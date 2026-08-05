@@ -520,6 +520,38 @@
       + '<th>Queue</th><th class="num">Total</th><th>Answered vs Abandoned</th>'
       + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num" title="Month-to-date 5%-violation days through this report\u2019s end date (not just this range)">Viol (MTD)</th>'
       + '</tr></thead>';
+    // Round-16 per-queue MTD pace (Option 1): a muted mono sub-line under the
+    // queue name -- "MTD Ø <avg>/day · <prior month> <avg> <▲/▼ %>", averages
+    // per WORKDAY from the payload's mtd block (same windows + workday counts
+    // as the verdict band above, so every level reconciles). Deltas stay
+    // NEUTRAL text (volume is demand, not performance -- the band's rule).
+    // A queue with no prior-month activity reads "new this month"; a queue
+    // with no MTD activity at all renders no line. Null-guarded on mtd.
+    const mtdMeta = (data && data.mtd) || null;
+    const qMtdSub = function (q) {
+      if (!mtdMeta || !(mtdMeta.workdays > 0)) return '';
+      const mCalls = Number(q.mtdTotalCalls) || 0;
+      const pCalls = Number(q.priorTotalCalls) || 0;
+      if (!mCalls && !pCalls) return '';
+      const mAvg = Math.round(mCalls / mtdMeta.workdays);
+      const pAvg = mtdMeta.priorWorkdays > 0 ? (pCalls / mtdMeta.priorWorkdays) : 0;
+      const pLbl = mtdMeta.priorLabel || 'prior';
+      const title = 'MTD ' + mtdMeta.from + ' → ' + mtdMeta.to + ' (' + mtdMeta.workdays
+        + ' workdays): ' + fmtNumber(mCalls) + ' calls · ' + pLbl + ' '
+        + mtdMeta.priorFrom + ' → ' + mtdMeta.priorTo + ' (' + mtdMeta.priorWorkdays
+        + ' workdays): ' + fmtNumber(pCalls) + ' calls';
+      let tail;
+      if (pAvg > 0) {
+        const dPct = (mAvg - pAvg) / pAvg * 100;
+        tail = pLbl + ' ' + Math.round(pAvg)
+          + ' <span class="qcd-q-sub-delta">' + (dPct >= 0 ? '▲' : '▼') + ' '
+          + Math.abs(dPct).toFixed(1) + '%</span>';
+      } else {
+        tail = 'new this month';
+      }
+      return '<div class="qcd-q-sub" title="' + escapeHtml(title) + '">MTD Ø '
+        + mAvg + '/day &middot; ' + tail + '</div>';
+    };
     const queueRow = function (q, sub) {
       const qViolShow = qcdViolShow_(q);
       const c = cell(q.abandonedPct, qViolShow);
@@ -532,7 +564,7 @@
       // F13: only the rows that actually expand become focusable.
       let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '"'
         + (hasDetail ? ' tabindex="0" aria-expanded="false"' : '') + '>'
-        + '<td>' + escapeHtml(q.queue) + subTag + chevron + '</td>'
+        + '<td>' + escapeHtml(q.queue) + subTag + chevron + qMtdSub(q) + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
         + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true }) + '</td>'   // QV-1
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
@@ -631,6 +663,20 @@
       return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     const row = function (cells) { return cells.map(esc).join(','); };
+    // Round-16: per-queue MTD pace columns (per-WORKDAY averages from the
+    // payload's mtd block; blank when the payload predates it). Numeric-only
+    // in the CSV -- the arrow/label rendering stays a web affordance.
+    const mm = (data && data.mtd) || null;
+    const mtdAvgOf = function (calls, wd) {
+      return (mm && wd > 0) ? String(Math.round((Number(calls) || 0) / wd)) : '';
+    };
+    const mtdDeltaOf = function (mtdCalls, priorCalls) {
+      if (!mm || !(mm.workdays > 0) || !(mm.priorWorkdays > 0)) return '';
+      const mAvg = (Number(mtdCalls) || 0) / mm.workdays;
+      const pAvg = (Number(priorCalls) || 0) / mm.priorWorkdays;
+      if (!(pAvg > 0)) return '';
+      return ((mAvg - pAvg) / pAvg * 100).toFixed(1) + '%';
+    };
     const lines = [];
     // C-5: route the title cells through the shared escaper too -- the
     // server-built dateLabel contains a comma ("Jul 10, 2026"), which split
@@ -638,7 +684,8 @@
     lines.push(row(['Daily Call Queue Report', data.dateLabel || '']));
     lines.push('');
     lines.push(row(['Department', 'Queue', 'Sub-dept', 'Total Calls', 'Answered', 'Abandoned',
-                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations (MTD)']));
+                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations (MTD)',
+                    'MTD Avg/Workday', 'Vs Prior Month %']));
     // Same grouping as the table: children nested under their parent, section
     // total only when the section has >1 queue (#3).
     const depts = data.depts || [];
@@ -658,17 +705,24 @@
       secItems.forEach(function (it) {
         const q = it.q;
         lines.push(row([d.dept, q.queue, it.sub, q.totalCalls, q.totalAnswered, q.abandoned,
-                        q.abandonedPctStr, q.longestWait, q.avgAnswer, qcdViolShow_(q)]));
+                        q.abandonedPctStr, q.longestWait, q.avgAnswer, qcdViolShow_(q),
+                        mtdAvgOf(q.mtdTotalCalls, mm && mm.workdays),
+                        mtdDeltaOf(q.mtdTotalCalls, q.priorTotalCalls)]));
       });
       if (secItems.length > 1) {
         const t = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
+        const secMtd = secItems.reduce(function (acc, i) { return acc + (Number(i.q.mtdTotalCalls) || 0); }, 0);
+        const secPrior = secItems.reduce(function (acc, i) { return acc + (Number(i.q.priorTotalCalls) || 0); }, 0);
         lines.push(row([d.dept, d.dept + ' total', '', t.totalCalls, t.totalAnswered, t.abandoned,
-                        t.abandonedPctStr, t.longestWait, t.avgAnswer, qcdViolShow_(t)]));
+                        t.abandonedPctStr, t.longestWait, t.avgAnswer, qcdViolShow_(t),
+                        mtdAvgOf(secMtd, mm && mm.workdays), mtdDeltaOf(secMtd, secPrior)]));
       }
     });
     const g = data.grandTotals || {};
     lines.push(row(['', 'Company total', '', g.totalCalls, g.totalAnswered, g.abandoned,
-                    g.abandonedPctStr, g.longestWait, g.avgAnswer, qcdViolShow_(g)]));
+                    g.abandonedPctStr, g.longestWait, g.avgAnswer, qcdViolShow_(g),
+                    mm ? mtdAvgOf(mm.totalCalls, mm.workdays) : '',
+                    mm ? mtdDeltaOf(mm.totalCalls, mm.priorTotalCalls) : '']));
     const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

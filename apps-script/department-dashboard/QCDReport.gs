@@ -296,8 +296,10 @@ function computeQcdAllDepartments_(from, to) {
       ? rep
       : computeQcdReport_(dept, mtdFrom, to, false, false, true);
     const mtdByQueue = {};
+    const mtdCallsByQueue = {}, priorCallsByQueue = {};
     (mtdRep.queueBreakdown || []).forEach(function (r) {
       mtdByQueue[r.queue] = Number(r.violations) || 0;
+      mtdCallsByQueue[r.queue] = Number(r.totalCalls) || 0;
     });
     // Month-scope company accumulation (must precede the dTotal===0 skip).
     const priorRep = (priorFrom === from && priorTo === to)
@@ -309,6 +311,7 @@ function computeQcdAllDepartments_(from, to) {
       mTotal += r.totalCalls; mAns += r.totalAnswered; mAbnd += r.abandoned;
     });
     (priorRep.queueBreakdown || []).forEach(function (r) {
+      priorCallsByQueue[r.queue] = Number(r.totalCalls) || 0;
       if (excludeSet[String(r.queue || '').toLowerCase()] || pSeen[r.queue]) return;
       pSeen[r.queue] = true;
       pTotal += r.totalCalls; pAns += r.totalAnswered; pAbnd += r.abandoned;
@@ -362,6 +365,11 @@ function computeQcdAllDepartments_(from, to) {
           avgAnswerSec:    Number(r.avgAnswerSec) || 0,
           violations:      r.violations,
           violationsMtd:   mtdByQueue[r.queue] || 0,
+          // Round-16 per-queue MTD pace (Option 1): raw window totals for the
+          // web table's "MTD Ø N/day vs prior" sub-line + CSV; the client
+          // divides by the mtd block's workday counts.
+          mtdTotalCalls:   mtdCallsByQueue[r.queue] || 0,
+          priorTotalCalls: priorCallsByQueue[r.queue] || 0,
           // Per-queue call-source breakdown (data-driven -- each queue shows
           // its own actual sources) + violation dates, for the expandable
           // per-queue detail in the all-dept report.

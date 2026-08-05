@@ -2089,12 +2089,22 @@
 
   // -- Render -------------------------------------------------------------
 
-  function fmtCell(col, row) {
+  // opts (Round-16, bar column only): { tallyUnit } on AGENT rows renders the
+  // volume-proportional tally at the cohort's shared scale; { tallyLegend }
+  // on a TOTALS row keeps the classic bar and appends the "each block = N
+  // calls" legend beneath it -- the totals tbody is pinned at the TOP of the
+  // table, so the legend leads the tallies it explains.
+  function fmtCell(col, row, opts) {
     if (col.type === 'chip' && col.key === 'source') {
       return sourceChipHtml_(row);
     }
     if (col.type === 'bar') {
-      return answeredBarHtml_(row);
+      var barHtml = answeredBarHtml_(row, (opts && opts.tallyUnit) || 0);
+      if (opts && opts.tallyLegend > 1) {
+        barHtml += '<div class="ans-tally-legend"><span class="tly a"></span> = '
+          + opts.tallyLegend + ' calls</div>';
+      }
+      return barHtml;
     }
     if (col.type === 'pct') {
       // #8 Answer % = answered / (answered + missed), matching the bar + the
@@ -2454,6 +2464,9 @@
     var totalsFor = {};
     byDept.forEach(function (g) { totalsFor[g.dept] = g.totals || {}; });
     var collapsed = subqCollapsedGet_(m.department);
+    // Round-16 tally: ONE unit across the whole combined cohort (both depts'
+    // rows), so block counts compare across groups too.
+    var tallyUnit = ansTallyUnitFor_(sorted);
     var out = [];
     order.forEach(function (d) {
       var rows = sorted.filter(function (r) { return r.dept === d; });
@@ -2483,7 +2496,7 @@
               + escapeHtml(d) + '">View ' + escapeHtml(d) + '\u2019s missed calls</button>'
             : '')
         + '</td></tr>');
-      if (!isShut) rows.forEach(function (row) { out.push(subqAgentRowHtml_(row)); });
+      if (!isShut) rows.forEach(function (row) { out.push(subqAgentRowHtml_(row, tallyUnit)); });
       out.push(subqSubtotalRowHtml_(d, totalsFor[d] || {}));
     });
     return out.join('');
@@ -2516,14 +2529,14 @@
     } catch (e) { /* a full/blocked store just means collapse won't persist */ }
   }
 
-  function subqAgentRowHtml_(row) {
+  function subqAgentRowHtml_(row, tallyUnit) {
     var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
     return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
       + (rowClass ? ' class="' + rowClass + '"' : '')
       + ' title="Open ' + escapeHtml(row.agent) + '\u2019s Individual Report">'
       + COLUMNS.map(function (col, i) {
           var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
-          return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
+          return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row, { tallyUnit: tallyUnit }) + '</td>';
         }).join('') + '</tr>';
   }
 
@@ -2579,24 +2592,22 @@
       + '</div>'
       + (rateDeltaHtml ? '<div class="dts-sub">' + rateDeltaHtml + ' vs prior</div>' : '')
       + '</div>';
-    var ansTile = '<div class="dts-tile">'
-      + '<div class="dts-label">Answered</div>'
-      + '<div class="dts-value" data-flash-key="dts:answered">' + fmtNumber(a) + '</div>'
-      + (ansDeltaHtml ? '<div class="dts-sub">' + ansDeltaHtml + ' vs prior</div>' : '')
-      + '</div>';
-    // (Owner round: the Missed + Avg-talk tiles were dropped so the strip fits
-    // one row -- missed lives in the agent table's split bar + the Missed
-    // section below; ATT keeps its per-agent column.)
-
-    // Batch D: range-scoped Queue calls + Abandoned % tiles from the QCD
-    // snapshot's `range` block (own-queues-only, the selected From/To). Shown
-    // only for QCD-mapped depts with queue activity in the range. Owner round:
-    // Queue calls renders BETWEEN the hero and Answered, and carries an
-    // implied per-WORKDAY rate (Mon-Fri minus company holidays -- the INV-35
-    // workingDaysBetween_ mirror, so it agrees with the Insights workday math).
-    var qCallsTile = '', qAbdTile = '';
+    // Round-16 (owner request): the 'Answered' and 'Queue calls' tiles MERGE
+    // into ONE color-split tile (the side panel's "Ans / Abd" shape) when the
+    // dept has queue data in range -- answered in sage, queue calls in plain
+    // ink (different POPULATIONS: agent-answered rings vs calls offered to
+    // the mapped queues -- they don't subtract, which the tooltip says). The
+    // sub-line folds the E5 answered delta and the per-workday rate together.
+    // A dept with no queue range data keeps the plain Answered tile.
+    var ansTile;
+    // Batch D: range-scoped queue figures come from the QCD snapshot's
+    // `range` block (own-queues-only, the selected From/To); the per-WORKDAY
+    // rate uses the INV-35 workingDaysBetween_ mirror, so it agrees with the
+    // Insights workday math.
+    var qAbdTile = '';
     var qr = state.qcd && state.qcd.range;
-    if (qr && (Number(qr.totalCalls) || 0) > 0) {
+    var hasQueueRange = !!(qr && (Number(qr.totalCalls) || 0) > 0);
+    if (hasQueueRange) {
       var qCalls = Number(qr.totalCalls) || 0;
       var qAbd   = Number(qr.abandoned) || 0;
       var abStr  = qr.abandonedPctStr || ((Number(qr.abandonedPct) || 0).toFixed(2) + '%');
@@ -2605,15 +2616,24 @@
       var qTo   = (state.meta && state.meta.to)   || ($('to-date')   && $('to-date').value)   || '';
       var wd = workingDaysBetween_(qFrom, qTo);
       // R7 (M-4): a 1-workday range's "≈ N/day over 1 workday" just restates
-      // the headline number -- show the per-day sub only for multi-day ranges.
-      var perDaySub = wd > 1
-        ? '&asymp; ' + (Math.round((qCalls / wd) * 10) / 10) + '/day over ' + wd + ' workdays'
-        : 'across mapped queues';
-      qCallsTile =
-          '<div class="dts-tile dts-tile--queue" title="Across the department&#39;s mapped queues. Workdays = Mon&ndash;Fri minus company holidays.">'
-        +   '<div class="dts-label">Queue calls <span class="dts-scope">this range</span></div>'
-        +   '<div class="dts-value" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</div>'
-        +   '<div class="dts-sub">' + perDaySub + '</div>'
+      // the headline number -- the per-day pace joins the sub only on
+      // multi-day ranges (the tile label already says "Queue calls", so a
+      // single-day filler phrase adds nothing; the tooltip carries scope).
+      var ansQSubParts = [];
+      if (ansDeltaHtml) ansQSubParts.push(ansDeltaHtml + ' answered vs prior');
+      if (wd > 1) {
+        ansQSubParts.push('&asymp; ' + (Math.round((qCalls / wd) * 10) / 10)
+          + ' queue calls/day over ' + wd + ' workdays');
+      }
+      ansTile =
+          '<div class="dts-tile dts-tile--queue" title="Answered = rings answered by this department&#39;s agents (agent data). Queue calls = calls offered to the department&#39;s mapped queues (queue data). Different populations &mdash; the two counts don&#39;t subtract. Workdays = Mon&ndash;Fri minus company holidays.">'
+        +   '<div class="dts-label">Answered / Queue calls <span class="dts-scope">this range</span></div>'
+        +   '<div class="dts-value dts-value--split">'
+        +     '<span class="dts-ans" data-flash-key="dts:answered">' + fmtNumber(a) + '</span>'
+        +     '<span class="dts-sep"> / </span>'
+        +     '<span class="dts-qcalls" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</span>'
+        +   '</div>'
+        +   (ansQSubParts.length ? '<div class="dts-sub">' + ansQSubParts.join(' &middot; ') + '</div>' : '')
         + '</div>';
       qAbdTile =
           '<div class="dts-tile dts-tile--queue">'
@@ -2621,7 +2641,16 @@
         +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
         +   '<div class="dts-sub">' + fmtNumber(qAbd) + ' abandoned</div>'
         + '</div>';
+    } else {
+      ansTile = '<div class="dts-tile">'
+        + '<div class="dts-label">Answered</div>'
+        + '<div class="dts-value" data-flash-key="dts:answered">' + fmtNumber(a) + '</div>'
+        + (ansDeltaHtml ? '<div class="dts-sub">' + ansDeltaHtml + ' vs prior</div>' : '')
+        + '</div>';
     }
+    // (Owner round: the Missed + Avg-talk tiles were dropped so the strip fits
+    // one row -- missed lives in the agent table's split bar + the Missed
+    // section below; ATT keeps its per-agent column.)
 
     // R10-5: Avg answer time tile -- answered-weighted over the dept's own
     // queues for the selected range (qcd.range.avgAnswer, QCD Historical
@@ -2665,7 +2694,7 @@
         + '</div>';
     }
 
-    strip.innerHTML = heroTile + qCallsTile + ansTile + qAbdTile + qAvgTile + trTile;
+    strip.innerHTML = heroTile + ansTile + qAbdTile + qAvgTile + trTile;
     strip.style.display = '';
     if (zone) zone.style.display = '';
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
@@ -2775,6 +2804,8 @@
     // Sorting stays GLOBAL within each group (the group order follows
     // meta.deptsShown, i.e. parent first), so a manager's chosen sort still
     // means what it did -- it just applies inside each department.
+    // Round-16 tally: cohort-wide block unit (same scale for every agent row).
+    const tallyUnit = ansTallyUnitFor_(sorted);
     const groups = subqRowGroups_(state, sorted);
     if (groups) { tbody.innerHTML = groups; }
     else {
@@ -2797,7 +2828,7 @@
         // B1: tag the Answered/Missed bar cell so a date-range refresh flashes
         // the agents whose volume actually changed (key by agent name, stable).
         var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
-        return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
+        return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row, { tallyUnit: tallyUnit }) + '</td>';
       }).join('') + '</tr>';
     }).join('');
     }
@@ -2834,7 +2865,7 @@
         if (col.type === 'chip' && col.key === 'source') return '<td class="src-cell' + (col.hideable ? ' col-extra' : '') + '"></td>';
         // The bar / num / duration cells render from the totals object
         // (ATT and abd-wait are weighted on the server).
-        return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, state.totals) + '</td>';
+        return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, state.totals, { tallyLegend: tallyUnit }) + '</td>';
       }).join('') + '</tr>';
     } else {
       tfoot.innerHTML = '';

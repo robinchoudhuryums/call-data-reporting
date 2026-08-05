@@ -1052,11 +1052,50 @@
     return base + (col.hideable ? ' col-extra' : '');
   }
 
-  // Stacked Answered/Missed bar (green answered + red missed; total =
+  // Round-16 (owner request): AGENT rows render a VOLUME-PROPORTIONAL TALLY --
+  // discrete color-coded blocks (answered sage, missed red), one block per
+  // `unit` calls -- instead of the fixed-length proportional bar, so a
+  // 400-call agent visibly dwarfs a 40-call one. The unit adapts to the
+  // COHORT (same scale for every row in a table, or block counts wouldn't be
+  // comparable): smallest ladder step that keeps the busiest agent within
+  // ANS_TALLY_MAX_BLOCKS_. Returns 0 for an empty/idle cohort (callers fall
+  // back to the classic bar). TOTALS + subtotal rows keep the classic
+  // proportional bar on purpose -- an aggregate tally at the agent scale
+  // would be hundreds of blocks, and totals aren't compared against agents.
+  var ANS_TALLY_MAX_BLOCKS_ = 36;
+  var ANS_TALLY_UNITS_ = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+  function ansTallyUnitFor_(rows) {
+    var max = 0;
+    (rows || []).forEach(function (r) {
+      var t = (Number(r.totalAnswered) || 0) + (Number(r.totalMissed) || 0);
+      if (t > max) max = t;
+    });
+    if (!max) return 0;
+    for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) {
+      if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= ANS_TALLY_MAX_BLOCKS_) return ANS_TALLY_UNITS_[i];
+    }
+    return ANS_TALLY_UNITS_[ANS_TALLY_UNITS_.length - 1];
+  }
+  // Blocks for one value: round to the nearest unit, but never hide a
+  // nonzero value (min 1 block) -- the exact numbers sit right beside the
+  // tally in .ans-nums, so block counts are a read of scale, not a count.
+  function ansTallyBlocks_(v, unit, cls) {
+    if (!(v > 0)) return '';
+    var n = Math.max(1, Math.round(v / unit));
+    var out = '';
+    for (var i = 0; i < n; i++) out += '<span class="tly ' + cls + '"></span>';
+    return out;
+  }
+
+  // Stacked Answered/Missed cell (green answered + red missed; total =
   // rung). Carries the E5 prior-period WoW chips inline on the answered
   // and missed counts so that signal survives the column consolidation.
   // The answer-rate gets the 92% benchmark tint (symmetric).
-  function answeredBarHtml_(row) {
+  // `tallyUnit` (Round-16): > 0 renders the volume-proportional tally for
+  // this row (agent rows -- callers compute it per cohort via
+  // ansTallyUnitFor_); 0/omitted keeps the classic proportional bar
+  // (totals + subtotal rows, and any legacy caller).
+  function answeredBarHtml_(row, tallyUnit) {
     var a = Number(row.totalAnswered) || 0;
     var m = Number(row.totalMissed)   || 0;
     var total = a + m;
@@ -1068,19 +1107,30 @@
     // column was folded away). Prefer the server's own totalRung when present
     // (definitionally = answered + missed, but never invent a number).
     var rung = (row.totalRung != null && row.totalRung !== '') ? (Number(row.totalRung) || 0) : total;
+    var useTally = tallyUnit > 0 && total > 0;
     var title = a + ' answered · ' + m + ' missed · ' + rung + ' total calls (rung)'
-              + (total ? ' · ' + rate + '% answered' : '');
-    var segs = total
-      ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
-        + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
-      : '<span class="ans-seg none" style="width:100%"></span>';
+              + (total ? ' · ' + rate + '% answered' : '')
+              + (useTally && tallyUnit > 1 ? ' · each block ≈ ' + tallyUnit + ' calls' : '');
     var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
     // R10-4: threshold-aware red -- passing the 92% standard renders the
     // missed segment light/translucent so healthy rows recede; failing keeps
     // the full red + a bold value (styles.html .ans-bar--pass/--fail).
     var passCls = total ? (rate >= answerTarget_('global') ? ' ans-bar--pass' : ' ans-bar--fail') : '';
+    var track;
+    if (useTally) {
+      track = '<div class="ans-tally" aria-hidden="true">'
+        + ansTallyBlocks_(a, tallyUnit, 'a')
+        + ansTallyBlocks_(m, tallyUnit, 'm')
+        + '</div>';
+    } else {
+      var segs = total
+        ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
+          + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
+        : '<span class="ans-seg none" style="width:100%"></span>';
+      track = '<div class="ans-track">' + segs + '</div>';
+    }
     return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
-         +   '<div class="ans-track">' + segs + '</div>'
+         +   track
          +   '<div class="ans-nums">'
          +     '<span class="ans-n">' + a + aChip + '</span>'
          +     '<span class="ans-slash">/</span>'

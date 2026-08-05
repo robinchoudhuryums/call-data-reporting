@@ -179,6 +179,11 @@ test('mtd block: month windows, workday counts, and totals include a dept quiet 
   assert.equal(m.priorTotalCalls, 300, 'April row excluded');
   assert.equal(m.priorAnswered, 275);
   assert.equal(m.priorAbandoned, 25);
+  // Round-16 Option 1: each queue row carries its own MTD/prior-month call
+  // totals (per-queue pace sub-line + CSV), from the same window passes.
+  const alphaQ = rep.depts[0].queues[0];
+  assert.equal(alphaQ.mtdTotalCalls, 150, 'Alpha queue MTD = Jun 3 + Jun 10 (50+100)');
+  assert.equal(alphaQ.priorTotalCalls, 200, 'Alpha queue prior = the May row');
 });
 
 test('mtd block: the F-36 unique-queue dedup applies to MTD and prior-month totals too', function () {

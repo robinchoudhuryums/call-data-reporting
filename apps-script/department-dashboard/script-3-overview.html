@@ -1258,6 +1258,8 @@
       }
     });
     var sorted = sortRows(ovUserRows_, ovUserSort_.key, ovUserSort_.dir);
+    // Round-16 tally: this mini-table is its OWN cohort (its own unit scale).
+    var tallyUnit = ansTallyUnitFor_(sorted);
     // C-3: point the WoW-chip tooltips at THIS table's prior window for the
     // duration of the (synchronous) render, then clear.
     wowChipMetaOverride_ = ovUserMeta_;
@@ -1265,7 +1267,7 @@
       var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
       return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
            + COLUMNS.map(function (col, i) {
-               return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row) + '</td>';
+               return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row, { tallyUnit: tallyUnit }) + '</td>';
              }).join('')
            + '</tr>';
     }).join('');
@@ -1279,7 +1281,7 @@
         var cls = cellClass_(col, i);
         if (i === 0) return '<td class="' + cls + '">' + totalLabel + '</td>';
         if (col.type === 'chip' && col.key === 'source') return '<td class="' + cls + '"></td>';
-        return '<td class="' + cls + '">' + fmtCell(col, ovUserTotals_) + '</td>';
+        return '<td class="' + cls + '">' + fmtCell(col, ovUserTotals_, { tallyLegend: tallyUnit }) + '</td>';
       }).join('') + '</tr>';
     } else {
       tfoot.innerHTML = '';

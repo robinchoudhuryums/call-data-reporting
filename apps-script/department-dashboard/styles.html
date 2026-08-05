@@ -782,6 +782,27 @@
      split; give the cell room + a little vertical padding like the agent table. */
   td.qcd-daily-bar-cell { min-width: 180px; padding-top: 6px; padding-bottom: 6px; }
   .ans-bar { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+  /* Round-16 (owner request): volume-proportional TALLY for AGENT rows --
+     one block per `unit` calls (answered sage first, then missed red), so
+     row width reads as call volume and a high-volume agent visibly dwarfs a
+     low-volume one. Cohort-shared unit via ansTallyUnitFor_; totals +
+     subtotal rows keep the classic .ans-track proportional bar (an
+     aggregate at agent scale would be hundreds of blocks). The R10-4
+     pass/fail convention carries over: past the answer target the missed
+     blocks recede translucent, under it they keep full red. */
+  .ans-tally { display: flex; flex-wrap: wrap; gap: 2px; align-items: center;
+    max-width: 320px; min-height: 13px; }
+  .tly { width: 6px; height: 13px; border-radius: var(--r); flex: 0 0 auto;
+    display: inline-block; background: var(--muted); }
+  .tly.a { background: var(--good); }
+  .tly.m { background: var(--bad); }
+  .ans-bar--pass .tly.m { opacity: 0.35; }
+  /* "block = N calls" legend on the pinned totals row (renders only when the
+     cohort unit is > 1); the swatch reuses .tly at legend scale. */
+  .ans-tally-legend { display: flex; align-items: center; gap: 4px;
+    font: 500 10px/1 var(--mono); color: var(--muted); margin-top: 4px;
+    font-variant-numeric: tabular-nums; }
+  .ans-tally-legend .tly { width: 5px; height: 10px; }
   .ans-track {
     display: flex;
     height: 8px;
@@ -4577,6 +4598,12 @@
     text-align: right; font-variant-numeric: tabular-nums;
   }
   .qcd-alldept-table thead th { color: var(--muted); font-weight: 600; }
+  /* Round-16 (Option 1): per-queue MTD pace sub-line under the queue name --
+     "MTD Ø N/day · Jul N ▲ x%", per-workday averages from the payload's mtd
+     block. Muted mono; the delta stays neutral text (volume, no valence). */
+  .qcd-q-sub { font: 500 10.5px/1.5 var(--mono); color: var(--muted);
+    font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .qcd-q-sub-delta { white-space: nowrap; }
   /* #3d: abandon % over the 5% threshold reads bold (color comes from the
      bm-over / qcd-warn-light warn tint). */
   .qcd-rate-over { font-weight: 700; }
@@ -6427,6 +6454,12 @@
     color: var(--ink); margin-top: 6px; }
   .dts-value.bm-target { color: var(--good); }
   .dts-value.bm-over { color: var(--warn); }
+  /* Round-16: merged "Answered / Queue calls" tile -- the side panel's
+     color-split Ans/Abd shape. Answered rides sage (the dept-qcd-ans
+     convention); queue calls stay plain ink (volume, no valence). */
+  .dts-value--split .dts-ans { color: var(--good); }
+  .dts-value--split .dts-sep { color: var(--muted); font-weight: 400; }
+  .dts-value--split .dts-qcalls { color: var(--ink); }
   .dts-sub { font: 400 11px/1.3 var(--mono); color: var(--muted); margin-top: 3px;
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .dts-delta { font-weight: 600; }
