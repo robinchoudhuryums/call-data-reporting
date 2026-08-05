@@ -2125,3 +2125,31 @@ commit/push/deploy direction.
   4. Next /sync-docs: one clause on the harness's new strictness in
      CLAUDE.md's test-command blurb; the C-6 allUnparsed clause from
      increment 75's note.
+
+- **Increment 78 (DONE — Round-15 Batches 5+6: a11y + server smalls):**
+  E-6..E-10 + B-5/B-6/A-3/A-4/A-5/B-8/E-5; commit `5c710da`; block in
+  `.cycle/blocks/78-batch5-batch6-broad-implement.md`. 630/630, INV-16 clean,
+  ci:ui green. NET 1 − 0 = 1 (B-5: ALL-sentinel managers were receiving NO
+  dept's alerts; they now receive every dept's — intended role semantics,
+  flagged to the operator in the block).
+
+  Two decisions worth carrying: (1) E-6 changed Enter semantics in
+  dsConfirm_ to FOLLOW FOCUS — Cancel-focused Enter cancels; it used to
+  confirm, destructive actions included. (2) B-6 resolved as
+  DOCUMENTED-DELIBERATE, not a code gate: a skipped weekly/monthly run has
+  no later run to cover it (unlike daily's next-weekday walker), so the
+  "missing" gates would lose digests; deferral needs a trigger redesign and
+  was explicitly declined in a comment block at the handlers.
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `5c710da` pushed; tree clean; NO PR (standing rule).
+  2. **DEPLOY pending:** dashboard (74/76/77/78 — one NEW VERSION covers
+     all) + cdr-import (74/75). Post-deploy: quick manual pass on the
+     keyboard paths (menus, dsConfirm_, chart-help) and an AT spot-check.
+  3. Remaining: Batch 7 (C-3/F-10/F-9/F-11/F-8), 8 (D-1..D-6), 9 (C-7),
+     10 (D-8/D-9), strategic items.
+  4. /sync-docs queue: harness-strictness clause, C-6 allUnparsed clause,
+     B-5's alerts note in the role-model bullet.
+  5. New follow-on: script.html ~7758 — the subq group-head <tr> carries the
+     same role="button" class as E-8 (has aria-expanded; right fix may
+     differ).
