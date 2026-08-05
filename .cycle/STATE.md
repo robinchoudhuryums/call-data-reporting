@@ -2027,3 +2027,40 @@ commit/push/deploy direction.
   6. /sync-docs is warranted for the doc-drift set (F-3's INV-38 index line
      above all — it misstates an AUTHORIZATION-relevant invariant in the
      always-loaded file).
+
+- **Increment 75 (DONE — Round-15 Batch 1: capture & force-path data safety):**
+  C-5 / C-6 / C-8 / C-9, all in cdr-import; commit `05ec643`; summary block in
+  `.cycle/blocks/75-batch1-data-safety-broad-implement.md`. 618/618, INV-16
+  clean. NET 0 − 0 = 0 (all latent hardening).
+
+  Shape notes worth keeping: C-6 grew past its audit wording during
+  implementation — an ALL-unparsed grid turned out to pass the C-1 stray gate
+  (date-LESS records are not stray-DATED), so the counter also became a third
+  refusal arm (`allUnparsed`) beside `allStray`; and the two capture builders
+  are asymmetric (inbound emits date-less records for the writer to filter,
+  outbound drops them internally), so outbound counts via a
+  `records._unparsedDropped` array property (the `_neonReachable` precedent).
+  C-5 splits into an input-validation THROW (empty ext maps — structurally
+  zero rows) and a log-only failure row for rebuilt-to-zero-with-deletions
+  (P-5's legitimate force-to-zero preserved). `dcWriteSheet_` now returns
+  `{written, deleted}` — its one caller and one test updated.
+
+  Also this session, before Batch 1: increment 74's /sync-docs pass landed as
+  `4a2a92b` (INV-38 index line, INV-01 bullet, chunking claims, count-free
+  index lines, Operator State #43 for the unversioned `deleteOldCDRSheets`
+  trigger, the #25 re-run warning, the Round-15 fix-history family, two stale
+  in-file comments). The CLAUDE.md per-bullet ratchet seed for the Neon-write-
+  discipline bullet tightened 4896 → 4892.
+
+  **WHERE I LEFT OFF:**
+  1. Commits `4a2a92b` (sync-docs) + `05ec643` (Batch 1) pushed to
+     `claude/broad-scan-l9ojgm`; tree clean; NO PR (standing rule).
+  2. **DEPLOY pending, two projects:** dashboard (increment 74's fixes — NEW
+     VERSION per Operator State #2) and cdr-import (increments 74 + 75).
+     cdr-report has only comment changes (can ride any later deploy).
+  3. Next batch when asked: **Batch 2 — Neon endgame enablers** (B-2
+     retirement-aware SmokeCheck/NeonCoverage, A-2 init-cache guard, B-4
+     case-insensitive entry-queue matching). Full batch list with efforts is
+     in the increment-74 close-out / the sync-docs session reply.
+  4. Minor deferred doc line: mention the C-6 `allUnparsed` arm beside C-1's
+     in the CLAUDE.md F2 sentence at the next /sync-docs.
