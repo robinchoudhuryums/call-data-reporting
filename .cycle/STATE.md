@@ -2153,3 +2153,31 @@ commit/push/deploy direction.
   5. New follow-on: script.html ~7758 — the subq group-head <tr> carries the
      same role="button" class as E-8 (has aria-expanded; right fix may
      differ).
+
+- **Increment 79 (DONE — Round-15 Batches 7+8: deploy/ops hygiene + cdr-report
+  editor tools):** C-3/F-10/F-9/F-11/F-8 + D-1..D-6; commit `f6e92be`; block in
+  `.cycle/blocks/79-batch7-batch8-broad-implement.md`. 631/631, INV-16 clean,
+  ci:ui green. NET 0 − 0 = 0 (all latent/hygiene — an honest zero).
+
+  C-3 closes the round's longest-standing operational gap: the Call_Legs_*
+  retention prune now has an in-repo installer, a menu entry, and a
+  `retentionPrune` Pipeline Health row per run (INV-44 vocabulary + Operator
+  State #43 + the CLAUDE.md index line all updated to the new reality —
+  #43's ask flipped from "verify the invisible trigger exists" to "install
+  ours, remove the hand-made one"). F-9/F-10/F-11 armor the gate machinery
+  itself; F-8 makes sheetRepairs.js grep-able again. Batch 8 hardened the
+  editor tools that had never seen an audit: width-throw (D-1), sidebar XSS
+  (D-2), sheet formula injection (D-3 — a cdr-report-local crSheetSafeCell_
+  that deliberately passes signed-numeric strings), silent truncation (D-4),
+  falsy-index chains (D-5), and the stranded-Running state (D-6).
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `f6e92be` pushed; tree clean; NO PR (standing rule).
+  2. **DEPLOY now spans all three projects:** dashboard (74/76/77/78, one new
+     version), cdr-import (74/75/79), cdr-report (79 — its first code deploy
+     this round). Then: CDR Tools → Install Retention Prune Trigger + delete
+     any hand-made deleteOldCDRSheets trigger (#43).
+  3. Remaining: Batch 9 (C-7 — defer until the Neon cutover decision), Batch
+     10 (D-8/D-9), strategic items.
+  4. /sync-docs queue (4 clauses): harness strictness, C-6 allUnparsed, B-5
+     alerts note, deploy.sh's TST-7 sentence now including ci:ui.
