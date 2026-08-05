@@ -2199,3 +2199,28 @@ commit/push/deploy direction.
   prerequisites were summarized for the owner in the increment-80 session
   reply (README "full flip runbook" + Op State #19/#25/#30/#35 are the
   durable references).
+
+- **Increment 81 (DONE — Round-15 Batch 10: frozen-legacy prep + PR):** D-8
+  (the dqe-report dual-onOpen collision resolved by deleting the redundant
+  copy — the menu file's is a strict superset, so this is the freeze's
+  cleanup-deletion class) + D-9 (a 5-item DECOMMISSION CHECKLIST comment in
+  DQEdashboard.js where the deleted function was). Block in
+  `.cycle/blocks/81-batch10-frozen-legacy-broad-implement.md`. 631/631,
+  INV-16 clean. NET 0 − 0 = 0.
+
+  **OWNER DECISIONS recorded:** staying on the Neon FREE tier; the cutover
+  proceeds per the runbook with a MULTI-WEEK soak spanning at least one
+  force re-import before any sheet trim. Batch 9 (C-7) stays deferred until
+  that soak concludes.
+
+  **WHERE I LEFT OFF:** Round-15's batch work is COMPLETE (1-8 + 10; 9
+  deferred by decision). A PR for the whole branch was opened + merged this
+  session (see the PR for the roll-up). Post-merge the operator steps are:
+  the three-project deploy (dashboard new version: 74/76/77/78; cdr-import:
+  74/75/79; cdr-report: 79; dqe-report: 81 cleanup push), the #43 retention
+  trigger install, then the Neon cutover runbook (README + Op State
+  #19/#25/#30/#35 — deploy first, gates before flags, soak before trim).
+  Remaining code work when wanted: strategic tracks (queue-split reader
+  phases → QUEUE_SPLIT_SCOPE flip, Inbound/Direct manager un-gating after
+  B-1's deploy + parity, the G-1-class harness payload-contract assertion)
+  and C-7 after the soak.
