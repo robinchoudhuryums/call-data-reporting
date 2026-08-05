@@ -98,6 +98,16 @@ test('script.html: include list matches the script-*.html files on disk, in both
     + 'throws at render. Included: ' + included.join(', ') + ' | On disk: ' + onDisk.join(', '));
 });
 
+test('styles.html: no scriptlets -- include_ template-evaluates it now', function () {
+  // include_ switched to createTemplateFromFile().evaluate() for the fragment
+  // assembly (#4), and styles.html rides the same helper -- a scriptlet-open
+  // sequence in the CSS would execute server-side at render.
+  const body = fs.readFileSync(path.join(DIR, 'styles.html'), 'utf8');
+  assert.equal(body.indexOf('<' + '?'), -1,
+    'styles.html contains a scriptlet-open sequence -- include_ EVALUATES '
+    + 'templates now, so this would execute server-side at render.');
+});
+
 test('script fragments: raw JS only -- no script/style tags, no scriptlets', function () {
   const { names } = scriptIncludeList();
   names.forEach(function (name) {
