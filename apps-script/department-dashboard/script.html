@@ -2091,9 +2091,12 @@
       if (!el) {
         el = document.createElement('div');
         el.id = id;
-        el.style.cssText = 'display:flex;align-items:center;gap:10px;margin:0 0 10px;'
-          + 'padding:6px 10px;border-radius:2px;'
-          + 'font-size:12px;color:#6b7280;background:#f9fafb;border:1px solid #e5e7eb;';
+        // E-1: theme tokens, not hardcoded light-palette hex -- this badge
+      // renders during FAILURE states, exactly when a dark-mode user is
+      // squinting at it; the raw hex made it a glaring light box there.
+      el.style.cssText = 'display:flex;align-items:center;gap:10px;margin:0 0 10px;'
+          + 'padding:6px 10px;border-radius:var(--r, 2px);'
+          + 'font-size:12px;color:var(--muted);background:var(--paper-card);border:1px solid var(--line);';
         var msg = document.createElement('span');
         msg.style.flex = '1';
         msg.textContent = 'Auto-refresh is failing — showing the last loaded data.';
@@ -3510,9 +3513,15 @@
     ovWireChartRange_();              // paint the YTD… loading label
     const revertTo90_ = function (msg) {
       ovYtdLoading = false;
-      ovChartRange = '90';
-      try { localStorage.setItem(OV_CHART_RANGE_KEY_, '90'); } catch (e) { /* best-effort */ }
-      showToast(msg, 'error');
+      // G-4: only revert (and persist!) if the user is still ON the YTD
+      // selection -- the range buttons stay clickable during the fetch, so
+      // an unconditional revert clobbered a newer 30/60 pick with '90' and
+      // stamped localStorage with a range the user never chose.
+      if (ovChartRange === 'ytd') {
+        ovChartRange = '90';
+        try { localStorage.setItem(OV_CHART_RANGE_KEY_, '90'); } catch (e) { /* best-effort */ }
+        showToast(msg, 'error');
+      }
       if (ovLastData) ovRenderChart_(ovLastData);
     };
     google.script.run
@@ -8790,9 +8799,15 @@
         // fetch fails, fall back to the form so the error (in the loader text)
         // is visible and cancel the pending auto-run.
         if (irPendingAutoRun_) { irPendingAutoRun_ = false; showIrForm(); }
-        $('ir-agent-loader').style.display = '';
-        $('ir-agent-loader').textContent = 'Error loading roster: '
-          + (err && err.message ? err.message : String(err));
+        // G-7: recovery used to require closing/reopening the modal (Generate
+        // stays disabled, the list hidden). Offer an inline Retry instead.
+        const irLoader = $('ir-agent-loader');
+        irLoader.style.display = '';
+        irLoader.innerHTML = 'Error loading roster: '
+          + escapeHtml(err && err.message ? err.message : String(err))
+          + ' <button type="button" class="link-btn" id="ir-roster-retry">Retry</button>';
+        const irRetry = $('ir-roster-retry');
+        if (irRetry) irRetry.addEventListener('click', function () { ensureIrRoster(); });
       })
       .getIndividualReportInit({ department: dept, from: from, to: to });
   }
@@ -8818,6 +8833,12 @@
       google.script.run
         .withSuccessHandler(function (data) {
           if (__rk !== irRosterReqSeq_) return;   // superseded by a newer fetch
+          // G-5: the header dept can change while this debounced refetch is
+          // in flight; the seq token doesn't catch that (the newer dept may
+          // not have scheduled any fetch). Mutating the cache would paint
+          // the OLD dept's rendered list with the NEW dept's active/floater
+          // split -- mislabeled groups until the next full roster load.
+          if (irLastRoster.dept !== dept) return;
           irLastRoster.activeAgents   = (data && data.activeAgents)   || null;
           irLastRoster.activeFloaters = (data && data.activeFloaters) || null;
           irLastRoster.subQueueGroups = (data && data.subQueueGroups) || null;   // G-1
@@ -9682,16 +9703,25 @@
           const share = shareEl
             ? shareEl.textContent.replace(/\s*of\s+dept\s*$/i, '').trim()
             : '';
+          // E-3: this is the SIXTH tabular writer -- route every cell through
+          // csvSafeCell_ like the five CSV exporters (the "every CSV cell
+          // writer" rule; today's tile text is numeric/static, but the rule
+          // exists so that stays a non-decision).
           rows.push([
-            label.trim(),
-            value.trim(),
-            team.replace(/^Team\s*/i, '').trim(),
-            share,
+            csvSafeCell_(label.trim()),
+            csvSafeCell_(value.trim()),
+            csvSafeCell_(team.replace(/^Team\s*/i, '').trim()),
+            csvSafeCell_(share),
           ].join('\t'));
         });
         const tsv = rows.join('\n') + '\n';
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(tsv).then(function () { irFlashButton(b, 'Copied'); });
+          navigator.clipboard.writeText(tsv).then(function () { irFlashButton(b, 'Copied'); },
+            function (err) {   // E-3: denied clipboard used to fail silently
+              showToast('Copy failed: ' + (err && err.message ? err.message : 'clipboard unavailable'), 'error');
+            });
+        } else {
+          showToast('Clipboard API not available in this browser.', 'error');   // E-3
         }
       });
     });
@@ -10141,8 +10171,13 @@
                     datasets[ag].map(function (x) { return Number(x.pct.toFixed(1)); }),
                     color, { agent: ag });
     });
+    // G-3: the goal line follows the admin-tunable answer-rate standard
+    // (ANSWER_TARGETS, seed 92) like every other surface -- it was the one
+    // remaining hardcoded literal (95, matching no documented standard), so
+    // tuning the target left this chart preaching a different number.
+    const irGoalPct = (typeof answerTarget_ === 'function') ? answerTarget_('global') : 92;
     effData.push({
-      label: 'Goal', data: new Array(labels.length).fill(95),
+      label: 'Goal', data: new Array(labels.length).fill(irGoalPct),
       borderColor: THEME.muted, borderDash: [4, 4], pointRadius: 0,
       fill: false, tension: 0, hexColor: THEME.muted, _irAgent: null,
     });
@@ -10362,6 +10397,14 @@
   function irBuildCanvas(onDone) {
     const root = $('individual-results');
     if (!root) return;
+    // G-2: html2canvas loads from a CDN tag; if it was blocked, the
+    // ReferenceError below would be SYNCHRONOUS inside a rAF callback --
+    // outside the promise .catch -- leaving the button at "Capturing…" for
+    // the session. Fail loud + restore instead (the safeChart_ discipline).
+    if (typeof html2canvas === 'undefined') {
+      exportCaptureFailed_(new Error('html2canvas is not loaded (blocked CDN?) — image export unavailable.'));
+      return;
+    }
 
     // Temporarily reveal every chart panel and resize its Chart.js
     // instance so the canvas has rendered pixels before we read it.
@@ -10392,6 +10435,7 @@
       panels.forEach(function (p, i) { p.style.display = savedDisplays[i]; });
       irChartInstances.forEach(function (c) { c.resize(); });
 
+      try {
       html2canvas(root, {
         scale: 2, useCORS: true, backgroundColor: (THEME.paper || '#f6f7f9'),
         onclone: function (clonedDoc) {
@@ -10434,6 +10478,7 @@
           });
         },
       }).then(function (canvas) { onDone(canvas); }).catch(exportCaptureFailed_);
+      } catch (e) { exportCaptureFailed_(e); }   // G-2: sync throw inside the rAF
     }); });
   }
 
@@ -10464,15 +10509,28 @@
     const restore = irExportBtnFeedback_('Capturing…', 0);
     irBuildCanvas(function (canvas) {
       canvas.toBlob(function (blob) {
+        // G-2: toBlob can yield null (tainted/zero-size canvas) -- the
+        // ClipboardItem construction below would then THROW inside this
+        // callback and strand the button at "Capturing…".
+        if (!blob) {
+          irSetResultsStatus('error', 'Capture produced no image — try again.');
+          restore();
+          return;
+        }
         if (navigator.clipboard && window.ClipboardItem) {
-          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-            .then(function () {
-              restore();
-              irExportBtnFeedback_('Copied!', 1200);
-            }, function (err) {
-              irSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
-              restore();
-            });
+          try {
+            navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+              .then(function () {
+                restore();
+                irExportBtnFeedback_('Copied!', 1200);
+              }, function (err) {
+                irSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+                restore();
+              });
+          } catch (e) {
+            irSetResultsStatus('error', 'Clipboard copy failed: ' + (e && e.message ? e.message : e));
+            restore();
+          }
         } else {
           irSetResultsStatus('error', 'Clipboard API not available in this browser.');
           restore();
@@ -10608,6 +10666,7 @@
   // Loaded rows for prefill; populated by the render functions above.
   var alCfgRows_ = [];
   var alDgRows_ = [];
+  var alDgLastInit_ = null;   // G-6: last full digest-init payload (see below)
   // Batch 3: the unified Report Subscribers table draws from BOTH lists, each
   // loaded by its own async init; track per-list load errors for a partial note.
   var alDgLoadError_ = null, alQrLoadError_ = null;
@@ -11080,6 +11139,7 @@
 
   function alRenderDigestInit_(data) {
     if (!data) return;
+    alDgLastInit_ = data;   // G-6: stash so a trigger-status-only update can merge
     // Batch 3: feed the unified Report Subscribers table (the two async inits
     // each set their list + call the shared renderer; trigger status is below).
     alDgRows_ = data.config || [];
@@ -11164,11 +11224,22 @@
     google.script.run
       .withSuccessHandler(function (status) {
         btn.disabled = false; btn.textContent = prev;
-        alRenderDigestInit_({ config: [], trigger: status || { daily: true, weekly: true, monthly: true } });
-        // Re-fetch the config too so the subscriber table re-renders.
+        // G-6: update the TRIGGER STATUS immediately but KEEP the current
+        // subscriber rows -- the old `{config: []}` interim render blanked
+        // the digest half of the unified table, and if the follow-up fetch
+        // failed it stayed blank for the rest of the modal session.
+        var kept = alDgLastInit_ || {};
+        alRenderDigestInit_({
+          config: kept.config || alDgRows_, loadError: kept.loadError,
+          spreadsheetUrl: kept.spreadsheetUrl, lastResults: kept.lastResults,
+          trigger: status || { daily: true, weekly: true, monthly: true },
+        });
+        // Re-fetch the full config so the table reflects any server changes.
         google.script.run
-          .withSuccessHandler(function (data) { alRenderDigestInit_(data || { config: [], trigger: status }); })
-          .withFailureHandler(function () { /* keep current */ })
+          .withSuccessHandler(function (data) { if (data) alRenderDigestInit_(data); })
+          .withFailureHandler(function () {
+            alSetRunStatus_('error', 'Triggers installed, but the config refresh failed — showing the previous list.');
+          })
           .getDigestsInit();
       })
       .withFailureHandler(function (err) {
@@ -11188,9 +11259,18 @@
     google.script.run
       .withSuccessHandler(function (status) {
         btn.disabled = false; btn.textContent = prev;
+        // G-6: reflect the uninstall immediately (rows kept), then refresh.
+        var kept = alDgLastInit_ || {};
+        alRenderDigestInit_({
+          config: kept.config || alDgRows_, loadError: kept.loadError,
+          spreadsheetUrl: kept.spreadsheetUrl, lastResults: kept.lastResults,
+          trigger: status || { daily: false, weekly: false, monthly: false },
+        });
         google.script.run
-          .withSuccessHandler(function (data) { alRenderDigestInit_(data || { config: [], trigger: status }); })
-          .withFailureHandler(function () { /* keep current */ })
+          .withSuccessHandler(function (data) { if (data) alRenderDigestInit_(data); })
+          .withFailureHandler(function () {
+            alSetRunStatus_('error', 'Triggers removed, but the config refresh failed — showing the previous list.');
+          })
           .getDigestsInit();
       })
       .withFailureHandler(function (err) {
@@ -13930,8 +14010,14 @@
         // scroll-jump + spotlight on the NEXT unrelated successful render,
         // and in Simple mode force-switch the user to Detailed.
         insScrollPending_ = null;
-        $('ins-agent-loader').style.display = '';
-        $('ins-agent-loader').textContent = 'Error loading roster: ' + (err && err.message ? err.message : String(err));
+        // G-7: inline Retry (see ensureIrRoster).
+        const insLoader = $('ins-agent-loader');
+        insLoader.style.display = '';
+        insLoader.innerHTML = 'Error loading roster: '
+          + escapeHtml(err && err.message ? err.message : String(err))
+          + ' <button type="button" class="link-btn" id="ins-roster-retry">Retry</button>';
+        const insRetry = $('ins-roster-retry');
+        if (insRetry) insRetry.addEventListener('click', function () { insEnsureRoster(); });
       })
       .getInsightsReportInit({ department: dept, from: from, to: to });
   }
@@ -13947,6 +14033,7 @@
       google.script.run
         .withSuccessHandler(function (data) {
           if (__rk !== insRosterReqSeq_) return;   // superseded by a newer fetch
+          if (insLastRoster.dept !== dept) return;   // G-5: dept switched mid-flight
           insLastRoster.activeAgents   = (data && data.activeAgents)   || null;
           insLastRoster.activeFloaters = (data && data.activeFloaters) || null;
           insLastRoster.subQueueGroups = (data && data.subQueueGroups) || null;   // G-1
@@ -16614,12 +16701,18 @@
   function insBuildCanvas_(onDone) {
     const root = $('insights-results');
     if (!root) return;
+    // G-2: same CDN-absent guard as irBuildCanvas.
+    if (typeof html2canvas === 'undefined') {
+      exportCaptureFailed_(new Error('html2canvas is not loaded (blocked CDN?) — image export unavailable.'));
+      return;
+    }
     if (insChartInstance) insChartInstance.resize();
     requestAnimationFrame(function () { requestAnimationFrame(function () {
       const canvasMap = {};
       root.querySelectorAll('canvas').forEach(function (cvs) {
         canvasMap[cvs.id] = cvs.toDataURL('image/png');
       });
+      try {
       html2canvas(root, {
         scale: 2, useCORS: true, backgroundColor: (THEME.paper || '#f6f7f9'),
         onclone: function (clonedDoc) {
@@ -16651,6 +16744,7 @@
           });
         },
       }).then(function (canvas) { onDone(canvas); }).catch(exportCaptureFailed_);
+      } catch (e) { exportCaptureFailed_(e); }   // G-2: sync throw inside the rAF
     }); });
   }
 
@@ -16658,15 +16752,25 @@
     const restore = insBtnFeedback_('Capturing…', 0);
     insBuildCanvas_(function (canvas) {
       canvas.toBlob(function (blob) {
+        if (!blob) {   // G-2: null blob would throw in ClipboardItem below
+          insSetResultsStatus_('error', 'Capture produced no image — try again.');
+          restore();
+          return;
+        }
         if (navigator.clipboard && window.ClipboardItem) {
-          navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-            .then(function () {
-              restore();
-              insBtnFeedback_('Copied!', 1200);
-            }, function (err) {
-              insSetResultsStatus_('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
-              restore();
-            });
+          try {
+            navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+              .then(function () {
+                restore();
+                insBtnFeedback_('Copied!', 1200);
+              }, function (err) {
+                insSetResultsStatus_('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+                restore();
+              });
+          } catch (e) {
+            insSetResultsStatus_('error', 'Clipboard copy failed: ' + (e && e.message ? e.message : e));
+            restore();
+          }
         } else {
           insSetResultsStatus_('error', 'Clipboard API not available in this browser.');
           restore();
@@ -20933,7 +21037,12 @@
     if (!data) return;
     const tableEl = $('qcd-alldept-body');
     const w = window.open('about:blank');
-    if (!w) return;
+    if (!w) {
+      // G-8: a popup blocker makes window.open return null -- say so instead
+      // of a silent no-op that reads as "Print does nothing".
+      showToast('Print window was blocked — allow pop-ups for this site and try again.', 'error');
+      return;
+    }
     const css = 'body{font-family:Arial,Helvetica,sans-serif;color:#222;padding:18px;}'
       + 'h1{font-size:16px;margin:0 0 2px;}.sub{color:#666;font-size:12px;margin:0 0 14px;}'
       + 'table{width:100%;border-collapse:collapse;}'

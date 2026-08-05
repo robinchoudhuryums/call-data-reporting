@@ -339,3 +339,49 @@ test('IMP-8: queue regex keeps &-names whole and ignores embedded A_Q_ tokens', 
   assert.ok(names.indexOf('A_Q_Elig_MM&R') !== -1, 'full &-name sentinel emitted');
   assert.ok(names.indexOf('A_Q_Elig_MM') === -1, 'no truncated sentinel');
 });
+
+test('F-6: coercion-prone columns are plain-texted -- whole-column AND the exact write range', function () {
+  // The '@' formats are the primary defense against the comma-joined cell
+  // coercion class (CLAUDE.md's largest gotcha: K-AC slots, AD/AE/AF ids +
+  // times, the col-35 queue split). The fake's setNumberFormat used to be a
+  // no-op, so deleting every protection passed the whole suite; it now
+  // RECORDS, and this test is the enforcement.
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const sh = ss._sheet('DQE Historical Data');
+  const at = (sh._numberFormats || []).filter(function (f) { return f.format === '@'; });
+  assert.ok(at.length, 'plain-text formats were applied at all');
+
+  const covers = function (row, col) {
+    return at.some(function (f) {
+      return row >= f.startRow && row < f.startRow + f.numRows
+          && col >= f.startCol && col < f.startCol + f.numCols;
+    });
+  };
+  // Whole-column pass (row 1, prior grid height): QUEUE_EXT (4), the 19 slot
+  // cols (11-29), AD/AE/AF (30-32), and the col-35 queue split.
+  [4, 11, 20, 29, 30, 31, 32, 35].forEach(function (col) {
+    assert.ok(covers(1, col), 'whole-column @ missing for col ' + col);
+  });
+  // The EXACT write-range pass (rows that can SPILL past the prior
+  // getMaxRows when the sheet auto-expands -- the lone recurrence vector
+  // before commit a350042): a record starting at the first written row for
+  // each protected column group.
+  const writeRangeAt = function (col) {
+    return at.some(function (f) { return f.startRow === 2 && col >= f.startCol && col < f.startCol + f.numCols; });
+  };
+  [4, 11, 30, 35].forEach(function (col) {
+    assert.ok(writeRangeAt(col), 'write-range @ missing for col group starting at ' + col);
+  });
+});
