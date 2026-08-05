@@ -635,10 +635,10 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v7` |
+| `InboundReport.gs` | `inbound:vN:` | `v8` |
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v2` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v3` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
@@ -1025,7 +1025,7 @@ IN-window rather than being dropped -- dropping them would silently shrink
 historical dates and read as a fixed gap. Pinned by
 `tests/unit/inbound-qcd-parity.test.js`.
 
-**Shipped (`inbound:v7`; this work was v6, and v7 added the unmapped-label fallback below).** `computeInboundReport_` window-scopes its whole
+**Shipped (the inbound v7 bump; this work was v6, and v7 added the unmapped-label fallback below).** `computeInboundReport_` window-scopes its whole
 payload from one place -- the clause is appended to the shared `dr`/`priorDr`,
 so the KPIs, prior KPIs, all five breakdowns and the daily series inherit it
 and a sub-select added later cannot miss it (pinned by a count-based assertion
@@ -1090,7 +1090,7 @@ already claimed by another dept, so the one-call-one-dept contract the
 entry-queue arm honors is preserved here too.
 
 **Follow-on fix (2026-07): an UNMAPPED label now falls back to the ENTRY
-QUEUE** (`inbound:v7` / `inboundHeatmap:v2`), so the label map is an OVERRIDE
+QUEUE** (the inbound v7 / heatmap v2 bumps), so the label map is an OVERRIDE
 rather than a prerequisite. The original fix left a real hole: the two arms are
 mutually exclusive on the on-hold flag, so an on-hold-answered call whose label
 was mapped nowhere had the entry-queue arm explicitly skipped and attributed to

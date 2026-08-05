@@ -103,11 +103,26 @@ function liveSmokeChecks_() {
   };
 
   // 1. The CDR Report spreadsheet opens and DQE Historical Data has rows.
+  //    B-2: SOURCE-AWARE -- with DQE_READ_SOURCE=neon the sheet is the error
+  //    fallback and MAY legitimately be trimmed/empty (the retirement end
+  //    state), so an empty sheet is a pass-with-note there, not a FAIL that
+  //    trains admins to ignore the sweep. The spreadsheet itself must still
+  //    open regardless (roster, Access Control and the config sheets live in
+  //    it), so verify the workbook + roster tab under either source.
   run('sheet-open', function () {
     var ss = openSpreadsheet_();
+    var roster = ss.getSheetByName('DO NOT EDIT!');
+    if (!roster) throw new Error('DO NOT EDIT! roster sheet not found — SPREADSHEET_ID pointing at the right workbook?');
+    var neonSource = (typeof getDqeReadSource_ === 'function') && getDqeReadSource_() === 'neon';
     var dqe = ss.getSheetByName('DQE Historical Data');
-    if (!dqe) throw new Error('DQE Historical Data sheet not found — SPREADSHEET_ID pointing at the right workbook?');
-    if (dqe.getLastRow() < 2) throw new Error('DQE Historical Data has no data rows');
+    if (!dqe) {
+      if (neonSource) return 'workbook + roster OK; DQE sheet absent (retired — read source is neon, no sheet fallback)';
+      throw new Error('DQE Historical Data sheet not found — SPREADSHEET_ID pointing at the right workbook?');
+    }
+    if (dqe.getLastRow() < 2) {
+      if (neonSource) return 'workbook + roster OK; DQE sheet empty (trimmed — read source is neon, no sheet fallback)';
+      throw new Error('DQE Historical Data has no data rows');
+    }
     return (dqe.getLastRow() - 1) + ' data rows';
   });
 

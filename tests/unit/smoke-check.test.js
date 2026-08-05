@@ -21,6 +21,9 @@ function install(opts) {
   h.state.sentEmails.length = 0;
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
     'DQE Historical Data': [['h'], ['r1'], ['r2']],
+    // B-2: check 1 now verifies the roster tab too (it must exist under
+    // EITHER read source -- the workbook hosts more than DQE).
+    'DO NOT EDIT!': [['h']],
   } });
   // Healthy stubs; individual tests override.
   h.ctx.getLatestDataDate = function () { return '2026-07-16'; };
@@ -63,6 +66,42 @@ test('smoke: healthy install -> every check passes, ok-prefixed result, property
   assert.equal(h.state.sentEmails[0], 'admin@x.com', 'sent to getAdminEmails_()');
   // Unconfigured Neon is an informational pass, not a failure.
   assert.equal(byName(res, 'neon').note, 'n/a (Neon unconfigured)');
+});
+
+test('B-2: an empty/absent DQE sheet under DQE_READ_SOURCE=neon is a pass-with-note, not a FAIL', function () {
+  // The retirement end state: reads are on Neon, the sheet is trimmed. The
+  // old unconditional rows assert made every smoke run lead with a FAIL
+  // there, training admins to ignore the sweep.
+  install();
+  h.ctx.getDqeReadSource_ = function () { return 'neon'; };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DQE Historical Data': [['h']],          // trimmed: header only
+    'DO NOT EDIT!': [['h']],
+  } });
+  let res = h.call('runLiveSmoke');
+  let c = byName(res, 'sheet-open');
+  assert.equal(c.ok, true, 'trimmed sheet under neon source passes: ' + c.note);
+  assert.match(c.note, /trimmed|retired/, 'the note says WHY it passes');
+
+  // Sheet deleted outright: same treatment.
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': [['h']] } });
+  res = h.call('runLiveSmoke');
+  c = byName(res, 'sheet-open');
+  assert.equal(c.ok, true, 'absent sheet under neon source passes: ' + c.note);
+
+  // Under the SHEET source the same states still FAIL (the sheet is primary).
+  h.ctx.getDqeReadSource_ = function () { return 'sheet'; };
+  res = h.call('runLiveSmoke');
+  c = byName(res, 'sheet-open');
+  assert.equal(c.ok, false, 'absent sheet under sheet source is still a FAIL');
+
+  // And a missing ROSTER tab fails under EITHER source.
+  h.ctx.getDqeReadSource_ = function () { return 'neon'; };
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
+  res = h.call('runLiveSmoke');
+  c = byName(res, 'sheet-open');
+  assert.equal(c.ok, false, 'missing roster tab always fails');
+  assert.match(c.note, /DO NOT EDIT/, 'and names the roster');
 });
 
 test('smoke: a failed prerequisite cascades as labeled skips, result leads with FAILED', function () {

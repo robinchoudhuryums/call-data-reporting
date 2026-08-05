@@ -744,7 +744,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **Out-of-window calls are RESEARCH data, never a dept metric (owner
   ruling)** -- report them separately, never in a dept total. Scoped surfaces:
   `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-  (`inbound:v7`), and `getInboundInsurerDaily` (so the drill reconciles with
+  (`inbound:v8`), and `getInboundInsurerDaily` (so the drill reconciles with
   the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
   (answers "when did capture begin", not a dept metric) and **the abandon
   HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -824,7 +824,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   from, to})` aggregates abandon rate by `ISODOW × hour-slot` in ONE
   json_agg round-trip, reusing `inboundResolveRequest_` (so it inherits
   the inbound report's **admin-only vetting gate** + per-dept scoping) and
-  `inboundDeptPredicate_`. Cached `inboundHeatmap:v2`. Rendered by the
+  `inboundDeptPredicate_`. Cached `inboundHeatmap:v3`. Rendered by the
   SHARED client `renderAbandonHeatmap_` / `loadAbandonHeatmap_` as a
   CSS-grid heatmap (no Chart.js dep) in the **Inbound report**
   (`#inbound-heatmap`, always, since that report is admin-only), AND the **Insights report**

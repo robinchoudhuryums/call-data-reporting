@@ -379,3 +379,42 @@ test('getFinalDeptLabels_ tolerates a pre-existing 10-column row', function () {
   deepEqual(h.call('getInboundQueueAliases_', 'CSR'), ['A_Q_CSR'],
     'and the pre-existing column still reads correctly');
 });
+
+test('A-2: getDeptConfigInit does not cache a degraded init (config-read error / discovery blip)', function () {
+  setConfig([row({ dept: 'CSR', qcd: 'A_Q_Foo' })]);
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  h.ctx.getRosterForDepartment_ = function () { return { names: ['Anna'] }; };
+  h.ctx.discoverQueues_ = function () { return []; };
+  h.ctx.getSpreadsheetId_ = function () { return 'fake'; };
+
+  // (1) Healthy -> cached.
+  h.state.cache.clear();
+  h.ctx.discoverInboundQueues_ = function () { return { available: true, queues: [] }; };
+  h.ctx.deptConfigReadFailed_ = function () { return false; };
+  h.call('getDeptConfigInit');
+  assert.ok(h.state.cache.has('deptConfig:init:v1'), 'healthy init caches');
+
+  // (2) Config-read error -> NOT cached (rows:[] + constants-only effective
+  // would read as "nothing configured" for the whole TTL).
+  h.state.cache.clear();
+  h.ctx.deptConfigReadFailed_ = function () { return true; };
+  h.call('getDeptConfigInit');
+  assert.ok(!h.state.cache.has('deptConfig:init:v1'), 'errored config read must not pin');
+
+  // (3) Discovery unavailable with Neon CONFIGURED (transient blip) -> NOT cached.
+  h.state.cache.clear();
+  h.ctx.deptConfigReadFailed_ = function () { return false; };
+  h.ctx.discoverInboundQueues_ = function () { return { available: false, queues: [] }; };
+  h.state.props.NEON_HOST = 'db.neon.example';
+  h.call('getDeptConfigInit');
+  assert.ok(!h.state.cache.has('deptConfig:init:v1'), 'configured-Neon discovery blip must not pin');
+
+  // (4) Discovery unavailable with Neon UNCONFIGURED (stable state) -> cached.
+  h.state.cache.clear();
+  delete h.state.props.NEON_HOST;
+  h.call('getDeptConfigInit');
+  assert.ok(h.state.cache.has('deptConfig:init:v1'), 'unconfigured Neon is stable and may cache');
+});

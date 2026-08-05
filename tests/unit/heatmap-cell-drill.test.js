@@ -104,7 +104,9 @@ test('heatmap cell drill: SQL mirrors the heatmap cell definition; rows mapped',
   assert.match(capture.sql, /interval '2 hours'/);
   assert.match(capture.sql, /EXTRACT\(ISODOW FROM c\.call_date\) = 2/);
   assert.match(capture.sql, /\/ 3600\)::int = 1/);          // hourly slot bucket = requested slot
-  assert.match(capture.sql, /'A_Q_CSR'/);                   // dept predicate applied
+  // B-4: the dept predicate matches queue names case-insensitively --
+  // lowercased literal against lower(trim(coalesce(entry_queue,''))).
+  assert.match(capture.sql, /lower\(trim\(coalesce\(c\.entry_queue,''\)\)\) IN \('a_q_csr'\)/);
   assert.match(capture.sql, /BETWEEN '2026-06-01'::date AND '2026-06-30'::date/);
 
   assert.equal(out.meta.available, true);

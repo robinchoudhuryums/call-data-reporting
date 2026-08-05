@@ -75,7 +75,8 @@ test('parity core: per-day join of QCD vs inbound with both definitions', functi
   // The inbound query scopes with the SAME dept predicate the report uses
   // (raw alias present) and counts both definitions.
   const sql = h.ctx.__cap.sqls[0];
-  assert.ok(sql.indexOf("'A_Q_CSR'") !== -1, 'predicate carries the raw alias');
+  // B-4: the predicate lowercases queue literals (case-insensitive matching).
+  assert.ok(sql.indexOf("'a_q_csr'") !== -1, 'predicate carries the raw alias (lowercased, B-4)');
   assert.ok(/FILTER \(WHERE c\.disposition = 'abandoned'/.test(sql));
   assert.ok(/abandoned_on_hold/.test(sql), 'on-hold carve-out counted separately');
 });
