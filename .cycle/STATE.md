@@ -1973,3 +1973,57 @@ commit/push/deploy direction.
   cap — call it three weeks at the observed rate, and the ratchet is what
   makes that rate visible per commit rather than at the cliff. Unselected
   audit findings S2-1, B-3, B-5, B-6 and the dead-code list are untouched.
+
+- **Increment 74 (DONE — Round-15 broad-scan + six selected fixes):** A fresh
+  three-stage audit (six parallel subsystem passes + a seventh over the
+  script.html regions no prior pass had read line-by-line, all headline
+  findings self-verified in code) produced ~55 findings; the owner selected
+  A-1, G-1, C-1+C-2, B-1, B-3+E-2 for implementation. All six landed in one
+  commit (`9b65772`, pushed to `claude/broad-scan-l9ojgm`); the full summary
+  block is `.cycle/blocks/74-audit-fixes-broad-implement.md`. NOTE: this
+  round's finding IDs (A-#/B-#/C-#...) are per-agent namespaces from THIS
+  audit — the B-3/B-5/B-6 "unselected findings" mentioned by increments 71-73
+  are a DIFFERENT, older numbering; both sets remain open where not fixed.
+
+  Highlights: A-1 was the CONFIG_SOURCE=neon runbook silently wiping Final
+  Dept Labels with its own parity gate certifying the loss (backfill + compare
+  key both blind to col 11; the ongoing save path was fine — the fix is small
+  and the test fixture now carries a non-empty label so the class can't
+  recur). G-1 was a shipped, server-computed, doc'd feature dead client-side:
+  all four roster-cache writers dropped `subQueueGroups`, so parent managers
+  never saw the sub-queue picker groups. C-1/C-2 hardened the no-sheet-primary
+  captures: an all-stray grid (wrong-day signature) no longer triggers the
+  zero-record authoritative DELETE, and the daily import now surfaces every
+  delete-only outcome (unreachable/refused/cleared) instead of logging
+  nothing. B-1 (Direct company view per-(agent,dept) grouping, directCall:v3),
+  B-3 (YTD trend cache-put guards), E-2 (missed-section inline error + Retry)
+  round it out.
+
+  Verification: 615/615 unit tests (+3 pins), INV-16 clean, and — new for this
+  container — the FULL rendered-UI gate ran locally (playwright installs fine
+  into tools/ui-harness after `npm init -y` there; the root-install trap and
+  its package.json pollution are what previously made this look impossible).
+  All drivers passed. NET 2 − 0 = 2 (G-1 + B-1 were live; the rest latent).
+
+  **WHERE I LEFT OFF:**
+  1. Commit `9b65772` is pushed; working tree clean; NO PR opened (standing
+     rule: none unless asked).
+  2. **DEPLOY is the gating step, two projects:** dashboard (NEW VERSION, not
+     just push — Operator State #2) + cdr-import. cdr-report/dqe-report
+     unchanged. `scripts/deploy.sh <dir> <deployment-id>` does both steps.
+  3. Post-deploy: runLiveSmoke, then walk S36 (Dept Config round-trip), S38
+     (inbound capture), and the IR/Insights picker as a parent-dept manager
+     (the G-1 groups + the now-reachable mixed-selection refusal).
+  4. If `backfillDeptConfigToNeon` was ever run pre-fix, re-run it +
+     `compareDeptConfigSources` (Neon's final_dept_labels are blank from the
+     old code). Skip if the C2 migration was never started.
+  5. The audit's full report (ratings, top-5, ~49 unimplemented findings,
+     Stage-3 effectiveness review) is in the session transcript; the
+     follow-on list + doc-drift items are in the increment-74 block file.
+     Next best candidates: C-3 (retention trigger unversioned), B-2
+     (retirement-aware SmokeCheck/NeonCoverage), F-5/F-6 (harness can't
+     enforce REP-10/coercion protections), F-10 (deploy.sh skips ci:ui),
+     G-2/G-3 (stuck export button; hardcoded 95% goal line).
+  6. /sync-docs is warranted for the doc-drift set (F-3's INV-38 index line
+     above all — it misstates an AUTHORIZATION-relevant invariant in the
+     always-loaded file).
