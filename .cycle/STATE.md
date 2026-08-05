@@ -2096,3 +2096,32 @@ commit/push/deploy direction.
      header note from this increment's follow-on).
   4. B-2's new behavior only MANIFESTS after a `DQE_READ_SOURCE=neon` flip +
      sheet trim; under the current sheet source both tools behave as before.
+
+- **Increment 77 (DONE — Round-15 Batches 3+4: harness teeth + client
+  correctness):** F-5/F-6/F-7 + G-2..G-8/E-1/E-3; commit `15cf82c`; block in
+  `.cycle/blocks/77-batch3-batch4-broad-implement.md`. 628/628, INV-16 clean,
+  full ci:ui green. NET 1 − 0 = 1 (G-3's hardcoded 95% goal line was live
+  against the tunable 92 standard).
+
+  The load-bearing change is the HARNESS: fakeSheet now THROWS on a getRange
+  past getMaxColumns (columns only — the REP-10 class) and RECORDS
+  setNumberFormat calls, so the repo's two worst documented failure classes
+  (narrow-sheet writes, plain-text coercion protections) are enforceable for
+  the first time. All three new Batch-3 pins were MUTATION-verified (remove
+  the widen → 7 failures; strip the '@' calls → pin fails; strip the userJson
+  escape → pin fails). Setup.gs gained its first suite (INV-12 enforced).
+  If a future suite needs a narrow sheet deliberately, set `_maxColumns` —
+  do not loosen the fake.
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `15cf82c` pushed to `claude/broad-scan-l9ojgm`; tree
+     clean; NO PR (standing rule).
+  2. **DEPLOY pending, unchanged set:** dashboard (74 + 76 + 77 — one NEW
+     VERSION covers all) and cdr-import (74 + 75).
+  3. Remaining batches by priority: 5 (a11y E-6..E-10), 6 (B-5/B-6/A-3/A-4/
+     A-5/B-8 + the E-5 one-liner), 7 (C-3/F-10/F-9/F-11/F-8), 8 (D-1..D-6),
+     9 (C-7), 10 (D-8/D-9), + strategic (queue-split phases; Inbound/Direct
+     un-gating; G-1-class harness payload-contract assertion).
+  4. Next /sync-docs: one clause on the harness's new strictness in
+     CLAUDE.md's test-command blurb; the C-6 allUnparsed clause from
+     increment 75's note.
