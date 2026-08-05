@@ -825,7 +825,13 @@ function getOverviewChartTrend(req) {
   const tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag;
   const cached = cache.get(cacheKey);
-  if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
+  if (cached) {
+    try {
+      const hit = JSON.parse(cached);
+      logReportUsage_('overviewChartYtd', '(all)', user, true);   // B-8
+      return hit;
+    } catch (e) { /* recompute */ }
+  }
 
   const ss = openSpreadsheet_();
   const ssTZ = ss.getSpreadsheetTimeZone();
@@ -905,6 +911,7 @@ function getOverviewChartTrend(req) {
   if (configDegraded || outageEmpty) {
     Logger.log('overviewChartTrend: skipping cache put (%s) -- degraded payload must not pin.',
       configDegraded ? 'Dept Config read errored' : 'empty DQE read despite a known latest date');
+    logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
     return data;
   }
   // Size guard: skip caching an oversized blob (CacheService ~100KB cap) rather
@@ -914,6 +921,7 @@ function getOverviewChartTrend(req) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
   }
+  logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
   return data;
 }
 

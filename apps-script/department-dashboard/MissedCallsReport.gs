@@ -352,6 +352,10 @@ function getMissedCallsSlice(req) {
   const filter = missedSliceValidateFilter_(req);
   const full = missedReportDataCached_(dept, from, to);
   const sliced = missedSliceFilter_(full, filter);
+  // B-8: the drill endpoints were invisible in the Report Usage evidence
+  // base (the INV-01 telemetry carve-out) that un-gating/consolidation
+  // decisions read -- understating usage of the surfaces they serve.
+  logReportUsage_('missedSlice', dept, user, false);
 
   return {
     meta: {

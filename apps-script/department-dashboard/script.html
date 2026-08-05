@@ -783,7 +783,9 @@
   function exportCaptureFailed_(err) {
     try { console.error('Report image capture failed', err); } catch (e) {}
     showToast("Couldn't capture the report image — please try again.", 'error');
-    ['ir-export-btn', 'pr-export-btn', 'cr-export-btn', 'ins-export-btn'].forEach(function (id) {
+    // E-5: pr/cr export buttons died with the retired Performance / Compare
+    // Ranges reports -- only the two live exporters remain.
+    ['ir-export-btn', 'ins-export-btn'].forEach(function (id) {
       var btn = document.getElementById(id);
       if (btn && btn.dataset && btn.dataset.label) {
         btn.innerHTML = btn.dataset.label;
@@ -838,14 +840,30 @@
       document.body.appendChild(overlay);
       var okBtn = overlay.querySelector('.ds-confirm-ok');
       var cancelBtn = overlay.querySelector('.ds-confirm-cancel');
+      var prevFocus = document.activeElement;   // E-6: focus-return (the F-42 discipline)
       var settle = function (val) {
         document.removeEventListener('keydown', onKey, true);
         if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        try { if (prevFocus && prevFocus.focus) prevFocus.focus(); } catch (e) { /* gone */ }
         resolve(val);
       };
       var onKey = function (e) {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); settle(false); }
-        else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); settle(true); }
+        else if (e.key === 'Enter') {
+          e.preventDefault(); e.stopPropagation();
+          // E-6: Enter follows FOCUS -- with the capture-phase intercept, a
+          // keyboard user who tabbed to Cancel and hit Enter used to CONFIRM
+          // (destructive actions included). Cancel-focused Enter cancels.
+          settle(document.activeElement !== cancelBtn);
+        } else if (e.key === 'Tab') {
+          // E-6: Tab TRAP. Without it, Tab walked out into the underlying
+          // page while the capture-phase Enter still resolved confirm -- a
+          // keyboard user interacting with what looks like the background
+          // could Enter-confirm a destructive action. Two focusables, so a
+          // simple toggle covers Shift+Tab too.
+          e.preventDefault(); e.stopPropagation();
+          (document.activeElement === okBtn ? cancelBtn : okBtn).focus();
+        }
       };
       okBtn.addEventListener('click', function () { settle(true); });
       cancelBtn.addEventListener('click', function () { settle(false); });
@@ -1142,6 +1160,13 @@
         lists.forEach(function (l) { l.style.display = 'none'; });
         buttons.forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
       }
+      // E-10: role="menu"/"menuitem" announce arrow-key semantics -- deliver
+      // them. Focusable items = the visible .header-menu-item buttons.
+      function menuItems_(list) {
+        return Array.prototype.filter.call(
+          list.querySelectorAll('.header-menu-item'),
+          function (el) { return el.offsetParent !== null && !el.disabled; });
+      }
       buttons.forEach(function (btn) {
         const listId = btn.getAttribute('aria-controls');
         const list = document.getElementById(listId);
@@ -1153,6 +1178,36 @@
           if (!open) {
             list.style.display = '';
             btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+        // E-10: ArrowDown on the trigger opens the menu and focuses item 1.
+        btn.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            closeAll();
+            list.style.display = '';
+            btn.setAttribute('aria-expanded', 'true');
+            const items = menuItems_(list);
+            if (items.length) items[0].focus();
+          }
+        });
+        // E-10: Arrow keys walk the open menu (wrapping); Home/End jump;
+        // Escape already closes via the document handler -- also return
+        // focus to the trigger so the keyboard user isn't dropped.
+        list.addEventListener('keydown', function (e) {
+          const items = menuItems_(list);
+          if (!items.length) return;
+          const idx = items.indexOf(document.activeElement);
+          if (e.key === 'ArrowDown') {
+            e.preventDefault(); items[(idx + 1) % items.length].focus();
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault(); items[(idx - 1 + items.length) % items.length].focus();
+          } else if (e.key === 'Home') {
+            e.preventDefault(); items[0].focus();
+          } else if (e.key === 'End') {
+            e.preventDefault(); items[items.length - 1].focus();
+          } else if (e.key === 'Escape') {
+            btn.focus();
           }
         });
       });
@@ -4854,7 +4909,11 @@
   };
   function initChartHelp_() {
     var pop = null;
-    var close = function () { if (pop) { pop.remove(); pop = null; } };
+    var opener = null;   // E-7: return focus to the ? button on close
+    var close = function () {
+      if (pop) { pop.remove(); pop = null; }
+      if (opener) { try { opener.focus(); } catch (e) { /* gone */ } opener = null; }
+    };
     document.addEventListener('click', function (e) {
       var btn = e.target.closest && e.target.closest('.chart-help-btn');
       if (!btn) {
@@ -4865,9 +4924,14 @@
       if (pop) { close(); return; }   // second click on the ? closes
       var lines = CHART_HELP_[btn.getAttribute('data-charthelp')] || [];
       if (!lines.length) return;
+      opener = btn;
       pop = document.createElement('div');
       pop.className = 'chart-help-pop';
+      // E-7: it announced dialog semantics without delivering them -- no
+      // label, and focus never moved in, so screen-reader users got nothing.
       pop.setAttribute('role', 'dialog');
+      pop.setAttribute('aria-label', 'Chart tips');
+      pop.setAttribute('tabindex', '-1');
       pop.innerHTML = '<div class="chp-title">Chart tips</div><ul>'
         + lines.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>';
       document.body.appendChild(pop);
@@ -4876,6 +4940,7 @@
       pop.style.width = w + 'px';
       pop.style.top = (r.bottom + 6) + 'px';
       pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+      pop.focus();   // E-7: announce + put Escape in reach
     });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') close();
@@ -17476,7 +17541,11 @@
     srtApply_('inbound-insurer-tbody', rows, function (sorted) {
       inboundCollapseDrill_();   // a re-sort re-renders rows; any open drill closes
       tbody.innerHTML = sorted.map(function (r) {
-        return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0" role="button"'
+        // E-8: NO role="button" on a <tr> -- it overrides the implicit row
+        // role and the table stops being a grid for screen readers (the
+        // documented house rule the agent table follows; tabindex + the
+        // keydown handler below keep it keyboard-activatable).
+        return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0"'
           + ' title="Show this insurer’s daily trend">'
           + '<td><span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label) + '</td>'
           + '<td class="num">' + fmtNumber(r.calls) + '</td>'

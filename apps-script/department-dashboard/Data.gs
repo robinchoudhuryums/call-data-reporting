@@ -884,7 +884,9 @@ function computeSummary_(dept, from, to, scope) {
   // getDeptQueueExts_ (no getDisplayValues), while the heavy windowed
   // aggregation comes from Neon; an override dept skips the scan entirely.
   // (A later step can move this derivation to a SELECT DISTINCT Neon query.)
-  const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  // (A-5: the dead `numCols` that used to sit here read as the sheet width
+  // but was 34 -- one short of the col-35 queue split; the REAL read width
+  // is `readCols` below, REP-10-clamped.)
   let srcRows = null;
   let deptQueueExts, deptQueueExtsSource;
   let effectiveSource = 'sheet';

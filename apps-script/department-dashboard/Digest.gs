@@ -154,6 +154,16 @@ function runDailyDigests_() {
   }
 }
 
+// B-6: the weekly/monthly handlers DELIBERATELY lack the daily handler's
+// weekend/holiday gates, and the asymmetry is load-bearing, not drift.
+// The daily skip is safe because the NEXT weekday's run covers the previous
+// business day (the holiday-aware walker); weekly fires only on Monday and
+// monthly only on the 1st, so a skipped run has NO later run to cover it --
+// the gate would silently LOSE that week's/month's digest. The data windows
+// are complete either way (prior Mon-Fri / prior calendar month), so on a
+// holiday Monday or a weekend 1st the email simply waits in the inbox.
+// Deferring to the next business day would mean re-architecting the triggers
+// around a daily poll + the run-claim marker -- not worth it here.
 function runWeeklyDigests_() {
   try {
     sendDigestsForCadence_('weekly');
