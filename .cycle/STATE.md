@@ -2224,3 +2224,29 @@ commit/push/deploy direction.
   phases → QUEUE_SPLIT_SCOPE flip, Inbound/Direct manager un-gating after
   B-1's deploy + parity, the G-1-class harness payload-contract assertion)
   and C-7 after the soak.
+
+- **Increment 82 (DONE — Round-16 quick wins: #7 NUL bytes, #5 orphan-prefs
+  sweep, #4 client fragment split):** neonbackfill.js is a text file again
+  (3 raw NULs -> escape sequences, the F-8 class); sweepOrphanPrefs_()
+  (script-2-chrome fragment, first call in init()) deletes the six documented
+  dead localStorage keys read-before-remove (supersedes the "left in place"
+  ruling on cdr.dept.subscope — owner selected #5 knowingly); script.html is
+  now a ~45-line ASSEMBLER splicing 11 raw-JS script-N-*.html fragments into
+  the same single script element / IIFE via a template-evaluating include_
+  (byte-identical partition — semantics provably unchanged). New enforcement:
+  4 html-include-structure pins (fragment purity, styles.html scriptlet-free,
+  include-list<->disk parity, node --check of the assembled body), all
+  mutation-verified; build-harness resolves nested includes. 635/635,
+  INV-16 clean, npm run ci:ui FULL PASS. NET 0 − 0 = 0. Block in
+  `.cycle/blocks/82-round16-nul-prefs-split-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** Round-16 items #7/#5/#4 are code-complete on
+  claude/broad-scan-l9ojgm (restarted from post-#217 main). Deploy needed:
+  dashboard (new version — picks up the 11 fragments + Code.gs + script.html;
+  NO web-editor deletion, script.html was kept) + cdr-report (#7). Remaining
+  Round-16 recommendations, by priority: #8 (Neon backup as a hard pre-trim
+  precondition — runbook edit), #1 (post-soak flag retirement), #2
+  (dqe-report decommission scheduling), #3 (INV-16 build-time copy), #6
+  (automate syncInsuranceNumbersToNeon), #9 (NeonMirror payload-mapping
+  test), #10 (usage-telemetry review), #11 (CLAUDE.md F8 shrink). C-7 and
+  the strategic tracks stay as recorded at increment 81.
