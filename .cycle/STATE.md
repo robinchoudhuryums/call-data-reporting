@@ -2064,3 +2064,35 @@ commit/push/deploy direction.
      in the increment-74 close-out / the sync-docs session reply.
   4. Minor deferred doc line: mention the C-6 `allUnparsed` arm beside C-1's
      in the CLAUDE.md F2 sentence at the next /sync-docs.
+
+- **Increment 76 (DONE — Round-15 Batch 2: Neon endgame enablers):** B-2 / A-2
+  / B-4; commit `30bd1ac`; block in
+  `.cycle/blocks/76-batch2-neon-enablers-broad-implement.md`. 622/622, INV-16
+  clean, full ci:ui green. NET 1 − 0 = 1 (B-4 plausibly live: a case-mismatched
+  Dept Config alias attributed calls in the Missed report but silently not in
+  any inbound surface, and the parity check could not show it).
+
+  Shape notes: B-2 landed as a pure `ncReclassifyTrimmed_` + per-table
+  `sourceFn` dispatch (explicit typeof-guarded, NOT this[name] — unreliable
+  across the Apps Script global and the test vm) and a SmokeCheck check 1 that
+  now also verifies the roster tab under either source. B-4 forced
+  `inbound:v8` / `inboundHeatmap:v3` bumps; the cache-version-sync guard's
+  every-mention rule then flagged HISTORICAL `prefix:vN` citations in
+  invariants/known-issues — those were REPHRASED ("the inbound v7 bump"), not
+  deleted, so history stays while the guard tracks only live constants. Note
+  for the next bump author: rephrase historical citations up front.
+  getDeptConfigInit gained its FIRST test coverage (the A-2 pin).
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `30bd1ac` pushed to `claude/broad-scan-l9ojgm`; tree
+     clean; NO PR (standing rule).
+  2. **DEPLOY pending:** dashboard (increments 74 + 76 — NEW VERSION, Op
+     State #2) and cdr-import (74 + 75). After the dashboard deploy, inbound/
+     heatmap counts may shift where alias casing differed — that is B-4
+     working; runInboundQcdParityCheck is the evidence either way.
+  3. Next when asked: **Batch 3 — test-harness teeth** (F-5 fakeSheet
+     getMaxColumns enforcement, F-6 setNumberFormat coercion-protection spy,
+     F-7 Code.gs userJson escape + Setup.gs idempotency pins, + the guard-
+     header note from this increment's follow-on).
+  4. B-2's new behavior only MANIFESTS after a `DQE_READ_SOURCE=neon` flip +
+     sheet trim; under the current sheet source both tools behave as before.
