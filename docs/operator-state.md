@@ -395,7 +395,10 @@ When something looks wrong, before assuming a code bug, check:
     list cols stored as the same comma-joined text so `dcParseList_` parity is
     exact). **Only flip to `neon` after `backfillDeptConfigToNeon()` (editor-run,
     admin) copies the sheet rows AND `compareDeptConfigSources()` reports parity
-    clean.** Reversible with no redeploy (set back to `sheet`); to revert
+    clean.** ⚠ If the backfill was ever run on code from before 2026-08-05
+    (the A-1 fix), re-run BOTH: the old helpers dropped the `Final Dept
+    Labels` column (Neon's copy is blank) and the old gate could not see the
+    loss. Reversible with no redeploy (set back to `sheet`); to revert
     cleanly after edits were made in Neon, copy them back to the sheet first.
     `dept_config` is created lazily (`CREATE TABLE IF NOT EXISTS`, no setup()
     change). Parity pinned by `tests/unit/dept-config-neon.test.js`. Needs the
@@ -990,3 +993,16 @@ When something looks wrong, before assuming a code bug, check:
     fail-safe, not a substitute for mapping the queues.
 
     Verify with `auditQueueSplitAttribution()` (#41) before and after a flip.
+
+43. **The `Call_Legs_*` retention prune (`deleteOldCDRSheets`, cdr-import) has
+    NO in-repo installer, menu item, or caller — verify its trigger exists in
+    the cdr-import Triggers panel.** The ~14-day per-day-sheet retention it
+    enforces is load-bearing well beyond disk hygiene: the inbound/outbound
+    journey backfills, the per-queue split backfill window (#40), and the
+    deferred mirror's pruned-sheet detection all assume it runs. If the
+    hand-created trigger is ever lost, the source spreadsheet grows without
+    bound and nothing in the repo or the Health page notices; conversely,
+    when auditing "how far back can X be rebuilt", this trigger's cadence IS
+    the answer. Known gap (audit C-3): give it an installer + a Health-page
+    row like the other engines; until then, this checklist item is the only
+    record that it must exist.

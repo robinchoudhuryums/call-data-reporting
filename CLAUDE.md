@@ -32,11 +32,11 @@ drift apart, and caps this file's size.
   (`INV-01`…`INV-55`). Indexed under Cycle Workflow Config → Invariant Library.
   This is what the INVARIANT CHECK step reads.
 - [`docs/operator-state.md`](docs/operator-state.md) — the **Operator State
-  Checklist** in full (38 items: Script Properties, triggers, sheets,
-  migrations). Cited across the repo BY NUMBER, e.g. "Operator State #38", so
+  Checklist** in full (Script Properties, triggers, sheets, migrations).
+  Cited across the repo BY NUMBER, e.g. "Operator State #38", so
   the numbering is stable — retire an item in place rather than renumbering.
-- [`docs/regression-scenarios.md`](docs/regression-scenarios.md) — the 40
-  **Regression Scenarios** (`S1`…`S40`) with steps + expected results. Walk
+- [`docs/regression-scenarios.md`](docs/regression-scenarios.md) — the
+  **Regression Scenarios** (numbered `S#`) with steps + expected results. Walk
   every one whose Subsystem overlaps a file you changed.
 - [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) — how the
   Insights + Overview pages, the density/prefs layer, the `ds-*` components and
@@ -337,13 +337,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor.
-- **Public write paths are admin-only.** Three public surfaces write
-  to the spreadsheet: `OrphanFix.gs` (alias + rename + roster-add
-  writes -- `addOrphanToRoster` is the New-hire flow that appends a
-  roster cell to a dept's DO NOT EDIT! column),
-  `setup()` in `Setup.gs` (sheet creation), and `DeptConfig.gs`
-  (`saveDeptConfig` / `removeDeptConfig` -- config-sheet writes,
-  INV-54). All are admin-gated via `assertAdmin_()`. Every other
+- **Public write paths are admin-only — INV-01 carries the AUTHORITATIVE
+  carve-out list** (OrphanFix.gs incl. the `addOrphanToRoster` New-hire flow /
+  `setup()` / DeptConfig.gs / the Access Control editor in Auth.gs / the
+  Alert+Digest config editors / the append-only `logReportUsage_` telemetry
+  carve-out; Escalations, INV-55, is the per-dept NEON write path). All start
+  with `assertAdmin_()` except the telemetry append and the row-dept-gated
+  Escalations verbs. Every other
   public-callable function is read-only; helpers that touch
   spreadsheet state end in `_` so Apps Script blocks them from RPC.
   Belt-and-suspenders against the "Execute as: Me" model letting any
@@ -1309,11 +1309,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `CDR_HMAC_CACHE_`, never raw per-occurrence** — `Utilities.computeHmacSha256Signature`
   is slow and the same outbound numbers recur thousands of times per day;
   the cache is reset at the top of `writeCDRRowsToNeon`. (2) **Batch
-  inserts and commit ONCE** — `call_history_phones` writes in 10000-row
-  chunks (5 params/row, under Postgres's 65535 bind-param cap) with a
-  single `conn.commit()` after the loop. A per-row or per-small-chunk
-  commit means dozens of round-trips AND leaves partially-committed rows
-  in Neon if the run times out mid-loop. The DQE/QCD writers already do
+  inserts and commit ONCE** — `call_history_phones` writes inline-literal
+  VALUES in 200-row chunks (zero bound params — the JDBC bridge rejects
+  oversized SQL strings) with a
+  single `conn.commit()` after the loop. Per-row/small-chunk
+  commits mean extra round-trips AND leave partially-committed rows
+  on a mid-loop timeout. The DQE/QCD writers already do
   one multi-row insert + one commit. (3) **One probed connection per
   writer** via `getReachableNeonConn_()` (above), not a separate probe +
   write connection. (4) **Authoritative per-date replace (IMP-5)** -- the
@@ -1349,7 +1350,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   legitimate count is zero can shed its phantoms; **GATED on the source grid
   being NON-EMPTY**, because an empty/unreadable `Call_Legs` grid is the one
   case where deleting would destroy good data (the P-3 discipline: validate
-  the source before you delete). It reports `unreachable` when Neon is down so
+  the source before you delete), **AND on ZERO stray-dated records (C-1:
+  all-stray = wrong-day grid; the writer refuses with `allStray`, the
+  import logs a failure row + email)**.
+  It reports `unreachable` when Neon is down so
   a deferred-mirror date stays queued rather than dequeued with its phantoms
   intact. Pinned by inbound-calls.test.js / outbound-calls.test.js.
   **PHI healing note (P-2):** `ib_list_*` JSONB rows written before the P-2
@@ -1360,9 +1364,6 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `dedupeAlreadyArchived_`, the row-batched backfills
   (`backfillDQEHistory*`, `backfillDirectCallToNeon`) -- must NOT pass it.
   Duplicate conflict-key rows are deduped last-write-wins first (IMP-6). The `call_history_phones` children are per-parent DELETE-then-insert (IMP-4: each payload row carries its parent's COMPLETE entry set, so per-parent replace is safe on every caller incl. partial-date bulk batches; the old `DO NOTHING` never propagated corrected durations/occurrences and kept removed entries as phantoms -- it survives only as an intra-payload dup guard; `neonbackfill.js::backfillCDRHistory`'s child path deliberately stays fill-only per its docstring).
-  (The "move the mirror off the synchronous import path" lever this bullet
-  used to name as future work has since SHIPPED -- see the deferred-mirror
-  bullet below.)
 - **Force-path data-loss guard convention (M2 generalized).** A FORCE
   re-import DELETES a date's rows for EVERY historical sheet (CDR / QPath /
   QCD / CSR / DQE) before rebuilding (`processNewImport`'s `if (force)`
@@ -1535,8 +1536,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   functions like `compareDqeSources_`.
 - **Daily import toast carries a Neon-mirror status segment.**
   `processIntegratedHistory` tracks `counts.neon` ('ok' | 'unreachable' |
-  'error', derived from the CDR + QCD writer results -- reachability is
-  per-run binary against one instance) and the success toast appends
+  'error', folding the CDR + QCD + Inbound + Outbound writer results --
+  reachability is per-run binary against one instance) and the success toast appends
   `| Neon ✓` / `| Neon ⚠ unreachable` / `| Neon ⚠ error` after the
   CDR/QPath/QCD/CSR/DQE counts. DQE-specific Neon failures still surface
   separately, so they're intentionally NOT folded into this single flag: a
@@ -2096,7 +2097,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > them, and clearing one just re-arms its engine. Don't file them as
 > undocumented operator state.
 
-The 39 numbered items now live in full in
+The numbered items now live in full in
 [`docs/operator-state.md`](docs/operator-state.md) (F8 split). Cited elsewhere
 BY NUMBER ("Operator State #38"), so the numbering is stable — retire an item in
 place rather than renumbering. **Read the full item before acting on it**; the
@@ -2150,6 +2151,7 @@ items for anything it flags or doesn't cover.)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
 41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
 42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`); what must ship before it can be `dept`, and what each mode makes the numbers mean
+43. The `Call_Legs_*` retention prune (`deleteOldCDRSheets`) has NO in-repo installer or trigger -- verify it exists in the cdr-import Triggers panel; the ~14-day window everything assumes rests on it
 
 ## Cycle Workflow Config
 
@@ -2238,7 +2240,7 @@ INV-34 | `Alert Config` / `Alert Log` schemas, plus the invalid-threshold / unkn
 INV-35 | The length-mismatch flag trips at 1.2x counted in WORKING days (weekends AND company holidays excluded) | Subsystem: Department Dashboard
 INV-36 | Cache keys that embed an agent selection MUST hash through `hashAgents_` -- CacheService silently rejects keys over 250 chars | Subsystem: Department Dashboard
 INV-37 | Multi-PAGE app toggled by `body[data-page=...]`; `setPage()` owns the swap; `refresh()` writes the header title only on the dept page | Subsystem: Department Dashboard
-INV-38 | `OVERVIEW_PARENT_OF` shapes the Overview tile grid ONLY; keys must match roster column headers byte-for-byte | Subsystem: Department Dashboard
+INV-38 | `OVERVIEW_PARENT_OF` (+ the Dept Config `Overview Parent` override) is NO LONGER Overview-only: since sub-queue Phase 0 it ALSO expands a manager's dept ACCESS one level (`resolveUser_` widening, fail-closed) and shapes rollups; keys must match roster column headers byte-for-byte | Subsystem: Department Dashboard
 INV-39 | Admin-only Overview fields are STRIPPED on serve by `personalizeOverview_` (deep-clone, fail-closed); a new admin-only field must join the strip list | Subsystem: Department Dashboard
 INV-40 | The "X of Y agents" denominator is `recentlyActiveCount` (30-day activity), not roster size | Subsystem: Department Dashboard
 INV-41 | datalabels needs explicit `Chart.register` + `display=true` at load; use the boolean `display` form. Also the missed-chart Bars/Radar contract and the animation-defaults rule | Subsystem: Department Dashboard

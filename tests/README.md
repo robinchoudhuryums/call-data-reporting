@@ -123,7 +123,8 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     INV-02 (display-vs-value durations), INV-04 (exact name match),
     INV-05 (simple-mean ATT), INV-23 (sentinel skip), INV-53 (floater
     exclusion from totals) + S35 roster/both parity, and the E5
-    prior-window deltas (summary:v8). The Individual Report —
+    prior-window deltas (the summary:v8 bump at the time; INV-30 tracks
+    the current version). The Individual Report —
     INV-25 (answered-weighted ATT, the deliberate contrast to INV-05's
     240-vs-288 case), INV-53 floater fields, INV-26 team-avg exclude via
     a Dept Config override, and the cross-dept auth gate.

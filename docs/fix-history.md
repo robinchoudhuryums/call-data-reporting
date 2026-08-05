@@ -513,6 +513,29 @@ plan).** Client + email template only; code comments cite `R11-B<n>`:
 
 ---
 
+## `A-#`/`B-#`/`C-#`/`E-#`/`G-#` — broad scan Round 15 (2026-08-05)
+
+Findings from the 2026-08-05 three-stage broad scan (six parallel subsystem
+passes; ~55 findings, six implemented in commit `9b65772`). **⚠ FIFTH shape,
+and it COLLIDES with Round 14:** these are per-AGENT namespaces — `A-#` core
+server, `B-#` report engines, `C-#` cdr-import, `D-#` cdr-report, `E-#`/`G-#`
+client, `F-#` tests/docs — so Round-15 `B-1` is a DIFFERENT finding from
+Round-14 `B-1`. Code comments citing these codes date from 2026-08-05+.
+
+| Code | What it fixed | Where the live rule is |
+|---|---|---|
+| A-1 | **The C2 Dept Config migration helpers dropped `Final Dept Labels` (col 11), and the parity gate certified the loss.** `backfillDeptConfigToNeon`'s record and `compareDeptConfigSources`'s key were both written before the col-11 append and never updated, so the backfill nulled Neon's `final_dept_labels` and the gate printed PARITY CLEAN — after a `CONFIG_SOURCE=neon` flip, the inbound answered-on-hold attribution arm silently regressed to the entry-queue fallback. The ongoing `saveDeptConfig` path always carried the field; only the one-time helpers were blind. Fixture now carries a non-empty label so the class can't recur | Operator State #25 (re-run warning); `tests/unit/dept-config-neon.test.js` |
+| B-1 | **Direct report company view collapsed crossover agents under `max(department)`.** The agents sub-select grouped by `agent_name` alone, so a two-dept agent's figures all landed on the lexicographically-max dept — one dept card inflated, the other missing the agent, while `deptsPrior` grouped correctly so the R11-M chips compared mismatched groupings. Now `GROUP BY agent_name, department`; `directCall:v2→v3` | INV-30 (`directCall:v3` entry) |
+| B-3 | **`getOverviewChartTrend` cached degraded payloads.** The YTD endpoint had neither the R8-C4 config-failed skip nor the R8-C1 outage-empty skip its siblings have; a transient outage pinned an all-null trend (or constants-only queue maps) for the 30-min TTL with no meta flag. `latestDate` is non-null there by construction, so an empty DQE read IS the outage shape | CompanyOverview.gs put-site comment |
+| C-1 | **An all-stray source grid could wipe the expected date from `inbound_calls`/`outbound_calls`.** The F2 zero-record cleanup gated on "source non-empty" only; a grid whose records ALL resolved to another date (wrong-day/mislabeled sheet) filtered to zero as stray, passed the gate, and ran the authoritative DELETE on tables with no sheet primary — permanent past the ~14-day retention. Now additionally gated on ZERO strays; refusal returns `allStray` and the backfills classify the date as a failure. Deliberately conservative: a legitimate zero-day with ≥1 stray keeps stale rows until retry (recoverable) rather than risking the wrong delete (not) | Neon write discipline F2 sentence, CLAUDE.md; both capture test suites |
+| C-2 | **The daily import swallowed the delete-only pass's outcomes.** `icDeleteDateOnly_`'s `unreachable` return has `skipped:0`, so the caller's `skipped && !inserted` branch never saw it — Neon-down on a zero-record day left phantoms with no Pipeline Health row and an `ok` toast; a successful destructive `cleared` logged nothing at all. Both blocks now branch on `unreachable` (failure row) / `allStray` (failure row + email) / `cleared` (success row, rows:0) ahead of the old chain | Daily-toast bullet, CLAUDE.md; autoImport.js branch comments |
+| E-2 | **Missed-section fetch failure rendered as absence.** The failure handler `display:none`'d the whole section — and the inline section IS the Missed Calls report — so an error read as "no missed calls" / "feature gone". Now an inline `#dept-missed-error` note + Retry; fetch start clears it and restores the chart row the failure path hides (nothing in the render path touches that display) | script.html failure-handler comment |
+| G-1 | **The sub-queue picker groups never rendered — the client dropped the field.** All four IR/Insights roster-cache writers rebuilt their cache object without the server-sent `subQueueGroups`, so `irBuildAgentListHtml_`'s groups were permanently empty and the documented parent-manager picker groups + `subqPickerScope_` refusal were unreachable, despite full server-side tests. Found only by a line-read of the cache writers; the ui-harness asserts rendering, not payload-field plumbing — adding a payload-contract assertion is an open follow-on | Sub-queue picker groups, client-ui-conventions.md |
+
+The unimplemented Round-15 findings (~49, incl. all `D-#` and `F-#`) live in
+`.cycle/blocks/74-audit-fixes-broad-implement.md` and the session's audit
+report; C-3 became Operator State #43.
+
 ## `S2-#` / `B-#` — broad scan Round 14 (2026-08-03)
 
 Findings from the 2026-08-03 three-stage broad scan. **A FOURTH shape:** `B-#`

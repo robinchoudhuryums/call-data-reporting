@@ -230,8 +230,9 @@ function previewDqeAbandonedIdRepair() {
 
 /**
  * Apply the repair: recover lossless single-value coerced cells as text, mark
- * unrecoverable multi-value cells with the lost sentinel, and lock AD-AF to
- * plain text.
+ * unrecoverable multi-value cells with the lost sentinel, and lock AD-AE to
+ * plain text (T-5: this repair owns the ID columns only -- AF, the
+ * comma-joined TIMES column, is formatted/recovered by the slot repair).
  */
 function repairDqeAbandonedIds() {
   return repairDqeAbandonedIds_(/*dryRun=*/false);
