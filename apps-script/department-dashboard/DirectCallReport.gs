@@ -43,7 +43,9 @@
 // v2 (R11-M): adds `kpisPrior` (scope-level, over the INV-28 immediately-
 // preceding same-length window) + `deptsPrior` (per-dept prior aggregates) so
 // the client renders delta/trend chips on the KPI cards + dept header rows.
-const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v2';
+// v3: B-1 -- the company-view agents sub-select groups per (agent, dept)
+// instead of collapsing a crossover agent under max(department).
+const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v3';
 const DIRECT_CALL_MAX_RANGE_DAYS = 366;
 
 /**
@@ -213,8 +215,17 @@ function computeDirectCallReport_(scope) {
             "'obConnected', COALESCE(sum(ob_int_connected+ob_ext_connected),0), " +
             "'obTalkSec', COALESCE(sum(ob_int_talk_sec+ob_ext_talk_sec),0)" +
           ") FROM direct_call_history c WHERE " + dr + "), " +
+        // B-1: group per (agent, department) -- direct_call_history is keyed
+        // (call_date, department, agent_name), so a crossover agent
+        // legitimately has rows in TWO depts. The old GROUP BY agent_name +
+        // max(department) collapsed both depts' figures under the
+        // lexicographically-max dept, inflating one company-view dept card
+        // and dropping the agent from the other (while deptsPrior grouped by
+        // department correctly, so the delta chips compared mismatched
+        // groupings). Single-dept scope is unchanged: deptPred pins one
+        // department, making the extra GROUP BY key a no-op there.
         "'agents', (SELECT COALESCE(json_agg(t ORDER BY t.ib_answered DESC, t.agent), '[]') FROM (" +
-            "SELECT agent_name AS agent, max(department) AS dept, " +
+            "SELECT agent_name AS agent, department AS dept, " +
               "sum(ib_int_answered+ib_ext_answered) AS ib_answered, " +
               "sum(ib_int_missed_free+ib_ext_missed_free) AS ib_missed_free, " +
               "sum(ib_int_missed_busy+ib_ext_missed_busy) AS ib_missed_busy, " +
@@ -224,7 +235,7 @@ function computeDirectCallReport_(scope) {
               "sum(ob_int_connected+ob_ext_connected) AS ob_connected, " +
               "sum(ob_int_talk_sec+ob_ext_talk_sec) AS ob_talk_sec, " +
               "sum(ob_int_total) AS ob_int_total, sum(ob_ext_total) AS ob_ext_total " +
-            "FROM direct_call_history c WHERE " + dr + " GROUP BY agent_name) t), " +
+            "FROM direct_call_history c WHERE " + dr + " GROUP BY agent_name, department) t), " +
         // v2 prior window (deltas):
         "'kpisPrior', (SELECT " + priorKpiSel + " FROM direct_call_history c WHERE " + priorDr + "), " +
         "'deptsPrior', (SELECT COALESCE(json_agg(t2), '[]') FROM (" +

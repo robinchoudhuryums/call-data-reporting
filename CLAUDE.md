@@ -897,7 +897,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
   (ONE json_build_object Neon round-trip; per-agent answer rate EXCLUDING the
   busy carve-out, inbound ATT, outbound activity + ATT, int/ext split; cached
-  `directCall:v2`). **R11-M: the SAME query also computes `kpisPrior` (scope-level,
+  `directCall:v3`). **R11-M: the SAME query also computes `kpisPrior` (scope-level,
   over the INV-28 immediately-preceding same-length window) + `deptsPrior`
   (per-dept prior aggregates); the client renders delta chips (`inboundDelta_`)
   on the IB Answered / IB Answer Rate / OB Calls KPI cards and on each company-view

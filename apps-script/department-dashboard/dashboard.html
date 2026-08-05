@@ -444,6 +444,11 @@
             <span class="dept-qcd-date" id="dept-missed-date"></span>
           </div>
           <div id="dept-missed-headline" class="report-headline" style="display:none;"></div>
+          <!-- E-2: fetch-failure state. The section used to hide itself on a
+               failed fetch, which read as "no missed calls" / "feature gone";
+               now the failure is said out loud with a retry. Populated by
+               deptMissedFetch_'s failure handler; hidden on every new fetch. -->
+          <div class="ds-note" id="dept-missed-error" style="display:none;"></div>
           <div class="ds-note subq-note" id="dept-missed-scope-note" style="display:none;"></div>
           <div class="report-summary" id="dept-missed-summary" style="display:none;"></div>
           <!-- Bars/Radar toggle (shared mode, persisted in localStorage). -->

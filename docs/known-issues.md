@@ -639,7 +639,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v2` |
-| `DirectCallReport.gs` | `directCall:vN:` | `v2` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v3` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.

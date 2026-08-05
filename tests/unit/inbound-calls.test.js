@@ -644,3 +644,24 @@ test('F2: zero records + Neon unreachable -> flagged unreachable so the date is 
   assert.equal(res.unreachable, true,
     'the deferred mirror must keep the date queued rather than mark it done');
 });
+
+test('C-1: an ALL-STRAY yield refuses the zero-record cleanup (wrong-day grid must not delete)', function () {
+  // Source grid holds ONLY records dated outside the expected date -- the
+  // signature of a mislabeled/wrong-day Call_Legs grid, not a zero-call day.
+  // The old gate ("source non-empty") deleted the expected date's rows here;
+  // with no sheet primary that loss is permanent past the retention window.
+  const cap = {};
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  const strayOnly = [
+    leg({ callId: '555001', legId: 1, start: '06/03/2026 14:00:00', stop: '06/03/2026 14:01:00',
+          direction: 'Incoming', caller: '12155550000', callee: '108',
+          calleeName: 'A_Q_Intake', dialIn: '19722281820' }),
+  ];
+  const res = h.call('writeInboundCallsToNeon', strayOnly,
+    { authoritative: true, expectedDateIso: '2026-06-04' });
+  assert.equal(res.allStray, true, 'refusal is reported to the caller');
+  assert.equal(res.strayCount, 1);
+  assert.equal(res.cleared, undefined, 'no cleanup happened');
+  assert.equal((cap.executed || []).length, 0,
+    'no statement ran -- the expected date\'s rows are untouched');
+});

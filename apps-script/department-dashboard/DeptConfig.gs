@@ -1086,6 +1086,7 @@ function backfillDeptConfigToNeon() {
       teamAvgExcludes: r.teamAvgExcludes, queueExtOverrides: r.queueExtOverrides,
       active: r.active, admin: r.updatedBy || Session.getActiveUser().getEmail(),
       notes: r.notes, inboundAliases: r.inboundAliases,
+      finalDeptLabels: r.finalDeptLabels,
     });
     n++;
   });
@@ -1111,7 +1112,8 @@ function compareDeptConfigSources() {
   }
   const key = function (r) {
     return JSON.stringify([r.qcdQueues, r.overviewParent, r.teamAvgExcludes,
-      r.queueExtOverrides, r.active, r.notes, r.inboundAliases]);
+      r.queueExtOverrides, r.active, r.notes, r.inboundAliases,
+      r.finalDeptLabels]);
   };
   const sMap = {}, nMap = {};
   sheet.forEach(function (r) { sMap[r.dept] = r; });

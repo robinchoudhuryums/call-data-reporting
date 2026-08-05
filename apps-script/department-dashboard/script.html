@@ -6637,6 +6637,11 @@
     // empty first-load section enough height to host the overlay.
     wrap.style.display = '';
     wrap.classList.add('dm-loading');
+    // E-2: clear any prior failure state -- hide the error note and restore
+    // the chart row the failure path hides (nothing in the render path
+    // touches the row's display, so a retry must restore it here).
+    const errNote = $('dept-missed-error'); if (errNote) errNote.style.display = 'none';
+    const chartRow = $('dept-missed-chart-row'); if (chartRow) chartRow.style.display = '';
     dsFrostShow_(wrap, 'Loading missed calls…');
     google.script.run
       .withSuccessHandler(function (data) {
@@ -6645,7 +6650,7 @@
         wrap.classList.remove('dm-loading');
         deptMissedRender_(data, from, to);
       })
-      .withFailureHandler(function () {
+      .withFailureHandler(function (err) {
         if (deptMissedReqKey !== key) return;
         dsFrostHide_(wrap);
         wrap.classList.remove('dm-loading');
@@ -6653,7 +6658,24 @@
         // waiting for isn't coming, and a leaked flag would yank the page
         // down on the NEXT unrelated dept-page refresh.
         deptMissedScrollPending_ = false;
-        wrap.style.display = 'none';
+        // E-2: the section used to display:none itself here, which a manager
+        // reads as "no missed calls" (the modal this section replaced IS the
+        // Missed Calls report). Say the failure out loud instead, with a
+        // retry; the stale inner content stays hidden below the note.
+        wrap.style.display = '';
+        ['dept-missed-headline', 'dept-missed-summary', 'dept-missed-scope-note'].forEach(function (id) {
+          const el = $(id); if (el) el.style.display = 'none';
+        });
+        const row = $('dept-missed-chart-row'); if (row) row.style.display = 'none';
+        const note = $('dept-missed-error');
+        if (note) {
+          note.innerHTML = 'Missed Calls could not load: '
+            + escapeHtml((err && err.message) ? err.message : String(err))
+            + ' <button type="button" class="link-btn" id="dept-missed-retry">Retry</button>';
+          note.style.display = '';
+          const btn = $('dept-missed-retry');
+          if (btn) btn.addEventListener('click', function () { deptMissedFetch_(); });
+        }
         const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
       })
       .getMissedCallsReport({ department: dept, from: from, to: to });
@@ -8754,6 +8776,10 @@
           agents: (data && data.agents) || [],
           activeAgents:   (data && data.activeAgents)   || null,
           activeFloaters: (data && data.activeFloaters) || null,
+          // G-1: the sub-queue picker groups render from THIS cached field --
+          // dropping it here (as every roster-cache writer originally did)
+          // left irBuildAgentListHtml_'s groups permanently empty.
+          subQueueGroups: (data && data.subQueueGroups) || null,
           rangeKey: rangeKey,
         };
         renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
@@ -8794,6 +8820,7 @@
           if (__rk !== irRosterReqSeq_) return;   // superseded by a newer fetch
           irLastRoster.activeAgents   = (data && data.activeAgents)   || null;
           irLastRoster.activeFloaters = (data && data.activeFloaters) || null;
+          irLastRoster.subQueueGroups = (data && data.subQueueGroups) || null;   // G-1
           irLastRoster.rangeKey = rangeKey;
           // Preserve current selection across the regroup.
           const checked = irGetCheckedAgents_($('ir-agent-list'));
@@ -13882,6 +13909,7 @@
           agents: (data && data.agents) || [],
           activeAgents:   (data && data.activeAgents)   || null,
           activeFloaters: (data && data.activeFloaters) || null,
+          subQueueGroups: (data && data.subQueueGroups) || null,   // G-1
           rangeKey: rangeKey,
         };
         insRenderAgentList();
@@ -13921,6 +13949,7 @@
           if (__rk !== insRosterReqSeq_) return;   // superseded by a newer fetch
           insLastRoster.activeAgents   = (data && data.activeAgents)   || null;
           insLastRoster.activeFloaters = (data && data.activeFloaters) || null;
+          insLastRoster.subQueueGroups = (data && data.subQueueGroups) || null;   // G-1
           insLastRoster.rangeKey = rangeKey;
           const checked = irGetCheckedAgents_($('ins-agent-list'));
           insRenderAgentList();

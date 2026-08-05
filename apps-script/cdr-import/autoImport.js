@@ -2231,6 +2231,56 @@ if (!skipCDR && obcHD) {
             + 'See the cdr-import execution log for the underlying exception. '
             + 'Re-import the date (or run backfillInboundCalls) once fixed.');
         } catch (notifyErr) { /* best-effort */ }
+      } else if (inboundRes && inboundRes.unreachable) {
+        // C-2: the zero-record delete-only pass (skipped:0, so the branch
+        // below can't see it) couldn't reach Neon -- the date's stale rows,
+        // if any, are still there. Same signal as the records-skipped
+        // unreachable case; a later re-import of the date clears them.
+        setNeonStatus_('unreachable');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Inbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - inboundStart,
+            notes: dateObj.toDateString() + ' | Neon unreachable (zero-record day; stale rows, if any, left in place)',
+          });
+        } catch (logErr) { /* best-effort */ }
+      } else if (inboundRes && inboundRes.allStray) {
+        // C-1: the writer REFUSED the zero-record cleanup -- every record the
+        // grid yielded was dated outside the expected date (wrong-day grid?).
+        // That is a source-data signal, not a quiet day: surface it like the
+        // DQE expected-date refusal (failure row + email).
+        setNeonStatus_('error');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Inbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - inboundStart,
+            notes: dateObj.toDateString() + ' | cleanup refused: ' + inboundRes.strayCount
+              + ' record(s) ALL dated outside the expected date (wrong-day grid?)',
+          });
+        } catch (logErr) { /* best-effort */ }
+        try {
+          notifyNeonWriteFailure('processIntegratedHistory:Inbound (' + dateObj.toDateString() + ')',
+            'writeInboundCallsToNeon refused the zero-record cleanup: the source grid yielded '
+            + inboundRes.strayCount + ' record(s), ALL dated outside the expected date. This is '
+            + 'the wrong-day-grid signature -- verify the Call_Legs sheet for this date before '
+            + 're-importing. No inbound_calls rows were deleted.');
+        } catch (notifyErr) { /* best-effort */ }
+      } else if (inboundRes && inboundRes.cleared) {
+        // C-2: a destructive clear (zero-record day shedding stale rows) gets
+        // a success row -- rows:0 with a note, so the action is on record.
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Inbound',
+            status: 'success',
+            rows: 0,
+            durationMs: Date.now() - inboundStart,
+            notes: dateObj.toDateString() + ' | zero-record day: cleared any stale inbound_calls rows',
+          });
+        } catch (logErr) { /* best-effort */ }
       } else if (inboundRes && inboundRes.skipped && !inboundRes.inserted) {
         setNeonStatus_('unreachable');
         try {
@@ -2253,8 +2303,9 @@ if (!skipCDR && obcHD) {
           });
         } catch (logErr) { /* best-effort */ }
       }
-      // inserted=0 + skipped=0 (no inbound legs in the day's data) logs no
-      // row -- matches the other blocks' "only rows>0 get a row" rule.
+      // inserted=0 + skipped=0 with no cleared/unreachable/allStray marker
+      // (no inbound legs in the day's data, nothing to clean) logs no row --
+      // matches the other blocks' "only rows>0 get a row" rule.
     }
   } catch (inboundErr) {
     var inboundMsg = (inboundErr && inboundErr.message) ? inboundErr.message : String(inboundErr);
@@ -2314,6 +2365,51 @@ if (!skipCDR && obcHD) {
             + 'See the cdr-import execution log for the underlying exception. '
             + 'Re-import the date (or run backfillOutboundCalls) once fixed.');
         } catch (notifyErr) { /* best-effort */ }
+      } else if (outboundRes && outboundRes.unreachable) {
+        // C-2: zero-record delete-only pass, Neon unreachable (skipped:0 so
+        // the branch below can't see it) -- stale rows left in place.
+        setNeonStatus_('unreachable');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Outbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - outboundStart,
+            notes: dateObj.toDateString() + ' | Neon unreachable (zero-record day; stale rows, if any, left in place)',
+          });
+        } catch (logErr) { /* best-effort */ }
+      } else if (outboundRes && outboundRes.allStray) {
+        // C-1: writer refused the zero-record cleanup -- wrong-day-grid
+        // signature (all yielded records dated outside the expected date).
+        setNeonStatus_('error');
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Outbound',
+            status: 'failure',
+            rows: null,
+            durationMs: Date.now() - outboundStart,
+            notes: dateObj.toDateString() + ' | cleanup refused: ' + outboundRes.strayCount
+              + ' record(s) ALL dated outside the expected date (wrong-day grid?)',
+          });
+        } catch (logErr) { /* best-effort */ }
+        try {
+          notifyNeonWriteFailure('processIntegratedHistory:Outbound (' + dateObj.toDateString() + ')',
+            'writeOutboundCallsToNeon refused the zero-record cleanup: the source grid yielded '
+            + outboundRes.strayCount + ' record(s), ALL dated outside the expected date. This is '
+            + 'the wrong-day-grid signature -- verify the Call_Legs sheet for this date before '
+            + 're-importing. No outbound_calls rows were deleted.');
+        } catch (notifyErr) { /* best-effort */ }
+      } else if (outboundRes && outboundRes.cleared) {
+        // C-2: destructive clear on record (zero-record day shed stale rows).
+        try {
+          logPipelineHealthWithFallback_(targetSS, {
+            step: 'processIntegratedHistory:Outbound',
+            status: 'success',
+            rows: 0,
+            durationMs: Date.now() - outboundStart,
+            notes: dateObj.toDateString() + ' | zero-record day: cleared any stale outbound_calls rows',
+          });
+        } catch (logErr) { /* best-effort */ }
       } else if (outboundRes && outboundRes.skipped && !outboundRes.inserted) {
         setNeonStatus_('unreachable');
         try {

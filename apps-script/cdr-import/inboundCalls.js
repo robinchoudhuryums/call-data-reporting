@@ -729,7 +729,21 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // case where deleting would destroy good data, so it keeps the old
       // early-return. expectedDateIso is required too, so the DELETE can only
       // ever touch the date the caller vouched for (the P-1 guard).
+      //
+      // C-1: ALSO gated on zero strays. "Source had rows but every record it
+      // yielded belonged to ANOTHER date" is not evidence this date has no
+      // calls -- it is the signature of a mislabeled/wrong-day grid, and
+      // deleting on it would wipe the expected date's rows from a table with
+      // no sheet primary (unrecoverable past the Call_Legs retention). Leave
+      // any stale rows in place (recoverable, like the unreachable case) and
+      // tell the caller why so it can surface a Pipeline Health row.
       if (authoritative && expectedDateIso && rawRows && rawRows.length) {
+        if (strayCount) {
+          Logger.log('writeInboundCallsToNeon: REFUSING zero-record cleanup for %s -- the source '
+            + 'grid yielded %s record(s), ALL dated elsewhere (wrong-day grid?). Stale rows (if '
+            + 'any) left in place.', expectedDateIso, strayCount);
+          return { inserted: 0, skipped: 0, allStray: true, strayCount: strayCount };
+        }
         return icDeleteDateOnly_('inbound_calls', expectedDateIso, 'writeInboundCallsToNeon');
       }
       return { inserted: 0, skipped: 0 };
@@ -951,6 +965,11 @@ function backfillInboundCalls(fromIso, toIso, force) {
       var res = writeInboundCallsToNeon(legs, { authoritative: true, expectedDateIso: c.iso });
       if (res && res.error) {
         failures.push(c.iso);
+      } else if (res && res.allStray) {
+        // C-1: the sheet's contents are ALL dated outside its own name-derived
+        // date -- a mislabeled/wrong-day sheet. The writer refused the cleanup;
+        // record it as a failure, not a processed date.
+        failures.push(c.iso + ' (all ' + res.strayCount + ' record(s) dated outside the sheet\'s date)');
       } else if (res && ((res.skipped && !res.inserted) || res.unreachable)) {
         // Neon unreachable for this date -- abort the run; re-run later.
         // `res.unreachable` also covers the F2 zero-record cleanup arm, which

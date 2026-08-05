@@ -179,8 +179,17 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       // F2: same zero-record authoritative cleanup as the inbound writer --
       // `outbound_calls` has no sheet primary either, so a date whose
       // legitimate count is zero must still be able to shed stale rows.
-      // Gated on a non-empty source so an unreadable grid can't delete data.
+      // Gated on a non-empty source so an unreadable grid can't delete data,
+      // AND (C-1, mirroring the inbound writer) on zero strays: an all-stray
+      // yield is a wrong-day grid, not a zero-call day -- deleting on it
+      // would wipe the expected date unrecoverably.
       if (authoritative && expectedDateIso && rawRows && rawRows.length) {
+        if (strayCount) {
+          Logger.log('writeOutboundCallsToNeon: REFUSING zero-record cleanup for %s -- the source '
+            + 'grid yielded %s record(s), ALL dated elsewhere (wrong-day grid?). Stale rows (if '
+            + 'any) left in place.', expectedDateIso, strayCount);
+          return { inserted: 0, skipped: 0, allStray: true, strayCount: strayCount };
+        }
         return icDeleteDateOnly_('outbound_calls', expectedDateIso, 'writeOutboundCallsToNeon');
       }
       return { inserted: 0, skipped: 0 };
@@ -352,6 +361,10 @@ function backfillOutboundCalls(fromIso, toIso, force) {
       var res = writeOutboundCallsToNeon(legs, { authoritative: true, expectedDateIso: c.iso });
       if (res && res.error) {
         failures.push(c.iso);
+      } else if (res && res.allStray) {
+        // C-1: mislabeled/wrong-day sheet (every record dated outside the
+        // sheet's own date) -- the writer refused; count as a failure.
+        failures.push(c.iso + ' (all ' + res.strayCount + ' record(s) dated outside the sheet\'s date)');
       } else if (res && ((res.skipped && !res.inserted) || res.unreachable)) {
         // res.unreachable also covers the F2 zero-record cleanup arm (no
         // `skipped` count, but the date still needs retrying).
