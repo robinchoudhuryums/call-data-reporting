@@ -132,7 +132,14 @@ bash scripts/check-duplicated-files.sh
 # subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
 # the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
-# versa -- fails the build, plus a size cap on CLAUDE.md itself).
+# versa -- fails the build, plus a size cap on CLAUDE.md itself), setup (the
+# INV-12 idempotency/ten-sheets/partial-run-recovery pins), and
+# alert-recipients (B-5: ALL-sentinel managers receive every dept's alert).
+# HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
+# getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a test
+# needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
+# (sheet._numberFormats), so the widen-before-write and plain-text coercion
+# protections are test-enforceable; never loosen the fake to make a fixture fit.
 # See tests/README.md for design + how to add tests. The neonWrite JDBC
 # writers are pinned end-to-end (chunking/commit discipline +
 # field mappings, neon-write-mapping.test.js).
@@ -146,8 +153,9 @@ node --test          # from repo root (or: npm test)
 # version in one step (avoids the manual "Manage deployments -> New
 # version" stale-deploy footgun, Operator State #2). The deployment id
 # comes from `clasp deployments` in that dir (one-time lookup).
-# TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard);
-# DEPLOY_SKIP_CI=1 skips the gate (emergencies only).
+# TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard) AND
+# `npm run ci:ui` (the rendered-UI gate, F-10; skips cleanly when playwright
+# isn't installed); DEPLOY_SKIP_CI=1 skips both (emergencies only).
 # Batch 4: it also runs the REMOTE-ORPHAN check first -- `clasp push -f` never
 # deletes remote files (INV-17), so a file removed from the repo stays live and
 # callable until deleted by hand in the web editor. The check pulls the project
@@ -176,8 +184,11 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # One-time: cd tools/ui-harness && npm init -y && npm i playwright
 # (the Chart.js / datalabels / html2canvas-pro bundles are COMMITTED under
 # tools/ui-harness/vendor/, version-pinned to dashboard.html's CDN tags by
-# tests/unit/ui-harness-vendor.test.js). With playwright absent it SKIPS
-# with a message and exits 0, so it is safe to run anywhere; chromium-path.js
+# tests/unit/ui-harness-vendor.test.js, incl. an F-11 sha256 byte pin).
+# With playwright absent it SKIPS
+# with a message and exits 0, so it is safe to run anywhere -- EXCEPT under
+# CI=true, where absence FAILS (F-9: a workflow refactor that loses the
+# install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
 # FOUR ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
@@ -1110,10 +1121,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   for admin (true) and a normal manager (false), so existing roles have
   ZERO behavior change and a missed widening degrades the new role to a
   single-dept manager (least privilege). **A missed widening is the recurring
-  defect here** -- four have been found and closed (R-3: `getCallJourney`
+  defect here** -- four found and closed (R-3: `getCallJourney`
   incl. its F-4 fallback entitlement, `inboundResolveRequest_`,
-  `directCallResolveRequest_`; R8-4: `escAssertRowAccess_`, where the role
-  could LIST all-dept escalations but not act on any). Pinned by
+  `directCallResolveRequest_`; R8-4: `escAssertRowAccess_`). Pinned by
   `tests/unit/escalations-hardening.test.js`. **Grant it** by setting an Access
   Control row's Department cell to `ALL` (Access Control admin modal or the
   sheet; `saveAccessControlRow` accepts + canonicalizes the sentinel) --
@@ -1160,7 +1170,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `Field Ops Power` is exactly this case and is deliberately NOT in the parent
   map -- the owner ruled they are separate queues whose managers should see
   both. NB Alerts + Digests follow neither mechanism (their own per-dept
-  config rows), so shared-manager email needs a row per dept there too.
+  config rows), so shared-manager email needs a row per dept there too --
+  though an ALL-sentinel row IS an alert recipient for every dept (B-5).
   **ALIAS EMAILS (Tier C).** The optional `EMAIL_ALIASES` Script Property
   (comma/newline-separated `alias@x = canonical@x` pairs, tolerant grammar
   like `DIAL_IN_LABELS`) lets several sign-in addresses resolve to ONE
@@ -1350,12 +1361,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   legitimate count is zero can shed its phantoms; **GATED on the source grid
   being NON-EMPTY**, because an empty/unreadable `Call_Legs` grid is the one
   case where deleting would destroy good data (the P-3 discipline: validate
-  the source before you delete), **AND on ZERO stray-dated records (C-1:
-  all-stray = wrong-day grid; the writer refuses with `allStray`, the
+  the source before you delete), **AND on ZERO stray-dated / date-less
+  records (C-1 all-stray = wrong-day grid; C-6 all-unparsed = format
+  drift; refused with `allStray`/`allUnparsed`, the
   import logs a failure row + email)**.
   It reports `unreachable` when Neon is down so
-  a deferred-mirror date stays queued rather than dequeued with its phantoms
-  intact. Pinned by inbound-calls.test.js / outbound-calls.test.js.
+  a deferred-mirror date stays queued. Pinned by inbound-/outbound-calls
+  test suites.
   **PHI healing note (P-2):** `ib_list_*` JSONB rows written before the P-2
   masking fix heal on a force re-import of their date; past the Call_Legs
   retention, `backfillCDRHistory` re-hashes phone-shaped entries but raw NAME

@@ -532,9 +532,14 @@ Round-14 `B-1`. Code comments citing these codes date from 2026-08-05+.
 | E-2 | **Missed-section fetch failure rendered as absence.** The failure handler `display:none`'d the whole section — and the inline section IS the Missed Calls report — so an error read as "no missed calls" / "feature gone". Now an inline `#dept-missed-error` note + Retry; fetch start clears it and restores the chart row the failure path hides (nothing in the render path touches that display) | script.html failure-handler comment |
 | G-1 | **The sub-queue picker groups never rendered — the client dropped the field.** All four IR/Insights roster-cache writers rebuilt their cache object without the server-sent `subQueueGroups`, so `irBuildAgentListHtml_`'s groups were permanently empty and the documented parent-manager picker groups + `subqPickerScope_` refusal were unreachable, despite full server-side tests. Found only by a line-read of the cache writers; the ui-harness asserts rendering, not payload-field plumbing — adding a payload-contract assertion is an open follow-on | Sub-queue picker groups, client-ui-conventions.md |
 
-The unimplemented Round-15 findings (~49, incl. all `D-#` and `F-#`) live in
-`.cycle/blocks/74-audit-fixes-broad-implement.md` and the session's audit
-report; C-3 became Operator State #43.
+Batches 2-8 (2026-08-05, commits `05ec643`..`f6e92be`) implemented most of the
+rest; each summary block carries the full what/why and the live rules landed in
+the docs updated by those commits. Code → block map: C-5/C-6/C-8/C-9 →
+`.cycle/blocks/75-*`; B-2/A-2/B-4 → `76-*`; F-5/F-6/F-7 + G-2..G-8 + E-1/E-3 →
+`77-*`; E-5..E-10 + B-5/B-6/A-3/A-4/A-5/B-8 → `78-*`; C-3/F-8/F-9/F-10/F-11 +
+D-1..D-6 → `79-*`. Still open from the scan: C-7 (daily-path O(history)
+scans), D-8/D-9 (frozen-legacy prep), F-12, B-7 (self-withdrawn), G-1's
+harness payload-contract follow-on, and the strategic tracks.
 
 ## `S2-#` / `B-#` — broad scan Round 14 (2026-08-03)
 

@@ -207,9 +207,9 @@ const SECTIONS = [
     endHeading: '\n## Key Design Decisions',
     grandfathered: {
       'Inbound-call capture is Neon-only and rides the daily import.': 12834,
-      'Role model + the all-departments manager (`allDepts`).': 6160,
+      'Role model + the all-departments manager (`allDepts`).': 6156,
       'Neon read-back (F1) is flag-gated and defaults OFF.': 5554,
-      "Neon write discipline (don't regress this — it caused a daily-import\n  timeout).": 4892,
+      "Neon write discipline (don't regress this — it caused a daily-import\n  timeout).": 4881,
       'Direct-extension call metrics are a separate population from the\n  DQE/QCD queue metrics, with a "busy" carve-out.': 4848,
     },
   },

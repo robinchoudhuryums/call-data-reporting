@@ -724,7 +724,11 @@ When something looks wrong, before assuming a code bug, check:
     READ-ONLY) reconciles per-date row counts sheet-vs-Neon over
     `NEON_COVERAGE_DAYS` (default 30, ending yesterday) for `dqe_history`,
     `qcd_history`, `call_history_dept`, `direct_call_history` -- findings
-    per date: missing-in-neon / count-mismatch / extra-in-neon (phantoms),
+    per date: missing-in-neon / count-mismatch / extra-in-neon (phantoms --
+    reclassified as informational `sheetTrimmed`, NOT a GAPS finding, when
+    that table's read source is `neon` (B-2): a trimmed sheet is the
+    retirement end state there; missing-in-neon and count-mismatch stay
+    findings in both modes),
     each emailed with its runbook fix (force re-import /
     `backfillDQEHistoryUpsert` / `backfillCDRHistory` /
     `backfillDirectCallToNeon`) -- and flags zero-row WEEKDAYS on the two

@@ -36,7 +36,14 @@ tests/
     formatDate.js   Intl-based shim for Utilities.formatDate (IANA-tz aware)
     fakeSheet.js    in-memory SpreadsheetApp fakes; supports a separate
                     { values, displays } grid so duration columns can
-                    model getValue() ≠ getDisplayValue() (INV-02)
+                    model getValue() ≠ getDisplayValue() (INV-02).
+                    STRICT on purpose (F-5/F-6): getRange past
+                    getMaxColumns THROWS like real Sheets (the REP-10
+                    class -- set `_maxColumns` when a test wants a narrow
+                    sheet), and setNumberFormat RECORDS onto
+                    sheet._numberFormats so the plain-text coercion
+                    protections are assertable. Never loosen the fake to
+                    make a fixture fit -- widen the fixture.
     fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
     shim.js         mock Apps Script globals + a `state` handle to drive them
     loadGas.js      loads .gs files into one vm context (shared global scope)
