@@ -492,7 +492,7 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v8` |
 | `InsightsReport.gs` | `insights:vN:` | `v19` |
-| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v5` |
+| `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v3` |
 

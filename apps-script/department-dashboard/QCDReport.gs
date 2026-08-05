@@ -53,7 +53,7 @@
 //     sub-queue nesting w/ parent + raw longestWaitSec/avgAnswerSec +
 //     roll-up exclusions). The merged payload carries BOTH; the 6h TTL
 //     makes a stale-shape blob too sticky to risk.
-const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v5';
+const QCD_ALLDEPT_CACHE_PREFIX = 'qcdAll:v6';   // v6: the mtd verdict block (MTD vs full prior month)
 
 // #3: queues excluded from the all-dept Daily Call Queue Report because their
 // calls are ALREADY counted within another queue (Intake / Backup CSR roll
@@ -267,6 +267,24 @@ function computeQcdAllDepartments_(from, to) {
   const mtdFrom = String(to).slice(0, 8) + '01';
   const gSeenQueues = {};   // F-36: dedupe double-mapped queues in the grand total
 
+  // MTD verdict sub-lines (owner spec, Round-16): the band's MTD figures
+  // compare month-start(to)..to against the ENTIRE previous month -- a
+  // full-month baseline, NOT the INV-28 same-length window. Percentages are
+  // ratios so the unequal lengths don't distort them; Total Calls compares
+  // per-WORKDAY averages (countWorkingDays_, INV-35 semantics: weekends AND
+  // company holidays excluded) so volume stays comparable too. Company MTD /
+  // prior-month totals accumulate under the same F-36 unique-queue dedup and
+  // exclusion set as the grand totals, and BEFORE the range-activity skip so
+  // a dept quiet today still contributes its earlier-month calls.
+  const toP = String(to).split('-');
+  const priorEnd = new Date(Number(toP[0]), Number(toP[1]) - 1, 0, 12);  // day 0 = last day of prev month
+  const pad2_ = function (n) { return ('0' + n).slice(-2); };
+  const priorMonth = priorEnd.getFullYear() + '-' + pad2_(priorEnd.getMonth() + 1);
+  const priorFrom = priorMonth + '-01';
+  const priorTo = priorMonth + '-' + pad2_(priorEnd.getDate());
+  let mTotal = 0, mAns = 0, mAbnd = 0, pTotal = 0, pAns = 0, pAbnd = 0;
+  const mSeen = {}, pSeen = {};
+
   allDepts.forEach(function (dept) {
     // Own queues only -- children listed under their own dept.
     if (queuesForDept_(dept, { includeChildren: false }).length === 0) return;
@@ -280,6 +298,20 @@ function computeQcdAllDepartments_(from, to) {
     const mtdByQueue = {};
     (mtdRep.queueBreakdown || []).forEach(function (r) {
       mtdByQueue[r.queue] = Number(r.violations) || 0;
+    });
+    // Month-scope company accumulation (must precede the dTotal===0 skip).
+    const priorRep = (priorFrom === from && priorTo === to)
+      ? rep
+      : computeQcdReport_(dept, priorFrom, priorTo, false, false, true);
+    (mtdRep.queueBreakdown || []).forEach(function (r) {
+      if (excludeSet[String(r.queue || '').toLowerCase()] || mSeen[r.queue]) return;
+      mSeen[r.queue] = true;
+      mTotal += r.totalCalls; mAns += r.totalAnswered; mAbnd += r.abandoned;
+    });
+    (priorRep.queueBreakdown || []).forEach(function (r) {
+      if (excludeSet[String(r.queue || '').toLowerCase()] || pSeen[r.queue]) return;
+      pSeen[r.queue] = true;
+      pTotal += r.totalCalls; pAns += r.totalAnswered; pAbnd += r.abandoned;
     });
     // #3: drop roll-up queues already counted within another queue.
     const rows = (rep.queueBreakdown || []).filter(function (r) {
@@ -385,11 +417,27 @@ function computeQcdAllDepartments_(from, to) {
     ? fmt(parseIso_(from))
     : fmt(parseIso_(from)) + ' - ' + fmt(parseIso_(to));
 
+  // MTD verdict block (see the owner-spec comment above the accumulators).
+  // Raw both-window values; the clients (web band + email tiles) format and
+  // derive deltas, mirroring the E5 prior-value convention.
+  const mtd = {
+    from: mtdFrom, to: to,
+    priorFrom: priorFrom, priorTo: priorTo,
+    priorLabel: Utilities.formatDate(priorEnd, TZ, 'MMM'),
+    totalCalls: mTotal, answered: mAns, abandoned: mAbnd,
+    abandonedPct: mTotal > 0 ? (mAbnd / mTotal) * 100 : 0,
+    workdays: countWorkingDays_(mtdFrom, to),
+    priorTotalCalls: pTotal, priorAnswered: pAns, priorAbandoned: pAbnd,
+    priorAbandonedPct: pTotal > 0 ? (pAbnd / pTotal) * 100 : 0,
+    priorWorkdays: countWorkingDays_(priorFrom, priorTo),
+  };
+
   const data = {
     meta:        { from: from, to: to, cacheHit: false, computeMs: Date.now() - t0, deptCount: depts.length },
     dateLabel:   dateLabel,
     depts:       depts,
     grandTotals: grandTotals,
+    mtd:         mtd,
   };
 
   return data;

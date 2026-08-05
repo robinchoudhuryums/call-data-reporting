@@ -496,23 +496,69 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // per-row color already carry it. (offenders still feed the preheader.)
 
   // ---- KPI row ----
-  const kpi = function (label, value, bg, bd, labelColor, valColor, pad) {
+  const kpi = function (label, value, bg, bd, labelColor, valColor, pad, subHtml) {
     return '<td class="kpi" width="25%" valign="top" style="' + (pad || '') + '">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:10px;"><tr>'
       + '<td class="kpi-cell" style="padding:12px 14px;">'
       + '<div style="font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:' + labelColor + ';">' + esc(label) + '</div>'
       + '<div style="font:bold 26px Arial,sans-serif;color:' + valColor + ';padding-top:2px;">' + esc(value) + '</div>'
+      + (subHtml || '')
       + '</td></tr></table></td>';
   };
+  // MTD sub-lines (owner spec, Round-16; mirrors the web band): MTD =
+  // month-start(report date)..report date vs the ENTIRE previous month.
+  // Total calls compares per-WORKDAY averages; aban down / answered up =
+  // green, reverse = orange, volume delta always gray; every delta grays
+  // under 3 elapsed workdays (low signal). Null-guarded so a payload
+  // without `mtd` renders the pre-v6 tiles unchanged.
+  const m = (data && data.mtd) || null;
+  const mtdUsable = !!(m && m.workdays > 0 && m.totalCalls > 0);
+  const mtdPriorUsable = !!(m && m.priorWorkdays > 0 && m.priorTotalCalls > 0);
+  const mtdLowSignal = !!(m && m.workdays < 3);
+  const mtdSub = function (valueTxt, deltaTxt, deltaColor) {
+    return '<div style="font:11px ' + sans + ';color:' + C.mut + ';padding-top:6px;white-space:nowrap;">'
+      + '<span style="font-weight:bold;font-size:9px;letter-spacing:0.6px;">MTD</span> '
+      + '<span style="color:' + C.ink + ';font-weight:bold;">' + esc(valueTxt) + '</span>'
+      + (deltaTxt ? ' &middot; <span style="color:' + (mtdLowSignal ? C.mut : deltaColor) + ';font-weight:bold;">' + esc(deltaTxt) + '</span>' : '')
+      + '</div>';
+  };
+  let mtdAbanSub = '', mtdCallsSub = '', mtdAnsSub = '';
+  if (mtdUsable) {
+    const mAbanPct = Number(m.abandonedPct) || 0;
+    const mAnsPct = m.totalCalls > 0 ? (m.answered / m.totalCalls * 100) : 0;
+    const mAvg = m.totalCalls / m.workdays;
+    const vsLbl = ' vs ' + (m.priorLabel || 'prior');
+    if (mtdPriorUsable) {
+      const pAbanPct = Number(m.priorAbandonedPct) || 0;
+      const pAnsPct = m.priorTotalCalls > 0 ? (m.priorAnswered / m.priorTotalCalls * 100) : 0;
+      const pAvg = m.priorTotalCalls / m.priorWorkdays;
+      const dAban = mAbanPct - pAbanPct;
+      const dAns = mAnsPct - pAnsPct;
+      const dAvgPct = pAvg > 0 ? ((mAvg - pAvg) / pAvg * 100) : 0;
+      mtdAbanSub = mtdSub(mAbanPct.toFixed(2) + '%',
+        (dAban <= 0 ? '▼ ' : '▲ ') + Math.abs(dAban).toFixed(2) + ' pts' + vsLbl,
+        dAban <= 0 ? C.good : C.watch);
+      mtdCallsSub = mtdSub(Math.round(mAvg) + '/day',
+        (dAvgPct >= 0 ? '▲ ' : '▼ ') + Math.abs(dAvgPct).toFixed(1) + '%' + vsLbl,
+        C.mut);
+      mtdAnsSub = mtdSub(mAnsPct.toFixed(1) + '%',
+        (dAns >= 0 ? '▲ ' : '▼ ') + Math.abs(dAns).toFixed(1) + ' pts' + vsLbl,
+        dAns >= 0 ? C.good : C.watch);
+    } else {
+      mtdAbanSub = mtdSub(mAbanPct.toFixed(2) + '%', '', '');
+      mtdCallsSub = mtdSub(Math.round(mAvg) + '/day', '', '');
+      mtdAnsSub = mtdSub(mAnsPct.toFixed(1) + '%', '', '');
+    }
+  }
   const abanOver = gPct >= 5;
   const kpiRow = '<tr><td style="padding:16px 26px 4px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
     + kpi('Company aban %', (gt.abandonedPctStr || gPct.toFixed(1) + '%'),
         abanOver ? C.badTile : C.neuTile, abanOver ? C.badTileB : C.neuTileB,
-        abanOver ? '#8a5a44' : '#6b7580', abanOver ? C.bad : C.ink, 'padding-right:6px;')
-    + kpi('Total calls', gTotal, C.neuTile, C.neuTileB, '#6b7580', C.ink, 'padding:0 3px;')
+        abanOver ? '#8a5a44' : '#6b7580', abanOver ? C.bad : C.ink, 'padding-right:6px;', mtdAbanSub)
+    + kpi('Total calls', gTotal, C.neuTile, C.neuTileB, '#6b7580', C.ink, 'padding:0 3px;', mtdCallsSub)
     + kpi('Queues in viol.', overCount, overCount > 0 ? C.badTile : C.neuTile, overCount > 0 ? C.badTileB : C.neuTileB,
         overCount > 0 ? '#8a5a44' : '#6b7580', overCount > 0 ? C.bad : C.ink, 'padding:0 3px;')
-    + kpi('Answered', gAnsPct.toFixed(1) + '%', C.goodTile, C.goodTileB, '#3f7a5f', C.good, 'padding-left:6px;')
+    + kpi('Answered', gAnsPct.toFixed(1) + '%', C.goodTile, C.goodTileB, '#3f7a5f', C.good, 'padding-left:6px;', mtdAnsSub)
     + '</tr></table></td></tr>';
 
   // ---- table (worst-first sections) ----

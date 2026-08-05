@@ -348,11 +348,74 @@
       });
     });
     offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
-    const tile = function (label, value, tone) {
+    const tile = function (label, value, tone, subHtml) {
       return '<div class="qcd-verdict-tile qcd-verdict--' + tone + '">'
         + '<div class="qcd-verdict-label">' + label + '</div>'
-        + '<div class="qcd-verdict-value">' + escapeHtml(String(value)) + '</div></div>';
+        + '<div class="qcd-verdict-value">' + escapeHtml(String(value)) + '</div>'
+        + (subHtml || '') + '</div>';
     };
+    // MTD sub-lines (owner spec, Round-16): MTD = month-start(range end)..end,
+    // compared against the ENTIRE previous month (full-month baseline, not
+    // INV-28 same-length). Percent deltas are pts; Total Calls compares
+    // per-WORKDAY averages so unequal window lengths stay comparable. Chip
+    // valence follows E5: aban down / answered up = sage, the reverse =
+    // orange; the volume delta stays MUTED (demand, not performance). Under
+    // MTD_MIN_WORKDAYS_ elapsed workdays every chip mutes (the E5
+    // noise-threshold idea). Renders nothing when the payload has no mtd
+    // (defensive: the v6 cache prefix already retires old blobs).
+    const MTD_MIN_WORKDAYS_ = 3;
+    const m = (data && data.mtd) || null;
+    const mtdUsable = !!(m && m.workdays > 0 && m.totalCalls > 0);
+    const priorUsable = !!(m && m.priorWorkdays > 0 && m.priorTotalCalls > 0);
+    const lowSignal = !!(m && m.workdays < MTD_MIN_WORKDAYS_);
+    const mtdWinTitle = m
+      ? ('MTD ' + m.from + ' → ' + m.to + ' (' + m.workdays + ' workdays) vs '
+         + m.priorFrom + ' → ' + m.priorTo + ' (' + m.priorWorkdays + ' workdays)'
+         + (lowSignal ? ' · under ' + MTD_MIN_WORKDAYS_ + ' workdays elapsed — low signal' : ''))
+      : '';
+    const mtdChip_ = function (deltaTxt, tone) {
+      const cls = lowSignal ? 'wow-chip-muted' : ('wow-chip-' + tone);
+      return '<span class="wow-chip ' + cls + '">' + escapeHtml(deltaTxt) + '</span>';
+    };
+    const mtdSub_ = function (valueTxt, chipHtml) {
+      return '<div class="qcd-mtd-sub" title="' + escapeHtml(mtdWinTitle) + '">'
+        + '<span class="mtd-k">MTD</span>'
+        + '<span class="mtd-v">' + escapeHtml(valueTxt) + '</span>'
+        + (chipHtml || '') + '</div>';
+    };
+    const mtdSpacer = mtdUsable
+      ? '<div class="qcd-mtd-sub qcd-mtd-sub--spacer" aria-hidden="true"><span class="mtd-k">·</span></div>'
+      : '';
+    let mtdAbanSub = '', mtdCallsSub = '', mtdAnsSub = '';
+    if (mtdUsable) {
+      const mAbanPct = Number(m.abandonedPct) || 0;
+      const mAnsPct = m.totalCalls > 0 ? (m.answered / m.totalCalls * 100) : 0;
+      const mAvg = m.workdays > 0 ? (m.totalCalls / m.workdays) : 0;
+      if (priorUsable) {
+        const pAbanPct = Number(m.priorAbandonedPct) || 0;
+        const pAnsPct = m.priorTotalCalls > 0 ? (m.priorAnswered / m.priorTotalCalls * 100) : 0;
+        const pAvg = m.priorWorkdays > 0 ? (m.priorTotalCalls / m.priorWorkdays) : 0;
+        const dAban = mAbanPct - pAbanPct;
+        const dAns = mAnsPct - pAnsPct;
+        const dAvgPct = pAvg > 0 ? ((mAvg - pAvg) / pAvg * 100) : 0;
+        const vsLbl = ' vs ' + (m.priorLabel || 'prior');
+        mtdAbanSub = mtdSub_(mAbanPct.toFixed(2) + '%',
+          mtdChip_((dAban <= 0 ? '▼ ' : '▲ ') + Math.abs(dAban).toFixed(2) + ' pts' + vsLbl,
+                   dAban <= 0 ? 'good' : 'warn'));
+        mtdCallsSub = mtdSub_(Math.round(mAvg).toLocaleString() + '/day',
+          '<span class="wow-chip wow-chip-muted">'
+          + escapeHtml((dAvgPct >= 0 ? '▲ ' : '▼ ') + Math.abs(dAvgPct).toFixed(1) + '%' + vsLbl)
+          + '</span>');
+        mtdAnsSub = mtdSub_(mAnsPct.toFixed(1) + '%',
+          mtdChip_((dAns >= 0 ? '▲ ' : '▼ ') + Math.abs(dAns).toFixed(1) + ' pts' + vsLbl,
+                   dAns >= 0 ? 'good' : 'warn'));
+      } else {
+        // No usable prior month: MTD values render, chips are omitted.
+        mtdAbanSub = mtdSub_(mAbanPct.toFixed(2) + '%');
+        mtdCallsSub = mtdSub_(Math.round(mAvg).toLocaleString() + '/day');
+        mtdAnsSub = mtdSub_(mAnsPct.toFixed(1) + '%');
+      }
+    }
     // QV-3: the company abandon% leads as a HERO tile -- big number, a 0-10%
     // target bar with the 5% tick at midpoint, and "N of M calls lost" --
     // so "is today bad?" answers before the table. Company pct comes from
@@ -372,13 +435,14 @@
       + '</div>'
       + '<div class="qcd-hero-sub">' + fmtNumber(abandoned) + ' of ' + fmtNumber(total)
       +   ' calls lost</div>'
+      + mtdAbanSub
       + '</div>';
     const band = '<div class="qcd-verdict-band qcd-verdict-band--hero">'
       + hero
       + '<div class="qcd-verdict-rest">'
-      + tile('Total calls', fmtNumber(total), 'neu')
-      + tile('Queues in violation', fmtNumber(offenders.length), offenders.length > 0 ? 'warn' : 'neu')
-      + tile('Answered %', answeredPct.toFixed(1) + '%', 'good')
+      + tile('Total calls', fmtNumber(total), 'neu', mtdCallsSub)
+      + tile('Queues in violation', fmtNumber(offenders.length), offenders.length > 0 ? 'warn' : 'neu', mtdSpacer)
+      + tile('Answered %', answeredPct.toFixed(1) + '%', 'good', mtdAnsSub)
       + '</div></div>';
     // R10-8: the Watch/On-track callout banner is RETIRED (owner): the queue
     // rows are already color-coded and the "Queues in violation" tile carries
