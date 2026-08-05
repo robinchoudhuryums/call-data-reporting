@@ -1,0 +1,2448 @@
+  // -- Individual Report modal -------------------------------------------
+  // Opens a form for date range + agent multi-select, then runs the
+  // report server-side and renders per-agent summary cards + 3 Chart.js
+  // line charts (volume / efficiency / duration). 1 agent = individual
+  // mode; 2+ = peer comparison.
+  //
+  // The agent roster is fetched once on first open per dept; if the
+  // user switches dept on the main page (admin only), we re-fetch.
+
+  // Peer-comparison palette. The first slot pulls from --accent so the
+  // primary agent matches the dashboard's slate-blue chrome; the rest
+  // are kept from the Tableau-10-derived CVD-safe palette so 2-10
+  // agents stay visually distinct in comparison mode.
+  // Harmonized categorical ramp — constant L/C, hue walk. Slots 1-3 are
+  // the brand accent / terracotta / sage so few-agent views match the
+  // rest of the app. Light values for light themes; lightened set for
+  // dark mode (mirrors the --accent/--warn/--good dark overrides).
+  var IR_RAMP_LIGHT = ['#4e7bc4','#c66b4b','#3d9476','#7a5aa8','#b89244',
+                       '#5391a3','#a8597d','#6f8f4c','#8a8f9c','#9c6f4a'];
+  var IR_RAMP_DARK  = ['#7ba3df','#e08a63','#5cb494','#a98fd0','#d8b25f',
+                       '#74b3c6','#cd83a4','#97b873','#aab0bd','#c4946a'];
+
+  function irChartColors_() {
+    var dark = document.body.dataset.mode === 'dark';
+    return (dark ? IR_RAMP_DARK : IR_RAMP_LIGHT).slice();
+  }
+  var IR_CHART_COLORS = irChartColors_();
+
+  function irVolumeColors_() {
+    return {
+      rung:     THEME.accent || '#4e7bc4',
+      answered: THEME.good   || '#3d9476',
+      missed:   THEME.warn   || '#c66b4b',
+    };
+  }
+  var IR_VOLUME_COLORS = irVolumeColors_();
+
+  // Translates a hex color to a Chart.js fill callback that paints a
+  // top-to-bottom gradient from the line color (alpha .25) down to
+  // transparent. Applied to every IR line chart so single-agent views
+  // have visual weight without dominating the comparison ones.
+  /**
+   * Resolves a CSS color string to canvas-canonical RGB form
+   * (`#rrggbb` for opaque colors, `rgba(r, g, b, a)` for
+   * transparent). Used by refreshChartTheme() to normalize the
+   * design-system tokens before they reach Chart.js / the
+   * datalabels plugin, which have inconsistent OKLCH support in
+   * their many sub-paths.
+   */
+  function colorToCanvasRgb_(color) {
+    try {
+      const cvs = document.createElement('canvas');
+      cvs.width = cvs.height = 1;
+      const ctx = cvs.getContext('2d');
+      ctx.fillStyle = 'rgb(1,2,3)';
+      const sentinel = ctx.fillStyle;
+      ctx.fillStyle = color;
+      if (ctx.fillStyle === sentinel) return color;
+      const out = ctx.fillStyle;
+      // R12-2: modern browsers serialize non-legacy colors (oklch()/oklab()/
+      // color()) back from fillStyle VERBATIM, so the readback alone does NOT
+      // canonicalize them and regex consumers downstream (datalabels' fill
+      // parsing, parseColorRgb_'s arrow gradient) silently fall to their
+      // fallbacks. Resolve those via a painted-pixel readback, which always
+      // yields a real RGB triple.
+      if (/^#|^rgba?\(/i.test(out)) return out;
+      ctx.fillRect(0, 0, 1, 1);
+      const px = ctx.getImageData(0, 0, 1, 1).data;
+      const a = px[3] / 255;
+      return a >= 1 ? 'rgb(' + px[0] + ',' + px[1] + ',' + px[2] + ')'
+        : 'rgba(' + px[0] + ',' + px[1] + ',' + px[2] + ',' + (Math.round(a * 1000) / 1000) + ')';
+    } catch (e) { return color; }
+  }
+
+  /**
+   * Returns the given CSS color with the supplied alpha applied,
+   * as an `rgba(...)` string. Paints the color onto a 1x1 canvas
+   * and reads back the resulting RGB pixel -- canvas resolves any
+   * supported color format (#rrggbb, rgb(), hsl(), oklch(),
+   * oklab(), named) into an RGB triple. Cleaner than DOM-resolve
+   * (some browsers return getComputedStyle().color as oklch() for
+   * oklch() inputs, which the prior regex didn't parse; that
+   * produced opaque fills where we wanted faded gradients).
+   *
+   * Falls back to returning the input color unchanged if canvas
+   * doesn't recognize it (rare; CSS-supported but canvas-
+   * unsupported formats).
+   */
+  function colorWithAlpha_(color, alpha) {
+    if (!color) return 'rgba(0,0,0,0)';
+    try {
+      const cvs = document.createElement('canvas');
+      cvs.width = cvs.height = 1;
+      const ctx = cvs.getContext('2d');
+      // Sentinel: set a known fillStyle first. If the next
+      // assignment is rejected by canvas (unsupported format),
+      // fillStyle keeps the sentinel value -- we detect that and
+      // bail out instead of painting the wrong color.
+      ctx.fillStyle = 'rgb(1, 2, 3)';
+      const sentinel = ctx.fillStyle;
+      ctx.fillStyle = color;
+      if (ctx.fillStyle === sentinel) return color;
+      ctx.fillRect(0, 0, 1, 1);
+      const data = ctx.getImageData(0, 0, 1, 1).data;
+      return 'rgba(' + data[0] + ', ' + data[1] + ', ' + data[2] + ', ' + alpha + ')';
+    } catch (e) {
+      return color;
+    }
+  }
+
+  function irGradientFill_(chart, color) {
+    const ctx = chart.ctx;
+    const area = chart.chartArea;
+    if (!area) return 'rgba(0,0,0,0)';
+    const gradient = ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    gradient.addColorStop(0, colorWithAlpha_(color, 0.25));
+    gradient.addColorStop(1, colorWithAlpha_(color, 0));
+    return gradient;
+  }
+
+  let irChartInstances = [];
+  let irPinnedAgent = null;   // peer-comparison legend: pinned/isolated agent (null = none)
+  let irLastData = null;
+  // Cached roster + active subset for the current modal session.
+  // `activeAgents` is null until the first init call with from/to
+  // succeeds; null means "we don't know yet, show all as one
+  // group". `rangeKey` is the (from|to) the activeAgents were
+  // computed for, so we can skip a re-fetch when neither input
+  // has changed.
+  let irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+  let irActiveFetchTimer = null;
+  // Stale-response token for the IR roster/active-subset fetches: the full
+  // init fetch and the debounced date-change refetch hit the same endpoint
+  // and both write irLastRoster (incl. rangeKey), so an out-of-order older
+  // response could repaint the picker with a stale grouping AND poison
+  // rangeKey so the correct refetch never fires. Each fetch takes a token;
+  // only the newest response is applied.
+  let irRosterReqSeq_ = 0;
+  // Persisted user preferences (mirrors the Performance Report's
+  // prefs model). Restored on modal init, saved on every state
+  // change so the next visit picks up where the user left off.
+  let irSortOrder = 'selection';   // selection | name | answered-desc | answered-asc | pct-desc
+  let irActiveChartTab = 'vol';    // vol | eff | dur
+  let irShowAllCharts = false;     // #4: stack all 3 trend charts vs one tab at a time
+  let irPendingAgentSelection_ = null;
+  let irPendingAutoRun_ = false;   // drill-through: auto-generate once the picker renders
+  let irCameFromInsights_ = false; // drill-through from Insights -> show "Back to Insights"
+  let irEditPopoverSeededCustom_ = false; // #1: edit popover opened over a custom-prior report
+  let irListChangeHandler_ = null;
+  // L3: per-email key. The IR prefs blob stores the AGENT SELECTION, which must
+  // NOT restore for a different viewer on a shared machine (the same reason
+  // insPrefsKey_ is per-email). IR previously used a bare global key, leaking
+  // one manager's dates / compare mode / agent names -- and pre-checking a
+  // same-dept colleague's exact selection -- into the next viewer's session.
+  // Pre-per-user blobs under the old bare `cdr.ir.prefs.v1` are now orphaned.
+  function irPrefsKey_() {
+    var who = '';
+    try { who = (typeof USER !== 'undefined' && USER && USER.email) ? USER.email : ''; } catch (e) {}
+    return 'cdr.ir.prefs.v1:' + who;
+  }
+
+  /**
+   * Drill-through entry: open the Individual Report for ONE agent over a
+   * given date range and auto-generate. Reuses the existing one-shot
+   * pending-selection hook (irPendingAgentSelection_) + a run flag honored
+   * at the end of renderIrAgentList. Called from the My Department table's
+   * row click. No comparison (plain Individual Report); the user can add a
+   * vs-self comparison from the form afterward.
+   */
+  function irDrillToAgent_(agentName, from, to) {
+    if (!agentName) return;
+    if (from && $('ir-from')) $('ir-from').value = from;
+    if (to   && $('ir-to'))   $('ir-to').value   = to;
+    if ($('ir-preset')) $('ir-preset').value = 'custom';
+    if ($('ir-compare-mode')) {
+      $('ir-compare-mode').value = 'none';
+      // Fire change so the prior-range inputs + hint sync to "no comparison".
+      $('ir-compare-mode').dispatchEvent(new Event('change'));
+    }
+    irPendingAgentSelection_ = [agentName];
+    irPendingAutoRun_ = true;
+    // Force a roster re-fetch for this range so renderIrAgentList re-runs
+    // (and applies the pending selection + auto-run) even if the cached
+    // roster matched.
+    irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+    // Drill-through from the Insights PAGE (modal->page conversion): the IR
+    // modal simply overlays it -- the rendered report stays put behind the
+    // overlay, so nothing is hidden or restored. Just flag the origin and
+    // reveal the "Back to Insights" button on the IR modal (#2).
+    const fromInsights = document.body.getAttribute('data-page') === 'insights';
+    if (fromInsights) {
+      irCameFromInsights_ = true;
+      const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = '';
+      // Hide the generic "« Back" (returns to the IR setup form) for the
+      // duration of the drill -- two Back buttons side by side read as
+      // redundant/confusing, and during a drill "back" means Insights.
+      // Restored by closeModal's irCameFromInsights_ branch.
+      const gb = $('ir-back-btn'); if (gb) gb.style.display = 'none';
+    }
+    const btn = $('individual-report-btn');
+    if (btn) btn.click();   // -> openModal -> ensureIrRoster -> renderIrAgentList
+  }
+
+  function initIndividualReport() {
+    const btn = $('individual-report-btn');
+    const modal = $('individual-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      // Drill-through (irPendingAutoRun_) shows a loader instead of the form,
+      // which auto-generates once the roster loads (#1 Part B). Direct opens
+      // show the setup form as before.
+      if (irPendingAutoRun_) showIrDrillLoading_();
+      else showIrForm();
+      ensureIrRoster();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.removeEventListener('keydown', onKeyDown);
+      // If we drilled in from the Insights page, ANY close (Back / X /
+      // Escape) reveals it again -- the page sat behind the IR overlay all
+      // along, so there's nothing to re-show and no scroll lock to keep;
+      // just restore the Back buttons (#2/#7). Focus deliberately stays put
+      // (the launcher button lives in the admin-only Reports dropdown).
+      if (irCameFromInsights_) {
+        irCameFromInsights_ = false;
+        const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = 'none';
+        const gb = $('ir-back-btn'); if (gb) gb.style.display = '';   // restore the generic Back
+        document.body.style.overflow = '';
+      } else {
+        document.body.style.overflow = '';
+        btn.focus();
+      }
+      // Revert the header-tab highlight to the underlying page's route.
+      // initRouter's generic revert hook only covers .modal-close /
+      // [data-close] clicks, which missed the "Back to Insights" button and
+      // Escape closes -- the Individual tab stayed lit over the Insights
+      // page. Async (like the router hook) and idempotent with it.
+      if (typeof setRoute_ === 'function') {
+        setTimeout(function () { setRoute_(basePageRoute_()); }, 0);
+      }
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    const backToIns = $('ir-back-to-insights-btn');
+    if (backToIns) backToIns.addEventListener('click', closeModal);
+
+    // Wire form controls.
+    const preset = $('ir-preset');
+    if (preset) preset.addEventListener('change', applyIrPreset);
+
+    const fromEl = $('ir-from');
+    const toEl   = $('ir-to');
+    if (fromEl) fromEl.addEventListener('change', function () {
+      resetIrPreset(); scheduleActiveAgentRefetch_(); irSavePrefs_();
+    });
+    if (toEl) toEl.addEventListener('change', function () {
+      resetIrPreset(); scheduleActiveAgentRefetch_(); irSavePrefs_();
+    });
+
+    const selAll  = $('ir-select-all');
+    const selNone = $('ir-select-none');
+    if (selAll)  selAll.addEventListener('click',  function (e) { e.preventDefault(); toggleIrAgents(true);  });
+    if (selNone) selNone.addEventListener('click', function (e) { e.preventDefault(); toggleIrAgents(false); });
+
+    const search = $('ir-agent-search');
+    if (search) search.addEventListener('input', function () {
+      irFilterAgentList_($('ir-agent-list'), search.value);
+    });
+
+    // Edit-selection popover wiring (results header).
+    const editBtn = $('ir-edit-selection-btn');
+    if (editBtn) editBtn.addEventListener('click', irOpenEditPopover_);
+    const editClose = $('ir-edit-popover-close');
+    if (editClose) editClose.addEventListener('click', irCloseEditPopover_);
+    const editApply = $('ir-edit-apply-btn');
+    if (editApply) editApply.addEventListener('click', irApplyEditPopover_);
+    const editSelAll  = $('ir-edit-select-all');
+    const editSelNone = $('ir-edit-select-none');
+    if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); irTogglePopoverAgents_(true);  });
+    if (editSelNone) editSelNone.addEventListener('click', function (e) { e.preventDefault(); irTogglePopoverAgents_(false); });
+    const editSearch = $('ir-edit-search');
+    if (editSearch) editSearch.addEventListener('input', function () {
+      irFilterAgentList_($('ir-edit-list'), editSearch.value);
+    });
+    // Close on click outside the popover.
+    document.addEventListener('click', function (e) {
+      const pop = $('ir-edit-popover');
+      if (!pop || pop.style.display === 'none') return;
+      if (pop.contains(e.target)) return;
+      if (e.target === editBtn) return;
+      irCloseEditPopover_();
+    });
+
+    const genBtn = $('ir-generate-btn');
+    if (genBtn) genBtn.addEventListener('click', runIrReport);
+
+    const backBtn = $('ir-back-btn');
+    if (backBtn) backBtn.addEventListener('click', showIrForm);
+
+    const labelToggle = $('ir-show-datalabels');
+    if (labelToggle) labelToggle.addEventListener('change', function () {
+      irSavePrefs_();
+      if (irLastData) irRenderCharts(irLastData);
+    });
+
+    // Export dropdown: consolidates Copy image / Email image /
+    // Print under one button. Click toggles open; click on an
+    // item runs the action and closes; outside click + Escape
+    // dismiss.
+    const exportBtn  = $('ir-export-btn');
+    const exportMenu = $('ir-export-menu');
+    if (exportBtn && exportMenu) {
+      exportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        irSetExportMenuOpen_(exportMenu.style.display === 'none');
+      });
+      exportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        const action = item.getAttribute('data-action');
+        irSetExportMenuOpen_(false);
+        if (action === 'copy')  irCopyImage();
+        else if (action === 'email') irEmailImage();
+        else if (action === 'print') irPrintReport_();
+      });
+      document.addEventListener('click', function (e) {
+        if (exportMenu.style.display === 'none') return;
+        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
+        irSetExportMenuOpen_(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && exportMenu.style.display !== 'none') {
+          irSetExportMenuOpen_(false);
+        }
+      });
+    }
+
+    // Chart panel tabs. Only one of the three charts is visible at
+    // a time so each gets the full container width. Default: Volume.
+    const tabContainer = $('ir-chart-tabs');
+    if (tabContainer) tabContainer.addEventListener('click', function (e) {
+      // #4: the "All at once" toggle shares this strip -- flip the mode and
+      // re-apply the layout (irActivateChartTab_ handles show/hide + resize).
+      if (e.target.closest('#ir-allcharts-toggle')) {
+        irShowAllCharts = !irShowAllCharts;
+        irActivateChartTab_();
+        irSavePrefs_();
+        return;
+      }
+      const tab = e.target.closest('.ir-tab');
+      if (!tab) return;
+      // Clicking a specific chart-type tab exits all-at-once mode and shows
+      // just that tab (previously tabs were inert in all-mode, leaving the
+      // only way out a second click on the toggle).
+      if (irShowAllCharts) irShowAllCharts = false;
+      irActiveChartTab = tab.getAttribute('data-tab');
+      irActivateChartTab_();
+      irSavePrefs_();
+    });
+    // R12-9: APG tabs keyboard model -- Left/Right/Home/End move focus AND
+    // activate (selection follows focus; panels are cheap show/hides).
+    if (tabContainer) tabContainer.addEventListener('keydown', function (e) {
+      const tab = e.target.closest && e.target.closest('.ir-tab');
+      if (!tab) return;
+      const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+      if (keys.indexOf(e.key) === -1) return;
+      e.preventDefault();
+      const tabs = Array.prototype.slice.call(tabContainer.querySelectorAll('.ir-tab'));
+      let i = tabs.indexOf(tab);
+      if (e.key === 'ArrowLeft') i = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+      else if (e.key === 'Home') i = 0;
+      else i = tabs.length - 1;
+      const next = tabs[i];
+      if (irShowAllCharts) irShowAllCharts = false;
+      irActiveChartTab = next.getAttribute('data-tab');
+      irActivateChartTab_();
+      irSavePrefs_();
+      next.focus();
+    });
+
+    // Card-sort dropdown: re-renders the summary cards in place.
+    const sortSel = $('ir-card-sort');
+    if (sortSel) sortSel.addEventListener('change', function () {
+      irSortOrder = sortSel.value;
+      irSavePrefs_();
+      if (irLastData) irRenderSummary(irLastData.summaryData, irLastData.teamAvg);
+    });
+
+    // Defaults: this-month-to-date.
+    setIrDefaultDates();
+    // Restore last-used form state if any. Runs after default
+    // dates so a saved preset/dates pair overrides the defaults.
+    irRestorePrefs_();
+    // Wire the Compare with dropdown + auto-update the hint.
+    irInitCompareMode_();
+  }
+
+  /**
+   * Persists the user's Individual Report state to localStorage so
+   * the next modal open picks up where they left off. Best-effort.
+   */
+  function irSavePrefs_() {
+    try {
+      const prefs = {
+        preset:      $('ir-preset')       ? $('ir-preset').value       : 'custom',
+        from:        $('ir-from')         ? $('ir-from').value         : '',
+        to:          $('ir-to')           ? $('ir-to').value           : '',
+        compareMode: $('ir-compare-mode') ? $('ir-compare-mode').value : 'none',
+        priorFrom:   $('ir-prior-from')   ? $('ir-prior-from').value   : '',
+        priorTo:     $('ir-prior-to')     ? $('ir-prior-to').value     : '',
+        agents:      irGetCheckedAgents_($('ir-agent-list')),
+        showLabels:  $('ir-show-datalabels') ? $('ir-show-datalabels').checked : false,
+        sortOrder:   irSortOrder,
+        chartTab:    irActiveChartTab,
+        showAllCharts: irShowAllCharts,
+      };
+      localStorage.setItem(irPrefsKey_(), JSON.stringify(prefs));
+    } catch (e) { /* ignore */ }
+  }
+
+  function irRestorePrefs_() {
+    let prefs;
+    try {
+      const raw = localStorage.getItem(irPrefsKey_());
+      if (!raw) return;
+      prefs = JSON.parse(raw);
+    } catch (e) { return; }
+    if (!prefs || typeof prefs !== 'object') return;
+
+    if (prefs.preset && $('ir-preset')) $('ir-preset').value = prefs.preset;
+    if (prefs.from   && $('ir-from'))   $('ir-from').value   = prefs.from;
+    if (prefs.to     && $('ir-to'))     $('ir-to').value     = prefs.to;
+    if (prefs.compareMode && $('ir-compare-mode')) $('ir-compare-mode').value = prefs.compareMode;
+    if (prefs.priorFrom   && $('ir-prior-from'))   $('ir-prior-from').value   = prefs.priorFrom;
+    if (prefs.priorTo     && $('ir-prior-to'))     $('ir-prior-to').value     = prefs.priorTo;
+    if (typeof prefs.showLabels === 'boolean' && $('ir-show-datalabels')) {
+      $('ir-show-datalabels').checked = prefs.showLabels;
+    }
+    if (prefs.sortOrder) irSortOrder = prefs.sortOrder;
+    if (prefs.chartTab)  irActiveChartTab = prefs.chartTab;
+    if (typeof prefs.showAllCharts === 'boolean') irShowAllCharts = prefs.showAllCharts;
+    if ($('ir-card-sort')) $('ir-card-sort').value = irSortOrder;
+
+    // Stash agents so we can pre-check the boxes once the roster
+    // list finishes rendering.
+    if (Array.isArray(prefs.agents) && prefs.agents.length) {
+      irPendingAgentSelection_ = prefs.agents;
+    }
+  }
+
+  function irSetExportMenuOpen_(open) {
+    const btn  = $('ir-export-btn');
+    const menu = $('ir-export-menu');
+    if (!btn || !menu) return;
+    menu.style.display = open ? '' : 'none';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('open', open);
+  }
+
+  function irPrintReport_() {
+    var panels = document.querySelectorAll('#ir-charts-container [data-panel]');
+    var saved = [];
+    panels.forEach(function (p) { saved.push(p.style.display); p.style.display = ''; });
+    irChartInstances.forEach(function (c) { c.resize(); });
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      panels.forEach(function (p, i) { p.style.display = saved[i]; });
+      document.body.classList.add('ir-printing');
+      window.print();
+      document.body.classList.remove('ir-printing');
+    }); });
+  }
+
+  function setIrDefaultDates() {
+    // Match the main dashboard's default behavior: current month to
+    // today. Lets a manager glance at the report without futzing
+    // with dates first.
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    if ($('ir-from')) $('ir-from').value = isoOf(first);
+    if ($('ir-to'))   $('ir-to').value   = isoOf(today);
+  }
+
+  function showIrForm() {
+    hideIrDrillLoading_();
+    $('individual-form').style.display = '';
+    $('individual-results').style.display = 'none';
+    irSetFormError('');
+  }
+  function showIrResults() {
+    hideIrDrillLoading_();
+    $('individual-form').style.display = 'none';
+    $('individual-results').style.display = '';
+  }
+  // #1 Part B: drill-through loader shown IN PLACE of the setup form while a
+  // drill (Insights / My Department "IR" buttons) auto-generates, so the form
+  // doesn't flash. showIrForm/showIrResults clear it on ANY transition, so a
+  // drill can never get stuck on the loader (failure paths fall back to the form).
+  function showIrDrillLoading_() {
+    const l = $('ir-drill-loader'); if (l) l.style.display = '';
+    $('individual-form').style.display = 'none';
+    $('individual-results').style.display = 'none';
+  }
+  function hideIrDrillLoading_() {
+    const l = $('ir-drill-loader'); if (l) l.style.display = 'none';
+  }
+
+  function irSetFormError(msg) {
+    const el = $('ir-form-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function irSetResultsStatus(kind, msg) {
+    const el = $('ir-results-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // Fetches the dept roster (agent picker source) the first time the
+  // modal opens for a given dept; subsequent opens reuse the cached
+  // list as long as the dashboard's dept hasn't changed. Also asks
+  // for the active-in-range subset using the current modal dates so
+  // the picker can show an Active / Inactive split.
+  function ensureIrRoster() {
+    const dept = getRequestedDept();
+    if (!dept) {
+      $('ir-agent-loader').textContent = 'No department selected.';
+      $('ir-agent-list').style.display = 'none';
+      return;
+    }
+    const from = $('ir-from').value;
+    const to   = $('ir-to').value;
+    const rangeKey = from + '|' + to;
+
+    if (irLastRoster.dept === dept && irLastRoster.agents.length
+        && irLastRoster.rangeKey === rangeKey) {
+      renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
+      return;
+    }
+    $('ir-agent-loader').style.display = '';
+    $('ir-agent-list').style.display = 'none';
+    $('ir-generate-btn').disabled = true;
+
+    const __rk = ++irRosterReqSeq_;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__rk !== irRosterReqSeq_) return;   // superseded by a newer fetch
+        irLastRoster = {
+          dept: dept,
+          agents: (data && data.agents) || [],
+          activeAgents:   (data && data.activeAgents)   || null,
+          activeFloaters: (data && data.activeFloaters) || null,
+          // G-1: the sub-queue picker groups render from THIS cached field --
+          // dropping it here (as every roster-cache writer originally did)
+          // left irBuildAgentListHtml_'s groups permanently empty.
+          subQueueGroups: (data && data.subQueueGroups) || null,
+          rangeKey: rangeKey,
+        };
+        renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
+      })
+      .withFailureHandler(function (err) {
+        if (__rk !== irRosterReqSeq_) return;   // a newer fetch owns the picker
+        // #1 Part B: a drill hides the form behind the loader; if the roster
+        // fetch fails, fall back to the form so the error (in the loader text)
+        // is visible and cancel the pending auto-run.
+        if (irPendingAutoRun_) { irPendingAutoRun_ = false; showIrForm(); }
+        // G-7: recovery used to require closing/reopening the modal (Generate
+        // stays disabled, the list hidden). Offer an inline Retry instead.
+        const irLoader = $('ir-agent-loader');
+        irLoader.style.display = '';
+        irLoader.innerHTML = 'Error loading roster: '
+          + escapeHtml(err && err.message ? err.message : String(err))
+          + ' <button type="button" class="link-btn" id="ir-roster-retry">Retry</button>';
+        const irRetry = $('ir-roster-retry');
+        if (irRetry) irRetry.addEventListener('click', function () { ensureIrRoster(); });
+      })
+      .getIndividualReportInit({ department: dept, from: from, to: to });
+  }
+
+  /**
+   * Re-fetches the active-in-range subset 350ms after the user
+   * stops changing the date inputs. Doesn't block the form -- the
+   * full roster is already rendered and selectable; the response
+   * just splits it into Active / Inactive groups visually.
+   */
+  function scheduleActiveAgentRefetch_() {
+    if (irActiveFetchTimer) clearTimeout(irActiveFetchTimer);
+    irActiveFetchTimer = setTimeout(function () {
+      const dept = getRequestedDept();
+      if (!dept) return;
+      const from = $('ir-from').value;
+      const to   = $('ir-to').value;
+      if (!from || !to || from > to) return;
+      const rangeKey = from + '|' + to;
+      if (irLastRoster.dept === dept && irLastRoster.rangeKey === rangeKey) return;
+
+      const __rk = ++irRosterReqSeq_;
+      google.script.run
+        .withSuccessHandler(function (data) {
+          if (__rk !== irRosterReqSeq_) return;   // superseded by a newer fetch
+          // G-5: the header dept can change while this debounced refetch is
+          // in flight; the seq token doesn't catch that (the newer dept may
+          // not have scheduled any fetch). Mutating the cache would paint
+          // the OLD dept's rendered list with the NEW dept's active/floater
+          // split -- mislabeled groups until the next full roster load.
+          if (irLastRoster.dept !== dept) return;
+          irLastRoster.activeAgents   = (data && data.activeAgents)   || null;
+          irLastRoster.activeFloaters = (data && data.activeFloaters) || null;
+          irLastRoster.subQueueGroups = (data && data.subQueueGroups) || null;   // G-1
+          irLastRoster.rangeKey = rangeKey;
+          // Preserve current selection across the regroup.
+          const checked = irGetCheckedAgents_($('ir-agent-list'));
+          renderIrAgentList(irLastRoster.agents, irLastRoster.activeAgents, irLastRoster.activeFloaters);
+          irApplyCheckedAgents_($('ir-agent-list'), checked);
+          updateIrGenerateEnabled();
+        })
+        .withFailureHandler(function () { /* keep existing grouping */ })
+        .getIndividualReportInit({ department: dept, from: from, to: to });
+    }, 350);
+  }
+
+  /**
+   * Renders the agent picker into `list` with Active / Inactive
+   * grouping when an activeAgents subset is provided; otherwise a
+   * single flat list. Used by both the main form picker and the
+   * results-header edit popover.
+   */
+  function renderIrAgentList(agents, activeAgents, activeFloaters) {
+    const list = $('ir-agent-list');
+    $('ir-agent-loader').style.display = 'none';
+    if (!agents.length) {
+      list.innerHTML = '<div class="ir-agent-empty">No agents on this department\'s roster.</div>';
+      list.style.display = '';
+      $('ir-generate-btn').disabled = true;
+      return;
+    }
+    list.innerHTML = irBuildAgentListHtml_(agents, activeAgents, activeFloaters,
+      (irLastRoster && irLastRoster.subQueueGroups) || []);
+    list.style.display = '';
+
+    if (irListChangeHandler_) list.removeEventListener('change', irListChangeHandler_);
+    irListChangeHandler_ = function () {
+      updateIrGenerateEnabled();
+      irSavePrefs_();
+    };
+    list.addEventListener('change', irListChangeHandler_);
+    // Apply any pending selection from restored prefs OR a drill-through
+    // once. (irDrillToAgent_ sets this to a single-agent array.)
+    if (irPendingAgentSelection_) {
+      irApplyCheckedAgents_(list, irPendingAgentSelection_);
+      irPendingAgentSelection_ = null;
+    }
+    updateIrGenerateEnabled();
+    // Drill-through: auto-generate once the picker (with the pre-selected
+    // agent) has rendered. Cleared so it fires exactly once.
+    if (irPendingAutoRun_) {
+      irPendingAutoRun_ = false;
+      runIrReport();
+    }
+  }
+
+  /**
+   * Sub-queue Phase 2: which sub-queue DEPARTMENT the current checkbox
+   * selection came from, or null when the selection is the viewed dept's own.
+   *
+   * The picker can offer agents from a parent AND its children, but a single
+   * report run is ONE department -- the team average is per-dept (INV-27).
+   * So a selection that lands entirely inside one sub-queue group runs against
+   * that dept; a selection that SPANS depts is rejected by the caller with a
+   * message, rather than silently averaging two teams together.
+   */
+  function subqPickerScope_(listEl) {
+    if (!listEl) return { dept: null, mixed: false };
+    var seen = {};
+    var any = false;
+    listEl.querySelectorAll('.ir-agent-cb:checked').forEach(function (cb) {
+      any = true;
+      var det = cb.closest('details.ir-agent-details-subq');
+      var d = det ? det.getAttribute('data-subq-dept') : '';
+      seen[d || '__own__'] = true;
+    });
+    if (!any) return { dept: null, mixed: false };
+    var keys = Object.keys(seen);
+    if (keys.length > 1) return { dept: null, mixed: true };
+    return { dept: keys[0] === '__own__' ? null : keys[0], mixed: false };
+  }
+
+  function irBuildAgentListHtml_(agents, activeAgents, activeFloaters, subQueueGroups) {
+    // No activity info or no inactive members -> flat list.
+    if (!activeAgents) return irAgentItemsHtml_(agents);
+    const activeSet = {};
+    for (let i = 0; i < activeAgents.length; i++) activeSet[activeAgents[i]] = true;
+    const active = [];
+    const inactive = [];
+    for (let i = 0; i < agents.length; i++) {
+      (activeSet[agents[i]] ? active : inactive).push(agents[i]);
+    }
+    const floaters = Array.isArray(activeFloaters) ? activeFloaters : [];
+    const subGroups = Array.isArray(subQueueGroups) ? subQueueGroups : [];
+    if (!inactive.length && !floaters.length && !subGroups.length) {
+      return irAgentItemsHtml_(active);
+    }
+
+    let html = '';
+    if (active.length) {
+      html += '<div class="ir-agent-group-label">'
+            + 'Active in range <span class="ir-agent-group-count">(' + active.length + ')</span>'
+            + '</div>'
+            + '<div class="ir-agent-group">' + irAgentItemsHtml_(active) + '</div>';
+    }
+    // Inactive group wrapped in <details>, collapsed by default --
+    // managers rarely need to pick zero-activity agents and the
+    // collapsed state cleans up the picker. Search auto-expands it
+    // (see irFilterAgentList_) when a query matches an inactive
+    // name.
+    if (inactive.length) {
+      html += '<details class="ir-agent-details">'
+            +   '<summary class="ir-agent-group-label ir-agent-group-label-muted">'
+            +     'No activity in range <span class="ir-agent-group-count">(' + inactive.length + ')</span>'
+            +   '</summary>'
+            +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(inactive) + '</div>'
+            + '</details>';
+    }
+    // Floaters group (INV-53 expansion). Queue-only agents matched
+    // into this dept via shared-queue extension overlap, not on the
+    // dept's roster. Collapsed by default like the inactive group.
+    // Items render with the QUEUE chip + sourceHomes suffix from
+    // the picker so managers see immediately which floater belongs
+    // to which other dept. Picking a floater sends their name in
+    // agents[] like any other; the server flags them and excludes
+    // their numbers from team-avg.
+    if (floaters.length) {
+      html += '<details class="ir-agent-details">'
+            +   '<summary class="ir-agent-group-label ir-agent-group-label-muted">'
+            +     'Floaters (queue-only) <span class="ir-agent-group-count">(' + floaters.length + ')</span>'
+            +   '</summary>'
+            +   '<div class="ir-agent-group ir-agent-group-muted">' + irAgentItemsHtml_(floaters) + '</div>'
+            + '</details>';
+    }
+    // Sub-queue groups (Phase 2). A sub-queue is a full DEPARTMENT, not a
+    // floater -- so its agents get their own labelled group, one per child,
+    // each carrying a `data-subq-dept` marker. Picking from one of these
+    // SWITCHES the report to that department rather than mixing depts into a
+    // single run: the team average is per-dept (INV-27), and one average across
+    // two teams with different call profiles is the wrong number. The click
+    // handler that acts on the marker lives with each report's picker.
+    subGroups.forEach(function (g) {
+      var names = (g && g.agents) || [];
+      var fl = (g && g.floaters) || [];
+      if (!names.length && !fl.length) return;
+      html += '<details class="ir-agent-details ir-agent-details-subq" data-subq-dept="'
+            +   escapeHtml(g.dept) + '">'
+            +   '<summary class="ir-agent-group-label">'
+            +     escapeHtml(g.dept) + ' <span class="subq-tag">sub-queue</span> '
+            +     '<span class="ir-agent-group-count">(' + (names.length + fl.length) + ')</span>'
+            +   '</summary>'
+            +   '<div class="ds-note subq-picker-note">Selecting from here runs the '
+            +     'report on <strong>' + escapeHtml(g.dept) + '</strong> — its team '
+            +     'average is its own, not ' + escapeHtml(g.dept) + '\u2019s parent\u2019s.</div>'
+            +   '<div class="ir-agent-group">' + irAgentItemsHtml_(names.concat(fl)) + '</div>'
+            + '</details>';
+    });
+    return html;
+  }
+
+  // Accepts either a plain string[] of agent names, OR an array of
+  // { name, sourceHomes } objects (the floaters shape). Object items
+  // render with a small QUEUE chip + sourceHomes suffix so the picker
+  // mirrors the My Department Source-column chip rendering.
+  function irAgentItemsHtml_(agents) {
+    return agents.map(function (a) {
+      if (a && typeof a === 'object' && a.name) {
+        const safe = escapeHtml(a.name);
+        const homes = Array.isArray(a.sourceHomes) ? a.sourceHomes : [];
+        const suffix = homes.length
+          ? ' &middot; ' + homes.map(escapeHtml).join(', ')
+          : '';
+        return '<label class="ir-agent-item">'
+             +   '<input type="checkbox" class="ir-agent-cb" value="' + safe + '"> '
+             +   safe
+             +   ' <span class="src-chip src-chip-queue ir-agent-floater-chip">'
+             +     '<span class="src-dot"></span>QUEUE' + suffix
+             +   '</span>'
+             + '</label>';
+      }
+      const safe = escapeHtml(a);
+      return '<label class="ir-agent-item">'
+           +   '<input type="checkbox" class="ir-agent-cb" value="' + safe + '"> '
+           +   safe
+           + '</label>';
+    }).join('');
+  }
+
+  /**
+   * Client-side substring filter across whatever list element is
+   * passed (main form picker or edit-popover list). Hides items +
+   * group-labels whose visible text doesn't match the query. The
+   * collapsed "No activity in range" <details> auto-expands while
+   * the query is non-empty so users can see matches inside it
+   * without manually clicking the disclosure.
+   */
+  function irFilterAgentList_(listEl, query) {
+    if (!listEl) return;
+    const q = String(query || '').trim().toLowerCase();
+    const items = listEl.querySelectorAll('.ir-agent-item');
+    items.forEach(function (it) {
+      const name = (it.textContent || '').trim().toLowerCase();
+      it.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
+    });
+    // For each agent-group container: hide if no children are
+    // visible. Two structural shapes:
+    //   1. Group is inside a <details> (the "No activity" wrapper)
+    //      -- toggle the details visibility + auto-open on search.
+    //   2. Standalone group (the "Active" block) -- also hide its
+    //      previous-sibling label.
+    listEl.querySelectorAll('.ir-agent-group').forEach(function (g) {
+      const anyVisible = Array.prototype.some.call(
+        g.querySelectorAll('.ir-agent-item'),
+        function (it) { return it.style.display !== 'none'; }
+      );
+      const det = g.closest('details');
+      if (det) {
+        det.style.display = anyVisible ? '' : 'none';
+        if (q && anyVisible) det.open = true;
+        return;
+      }
+      g.style.display = anyVisible ? '' : 'none';
+      const prevLabel = g.previousElementSibling;
+      if (prevLabel && prevLabel.classList.contains('ir-agent-group-label')) {
+        prevLabel.style.display = anyVisible ? '' : 'none';
+      }
+    });
+  }
+
+  function updateIrGenerateEnabled() {
+    const boxes = $('ir-agent-list').querySelectorAll('.ir-agent-cb:checked');
+    $('ir-generate-btn').disabled = boxes.length === 0;
+  }
+
+  function toggleIrAgents(checked) {
+    selectAllActiveAgents_($('ir-agent-list'), checked);
+    updateIrGenerateEnabled();
+    // Persist explicitly -- programmatic cb.checked flips don't
+    // fire 'change' events, so the change-listener-driven
+    // irSavePrefs_ doesn't catch this.
+    irSavePrefs_();
+  }
+
+  /**
+   * Shared "Select all active / Select none" toggle. When checked
+   * is true, only the agents in the non-muted (Active in range)
+   * group are ticked -- the inactive group (hidden under the
+   * collapsible details) is left alone, so users have to opt in
+   * explicitly to those. When checked is false, every checkbox
+   * (active + inactive) is cleared.
+   *
+   * Falls back to "select all" when the picker has no
+   * active/inactive grouping (e.g. the active-in-range fetch
+   * hasn't returned yet, or every roster member fell into one
+   * bucket).
+   */
+  function selectAllActiveAgents_(listEl, checked) {
+    if (!listEl) return;
+    if (checked) {
+      const activeGroup = listEl.querySelector('.ir-agent-group:not(.ir-agent-group-muted)');
+      const target = activeGroup
+        ? activeGroup.querySelectorAll('.ir-agent-cb')
+        : listEl.querySelectorAll('.ir-agent-cb');
+      target.forEach(function (cb) { cb.checked = true; });
+    } else {
+      listEl.querySelectorAll('.ir-agent-cb').forEach(function (cb) { cb.checked = false; });
+    }
+  }
+
+  function irGetCheckedAgents_(listEl) {
+    if (!listEl) return [];
+    return Array.prototype.slice.call(listEl.querySelectorAll('.ir-agent-cb:checked'))
+                .map(function (cb) { return cb.value; });
+  }
+
+  function irApplyCheckedAgents_(listEl, agents) {
+    if (!listEl) return;
+    const set = {};
+    for (let i = 0; i < agents.length; i++) set[agents[i]] = true;
+    listEl.querySelectorAll('.ir-agent-cb').forEach(function (cb) {
+      cb.checked = !!set[cb.value];
+    });
+  }
+
+  function applyIrPreset() {
+    const v = $('ir-preset').value;
+    irSavePrefs_();
+    if (v === 'custom') return;
+    const today = new Date();
+    let s, e;
+    e = new Date(today);
+    if (v === 'thisMonth')       { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth')  { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                                    e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    // "Last 30 days" = a 30-day window ENDING YESTERDAY, matching the main
+    // page's preset chip (daysAgo_(30)..daysAgo_(1)) and the Overview
+    // launcher / CacheWarm window -- today's ingest usually hasn't landed,
+    // and the old today-30..today form was 31 days ending today.
+    else if (v === 'last30')     { e = new Date(today); e.setDate(today.getDate() - 1);
+                                    s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'last3Months'){ s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
+    else if (v === 'lastYear')   { s = new Date(today.getFullYear() - 1, 0, 1);
+                                    e = new Date(today.getFullYear() - 1, 11, 31); }
+    if (!s) return;
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    $('ir-from').value = isoOf(s);
+    $('ir-to').value   = isoOf(e);
+    irSavePrefs_();
+  }
+  function resetIrPreset() {
+    const p = $('ir-preset');
+    if (p) p.value = 'custom';
+  }
+
+  function runIrReport() {
+    irSetFormError('');
+    const dept = getRequestedDept();
+    const from = $('ir-from').value;
+    const to   = $('ir-to').value;
+    if (!from || !to) { irSetFormError('Pick a start and end date.'); return; }
+    if (from > to)    { irSetFormError('Start date must be on or before end date.'); return; }
+    const agents = irGetCheckedAgents_($('ir-agent-list'));
+    if (!agents.length) { irSetFormError('Select at least one agent.'); return; }
+    // Sub-queue Phase 2: one report run is ONE department, because the team
+    // average is per-dept (INV-27). A pick confined to a sub-queue group runs
+    // against THAT dept; a pick spanning depts is refused with a reason rather
+    // than silently averaging two teams together.
+    const __sq = subqPickerScope_($('ir-agent-list'));
+    if (__sq.mixed) {
+      irSetFormError('Pick agents from one department at a time — the team '
+        + 'average is per-department, so a mixed selection would compare '
+        + 'agents against the wrong team.');
+      return;
+    }
+    const reportDept = __sq.dept || dept;
+
+    const prior = irResolvePriorRange_(from, to);
+    if (prior && prior.error) { irSetFormError(prior.error); return; }
+
+    const btn = $('ir-generate-btn');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.innerHTML = DS_EQ_HTML_ + 'Loading…';
+
+    const req = { department: reportDept, from: from, to: to, agents: agents };
+    // R8-D3: prevPeriod sends the MODE and lets the server resolve the
+    // window via the canonical computePriorWindow_ (INV-28) -- the client
+    // resolver stays for the form HINT only (its math drifted once, R8-5).
+    // YoY/custom keep explicit dates (YoY construction is DST-immune).
+    const __irCmpMode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    if (__irCmpMode === 'prevPeriod') { req.priorMode = 'prevPeriod'; }
+    else if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+
+    const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
+    const __sig = reportSig_(req);   // D1b keep-last-good key
+    reportSwrPaint_('ir', __sig, irRenderReport, 'ir-results-status');   // SWR: instant repeat-paint
+    google.script.run
+      .withSuccessHandler(function (data) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq_.ir) return;   // superseded by a newer request
+        reportLastGoodWrite_('ir', __sig, data);
+        irRenderReport(data);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        if (__rtok !== reportReqSeq_.ir) return;
+        // D1b: repaint last-good for this exact request (if any) instead of blanking.
+        if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
+        // #1 Part B: on a drill the form is hidden behind the loader; surface it
+        // so the error is visible (showIrForm clears the loader + any prior error).
+        showIrForm();
+        irSetFormError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getIndividualReport(req);
+  }
+
+  /**
+   * Resolves the active "Compare with" selection into a concrete
+   * { from, to } prior range, or null when no comparison is wanted.
+   * Returns { error } on validation problems so the caller can
+   * surface a form-level message.
+   *
+   * Modes:
+   *   none        -> null
+   *   yoy         -> shift the current window back 1 calendar year
+   *   prevPeriod  -> immediately-preceding window of the same length
+   *   custom      -> pull from the ir-prior-from / ir-prior-to inputs
+   */
+  /**
+   * THE shared client-side comparison-window resolver. One math
+   * implementation for every report's "compare against" control (IR
+   * and Insights today) so the mode semantics can't drift between
+   * reports -- mirrors the server's shared computePriorWindow_
+   * (Data.gs) for the prevPeriod case (INV-28).
+   *
+   *   none        -> null
+   *   prevPeriod  -> immediately-preceding window of the same length
+   *   yoy         -> the window shifted back 1 calendar year
+   *   custom      -> the supplied customFrom/customTo ({error} when
+   *                  missing or out of order; controlLabel names the
+   *                  form control in the message)
+   */
+  function resolveComparisonWindow_(mode, from, to, customFrom, customTo, controlLabel) {
+    if (!mode || mode === 'none') return null;
+    if (mode === 'custom') {
+      if (!customFrom || !customTo) {
+        return { error: 'Pick prior start and end dates (or switch '
+                      + (controlLabel || 'the compare control') + ' to a preset).' };
+      }
+      if (customFrom > customTo) return { error: 'Prior start must be on or before prior end.' };
+      const custom = { from: customFrom, to: customTo };
+      // F3: warn (don't block) when the custom prior window overlaps the
+      // current range. Server-side attribution is "current wins" -- rows in
+      // the overlap count toward the current period only, so the prior
+      // totals (and the deltas computed from them) understate. The report
+      // still renders; this just makes the caveat visible.
+      if (from && to && customFrom <= to && customTo >= from) {
+        custom.warn = 'Note: this prior window overlaps the current range ('
+          + from + ' – ' + to + '). Overlapping days count toward the current '
+          + 'period only, so the prior period may read low.';
+      }
+      return custom;
+    }
+    // Parse using noon-local-time to avoid DST edges.
+    const parts1 = from.split('-'), parts2 = to.split('-');
+    const start = new Date(Number(parts1[0]), Number(parts1[1]) - 1, Number(parts1[2]), 12);
+    const end   = new Date(Number(parts2[0]), Number(parts2[1]) - 1, Number(parts2[2]), 12);
+    const isoOf = function (d) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    if (mode === 'yoy') {
+      const ps = new Date(start.getFullYear() - 1, start.getMonth(), start.getDate(), 12);
+      const pe = new Date(end.getFullYear()   - 1, end.getMonth(),   end.getDate(),   12);
+      return { from: isoOf(ps), to: isoOf(pe) };
+    }
+    if (mode === 'prevPeriod') {
+      const ms = 86400000;
+      // R8-5: Math.ROUND, not floor. The noon-local Dates protect the DATE
+      // formatting from DST, but the DIFFERENCE across spring-forward is
+      // N*24h - 1h, which floor truncates to N-1 -- the resolved prior
+      // window came out one day short for any DST-spanning range,
+      // violating INV-28 (the server's computePriorWindow_ uses
+      // Date.UTC + Math.round and was immune; this client copy resolves
+      // the IR prevPeriod + the form hints, so it must match).
+      const durationDays = Math.round((end - start) / ms);
+      const pe = new Date(start.getTime() - ms);
+      const ps = new Date(pe.getTime() - durationDays * ms);
+      return { from: isoOf(ps), to: isoOf(pe) };
+    }
+    return null;
+  }
+
+  function irResolvePriorRange_(from, to) {
+    const mode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    return resolveComparisonWindow_(mode, from, to,
+      $('ir-prior-from') ? $('ir-prior-from').value : '',
+      $('ir-prior-to')   ? $('ir-prior-to').value   : '',
+      'Compare with');
+  }
+
+  // Wire the Compare with dropdown: show/hide custom date inputs;
+  // update the hint with a preview of the resolved prior range.
+  function irInitCompareMode_() {
+    const sel = $('ir-compare-mode');
+    if (!sel) return;
+    const refresh = function () {
+      const mode = sel.value;
+      const showCustom = (mode === 'custom');
+      const fromWrap = $('ir-prior-from-wrap');
+      const toWrap   = $('ir-prior-to-wrap');
+      if (fromWrap) fromWrap.style.display = showCustom ? '' : 'none';
+      if (toWrap)   toWrap.style.display   = showCustom ? '' : 'none';
+      const hint = $('ir-prior-hint');
+      if (!hint) return;
+      if (!mode || mode === 'none') { hint.textContent = ''; return; }
+      const from = $('ir-from').value, to = $('ir-to').value;
+      if (!from || !to) { hint.textContent = ''; return; }
+      const prior = irResolvePriorRange_(from, to);
+      if (!prior) { hint.textContent = ''; return; }
+      if (prior.error) { hint.textContent = prior.error; return; }
+      hint.textContent = 'Comparing against ' + prior.from + ' to ' + prior.to + '.'
+        + (prior.warn ? ' ' + prior.warn : '');
+    };
+    sel.addEventListener('change', function () { refresh(); irSavePrefs_(); });
+    ['ir-from', 'ir-to', 'ir-prior-from', 'ir-prior-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', refresh);
+    });
+    refresh();
+  }
+
+  function irRenderReport(data) {
+    irLastData = data;
+    coverageNoteUpsert_('individual-results', 'ir', ($('ir-from') && $('ir-from').value) || null, 'dqe');   // R12-26
+    $('ir-results-title').textContent = data.mode === 'comparison'
+      ? 'Peer Comparison Report' : 'Individual Performance Report';
+    const headerDate = '(' + (data.dateLabel || '')
+                     + (data.priorDateLabel
+                          ? ' &middot; vs ' + data.priorDateLabel
+                          : '')
+                     + ')';
+    // priorDateLabel comes from the server unescaped; the date
+    // string format is fixed (Utilities.formatDate with our own
+    // template), but use innerHTML here only because we already
+    // included the &middot; entity above. Date contents themselves
+    // are dates, not user input. F-32 follow-up: when a custom prior
+    // window overlaps the current range (meta.priorOverlap, individual
+    // v11), append the same inline "Windows overlap" caveat Insights
+    // renders -- overlap days count toward the current window only.
+    $('ir-results-date').innerHTML = headerDate
+      + (data.meta && data.meta.priorOverlap ? ' ' + insOverlapFlagHtml_(data.meta) : '');
+    irRenderEditingLine_(data.meta && data.meta.agents);
+    showIrResults();
+    irSetResultsStatus('');
+    irCloseEditPopover_();
+    // Restore the user's last-viewed chart tab (defaults to
+    // Volume on first visit). Persisted in prefs.
+    irActivateChartTab_();
+    reportHeadline_('ir-headline', 'individual-results', irHeadline_(data));
+    irRenderSummary(data.summaryData, data.teamAvg);
+    irRenderCharts(data);
+  }
+
+  /**
+   * Compact label for the agents in the current report. With 3 or
+   * fewer agents we list them all; beyond that we list two and add
+   * "+N more". Hover-tooltip on the truncated form shows the full
+   * comma-separated list.
+   */
+  function irRenderEditingLine_(agents) {
+    const el = $('ir-editing-agents');
+    if (!el) return;
+    const list = Array.isArray(agents) ? agents : [];
+    let visible, tooltip;
+    if (list.length <= 3) {
+      visible = list.join(', ');
+      tooltip = visible;
+    } else {
+      visible = list.slice(0, 2).join(', ') + ', +' + (list.length - 2) + ' more';
+      tooltip = list.join(', ');
+    }
+    el.textContent = visible || '(none)';
+    el.title = tooltip;
+  }
+
+  /**
+   * Opens the edit-selection popover positioned below the "change"
+   * link in the results header. Mirrors the agent picker into the
+   * popover with the current selection pre-checked, then focuses
+   * the search input for fast filtering.
+   */
+  function irOpenEditPopover_() {
+    const pop = $('ir-edit-popover');
+    if (!pop) return;
+    const list = $('ir-edit-list');
+    if (!list) return;
+    // #1: seed the date + compare controls from the current report so the
+    // popover can change dates as well as agents.
+    const curFrom = (irLastData && irLastData.meta && irLastData.meta.from) || ($('ir-from') ? $('ir-from').value : '');
+    const curTo   = (irLastData && irLastData.meta && irLastData.meta.to)   || ($('ir-to')   ? $('ir-to').value   : '');
+    if ($('ir-edit-from')) $('ir-edit-from').value = curFrom;
+    if ($('ir-edit-to'))   $('ir-edit-to').value   = curTo;
+    // The popover offers none/prevPeriod/yoy; a 'custom' prior can't be edited
+    // here. Track when we seeded over a custom prior so Apply can preserve it
+    // (rather than silently downgrading to "no comparison") if the user doesn't
+    // touch the compare control.
+    const curMode = $('ir-compare-mode') ? $('ir-compare-mode').value : 'none';
+    irEditPopoverSeededCustom_ = (curMode === 'custom');
+    if ($('ir-edit-compare-mode')) {
+      $('ir-edit-compare-mode').value =
+        (curMode === 'prevPeriod' || curMode === 'yoy') ? curMode : 'none';
+    }
+    list.innerHTML = irBuildAgentListHtml_(irLastRoster.agents || [], irLastRoster.activeAgents, irLastRoster.activeFloaters, irLastRoster.subQueueGroups || []);
+    // Pre-check the currently-reported agents.
+    const current = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
+    irApplyCheckedAgents_(list, current);
+    irUpdateEditApplyEnabled_();
+    list.removeEventListener('change', irUpdateEditApplyEnabled_);
+    list.addEventListener('change', irUpdateEditApplyEnabled_);
+    pop.style.display = '';
+    // Reset search + filter state.
+    const search = $('ir-edit-search');
+    if (search) { search.value = ''; setTimeout(function () { search.focus(); }, 0); }
+    irFilterAgentList_(list, '');
+  }
+
+  function irCloseEditPopover_() {
+    const pop = $('ir-edit-popover');
+    if (!pop) return;
+    pop.style.display = 'none';
+  }
+
+  function irUpdateEditApplyEnabled_() {
+    const checked = irGetCheckedAgents_($('ir-edit-list'));
+    $('ir-edit-apply-btn').disabled = checked.length === 0;
+  }
+
+  function irTogglePopoverAgents_(checked) {
+    selectAllActiveAgents_($('ir-edit-list'), checked);
+    irUpdateEditApplyEnabled_();
+  }
+
+  /**
+   * Apply the popover selection: runs the report with the popover's
+   * agent list while keeping the existing dept and date range.
+   * Also propagates the new selection back into the main form
+   * picker so going Back shows the same checkboxes.
+   */
+  function irApplyEditPopover_() {
+    const newAgents = irGetCheckedAgents_($('ir-edit-list'));
+    if (!newAgents.length) return;
+
+    // #1: dates + compare mode now come from the popover too.
+    const from = $('ir-edit-from') ? $('ir-edit-from').value : $('ir-from').value;
+    const to   = $('ir-edit-to')   ? $('ir-edit-to').value   : $('ir-to').value;
+    if (!from || !to) { irSetResultsStatus('error', 'Pick a start and end date.'); return; }
+    if (from > to)    { irSetResultsStatus('error', 'Start date must be on or before end date.'); return; }
+    const popMode = $('ir-edit-compare-mode') ? $('ir-edit-compare-mode').value : 'none';
+
+    // Preserve a custom prior the popover can't represent: if we seeded over a
+    // custom-prior report and the user left the compare control at 'none', keep
+    // the custom prior (resolved from the setup form's inputs) instead of
+    // silently dropping the comparison.
+    const keepCustom = irEditPopoverSeededCustom_ && popMode === 'none';
+    let prior;
+    if (keepCustom) {
+      prior = irResolvePriorRange_(from, to);   // reads ir-compare-mode='custom' + ir-prior-from/to
+    } else {
+      prior = resolveComparisonWindow_(popMode, from, to, '', '', 'the compare control');
+    }
+
+    // Sync the popover state back into the setup form so going Back (or
+    // re-opening the popover) shows the same dates / agents / compare mode.
+    if ($('ir-from')) $('ir-from').value = from;
+    if ($('ir-to'))   $('ir-to').value   = to;
+    if ($('ir-preset')) $('ir-preset').value = 'custom';
+    if ($('ir-compare-mode') && !keepCustom) {
+      $('ir-compare-mode').value = popMode;
+      $('ir-compare-mode').dispatchEvent(new Event('change'));
+    }
+    irApplyCheckedAgents_($('ir-agent-list'), newAgents);
+    irCloseEditPopover_();
+
+    const dept = getRequestedDept();
+
+    const btn = $('ir-edit-apply-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+    irSetResultsStatus('loading', 'Refreshing report…');
+
+    const req = { department: dept, from: from, to: to, agents: newAgents };
+    // R8-D3: prevPeriod resolves server-side (see runIrReport). keepCustom
+    // keeps its explicit custom dates.
+    if (!keepCustom && popMode === 'prevPeriod') { req.priorMode = 'prevPeriod'; }
+    else if (prior && !prior.error) { req.priorFrom = prior.from; req.priorTo = prior.to; }
+
+    const __rtok = ++reportReqSeq_.ir;   // F10 stale-response guard
+    const __sig = reportSig_(req);   // D1b keep-last-good key
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        if (__rtok !== reportReqSeq_.ir) return;
+        reportLastGoodWrite_('ir', __sig, data);
+        irRenderReport(data);
+      })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.textContent = 'Apply'; btn.disabled = false; }
+        if (__rtok !== reportReqSeq_.ir) return;
+        // D1b: repaint last-good for this request if cached; else the prior
+        // render stays (results pane already shown) with an error banner.
+        if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
+        irSetResultsStatus('error', 'Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getIndividualReport(req);
+  }
+
+  // Single authority for IR chart-panel visibility. Respects the #4
+  // "All at once" toggle: in all-mode every panel is shown (stacked via
+  // the .ir-charts-all container class) and the tab buttons go inert;
+  // otherwise only the active tab's panel shows. Resizes the now-visible
+  // charts (Chart.js can't lay out while display:none).
+  function irActivateChartTab_() {
+    const tabsEl = $('ir-chart-tabs');
+    if (tabsEl) {
+      tabsEl.classList.toggle('ir-tabs-allmode', irShowAllCharts);
+      tabsEl.querySelectorAll('.ir-tab').forEach(function (b) {
+        const active = !irShowAllCharts && b.getAttribute('data-tab') === irActiveChartTab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+        // R12-9: roving tabindex (APG tabs pattern). Anchored to
+        // irActiveChartTab even in all-mode so the tablist always keeps
+        // exactly one Tab stop.
+        b.tabIndex = (b.getAttribute('data-tab') === irActiveChartTab) ? 0 : -1;
+      });
+    }
+    const cont = $('ir-charts-container');
+    if (cont) cont.classList.toggle('ir-charts-all', irShowAllCharts);
+    document.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
+      const show = irShowAllCharts || p.getAttribute('data-panel') === irActiveChartTab;
+      p.style.display = show ? '' : 'none';
+    });
+    const tg = $('ir-allcharts-toggle');
+    if (tg) {
+      tg.classList.toggle('active', irShowAllCharts);
+      tg.setAttribute('aria-pressed', irShowAllCharts ? 'true' : 'false');
+    }
+    if (irChartInstances && irChartInstances.length) {
+      // Defer past layout. Toggling panel visibility AND the wrap height
+      // (420px single -> 300px all) changes the chart containers; a
+      // synchronous resize reads stale dimensions, so a chart canvas sized
+      // to the old (taller) box overflows and overlaps the next panel when
+      // switching modes back and forth. A double rAF lets the browser lay
+      // out the now-visible panels at their new height first.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          irChartInstances.forEach(function (c) { try { c.resize(); } catch (e) {} });
+        });
+      });
+    }
+  }
+
+  function irRenderSummary(summaryData, teamAvg) {
+    const container = $('ir-summary-container');
+    if (!container) return;
+    const toolbar = $('ir-cards-toolbar');
+    // Sort toolbar only makes sense with 2+ cards.
+    if (toolbar) toolbar.style.display = (summaryData && summaryData.length > 1) ? '' : 'none';
+
+    // Friendly empty state when no selected agent had any call
+    // activity in range. Hides the trend chart trio too since it
+    // would just be 12 months of zeros.
+    const anyActivity = (summaryData || []).some(function (a) {
+      return a.raw.rung > 0 || a.raw.answered > 0 || a.raw.missed > 0;
+    });
+    if (!anyActivity) {
+      container.innerHTML =
+        '<div class="ir-empty-card">'
+        +   '<div class="ir-empty-icon">&#x1F4ED;</div>'
+        +   '<div class="ir-empty-title">No call data for this selection</div>'
+        +   '<div class="ir-empty-sub">No rung, answered, or missed calls for the selected '
+        +     'agent(s) in this date range. Try broadening the date range or picking '
+        +     'different agents.</div>'
+        + '</div>';
+      const charts = $('ir-charts-container');
+      if (charts) charts.style.display = 'none';
+      const toggle = $('ir-datalabels-box');
+      if (toggle) toggle.style.display = 'none';
+      const tabs = $('ir-chart-tabs');
+      if (tabs) tabs.style.display = 'none';
+      const sharedLegend = $('ir-shared-legend');
+      if (sharedLegend) sharedLegend.style.display = 'none';
+      return;
+    }
+    const charts = $('ir-charts-container');
+    if (charts) charts.style.display = '';
+    const toggle = $('ir-datalabels-box');
+    if (toggle) toggle.style.display = '';
+    const tabs = $('ir-chart-tabs');
+    if (tabs) tabs.style.display = '';
+
+    // KPI-tile layout per agent. Replaces the dense comparison
+    // table from Phase 1 with a row of metric tiles (big number,
+    // vs-team-avg delta badge, sparkline). Each tile's sparkline
+    // is drawn inline from irLastData.trendData -- no extra Chart
+    // instances created. Tiles per agent:
+    //   Total Rung | Answered | Missed | % Answered | Avg Talk Time
+    const priorStatsAvailable = !!(irLastData && irLastData.meta
+                                   && irLastData.meta.priorFrom);
+    container.innerHTML = irSortSummaryData_(summaryData || []).map(function (agent) {
+      const trendForAgent = (irLastData && irLastData.trendData && irLastData.trendData.datasets)
+                          ? (irLastData.trendData.datasets[agent.name] || [])
+                          : [];
+      const safeName = escapeHtml(agent.name);
+      const share = agent.share || {};
+      const pStats = agent.priorStats;   // may be null when no comparison
+      const pRaw   = agent.priorRaw;
+      // Render the vs-prior row only when the server supplied
+      // priorStats. Pass per-metric formatted strings so the row
+      // shows the same precision/unit as the team row.
+      const priorRow = function (key, valence) {
+        if (!pStats || !pRaw) return '';
+        return irPriorRow_(pStats, pRaw[key], agent.raw[key], valence, pStats[key]);
+      };
+      // Excluded-from-team-avg pill (E4, Phase E). Surfaces when the
+      // agent appears in TEAM_AVG_EXCLUDES[dept] so the manager sees
+      // why their numbers don't move the team average. INV-26.
+      const excludedPill = agent.excludedFromTeamAvg
+        ? ' <span class="ir-excluded-pill" title="Per TEAM_AVG_EXCLUDES, this agent\'s numbers are subtracted from BOTH numerator and denominator of the team average (INV-26).">EXCLUDED FROM TEAM AVG</span>'
+        : '';
+      // Floater QUEUE chip (INV-53 expansion). Only floaters get a
+      // chip on the IR card -- roster agents are implicit (no chip
+      // would clutter the card). Bare QUEUE for floaters on no
+      // roster, QUEUE · <home depts> for multi-rostered floaters.
+      // Reuses sourceChipHtml_ from My Dept's Source column path.
+      const isFloater = agent.matchedViaQueue && !agent.matchedViaRoster;
+      const floaterPill = isFloater ? sourceChipHtml_(agent) : '';
+      return '<div class="ir-summary-card">'
+           +   '<div class="ir-summary-title">'
+           +     safeName
+           +     (floaterPill ? ' ' + floaterPill : '')
+           +     excludedPill
+           +     ' <span class="ir-vs">vs Team Avg'
+           +       (priorStatsAvailable ? ' &middot; vs Prior period' : '')
+           +     '</span>'
+           +     ' <button type="button" class="ir-copy-tsv" data-agent="' + safeName + '">Copy data</button>'
+           +   '</div>'
+           +   irInsightsBlock_(agent.insights || [])
+           +   '<div class="ir-kpi-grid">'
+           +     irKpiTile('Total Rung',  agent.stats.rung,     teamAvg.rung,
+                            irDiffBadge(agent.raw.rung,     teamAvg.raw.rung,        'pos', 'rung calls'),
+                            trendForAgent.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung,
+                            share.rung,
+                            priorRow('rung', 'pos'))
+           +     irKpiTile('Answered',    agent.stats.answered, teamAvg.answered,
+                            irDiffBadge(agent.raw.answered, teamAvg.raw.answered,    'pos', 'answered calls'),
+                            trendForAgent.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered,
+                            share.answered,
+                            priorRow('answered', 'pos'))
+           +     irKpiTile('Missed (rings)', agent.stats.missed, teamAvg.missed,
+                            irDiffBadge(agent.raw.missed,   teamAvg.raw.missed,      'neg', 'missed calls'),
+                            trendForAgent.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed,
+                            share.missed,
+                            priorRow('missed', 'neg'))
+           +     irKpiTile('% Answered',  agent.stats.pct,      teamAvg.pct,
+                            irDiffBadge(agent.raw.pct,      teamAvg.raw.pctAnswered, 'pos', '% answered'),
+                            trendForAgent.map(function (x) { return x.pct; }),      (THEME.accent || '#4E79A7'),
+                            null,
+                            priorRow('pct', 'pos'))
+           +     irKpiTile('Avg talk (per call)', agent.stats.att, teamAvg.att,
+                            irAttCompare(agent.raw.att, teamAvg.raw.att),
+                            trendForAgent.map(function (x) { return x.att; }),      (THEME.muted || '#9C755F'),
+                            null,
+                            priorRow('att', 'neu'))
+           +   '</div>'
+           + '</div>';
+    }).join('');
+
+    // Wire copy-data-as-TSV buttons (re-attaches every render; OK
+    // since `container.innerHTML` wipes the previous handlers too).
+    container.querySelectorAll('.ir-copy-tsv').forEach(function (b) {
+      b.addEventListener('click', function () {
+        // Build TSV from the card's KPI tiles: header + value rows.
+        const card = b.closest('.ir-summary-card');
+        if (!card) return;
+        const rows = [];
+        rows.push(['Metric', 'Agent', 'Team Avg', '% of Dept'].join('\t'));
+        card.querySelectorAll('.ds-kpi').forEach(function (tile) {
+          const label = (tile.querySelector('.ds-kpi__label') || {}).textContent || '';
+          const value = (tile.querySelector('.ds-kpi__value') || {}).textContent || '';
+          // First .ds-kpi__team is the "Team X" marker (the vs-prior row, when
+          // present, is a second .ds-kpi__team -- query scoped to __compare).
+          const teamEl = tile.querySelector('.ds-kpi__compare .ds-kpi__team');
+          const team  = (teamEl || {}).textContent || '';
+          const shareEl = tile.querySelector('.ds-kpi__share');
+          const share = shareEl
+            ? shareEl.textContent.replace(/\s*of\s+dept\s*$/i, '').trim()
+            : '';
+          // E-3: this is the SIXTH tabular writer -- route every cell through
+          // csvSafeCell_ like the five CSV exporters (the "every CSV cell
+          // writer" rule; today's tile text is numeric/static, but the rule
+          // exists so that stays a non-decision).
+          rows.push([
+            csvSafeCell_(label.trim()),
+            csvSafeCell_(value.trim()),
+            csvSafeCell_(team.replace(/^Team\s*/i, '').trim()),
+            csvSafeCell_(share),
+          ].join('\t'));
+        });
+        const tsv = rows.join('\n') + '\n';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(tsv).then(function () { irFlashButton(b, 'Copied'); },
+            function (err) {   // E-3: denied clipboard used to fail silently
+              showToast('Copy failed: ' + (err && err.message ? err.message : 'clipboard unavailable'), 'error');
+            });
+        } else {
+          showToast('Clipboard API not available in this browser.', 'error');   // E-3
+        }
+      });
+    });
+  }
+
+  /**
+   * Returns summaryData reordered per irSortOrder. "selection"
+   * preserves the order the server sent (which mirrors the order
+   * the user checked agents in the picker). Other keys sort by
+   * the corresponding numeric field on each agent's raw stats.
+   */
+  function irSortSummaryData_(summaryData) {
+    if (!Array.isArray(summaryData) || summaryData.length < 2) return summaryData;
+    if (irSortOrder === 'selection') return summaryData;
+    const out = summaryData.slice();
+    if (irSortOrder === 'name') {
+      out.sort(function (a, b) {
+        const an = (a.name || '').toLowerCase();
+        const bn = (b.name || '').toLowerCase();
+        return an < bn ? -1 : an > bn ? 1 : 0;
+      });
+    } else if (irSortOrder === 'answered-desc') {
+      out.sort(function (a, b) { return (b.raw.answered || 0) - (a.raw.answered || 0); });
+    } else if (irSortOrder === 'answered-asc') {
+      out.sort(function (a, b) { return (a.raw.answered || 0) - (b.raw.answered || 0); });
+    } else if (irSortOrder === 'pct-desc') {
+      out.sort(function (a, b) { return (b.raw.pct || 0) - (a.raw.pct || 0); });
+    }
+    return out;
+  }
+
+  /**
+   * Single KPI tile markup. `sparklineData` is a numeric array;
+   * `sparklineColor` is a hex. `share` is an optional pre-formatted
+   * "X.X%" string -- when present (volume tiles only), shown as a
+   * small "X.X% of dept" tag inline with the value to communicate
+   * this agent's portion of the dept's total volume.
+   */
+  function irKpiTile(label, value, teamVal, diffBadgeHtml, sparklineData, sparklineColor, share, priorHtml) {
+    const spark = irSparkline_(sparklineData || [], sparklineColor || '#4E79A7');
+    const shareHtml = share
+      ? '<span class="ds-kpi__share" title="Share of dept volume in range">'
+        + escapeHtml(String(share)) + ' of dept</span>'
+      : '';
+    // Migrated onto the shared ds-kpi component (Phase 4). The IR-specific
+    // share tag / team-average marker / vs-prior row ride the ds-kpi__* sub-
+    // elements added for this; `.ds-kpi--ir` keeps the denser 5-up sizing.
+    return '<div class="ds-kpi ds-kpi--ir">'
+         +   '<div class="ds-kpi__top">'
+         +     '<span class="ds-kpi__label">' + label + '</span>'
+         +     '<span class="ds-kpi__spark ds-kpi__spark--inline">' + spark + '</span>'
+         +   '</div>'
+         +   '<div class="ds-kpi__value-row">'
+         +     '<div class="ds-kpi__value' + benchValueCls_(label, value) + '">' + escapeHtml(String(value)) + '</div>'
+         +     shareHtml
+         +   '</div>'
+         +   '<div class="ds-kpi__compare">'
+         +     '<span class="ds-kpi__team">Team ' + escapeHtml(String(teamVal)) + '</span>'
+         +     diffBadgeHtml
+         +   '</div>'
+         +   (priorHtml || '')
+         + '</div>';
+  }
+
+  /**
+   * Per-tile "vs prior" delta line, rendered below the team-vs row
+   * when summaryData.priorStats is present. Same valence model as
+   * irDiffBadge: 'pos' = higher is better, 'neg' = lower is better,
+   * 'neu' = direction-ambiguous (TTT/ATT). Returns empty string if
+   * priorRaw is null/undefined.
+   */
+  function irPriorRow_(priorStats, priorVal, currVal, type, displayPrior) {
+    if (!priorStats) return '';
+    const prev = Number(priorVal) || 0;
+    const cur  = Number(currVal)  || 0;
+    if (prev === 0 && cur === 0) {
+      return '<div class="ds-kpi__prior">'
+           +   '<span class="ds-kpi__team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
+           +   '<span class="ir-badge ir-badge-neu">-</span>'
+           + '</div>';
+    }
+    let cls = 'ir-badge-neu';
+    let label;
+    if (type === 'neu') {
+      // Direction-ambiguous metric (ATT / TTT). Show signed pct but
+      // don't colorize as good/bad.
+      const pct = prev > 0 ? ((cur - prev) / prev) * 100 : (cur > 0 ? 100 : 0);
+      label = (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+    } else {
+      const pct = prev > 0 ? ((cur - prev) / prev) * 100 : (cur > 0 ? 100 : 0);
+      label = (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+      if (type === 'pos') {
+        if (pct > 0) cls = 'ir-badge-pos'; else if (pct < 0) cls = 'ir-badge-neg';
+      } else if (type === 'neg') {
+        if (pct < 0) cls = 'ir-badge-pos'; else if (pct > 0) cls = 'ir-badge-neg';
+      }
+    }
+    return '<div class="ds-kpi__prior">'
+         +   '<span class="ds-kpi__team">Prior ' + escapeHtml(String(displayPrior)) + '</span>'
+         +   '<span class="ir-badge ' + cls + '">' + label + '</span>'
+         + '</div>';
+  }
+
+  /**
+   * Renders the per-agent insights callout. Each insight is an
+   * object { type, text } where type is "positive" | "negative" |
+   * "neutral" -- shown as a colored circular marker before the
+   * text so managers can scan the list at a glance:
+   *
+   *   blue  up arrow   : favorable comparison (positive)
+   *   orange down arrow: unfavorable comparison (negative)
+   *   grey  bullet     : direction-ambiguous (neutral, e.g. ATT)
+   *
+   * Returns empty string when there are no insights so empty
+   * callout boxes never appear.
+   */
+  function irInsightsBlock_(insights) {
+    if (!insights || !insights.length) return '';
+    const items = insights.map(function (item) {
+      // Accept legacy v3 string-form for cache transition safety.
+      const type = (item && item.type) || 'neutral';
+      const text = (item && item.text)
+        ? item.text
+        : (typeof item === 'string' ? item : '');
+      const mark = type === 'positive' ? '↑'    // up arrow
+                 : type === 'negative' ? '↓'    // down arrow
+                 : '•';                          // bullet
+      return '<li class="ir-insight-item">'
+           +   '<span class="ir-insight-mark ir-insight-mark-' + type + '" aria-hidden="true">'
+           +     mark
+           +   '</span>'
+           +   '<span class="ir-insight-text">' + escapeHtml(text) + '</span>'
+           + '</li>';
+    }).join('');
+    return '<div class="ir-insights">'
+         +   '<div class="ir-insights-label">Insights</div>'
+         +   '<ul class="ir-insights-list">' + items + '</ul>'
+         + '</div>';
+  }
+
+  /**
+   * Inline SVG sparkline (no Chart.js dependency, no extra Chart
+   * instances). Returns the SVG markup as a string ready for
+   * innerHTML. Renders a 70x22 stroke with subtle area fill below;
+   * collapses to a flat baseline if all values are 0.
+   */
+  // R11-L: honest-scale band. Given a series and a fixed band [lo,hi], return
+  // the effective [min,max] GROWN to include any out-of-band outlier (so a
+  // metric that sits inside the band renders against the fixed scale -- small
+  // drifts read small -- while a rare outlier extends the scale rather than
+  // clipping). Shared by irSparkline_ (opts.band) + irTrendArrow_.
+  function honestBand_(values, band) {
+    let lo = band[0], hi = band[1];
+    (values || []).forEach(function (raw) {
+      if (raw == null) return;
+      const v = Number(raw);
+      if (!isFinite(v)) return;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    });
+    return [lo, hi];
+  }
+
+  // opts.band = [lo,hi] gives an HONEST fixed scale (grown to include outliers)
+  // so tiny drifts don't fill the box (the auto-scale exaggeration). Omit opts
+  // for the legacy auto-scale (backward-compatible for count/duration sparks).
+  function irSparkline_(values, color, opts) {
+    const W = 70, H = 22;
+    const n = (values || []).length;
+    if (n < 2) {
+      return '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '"></svg>';
+    }
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const v = Number(values[i]) || 0;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (!isFinite(min) || !isFinite(max)) { min = 0; max = 0; }
+    if (opts && opts.band) { const b = honestBand_(values, opts.band); min = b[0]; max = b[1]; }
+    const range = max - min;
+    const xStep = W / (n - 1);
+    const pad = 2;
+    const innerH = H - pad * 2;
+    // Band callers skip null/no-data points (gap-connect) so a missing day
+    // doesn't plot as a 0% crash; legacy (no-band) callers keep null->0.
+    const skipNull = !!(opts && opts.band);
+    const pts = [];
+    let firstX = 0, lastX = (n - 1) * xStep;
+    for (let i = 0; i < n; i++) {
+      const raw = values[i];
+      if (skipNull && (raw == null || !isFinite(Number(raw)))) continue;
+      const v = Number(raw) || 0;
+      const x = i * xStep;
+      const y = range === 0
+        ? H / 2
+        : pad + innerH - ((v - min) / range) * innerH;
+      if (!pts.length) firstX = x;
+      lastX = x;
+      pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+    }
+    if (pts.length < 2) {
+      return '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '"></svg>';
+    }
+    const linePath = 'M' + pts.join(' L');
+    const areaPath = linePath
+                   + ' L' + lastX.toFixed(1) + ',' + H
+                   + ' L' + firstX.toFixed(1) + ',' + H + ' Z';
+    return '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'
+         +   '<path d="' + areaPath + '" fill="' + color + '" fill-opacity="0.15" stroke="none"/>'
+         +   '<path d="' + linePath + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
+         + '</svg>';
+  }
+
+  // -- R11-L: compact trend ARROW (dense-tile alternative to the sparkline) ----
+  // The angle is the REAL least-squares slope of the series over the period,
+  // measured against a FIXED value band (default 70-100% for answer rate, grown
+  // to include outliers) so a 90->91% drift reads shallow and a 92->80% drop
+  // reads steep -- the "look deeper" signal. Capped at +/-60deg. Color is a
+  // red-amber-green gradient on the slope (amber = flat), saturating by +/-30deg.
+  // Nulls (no-data days) are skipped, not zero-filled. up = good by default;
+  // pass opts.inverse for a "lower is better" metric (color valence only).
+  function linRegSlope_(xs, ys) {
+    const n = xs.length;
+    if (n < 2) return 0;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; sxx += xs[i] * xs[i]; sxy += xs[i] * ys[i]; }
+    const denom = n * sxx - sx * sx;
+    return denom === 0 ? 0 : (n * sxy - sx * sy) / denom;
+  }
+  function parseColorRgb_(s) {
+    s = String(s || '').trim();
+    let m = s.match(/^#([0-9a-f]{3})$/i);
+    if (m) { const h = m[1]; return [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]; }
+    m = s.match(/^#([0-9a-f]{6})$/i);
+    if (m) { const h = m[1]; return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+    m = s.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (m) return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+    return [128, 128, 128];
+  }
+  function arrowAnchorColors_() {
+    const css = getComputedStyle(document.documentElement);
+    const resolve = function (token, themeKey, fallback) {
+      if (themeKey && THEME[themeKey]) return THEME[themeKey];
+      const raw = (css.getPropertyValue(token) || '').trim();
+      return raw ? colorToCanvasRgb_(raw) : fallback;
+    };
+    return {
+      good: parseColorRgb_(resolve('--good', 'good', '#3d9476')),
+      warn: parseColorRgb_(resolve('--warn', 'warn', '#d99a2b')),
+      bad:  parseColorRgb_(resolve('--bad', null, '#c0392b')),   // --bad isn't in THEME (INV-42)
+    };
+  }
+  function arrowGradientColor_(t, anchors) {
+    // t in [-1,1]: 0 = amber(warn), +1 = good, -1 = bad. Linear RGB lerp.
+    const a = anchors.warn;
+    const b = t >= 0 ? anchors.good : anchors.bad;
+    const k = Math.min(1, Math.abs(t));
+    const c = [0, 1, 2].map(function (i) { return Math.round(a[i] + (b[i] - a[i]) * k); });
+    return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+  }
+  function irTrendArrow_(values, opts) {
+    opts = opts || {};
+    const band = opts.band || [70, 100];
+    const W = 42, H = 22, cy = H / 2;
+    const vals = values || [];
+    const n = vals.length;
+    const eff = honestBand_(vals, band);
+    const lo = eff[0], span = (eff[1] - eff[0]) || 1;
+    const xs = [], ys = [];
+    for (let i = 0; i < n; i++) {
+      const raw = vals[i];
+      if (raw == null || !isFinite(Number(raw))) continue;
+      xs.push(n > 1 ? i / (n - 1) : 0);
+      ys.push((Number(raw) - lo) / span);
+    }
+    if (xs.length < 2) {   // not enough data to trend -> a muted flat dash
+      return '<span class="ir-trend-arrow" title="Not enough data to show a trend">'
+        + '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">'
+        + '<line x1="9" y1="' + cy + '" x2="33" y2="' + cy + '" stroke="' + (THEME.muted || '#999')
+        + '" stroke-width="2" stroke-linecap="round" stroke-opacity="0.5"/></svg></span>';
+    }
+    const slope = linRegSlope_(xs, ys);        // dy/dx in unit space (+ = up)
+    let angle = Math.atan(slope) * 180 / Math.PI;
+    const CAP = 60;
+    if (angle > CAP) angle = CAP; else if (angle < -CAP) angle = -CAP;
+    const signed = opts.inverse ? -angle : angle;              // valence for color
+    const color = arrowGradientColor_(Math.max(-1, Math.min(1, signed / 30)), arrowAnchorColors_());
+    const deltaPts = slope * span;                             // fitted change over the window
+    const dir = angle > 1 ? 'up' : (angle < -1 ? 'down' : 'flat');
+    const title = (opts.label || 'Trend') + ': '
+      + (deltaPts >= 0 ? '+' : '') + deltaPts.toFixed(1) + ' pts over the window (' + dir + ')';
+    // SVG y is down, so an UP trend (angle>0) rotates the arrow UP = negative.
+    const rot = (-angle).toFixed(1);
+    return '<span class="ir-trend-arrow" title="' + escapeHtml(title) + '">'
+      + '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + escapeHtml(title) + '">'
+      + '<g transform="rotate(' + rot + ' ' + (W / 2) + ' ' + cy + ')">'
+      + '<line x1="9" y1="' + cy + '" x2="30" y2="' + cy + '" stroke="' + color + '" stroke-width="2.6" stroke-linecap="round"/>'
+      + '<path d="M30 ' + cy + ' L24 ' + (cy - 4) + ' M30 ' + cy + ' L24 ' + (cy + 4) + '" stroke="' + color + '" stroke-width="2.6" stroke-linecap="round" fill="none"/>'
+      + '</g></svg></span>';
+  }
+
+  function irFlashButton(btn, text) {
+    const prev = btn.textContent;
+    btn.textContent = text;
+    setTimeout(function () { btn.textContent = prev; }, 1000);
+  }
+
+  function irDiffBadge(agentVal, teamVal, type, metricLabel) {
+    // type: 'pos' = higher is better (Rung, Answered, % Answered).
+    //       'neg' = lower is better (Missed).
+    if (!teamVal) return '<span class="ir-badge ir-badge-neu">-</span>';
+    const pct = ((agentVal - teamVal) / teamVal) * 100;
+    const label = (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+    let cls = 'ir-badge-neu';
+    if (type === 'pos') {
+      if (pct > 0) cls = 'ir-badge-pos'; else if (pct < 0) cls = 'ir-badge-neg';
+    } else if (type === 'neg') {
+      if (pct < 0) cls = 'ir-badge-pos'; else if (pct > 0) cls = 'ir-badge-neg';
+    }
+    // Plain-English explainer for screen readers + hover -- the colored
+    // badge alone doesn't say which direction is good for this metric.
+    const metric = metricLabel ? ' for ' + metricLabel : '';
+    const where = pct === 0 ? 'matches the team average'
+      : Math.abs(pct).toFixed(1) + '% ' + (pct > 0 ? 'above' : 'below') + ' the team average';
+    const valence = type === 'pos' ? 'Higher is better.'
+                  : type === 'neg' ? 'Lower is better.' : '';
+    const explain = escapeHtml((where + metric + '. ' + valence).trim());
+    return '<span class="ir-badge ' + cls + '" title="' + explain
+         + '" aria-label="' + explain + '">' + label + '</span>';
+  }
+
+  function irAttCompare(agentAtt, teamAtt) {
+    // ATT is reported as "> Avg / < Avg (+x.x%)" since neither
+    // direction is unambiguously "better" -- shorter ATT can mean
+    // efficiency, longer can mean more thorough service. Neutral
+    // styling.
+    if (!teamAtt) return '<span class="ir-badge ir-badge-neu">-</span>';
+    const pct = ((agentAtt - teamAtt) / teamAtt) * 100;
+    const sign = agentAtt > teamAtt ? '> Avg' : '< Avg';
+    const explain = escapeHtml('Average talk time is ' + Math.abs(pct).toFixed(1) + '% '
+      + (agentAtt > teamAtt ? 'longer' : 'shorter')
+      + ' than the team average. Neither direction is automatically better — longer can mean more thorough service.');
+    return '<span class="ir-badge ir-badge-neu" title="' + explain + '" aria-label="' + explain + '">'
+         + sign + ' (' + (pct > 0 ? '+' : '') + pct.toFixed(1) + '%)'
+         + '</span>';
+  }
+
+  /**
+   * Defensive cleanup: destroys any Chart.js instance currently
+   * attached to the given canvas id, regardless of whether it's
+   * tracked in our own *ChartInstances arrays. Necessary because
+   * a previous render that crashed mid-construction may have
+   * left an orphaned chart bound to the canvas, which Chart.js
+   * refuses to overwrite ("Canvas is already in use").
+   */
+  function destroyOrphanedChartOnCanvas_(canvasId) {
+    if (typeof Chart === 'undefined' || !Chart.getChart) return;
+    const cvs = document.getElementById(canvasId);
+    if (!cvs) return;
+    try {
+      const existing = Chart.getChart(cvs);
+      if (existing) existing.destroy();
+    } catch (e) { /* ignore */ }
+  }
+
+  function irRenderCharts(data) {
+    // Refresh THEME tokens right before chart creation so values
+    // resolved late (slow CSS / font load) reach Chart.defaults
+    // before the first chart is instantiated.
+    refreshChartTheme();
+    // Destroy old charts to avoid Chart.js leaks / canvas reuse errors.
+    irChartInstances.forEach(function (c) { try { c.destroy(); } catch (e) {} });
+    irChartInstances = [];
+    // Sweep up any orphans left by a partial-crash on the previous render.
+    ['ir-vol-chart', 'ir-eff-chart', 'ir-dur-chart'].forEach(destroyOrphanedChartOnCanvas_);
+
+    // Reveal every chart panel temporarily so each canvas has
+    // non-zero dimensions at Chart.js instantiation time. Without
+    // this, charts created in display:none panels come up 0x0 and
+    // never recover when their tab is clicked. Restore visibility
+    // at the end (active tab visible, others hidden).
+    const irPanels = Array.prototype.slice.call(
+      document.querySelectorAll('#ir-charts-container [data-panel]'));
+    const irSavedDisplays = irPanels.map(function (p) { return p.style.display; });
+    irPanels.forEach(function (p) { p.style.display = ''; });
+
+    const showLabels = $('ir-show-datalabels') && $('ir-show-datalabels').checked;
+    const labels   = data.trendData.labels || [];
+    const datasets = data.trendData.datasets || {};
+    const agents   = Object.keys(datasets);
+    if (!agents.length) {
+      // C-6: restore panel visibility before bailing -- the reveal above
+      // otherwise left all three chart panels stacked visible regardless of
+      // the active tab.
+      irPanels.forEach(function (p, i) { p.style.display = irSavedDisplays[i]; });
+      return;
+    }
+
+    // Build dataset descriptors with a `hexColor` field; the chart
+    // factory wires up gradient fill callbacks per-dataset against
+    // that color (so single-agent views feel less spartan). The
+    // `_irAgent` tag lets the shared comparison-mode legend find a
+    // given agent's dataset across all three charts.
+    const makeDs = function (label, vals, hex, opts) {
+      const o = opts || {};
+      return {
+        label: label,
+        data: vals,
+        borderColor: hex,
+        backgroundColor: hex,
+        hexColor: hex,
+        _irAgent: o.agent || null,
+        tension: 0.4,
+        fill: o.fill !== false,
+        pointBackgroundColor: hex,
+        pointBorderColor: THEME.paperCard,
+        pointBorderWidth: 1.5,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+      };
+    };
+
+    // Volume chart: in individual mode show Rung/Answered/Missed for
+    // the single agent; in comparison mode show each agent's Answered.
+    const volData = [];
+    if (data.mode === 'individual') {
+      const d = datasets[agents[0]];
+      volData.push(makeDs('Total Rung', d.map(function (x) { return x.rung; }),     IR_VOLUME_COLORS.rung));
+      volData.push(makeDs('Answered',   d.map(function (x) { return x.answered; }), IR_VOLUME_COLORS.answered));
+      volData.push(makeDs('Missed',     d.map(function (x) { return x.missed; }),   IR_VOLUME_COLORS.missed));
+    } else {
+      agents.forEach(function (ag, i) {
+        const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+        volData.push(makeDs(ag + ' (Ans)',
+                            datasets[ag].map(function (x) { return x.answered; }),
+                            color, { agent: ag }));
+      });
+    }
+    irCreateChart($('ir-vol-chart'), 'Call Volume', labels, volData,
+                  { isPercent: false, isTimeMinutes: false, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
+
+    // Efficiency chart: % Answered per agent + a 95% goal line.
+    const effData = agents.map(function (ag, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      return makeDs(ag + ' %',
+                    datasets[ag].map(function (x) { return Number(x.pct.toFixed(1)); }),
+                    color, { agent: ag });
+    });
+    // G-3: the goal line follows the admin-tunable answer-rate standard
+    // (ANSWER_TARGETS, seed 92) like every other surface -- it was the one
+    // remaining hardcoded literal (95, matching no documented standard), so
+    // tuning the target left this chart preaching a different number.
+    const irGoalPct = (typeof answerTarget_ === 'function') ? answerTarget_('global') : 92;
+    effData.push({
+      label: 'Goal', data: new Array(labels.length).fill(irGoalPct),
+      borderColor: THEME.muted, borderDash: [4, 4], pointRadius: 0,
+      fill: false, tension: 0, hexColor: THEME.muted, _irAgent: null,
+    });
+    irCreateChart($('ir-eff-chart'), '% Answered', labels, effData,
+                  { isPercent: true, isTimeMinutes: false, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
+
+    // Duration chart: ATT in minutes (legacy converts seconds -> minutes).
+    const durData = agents.map(function (ag, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      return makeDs(ag + ' ATT',
+                    datasets[ag].map(function (x) { return Number((x.att / 60).toFixed(2)); }),
+                    color, { agent: ag });
+    });
+    irCreateChart($('ir-dur-chart'), 'Avg Talk Time', labels, durData,
+                  { isPercent: false, isTimeMinutes: true, showLabels: showLabels, sharedLegend: data.mode === 'comparison' });
+
+    irRenderSharedLegend(data, agents);
+
+    // Restore panel visibility so only the active tab shows. The
+    // charts in the just-hidden panels keep their layout state
+    // (computed during the brief reveal above) and re-paint
+    // correctly when their tab is clicked.
+    irPanels.forEach(function (p, i) { p.style.display = irSavedDisplays[i]; });
+  }
+
+  /**
+   * Single legend rendered ABOVE the chart-tab container in
+   * comparison mode (>1 agent). Clicking a chip toggles that
+   * agent's series visibility across all three charts; hovering
+   * highlights it across all three.
+   *
+   * In individual mode the shared legend is hidden -- the volume
+   * chart's three series (Rung/Answered/Missed) are unambiguous
+   * via their colored title legend within the chart itself, and
+   * Eff/Dur each have a single series.
+   */
+  function irRenderSharedLegend(data, agents) {
+    const el = $('ir-shared-legend');
+    if (!el) return;
+    if (data.mode !== 'comparison' || !agents.length) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    const chips = agents.map(function (ag, i) {
+      const color = IR_CHART_COLORS[i % IR_CHART_COLORS.length];
+      const safe = escapeHtml(ag);
+      return '<button type="button" class="ir-legend-chip" data-agent="' + safe + '" '
+           + 'title="Click to isolate · Shift+click to hide" '
+           + 'style="--chip-color: ' + color + ';">'
+           +   '<span class="ir-legend-swatch"></span>'
+           +   '<span class="ir-legend-name">' + safe + '</span>'
+           + '</button>';
+    }).join('');
+    el.innerHTML = chips;
+    el.style.display = '';
+    irPinnedAgent = null;   // fresh legend -> no pin
+
+    el.querySelectorAll('.ir-legend-chip').forEach(function (chip) {
+      const agent = chip.getAttribute('data-agent');
+      // Plain click = pin/isolate (persistent spotlight), matching the
+      // Overview chart. Shift+click = hide/show this agent's series (the
+      // legacy toggle). Click the pinned chip again (or another) to
+      // release/switch the isolate.
+      chip.addEventListener('click', function (ev) {
+        if (ev.shiftKey) {
+          const willHide = !chip.classList.contains('inactive');
+          chip.classList.toggle('inactive', willHide);
+          irChartInstances.forEach(function (chart) {
+            chart.data.datasets.forEach(function (ds, idx) {
+              if (ds._irAgent === agent) chart.getDatasetMeta(idx).hidden = willHide;
+            });
+            chart.update();
+          });
+          return;
+        }
+        if (irPinnedAgent === agent) {
+          irPinnedAgent = null;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) { c.classList.remove('pinned'); });
+          irHighlightAgent_(null);
+        } else {
+          irPinnedAgent = agent;
+          el.querySelectorAll('.ir-legend-chip').forEach(function (c) {
+            c.classList.toggle('pinned', c.getAttribute('data-agent') === agent);
+          });
+          irHighlightAgent_(agent);
+        }
+      });
+      // Hover previews the spotlight when nothing is pinned; with a pin
+      // active, leaving re-asserts the pinned selection rather than clearing.
+      chip.addEventListener('mouseenter', function () { if (!irPinnedAgent) irHighlightAgent_(agent); });
+      chip.addEventListener('mouseleave', function () { irHighlightAgent_(irPinnedAgent); });
+    });
+  }
+
+  function irHighlightAgent_(agent) {
+    irChartInstances.forEach(function (chart) {
+      chart.data.datasets.forEach(function (ds) {
+        if (ds._irAgent && ds.hexColor) {
+          // Faded if a specific agent is highlighted and this isn't them.
+          const dim = (agent !== null && ds._irAgent !== agent);
+          ds.borderColor = dim ? ds.hexColor + '33' : ds.hexColor;
+          ds.borderWidth = dim ? 1 : (agent && ds._irAgent === agent ? 3 : 2);
+        }
+      });
+      chart.update('none');
+    });
+  }
+
+  function irCreateChart(canvas, title, labels, datasets, opts) {
+    if (!canvas) return;
+    const isPercent      = !!opts.isPercent;
+    const isTimeMinutes  = !!opts.isTimeMinutes;
+    const showLabels     = !!opts.showLabels;
+    let globalMax = 0;
+    datasets.forEach(function (ds) {
+      if (!ds.data) return;
+      ds.data.forEach(function (v) {
+        const n = parseFloat(v) || 0;
+        if (n > globalMax) globalMax = n;
+      });
+    });
+    const suggestedMax = globalMax > 0 ? globalMax * 1.1 : 1;
+
+    // Per-chart plugin registration (rather than Chart.register'ing
+    // globally) so the existing Missed Calls bar chart isn't affected
+    // by data labels. Falls back gracefully if the CDN didn't load.
+    const irPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    // Replace each dataset's `backgroundColor` with a function that
+    // returns a vertical gradient (line color -> transparent) once
+    // the chart's chartArea exists. Skip if `fill: false` is set.
+    datasets.forEach(function (ds) {
+      if (ds.fill === false || !ds.hexColor) return;
+      const hex = ds.hexColor;
+      ds.backgroundColor = function (ctx) {
+        return irGradientFill_(ctx.chart, hex);
+      };
+    });
+
+    const chart = safeChart_(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      plugins: irPlugins,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        devicePixelRatio: 1,
+        plugins: {
+          title:   { display: true, text: title },
+          legend:  {
+            display: !opts.sharedLegend,
+            position: 'bottom',
+            labels: { boxWidth: 10 },
+          },
+          datalabels: {
+            display: showLabels,
+            align: 'top', anchor: 'center',
+            backgroundColor: THEME.paperCard,
+            borderColor: function (ctx) { return ctx.dataset.borderColor; },
+            borderWidth: 1, borderRadius: 2,
+            color: function (ctx) { return ctx.dataset.borderColor; },
+            font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
+            formatter: function (value, ctx) {
+              if (ctx.dataset.label === 'Goal') return '';
+              if (!value || value == 0) return '';
+              if (isTimeMinutes) return irFormatMinutes(value);
+              if (isPercent)     return parseFloat(value).toFixed(1) + '%';
+              return value;
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                let l = ctx.dataset.label || '';
+                if (l) l += ': ';
+                if (isTimeMinutes) return l + irFormatMinutes(ctx.parsed.y);
+                if (isPercent)     return l + ctx.parsed.y + '%';
+                return l + ctx.parsed.y;
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: suggestedMax,
+            grid: { borderDash: [5, 5] },
+            ticks: {
+              callback: function (val) {
+                if (isPercent)     return val + '%';
+                if (isTimeMinutes) return irFormatMinutes(val);
+                return val;
+              },
+            },
+          },
+          x: { grid: { borderDash: [5, 5] } },
+        },
+      },
+    });
+    if (chart) irChartInstances.push(chart);   // null when Chart.js CDN failed (safeChart_)
+  }
+
+  function irFormatMinutes(val) {
+    if (val == null) return '';
+    const n = parseFloat(val);
+    if (isNaN(n)) return '';
+    const m = Math.floor(n);
+    const s = Math.round((n - m) * 60);
+    return m + ':' + (s < 10 ? '0' + s : s);
+  }
+
+  // Image-export helpers. Both Copy and Email pass through
+  // html2canvas; the only difference is the destination of the
+  // resulting data URL.
+
+  function irBuildCanvas(onDone) {
+    const root = $('individual-results');
+    if (!root) return;
+    // G-2: html2canvas loads from a CDN tag; if it was blocked, the
+    // ReferenceError below would be SYNCHRONOUS inside a rAF callback --
+    // outside the promise .catch -- leaving the button at "Capturing…" for
+    // the session. Fail loud + restore instead (the safeChart_ discipline).
+    if (typeof html2canvas === 'undefined') {
+      exportCaptureFailed_(new Error('html2canvas is not loaded (blocked CDN?) — image export unavailable.'));
+      return;
+    }
+
+    // Temporarily reveal every chart panel and resize its Chart.js
+    // instance so the canvas has rendered pixels before we read it.
+    // Hidden panels (the inactive tabs) leave their canvases at 0x0
+    // -- toDataURL on those returns a blank PNG, which was showing
+    // up as empty chart slots in the exported image / email.
+    const panels = root.querySelectorAll('#ir-charts-container [data-panel]');
+    const savedDisplays = [];
+    panels.forEach(function (p) {
+      savedDisplays.push(p.style.display);
+      p.style.display = '';
+    });
+    irChartInstances.forEach(function (c) { c.resize(); });
+
+    // Two rAFs: one for Chart.js's internal re-layout to settle,
+    // one for the browser to actually paint the resized canvas.
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      const canvasMap = {};
+      root.querySelectorAll('canvas').forEach(function (cvs) {
+        canvasMap[cvs.id] = cvs.toDataURL('image/png');
+      });
+
+      // Restore tab visibility before html2canvas snapshots the
+      // live DOM. onclone re-reveals all panels in the cloned doc
+      // and swaps each canvas for the captured PNG so the export
+      // includes all three charts regardless of which tab is
+      // currently visible on screen.
+      panels.forEach(function (p, i) { p.style.display = savedDisplays[i]; });
+      irChartInstances.forEach(function (c) { c.resize(); });
+
+      try {
+      html2canvas(root, {
+        scale: 2, useCORS: true, backgroundColor: (THEME.paper || '#f6f7f9'),
+        onclone: function (clonedDoc) {
+          const btns = clonedDoc.getElementById('ir-action-buttons');
+          if (btns) btns.style.display = 'none';
+          const toggle = clonedDoc.getElementById('ir-datalabels-box');
+          if (toggle) toggle.style.display = 'none';
+          const tabs = clonedDoc.getElementById('ir-chart-tabs');
+          if (tabs) tabs.style.display = 'none';
+          const cardsToolbar = clonedDoc.getElementById('ir-cards-toolbar');
+          if (cardsToolbar) cardsToolbar.style.display = 'none';
+          const editPop = clonedDoc.getElementById('ir-edit-popover');
+          if (editPop) editPop.style.display = 'none';
+          const editLine = clonedDoc.querySelector('.ir-editing-edit');
+          if (editLine) editLine.style.display = 'none';
+          clonedDoc.querySelectorAll('.ir-copy-tsv').forEach(function (b) { b.style.display = 'none'; });
+          const status = clonedDoc.getElementById('ir-results-status');
+          if (status) status.style.display = 'none';
+
+          // In the tabbed UI only the active chart panel is visible,
+          // but a captured image should include all three. Force all
+          // panels visible in the clone and lay them out stacked.
+          clonedDoc.querySelectorAll('#ir-charts-container [data-panel]').forEach(function (p) {
+            p.style.display = '';
+            p.style.marginBottom = '14px';
+          });
+
+          // Replace each <canvas> in the clone with an <img> of the
+          // pre-captured PNG. Avoids the "blank chart" problem where
+          // Chart.js has nothing to draw on in the detached clone.
+          Object.keys(canvasMap).forEach(function (id) {
+            const cvs = clonedDoc.getElementById(id);
+            if (!cvs) return;
+            const img = clonedDoc.createElement('img');
+            img.src = canvasMap[id];
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            cvs.parentNode.replaceChild(img, cvs);
+          });
+        },
+      }).then(function (canvas) { onDone(canvas); }).catch(exportCaptureFailed_);
+      } catch (e) { exportCaptureFailed_(e); }   // G-2: sync throw inside the rAF
+    }); });
+  }
+
+  /**
+   * Transient feedback on the Export button while a copy/email
+   * is in flight. Saves the original label, swaps it, restores
+   * after `holdMs` (or immediately if `holdMs` is 0).
+   */
+  function irExportBtnFeedback_(label, holdMs) {
+    const btn = $('ir-export-btn');
+    if (!btn) return function () {};
+    if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = label;
+    if (holdMs) {
+      setTimeout(function () {
+        btn.innerHTML = btn.dataset.label;
+        btn.disabled = false;
+      }, holdMs);
+    }
+    return function restore() {
+      btn.innerHTML = btn.dataset.label;
+      btn.disabled = false;
+    };
+  }
+
+  function irCopyImage() {
+    const restore = irExportBtnFeedback_('Capturing…', 0);
+    irBuildCanvas(function (canvas) {
+      canvas.toBlob(function (blob) {
+        // G-2: toBlob can yield null (tainted/zero-size canvas) -- the
+        // ClipboardItem construction below would then THROW inside this
+        // callback and strand the button at "Capturing…".
+        if (!blob) {
+          irSetResultsStatus('error', 'Capture produced no image — try again.');
+          restore();
+          return;
+        }
+        if (navigator.clipboard && window.ClipboardItem) {
+          try {
+            navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+              .then(function () {
+                restore();
+                irExportBtnFeedback_('Copied!', 1200);
+              }, function (err) {
+                irSetResultsStatus('error', 'Clipboard copy failed: ' + (err && err.message ? err.message : err));
+                restore();
+              });
+          } catch (e) {
+            irSetResultsStatus('error', 'Clipboard copy failed: ' + (e && e.message ? e.message : e));
+            restore();
+          }
+        } else {
+          irSetResultsStatus('error', 'Clipboard API not available in this browser.');
+          restore();
+        }
+      }, 'image/png');
+    });
+  }
+
+  function irEmailImage() {
+    const restore = irExportBtnFeedback_('Capturing…', 0);
+    irBuildCanvas(function (canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      irExportBtnFeedback_('Sending…', 0);
+      google.script.run
+        .withSuccessHandler(function (res) {
+          restore();
+          irExportBtnFeedback_('Sent to ' + (res && res.to ? res.to : 'you'), 2000);
+          showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
+        })
+        .withFailureHandler(function (err) {
+          irSetResultsStatus('error', 'Email failed: ' + (err && err.message ? err.message : err));
+          showToast('Email failed', 'error');
+          restore();
+        })
+        .sendIndividualReportEmail({
+          imageBase64: dataUrl,
+          dateLabel: irLastData && irLastData.dateLabel ? irLastData.dateLabel : '',
+        });
+    });
+  }
+
+  // -- Shared delta/duration helpers (ex-Compare Ranges) ----------------
+  // These outlived the retired Compare Ranges report: Insights consumes
+  // all four (cards/CSV classification + improvement score + quiet gate,
+  // short-duration formatting in the CSV per-day columns, KPI-tile
+  // per-day captions, and the heatmap cell drill).
+
+  function crFormatSecondsShort_(totalSeconds) {
+    if (!totalSeconds || totalSeconds <= 0) return '0:00';
+    totalSeconds = Math.round(totalSeconds);
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    if (h > 0) return h + ':' + pad(m) + ':' + pad(s);
+    return m + ':' + pad(s);
+  }
+
+  // ── Generic delta-map classifiers ────────────────────────────────
+  // Shared by Compare Ranges (a.deltas) and Insights (a.metrics) --
+  // both shapes are { rung, missed, answered, pct, ... } maps of
+  // deltaBlocks carrying `deltaPct` (relative % for volume metrics,
+  // pp for pct). One implementation so the two reports' improvement
+  // scoring / classification / quiet thresholds can't drift.
+
+  function deltaImprovementScore_(d) {
+    d = d || {};
+    const v = function (k) { return Number((d[k] && d[k].deltaPct) || 0); };
+    return v('rung') - v('missed') + v('answered') + 5 * v('pct');
+  }
+
+  /**
+   * Classify a delta map's overall direction (left-border color).
+   * Adds up signed-by-valence votes across the 4 valenced
+   * metrics. Threshold of >=2 / <=-2 prevents 1-metric noise
+   * from tipping the classification.
+   */
+  // Per-WORKING-DAY normalization for the trend classification (owner
+  // note): comparing windows with unequal working days (a holiday week, a
+  // custom prior) made a raw answered-count drop read as "Slipping" even
+  // when the agent's per-day output held steady. Volume-type metrics
+  // (rung / missed / answered / ttt) get their deltaPct recomputed on
+  // per-working-day values; rates (pct is pp, att is per-call) are
+  // untouched, and equal-workday windows are numerically unchanged. The
+  // adjustment feeds ONLY the classifiers below (trend pill, triage tiers,
+  // quiet test, improver/regressor sort, headline, CSV classification
+  // columns) -- the card badges keep showing the raw window totals.
+  function insPerDayMetrics_(metrics, meta) {
+    const wdC = Number(meta && meta.currentWorkDays) || 0;
+    const wdP = Number(meta && meta.priorWorkDays) || 0;
+    if (!metrics || wdC <= 0 || wdP <= 0 || wdC === wdP) return metrics;
+    const out = {};
+    Object.keys(metrics).forEach(function (k) {
+      const b = metrics[k];
+      if (!b || b.type !== 'volume' || k === 'att') { out[k] = b; return; }
+      const curPd = Number(b.val) / wdC, prevPd = Number(b.prev) / wdP;
+      let dp;
+      if (prevPd === 0 && curPd === 0) dp = 0;
+      else if (prevPd === 0) dp = 100;
+      else dp = ((curPd - prevPd) / prevPd) * 100;
+      out[k] = { val: b.val, prev: b.prev, formatted: b.formatted,
+                 delta: b.delta, deltaPct: dp, type: b.type };
+    });
+    return out;
+  }
+
+  function deltaClassify_(d) {
+    d = d || {};
+    const sign = function (v) { return v > 0.05 ? 1 : v < -0.05 ? -1 : 0; };
+    let score = 0;
+    score += sign(Number((d.rung     && d.rung.deltaPct)     || 0));      // up = good
+    score -= sign(Number((d.missed   && d.missed.deltaPct)   || 0));      // up = bad
+    score += sign(Number((d.answered && d.answered.deltaPct) || 0));      // up = good
+    score += sign(Number((d.pct      && d.pct.deltaPct)      || 0));      // up = good
+    if (score >=  2) return 'improved';
+    if (score <= -2) return 'regressed';
+    return 'mixed';
+  }
+
+  /**
+   * Quiet test: every meaningful metric moved by less than a small
+   * noise threshold. Cuts visual noise so users can focus on agents
+   * that actually shifted.
+   */
+  function deltaIsQuiet_(d) {
+    d = d || {};
+    const absV = function (k) { return Math.abs(Number((d[k] && d[k].deltaPct) || 0)); };
+    return absV('rung')     < 10
+        && absV('missed')   < 10
+        && absV('answered') < 10
+        && absV('pct')      < 3;   // pp difference
+  }
+

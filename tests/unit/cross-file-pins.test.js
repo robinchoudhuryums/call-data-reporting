@@ -90,7 +90,13 @@ test('R8-D2: every UI_FLAG_SURFACES key has a CSS hide rule whose targets exist 
 
   const styles = read('styles.html', DASH);
   const dashboard = read('dashboard.html', DASH);
-  const script = read('script.html', DASH);
+  // #4 (Round-16): the client is script.html (assembler) + the script-*.html
+  // fragments it includes; search the whole family, since the classes/ids the
+  // flag rules target are built across the fragments.
+  const script = read('script.html', DASH) + fs.readdirSync(DASH)
+    .filter(function (f) { return /^script-[\w-]+\.html$/.test(f); })
+    .map(function (f) { return read(f, DASH); })
+    .join('\n');
 
   keys.forEach(function (key) {
     // (1) A CSS rule exists for the key.

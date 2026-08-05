@@ -10,8 +10,41 @@ tests/unit/claude-md-split.test.js fails the build if they drift. -->
 The CLIENT-side conventions that were Common Gotchas bullets in CLAUDE.md:
 how the Insights page, the Overview page, the density/prefs layer, the `ds-*`
 component system and the design tokens are built. **Read this before touching
-`script.html`, `styles.html`, or `dashboard.html`**, and re-run
-`npm run ci:ui` afterwards.
+`script.html`, any `script-*.html` fragment, `styles.html`, or
+`dashboard.html`**, and re-run `npm run ci:ui` afterwards.
+
+## The assembled client (#4, Round-16): script.html + the script-*.html fragments
+
+The client used to be ONE ~21K-line script.html. It is now **script.html (a
+~45-line ASSEMBLER) + eleven `script-N-<name>.html` fragments** spliced into
+one `<script>` element / one IIFE, in include order, by the
+template-EVALUATING `include_` (Code.gs). Everything a maintainer needs:
+
+- **One shared scope, exactly as before.** The fragments assemble into the
+  same single IIFE, so function hoisting and top-level `const`/`let`
+  visibility span fragment boundaries. Handlers may call anything anywhere;
+  TOP-LEVEL code (IIFEs, init expressions) should only call into its own or
+  EARLIER fragments — the assembled order is the include order in script.html.
+- **Fragments are RAW JS** — no script/style tags, no template scriptlets
+  (include_ evaluates templates now, so a stray scriptlet-open sequence in a
+  fragment would EXECUTE server-side at render), and never the literal
+  end-of-script-tag pattern (closes the assembled block early — the original
+  html-include-structure bug class, now reachable from any fragment).
+  `tests/unit/html-include-structure.test.js` enforces all three per fragment,
+  pins the include list == the `script-*.html` files on disk (both
+  directions — a fragment on disk but not included silently DROPS its
+  features), and syntax-checks the assembled body via `node --check`.
+- **Adding a fragment** = create the file AND add its include line + map entry
+  in script.html (the parity pin fails until you do both). Appending to the
+  END of the last fragment is safe — it lands inside the IIFE.
+- **`tools/ui-harness/build-harness.js` resolves the nested includes itself**
+  (`resolveIncludes_`), so the rendered-UI gate boots the same assembled
+  client the real page serves.
+- **Deploy note:** `clasp push -f` picks the new files up automatically; no
+  web-editor deletion was needed (script.html itself remains, as the
+  assembler — INV-17 concerns REMOVED files only).
+- The fragment map (name → contents) lives in script.html's header comment —
+  that comment is the canonical index; keep it current when fragments change.
 
 These moved because they describe HOW A SURFACE IS BUILT rather than a trap that
 bites unrelated work. The client traps that CAN bite you without warning stayed
@@ -544,9 +577,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   still honors it. A sub-queue's group header also carries the ONLY route to its
   own missed calls (Phase 3 cannot merge that section without double-counting
   queue abandons) -- the button re-scopes the section and the scope note offers
-  the way back. `cdr.dept.subscope` is an orphan key, left in place rather than
-  cleared on load: tidying it would be a write on every page view for no user
-  benefit.
+  the way back. `cdr.dept.subscope` is an orphan key, swept on load by
+  `sweepOrphanPrefs_()` (#5, Round-16) -- read-before-remove, so the steady
+  state stays write-free (the objection that previously kept it in place).
 - **A control whose only state is a class is a control with NO state, and a
   driver that asserts the class cannot tell the difference.** The retired tabs
   carried `is-active` while `.segmented` only styles `.active`, so they had no
@@ -608,7 +641,13 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   machine; pre-per-user blobs under the bare `cdr.ins.prefs.v2` AND the bare
   `cdr.ir.prefs.v1` (IR was per-user'd later, L3) are orphans. The
   retired Performance / Compare Ranges reports' `cdr.pr.prefs.v1` /
-  `cdr.cr.prefs.v1` are orphans too. Bump the trailing version when the prefs schema
+  `cdr.cr.prefs.v1` are orphans too. **All six documented orphan keys are now
+  deleted on load by `sweepOrphanPrefs_()`** (script.html, #5 Round-16; called
+  first in `init()`, read-before-remove so a clean store costs no writes) --
+  add a newly-orphaned exact key THERE, and never list a key that is still
+  read as a migration fallback (the superseded `cdr.ov.cardperiod` /
+  `cdr.ov.tableperiod.v1` stay un-swept for exactly that reason).
+  Bump the trailing version when the prefs schema
   changes; older saved blobs are silently dropped if JSON parsing
   fails. The chrome layer also writes `dash-mode` (light/dark toggle),
   `dash-theme.v1` (warm / cool / clinical paper theme), and

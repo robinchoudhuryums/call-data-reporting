@@ -1,0 +1,2056 @@
+  // -- Company Overview page --------------------------------------------
+  // Cross-dept snapshot: per-dept tile grid showing the latest day's
+  // KPIs (rung / answered / missed / % / ATT) + a 30-day answer-rate
+  // trend chart with one line per dept. Accessible to all
+  // authenticated users (managers see other depts' numbers too --
+  // matches the legacy DQE Report's read-only cross-dept visibility).
+  //
+  // Rendered inline as a full page (#overview-page), toggled with
+  // the #dept-page section via body[data-page] from the header
+  // buttons in setPage().
+
+  let ovChartInstance = null;
+  let ovLastData = null;
+  // Sub-queue (child) lines are shown on the trend chart BY DEFAULT now
+  // (dashed + parent hue, so they behave like other dept queues while staying
+  // visually linked); the "sub-queues" toggle lets the user declutter to
+  // top-level depts only. In the grid, children render as dense chips beneath
+  // their parent tile (ovBuildSubqCard_) that expand IN PLACE into a near-full
+  // card on click -- compact, but never collapsed INTO the parent card
+  // (independent metrics, not a roll-up).
+  let ovShowSubQueues_ = true;
+
+  function initCompanyOverview() {
+    const overviewBtn = $('overview-btn');
+    const myDeptBtn   = $('my-dept-btn');
+    if (overviewBtn) overviewBtn.addEventListener('click', function () { setPage('overview'); });
+    if (myDeptBtn)   myDeptBtn.addEventListener('click',   function () { setPage('dept');     });
+  }
+
+  var ovAutoRefreshTimer_ = null;
+  var OV_AUTO_REFRESH_MS  = 5 * 60 * 1000;
+
+  // Stale-while-revalidate cache for the Overview (Phase 5 / decision C6).
+  // Paints the last successful payload instantly on load, then revalidates.
+  // Keyed by VIEWER (email + role) so a cached blob never paints for a
+  // different user on a shared machine, and only the already-personalized
+  // payload the client received is stored (the server strips admin-only fields
+  // per-viewer before serving). Best-effort: any storage/parse error falls back
+  // to the normal fetch path, and the live fetch ALWAYS runs regardless.
+  var OV_CACHE_KEY_ = 'cdr.ov.cache.v1:' + (USER.email || '') + ':' + (USER.role || '');
+  function ovReadCache_() {
+    try {
+      var raw = localStorage.getItem(OV_CACHE_KEY_);
+      if (!raw) return null;
+      var obj = JSON.parse(raw);
+      return (obj && obj.data && obj.data.depts) ? obj.data : null;
+    } catch (e) { return null; }
+  }
+  function ovWriteCache_(data) {
+    try {
+      if (data && data.depts) {
+        localStorage.setItem(OV_CACHE_KEY_, JSON.stringify({ data: data, at: Date.now() }));
+      }
+    } catch (e) { /* quota / disabled -- SWR is best-effort */ }
+  }
+  // "Showing saved snapshot · refreshing…" pill while a cached paint awaits the
+  // live fetch. Cleared on the next successful load.
+  function ovSetCachedIndicator_(on) {
+    var el = document.getElementById('ov-cached-pill');
+    if (on) {
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'ov-cached-pill';
+        el.className = 'ov-cached-pill';
+        el.textContent = 'Showing saved snapshot · refreshing…';
+        var body = $('ov-body');
+        if (body) body.insertBefore(el, body.firstChild);
+      }
+      el.style.display = '';
+    } else if (el) {
+      el.style.display = 'none';
+    }
+  }
+
+  // B1 change-flash. One-shot highlight on value nodes whose text changed
+  // since the last render in the SAME scope (SWR cache->live swap on Overview,
+  // or a date-range refresh on My Department). Callers tag each value node with
+  // a stable data-flash-key (dept / agent name, never row index). Best-effort,
+  // reduced-motion aware, and flashes ONLY on a real change -- never on first
+  // paint (the hasOwnProperty guard), so opening a screen never flashes.
+  var DS_PREV_VALUES_ = {};
+  function dsFlashChanged_(root, scopeId) {
+    if (!root || !root.querySelectorAll) return;
+    var nodes = root.querySelectorAll('[data-flash-key]');
+    var reduce = false;
+    try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+    var prev = DS_PREV_VALUES_[scopeId] || {};
+    var next = {};
+    nodes.forEach(function (el) {
+      var k = el.getAttribute('data-flash-key');
+      var v = el.textContent.trim();
+      next[k] = v;
+      if (!reduce && Object.prototype.hasOwnProperty.call(prev, k) && prev[k] !== v) {
+        el.classList.remove('ds-flash');
+        void el.offsetWidth;            // force reflow so the animation replays
+        el.classList.add('ds-flash');
+        el.addEventListener('animationend', function h() {
+          el.classList.remove('ds-flash'); el.removeEventListener('animationend', h);
+        });
+      }
+    });
+    DS_PREV_VALUES_[scopeId] = next;   // snapshot for the next render (even on first paint)
+  }
+
+  // View-as (admin only): when set to a dept name, the admin is previewing
+  // that dept manager's experience. Drives the getCompanyOverview viewAsDept
+  // param (server personalizes as manager) + body[data-view-as] (CSS hides
+  // admin chrome) + a pinned dept selector. null = normal admin view.
+  var viewAsDept_ = null;
+
+  // Builds the admin-only "View as" control in the header and wires it.
+  // Created only for admins (called from the admin branch of init), and the
+  // control itself carries NO data-admin-only so it stays visible in view-as
+  // mode (the admin needs it to switch back).
+  function initViewAs_() {
+    var host = document.querySelector('.header-meta') || document.querySelector('.header-nav');
+    if (!host || $('view-as-select')) return;
+    var depts = (USER && USER.departments) || [];
+    if (!depts.length) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'view-as-ctl';
+    wrap.innerHTML = '<label for="view-as-select">View as</label>'
+      + '<select id="view-as-select"><option value="">Admin (me)</option>'
+      + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + ' (manager)</option>'; }).join('')
+      + '</select>';
+    host.appendChild(wrap);
+    $('view-as-select').addEventListener('change', function () {
+      applyViewAs_(this.value || null);
+    });
+  }
+
+  // Enter (dept) / exit (null) the manager preview.
+  function applyViewAs_(dept) {
+    viewAsDept_ = dept || null;
+    var sel = $('dept-selector');
+    if (viewAsDept_) {
+      document.body.setAttribute('data-view-as', 'manager');
+      // Pin the dept selector to the previewed dept (managers can't switch).
+      if (sel) {
+        if (Array.prototype.slice.call(sel.options).some(function (o) { return o.value === viewAsDept_; })) {
+          sel.value = viewAsDept_;
+        }
+        sel.disabled = true;
+      }
+    } else {
+      document.body.removeAttribute('data-view-as');
+      if (sel) sel.disabled = false;
+      // R9-5: restore the Escalations dept-filter column hidden by the
+      // view-as pin (escLoad_) -- re-apply its normal visibility rule.
+      const vaCol = $('esc-dept-col');
+      if (vaCol && typeof escInit_ !== 'undefined' && escInit_) {
+        const escAllDept = escInit_.isAdmin || escInit_.allDepts;
+        vaCol.style.display = (escAllDept || (escInit_.departments || []).length > 1) ? '' : 'none';
+      }
+    }
+    // (The Reports dropdown (data-admin-only) is hidden in view-as by the
+    // existing CSS; the top-level Insights tab carries no data-admin-only so
+    // it stays visible in the preview -- the old #10 solo-button surfacing
+    // is no longer needed.)
+    // Re-fetch the active surface so it reflects the effective role.
+    if (document.body.getAttribute('data-page') === 'overview') {
+      // R7 (O-3): repaint the viewer-scoped bits IMMEDIATELY from the last
+      // payload so the 'My Dept' badge + mini-table chip move on the spot --
+      // the live re-fetch below can take seconds (the per-viewer SWR cache is
+      // bypassed in view-as), and the stale chip read as "not changing".
+      if (typeof ovLastData !== 'undefined' && ovLastData && ovLastData.depts) {
+        try {
+          ovRenderUserHero_(ovLastData);
+          ovRenderUserTable_(ovLastData);
+          ovRenderTiles_(ovLastData);
+        } catch (e) { /* best-effort pre-paint; the fetch below repaints */ }
+      }
+      ovLoad_(false);
+    } else if (document.body.getAttribute('data-page') === 'escalations') {
+      // R9-5: reload the worklist under the previewed dept's scope (or the
+      // full scope when exiting the preview).
+      if (typeof escLoad_ === 'function') escLoad_();
+    } else if (typeof refresh === 'function') {
+      refresh();
+    }
+  }
+
+  // Reveal #ov-body, hiding #ov-loading. When the skeleton loader WAS
+  // showing (cold start / first paint), run a one-shot opacity crossfade so
+  // the swap reads as a fade-in rather than a hard pop (Pass-2 E-motion;
+  // reduced-motion no-op via CSS). Fires only on the skeleton->content
+  // transition -- silent auto-refreshes (loader already hidden) don't re-fade.
+  function ovRevealBody_() {
+    var loader = $('ov-loading'), body = $('ov-body');
+    var wasLoading = !!(loader && loader.style.display !== 'none');
+    if (loader) loader.style.display = 'none';
+    if (!body) return;
+    body.style.display = '';
+    if (wasLoading) {
+      body.classList.remove('ov-body-in');
+      void body.offsetWidth;          // restart the animation
+      body.classList.add('ov-body-in');
+    }
+  }
+
+  // CL1-1: monotonic stale-response token for the Overview fetch (the same
+  // guard class as summaryReqSeq / reportReqSeq_). Multiple fetches can be
+  // in flight -- the 5-min auto-refresh, setPage('overview'), Retry, and a
+  // View-as switch -- and without a token the OLDER response painted last:
+  // during a view-as switch that rendered the ADMIN payload (incl. the
+  // company-aggregate hero) inside the supposed manager preview.
+  var ovLoadSeq_ = 0;
+
+  function ovLoad_(silent) {
+    var paintedFromCache = false;
+    var __otok = ++ovLoadSeq_;
+    // In view-as (admin previewing a manager) skip the per-viewer SWR cache
+    // entirely -- the manager-personalized payload must not be written under
+    // the admin's cache key (it would paint a manager view after exiting).
+    if (!silent && !viewAsDept_) {
+      var cached = ovReadCache_();
+      if (cached) {
+        // Instant paint from the last snapshot; the live fetch below swaps it.
+        ovRevealBody_();
+        ovLastData = cached;
+        ovRender_(cached);
+        ovSetCachedIndicator_(true);
+        paintedFromCache = true;
+      } else {
+        $('ov-loading').style.display = '';
+        $('ov-body').style.display = 'none';
+      }
+    }
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__otok !== ovLoadSeq_) return;   // superseded (e.g. view-as switched)
+        ovLastData = data;
+        if (!viewAsDept_) ovWriteCache_(data);   // don't cache a view-as payload
+        ovRevealBody_();
+        ovSetRefreshWarn_(false);   // a refresh succeeded: clear any prior warning
+        ovSetCachedIndicator_(false);
+        ovRender_(data);
+        ovScheduleAutoRefresh_();
+      })
+      .withFailureHandler(function (err) {
+        if (__otok !== ovLoadSeq_) return;   // a newer request owns the UI
+        if (!silent && !paintedFromCache) {
+          // No cached content to fall back on -- show the hard error.
+          $('ov-loading').textContent = 'Error loading overview: '
+            + (err && err.message ? err.message : String(err));
+        } else {
+          // Keep the cached / last-loaded data on screen; surface a muted
+          // "refresh failing" badge instead of discarding good data.
+          ovSetCachedIndicator_(false);
+          ovSetRefreshWarn_(true);
+        }
+        ovScheduleAutoRefresh_();
+      })
+      .getCompanyOverview({ viewAsDept: viewAsDept_ || '' });
+  }
+
+  // Muted "auto-refresh failing" badge at the top of the Overview body.
+  // Created lazily; toggled by ovLoad_'s success/failure handlers.
+  function ovSetRefreshWarn_(on) {
+    var id = 'ov-refresh-warn';
+    var el = document.getElementById(id);
+    if (on) {
+      if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        // E-1: theme tokens, not hardcoded light-palette hex -- this badge
+      // renders during FAILURE states, exactly when a dark-mode user is
+      // squinting at it; the raw hex made it a glaring light box there.
+      el.style.cssText = 'display:flex;align-items:center;gap:10px;margin:0 0 10px;'
+          + 'padding:6px 10px;border-radius:var(--r, 2px);'
+          + 'font-size:12px;color:var(--muted);background:var(--paper-card);border:1px solid var(--line);';
+        var msg = document.createElement('span');
+        msg.style.flex = '1';
+        msg.textContent = 'Auto-refresh is failing — showing the last loaded data.';
+        // D1a: an explicit Retry so a manager isn't stuck on stale data waiting
+        // for the next auto-refresh tick. Re-runs the silent revalidate; a
+        // success clears this banner and repaints (with B1 change-flash).
+        var retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'link-btn';
+        retry.textContent = 'Retry now';
+        retry.addEventListener('click', function () {
+          retry.disabled = true; retry.textContent = 'Retrying…';
+          ovLoad_(true);
+          setTimeout(function () { retry.disabled = false; retry.textContent = 'Retry now'; }, 4000);
+        });
+        el.appendChild(msg);
+        el.appendChild(retry);
+        var body = $('ov-body');
+        if (body) body.insertBefore(el, body.firstChild);
+      }
+      el.style.display = '';
+    } else if (el) {
+      el.style.display = 'none';
+    }
+  }
+
+  function ovScheduleAutoRefresh_() {
+    if (ovAutoRefreshTimer_) clearTimeout(ovAutoRefreshTimer_);
+    ovAutoRefreshTimer_ = setTimeout(function () {
+      if (document.body.getAttribute('data-page') === 'overview') {
+        ovLoad_(true);
+      }
+    }, OV_AUTO_REFRESH_MS);
+  }
+
+  function ovRender_(data) {
+    if (!data || !data.depts) return;
+    ovRenderPipelineBanner_(data);
+    ovRenderOrphanNag_(data);
+    ovRenderUnmappedNag_(data);
+    ovRenderSummaryLine_(data);
+    ovRenderCompanyAggregate_(data);
+    ovRenderUserHero_(data);
+    ovRenderTiles_(data);
+    // Defer chart creation by one frame so the just-revealed
+    // modal body lays out before Chart.js measures the canvas.
+    requestAnimationFrame(function () { ovRenderChart_(data); });
+    ovRenderUserTable_(data);
+    // B1: flash dept/hero answer-rate values that changed vs the prior paint.
+    // On the SWR path the cache paint snapshots first (no flash), then the live
+    // paint flashes only what actually moved -- a returning manager sees the diff.
+    dsFlashChanged_($('ov-body'), 'overview');
+  }
+
+  // Single mono-uppercase summary line above the dept grid.
+  // Admin viewers see org-wide stats (rung total, % answered company-wide,
+  // QCD violations MTD across all depts). Manager viewers see the same
+  // shape scoped to their own dept so the line surfaces meaningful numbers
+  // for both audiences without leaking the admin-only company aggregate.
+  function ovRenderSummaryLine_(data) {
+    // #6: this "Data through ... Rung ... % Answered ... QCD viol MTD" line was
+    // removed -- "Data through" duplicates the header freshness pill, and the
+    // Rung / % Answered / violations are already on the per-dept cards below
+    // the chart. Kept as a hidden no-op (one-line revert) so the caller and the
+    // #ov-summary-line element don't need touching.
+    const el = $('ov-summary-line');
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  }
+
+  // Admin-only banner above the summary line surfacing Pipeline
+  // Health staleness. Healthy state stays hidden; >36h since the
+  // latest DQE-freshness success picks up the warn variant.
+  function ovRenderPipelineBanner_(data) {
+    const el = $('ov-pipeline-banner');
+    if (!el) return;
+    const pf = data && data.pipelineFreshness;
+    if (data.viewerRole !== 'admin' || !pf || !pf.isStale) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      el.classList.remove('is-warn');
+      return;
+    }
+    el.style.display = '';
+    el.className = 'ov-status-banner is-warn';
+    let bodyHtml;
+    if (pf.latestTimestamp && pf.hoursSinceFresh != null) {
+      const hours = pf.hoursSinceFresh >= 24
+        ? (pf.hoursSinceFresh / 24).toFixed(1) + 'd'
+        : pf.hoursSinceFresh.toFixed(1) + 'h';
+      bodyHtml =
+          'DQE freshness is stale -- last successful build was '
+        + '<strong>' + hours + ' ago</strong> ('
+        + escapeHtml(pf.latestTimestamp) + ').'
+        + ' Check the import pipeline (see <strong>Alerts &rarr; Pipeline Health</strong>).';
+    } else {
+      bodyHtml =
+          'No recent DQE-freshness success found in Pipeline Health.'
+        + ' Either the daily import hasn\'t run, or the success rows have aged out of the 40-row scan window.'
+        + ' Check <strong>Alerts &rarr; Pipeline Health</strong>.';
+    }
+    el.innerHTML =
+        '<span class="ov-status-banner-kicker">Pipeline</span>'
+      + '<span class="ov-status-banner-body">' + bodyHtml + '</span>';
+  }
+
+  // Admin-only banner for orphan agent names that have been written
+  // to DQE Historical Data in the last 7 days. Clicking opens the
+  // Orphan Fix modal so the admin can triage them.
+  function ovRenderOrphanNag_(data) {
+    const el = $('ov-orphan-nag');
+    if (!el) return;
+    const on = data && data.orphanNag;
+    if (data.viewerRole !== 'admin' || !on || !on.activeCount) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      el.classList.remove('is-warn');
+      return;
+    }
+    const names = (on.sampleNames || []).map(escapeHtml).join(', ');
+    const moreCount = on.activeCount - (on.sampleNames || []).length;
+    const moreClause = moreCount > 0 ? ' and ' + fmtNumber(moreCount) + ' more' : '';
+    el.style.display = '';
+    el.className = 'ov-status-banner is-warn';
+    el.innerHTML =
+        '<span class="ov-status-banner-kicker">Orphans</span>'
+      + '<span class="ov-status-banner-body">'
+      +   '<strong>' + fmtNumber(on.activeCount) + '</strong>'
+      +   ' agent name' + (on.activeCount === 1 ? '' : 's')
+      +   ' written in the last 7 days do not match any roster'
+      +   (names ? ' (' + names + moreClause + ')' : '')
+      +   '. Map them in the Orphan Fix modal so their calls roll up to the right dept.'
+      + '</span>'
+      + '<button type="button" class="ov-status-banner-action" id="ov-orphan-nag-open">Open</button>';
+    const btn = $('ov-orphan-nag-open');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        const trigger = document.getElementById('orphan-fix-btn');
+        if (trigger) trigger.click();
+      });
+    }
+  }
+
+  // F onboarding: admin-only nag for QCD queues seen in the data but mapped
+  // to no department (their calls never surface until assigned). Mirrors
+  // ovRenderOrphanNag_; hidden for non-admins and when nothing is unmapped.
+  // The "Open" button programmatically opens the Dept Config modal.
+  function ovRenderUnmappedNag_(data) {
+    const el = $('ov-unmapped-nag');
+    if (!el) return;
+    const u = data && data.unmappedQcd;
+    if (data.viewerRole !== 'admin' || !u || !u.count) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      el.classList.remove('is-warn');
+      return;
+    }
+    const names = (u.sampleNames || []).map(escapeHtml).join(', ');
+    const moreCount = u.count - (u.sampleNames || []).length;
+    const moreClause = moreCount > 0 ? ' and ' + fmtNumber(moreCount) + ' more' : '';
+    el.style.display = '';
+    el.className = 'ov-status-banner is-warn';
+    el.innerHTML =
+        '<span class="ov-status-banner-kicker">Unmapped queues</span>'
+      + '<span class="ov-status-banner-body">'
+      +   '<strong>' + fmtNumber(u.count) + '</strong>'
+      +   ' QCD queue' + (u.count === 1 ? '' : 's')
+      +   ' seen in the data ' + (u.count === 1 ? 'is' : 'are') + ' mapped to no department'
+      +   (names ? ' (' + names + moreClause + ')' : '')
+      +   ". Their calls won't appear in any QCD report until you assign them in Dept Config."
+      + '</span>'
+      + '<button type="button" class="ov-status-banner-action" id="ov-unmapped-nag-open">Open Dept Config</button>';
+    const btn = $('ov-unmapped-nag-open');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        const trigger = document.getElementById('dept-config-btn');
+        if (trigger) trigger.click();
+      });
+    }
+  }
+
+  function ovFormatDateLabel_(iso) {
+    const p = iso.split('-');
+    const d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  // Which dept the viewer "owns" -- managers always show their own;
+  // admins show whichever dept is currently selected in the header
+  // dropdown (so they can pin a focus dept).
+  function ovViewerDept_(data) {
+    if (canPickDept_()) {
+      const sel = $('dept-selector');
+      return (sel && sel.value) || (USER.departments && USER.departments[0]) || null;
+    }
+    return (data && data.viewerDept) || USER.department || null;
+  }
+
+  // Company-wide aggregate hero, admin-only. Renders a single wide
+  // tile above the dept grid with totals across all non-hidden
+  // depts for the latest date plus a 30-day company-wide sparkline.
+  function ovRenderCompanyAggregate_(data) {
+    const wrap = $('ov-company-aggregate');
+    const agg  = data && data.companyAggregate;
+    if (!wrap) return;
+    if (!agg || data.viewerRole !== 'admin') {
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+      return;
+    }
+    // Use the design system's accent color so the company tile
+    // visually anchors above the dept tiles (which cycle through
+    // the IR palette starting at the same accent slot).
+    const sparkColor = (THEME && THEME.accent) || IR_CHART_COLORS[0] || '#4E79A7';
+    // R11-L: honest 70-100% band + raw series (nulls gap-connected, not 0-filled).
+    const spark = (agg.trend || []).length ? irSparkline_(agg.trend || [], sparkColor, { band: [70, 100] }) : '';
+
+    wrap.style.display = '';
+    wrap.innerHTML =
+        '<div class="ov-agg-kicker">Company snapshot &middot; admin only</div>'
+      + '<div class="ov-agg-row">'
+      +   '<div class="ov-agg-pct-block">'
+      +     '<div class="ov-agg-pct">' + escapeHtml(agg.pctFormatted) + '</div>'
+      +     '<div class="ov-agg-pct-cap">answered company-wide</div>'
+      +   '</div>'
+      +   '<div class="ov-agg-stats">'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Rung</span><span class="ov-agg-stat-val">' + fmtNumber(agg.rung) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Answered</span><span class="ov-agg-stat-val">' + fmtNumber(agg.answered) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">Missed</span><span class="ov-agg-stat-val">' + fmtNumber(agg.missed) + '</span></div>'
+      +     '<div class="ov-agg-stat"><span class="ov-agg-stat-label">ATT</span><span class="ov-agg-stat-val">' + escapeHtml(agg.attFormatted) + '</span></div>'
+      +     '<div class="ov-agg-stat" title="' + escapeHtml(ovActiveTooltip_(agg)) + '"><span class="ov-agg-stat-label">Active</span><span class="ov-agg-stat-val">' + agg.activeAgents + ' of ' + (agg.recentlyActiveCount != null ? agg.recentlyActiveCount : agg.rosterSize) + '</span></div>'
+      +   '</div>'
+      +   (spark ? '<div class="ov-agg-spark" title="30-day company % answered trend">' + spark + '</div>' : '')
+      + '</div>';
+  }
+
+  // Hero block: featured rendering of the viewer's own department,
+  // sitting above the grid. Manager: their dept. Admin: whichever
+  // dept is selected in the header dropdown.
+  //
+  // Three shapes depending on the viewer's dept position:
+  //   - Top-level parent with children (e.g. Sales has PAP Q):
+  //     hero shows the big parent tile + its child sub-queue tiles
+  //     stacked underneath. Keeps the parent-child relationship
+  //     visible even when the parent is the hero.
+  //   - Top-level dept with no children: hero is just that tile.
+  //   - Child sub-queue (e.g. Spanish): hero is just that child
+  //     tile, with a "sub-queue · <Parent>" tag so the relationship
+  //     is still visible even though the parent renders below in
+  //     the grid (with the child removed from its group).
+  //
+  // Hidden entirely if we can't resolve a viewer dept or it isn't
+  // present in the overview data (e.g. listed in
+  // OVERVIEW_HIDDEN_DEPTS).
+  function ovRenderUserHero_(data) {
+    // RETIRED: the viewer's dept used to render as a full-width hero ABOVE the
+    // chart. It now folds into the grid as the highlighted first card
+    // (ovRenderTiles_ -> ov-dept-tile-viewer), which reads better and works
+    // when presenting several depts at once. Keep this block hidden; the
+    // function is still called from the render sequence + dept-selector change
+    // handler, so it stays a safe no-op rather than being ripped out.
+    const wrap = $('ov-user-hero');
+    if (wrap) { wrap.style.display = 'none'; wrap.innerHTML = ''; }
+  }
+
+  // Card period slider (Yesterday / Last 30 / YTD). Swaps which server-shipped
+  // `periods` block the dept cards' headline stats read; the sparkline, WoW
+  // chip, and active-count stay period-independent. Persisted; default keeps
+  // the historical latest-day view.
+  // R12-19 (#2, owner-confirmed): ONE window drives the dept cards AND the
+  // agent table (the old Cards:/Table: split was the top "why don't these
+  // match" trap). Migration: new key, else the old TABLE pref (the heavier
+  // fetch), else the old card pref. The chart keeps its own range control
+  // (a trend isn't a snapshot); sparkline/WoW/active-count stay
+  // period-independent (INV-40).
+  const OV_WINDOW_KEY_ = 'cdr.ov.window';
+  const OV_CARD_PERIOD_KEY_ = 'cdr.ov.cardperiod';
+  const OV_CARD_PERIODS_ = {
+    yesterday: { label: 'Yesterday',    cap: 'answered (yesterday)' },
+    last30:    { label: 'Last 30 days', cap: 'answered (last 30 days)' },
+    ytd:       { label: 'YTD',          cap: 'answered (year to date)' },
+  };
+  let ovCardPeriod = (function () {
+    try {
+      var v = localStorage.getItem(OV_WINDOW_KEY_)
+        || localStorage.getItem('cdr.ov.tableperiod.v1')
+        || localStorage.getItem(OV_CARD_PERIOD_KEY_);
+      return OV_CARD_PERIODS_[v] ? v : 'yesterday';
+    }
+    catch (e) { return 'yesterday'; }
+  })();
+  function ovPeriodStats_(dept) {
+    const st = (dept && dept.periods && dept.periods[ovCardPeriod])
+      || (dept && dept.latest)
+      || { pctFormatted: '—', rung: 0, answered: 0, missed: 0, attFormatted: '—' };
+    // R12-4: a dept with queue/QCD data but ZERO rings in the window (e.g. a
+    // mapped dept whose roster had no agent activity) would headline
+    // "0.0% answered" -- reads as catastrophic when it means "no agent
+    // data". Show the no-data dash instead; a true all-missed day keeps its
+    // real 0.0% because rung > 0 there.
+    if (!(Number(st.rung) > 0)) {
+      return Object.assign({}, st, { pctFormatted: '—', attFormatted: '—' });
+    }
+    return st;
+  }
+  function ovPeriodCap_() { return (OV_CARD_PERIODS_[ovCardPeriod] || OV_CARD_PERIODS_.yesterday).cap; }
+
+  // O4: independent period for the bottom AGENT TABLE (re-fetches the dept
+  // summary for the selected range), separate from the card period above.
+  const OV_TABLE_PERIOD_KEY_ = 'cdr.ov.tableperiod.v1';
+  let ovTablePeriod = (function () {
+    try {
+      var v = localStorage.getItem(OV_WINDOW_KEY_)
+        || localStorage.getItem(OV_TABLE_PERIOD_KEY_)
+        || localStorage.getItem('cdr.ov.cardperiod');
+      return OV_CARD_PERIODS_[v] ? v : 'yesterday';
+    }
+    catch (e) { return 'yesterday'; }
+  })();
+  // Resolve { from, to } from the latest DQE date + the selected table period.
+  function ovTableRange_(latestIso) {
+    if (!latestIso || ovTablePeriod === 'yesterday') return { from: latestIso, to: latestIso };
+    var p = String(latestIso).split('-');
+    var y = +p[0], mo = (+p[1]) - 1, d = +p[2];
+    if (ovTablePeriod === 'ytd') return { from: y + '-01-01', to: latestIso };
+    var start = new Date(Date.UTC(y, mo, d - 29));   // last30: latest - 29d inclusive
+    var iso = function (dt) {
+      return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0')
+        + '-' + String(dt.getUTCDate()).padStart(2, '0');
+    };
+    return { from: iso(start), to: latestIso };
+  }
+  let ovTablePeriodWired = false;
+  function ovWireTablePeriodBar_() {
+    const bar = $('ov-user-table-period');
+    if (!bar) return;
+    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
+      const on = b.getAttribute('data-period') === ovTablePeriod;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (ovTablePeriodWired) return;
+    ovTablePeriodWired = true;
+    bar.addEventListener('click', function (e) {
+      const b = e.target.closest('.ov-period-btn');
+      if (!b) return;
+      const p = b.getAttribute('data-period');
+      if (!OV_CARD_PERIODS_[p] || p === ovTablePeriod) return;
+      ovTablePeriod = p;
+      try { localStorage.setItem(OV_TABLE_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (ovLastData) ovRenderUserTable_(ovLastData);
+      // R11-F: fade the table on the range swap (reduced-motion no-ops via CSS).
+      var wrap = $('ov-user-table-wrap');
+      if (wrap) { wrap.classList.remove('ov-tbl-fade'); void wrap.offsetWidth; wrap.classList.add('ov-tbl-fade'); }
+    });
+  }
+
+  // Period bar above the dept grid (static markup). Syncs the active button on
+  // every render; wires the click once. Switching re-renders only the cards
+  // (hero + grid) from ovLastData -- no re-fetch; the chart/sparklines
+  // (period-independent) are left alone.
+  let ovPeriodBarWired = false;
+  function ovWirePeriodBar_() {
+    const bar = $('ov-period-bar');
+    if (!bar) return;
+    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
+      const on = b.getAttribute('data-period') === ovCardPeriod;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    if (ovPeriodBarWired) return;
+    ovPeriodBarWired = true;
+    bar.addEventListener('click', function (e) {
+      const b = e.target.closest('.ov-period-btn');
+      if (!b) return;
+      const p = b.getAttribute('data-period');
+      if (!OV_CARD_PERIODS_[p] || p === ovCardPeriod) return;
+      ovCardPeriod = p;
+      ovTablePeriod = p;   // R12-19: one window, both surfaces
+      try { localStorage.setItem(OV_WINDOW_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (ovLastData) {
+        ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData);
+        ovRenderUserTable_(ovLastData);
+        var twrap = $('ov-user-table-wrap');
+        if (twrap) { twrap.classList.remove('ov-tbl-fade'); void twrap.offsetWidth; twrap.classList.add('ov-tbl-fade'); }
+      }
+    });
+  }
+
+  // R11-B5: collapse/expand the Overview trend band (chart + its controls),
+  // persisted per user, so the dept cards can take the whole screen. The
+  // band's markup keeps its DOM (charts aren't destroyed) -- CSS hides it via
+  // .ov-trend-collapsed; expanding re-measures the chart (the hidden-render
+  // gotcha) with a double-rAF resize.
+  var OV_TREND_COLLAPSE_KEY_ = 'cdr.ov.trendcollapsed';
+  function ovWireTrendCollapse_() {
+    var btn = $('ov-trend-collapse-btn');
+    var col = document.querySelector('.ov-trend-col');
+    if (!btn || !col) return;
+    var apply = function (collapsed) {
+      col.classList.toggle('ov-trend-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      var lbl = btn.querySelector('.ov-trend-collapse-lbl');
+      var chev = btn.querySelector('.ov-trend-collapse-chev');
+      if (lbl) lbl.textContent = collapsed ? 'Show trend chart' : 'Hide trend chart';
+      if (chev) chev.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+      if (!collapsed && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          try { if (ovChartInstance) ovChartInstance.resize(); } catch (e) {}
+        }); });
+      }
+    };
+    var saved = false;
+    try { saved = localStorage.getItem(OV_TREND_COLLAPSE_KEY_) === '1'; } catch (e) {}
+    apply(saved);
+    btn.addEventListener('click', function () {
+      var next = !col.classList.contains('ov-trend-collapsed');
+      try { localStorage.setItem(OV_TREND_COLLAPSE_KEY_, next ? '1' : ''); } catch (e) {}
+      apply(next);
+    });
+  }
+
+  function ovBuildHeroTile_(dept, color) {
+    const st = ovPeriodStats_(dept);
+    // R11-L: honest 70-100% band + raw series (nulls gap-connected).
+    const spark = irSparkline_(dept.trend || [], color, { band: [70, 100] });
+    const subTag = dept.parent
+      ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
+      : '';
+    return '<div class="ov-dept-tile ov-dept-tile-hero" data-dept="' + escapeHtml(dept.name) + '" style="border-top-color:' + color + ';">'
+         +   '<div class="ov-dept-tile-head">'
+         +     '<div>'
+         +       '<div class="ov-hero-kicker">Your department</div>'
+         +       '<span class="ov-dept-name ov-hero-name">' + escapeHtml(dept.name) + '</span>'
+         +       (subTag ? ' ' + subTag : '')
+         +     '</div>'
+         +     '<div class="ov-hero-meta">'
+         +       ovBuildAlertPill_(dept)
+         +       (ovCardPeriod === 'yesterday' ? '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' : '<span class="ov-dept-active" style="display:none;">')
+         +         dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents active'
+         +       '</span>'
+         +     '</div>'
+         +   '</div>'
+         +   '<div class="ov-hero-body">'
+         +     '<div class="ov-hero-pct-block">'
+         +       '<div class="ov-hero-pct" data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</div>'
+         +       '<div class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</div>'
+         +       ovBuildWowChip_(dept)
+         +       ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
+         +     '</div>'
+         +     '<div class="ov-hero-stats">'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Rung</span><span>' + fmtNumber(st.rung) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Answered</span><span>' + fmtNumber(st.answered) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">Missed</span><span>' + fmtNumber(st.missed) + '</span></div>'
+         +       '<div class="ov-hero-stat"><span class="ov-dept-stat-label">ATT</span><span>' + escapeHtml(st.attFormatted) + '</span></div>'
+         +     '</div>'
+         +     '<div class="ov-hero-spark" title="30-day % answered trend">' + spark + '</div>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  function ovBuildWowChip_(dept) {
+    if (!dept.wow) return '';
+    const d = Number(dept.wow.deltaPct) || 0;
+    const arrow = d > 0 ? '▲' : (d < 0 ? '▼' : '◆');
+    let cls = 'ov-wow-flat';
+    if (d > 0.5)  cls = 'ov-wow-up';
+    if (d < -0.5) cls = 'ov-wow-down';
+    const tip = 'Week-over-week answer rate: last 7 days ' + dept.wow.curPct.toFixed(1)
+              + '% vs the prior 7 days ' + dept.wow.prevPct.toFixed(1)
+              + '% \u2014 independent of the window selector above.';
+    // R9-7: the QCD caption is NOT appended here anymore -- it used to ride
+    // inside this builder, so the `!dept.wow` early-return above silently
+    // dropped a dept's QCD chips whenever its DQE rung was zero in either
+    // 7-day window (exactly the queue-centric low-ring depts, e.g. Denials
+    // at 50% abandoned, whose QCD data matters most). The tile builders now
+    // call ovBuildQcdCaption_ independently.
+    return '<span class="ov-wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
+         + arrow + ' ' + Math.abs(d).toFixed(1) + '% WoW</span>';
+  }
+
+  // QCD info that isn't already covered by DQE on the dept tile.
+  // Two chips:
+  //   - "Abandoned: N (P%)" — always rendered when QCD data exists,
+  //     warn-tinted when % >= 5% (pipeline's violation threshold).
+  //   - "X viol MTD" — month-to-date violations across this dept's
+  //     mapped queues; only rendered when X > 0.
+  // Tooltip on the abandoned chip carries the latest-date context.
+  // Chip budget: how many per-queue rows a multi-queue tile shows
+  // before collapsing the rest into a "+N more" summary, so a tile
+  // stays scannable instead of stacking a row+chips per queue.
+  var OV_QCD_QUEUE_BUDGET = 3;
+  function ovBuildQcdCaption_(dept) {
+    if (!dept || !dept.qcd) return '';
+    var q = dept.qcd;
+    var queues = q.perQueue || [];
+    var multiQueue = queues.length > 1;
+    var html = '';
+
+    if (multiQueue) {
+      // Worst-first so the few chips that DO show are the ones that
+      // matter (most violations, then highest abandoned %).
+      var sorted = queues.slice().sort(function (a, b) {
+        return (Number(b.violations)   || 0) - (Number(a.violations)   || 0)
+            || (Number(b.abandonedPct) || 0) - (Number(a.abandonedPct) || 0)
+            || (Number(b.abandoned)    || 0) - (Number(a.abandoned)    || 0);
+      });
+      var shown  = sorted.slice(0, OV_QCD_QUEUE_BUDGET);
+      var hidden = sorted.slice(OV_QCD_QUEUE_BUDGET);
+      html += '<div class="ov-qcd-queue-list">';
+      shown.forEach(function (pq) {
+        var qPct = Number(pq.abandonedPct) || 0;
+        var qAbnd = Number(pq.abandoned) || 0;
+        var qViol = Number(pq.violations) || 0;
+        // One combined abandoned chip ("P% · N aban") instead of two
+        // separate chips, to cut the per-row chip count.
+        var abndText = escapeHtml(pq.abandonedPctStr || '0.00%')
+          + (qAbnd > 0 ? ' · ' + fmtNumber(qAbnd) + ' aban' : '');
+        var chips = '<span class="ov-qcd-flag'
+              + (qPct >= 5 ? ' ov-qcd-violation' : ' ov-qcd-elevated') + '">'
+              + abndText + '</span>';
+        if (qViol > 0) {
+          chips += '<span class="ov-qcd-flag ov-qcd-violation">' + qViol + ' viol</span>';
+        }
+        html += '<div class="ov-qcd-queue-row"><span class="ov-qcd-queue-name">'
+             + escapeHtml(pq.queue) + '</span>' + chips + '</div>';
+      });
+      if (hidden.length) {
+        var moreTitle = hidden.map(function (pq) {
+          return pq.queue + ': ' + (pq.abandonedPctStr || '0.00%')
+            + ((Number(pq.violations) || 0) > 0 ? ' (' + pq.violations + ' viol)' : '');
+        }).join(' • ');
+        html += '<div class="ov-qcd-queue-more" title="' + escapeHtml(moreTitle) + '">'
+             + '+' + hidden.length + ' more queue' + (hidden.length === 1 ? '' : 's')
+             + '</div>';
+      }
+      html += '</div>';
+    } else {
+      var pct = Number(q.abandonedPct) || 0;
+      var abandoned = Number(q.abandoned) || 0;
+      var abndCls = pct >= 5 ? 'ov-qcd-flag ov-qcd-violation' : 'ov-qcd-flag ov-qcd-elevated';
+      html += '<span class="' + abndCls + '">'
+           + escapeHtml(q.abandonedPctStr || '0.00%') + '</span>';
+      if (abandoned > 0) {
+        html += '<span class="' + abndCls + '">'
+             + fmtNumber(abandoned) + ' aban</span>';
+      }
+    }
+
+    var mtdViol = Number(q.violationsMtd) || 0;
+    if (mtdViol > 0) {
+      html += '<span class="ov-qcd-flag ov-qcd-violation" title="'
+            + mtdViol + ' QCD violation' + (mtdViol === 1 ? '' : 's')
+            + ' month-to-date">' + mtdViol + ' viol MTD</span>';
+    }
+    return html;
+  }
+
+  // RETIRED (#4): the "what changed" per-agent driver callout (e.g.
+  // "Sarah +12 answered") was removed from the Overview cards -- naming a
+  // specific agent on the dept tile read as clutter, not at-a-glance. The
+  // server still computes dept.wow.driver (used by the manager digest's
+  // own narrative, INV-48); it's just no longer rendered on the cards.
+  // Kept as a no-op so any stray caller renders nothing.
+  function ovBuildWowDriver_(dept) { return ''; }
+
+  // Tooltip text for the active-agents caption. Spells out the
+  // three counts (today's active / recently active / full roster)
+  // so the user understands why the denominator isn't the full
+  // roster size -- ex-employees on the roster sheet (kept for
+  // historical-data preservation) get filtered out of the
+  // "recently active" count.
+  function ovActiveTooltip_(rec) {
+    if (!rec) return '';
+    const recent  = rec.recentlyActiveCount;
+    const roster  = rec.rosterSize;
+    const parts = [];
+    parts.push(rec.activeAgents + ' agent(s) had activity on the latest date');
+    if (recent != null) {
+      parts.push(recent + ' agent(s) had activity in the past 30 days (the denominator)');
+    }
+    if (roster != null) {
+      parts.push(roster + ' agent(s) on the full roster sheet');
+    }
+    return parts.join('. ') + '.';
+  }
+
+  function ovBuildAlertPill_(dept) {
+    if (!dept.alertedOnLatest) return '';
+    return '<span class="ov-alert-pill" title="A low-answer-rate alert was sent for this department on the latest data date.">'
+         + '<span aria-hidden="true">🚨</span> Alerted today</span>';
+  }
+
+  // Shared grid tile builder. Used by both the main grid and the
+  // hero block (for parent-viewers' nested child sub-queues).
+  // Set `isChild=true` for sub-queues -- they pick up the
+  // accent-tinted background + tree-line connector via CSS.
+  function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
+    const st = ovPeriodStats_(dept);
+    // R11-L: dense grid tiles use the compact trend ARROW (real regression
+    // slope on the fixed 70-100% band) instead of the auto-scaled sparkline,
+    // which exaggerated tiny drifts. Nulls skipped (not zero-filled).
+    const spark = irTrendArrow_(dept.trend || [], { label: '% answered (30-day)' });
+    const parentTag = isChild
+      ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
+      : '';
+    // The viewer's own dept (manager) / selected dept (admin) is folded into
+    // the grid as the FIRST card with a distinctive border + "your dept"
+    // badge (replaces the old full-width hero above the chart).
+    // R7 (O-3): in View-as-Manager the badge reads 'My Dept' like the real
+    // manager experience being previewed -- isAllDeptViewer_() alone stays
+    // true there (the client USER is still the admin), which kept the badge
+    // on 'selected' mid-preview.
+    const viewerBadge = isViewer
+      ? '<span class="ov-dept-viewer-badge">' + ((isAllDeptViewer_() && !viewAsDept_) ? 'selected' : 'My Dept') + '</span>'
+      : '';
+    const cls = 'ov-dept-tile'
+              + (isChild ? ' ov-dept-tile-child' : '')
+              + (isViewer ? ' ov-dept-tile-viewer' : '')
+              + (routable ? ' ov-dept-tile-clickable' : '');
+    return '<div class="' + cls + '" data-dept="' + escapeHtml(dept.name) + '">'
+         +   '<div class="ov-dept-tile-head">'
+         +     '<span class="ov-dept-name">' + escapeHtml(dept.name) + viewerBadge + '</span>'
+         +     (ovCardPeriod === 'yesterday' ? '<span class="ov-dept-active" title="' + escapeHtml(ovActiveTooltip_(dept)) + '">' : '<span class="ov-dept-active" style="display:none;">')
+         +       dept.activeAgents + ' of ' + (dept.recentlyActiveCount != null ? dept.recentlyActiveCount : dept.rosterSize) + ' agents'
+         +     '</span>'
+         +   '</div>'
+         +   parentTag
+         +   ovBuildAlertPill_(dept)
+         +   '<div class="ov-dept-tile-pct">'
+         +     '<span data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</span>'
+         +     ' <span class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</span>'
+         +     ovBuildWowChip_(dept)
+         +     ovBuildQcdCaption_(dept)   // R9-7: independent of the WoW chip
+         +   '</div>'
+         +   (st.pctFormatted === '\u2014'
+              ? '<div class="ov-dept-nodata-note">No agent call data in this window yet \u2014 queue stats below still count.</div>' : '')
+         +   '<div class="ov-dept-tile-row">'
+         +     '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
+         +     '<span><span class="ov-dept-stat-label">Miss</span> ' + fmtNumber(st.missed) + '</span>'
+         +   '</div>'
+         +   '<div class="ov-dept-tile-row">'
+         +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
+         +   '</div>'
+         +   '<div class="ov-dept-tile-spark ov-dept-tile-arrow">' + spark + '</div>'
+         + '</div>';
+  }
+
+  // WoW direction arrow for a sub-queue strip: answer-rate up = good (sage),
+  // down = warn. Flat/absent -> nothing.
+  function ovSubqArrow_(wow) {
+    if (!wow || typeof wow.deltaPct !== 'number') return '';
+    const d = wow.deltaPct;
+    if (Math.abs(d) < 0.1) return '';
+    const up = d > 0;
+    const sign = up ? '+' : '';
+    return '<span class="ov-subq-arrow ' + (up ? 'is-up' : 'is-down') + '" '
+         +   'title="Answer rate ' + sign + d.toFixed(1) + ' pts vs prior week">'
+         +   (up ? '▲' : '▼') + '</span>';
+  }
+
+  // Sub-queue mini-card STRIP for the grid: a compact card (white, hover
+  // border) showing Ans % (+ WoW arrow), Abandoned %, and violations, that
+  // EXPANDS IN PLACE into a near-full card (rung/ans/miss, ATT, sparkline)
+  // -- one element, so the strip morphs into the card rather than a second
+  // card appearing beside it. In the parent's group cell, NOT inside the
+  // parent card (no false roll-up). Hover spotlights the child's chart line.
+  function ovBuildSubqCard_(dept, color) {
+    const st = ovPeriodStats_(dept);
+    const qcd = dept.qcd || null;
+    const alert = dept.alertedOnLatest
+      ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Low-answer-rate alert on the latest date">🚨</span>'
+      : '';
+    const abd = (qcd && typeof qcd.abandonedPct === 'number')
+      ? '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Abd</span> '
+        + '<span class="' + (qcd.abandonedPct >= 5 ? 'bm-over' : '') + '">' + qcd.abandonedPct.toFixed(1) + '%</span></span>'
+      : '';
+    const viol = (qcd && qcd.violations > 0)
+      ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">Viol</span> ' + qcd.violations + '</span>'
+      : '';
+    // R11-L: honest 70-100% band + raw series (nulls gap-connected).
+    const spark = irSparkline_(dept.trend || [], color, { band: [70, 100] });
+    const routable = isAllDeptViewer_();
+    const routeBtn = routable
+      ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'
+      : '';
+    return '<div class="ov-subq-card" data-dept="' + escapeHtml(dept.name) + '" data-subq="' + escapeHtml(dept.name) + '">'
+         +   '<button type="button" class="ov-subq-strip" aria-expanded="false" '
+         +     'title="' + escapeHtml(dept.name) + ' — sub-queue of ' + escapeHtml(dept.parent) + '. Click to expand.">'
+         +     '<span class="ov-subq-strip-dot" style="background:' + color + '"></span>'
+         +     '<span class="ov-subq-strip-name">' + escapeHtml(dept.name) + '</span>'
+         +     '<span class="ov-subq-strip-metrics">'
+         +       '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Ans</span> '
+         +         escapeHtml(st.pctFormatted) + ovSubqArrow_(dept.wow) + '</span>'
+         +       abd + viol + alert
+         +     '</span>'
+         +     '<span class="ov-subq-strip-chev" aria-hidden="true">›</span>'
+         +   '</button>'
+         +   '<div class="ov-subq-detail">'
+         +     '<div class="ov-subq-detail-inner">'
+         +       '<div class="ov-dept-tile-row">'
+         +         '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'
+         +         '<span><span class="ov-dept-stat-label">Miss</span> ' + fmtNumber(st.missed) + '</span>'
+         +       '</div>'
+         +       '<div class="ov-dept-tile-row">'
+         +         '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
+         +       '</div>'
+         +       '<div class="ov-dept-tile-spark" title="30-day % answered trend">' + spark + '</div>'
+         +       routeBtn
+         +     '</div>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  // Smoothly expand/collapse a sub-queue card's detail by animating its
+  // height between 0 and the inner content height, then settling on `auto`
+  // (so it reflows if the viewport changes). The strip stays put -- the card
+  // grows beneath it -- so it reads as one card morphing, not two cards.
+  function ovToggleSubqCard_(card, strip, detail) {
+    const inner = detail.querySelector('.ov-subq-detail-inner');
+    const opening = !card.classList.contains('is-open');
+    strip.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    card.classList.toggle('is-open', opening);
+    if (typeof requestAnimationFrame !== 'function' || !inner) {
+      detail.style.height = opening ? 'auto' : '0';   // no-animation fallback
+      return;
+    }
+    if (opening) {
+      detail.style.height = inner.offsetHeight + 'px';
+      const done = function () {
+        detail.style.height = 'auto';   // let it reflow after the transition
+        detail.removeEventListener('transitionend', done);
+      };
+      detail.addEventListener('transitionend', done);
+    } else {
+      detail.style.height = inner.offsetHeight + 'px';   // fix the current height
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { detail.style.height = '0px'; });
+      });
+    }
+  }
+
+  function ovRenderTiles_(data) {
+    ovWirePeriodBar_();
+    const colors = IR_CHART_COLORS;
+    const viewerDept = ovViewerDept_(data);
+    const depts = data.depts || [];
+    const viewerObj = viewerDept ? depts.find(function (d) { return d.name === viewerDept; }) : null;
+    // The viewer's dept is no longer hoisted into a full-width hero above the
+    // chart -- it's rendered IN the grid (first, highlighted). The top-level
+    // group the viewer belongs to (itself if top-level, else its parent's
+    // group) is moved to the front; the viewer's own tile gets a marker.
+    const viewerTopName = viewerObj ? (viewerObj.parent || viewerObj.name) : null;
+
+    const groups = [];
+    const slotByName = {};
+    let slot = 0;
+    depts.forEach(function (d) {
+      if (!d.parent) {
+        slotByName[d.name] = slot++;
+        groups.push({ parent: d, children: [] });
+      } else {
+        const last = groups[groups.length - 1];
+        if (last && last.parent.name === d.parent) last.children.push(d);
+        else {
+          // Parent not the previous group (filtered/missing) -- the child
+          // becomes a standalone top-level tile so it still surfaces.
+          slotByName[d.name] = slot++;
+          groups.push({ parent: d, children: [] });
+        }
+      }
+    });
+
+    // Move the viewer's group to the front (stable for the rest).
+    if (viewerTopName) {
+      const vi = groups.findIndex(function (g) { return g.parent.name === viewerTopName; });
+      if (vi > 0) groups.unshift(groups.splice(vi, 1)[0]);
+    }
+
+    const tileRoutable = isAllDeptViewer_();
+    const html = groups.map(function (g) {
+      const color = colors[(slotByName[g.parent.name] || 0) % colors.length];
+      const parentIsViewer = (g.parent.name === viewerDept);
+      const parentTile = ovBuildGridTile_(g.parent, color, false, tileRoutable, parentIsViewer);
+      if (!g.children.length) {
+        return '<div class="ov-dept-group' + (parentIsViewer ? ' ov-dept-group-viewer' : '') + '">' + parentTile + '</div>';
+      }
+      // Sub-queues render as mini-card STRIPS beneath the parent tile, each
+      // expanding IN PLACE into a near-full card. In the group cell, NOT
+      // inside the parent card, so the child's independent metrics never read
+      // as a roll-up of the parent.
+      const cards = g.children.map(function (c) { return ovBuildSubqCard_(c, color); }).join('');
+      return '<div class="ov-dept-group' + (parentIsViewer ? ' ov-dept-group-viewer' : '') + '">' + parentTile
+           +   '<div class="ov-subq-cards" role="group" aria-label="Sub-queues of ' + escapeHtml(g.parent.name) + '">' + cards + '</div>'
+           + '</div>';
+    }).join('');
+    $('ov-dept-grid').innerHTML = html;
+
+    // Sub-queue mini-card strip: the strip button expands/collapses the
+    // card's detail IN PLACE with a smooth height transition (the strip
+    // morphs into a near-full card -- no second card appears). Admins can
+    // route to the dept via the detail's "Open" button. Hover spotlights the
+    // child's chart line.
+    $('ov-dept-grid').querySelectorAll('.ov-subq-card').forEach(function (card) {
+      const strip  = card.querySelector('.ov-subq-strip');
+      const detail = card.querySelector('.ov-subq-detail');
+      if (strip && detail) {
+        strip.addEventListener('click', function () {
+          ovToggleSubqCard_(card, strip, detail);
+        });
+      }
+      const routeBtn = card.querySelector('.ov-subq-route');
+      if (routeBtn) {
+        routeBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const target = routeBtn.getAttribute('data-dept');
+          if (target) ovRouteToDept_(target);
+        });
+      }
+      const target = card.getAttribute('data-dept');
+      if (target) {
+        card.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+        card.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+      }
+    });
+
+    // #1: clicking a dept tile SOLOS its line in the trend chart (like a legend
+    // click) instead of navigating to My Department -- and Shift/Cmd/Ctrl-click
+    // ADDS it to a multi-dept comparison. Navigation still lives on the chart
+    // POINT click (ovHandlePointClick_) + the dept-selector dropdown, so the
+    // "jarring page load on a card click" is gone for every role. Hover still
+    // spotlights (no-op once a pin is active).
+    $('ov-dept-grid').querySelectorAll('.ov-dept-tile').forEach(function (tile) {
+      const target = tile.getAttribute('data-dept');
+      if (!target) return;
+      tile.classList.add('ov-dept-tile-solo');
+      const solo = function (e) {
+        const additive = !!(e && (e.shiftKey || e.metaKey || e.ctrlKey));
+        chartSpotlightTogglePin_(ovChartInstance, target, additive);
+      };
+      tile.addEventListener('click', solo);
+      // F13: the tile is a <div>, so solo/compare was mouse-only on the
+      // Overview -- the default landing page. Shift/Cmd/Ctrl+Enter still adds
+      // to the pinned set, since `solo` reads the modifiers off the event.
+      makeActivatable_(tile, solo);
+      tile.setAttribute('aria-label', 'Isolate ' + target + ' in the trend chart');
+      tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
+      tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
+    });
+  }
+
+  // Admin-only: switch the main dashboard to a different dept and
+  // navigate to the My Department page so the new dept's full
+  // detail is visible.
+  function ovRouteToDept_(deptName, isoDate) {
+    const sel = $('dept-selector');
+    if (sel && sel.value !== deptName) {
+      sel.value = deptName;
+      // Trigger the same 'change' handler the manual dropdown uses
+      // -- wipes stale roster caches and re-fetches the summary.
+      sel.dispatchEvent(new Event('change'));
+    }
+    // Point-click deep-link: snap the From/To range to the clicked day
+    // and re-fetch (this wins over any change-driven latest-date load).
+    if (isoDate && $('from-date') && $('to-date')) {
+      $('from-date').value = isoDate;
+      $('to-date').value = isoDate;
+      refresh();
+    }
+    // setPage runs LAST: its stale-dept guard loads the table when neither of
+    // the above kicked off a load (selector already on this dept + no isoDate,
+    // e.g. clicking the pinned dept card in view-as-manager mode).
+    setPage('dept');
+  }
+
+  // Renders the user's own dept's agent table at the latest date
+  // inside the Overview modal, below the trend chart. For admins,
+  // shows whichever dept they currently have selected in the
+  // header dropdown. Independent of the main dashboard's date
+  // range: always uses latestDate. Fetches via getDepartmentSummary,
+  // which is cached server-side per (dept, scope, from, to).
+  // F-40: monotonic token so a slower earlier fetch (the SWR cached-paint +
+  // live-paint pair both call this, and admins can flip depts quickly)
+  // can't paint stale rows under a newer call's title/date -- the same
+  // guard class as summaryReqSeq / reportReqSeq_ elsewhere.
+  var ovUserTableSeq = 0;
+  // #8: the Overview mini-table is now header-sortable with its OWN sort state
+  // (default worst-answer-rate first, like My Department), reusing the shared
+  // sortRows/COLUMNS/fmtCell. Stored rows/totals let a header click re-sort
+  // without re-fetching. The Total row renders from `ovUserTotals_`, so it's
+  // never part of the sorted body.
+  var ovUserRows_ = [], ovUserTotals_ = null;
+  var ovUserSort_ = { key: 'answerRate', dir: 'asc' };
+  // C-3: the Overview mini-table's own response meta (priorFrom/priorTo for
+  // the WoW-chip tooltips) + the synchronous render-pass override consumed
+  // by wowChipHtml_ (see there).
+  var ovUserMeta_ = null;
+  var wowChipMetaOverride_ = null;
+  var ovUserSortWired_ = false;
+  function ovRenderUserTable_(data) {
+    const wrap = $('ov-user-table-wrap');
+    const tbody = $('ov-user-tbody');
+    const tfoot = $('ov-user-tfoot');
+    const status = $('ov-user-table-status');
+    if (!wrap || !tbody || !tfoot) return;
+    if (uiFlagOn_('ov-user-table')) { wrap.style.display = 'none'; return; }   // R7 (G-3)
+    const myToken = ++ovUserTableSeq;
+
+    const viewerDept = ovViewerDept_(data);
+    if (!viewerDept || !data.latestDate) {
+      wrap.style.display = 'none';
+      return;
+    }
+    wrap.style.display = '';
+
+    // R7 (O-3): 'My dept' for managers (owner wording) AND for the view-as
+    // preview (which presents the manager experience); 'Selected dept' only
+    // for a genuine all-dept viewer driving the selector.
+    const title = ((isAllDeptViewer_() && !viewAsDept_) ? 'Selected dept: ' : 'My dept: ') + viewerDept;
+    $('ov-user-table-title').textContent = title;
+    // O4: the table follows its own period slider (re-fetches the range).
+    ovWireTablePeriodBar_();
+    const range = ovTableRange_(data.latestDate);
+    $('ov-user-table-date').textContent = (range.from === range.to)
+      ? ovFormatDateLabel_(range.to)
+      : (ovFormatDateLabel_(range.from) + ' – ' + ovFormatDateLabel_(range.to));
+
+    status.style.display = '';
+    status.className = 'status status-loading';
+    status.textContent = 'Loading agent detail…';
+    tbody.innerHTML = '';
+    tfoot.innerHTML = '';
+
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (myToken !== ovUserTableSeq) return;   // F-40: superseded by a newer call
+        status.style.display = 'none';
+        if (!resp || !resp.rows || !resp.rows.length) {
+          ovUserRows_ = []; ovUserTotals_ = null; ovUserMeta_ = null;
+          tbody.innerHTML = '<tr><td colspan="' + COLUMNS.length + '" class="ov-user-empty">No agent rows for this dept in '
+                          + escapeHtml(range.from === range.to ? range.to : (range.from + ' – ' + range.to)) + '.</td></tr>';
+          tfoot.innerHTML = '';
+          return;
+        }
+        // #8: store the rows/totals and render via the shared, sortable path
+        // (default worst-answer-rate first). A header click re-sorts in place.
+        ovUserRows_ = resp.rows;
+        ovUserTotals_ = resp.totals || null;
+        ovUserMeta_ = resp.meta || null;   // C-3: this table's own prior window
+        ovWireUserSort_();
+        ovRenderUserRows_();
+      })
+      .withFailureHandler(function (err) {
+        if (myToken !== ovUserTableSeq) return;   // F-40
+        status.className = 'status status-error';
+        status.textContent = 'Error loading detail: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getDepartmentSummary({
+        department: viewerDept,
+        from:       range.from,
+        to:         range.to,
+        scope:      'roster',
+      });
+  }
+
+  // #8: renders the Overview mini-table body + totals from the stored rows using
+  // the current ovUserSort_, and paints the header arrows. Reuses the shared
+  // sortRows/COLUMNS/fmtCell/cellClass_ so it stays byte-for-byte consistent with
+  // the My Department table's cells.
+  function ovRenderUserRows_() {
+    var tbody = $('ov-user-tbody'), tfoot = $('ov-user-tfoot');
+    if (!tbody || !tfoot) return;
+    document.querySelectorAll('.ov-user-table thead th[data-sort]').forEach(function (th) {
+      var key = th.getAttribute('data-sort');
+      var arrow = th.querySelector('.arrow');
+      if (!arrow) return;
+      if (key === ovUserSort_.key) {
+        arrow.textContent = ovUserSort_.dir === 'asc' ? '▲' : '▼';
+        arrow.style.color = THEME.ink || '#374151';
+        th.setAttribute('aria-sort', ovUserSort_.dir === 'asc' ? 'ascending' : 'descending');
+      } else {
+        arrow.textContent = '▽';
+        arrow.style.color = THEME.muted || '#9ca3af';
+        th.removeAttribute('aria-sort');
+      }
+    });
+    var sorted = sortRows(ovUserRows_, ovUserSort_.key, ovUserSort_.dir);
+    // C-3: point the WoW-chip tooltips at THIS table's prior window for the
+    // duration of the (synchronous) render, then clear.
+    wowChipMetaOverride_ = ovUserMeta_;
+    tbody.innerHTML = sorted.map(function (row) {
+      var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+      return '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '>'
+           + COLUMNS.map(function (col, i) {
+               return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, row) + '</td>';
+             }).join('')
+           + '</tr>';
+    }).join('');
+    wowChipMetaOverride_ = null;
+    if (ovUserTotals_) {
+      var queueCount = ovUserTotals_.queueOnlyAgentCount || 0;
+      var totalLabel = queueCount > 0
+        ? 'Totals (roster only · ' + queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded)'
+        : 'Totals';
+      tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
+        var cls = cellClass_(col, i);
+        if (i === 0) return '<td class="' + cls + '">' + totalLabel + '</td>';
+        if (col.type === 'chip' && col.key === 'source') return '<td class="' + cls + '"></td>';
+        return '<td class="' + cls + '">' + fmtCell(col, ovUserTotals_) + '</td>';
+      }).join('') + '</tr>';
+    } else {
+      tfoot.innerHTML = '';
+    }
+  }
+
+  // Wire the Overview mini-table header clicks once (the thead is static).
+  function ovWireUserSort_() {
+    if (ovUserSortWired_) return;
+    var table = document.querySelector('.ov-user-table');
+    if (!table) return;
+    ovUserSortWired_ = true;
+    table.querySelectorAll('thead th[data-sort]').forEach(function (th) {
+      th.style.cursor = 'pointer';
+      th.tabIndex = 0;   // R12-5: keyboard-operable sort (was click-only)
+      th.addEventListener('click', function () { ovOnUserSort_(th.getAttribute('data-sort')); });
+      th.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        ovOnUserSort_(th.getAttribute('data-sort'));
+      });
+    });
+  }
+
+  // Header-click sort for the Overview mini-table (mirrors My Dept's onSort:
+  // toggle direction on the same key, else numbers default desc / text asc).
+  function ovOnUserSort_(key) {
+    if (ovUserSort_.key === key) {
+      ovUserSort_.dir = ovUserSort_.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      ovUserSort_.key = key;
+      var col = COLUMNS.find(function (c) { return c.key === key; });
+      ovUserSort_.dir = (col && col.type === 'text') ? 'asc' : 'desc';
+    }
+    ovRenderUserRows_();
+  }
+
+  // Overview trend-chart metric views. `field` = the per-dept data array on the
+  // payload; `unit` = 'pct' | 'count' (axis + tooltip format); `baseline` = a
+  // dashed reference line value (null = none). % Answered is DQE (ring
+  // answer-rate); the two Abandoned metrics are QCD (queue-level) -- so
+  // Abandoned % is NOT 100 - % Answered (different populations), hence the
+  // "(queue)" header qualifier.
+  const OV_CHART_METRICS_ = {
+    pct: {
+      field: 'trend', unit: 'pct', axisTitle: '% Answered',
+      baseline: answerTarget_('global'), baselineLabel: answerTarget_('global') + '% target',
+      header: 'Answer rate trend per department (rings)',
+      fmt: function (v) { return v.toFixed(1) + '%'; },
+    },
+    abandonedCalls: {
+      field: 'trendAbandoned', unit: 'count', axisTitle: 'Abandoned calls',
+      baseline: null, baselineLabel: '',
+      header: 'Abandoned calls per department (queue)',
+      fmt: function (v) { return Math.round(v).toLocaleString(); },
+    },
+    abandonedPct: {
+      field: 'trendAbandonedPct', unit: 'pct', axisTitle: 'Abandoned %',
+      baseline: 5, baselineLabel: '5% threshold',
+      header: 'Abandoned % per department (queue)',
+      fmt: function (v) { return v.toFixed(1) + '%'; },
+    },
+  };
+  const OV_CHART_METRIC_KEY_ = 'cdr.ov.chartmetric';
+  let ovChartMetric = (function () {
+    try { var v = localStorage.getItem(OV_CHART_METRIC_KEY_); return OV_CHART_METRICS_[v] ? v : 'pct'; }
+    catch (e) { return 'pct'; }
+  })();
+
+  // Chart RANGE control (30 / 60 / 90 days / YTD). 30-60-90 slice the 90-day
+  // chart series the Overview payload already ships (client-only, instant --
+  // separate from the 30-day sparkline/active-count so those never move,
+  // INV-40). YTD is fetched on demand via getOverviewChartTrend (the full
+  // series would blow the shared Overview cache's ~100KB cap) and cached in
+  // this session. The active metric (% Answered / Abandoned calls /
+  // Abandoned %) follows whichever range is selected.
+  const OV_CHART_RANGE_KEY_ = 'cdr.ov.chartrange';
+  const OV_CHART_RANGES_ = { '30': 30, '60': 60, '90': 90, ytd: null };
+  let ovChartRange = (function () {
+    try { var v = localStorage.getItem(OV_CHART_RANGE_KEY_); return OV_CHART_RANGES_.hasOwnProperty(v) ? v : '30'; }
+    catch (e) { return '30'; }
+  })();
+  let ovYtdData = null;        // session cache of the getOverviewChartTrend payload
+  let ovYtdLoading = false;
+
+  // 'YYYY-MM-DD' minus N calendar days, UTC-stable (parse + reformat via UTC
+  // so the arithmetic can't drift across a DST boundary).
+  function ovIsoMinusDays_(iso, days) {
+    const p = String(iso).split('-');
+    if (p.length !== 3) return iso;
+    const dt = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    dt.setUTCDate(dt.getUTCDate() - days);
+    const pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return dt.getUTCFullYear() + '-' + pad(dt.getUTCMonth() + 1) + '-' + pad(dt.getUTCDate());
+  }
+
+  // Normalize the chart's data source to a single shape regardless of which
+  // range is active: { trendLabels, trendIsoLabels, depts:[{name,parent,
+  // trend,trendAbandoned,trendAbandonedPct}], latestDate }. The 30/60/90
+  // ranges slice the payload's 90-day trendChart* fields down to the trailing
+  // N-day window; YTD returns the on-demand payload verbatim (already
+  // normalized to trend/trendAbandoned/trendAbandonedPct). Falls back to the
+  // 90-day payload when a YTD fetch hasn't landed yet.
+  function ovCurrentChartView_(data) {
+    if (ovChartRange === 'ytd') {
+      if (ovYtdData && ovYtdData.available) {
+        return {
+          trendLabels: ovYtdData.trendLabels || [],
+          trendIsoLabels: ovYtdData.trendIsoLabels || [],
+          depts: ovYtdData.depts || [],
+          latestDate: ovYtdData.latestDate || (data && data.latestDate),
+        };
+      }
+      // YTD not loaded yet -> show the full 90-day window meanwhile.
+    }
+    const iso = data.chartTrendIsoLabels || [];
+    const lab = data.chartTrendLabels || [];
+    const rangeDays = OV_CHART_RANGES_[ovChartRange];
+    let startIdx = 0;
+    if (rangeDays && iso.length) {
+      const latest = data.latestDate || iso[iso.length - 1];
+      const cut = ovIsoMinusDays_(latest, rangeDays - 1);
+      startIdx = iso.findIndex(function (x) { return x >= cut; });
+      if (startIdx < 0) startIdx = 0;
+    }
+    const depts = (data.depts || []).map(function (d) {
+      return {
+        name: d.name, parent: d.parent,
+        trend: (d.trendChart || []).slice(startIdx),
+        trendAbandoned: (d.trendChartAbandoned || []).slice(startIdx),
+        trendAbandonedPct: (d.trendChartAbandonedPct || []).slice(startIdx),
+      };
+    });
+    return {
+      trendLabels: lab.slice(startIdx),
+      trendIsoLabels: iso.slice(startIdx),
+      depts: depts,
+      latestDate: data.latestDate,
+    };
+  }
+
+  // Builds the y-axis config for a metric + zoom state. The Fit/Full behavior
+  // (fixing the previously-inert Zoom button): Full gives % Answered the fixed
+  // 0-100 context and the Abandoned metrics a 0-to-data-top scale (0-100 would
+  // bury a ~0-8% abandon line at the very bottom); Fit tightens to the actual
+  // data range on every metric. The reference baseline is EXCLUDED from the
+  // range math so it can't pin the axis. Now applied inside the render, so the
+  // zoom persists across re-renders (5-min refresh / sub-queue / metric switch)
+  // instead of resetting to Full.
+  function ovYAxis_(mcfg, zoom, datasets, skipLabels) {
+    let lo = Infinity, hi = -Infinity;
+    datasets.forEach(function (ds) {
+      if (skipLabels.indexOf(ds.label) !== -1) return;
+      if (ds.hidden) return;   // O1: an Alt-hidden dept line is excluded from Fit scaling
+      (ds.data || []).forEach(function (v) {
+        if (v == null || isNaN(v)) return;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      });
+    });
+    const hasData = isFinite(lo) && isFinite(hi);
+    const axis = {
+      ticks: { callback: mcfg.unit === 'pct'
+        ? function (v) { return v + '%'; }
+        : function (v) { return Number(v).toLocaleString(); } },
+      title: { display: true, text: mcfg.axisTitle, font: { size: 11 } },
+    };
+    if (zoom === 'fit' && hasData) {
+      const pad = Math.max(1, (hi - lo) * 0.08);
+      axis.beginAtZero = false;
+      axis.min = Math.max(0, Math.floor(lo - pad));
+      axis.max = (mcfg.unit === 'pct') ? Math.min(100, Math.ceil(hi + pad)) : Math.ceil(hi + pad);
+    } else {
+      axis.beginAtZero = true;
+      axis.min = 0;
+      if (mcfg.field === 'trend') axis.max = 100;
+      else axis.max = hasData ? Math.ceil(hi * 1.15) + (mcfg.unit === 'pct' ? 1 : 0) : undefined;
+    }
+    return axis;
+  }
+
+  function ovRenderChart_(data) {
+    if (ovChartInstance) {
+      try { ovChartInstance.destroy(); } catch (e) {}
+      ovChartInstance = null;
+    }
+    destroyOrphanedChartOnCanvas_('ov-trend-chart');
+    refreshChartTheme();
+
+    // Resolve the active range (30/60/90 client-slice, or the on-demand YTD
+    // payload) to a single normalized shape before building datasets.
+    const view = ovCurrentChartView_(data);
+    const labels = view.trendLabels || [];
+    const colors = IR_CHART_COLORS;
+    // Color assignment: walk top-level depts in payload order and
+    // give each one a slot from IR_CHART_COLORS. Child depts inherit
+    // their parent's hue so the parent-vs-child relationship is
+    // legible at a glance. Built once up front instead of per-dept
+    // so children referencing parents that appear later in `depts`
+    // still resolve correctly (defensive -- depts are typically
+    // ordered parent-then-children today, but don't lean on it).
+    const colorByDept = {};
+    let nextColorSlot = 0;
+    (view.depts || []).forEach(function (dept) {
+      if (dept.parent) return;
+      colorByDept[dept.name] = colors[nextColorSlot % colors.length];
+      nextColorSlot++;
+    });
+    (view.depts || []).forEach(function (dept) {
+      if (!dept.parent) return;
+      colorByDept[dept.name] = colorByDept[dept.parent]
+        || colors[nextColorSlot++ % colors.length];
+    });
+
+    // Metric view (% Answered / Abandoned calls / Abandoned %). The per-dept
+    // data array + axis/baseline/format all switch on this. % Answered is DQE
+    // (ring answer-rate, dept.trend); the two Abandoned metrics are QCD
+    // (dept.trendAbandoned / dept.trendAbandonedPct) -- so they are NOT
+    // 100 - answered% (different populations).
+    const metric = OV_CHART_METRICS_[ovChartMetric] ? ovChartMetric : 'pct';
+    const mcfg = OV_CHART_METRICS_[metric];
+
+    // P2.4: default to top-level depts only; children join when toggled on.
+    // colorByDept was computed over ALL depts above, so hues stay stable
+    // whether or not children are shown.
+    const chartDepts = (view.depts || []).filter(function (d) {
+      return ovShowSubQueues_ || !d.parent;
+    });
+    const datasets = chartDepts.map(function (dept) {
+      const color = colorByDept[dept.name];
+      const isChild = !!dept.parent;
+      return {
+        label: dept.name + (isChild ? ' (sub-queue)' : ''),
+        data: (dept[mcfg.field] || []),
+        borderColor: color,
+        // Stash the resting style so the legend hover-dim can restore it
+        // (see chartSpotlight* helpers). _deptName lets the tile-hover and
+        // point-click handlers map a dept back to its dataset index.
+        _origBorder: color,
+        _origWidth: isChild ? 1.4 : 2.2,
+        _deptName: dept.name,
+        // No fill on the overlaid multi-dept chart -- 10+ stacked
+        // gradients muddle the view. The soft-area treatment (25%
+        // gradient via irGradientFill_) is intentionally reserved
+        // for single-series charts like the Individual / Performance
+        // monthly trends. Per-dept parent/child differentiation
+        // happens via line weight + dash pattern instead.
+        backgroundColor: 'rgba(0,0,0,0)',
+        fill: false,
+        tension: 0.4,
+        borderWidth: isChild ? 1.4 : 2.2,
+        borderDash: isChild ? [4, 3] : [],
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointBackgroundColor: color,
+        pointBorderColor: THEME.paperCard,
+        pointBorderWidth: 1.5,
+        spanGaps: false,    // honor nulls -> gaps for no-data days
+      };
+    });
+
+    // Metric-specific dashed reference baseline drawn behind the dept series
+    // (92% answer-rate goal for % Answered; 5% abandon threshold for
+    // Abandoned %; none for the raw Abandoned-calls count). Excluded from the
+    // Fit auto-scale computation below so it can't pin the y-range.
+    if (mcfg.baseline != null) {
+      datasets.push({
+        label: mcfg.baselineLabel,
+        data: labels.map(function () { return mcfg.baseline; }),
+        borderColor: (THEME && THEME.muted) || '#606872',
+        backgroundColor: 'rgba(0,0,0,0)',
+        borderWidth: 1,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        fill: false,
+        tension: 0,
+        // Render behind everything else so dept lines stay on top.
+        order: 99,
+      });
+    }
+    // The reference-baseline labels the spotlight + tooltip must skip
+    // (the target label must match OV_CHART_METRICS_.pct.baselineLabel).
+    const OV_BASELINE_LABELS_ = [answerTarget_('global') + '% target', '5% threshold'];
+
+    const ovPlugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
+
+    ovChartInstance = safeChart_($('ov-trend-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      plugins: ovPlugins,
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: Object.assign({
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 11 } },
+          }, chartSpotlightLegend_()),
+          tooltip: {
+            // O2: park the card at the top of the plot so it doesn't sit over
+            // the lines. Degrades to the default position if the positioner
+            // isn't available in this Chart build.
+            position: (typeof Chart !== 'undefined' && Chart.Tooltip && Chart.Tooltip.positioners
+                       && Chart.Tooltip.positioners.topBand) ? 'topBand' : undefined,
+            filter: function (ctx) {
+              // Hide the reference baseline from the per-line tooltip list;
+              // R11-G composes the shared pin/off filter (5a/5b).
+              return OV_BASELINE_LABELS_.indexOf(ctx.dataset.label) === -1
+                && chartTooltipPinFilter_(ctx);
+            },
+            callbacks: {
+              label: function (ctx) {
+                const v = ctx.parsed && ctx.parsed.y;
+                if (v == null) return ctx.dataset.label + ': no data';
+                return ctx.dataset.label + ': ' + mcfg.fmt(v);
+              },
+            },
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          y: ovYAxis_(mcfg, ovAxisZoom, datasets, OV_BASELINE_LABELS_),
+          x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
+        },
+        interaction: { mode: 'index', intersect: false },
+        // Point click -> deep-link into that dept + date's My Department
+        // view (admins, or a manager clicking their own dept's line).
+        onClick: function (evt, elements, chart) {
+          ovHandlePointClick_(evt, chart, data);
+        },
+      },
+    });
+
+    // Generic legend spotlight (hover-dim + click-to-pin/isolate). Skip
+    // the 92% baseline. Stash resting styles + the ISO date axis + the
+    // viewer's dept so the tile-hover and point-click handlers can use them.
+    // ovChartInstance is null when Chart.js failed to load (safeChart_
+    // fallback) -- guard the post-render wiring so the rest of the Overview
+    // still paints with the inline "chart unavailable" note. ovWireAxisZoom_
+    // self-guards (it early-returns on a null instance).
+    if (ovChartInstance) {
+      chartSpotlightStash_(ovChartInstance, { skipLabel: mcfg.baselineLabel || '__ov_no_baseline__' });
+      ovChartInstance._trendIso = view.trendIsoLabels || [];
+      ovChartInstance._viewerDept = ovViewerDept_(data);
+      // O1: stash the metric config + baseline labels so chartSpotlightAfterHide_
+      // can recompute the Fit y-axis (excluding Alt-hidden lines) in place.
+      ovChartInstance._mcfg = mcfg;
+      ovChartInstance._skipLabels = OV_BASELINE_LABELS_;
+    }
+    // Chart header reflects the active metric (the click-a-card hint is a
+    // sibling span, left intact).
+    const hdr = $('ov-chart-header-label');
+    if (hdr) hdr.textContent = mcfg.header;
+    ovWireAxisZoom_();
+    ovWireSubqToggle_();
+    ovWireMetricTabs_();
+    ovWireChartRange_();
+  }
+
+  // Chart RANGE control (30 / 60 / 90 / YTD) in the ov-chart-tabs row. The
+  // 30/60/90 buttons re-slice the already-shipped 90-day series instantly;
+  // YTD lazily fetches getOverviewChartTrend once per session (size-guarded,
+  // server-cached), painting a "loading" state on the button meanwhile.
+  // Wired once; syncs active state + the YTD-loading affordance every render.
+  let ovChartRangeWired = false;
+  function ovWireChartRange_() {
+    const grp = $('ov-chart-range');
+    if (!grp) return;
+    grp.querySelectorAll('.ov-range-btn').forEach(function (b) {
+      const r = b.getAttribute('data-range');
+      const on = r === ovChartRange;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (r === 'ytd') {
+        b.textContent = (ovChartRange === 'ytd' && ovYtdLoading) ? 'YTD…' : 'YTD';
+        b.disabled = ovYtdLoading;
+      }
+    });
+    if (ovChartRangeWired) return;
+    ovChartRangeWired = true;
+    grp.addEventListener('click', function (e) {
+      const b = e.target.closest('.ov-range-btn');
+      if (!b) return;
+      const r = b.getAttribute('data-range');
+      if (!OV_CHART_RANGES_.hasOwnProperty(r) || r === ovChartRange) return;
+      ovChartRange = r;
+      try { localStorage.setItem(OV_CHART_RANGE_KEY_, r); } catch (e2) { /* best-effort */ }
+      if (r === 'ytd' && !(ovYtdData && ovYtdData.available)) {
+        ovLoadYtdChart_();
+        return;                       // ovLoadYtdChart_ re-renders when it lands
+      }
+      if (ovLastData) ovRenderChart_(ovLastData);
+    });
+  }
+
+  // Fetch the YTD chart series on demand (kept out of the shared Overview
+  // blob, which is size-capped). Cached for the session; a failure reverts to
+  // the 90-day view with a toast so the control never dead-ends.
+  function ovLoadYtdChart_() {
+    if (ovYtdLoading) return;
+    if (ovYtdData && ovYtdData.available) { if (ovLastData) ovRenderChart_(ovLastData); return; }
+    ovYtdLoading = true;
+    ovWireChartRange_();              // paint the YTD… loading label
+    const revertTo90_ = function (msg) {
+      ovYtdLoading = false;
+      // G-4: only revert (and persist!) if the user is still ON the YTD
+      // selection -- the range buttons stay clickable during the fetch, so
+      // an unconditional revert clobbered a newer 30/60 pick with '90' and
+      // stamped localStorage with a range the user never chose.
+      if (ovChartRange === 'ytd') {
+        ovChartRange = '90';
+        try { localStorage.setItem(OV_CHART_RANGE_KEY_, '90'); } catch (e) { /* best-effort */ }
+        showToast(msg, 'error');
+      }
+      if (ovLastData) ovRenderChart_(ovLastData);
+    };
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res && res.available) {
+          ovYtdLoading = false;
+          ovYtdData = res;
+          if (ovLastData) ovRenderChart_(ovLastData);
+        } else {
+          revertTo90_('Year-to-date trend is unavailable right now.');
+        }
+      })
+      .withFailureHandler(function () {
+        revertTo90_('Could not load the year-to-date trend.');
+      })
+      .getOverviewChartTrend({ viewAsDept: viewAsDept_ || '' });
+  }
+
+  // ---- Generic Chart.js legend spotlight (shared) ----------------------
+  // Hover a legend item -> dim every other series (transient preview).
+  // Click a legend item -> PIN that series (persistent dim of others);
+  // click it again (or another) to release/switch. Used by the multi-dept
+  // Overview chart and the multi-queue QCD chart. Datasets must have been
+  // stashed via chartSpotlightStash_ first. A `skipLabel` dataset (e.g. a
+  // reference baseline / dept-total line) is never dimmed.
+  const CHART_DIM_COLOR = 'rgba(140,140,140,0.18)';
+
+  // Stable key for a dataset in the spotlight model: the Overview dept name
+  // when present (survives re-render), else the series label (e.g. QCD queues).
+  function chartSpotKey_(ds) { return (ds && (ds._deptName || ds.label)) || null; }
+
+  function chartSpotlightStash_(chart, opts) {
+    if (!chart || !chart.data) return;
+    chart._spotlightSkip = (opts && opts.skipLabel) || null;
+    chart._spotlightPins = {};   // SET of pinned keys (multi-select, #1)
+    chart.data.datasets.forEach(function (ds) {
+      if (ds._origBorder == null) ds._origBorder = ds.borderColor;
+      if (ds._origWidth == null) ds._origWidth = ds.borderWidth;
+    });
+    // R11-G (item 4): remember the built y-axis bounds so an auto-fit-on-solo
+    // can restore them when the solo is released. Captured at BUILD time, so it
+    // respects whatever the chart configured (e.g. the Overview Full/Fit
+    // toggle's ovYAxis_ output) -- solo fits to the pinned data, un-solo
+    // restores the natural axis.
+    var y = chart.options && chart.options.scales && chart.options.scales.y;
+    if (y && chart._origYAxis == null) {
+      chart._origYAxis = { min: y.min, max: y.max, beginAtZero: y.beginAtZero };
+    }
+  }
+
+  // R11-G (item 4): auto-zoom-fit the y-axis to the PINNED (soloed) series so a
+  // soloed line fills the plot vertically instead of hugging the bottom. When
+  // no pin is active, restore the axis captured at build time. Generic across
+  // every spotlight chart (Overview / Insights trend / per-agent trend / QCD);
+  // caller applies chart.update. Handles both scalar data and {x,y} points.
+  function chartSpotlightFitAxis_(chart) {
+    var y = chart && chart.options && chart.options.scales && chart.options.scales.y;
+    if (!y) return;
+    var pins = chart._spotlightPins || {};
+    if (!Object.keys(pins).length) {
+      if (chart._origYAxis) {
+        y.min = chart._origYAxis.min; y.max = chart._origYAxis.max;
+        y.beginAtZero = chart._origYAxis.beginAtZero;
+      }
+      return;
+    }
+    var skip = chart._spotlightSkip, lo = Infinity, hi = -Infinity;
+    chart.data.datasets.forEach(function (ds) {
+      if (ds.hidden) return;
+      if (skip && ds.label === skip) return;
+      var key = chartSpotKey_(ds);
+      if (!key || !pins[key]) return;                 // pinned only
+      (ds.data || []).forEach(function (v) {
+        var n = (v && typeof v === 'object') ? v.y : v;
+        if (n == null || isNaN(n)) return;
+        if (n < lo) lo = n;
+        if (n > hi) hi = n;
+      });
+    });
+    if (!isFinite(lo) || !isFinite(hi)) return;
+    var pad = Math.max(1, (hi - lo) * 0.1);
+    y.beginAtZero = false;
+    y.min = Math.max(0, Math.floor(lo - pad));
+    y.max = Math.ceil(hi + pad);
+    // Percent axes (built capped at 100) stay capped so "fit" can't overshoot.
+    if (chart._origYAxis && chart._origYAxis.max === 100 && y.max > 100) y.max = 100;
+  }
+
+  // R11-G (items 5a + 5b): the SHARED Chart.js tooltip filter. (5b) When the
+  // global "chart tooltips" setting is OFF, suppress the hover card entirely
+  // (the point still highlights) by filtering out every item -- live, no
+  // per-instance update needed. (5a) When a chart has PINNED (soloed) series,
+  // show ONLY those in the hover card so a solo'd comparison isn't buried under
+  // every dimmed line. Set as the global default AND composed into the two
+  // charts that carry their own filter (Overview baseline / QCD threshold).
+  var CHART_TOOLTIPS_OFF_ = (function () {
+    try { return localStorage.getItem('cdr.charts.tooltips') === 'off'; } catch (e) { return false; }
+  })();
+  function chartTooltipPinFilter_(ctx) {
+    if (CHART_TOOLTIPS_OFF_) return false;               // 5b: global off
+    var chart = ctx && ctx.chart;
+    var pins = chart && chart._spotlightPins;
+    if (!pins || !Object.keys(pins).length) return true; // no solo -> show all
+    var ds = chart.data.datasets[ctx.datasetIndex];
+    var key = chartSpotKey_(ds);
+    return !!(key && pins[key]);                          // solo -> pinned only
+  }
+
+  // Transient single-series highlight (dept-tile hover). Does NOT touch pins.
+  function chartSpotlightApply_(chart, activeIndex) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds, i) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (i === activeIndex) {
+        ds.borderColor = ds._origBorder;
+        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+      } else {
+        ds.borderColor = CHART_DIM_COLOR;
+        ds.borderWidth = ds._origWidth || 1.4;
+      }
+    });
+    chart.update('none');
+  }
+
+  function chartSpotlightClear_(chart, animate) {
+    if (!chart || !chart.data) return;
+    chart.data.datasets.forEach(function (ds) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (ds._origBorder != null) ds.borderColor = ds._origBorder;
+      if (ds._origWidth != null) ds.borderWidth = ds._origWidth;
+    });
+    // R11-M: transient hover-out stays instant ('none'); a pin RELEASE animates
+    // the axis zoom-back so it doesn't flash (caller passes animate=true).
+    chart.update(animate ? undefined : 'none');
+  }
+
+  function chartSpotlightHasPins_(chart) {
+    return !!(chart && chart._spotlightPins && Object.keys(chart._spotlightPins).length);
+  }
+
+  // Highlight every PINNED series, dim the rest. Empty set -> clear.
+  function chartSpotlightApplyPins_(chart) {
+    if (!chart || !chart.data) return;
+    if (!chartSpotlightHasPins_(chart)) {
+      // R11-G: no pins -> restore the natural y-axis (fitAxis reads the empty
+      // pin set), then reset the line styling. R11-M: animate the zoom-back so
+      // releasing a solo eases out instead of flashing.
+      chartSpotlightFitAxis_(chart);
+      chartSpotlightClear_(chart, true);
+      return;
+    }
+    const pins = chart._spotlightPins;
+    chart.data.datasets.forEach(function (ds) {
+      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      const k = chartSpotKey_(ds);
+      if (k && pins[k]) {
+        ds.borderColor = ds._origBorder;
+        ds.borderWidth = (ds._origWidth || 2) + 0.8;
+      } else {
+        ds.borderColor = CHART_DIM_COLOR;
+        ds.borderWidth = ds._origWidth || 1.4;
+      }
+    });
+    chartSpotlightFitAxis_(chart);   // R11-G (item 4): zoom to the pinned series
+    // R11-M: animate the zoom-IN + dim on a click-pin (the hover-preview path
+    // keeps its own instant 'none' update). The global 400ms easeOutQuart
+    // (R9-6) tweens the axis + colors so the focus eases in, not flashes.
+    chart.update();
+  }
+
+  // Toggle a series' pin. `additive` (Shift/Cmd/Ctrl) adds/removes from the set
+  // for multi-series comparison; a plain click SOLOS (or releases if it was
+  // already the sole pin).
+  function chartSpotlightTogglePin_(chart, key, additive) {
+    if (!chart || !key) return;
+    if (!chart._spotlightPins) chart._spotlightPins = {};
+    const pins = chart._spotlightPins;
+    if (additive) {
+      if (pins[key]) delete pins[key]; else pins[key] = true;
+    } else {
+      const keys = Object.keys(pins);
+      if (keys.length === 1 && pins[key]) { delete pins[key]; }
+      else { chart._spotlightPins = {}; chart._spotlightPins[key] = true; }
+    }
+    chartSpotlightApplyPins_(chart);
+    // Tile markers are Overview-only (the QCD multi-queue chart reuses these
+    // helpers but has no dept grid).
+    if (chart === ovChartInstance && typeof ovSyncTilePins_ === 'function') ovSyncTilePins_(chart);
+  }
+
+  // Returns legend onHover/onLeave/onClick callbacks implementing the
+  // spotlight model. Spread into a chart's plugins.legend config.
+  function chartSpotlightLegend_() {
+    return {
+      onHover: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chartSpotlightHasPins_(chart)) return;   // pins win over hover
+        if (item && item.datasetIndex != null) chartSpotlightApply_(chart, item.datasetIndex);
+      },
+      onLeave: function (e, item, legend) {
+        const chart = legend.chart;
+        if (chartSpotlightHasPins_(chart)) return;
+        chartSpotlightClear_(chart);
+      },
+      onClick: function (e, item, legend) {
+        const chart = legend.chart;
+        if (!item || item.datasetIndex == null) return;
+        const ds = chart.data.datasets[item.datasetIndex];
+        const key = chartSpotKey_(ds);
+        if (!key) return;
+        const ne = e && e.native;
+        // O1: Alt/Option-click HIDES a series (and rescales the y-axis) rather
+        // than pinning it -- lets the user drop an outlier dept so the rest
+        // scale properly. Plain click = solo-pin; Shift/Cmd/Ctrl = add to pins.
+        if (ne && ne.altKey) {
+          ds.hidden = !ds.hidden;
+          chartSpotlightAfterHide_(chart);
+          return;
+        }
+        const additive = !!(ne && (ne.shiftKey || ne.metaKey || ne.ctrlKey));
+        chartSpotlightTogglePin_(chart, key, additive);
+      },
+    };
+  }
+
+  // O1: after Alt-hiding/showing a series, rescale + repaint. The Overview
+  // chart uses a custom metric-aware y-axis (ovYAxis_, which now skips hidden
+  // datasets), so recompute its min/max from the stashed mcfg; the QCD chart
+  // uses Chart.js default scales, which already exclude hidden datasets, so a
+  // plain update() suffices there.
+  function chartSpotlightAfterHide_(chart) {
+    if (chart === ovChartInstance && chart._mcfg && chart.options && chart.options.scales) {
+      const y = ovYAxis_(chart._mcfg, ovAxisZoom, chart.data.datasets, chart._skipLabels || []);
+      chart.options.scales.y.min = y.min;
+      chart.options.scales.y.max = y.max;
+      chart.options.scales.y.beginAtZero = y.beginAtZero;
+    }
+    // R11-G: if a solo is active, the pin-fit wins over the recomputed full
+    // axis (it reads the current pins; a no-pin chart is left as recomputed).
+    chartSpotlightFitAxis_(chart);
+    chart.update();
+  }
+
+  // Spotlight a dept's line by name (dept-tile hover). No-op when a pin is
+  // active so a hover doesn't fight the pinned selection.
+  function ovSpotlightDept_(deptName) {
+    const chart = ovChartInstance;
+    if (!chart || !chart.data) return;
+    if (chartSpotlightHasPins_(chart)) return;   // pins win over hover
+    if (deptName == null) { chartSpotlightClear_(chart); return; }
+    let idx = -1;
+    chart.data.datasets.forEach(function (ds, i) { if (ds._deptName === deptName) idx = i; });
+    if (idx >= 0) chartSpotlightApply_(chart, idx);
+  }
+
+  // Reflect the chart's pin set on the dept tiles (a soloed/compared marker),
+  // so the grid shows which depts are currently isolated in the chart.
+  function ovSyncTilePins_(chart) {
+    const pins = (chart && chart._spotlightPins) || {};
+    const grid = $('ov-dept-grid');
+    if (!grid) return;
+    grid.querySelectorAll('[data-dept]').forEach(function (tile) {
+      const d = tile.getAttribute('data-dept');
+      tile.classList.toggle('ov-tile-soloed', !!(d && pins[d]));
+    });
+  }
+
+  // Point click -> deep-link to that dept + date. Only routes for admins
+  // or a manager clicking their OWN dept's line (others can't view it).
+  function ovHandlePointClick_(evt, chart, data) {
+    if (!chart || typeof chart.getElementsAtEventForMode !== 'function') return;
+    const hits = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+    if (!hits || !hits.length) return;
+    const ds = chart.data.datasets[hits[0].datasetIndex];
+    if (!ds || !ds._deptName) return;                 // baseline / non-dept line
+    const deptName = ds._deptName;
+    const viewerDept = chart._viewerDept || ovViewerDept_(data);
+    if (!isAllDeptViewer_() && deptName !== viewerDept) return;
+    const iso = (chart._trendIso || [])[hits[0].index] || null;
+    ovRouteToDept_(deptName, iso);
+  }
+
+  // Axis zoom toggle: Full (0-100%) <-> Fit (auto-scale to the data range,
+  // so depts clustered near the top spread out). Wired once; the button
+  // lives in the ov-chart-tabs row (dashboard.html). R12-8 (owner): Fit is
+  // the DEFAULT -- lines cluster at 85-95%, so Full renders ~80% dead plot;
+  // the choice persists per user.
+  const OV_AXIS_ZOOM_KEY_ = 'cdr.ov.axiszoom';
+  let ovAxisZoom = (function () {
+    try {
+      var v = localStorage.getItem(OV_AXIS_ZOOM_KEY_);
+      return (v === 'full' || v === 'fit') ? v : 'fit';
+    } catch (e) { return 'fit'; }
+  })();
+  let ovAxisZoomWired = false;
+  function ovWireAxisZoom_() {
+    // Keep the button label in sync on every render (the metric switch /
+    // 5-min refresh re-runs the render, and the axis is now computed from
+    // ovAxisZoom INSIDE the render via ovYAxis_, so the state persists).
+    const btn = $('ov-axis-zoom-btn');
+    if (btn) {
+      btn.textContent = ovAxisZoom === 'fit' ? 'Zoom: Fit' : 'Zoom: Full';
+      btn.setAttribute('aria-pressed', ovAxisZoom === 'fit' ? 'true' : 'false');
+    }
+    if (ovAxisZoomWired) return;
+    if (!btn) return;
+    ovAxisZoomWired = true;
+    btn.addEventListener('click', function () {
+      ovAxisZoom = (ovAxisZoom === 'full') ? 'fit' : 'full';
+      try { localStorage.setItem(OV_AXIS_ZOOM_KEY_, ovAxisZoom); } catch (e) {}
+      // Re-render so the metric-aware axis (ovYAxis_) is recomputed and the
+      // new zoom survives the next refresh. Previously this mutated the live
+      // chart's scale directly, which the next re-render silently reset.
+      if (ovLastData) ovRenderChart_(ovLastData);
+    });
+  }
+
+  // Metric tabs (% Answered / Abandoned calls / Abandoned %) in the
+  // ov-chart-tabs row. Wired once; re-renders from ovLastData on switch and
+  // persists the choice. The grid tiles are untouched (they stay latest-day).
+  let ovMetricTabsWired = false;
+  function ovWireMetricTabs_() {
+    const tabs = document.querySelectorAll('#ov-chart-tabs .ir-tab[data-metric]');
+    // Sync active state every render.
+    tabs.forEach(function (t) {
+      const on = t.getAttribute('data-metric') === ovChartMetric;
+      t.classList.toggle('active', on);
+      // R12-6: the toolbar mixes non-tab controls (zoom, range, checkbox), so
+      // it isn't a tablist -- these are toggle buttons (aria-pressed).
+      t.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (ovMetricTabsWired) return;
+    ovMetricTabsWired = true;
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () {
+        const m = t.getAttribute('data-metric');
+        if (!OV_CHART_METRICS_[m] || m === ovChartMetric) return;
+        ovChartMetric = m;
+        try { localStorage.setItem(OV_CHART_METRIC_KEY_, m); } catch (e) { /* best-effort */ }
+        if (ovLastData) ovRenderChart_(ovLastData);
+      });
+    });
+  }
+
+  // P2.4: "+ sub-queues" toggle in the ov-chart-tabs row. Off by default so
+  // the chart shows only top-level depts; on adds the dashed child lines.
+  // Re-renders from ovLastData (grid tiles are untouched). Wired once.
+  let ovSubqWired = false;
+  function ovWireSubqToggle_() {
+    if (ovSubqWired) return;
+    const box = $('ov-subq-toggle');
+    if (!box) return;
+    ovSubqWired = true;
+    box.checked = ovShowSubQueues_;
+    box.addEventListener('change', function () {
+      ovShowSubQueues_ = !!box.checked;
+      if (ovLastData) ovRenderChart_(ovLastData);
+    });
+  }
+

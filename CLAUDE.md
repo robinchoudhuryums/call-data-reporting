@@ -124,7 +124,12 @@ bash scripts/check-duplicated-files.sh
 # INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
 # content appended to the END lands OUTSIDE the tag and renders as visible text
 # on the page. That shipped once, and the rendered-UI gate structurally cannot
-# see it: no console error, no blank canvas, no overflow), queue-split (the
+# see it: no console error, no blank canvas, no overflow. Since #4/Round-16 it
+# ALSO pins the assembled client: script.html is an ASSEMBLER whose
+# script-N-*.html fragments are raw JS spliced into ONE IIFE by the
+# template-evaluating include_ -- per-fragment purity, include-list<->disk
+# parity, and a node --check of the assembled body; see
+# docs/client-ui-conventions.md "The assembled client"), queue-split (the
 # sub-queue Phase 1 pipeline column -- pins cols A..AH byte-identical so the
 # append stays provably additive -- plus the Phase 2 reader's FOUR fail-open
 # paths, its S2-0 QUEUE_SPLIT_SCOPE gate (default off) and its INVERSION of the
@@ -215,7 +220,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # visible text, and the header dept selector throwing so no admin could switch
 # departments. Neither is reachable from `node --test` (one is markup structure,
 # the other needs a real click). Re-run it after touching
-# script.html, styles.html, dashboard.html, or any payload shape.
+# script.html or any script-*.html fragment, styles.html, dashboard.html,
+# or any payload shape.
 ```
 
 ## Common Gotchas

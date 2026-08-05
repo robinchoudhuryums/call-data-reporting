@@ -55,6 +55,88 @@ INCLUDES.forEach(function (spec) {
   });
 });
 
+// ---- #4 (Round-16): the assembled-client fragment family ------------------
+//
+// script.html is now an ASSEMBLER: one <script> element wrapping one IIFE
+// whose body is spliced from the raw-JS script-N-*.html fragment includes, in
+// order, by the template-evaluating include_ (Code.gs). That preserves the
+// single shared function scope the client has always had -- and it changes
+// what the dangerous mistakes look like:
+//   * a fragment containing the end-of-script-tag pattern closes the
+//     assembled block early (the ORIGINAL bug class, now reachable from any
+//     fragment, not just the tail of one big file);
+//   * a fragment containing a scriptlet-open sequence EXECUTES at render,
+//     because include_ evaluates templates now;
+//   * a fragment on disk that is not in script.html's include list silently
+//     drops every feature it defines (include_ pulls by name, nothing scans
+//     the directory).
+// So: purity pins per fragment, list-parity both directions, and a syntax
+// check on the assembled body (the closest a zero-dep suite gets to "the
+// spliced JS actually parses as one program").
+
+const FRAGMENT_RE = /<\?!= include_\('([\w-]+)'\) \?>/g;
+
+function scriptIncludeList() {
+  const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');
+  const names = [];
+  let m;
+  while ((m = FRAGMENT_RE.exec(text)) !== null) names.push(m[1]);
+  return { text, names };
+}
+
+test('script.html: include list matches the script-*.html files on disk, in both directions', function () {
+  const { names } = scriptIncludeList();
+  assert.ok(names.length >= 2, 'script.html no longer looks like the fragment assembler');
+  const onDisk = fs.readdirSync(DIR)
+    .filter(function (f) { return /^script-[\w-]+\.html$/.test(f); })
+    .map(function (f) { return f.replace(/\.html$/, ''); })
+    .sort();
+  const included = names.slice().sort();
+  assert.deepEqual(included, onDisk,
+    'script.html includes and script-*.html files diverge. A fragment on disk '
+    + 'but not included silently DROPS its features; an include with no file '
+    + 'throws at render. Included: ' + included.join(', ') + ' | On disk: ' + onDisk.join(', '));
+});
+
+test('script fragments: raw JS only -- no script/style tags, no scriptlets', function () {
+  const { names } = scriptIncludeList();
+  names.forEach(function (name) {
+    const body = fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
+    assert.equal(body.indexOf('</scr' + 'ipt'), -1,
+      name + '.html contains the end-of-script-tag pattern -- the browser closes '
+      + 'the ASSEMBLED block there and everything after renders as page text.');
+    assert.equal(body.indexOf('<scr' + 'ipt'), -1,
+      name + '.html contains a script-open tag -- fragments are spliced INSIDE '
+      + 'one script element and must stay raw JS.');
+    assert.equal(body.indexOf('<' + '?'), -1,
+      name + '.html contains a scriptlet-open sequence -- include_ EVALUATES '
+      + 'templates now, so this would execute server-side at render.');
+  });
+});
+
+test('script.html + fragments: the assembled IIFE body parses as one program', function () {
+  const { text, names } = scriptIncludeList();
+  const assembled = text.replace(FRAGMENT_RE, function (_, name) {
+    return fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
+  });
+  const open = assembled.indexOf('<script>');
+  const close = assembled.indexOf('</script>');
+  assert.ok(open !== -1 && close > open, 'assembled page lost its script element');
+  const js = assembled.slice(open + '<script>'.length, close);
+  const os = require('os');
+  const cp = require('child_process');
+  const tmp = path.join(os.tmpdir(), 'assembled-client-' + process.pid + '.js');
+  fs.writeFileSync(tmp, js);
+  try {
+    const r = cp.spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
+    assert.equal(r.status, 0,
+      'assembled client body fails to parse -- a fragment boundary probably cut '
+      + 'a statement in half, or a fragment edit broke syntax:\n' + (r.stderr || ''));
+  } finally {
+    fs.unlinkSync(tmp);
+  }
+});
+
 test('styles.html: the sub-queue CSS is inside the style element', function () {
   // A named regression pin for the block that actually escaped, so a future
   // refactor that re-appends it is caught by name rather than by byte offset.

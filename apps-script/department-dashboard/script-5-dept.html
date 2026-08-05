@@ -1,0 +1,2945 @@
+  // -- Missed Calls report (My Department inline section) ----------------
+  // The standalone Missed Calls modal was RETIRED -- the My Department
+  // page's inline missed section (deptMissedFetch_/deptMissedRender_,
+  // below) is the report now, at full parity: shared headline composer,
+  // summary strip, the 18-bucket hour-of-day chart (bars/radar toggle) +
+  // bucket drill-in, queue-only abandoned section, and the per-agent
+  // missed-time timelines with the journey drill. Fetches via
+  // google.script.run.getMissedCallsReport on every dept-page refresh.
+
+  let deptMissedLastData = null;   // My Department missed section's last response
+  // One-shot flag: scroll the dept missed section into view the next time it
+  // renders. Set by launcherOpenMissed_ and the legacy '#/report/missed' deep
+  // link (the standalone Missed Calls modal was retired -- this section IS the
+  // report); consumed in deptMissedRender_ so the scroll never races the fetch.
+  let deptMissedScrollPending_ = false;
+
+  // Factory for the chart-bucket drill-in panel. Historically shared by the
+  // Missed Calls modal and the My Department missed section; the modal is
+  // retired, but the factory shape is kept (one instance now) since it holds
+  // the panel's active-bucket state cleanly.
+  function makeMissedBucketDetail_(getData, ids) {
+    var active = -1;
+    function collectRings(data, idx) {
+      var rings = [];
+      (data.agents || []).forEach(function (a) {
+        (a.missedTimes || []).forEach(function (m) {
+          if (m.bucket === idx) rings.push({ agent: a.name, date: m.date, label: m.label,
+            abandoned: m.abandoned, parentId: m.parentId || null, sortKey: m.sortKey });
+        });
+      });
+      (data.queueOnly || []).forEach(function (q) {
+        (q.entries || []).forEach(function (m) {
+          if (m.bucket === idx) rings.push({ agent: q.queue + ' (no agent rang)', date: m.date,
+            label: m.label, abandoned: true, parentId: m.parentId || null, sortKey: m.sortKey });
+        });
+      });
+      rings.sort(function (a, b) {
+        if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+        return (a.sortKey || 0) - (b.sortKey || 0);
+      });
+      return rings;
+    }
+    function show(idx) {
+      var data = getData();
+      if (!data || !data.chart || !data.agents) return;
+      var labels = data.chart.labels || [];
+      if (idx < 0 || idx >= labels.length) return;
+      active = idx;
+      var rings = collectRings(data, idx);
+      var titleEl = $(ids.title), bodyEl = $(ids.body), wrap = $(ids.wrap);
+      if (!titleEl || !bodyEl || !wrap) return;
+      titleEl.textContent = labels[idx] + ' CST  ·  ' + rings.length + ' ring' + (rings.length === 1 ? '' : 's');
+      if (!rings.length) {
+        bodyEl.innerHTML = '<p class="bucket-detail-empty">No rings in this bucket.</p>';
+      } else {
+        bodyEl.innerHTML = '<ul class="bucket-detail-list">' + rings.map(function (r) {
+          var cls = r.abandoned ? 'abandoned' : '';
+          var siren = r.abandoned ? ' 🚨' : '';
+          var dateLabel = r.date ? r.date.slice(5) : '';   // MM-DD
+          return '<li class="' + cls + '">'
+               +   '<span class="ring-date">'  + escapeHtml(dateLabel) + '</span>'
+               +   '<span class="ring-agent">' + escapeHtml(r.agent)   + '</span>'
+               +   '<span class="ring-time">'  + escapeHtml(r.label) + siren + parentIdBadge(r.parentId, r.date)
+               +   '</span>'
+               + '</li>';
+        }).join('') + '</ul>';
+      }
+      wrap.style.display = '';
+      if (ids.row) { var row = $(ids.row); if (row) row.classList.remove('no-detail'); }
+      if (ids.onGridChange) ids.onGridChange();   // R11-M: smooth resize during the column transition
+      initClipboardOnce();
+      wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    function hide() {
+      active = -1;
+      var wrap = $(ids.wrap);
+      if (!wrap) return;
+      wrap.style.display = 'none';
+      var bodyEl = $(ids.body);
+      if (bodyEl) bodyEl.innerHTML = '';
+      if (ids.row) { var row = $(ids.row); if (row) row.classList.add('no-detail'); }
+      if (ids.onGridChange) ids.onGridChange();   // R11-M
+    }
+    function toggle(idx) { if (idx === active) hide(); else show(idx); }
+    return { toggle: toggle, hide: hide };
+  }
+
+  const deptMissedBucketDetail_ = makeMissedBucketDetail_(
+    function () { return deptMissedLastData; },
+    { wrap: 'dept-missed-bucket-detail', title: 'dept-bucket-detail-title', body: 'dept-bucket-detail-body',
+      row: 'dept-missed-chart-row', onGridChange: deptMissedResizeDuringTransition_ });
+
+  function missedRadarCfg_(chart, onBucketClick) {
+    return {
+      type: 'radar',
+      data: {
+        labels: chart.labels || [],
+        datasets: [{
+          label: 'Missed calls',
+          data: chart.counts || [],
+          fill: true,
+          backgroundColor: THEME.warnSoft,
+          borderColor: THEME.warn,
+          pointBackgroundColor: THEME.warn,
+          pointRadius: 3,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) { return items[0].label + ' CST'; },
+              label: function (item) { return item.parsed.r + ' missed call' + (item.parsed.r === 1 ? '' : 's'); }
+            }
+          },
+          // Opt out of datalabels -- the plugin is registered
+          // globally for the report charts (PR / CR / IR) that DO
+          // want labels; the missed-calls radar would get
+          // default-rendered labels on all 18 buckets without this.
+          datalabels: { display: false }
+        },
+        scales: {
+          r: {
+            beginAtZero: true,
+            ticks: { display: false, stepSize: 1 },
+            pointLabels: {
+              font: { size: 10 },
+              // Make the 18 axis labels feel clickable too -- they
+              // open the same detail panel as a data-point click.
+              padding: 6
+            }
+          }
+        },
+        layout: { padding: 10 },
+        // Click a data point (or the axis label nearest a point) to
+        // see the contributing rings for that 30-min bucket.
+        onClick: function (evt, items, chartObj) {
+          if (!onBucketClick) return;
+          if (items && items.length) {
+            onBucketClick(items[0].index);
+            return;
+          }
+          // Allow clicking near an axis label even if not exactly on a
+          // data point: snap to the nearest point.
+          const near = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+          if (near && near.length) onBucketClick(near[0].index);
+        }
+      }
+    };
+  }
+
+  // Re-alpha a color string. Fast path parses 'rgb(...)'/'rgba(...)'; anything
+  // else (HEX in particular) delegates to the canvas-based colorWithAlpha_.
+  // R7 (O-1) root cause: colorToCanvasRgb_ (INV-42) returns canvas fillStyle,
+  // which is '#rrggbb' HEX for fully-OPAQUE colors ('rgba(...)' only when
+  // alpha < 1) -- so THEME tokens missed the old rgb-only regex and this
+  // function silently returned them UNCHANGED. That kept the chart tooltip
+  // fully opaque despite the alpha-0.6 setting AND flattened the missed-bar
+  // volume ramp (every bar the same solid warn). Never return the input
+  // un-alpha'd when a parse misses -- delegate instead.
+  function rgbaWithAlpha_(str, a) {
+    const m = String(str).match(/rgba?\(([^)]+)\)/);
+    if (!m) return colorWithAlpha_(str, a);   // HEX / named / oklch -> canvas resolve
+    const p = m[1].split(',');
+    return 'rgba(' + p[0].trim() + ',' + p[1].trim() + ',' + p[2].trim() + ',' + a + ')';
+  }
+
+  // R7 (M-3): faint clock-face watermark behind the missed-calls BAR chart
+  // (owner ask). Drawn as vectors (circle + ticks + hands) so it's crisp,
+  // theme-safe (muted token at low alpha via the same canvas-resolve path the
+  // charts use), and needs no emoji font. beforeDraw = behind the bars.
+  const missedClockWatermark_ = {
+    id: 'missedClockWatermark',
+    beforeDraw: function (chart) {
+      try {
+        const area = chart.chartArea;
+        if (!area) return;
+        const ctx = chart.ctx;
+        const cx = (area.left + area.right) / 2;
+        const cy = (area.top + area.bottom) / 2;
+        const r = Math.min(area.right - area.left, area.bottom - area.top) * 0.32;
+        if (r < 24) return;   // too small to read as a clock -- skip
+        const stroke = rgbaWithAlpha_(THEME.muted || '#8a8578', 0.14);
+        ctx.save();
+        ctx.strokeStyle = stroke;
+        ctx.lineCap = 'round';
+        // Face
+        ctx.lineWidth = Math.max(2, r * 0.05);
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+        // Hour ticks
+        ctx.lineWidth = Math.max(1.5, r * 0.035);
+        for (let h = 0; h < 12; h++) {
+          const a = (h / 12) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.sin(a) * r * 0.86, cy - Math.cos(a) * r * 0.86);
+          ctx.lineTo(cx + Math.sin(a) * r * 0.94, cy - Math.cos(a) * r * 0.94);
+          ctx.stroke();
+        }
+        // Hands (a static ~10:10 -- the classic legible pose)
+        ctx.lineWidth = Math.max(2, r * 0.055);
+        const hand = function (angleDeg, len) {
+          const a = (angleDeg / 360) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + Math.sin(a) * r * len, cy - Math.cos(a) * r * len);
+          ctx.stroke();
+        };
+        hand(305, 0.5);    // hour
+        hand(50, 0.72);    // minute
+        ctx.restore();
+      } catch (e) { /* watermark is decoration -- never break the chart */ }
+    }
+  };
+
+  // ALTERNATE missed-calls chart: a VERTICAL bar timeline (one bar per 30-min
+  // bucket, 8 AM-5 PM CST left-to-right -- R7/M-3 swapped the axes from the
+  // earlier horizontal layout so the buckets read as a workday timeline and
+  // fill the wide chart slot). Spice-up for "reads like a work day": a COLOR
+  // INTENSITY RAMP (each bar's fill alpha scales with its count, so the
+  // busiest stretch pops), the PEAK bucket outlined + tooltip-flagged, the
+  // count printed above each bar, and a faint clock watermark behind the
+  // plot. Same shared `chart = {labels, counts}` + bucket-click drill as the
+  // radar.
+  function missedBarCfg_(chart, onBucketClick) {
+    const counts = (chart.counts || []).map(function (v) { return Number(v) || 0; });
+    const abandoned = (chart.abandoned || []).map(function (v) { return Number(v) || 0; });
+    const max = counts.reduce(function (m, v) { return Math.max(m, v); }, 0) || 1;
+    let peakIdx = -1, peakVal = -1;
+    counts.forEach(function (v, i) { if (v > peakVal) { peakVal = v; peakIdx = i; } });
+    // Color pivots on whether the bucket CONTAINS an abandoned call: a bucket
+    // with >=1 abandoned ring renders SOLID warn red (still volume-ramped so the
+    // busiest abandoned window reads hottest); an abandoned-free bucket renders
+    // a much lighter, semi-transparent warn so it recedes. (Falls back to the
+    // faint shade for a pre-v12 cached payload with no `abandoned` array.)
+    const bg = counts.map(function (v, i) {
+      const ramp = v / max;                       // 0..1 by volume
+      return (abandoned[i] || 0) > 0
+        ? rgbaWithAlpha_(THEME.warn, 0.58 + 0.42 * ramp)   // solid, hot (has abandons)
+        : rgbaWithAlpha_(THEME.warn, 0.28 + 0.22 * ramp);  // light orange, clearly visible
+    });
+    // Peak bucket keeps its outline: 2px reads as "marked" without the heavy
+    // 3px frame that looked too loud at the compact size.
+    const border = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? THEME.ink : 'transparent'; });
+    const borderW = counts.map(function (v, i) { return (i === peakIdx && peakVal > 0) ? 2 : 0; });
+    return {
+      type: 'bar',
+      data: {
+        labels: chart.labels || [],
+        datasets: [{
+          label: 'Missed calls',
+          data: counts,
+          backgroundColor: bg,
+          borderColor: border,
+          borderWidth: borderW,
+          borderRadius: 2,
+          maxBarThickness: 26,
+        }]
+      },
+      plugins: [missedClockWatermark_],   // R7 (M-3): faint clock behind the bars
+      options: {
+        // R10-7: fixed-height wrap (.missed-chart-hwrap--bars) + no aspect
+        // ratio -- the aspectRatio:2 form derived height from the measured
+        // width, so a mid-transition/hidden measurement left the chart
+        // permanently small in its slot (owner report). With
+        // maintainAspectRatio:false the canvas always fills the wrap.
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                return items[0].label + ' CST' + (items[0].dataIndex === peakIdx && peakVal > 0 ? '  •  peak' : '');
+              },
+              label: function (item) { return item.parsed.y + ' missed call' + (item.parsed.y === 1 ? '' : 's'); }
+            }
+          },
+          // Bars are readable (unlike the radar, INV-41), so SHOW the count
+          // above each bar. Boolean display + empty-string formatter hides
+          // zeros (avoids the function-form display footgun on this plugin
+          // version).
+          datalabels: {
+            display: true,
+            anchor: 'end', align: 'end', clamp: true,
+            color: THEME.ink, font: { size: 10 },
+            formatter: function (v) { return (Number(v) || 0) > 0 ? v : ''; }
+          }
+        },
+        scales: {
+          // Time buckets on X (workday reads left->right); every other label
+          // shown so 18 buckets don't crowd the column. R11-B6: labels render
+          // COMPACT ("8AM", not "8:00 AM") so they stay legible at any width.
+          x: {
+            ticks: {
+              font: { size: 10 }, maxRotation: 0, autoSkip: false,
+              callback: function (v, i) {
+                if (i % 2 !== 0) return '';
+                var lbl = String(this.getLabelForValue(v) || '');
+                // "8:00 AM" -> "8AM"; "8:30 AM" -> "8:30" (half-hours are
+                // skipped by the modulo above, but keep the branch safe).
+                return /:00\s/.test(lbl) ? lbl.replace(':00', '').replace(/\s+/, '')
+                                         : lbl.replace(/\s*[AP]M$/i, '');
+              }
+            },
+            grid: { display: false }
+          },
+          y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: THEME.line } }
+        },
+        onClick: function (evt, items, chartObj) {
+          if (!onBucketClick) return;
+          if (items && items.length) { onBucketClick(items[0].index); return; }
+          const near = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+          if (near && near.length) onBucketClick(near[0].index);
+        }
+      }
+    };
+  }
+
+  // Persisted chart mode for the My Department missed section (previously
+  // shared with the retired Missed Calls modal -- the localStorage key is
+  // kept so an existing preference survives). Default 'bars' (the more
+  // legible view).
+  const MISSED_CHART_MODE_KEY = 'cdr.missed.chartmode';
+  function missedChartMode_() {
+    // R11-B7: the Bars/Radar toggle is admin-only -- a manager with a saved
+    // 'radar' pref (from before the fence) would otherwise be stuck in radar
+    // with no way back, so non-admins always resolve to bars.
+    try {
+      if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') return 'bars';
+      return localStorage.getItem(MISSED_CHART_MODE_KEY) === 'radar' ? 'radar' : 'bars';
+    }
+    catch (e) { return 'bars'; }
+  }
+  function missedChartCfg_(chart, onBucketClick) {
+    return missedChartMode_() === 'radar'
+      ? missedRadarCfg_(chart, onBucketClick)
+      : missedBarCfg_(chart, onBucketClick);
+  }
+  // Reflect the active mode on every Bars/Radar toggle currently in the DOM,
+  // and tag each chart-row so CSS can widen the bar view (bars fill the column;
+  // the square radar keeps its 520px cap).
+  function missedSyncToggles_() {
+    const mode = missedChartMode_();
+    document.querySelectorAll('.missed-chart-mode [data-mode]').forEach(function (b) {
+      const on = b.getAttribute('data-mode') === mode;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    ['dept-missed-chart-row'].forEach(function (id) {
+      const row = document.getElementById(id);
+      if (row) {
+        row.classList.toggle('mode-bars',  mode === 'bars');
+        row.classList.toggle('mode-radar', mode === 'radar');
+      }
+    });
+  }
+  function setMissedChartMode_(mode) {
+    mode = (mode === 'radar') ? 'radar' : 'bars';
+    try { localStorage.setItem(MISSED_CHART_MODE_KEY, mode); } catch (e) {}
+    missedSyncToggles_();
+    // Re-render only charts that are instantiated AND visible (offsetParent
+    // is null under display:none) -- rebuilding in a hidden container would
+    // render at zero size.
+    const visible = function (id) { const el = $(id); return el && el.offsetParent !== null; };
+    if (deptMissedChart && deptMissedLastData && visible('dept-missed-chart-wrap')) {
+      deptMissedDrawChart_(deptMissedLastData);
+    }
+  }
+  // One delegated handler for the dept-section toolbar (delegation kept so
+  // any future surface reusing .missed-chart-mode participates for free).
+  document.addEventListener('click', function (e) {
+    const b = e.target.closest && e.target.closest('.missed-chart-mode [data-mode]');
+    if (b) { e.preventDefault(); setMissedChartMode_(b.getAttribute('data-mode')); }
+  });
+
+  // -- Bucket detail (chart drill-in) ------------------------------------
+  // Click a chart bucket -> show all rings (date, agent, time) in that 30-min
+  // slot; click again (or Close) to dismiss. Implemented by the
+  // makeMissedBucketDetail_ factory (the My Dept instance, above).
+
+  // Renders the parent-call-ID chip + copy button used on every
+  // abandoned timestamp. Pasting the parent ID into raw CDR search
+  // is the manual verification step, so the copy button is worth
+  // the extra DOM. Returns '' for falsy IDs (non-abandoned rows).
+  function parentIdBadge(parentId, date) {
+    if (!parentId) return '';
+    const safe = escapeHtml(String(parentId));
+    // #3: "view path" affordance on abandoned rings -- the parent call id +
+    // date key inbound_calls for the leg-by-leg journey (getCallJourney).
+    const pathBtn = date
+      ? '<button type="button" class="pid-journey" '
+        +   'data-journey-pid="' + safe + '" '
+        +   'data-journey-date="' + escapeHtml(String(date)) + '" '
+        +   'title="View this call’s path (IVR → queues → agents)" '
+        +   'aria-label="View call path">↳ path</button>'
+      : '';
+    // Owner round 4: the raw call-ID chip + copy button are the ADMIN
+    // verification workflow (paste into raw CDR search); managers only need
+    // the journey drill, so non-admins get the "↳ path" button alone.
+    if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') {
+      return pathBtn ? ' <span class="parent-id">' + pathBtn + '</span>' : '';
+    }
+    return ' <span class="parent-id">'
+         +   '<span class="pid-num" title="Call ID ' + safe + ' (hover for full · use 📋 to copy)">#' + safe + '</span>'
+         +   '<button type="button" class="pid-copy" '
+         +     'data-pid="' + safe + '" '
+         +     'aria-label="Copy parent ID ' + safe + '" '
+         +     'title="Copy">📋</button>'
+         +   pathBtn
+         + '</span>';
+  }
+
+  // Renders the "[also rang Backup CSR, A_Q_Spanish]" suffix used on
+  // queue-only entries when the same parent ID appears under multiple
+  // queue sentinels (overflow). Empty when the call only hit this
+  // queue, so no visual noise on the common case.
+  function alsoInBadge(alsoIn) {
+    if (!alsoIn || !alsoIn.length) return '';
+    return ' <span class="also-in">'
+         +   '[also rang ' + alsoIn.map(escapeHtml).join(', ') + ']'
+         + '</span>';
+  }
+
+  // Wire a single delegated click handler for ALL copy buttons inside
+  // the missed-calls modal. data-pid carries the value; we use the
+  // async Clipboard API with a fallback no-op + visual confirmation
+  // (button flips to ✓ for ~1s) so the user knows it worked.
+  function initClipboardOnce() {
+    if (initClipboardOnce.done) return;
+    initClipboardOnce.done = true;
+    // Delegated on document so the parentId copy badges work in BOTH the Missed
+    // Calls modal AND the My Department inline missed section (#9b). Strict
+    // no-op unless the click lands on a .pid-copy badge.
+    document.addEventListener('click', function (e) {
+      // Sub-queue owner round: "View <sub-queue>'s missed calls" in a group
+      // header. Checked FIRST and stops propagation, so it never also fires the
+      // group's collapse toggle it sits inside -- the same trap the agent-scope
+      // button hits with <details> below.
+      const mbtn = e.target.closest && e.target.closest('.subq-missed-btn');
+      if (mbtn) {
+        e.preventDefault(); e.stopPropagation();
+        subqMissedSetDept_(mbtn.getAttribute('data-subq-missed') || '');
+        return;
+      }
+      const mclr = e.target.closest && e.target.closest('[data-subq-missed-clear]');
+      if (mclr) {
+        e.preventDefault(); e.stopPropagation();
+        subqMissedSetDept_('');
+        return;
+      }
+      // Collapse/expand a department group. The whole header row is the target
+      // (role=button + tabindex), so this must run AFTER the buttons above.
+      const ghead = e.target.closest && e.target.closest('tr.subq-group-head');
+      if (ghead) {
+        e.preventDefault();
+        const parent = (state.meta && state.meta.department) || '';
+        subqCollapsedToggle_(parent, ghead.getAttribute('data-subq-group') || '');
+        render();
+        return;
+      }
+      // R11-C4: agent-scope toggle on a missed card (lives inside the card's
+      // <summary>, so preventDefault stops the <details> from toggling) + the
+      // chart chip's ✕ clear. Both funnel through deptMissedSetScope_'s toggle.
+      const sbtn = e.target.closest && e.target.closest('.agent-scope-btn');
+      if (sbtn) {
+        e.preventDefault(); e.stopPropagation();
+        deptMissedSetScope_(sbtn.getAttribute('data-scope-agent') || '');
+        return;
+      }
+      const sclr = e.target.closest && e.target.closest('[data-scope-clear]');
+      if (sclr) {
+        e.preventDefault(); e.stopPropagation();
+        deptMissedSetScope_(deptMissedAgentScope_);   // toggle-off the active scope
+        return;
+      }
+      // #3: "↳ path" drill -> open the inbound-call journey for this parent id.
+      const jbtn = e.target.closest && e.target.closest('.pid-journey');
+      if (jbtn) {
+        e.preventDefault(); e.stopPropagation();
+        callJourneyShow_(jbtn.getAttribute('data-journey-pid') || '',
+                         jbtn.getAttribute('data-journey-date') || '');
+        return;
+      }
+      const btn = e.target.closest && e.target.closest('.pid-copy');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pid = btn.getAttribute('data-pid') || '';
+      if (!pid) return;
+      const flashOk = function () {
+        const prev = btn.textContent;
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(function () {
+          btn.textContent = prev;
+          btn.classList.remove('copied');
+        }, 1000);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(pid).then(flashOk, function () {});
+      } else {
+        // Apps Script web app may run in a sandboxed iframe where
+        // clipboard API is unavailable; fall back to a hidden textarea
+        // + execCommand so copy still works in older paths.
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = pid;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          flashOk();
+        } catch (err) { /* swallow */ }
+      }
+    });
+  }
+
+  // #3: inbound-call PATH drill-through. Opens a lightweight overlay showing
+  // the leg-by-leg journey for one abandoned call (keyed by parent id + date),
+  // reusing the Caller Lookup journey renderers (clChainHtml_/clJourneyRowHtml_).
+  function ensureCallJourneyOverlay_() {
+    var ov = $('call-journey-overlay');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.id = 'call-journey-overlay';
+    ov.className = 'cj-overlay';
+    ov.style.display = 'none';
+    ov.innerHTML = '<div class="cj-backdrop" data-cj-close></div>'
+      + '<div class="cj-panel" role="dialog" aria-modal="true" aria-label="Call path">'
+      +   '<button type="button" class="cj-close" data-cj-close aria-label="Close">&times;</button>'
+      +   '<div class="cj-title">Call path</div>'
+      +   '<div class="cj-body"></div>'
+      + '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) {
+      if (e.target.hasAttribute('data-cj-close')) callJourneyHide_();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && ov.style.display !== 'none') callJourneyHide_();
+    });
+    return ov;
+  }
+  function callJourneyHide_() {
+    var ov = $('call-journey-overlay');
+    if (ov) ov.style.display = 'none';
+  }
+  // Stale-response token: clicking a second "↳ path" link while the first
+  // fetch is in flight must not let the OLDER response overwrite the newer
+  // call's panel when it lands late.
+  var callJourneySeq_ = 0;
+  function callJourneyShow_(callId, date) {
+    if (!callId || !date) return;
+    var ov = ensureCallJourneyOverlay_();
+    var body = ov.querySelector('.cj-body');
+    ov.style.display = '';
+    body.innerHTML = dsRingsHtml_('Loading call path…');
+    var __tok = ++callJourneySeq_;
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (__tok !== callJourneySeq_) return;   // superseded by a newer drill
+        if (!resp || resp.available === false) {
+          body.innerHTML = '<div class="ds-note">Call path unavailable — the inbound-calls store (Neon) could not be reached.</div>';
+          return;
+        }
+        if (!resp.found || !resp.call) {
+          // R7 (M-2): the server now classifies WHY (reason probe on the
+          // unscoped miss) so the note is actionable, not three maybes.
+          var cjMsg;
+          if (resp.reason === 'before-capture') {
+            cjMsg = 'This call predates inbound-call capture'
+              + (resp.minDate ? ' (records begin ' + escapeHtml(resp.minDate) + ')' : '') + ', so no path was recorded.';
+          } else if (resp.reason === 'date-gap') {
+            cjMsg = 'No inbound-call records exist for this date at all — the day looks like a capture gap.'
+              + (USER && USER.role === 'admin'
+                ? ' Run the Neon coverage check (Health page) and re-import / backfill the date if it’s within the Call_Legs retention window.'
+                : ' An admin can check data coverage for this date.');
+          } else if (resp.reason === 'not-captured') {
+            cjMsg = 'This call isn’t in the inbound-call records for its date — it was likely an internal or direct call rather than a captured inbound call, so no path is available.';
+          } else {
+            cjMsg = 'No inbound-call path on record for this call. It may predate inbound capture, or it isn’t an inbound call attributable to this department.';
+          }
+          body.innerHTML = '<div class="ds-note">' + cjMsg + '</div>';
+          return;
+        }
+        body.innerHTML = callJourneyHtml_(resp.call);
+      })
+      .withFailureHandler(function (err) {
+        if (__tok !== callJourneySeq_) return;   // a newer drill owns the panel
+        body.innerHTML = '<div class="status status-error">' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+      })
+      .getCallJourney({ callId: callId, date: date, department: getRequestedDept() });
+  }
+  // Mirrors the Caller Lookup card body: full chain + timeline when the
+  // journey was captured, else the entry->final summary for pre-extension rows.
+  function callJourneyHtml_(c) {
+    var head = '<div class="cj-head">'
+      + (c.callStart ? escapeHtml(clCstTime_(c.callStart)) + ' · ' : '')
+      + escapeHtml(c.callDate || '')
+      + (c.disposition ? ' · <strong>' + escapeHtml(c.disposition) + '</strong>' : '')
+      + (c.abandonStage ? ' (' + escapeHtml(c.abandonStage) + ')' : '')
+      + (c.dialIn ? ' · dial-in ' + escapeHtml(c.dialIn) : '')
+      + '</div>';
+    if (c.journey && c.journey.length) {
+      return head + clChainHtml_(c.journey)
+        + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+        + clJourneyEndRowHtml_(c.journey) + '</div>';
+    }
+    var path = [c.entryQueue, c.finalQueue].filter(Boolean).map(escapeHtml).join(' → ');
+    return head + '<div class="cl-journey-summary">' + (path || '(no queue path recorded)')
+      + ' <span class="cl-journey-note">— leg-by-leg detail not captured for this call (recorded before the journey extension)</span></div>';
+  }
+
+  // -- Queue-only abandoned section --------------------------------------
+  // Renders a banner + per-queue lists for abandoned calls that never
+  // rang an agent (queue had no available agent). Hidden when empty.
+
+  /**
+   * Builder for the queue-only abandoned section -- returns the subhead
+   * string + per-queue body HTML for the My Department inline section
+   * (deptMissedRender_; previously also the retired Missed Calls modal).
+   * Takes the report meta explicitly (for the unique/event counts) rather
+   * than reading a module global.
+   */
+  // Range (inclusive days) between two ISO dates, or null if either is absent.
+  function isoRangeDays_(from, to) {
+    if (!from || !to) return null;
+    var a = new Date(from + 'T00:00:00'), b = new Date(to + 'T00:00:00');
+    if (isNaN(a) || isNaN(b)) return null;
+    return Math.round((b - a) / 86400000) + 1;
+  }
+
+  function missedQueueOnlyParts_(queueOnly, meta) {
+    meta = meta || {};
+    // Default the per-queue cards COLLAPSED on a multi-day range (> 2 days):
+    // long ranges accumulate many timestamps per queue, so an all-open list
+    // is a wall of rows. Short ranges (<= 2 days) stay open for quick scanning.
+    const rangeDays = isoRangeDays_(meta.from, meta.to);
+    const cardsOpen = !(rangeDays != null && rangeDays > 2);
+    // Headline uses unique-by-parent-ID count alongside the per-queue event
+    // sum, so overflow (one call ringing two queues) is visible. Fall back to
+    // the raw sum if the server didn't send the unique count (older payload).
+    const eventSum = (typeof meta.queueOnlyEventCount === 'number')
+                   ? meta.queueOnlyEventCount
+                   : queueOnly.reduce(function (s, q) { return s + q.total; }, 0);
+    const uniqueCalls = (typeof meta.queueOnlyUniqueCount === 'number')
+                      ? meta.queueOnlyUniqueCount
+                      : eventSum;
+    const headParts = [
+      uniqueCalls + ' unique call' + (uniqueCalls === 1 ? '' : 's'),
+      'across ' + queueOnly.length + ' queue' + (queueOnly.length === 1 ? '' : 's'),
+    ];
+    if (eventSum !== uniqueCalls) headParts.push('(' + eventSum + ' ring events)');
+    const bodyHtml = queueOnly.map(function (q) {
+      const itemsHtml = q.entries.map(function (m) {
+        const dateLabel = m.date ? m.date.slice(5) : '';   // MM-DD
+        // R5 (owner): per-call facts from the server's inbound_calls
+        // enrichment -- wait time before abandoning + the insurer label
+        // when the caller is a labeled insurance number. Absent fields
+        // (Neon miss / pre-capture rows / non-insurer callers) render
+        // nothing, so the line degrades to the old shape.
+        const facts = [];
+        if (m.waitSec != null) facts.push('waited ' + crFormatSecondsShort_(m.waitSec));
+        if (m.insurer) facts.push(escapeHtml(m.insurer));
+        const factsHtml = facts.length
+          ? ' <span class="qo-facts" title="From the inbound-call record: time the caller waited before hanging up' + (m.insurer ? ' · caller is a labeled insurance line' : '') + '">· ' + facts.join(' · ') + '</span>'
+          : '';
+        return '<li>'
+             +   '<span class="ring-date">' + escapeHtml(dateLabel) + '</span>'
+             +   '<span class="ring-time">' + escapeHtml(m.label)   + ' 🚨'
+             +     factsHtml
+             +     parentIdBadge(m.parentId, m.date)
+             +     alsoInBadge(m.alsoIn)
+             +   '</span>'
+             + '</li>';
+      }).join('');
+      return '<details class="queue-only-card"' + (cardsOpen ? ' open' : '') + '>'
+           +   '<summary class="qname">' + escapeHtml(q.queue) + ' &middot; '
+           +     q.total + ' abandoned</summary>'
+           +   '<ul class="queue-only-list">' + itemsHtml + '</ul>'
+           + '</details>';
+    }).join('');
+    return { subhead: '(no agent rang) — ' + headParts.join(' '), bodyHtml: bodyHtml };
+  }
+
+  function missedQuantile_(sortedAsc, q) {
+    if (!sortedAsc.length) return 0;
+    const pos = (sortedAsc.length - 1) * q;
+    const lo = Math.floor(pos), hi = Math.ceil(pos);
+    if (lo === hi) return sortedAsc[lo];
+    return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (pos - lo);
+  }
+
+  function missedAgentsHtml_(agents) {
+    // Phase 15: most-missed first so the worst timelines lead. Stable
+    // tiebreak by name keeps equal-count agents in a deterministic order.
+    const sorted = agents.slice().sort(function (a, b) {
+      return (b.total || 0) - (a.total || 0) || a.name.localeCompare(b.name);
+    });
+
+    // Relative severity tiers across the agents shown (tertile cutoffs on
+    // the missed totals). Gated so a low-signal group -- few agents or
+    // tiny counts -- stays neutral rather than branding a 1-missed agent
+    // "Most missed". No company standard exists for per-agent missed
+    // counts, so the tiering is intentionally RELATIVE to the cohort.
+    const totalsAsc = sorted.map(function (a) { return a.total || 0; })
+      .sort(function (x, y) { return x - y; });
+    const maxTotal = totalsAsc.length ? totalsAsc[totalsAsc.length - 1] : 0;
+    const useTiers = sorted.length >= 3 && maxTotal >= 3;
+    const cutHigh = useTiers ? missedQuantile_(totalsAsc, 0.67) : Infinity;
+    const cutLow = useTiers ? missedQuantile_(totalsAsc, 0.34) : -Infinity;
+
+    return sorted.map(function (a) {
+      const itemsHtml = a.missedTimes.map(function (m) {
+        const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
+        const cls = m.abandoned ? 'abandoned' : '';
+        const siren = m.abandoned ? ' 🚨' : '';
+        return '<li class="' + cls + '">'
+             +   dateLabel + escapeHtml(m.label) + siren
+             +   parentIdBadge(m.parentId, m.date)
+             + '</li>';
+      }).join('');
+
+      var tier = '', tierChip = '';
+      if (useTiers) {
+        const t = a.total || 0;
+        if (t >= cutHigh && t >= 3) tier = 'high';
+        else if (t <= cutLow) tier = 'low';
+        else tier = 'med';
+        const tierLabel = tier === 'high' ? 'Most missed' : (tier === 'low' ? 'Fewest' : 'Moderate');
+        tierChip = '<span class="agent-tier agent-tier--' + tier + '">' + tierLabel + '</span>';
+      }
+
+      // R11-C4: per-card chart-scope toggle -- scopes the hour-of-day chart
+      // above to this agent's own rings (client rebucket; the button never
+      // toggles the <details>, stopPropagation in the delegated handler).
+      const scoped = deptMissedAgentScope_ === a.name;
+      return '<details class="agent-card' + (tier ? ' agent-card--tier-' + tier : '') + '" open>'
+           +   '<summary class="agent-card-head">'
+           +     '<span class="agent-name">' + escapeHtml(a.name) + '</span>'
+           +     '<span class="agent-card-meta">' + tierChip
+           +       '<span class="agent-total">' + a.total + ' missed</span>'
+           +       '<button type="button" class="agent-scope-btn' + (scoped ? ' is-on' : '') + '"'
+           +         ' data-scope-agent="' + escapeHtml(a.name) + '"'
+           +         ' title="' + (scoped ? 'Show the whole department on the chart again'
+                                         : 'Scope the hour-of-day chart above to this agent') + '">'
+           +         (scoped ? '&#10005; chart' : '&#9632; chart') + '</button>'
+           +     '</span>'
+           +   '</summary>'
+           +   '<ul class="missed-list">' + itemsHtml + '</ul>'
+           + '</details>';
+    }).join('');
+  }
+
+  function getRequestedDept() {
+    if (canPickDept_()) {
+      const sel = $('dept-selector');
+      return sel ? sel.value : '';
+    }
+    return USER.department || '';
+  }
+
+  function setStatus(kind, msg) {
+    const el = $('status');
+    var skel = $('dept-table-skeleton');
+    var empt = $('dept-empty-state');
+    if (!kind) {
+      el.style.display = 'none'; el.textContent = '';
+      if (skel) skel.style.display = 'none';
+      if (empt) empt.style.display = 'none';
+      return;
+    }
+    if (kind === 'loading') {
+      el.style.display = 'none';
+      if (empt) empt.style.display = 'none';
+      if (skel) skel.style.display = '';
+      return;
+    }
+    if (skel) skel.style.display = 'none';
+    if (kind === 'empty') {
+      el.style.display = 'none';
+      if (empt) {
+        var title = $('dept-empty-title');
+        var hint  = $('dept-empty-hint');
+        if (title) title.textContent = 'No agent data found';
+        if (hint) hint.textContent = msg || '';
+        empt.style.display = '';
+      }
+      return;
+    }
+    if (empt) empt.style.display = 'none';
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // Inline equalizer busy-indicator markup (Part 7) for report-fetch
+  // buttons. Set via innerHTML on the busy label; the restore path sets
+  // textContent back to the idle label, which clears the span.
+  var DS_EQ_HTML_ = '<span class="ds-loader--eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> ';
+
+  // C1 signal-rings block loader -- for an indeterminate query whose results
+  // area has no shape to skeleton (Caller Lookup). Optional caption.
+  function dsRingsHtml_(label) {
+    return '<div class="ds-loader-block">'
+         +   '<div class="ds-loader--rings" aria-hidden="true"><span></span><span></span><span></span></div>'
+         +   (label ? '<div class="ds-loader-block-label">' + escapeHtml(label) + '</div>' : '')
+         + '</div>';
+  }
+
+  // M3: frost-and-ripple overlay. Frosts `host` (blur + dim) with the ripple
+  // loader centered over it, so data being refreshed stays in place instead of
+  // collapsing to a top skeleton that pushes the page down. Idempotent; the
+  // host gains position:relative via .ds-frost-host.
+  function dsFrostShow_(host, label) {
+    if (!host) return;
+    var ov = host.querySelector(':scope > .ds-frost');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'ds-frost';
+      ov.innerHTML = dsRingsHtml_(label || 'Refreshing…');
+      host.appendChild(ov);
+    } else {
+      ov.style.display = '';
+    }
+    host.classList.add('ds-frost-host');
+  }
+  function dsFrostHide_(host) {
+    if (!host) return;
+    var ov = host.querySelector(':scope > .ds-frost');
+    if (ov) ov.style.display = 'none';
+    host.classList.remove('ds-frost-host');
+  }
+
+  // R7 (M-5/I-2): sticky context bar. The bar (position:fixed, hidden by
+  // default) reveals while `sentinel` -- the page's own controls / results
+  // header row -- is scrolled ABOVE the viewport top and its page is active.
+  // IntersectionObserver keeps it scroll-handler-free; a hidden page's
+  // sentinel reports a zeroed rect, which fails the `top < 0` test, so bars
+  // never leak across pages (the fixed bar also lives inside its display:none
+  // page section, which hides it outright on page swaps).
+  // (R9-1: initStickyBar_ retired -- the controls strip / period bar are
+  // position:sticky themselves now; no observer-driven banner.)
+
+  // Generic trailing-edge debounce. Returns a wrapped fn that defers
+  // invocation until `ms` have elapsed since the last call.
+  function debounce_(fn, ms) {
+    var t = null;
+    return function () {
+      var args = arguments, self = this;
+      if (t) clearTimeout(t);
+      t = setTimeout(function () { t = null; fn.apply(self, args); }, ms);
+    };
+  }
+
+  // Monotonic request token for getDepartmentSummary. A rapid sequence
+  // of date edits can have several requests in flight; only the latest
+  // may paint. Stale responses (token !== summaryReqSeq) are dropped so
+  // an earlier, slower response can't clobber a newer one.
+  var summaryReqSeq = 0;
+
+  // The dept whose rows are currently painted in the agent table. Lets
+  // refresh() blank the table the instant the dept CHANGES (admin clicking
+  // a different Overview tile, header dropdown, view-as) so the previous
+  // dept's rows don't linger on screen while the new summary loads -- the
+  // cross-dept "stale flash". A SAME-dept refresh keeps its rows (no
+  // flash-to-empty); only a genuine switch clears.
+  var lastSummaryDept_ = null;
+
+  // F10: monotonic stale-response tokens for the agent reports. Generate +
+  // edit-apply + dept-switch-then-regenerate can leave two fetches in
+  // flight; without a guard the slower (older) response paints last and
+  // wins, showing stale data for the now-current selection. Each fetch
+  // captures ++reportReqSeq_.<report> and its handlers RESET their own
+  // button unconditionally (so a superseded request never leaves a button
+  // stuck) but SKIP rendering when the token is stale.
+  // CL2-1: PER-REPORT counters (was one shared counter). The shared token
+  // meant the Insights->IR drill's auto-run CANCELLED an in-flight Insights
+  // response: its SWR "refreshing now..." note never cleared and "Back to
+  // Insights" restored STALE data under a permanent loading note. IR and
+  // Insights render into separate containers, so cross-report responses
+  // never actually conflict.
+  var reportReqSeq_ = { ir: 0, ins: 0, inb: 0, dir: 0 };   // C-8: inbound/direct join the guard family
+
+  // D1b: per-report last-good payload cache (localStorage). On a FAILED fetch
+  // the report repaints the last good payload for the SAME request (if any)
+  // with a non-destructive staleness note, instead of blanking to a hard
+  // error -- the modal-report analogue of the Overview SWR cache (which the
+  // reports don't have; they re-fetch fresh each open). Bounded: ONE entry per
+  // report (keyed by report name), matched by a request signature, so it can't
+  // grow unbounded and only repaints when the SAME view's fetch fails (a
+  // transient backend blip / reopen while Neon is briefly unreachable).
+  var REPORT_LASTGOOD_PREFIX_ = 'cdr.rpt.lastgood.v1:';
+  // Per-VIEWER key segment (mirrors the Overview SWR cache's per-email keying,
+  // INV-39 spirit) so a shared browser can never repaint one viewer's cached
+  // report for another. Belt-and-suspenders on top of the dept-in-signature
+  // entitlement boundary (a manager only ever requests their own dept, so the
+  // sig already differs across depts).
+  function reportLastGoodKey_(report) {
+    var who = '';
+    try { who = (typeof USER !== 'undefined' && USER && USER.email) ? USER.email : ''; } catch (e) {}
+    return REPORT_LASTGOOD_PREFIX_ + who + ':' + report;
+  }
+  // Stable signature of a report request (agents sorted so selection order
+  // doesn't churn the key).
+  function reportSig_(req) {
+    try {
+      var clone = JSON.parse(JSON.stringify(req || {}));
+      if (Array.isArray(clone.agents)) clone.agents = clone.agents.slice().sort();
+      return JSON.stringify(clone);
+    } catch (e) { return ''; }
+  }
+  // The store holds up to REPORT_LASTGOOD_SLOTS_ signature-keyed entries per
+  // report, most-recent first.
+  //
+  // It was ONE slot, and that made every A/B toggle a full round trip: flipping
+  // the My Department sub-queue scope (or a date range) back and forth
+  // overwrote the other side's entry every time, so the return trip always
+  // missed and re-fetched. Correctness was never at risk -- the signature match
+  // meant a miss, not a wrong payload -- it was purely slow, which is what the
+  // owner reported.
+  //
+  // Bounded on purpose: a summary payload for a big roster is tens of KB and
+  // localStorage is a ~5 MB budget shared with every other cdr.* key, so this
+  // keeps a few slots rather than growing without limit. Eviction is
+  // least-recently-WRITTEN; a quota error silently drops the write, as before.
+  var REPORT_LASTGOOD_SLOTS_ = 4;
+  function reportLastGoodEntries_(report) {
+    try {
+      var raw = localStorage.getItem(reportLastGoodKey_(report));
+      if (!raw) return [];
+      var obj = JSON.parse(raw);
+      if (Array.isArray(obj)) return obj;
+      // Pre-multi-slot shape ({sig, at, data}) written by an older session --
+      // adopt it as a single entry rather than discarding a usable payload.
+      return (obj && obj.sig) ? [obj] : [];
+    } catch (e) { return []; }
+  }
+  function reportLastGoodWrite_(report, sig, data) {
+    try {
+      var list = reportLastGoodEntries_(report)
+        .filter(function (e) { return e && e.sig !== sig; });
+      list.unshift({ sig: sig, at: Date.now(), data: data });
+      localStorage.setItem(reportLastGoodKey_(report),
+        JSON.stringify(list.slice(0, REPORT_LASTGOOD_SLOTS_)));
+    } catch (e) {
+      // Quota exceeded with several slots held: fall back to keeping only the
+      // newest, so a large payload can still be cached at all.
+      try {
+        localStorage.setItem(reportLastGoodKey_(report),
+          JSON.stringify([{ sig: sig, at: Date.now(), data: data }]));
+      } catch (e2) {}
+    }
+  }
+  // Returns the cached entry ONLY when its signature matches the current
+  // request (so a stale, different-params payload is never shown as "current").
+  function reportLastGoodRead_(report, sig) {
+    var list = reportLastGoodEntries_(report);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].sig === sig && list[i].data) return list[i];
+    }
+    return null;
+  }
+  function reportStaleNote_(at) {
+    var when = '';
+    try { when = at ? new Date(at).toLocaleString() : ''; } catch (e) {}
+    return 'Couldn’t refresh — showing the last loaded report'
+      + (when ? ' (as of ' + when + ')' : '') + '. Try again in a moment.';
+  }
+  // Generic results-status setter by element id (matches the per-report
+  // *SetResultsStatus bodies; used for reports whose setter isn't in scope here).
+  function reportSetStatus_(elId, kind, msg) {
+    var el = $(elId); if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind; el.textContent = msg; el.style.display = '';
+  }
+  // On a failed fetch: repaint the last-good payload for this exact request
+  // (if cached) + a staleness note, and return true so the caller SKIPS its
+  // hard-error path. Returns false when there's nothing to fall back to.
+  function reportFailFallback_(report, sig, repaintFn, statusElId) {
+    var lg = reportLastGoodRead_(report, sig);
+    if (!lg) return false;
+    try {
+      repaintFn(lg.data);                                   // renders + shows the results pane
+      reportSetStatus_(statusElId, 'warn', reportStaleNote_(lg.at));
+      return true;
+    } catch (e) { return false; }
+  }
+  // SWR (stale-while-revalidate) companion to the D1b store: when the
+  // last-good payload matches this EXACT request signature, paint it
+  // immediately with a visible "previous result — refreshing" note, so a
+  // repeat Generate feels instant instead of showing a skeleton for the
+  // full server round-trip. Perceived speed only -- the live fetch ALWAYS
+  // runs: on success the report's normal repaint path clears the note (every
+  // wired renderer resets its results-status line); on failure
+  // reportFailFallback_ swaps it for the couldn't-refresh warning. Signature
+  // matching means a changed dept/range/agents never paints someone else's
+  // stale shape -- those requests take the normal skeleton path.
+  function reportSwrPaint_(report, sig, repaintFn, statusElId) {
+    var lg = reportLastGoodRead_(report, sig);
+    if (!lg) return false;
+    try {
+      // swr:true lets a renderer skip side-fetches (e.g. the abandon
+      // heatmap) on the pre-paint -- the live pass triggers them once.
+      repaintFn(lg.data, { swr: true });
+      var when = '';
+      try { when = lg.at ? new Date(lg.at).toLocaleString() : ''; } catch (e) {}
+      reportSetStatus_(statusElId, 'loading',
+        'Showing your previous result for this exact selection'
+        + (when ? ' (from ' + when + ')' : '') + ' — refreshing now…');
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // #5 Option A: intent-gated prefetch of the OTHER page's data on hand-off
+  // hover, so the cross-page jump SWR-paints instantly instead of showing a
+  // skeleton for the full round-trip. Mirrors the IR hover-prefetch: one fetch
+  // per (report, signature) per session, skipped when the D1b store already
+  // holds the signature, best-effort throughout (a failed prefetch is silent;
+  // the real navigation fetch still surfaces any error). Scoped to the
+  // reliably-reconstructable direction -> My Department (getDepartmentSummary,
+  // req = {department, from, to}, so reportSig_ matches refresh()'s to the byte).
+  // The Insights direction is intentionally NOT prefetched: its request
+  // signature (agents + compare mode + resolved prior window) isn't reliably
+  // known at hover time, so a prefetch would usually miss the sig and just
+  // waste the call (see the follow-on note).
+  var deptSummaryPrefetched_ = {};   // sig -> true (one speculative fetch per window per session)
+  function prefetchDeptSummary_(fromIso, toIso) {
+    var dept = (typeof getRequestedDept === 'function') ? getRequestedDept() : '';
+    if (!dept || !fromIso || !toIso) return;
+    var req = { department: dept, from: fromIso, to: toIso };
+    var sig = reportSig_(req);
+    if (!sig || deptSummaryPrefetched_[sig]) return;
+    deptSummaryPrefetched_[sig] = true;               // mark up front so hover jitter can't double-fire
+    if (reportLastGoodRead_('summary', sig)) return;  // already warm (a real run or prior prefetch)
+    google.script.run
+      .withSuccessHandler(function (data) { reportLastGoodWrite_('summary', sig, data); })
+      .withFailureHandler(function () { /* best-effort -- the navigation's own fetch surfaces errors */ })
+      .getDepartmentSummary(req);
+  }
+
+  // -- Data-coverage warnings (R12-26) ------------------------------------
+  // getLatestDataDates now carries dqeEarliest/qcdEarliest (the earliest date
+  // each source actually holds). When a report's requested From predates the
+  // coverage start, the rendered range is silently SHORTER than the header
+  // claims -- so each main report upserts a warning note with a one-click
+  // "adjust range" that rewrites its From input and re-runs. Best-effort:
+  // unknown coverage (fetch not landed / failed) -> no note.
+  let dataCoverage_ = null;   // { dqe: iso|null, qcd: iso|null }
+  const COVERAGE_ADJUST_ = {
+    dept:     { fromId: 'from-date',        rerun: function () { refresh(); } },
+    ir:       { fromId: 'ir-from',          rerun: function () { const b = $('ir-generate-btn'); if (b && !b.disabled) b.click(); } },
+    insights: { fromId: 'ins-from',         rerun: function () { if (typeof runInsReport === 'function') runInsReport(); } },
+    qcdAll:   { fromId: 'qcd-alldept-from', rerun: function () { const b = $('qcd-alldept-refresh-btn'); if (b) b.click(); } },
+    inbound:  { fromId: 'inbound-from',      rerun: function () { const b = $('inbound-generate-btn'); if (b && !b.disabled) b.click(); } },
+    direct:   { fromId: 'direct-call-from',  rerun: function () { const b = $('direct-call-generate-btn'); if (b && !b.disabled) b.click(); } },
+  };
+  function coverageStartFor_(source) {
+    if (!dataCoverage_) return null;
+    return (source === 'qcd' ? dataCoverage_.qcd : dataCoverage_.dqe) || null;
+  }
+  function coverageNoteUpsert_(hostId, report, fromIso, source, explicitStart) {
+    const host = $(hostId);
+    if (!host) return;
+    const old = host.querySelector(':scope > .coverage-note');
+    const start = explicitStart || coverageStartFor_(source);
+    const bad = !!(start && fromIso && fromIso < start);
+    if (!bad) { if (old) old.remove(); return; }
+    const html = '<div class="ds-note coverage-note" role="status">'
+      + '<strong>Data only goes back to ' + escapeHtml(start) + '.</strong> '
+      + 'The selected start (' + escapeHtml(fromIso) + ') predates the earliest available data, '
+      + 'so this report actually covers <strong>' + escapeHtml(start) + ' \u2192 onward</strong>, '
+      + 'not the full selected range. '
+      + '<button type="button" class="link-btn coverage-adjust-btn" data-report="' + report
+      + '" data-start="' + escapeHtml(start) + '">Adjust range to start ' + escapeHtml(start) + '</button>'
+      + '</div>';
+    if (old) old.outerHTML = html;
+    else host.insertAdjacentHTML('afterbegin', html);
+  }
+  document.addEventListener('click', function (e) {
+    const btn = e.target && e.target.closest && e.target.closest('.coverage-adjust-btn');
+    if (!btn) return;
+    const spec = COVERAGE_ADJUST_[btn.getAttribute('data-report')];
+    const start = btn.getAttribute('data-start');
+    if (!spec || !start) return;
+    const input = $(spec.fromId);
+    if (input) {
+      input.value = start;
+      try { input.dispatchEvent(new Event('change', { bubbles: true })); } catch (ce) {}
+    }
+    if (spec.rerun) spec.rerun();
+  });
+
+  function refresh() {
+    const dept = getRequestedDept();
+    if (!dept) {
+      setStatus('error', 'No department available.');
+      return;
+    }
+    const req = {
+      department: dept,
+      from: $('from-date').value,
+      to: $('to-date').value,
+    };
+    // Sub-queue: the client no longer sends `subScope` at all. The scope
+    // switcher is retired -- collapsing a group in the combined table gives
+    // every view it offered, instantly and without a round trip -- so the
+    // SERVER picks: combined for a parent, own for everyone else. Deliberately
+    // omitted rather than hardcoded to 'all' here, so the default lives in one
+    // place; the parameter itself is still honored server-side.
+    if (!req.from || !req.to) {
+      setStatus('error', 'Pick a from and to date.');
+      return;
+    }
+    // The missed section's sub-queue override is per (dept, window): a child's
+    // missed calls left pinned across a department switch or a date change
+    // would be WRONG, not merely stale. deptMissedFetch_ then falls back to the
+    // header dept until the button is clicked again.
+    subqMissedDeptOverride_ = null;
+    recordPageWindow_('dept', req.from, req.to);   // R9-3: the shared-window store
+    coverageNoteUpsert_('dept-coverage-host', 'dept', req.from, 'dqe');   // R12-26
+
+    // M3: when the table already holds data for the SAME dept, frost it in
+    // place (blur + ripple) rather than showing the top skeleton that pushes
+    // the page down then pops back. First load / dept switch (nothing to
+    // frost) keeps the skeleton.
+    var __deptSwitch = (lastSummaryDept_ !== null && lastSummaryDept_ !== dept);
+    var __frostHost = document.querySelector('.agents-table-wrap');
+    var __useFrost = !__deptSwitch && state.rows.length > 0 && !!__frostHost;
+    if (__useFrost) { dsFrostShow_(__frostHost, 'Refreshing…'); setStatus(null); }
+    else { setStatus('loading', 'Loading...'); }
+    $('refresh-btn').disabled = true;
+    // Page title belongs to the dept page; only update it when
+    // we're actually showing that page (otherwise we'd clobber
+    // "Departments Snapshot" on Overview or "Escalations" on that page).
+    if (document.body.getAttribute('data-page') === 'dept') {
+      $('page-title').textContent = dept;
+    }
+
+    // Dept switch: drop the prior dept's rows + dept-specific side panels NOW
+    // so they don't show as the new dept's data during the fetch. Same-dept
+    // refresh leaves them up (no flash-to-empty); only a genuine switch clears.
+    if (lastSummaryDept_ !== null && lastSummaryDept_ !== dept) {
+      state.rows = [];
+      state.totals = null;
+      render();
+      var hdr = $('dqe-table-header');
+      if (hdr) hdr.style.display = 'none';
+      var csvB = $('csv-export-btn');
+      if (csvB) csvB.style.display = 'none';
+      // QCD snapshot + Missed section paint from the prior dept until their
+      // (separate) loads return -- hide them so they re-appear with the new
+      // dept's data rather than flashing the old dept's.
+      var qcdSnap = $('dept-qcd-snapshot');
+      if (qcdSnap) qcdSnap.style.display = 'none';
+      var missedSec = $('dept-missed-section');
+      if (missedSec) missedSec.style.display = 'none';
+      var missedDetail = $('dept-missed-detail');
+      if (missedDetail) missedDetail.style.display = 'none';
+    }
+
+    // R7 (M-1): frost the Missed Calls section from the MOMENT the summary
+    // fetch begins, not only when its own fetch starts (deptMissedFetch_ runs
+    // only after the summary returns, so the section sat stale/unfrosted for
+    // the whole summary leg -- the window managers kept catching). The frost
+    // stays up through deptMissedFetch_ (which re-frosts idempotently) and is
+    // cleared by its handlers; a summary FAILURE clears it in onError.
+    deptMissedFrostArm_();
+
+    var myToken = ++summaryReqSeq;
+    // SWR: a repeat request for the exact same (dept, from, to) paints the
+    // last-good summary instantly (localStorage, signature-matched) with a
+    // visible "refreshing" note; the live response repaints over it (and the
+    // B1 change-flash pulses whatever moved). The SWR paint passes swr:true
+    // so onData skips the missed-section fetch -- the live pass triggers it
+    // once. On a fetch failure the stale table simply stays painted under
+    // the error status.
+    var __sig = reportSig_(req);
+    var __swrHit = reportLastGoodRead_('summary', __sig);
+    if (__swrHit) {
+      try {
+        onData(__swrHit.data, { swr: true });
+        // With the frost overlay up (same-dept refresh with data), the top
+        // "showing previous result" skeleton note is redundant + would push
+        // the page down -- skip it and let the frost signal the refresh.
+        if (!__useFrost) setStatus('loading', 'Showing your previous result — refreshing now…');
+      } catch (e) { /* fall through to the normal loading path */ }
+    }
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (myToken !== summaryReqSeq) return;   // a newer request superseded this one
+        reportLastGoodWrite_('summary', __sig, data);
+        onData(data);
+      })
+      .withFailureHandler(function (err) {
+        if (myToken !== summaryReqSeq) return;
+        onError(err, !!__swrHit);
+      })
+      .getDepartmentSummary(req);
+  }
+
+  // Date-edit-only entry point: debounced so free typing / rapid arrow
+  // presses coalesce into one request, and so the trailing call reads
+  // the values AFTER the linkDateRange_ autocorrect (registered later)
+  // has run on the same change event.
+  var refreshOnDateEdit_ = debounce_(refresh, 350);
+
+  function onData(data, opts) {
+    $('refresh-btn').disabled = false;
+    // M3: clear the frost on the LIVE repaint (not the SWR pre-paint, which is
+    // still "loading").
+    if (!(opts && opts.swr)) {
+      var __fh = document.querySelector('.agents-table-wrap');
+      if (__fh) dsFrostHide_(__fh);
+    }
+    lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
+    state.rows = (data && data.rows) || [];
+    state.totals = (data && data.totals) || null;
+    var csvBtn = $('csv-export-btn');
+    if (csvBtn) csvBtn.style.display = state.rows.length ? '' : 'none';
+    state.meta = (data && data.meta) || null;
+    // Sub-queue Phase 1: per-dept subtotals for the combined view. Absent on a
+    // single-dept payload, which is what keeps the flat render path unchanged.
+    state.deptGroups = (data && data.deptGroups) || null;
+    state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
+    state.csrTransfer = (data && data.csrTransfer) || null;   // R10-5: CSR-only Transfer % tile
+    state.diagnostics = (data && data.diagnostics) || null;
+
+    var dqeHeader = $('dqe-table-header');
+    if (dqeHeader) {
+      dqeHeader.style.display = state.rows.length ? '' : 'none';
+      var dqeDateEl = $('dqe-table-date');
+      if (dqeDateEl) {
+        var f = $('from-date') ? $('from-date').value : '';
+        var t = $('to-date') ? $('to-date').value : '';
+        dqeDateEl.textContent = (f && t) ? (f === t ? f : f + ' to ' + t) : '';
+      }
+    }
+
+    if (!state.rows.length) {
+      var hint = state.meta && state.meta.rosterSize === 0
+        ? 'No agents are mapped to this department in the roster sheet. Check the DO NOT EDIT! tab or contact your admin.'
+        : ((typeof USER !== 'undefined' && USER && USER.role === 'admin')
+            ? 'No activity found for this date range. Try expanding the range, or check that the daily import has run (Pipeline Health in the Alerts modal).'
+            : 'No activity found for this date range. Try expanding the range \u2014 yesterday\u2019s data usually lands by mid-morning Central. If a recent day stays empty, let your admin know.');
+      setStatus('empty', hint);
+    } else {
+      setStatus(null);
+    }
+    render();
+    renderInfoLine();
+    renderDeptQcdSnapshot_(data && data.qcd);
+    // SWR paint: skip the missed-section fetch -- the live onData (arriving
+    // right behind) triggers it exactly once for this range.
+    if (!(opts && opts.swr)) deptMissedFetch_();
+    renderDiagnostics();
+  }
+
+  // -- Missed Calls drill-down on My Department (consolidation phase B) --
+  // Auto-generates the missed-calls summary (headline + radar) for the
+  // SAME range as the agent table, after every summary load. Independent
+  // async: a failure hides the section and never blocks the table. The
+  // "Full report" button (and a radar click) opens the Missed Calls
+  // modal, which carries its own range for deeper digging.
+  let deptMissedChart = null;
+  let deptMissedReqKey = '';   // ignore out-of-order responses
+
+  // R7 (M-1): early frost, armed by refresh() when a summary fetch starts so
+  // the section signals "loading" for the summary+missed duration (all roles).
+  // Mirrors deptMissedFetch_'s own frost lines; safe to run twice (idempotent).
+  function deptMissedFrostArm_() {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    if (uiFlagOn_('dept-missed-section')) return;   // R7 (G-3): surface toggled off
+    const dept = getRequestedDept();
+    const from = $('from-date') ? $('from-date').value : '';
+    const to = $('to-date') ? $('to-date').value : '';
+    if (!dept || !from || !to) return;   // deptMissedFetch_ would hide the section anyway
+    wrap.style.display = '';
+    wrap.classList.add('dm-loading');
+    dsFrostShow_(wrap, 'Loading missed calls…');
+  }
+
+  /**
+   * The dept the missed section should run on, or null to use the header dept.
+   * Single-dept scopes only -- see the note in deptMissedFetch_ for why 'all'
+   * is deliberately not merged.
+   */
+  /**
+   * Which department the missed section is showing.
+   *
+   * Phase 3 deliberately does NOT merge the missed section across departments:
+   * the queue-only abandoned section already covers a parent's sub-queue queues
+   * (`queuesForDept_` rolls them up), so summing a child's report into the
+   * parent's would double-count every queue abandon and every abandoned-ring
+   * bucket in the hour-of-day chart. It therefore shows exactly ONE department.
+   *
+   * That used to follow the scope switcher. With the switcher retired, the
+   * route to a sub-queue's own missed calls is the explicit button in its group
+   * header, whose choice lands here. Reset on every dept/window change, because
+   * a child's missed calls pinned under a different parent would be wrong
+   * rather than merely stale.
+   */
+  var subqMissedDeptOverride_ = null;
+  function subqMissedDept_() {
+    var m = (state && state.meta) || {};
+    var subs = m.subQueues || [];
+    if (subqMissedDeptOverride_ && subs.indexOf(subqMissedDeptOverride_) !== -1) {
+      return subqMissedDeptOverride_;
+    }
+    return null;
+  }
+  function subqMissedSetDept_(dept) {
+    var next = dept || null;
+    if (subqMissedDeptOverride_ === next) next = null;   // clicking it again clears
+    subqMissedDeptOverride_ = next;
+    deptMissedFetch_();
+    var sec = $('dept-missed-section');
+    if (sec && next) {
+      try { sec.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+    }
+  }
+
+  /**
+   * One line under the missed-section title naming the scope, so a manager
+   * reading a parent's combined page knows the section is NOT the combined
+   * figure. Renders only when a sub-queue relationship exists.
+   */
+  function subqMissedScopeNote_(shownDept) {
+    var host = $('dept-missed-scope-note');
+    if (!host) return;
+    var m = (state && state.meta) || {};
+    var subs = m.subQueues || [];
+    if (!subs.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    var list = subs.map(escapeHtml).join(', ');
+    host.style.display = '';
+    if (subqMissedDeptOverride_ && shownDept === subqMissedDeptOverride_) {
+      // Viewing a sub-queue's own missed calls. Must carry its own way back --
+      // the section is far enough down the page that the group header it was
+      // launched from is off screen.
+      host.innerHTML = 'Showing <strong>' + escapeHtml(shownDept)
+        + '</strong>\u2019s missed calls. '
+        + '<button type="button" class="link-btn" data-subq-missed-clear="1">'
+        + 'Back to ' + escapeHtml(m.department || 'the department') + '</button>';
+    } else {
+      host.innerHTML = 'Per-agent timelines below are <strong>'
+        + escapeHtml(shownDept) + '</strong>\u2019s only. Queue abandons already '
+        + 'include ' + list + '\u2019s queues, so they are not added twice. '
+        + 'Use the button on ' + list + '\u2019s heading row above for '
+        + (subs.length === 1 ? 'its' : 'their') + ' own missed calls.';
+    }
+  }
+
+  function deptMissedFetch_() {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    // R7 (G-3): surface toggled off -- skip the fetch too (CSS already hides).
+    if (uiFlagOn_('dept-missed-section')) { deptMissedScrollPending_ = false; return; }
+    // Sub-queue Phase 3: the missed section follows the switcher when the scope
+    // resolves to a SINGLE department -- 'subs' with one child runs on that
+    // child. It deliberately does NOT merge for 'all': the queue-only abandoned
+    // section already covers a parent's sub-queue queues (`queuesForDept_` rolls
+    // them up), so summing a child's report into the parent's would double-count
+    // every queue abandon and every abandoned-ring bucket in the hour-of-day
+    // chart. `subqMissedScopeNote_` says what is and isn't included instead of
+    // leaving the reader to guess.
+    const dept = subqMissedDept_() || getRequestedDept();
+    const from = $('from-date').value, to = $('to-date').value;
+    if (!dept || !from || !to) {
+      deptMissedScrollPending_ = false;   // no fetch coming -- disarm the one-shot scroll
+      wrap.style.display = 'none';
+      const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
+      return;
+    }
+    const key = dept + '|' + from + '|' + to;
+    deptMissedReqKey = key;
+    // R5 (owner): the section used to sit hidden/stale with NO indication
+    // while its fetch ran (a cold fetch can take seconds), which read as
+    // "charts not loading". Frost-and-ripple it for the fetch's duration --
+    // the M3 pattern the agents table uses; the dm-loading class gives an
+    // empty first-load section enough height to host the overlay.
+    wrap.style.display = '';
+    wrap.classList.add('dm-loading');
+    // E-2: clear any prior failure state -- hide the error note and restore
+    // the chart row the failure path hides (nothing in the render path
+    // touches the row's display, so a retry must restore it here).
+    const errNote = $('dept-missed-error'); if (errNote) errNote.style.display = 'none';
+    const chartRow = $('dept-missed-chart-row'); if (chartRow) chartRow.style.display = '';
+    dsFrostShow_(wrap, 'Loading missed calls…');
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (deptMissedReqKey !== key) return;   // stale response
+        dsFrostHide_(wrap);
+        wrap.classList.remove('dm-loading');
+        deptMissedRender_(data, from, to);
+      })
+      .withFailureHandler(function (err) {
+        if (deptMissedReqKey !== key) return;
+        dsFrostHide_(wrap);
+        wrap.classList.remove('dm-loading');
+        // Disarm the one-shot launcher/deep-link scroll: the render it was
+        // waiting for isn't coming, and a leaked flag would yank the page
+        // down on the NEXT unrelated dept-page refresh.
+        deptMissedScrollPending_ = false;
+        // E-2: the section used to display:none itself here, which a manager
+        // reads as "no missed calls" (the modal this section replaced IS the
+        // Missed Calls report). Say the failure out loud instead, with a
+        // retry; the stale inner content stays hidden below the note.
+        wrap.style.display = '';
+        ['dept-missed-headline', 'dept-missed-summary', 'dept-missed-scope-note'].forEach(function (id) {
+          const el = $(id); if (el) el.style.display = 'none';
+        });
+        const row = $('dept-missed-chart-row'); if (row) row.style.display = 'none';
+        const note = $('dept-missed-error');
+        if (note) {
+          note.innerHTML = 'Missed Calls could not load: '
+            + escapeHtml((err && err.message) ? err.message : String(err))
+            + ' <button type="button" class="link-btn" id="dept-missed-retry">Retry</button>';
+          note.style.display = '';
+          const btn = $('dept-missed-retry');
+          if (btn) btn.addEventListener('click', function () { deptMissedFetch_(); });
+        }
+        const detail = $('dept-missed-detail'); if (detail) detail.style.display = 'none';
+      })
+      .getMissedCallsReport({ department: dept, from: from, to: to });
+  }
+
+  // Re-measure the dept missed chart after layout settles. rAF (twice, to
+  // clear a sticky-side-column reflow) then an explicit resize so a chart
+  // created at zero width fills its container. No-op if the chart is gone.
+  // Owner note: the FIRST bar render could come up blank -- the chart is
+  // created in the same frame the section is unhidden, so Chart.js can
+  // measure a zero-size canvas that even resize() doesn't recover (the
+  // Bars/Radar toggle "fixed" it because its re-render happens after
+  // layout settled). If the chart still measures empty after the settle +
+  // resize, destroy + rebuild ONCE from the last response.
+  var deptMissedRebuilt_ = false;
+  function deptMissedResize_(allowRebuild) {
+    if (allowRebuild === undefined) allowRebuild = true;   // R11-C6: toggle passes false
+    if (typeof requestAnimationFrame !== 'function') return;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        try {
+          if (!deptMissedChart) return;
+          deptMissedChart.resize();
+          // R11-B6: a chart that settled markedly NARROWER than its wrap
+          // (the stuck-square prod symptom -- built mid-transition and never
+          // recovered) counts as broken too, not just zero-size.
+          var wrapEl = document.querySelector('#dept-missed-chart-wrap .missed-chart-hwrap');
+          var tooNarrow = !!(wrapEl && wrapEl.clientWidth > 0
+            && deptMissedChart.width < wrapEl.clientWidth * 0.7);
+          if (allowRebuild
+              && (deptMissedChart.width === 0 || deptMissedChart.height === 0 || tooNarrow)
+              && deptMissedLastData && !deptMissedRebuilt_) {
+            deptMissedRebuilt_ = true;   // one retry -- never loop
+            deptMissedDrawChart_(deptMissedLastData);
+          } else if (deptMissedChart.width > 0 && deptMissedChart.height > 0 && !tooNarrow) {
+            deptMissedRebuilt_ = false;  // healthy: re-arm for the next render
+          }
+        } catch (e) { /* chart destroyed mid-settle */ }
+      });
+    });
+  }
+
+  // R11-M: resize the missed chart CONTINUOUSLY while the chart-row grid-column
+  // transition runs (open/close of the bucket drill), so the canvas bitmap
+  // tracks the shrinking/growing column every frame instead of stretching and
+  // snapping sharp only at transitionend (the residual open-flash R11-C6 left).
+  // Bounded by a deadline just past the 420ms CSS transition; resize() carries
+  // no animation so per-frame cost is trivial. Never rebuilds (the tooNarrow
+  // guard stays off).
+  var deptMissedResizeRaf_ = null;
+  function deptMissedResizeDuringTransition_() {
+    if (!deptMissedChart || typeof requestAnimationFrame !== 'function') return;
+    if (deptMissedResizeRaf_) cancelAnimationFrame(deptMissedResizeRaf_);
+    var end = Date.now() + 480;
+    var step = function () {
+      try { if (deptMissedChart) deptMissedChart.resize(); } catch (e) { /* destroyed mid-settle */ }
+      if (Date.now() < end) {
+        deptMissedResizeRaf_ = requestAnimationFrame(step);
+      } else {
+        deptMissedResizeRaf_ = null;
+        deptMissedResize_(false);   // final settle (no rebuild)
+      }
+    };
+    deptMissedResizeRaf_ = requestAnimationFrame(step);
+  }
+
+  // Draw (or redraw, on a Bars/Radar toggle) the dept missed chart from the
+  // last response. Destroys any prior instance first; honors the shared mode;
+  // re-measures after layout settles (#5).
+  // MC2: bounded rAF retry when the container isn't measurable yet (see below).
+  var deptMissedDrawAttempts_ = 0;
+  // R11-C4: agent scope for the missed hour-of-day chart. Clicking an agent
+  // card's "chart" button rebuckets the 18-slot chart from THAT agent's own
+  // timeline entries (times are already in the payload; no new fetch). The
+  // bucket drill panel stays DEPT-WIDE by design -- it lists every ring in
+  // the bucket regardless of scope. Scope resets on every fresh fetch.
+  var deptMissedAgentScope_ = null;
+  function missedTimeBucketIdx_(label) {
+    const mm = /^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i.exec(String(label || '').trim());
+    if (!mm) return -1;
+    let h = Number(mm[1]) % 12;
+    if (/pm/i.test(mm[3])) h += 12;
+    const idx = Math.floor(((h * 60 + Number(mm[2])) - 480) / 30);   // 8:00 AM base, 30-min slots
+    return (idx >= 0 && idx < 18) ? idx : -1;
+  }
+  function deptMissedScopedChart_(data) {
+    if (!deptMissedAgentScope_) return null;
+    const agents = (data && data.agents) || [];
+    const ag = agents.filter(function (a) { return a.name === deptMissedAgentScope_; })[0];
+    const base = (data && data.chart) || {};
+    if (!ag || !(base.labels || []).length) return null;
+    const counts = base.labels.map(function () { return 0; });
+    const abandoned = base.labels.map(function () { return 0; });
+    (ag.missedTimes || []).forEach(function (m) {
+      const idx = missedTimeBucketIdx_(m.label);
+      if (idx < 0 || idx >= counts.length) return;   // outside the 8-5 band (RPT-1 rings)
+      counts[idx]++;
+      if (m.abandoned) abandoned[idx]++;
+    });
+    return { labels: base.labels, counts: counts, abandoned: abandoned };
+  }
+  function deptMissedSetScope_(name) {
+    deptMissedAgentScope_ = (deptMissedAgentScope_ === name) ? null : name;
+    if (deptMissedLastData) {
+      deptMissedDrawChart_(deptMissedLastData);
+      // Re-render the cards so the active button state tracks.
+      const agWrap0 = $('dept-missed-agents');
+      if (agWrap0) agWrap0.innerHTML = missedAgentsHtml_(deptMissedLastData.agents || []);
+    }
+  }
+  function deptMissedDrawChart_(data) {
+    const m = (data && data.meta) || {};
+    const chartWrap = $('dept-missed-chart-wrap');
+    if (deptMissedChart) { try { deptMissedChart.destroy(); } catch (e) {} deptMissedChart = null; }
+    if (!chartWrap) return;
+    missedSyncToggles_();   // tag the chart-row (mode-bars/mode-radar) before sizing
+    const hasMissed = Number(m.totalMissed || 0) > 0 || Number(m.abandonedCallCount || 0) > 0;
+    chartWrap.style.display = hasMissed ? '' : 'none';
+    if (!hasMissed || typeof Chart === 'undefined') { missedSyncToggles_(); return; }
+    // MC2: don't CREATE the chart while the container is unmeasurable (the dept
+    // page / missed section can still be under a display:none ancestor on the
+    // first paint -- notably manager view -- so Chart.js measures a zero-size
+    // canvas that even the resize() retry can't recover, and it comes up blank).
+    // Defer creation via rAF until it's laid out; bounded so it can't spin if
+    // the section never becomes visible.
+    const measurable = chartWrap.offsetParent !== null && chartWrap.clientWidth > 0;
+    if (!measurable) {
+      if (deptMissedDrawAttempts_ < 30 && typeof requestAnimationFrame === 'function') {
+        deptMissedDrawAttempts_++;
+        requestAnimationFrame(function () { deptMissedDrawChart_(data); });
+      }
+      return;
+    }
+    deptMissedDrawAttempts_ = 0;
+    // R10-7: bars render inside a fixed-height wrap (Chart.js sizes to the
+    // parent box under maintainAspectRatio:false -- the .ir-chart-wrap
+    // pattern); the square radar keeps its own aspect-driven sizing.
+    var hwrapCls = 'missed-chart-hwrap' + (missedChartMode_() === 'bars' ? ' missed-chart-hwrap--bars' : '');
+    chartWrap.innerHTML = '<div class="' + hwrapCls + '">'
+      + '<canvas id="dept-missed-chart" aria-label="Hour-of-day distribution of missed calls"></canvas></div>';
+    refreshChartTheme();
+    const scopedChart = deptMissedScopedChart_(data);   // R11-C4
+    const chipEl = $('dept-missed-scope-chip');
+    if (chipEl) {
+      if (scopedChart) {
+        chipEl.innerHTML = 'Chart: <strong>' + escapeHtml(deptMissedAgentScope_) + '</strong>'
+          + ' <button type="button" class="scope-chip-x" data-scope-clear="1" title="Show the whole department">&#10005;</button>';
+        chipEl.style.display = '';
+      } else {
+        chipEl.style.display = 'none'; chipEl.innerHTML = '';
+      }
+    }
+    deptMissedChart = safeChart_($('dept-missed-chart').getContext('2d'),
+      missedChartCfg_(scopedChart || (data && data.chart) || { labels: [], counts: [] },
+                      function (idx) { deptMissedBucketDetail_.toggle(idx); }));
+    deptMissedResize_();
+    missedSyncToggles_();
+  }
+
+  function deptMissedRender_(data, from, to) {
+    const wrap = $('dept-missed-section');
+    if (!wrap) return;
+    const m = (data && data.meta) || {};
+    deptMissedLastData = data;            // drill-in reads this
+    deptMissedAgentScope_ = null;         // R11-C4: fresh data = dept-wide chart
+    subqMissedScopeNote_(m.department || getRequestedDept());
+    deptMissedBucketDetail_.hide();       // reset the panel on every fetch (like the modal)
+
+    // Show the section BEFORE the radar is created below: Chart.js measures
+    // the canvas's container at construction time, and a chart built while an
+    // ancestor is display:none collapses to a zero-size (or mis-sized) render.
+    // (Surfaced by the #5 sticky QCD side-column squeeze, but the root cause
+    // is the create-while-hidden ordering.)
+    wrap.style.display = '';
+
+    // One-shot scroll for the launcher / legacy '#/report/missed' deep link:
+    // now that the section is visible and populated, bring it into view
+    // with the quick-start spotlight pulse (same treatment as the Insights
+    // chip landings).
+    if (deptMissedScrollPending_) {
+      deptMissedScrollPending_ = false;
+      qsSpotlight_('dept-missed-section');
+    }
+
+    const dateEl = $('dept-missed-date');
+    if (dateEl) dateEl.textContent = from === to ? from : from + ' to ' + to;
+
+    // Headline (same composer the modal uses).
+    const head = $('dept-missed-headline');
+    if (head) {
+      const lines = missedHeadline_(m);
+      head.innerHTML = lines.length
+        ? '<div class="report-headline-kicker">At a glance</div>'
+          + lines.map(function (l) { return '<div class="report-headline-line">' + l + '</div>'; }).join('')
+        : '';
+      head.style.display = lines.length ? '' : 'none';
+    }
+
+    // Summary strip (Range / Total missed / Abandoned / No-ring abandons / Agents).
+    const sum = $('dept-missed-summary');
+    if (sum) {
+      const parts = [
+        '<span class="label">Range:</span><span class="val">' + escapeHtml(from || '') + (from === to ? '' : ' to ' + escapeHtml(to || '')) + '</span>',
+        '<span class="label">Total missed:</span><span class="val">' + fmtNumber(m.totalMissed || 0) + '</span>',
+        '<span class="label">Abandoned calls:</span><span class="val">' + fmtNumber(m.abandonedCallCount || 0) + '</span>',
+      ];
+      if ((m.noRingAbandonCount || 0) > 0) {
+        parts.push('<span class="label">No-ring abandons:</span><span class="val">' + fmtNumber(m.noRingAbandonCount) + '</span>');
+      }
+      parts.push('<span class="label">Agents:</span><span class="val">' + fmtNumber(m.agentCount || 0) + '</span>');
+      sum.innerHTML = parts.join('<span class="sep">|</span>');
+      sum.style.display = '';
+    }
+
+    // Chart (bars/radar per the shared toggle). Clicks drill IN-PLACE into the
+    // dept bucket panel (parity), via the shared bucket-detail instance.
+    deptMissedDrawChart_(data);
+
+    // #9b: inline parity with the full modal -- queue-only abandoned section
+    // + per-agent missed-time timelines via the SAME shared builders.
+    const queueOnly = (data && data.queueOnly) || [];
+    const qoWrap = $('dept-missed-queue-only');
+    const qoBody = $('dept-queue-only-body');
+    const qoSub  = $('dept-queue-only-subhead');
+    if (qoWrap && qoBody) {
+      if (queueOnly.length) {
+        const parts = missedQueueOnlyParts_(queueOnly, m);
+        if (qoSub) qoSub.textContent = parts.subhead;
+        qoBody.innerHTML = parts.bodyHtml;
+        qoWrap.style.display = '';
+      } else {
+        qoWrap.style.display = 'none';
+        qoBody.innerHTML = '';
+      }
+    }
+
+    const agents = (data && data.agents) || [];
+    const agWrap = $('dept-missed-agents');
+    if (agWrap) {
+      if (agents.length) {
+        agWrap.innerHTML = missedAgentsHtml_(agents);
+        agWrap.style.display = '';
+      } else {
+        // Zero-missed day: keep the inline section tidy (the headline already
+        // conveys "no missed"); hide the empty grid rather than show a card.
+        agWrap.innerHTML = '';
+        agWrap.style.display = 'none';
+      }
+    }
+    // parentId badges (queue-only + agent cards) use a delegated copy handler.
+    initClipboardOnce();
+
+    // #9a: full-width detail wrapper shows only when there's detail content.
+    const detail = $('dept-missed-detail');
+    if (detail) detail.style.display = (queueOnly.length || agents.length) ? '' : 'none';
+    // (wrap was shown at the top so the radar measured a real canvas size.)
+  }
+
+  /**
+   * "Yesterday's QCD" mini-section under the agent table on My
+   * Department. Server returns data.qcd as the dept's most-recent
+   * QCD daily roll-up (sum across mapped queues; null when the
+   * dept isn't mapped in DEPT_QCD_QUEUES or has no recent rows).
+   * Hidden when null.
+   */
+  // QCD side-panel period toggle (Yesterday / MTD). Yesterday = the latest-day
+  // block (the payload's top-level fields); MTD = the `mtd` block the server
+  // ships alongside (month-to-date across the dept's queues). Client-only swap
+  // of which block the panel renders -- no re-fetch. Persisted; defaults to the
+  // historical latest-day view.
+  const DEPT_QCD_PERIOD_KEY_ = 'cdr.dept.qcdperiod';
+  let deptQcdPeriod = (function () {
+    try { var v = localStorage.getItem(DEPT_QCD_PERIOD_KEY_); return (v === 'mtd' || v === 'yesterday') ? v : 'yesterday'; }
+    catch (e) { return 'yesterday'; }
+  })();
+  let deptQcdSnap_ = null;      // last snapshot payload, for re-render on toggle
+
+  function renderDeptQcdSnapshot_(qcd) {
+    var wrap = $('dept-qcd-snapshot');
+    if (!wrap) return;
+    if (!qcd) { wrap.style.display = 'none'; deptQcdSnap_ = null; return; }
+    deptQcdSnap_ = qcd;
+    // Resolve the active period block. MTD is only offered when the server
+    // shipped it; a missing `mtd` (older cache) falls back to Yesterday.
+    var hasMtd = !!qcd.mtd;
+    var period = (deptQcdPeriod === 'mtd' && hasMtd) ? 'mtd' : 'yesterday';
+    var block = (period === 'mtd') ? qcd.mtd : qcd;
+    deptQcdWirePeriod_(hasMtd, period);
+    var titleEl = $('dept-qcd-title');
+    if (titleEl) {
+      if (period === 'mtd') {
+        var msStr = qcd.mtdStart || '';
+        var msLabel = '';
+        if (msStr) {
+          var mp = msStr.split('-');
+          var monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          msLabel = monthsShort[Number(mp[1]) - 1] + ' ' + Number(mp[2]);
+        }
+        titleEl.textContent = 'Queue Call Data — Month to date' + (msLabel ? ' (since ' + msLabel + ')' : '');
+        titleEl.title = 'Month-to-date across this department’s queues, through the '
+          + 'latest day with queue data. For a custom range, open the Insights '
+          + 'report’s Queue health section.';
+        titleEl.style.cursor = 'help';
+      } else {
+        var dateStr = qcd.date || '';
+        if (dateStr) {
+          var parts = dateStr.split('-');
+          var d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+          var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+          var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          dateStr = days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate();
+        }
+        titleEl.textContent = 'Queue Call Data — ' + dateStr;
+        // This card always shows the most recent QCD day for the dept, which is
+        // independent of the date range above (QCD can update on a different day
+        // than DQE, and the range defaults to the latest DQE date). Clarify that
+        // so the static card next to the range controls doesn't read as broken.
+        titleEl.title = 'Most recent day of queue data — independent of the date '
+          + 'range above. For a specific date range, open the Insights report’s '
+          + 'Queue health section.';
+        titleEl.style.cursor = 'help';
+      }
+    }
+    // Owner note: the hover-only explanation wasn't enough -- when the
+    // snapshot's day differs from the page's To date, say so VISIBLY so
+    // the card can't read as showing the selected range's numbers. The note
+    // is diagnostic (owner follow-up): comparing against the COMPANY-wide
+    // latest QCD day (latestQcdIso_) distinguishes "queue data simply hasn't
+    // landed past this date" from "OTHER depts have newer queue rows" -- the
+    // latter usually means this dept's queue mapping misses a renamed queue.
+    var dateEl = $('dept-qcd-date');
+    if (dateEl) {
+      var pageTo = $('to-date') ? $('to-date').value : '';
+      var note = '';
+      // The "latest queue day vs page range" diagnostic only makes sense for the
+      // single-day Yesterday view; MTD is a range so there's no one day to
+      // reconcile against the To date.
+      if (period === 'yesterday' && qcd.date && pageTo && qcd.date !== pageTo) {
+        var mmdd = function (iso) {
+          var p = String(iso).split('-');
+          return p.length === 3 ? (Number(p[1]) + '/' + Number(p[2])) : iso;
+        };
+        if (latestQcdIso_ && latestQcdIso_ > qcd.date) {
+          note = 'latest day with queue data for this department’s queues — '
+            + 'company queue data runs through ' + mmdd(latestQcdIso_)
+            + ', so if this looks behind, the dept’s queue mapping may need updating';
+        } else {
+          note = 'latest queue day — queue data lands separately from the '
+            + 'agent call data above (which runs through '
+            + mmdd(latestDqeIso_ || pageTo) + ')';
+        }
+      }
+      dateEl.textContent = note;
+    }
+    const tiles = $('dept-qcd-tiles');
+    if (!tiles) return;
+
+    const tile = function (label, value, valueClass) {
+      return '<div class="dept-qcd-tile">'
+           +   '<div class="dept-qcd-label">' + escapeHtml(label) + '</div>'
+           +   '<div class="dept-qcd-value' + (valueClass ? ' ' + valueClass : '') + '">'
+           +     escapeHtml(String(value))
+           +   '</div>'
+           + '</div>';
+    };
+    const tileRow = function (q) {
+      const violCls = (Number(q.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
+      const pctCls  = (Number(q.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
+      // Owner note: Answered / Abandoned merged into ONE color-split tile
+      // ("Ans / Abd" -- green X / warm Y) so the compact side panel reads
+      // at a glance instead of two look-alike number tiles.
+      const ansAbd = '<div class="dept-qcd-tile">'
+        + '<div class="dept-qcd-label">Ans / Abd</div>'
+        + '<div class="dept-qcd-value">'
+        +   '<span class="dept-qcd-ans">' + escapeHtml(fmtNumber(q.totalAnswered || 0)) + '</span>'
+        +   '<span class="dept-qcd-sep"> / </span>'
+        +   '<span class="dept-qcd-abd">' + escapeHtml(fmtNumber(q.abandoned || 0)) + '</span>'
+        + '</div></div>';
+      return tile('Total Calls', fmtNumber(q.totalCalls    || 0))
+           + ansAbd
+           + tile('Abandoned %', String(q.abandonedPctStr  || '0.00%'), pctCls)
+           + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
+    };
+
+    // Per-queue separation: each queue (incl. sub-queue children, which can
+    // behave very differently from the parent) is its OWN page. To keep the
+    // sticky side column compact, multi-queue depts render a CAROUSEL -- one
+    // queue page at a time with ‹ › nav + a dot indicator, plus a trailing
+    // "All queues" total page -- instead of stacking every queue vertically.
+    // Single-queue depts keep the flat tile row (no redundant total).
+    const perQueue = block.perQueue || [];
+    if (perQueue.length > 1) {
+      const pages = perQueue.map(function (q) {
+        const tag = q.subDept
+          ? ' <span class="dept-qcd-subtag">sub-queue · ' + escapeHtml(q.subDept) + '</span>'
+          : '';
+        return { name: escapeHtml(q.queue) + tag, html: tileRow(q) };
+      });
+      // P3: gated summary pages. The own-dept total is the canonical number
+      // that reconciles with the QCD modal / Overview; the all-inclusive
+      // figure is shown only under an explicit "All queues (incl.
+      // sub-queues)" label so it can't be mistaken for the dept total. Each
+      // subtotal renders only when it isn't a redundant copy of a single row:
+      //   - Main-queues subtotal: only when >1 own queue.
+      //   - Sub-queues subtotal: only when >1 sub-queue.
+      //   - All-queues total: only when sub-queues exist (else it == main).
+      // With no sub-queues, the own rollup is simply "Department total".
+      const hasSub = (block.subQueueCount || 0) > 0;
+      const ownTotals = {
+        totalCalls:      block.totalCalls,
+        totalAnswered:   block.totalAnswered,
+        abandoned:       block.abandoned,
+        abandonedPct:    block.abandonedPct,
+        abandonedPctStr: block.abandonedPctStr,
+        violations:      block.violations,
+      };
+      if ((block.mainQueueCount || 0) > 1) {
+        pages.push({ name: hasSub ? 'Main queues' : 'Department total', html: tileRow(ownTotals) });
+      }
+      if ((block.subQueueCount || 0) > 1 && block.subTotals) {
+        pages.push({ name: 'Sub-queues (separate depts)', html: tileRow(block.subTotals) });
+      }
+      if (hasSub && block.allTotals) {
+        pages.push({ name: 'All queues (incl. sub-queues)', html: tileRow(block.allTotals) });
+      }
+
+      tiles.innerHTML =
+          '<div class="dept-qcd-carousel">'
+        +   '<div class="dept-qcd-carousel-head">'
+        +     '<button type="button" class="dept-qcd-nav" data-dir="-1" aria-label="Previous queue">&#8249;</button>'
+        +     '<span class="dept-qcd-queue-name" id="dept-qcd-cur-name"></span>'
+        +     '<button type="button" class="dept-qcd-nav" data-dir="1" aria-label="Next queue">&#8250;</button>'
+        +   '</div>'
+        +   '<div class="dept-qcd-tiles-inner" id="dept-qcd-cur-tiles"></div>'
+        +   '<div class="dept-qcd-dots" id="dept-qcd-dots">'
+        +     pages.map(function (_p, i) { return '<span class="dept-qcd-dot" data-idx="' + i + '"></span>'; }).join('')
+        +   '</div>'
+        + '</div>';
+
+      let cur = 0;
+      const nameEl = $('dept-qcd-cur-name');
+      const curTiles = $('dept-qcd-cur-tiles');
+      const dotsWrap = $('dept-qcd-dots');
+      const showPage = function (i) {
+        cur = (i + pages.length) % pages.length;
+        if (nameEl) nameEl.innerHTML = pages[cur].name;
+        if (curTiles) curTiles.innerHTML = pages[cur].html;
+        if (dotsWrap) {
+          const dots = dotsWrap.querySelectorAll('.dept-qcd-dot');
+          for (let d = 0; d < dots.length; d++) dots[d].classList.toggle('is-active', d === cur);
+        }
+      };
+      const navs = tiles.querySelectorAll('.dept-qcd-nav');
+      for (let n = 0; n < navs.length; n++) {
+        navs[n].addEventListener('click', function () {
+          showPage(cur + Number(this.getAttribute('data-dir')));
+        });
+      }
+      if (dotsWrap) {
+        const dots = dotsWrap.querySelectorAll('.dept-qcd-dot');
+        for (let d = 0; d < dots.length; d++) {
+          const jump = function () { showPage(Number(this.getAttribute('data-idx'))); };
+          dots[d].addEventListener('click', jump);
+          // F13: the dots are <span>s. Lower stakes than the other four sites
+          // (the ‹ › navs are real buttons and reach every page), but a
+          // keyboard user could see the dots and not use them.
+          makeActivatable_(dots[d], jump);
+          dots[d].setAttribute('aria-label', 'Show queue page ' + (d + 1));
+        }
+      }
+      showPage(0);
+    } else {
+      tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : block);
+    }
+    wrap.style.display = '';
+  }
+
+  // Wire the QCD panel's Yesterday / MTD toggle. Syncs active state every
+  // render; hides the toggle entirely when the server didn't ship an MTD block
+  // (older cache). Wired once; a switch re-renders from the stashed snapshot.
+  let deptQcdPeriodWired = false;
+  function deptQcdWirePeriod_(hasMtd, activePeriod) {
+    const bar = $('dept-qcd-period');
+    if (!bar) return;
+    bar.style.display = hasMtd ? '' : 'none';
+    bar.querySelectorAll('.dept-qcd-period-btn').forEach(function (b) {
+      const on = b.getAttribute('data-period') === activePeriod;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (deptQcdPeriodWired) return;
+    deptQcdPeriodWired = true;
+    bar.addEventListener('click', function (e) {
+      const b = e.target.closest('.dept-qcd-period-btn');
+      if (!b) return;
+      const p = b.getAttribute('data-period');
+      if ((p !== 'yesterday' && p !== 'mtd') || p === deptQcdPeriod) return;
+      deptQcdPeriod = p;
+      try { localStorage.setItem(DEPT_QCD_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
+      if (deptQcdSnap_) renderDeptQcdSnapshot_(deptQcdSnap_);
+    });
+  }
+
+  function renderInfoLine() {
+    const el = $('info-line');
+    // Owner round 4: the roster/matched/compute-time + cache-hit line is an
+    // operational/debug readout -- admin-only, like the Diagnostics panel.
+    if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') {
+      el.style.display = 'none';
+      return;
+    }
+    if (!state.meta) { el.style.display = 'none'; return; }
+    const m = state.meta;
+    const parts = [
+      'Roster: ' + (m.rosterSize || 0) + ' agents',
+      'Matched: ' + (m.rowsMatched || 0) + ' / ' + (m.rowsScanned || 0) + ' rows',
+    ];
+    if (typeof m.computeMs === 'number') {
+      parts.push('Computed in ' + m.computeMs + ' ms');
+    }
+    const cachePill = m.cacheHit
+      ? '<span class="pill pill-cache">cache hit</span>'
+      : '<span class="pill pill-fresh">fresh read</span>';
+    el.innerHTML = parts.join(' &middot; ') + cachePill;
+    el.style.display = '';
+  }
+
+  function renderDiagnostics() {
+    const wrap = $('diagnostics');
+    const content = $('diag-content');
+    const count = $('diag-count');
+    // Admin-only: the Diagnostics panel is an operational/debug surface (roster
+    // gaps, queue-only matches), not a manager-facing metric. Hide it for
+    // non-admins (and for the admin's own view-as-manager preview, which keeps
+    // USER.role === 'admin' -- so this is a deliberate no-hide there; the
+    // data-admin-only CSS on the panel handles the view-as case).
+    if (!wrap) return;
+    if (USER.role !== 'admin') {
+      wrap.style.display = 'none';
+      wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
+      return;
+    }
+    if (!state.diagnostics) {
+      wrap.style.display = 'none';
+      wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
+      return;
+    }
+    const d = state.diagnostics;
+    const rosterMissing = d.rosterWithNoData || [];
+    const queueOnly = d.queueOnlyMatched || [];
+    const total = rosterMissing.length + queueOnly.length;
+    if (total === 0) {
+      wrap.style.display = 'none';
+      wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
+      return;
+    }
+    count.textContent = '(' + total + ')';
+    // Severity chip (E3, Phase E): warn-soft for 1-5 issues, bad-soft
+    // for >5. Drives a visual indicator at the section header without
+    // forcing the user to expand the panel.
+    wrap.classList.remove('diag-severity-warn', 'diag-severity-bad');
+    wrap.classList.add(total > 5 ? 'diag-severity-bad' : 'diag-severity-warn');
+
+    const sections = [];
+    if (rosterMissing.length) {
+      sections.push(
+        '<div class="diag-section">' +
+        '<h3>Roster agents with no data in this range (' + rosterMissing.length + ')</h3>' +
+        '<p>These agents are on the department roster but had no rows in <code>DQE Historical Data</code> for the selected dates. They may have been off, or the data hasn\'t been imported yet.</p>' +
+        '<div class="diag-chips">' +
+          rosterMissing.map(function (n) {
+            return '<span class="diag-chip">' + escapeHtml(n) + '</span>';
+          }).join('') +
+        '</div></div>'
+      );
+    }
+    if (queueOnly.length) {
+      sections.push(
+        '<div class="diag-section">' +
+        '<h3>Agents matched only via queue (' + queueOnly.length + ')</h3>' +
+        '<p>These agents handled this department\'s queue extensions but aren\'t on the department roster. Either they covered for the dept, or they belong on the roster and the <code>DO NOT EDIT!</code> sheet should be updated.</p>' +
+        '<div class="diag-chips">' +
+          queueOnly.map(function (n) {
+            return '<span class="diag-chip">' + escapeHtml(n) + '</span>';
+          }).join('') +
+        '</div></div>'
+      );
+    }
+    content.innerHTML = sections.join('');
+    wrap.style.display = '';
+  }
+
+  function onError(err, hadSwrPaint) {
+    $('refresh-btn').disabled = false;
+    // M3: clear the frost overlay on failure (the stale table stays visible).
+    var __fh = document.querySelector('.agents-table-wrap');
+    if (__fh) dsFrostHide_(__fh);
+    // R7 (M-1): the missed-section frost armed at refresh() start has no
+    // deptMissedFetch_ coming to clear it -- unfrost here (content stays as-is).
+    var __mw = $('dept-missed-section');
+    if (__mw) { dsFrostHide_(__mw); __mw.classList.remove('dm-loading'); }
+    var msg = (err && err.message ? err.message : String(err));
+    // When this request SWR-painted the last-good table, keep it on screen
+    // under the error status (the behavior refresh()'s SWR comment promises)
+    // instead of wiping the rows to an empty table.
+    if (hadSwrPaint && state.rows.length) {
+      setStatus('error', "Couldn't refresh — showing your previous result. " + msg);
+      return;
+    }
+    state.rows = [];
+    state.totals = null;
+    state.meta = null;
+    state.diagnostics = null;
+    setStatus('error', 'Error: ' + msg);
+    render();
+    renderInfoLine();
+    renderDiagnostics();
+  }
+
+  // -- Sort ---------------------------------------------------------------
+
+  function onSort(key) {
+    if (state.sortKey === key) {
+      state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sortKey = key;
+      // Numbers default desc (most useful first), text asc.
+      const col = COLUMNS.find(function (c) { return c.key === key; });
+      state.sortDir = (col && col.type === 'text') ? 'asc' : 'desc';
+    }
+    render();
+  }
+
+  // #8: parametrized so the Overview mini-table can reuse it with its own sort
+  // state (was reading the My Department `state` globals). Callers pass
+  // (rows, sortKey, sortDir).
+  function sortRows(rows, sortKey, sortDir) {
+    const key = sortKey;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const col = COLUMNS.find(function (c) { return c.key === key; });
+    const isText = col && col.type === 'text';
+    return rows.slice().sort(function (a, b) {
+      // Answer-rate sort (the stacked bar column). Idle agents -- no
+      // rung activity at all -- always sink to the bottom regardless of
+      // direction so they don't crowd the top of an ascending sort.
+      if (key === 'answerRate') {
+        const at = (Number(a.totalAnswered) || 0) + (Number(a.totalMissed) || 0);
+        const bt = (Number(b.totalAnswered) || 0) + (Number(b.totalMissed) || 0);
+        if (!at && !bt) return String(a.agent).localeCompare(String(b.agent));
+        if (!at) return 1;
+        if (!bt) return -1;
+        const ar = (Number(a.totalAnswered) || 0) / at;
+        const br = (Number(b.totalAnswered) || 0) / bt;
+        if (ar !== br) return (ar - br) * dir;
+        return String(a.agent).localeCompare(String(b.agent));
+      }
+      const av = a[key], bv = b[key];
+      if (isText) {
+        return String(av).localeCompare(String(bv)) * dir;
+      }
+      return ((Number(av) || 0) - (Number(bv) || 0)) * dir;
+    });
+  }
+
+  // -- Render -------------------------------------------------------------
+
+  function fmtCell(col, row) {
+    if (col.type === 'chip' && col.key === 'source') {
+      return sourceChipHtml_(row);
+    }
+    if (col.type === 'bar') {
+      return answeredBarHtml_(row);
+    }
+    if (col.type === 'pct') {
+      // #8 Answer % = answered / (answered + missed), matching the bar + the
+      // answerRate sort. Idle rows (no rung) show a muted dash; the rest carry
+      // the 92% benchmark tint (symmetric), like the bar's inline rate.
+      const pa = Number(row.totalAnswered) || 0, pm = Number(row.totalMissed) || 0, pt = pa + pm;
+      if (!pt) return zeroCell_('–');
+      const prate = Math.round(pa / pt * 100);
+      return '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true) + '">' + prate + '%</span>';
+    }
+    const v = row[col.key];
+    if (col.type === 'text') return escapeHtml(v == null ? '' : v);
+    if (col.type === 'duration') {
+      const dur = fmtDuration(v);
+      return (Number(v) || 0) === 0 ? zeroCell_(dur) : dur;
+    }
+    // E5: append a small prior-period delta chip after the number on
+    // the three chipped columns. No chip on totals row (no prior
+    // window for a sum row). Zero values are muted (zeroCell_), but the
+    // WoW chip stays full-color since a delta against zero is signal.
+    const num = fmtNumber(v);
+    const numHtml = (Number(v) || 0) === 0 ? zeroCell_(num) : num;
+    return numHtml + wowChipHtml_(row, col);
+  }
+
+  // E5 prior-period delta chip. Maps each chipped column to its
+  // prior-window field on `row` (priorRung / priorMissed /
+  // priorAnswered), computes the delta, and returns a small inline
+  // chip with the direction arrow + magnitude. Returns '' when:
+  //   - the column isn't one we chip (only totalRung/Missed/Answered)
+  //   - the row is the tfoot totals row (no priorHasData field)
+  //   - the prior window had no included rows for this agent
+  //     (priorHasData=false; client renders the plain number alone)
+  //
+  // Valence:
+  //   totalRung     -> up = good (more inbound engagement)
+  //   totalAnswered -> up = good (more handled)
+  //   totalMissed   -> up = warn (worse)
+  // Small deltas (|delta| < WOW_NOISE_THRESHOLD) get the muted
+  // styling regardless of direction so the table isn't a sea of
+  // colors on routine day-to-day fluctuation.
+  const WOW_NOISE_THRESHOLD = 3;
+  const WOW_PRIOR_KEYS = {
+    totalRung:     { priorKey: 'priorRung',     valence: 'good' },
+    totalAnswered: { priorKey: 'priorAnswered', valence: 'good' },
+    totalMissed:   { priorKey: 'priorMissed',   valence: 'warn' },
+  };
+  function wowChipHtml_(row, col) {
+    const spec = WOW_PRIOR_KEYS[col.key];
+    if (!spec) return '';
+    if (!row || row.priorHasData !== true) return '';
+    const current = Number(row[col.key]) || 0;
+    const prior   = Number(row[spec.priorKey]) || 0;
+    const delta   = current - prior;
+    const abs     = Math.abs(delta);
+    let cls;
+    let arrow;
+    if (delta === 0) {
+      cls = 'wow-chip-muted';
+      arrow = '→';   // → flat
+    } else if (abs < WOW_NOISE_THRESHOLD) {
+      cls = 'wow-chip-muted';
+      arrow = delta > 0 ? '▲' : '▼';  // ▲ ▼ muted
+    } else {
+      // Above threshold: color by valence direction. For "good"
+      // metrics (rung/answered), up = good; for "warn" (missed),
+      // up = bad. Down inverts.
+      const isUp = delta > 0;
+      if (spec.valence === 'good') {
+        cls = isUp ? 'wow-chip-good' : 'wow-chip-warn';
+      } else {
+        cls = isUp ? 'wow-chip-warn' : 'wow-chip-good';
+      }
+      arrow = isUp ? '▲' : '▼';
+    }
+    const sign = delta > 0 ? '+' : (delta < 0 ? '−' : '');  // − minus
+    const label = delta === 0 ? '0' : (sign + abs);
+    // Tooltip carries the raw prior value + the explicit window so
+    // a manager can sanity-check the delta without doing math. Uses the
+    // RENDER CONTEXT's meta (C-3): the Overview mini-table sets
+    // wowChipMetaOverride_ for its synchronous render pass, because its rows
+    // come from its OWN getDepartmentSummary call -- reading the dept PAGE's
+    // state.meta here cited that page's prior window (or blank) on the
+    // Overview chips. Deltas were always per-row correct; only this hover
+    // label borrowed the wrong window.
+    const wm = wowChipMetaOverride_ || (state && state.meta) || {};
+    const pf = wm.priorFrom || '';
+    const pt = wm.priorTo   || '';
+    const tip = 'Prior period ' + pf + ' – ' + pt
+              + ': ' + prior + '. Delta ' + (delta >= 0 ? '+' : '') + delta + '.';
+    return ' <span class="wow-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
+         +   arrow + label
+         + '</span>';
+  }
+
+  // Source chip for the Phase D Source column. Three variants:
+  //   - matchedViaRoster && matchedViaQueue -> BOTH (good-soft)
+  //   - matchedViaRoster only               -> ROSTER (accent-soft)
+  //   - matchedViaQueue only                -> QUEUE [· dept1, dept2] (warn-soft)
+  // sourceHomes is an array (server-populated) listing every dept
+  // whose roster a queue-only floater appears on. Empty array =
+  // bare "QUEUE" with no suffix (floater on no dept's roster --
+  // they only touched the current dept's queue extensions). One
+  // entry = "QUEUE · Sales". Multiple = "QUEUE · Sales, Power" so
+  // multi-rostered floaters surface their full home list.
+  function sourceChipHtml_(row) {
+    if (row.matchedViaRoster && row.matchedViaQueue) {
+      return '<span class="src-chip src-chip-both"><span class="src-dot"></span>BOTH</span>';
+    }
+    if (row.matchedViaRoster) {
+      return '<span class="src-chip src-chip-roster"><span class="src-dot"></span>ROSTER</span>';
+    }
+    if (row.matchedViaQueue) {
+      const homes = Array.isArray(row.sourceHomes) ? row.sourceHomes : [];
+      const suffix = homes.length
+        ? ' &middot; ' + homes.map(escapeHtml).join(', ')
+        : '';
+      return '<span class="src-chip src-chip-queue"><span class="src-dot"></span>QUEUE' + suffix + '</span>';
+    }
+    return '';
+  }
+
+  // CSV-safe plain text for a source row. Mirrors the chip's
+  // variants without the chip markup; consumed by exportTableCsv_.
+  function sourceChipCsv_(row) {
+    if (row.matchedViaRoster && row.matchedViaQueue) return 'BOTH';
+    if (row.matchedViaRoster) return 'ROSTER';
+    if (row.matchedViaQueue) {
+      const homes = Array.isArray(row.sourceHomes) ? row.sourceHomes : [];
+      return homes.length ? 'QUEUE - ' + homes.join(', ') : 'QUEUE';
+    }
+    return '';
+  }
+
+  // B1: derive the ROSTER team prior-window totals from the per-row prior
+  // fields the server already ships (priorAnswered/priorMissed/priorRung on
+  // matchedViaRoster rows with priorHasData). Same roster-only scope as the
+  // tfoot totals + the same limitation as the per-row WoW chips: agents with
+  // prior-only activity (no current-window row) aren't represented. `has` is
+  // false when no row carried a prior baseline -> the strip shows no delta.
+  function deptTeamPrior_(rows) {
+    var out = { answered: 0, missed: 0, rung: 0, has: false };
+    (rows || []).forEach(function (r) {
+      if (!r.matchedViaRoster || r.priorHasData !== true) return;
+      out.answered += Number(r.priorAnswered) || 0;
+      out.missed   += Number(r.priorMissed)   || 0;
+      out.rung     += Number(r.priorRung)     || 0;
+      out.has = true;
+    });
+    return out;
+  }
+
+  // B1: compact vs-prior delta chip for the team strip. Mirrors the table's
+  // WoW valence + noise-muting (WOW_NOISE_THRESHOLD) so a small move stays
+  // quiet. `valence` = 'good' (up is good: answered/rate) or 'warn' (up is
+  // bad: missed).
+  function deptStripDelta_(delta, valence, threshold, unit, tip) {
+    var abs = Math.abs(delta);
+    var cls, arrow;
+    if (delta === 0) { cls = 'wow-chip-muted'; arrow = '→'; }
+    else if (abs < threshold) { cls = 'wow-chip-muted'; arrow = delta > 0 ? '▲' : '▼'; }
+    else {
+      var up = delta > 0;
+      cls = (valence === 'good') ? (up ? 'wow-chip-good' : 'wow-chip-warn')
+                                 : (up ? 'wow-chip-warn' : 'wow-chip-good');
+      arrow = up ? '▲' : '▼';
+    }
+    var sign = delta > 0 ? '+' : (delta < 0 ? '−' : '');
+    var label = delta === 0 ? '0' : (sign + abs + (unit || ''));
+    return '<span class="dts-delta ' + cls + '" title="' + escapeHtml(tip || '') + '">'
+         + arrow + ' ' + label + '</span>';
+  }
+
+  // B1: team summary strip (answer rate hero + answered / missed / avg talk)
+  // for the selected range. Built from state.totals (roster-only, server-
+  // summed) -- no new fetch. Hidden when there are no data rows.
+  // ==== Sub-queue scope (Phase 1) ==========================================
+  // A sub-queue (PAP, Spanish, PAK) is a FULL department with its own roster
+  // column -- NOT a floater (INV-53). The switcher lets a parent manager see
+  // their own dept, the sub-queue alone, or both COMBINED, and "combined" here
+  // means grouped-and-subtotalled: every row keeps its dept, every dept keeps
+  // its own subtotal, and the grand total is explicitly labelled. A single
+  // merged number would be unreconcilable against each dept's own view, which
+  // is exactly what the QCD carousel learned the hard way (P3).
+
+  // `cdr.dept.subscope` (the retired scope switcher's saved per-dept view) is
+  // an ORPHAN key: nothing reads or writes it since the switcher was replaced
+  // by collapsible groups. Swept on load by sweepOrphanPrefs_() (#5, Round-16;
+  // read-before-remove, so the steady state costs no writes). Listed with the
+  // other orphaned prefs in docs/client-ui-conventions.md.
+
+  /**
+   * The always-on relationship line. Renders whenever a sub-queue relationship
+   * exists in either direction, because the whole point is that a manager
+   * should not have to DISCOVER that a sub-queue exists -- before this, the
+   * relationship was completely invisible from the table.
+   *
+   * (Named for the scope switcher it used to carry; the switcher is retired.
+   * The name is kept because it is referenced from docs and the harness.)
+   */
+  function subqRenderScopeBar_(state) {
+    var host = $('dept-subq-bar');
+    if (!host) return;
+    var m = (state && state.meta) || {};
+    var subs = m.subQueues || [];
+    var parentOf = m.subQueueOf || null;
+    if (!subs.length && !parentOf) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    host.style.display = '';
+    var dept = m.department || '';
+
+    // A CHILD dept just gets the upward pointer, because the
+    // combined view belongs to the parent (one level, matching the server).
+    if (!subs.length && parentOf) {
+      host.innerHTML = '<div class="subq-bar-row">'
+        + '<div class="ds-note subq-note">'
+        + escapeHtml(dept) + ' is a sub-queue of <strong>'
+        + escapeHtml(parentOf) + '</strong>. These figures are '
+        + escapeHtml(dept) + '\u2019s only.</div>'
+        + subqSplitChip_(m)
+        + '</div>';
+      return;
+    }
+
+    // OWNER ROUND: the three-way scope switcher is RETIRED. Every view it
+    // offered is reachable from the combined table by collapsing a group --
+    // "<dept> only" is the combined view with the sub-queue collapsed, and vice
+    // versa -- and each dept's subtotal stays on screen either way. The tabs
+    // cost a SERVER ROUND TRIP per view to show what a local toggle shows
+    // instantly, and put the reader in a mode they then had to keep track of.
+    //
+    // The server still accepts `subScope` (it drives the CSV's Department
+    // column and the combined default), so this is a client-side retirement,
+    // not a capability removal. The client simply stops sending one and lets
+    // the server pick: combined for a parent, own for everyone else.
+    var list = subs.map(escapeHtml).join(', ');
+    var one = subs.length === 1;
+    host.innerHTML =
+        '<div class="subq-bar-row">'
+      +   '<div class="ds-note subq-note">Combined view: <strong>'
+      +     escapeHtml(dept) + '</strong> and <strong>' + list + '</strong>, each '
+      +     'with its own subtotal. ' + (one ? 'It ' : 'They ')
+      +     'can be collapsed from its heading row below.</div>'
+      +   subqSplitChip_(m)
+      + '</div>';
+  }
+
+  /**
+   * Sub-queue Phase 2: the "these numbers are not queue-split yet" disclosure.
+   *
+   * A per-queue split can only exist for dates built after the Phase 1 pipeline
+   * shipped -- Call_Legs is pruned at 14 days, so earlier dates are
+   * PERMANENTLY all-queue. For an agent who works two departments' queues,
+   * an un-split figure includes the OTHER department's calls, which is exactly
+   * the bug this feature exists to fix. Rendering that silently would be worse
+   * than the bug, so the range says which of its days are narrowed.
+   *
+   * Returns '' when there is nothing to disclose (fully split, or a dept with
+   * no sub-queue relationship at all).
+   */
+  function subqSplitChip_(m) {
+    if (!m) return '';
+    var hasRel = (m.subQueues && m.subQueues.length) || m.subQueueOf;
+    if (!hasRel) return '';                       // nothing to be confused by
+    var dept = m.department || 'this department';
+    var label, tip;
+    // B-1: the dept's mapped queue names matched NOTHING in this window's
+    // per-queue detail, so the server kept the all-queue rollup rather than
+    // reporting the dept as zero. This is a CONFIG fault and it is the loudest
+    // thing this chip can say -- an admin has to fix it, and until they do the
+    // sub-queue separation is simply not happening for this dept.
+    if (m.queueSplitFellOpen) {
+      // NB every branch builds tip as PLAIN text -- the single escapeHtml(tip)
+      // at the return escapes it once. Escaping here too would double-encode
+      // the queue names (which originate in the external CDR feed).
+      label = 'all queues — queue mapping mismatch';
+      tip = 'Per-queue detail exists for this range, but none of the queue names '
+          + 'it carries (' + (m.queueSplitUnmatched || []).join(', ')
+          + ') are mapped to ' + dept + '. Showing ALL-QUEUE figures rather than '
+          + 'zero. Fix this in Dept Config → "Inbound queue aliases" (the raw '
+          + 'phone-system names differ from the QCD-canonical ones), then re-run '
+          + 'auditQueueSplitAttribution().';
+    // S2-0: narrowing is switched OFF (QUEUE_SPLIT_SCOPE unset / 'off'), so
+    // these figures are all-queue BY DESIGN and match every other page. Say
+    // that plainly -- the legacy "detail is not available" wording below would
+    // claim the data is missing when it is merely not being applied.
+    } else if (m.queueSplitScope === 'off') {
+      label = 'all queues';
+      tip = 'These figures cover ALL queues these agents worked, matching the '
+          + 'Overview, Insights and the Individual Report. Per-department '
+          + 'narrowing is currently switched off (QUEUE_SPLIT_SCOPE) so every '
+          + 'page reports the same basis; an agent who also works another '
+          + 'department’s queue is counted in both.';
+    } else if (m.queueSplitMapped === false) {
+      label = 'all queues';
+      tip = 'These figures cover ALL queues these agents worked. No queues are '
+          + 'mapped to ' + dept + ', so there is nothing to narrow them to \u2014 '
+          + 'map them in Dept Config (Admin \u25be \u2192 Dept Config).';
+    } else if (m.queueSplitUnmatched && m.queueSplitUnmatched.length) {
+      // B-1, partial case: SOME of the dept's queues matched, so the narrowing
+      // is real and correct for those -- but the unmatched ones are being
+      // dropped from this dept's totals with no other signal. Checked BEFORE
+      // the fully-split early-return below, because a range can be 100%
+      // split-aware and still be short a queue.
+      label = 'missing a queue';
+      tip = 'These figures are narrowed to ' + dept + '’s mapped queues, but '
+          + 'this range also carries calls on ' + m.queueSplitUnmatched.join(', ')
+          + ', which no mapping claims for ' + dept + ' — those calls are NOT '
+          + 'counted here. If any of them belong to ' + dept + ', add them to Dept '
+          + 'Config → "Inbound queue aliases".';
+    } else {
+      var days = m.queueSplitDays || 0;
+      var total = daysInRangeInclusive_(m.from, m.to);
+      if (days && total && days >= total) return '';   // fully split: say nothing
+      if (!days) {
+        label = 'all queues';
+        tip = 'These figures cover ALL queues these agents worked, not just '
+            + dept + '\u2019s. Per-queue detail is not available for this date '
+            + 'range, so an agent who also works another department\u2019s queue '
+            + 'reads high. Earlier days cannot be split retroactively.';
+      } else {
+        label = 'all queues before ' + (m.queueSplitFrom || '');
+        tip = 'Per-queue detail starts ' + (m.queueSplitFrom || '') + '. Earlier '
+            + 'days in this range count ALL queues an agent worked, so an agent '
+            + 'who also works another department\u2019s queue reads high before '
+            + 'that date. Earlier days cannot be split retroactively.';
+      }
+    }
+    // A CHIP, not a banner (owner request), but deliberately still warn-toned
+    // and still on screen: it states that the numbers above include another
+    // department's calls, which changes how they should be read. A pure
+    // tooltip would make that discoverable only by accident -- and right after
+    // deploy EVERY range is pre-split, which is exactly when it matters most.
+    // It removes itself once the range is fully split.
+    return '<span class="subq-split-chip" title="' + escapeHtml(tip) + '">'
+      + '\u26a0 ' + escapeHtml(label) + '</span>';
+  }
+
+  /** Inclusive day count between two ISO dates; 0 if either is unusable. */
+  function daysInRangeInclusive_(fromIso, toIso) {
+    if (!fromIso || !toIso) return 0;
+    var a = Date.parse(fromIso + 'T00:00:00Z');
+    var b = Date.parse(toIso + 'T00:00:00Z');
+    if (isNaN(a) || isNaN(b) || b < a) return 0;
+    return Math.round((b - a) / 86400000) + 1;
+  }
+
+
+  /**
+   * Grouped tbody HTML for a combined view, or null when there is nothing to
+   * group (single-dept payloads take the unchanged flat path).
+   */
+  function subqRowGroups_(state, sorted) {
+    var m = (state && state.meta) || {};
+    var order = m.deptsShown || [];
+    var byDept = state.deptGroups || null;
+    if (!byDept || order.length < 2) return null;
+    var totalsFor = {};
+    byDept.forEach(function (g) { totalsFor[g.dept] = g.totals || {}; });
+    var collapsed = subqCollapsedGet_(m.department);
+    var out = [];
+    order.forEach(function (d) {
+      var rows = sorted.filter(function (r) { return r.dept === d; });
+      if (!rows.length) return;
+      var isChild = d !== m.department;
+      var isShut = collapsed.indexOf(d) !== -1;
+      // The group HEADER is the disclosure control. Collapsing hides the agent
+      // rows but deliberately KEEPS the subtotal on screen -- that is the whole
+      // point of the disclosure: you keep the department's number and drop the
+      // detail. Replaces the three-way scope switcher, which needed a server
+      // round trip per view to show the same thing.
+      out.push('<tr class="subq-group-head' + (isShut ? ' is-collapsed' : '')
+        + '" data-subq-group="' + escapeHtml(d) + '" tabindex="0" role="button"'
+        + ' aria-expanded="' + (isShut ? 'false' : 'true') + '"'
+        + ' title="' + (isShut ? 'Show' : 'Hide') + ' ' + escapeHtml(d)
+        + '\u2019s agents (its subtotal stays visible)">'
+        + '<td colspan="' + COLUMNS.length + '">'
+        + '<span class="subq-caret" aria-hidden="true">' + (isShut ? '\u25b8' : '\u25be') + '</span> '
+        + escapeHtml(d) + (isChild ? ' <span class="subq-tag">sub-queue</span>' : '')
+        + ' <span class="subq-count">' + rows.length + ' agent'
+        + (rows.length === 1 ? '' : 's') + '</span>'
+        // Phase 3 does NOT merge the missed section across depts (queue abandons
+        // would double-count), so a sub-queue's own missed calls had no route
+        // once the scope tabs went away. This button is that route.
+        + (isChild
+            ? ' <button type="button" class="subq-missed-btn" data-subq-missed="'
+              + escapeHtml(d) + '">View ' + escapeHtml(d) + '\u2019s missed calls</button>'
+            : '')
+        + '</td></tr>');
+      if (!isShut) rows.forEach(function (row) { out.push(subqAgentRowHtml_(row)); });
+      out.push(subqSubtotalRowHtml_(d, totalsFor[d] || {}));
+    });
+    return out.join('');
+  }
+
+  /**
+   * Which groups are collapsed, per parent dept. Defaults to NONE -- the
+   * combined view stays exactly what it was on open, and hiding is something
+   * the reader chooses rather than something the page decides for them.
+   */
+  var SUBQ_COLLAPSE_KEY_ = 'cdr.dept.subqcollapse';
+  function subqCollapsedGet_(dept) {
+    if (!dept) return [];
+    try {
+      var all = JSON.parse(localStorage.getItem(SUBQ_COLLAPSE_KEY_) || '{}');
+      var v = all && all[dept];
+      return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
+  }
+  function subqCollapsedToggle_(parentDept, group) {
+    if (!parentDept || !group) return;
+    try {
+      var all = JSON.parse(localStorage.getItem(SUBQ_COLLAPSE_KEY_) || '{}');
+      if (!all || typeof all !== 'object') all = {};
+      var list = Array.isArray(all[parentDept]) ? all[parentDept] : [];
+      var i = list.indexOf(group);
+      if (i === -1) list.push(group); else list.splice(i, 1);
+      all[parentDept] = list;
+      localStorage.setItem(SUBQ_COLLAPSE_KEY_, JSON.stringify(all));
+    } catch (e) { /* a full/blocked store just means collapse won't persist */ }
+  }
+
+  function subqAgentRowHtml_(row) {
+    var rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+    return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+      + (rowClass ? ' class="' + rowClass + '"' : '')
+      + ' title="Open ' + escapeHtml(row.agent) + '\u2019s Individual Report">'
+      + COLUMNS.map(function (col, i) {
+          var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
+          return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
+        }).join('') + '</tr>';
+  }
+
+  /** A department's OWN subtotal -- identical to what its own view shows. */
+  function subqSubtotalRowHtml_(dept, totals) {
+    return '<tr class="subq-subtotal">' + COLUMNS.map(function (col, i) {
+      if (i === 0) return '<td>' + escapeHtml(dept) + ' subtotal</td>';
+      if (col.key === 'sourceHomes' || col.type === 'source') return '<td></td>';
+      return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, totals) + '</td>';
+    }).join('') + '</tr>';
+  }
+
+  function renderDeptTeamStrip_(state) {
+    var zone = $('dept-team-zone');
+    var strip = $('dept-team-strip');
+    if (!strip) return;
+    var t = state && state.totals;
+    if (!t || !state.rows || !state.rows.length) {
+      strip.style.display = 'none'; strip.innerHTML = '';
+      if (zone) zone.style.display = 'none';
+      return;
+    }
+    var a = Number(t.totalAnswered) || 0;
+    var m = Number(t.totalMissed)   || 0;
+    var total = a + m;
+    var rate = total ? Math.round(a / total * 100) : 0;
+
+    var prior = deptTeamPrior_(state.rows);
+    var priorTip = '';
+    if (prior.has) {
+      var pf = (state.meta && state.meta.priorFrom) || '';
+      var pt = (state.meta && state.meta.priorTo)   || '';
+      priorTip = 'Prior period ' + pf + ' – ' + pt;
+    }
+    var rateDeltaHtml = '', ansDeltaHtml = '';
+    if (prior.has) {
+      var pTotal = prior.answered + prior.missed;
+      var pRate = pTotal ? Math.round(prior.answered / pTotal * 100) : 0;
+      rateDeltaHtml = deptStripDelta_(rate - pRate, 'good', 1, ' pts', priorTip + ': ' + pRate + '%');
+      ansDeltaHtml  = deptStripDelta_(a - prior.answered, 'good', WOW_NOISE_THRESHOLD, '', priorTip + ': ' + prior.answered);
+    }
+
+    var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
+    var under92 = total && rate < answerTarget_('global');
+    var fillPct = total ? Math.max(0, Math.min(100, rate)) : 0;
+
+    var heroTile = '<div class="dts-tile dts-tile--hero">'
+      + '<div class="dts-label">% Answered (rings) <span class="dts-scope">this range</span></div>'
+      + '<div class="dts-value' + rateCls + '" data-flash-key="dts:rate">' + (total ? rate + '%' : '–') + '</div>'
+      + '<div class="dts-track" title="' + answerTarget_('global') + '% company target">'
+      +   '<span class="dts-track-fill' + (under92 ? ' is-under' : '') + '" style="width:' + fillPct + '%"></span>'
+      +   '<span class="dts-track-tick" style="left:' + answerTarget_('global') + '%"></span>'
+      + '</div>'
+      + (rateDeltaHtml ? '<div class="dts-sub">' + rateDeltaHtml + ' vs prior</div>' : '')
+      + '</div>';
+    var ansTile = '<div class="dts-tile">'
+      + '<div class="dts-label">Answered</div>'
+      + '<div class="dts-value" data-flash-key="dts:answered">' + fmtNumber(a) + '</div>'
+      + (ansDeltaHtml ? '<div class="dts-sub">' + ansDeltaHtml + ' vs prior</div>' : '')
+      + '</div>';
+    // (Owner round: the Missed + Avg-talk tiles were dropped so the strip fits
+    // one row -- missed lives in the agent table's split bar + the Missed
+    // section below; ATT keeps its per-agent column.)
+
+    // Batch D: range-scoped Queue calls + Abandoned % tiles from the QCD
+    // snapshot's `range` block (own-queues-only, the selected From/To). Shown
+    // only for QCD-mapped depts with queue activity in the range. Owner round:
+    // Queue calls renders BETWEEN the hero and Answered, and carries an
+    // implied per-WORKDAY rate (Mon-Fri minus company holidays -- the INV-35
+    // workingDaysBetween_ mirror, so it agrees with the Insights workday math).
+    var qCallsTile = '', qAbdTile = '';
+    var qr = state.qcd && state.qcd.range;
+    if (qr && (Number(qr.totalCalls) || 0) > 0) {
+      var qCalls = Number(qr.totalCalls) || 0;
+      var qAbd   = Number(qr.abandoned) || 0;
+      var abStr  = qr.abandonedPctStr || ((Number(qr.abandonedPct) || 0).toFixed(2) + '%');
+      var abCls  = benchValueCls_('abandoned %', abStr, true);   // 5% company standard
+      var qFrom = (state.meta && state.meta.from) || ($('from-date') && $('from-date').value) || '';
+      var qTo   = (state.meta && state.meta.to)   || ($('to-date')   && $('to-date').value)   || '';
+      var wd = workingDaysBetween_(qFrom, qTo);
+      // R7 (M-4): a 1-workday range's "≈ N/day over 1 workday" just restates
+      // the headline number -- show the per-day sub only for multi-day ranges.
+      var perDaySub = wd > 1
+        ? '&asymp; ' + (Math.round((qCalls / wd) * 10) / 10) + '/day over ' + wd + ' workdays'
+        : 'across mapped queues';
+      qCallsTile =
+          '<div class="dts-tile dts-tile--queue" title="Across the department&#39;s mapped queues. Workdays = Mon&ndash;Fri minus company holidays.">'
+        +   '<div class="dts-label">Queue calls <span class="dts-scope">this range</span></div>'
+        +   '<div class="dts-value" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</div>'
+        +   '<div class="dts-sub">' + perDaySub + '</div>'
+        + '</div>';
+      qAbdTile =
+          '<div class="dts-tile dts-tile--queue">'
+        +   '<div class="dts-label">Abandoned %</div>'
+        +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
+        +   '<div class="dts-sub">' + fmtNumber(qAbd) + ' abandoned</div>'
+        + '</div>';
+    }
+
+    // R10-5: Avg answer time tile -- answered-weighted over the dept's own
+    // queues for the selected range (qcd.range.avgAnswer, QCD Historical
+    // Data col J). Renders wherever the data exists (any QCD-mapped dept).
+    // R11-C1: + a delta chip vs the E5 prior window (qcd.rangePrior).
+    // LOWER is better for time-to-answer, so valence is inverted ('bad' =
+    // an increase warns); 3s noise threshold.
+    var qAvgTile = '';
+    if (qr && qr.avgAnswer) {
+      var qAvgChip = '';
+      var qrp = state.qcd && state.qcd.rangePrior;
+      if (qrp && qrp.avgAnswerSec != null && qr.avgAnswerSec != null) {
+        qAvgChip = deptStripDelta_(qr.avgAnswerSec - qrp.avgAnswerSec, 'bad', 3, 's',
+          priorTip + ': ' + qrp.avgAnswer);
+      }
+      qAvgTile =
+          '<div class="dts-tile dts-tile--queue" title="Answered-weighted average time to answer across the department&#39;s mapped queues, this range.">'
+        +   '<div class="dts-label">Avg answer <span class="dts-scope">queue</span></div>'
+        +   '<div class="dts-value" data-flash-key="dts:qavg">' + escapeHtml(qr.avgAnswer) + '</div>'
+        +   '<div class="dts-sub">' + (qAvgChip ? qAvgChip + ' vs prior' : 'time to answer') + '</div>'
+        + '</div>';
+    }
+    // R10-5: Transfer % tile -- CSR only (server ships csrTransfer only for
+    // CSR, from CSR Transfer Historical Data; weighted transferred/total).
+    // R11-C1: + a delta chip vs the prior window (csrTransfer.prior). A
+    // transfer-rate INCREASE reads warn (more hand-offs); 1pt noise floor.
+    var trTile = '';
+    var tr = state.csrTransfer;
+    if (tr && tr.pctStr) {
+      var trChip = '';
+      if (tr.prior && tr.prior.pct != null && tr.pct != null) {
+        trChip = deptStripDelta_(Math.round((tr.pct - tr.prior.pct) * 10) / 10, 'bad', 1, ' pts',
+          priorTip + ': ' + tr.prior.pctStr);
+      }
+      trTile =
+          '<div class="dts-tile dts-tile--queue" title="Transferred &divide; total calls across CSR agents, this range (CSR Transfer Historical Data).">'
+        +   '<div class="dts-label">Transfer % <span class="dts-scope">this range</span></div>'
+        +   '<div class="dts-value" data-flash-key="dts:transfer">' + escapeHtml(tr.pctStr) + '</div>'
+        +   '<div class="dts-sub">' + fmtNumber(tr.transferred) + ' of ' + fmtNumber(tr.totalCalls) + ' calls'
+        +     (trChip ? ' &middot; ' + trChip + ' vs prior' : '') + '</div>'
+        + '</div>';
+    }
+
+    strip.innerHTML = heroTile + qCallsTile + ansTile + qAbdTile + qAvgTile + trTile;
+    strip.style.display = '';
+    if (zone) zone.style.display = '';
+    dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
+  }
+
+  // Lighter Insights hand-off strip: a COLLAPSED one-line summary of the
+  // deeper Insights report for this dept + range, expandable, with an
+  // "Open full report" button that carries the current dept & dates. The
+  // one-line takeaway is derived from the SAME server totals the team strip
+  // uses (no new fetch); the full per-agent / queue-health / heatmap story is
+  // one click away on the Insights page. Hidden when there are no data rows.
+  function renderDeptInsightsStrip_(state) {
+    var strip = $('dept-insights-strip');
+    if (!strip) return;
+    var t = state && state.totals;
+    if (!t || !state.rows || !state.rows.length) {
+      strip.style.display = 'none'; strip.innerHTML = '';
+      return;
+    }
+    var total = (Number(t.totalAnswered) || 0) + (Number(t.totalMissed) || 0);
+    var dept = getRequestedDept() || 'this department';
+    var from = ($('from-date') && $('from-date').value) || '';
+    var to   = ($('to-date')   && $('to-date').value)   || '';
+    // #3b: the rate% / missed count already live in the KPI tiles above, so the
+    // strip no longer restates them (that duplication was the flagged clutter).
+    // It keeps its "what the full report adds" hook + the Open-report hand-off.
+    var teaser = total
+      ? 'Deeper per-agent &amp; queue-health breakdown for this range.'
+      : 'No call activity in this range.';
+    strip.innerHTML =
+        '<div class="dis-row">'
+      +   '<button class="dis-toggle" type="button" aria-expanded="false" aria-controls="dept-insights-more" '
+      +           'title="Show what the full Insights report adds">'
+      +     '<span class="dis-chevron" aria-hidden="true">&#9656;</span>'
+      +     '<span class="dis-kicker">Insights</span>'
+      +   '</button>'
+      +   '<span class="dis-teaser">' + teaser + '</span>'
+      +   '<button class="btn btn-secondary dis-open" type="button" '
+      +           'title="Open the full Insights report for this department and date range.">Open full report &#8594;</button>'
+      + '</div>'
+      + '<div class="dis-more" id="dept-insights-more" hidden>'
+      +   'The full Insights report adds per-agent improvers &amp; laggards (vs the team average), '
+      +   'queue health &amp; violations, and the abandon heatmap &mdash; for <strong>' + escapeHtml(dept) + '</strong>'
+      +   (from && to ? ', <strong>' + escapeHtml(from) + '</strong> to <strong>' + escapeHtml(to) + '</strong>' : '') + '.'
+      + '</div>';
+    strip.style.display = '';
+    wireDeptInsightsStrip_();
+  }
+
+  // Delegated wiring for the Insights hand-off strip (attached once on the
+  // container so the per-render innerHTML swap never detaches it).
+  var deptInsightsStripWired_ = false;
+  function wireDeptInsightsStrip_() {
+    if (deptInsightsStripWired_) return;
+    var strip = $('dept-insights-strip');
+    if (!strip) return;
+    deptInsightsStripWired_ = true;
+    strip.addEventListener('click', function (e) {
+      if (e.target.closest('.dis-open')) {
+        handoffToInsights_(($('from-date') || {}).value, ($('to-date') || {}).value, null);
+        return;
+      }
+      var tog = e.target.closest('.dis-toggle');
+      if (tog) {
+        var more = $('dept-insights-more');
+        var expanded = tog.getAttribute('aria-expanded') === 'true';
+        tog.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        tog.classList.toggle('is-open', !expanded);
+        if (more) more.hidden = expanded;
+      }
+    });
+  }
+
+  function render() {
+    // Header sort arrows
+    document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
+      const key = th.getAttribute('data-sort');
+      const arrow = th.querySelector('.arrow');
+      if (!arrow) return;
+      if (key === state.sortKey) {
+        arrow.textContent = state.sortDir === 'asc' ? '▲' : '▼';
+        arrow.style.color = THEME.ink || '#374151';
+        th.setAttribute('aria-sort', state.sortDir === 'asc' ? 'ascending' : 'descending');
+      } else {
+        arrow.textContent = '▽';
+        arrow.style.color = THEME.muted || '#9ca3af';
+        th.removeAttribute('aria-sort');
+      }
+    });
+
+    subqRenderScopeBar_(state);
+
+    const tbody = $('agents-tbody');
+    const tfoot = $('agents-tfoot');
+
+    if (!state.rows.length) {
+      tbody.innerHTML = '';
+      tfoot.innerHTML = '';
+      renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
+      renderDeptInsightsStrip_(state);   // Insights hand-off strip (hides too)
+      return;
+    }
+
+    const sorted = sortRows(state.rows, state.sortKey, state.sortDir);
+    // Sub-queue Phase 1: in a COMBINED view, rows are grouped under a per-dept
+    // subheader with that dept's own subtotal, so nothing is silently summed.
+    // Sorting stays GLOBAL within each group (the group order follows
+    // meta.deptsShown, i.e. parent first), so a manager's chosen sort still
+    // means what it did -- it just applies inside each department.
+    const groups = subqRowGroups_(state, sorted);
+    if (groups) { tbody.innerHTML = groups; }
+    else {
+    tbody.innerHTML = sorted.map(function (row) {
+      // Agents matched only via queue (not in the roster) get a small
+      // "(queue-only)" tag next to the name in CSS.
+      // Phase D: the .via-queue row class is no longer needed for
+      // visual distinction (the Source chip handles that), but we
+      // keep it so any consumer that styles whole-row queue-only
+      // emphasis (e.g. user CSS, future hover handling) still works.
+      const rowClass = (row.matchedViaQueue && !row.matchedViaRoster) ? 'via-queue' : '';
+      // data-agent powers the row drill-through to the Individual Report.
+      // F13: tabindex makes the drill keyboard-reachable (the delegated
+      // keydown on #agents-tbody activates it); no role override -- see
+      // makeActivatable_'s note on preserving table row semantics.
+      return '<tr data-agent="' + escapeHtml(row.agent) + '" tabindex="0"'
+           + (rowClass ? ' class="' + rowClass + '"' : '')
+           + ' title="Open ' + escapeHtml(row.agent) + '’s Individual Report">'
+           + COLUMNS.map(function (col, i) {
+        // B1: tag the Answered/Missed bar cell so a date-range refresh flashes
+        // the agents whose volume actually changed (key by agent name, stable).
+        var fk = (col.type === 'bar') ? ' data-flash-key="ag:' + escapeHtml(row.agent) + '"' : '';
+        return '<td class="' + cellClass_(col, i) + '"' + fk + '>' + fmtCell(col, row) + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    }
+
+    if (state.totals) {
+      // Roster-vs-floater count caption surfaced as the tfoot's
+      // first cell when queue-only floaters are visible. Keeps the
+      // "totals exclude floaters" semantics legible without a second
+      // tfoot row. Falls back to the plain "Total" label when there
+      // are no floaters in the current view.
+      const queueCount = state.totals.queueOnlyAgentCount || 0;
+      // Sub-queue Phase 0: in a combined view an agent on BOTH depts' rosters
+      // is one person shown in two groups, so the grand total counts them ONCE
+      // and is therefore LESS than the sum of the per-dept subtotals. That
+      // mismatch has to be stated: the whole point of per-dept subtotals is
+      // that a reader can add them up, and an unexplained shortfall reads as a
+      // bug. The subtotals stay un-deduped on purpose -- each is exactly what
+      // that dept's own view shows (S35).
+      const crossCount = state.totals.crossoverAgentCount || 0;
+      const parts = [];
+      if (queueCount > 0) {
+        parts.push(queueCount + ' floater' + (queueCount === 1 ? '' : 's') + ' excluded');
+      }
+      if (crossCount > 0) {
+        parts.push(crossCount + ' in both departments, counted once');
+      }
+      const totalLabel = parts.length
+        ? 'Total (roster only · ' + parts.join(' · ') + ')'
+        : 'Total';
+      tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
+        if (i === 0) return '<td>' + totalLabel + '</td>';
+        // Source column has no aggregate value -- leave its tfoot
+        // cell empty so it doesn't try to render a chip from totals.
+        if (col.type === 'chip' && col.key === 'source') return '<td class="src-cell' + (col.hideable ? ' col-extra' : '') + '"></td>';
+        // The bar / num / duration cells render from the totals object
+        // (ATT and abd-wait are weighted on the server).
+        return '<td class="' + cellClass_(col, i) + '">' + fmtCell(col, state.totals) + '</td>';
+      }).join('') + '</tr>';
+    } else {
+      tfoot.innerHTML = '';
+    }
+    // B1: team summary strip for the selected range (roster rollup), lifted
+    // from the same server totals -- rendered here so it repaints on sort /
+    // refresh alongside the table.
+    renderDeptTeamStrip_(state);
+    renderDeptInsightsStrip_(state);   // Insights hand-off strip (collapsed summary + link-out)
+    // B1: flash agents whose Answered/Missed changed since the last paint for
+    // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
+    // re-render leaves values unchanged per key, so it never flashes.
+    dsFlashChanged_($('agents-tbody'), 'dept:' + getRequestedDept());
+  }
+
+  // -- CSV export for the main agent table --------------------------------
+  function exportTableCsv_() {
+    var sorted = sortRows(state.rows, state.sortKey, state.sortDir);
+    if (!sorted.length) return;
+    var csvEscape = function (v) {
+      var s = csvSafeCell_(v);
+      return (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1)
+        ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    // CSV exports ALL columns (incl. the foldable detail ones) regardless
+    // of the on-screen toggle -- a data dump should be complete. The bar
+    // column emits "answered / missed (rate%)" text.
+    var barCsv = function (row) {
+      var a = Number(row.totalAnswered) || 0, m = Number(row.totalMissed) || 0, t = a + m;
+      return a + ' / ' + m + (t ? ' (' + Math.round(a / t * 100) + '%)' : '');
+    };
+    // #8: Answer % column value for CSV (answered / (answered+missed)).
+    var pctCsv = function (row) {
+      var a = Number(row.totalAnswered) || 0, m = Number(row.totalMissed) || 0, t = a + m;
+      return t ? Math.round(a / t * 100) + '%' : '';
+    };
+    // Owner round 4: the on-screen Total-calls column folded into the bar,
+    // but the CSV stays complete -- a numeric Total calls column is spliced
+    // in right after the bar column.
+    // Sub-queue Phase 1 follow-up: in a COMBINED view the flat CSV was
+    // unreadable -- no way to tell which department a row belonged to, and no
+    // subtotals, so the on-screen grouping was lost entirely on export. A
+    // leading Department column is added ONLY when more than one dept is shown,
+    // so a single-dept export is byte-identical to before.
+    var deptsShown = (state.meta && state.meta.deptsShown) || [];
+    var multiDept = deptsShown.length > 1 && !!state.deptGroups;
+    var cellsFor = function (row, isTotals, deptLabel) {
+      var out = [];
+      if (multiDept) out.push(csvEscape(deptLabel == null ? (row.dept || '') : deptLabel));
+      COLUMNS.forEach(function (col, i) {
+        if (isTotals && i === 0) { out.push(csvEscape(isTotals === 'sub'
+          ? (deptLabel || '') + ' subtotal'
+          // Phase 0: say it here too. A spreadsheet reader is MORE likely than
+          // an on-screen one to add the subtotals up and find them larger than
+          // the grand total, and they have no tooltip to fall back on.
+          : ((state.totals && state.totals.crossoverAgentCount)
+             ? 'Total (roster only · ' + state.totals.crossoverAgentCount
+               + ' in both departments, counted once)'
+             : 'Total (roster only)'))); }
+        // Source column has no aggregate meaning in the totals row.
+        else if (col.type === 'chip' && col.key === 'source') out.push(isTotals ? '' : csvEscape(sourceChipCsv_(row)));
+        else if (col.type === 'bar') out.push(csvEscape(barCsv(row)));
+        else if (col.type === 'pct') out.push(csvEscape(pctCsv(row)));
+        else if (col.type === 'duration') out.push(csvEscape(fmtDuration(row[col.key])));
+        else out.push(csvEscape(row[col.key]));
+        if (col.type === 'bar') out.push(csvEscape(row.totalRung != null ? row.totalRung : ''));
+      });
+      return out.join(',');
+    };
+    var header = COLUMNS.reduce(function (acc, c) {
+      acc.push(csvEscape(c.label));
+      if (c.type === 'bar') acc.push(csvEscape('Total calls'));
+      return acc;
+    }, multiDept ? [csvEscape('Department')] : []).join(',');
+    var rows = [];
+    if (multiDept) {
+      // Grouped like the table: each dept's rows, then that dept's OWN
+      // subtotal (from deptGroups, i.e. the same numbers its own view shows),
+      // then the labelled grand total. NO group-header pseudo-rows -- a
+      // spreadsheet reader wants a Department COLUMN it can pivot on, not
+      // banner rows that break sorting and filtering.
+      var subtotalFor = {};
+      (state.deptGroups || []).forEach(function (g) { subtotalFor[g.dept] = g.totals || {}; });
+      deptsShown.forEach(function (d) {
+        var mine = sorted.filter(function (r) { return r.dept === d; });
+        if (!mine.length) return;
+        mine.forEach(function (row) { rows.push(cellsFor(row, false)); });
+        rows.push(cellsFor(subtotalFor[d] || {}, 'sub', d));
+      });
+      if (state.totals) rows.push(cellsFor(state.totals, true, 'All shown'));
+    } else {
+      sorted.forEach(function (row) { rows.push(cellsFor(row, false)); });
+      if (state.totals) rows.push(cellsFor(state.totals, true));
+    }
+    var blob = new Blob([header + '\n' + rows.join('\n')], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    var scopeTag = (state.meta && state.meta.subScope && state.meta.subScope !== 'own')
+      ? '_' + state.meta.subScope : '';
+    a.download = (getRequestedDept() || 'department') + scopeTag + '_'
+      + (($('from-date') && $('from-date').value) || 'data') + '_to_'
+      + (($('to-date') && $('to-date').value) || 'data') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+

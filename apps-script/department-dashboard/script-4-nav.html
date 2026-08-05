@@ -1,0 +1,1388 @@
+  // -- Router + URL hash routing (Phase C) -------------------------------
+  // Lightweight in-page router that lets the user deep-link into a
+  // specific report modal -- the primary use-case is the "Open in
+  // new tab" affordance, which lets users OS-tile two browser
+  // windows for side-by-side comparison.
+  //
+  // Design:
+  //   * The header nav already has the modal-trigger buttons we want
+  //     (Missed / Individual / Performance / Compare / QCD / Alerts /
+  //     Outlier Fix). Each tab carries a data-route="..." attribute.
+  //   * This router adds a click listener on every [data-route]
+  //     element that tracks the active route + paints the active-tab
+  //     visual indicator. It does NOT open the modal itself --
+  //     each per-modal initXxxReport already has its own click
+  //     handler that does the open. Two listeners fire on the same
+  //     button click; they don't conflict.
+  //   * On modal close (close button or backdrop), the router
+  //     reverts the active state to the underlying page tab
+  //     (Overview or My Department) so the highlight follows what's
+  //     actually visible. Escape-key closes are not intercepted in
+  //     this phase; the tab stays highlighted until the next click
+  //     -- a minor visual cosmetic miss that's reversible by any
+  //     subsequent tab interaction.
+  //   * On page load, google.script.url.getLocation reads the parent
+  //     URL's hash; if it matches a known route, the corresponding
+  //     tab is programmatically clicked so the deep-link lands on
+  //     the right view. Defensive against unknown / malformed hashes:
+  //     the tab lookup quietly no-ops if no match.
+  //
+  // The router does not push hash updates to the parent URL on
+  // modal open -- that would require google.script.history which
+  // has had spotty browser behavior. The currentRoute is tracked
+  // purely in-JS and consumed by the "Open in new tab" buttons,
+  // which build a fresh URL from window.__DASHBOARD_URL__ + the
+  // current route. The new tab loads the dashboard fresh and the
+  // init-time hash read opens the deep-linked modal.
+
+  const ROUTES_ = {
+    '/overview':           { kind: 'page',  page: 'overview' },
+    '/dept':               { kind: 'page',  page: 'dept' },
+    // Missed-modal retirement: the My Department inline section is the
+    // report now -- legacy #/report/missed deep-links land on the dept
+    // page and scroll to it once it renders.
+    '/report/missed':      { kind: 'page',  page: 'dept', scrollTo: 'dept-missed-section' },
+    '/report/individual':  { kind: 'modal', modalId: 'individual-modal',  buttonId: 'individual-report-btn' },
+    // Insights is a full PAGE (modal->page conversion, docs/
+    // insights-page-plan.md). The three retired-report repoints ride the
+    // same def: legacy #/report/performance (PR's team rollup + Absolute
+    // chart), #/report/compare (custom priors + vs-Prior chart), and
+    // #/report/qcd (Queue health) deep-links all land on the Insights page.
+    // Their ?query form-state is quietly dropped (no SHARE_STATE_ provider);
+    // '/report/insights' itself keeps full state via its provider.
+    '/report/performance': { kind: 'page', page: 'insights' },
+    '/report/compare':     { kind: 'page', page: 'insights' },
+    '/report/qcd':         { kind: 'page', page: 'insights' },
+    '/report/insights':    { kind: 'page', page: 'insights' },
+    '/report/inbound':     { kind: 'modal', modalId: 'inbound-modal',     buttonId: 'inbound-report-btn' },
+    '/report/direct':      { kind: 'modal', modalId: 'direct-call-modal', buttonId: 'direct-call-report-btn' },
+    '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
+    '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
+    '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },
+    '/admin/access-control': { kind: 'modal', modalId: 'access-control-modal', buttonId: 'access-control-btn' },
+    '/admin/caller-lookup': { kind: 'modal', modalId: 'caller-lookup-modal', buttonId: 'caller-lookup-btn' },
+    '/admin/health':        { kind: 'modal', modalId: 'health-modal',        buttonId: 'system-health-btn' },
+    '/escalations':        { kind: 'page',  page: 'escalations' },
+  };
+
+  // The route currently considered "active". Starts as '/overview'
+  // matching the default landing page. Reset to the underlying page
+  // ('/overview' or '/dept') whenever a modal closes.
+  var currentRoute = '/overview';
+
+  function updateTabActiveState_(route) {
+    document.querySelectorAll('[data-route]').forEach(function (btn) {
+      const isActive = btn.getAttribute('data-route') === route;
+      btn.classList.toggle('header-nav-current', isActive);
+      // R12-6: page-nav semantics, not tab semantics -- these buttons have no
+      // tabpanels/arrow-key model, so aria-selected (a tab attribute) was
+      // announced wrong. aria-current="page" is the nav equivalent.
+      if (isActive) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
+    });
+    // If the active route lives inside a collapsed header dropdown (the
+    // Reports group), its menu-item highlight is hidden, so also light
+    // up the dropdown's trigger. Generic over any .header-menu so it
+    // keeps working if more groups are collapsed later.
+    document.querySelectorAll('.header-menu').forEach(function (menu) {
+      const trigger = menu.querySelector('.header-menu-btn[aria-controls]');
+      if (!trigger) return;
+      const hasActive = !!menu.querySelector(
+        '.header-menu-list [data-route="' + escCssId_(route) + '"]');   // C-4
+      trigger.classList.toggle('header-nav-current', hasActive);
+    });
+  }
+
+  function setRoute_(route) {
+    if (!ROUTES_[route]) return;
+    currentRoute = route;
+    updateTabActiveState_(route);
+  }
+
+  function basePageRoute_() {
+    // F-41: include the Escalations page -- closing a report modal opened
+    // over it previously reverted the active-tab highlight to Overview
+    // while the Escalations page stayed visible. Insights joined when it
+    // became a page (an IR drill opens the IR modal OVER the Insights page;
+    // closing it must restore the Insights tab highlight).
+    var page = document.body.getAttribute('data-page');
+    if (page === 'dept') return '/dept';
+    if (page === 'escalations') return '/escalations';
+    if (page === 'insights') return '/report/insights';
+    return '/overview';
+  }
+
+  function initRouter() {
+    // Wire up click on every [data-route] element. The per-modal
+    // initXxxReport already adds its own click handler that opens
+    // the modal; this just tracks the route + active state.
+    document.querySelectorAll('[data-route]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const route = btn.getAttribute('data-route');
+        if (!route || !ROUTES_[route]) return;
+        setRoute_(route);
+      });
+    });
+
+    // Wire up modal close paths to revert the active state. We hook
+    // the close button + the backdrop click; Escape-key closes are
+    // not intercepted in this phase (see header comment above).
+    Object.keys(ROUTES_).forEach(function (route) {
+      const def = ROUTES_[route];
+      if (def.kind !== 'modal') return;
+      const modal = document.getElementById(def.modalId);
+      if (!modal) return;
+      const onClose = function () {
+        // Async so the modal's own close handler runs first and
+        // body[data-page] is already correct.
+        setTimeout(function () { setRoute_(basePageRoute_()); }, 0);
+      };
+      modal.querySelectorAll('.modal-close, [data-close]').forEach(function (el) {
+        el.addEventListener('click', onClose);
+      });
+    });
+
+    // Initial route from parent URL hash. google.script.url.getLocation
+    // returns the parent URL's hash (without the leading '#') so deep
+    // links like ".../exec#/report/individual" hit ROUTES_ exactly.
+    // A '?' query suffix carries optional FORM STATE (dates, compare
+    // mode, agents) serialized by the Open-in-new-tab buttons -- split
+    // it off before the route lookup and apply it after the modal opens.
+    if (typeof google !== 'undefined' && google.script && google.script.url) {
+      google.script.url.getLocation(function (loc) {
+        const hash = (loc && loc.hash) || '';
+        if (!hash) return;
+        // Allow either '#/report/individual' (leading slash) or
+        // '#report/individual' (no leading slash) for resilience to
+        // hand-typed URLs.
+        const normalized = hash.charAt(0) === '/' ? hash : '/' + hash;
+        const qIdx = normalized.indexOf('?');
+        const route = qIdx === -1 ? normalized : normalized.slice(0, qIdx);
+        const params = qIdx === -1 ? null : decodeShareParams_(normalized.slice(qIdx + 1));
+        // C-4: escape the hand-typed hash -- a crafted quote/backslash used
+        // to throw a selector SyntaxError inside this callback, silently
+        // killing all deep-link handling for the load.
+        const trigger = document.querySelector('[data-route="' + escCssId_(route) + '"]');
+        if (!trigger) {
+          // Routes with no [data-route] element of their own:
+          //  - page routes (the retired Missed modal's '#/report/missed',
+          //    repointed at the My Department missed section, and the three
+          //    retired-report repoints onto the Insights PAGE) dispatch
+          //    directly -- swap the page, load it, arm the one-shot scroll;
+          //  - kind:'modal' repoints resolve via the target's buttonId
+          //    (kept generic for any future modal repoint).
+          //  ?query form-state is applied via the route's SHARE_STATE_
+          //  provider AFTER the page swap (same ordering contract as the
+          //  trigger path below: setPage has run the page's synchronous
+          //  defaults + prefs restore, so the shared state wins). Routes
+          //  with no provider -- the retired repoints -- quietly drop it.
+          //  This is load-bearing for the Digest.gs email deep links
+          //  ('#/report/insights?from=...&agents=...') whenever the
+          //  Insights tab isn't in the DOM for the viewer.
+          const def = ROUTES_[route];
+          if (def && def.kind === 'page') {
+            if (def.scrollTo === 'dept-missed-section') deptMissedScrollPending_ = true;
+            setPage(def.page);
+            if (def.page === 'dept' && typeof refresh === 'function') refresh();
+            if (params) {
+              const provider = SHARE_STATE_[route];
+              if (provider) {
+                try { provider.apply(params); } catch (e) { /* best-effort */ }
+              }
+            }
+          } else if (def && def.kind === 'modal' && def.buttonId) {
+            const btn = document.getElementById(def.buttonId);
+            if (btn && !(btn.hasAttribute('data-admin-only') && USER.role !== 'admin')) btn.click();
+          }
+          return;
+        }
+        // A deep link to an admin-only view (data-admin-only tabs:
+        // alerts / orphan-fix / dept-config) by a non-admin would open
+        // the modal only to surface a server "admin-only" error. Skip it
+        // and stay on the base page instead.
+        if (trigger.hasAttribute('data-admin-only') && USER.role !== 'admin') return;
+        trigger.click();
+        // Apply AFTER the click: the modal's openModal has now run its
+        // defaults + prefs restore synchronously, so the shared state
+        // wins; the agent selection lands via the report's pending-
+        // selection hook once the roster fetch renders.
+        if (params) {
+          const provider = SHARE_STATE_[route];
+          if (provider) {
+            try { provider.apply(params); } catch (e) { /* best-effort */ }
+          }
+        }
+      });
+    }
+  }
+
+  // -- Share-state (state-in-URL) for the report forms ------------------
+  // Serializes a report form's state into the deep-link hash so an
+  // "Open in new tab" target (or a pasted link) restores the exact
+  // form -- dates, compare mode, custom prior window, and agent
+  // selection -- with one click left (Generate). Generation is NOT
+  // auto-triggered: the roster/agent picker loads async and the
+  // primed form keeps the flow race-free and predictable.
+
+  function encodeShareParams_(obj) {
+    const parts = [];
+    Object.keys(obj).forEach(function (k) {
+      const v = obj[k];
+      if (v == null || v === '') return;
+      parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(String(v)));
+    });
+    return parts.join('&');
+  }
+
+  function decodeShareParams_(str) {
+    const out = {};
+    String(str || '').split('&').forEach(function (pair) {
+      if (!pair) return;
+      const i = pair.indexOf('=');
+      if (i === -1) return;
+      try {
+        out[decodeURIComponent(pair.slice(0, i))] = decodeURIComponent(pair.slice(i + 1));
+      } catch (e) { /* skip malformed token */ }
+    });
+    return out;
+  }
+
+  /** Sets an input/select value and fires its change handlers. */
+  function shareSetField_(id, value) {
+    const el = $(id);
+    if (!el || value == null || value === '') return;
+    el.value = value;
+    el.dispatchEvent(new Event('change'));
+  }
+
+  /**
+   * Per-route share-state providers. `collect()` reads the CURRENT form
+   * (returns null when there's nothing meaningful to share); `apply()`
+   * writes params back into the form + the report's pending-agent hook.
+   * Agent lists are '|'-joined inside one encoded param. Only the four
+   * agent-comparison reports participate -- they're where "look at this
+   * exact view" matters; the simpler forms (QCD / Missed / Inbound) are
+   * candidates for a follow-on.
+   */
+  function shareDatesProvider_(ids, getPending) {
+    return {
+      collect: function () {
+        const out = {};
+        Object.keys(ids.fields).forEach(function (k) {
+          const el = $(ids.fields[k]);
+          if (el && el.value) out[k] = el.value;
+        });
+        const list = $(ids.agentList);
+        if (list) {
+          const agents = irGetCheckedAgents_(list);
+          if (agents.length) out.agents = agents.join('|');
+        }
+        return (out.from || out.p1from) ? out : null;
+      },
+      apply: function (params) {
+        Object.keys(ids.fields).forEach(function (k) {
+          shareSetField_(ids.fields[k], params[k]);
+        });
+        if (params.agents && getPending) {
+          getPending(String(params.agents).split('|').filter(function (a) { return !!a; }));
+        }
+      },
+    };
+  }
+
+  const SHARE_STATE_ = {
+    '/report/individual': shareDatesProvider_(
+      { fields: { from: 'ir-from', to: 'ir-to', mode: 'ir-compare-mode', pfrom: 'ir-prior-from', pto: 'ir-prior-to' },
+        agentList: 'ir-agent-list' },
+      function (list) { irPendingAgentSelection_ = list; }),
+    // '/report/performance' retired (PR->Insights); legacy links repoint to
+    // the Insights modal via ROUTES_, and any ?query state is quietly dropped
+    // (SHARE_STATE_ has no provider for the retired route).
+    '/report/insights': shareDatesProvider_(
+      { fields: { from: 'ins-from', to: 'ins-to', mode: 'ins-compare-mode', pfrom: 'ins-prior-from', pto: 'ins-prior-to' },
+        agentList: 'ins-agent-list' },
+      function (list) { insPendingAgentSelection_ = list; }),
+    // '#/dept?dept=<name>' -- the per-dept deep link the Daily Call Queue
+    // Report email hangs on each department's banner line, so a recipient
+    // lands on THAT dept's My Department page instead of their default one.
+    //
+    // THIS IS NOT A SECURITY BOUNDARY, and must not be mistaken for one. The
+    // real gate is server-side `assertDeptAccess_`, which every report endpoint
+    // calls and which rejects a dept outside `user.departments` regardless of
+    // what any client sends. What this does is fail GRACEFULLY: an unauthorized
+    // dept in the link is ignored and the viewer lands on their own dept,
+    // rather than being shown a server error for a link they were emailed. A
+    // single-dept manager has no selector at all, so `getRequestedDept()`
+    // returns their own dept and this is a no-op for them either way.
+    //
+    // Exact match, per INV-04 -- dept names are compared case- and
+    // whitespace-sensitively everywhere else in the app, and a lenient match
+    // here would be the one place that is not true.
+    '/dept': {
+      collect: function () {
+        var d = getRequestedDept();
+        return d ? { dept: d } : null;
+      },
+      apply: function (p) {
+        var want = String((p && p.dept) || '').trim();
+        if (!want) return;
+        var allowed = (typeof USER !== 'undefined' && USER && USER.departments) || [];
+        if (allowed.indexOf(want) === -1) return;   // not theirs -- keep their own
+        var sel = $('dept-selector');
+        if (sel && sel.value !== want) {
+          sel.value = want;
+          if (sel.value !== want) return;           // option absent -- leave as-is
+        }
+        refresh();
+      },
+    },
+  };
+
+  // Phase 2 #8: the Insights provider also carries the Simple/Detailed mode
+  // (`view` param) so a shared link / saved view restores the disclosure
+  // level. Wrapper over the generic provider -- collect/apply run on user
+  // action, long after insDensity is initialized.
+  (function () {
+    const base = SHARE_STATE_['/report/insights'];
+    SHARE_STATE_['/report/insights'] = {
+      collect: function () {
+        const s = base.collect() || {};
+        if (insDensity === 'simple' || insDensity === 'detailed') s.view = insDensity;
+        return (s.from || s.view) ? s : null;
+      },
+      apply: function (params) {
+        base.apply(params || {});
+        if (params && (params.view === 'simple' || params.view === 'detailed')) {
+          insDensity = params.view;
+          insSyncDensity_();
+        }
+      },
+    };
+  })();
+
+  // Open-in-new-tab buttons on each report modal. Builds the target
+  // URL from window.__DASHBOARD_URL__ (DASHBOARD_URL Script Property)
+  // + the modal's data-open-tab-route. Hidden via .is-disabled when
+  // the property is unset -- the alert/email path already requires
+  // it so most installs have it set; CLAUDE.md README setup section
+  // documents how.
+  function initOpenInNewTabButtons_() {
+    const dashboardUrl = (window.__DASHBOARD_URL__ || '').trim();
+    document.querySelectorAll('.modal-open-tab-btn').forEach(function (btn) {
+      if (!dashboardUrl) {
+        btn.classList.add('is-disabled');
+        return;
+      }
+      btn.addEventListener('click', function () {
+        const route = btn.getAttribute('data-open-tab-route') || currentRoute;
+        // Strip any existing fragment from the configured URL before
+        // appending ours, so an admin-pasted URL ending in "#anything"
+        // doesn't produce a double-hash target.
+        const baseUrl = dashboardUrl.split('#')[0];
+        // Carry the modal's CURRENT form state (dates / compare mode /
+        // agents) so the new tab restores the exact view primed for one
+        // Generate click. Best-effort: any provider failure falls back
+        // to the bare route.
+        let suffix = '';
+        try {
+          const provider = SHARE_STATE_[route];
+          const state = provider ? provider.collect() : null;
+          const encoded = state ? encodeShareParams_(state) : '';
+          if (encoded) suffix = '?' + encoded;
+        } catch (e) { /* bare route */ }
+        window.open(baseUrl + '#' + route + suffix, '_blank', 'noopener');
+      });
+    });
+  }
+
+  // -- Overview question launcher (anti-intimidation layer) --------------
+  // Four plain-English questions on the Overview page, each mapped to an
+  // existing report primed with a sensible window. Where the report needs
+  // no agent selection (Missed / QCD) or can default to the whole active
+  // roster (Insights) the launcher runs it immediately; the Individual
+  // Report stops at the primed form because "which agent?" is the user's
+  // question to answer. No new server endpoints -- this is routing sugar
+  // over the modals' existing open + form machinery.
+
+  let latestDqeIso_ = null;          // set by the getLatestDataDates init fetch
+  let latestQcdIso_ = null;          // ditto -- drives the all-dept QCD report's default date
+  let insLauncherAutoRun_ = false;   // consumed by insRenderAgentList
+  let insScrollPending_ = null;      // quick-start chip target section id (one-shot, consumed on render)
+
+  function launcherIsoDaysAgo_(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  // The chip row markup, one source of truth. The Overview's #ov-launcher
+  // block in dashboard.html carries a STATIC copy of the same row (so it
+  // paints before JS init) -- keep the two in sync when editing chips.
+  function launcherRowHtml_() {
+    return '<div class="ov-launcher-kicker">What do you want to know?</div>'
+      + '<div class="ov-launcher-row">'
+      +   '<button type="button" class="ov-launcher-q" data-launch="team-lately">How is my team doing lately?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="missed-yesterday">When did we miss calls?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="agent-trend">Is one of my agents struggling or improving?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="abandons">Are callers giving up before we answer?</button>'
+      + '</div>';
+  }
+
+  // R10-1: the quick-start chips live in the HELP modal now (#help-launcher)
+  // -- one global home instead of a pinned row atop every page (owner:
+  // saves screen space, declutters). Same chips, same landings: each still
+  // lands on (and briefly SPOTLIGHTS) the exact report section that answers
+  // its question; clicking one closes Help first (its own close button, the
+  // F-42 focus-trap discipline) so the navigation isn't hidden behind it.
+  function initOverviewLauncher_() {
+    const onLaunch = function (e) {
+      const btn = e.target.closest('[data-launch]');
+      if (!btn) return;
+      const kind = btn.getAttribute('data-launch');
+      const helpClose = $('help-close');
+      if (helpClose) { try { helpClose.click(); } catch (e2) {} }
+      try {
+        if (kind === 'team-lately') {
+          launcherOpenInsights_('How is my team doing lately?', 'ins-kpi-row');
+        } else if (kind === 'missed-yesterday') {
+          launcherOpenMissed_();
+        } else if (kind === 'agent-trend') {
+          // Repointed from the Individual Report's primed setup form (owner
+          // note): the Insights per-agent cards auto-run and answer the
+          // question directly; each card still drills into IR.
+          launcherOpenInsights_('Is one of my agents struggling or improving?', 'ins-agent-cards');
+        } else if (kind === 'abandons') {
+          // #5: repointed from QCD (retired) to Insights -- its Queue health
+          // section carries the abandon %/heatmap that answers the question.
+          launcherOpenInsights_('Are callers giving up before we answer?', 'ins-queue-health');
+        }
+      } catch (err) { /* best-effort: the report is still openable by hand */ }
+    };
+    const wrap = $('help-launcher');
+    if (!wrap) return;
+    wrap.innerHTML = launcherRowHtml_();
+    wrap.addEventListener('click', onLaunch);
+  }
+
+  // Launcher-initiated runs skip the form: a loading pane (with the
+  // question being answered) replaces it until the report renders. The
+  // pane is created on demand before the form element; each modal's
+  // showForm/showResults helpers hide it, so any failure path that falls
+  // back to the form dismisses it automatically.
+  function launcherShowLoading_(loadingId, formId, resultsId, question) {
+    const form = $(formId), results = $(resultsId);
+    if (!form) return;
+    form.style.display = 'none';
+    if (results) results.style.display = 'none';
+    let el = $(loadingId);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = loadingId;
+      el.className = 'launcher-loading';
+      form.parentNode.insertBefore(el, form);
+    }
+    el.innerHTML = '<div class="launcher-loading-q">' + escapeHtml(question) + '</div>'
+      + '<div class="skeleton-row"><div class="skeleton-line" style="width:60%;"></div></div>'
+      + '<div class="skeleton-row"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>'
+      + '<div class="skeleton-row"><div class="skeleton-line" style="height:120px;flex:1;"></div></div>'
+      + '<div class="launcher-loading-cap">Generating the report…</div>';
+    el.style.display = '';
+  }
+  function launcherHideLoading_(loadingId) {
+    const el = $(loadingId);
+    if (el) el.style.display = 'none';
+  }
+
+  // "How is my team doing lately?" -> Insights, last 30 days, all active
+  // agents, auto-generated. setPage('insights') runs the page's normal
+  // entry (first-entry defaults + prefs + roster fetch via insEnsurePage_);
+  // we then override the dates and re-ensure the roster for the new range --
+  // insRenderAgentList consumes insLauncherAutoRun_ once the picker is
+  // rendered, so the select-all + generate happen at a race-free
+  // synchronization point. The form never flashes: a loading pane covers
+  // the roster fetch + generate; failures fall back to the primed form
+  // (insShowForm).
+  function launcherOpenInsights_(question, scrollTarget) {
+    if (!$('insights-page')) return;
+    // Land on (and spotlight) the exact section that answers the chip's
+    // question; consumed at the end of insRenderReport_ (one-shot).
+    insScrollPending_ = scrollTarget || null;
+    setPage('insights');
+    if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
+    if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
+    const p = $('ins-preset');
+    if (p) p.value = 'custom';
+    insLauncherAutoRun_ = true;
+    launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+      question || 'How is my team doing lately?');
+    insEnsureRoster();
+  }
+
+  // "When did we miss calls?" -> the My Department missed section
+  // on the most recent date with data (the modal was retired -- the inline
+  // section is the report). Sets the page dates, opens the dept page, and
+  // scrolls to the section once its fetch renders it.
+  function launcherOpenMissed_() {
+    const iso = latestDqeIso_ || launcherIsoDaysAgo_(1);
+    if ($('from-date')) $('from-date').value = iso;
+    if ($('to-date'))   $('to-date').value   = iso;
+    clearActivePreset_();
+    deptMissedScrollPending_ = true;   // consumed when the section renders
+    setPage('dept');
+    refresh();
+  }
+
+  // Lighter Insights <-> My Department hand-off (the two pages stay separate;
+  // the relationship is made explicit). The department is the shared global
+  // selector, so only the DATE window needs carrying.
+
+  // My Department -> Insights: carry an explicit window into the Insights page
+  // and (re-)generate it -- a parametrized launcherOpenInsights_. Re-entry
+  // normally keeps the rendered report, so we arm the auto-run flag + re-ensure
+  // the roster (the launcher-chip path) to force a run for the carried window.
+  function handoffToInsights_(fromIso, toIso, scrollTarget) {
+    if (!$('insights-page')) return;
+    insScrollPending_ = scrollTarget || null;
+    setPage('insights');
+    if (fromIso && $('ins-from')) $('ins-from').value = fromIso;
+    if (toIso   && $('ins-to'))   $('ins-to').value   = toIso;
+    const p = $('ins-preset'); if (p) p.value = 'custom';
+    insLauncherAutoRun_ = true;
+    launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+      'Insights for this department & range');
+    insEnsureRoster();
+  }
+
+  // Insights -> My Department: carry the window into the dept page and load it.
+  // opts.missed arms the one-shot scroll to the Missed Calls section (the Queue
+  // health "See missed calls" drilldown). Mirrors launcherOpenMissed_.
+  function handoffToMyDept_(fromIso, toIso, opts) {
+    opts = opts || {};
+    if (fromIso && $('from-date')) $('from-date').value = fromIso;
+    if (toIso   && $('to-date'))   $('to-date').value   = toIso;
+    if (typeof clearActivePreset_ === 'function') clearActivePreset_();
+    if (opts.missed) deptMissedScrollPending_ = true;
+    setPage('dept');
+    refresh();
+  }
+
+  // -- R9-3: shared date window between My Department and Insights ------------
+  // Owner feedback (post-deploy round): the two pages should feel like ONE
+  // top-line date strip -- so the Batch-E "Use these dates" offer chip is
+  // RETIRED and replaced with silent adoption. On entering either page, if
+  // the OTHER page rendered a window more RECENTLY than this one, this page
+  // adopts it (rewrites its date inputs; setPage re-runs the report). The
+  // newest explicit choice wins wherever it was made, so the two windows
+  // converge instead of drifting apart. Explicit hand-off buttons
+  // (handoffTo* above) still carry their window verbatim: they either set
+  // inputs AFTER setPage (Insights direction) or carry the other page's
+  // already-recorded window (dept direction), so adoption never fights them.
+  var pageActiveWindow_ = { dept: null, insights: null };   // last-rendered window per page (+ at: ms)
+
+  function recordPageWindow_(page, from, to) {
+    if (!from || !to) return;
+    pageActiveWindow_[page] = { from: from, to: to, at: Date.now() };
+    // R11-C2: a fresh render restarts the dwell-prefetch clock, so date
+    // changes made while staying on the page get their own warm pass.
+    if (typeof armDwellPrefetch_ === 'function'
+        && document.body.getAttribute('data-page') === page) {
+      armDwellPrefetch_(page);
+    }
+  }
+
+  // -- R11-C2: dwell-prefetch between My Department and Insights ------------
+  // Insights' first entry is a heavy cold aggregation (30-60s, owner report),
+  // and since R9-3 the entry window follows the dept page -- so after ~10s of
+  // dwelling on My Department we silently fire the EXACT request Insights'
+  // agent-free entry would run (dept + the dept page's rendered window +
+  // empty agents = the INV-45 whole-department default; prevPeriod compare
+  // adds no prior fields, matching insResolvePriorRange_'s null) and seed the
+  // D1b keep-last-good store under its reportSig_, so the tab switch
+  // SWR-paints instantly. Guards: one fetch per signature per session,
+  // skipped when Insights already shows that window, best-effort (failures
+  // silent). A user with SAVED agent/compare prefs produces a different
+  // signature on entry -- the prefetch then just warms the server cache for
+  // the agent-free key (documented cost; the IR-prefetch telemetry tradeoff
+  // applies: warmed requests count in Report Usage). The REVERSE direction
+  // (dwelling on Insights) warms the dept summary via the existing
+  // prefetchDeptSummary_. Timers arm on setPage entry and are cleared on
+  // any page switch.
+  var DWELL_PREFETCH_MS_ = 10000;
+  var dwellTimer_ = null;
+  var insPrefetchedSigs_ = {};
+  function clearDwellTimer_() { if (dwellTimer_) { clearTimeout(dwellTimer_); dwellTimer_ = null; } }
+  function armDwellPrefetch_(page) {
+    clearDwellTimer_();
+    if (page !== 'dept' && page !== 'insights') return;
+    dwellTimer_ = setTimeout(function () {
+      try {
+        if (document.body.getAttribute('data-page') !== page) return;
+        if (page === 'dept') insDwellPrefetch_();
+        else {
+          // Insights -> warm My Department's summary for the shared window.
+          var f = $('ins-from') && $('ins-from').value, t = $('ins-to') && $('ins-to').value;
+          if (f && t && typeof prefetchDeptSummary_ === 'function') prefetchDeptSummary_(f, t);
+        }
+      } catch (e) { /* best-effort */ }
+    }, DWELL_PREFETCH_MS_);
+  }
+  function insDwellPrefetch_() {
+    var dept = getRequestedDept(); if (!dept) return;
+    var win = pageActiveWindow_.dept;
+    if (!win || !win.from || !win.to) return;
+    // Already showing this window on Insights? Nothing to warm.
+    if (typeof insLastData !== 'undefined' && insLastData && insLastData.meta
+        && insLastData.meta.from === win.from && insLastData.meta.to === win.to) return;
+    var req = { department: dept, from: win.from, to: win.to, agents: [] };
+    var sig = reportSig_(req);
+    if (insPrefetchedSigs_[sig]) return;
+    insPrefetchedSigs_[sig] = true;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        try { reportLastGoodWrite_('ins', sig, data); } catch (e) { /* storage full etc. */ }
+      })
+      .withFailureHandler(function () { /* best-effort: entry takes the cold path */ })
+      .getInsightsReport(req);
+  }
+
+  // Returns true when the entered page's date inputs were rewritten to the
+  // other page's newer window (the setPage caller decides how to re-run).
+  // No-ops when the other page hasn't rendered yet, this page's own window
+  // is at least as recent, or the inputs already match.
+  function adoptSharedWindow_(page) {
+    if (page !== 'dept' && page !== 'insights') return false;
+    var other = pageActiveWindow_[page === 'dept' ? 'insights' : 'dept'];
+    var mine  = pageActiveWindow_[page];
+    if (!other) return false;
+    if (mine && mine.at >= other.at) return false;
+    var fromEl = page === 'dept' ? $('from-date') : $('ins-from');
+    var toEl   = page === 'dept' ? $('to-date')   : $('ins-to');
+    if (!fromEl || !toEl) return false;
+    if (fromEl.value === other.from && toEl.value === other.to) return false;
+    fromEl.value = other.from;
+    toEl.value   = other.to;
+    if (page === 'dept') {
+      if (typeof clearActivePreset_ === 'function') clearActivePreset_();
+    } else {
+      var p = $('ins-preset'); if (p) p.value = 'custom';
+    }
+    return true;
+  }
+
+  // "Is one of my agents struggling or improving?" -> Individual Report
+  // primed with a 30-day window; agent choice is deliberately left to
+  // the user (that IS the question), so no auto-run.
+  // (launcherOpenIndividual_ was retired -- the "struggling or improving?"
+  // chip previously stopped at the Individual Report's primed setup form;
+  // it now routes to the Insights per-agent cards, which auto-run and
+  // answer the question directly. IR stays reachable via the Reports menu
+  // and the card/chart drill-throughs.)
+
+  // One-shot section spotlight for the quick-start chips: scrolls the
+  // target into view and pulses an accent ring so the eye lands on the
+  // exact part of the report that answers the question. Reduced-motion
+  // users get a static ring (no pulse) for the same duration.
+  function qsSpotlight_(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
+    el.classList.remove('qs-spotlight');
+    void el.offsetWidth;   // restart the CSS animation on repeat clicks
+    el.classList.add('qs-spotlight');
+    setTimeout(function () { el.classList.remove('qs-spotlight'); }, 2600);
+    qsDimOutside_(el);     // briefly dim everything OUTSIDE the target
+  }
+
+  // Companion to the accent-ring pulse: a transient overlay that dims the rest
+  // of the page so the eye is pulled to the spotlighted section (the guided
+  // tour's box-shadow-spotlight technique, as a one-shot). A transparent box is
+  // positioned over the target in DOCUMENT coordinates (scroll-invariant, so it
+  // stays aligned through the smooth-scroll) and dims everything else via a huge
+  // box-shadow; it's click-through and self-removes. Sits below all modals
+  // (z-index in styles.html), so it never fires over one in practice (the
+  // launcher chips land on pages, not modals).
+  function qsDimOutside_(el) {
+    var prev = document.getElementById('qs-dim-overlay');
+    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);   // no stacking on rapid re-clicks
+    var ov = document.createElement('div');
+    ov.id = 'qs-dim-overlay';
+    ov.className = 'qs-dim';
+    document.body.appendChild(ov);
+    var pad = 8;
+    var position = function () {
+      var r = el.getBoundingClientRect();
+      // Document coords: rect (viewport-relative) + scroll offset is constant as
+      // the viewport scrolls, so the hole tracks the element without per-frame
+      // work -- the RAF loop below only corrects late layout shifts on render.
+      ov.style.top = (r.top + (window.pageYOffset || 0) - pad) + 'px';
+      ov.style.left = (r.left + (window.pageXOffset || 0) - pad) + 'px';
+      ov.style.width = (r.width + pad * 2) + 'px';
+      ov.style.height = (r.height + pad * 2) + 'px';
+    };
+    position();
+    var start = Date.now();
+    var track = function () { position(); if (Date.now() - start < 700) requestAnimationFrame(track); };
+    requestAnimationFrame(track);
+    requestAnimationFrame(function () { ov.classList.add('is-on'); });   // fade the dim in
+    setTimeout(function () {
+      ov.classList.remove('is-on');                                     // fade it back out
+      setTimeout(function () { if (ov.parentNode) ov.parentNode.removeChild(ov); }, 400);
+    }, 2000);
+  }
+
+  // -- Metric glossary (anti-intimidation layer) --------------------------
+  // One central dictionary of plain-English metric definitions, applied as
+  // hover tooltips (title=) on table headers and KPI labels everywhere --
+  // static markup at init, dynamically-rendered report content via a
+  // debounced MutationObserver. Matched elements pick up the .gloss class
+  // (dotted underline + help cursor) so the affordance is discoverable.
+  // Keys are normalized label text: lowercased, trimmed, sort-arrows and
+  // trailing colons stripped.
+
+  const METRIC_GLOSSARY_ = {
+    'source': 'Where this agent matched into the department: ROSTER (on this dept’s roster), BOTH (roster + shared-queue activity), or QUEUE (a floater who handled this dept’s queue but is rostered elsewhere — shown for visibility, excluded from the totals row).',
+    'unique': 'Distinct parent calls this agent was rung on inside the 8:30 AM–5:00 PM CST work window.',
+    'rung': 'Times this agent’s phone rang inside the work window. A call that overflows across agents counts once per agent it rang.',
+    'missed': 'Rings this agent didn’t pick up. A missed ring isn’t necessarily a lost call — another agent may have answered the same call.',
+    'missed (rings)': 'Rings agents didn’t pick up. One call can ring several agents, so this counts RINGS, not lost calls — a missed ring is often answered by someone else. For calls callers actually gave up on, see Abandoned (queue data).',
+    'att (daily avg)': 'Average Talk Time as the simple mean of each day’s stored ATT value. This is the My Department lens; the reports use the per-call weighted version, so the two can differ for the same range — neither is wrong, they answer different questions.',
+    'att (per call)': 'Average Talk Time weighted by answered calls (total talk ÷ calls answered). Days with no answered calls don’t drag it down. The My Department table shows the daily-mean version instead, so the two can differ for the same range.',
+    'avg talk (per call)': 'Average Talk Time weighted by answered calls (total talk ÷ calls answered). Longer isn’t automatically worse — it can mean thorough service.',
+    'answered': 'Calls this agent answered inside the work window.',
+    'ttt': 'Total Talk Time: the sum of this agent’s own conversation time on answered calls in the window.',
+    'att': 'Average Talk Time per answered call. Longer isn’t automatically worse — it can mean thorough service; read it alongside % answered.',
+    'avg abd wait': 'Average time abandoning callers waited before hanging up (across all of that day’s queues).',
+    'csr avg abd wait': 'Average abandon wait for the CSR queues specifically.',
+    '% answered': 'Answered calls as a share of calls that rang. The company-wide target is ' + answerTarget_('global') + '%.',
+    'answer rate': 'Answered calls as a share of calls offered. The company-wide target is ' + answerTarget_('global') + '%.',
+    'answer rate %': 'Answered calls as a share of calls offered. The company-wide target is ' + answerTarget_('global') + '%.',
+    'abandoned': 'Callers who hung up while waiting in the queue, before any agent answered.',
+    'abandoned %': 'Share of queue calls where the caller hung up before being answered. 5% or more on a day counts as a violation.',
+    'aband. %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
+    'abandon rate %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
+    'violations': 'Days where a queue’s abandoned % exceeded the 5% threshold. Month-to-date in the totals row.',
+    'longest wait': 'The single longest time any caller waited in the queue that day.',
+    'avg answer': 'Average time callers waited before an agent answered.',
+    'avg wait': 'Average time callers waited in the queue before being answered or giving up.',
+    'total calls': 'All calls offered to the queue, answered or not.',
+    'on-hold abandon': 'Calls an agent answered but the caller later hung up while parked on hold.',
+    'entry queue': 'The first queue the call entered. A call that overflows to another department still attributes to its entry queue’s department.',
+    'dial-in number': 'The phone number the caller dialed to reach us.',
+    'insurer': 'The insurance company a caller’s number is registered to in the DO NOT EDIT! insurance block. Unregistered numbers show as (unlabeled).',
+    'inbound calls': 'Every distinct call that dialed in during the range, answered or not.',
+    'abandoned on hold': 'Calls an agent answered but the caller later hung up while parked on hold.',
+    'abandoned in ivr': 'Callers who hung up in the phone menu before reaching any queue — unattributable to a department, so shown on the company view only.',
+    'avg hold': 'Average time answered callers spent parked on hold.',
+  };
+  // KPI tile labels are variants of the same metrics -- alias them to
+  // one definition each so the glossary never drifts per surface.
+  (function () {
+    const g = METRIC_GLOSSARY_;
+    g['total rung']   = g['rung'];
+    g['total missed'] = g['missed'];
+    g['% answered (rings)'] = 'Answered as a share of rings to agents (answered ÷ rung). '
+      + 'One call can ring several agents and each ring counts once, so this is ring-level '
+      + '— not the share of unique calls answered. The company-wide target is '
+      + answerTarget_('global') + '%.';
+    g['total ttt']    = g['ttt'];
+    g['avg att']      = g['att'];
+    g['avg talk']     = g['att'];
+  })();
+
+  // Rich tooltip variants for high-value terms: a titled definition + an
+  // optional benchmark chip surfacing the 92% / 5% company standards. Keys
+  // match glossaryKeyFor_ output. Rendered via innerHTML (developer-authored
+  // constants only -- never user data); terms without a rich entry fall back
+  // to the plain-text METRIC_GLOSSARY_ definition. The plain title is still
+  // set on the element for screen readers + the no-JS fallback.
+  const METRIC_GLOSSARY_RICH_ = (function () {
+    function tip(title, body, bench) {
+      return '<span class="ds-tip-title">' + title + '</span>'
+           + '<span>' + body + '</span>'
+           + (bench ? '<span class="ds-tip-bench ' + bench.cls + '">' + bench.text + '</span>' : '');
+    }
+    const target92 = { cls: 'is-good', text: 'Company target ≥ ' + answerTarget_('global') + '%' };
+    const thresh5  = { cls: 'is-warn', text: '5% or more in a day = violation' };
+    const attNote  = { cls: '', text: 'Longer isn’t automatically worse — read with % answered' };
+    const m = {};
+    ['% answered', 'answer rate', 'answer rate %'].forEach(function (k) {
+      m[k] = tip('% Answered', 'Answered calls as a share of calls offered.', target92);
+    });
+    m['% answered (rings)'] = tip('% Answered (rings)',
+      'Answered as a share of rings to agents (answered ÷ rung). One call can ring '
+      + 'several agents and each ring counts once — ring-level, not unique calls.', target92);
+    ['abandoned %', 'aband. %', 'abandon rate %'].forEach(function (k) {
+      m[k] = tip('Abandoned %', 'Share of queue calls where the caller hung up before being answered.', thresh5);
+    });
+    m['violations'] = tip('Violations',
+      'Days a queue’s abandoned % went over the threshold. Month-to-date in the totals row.', thresh5);
+    ['att', 'avg att', 'avg talk', 'att (per call)', 'avg talk (per call)'].forEach(function (k) {
+      m[k] = tip('Average Talk Time',
+        'Per answered call (total talk ÷ calls answered). Days with no answered calls don’t drag it down.', attNote);
+    });
+    m['att (daily avg)'] = tip('Average Talk Time — daily mean',
+      'The simple mean of each day’s stored ATT (the My Department lens). The reports use the per-call '
+      + 'weighted version, so the two can differ for the same range.', null);
+    m['ttt'] = tip('Total Talk Time',
+      'The sum of this agent’s own conversation time on answered calls inside the work window.', null);
+    return m;
+  })();
+
+  function glossaryKeyFor_(el) {
+    let text = (el.textContent || '');
+    return text.replace(/[▲▼↑↓]/g, '')   // sort arrows
+               .replace(/\s+/g, ' ').trim().toLowerCase()
+               .replace(/:$/, '');
+  }
+
+  function applyGlossaryTooltips_(root) {
+    if (!root || !root.querySelectorAll) return;
+    const sel = 'th, .ds-kpi__label, .dept-qcd-label, .ov-dept-stat-label';
+    root.querySelectorAll(sel).forEach(function (el) {
+      // Skip already-titled elements AND ones whose title is temporarily
+      // stashed in data-gloss while the styled tooltip is showing, so the
+      // observer can't re-add a native title mid-hover (double tooltip).
+      if (el.title || el.hasAttribute('data-gloss')) return;
+      const key = glossaryKeyFor_(el);
+      const def = METRIC_GLOSSARY_[key];
+      if (!def) return;
+      el.title = def;
+      el.classList.add('gloss');
+      const rich = METRIC_GLOSSARY_RICH_[key];
+      if (rich) el.setAttribute('data-gloss-rich', rich);
+    });
+  }
+
+  // Styled tooltip for glossary terms (.gloss) -- replaces the unstyleable
+  // native `title=` popover with a token-styled one. Reads the definition from
+  // the element's `title`, suppresses the native popover by stashing the title
+  // in `data-gloss` while shown (restored on leave -- preserves it for SR /
+  // non-hover), and one shared element is positioned by event delegation so it
+  // covers dynamically-rendered terms too. pointer-events:none keeps the
+  // tooltip out of the hover hit-test.
+  function initGlossTooltip_() {
+    const tip = document.createElement('div');
+    tip.className = 'ds-tooltip';
+    tip.setAttribute('role', 'tooltip');
+    tip.style.display = 'none';
+    document.body.appendChild(tip);
+    let current = null;
+
+    function position(el) {
+      const r = el.getBoundingClientRect();
+      const tw = tip.offsetWidth, th = tip.offsetHeight, gap = 8;
+      let left = r.left + r.width / 2 - tw / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+      let top = r.top - th - gap;                 // prefer above
+      if (top < 8) top = r.bottom + gap;          // flip below if no room
+      tip.style.left = Math.round(left) + 'px';
+      tip.style.top = Math.round(top) + 'px';
+    }
+    function show(el) {
+      const rich = el.getAttribute('data-gloss-rich');
+      const text = el.getAttribute('title') || el.getAttribute('data-gloss');
+      if (!rich && !text) return;
+      if (el.hasAttribute('title')) {             // suppress native popover
+        el.setAttribute('data-gloss', el.getAttribute('title'));
+        el.removeAttribute('title');
+      }
+      current = el;
+      // Rich entries render developer-authored HTML (titled def + benchmark
+      // chip); everything else stays plain text.
+      if (rich) { tip.innerHTML = rich; tip.classList.add('ds-tooltip--rich'); }
+      else { tip.textContent = text; tip.classList.remove('ds-tooltip--rich'); }
+      tip.style.display = 'block';
+      position(el);
+    }
+    function hide() {
+      if (current && current.hasAttribute('data-gloss')) {
+        current.setAttribute('title', current.getAttribute('data-gloss'));
+        current.removeAttribute('data-gloss');
+      }
+      current = null;
+      tip.style.display = 'none';
+    }
+    function glossOf(node) { return node && node.closest ? node.closest('.gloss') : null; }
+
+    document.addEventListener('mouseover', function (e) {
+      const el = glossOf(e.target);
+      if (el && el !== current) { hide(); show(el); }
+    });
+    document.addEventListener('mouseout', function (e) {
+      const el = glossOf(e.target);
+      if (el && el === current && (!e.relatedTarget || !el.contains(e.relatedTarget))) hide();
+    });
+    document.addEventListener('focusin', function (e) {
+      const el = glossOf(e.target);
+      if (el) { hide(); show(el); }
+    });
+    document.addEventListener('focusout', hide);
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
+  }
+
+  function initMetricGlossary_() {
+    applyGlossaryTooltips_(document);
+    // Report tables/tiles render after async fetches; a debounced
+    // childList observer re-applies over the whole document (cheap:
+    // a few hundred elements, and already-titled ones short-circuit).
+    let timer = null;
+    const obs = new MutationObserver(function () {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () { applyGlossaryTooltips_(document); }, 250);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // -- R11-B8: chart-tips popover -----------------------------------------
+  // A small circled-? on each chart toolbar (static buttons carrying
+  // data-charthelp) opens a popover listing that chart's ACTUAL interactions
+  // -- the spotlight/pin/drill shortcuts are otherwise invisible. One shared
+  // popover element, delegated wiring, outside-click/Escape closes.
+  var CHART_HELP_ = {
+    overview: [
+      'Hover a department card (or a legend name) to spotlight its line.',
+      'Click a card to solo its line; Shift-click more cards to compare several. Click the solo card again to release.',
+      'Click a point on a line to open that department & day in My Department.',
+      'Zoom toggles the y-axis between the full 0–100% scale and a fit to the data.',
+      '30d / 60d / 90d / YTD change the chart window; the sub-queues box shows or hides dashed child-queue lines.',
+    ],
+    insTrend: [
+      'The Metric dropdown switches what the chart shows (team metrics + the Queue: entries); Monthly / Daily switches the axis.',
+      'Line ⇄ Calendar re-renders the daily series as a month grid (windows of 14+ days).',
+      'Click a data point — or a calendar day — to reload the whole report scoped to that month or day.',
+      'On the Abd % tab, click a legend entry to pin/isolate that queue’s line; hover previews.',
+      '"Show data labels" prints the values on the chart.',
+    ],
+    ir: [
+      'With 2+ agents, click a legend chip to isolate that agent across all charts; click again to release.',
+      'Shift-click a chip to hide/show that agent’s series entirely.',
+      'Hovering a chip previews the spotlight without pinning.',
+      'ALL stacks the Volume, Efficiency and Duration charts together.',
+    ],
+    missed: [
+      'Click a bar to open that half-hour’s rings in the detail panel beside the chart.',
+      'Solid red bars contain abandoned calls; lighter bars had rings but no abandons.',
+      'The outlined bar marks the peak missed-call window.',
+      'Timestamps in the per-agent cards below carry a ↳ path drill for abandoned rings.',
+    ],
+  };
+  function initChartHelp_() {
+    var pop = null;
+    var opener = null;   // E-7: return focus to the ? button on close
+    var close = function () {
+      if (pop) { pop.remove(); pop = null; }
+      if (opener) { try { opener.focus(); } catch (e) { /* gone */ } opener = null; }
+    };
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('.chart-help-btn');
+      if (!btn) {
+        if (pop && !pop.contains(e.target)) close();
+        return;
+      }
+      e.stopPropagation();
+      if (pop) { close(); return; }   // second click on the ? closes
+      var lines = CHART_HELP_[btn.getAttribute('data-charthelp')] || [];
+      if (!lines.length) return;
+      opener = btn;
+      pop = document.createElement('div');
+      pop.className = 'chart-help-pop';
+      // E-7: it announced dialog semantics without delivering them -- no
+      // label, and focus never moved in, so screen-reader users got nothing.
+      pop.setAttribute('role', 'dialog');
+      pop.setAttribute('aria-label', 'Chart tips');
+      pop.setAttribute('tabindex', '-1');
+      pop.innerHTML = '<div class="chp-title">Chart tips</div><ul>'
+        + lines.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>';
+      document.body.appendChild(pop);
+      var r = btn.getBoundingClientRect();
+      var w = Math.min(340, window.innerWidth - 24);
+      pop.style.width = w + 'px';
+      pop.style.top = (r.bottom + 6) + 'px';
+      pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+      pop.focus();   // E-7: announce + put Escape in reach
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') close();
+    });
+  }
+
+  // -- R10-3: count-up load animation on KPI values -----------------------
+  // Purely aesthetic (owner: "if this would impact performance or function,
+  // disregard" -- so every guard fails to the plain static value). Newly
+  // rendered KPI-value elements count from 0 to their rendered number over
+  // ~600ms. Scope is a curated selector list of NUMERIC value surfaces;
+  // durations (H:MM:SS), dashes, and non-numeric text are left untouched.
+  // Wired via the same debounced MutationObserver pattern as the metric
+  // glossary; runs AFTER each render's dsFlashChanged_ snapshot (which is
+  // synchronous), so change-flash comparisons always see final values.
+  var CU_SELECTORS_ = '.ds-kpi__value, .dts-value, .qcd-verdict-value, '
+    + '.qcd-hero-value, .ov-hero-pct, .ov-dept-tile-pct > [data-flash-key]';
+  var CU_RE_ = /^([\d,]+(?:\.\d+)?)(%|\s*pts)?$/;
+  function cuAnimate_(el, finalText) {
+    var m = CU_RE_.exec(finalText.trim());
+    if (!m) return;                       // durations / dashes / rich text: leave as-is
+    var target = parseFloat(m[1].replace(/,/g, ''));
+    if (!isFinite(target) || target === 0) return;
+    var decimals = (m[1].split('.')[1] || '').length;
+    var hasCommas = m[1].indexOf(',') !== -1;
+    var suffix = m[2] || '';
+    var t0 = null, DUR = 600;
+    var fmt = function (v) {
+      var s = v.toFixed(decimals);
+      if (hasCommas) {
+        var parts = s.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        s = parts.join('.');
+      }
+      return s + suffix;
+    };
+    var step = function (ts) {
+      if (t0 === null) t0 = ts;
+      var p = Math.min(1, (ts - t0) / DUR);
+      var eased = 1 - Math.pow(1 - p, 3);   // easeOutCubic
+      try { el.textContent = p >= 1 ? finalText : fmt(target * eased); } catch (e) { return; }
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  function applyCountUps_() {
+    document.querySelectorAll(CU_SELECTORS_).forEach(function (el) {
+      // Value-only elements: skip anything with child elements (chips,
+      // sub-rows) -- textContent writes would flatten them.
+      if (el.children.length > 0) return;
+      // Once per node lifetime: re-renders create fresh nodes (which animate),
+      // while the observer refiring on the animation's own text mutations
+      // must NOT re-target an intermediate frame's value.
+      if (el.dataset.cuDone) return;
+      el.dataset.cuDone = '1';
+      cuAnimate_(el, el.textContent || '');
+    });
+  }
+  function initCountUp_() {
+    try {
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      if (typeof requestAnimationFrame !== 'function' || typeof MutationObserver !== 'function') return;
+      applyCountUps_();
+      var timer = null;
+      new MutationObserver(function () {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(applyCountUps_, 120);
+      }).observe(document.body, { childList: true, subtree: true });
+    } catch (e) { /* aesthetic only -- never block init */ }
+  }
+
+  // -- Universal benchmark tints (anti-intimidation layer) ----------------
+  // The install has exactly two company-wide standards: the answer-rate
+  // TARGET (seed 92%; admin-tunable via the ANSWER_TARGETS Script Property
+  // -- Alerts modal -> "Answer-rate standards" -- with per-surface
+  // overrides for the Direct / Inbound reports, whose answer rates are
+  // different populations) and the FIXED 5% abandoned-% violation
+  // threshold (the QCD pipeline rule, baked into written Violations
+  // history -- never tunable). This helper applies them consistently to
+  // KPI tile values so a manager reading ANY report sees the same
+  // green-at-target / orange-over-threshold language the QCD and
+  // Overview surfaces already speak. Dept-specific ALERT thresholds stay
+  // with the Alerts engine -- no invented thresholds here.
+  // Reads window.__ANSWER_TARGETS__ per call (injected before this include)
+  // rather than caching into a module var -- function declarations hoist, so
+  // module-scope consts ABOVE this point can call it safely at load time.
+  function answerTarget_(surface) {
+    var at = (typeof window !== 'undefined' && window.__ANSWER_TARGETS__) || {};
+    var t = Number(at[surface]);
+    if (isFinite(t) && t > 0) return t;
+    var g = Number(at.global);
+    return (isFinite(g) && g > 0) ? g : 92;
+  }
+  // Keep a From/To (Start/End) date pair valid: picking a Start past the End
+  // (or an End before the Start) nudges the OTHER input so From <= To. ISO
+  // 'YYYY-MM-DD' strings compare correctly as plain strings.
+  function linkDateRange_(fromId, toId) {
+    const from = $(fromId), to = $(toId);
+    if (!from || !to) return;
+    from.addEventListener('change', function () {
+      if (from.value && to.value && from.value > to.value) to.value = from.value;
+    });
+    to.addEventListener('change', function () {
+      if (from.value && to.value && to.value < from.value) from.value = to.value;
+    });
+  }
+
+  // Wire every report setup modal's From/To pair (incl. custom-prior windows and
+  // the Compare-Ranges P1/P2 pairs). Inputs are static, so one init pass suffices.
+  function initDateRangeLinks_() {
+    [
+      ['from-date', 'to-date'],
+      ['ir-from', 'ir-to'], ['ir-prior-from', 'ir-prior-to'], ['ir-edit-from', 'ir-edit-to'],
+      ['qcd-alldept-from', 'qcd-alldept-to'],
+      ['ins-from', 'ins-to'], ['ins-prior-from', 'ins-prior-to'], ['ins-edit-from', 'ins-edit-to'],
+      ['inbound-from', 'inbound-to'], ['cl-from', 'cl-to'],
+    ].forEach(function (p) { linkDateRange_(p[0], p[1]); });
+  }
+
+  function benchValueCls_(label, formatted, symmetric, surface) {
+    const text = String(label).replace(/<[^>]*>/g, '').toLowerCase();
+    const str = String(formatted);
+    if (str.indexOf('%') === -1) return '';
+    const num = parseFloat(str);
+    if (!isFinite(num)) return '';
+    // Binary by default (highlight only the notable direction -- the documented
+    // table behavior). `symmetric` (KPI tiles) tints BOTH sides of the SAME
+    // answer-target / 5% standard, so a below-target answer rate reads "watch"
+    // (orange) and a healthy abandon rate reads "good" (green) instead of
+    // plain black. Still no invented thresholds (decision C2); `surface`
+    // ('direct' / 'inbound') picks that report's admin-set override, absent
+    // = the global target.
+    if (/answer/.test(text)) return num >= answerTarget_(surface || 'global') ? ' bm-target' : (symmetric ? ' bm-over' : '');
+    if (/aband/.test(text))  return num >= 5  ? ' bm-over'   : (symmetric ? ' bm-target' : '');
+    return '';
+  }
+
+  // -- Answer-first headlines (anti-intimidation layer) ------------------
+  // Every report's results open with 2-3 PLAIN-ENGLISH sentences composed
+  // client-side from the payload it already received (no server change,
+  // no cache bump). The charts/tables stay; the headline just answers
+  // "what does this say?" before the manager has to read a number. Each
+  // composer guards its no-data case; an empty sentence list hides the
+  // block entirely.
+
+  /**
+   * Renders `sentences` (pre-escaped HTML strings) into a headline block
+   * at the top of `containerId`'s results -- inserted right after the
+   * `.ir-results-header` (or as the first child when there isn't one).
+   * Creates the element on first use.
+   */
+  function reportHeadline_(id, containerId, headline) {
+    const container = $(containerId);
+    if (!container) return;
+    let el = $(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.className = 'report-headline';
+      const header = container.querySelector('.ir-results-header');
+      if (header) {
+        // Insert after the header AND after any status / loading / error
+        // elements that immediately follow it, so transient "Loading…" and
+        // error banners always render ABOVE the headline, not under it.
+        // Also skip an inline edit popover (the IR / Insights "change" panel)
+        // so it expands directly beneath its button, ABOVE the headline.
+        let anchor = header.nextElementSibling;
+        while (anchor && (anchor.classList.contains('status')
+                          || anchor.classList.contains('ir-loader')
+                          || anchor.classList.contains('ir-edit-popover')
+                          // R11-I: Insights' relocated compare/selection lines
+                          // (moved out of the sticky header) sit here too --
+                          // keep the headline anchored BELOW them.
+                          || anchor.classList.contains('ins-subhead')
+                          || anchor.classList.contains('empty-state'))) {
+          anchor = anchor.nextElementSibling;
+        }
+        container.insertBefore(el, anchor);
+      }
+      // Anchor without a results header (e.g. the Missed modal's
+      // summary strip): place the headline just above the anchor.
+      else container.parentNode.insertBefore(el, container);
+    }
+    // Composers return either a bare sentences array (neutral) OR
+    // { sentences, tone } where tone = { cls:'is-good'|'is-warn', badge } from
+    // headlineTone_ (the 92% / 5% standards only). Arrays stay neutral.
+    const sentences = Array.isArray(headline) ? headline : ((headline && headline.sentences) || []);
+    const tone = (!Array.isArray(headline) && headline && headline.tone) || null;
+    const lines = (sentences || []).filter(function (s) { return !!s; });
+    if (!lines.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    el.className = 'report-headline' + (tone && tone.cls ? ' ' + tone.cls : '');
+    const badge = (tone && tone.badge) ? tone.badge : 'At a glance';
+    el.innerHTML = '<div class="report-headline-kicker">' + escapeHtml(badge) + '</div>'
+      + lines.map(function (s) { return '<div class="report-headline-line">' + s + '</div>'; }).join('');
+  }
+
+  /**
+   * "…, up 8.2% vs the prior period" phrase from a deltaBlock. Empty
+   * string when there's no meaningful prior; "about the same" inside
+   * the noise band. pctPoints deltas read as "points".
+   */
+  function headlineDeltaPhrase_(stat) {
+    if (!stat || (Number(stat.prev || 0) === 0 && Number(stat.val || 0) === 0)) return '';
+    const dp = Number(stat.deltaPct || 0);
+    if (Math.abs(dp) < 0.05) return ', about the same as the prior period';
+    return ', ' + (dp > 0 ? 'up ' : 'down ') + Math.abs(dp).toFixed(1)
+         + (stat.type === 'pctPoints' ? ' points' : '%') + ' vs the prior period';
+  }
+
+  function headlineName_(n) { return '<strong>' + escapeHtml(n) + '</strong>'; }
+
+  // Status tone for the answer-first headline, from the ONLY two company-wide
+  // standards (answer rate >= 92% = "On track"; answer < 92% OR abandon >= 5%
+  // = "Watch"). Returns null when neither metric is available -> neutral
+  // "At a glance". No invented thresholds (decision C2 + the headline decision).
+  function headlineTone_(opts) {
+    opts = opts || {};
+    const a = opts.answerPct, b = opts.abandonPct;
+    const hasA = a != null && isFinite(Number(a));
+    const hasB = b != null && isFinite(Number(b));
+    if (!hasA && !hasB) return null;
+    const warn = (hasA && Number(a) < answerTarget_('global')) || (hasB && Number(b) >= 5);
+    return warn ? { cls: 'is-warn', badge: 'Watch' } : { cls: 'is-good', badge: 'On track' };
+  }
+
+  // IR1: PEER-AWARE banner tone for the single-agent Individual Report. The
+  // absolute headlineTone_ read "Watch" (red) whenever the agent was under 92%,
+  // even when they beat their team. Instead:
+  //   - agent meets the 92% company standard        -> "On track" (green)
+  //   - below 92% but AT/ABOVE the team average      -> NEUTRAL (no tint; owner
+  //     ruling: beating a struggling team isn't "Watch", but isn't "On track")
+  //   - below the team average                       -> "Watch" (warn)
+  function irHeadlineTone_(agentPct, teamPct) {
+    if (agentPct == null || !isFinite(Number(agentPct))) return null;
+    const a = Number(agentPct);
+    if (a >= answerTarget_('global')) return { cls: 'is-good', badge: 'On track' };
+    const tp = Number(teamPct);
+    if (teamPct != null && isFinite(tp) && tp > 0 && a >= tp) return null;   // neutral
+    return { cls: 'is-warn', badge: 'Watch' };
+  }
+
+  function insHeadline_(data) {
+    const t = data.teamStats || {};
+    if (!Number((t.rung || {}).val) && !Number((t.rung || {}).prev)) {
+      return ['No call activity for the selected agents in this range.'];
+    }
+    const s = [];
+    s.push('Your team answered <strong>' + escapeHtml(String((t.answered || {}).formatted || 0))
+      + '</strong> of ' + escapeHtml(String((t.rung || {}).formatted || 0))
+      + ' rung calls (<strong>' + escapeHtml(String((t.pct || {}).formatted || '0%')) + '</strong>'
+      + headlineDeltaPhrase_(t.pct) + ').');
+    const cards = data.agentData || [];
+    if (cards.length > 1) {
+      let top = null, bottom = null;
+      cards.forEach(function (c) {
+        // Per-working-day-adjusted, matching the card trend pills below.
+        const score = deltaImprovementScore_(insPerDayMetrics_(c.metrics, data.meta));
+        if (!top || score > top.score) top = { name: c.name, score: score };
+        if (!bottom || score < bottom.score) bottom = { name: c.name, score: score };
+      });
+      const bits = [];
+      if (top && top.score > 5) bits.push(headlineName_(top.name) + ' improved the most');
+      if (bottom && bottom.score < -5 && (!top || bottom.name !== top.name)) {
+        bits.push(headlineName_(bottom.name) + ' slipped the most');
+      }
+      if (bits.length) s.push(bits.join('; ') + ' vs the prior window.');
+      // I6: count the SAME set the card rails flag -- agents BEHIND the team
+      // (peer-relative standing), so the headline number matches the orange
+      // edges below exactly (was a direction-of-change "regressed" count, which
+      // disagreed with the standing-based rails).
+      const teamPctH = Number((t.pct || {}).val) || 0;
+      const behind = cards.filter(function (c) {
+        return insClassifyAgent_(c, teamPctH) === 'attention';
+      }).length;
+      if (behind > 0) {
+        s.push(behind + ' agent' + (behind === 1 ? '' : 's')
+          + ' ' + (behind === 1 ? 'is' : 'are') + ' behind the team average — their cards carry the orange edge below.');
+      }
+    }
+    // Queue health: one sentence when the abandon rate crosses the 5%
+    // threshold (the only company-wide queue standard).
+    const qh = data.queueHealth;
+    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && Number(qh.totals.abandonedPct) >= 5) {
+      s.push('Heads up: callers abandoned <strong>'
+        + escapeHtml(String(qh.totals.abandonedPctStr)) + '</strong> of queue calls — over the 5% threshold (see Queue health below).');
+    }
+    // When the comparison windows differ a lot (> 7 days), the deltas in the
+    // headline are apples-to-oranges, so neutralize the status tone (drop the
+    // green/orange "On track"/"Watch" banner) to avoid a false alarm. The
+    // sentences -- including any real >=5% abandon heads-up -- still render.
+    const meta = data.meta || {};
+    const bigMismatch = !!meta.lengthMismatch
+      && Math.abs((meta.currentDays || 0) - (meta.priorDays || 0)) > 7;
+    return { sentences: s.slice(0, 3), tone: bigMismatch ? null : headlineTone_({
+      answerPct: (t.pct || {}).val,
+      abandonPct: (qh && qh.totals) ? qh.totals.abandonedPct : null,
+    }) };
+  }
+
+  function irHeadline_(data) {
+    const cards = data.summaryData || [];
+    if (!cards.length) return [];
+    if (data.mode !== 'comparison') {
+      const a = cards[0];
+      const raw = a.raw || {};
+      if (!raw.rung) return [headlineName_(a.name) + ' had no rung calls in this range.'];
+      const teamPct = (data.teamAvg && data.teamAvg.raw && data.teamAvg.raw.pctAnswered) || 0;
+      const diff = (raw.pct || 0) - teamPct;
+      let vsTeam = '';
+      if (teamPct > 0) {
+        vsTeam = Math.abs(diff) < 1
+          ? ', right around the team average'
+          : ', about ' + Math.abs(diff).toFixed(1) + ' points '
+            + (diff > 0 ? 'above' : 'below') + ' the team average ('
+            + teamPct.toFixed(1) + '%)';
+      }
+      const s = [headlineName_(a.name) + ' answered <strong>' + escapeHtml(String(a.stats.answered))
+        + '</strong> of ' + escapeHtml(String(a.stats.rung)) + ' rung calls (<strong>'
+        + escapeHtml(String(a.stats.pct)) + '</strong>' + vsTeam + ').'];
+      const ins = a.insights || [];
+      if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
+      // IR1: peer-aware tone (below 92% but at/above team reads neutral, not red).
+      return { sentences: s, tone: irHeadlineTone_((a.raw || {}).pct, teamPct) };
+    }
+    let top = cards[0];
+    cards.forEach(function (c) { if ((c.raw || {}).answered > (top.raw || {}).answered) top = c; });
+    return ['Comparing ' + cards.length + ' agents. ' + headlineName_(top.name)
+      + ' answered the most calls (<strong>' + escapeHtml(String(top.stats.answered))
+      + '</strong>, ' + escapeHtml(String(top.share.answered)) + ' of the group\'s total).'];
+  }
+
+  function missedHeadline_(meta) {
+    if (!meta) return [];
+    const missed = Number(meta.totalMissed || 0);
+    const abandoned = Number(meta.abandonedCallCount || 0);
+    const noRing = Number(meta.noRingAbandonCount || 0);
+    // Note when some rows' abandoned detail was lost to the number-coercion bug
+    // (excluded from the counts above) so a lost row isn't read as "0 abandoned".
+    let lostNote = null;
+    if (meta.abandonedDetailLost) {
+      const n = (meta.abandonedDetailLostDates || []).length;
+      lostNote = '<span class="missed-lost-note">&#9888; Abandoned-call detail is '
+        + 'unavailable for <strong>' + fmtNumber(n) + '</strong> day' + (n === 1 ? '' : 's')
+        + ' in this range (a formatting bug corrupted those rows — rebuild them from Raw '
+        + 'Data). Counts above exclude those days.</span>';
+    }
+    if (!missed && !abandoned) {
+      return lostNote
+        ? [lostNote]
+        : ['No missed calls in this range — every rung call was picked up.'];
+    }
+    const s = ['Your team missed <strong>' + fmtNumber(missed) + '</strong> ring'
+      + (missed === 1 ? '' : 's') + ' in this range.'];
+    if (abandoned > 0) {
+      s.push('<strong>' + fmtNumber(abandoned) + '</strong> call' + (abandoned === 1 ? '' : 's')
+        + ' were abandoned — the caller hung up before anyone answered'
+        + (noRing > 0 ? ', including ' + fmtNumber(noRing) + ' that never rang any agent' : '') + '.');
+    }
+    if (lostNote) s.push(lostNote);
+    return s;
+  }
+
+  function inboundHeadline_(data) {
+    const k = data.kpis || {}, p = data.kpisPrior || {};
+    const meta = data.meta || {};
+    if (!Number(k.total)) return ['No inbound calls in this range.'];
+    const ratePhrase = headlineDeltaPhrase_({
+      val: k.answerRate, prev: p.answerRate,
+      deltaPct: (Number(k.answerRate) || 0) - (Number(p.answerRate) || 0),
+      type: 'pctPoints',
+    });
+    const s = ['You received <strong>' + fmtNumber(k.total) + '</strong> inbound calls; <strong>'
+      + escapeHtml(String(k.answerRate || 0)) + '%</strong> were answered' + ratePhrase + '.'];
+    if (Number(k.abandonedOnHold) > 0) {
+      s.push(fmtNumber(k.abandonedOnHold) + ' caller' + (Number(k.abandonedOnHold) === 1 ? '' : 's')
+        + ' hung up while on hold.');
+    }
+    if (meta.companyView && Number(k.abandonedIvr) > 0) {
+      s.push(fmtNumber(k.abandonedIvr) + ' abandoned in the IVR before reaching any queue.');
+    }
+    return { sentences: s.slice(0, 3), tone: headlineTone_({ answerPct: Number(k.answerRate) }) };
+  }
+

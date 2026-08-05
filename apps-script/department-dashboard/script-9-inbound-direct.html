@@ -1,0 +1,1675 @@
+  // ===================================================================
+  // Inbound Report (admin-only) -- Neon-backed inbound_calls analytics:
+  // volume + answered/abandoned/on-hold by insurer / dial-in / entry queue.
+  // ===================================================================
+  let inboundLastData = null;
+  let inboundExpandedInsurer = null;   // accordion: at most one open row
+  let inboundDrillChart = null;
+  let inboundDrillMetric = 'calls';    // 'calls' | 'rate'
+  let inboundDrillCache = {};          // insurer -> daily[] (cleared per render)
+
+  function initInboundReport() {
+    const btn = $('inbound-report-btn');
+    const modal = $('inbound-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      inboundShowForm();
+      inboundSetDefaultDates();
+      inboundEnsureDeptOptions_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('inbound-preset');
+    if (preset) preset.addEventListener('change', inboundApplyPreset);
+    const fromEl = $('inbound-from'), toEl = $('inbound-to');
+    if (fromEl) fromEl.addEventListener('change', function () { if ($('inbound-preset')) $('inbound-preset').value = 'custom'; });
+    if (toEl)   toEl.addEventListener('change',   function () { if ($('inbound-preset')) $('inbound-preset').value = 'custom'; });
+    const gen = $('inbound-generate-btn');
+    if (gen) gen.addEventListener('click', runInboundReport);
+    const back = $('inbound-back-btn');
+    if (back) back.addEventListener('click', inboundShowForm);
+    const csv = $('inbound-csv-btn');
+    if (csv) csv.addEventListener('click', inboundDownloadCsv_);
+    const emailBtn = $('inbound-email-btn');
+    if (emailBtn) emailBtn.addEventListener('click', inboundEmailReport_);
+  }
+
+  // R11-M (#4b): email the current Inbound view to the caller (server renders a
+  // styled HTML summary; admin-gated like the report).
+  function inboundEmailReport_() {
+    if (!inboundLastData || (inboundLastData.meta || {}).available === false) return;
+    const meta = inboundLastData.meta || {};
+    const btn = $('inbound-email-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Email me this report'; } };
+    google.script.run
+      .withSuccessHandler(function (res) { restore(); showToast('Emailed to ' + ((res && res.to) || 'you'), 'success'); })
+      .withFailureHandler(function (err) { restore(); showToast('Email failed: ' + (err && err.message ? err.message : err), 'error'); })
+      .sendInboundReportEmail({ from: meta.from, to: meta.to,
+        department: meta.companyView ? 'ALL' : (meta.department || '') });
+  }
+
+  function inboundShowForm()    { $('inbound-form').style.display = ''; $('inbound-results').style.display = 'none'; inboundSetError(''); }
+  function inboundShowResults() { $('inbound-form').style.display = 'none'; $('inbound-results').style.display = ''; }
+  function inboundSetError(msg) {
+    const el = $('inbound-form-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function inboundIsoOf_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function inboundSetDefaultDates() {
+    if ($('inbound-from') && $('inbound-from').value) return;
+    const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
+    if ($('inbound-from')) $('inbound-from').value = inboundIsoOf_(s);
+    if ($('inbound-to'))   $('inbound-to').value   = inboundIsoOf_(today);
+  }
+  function inboundApplyPreset() {
+    const v = $('inbound-preset').value;
+    if (v === 'custom') return;
+    const today = new Date(); let s, e = new Date(today);
+    if (v === 'last7')        { s = new Date(today); s.setDate(today.getDate() - 7); }
+    // "Last 30 days" = 30 days ending yesterday -- matches the main page's
+    // chip and the IR/Insights presets (see applyIrPreset).
+    else if (v === 'last30')  { e = new Date(today); e.setDate(today.getDate() - 1);
+                                s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'thisMonth') { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth') { s = new Date(today.getFullYear(), today.getMonth() - 1, 1); e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    if (!s) return;
+    $('inbound-from').value = inboundIsoOf_(s);
+    $('inbound-to').value   = inboundIsoOf_(e);
+  }
+
+  /**
+   * Dept scope options. Managers are pinned to their own dept (the
+   * server enforces this regardless); admins get "All departments"
+   * (the company-wide view incl. the IVR bucket) plus every dept.
+   */
+  function inboundEnsureDeptOptions_() {
+    const sel = $('inbound-dept');
+    if (!sel || sel.options.length) return;
+    if (USER.role === 'admin') {
+      const opts = ['<option value="">All departments</option>'];
+      (USER.departments || []).forEach(function (d) {
+        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
+      });
+      sel.innerHTML = opts.join('');
+    } else {
+      const d = USER.department || '';
+      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+      sel.disabled = true;
+    }
+  }
+
+  function runInboundReport() {
+    const from = $('inbound-from').value, to = $('inbound-to').value;
+    if (!from || !to) { inboundSetError('Pick a start and end date.'); return; }
+    if (from > to) { inboundSetError('Start date must be on or before end date.'); return; }
+    inboundSetError('');
+    const dept = $('inbound-dept') ? $('inbound-dept').value : '';
+    const gen = $('inbound-generate-btn'); const prev = gen.textContent;
+    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    const __sig = reportSig_({ from: from, to: to, department: dept });   // D1b key
+    const __rtok = ++reportReqSeq_.inb;   // C-8: stale-response guard
+    const __inboundRepaint = function (d, opts) { inboundRenderReport_(d, opts); inboundShowResults(); reportSetStatus_('inbound-results-status', ''); };
+    reportSwrPaint_('inbound', __sig, __inboundRepaint, 'inbound-results-status');   // SWR: instant repeat-paint
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__rtok !== reportReqSeq_.inb) return;   // superseded by a newer request
+        gen.disabled = false; gen.textContent = prev;
+        reportLastGoodWrite_('inbound', __sig, data);
+        __inboundRepaint(data);
+      })
+      .withFailureHandler(function (err) {
+        if (__rtok !== reportReqSeq_.inb) return;
+        gen.disabled = false; gen.textContent = prev;
+        // D1b: repaint last-good for this exact request (if any) instead of just
+        // a form error (which is hidden once results show).
+        if (reportFailFallback_('inbound', __sig, __inboundRepaint, 'inbound-results-status')) return;
+        inboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getInboundReport({ from: from, to: to, department: dept });
+  }
+
+  // ds-kpi tile for the simpler (label, value, cap, deltaHtml) shape used by
+  // the Inbound report KPI row + the Insights queue-health tiles. Distinct from
+  // dsKpiTile_ (which takes a stat object + sparkline); this one keeps its
+  // pre-formatted value + pre-built delta badge + a bench-tinted caption.
+  // (Phase 1 ds-* migration; cap tint preserved by the .ds-kpi__foot.bm-*
+  // overrides in styles.html.)
+  function inboundKpiTile_(label, value, cap, deltaHtml, valueCls, surface) {
+    return '<div class="ds-kpi">'
+      + '<div class="ds-kpi__top">'
+      +   '<span class="ds-kpi__label">' + escapeHtml(label) + '</span>'
+      +   (deltaHtml || '')
+      + '</div>'
+      + '<div class="ds-kpi__value' + (valueCls || '') + '">' + escapeHtml(String(value)) + '</div>'
+      + (cap ? '<div class="ds-kpi__foot' + benchValueCls_(label, cap, true, surface) + '">' + escapeHtml(cap) + '</div>' : '')
+      + '</div>';
+  }
+
+  /**
+   * Delta badge for an inbound KPI vs the prior window. `isPp` =
+   * already-percent metrics (answer/abandon rate) compare as point
+   * differences; everything else as relative % (deltaBlock_ semantics:
+   * 0 -> 0 is 0, 0 -> nonzero is +100). Renders via the shared
+   * insDeltaBadge_ ({deltaPct, type} + valence).
+   */
+  function inboundDelta_(cur, prev, valence, isPp) {
+    cur = Number(cur) || 0; prev = Number(prev) || 0;
+    let dp;
+    if (isPp) dp = cur - prev;
+    else if (prev === 0 && cur === 0) dp = 0;
+    else if (prev === 0) dp = 100;
+    else dp = ((cur - prev) / prev) * 100;
+    return insDeltaBadge_({ deltaPct: dp, type: isPp ? 'pctPoints' : 'volume' }, valence);
+  }
+
+  function inboundAbandonPct_(r) {
+    const calls = Number(r.calls) || 0;
+    if (!calls) return '–';
+    return (((Number(r.abandoned) || 0) / calls) * 100).toFixed(1) + '%';
+  }
+
+  // Abandon-% table cell with the shared 5%-threshold benchmark tint.
+  function inboundAbandonPctCell_(r) {
+    const txt = inboundAbandonPct_(r);
+    return '<td class="num' + benchValueCls_('abandoned %', txt) + '">' + txt + '</td>';
+  }
+
+  // -- R11-B11: shared click-to-sort machinery for the report tables -------
+  // Static theads carry data-sort="<field>" (the special "__abdPct" computes
+  // abandoned/calls). Default order (owner-confirmed) is the IMPACT score:
+  // (100 - answer%) x calls, descending -- worst-AND-busiest first, so a
+  // busy 70%-answered queue outranks a one-call 0% row. A column click
+  // overrides with a plain per-column sort (second click flips direction);
+  // renderers re-paint their tbody from the re-sorted cached rows.
+  var srtState_ = {};      // tbodyId -> { key: ''|field, dir: 'asc'|'desc' } ('' = impact default)
+  var srtRegistry_ = {};   // tbodyId -> { rows, paint, impact } (last render's inputs)
+  var srtWired_ = {};
+  function srtImpactInbound_(r) {
+    var c = Number(r.calls) || 0;
+    if (c <= 0) return 0;
+    var rate = (Number(r.answered) || 0) / c * 100;
+    return (100 - rate) * c;
+  }
+  function srtValue_(r, key) {
+    if (key === '__abdPct') {
+      var c = Number(r.calls) || 0;
+      return c > 0 ? (Number(r.abandoned) || 0) / c : 0;
+    }
+    return r[key];
+  }
+  function srtApply_(tbodyId, rows, paint, impactFn) {
+    var st = srtState_[tbodyId] || (srtState_[tbodyId] = { key: '', dir: 'desc' });
+    var sorted = (rows || []).slice();
+    if (!st.key) {
+      sorted.sort(function (a, b) { return (impactFn(b) || 0) - (impactFn(a) || 0); });
+    } else {
+      var dir = st.dir === 'asc' ? 1 : -1;
+      sorted.sort(function (a, b) {
+        var va = srtValue_(a, st.key), vb = srtValue_(b, st.key);
+        var na = Number(va), nb = Number(vb);
+        var numeric = isFinite(na) && isFinite(nb)
+          && !(typeof va === 'string' && va.trim() === '')
+          && !(typeof vb === 'string' && vb.trim() === '');
+        if (numeric) return (na - nb) * dir;
+        return String(va == null ? '' : va).localeCompare(String(vb == null ? '' : vb)) * dir;
+      });
+    }
+    paint(sorted);
+    srtRegistry_[tbodyId] = { rows: rows, paint: paint, impact: impactFn };
+    var tbody = $(tbodyId); if (!tbody) return;
+    var table = tbody.closest('table'); if (!table) return;
+    var thead = table.querySelector('thead'); if (!thead) return;
+    if (!srtWired_[tbodyId]) {
+      srtWired_[tbodyId] = true;
+      thead.addEventListener('click', function (e) {
+        var th = e.target.closest('th[data-sort]');
+        if (!th) return;
+        var key = th.getAttribute('data-sort');
+        var cur = srtState_[tbodyId];
+        if (cur.key === key) { cur.dir = cur.dir === 'asc' ? 'desc' : 'asc'; }
+        else {
+          cur.key = key;
+          // Text columns start ascending; numerics start descending.
+          cur.dir = /^(label|agent|insurer|dial_in)$/.test(key) ? 'asc' : 'desc';
+        }
+        var reg = srtRegistry_[tbodyId];
+        if (reg) srtApply_(tbodyId, reg.rows, reg.paint, reg.impact);
+      });
+    }
+    thead.querySelectorAll('th[data-sort]').forEach(function (th) {
+      var on = st.key === th.getAttribute('data-sort');
+      th.classList.add('sortable');
+      th.classList.toggle('srt-asc', on && st.dir === 'asc');
+      th.classList.toggle('srt-desc', on && st.dir === 'desc');
+    });
+  }
+
+  function inboundRenderTable_(tbodyId, rows, extraOnHold) {
+    const tbody = $(tbodyId); if (!tbody) return;
+    const cols = extraOnHold ? 7 : 6;
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="' + cols + '" class="al-empty">No data in range.</td></tr>';
+      return;
+    }
+    srtApply_(tbodyId, rows, function (sorted) {
+      tbody.innerHTML = sorted.map(function (r) {
+        var html = '<tr><td>' + escapeHtml(r.label) + '</td>'
+          + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+          + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+          + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+          + inboundAbandonPctCell_(r);
+        if (extraOnHold) html += '<td class="num">' + fmtNumber(r.on_hold) + '</td>';
+        html += '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>';
+        return html + '</tr>';
+      }).join('');
+    }, srtImpactInbound_);
+  }
+
+  function inboundRenderCrossTable_(rows) {
+    const tbody = $('inbound-dialin-insurer-tbody'); if (!tbody) return;
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="al-empty">No labeled callers in range.</td></tr>';
+      return;
+    }
+    srtApply_('inbound-dialin-insurer-tbody', rows, function (sorted) {
+      tbody.innerHTML = sorted.map(function (r) {
+        return '<tr><td>' + escapeHtml(r.dial_in) + '</td>'
+          + '<td>' + escapeHtml(r.insurer) + '</td>'
+          + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+          + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+          + '<td class="num">' + fmtNumber(r.abandoned) + '</td></tr>';
+      }).join('');
+    }, srtImpactInbound_);
+  }
+
+  /**
+   * The insurer table: same columns as inboundRenderTable_ plus a
+   * click-to-expand daily drill-down per row (decision A: fetched on
+   * demand via getInboundInsurerDaily; at most one row open). The
+   * expansion carries a Volume / Abandon % tab strip + a line chart.
+   */
+  function inboundRenderInsurerTable_(rows) {
+    const tbody = $('inbound-insurer-tbody'); if (!tbody) return;
+    inboundCollapseDrill_();
+    if (!rows || !rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No data in range.</td></tr>';
+      return;
+    }
+    srtApply_('inbound-insurer-tbody', rows, function (sorted) {
+      inboundCollapseDrill_();   // a re-sort re-renders rows; any open drill closes
+      tbody.innerHTML = sorted.map(function (r) {
+        // E-8: NO role="button" on a <tr> -- it overrides the implicit row
+        // role and the table stops being a grid for screen readers (the
+        // documented house rule the agent table follows; tabindex + the
+        // keydown handler below keep it keyboard-activatable).
+        return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0"'
+          + ' title="Show this insurer’s daily trend">'
+          + '<td><span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label) + '</td>'
+          + '<td class="num">' + fmtNumber(r.calls) + '</td>'
+          + '<td class="num">' + fmtNumber(r.answered) + '</td>'
+          + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
+          + inboundAbandonPctCell_(r)
+          + '<td class="num">' + fmtNumber(r.on_hold) + '</td>'
+          + '<td class="num">' + fmtDuration(r.avg_wait || 0) + '</td>'
+          + '</tr>';
+      }).join('');
+      tbody.querySelectorAll('.inbound-insurer-row').forEach(function (tr) {
+        tr.addEventListener('click', function () { inboundToggleDrill_(tr); });
+        tr.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inboundToggleDrill_(tr); }
+        });
+      });
+    }, srtImpactInbound_);
+  }
+
+  function inboundCollapseDrill_() {
+    if (inboundDrillChart) { try { inboundDrillChart.destroy(); } catch (e) {} inboundDrillChart = null; }
+    document.querySelectorAll('.inbound-drill-row').forEach(function (row) { row.remove(); });
+    document.querySelectorAll('.inbound-insurer-row.drill-open').forEach(function (tr) {
+      tr.classList.remove('drill-open');
+    });
+    inboundExpandedInsurer = null;
+  }
+
+  function inboundToggleDrill_(tr) {
+    const insurer = tr.getAttribute('data-insurer');
+    const wasOpen = (inboundExpandedInsurer === insurer);
+    inboundCollapseDrill_();
+    if (wasOpen) return;   // second click closes
+    inboundExpandedInsurer = insurer;
+    tr.classList.add('drill-open');
+
+    const drill = document.createElement('tr');
+    drill.className = 'inbound-drill-row';
+    drill.innerHTML = '<td colspan="7">'
+      + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist">'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab">Volume</button>'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab">Abandon %</button>'
+      + '</div>'
+      + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart"></canvas></div>'
+      + '<div class="inbound-drill-status pr-delta-cap">Loading daily trend…</div>'
+      + '</td>';
+    tr.parentNode.insertBefore(drill, tr.nextSibling);
+
+    drill.querySelector('.inbound-drill-tabs').addEventListener('click', function (e) {
+      const tab = e.target.closest('.pr-trend-subtab');
+      if (!tab) return;
+      inboundDrillMetric = tab.getAttribute('data-metric') || 'calls';
+      drill.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
+        b.classList.toggle('active', b === tab);
+      });
+      const cached = inboundDrillCache[insurer];
+      if (cached) inboundRenderDrillChart_(drill, cached);
+    });
+
+    const cached = inboundDrillCache[insurer];
+    if (cached) { inboundRenderDrillChart_(drill, cached); return; }
+    const dept = (inboundLastData && inboundLastData.meta && inboundLastData.meta.department) || '';
+    const meta = (inboundLastData && inboundLastData.meta) || {};
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (inboundExpandedInsurer !== insurer) return;   // collapsed meanwhile
+        if (!res || res.meta.available === false) {
+          const st = drill.querySelector('.inbound-drill-status');
+          if (st) st.textContent = 'Daily trend unavailable (Neon unreachable) — try again.';
+          return;
+        }
+        inboundDrillCache[insurer] = res.daily || [];
+        inboundRenderDrillChart_(drill, inboundDrillCache[insurer]);
+      })
+      .withFailureHandler(function (err) {
+        const st = drill.querySelector('.inbound-drill-status');
+        if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getInboundInsurerDaily({ from: meta.from, to: meta.to, insurer: insurer, department: dept });
+  }
+
+  function inboundRenderDrillChart_(drillRow, daily) {
+    const status = drillRow.querySelector('.inbound-drill-status');
+    if (!daily.length) {
+      if (status) status.textContent = 'No calls from this insurer in range.';
+      return;
+    }
+    if (status) status.textContent = '';
+    refreshChartTheme();
+    if (inboundDrillChart) { try { inboundDrillChart.destroy(); } catch (e) {} inboundDrillChart = null; }
+    const canvas = drillRow.querySelector('canvas');
+    if (!canvas) return;
+    const isRate = inboundDrillMetric === 'rate';
+    const labels = daily.map(function (d) { return d.d; });
+    const accent = THEME.accent || '#4E79A7';
+    const warn = THEME.warn || '#E15759';
+    let datasets;
+    if (isRate) {
+      const points = daily.map(function (d) {
+        const calls = Number(d.calls) || 0;
+        return calls > 0 ? Number((((Number(d.abandoned) || 0) / calls) * 100).toFixed(1)) : 0;
+      });
+      datasets = [{
+        label: 'Abandon %', data: points, borderColor: warn,
+        backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, warn); },
+        tension: 0.3, fill: true,
+        pointBackgroundColor: warn, pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+        pointRadius: 2.5, pointHoverRadius: 4,
+      }];
+    } else {
+      // R11-M: Volume view overlays the ABANDONED-call volume (warn/red) on the
+      // total-calls line so lost volume reads against total at a glance.
+      datasets = [
+        {
+          label: 'Calls', data: daily.map(function (d) { return Number(d.calls) || 0; }),
+          borderColor: accent,
+          backgroundColor: function (ctx) { return irGradientFill_(ctx.chart, accent); },
+          tension: 0.3, fill: true,
+          pointBackgroundColor: accent, pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+          pointRadius: 2.5, pointHoverRadius: 4,
+        },
+        {
+          label: 'Abandoned', data: daily.map(function (d) { return Number(d.abandoned) || 0; }),
+          borderColor: warn, backgroundColor: 'rgba(0,0,0,0)',
+          tension: 0.3, fill: false,
+          pointBackgroundColor: warn, pointBorderColor: THEME.paperCard, pointBorderWidth: 1.5,
+          pointRadius: 2.5, pointHoverRadius: 4,
+        },
+      ];
+    }
+    inboundDrillChart = safeChart_(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: !isRate, position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
+          datalabels: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                return isRate
+                  ? 'Abandon %: ' + ctx.parsed.y + '%'
+                  : ctx.dataset.label + ': ' + ctx.parsed.y;
+              },
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: isRate ? 100 : undefined,
+            ticks: { callback: function (v) { return isRate ? v + '%' : v; } },
+          },
+        },
+      },
+    });
+  }
+
+  function inboundSetResultsStatus_(kind, msg) {
+    const el = $('inbound-results-status'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; el.className = 'status'; return; }
+    el.className = 'status status-' + (kind || 'info');
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function inboundRenderReport_(data, opts) {
+    coverageNoteUpsert_('inbound-body', 'inbound',
+      (data && data.meta && data.meta.from) || null, null,
+      (data && data.meta && data.meta.coverageStart) || null);   // R12-26b
+    inboundLastData = data;
+    inboundDrillCache = {};   // drill-down series are per (range, dept)
+    inboundCollapseDrill_();
+    const meta = data.meta || {};
+    const scopeLabel = meta.companyView ? 'All departments' : (meta.department || '');
+    $('inbound-results-date').textContent =
+      '(' + scopeLabel + ' · ' + (meta.from || '') + ' – ' + (meta.to || '') + ')';
+    const cmp = $('inbound-compare-line');
+    if (cmp) {
+      cmp.textContent = (meta.priorFrom && meta.priorTo)
+        ? 'Deltas compare against the immediately-preceding period: ' + meta.priorFrom + ' – ' + meta.priorTo
+        : '';
+    }
+
+    // Unavailable (Neon down / table missing) -> show the empty-state, hide body.
+    const unavail = $('inbound-unavailable'), body = $('inbound-body');
+    const csvBtn = $('inbound-csv-btn');
+    if (meta.available === false) {
+      if (unavail) unavail.style.display = '';
+      if (body) body.style.display = 'none';
+      if (csvBtn) csvBtn.style.display = 'none';
+      inboundSetResultsStatus_('', '');
+      return;
+    }
+    if (unavail) unavail.style.display = 'none';
+    if (body) body.style.display = '';
+    if (csvBtn) csvBtn.style.display = '';
+
+    // Dept with no mapped queues: same operator hint QCD uses (the dept
+    // needs a Dept Config row / DEPT_QCD_QUEUES entry before its inbound
+    // slice can attribute anything).
+    inboundSetResultsStatus_('', '');
+    if (meta.unmapped) {
+      inboundSetResultsStatus_('warn', 'No queues are mapped for '
+        + (meta.department || 'this department')
+        + ' — map its A_Q_* queue names in Dept Config (admin) to populate this view.');
+    }
+
+    reportHeadline_('inbound-headline', 'inbound-results', inboundHeadline_(data));
+
+    const k = data.kpis || {};
+    const p = data.kpisPrior || {};
+    const tiles = [
+      inboundKpiTile_('Inbound calls', fmtNumber(k.total),
+        (k.anonymous ? fmtNumber(k.anonymous) + ' anonymous' : ''),
+        inboundDelta_(k.total, p.total, 'neu', false)),
+      inboundKpiTile_('Answered', fmtNumber(k.answered), (k.answerRate || 0) + '%',
+        inboundDelta_(k.answered, p.answered, 'pos', false), '', 'inbound'),
+      inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
+        inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
+      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held',
+        inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false)),
+      inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon',
+        inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false)),
+      inboundKpiTile_('Avg hold', fmtDuration(k.avgHoldSec), 'when held',
+        inboundDelta_(k.avgHoldSec, p.avgHoldSec, 'neu', false)),
+    ];
+    // IVR abandons never reached a queue, so they're unattributable to any
+    // dept -- the bucket only renders on the company-wide view (decision C).
+    if (meta.companyView) {
+      tiles.push(inboundKpiTile_('Abandoned in IVR', fmtNumber(k.abandonedIvr),
+        'hung up in the menus — no queue, no agent',
+        inboundDelta_(k.abandonedIvr, p.abandonedIvr, 'neg', false)));
+      // R5: abandoned DIRECT calls (rang a person's line, no queue) were
+      // split out of the IVR bucket at capture -- old rows keep stage=ivr
+      // until re-imported, so this tile grows as history heals.
+      tiles.push(inboundKpiTile_('Abandoned direct', fmtNumber(k.abandonedDirect),
+        'rang an agent’s line — no queue',
+        inboundDelta_(k.abandonedDirect, p.abandonedDirect, 'neg', false)));
+    }
+    $('inbound-kpi-row').innerHTML = tiles.join('');
+
+    inboundRenderInsurerTable_(data.byInsurer);
+    inboundRenderTable_('inbound-dialin-tbody', data.byDialIn, false);
+    inboundRenderTable_('inbound-queue-tbody', data.byQueue, false);
+    inboundRenderCrossTable_(data.byDialInInsurer);
+    inboundRenderOutside_(data.outsideWindow);
+    // Temporal abandon heatmap (companion). Separate round-trip via
+    // getInboundHeatmap so it can be reused by the QCD report too.
+    // Skipped on the SWR pre-paint -- the live repaint fetches it once.
+    if (!(opts && opts.swr)) {
+      loadAbandonHeatmap_('inbound-heatmap', meta.companyView ? '' : meta.department, meta.from, meta.to);
+    }
+  }
+
+  // ---- Temporal abandon heatmap (weekday x hour), shared by Inbound + QCD ----
+  // Sourced from inbound_calls via getInboundHeatmap. Admin-only at the server
+  // boundary (inherits the inbound report's vetting gate), so the loader hides
+  // the panel quietly on an auth/error/empty result -- it's a companion, never
+  // core. Color pivots on the 5% company abandon standard (C2): <=5% reads as
+  // calm sage, >5% ramps warm so the problem hours pop.
+  var HEAT_MIN_VOLUME_ = 3;   // cells below this are "low signal" -> muted, not colored by rate
+
+  // Per-container stale-response tokens: a re-generate with a new window
+  // while the previous heatmap fetch is in flight must not let the OLDER
+  // response paint a grid that disagrees with the container's stashed
+  // data-heat-* scope (which the cell drill re-issues).
+  var heatLoadSeq_ = {};
+  /**
+   * RESEARCH-ONLY out-of-hours block. Everything above it is scoped to the
+   * work window (server-side), so this is the only place out-of-window traffic
+   * appears -- and it is deliberately styled MUTED, kept out of the KPI row,
+   * and captioned as not-a-department-metric, because the whole point of the
+   * owner ruling is that these calls are visible without counting against
+   * anyone. Hides itself entirely when there is nothing outside the window.
+   */
+  function inboundRenderOutside_(o) {
+    const sec = $('inbound-outside-section'), body = $('inbound-outside-body');
+    if (!sec || !body) return;
+    if (!o || !o.calls) { sec.style.display = 'none'; body.innerHTML = ''; return; }
+    sec.style.display = '';
+    const pct = function (ab, n) { return n ? (Math.round((ab / n) * 1000) / 10) + '%' : '—'; };
+    const row = function (label, calls, ab, hint) {
+      return '<tr><td>' + escapeHtml(label) + '<span class="ins-rollup-cap"> '
+        + escapeHtml(hint) + '</span></td><td class="num">' + fmtNumber(calls)
+        + '</td><td class="num">' + fmtNumber(ab) + '</td><td class="num">'
+        + pct(ab, calls) + '</td></tr>';
+    };
+    body.innerHTML =
+      '<table class="qcd-source-table"><thead><tr><th>Window</th>'
+      + '<th class="num">Calls</th><th class="num">Abandoned</th>'
+      + '<th class="num">Aband. %</th></tr></thead><tbody>'
+      + row('Before hours', o.beforeCalls, o.beforeAbandoned, '(before 8:30 AM CST)')
+      + row('After hours', o.afterCalls, o.afterAbandoned, '(after 5:00 PM CST)')
+      + '<tr class="agents-totals"><td>Total outside hours</td><td class="num">'
+      + fmtNumber(o.calls) + '</td><td class="num">' + fmtNumber(o.abandoned)
+      + '</td><td class="num">' + pct(o.abandoned, o.calls) + '</td></tr>'
+      + '</tbody></table>';
+  }
+
+  function loadAbandonHeatmap_(containerId, dept, from, to) {
+    var el = $(containerId);
+    if (!el) return;
+    // R7 (G-3): the Insights heatmap surface can be admin-toggled off -- skip
+    // the fetch too (CSS hides #ins-heatmap; the Inbound copy stays live).
+    if (containerId === 'ins-heatmap' && uiFlagOn_('ins-heatmap')) { el.style.display = 'none'; return; }
+    // Stash the request scope on the container so the cell drill can re-issue
+    // it for one (dow, slot); a re-render implicitly drops any open drill.
+    el.setAttribute('data-heat-dept', dept || '');
+    el.setAttribute('data-heat-from', from || '');
+    el.setAttribute('data-heat-to', to || '');
+    initHeatmapDrillOnce_();
+    el.style.display = '';
+    el.innerHTML = '<div class="ds-heatmap-loading"><span class="ds-loader--eq" aria-hidden="true">'
+      + '<i></i><i></i><i></i><i></i></span> Loading abandon heatmap…</div>';
+    var __tok = heatLoadSeq_[containerId] = (heatLoadSeq_[containerId] || 0) + 1;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__tok !== heatLoadSeq_[containerId]) return;   // superseded by a newer load
+        renderAbandonHeatmap_(containerId, data);
+      })
+      .withFailureHandler(function () {
+        if (__tok !== heatLoadSeq_[containerId]) return;   // a newer load owns the panel
+        el.style.display = 'none'; el.innerHTML = '';
+      })
+      .getInboundHeatmap({ department: dept || '', from: from, to: to });
+  }
+
+  // Cell background via CSS color-mix() -- the browser resolves + mixes the
+  // theme tokens (incl. OKLCH ones) itself, so there's no JS color parsing to
+  // get wrong (the earlier canvas-resolve path returned black on some themes).
+  // Pivots on the 5% standard: <=5% sage (deeper = lower abandon), >5% warm
+  // (deeper = higher), saturating ~20%.
+  function heatCellBg_(rate, calls) {
+    if (calls < HEAT_MIN_VOLUME_) return 'var(--paper-2)';       // not enough signal
+    if (rate <= 5) {
+      var p = Math.round((0.20 + 0.45 * (1 - rate / 5)) * 100);  // 20%..65% good over paper
+      return 'color-mix(in srgb, var(--good) ' + p + '%, var(--paper-card))';
+    }
+    var p2 = Math.round(Math.min(1, (rate - 5) / 15) * 100);     // 0%..100% warn over warn-soft
+    return 'color-mix(in srgb, var(--warn) ' + p2 + '%, var(--warn-soft))';
+  }
+  function heatHourLabel_(h) {
+    var ampm = h < 12 ? 'a' : 'p';
+    var hr = h % 12; if (hr === 0) hr = 12;
+    return hr + ampm;
+  }
+  // Compact "Jun 2" ISO formatter for the heatmap aggregation caption (#4).
+  function isoDateShort_(iso) {
+    var p = String(iso).split('-');
+    if (p.length !== 3) return String(iso);
+    var mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][(+p[1]) - 1] || p[1];
+    return mo + ' ' + (+p[2]);
+  }
+
+  function renderAbandonHeatmap_(containerId, data) {
+    var el = $(containerId);
+    if (!el) return;
+    var meta = (data && data.meta) || {};
+    var cells = (data && data.cells) || [];
+    // Companion panel: stay quiet (hidden) when there's nothing useful to show
+    // -- unavailable Neon, unmapped dept, or no time-of-day rows at all (e.g.
+    // a range with only pre-extension inbound rows that lack call_start).
+    if (meta.available === false || meta.unmapped || !cells.length) {
+      el.style.display = 'none'; el.innerHTML = '';
+      return;
+    }
+    el.style.display = '';
+
+    var startH = meta.windowStartHour != null ? meta.windowStartHour : 8;
+    var endH   = meta.windowEndHour   != null ? meta.windowEndHour   : 17;
+    var slotMin = meta.slotMinutes || 60;
+    var perHour = 60 / slotMin;
+    var slotCount = Math.max(1, Math.round((endH - startH) * perHour));
+    var tz = meta.tzLabel || 'CST';
+    // Phase 4 dual-lens: stash the slot geometry on the host so a cell drill can
+    // reconstruct the CST hour window (startH + slot*slotMin) for the DQE
+    // missed-ring lens (getMissedCallsSlice). Attributes survive the innerHTML
+    // swap below.
+    el.setAttribute('data-heat-starth', startH);
+    el.setAttribute('data-heat-slotmin', slotMin);
+
+    // cellMap[dow][slot] = {calls, abandoned}
+    var cellMap = {};
+    cells.forEach(function (c) {
+      if (!cellMap[c.dow]) cellMap[c.dow] = {};
+      cellMap[c.dow][c.slot] = c;
+    });
+
+    var DOWS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri']];
+
+    // #4: the grid COLLAPSES the whole report window into one weekday × hour
+    // summary, so it can read as "one week" next to the report's 30-day header.
+    // Spell out the aggregation window (from the container's stashed scope) so
+    // the framing is explicit, not dissonant.
+    var hFrom = el.getAttribute('data-heat-from') || meta.from || '';
+    var hTo   = el.getAttribute('data-heat-to')   || meta.to   || '';
+    var heatRangeNote = '';
+    if (hFrom && hTo) {
+      var heatWd = (typeof workingDaysBetween_ === 'function') ? workingDaysBetween_(hFrom, hTo) : 0;
+      heatRangeNote = ' · aggregated over ' + isoDateShort_(hFrom) + '–' + isoDateShort_(hTo)
+        + (heatWd ? ' (' + heatWd + ' weekday' + (heatWd === 1 ? '' : 's') + ')' : '');
+    }
+    var html = '<div class="ds-heatmap-head"><span class="ds-heatmap-title">When are callers abandoning?</span>'
+      + '<span class="ds-heatmap-sub">abandon rate · weekday × hour (' + escapeHtml(tz) + ')'
+      + escapeHtml(heatRangeNote) + ' · hover a cell for its abandoned / total counts</span></div>';
+    html += '<div class="ds-heatmap-wrap"><div class="ds-heatmap" style="grid-template-columns: auto repeat('
+      + slotCount + ', minmax(26px, 1fr));">';
+    html += '<span class="ds-heatmap__corner"></span>';
+    for (var s = 0; s < slotCount; s++) {
+      html += '<span class="ds-heatmap__col-h">' + escapeHtml(heatHourLabel_(startH + Math.round(s / perHour))) + '</span>';
+    }
+    DOWS.forEach(function (d) {
+      html += '<span class="ds-heatmap__row-h">' + d[1] + '</span>';
+      for (var sl = 0; sl < slotCount; sl++) {
+        var c = cellMap[d[0]] && cellMap[d[0]][sl];
+        var hr = startH + Math.round(sl / perHour);
+        var label = d[1] + ' ' + heatHourLabel_(hr) + '–' + heatHourLabel_(hr + Math.round(1 / perHour)) + ' ' + tz;
+        if (!c || !c.calls) {
+          html += '<span class="ds-heatmap__cell ds-heatmap__cell--empty" title="'
+            + escapeHtml(label + ' · no calls') + '"></span>';
+          continue;
+        }
+        var rate = Math.round(c.abandoned / c.calls * 1000) / 10;
+        var bg = heatCellBg_(rate, c.calls);
+        var note = c.calls < HEAT_MIN_VOLUME_ ? ' (low volume)' : '';
+        var title = label + ' · ' + rate + '% abandoned (' + c.abandoned + ' of ' + c.calls + ' calls)' + note;
+        // Drill affordance: any cell with at least one abandon lists its
+        // calls on click (getInboundHeatmapCell -> the detail panel below).
+        var drill = c.abandoned > 0;
+        html += '<span class="ds-heatmap__cell' + (drill ? ' ds-heatmap__cell--drill' : '')
+          + '" style="background:' + bg + ';" title="'
+          + escapeHtml(title + (drill ? ' · click to list the calls' : '')) + '"'
+          + (drill ? ' role="button" tabindex="0" data-dow="' + d[0] + '" data-slot="' + sl
+            + '" data-label="' + escapeHtml(label) + '"' : '')
+          + '></span>';
+      }
+    });
+    html += '</div></div>';
+
+    // Legend: discrete swatches anchored on the 5% standard (clearer than a
+    // continuous ramp for a non-technical audience).
+    var sw = function (bg, lbl) {
+      return '<span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background:'
+        + bg + ';"></span>' + escapeHtml(lbl) + '</span>';
+    };
+    html += '<div class="ds-heatmap-legend">'
+      + sw(heatCellBg_(2.5, 99), '0–5% (on target)')
+      + sw(heatCellBg_(7.5, 99), '5–10%')
+      + sw(heatCellBg_(15, 99), '15%+')
+      + sw('var(--paper-2)', 'low volume (<' + HEAT_MIN_VOLUME_ + ' calls)')
+      + '</div>';
+    // Cell-drill detail panel (hidden until a cell with abandons is clicked).
+    html += '<div class="ds-heatmap-detail" style="display:none;"></div>';
+    el.innerHTML = html;
+  }
+
+  // -- Heatmap cell drill --------------------------------------------------
+  // Click a cell with abandons -> list the individual abandoned calls in that
+  // weekday x hour slot (getInboundHeatmapCell -- same scope + slot math as
+  // the heatmap, so the list reconciles with the cell). Each row carries the
+  // existing "↳ path" journey drill via the delegated .pid-journey handler.
+  function initHeatmapDrillOnce_() {
+    if (initHeatmapDrillOnce_.done) return;
+    initHeatmapDrillOnce_.done = true;
+    document.addEventListener('click', function (e) {
+      const cell = e.target.closest && e.target.closest('.ds-heatmap__cell--drill');
+      if (!cell) return;
+      const host = cell.closest('[data-heat-from]');
+      if (!host) return;
+      e.preventDefault();
+      heatCellToggleDrill_(host, cell);
+    });
+    // role=button cells: Enter/Space activate like a click.
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const cell = e.target.closest && e.target.closest('.ds-heatmap__cell--drill');
+      if (!cell) return;
+      e.preventDefault();
+      cell.click();
+    });
+  }
+
+  function heatCellToggleDrill_(host, cell) {
+    const detail = host.querySelector('.ds-heatmap-detail');
+    if (!detail) return;
+    // Ensure the delegated .pid-journey handler is live -- both lenses emit
+    // "↳ path" chips, and on an Insights-only session initClipboardOnce may not
+    // have run yet (its other call sites are the My-Dept missed render paths).
+    initClipboardOnce();
+    const key = cell.getAttribute('data-dow') + ':' + cell.getAttribute('data-slot');
+    const clearActive = function () {
+      host.querySelectorAll('.ds-heatmap__cell--active').forEach(function (c) {
+        c.classList.remove('ds-heatmap__cell--active');
+      });
+    };
+    // Second click on the open cell closes the panel.
+    if (detail.getAttribute('data-cell') === key && detail.style.display !== 'none') {
+      detail.style.display = 'none'; detail.innerHTML = '';
+      detail.removeAttribute('data-cell');
+      clearActive();
+      return;
+    }
+    clearActive();
+    cell.classList.add('ds-heatmap__cell--active');
+    detail.setAttribute('data-cell', key);
+    detail.style.display = '';
+    const label = cell.getAttribute('data-label') || '';
+    const dept = host.getAttribute('data-heat-dept') || '';
+    const from = host.getAttribute('data-heat-from') || '';
+    const to   = host.getAttribute('data-heat-to') || '';
+    const dow  = Number(cell.getAttribute('data-dow'));
+    const slot = Number(cell.getAttribute('data-slot'));
+
+    // Phase 4: TWO labeled lenses in the same panel -- the inbound_calls
+    // abandon list (Lens 1, reconciles with the cell's own count) and the
+    // dqe_history missed-ring lens for the SAME weekday × hour (Lens 2). The
+    // counts are NOT expected to match (different source & definition); each
+    // lens is labeled. Both fetch independently, each guarded by the panel's
+    // current cell key so a stale response can't paint.
+    detail.innerHTML =
+        '<div class="heat-lens" data-lens="inbound">' + dsRingsHtml_('Loading abandoned inbound calls…') + '</div>'
+      + '<div class="heat-lens" data-lens="missed">'  + dsRingsHtml_('Loading missed rings…')          + '</div>';
+    const inboundSlot = detail.querySelector('[data-lens="inbound"]');
+    const missedSlot  = detail.querySelector('[data-lens="missed"]');
+    const guard = function () { return detail.getAttribute('data-cell') === key; };
+
+    // Lens 1 -- inbound abandons (unchanged behavior).
+    google.script.run
+      .withSuccessHandler(function (resp) { if (guard() && inboundSlot) inboundSlot.innerHTML = heatCellDetailHtml_(resp, label); })
+      .withFailureHandler(function (err) {
+        if (guard() && inboundSlot) inboundSlot.innerHTML = '<div class="status status-error">'
+          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+      })
+      .getInboundHeatmapCell({ department: dept, from: from, to: to, dow: dow, slot: slot });
+
+    // Lens 2 -- DQE missed rings for the same weekday × CST hour window. Needs a
+    // single department (the missed report is per-dept); the company view
+    // (dept='') shows a note instead.
+    if (!dept) {
+      if (missedSlot) missedSlot.innerHTML =
+        '<div class="heat-drill-head"><strong>Missed Rings</strong> · <span class="ms-lens-note">agent-ring lens (DQE)</span></div>'
+        + '<div class="ds-note">Pick a single department to see the agent-ring missed detail for this slot.</div>';
+    } else {
+      const startH  = Number(host.getAttribute('data-heat-starth'));
+      const slotMin = Number(host.getAttribute('data-heat-slotmin')) || 60;
+      const startMin = (isFinite(startH) ? startH : 8) * 60 + slot * slotMin;
+      google.script.run
+        .withSuccessHandler(function (resp) { if (guard() && missedSlot) missedSlot.innerHTML = missedSliceListHtml_(resp); })
+        .withFailureHandler(function (err) {
+          if (guard() && missedSlot) missedSlot.innerHTML = '<div class="status status-error">'
+            + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+        })
+        .getMissedCallsSlice({ department: dept, from: from, to: to,
+          isoDow: dow, hourStart: missedSliceHm_(startMin), hourEnd: missedSliceHm_(startMin + slotMin) });
+    }
+  }
+
+  // R11-H: group heat-drill rows by their date, with a colored per-date header
+  // + a left rail, so a multi-date slot reads as distinct day-clusters. Tone
+  // cycles through a small token palette keyed on first-seen date order. A
+  // single-date slot renders one (still-headered) group.
+  var HEAT_DRILL_DATE_TONES_ = ['accent', 'good', 'warn', 'muted'];
+  function heatDrillDateHeader_(dateIso, count, toneIdx) {
+    var tone = HEAT_DRILL_DATE_TONES_[toneIdx % HEAT_DRILL_DATE_TONES_.length];
+    var wd = '';
+    if (dateIso && /^\d{4}-\d{2}-\d{2}$/.test(dateIso)) {
+      var p = dateIso.split('-');
+      var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+      wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] || '';
+    }
+    var label = dateIso ? String(dateIso).slice(5) : '(no date)';   // MM-DD
+    return '<div class="heat-drill-datehdr heat-drill-datehdr--' + tone + '">'
+      + '<span class="heat-drill-datedot"></span>'
+      + escapeHtml(label) + (wd ? ' <span class="heat-drill-dow">' + wd + '</span>' : '')
+      + ' <span class="heat-drill-datecount">' + count + '</span></div>';
+  }
+  function heatDrillGroupedList_(items, getDate, rowHtmlFn) {
+    var order = [], byDate = {};
+    items.forEach(function (it) {
+      var d = getDate(it) || '';
+      if (!byDate[d]) { byDate[d] = []; order.push(d); }
+      byDate[d].push(it);
+    });
+    var toneIdx = 0;
+    return order.map(function (d) {
+      var grp = byDate[d];
+      var tone = HEAT_DRILL_DATE_TONES_[toneIdx % HEAT_DRILL_DATE_TONES_.length];
+      var html = '<div class="heat-drill-dategroup heat-drill-dategroup--' + tone + '">'
+        + heatDrillDateHeader_(d, grp.length, toneIdx)
+        + grp.map(rowHtmlFn).join('') + '</div>';
+      toneIdx++;
+      return html;
+    }).join('');
+  }
+
+  function heatCellDetailHtml_(resp, label) {
+    const meta = (resp && resp.meta) || {};
+    if (meta.available === false) {
+      return '<div class="ds-note">Call detail unavailable — the inbound-calls store (Neon) could not be reached.</div>';
+    }
+    const calls = (resp && resp.calls) || [];
+    if (!calls.length) {
+      return '<div class="ds-note">No abandoned calls recorded in this slot for the selected range.</div>';
+    }
+    // Rows grouped by date (the date is in the group header, so each row shows
+    // the CST time only).
+    const body = heatDrillGroupedList_(calls,
+      function (c) { return c.callDate || ''; },
+      function (c) {
+        const path = [c.entryQueue, c.finalQueue].filter(Boolean)
+          .filter(function (v, i, a) { return a.indexOf(v) === i; })   // entry==final -> once
+          .map(escapeHtml).join(' → ');
+        const stage = c.abandonedOnHold ? 'on hold' : (c.abandonStage || '');
+        const facts = [];
+        if (stage) facts.push('abandoned ' + escapeHtml(String(stage)));
+        if (c.waitSeconds != null) facts.push('waited ' + escapeHtml(crFormatSecondsShort_(c.waitSeconds)));
+        if (c.abandonedOnHold && c.holdSeconds != null) {
+          facts.push('held ' + escapeHtml(crFormatSecondsShort_(c.holdSeconds)));
+        }
+        return '<div class="heat-drill-row">'
+          + '<span class="heat-drill-when">' + escapeHtml(String(c.cstStart || '').slice(0, 5)) + '</span>'
+          + '<span class="heat-drill-path">' + (path || '(no queue recorded)')
+          +   (facts.length ? ' <span class="heat-drill-facts">· ' + facts.join(' · ') + '</span>' : '')
+          + '</span>'
+          + (c.callId
+            ? '<button type="button" class="pid-journey" data-journey-pid="' + escapeHtml(c.callId)
+              + '" data-journey-date="' + escapeHtml(c.callDate || '')
+              + '" title="Show this call&#39;s leg-by-leg path">&#8627; path</button>'
+            : '')
+          + '</div>';
+      });
+    const head = '<div class="heat-drill-head"><strong>' + escapeHtml(label) + '</strong>'
+      + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
+      + '</div>';
+    return head + '<div class="heat-drill-list">' + body + '</div>';
+  }
+
+  // Shared renderer for a getMissedCallsSlice payload (the DQE missed-ring
+  // LENS surfaced by the heatmap dual-lens cell drill + the Queue-health
+  // per-queue drill). This is a DIFFERENT source & definition than the inbound
+  // abandon count / QCD roll-up it sits beside -- the two won't reconcile, so
+  // the header labels it explicitly (owner ruling: two labeled lenses).
+  // Abandoned entries carry the existing "↳ path" journey chip via
+  // parentIdBadge (the delegated .pid-journey handler renders the overlay).
+  function missedSliceListHtml_(resp, headLabel) {
+    var meta = (resp && resp.meta) || {};
+    var entries = (resp && resp.entries) || [];
+    var lens = '<span class="ms-lens-note" title="From dqe_history missed rings — a different source and definition than the inbound abandon count. The two are not expected to reconcile.">agent-ring lens (DQE)</span>';
+    var head = '<div class="heat-drill-head"><strong>' + escapeHtml(headLabel || 'Missed Rings')
+      + '</strong> · ' + entries.length + ' ring' + (entries.length === 1 ? '' : 's')
+      + ' · ' + lens + '</div>';
+    if (!entries.length) {
+      return head + '<div class="ds-note">No missed rings recorded here for the selected range.</div>';
+    }
+    var lost = meta.abandonedDetailLost
+      ? '<div class="ds-note ms-lost">Some abandoned-call detail in this range was corrupted (rebuild pending) and is excluded.</div>'
+      : '';
+    // R11-H: grouped by date (the date is in the group header, so each row shows
+    // the ring time only).
+    var rows = heatDrillGroupedList_(entries,
+      function (e) { return e.date || ''; },
+      function (e) {
+        var siren = e.abandoned ? ' 🚨' : '';
+        return '<div class="heat-drill-row' + (e.abandoned ? ' abandoned' : '') + '">'
+          + '<span class="heat-drill-when">' + escapeHtml(e.label || e.time || '') + siren + '</span>'
+          + '<span class="heat-drill-path">' + escapeHtml(e.who || '') + '</span>'
+          + parentIdBadge(e.parentId, e.date)
+          + '</div>';
+      });
+    return head + lost + '<div class="heat-drill-list">' + rows + '</div>';
+  }
+
+  // "HH:MM" from minutes-past-midnight (CST), for the slice hour window.
+  function missedSliceHm_(mins) {
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  }
+
+  /**
+   * Client-side CSV of the full inbound payload (KPIs vs prior, the
+   * three breakdowns, the dial-in x insurer cross-cut, and the daily
+   * series -- which has no on-screen table, so the CSV is the only way
+   * to get it). Every cell routes through csvSafeCell_ before the
+   * RFC-4180 quoting (insurer labels are admin text; queue/dial-in
+   * values originate upstream -- treat all as untrusted).
+   */
+  function inboundDownloadCsv_() {
+    if (!inboundLastData || (inboundLastData.meta || {}).available === false) return;
+    const d = inboundLastData;
+    const meta = d.meta || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push(row(['Inbound Calls report', meta.from + ' to ' + meta.to]));
+    lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
+    lines.push(row(['Prior window', meta.priorFrom + ' to ' + meta.priorTo]));
+    lines.push('');
+    lines.push(row(['KPI', 'Current', 'Prior']));
+    const k = d.kpis || {}, p = d.kpisPrior || {};
+    [['Inbound calls', 'total'], ['Answered', 'answered'], ['Abandoned', 'abandoned'],
+     ['Missed', 'missed'], ['Abandoned on hold', 'abandonedOnHold'], ['Anonymous', 'anonymous'],
+     ['Answer rate %', 'answerRate'], ['Abandon rate %', 'abandonRate'],
+     ['Avg wait sec', 'avgWaitSec'], ['Avg hold sec', 'avgHoldSec']].forEach(function (m) {
+      lines.push(row([m[0], k[m[1]] != null ? k[m[1]] : '', p[m[1]] != null ? p[m[1]] : '']));
+    });
+    const breakdown = function (title, firstCol, rows, withOnHold) {
+      lines.push('');
+      lines.push(row([title]));
+      const head = [firstCol, 'Calls', 'Answered', 'Abandoned'];
+      if (withOnHold) head.push('On-hold abandon');
+      head.push('Avg wait sec');
+      lines.push(row(head));
+      (rows || []).forEach(function (r) {
+        const cells = [r.label, r.calls, r.answered, r.abandoned];
+        if (withOnHold) cells.push(r.on_hold);
+        cells.push(r.avg_wait != null ? r.avg_wait : '');
+        lines.push(row(cells));
+      });
+    };
+    breakdown('By insurer (labeled callers only)', 'Insurer', d.byInsurer, true);
+    breakdown('By dial-in', 'Dial-in', d.byDialIn, false);
+    breakdown('By entry queue', 'Entry queue', d.byQueue, false);
+    lines.push('');
+    lines.push(row(['By dial-in x insurer (labeled callers only)']));
+    lines.push(row(['Dial-in', 'Insurer', 'Calls', 'Answered', 'Abandoned']));
+    (d.byDialInInsurer || []).forEach(function (r) {
+      lines.push(row([r.dial_in, r.insurer, r.calls, r.answered, r.abandoned]));
+    });
+    lines.push('');
+    lines.push(row(['Daily']));
+    lines.push(row(['Date', 'Calls', 'Abandoned']));
+    (d.daily || []).forEach(function (r) {
+      lines.push(row([r.d, r.calls, r.abandoned]));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'inbound-calls_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // ===================================================================
+  // Direct Call Report (admin-only while vetted) -- Neon-backed
+  // direct_call_history: per-agent inbound answer rate (a miss while the
+  // agent was on another call is EXCLUDED), inbound ATT, outbound activity.
+  // ===================================================================
+  let directCallLastData = null;
+
+  function initDirectCallReport() {
+    const btn = $('direct-call-report-btn');
+    const modal = $('direct-call-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      directCallShowForm();
+      directCallSetDefaultDates();
+      directCallEnsureDeptOptions_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('direct-call-preset');
+    if (preset) preset.addEventListener('change', directCallApplyPreset);
+    const fromEl = $('direct-call-from'), toEl = $('direct-call-to');
+    if (fromEl) fromEl.addEventListener('change', function () { if ($('direct-call-preset')) $('direct-call-preset').value = 'custom'; });
+    if (toEl)   toEl.addEventListener('change',   function () { if ($('direct-call-preset')) $('direct-call-preset').value = 'custom'; });
+    const gen = $('direct-call-generate-btn');
+    if (gen) gen.addEventListener('click', runDirectCallReport);
+    const back = $('direct-call-back-btn');
+    if (back) back.addEventListener('click', directCallShowForm);
+    const csv = $('direct-call-csv-btn');
+    if (csv) csv.addEventListener('click', directCallDownloadCsv_);
+  }
+
+  function directCallShowForm()    { $('direct-call-form').style.display = ''; $('direct-call-results').style.display = 'none'; directCallSetError(''); }
+  function directCallShowResults() { $('direct-call-form').style.display = 'none'; $('direct-call-results').style.display = ''; }
+  function directCallSetError(msg) {
+    const el = $('direct-call-form-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function directCallIsoOf_(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function directCallSetDefaultDates() {
+    if ($('direct-call-from') && $('direct-call-from').value) return;
+    const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
+    if ($('direct-call-from')) $('direct-call-from').value = directCallIsoOf_(s);
+    if ($('direct-call-to'))   $('direct-call-to').value   = directCallIsoOf_(today);
+  }
+  function directCallApplyPreset() {
+    const v = $('direct-call-preset').value;
+    if (v === 'custom') return;
+    const today = new Date(); let s, e = new Date(today);
+    if (v === 'last7')        { s = new Date(today); s.setDate(today.getDate() - 7); }
+    // "Last 30 days" = 30 days ending yesterday (see applyIrPreset).
+    else if (v === 'last30')  { e = new Date(today); e.setDate(today.getDate() - 1);
+                                s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'thisMonth') { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth') { s = new Date(today.getFullYear(), today.getMonth() - 1, 1); e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    if (!s) return;
+    $('direct-call-from').value = directCallIsoOf_(s);
+    $('direct-call-to').value   = directCallIsoOf_(e);
+  }
+  function directCallEnsureDeptOptions_() {
+    const sel = $('direct-call-dept');
+    if (!sel || sel.options.length) return;
+    if (USER.role === 'admin') {
+      const opts = ['<option value="">All departments</option>'];
+      (USER.departments || []).forEach(function (d) {
+        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
+      });
+      sel.innerHTML = opts.join('');
+    } else {
+      const d = USER.department || '';
+      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+      sel.disabled = true;
+    }
+  }
+
+  function runDirectCallReport() {
+    const from = $('direct-call-from').value, to = $('direct-call-to').value;
+    if (!from || !to) { directCallSetError('Pick a start and end date.'); return; }
+    if (from > to) { directCallSetError('Start date must be on or before end date.'); return; }
+    directCallSetError('');
+    const dept = $('direct-call-dept') ? $('direct-call-dept').value : '';
+    const gen = $('direct-call-generate-btn'); const prev = gen.textContent;
+    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    const __rtok = ++reportReqSeq_.dir;   // C-8: stale-response guard
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__rtok !== reportReqSeq_.dir) return;   // superseded by a newer request
+        gen.disabled = false; gen.textContent = prev;
+        directCallRenderReport_(data);
+        directCallShowResults();
+      })
+      .withFailureHandler(function (err) {
+        if (__rtok !== reportReqSeq_.dir) return;
+        gen.disabled = false; gen.textContent = prev;
+        directCallSetError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getDirectCallReport({ from: from, to: to, department: dept });
+  }
+
+  function directCallRenderReport_(data) {
+    directCallLastData = data;
+    coverageNoteUpsert_('direct-call-body', 'direct',
+      (data && data.meta && data.meta.from) || null, null,
+      (data && data.meta && data.meta.coverageStart) || null);   // R12-26b
+    const meta = (data && data.meta) || {};
+    const unavail = $('direct-call-unavailable');
+    const empty = $('direct-call-empty');
+    const body = $('direct-call-body');
+    if (unavail) unavail.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    if (body) body.style.display = '';
+
+    const dateEl = $('direct-call-results-date');
+    if (dateEl) {
+      dateEl.textContent = (meta.from || '') + ' to ' + (meta.to || '')
+        + (meta.companyView ? ' · All departments' : (meta.department ? ' · ' + meta.department : ''));
+    }
+
+    if (meta.available === false) {
+      if (body) body.style.display = 'none';
+      if (unavail) unavail.style.display = '';
+      return;
+    }
+    const agents = (data && data.agents) || [];
+    if (!agents.length) {
+      if (body) body.style.display = 'none';
+      if (empty) empty.style.display = '';
+      return;
+    }
+
+    // KPI tiles (reuse the inbound ds-kpi tile helper). R11-M: delta chips vs
+    // the prior window (kpisPrior) on IB answered (up=good), IB answer rate
+    // (up=good), and OB calls (up=good, more outbound activity).
+    const k = (data && data.kpis) || {};
+    const p = (data && data.kpisPrior) || null;
+    const rateDelta = (p && k.ibAnswerRate != null && p.ibAnswerRate != null)
+      ? inboundDelta_(k.ibAnswerRate, p.ibAnswerRate, 'pos', true) : '';
+    const tiles = [
+      inboundKpiTile_('Agents', fmtNumber(k.agents), 'with direct activity', ''),
+      inboundKpiTile_('IB answered', fmtNumber(k.ibAnswered),
+        fmtNumber(k.ibMissedFree) + ' missed (free)',
+        p ? inboundDelta_(k.ibAnswered, p.ibAnswered, 'pos', false) : ''),
+      inboundKpiTile_('IB answer rate', k.ibAnswerRate != null ? k.ibAnswerRate + '%' : '—',
+        'busy misses excluded', rateDelta,
+        k.ibAnswerRate != null ? benchValueCls_('% answered', k.ibAnswerRate + '%', true, 'direct') : '', 'direct'),
+      inboundKpiTile_('IB missed (busy)', fmtNumber(k.ibMissedBusy), 'excused — on another call', ''),
+      inboundKpiTile_('IB ATT', fmtDuration(k.ibAttSec), 'avg talk per answered', ''),
+      inboundKpiTile_('OB calls', fmtNumber(k.obTotal),
+        fmtNumber(k.obConnected) + ' connected · ATT ' + fmtDuration(k.obAttSec),
+        p ? inboundDelta_(k.obTotal, p.obTotal, 'pos', false) : ''),
+    ];
+    const kpiRow = $('direct-call-kpi-row');
+    if (kpiRow) kpiRow.innerHTML = tiles.join('');
+
+    // R11-C5: COMPANY view (admin, All departments) renders DEPT CARDS --
+    // the same per-agent rows grouped by r.dept, each card expanding into
+    // that dept's own sortable agent table -- instead of one flat all-agents
+    // table (which mixed 14 depts' agents into a single impact ordering).
+    // Single-dept view keeps the flat table unchanged.
+    const agentSection = $('direct-call-agent-section');
+    const deptCards = $('direct-call-dept-cards');
+    if (meta.companyView && deptCards) {
+      if (agentSection) agentSection.style.display = 'none';
+      deptCards.style.display = '';
+      directCallRenderDeptCards_(agents, deptCards);
+      return;
+    }
+    if (deptCards) { deptCards.style.display = 'none'; deptCards.innerHTML = ''; }
+    if (agentSection) agentSection.style.display = '';
+
+    // Per-agent table (R11-B11: sortable; impact default = the busy-excluded
+    // answerable population, so busy-heavy agents rank by their REAL misses).
+    const tb = $('direct-call-agent-tbody');
+    if (tb) {
+      srtApply_('direct-call-agent-tbody', agents, function (sorted) {
+        tb.innerHTML = sorted.map(directAgentRowHtml_).join('');
+      }, directImpact_);
+    }
+  }
+
+  // Shared per-agent row template + impact score (flat table AND the C5
+  // per-dept expanded tables).
+  function directAgentRowHtml_(r) {
+    const rateStr = r.ibAnswerRate != null ? r.ibAnswerRate + '%' : '—';
+    const rateCls = r.ibAnswerRate != null ? benchValueCls_('% answered', r.ibAnswerRate + '%', true, 'direct') : '';
+    return '<tr>'
+      + '<td>' + escapeHtml(r.agent) + '</td>'
+      + '<td class="num">' + fmtNumber(r.ibAnswered) + '</td>'
+      + '<td class="num">' + fmtNumber(r.ibMissedFree) + '</td>'
+      + '<td class="num">' + fmtNumber(r.ibMissedBusy) + '</td>'
+      + '<td class="num' + rateCls + '">' + rateStr + '</td>'
+      + '<td class="num">' + fmtDuration(r.ibAttSec) + '</td>'
+      + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
+      + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
+      + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
+      + '</tr>';
+  }
+  function directImpact_(r) {
+    var answerable = (Number(r.ibAnswered) || 0) + (Number(r.ibMissedFree) || 0);
+    if (answerable <= 0) return 0;
+    var rate = (Number(r.ibAnswered) || 0) / answerable * 100;
+    return (100 - rate) * answerable;
+  }
+
+  // R11-C5: group the per-agent rows by their dept (the payload's
+  // max(department) field) and aggregate the card headline metrics. IB ATT
+  // is answered-weighted across the dept's agents; the answer rate excludes
+  // the busy carve-out like everywhere else in this report. Card order is
+  // the same impact score applied to the dept aggregate.
+  function directCallDeptGroups_(agents) {
+    // R11-M: prior per-dept aggregates for the header-row delta chips.
+    const priorMap = {};
+    ((directCallLastData && directCallLastData.deptsPrior) || []).forEach(function (d) {
+      priorMap[d.dept || '(unassigned)'] = d;
+    });
+    const by = {};
+    agents.forEach(function (r) {
+      const d = r.dept || '(unassigned)';
+      (by[d] = by[d] || []).push(r);
+    });
+    return Object.keys(by).map(function (d) {
+      const rows = by[d];
+      const g = { dept: d, rows: rows, agents: rows.length, ibAnswered: 0, ibMissedFree: 0,
+                  ibMissedBusy: 0, obTotal: 0, obConnected: 0, talkSec: 0 };
+      rows.forEach(function (r) {
+        g.ibAnswered   += Number(r.ibAnswered)   || 0;
+        g.ibMissedFree += Number(r.ibMissedFree) || 0;
+        g.ibMissedBusy += Number(r.ibMissedBusy) || 0;
+        g.obTotal      += Number(r.obTotal)      || 0;
+        g.obConnected  += Number(r.obConnected)  || 0;
+        g.talkSec      += (Number(r.ibAttSec) || 0) * (Number(r.ibAnswered) || 0);
+      });
+      const answerable = g.ibAnswered + g.ibMissedFree;
+      g.ibAnswerRate = answerable > 0 ? Math.round(g.ibAnswered / answerable * 1000) / 10 : null;
+      g.ibAttSec = g.ibAnswered > 0 ? Math.round(g.talkSec / g.ibAnswered) : 0;
+      g.impact = answerable > 0 ? (100 - g.ibAnswered / answerable * 100) * answerable : 0;
+      g.prior = priorMap[d] || null;   // R11-M
+      return g;
+    }).sort(function (a, b) {
+      return (b.impact - a.impact) || a.dept.localeCompare(b.dept);
+    });
+  }
+
+  var DIRECT_AGENT_THEAD_ = '<thead><tr>'
+    + '<th data-sort="agent">Agent</th>'
+    + '<th class="num" data-sort="ibAnswered">IB answered</th>'
+    + '<th class="num" data-sort="ibMissedFree">IB missed (free)</th>'
+    + '<th class="num" data-sort="ibMissedBusy">IB missed (busy)</th>'
+    + '<th class="num" data-sort="ibAnswerRate">Answer %</th>'
+    + '<th class="num" data-sort="ibAttSec">IB ATT</th>'
+    + '<th class="num" data-sort="obTotal">OB calls</th>'
+    + '<th class="num" data-sort="obConnected">OB connected</th>'
+    + '<th class="num" data-sort="obAttSec">OB ATT</th>'
+    + '</tr></thead>';
+
+  function directCallRenderDeptCards_(agents, wrap) {
+    // The dynamic tables are rebuilt wholesale each render (innerHTML swap
+    // destroys the old theads while srtWired_ would still claim them wired)
+    // -- drop their stale sort machinery so re-renders re-arm cleanly.
+    Object.keys(srtWired_).forEach(function (k) {
+      if (k.indexOf('direct-dept-tbody-') === 0) {
+        delete srtWired_[k]; delete srtState_[k]; delete srtRegistry_[k];
+      }
+    });
+    const groups = directCallDeptGroups_(agents);
+    wrap.innerHTML = '<div class="al-section-title">Per department'
+      + ' <span class="ins-rollup-cap">(click a card for its agents; inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></div>'
+      + groups.map(function (g, i) {
+        const rateStr = g.ibAnswerRate != null ? g.ibAnswerRate + '%' : '—';
+        const rateCls = g.ibAnswerRate != null
+          ? benchValueCls_('% answered', g.ibAnswerRate + '%', true, 'direct').trim() : '';
+        // R11-M: a left-rail tone on the whole dept row keyed on the 92%
+        // answer-rate standard, so a struggling dept reads distinct at a glance.
+        const toneCls = g.ibAnswerRate == null ? 'ddc-tone-muted'
+          : (g.ibAnswerRate >= answerTarget_('direct') ? 'ddc-tone-good' : 'ddc-tone-warn');
+        // R11-M: delta chips vs the prior window (per-dept). answered/OB up=good,
+        // missed up=bad, answer% up=good (pctPoints).
+        const pr = g.prior;
+        const dAns  = pr ? inboundDelta_(g.ibAnswered, pr.ibAnswered, 'pos', false) : '';
+        const dMiss = pr ? inboundDelta_(g.ibMissedFree, pr.ibMissedFree, 'neg', false) : '';
+        const dOb   = pr ? inboundDelta_(g.obTotal, pr.obTotal, 'pos', false) : '';
+        const dRate = (pr && g.ibAnswerRate != null && pr.ibAnswerRate != null)
+          ? inboundDelta_(g.ibAnswerRate, pr.ibAnswerRate, 'pos', true) : '';
+        return '<details class="direct-dept-card ' + toneCls + '"' + (groups.length === 1 ? ' open' : '') + '>'
+          + '<summary class="direct-dept-head">'
+          +   '<span class="direct-dept-name">' + escapeHtml(g.dept) + '</span>'
+          +   '<span class="direct-dept-stats">'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.agents) + '</b> agent' + (g.agents === 1 ? '' : 's') + '</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibAnswered) + '</b> IB answered' + dAns + '</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedFree) + '</b> missed (free)' + dMiss + '</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.ibMissedBusy) + '</b> missed (busy)</span>'
+          +     '<span class="ddc-stat"><b' + (rateCls ? ' class="' + rateCls + '"' : '') + '>' + rateStr + '</b> answer' + dRate + '</span>'
+          +     '<span class="ddc-stat"><b>' + fmtDuration(g.ibAttSec) + '</b> IB ATT</span>'
+          +     '<span class="ddc-stat"><b>' + fmtNumber(g.obTotal) + '</b> OB' + dOb + '</span>'
+          +   '</span>'
+          + '</summary>'
+          + '<div class="direct-dept-body">'
+          +   '<table class="qcd-source-table">' + DIRECT_AGENT_THEAD_
+          +     '<tbody id="direct-dept-tbody-' + i + '"></tbody></table>'
+          + '</div>'
+          + '</details>';
+      }).join('');
+    groups.forEach(function (g, i) {
+      const id = 'direct-dept-tbody-' + i;
+      const tbEl = $(id);
+      if (!tbEl) return;
+      srtApply_(id, g.rows, function (sorted) {
+        tbEl.innerHTML = sorted.map(directAgentRowHtml_).join('');
+      }, directImpact_);
+    });
+  }
+
+  function directCallDownloadCsv_() {
+    if (!directCallLastData || (directCallLastData.meta || {}).available === false) return;
+    const d = directCallLastData;
+    const meta = d.meta || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push(row(['Direct Calls report', meta.from + ' to ' + meta.to]));
+    lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
+    lines.push('');
+    lines.push(row(['Agent', 'Dept', 'IB answered', 'IB missed (free)', 'IB missed (busy)',
+      'Answer %', 'IB ATT sec', 'OB calls', 'OB connected', 'OB ATT sec',
+      'IB int answered', 'IB ext answered', 'OB int calls', 'OB ext calls']));
+    (d.agents || []).forEach(function (r) {
+      lines.push(row([r.agent, r.dept, r.ibAnswered, r.ibMissedFree, r.ibMissedBusy,
+        r.ibAnswerRate != null ? r.ibAnswerRate : '', r.ibAttSec, r.obTotal, r.obConnected, r.obAttSec,
+        r.ibIntAnswered, r.ibExtAnswered, r.obIntTotal, r.obExtTotal]));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'direct-calls_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // -- Caller Lookup (admin) ----------------------------------------------
+  // "Explain the full call path for this caller on this day." Phone +
+  // date range -> getCallerLookup (CallerLookup.gs) -> one timeline card
+  // per inbound call. Calls captured since the journey extension render
+  // the leg-by-leg path; older rows fall back to the entry->final queue
+  // summary. The raw number never leaves the request payload -- the
+  // server hashes it in memory and queries by hash.
+
+  // -- System Health (admin-only) ---------------------------------------
+  // Read-only status table from getSystemHealth() (SystemHealth.gs) + the
+  // Neon-backup service controls (NeonBackup.gs). Rows carry a status chip
+  // (ok / warn / muted) and a remediation hint on warn rows.
+  function initSystemHealth_() {
+    const btn = $('system-health-btn');
+    const modal = $('health-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      healthLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('health-refresh-btn')) $('health-refresh-btn').addEventListener('click', healthLoad_);
+    const wireBackup = function (id, fnName, busyLabel) {
+      const b = $(id);
+      if (!b) return;
+      b.addEventListener('click', function () {
+        const prev = b.textContent;
+        b.disabled = true; b.textContent = busyLabel;
+        google.script.run
+          .withSuccessHandler(function (st) {
+            b.disabled = false; b.textContent = prev;
+            healthRenderBackup_(st);
+            healthLoad_();   // outcome rows changed
+          })
+          .withFailureHandler(function (err) {
+            b.disabled = false; b.textContent = prev;
+            const el = $('health-backup-status');
+            if (el) el.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+          })[fnName]();
+      });
+    };
+    wireBackup('health-backup-install',   'installNeonBackupTrigger',   'Installing…');
+    wireBackup('health-backup-uninstall', 'uninstallNeonBackupTrigger', 'Uninstalling…');
+    wireBackup('health-backup-now',       'runNeonBackupNow',           'Backing up… (can take a minute)');
+    // R7 (G-3): UI surface toggles editor.
+    const uiSave = $('health-uiflags-save');
+    if (uiSave) uiSave.addEventListener('click', function () {
+      const list = $('health-uiflags-list');
+      if (!list) return;
+      const flags = Array.prototype.slice.call(list.querySelectorAll('input[type=checkbox]:checked'))
+        .map(function (cb) { return cb.getAttribute('data-flag'); });
+      const st = $('health-uiflags-status');
+      if (st) st.textContent = 'Saving…';
+      uiSave.disabled = true;
+      google.script.run
+        .withSuccessHandler(function (resp) {
+          uiSave.disabled = false;
+          if (st) st.textContent = 'Saved — '
+            + ((resp && resp.flags && resp.flags.length) ? (resp.flags.length + ' surface(s) hidden') : 'all surfaces visible')
+            + '. Users pick this up on their next page load.';
+        })
+        .withFailureHandler(function (err) {
+          uiSave.disabled = false;
+          if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+        })
+        .saveUiFlags({ flags: flags });
+    });
+  }
+
+  // R7 (G-3): render the UI-toggle checkboxes from the server registry
+  // (checked = HIDDEN). Loaded alongside the health table.
+  function healthLoadUiFlags_() {
+    const list = $('health-uiflags-list');
+    const section = $('health-uiflags-section');
+    if (!list || !section) return;
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (!resp || !resp.registry) { section.style.display = 'none'; return; }
+        section.style.display = '';
+        const flags = resp.flags || [];
+        list.innerHTML = Object.keys(resp.registry).map(function (k) {
+          const on = flags.indexOf(k) !== -1;
+          return '<label class="health-uiflag-row"><input type="checkbox" data-flag="' + escapeHtml(k) + '"'
+            + (on ? ' checked' : '') + '> ' + escapeHtml(resp.registry[k])
+            + ' <code class="health-uiflag-key">' + escapeHtml(k) + '</code></label>';
+        }).join('');
+      })
+      .withFailureHandler(function () { section.style.display = 'none'; })
+      .getUiFlags();
+  }
+
+  function healthLoad_() {
+    reportSetStatus_('health-status', 'loading', 'Checking…');
+    if ($('health-table')) $('health-table').style.display = 'none';
+    healthLoadUiFlags_();   // R7 (G-3): the toggle editor loads alongside
+    google.script.run
+      .withSuccessHandler(function (data) {
+        reportSetStatus_('health-status', '');
+        healthRender_(data || { rows: [] });
+      })
+      .withFailureHandler(function (err) {
+        reportSetStatus_('health-status', 'error', 'Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getSystemHealth();
+    google.script.run
+      .withSuccessHandler(healthRenderBackup_)
+      .withFailureHandler(function () { /* section stays hidden for non-admins/errors */ })
+      .getNeonBackupStatus();
+  }
+
+  const HEALTH_SECTIONS_ = {
+    pipeline: 'Pipeline', neon: 'Neon', triggers: 'Trigger-driven services',
+    config: 'Script Properties', sheets: 'Sheets',
+    usage: 'Report usage (last 30 days)',   // the consolidation/un-gating evidence
+  };
+
+  function healthRender_(data) {
+    const tbody = $('health-tbody');
+    if (!tbody) return;
+    const rows = data.rows || [];
+    const chip = function (st) {
+      const cls = st === 'ok' ? 'sh-ok' : st === 'warn' ? 'sh-warn' : 'sh-muted';
+      const label = st === 'ok' ? 'OK' : st === 'warn' ? 'ATTENTION' : 'info';
+      return '<span class="sh-chip ' + cls + '">' + label + '</span>';
+    };
+    let html = '', lastSection = null;
+    rows.forEach(function (r) {
+      if (r.section !== lastSection) {
+        lastSection = r.section;
+        html += '<tr class="sh-section"><td colspan="3">'
+          + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section) + '</td></tr>';
+      }
+      html += '<tr>'
+        + '<td>' + escapeHtml(r.label) + '</td>'
+        + '<td>' + chip(r.status) + '</td>'
+        + '<td>' + escapeHtml(r.value || '')
+        + (r.hint ? '<span class="sh-hint">' + escapeHtml(r.hint) + '</span>' : '')
+        + '</td></tr>';
+    });
+    tbody.innerHTML = html || '<tr><td colspan="3" class="al-empty">No checks returned.</td></tr>';
+    if ($('health-table')) $('health-table').style.display = '';
+    const sum = $('health-summary');
+    if (sum) {
+      const warns = Number(data.warnCount) || 0;
+      sum.textContent = warns
+        ? warns + ' item(s) need attention'
+        : 'All checks healthy';
+    }
+  }
+
+  function healthRenderBackup_(st) {
+    const sec = $('health-backup-section');
+    if (!sec || !st) return;
+    sec.style.display = '';
+    const el = $('health-backup-status');
+    if (el) {
+      el.textContent = (st.installed ? 'Weekly trigger installed (Sat ' + st.hour + ':00). ' : 'No trigger installed. ')
+        + (st.lastRun ? ('Last run ' + st.lastRun + ' — ' + (st.lastResult || '')) : 'Never run.');
+    }
+  }
+
+  function initCallerLookup() {
+    const btn = $('caller-lookup-btn');
+    const modal = $('caller-lookup-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      clSetDefaultDates_();
+      const phone = $('cl-phone');
+      if (phone) phone.focus();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const lookupBtn = $('cl-lookup-btn');
+    if (lookupBtn) lookupBtn.addEventListener('click', runCallerLookup_);
+    const phoneInput = $('cl-phone');
+    if (phoneInput) phoneInput.addEventListener('keydown', function (e) {
+      // R8-A3: don't launch a second overlapping lookup while one is in
+      // flight -- Enter used to bypass the disabled button entirely.
+      if (e.key === 'Enter' && !($('cl-lookup-btn') && $('cl-lookup-btn').disabled)) runCallerLookup_();
+    });
+  }
+

@@ -31,8 +31,26 @@ for (const f of ['chart.umd.js', 'datalabels.min.js', 'html2canvas-pro.min.js'])
 const role = process.argv[2] || 'admin';   // admin | manager
 
 let html = fs.readFileSync(path.join(REPO, 'dashboard.html'), 'utf8');
-const styles = fs.readFileSync(path.join(REPO, 'styles.html'), 'utf8');
-const script = fs.readFileSync(path.join(REPO, 'script.html'), 'utf8');
+
+// #4 (Round-16): script.html is now an ASSEMBLER -- its body is a list of
+// nested `include_('script-N-...')` scriptlets resolved server-side by the
+// template-evaluating include_ (Code.gs). Mirror that here: recursively
+// substitute nested include scriptlets with the named file's content, so the
+// harness keeps booting the same assembled client the real page serves. A
+// missing fragment file is a hard build error (it would be a render error in
+// production too).
+function resolveIncludes_(content) {
+  return content.replace(/<\?!= include_\('([\w-]+)'\) \?>/g, function (_, name) {
+    const p = path.join(REPO, name + '.html');
+    if (!fs.existsSync(p)) {
+      console.error('include_ references missing file: ' + name + '.html');
+      process.exit(1);
+    }
+    return resolveIncludes_(fs.readFileSync(p, 'utf8'));
+  });
+}
+const styles = resolveIncludes_(fs.readFileSync(path.join(REPO, 'styles.html'), 'utf8'));
+const script = resolveIncludes_(fs.readFileSync(path.join(REPO, 'script.html'), 'utf8'));
 
 // Payloads inlined as JS (fetch() would work over http, but inline is robust).
 const P = {};
