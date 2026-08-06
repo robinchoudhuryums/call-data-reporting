@@ -1,0 +1,1593 @@
+  // ── Escalations ────────────────────────────────────────────────
+  var escInit_ = null;   // cached getEscalationsInit payload (role + depts)
+  var escLastResp_ = null;   // last getEscalations response (for client-side §4 filter)
+  var escEditId_ = null;     // non-null when the create form is in §3 edit mode
+
+  function initEscalations() {
+    const btn = $('escalations-btn');
+    const page = $('escalations-page');
+    if (!btn || !page) return;
+
+    // Escalations is a full PAGE now (#6): the nav button navigates to it;
+    // setPage('escalations') handles the lazy init + load + header title.
+    // No modal open/close/drag/focus-trap/Escape -- it behaves like the
+    // Overview / My Department pages.
+    btn.addEventListener('click', function () { setPage('escalations'); });
+
+    if ($('esc-refresh-btn')) $('esc-refresh-btn').addEventListener('click', escLoad_);
+    if ($('esc-status'))      $('esc-status').addEventListener('change', escLoad_);
+    // C2: client-side sort re-renders the already-loaded rows (no server call).
+    if ($('esc-sort'))        $('esc-sort').addEventListener('change', function () {
+      escSyncSortToggle_(); escApplyFilter_();
+    });
+    // R11-D1: the category list is the wide-viewport status filter -- a row
+    // click writes the SAME #esc-status value the select wrote, then reloads.
+    if ($('esc-cat-menu')) $('esc-cat-menu').addEventListener('click', function (e) {
+      const row = e.target.closest('[data-jump]');
+      if (!row) return;
+      if ($('esc-status')) $('esc-status').value = row.getAttribute('data-jump');
+      escLoad_();
+    });
+    // R11-D3: the sort toggle flips the same #esc-sort value + re-sorts in place.
+    if ($('esc-sort-toggle')) $('esc-sort-toggle').addEventListener('click', function () {
+      const sel = $('esc-sort');
+      if (sel) sel.value = (sel.value === 'newest') ? 'oldest' : 'newest';
+      escSyncSortToggle_();
+      escApplyFilter_();
+    });
+    escSyncSortToggle_();
+    // C1: band tiles are click-to-filter shortcuts (Needs review / Pending /
+    // In progress jump the status selector + reload).
+    if ($('esc-summary-band')) $('esc-summary-band').addEventListener('click', function (e) {
+      const tile = e.target.closest('[data-jump]');
+      if (!tile) return;
+      if ($('esc-status')) $('esc-status').value = tile.getAttribute('data-jump');
+      escLoad_();
+    });
+    // Phase 2: the review chip jumps straight to the review queue.
+    if ($('esc-review-chip')) $('esc-review-chip').addEventListener('click', function () {
+      if ($('esc-status')) $('esc-status').value = 'pending_review';
+      escLoad_();
+    });
+    if ($('esc-dept'))        $('esc-dept').addEventListener('change', escLoad_);
+    // §4: debounced client-side filter over the already-loaded rows.
+    if ($('esc-filter'))      $('esc-filter').addEventListener('input', escDebounceFilter_);
+    if ($('esc-filter-clear')) $('esc-filter-clear').addEventListener('click', function () {
+      if ($('esc-filter')) $('esc-filter').value = '';
+      escApplyFilter_();
+    });
+    if ($('esc-new-btn'))     $('esc-new-btn').addEventListener('click', function () {
+      const f = $('esc-create'); if (!f) return;
+      const opening = (f.style.display === 'none');
+      f.style.display = opening ? '' : 'none';
+      // Opening via "+ New escalation" is always a fresh create -- clear any
+      // lingering §3 edit prefill/mode.
+      if (opening) {
+        escResetCreateMode_();
+        ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
+          if ($(i)) $(i).value = '';
+        });
+        escSetCreateError_('');
+      }
+    });
+    if ($('esc-c-cancel'))    $('esc-c-cancel').addEventListener('click', function () {
+      const f = $('esc-create'); if (f) f.style.display = 'none';
+      escSetCreateError_('');
+      escResetCreateMode_();
+    });
+    if ($('esc-c-save'))      $('esc-c-save').addEventListener('click', escCreate_);
+
+    // Event delegation for per-row resolve/comment actions.
+    if ($('esc-list')) $('esc-list').addEventListener('click', escOnListClick_);
+    if ($('esc-list')) $('esc-list').addEventListener('input', escOnListInput_);
+  }
+
+  // Fetch role + dept list once; populate the dept selectors; reveal the
+  // admin-only create controls. cb() runs after (or immediately if cached).
+  function escEnsureInit_(cb) {
+    if (escInit_) { cb && cb(); return; }
+    // R9-4: the init fetch painted NOTHING -- on a cold entry the page sat
+    // as blank background until getEscalationsInit returned and escLoad_'s
+    // own loader took over. Show the same rings loader from the first frame.
+    if ($('esc-loading')) {
+      $('esc-loading').style.display = '';
+      $('esc-loading').innerHTML = (typeof dsRingsHtml_ === 'function')
+        ? dsRingsHtml_('Loading escalations…') : 'Loading…';
+    }
+    google.script.run
+      .withSuccessHandler(function (init) {
+        escInit_ = init || {};
+        const depts = escInit_.departments || [];
+        // Filter selector: admins get an "All departments" option.
+        const sel = $('esc-dept');
+        if (sel) {
+          let opts = '';
+          // #1: admins + all-dept managers get the cross-dept "All departments"
+          // option; single-dept managers get only their own dept. Tier C: a
+          // multi-dept manager gets an "All my departments" option (the server
+          // scopes a blank/ALL request to their assigned depts only) so the
+          // combined view is their default, plus a per-dept narrow.
+          const escAllDept = escInit_.isAdmin || escInit_.allDepts;
+          const escMultiMgr = !escAllDept && depts.length > 1;
+          if (escAllDept) opts += '<option value="ALL">All departments</option>';
+          else if (escMultiMgr) opts += '<option value="ALL">All my departments</option>';
+          opts += depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+          sel.innerHTML = opts;
+          // R11-D4: a viewer with a real choice (admin/all-dept, or a rare
+          // multi-dept manager) gets the SELECTOR; a single-dept manager gets
+          // the dept NAME as plain text (nothing to switch to -- previously the
+          // whole control was hidden). Reuses the existing role signal; no new
+          // permission. The selector's change handler still runs the normal
+          // fetch + server auth path, so an unreachable dept can't be selected.
+          const canSwitch = escAllDept || depts.length > 1;
+          const nameEl = $('esc-dept-name');
+          const col = $('esc-dept-col');
+          if (canSwitch) {
+            sel.style.display = '';
+            if (nameEl) nameEl.style.display = 'none';
+            if (col) col.style.display = '';
+          } else if (depts.length === 1) {
+            sel.style.display = 'none';
+            if (nameEl) { nameEl.textContent = depts[0]; nameEl.style.display = ''; }
+            if (col) col.style.display = '';
+          } else {
+            if (col) col.style.display = 'none';   // no dept at all -> nothing to show
+          }
+        }
+        // Create-form dept selector (admins choose any dept).
+        const cdept = $('esc-c-dept');
+        if (cdept) cdept.innerHTML = depts.map(function (d) {
+          return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+        }).join('');
+        // R11-D1: seed the (countless) category list so the wide-viewport status
+        // filter is present immediately; escRenderList_ refreshes it with counts.
+        escRenderCatMenu_(null);
+        cb && cb();
+      })
+      .withFailureHandler(function (err) {
+        escSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getEscalationsInit();
+  }
+
+  // Stale-response token: switching the status/dept filter (or hitting
+  // Refresh) while a load is in flight must not let the OLDER response
+  // repaint the list over the newer filter's result when it lands late.
+  var escLoadSeq_ = 0;
+  function escLoad_() {
+    escSetError_('');
+    const listEl = $('esc-list');
+    const status = $('esc-status') ? $('esc-status').value : 'pending';
+    // R9-5: the admin "View as <dept> (manager)" preview pins the Escalations
+    // scope to the previewed dept. View-as is a VISUAL preview -- the server
+    // still authorizes the real admin -- so without this override the page
+    // kept showing every dept's escalations in manager preview. The dept
+    // filter column is hidden while previewing (single-dept managers already
+    // have it hidden); real managers are pinned SERVER-side regardless.
+    let dept = $('esc-dept') ? $('esc-dept').value : '';
+    if (typeof viewAsDept_ !== 'undefined' && viewAsDept_) {
+      dept = viewAsDept_;
+      const vaCol = $('esc-dept-col');
+      if (vaCol) vaCol.style.display = 'none';
+    }
+    if ($('esc-empty')) $('esc-empty').style.display = 'none';
+    if ($('esc-loading')) { $('esc-loading').style.display = ''; $('esc-loading').innerHTML = dsRingsHtml_ ? dsRingsHtml_('Loading escalations…') : 'Loading…'; }
+    if (listEl) listEl.innerHTML = '';
+    var __tok = ++escLoadSeq_;
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (__tok !== escLoadSeq_) return;   // superseded by a newer load
+        if ($('esc-loading')) $('esc-loading').style.display = 'none';
+        escRenderList_(resp || {});
+        // F10: refresh the nav badge / Overview strip after every list load --
+        // and every mutation reloads the list, so resolving the last escalation
+        // now clears the badge instead of leaving a stale count for the session.
+        // Deliberately a fresh `getEscalationsBadge()` rather than reusing this
+        // response's `meta.statusCounts`: the list can be filtered to ONE dept
+        // (an admin picking a dept, or view-as), while the badge is scoped to
+        // the viewer's FULL set -- deriving it from a filtered response would
+        // undercount. One cheap COUNT aggregate is the right trade.
+        loadEscBadge_();
+      })
+      .withFailureHandler(function (err) {
+        if (__tok !== escLoadSeq_) return;   // a newer load owns the list
+        if ($('esc-loading')) $('esc-loading').style.display = 'none';
+        escSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getEscalations({ department: dept, status: status });
+  }
+
+  function escRenderList_(resp) {
+    const listEl = $('esc-list');
+    if (!listEl) return;
+    escLastResp_ = resp || {};
+    // Phase 2: "N awaiting review" chip -- shown on every load (whatever the
+    // active status filter) so submissions can't sit unnoticed; hidden while
+    // already viewing the review queue, or when the count is 0/unknown.
+    const chip = $('esc-review-chip');
+    if (chip) {
+      const n = (resp && resp.meta && resp.meta.pendingReviewCount) || 0;
+      const viewing = !!(resp && resp.meta && resp.meta.status === 'pending_review');
+      if (n > 0 && !viewing) {
+        chip.textContent = '\u26a0 ' + n + ' awaiting review';
+        chip.style.display = 'inline-flex';
+      } else {
+        chip.style.display = 'none';
+      }
+    }
+    // C1: triage summary band (hides itself on unavailable / missing meta).
+    escRenderSummaryBand_(resp);
+    // R11-D1: sidebar status category list (counts from meta.statusCounts).
+    escRenderCatMenu_(resp);
+    if (resp.available === false) {
+      escSetFilterCount_('');
+      escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');
+      return;
+    }
+    escApplyFilter_();
+  }
+
+  // §4: re-render the already-loaded rows narrowed by the toolbar text filter
+  // (patient / caller / Trx / reason; case-insensitive substring). Pure
+  // client-side -- no server call; filters a COPY, never mutates the source.
+  function escApplyFilter_() {
+    const listEl = $('esc-list');
+    if (!listEl || !escLastResp_) return;
+    const all = escLastResp_.rows || [];
+    const q = ($('esc-filter') ? $('esc-filter').value : '').trim().toLowerCase();
+    const rows = q ? all.filter(function (r) { return escRowMatchesQuery_(r, q); }) : all.slice();
+
+    if (!all.length) {
+      escSetFilterCount_('');
+      const st = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
+      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉 New ones appear here when an admin logs one or a team-tools submission is approved.'
+        : st === 'pending_review' ? 'No submissions awaiting review. 🎉'
+        : 'No escalations to show for this filter.');
+      return;
+    }
+    // "N of M shown" (only meaningful while a query is active). F-46: when
+    // the server capped the list (ESC_MAX_ROWS), say so -- the text filter
+    // only searches the rows that arrived, not everything in storage.
+    const truncNote = (escLastResp_.meta && escLastResp_.meta.truncated)
+      ? 'showing the ' + all.length + ' most recent — narrow by status or department to see older rows'
+      : '';
+    escSetFilterCount_(q
+      ? (rows.length + ' of ' + all.length + ' shown' + (truncNote ? ' · ' + truncNote : ''))
+      : truncNote);
+    if (!rows.length) {
+      escShowEmpty_('No escalations match “' + q + '”. Clear the filter to see all ' + all.length + '.');
+      return;
+    }
+    if ($('esc-empty')) $('esc-empty').style.display = 'none';
+    // C2 sort + C4 grouping. Group into triage tiers ONLY in the "All" view;
+    // any single-status filter renders one flat (sorted) tier -- respecting
+    // the filter the user picked. Sort/group operate on a COPY.
+    const sortMode = ($('esc-sort') && $('esc-sort').value) || 'oldest';
+    const activeStatus = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
+    if (activeStatus === 'all') {
+      const byTier = {};
+      rows.forEach(function (r) { const k = escTierOf_(r); (byTier[k] = byTier[k] || []).push(r); });
+      listEl.innerHTML = ESC_TIERS_.map(function (t) {
+        const g = byTier[t.key];
+        if (!g || !g.length) return '';
+        return escTierHeaderHtml_(t.label, g.length, t.tone)
+          + escSortRows_(g, sortMode).map(escCardHtml_).join('');
+      }).join('');
+    } else {
+      listEl.innerHTML = escSortRows_(rows, sortMode).map(escCardHtml_).join('');
+    }
+  }
+
+  function escRowMatchesQuery_(r, q) {
+    return [r.patient_name, r.caller, r.trx, r.reason]
+      .some(function (v) { return v && String(v).toLowerCase().indexOf(q) !== -1; });
+  }
+
+  var escFilterTimer_ = null;
+  function escDebounceFilter_() {
+    if (escFilterTimer_) clearTimeout(escFilterTimer_);
+    escFilterTimer_ = setTimeout(escApplyFilter_, 160);
+  }
+
+  function escSetFilterCount_(txt) {
+    const el = $('esc-filter-count');
+    if (!el) return;
+    el.textContent = txt || '';
+    el.style.display = txt ? '' : 'none';
+  }
+
+  function escShowEmpty_(msg) {
+    const e = $('esc-empty');
+    if (e) {
+      e.style.display = '';
+      e.innerHTML = '<div class="empty-state-icon">📋</div><div class="empty-state-title">Nothing here</div>'
+        + '<div class="empty-state-hint">' + escapeHtml(msg) + '</div>';
+    }
+  }
+
+  // ── C1-C4 triage helpers ─────────────────────────────────────────
+  // C3: overdue threshold in CALENDAR days (front-end constant; presentation
+  // only -- no schema field / server alerting). Kept in sync with the server's
+  // n_overdue interval in getEscalations so the band count + the card badge use
+  // the SAME definition.
+  // F3: must stay in sync with Escalations.gs::ESC_OVERDUE_DAYS, which drives
+  // the server's band-tile / nav-badge counts (the client can't read a .gs
+  // constant -- same two-runtime mirror as DASHBOARD_WORK_WINDOW / INV-06).
+  // Both sides now compare CALENDAR DAYS; the server previously used a 72-hour
+  // interval, so a card could show ⚑ while the tile didn't count it.
+  var ESC_OVERDUE_DAYS = 3;
+
+  // C3: calendar days an escalation has been open, from occurred_at (nullable
+  // -> null = render no badge, never "0 days"). Date-only basis, matching the
+  // server's band count.
+  function escDaysOpen_(r) {
+    if (!r || !r.occurred_at) return null;
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(r.occurred_at));
+    if (!m) return null;
+    var occ = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+    var now = new Date();
+    var today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    var days = Math.floor((today - occ) / 86400000);
+    return days < 0 ? 0 : days;
+  }
+  function escIsOpenStatus_(s) { return s === 'pending' || s === 'in_progress'; }
+  function escIsOverdueRow_(r) {
+    if (!r || !escIsOpenStatus_(r.status)) return false;
+    var d = escDaysOpen_(r);
+    return d != null && d >= ESC_OVERDUE_DAYS;
+  }
+  // C3: age badge for an OPEN card (turns red ⚑ past the threshold).
+  function escAgeBadgeHtml_(r) {
+    if (!escIsOpenStatus_(r.status)) return '';
+    var d = escDaysOpen_(r);
+    if (d == null) return '';
+    var overdue = d >= ESC_OVERDUE_DAYS;
+    var label = (d === 0 ? 'today' : d + 'd open');
+    return '<span class="esc-age' + (overdue ? ' esc-age-over' : '') + '"'
+      + (overdue ? ' title="Open ' + d + ' days — over the ' + ESC_OVERDUE_DAYS + '-day threshold"' : '') + '>'
+      + (overdue ? '⚑ ' : '') + label + '</span>';
+  }
+
+  // C2: sort a COPY (never mutates escLastResp_.rows -- the filter reads it
+  // live). Default oldest-first (most stale on top, the triage default).
+  function escSortRows_(rows, mode) {
+    var key = function (r) { return String(r.occurred_at || r.created_at || ''); };
+    return rows.slice().sort(function (a, b) {
+      var ak = key(a), bk = key(b);
+      if (ak === bk) return 0;
+      return (mode === 'newest') ? (ak < bk ? 1 : -1) : (ak < bk ? -1 : 1);
+    });
+  }
+
+  // C4: which triage tier a row belongs to (exactly one). Overdue pulls
+  // pending/in-progress rows past the threshold OUT of their status tier.
+  function escTierOf_(r) {
+    if (r.status === 'pending_review') return 'review';
+    if (r.status === 'resolved')       return 'resolved';
+    if (r.status === 'rejected')       return 'rejected';
+    if (escIsOverdueRow_(r))           return 'overdue';
+    if (r.status === 'in_progress')    return 'in_progress';
+    return 'pending';
+  }
+  var ESC_TIERS_ = [
+    { key: 'review',      label: 'Needs review', tone: 'accent' },
+    { key: 'overdue',     label: 'Overdue',      tone: 'warn'   },
+    { key: 'in_progress', label: 'In progress',  tone: 'accent' },
+    { key: 'pending',     label: 'Pending',      tone: 'warn'   },
+    { key: 'resolved',    label: 'Resolved',     tone: 'good'   },
+    { key: 'rejected',    label: 'Rejected',     tone: 'muted'  },
+  ];
+  function escTierHeaderHtml_(label, count, tone) {
+    return '<div class="esc-group-head esc-group-head--' + tone + '">'
+      + '<span class="esc-group-dot"></span>'
+      + '<span class="esc-group-label">' + escapeHtml(label) + '</span>'
+      + '<span class="esc-group-count">' + count + '</span>'
+      + '</div>';
+  }
+
+  // ── C1 triage summary band ───────────────────────────────────────
+  // Renders from server-computed meta (statusCounts / overdueCount /
+  // resolvedLast7 / oldestOpenAt) -- accurate for ANY active filter, unlike a
+  // count over the filtered in-memory rows. Hidden when unavailable.
+  function escRenderSummaryBand_(resp) {
+    var band = $('esc-summary-band');
+    if (!band) return;
+    var meta = (resp && resp.meta) || {};
+    var c = meta.statusCounts;
+    if (!resp || resp.available === false || !c) { band.style.display = 'none'; band.innerHTML = ''; return; }
+    var tiles = [];
+    // R11-D1: the per-status counts (Needs review / Pending / In progress) moved
+    // to the sidebar category menu (escRenderCatMenu_) so counts live in ONE
+    // place. The band is now the "health" strip: the derived signals that AREN'T
+    // status-filter categories -- Overdue, Oldest open, Resolved in the last 7d.
+    tiles.push(escBandTile_('Overdue >' + ESC_OVERDUE_DAYS + 'd', Number(meta.overdueCount || 0), (meta.overdueCount > 0) ? 'warn' : 'muted', null));
+    tiles.push(escBandOldestTile_(meta.oldestOpenAt));
+    tiles.push(escBandTile_('Resolved · MTD', Number(meta.resolvedMTD || 0), 'good', null));   // R11-H: 7d -> month-to-date
+    band.innerHTML = tiles.join('');
+    band.style.display = '';
+  }
+
+  // R11-D1: the sidebar status category list. Counts come from the server
+  // aggregate meta.statusCounts (+ meta.pendingReviewCount) -- accurate for ANY
+  // active filter, unlike a count over the status-filtered in-memory rows (which
+  // hold only the active status). A row click writes #esc-status + reloads; the
+  // active row tracks meta.status. Mirrors the native <select>'s six options.
+  function escRenderCatMenu_(resp) {
+    var menu = $('esc-cat-menu');
+    if (!menu) return;
+    var meta = (resp && resp.meta) || {};
+    // Counts are OPTIONAL: the six rows always render so the wide-viewport
+    // status filter is present during the first load AND on an unavailable
+    // (Neon-down) response -- clicking a row re-fetches, which is the recovery.
+    var c = (resp && resp.available !== false && meta.statusCounts) || null;
+    var reviewN = c ? Number(meta.pendingReviewCount || c.pending_review || 0) : null;
+    var total = c ? (Number(c.pending || 0) + Number(c.in_progress || 0) + reviewN
+              + Number(c.resolved || 0) + Number(c.rejected || 0)) : null;
+    var active = (meta.status) || ($('esc-status') && $('esc-status').value) || 'pending';
+    // [value, label, count-or-null, dot-tone]. Order = triage priority.
+    // R11-H (owner): the "Needs review" row was dropped from the sidebar list
+    // -- the pending_review review queue is still reachable via the "N awaiting
+    // review" chip (which appears only when there ARE items) + the native
+    // <select> fallback; it just no longer takes a permanent list slot.
+    var cats = [
+      ['pending',        'Pending',      c ? Number(c.pending || 0)   : null, 'warn'],
+      ['in_progress',    'In progress',  c ? Number(c.in_progress || 0) : null, 'accent'],
+      ['resolved',       'Completed',    c ? Number(c.resolved || 0)  : null, 'good'],
+      ['rejected',       'Rejected',     c ? Number(c.rejected || 0)  : null, 'muted'],
+      ['all',            'All',          total,                              'muted'],
+    ];
+    menu.innerHTML = '<div class="esc-cat-label">Show</div>' + cats.map(function (t) {
+      var on = t[0] === active;
+      var count = (t[2] == null) ? '' : ('<span class="esc-cat-count">' + t[2] + '</span>');
+      return '<button type="button" class="esc-cat-row' + (on ? ' is-active' : '')
+        + '" data-jump="' + t[0] + '"' + (on ? ' aria-current="true"' : '') + '>'
+        + '<span class="esc-cat-dot esc-cat-dot--' + t[3] + '"></span>'
+        + '<span class="esc-cat-name">' + escapeHtml(t[1]) + '</span>'
+        + count
+        + '</button>';
+    }).join('');
+  }
+
+  // R11-D3 / R11-H: reflect the #esc-sort value onto the compact arrow toggle
+  // beside Refresh -- glyph only (hover explains). Oldest-first = up arrow
+  // (oldest at the top of the list).
+  function escSyncSortToggle_() {
+    var btn = $('esc-sort-toggle');
+    if (!btn) return;
+    var newest = (($('esc-sort') && $('esc-sort').value) || 'oldest') === 'newest';
+    btn.innerHTML = newest ? '&#8595;' : '&#8593;';   // ↓ / ↑
+    btn.setAttribute('title', newest ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)');
+    btn.setAttribute('aria-label', 'Sort order: ' + (newest ? 'newest first' : 'oldest first'));
+  }
+  function escBandTile_(label, value, tone, jumpStatus) {
+    var cls = 'esc-band-tile esc-band-tile--' + tone + (jumpStatus ? ' esc-band-clickable' : '');
+    var attr = jumpStatus ? ' data-jump="' + escapeHtml(jumpStatus) + '" role="button" tabindex="0"' : '';
+    return '<div class="' + cls + '"' + attr + '>'
+      + '<div class="esc-band-value">' + value + '</div>'
+      + '<div class="esc-band-label">' + escapeHtml(label) + '</div>'
+      + '</div>';
+  }
+  function escBandOldestTile_(oldestIso) {
+    var d = oldestIso ? escDaysOpen_({ occurred_at: oldestIso, status: 'pending' }) : null;
+    var val = (d == null) ? '—' : (d === 0 ? 'today' : d + 'd');
+    var tone = (d != null && d >= ESC_OVERDUE_DAYS) ? 'warn' : 'muted';
+    return '<div class="esc-band-tile esc-band-tile--' + tone + '">'
+      + '<div class="esc-band-value">' + val + '</div>'
+      + '<div class="esc-band-label">Oldest open</div>'
+      + '</div>';
+  }
+
+  function escCardHtml_(r) {
+    const resolved = r.status === 'resolved';
+    // Phase 2: externally-submitted rows awaiting review / reviewed out.
+    const inReview = r.status === 'pending_review';
+    const rejected = r.status === 'rejected';
+    const inProgress = r.status === 'in_progress';   // C6
+    // C5: labeled field grid replaces the emoji meta run-on.
+    const fields = [
+      ['When',    r.occurred_at ? escFmtWhen_(r.occurred_at) : ''],
+      ['Caller',  r.caller || ''],
+      ['Patient', r.patient_name || ''],
+      ['Trx',     r.trx || ''],
+      ['Area',    r.area || ''],
+    ].filter(function (f) { return f[1]; });
+    const fieldGrid = fields.length
+      ? '<div class="esc-fields">' + fields.map(function (f) {
+          return '<div class="esc-field"><span class="esc-field-k">' + escapeHtml(f[0]) + '</span>'
+            + '<span class="esc-field-v">' + escapeHtml(f[1]) + '</span></div>';
+        }).join('') + '</div>'
+      : '';
+    const deptTag = (escInit_ && (escInit_.isAdmin || escInit_.allDepts || ($('esc-dept') && $('esc-dept').value === 'ALL')))
+      ? '<span class="esc-dept-tag">' + escapeHtml(r.department || '') + '</span>' : '';
+    const statusPill = inReview
+      ? '<span class="esc-pill esc-pill-review">Needs review</span>'
+      : rejected
+        ? '<span class="esc-pill esc-pill-rejected">Rejected</span>'
+        : resolved
+          ? '<span class="esc-pill esc-pill-resolved">Resolved</span>'
+          : inProgress
+            ? '<span class="esc-pill esc-pill-progress">In progress</span>'
+            : '<span class="esc-pill esc-pill-pending">Pending</span>';
+    // C3: age badge (open cards only).
+    const ageBadge = escAgeBadgeHtml_(r);
+    // Submission provenance (Phase 2 contract: source='team-tools' etc.;
+    // the dashboard's own creates are 'manual' and stay untagged).
+    const sourceTag = (r.source && r.source !== 'manual')
+      ? '<span class="esc-source-tag">via ' + escapeHtml(r.source)
+        + (r.created_by ? ' · ' + escapeHtml(r.created_by) : '') + '</span>' : '';
+
+    const idAttr = escapeHtml(r.id);
+    const isAdmin = !!(escInit_ && escInit_.isAdmin);
+
+    let body = '<div class="esc-reason">' + escapeHtml(r.reason || '') + '</div>';
+    body += fieldGrid;
+
+    if (inReview) {
+      // Phase 2 review verbs: Approve admits the submission into the dept
+      // worklist; Reject (required reason, mirroring reopen) reviews it out.
+      // Visible to the dept's managers + admins -- the same population the
+      // server's escAssertRowAccess_ gate accepts for this row.
+      body += '<div class="esc-reopen-wrap">'
+        + '<div class="esc-resolve-actions">'
+        +   '<button class="btn esc-approve" type="button" data-id="' + idAttr + '">&#10003; Approve into worklist</button>'
+        +   '<button class="btn btn-ghost esc-reject-toggle" type="button" data-id="' + idAttr + '">&#10007; Reject</button>'
+        +   '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
+        + '</div>'
+        + '<div class="esc-reject" data-id="' + idAttr + '" style="display:none;">'
+        +   '<label class="esc-resolve-label">Why reject? <span class="esc-optional">(required — goes to the activity trail)</span>'
+        +   '<textarea class="esc-reject-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
+        +   '<div class="esc-resolve-actions">'
+        +     '<button class="btn esc-reject-save" type="button" data-id="' + idAttr + '" disabled>Reject submission</button>'
+        +   '</div>'
+        + '</div></div>';
+    } else if (rejected) {
+      // Terminal: data retained for the audit trail; no actions. A
+      // correction is a fresh external resubmission.
+      body += '<div class="esc-resolved-by">Rejected — see Activity for the reviewer’s reason.</div>';
+    } else if (resolved) {
+      body += '<div class="esc-resolution"><strong>Resolution:</strong> ' + escapeHtml(r.resolution || '') + '</div>';
+      if (r.comments) body += '<div class="esc-comments"><strong>Comments:</strong> ' + escapeHtml(r.comments) + '</div>';
+      const by = r.resolved_by ? (' by ' + escapeHtml(r.resolved_by)) : '';
+      const at = r.resolved_at ? (' · ' + escapeHtml(escFmtWhen_(r.resolved_at))) : '';
+      body += '<div class="esc-resolved-by">Resolved' + by + at + '</div>';
+      // §2: reopen affordance (per-dept; any manager of this dept + admins).
+      // The reason is REQUIRED, mirroring the resolve guard -- Reopen stays
+      // disabled until typed.
+      body += '<div class="esc-reopen-wrap">'
+        + '<button class="btn btn-ghost esc-reopen-toggle" type="button" data-id="' + idAttr + '">&#8635; Reopen</button>'
+        + '<div class="esc-reopen" data-id="' + idAttr + '" style="display:none;">'
+        +   '<label class="esc-resolve-label">Why reopen? <span class="esc-optional">(required)</span>'
+        +   '<textarea class="esc-reopen-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
+        +   '<div class="esc-resolve-actions">'
+        +     '<button class="btn esc-reopen-save" type="button" data-id="' + idAttr + '" disabled>Reopen escalation</button>'
+        +     '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
+        +   '</div>'
+        + '</div></div>';
+    } else {
+      // pending OR in_progress -- the two worklist states share the resolve
+      // form (its "Save comment only" IS the progress note). Pending cards
+      // additionally get admin Edit (§3, pending-only per the server guard)
+      // and a Start button (C6, pending -> in_progress). In-progress cards
+      // omit both (edit is pending-only; you can't re-start).
+      const pa = [];
+      if (isAdmin && !inProgress) {
+        pa.push('<button class="btn btn-ghost esc-edit" type="button" data-id="' + idAttr + '">&#9998; Edit</button>');
+      }
+      if (!inProgress) {
+        pa.push('<button class="btn btn-ghost esc-start" type="button" data-id="' + idAttr + '">&#9680; Start</button>');
+      }
+      if (pa.length) body += '<div class="esc-pending-actions">' + pa.join('') + '</div>';
+      // Inline resolve form. The "Resolved" checkbox + Save stay DISABLED
+      // until a resolution note is entered (mirrors the server requirement).
+      // R12-15 (P3-2): the form sits behind a disclosure (the Activity
+      // pattern) so a multi-card list isn't a wall of repeated empty
+      // textareas; all field classes/data-ids are unchanged, so the
+      // delegated save/comment handlers are untouched.
+      body += '<details class="esc-resolve-disc">'
+        + '<summary class="esc-resolve-disc-summary">Resolve / comment&hellip;</summary>'
+        + '<div class="esc-resolve" data-id="' + idAttr + '">'
+        + '<label class="esc-resolve-label">Resolution (what action was taken — required)'
+        + '<textarea class="esc-resolve-text" rows="2" data-id="' + idAttr + '"></textarea></label>'
+        + '<label class="esc-resolve-label">Comments <span class="esc-optional">(optional)</span>'
+        + '<textarea class="esc-comments-text" rows="1" data-id="' + idAttr + '"></textarea></label>'
+        + '<label class="esc-resolved-check"><input type="checkbox" class="esc-resolved-box" data-id="' + idAttr + '" disabled> Mark resolved</label>'
+        + '<div class="esc-resolve-actions">'
+        + '<button class="btn esc-resolve-save" type="button" data-id="' + idAttr + '" disabled>Save resolution</button>'
+        + '<button class="btn btn-ghost esc-comment-save" type="button" data-id="' + idAttr + '">Save comment only</button>'
+        + '<span class="status status-error esc-row-error" data-id="' + idAttr + '" style="display:none;"></span>'
+        + '</div></div></details>';
+    }
+
+    // §5: append-only activity trail, collapsed by default (progressive
+    // disclosure). Lazy-loaded on first open via getEscalationActivity.
+    body += '<details class="esc-activity" data-id="' + idAttr + '">'
+      + '<summary class="esc-activity-summary" data-id="' + idAttr + '">Activity</summary>'
+      + '<div class="esc-activity-body" data-id="' + idAttr + '" data-loaded="0"></div>'
+      + '</details>';
+
+    return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '')
+      + (rejected ? ' esc-card-resolved' : '') + (inProgress ? ' esc-card-progress' : '')
+      + '" data-id="' + escapeHtml(r.id) + '">'
+      + '<div class="esc-card-top">' + statusPill + deptTag + sourceTag
+      +   (ageBadge ? '<span class="esc-card-top-spacer"></span>' + ageBadge : '') + '</div>'
+      + body + '</div>';
+  }
+
+  // Enable the checkbox + Save only once a resolution note is present; same
+  // gate for the §2 reopen reason -> its Reopen button.
+  function escOnListInput_(e) {
+    if (e.target.classList.contains('esc-resolve-text')) {
+      const id = e.target.getAttribute('data-id');
+      const has = !!e.target.value.trim();
+      const box  = document.querySelector('.esc-resolved-box[data-id="' + escCssId_(id) + '"]');
+      const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
+      if (box)  box.disabled = !has;
+      if (save) save.disabled = !has;
+      if (!has && box) box.checked = false;
+      return;
+    }
+    if (e.target.classList.contains('esc-reopen-text')) {
+      const id = e.target.getAttribute('data-id');
+      const save = document.querySelector('.esc-reopen-save[data-id="' + escCssId_(id) + '"]');
+      if (save) save.disabled = !e.target.value.trim();
+      return;
+    }
+    if (e.target.classList.contains('esc-reject-text')) {
+      const id = e.target.getAttribute('data-id');
+      const save = document.querySelector('.esc-reject-save[data-id="' + escCssId_(id) + '"]');
+      if (save) save.disabled = !e.target.value.trim();
+      return;
+    }
+  }
+
+  function escOnListClick_(e) {
+    const t = e.target;
+    if (t.classList.contains('esc-resolve-save'))   { escResolve_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-comment-save'))   { escSaveComment_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-reopen-toggle'))  {
+      const w = document.querySelector('.esc-reopen[data-id="' + escCssId_(t.getAttribute('data-id')) + '"]');
+      if (w) w.style.display = (w.style.display === 'none' ? '' : 'none');
+      return;
+    }
+    if (t.classList.contains('esc-reopen-save'))    { escReopen_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-approve'))        { escApprove_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-reject-toggle'))  {
+      const rw = document.querySelector('.esc-reject[data-id="' + escCssId_(t.getAttribute('data-id')) + '"]');
+      if (rw) rw.style.display = (rw.style.display === 'none' ? '' : 'none');
+      return;
+    }
+    if (t.classList.contains('esc-reject-save'))    { escReject_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-start'))          { escStart_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-edit'))           { escEditOpen_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
+  }
+
+  // C6: start work on a pending escalation (pending -> in_progress).
+  function escStart_(id) {
+    escRowError_(id, '');
+    const btn = document.querySelector('.esc-start[data-id="' + escCssId_(id) + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    google.script.run
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '&#9680; Start'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .startEscalation({ id: id });
+  }
+
+  // §2: reopen a resolved escalation (requires a reason).
+  function escReopen_(id) {
+    const ta = document.querySelector('.esc-reopen-text[data-id="' + escCssId_(id) + '"]');
+    const reason = ta ? ta.value.trim() : '';
+    if (!reason) { escRowError_(id, 'Enter a reason for reopening.'); return; }
+    escRowError_(id, '');
+    const save = document.querySelector('.esc-reopen-save[data-id="' + escCssId_(id) + '"]');
+    if (save) { save.disabled = true; save.textContent = 'Reopening…'; }
+    google.script.run
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (save) { save.disabled = false; save.textContent = 'Reopen escalation'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .reopenEscalation({ id: id, reason: reason });
+  }
+
+  // Phase 2: approve an external submission into the dept worklist.
+  function escApprove_(id) {
+    escRowError_(id, '');
+    const btn = document.querySelector('.esc-approve[data-id="' + escCssId_(id) + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
+    google.script.run
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '&#10003; Approve into worklist'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .approveEscalation({ id: id });
+  }
+
+  // Phase 2: reject an external submission (requires a reason).
+  function escReject_(id) {
+    const ta = document.querySelector('.esc-reject-text[data-id="' + escCssId_(id) + '"]');
+    const reason = ta ? ta.value.trim() : '';
+    if (!reason) { escRowError_(id, 'Enter a reason for rejecting.'); return; }
+    escRowError_(id, '');
+    const save = document.querySelector('.esc-reject-save[data-id="' + escCssId_(id) + '"]');
+    if (save) { save.disabled = true; save.textContent = 'Rejecting…'; }
+    google.script.run
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (save) { save.disabled = false; save.textContent = 'Reject submission'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .rejectEscalation({ id: id, reason: reason });
+  }
+
+  // §3: open the create form in EDIT mode, prefilled from the row.
+  function escEditOpen_(id) {
+    if (!escLastResp_ || !escLastResp_.rows) return;
+    let row = null;
+    for (let i = 0; i < escLastResp_.rows.length; i++) {
+      if (String(escLastResp_.rows[i].id) === String(id)) { row = escLastResp_.rows[i]; break; }
+    }
+    if (!row) return;
+    escEditId_ = id;
+    escSetCreateError_('');
+    const f = $('esc-create'); if (f) f.style.display = '';
+    // Prefill. occurred_at comes back as 'YYYY-MM-DD HH:MM:SS' -> datetime-local wants 'YYYY-MM-DDTHH:MM'.
+    const setVal = function (elId, v) { if ($(elId)) $(elId).value = v || ''; };
+    if ($('esc-c-dept')) $('esc-c-dept').value = row.department || '';
+    setVal('esc-c-when', escToLocalInput_(row.occurred_at));
+    setVal('esc-c-caller', row.caller);
+    setVal('esc-c-patient', row.patient_name);
+    setVal('esc-c-trx', row.trx);
+    setVal('esc-c-area', row.area);
+    setVal('esc-c-reason', row.reason);
+    const titleEl = $('esc-create-title'); if (titleEl) titleEl.textContent = 'Edit escalation';
+    const saveBtn = $('esc-c-save'); if (saveBtn) saveBtn.textContent = 'Save changes';
+    if (f && f.scrollIntoView) f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Reset the create form back to "new escalation" mode.
+  function escResetCreateMode_() {
+    escEditId_ = null;
+    const titleEl = $('esc-create-title'); if (titleEl) titleEl.textContent = 'Log a new escalation';
+    const saveBtn = $('esc-c-save'); if (saveBtn) saveBtn.textContent = 'Save escalation';
+  }
+
+  // §5: lazy-load the activity trail into a card's body on first expand.
+  function escLoadActivity_(id) {
+    const body = document.querySelector('.esc-activity-body[data-id="' + escCssId_(id) + '"]');
+    if (!body || body.getAttribute('data-loaded') === '1') return;
+    body.setAttribute('data-loaded', '1');
+    body.innerHTML = '<div class="esc-activity-loading">Loading…</div>';
+    google.script.run
+      .withSuccessHandler(function (resp) { escRenderActivity_(body, resp || {}); })
+      .withFailureHandler(function (err) {
+        body.setAttribute('data-loaded', '0');
+        body.innerHTML = '<div class="esc-activity-empty">Could not load activity.</div>';
+      })
+      .getEscalationActivity({ id: id });
+  }
+
+  function escRenderActivity_(body, resp) {
+    if (resp.available === false) {
+      body.setAttribute('data-loaded', '0');
+      body.innerHTML = '<div class="esc-activity-empty">Activity is temporarily unavailable.</div>';
+      return;
+    }
+    const rows = resp.rows || [];
+    if (!rows.length) { body.innerHTML = '<div class="esc-activity-empty">No activity recorded.</div>'; return; }
+    const labels = { created: 'Created', resolved: 'Resolved', comment: 'Comment', edited: 'Edited',
+      reopened: 'Reopened', started: 'Started', approved: 'Approved', rejected: 'Rejected' };
+    body.innerHTML = '<ul class="esc-timeline">' + rows.map(function (a) {
+      const lab = labels[a.action] || escapeHtml(a.action || '');
+      const who = a.actor ? (' · ' + escapeHtml(a.actor)) : '';
+      const when = a.at ? escapeHtml(escFmtWhen_(a.at)) : '';
+      const detail = a.detail ? '<div class="esc-timeline-detail">' + escapeHtml(a.detail) + '</div>' : '';
+      return '<li class="esc-timeline-item esc-timeline-' + escapeHtml(a.action || '') + '">'
+        + '<div class="esc-timeline-head"><span class="esc-timeline-action">' + lab + '</span>'
+        + '<span class="esc-timeline-meta">' + when + who + '</span></div>'
+        + detail + '</li>';
+    }).join('') + '</ul>';
+  }
+
+  // 'YYYY-MM-DD HH:MM:SS' (or ISO) -> 'YYYY-MM-DDTHH:MM' for datetime-local.
+  function escToLocalInput_(s) {
+    if (!s) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s));
+    if (m) return m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5];
+    const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s));
+    return d ? (d[1] + '-' + d[2] + '-' + d[3] + 'T00:00') : '';
+  }
+
+  function escResolve_(id) {
+    const text = document.querySelector('.esc-resolve-text[data-id="' + escCssId_(id) + '"]');
+    const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
+    const resolution = text ? text.value.trim() : '';
+    if (!resolution) { escRowError_(id, 'Enter a resolution note before marking resolved.'); return; }
+    escRowError_(id, '');
+    const save = document.querySelector('.esc-resolve-save[data-id="' + escCssId_(id) + '"]');
+    if (save) { save.disabled = true; save.textContent = 'Saving…'; }
+    google.script.run
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) {
+        if (save) { save.disabled = false; save.textContent = 'Save resolution'; }
+        escRowError_(id, (err && err.message ? err.message : String(err)));
+      })
+      .resolveEscalation({ id: id, resolution: resolution, comments: comm ? comm.value.trim() : '' });
+  }
+
+  function escSaveComment_(id) {
+    const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
+    escRowError_(id, '');
+    google.script.run
+      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) { escRowError_(id, (err && err.message ? err.message : String(err))); })
+      .updateEscalationComment({ id: id, comments: comm ? comm.value.trim() : '' });
+  }
+
+  function escCreate_() {
+    escSetCreateError_('');
+    const dept = $('esc-c-dept') ? $('esc-c-dept').value : '';
+    const reason = $('esc-c-reason') ? $('esc-c-reason').value.trim() : '';
+    if (!reason) { escSetCreateError_('Reason for escalation is required.'); return; }
+    const editing = !!escEditId_;
+    const btn = $('esc-c-save');
+    const idleLabel = editing ? 'Save changes' : 'Save escalation';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const payload = {
+      department: dept,
+      occurredAt: $('esc-c-when') ? $('esc-c-when').value : '',
+      caller:      $('esc-c-caller') ? $('esc-c-caller').value : '',
+      patientName: $('esc-c-patient') ? $('esc-c-patient').value : '',
+      trx:         $('esc-c-trx') ? $('esc-c-trx').value : '',
+      area:        $('esc-c-area') ? $('esc-c-area').value : '',
+      reason:      reason,
+    };
+    const runner = google.script.run
+      .withSuccessHandler(function () {
+        if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+        ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
+          if ($(i)) $(i).value = '';
+        });
+        const f = $('esc-create'); if (f) f.style.display = 'none';
+        escResetCreateMode_();
+        if (!editing && $('esc-status')) $('esc-status').value = 'pending';
+        escLoad_();
+      })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+        escSetCreateError_(err && err.message ? err.message : String(err));
+      });
+    if (editing) {
+      payload.id = escEditId_;
+      runner.updateEscalation(payload);
+    } else {
+      runner.createEscalation(payload);
+    }
+  }
+
+  function escFmtWhen_(s) {
+    // Server returns ISO-ish timestamptz text; show a compact local-ish label.
+    if (!s) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s));
+    if (m) return m[2] + '/' + m[3] + '/' + m[1] + ' ' + m[4] + ':' + m[5];
+    const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s));
+    return d ? (d[2] + '/' + d[3] + '/' + d[1]) : String(s);
+  }
+  // CSS-attr-safe id (UUIDs are hex+hyphen, but guard anyway).
+  // C-9: ESCAPE quotes/backslashes for use inside a double-quoted attribute
+  // selector ([data-x="..."]) instead of STRIPPING them -- a stripped value
+  // could never match an attribute that actually contains a quote (agent /
+  // dept names are feed-originated), so those lookups silently no-op'd.
+  function escCssId_(id) {
+    return String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
+  function escSetError_(msg) {
+    const el = $('esc-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function escSetCreateError_(msg) {
+    const el = $('esc-c-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function escRowError_(id, msg) {
+    const el = document.querySelector('.esc-row-error[data-id="' + escCssId_(id) + '"]');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  // ── Guided tour (#5, onboarding) ──────────────────────────────
+  // Client-only coachmark walkthrough (fits the anti-intimidation layer).
+  // Auto-runs once for first-time visitors (localStorage cdr.tour.done) and is
+  // always replayable from Help -> Guided tour. Spotlight = a highlight box
+  // with a huge box-shadow that dims everything else; reduced-motion aware.
+  var TOUR_KEY_ = 'cdr.tour.done';
+  var tourIdx_ = 0;
+  var tourSteps_ = [];
+
+  function tourAllSteps_() {
+    return [
+      { sel: '#page-title',       title: 'Welcome 👋',              body: 'This is your Overview — a one-glance snapshot of every department’s most recent day, with a 30-day answer-rate trend.' },
+      // (R10-1: the quick-start question row moved into the Help modal, so
+      // its step folded into the Help closing step below.)
+      { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
+      { sel: '#ov-trend-chart',   title: 'The department trend',    body: 'Each department’s answer rate over time. Click a card below to spotlight its line (Shift-click to compare a few); click a point on a line to open that department & day in My Department. The tabs switch to abandoned calls / %, and the range buttons zoom to 30 / 60 / 90 days.' },
+      { sel: '#ov-period-bar',    title: 'Change the window',  body: 'One Window selector flips the department cards AND the agent table between Yesterday, Last 30 days, and Year-to-date. The trend chart keeps its own Chart: range control beside it.' },
+      { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent table — sortable by any column, worst answer rate first by default. A summary strip up top (% Answered, Queue calls with its answered/abandoned split, Abandoned % for the range) and the full Missed Calls report with per-agent timelines below the table.' },
+      { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — start one, mark it resolved with a note on how it was handled, and see the full activity trail.' },
+      { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, per-agent cards vs the prior period, and queue health. Use the period slider (Last 7 / 30 / MTD / YTD) to reframe it — Insights and My Department share one date window, so whichever you set most recently carries over. Your generated report stays put when you switch tabs.' },
+      { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (the per-agent deep dive) lives here, alongside the admin-vetted Inbound and Direct reports. Missed-call detail is on the My Department page.' },
+      { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere. Inside you’ll find plain-English quick-start questions that jump you straight into the right report, plus a button to replay this tour any time.' },
+    ];
+  }
+  // Keep only steps whose target exists AND is visible (skips admin-only or
+  // not-yet-rendered elements gracefully).
+  function tourVisibleSteps_() {
+    return tourAllSteps_().filter(function (s) {
+      var el = document.querySelector(s.sel);
+      return el && el.offsetParent !== null;
+    });
+  }
+  function startTour_() {
+    tourSteps_ = tourVisibleSteps_();
+    if (!tourSteps_.length) return;
+    tourIdx_ = 0;
+    tourEnsureEls_();
+    tourShow_();
+  }
+  function tourEnsureEls_() {
+    if ($('tour-overlay')) return;
+    var ov = document.createElement('div');
+    ov.id = 'tour-overlay'; ov.className = 'tour-overlay'; ov.style.display = 'none';
+    ov.innerHTML = '<div class="tour-highlight" id="tour-highlight"></div>'
+      + '<div class="tour-tip" id="tour-tip" role="dialog" aria-modal="true" aria-label="Guided tour">'
+      +   '<div class="tour-tip-title" id="tour-tip-title"></div>'
+      +   '<div class="tour-tip-body" id="tour-tip-body"></div>'
+      +   '<div class="tour-tip-foot">'
+      +     '<span class="tour-step-count" id="tour-step-count"></span>'
+      +     '<span class="tour-tip-actions">'
+      +       '<button type="button" class="btn btn-ghost" id="tour-skip">Skip</button>'
+      +       '<button type="button" class="btn btn-ghost" id="tour-back">Back</button>'
+      +       '<button type="button" class="btn" id="tour-next">Next</button>'
+      +     '</span>'
+      +   '</div>'
+      + '</div>';
+    document.body.appendChild(ov);
+    $('tour-skip').addEventListener('click', tourFinish_);
+    $('tour-back').addEventListener('click', function () { if (tourIdx_ > 0) { tourIdx_--; tourShow_(); } });
+    $('tour-next').addEventListener('click', function () {
+      if (tourIdx_ < tourSteps_.length - 1) { tourIdx_++; tourShow_(); } else { tourFinish_(); }
+    });
+    document.addEventListener('keydown', tourKey_);
+    window.addEventListener('resize', tourReposition_);
+  }
+  function tourKey_(e) {
+    var ov = $('tour-overlay');
+    if (!ov || ov.style.display === 'none') return;
+    if (e.key === 'Escape') tourFinish_();
+    else if (e.key === 'ArrowRight' || e.key === 'Enter') $('tour-next').click();
+    else if (e.key === 'ArrowLeft') $('tour-back').click();
+  }
+  function tourShow_() {
+    var step = tourSteps_[tourIdx_];
+    if (!step) { tourFinish_(); return; }
+    $('tour-overlay').style.display = '';
+    $('tour-tip-title').textContent = step.title;
+    $('tour-tip-body').textContent = step.body;
+    $('tour-step-count').textContent = (tourIdx_ + 1) + ' / ' + tourSteps_.length;
+    $('tour-back').style.visibility = tourIdx_ === 0 ? 'hidden' : '';
+    $('tour-next').textContent = (tourIdx_ === tourSteps_.length - 1) ? 'Done' : 'Next';
+    tourReposition_();
+  }
+  function tourReposition_() {
+    var ov = $('tour-overlay');
+    if (!ov || ov.style.display === 'none') return;
+    var step = tourSteps_[tourIdx_];
+    var el = step && document.querySelector(step.sel);
+    if (!el) { tourFinish_(); return; }
+    var r = el.getBoundingClientRect();
+    var hl = $('tour-highlight'), tip = $('tour-tip'), pad = 6;
+    hl.style.top = (r.top - pad) + 'px';
+    hl.style.left = (r.left - pad) + 'px';
+    hl.style.width = (r.width + pad * 2) + 'px';
+    hl.style.height = (r.height + pad * 2) + 'px';
+    var tipW = 300, tipH = 150;
+    var tipTop = r.bottom + 12;
+    if (tipTop > window.innerHeight - tipH) tipTop = Math.max(12, r.top - 12 - tipH);
+    var tipLeft = Math.min(Math.max(12, r.left), window.innerWidth - tipW - 12);
+    tip.style.top = tipTop + 'px';
+    tip.style.left = tipLeft + 'px';
+  }
+  function tourFinish_() {
+    var ov = $('tour-overlay');
+    if (ov) ov.style.display = 'none';
+    try { localStorage.setItem(TOUR_KEY_, '1'); } catch (e) {}
+  }
+  function initTour_() {
+    var replay = $('tour-replay-btn');
+    if (replay) replay.addEventListener('click', function () {
+      // C-2: the replay button lives in the SETTINGS modal (dashboard.html)
+      // -- close THAT modal so the tour isn't hidden behind it. (The old
+      // handler still closed HELP from before the button moved: it released
+      // Settings' focus trap via Help's closeModal and left Settings open
+      // under -- and after -- the tour.) F-42 still applies: go through the
+      // modal's OWN close button so the focus trap + Escape keydown listener
+      // are released.
+      var settings = $('settings-modal');
+      var closeBtn = settings && settings.querySelector('.modal-close');
+      if (closeBtn) { closeBtn.click(); }
+      else if (settings) {
+        settings.style.display = 'none'; settings.setAttribute('aria-hidden', 'true');
+        document.body.style.overflow = '';
+      }
+      setTimeout(startTour_, 200);
+    });
+    // R10-1: the tour is replayable from the HELP modal too (the tour's own
+    // closing step always pointed users at Help). Same F-42 discipline:
+    // close Help via its OWN close button so the focus trap releases.
+    var helpTour = $('help-tour-btn');
+    if (helpTour) helpTour.addEventListener('click', function () {
+      var hc = $('help-close');
+      if (hc) hc.click();
+      setTimeout(startTour_, 200);
+    });
+    var seen = true;
+    try { seen = !!localStorage.getItem(TOUR_KEY_); } catch (e) { seen = true; }
+    if (!seen) setTimeout(function () {
+      // Autostart only on the Overview landing (the steps assume it).
+      if (document.body.getAttribute('data-page') === 'overview') startTour_();
+    }, 1200);
+  }
+
+  function clSetDefaultDates_() {
+    if ($('cl-from') && $('cl-from').value) return;   // keep last-used range
+    if ($('cl-from')) $('cl-from').value = launcherIsoDaysAgo_(30);
+    if ($('cl-to'))   $('cl-to').value   = launcherIsoDaysAgo_(0);
+  }
+
+  function clSetError_(msg) {
+    const el = $('cl-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function clShowOnly_(id) {
+    ['cl-unconfigured', 'cl-unavailable', 'cl-empty', 'cl-results', 'cl-loading'].forEach(function (x) {
+      const el = $(x);
+      if (el) el.style.display = (x === id) ? '' : 'none';
+    });
+  }
+
+  let clLookupSeq_ = 0;   // R8-A3: stale-response token for the lookup fetch
+
+  function runCallerLookup_() {
+    clSetError_('');
+    const phone = ($('cl-phone') && $('cl-phone').value) || '';
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10) { clSetError_('Enter a phone number with at least 10 digits.'); return; }
+    const from = $('cl-from').value, to = $('cl-to').value;
+    if (!from || !to) { clSetError_('Pick a start and end date.'); return; }
+    if (from > to)    { clSetError_('Start date must be on or before end date.'); return; }
+
+    const btn = $('cl-lookup-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Looking up…';
+    // C1: signal-rings loader in the results area while the query is in flight.
+    const loadEl = $('cl-loading');
+    if (loadEl) loadEl.innerHTML = dsRingsHtml_('Looking up communication history…');
+    clShowOnly_('cl-loading');
+
+    // R8-A3: monotonic stale-response token (the reportReqSeq_ family). The
+    // button-disable guard alone couldn't stop an older in-flight response
+    // from painting over a newer one -- on a PII surface where the queried
+    // number isn't echoed in the results, caller A's history could silently
+    // render under an input reading number B.
+    clLookupSeq_++;
+    const __cltok = clLookupSeq_;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__cltok !== clLookupSeq_) return;   // superseded by a newer lookup
+        btn.disabled = false; btn.textContent = prev;
+        clRenderResults_(data);
+      })
+      .withFailureHandler(function (err) {
+        if (__cltok !== clLookupSeq_) return;
+        btn.disabled = false; btn.textContent = prev;
+        clShowOnly_('');
+        clSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getCallerLookup({ phone: phone, from: from, to: to });
+  }
+
+  function clRenderResults_(data) {
+    const meta = (data && data.meta) || {};
+    if (meta.configured === false) { clShowOnly_('cl-unconfigured'); return; }
+    if (meta.available === false)  { clShowOnly_('cl-unavailable');  return; }
+    const calls = (data && data.calls) || [];
+    const outCalls = (data && data.outboundCalls) || [];
+    // Day-level historical outbound: only for dates the per-call capture
+    // doesn't cover (a covered date's per-call records ARE those calls --
+    // showing the aggregate too would double-tell the same story).
+    const outDates = {};
+    outCalls.forEach(function (c) { if (c.callDate) outDates[c.callDate] = true; });
+    const history = ((data && data.outboundHistory) || []).filter(function (e) {
+      return e.callDate && !outDates[e.callDate];
+    });
+    if (!calls.length && !outCalls.length && !history.length) {
+      const hint = $('cl-empty-hint');
+      if (hint) hint.textContent = 'No calls to or from this number between '
+        + (meta.from || '?') + ' and ' + (meta.to || '?')
+        + '. Inbound capture starts the day the inbound mirror first ran; per-call outbound starts '
+        + 'with the outbound capture (day-level outbound reaches back through the CDR mirror).';
+      clShowOnly_('cl-empty');
+      return;
+    }
+    const title = $('cl-results-title');
+    if (title) {
+      const parts = [];
+      parts.push(calls.length + ' inbound' + (meta.truncated ? ' (truncated)' : ''));
+      parts.push(outCalls.length + ' outbound' + (meta.outboundTruncated ? ' (truncated)' : '')
+        + (history.length ? ' (+' + history.length + ' earlier day-summar' + (history.length === 1 ? 'y' : 'ies') + ')' : ''));
+      title.textContent = parts.join(' · ')
+        + (calls.length && calls[0].insurer ? ' · ' + calls[0].insurer : '');
+    }
+    const dateEl = $('cl-results-date');
+    if (dateEl) dateEl.textContent = (meta.from || '') + ' → ' + (meta.to || '');
+
+    // One interleaved timeline: both directions tagged, newest first.
+    const merged = calls.map(function (c) { c._dir = 'in'; return c; })
+      .concat(outCalls.map(function (c) { c._dir = 'out'; return c; }));
+    merged.sort(function (a, b) {
+      const ka = (a.callDate || '') + ' ' + (a.callStart || '');
+      const kb = (b.callDate || '') + ' ' + (b.callStart || '');
+      return ka < kb ? 1 : (ka > kb ? -1 : 0);
+    });
+    let html = merged.length ? clGroupByDayHtml_(merged) : '';
+    if (meta.outboundAvailable === false) {
+      html += '<div class="ds-note">Per-call outbound capture isn’t live yet '
+        + '(deploy cdr-import and run <code>backfillOutboundCalls</code>) — showing inbound calls'
+        + (history.length ? ' plus day-level outbound summaries' : '') + '.</div>';
+    }
+    if (history.length) html += clHistoryHtml_(history);
+    $('cl-call-list').innerHTML = html;
+    clShowOnly_('cl-results');
+  }
+
+  // Day-level outbound entries (call_history_phones) for dates before the
+  // per-call capture: one line per (date, agent) -- the data was only ever
+  // stored per agent-day, so this is the ceiling for those dates.
+  function clHistoryHtml_(entries) {
+    const rows = entries.slice().sort(function (a, b) {
+      return (a.callDate || '') < (b.callDate || '') ? 1 : -1;   // newest first
+    }).map(function (e) {
+      const facts = [];
+      facts.push('dialed ×' + (e.dialed || (e.answered + e.missed) || '?'));
+      if (e.answered) facts.push(e.answered + ' answered');
+      if (e.missed) facts.push(e.missed + ' not answered');
+      if (e.talkSeconds > 0) facts.push(fmtDuration(e.talkSeconds) + ' talk');
+      return '<div class="cl-history-row">'
+        + '<span class="cl-history-date">' + escapeHtml(clDayLabel_(e.callDate)) + '</span>'
+        + '<span class="cl-history-agent">' + escapeHtml(e.agentName || '(unknown agent)')
+        + (e.department ? ' · ' + escapeHtml(e.department) : '') + '</span>'
+        + '<span class="cl-history-facts">' + facts.join(' · ') + '</span>'
+        + '</div>';
+    }).join('');
+    return '<details class="cl-day cl-history" open>'
+      + '<summary class="cl-day-head">'
+      +   '<span class="cl-day-date">Earlier outbound activity</span>'
+      +   '<span class="cl-day-count">daily summaries — per-call detail was not captured for these dates</span>'
+      + '</summary>'
+      + '<div class="cl-day-cards">' + rows + '</div>'
+      + '</details>';
+  }
+
+  // R11-E (item 1): group the call cards into collapsible per-day sections
+  // (newest day first, most-recent day open) so a wide date range reads as a
+  // scannable diary rather than a flat wall of cards. Each day header shows the
+  // weekday + date and that day's call count. Single-day results render one
+  // (open, header-less) group so nothing changes for the common case.
+  function clGroupByDayHtml_(calls) {
+    const order = [];
+    const byDay = {};
+    calls.forEach(function (c) {
+      const d = c.callDate || '?';
+      if (!byDay[d]) { byDay[d] = []; order.push(d); }
+      byDay[d].push(c);
+    });
+    // calls arrive newest-first (clRenderResults_ sorts the merged list);
+    // keep that order for days too. Cards dispatch on direction.
+    const card = function (c) { return c._dir === 'out' ? clOutboundCardHtml_(c) : clCallCardHtml_(c); };
+    if (order.length <= 1) {
+      return '<div class="cl-day-cards">' + calls.map(card).join('') + '</div>';
+    }
+    return order.map(function (d, i) {
+      const list = byDay[d];
+      const label = clDayLabel_(d);
+      const nIn = list.filter(function (c) { return c._dir !== 'out'; }).length;
+      const nOut = list.length - nIn;
+      const countLbl = (nIn && nOut) ? (nIn + ' in · ' + nOut + ' out')
+        : list.length + (nOut ? ' outbound' : ' call' + (list.length === 1 ? '' : 's'));
+      return '<details class="cl-day"' + (i === 0 ? ' open' : '') + '>'
+        + '<summary class="cl-day-head">'
+        +   '<span class="cl-day-date">' + escapeHtml(label) + '</span>'
+        +   '<span class="cl-day-count">' + countLbl + '</span>'
+        + '</summary>'
+        + '<div class="cl-day-cards">' + list.map(card).join('') + '</div>'
+        + '</details>';
+    }).join('');
+  }
+  function clDayLabel_(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
+    if (!m) return String(iso || '?');
+    const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (isNaN(dt.getTime())) return iso;
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const mons = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return days[dt.getDay()] + ' · ' + mons[dt.getMonth()] + ' ' + Number(m[3]) + ', ' + m[1];
+  }
+
+  function clOutcomeChip_(c) {
+    let cls = 'cl-chip-muted', label = c.disposition || 'unknown';
+    if (c.disposition === 'answered')  { cls = 'cl-chip-good'; label = 'Answered'; }
+    if (c.disposition === 'missed')    { label = 'Missed'; }
+    if (c.disposition === 'abandoned') {
+      cls = 'cl-chip-warn';
+      label = c.abandonStage === 'ivr' ? 'Abandoned in IVR' : 'Abandoned in queue';
+    }
+    let html = '<span class="cl-chip ' + cls + '">' + escapeHtml(label) + '</span>';
+    if (c.abandonedOnHold) {
+      html += ' <span class="cl-chip cl-chip-warn">Hung up on hold</span>';
+    }
+    return html;
+  }
+
+  function clCallCardHtml_(c) {
+    const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + clCstTime_(c.callStart) : ''));
+    const facts = [];
+    if (c.waitSeconds != null) facts.push('Waited ' + fmtDuration(c.waitSeconds));
+    if (c.holdSeconds > 0)     facts.push('Held ' + fmtDuration(c.holdSeconds));
+    if (c.finalDept)           facts.push('Answered by ' + escapeHtml(c.finalDept));
+    if (c.dialIn)              facts.push('Dialed ' + escapeHtml(c.dialIn));
+    let body;
+    if (c.journey && c.journey.length) {
+      body = clChainHtml_(c.journey)
+           + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+           + clJourneyEndRowHtml_(c.journey) + '</div>';
+    } else {
+      // Pre-journey-extension row: queue-level summary only.
+      const path = c.entryQueue
+        ? escapeHtml(c.entryQueue) + (c.finalQueue && c.finalQueue !== c.entryQueue
+            ? ' → ' + escapeHtml(c.finalQueue) + ' (' + c.numTransfers + ' transfer' + (c.numTransfers === 1 ? '' : 's') + ')'
+            : '')
+        : 'Never reached a queue (IVR only)';
+      body = '<div class="cl-journey-summary">' + path
+           + ' <span class="cl-journey-note">— leg-by-leg detail not captured for this call (recorded before the journey extension)</span></div>';
+    }
+    return '<div class="cl-call-card">'
+         +   '<div class="cl-call-head">'
+         +     '<span class="cl-call-when">' + when + '</span>'
+         +     '<span class="cl-chip cl-chip-dir-in">Inbound</span>'
+         +     clOutcomeChip_(c)
+         +   '</div>'
+         +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
+         +   body
+         + '</div>';
+  }
+
+  // Outbound per-call card (Option B, `outbound_calls`): who called the
+  // number, whether it connected, talk/ring time. call_start shares the raw
+  // PST convention with inbound, so the same CST display shift applies.
+  function clOutboundCardHtml_(c) {
+    const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + clCstTime_(c.callStart) : ''));
+    const outcome = c.connected
+      ? '<span class="cl-chip cl-chip-good">Connected</span>'
+      : '<span class="cl-chip cl-chip-muted">Not connected</span>';
+    const facts = [];
+    facts.push('Called by ' + escapeHtml(c.agentName || (c.agentExt ? 'ext ' + c.agentExt : '(unknown)'))
+      + (c.department ? ' (' + escapeHtml(c.department) + ')' : ''));
+    if (c.connected && c.talkSeconds > 0) facts.push('Talked ' + fmtDuration(c.talkSeconds));
+    if (!c.connected && c.ringSeconds != null) facts.push('Rang ' + fmtDuration(c.ringSeconds));
+    if (c.attempts > 1) facts.push(c.attempts + ' attempts');
+    let body = '';
+    if (c.journey && c.journey.length > 1) {
+      body = '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
+           + clJourneyEndRowHtml_(c.journey) + '</div>';
+    }
+    return '<div class="cl-call-card cl-call-card--out">'
+         +   '<div class="cl-call-head">'
+         +     '<span class="cl-call-when">' + when + '</span>'
+         +     '<span class="cl-chip cl-chip-dir-out">Outbound</span>'
+         +     outcome
+         +   '</div>'
+         +   '<div class="cl-call-facts">' + facts.join(' · ') + '</div>'
+         +   body
+         + '</div>';
+  }
+
+  /**
+   * Compact visual path above the detailed timeline: queue + agent legs
+   * as arrow-chained tokens (IVR legs collapse into one leading token).
+   * "IVR → Sales → Anna ✗ → Ben ✓ 4:12" reads the whole call at a glance;
+   * the timeline below keeps the exact timestamps / hold detail.
+   */
+  // INV-18: inbound journey timestamps (`ev.t`, `callStart`) are STORED in
+  // raw PST wall-clock (icIsoTime_ in cdr-import preserves the CDR's own
+  // clock); every other dashboard surface speaks CST, so DISPLAY shifts
+  // +2h -- the same fixed shift the heatmap SQL applies
+  // (INBOUND_HEATMAP_CST_SHIFT_HOURS). Owner note: the Call Path overlay
+  // previously showed the raw PST values next to CST timestamps on the
+  // Missed report.
+  var CL_PST_TO_CST_SEC_ = 2 * 3600;
+  function clHmsToSec_(hms) {
+    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(hms || '').trim());
+    if (!m) return null;
+    return (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0));
+  }
+  function clSecToHms_(sec) {
+    sec = ((sec % 86400) + 86400) % 86400;
+    const p = function (n) { return String(n).padStart(2, '0'); };
+    return p(Math.floor(sec / 3600)) + ':' + p(Math.floor((sec % 3600) / 60)) + ':' + p(sec % 60);
+  }
+  function clCstTime_(hms) {
+    const s = clHmsToSec_(hms);
+    return s == null ? String(hms || '') : clSecToHms_(s + CL_PST_TO_CST_SEC_);
+  }
+
+  // Owner note: every journey row's timestamp is that leg's START, so a
+  // long abandoned queue wait read as if the caller disconnected minutes
+  // earlier than they did (the last row's time + its duration is the real
+  // hang-up moment). Append an explicit terminal line computed from the
+  // latest leg end (start + duration), CST-shifted like the rows.
+  function clJourneyEndRowHtml_(journey) {
+    let endSec = -1, abandoned = false;
+    (journey || []).forEach(function (ev) {
+      const s = clHmsToSec_(ev.t);
+      if (s == null) return;
+      const dur = Number(ev.secs != null ? ev.secs : ev.talk) || 0;
+      if (s + dur > endSec) endSec = s + dur;
+      if (ev.abandoned) abandoned = true;
+    });
+    if (endSec < 0) return '';
+    return '<div class="cl-ev cl-ev-end">'
+         +   '<span class="cl-ev-time">' + escapeHtml(clSecToHms_(endSec + CL_PST_TO_CST_SEC_)) + '</span>'
+         +   '<span class="cl-ev-icon" aria-hidden="true">&#9632;</span>'
+         +   '<span class="cl-ev-name">Call ended</span>'
+         +   (abandoned ? '<span class="cl-ev-bits">caller disconnected here</span>' : '')
+         + '</div>';
+  }
+
+  function clChainHtml_(journey) {
+    const toks = [];
+    let leadingIvr = false;
+    journey.forEach(function (ev) {
+      if (ev.kind === 'queue') {
+        toks.push({ txt: String(ev.name || '').replace(/^A_Q_/i, ''), cls: 'cl-tok-queue' });
+      } else if (ev.kind === 'answer') {
+        toks.push({ txt: (ev.name || '?') + ' ✓' + (ev.talk ? ' ' + fmtDuration(ev.talk) : ''), cls: 'cl-tok-answer' });
+      } else if (ev.missed) {
+        toks.push({ txt: (ev.name || '?') + ' ✗', cls: 'cl-tok-missed' });
+      } else if (!toks.length) {
+        leadingIvr = true;   // pre-queue IVR/menu legs collapse to one token
+      }
+    });
+    if (!toks.length) return '';
+    const parts = (leadingIvr ? [{ txt: 'IVR', cls: 'cl-tok-ivr' }] : []).concat(toks);
+    return '<div class="cl-chain">'
+      + parts.map(function (p) {
+          return '<span class="cl-tok ' + p.cls + '">' + escapeHtml(p.txt) + '</span>';
+        }).join('<span class="cl-arrow" aria-hidden="true">→</span>')
+      + '</div>';
+  }
+
+  function clJourneyRowHtml_(ev) {
+    const kindIcon = ev.kind === 'queue' ? '⧖' : (ev.kind === 'answer' ? '✓' : '·');
+    const kindCls  = ev.kind === 'answer' ? ' cl-ev-answer' : (ev.kind === 'queue' ? ' cl-ev-queue' : '');
+    const bits = [];
+    if (ev.talk)  bits.push('talked ' + fmtDuration(ev.talk));
+    else if (ev.secs != null) bits.push(fmtDuration(ev.secs));
+    if (ev.hold)  bits.push('held ' + fmtDuration(ev.hold));
+    if (ev.abandoned) bits.push('caller hung up');
+    else if (ev.missed && ev.kind !== 'queue') bits.push('no answer');
+    return '<div class="cl-ev' + kindCls + '">'
+         +   '<span class="cl-ev-time">' + escapeHtml(ev.t ? clCstTime_(ev.t) : '') + '</span>'
+         +   '<span class="cl-ev-icon" aria-hidden="true">' + kindIcon + '</span>'
+         +   '<span class="cl-ev-name">' + escapeHtml(ev.name || '(unknown)') + '</span>'
+         +   (bits.length ? '<span class="cl-ev-bits">' + escapeHtml(bits.join(' · ')) + '</span>' : '')
+         + '</div>';
+  }
+
+  // Days-to-violation forecast (E9, Phase E). Linear regression on
+  // the last 7 entries of dailySeries.abandonedPct; if slope > 0 and
+  // the regression projects a crossing of the 5% violation threshold
+  // within QCD_FORECAST_HORIZON_DAYS (=7), surface a warn-tinted
+  // banner above the KPI tiles. Hidden in healthy states (negative
+  // slope, projected crossing too far out, or already above 5%).
+  //
+  // Math (avoids any library dep):
+  //   slope = (n*Σxy - Σx*Σy) / (n*Σx² - (Σx)²)
+  //   daysToCross = (5 - currentY) / slope
+  // where currentY is the last observed abandonedPct and x is days
+  // since the first point in the window.
+  const QCD_FORECAST_HORIZON_DAYS = 7;
+  const QCD_FORECAST_WINDOW_DAYS  = 7;
+  /**
+   * SHARED days-to-violation forecast (INV-51 / E9 semantics): 7-day
+   * linear regression on a daily abandoned-% series, projecting when
+   * the 5% threshold will cross. Returns inner HTML, or '' in the
+   * three healthy states (already over / flat-or-improving / crossing
+   * beyond the horizon). Consumed by the QCD Report AND the Insights
+   * Queue health section, so the two can't disagree.
+   */
+  function abandonForecastHtml_(pcts) {
+    const series = pcts || [];
+    if (series.length < QCD_FORECAST_WINDOW_DAYS) return '';
+    const ys = series.slice(-QCD_FORECAST_WINDOW_DAYS).map(function (v) { return Number(v) || 0; });
+    const currentY = ys[ys.length - 1];
+    // Already above threshold? No forecast -- the operator is past
+    // the projection horizon; existing chrome already flags it.
+    if (currentY >= 5) return '';
+    const n = ys.length;
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (let i = 0; i < n; i++) {
+      sumX  += i;
+      sumY  += ys[i];
+      sumXY += i * ys[i];
+      sumXX += i * i;
+    }
+    const denom = n * sumXX - sumX * sumX;
+    if (denom === 0) return '';
+    const slope = (n * sumXY - sumX * sumY) / denom;
+    // Healthy: trend is flat or improving. Skip the banner.
+    if (slope <= 0.01) return '';
+    const daysToCross = (5 - currentY) / slope;
+    if (daysToCross <= 0 || daysToCross > QCD_FORECAST_HORIZON_DAYS) return '';
+    const wholeDays = Math.max(1, Math.round(daysToCross));
+    const slopeDay  = slope.toFixed(2);
+    return '<span class="qcd-forecast-kicker">Forecast</span>'
+      + 'Abandoned % is trending up '
+      + '<strong>+' + escapeHtml(slopeDay) + '%/day</strong>'
+      + ' over the last ' + QCD_FORECAST_WINDOW_DAYS + ' days. '
+      + 'At this rate, it crosses the 5% violation threshold in '
+      + '<strong>~' + wholeDays + ' day' + (wholeDays === 1 ? '' : 's') + '</strong>.';
+  }
+
+  // Pure: the per-day QCD rows (Date / Total / Answered / Abandoned / Aban% /
+  // Viol) shared by the QCD modal's daily table AND the Insights Queue health
+  // daily table (consolidation Phase 1, gap 3).
+  // Secondary QCD metrics strip (#1): Answered / Longest wait / Avg answer.
+  // Shown in the Insights Queue health per-queue EXPAND detail + the dept-total
+  // secondary line (QCD-parity for the three secondary metrics without adding
+  // headline tiles/columns).
+  function insQhStatStrip_(answered, longestWait, avgAnswer) {
+    return '<div class="ins-qh-qstats">'
+      +   '<span><span class="ins-qh-qstat-k">Answered</span> ' + fmtNumber(Number(answered) || 0) + '</span>'
+      +   '<span><span class="ins-qh-qstat-k">Longest wait</span> ' + escapeHtml(String(longestWait || '0:00:00')) + '</span>'
+      +   '<span><span class="ins-qh-qstat-k">Avg answer</span> ' + escapeHtml(String(avgAnswer || '0:00:00')) + '</span>'
+      + '</div>';
+  }
+
+  // YYYY-MM-DD -> MM-DD-YY for the compact "Violation dates:" lists. Returns
+  // safe text (digits + dashes) on a match; escapes anything unexpected.
+  function fmtViolDate_(iso) {
+    var s = String(iso == null ? '' : iso);
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    return m ? (m[2] + '-' + m[3] + '-' + m[1].slice(2)) : escapeHtml(s);
+  }
+
+  // Answered-vs-abandoned split bar for the Insights Daily breakdown, mirroring
+  // the My Department agent table's answeredBarHtml_ (green answered + red
+  // abandoned over total calls; the rate cell shows abandoned % with the 5%
+  // benchmark tint). Reuses the .ans-bar / .ans-seg component.
+  function qcdDailyBarCell_(r, opts) {
+    var total = Number(r.totalCalls)    || 0;
+    var a     = Number(r.totalAnswered) || 0;
+    var ab    = Number(r.abandoned)     || 0;
+    var pctA  = total ? (a  / total * 100) : 0;
+    var pctAb = total ? (ab / total * 100) : 0;
+    var rest  = Math.max(0, 100 - pctA - pctAb);
+    var abStr = r.abandonedPctStr || ((Number(r.abandonedPct) || 0).toFixed(2) + '%');
+    // #3d: over the 5% threshold reads BOLD (+ the warn tint from benchValueCls_)
+    // so it pops on the split bar and the granular source lines.
+    var over = (Number(r.abandonedPct) || 0) >= 5;
+    var rateCls = benchValueCls_('abandoned %', abStr, true) + (over ? ' qcd-rate-over' : '');
+    var title = fmtNumber(a) + ' answered · ' + fmtNumber(ab) + ' abandoned · '
+              + fmtNumber(total) + ' calls · ' + abStr + ' abandoned';
+    // QV-1 (opt-in, all-dept report only): a 5%-threshold tick on the split
+    // bar. The bar is share-of-total (green answered, then red abandoned),
+    // so the tick sits at (answered% + 5%) -- the red segment ENDING past it
+    // is exactly "abandoned > 5% of offered". Hidden when answered > 95%
+    // (the tick would overflow, and abandon can't exceed 5% there anyway)
+    // and on zero-volume rows. Screen-only decoration (`qcd-screen-only` is
+    // stripped by the print path; the CSV builds from data, never the DOM) --
+    // exported cell text is unchanged.
+    var tick = '';
+    if (opts && opts.tick && total > 0 && (pctA + 5) < 100) {
+      tick = '<span class="qcd-thresh-tick qcd-screen-only" style="left:' + (pctA + 5) + '%"></span>';
+    }
+    var segs = total
+      ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
+        + '<span class="ans-seg miss" style="width:' + pctAb + '%"></span>'
+        + (rest > 0.1 ? '<span class="ans-seg none" style="width:' + rest + '%"></span>' : '')
+      : '<span class="ans-seg none" style="width:100%"></span>';
+    // R10-4: passing the 5% standard renders the abandoned segment
+    // light/translucent; failing keeps the full red (value bolding already
+    // rides .qcd-rate-over above).
+    var passCls = total ? (over ? ' ans-bar--fail' : ' ans-bar--pass') : '';
+    return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
+         +   '<div class="ans-track">' + segs + tick + '</div>'
+         +   '<div class="ans-nums">'
+         +     '<span class="ans-n">'   + fmtNumber(a)  + '</span>'
+         +     '<span class="ans-slash">/</span>'
+         +     '<span class="miss-n">'  + fmtNumber(ab) + '</span>'
+         +     '<span class="ans-rate' + rateCls + '">' + (total ? abStr : '–') + '</span>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  // Shared daily QCD rows. Default = the QCD modal's 6-column numeric table.
+  // opts.bar (Insights Daily breakdown) folds Answered / Abandoned / Abandoned %
+  // into one split-bar cell -- 4 columns: Date | Total | Answered vs Abandoned |
+  // Violations (keep the #ins-qh-daily thead in sync).
+  function qcdDailyRowsHtml_(rows, opts) {
+    var bar = !!(opts && opts.bar);
+    return (rows || []).map(function (r) {
+      var pct = Number(r.abandonedPct) || 0;
+      var pctCls = pct >= 5 ? 'num qcd-warn-light' : 'num';
+      var viol = Number(r.violations) || 0;
+      var violCls = viol > 0 ? 'num qcd-warn-light' : 'num';
+      // data-date keys the violation-date -> daily-row jump (insJumpToDailyRow_).
+      if (bar) {
+        return '<tr data-date="' + escapeHtml(r.date) + '">'
+             +   '<td>' + escapeHtml(r.date) + '</td>'
+             +   '<td class="num">' + fmtNumber(r.totalCalls) + '</td>'
+             +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(r) + '</td>'
+             +   '<td class="' + violCls + '">' + fmtNumber(r.violations) + '</td>'
+             + '</tr>';
+      }
+      return '<tr data-date="' + escapeHtml(r.date) + '">'
+           +   '<td>' + escapeHtml(r.date) + '</td>'
+           +   '<td class="num">' + fmtNumber(r.totalCalls)    + '</td>'
+           +   '<td class="num">' + fmtNumber(r.totalAnswered) + '</td>'
+           +   '<td class="num">' + fmtNumber(r.abandoned)     + '</td>'
+           +   '<td class="' + pctCls + '">' + escapeHtml(r.abandonedPctStr) + '</td>'
+           +   '<td class="' + violCls + '">' + fmtNumber(r.violations)    + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  // Pure: the per-call-source breakdown subtable (Overall + CSR / Ad-campaign /
+  // New Call Menu / Non-CSR ...) shared by the QCD modal's expandable queue
+  // rows AND the Insights Queue health expandable rows (consolidation Phase 1,
+  // gap 2). '' when there are no sources.
+  function qcdSourceSubtableHtml_(sources) {
+    sources = sources || [];
+    if (!sources.length) return '';
+    return '<table class="qcd-source-subtable"><thead><tr>'
+         +    '<th>Call source</th><th class="num">Total</th><th class="num">Answered</th>'
+         +    '<th class="num">Abandoned</th><th class="num">Aban %</th>'
+         +    '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num">Viol</th>'
+         +  '</tr></thead><tbody>'
+         +  sources.map(function (s) {
+              var sPct = Number(s.abandonedPct) || 0;
+              var sViol = Number(s.violations) || 0;
+              return '<tr class="' + (s.isOverall ? 'qcd-source-overall' : '') + '">'
+                +  '<td>' + escapeHtml(s.source) + '</td>'
+                +  '<td class="num">' + fmtNumber(s.totalCalls)    + '</td>'
+                +  '<td class="num">' + fmtNumber(s.totalAnswered) + '</td>'
+                +  '<td class="num">' + fmtNumber(s.abandoned)     + '</td>'
+                +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light qcd-rate-over' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
+                +  '<td class="num">' + escapeHtml(s.longestWait)  + '</td>'
+                +  '<td class="num">' + escapeHtml(s.avgAnswer)    + '</td>'
+                +  '<td class="num' + (sViol > 0 ? ' qcd-warn-light' : '') + '">' + fmtNumber(s.violations) + '</td>'
+                +  '</tr>';
+            }).join('')
+         +  '</tbody></table>';
+  }
+

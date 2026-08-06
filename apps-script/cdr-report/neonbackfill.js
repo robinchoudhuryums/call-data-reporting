@@ -406,7 +406,7 @@ function backfillDQEHistoryUpsert() {
         var seenKey_ = {};
         var deduped_ = [];
         for (var d = 0; d < batch.length; d++) {
-          var key_ = batch[d].callDate + ' ' + batch[d].agentName;
+          var key_ = batch[d].callDate + '\u0000' + batch[d].agentName;
           if (seenKey_[key_] !== undefined) {
             deduped_[seenKey_[key_]] = batch[d];   // last-write-wins, same slot
           } else {
@@ -540,7 +540,7 @@ function findDqeDuplicateRows() {
     var cd = parseDateForNeon(r[1]);
     if (!cd) continue;                           // unparseable date -> not a key
     var agent = String(r[2]);
-    var key = cd + ' ' + agent;
+    var key = cd + '\u0000' + agent;
     (groups[key] = groups[key] || []).push({
       row:    i + 2,                             // 1-based sheet row (data starts at row 2)
       date:   cd, agent: agent,
@@ -549,7 +549,7 @@ function findDqeDuplicateRows() {
   }
 
   var dupKeys = Object.keys(groups).filter(function (k) { return groups[k].length > 1; });
-  dupKeys.sort();   // key = 'YYYY-MM-DD agent' -> chronological, then agent
+  dupKeys.sort();   // key = 'YYYY-MM-DD\u0000agent' -> chronological, then agent
   var totalDupRows = 0;
   dupKeys.forEach(function (k) { totalDupRows += groups[k].length; });
 

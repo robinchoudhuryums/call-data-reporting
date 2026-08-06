@@ -10,8 +10,41 @@ tests/unit/claude-md-split.test.js fails the build if they drift. -->
 The CLIENT-side conventions that were Common Gotchas bullets in CLAUDE.md:
 how the Insights page, the Overview page, the density/prefs layer, the `ds-*`
 component system and the design tokens are built. **Read this before touching
-`script.html`, `styles.html`, or `dashboard.html`**, and re-run
-`npm run ci:ui` afterwards.
+`script.html`, any `script-*.html` fragment, `styles.html`, or
+`dashboard.html`**, and re-run `npm run ci:ui` afterwards.
+
+## The assembled client (#4, Round-16): script.html + the script-*.html fragments
+
+The client used to be ONE ~21K-line script.html. It is now **script.html (a
+~45-line ASSEMBLER) + eleven `script-N-<name>.html` fragments** spliced into
+one `<script>` element / one IIFE, in include order, by the
+template-EVALUATING `include_` (Code.gs). Everything a maintainer needs:
+
+- **One shared scope, exactly as before.** The fragments assemble into the
+  same single IIFE, so function hoisting and top-level `const`/`let`
+  visibility span fragment boundaries. Handlers may call anything anywhere;
+  TOP-LEVEL code (IIFEs, init expressions) should only call into its own or
+  EARLIER fragments — the assembled order is the include order in script.html.
+- **Fragments are RAW JS** — no script/style tags, no template scriptlets
+  (include_ evaluates templates now, so a stray scriptlet-open sequence in a
+  fragment would EXECUTE server-side at render), and never the literal
+  end-of-script-tag pattern (closes the assembled block early — the original
+  html-include-structure bug class, now reachable from any fragment).
+  `tests/unit/html-include-structure.test.js` enforces all three per fragment,
+  pins the include list == the `script-*.html` files on disk (both
+  directions — a fragment on disk but not included silently DROPS its
+  features), and syntax-checks the assembled body via `node --check`.
+- **Adding a fragment** = create the file AND add its include line + map entry
+  in script.html (the parity pin fails until you do both). Appending to the
+  END of the last fragment is safe — it lands inside the IIFE.
+- **`tools/ui-harness/build-harness.js` resolves the nested includes itself**
+  (`resolveIncludes_`), so the rendered-UI gate boots the same assembled
+  client the real page serves.
+- **Deploy note:** `clasp push -f` picks the new files up automatically; no
+  web-editor deletion was needed (script.html itself remains, as the
+  assembler — INV-17 concerns REMOVED files only).
+- The fragment map (name → contents) lives in script.html's header comment —
+  that comment is the canonical index; keep it current when fragments change.
 
 These moved because they describe HOW A SURFACE IS BUILT rather than a trap that
 bites unrelated work. The client traps that CAN bite you without warning stayed
@@ -240,7 +273,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
   labeled "% Answered (rings)" to match the Insights rollup; R10-5 added an
   answered-weighted "Avg answer" tile for QCD-mapped depts (qcd.range.avgAnswer)
-  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v18.) Insights carries a header **"My Department ->"** button and
+  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v19.) Insights carries a header **"My Department ->"** button and
   a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
   wired in `initInsightsReport`). **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
@@ -544,9 +577,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   still honors it. A sub-queue's group header also carries the ONLY route to its
   own missed calls (Phase 3 cannot merge that section without double-counting
   queue abandons) -- the button re-scopes the section and the scope note offers
-  the way back. `cdr.dept.subscope` is an orphan key, left in place rather than
-  cleared on load: tidying it would be a write on every page view for no user
-  benefit.
+  the way back. `cdr.dept.subscope` is an orphan key, swept on load by
+  `sweepOrphanPrefs_()` (#5, Round-16) -- read-before-remove, so the steady
+  state stays write-free (the objection that previously kept it in place).
 - **A control whose only state is a class is a control with NO state, and a
   driver that asserts the class cannot tell the difference.** The retired tabs
   carried `is-active` while `.segmented` only styles `.active`, so they had no
@@ -608,7 +641,13 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   machine; pre-per-user blobs under the bare `cdr.ins.prefs.v2` AND the bare
   `cdr.ir.prefs.v1` (IR was per-user'd later, L3) are orphans. The
   retired Performance / Compare Ranges reports' `cdr.pr.prefs.v1` /
-  `cdr.cr.prefs.v1` are orphans too. Bump the trailing version when the prefs schema
+  `cdr.cr.prefs.v1` are orphans too. **All six documented orphan keys are now
+  deleted on load by `sweepOrphanPrefs_()`** (script.html, #5 Round-16; called
+  first in `init()`, read-before-remove so a clean store costs no writes) --
+  add a newly-orphaned exact key THERE, and never list a key that is still
+  read as a migration fallback (the superseded `cdr.ov.cardperiod` /
+  `cdr.ov.tableperiod.v1` stay un-swept for exactly that reason).
+  Bump the trailing version when the prefs schema
   changes; older saved blobs are silently dropped if JSON parsing
   fails. The chrome layer also writes `dash-mode` (light/dark toggle),
   `dash-theme.v1` (warm / cool / clinical paper theme), and
@@ -947,3 +986,29 @@ abandoned section already includes the parent's sub-queue queues via
 abandon and every abandoned-ring chart bucket. `subqMissedScopeNote_` renders one
 line under the section title saying so, which is the difference between a
 defensible scope and a confusing one.
+
+## Round-16 additions (owner-driven, 2026-08)
+
+- **Agent-table volume tally**: agent rows render discrete answered/missed
+  blocks at a cohort-shared adaptive unit (`ansTallyUnitFor_`, script-1-core;
+  ≤36 blocks for the busiest row, unit disclosed in tooltips + a totals-row
+  legend when >1); totals/subtotal rows keep the classic proportional
+  `.ans-track` bar (an aggregate at agent scale would be hundreds of blocks).
+  The R10-4 pass/fail treatment carries over (`.ans-bar--pass .tly.m` recedes
+  translucent). `drive-subqueue.js` pins the agent-tally/subtotal-bar split.
+- **Team strip**: non-hero tiles center both axes (the R12-23 treatment); the
+  Answered + Queue-calls tiles merged into one "<total> (<ans> / <abd>)"
+  split-value tile (`.dts-value--split`; abandoned mutes at zero), the same
+  format the QCD side panel's Total Calls tile now uses — one dialect on both
+  surfaces. The side panel's MTD view carries delta sub-lines
+  (`.dept-qcd-sub`) vs the ENTIRE previous month, per-workday for volume.
+- **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD
+  sub-lines (`.qcd-mtd-sub`, full-prior-month baseline, per-workday volume);
+  queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`).
+- **Journey overlay**: internal-origin calls show a `.cj-internal-tag` and,
+  when `relatedCallId` is present, a `.cj-related` context line whose button
+  drills into the originating inbound call's path (delegated document
+  listener).
+- **`.ir-form-grid` is now DEFINED** (flex + wrap; it was referenced by five
+  admin forms but never styled, so their fields stacked full-width). New
+  admin form rows should use it rather than inventing another container.

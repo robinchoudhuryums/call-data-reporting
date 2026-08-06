@@ -92,7 +92,7 @@ const DIGEST_CONFIG_HEADERS = Object.freeze([
 // (QueueReportEmail.gs); the report is company-wide, so there is no per-dept
 // column -- every subscriber receives the full all-departments report.
 const QUEUE_REPORT_SUBSCRIBERS_HEADERS = Object.freeze([
-  'Email', 'Active', 'Notes',
+  'Email', 'Active', 'Notes', 'Cc',
 ]);
 // Agent Alias Overrides: persistent rename map used by the CDR
 // pipeline's loadRosterCanonicalNames_ on every build. Each row

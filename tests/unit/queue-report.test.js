@@ -30,7 +30,11 @@ test('gate: sends when enabled + in-window + weekday + data ready + not yet sent
 test('gate: skips when disabled / outside window / weekend / holiday', function () {
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ enabled: false })).reason, 'disabled');
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 5 })).reason, 'outside-window');   // before 6
-  assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 12 })).reason, 'outside-window');  // noon exclusive
+  // Round-16: the window END is classification, not a gate -- a post-noon
+  // poll with ready data SENDS (the late catch-up; the target rolls at
+  // midnight so this can never resend yesterday's report).
+  assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 12 })).send, true);
+  assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 23 })).send, true);
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ dow: 6 })).reason, 'weekend');
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ dow: 0 })).reason, 'weekend');
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ holiday: true })).reason, 'holiday');
@@ -338,31 +342,83 @@ test('O-4: duplicate subscriber rows are flagged first-row-wins (no double-send)
     'send loop sees each subscriber once');
 });
 
-test('O-1: a mid-list send failure is isolated; successes and failures both reported', function () {
+test('Round-16 To/Cc: ONE message -- To rows joined, Cc rows on cc (dedupe by shared Message-ID)', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
     timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
-        ['Email', 'Active', 'Notes'],
-        ['ok1@x.com', 'TRUE', ''], ['bad@x.com', 'TRUE', ''], ['ok2@x.com', 'TRUE', ''],
+        ['Email', 'Active', 'Notes', 'Cc'],
+        ['departmentleads@x.com', 'TRUE', 'group inbox', ''],
+        ['ops@x.com', 'TRUE', '', 'TRUE'],
+        ['exec@x.com', 'TRUE', '', 'TRUE'],
+        ['off@x.com', 'FALSE', '', ''],
       ],
     },
   });
   h.ctx.qcdAllDeptCachedData_ = function () {
     return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
   };
-  const sent = [];
-  h.ctx.MailApp = { sendEmail: function (arg) {
-    if (String(arg.to).indexOf('bad@') === 0) throw new Error('Invalid email: bad@x.com');
-    sent.push(arg.to);
-  } };
+  const mails = [];
+  h.ctx.MailApp = { sendEmail: function (arg) { mails.push(arg); } };
   const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
-  // Array.from: vm-realm arrays fail deepStrictEqual on prototype identity.
-  assert.deepEqual(Array.from(res.to), ['ok1@x.com', 'ok2@x.com'], 'later subscriber still receives the report');
-  assert.equal(res.count, 2);
-  assert.equal(res.failed.length, 1);
-  assert.equal(res.failed[0].email, 'bad@x.com');
+  assert.equal(mails.length, 1, 'exactly ONE message per day');
+  assert.equal(mails[0].to, 'departmentleads@x.com');
+  assert.equal(mails[0].cc, 'ops@x.com,exec@x.com');
+  assert.equal(res.count, 3);
+});
+
+test('Round-16 To/Cc: a send failure fails the WHOLE message -- count 0, every recipient in failed (FAILED-ALL retry path)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Queue Report Subscribers': [
+        ['Email', 'Active', 'Notes', 'Cc'],
+        ['ok1@x.com', 'TRUE', '', ''], ['bad@x.com', 'TRUE', '', ''],
+      ],
+    },
+  });
+  h.ctx.qcdAllDeptCachedData_ = function () {
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+  };
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('Invalid email: bad@x.com'); } };
+  const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(res.count, 0, 'nobody received it -> the next poll may retry safely');
+  assert.equal(res.failed.length, 2, 'every recipient reported');
+  assert.match(res.failed[0].error, /Invalid email/);
+});
+
+test('Round-16 To/Cc: all-Cc rows promote to To (an email needs a To); legacy 3-col sheet reads as all-To', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Queue Report Subscribers': [
+        ['Email', 'Active', 'Notes', 'Cc'],
+        ['cc1@x.com', 'TRUE', '', 'TRUE'], ['cc2@x.com', 'TRUE', '', 'TRUE'],
+      ],
+    },
+  });
+  h.ctx.qcdAllDeptCachedData_ = function () {
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+  };
+  const mails = [];
+  h.ctx.MailApp = { sendEmail: function (arg) { mails.push(arg); } };
+  h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(mails[0].to, 'cc1@x.com,cc2@x.com', 'promoted');
+  assert.equal(mails[0].cc, undefined, 'no cc left');
+  // Legacy sheet (pre-Cc, 3 columns): bounded read -> every row is To.
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Queue Report Subscribers': [
+        ['Email', 'Active', 'Notes'], ['old@x.com', 'TRUE', ''],
+      ],
+    },
+  });
+  const subs = h.call('readQueueReportSubscribers_');
+  assert.equal(subs[0].cc, false, 'legacy rows default to To');
 });
 
 test('O-1: the single-address preview path still throws (admin sees the error)', function () {
@@ -375,7 +431,7 @@ test('O-1: the single-address preview path still throws (admin sees the error)',
   }, /quota/);
 });
 
-test('O-7: a window-closed-without-send day is flagged ONCE (MISSED result + one admin email)', function () {
+test('O-7 (late catch-up): a window-closed-without-send day is flagged ONCE (LATE result + one admin email; the poller keeps retrying)', function () {
   h.state.props = { ADMIN_EMAILS: 'admin@x.com', QUEUE_REPORT_LAST_SENT: '2026-07-08' };
   h.state.sentEmails.length = 0;
   const props = {
@@ -389,7 +445,8 @@ test('O-7: a window-closed-without-send day is flagged ONCE (MISSED result + one
   const afternoon = new Date('2026-07-10T14:00:00-05:00');
   h.call('queueReportFlagMissedDay_', props, afternoon, '2026-07-09');
   assert.equal(h.state.props.QUEUE_REPORT_LAST_MISSED, '2026-07-09');
-  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^MISSED 2026-07-09/);
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^LATE 2026-07-09/);
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /keeps retrying/);
   assert.equal(mails.length, 1, 'one admin notification');
   // Second post-window poll the same day: no re-flag, no second email.
   h.call('queueReportFlagMissedDay_', props, afternoon, '2026-07-09');

@@ -25,9 +25,18 @@ function doGet(e) {
  * HtmlService template include helper. Used in templates as:
  *   <?!= include_('styles') ?>
  * Lets us split CSS / JS / HTML into separate files without a build.
+ *
+ * #4 (Round-16): EVALUATES the included file as a template (was
+ * createHtmlOutputFromFile) so includes can NEST -- script.html is now an
+ * assembler that includes the script-N-*.html fragments, which this change
+ * resolves at render time. Behavior-identical for scriptlet-free files
+ * (styles.html, the fragments): evaluating a template with no scriptlets
+ * returns its content verbatim. The flip side: a stray scriptlet-open
+ * sequence ANYWHERE in an included file now executes at render --
+ * tests/unit/html-include-structure.test.js pins the fragments clean.
  */
 function include_(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  return HtmlService.createTemplateFromFile(filename).evaluate().getContent();
 }
 
 function renderDashboard_(user) {

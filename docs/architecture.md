@@ -243,13 +243,13 @@ is canonical and reflects current code.
 
 | Report | File | Public entries | Cache prefix | Admin-only |
 |---|---|---|---|---|
-| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v18:` | no |
+| Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v19:` | no |
 | Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v17:` | no |
 | Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v11:`, `individual_active:v2:` | no |
 | Performance Report | RETIRED (PR->Insights consolidation; `PerformanceReport.gs` deleted -- `deltaBlock_` moved to `Util.gs`; legacy `#/report/performance` deep links land on Insights) | — | — | — |
 | Compare Ranges | RETIRED (CR->Insights consolidation; `CompareRangesReport.gs` deleted -- Insights custom-prior mode + the vs-Prior chart basis replace it; legacy `#/report/compare` deep links land on Insights) | — | — | — |
 | Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v20` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |
-| QCD (retired as a standalone report -- QCD->Insights consolidation; queue data lives in Insights Queue health) | `QCDReport.gs` | `getQcdAllDepartments` (all-departments daily report, open to all signed-in users; `computeQcdReport_` serves Insights + the snapshots) | `qcdAll:v5:` | no (all-dept report is company-wide read-only) |
+| QCD (retired as a standalone report -- QCD->Insights consolidation; queue data lives in Insights Queue health) | `QCDReport.gs` | `getQcdAllDepartments` (all-departments daily report, open to all signed-in users; `computeQcdReport_` serves Insights + the snapshots) | `qcdAll:v6:` | no (all-dept report is company-wide read-only) |
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v19:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v8:`, `inboundHeatmap:v3:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
 | Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v3:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |

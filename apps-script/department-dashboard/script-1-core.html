@@ -1,0 +1,1143 @@
+
+  // ══ DEV OVERLAY (O-11) ══════════════════════════════════════════════════
+  //
+  // An admin-only, off-by-default diagnostics panel. Toggle: Ctrl/Cmd+Alt+D,
+  // or the `#/dev` hash. Persisted in `cdr.dev.overlay`.
+  //
+  // WHY IT EXISTS. Two production bugs reached users and stayed there because
+  // nothing in the client records anything: the header dept selector threw
+  // `ReferenceError: prLastRoster is not defined` on EVERY admin click until a
+  // harness driver happened to try it, and CSS appended after `</` + `style>`
+  // rendered as visible text at the top of the page. Before this block the
+  // client had ZERO window.onerror handlers and one console.error in ~20K
+  // lines, so a thrown error went nowhere and nobody ever learned.
+  //
+  // SECURITY -- the rule that must not erode. This overlay is a PRESENTATION
+  // layer and nothing else. A localStorage flag is not authentication (anyone
+  // can set one), so the `role === 'admin'` check below is COSMETIC: it keeps
+  // the panel out of a manager's way, and is not what protects anything. Every
+  // server diagnostic it invokes keeps its own `assertAdmin_()`, and the panel
+  // renders only what the server already sent THIS viewer. Never move an
+  // authorization decision in here, and never add a registry entry to a
+  // callable that is not admin-gated server-side.
+  //
+  // Installed FIRST so it captures errors thrown during the rest of module
+  // load -- which is exactly where the prLastRoster class of bug lives.
+  const DEV_ = {
+    on: false, ready: false, admin: false,
+    errors: [], rpc: [], MAX_ERRORS: 60, MAX_RPC: 120,
+    KEY: 'cdr.dev.overlay',
+  };
+
+  function devIsAdmin_() {
+    try {
+      const u = window.__USER__;
+      return !!(u && u.role === 'admin');
+    } catch (e) { return false; }
+  }
+
+  function devPush_(list, entry, cap) {
+    list.push(entry);
+    if (list.length > cap) list.splice(0, list.length - cap);
+    if (DEV_.on) devScheduleRender_();
+  }
+
+  function devStamp_() {
+    const d = new Date();
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
+         + ':' + ('0' + d.getSeconds()).slice(-2);
+  }
+
+  // Error capture. Bounded ring buffers -- a page left open all day on a
+  // throwing handler must not grow without limit.
+  function devInstallErrorCapture_() {
+    window.addEventListener('error', function (e) {
+      devPush_(DEV_.errors, {
+        at: devStamp_(), kind: 'error',
+        msg: (e && e.message) || 'unknown error',
+        where: ((e && e.filename) || '') + (e && e.lineno ? (':' + e.lineno) : ''),
+        stack: (e && e.error && e.error.stack) ? String(e.error.stack).slice(0, 900) : '',
+      }, DEV_.MAX_ERRORS);
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      const r = e && e.reason;
+      devPush_(DEV_.errors, {
+        at: devStamp_(), kind: 'promise',
+        msg: (r && r.message) ? r.message : String(r),
+        where: '', stack: (r && r.stack) ? String(r.stack).slice(0, 900) : '',
+      }, DEV_.MAX_ERRORS);
+    });
+    // console.error is wrapped rather than replaced: the original ALWAYS runs,
+    // so devtools behavior is unchanged even if this buffer throws.
+    try {
+      const orig = window.console && window.console.error;
+      if (typeof orig === 'function') {
+        window.console.error = function () {
+          try {
+            devPush_(DEV_.errors, {
+              at: devStamp_(), kind: 'console',
+              msg: Array.prototype.map.call(arguments, function (a) {
+                try { return (a && a.message) ? a.message : String(a); } catch (x) { return '?'; }
+              }).join(' ').slice(0, 400),
+              where: '', stack: '',
+            }, DEV_.MAX_ERRORS);
+          } catch (x) { /* never let instrumentation break logging */ }
+          return orig.apply(window.console, arguments);
+        };
+      }
+    } catch (e) { /* console is not writable somewhere -- fine, skip */ }
+  }
+
+  // RPC probe. `google.script.run` is a MAGIC chainable object: every property
+  // access returns a fresh runner, and withSuccessHandler/withFailureHandler/
+  // withUserObject each return a new one. Wrapping it wrong breaks all 91 call
+  // sites in this file, so the whole install is try/caught and ANY doubt
+  // leaves the original object untouched -- instrumentation is worth zero
+  // failed RPCs.
+  function devInstallRpcProbe_() {
+    if (typeof Proxy !== 'function') return;         // no Proxy -> no probe, app unaffected
+    try {
+      const g = window.google && window.google.script;
+      if (!g || !g.run) return;
+      // `run` is a GETTER that hands back a FRESH runner on every access, and
+      // a runner is stateful (it holds the success/failure handlers set on
+      // it). Capturing one runner and reusing it across calls would leak one
+      // call site's handlers into the next -- so keep the original accessor
+      // and invoke it per access, exactly as the platform intends.
+      const desc = Object.getOwnPropertyDescriptor(g, 'run');
+      if (!desc) return;
+      const freshRunner = desc.get
+        ? function () { return desc.get.call(g); }
+        : function () { return desc.value; };
+      const CHAIN = { withSuccessHandler: 1, withFailureHandler: 1, withUserObject: 1 };
+
+      const wrap = function (runner, ctx) {
+        return new Proxy(function () {}, {
+          get: function (_t, prop) {
+            const v = runner[prop];
+            if (typeof v !== 'function') return v;
+            if (CHAIN[prop]) {
+              return function (fn) {
+                // Tap the caller's handlers so timing/outcome is recorded
+                // without changing what they receive or when.
+                const tapped = (typeof fn === 'function' && prop !== 'withUserObject')
+                  ? function () {
+                      try {
+                        if (ctx.t0 && !ctx.done) {
+                          ctx.done = true;
+                          devPush_(DEV_.rpc, {
+                            at: ctx.at, name: ctx.name, ms: Date.now() - ctx.t0,
+                            ok: prop === 'withSuccessHandler',
+                            detail: prop === 'withFailureHandler'
+                              ? String((arguments[0] && arguments[0].message) || arguments[0] || '').slice(0, 200)
+                              : '',
+                          }, DEV_.MAX_RPC);
+                        }
+                      } catch (x) { /* never break a live handler */ }
+                      return fn.apply(this, arguments);
+                    }
+                  : fn;
+                return wrap(v.call(runner, tapped), ctx);
+              };
+            }
+            // A non-chain function is the actual server call.
+            return function () {
+              ctx.name = String(prop);
+              ctx.at = devStamp_();
+              ctx.t0 = Date.now();
+              return v.apply(runner, arguments);
+            };
+          },
+        });
+      };
+
+      Object.defineProperty(g, 'run', {
+        configurable: true,
+        get: function () { return wrap(freshRunner(), {}); },
+      });
+    } catch (e) { /* leave google.script.run exactly as it was */ }
+  }
+
+  let devRenderPending_ = false;
+  function devScheduleRender_() {
+    if (devRenderPending_) return;
+    devRenderPending_ = true;
+    (window.requestAnimationFrame || window.setTimeout)(function () {
+      devRenderPending_ = false;
+      if (DEV_.on) devRender_();
+    }, 0);
+  }
+
+  DEV_.admin = devIsAdmin_();
+  if (DEV_.admin) {
+    devInstallErrorCapture_();
+    devInstallRpcProbe_();
+    try { DEV_.on = localStorage.getItem(DEV_.KEY) === 'on'; } catch (e) {}
+  }
+
+  // -- Dark mode toggle (Step 1 of the Call-Analyzer visual parity work).
+  // Reads persisted preference and wires the header button. Runs before
+  // any other UI setup so the page paints in the right mode immediately.
+  // The script.html include sits at the end of <body>, so #mode-btn and
+  // document.body are already in the DOM when this executes.
+  (function initModeToggle() {
+    const MODE_KEY = 'dash-mode';
+    let saved = null;
+    try { saved = localStorage.getItem(MODE_KEY); } catch (e) {}
+    // An explicit saved choice always wins; otherwise fall back to the
+    // OS color-scheme so system-dark users land in dark on first load.
+    let initial;
+    if (saved === 'dark' || saved === 'light') {
+      initial = saved;
+    } else {
+      const prefersDark = window.matchMedia
+        && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      initial = prefersDark ? 'dark' : 'light';
+    }
+    if (initial === 'dark') document.body.dataset.mode = 'dark';
+
+    const btn = document.getElementById('mode-btn');
+    if (!btn) return;
+    const render = () => {
+      const dark = document.body.dataset.mode === 'dark';
+      btn.textContent = dark ? '☀' : '◐';
+      btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+      btn.setAttribute('title', dark ? 'Switch to light mode' : 'Switch to dark mode');
+      // Background-theme chips only affect light mode; grey them out +
+      // make them inert while dark mode is on (the dark tokens win).
+      const grid = document.getElementById('theme-chip-grid');
+      if (grid) grid.classList.toggle('theme-grid-disabled', dark);
+    };
+    render();
+    btn.addEventListener('click', () => {
+      const dark = document.body.dataset.mode === 'dark';
+      if (dark) delete document.body.dataset.mode;
+      else document.body.dataset.mode = 'dark';
+      try { localStorage.setItem(MODE_KEY, dark ? 'light' : 'dark'); } catch (e) {}
+      render();
+      // Notify the Chart.js theme bridge so its next render uses the
+      // new tokens. Already-mounted charts keep their pixels until
+      // they're rebuilt.
+      window.dispatchEvent(new Event('dash-mode-change'));
+    });
+  })();
+
+  // -- Background-theme settings ---------------------------------------
+  // Personal-preference theme picker (Warm / Cool / Clinical) lives in
+  // the Settings modal. Persisted to localStorage; applied via a
+  // data-theme attribute on body so the CSS token overrides cascade
+  // without any per-selector code changes. Runs at module-load time
+  // so the saved theme is applied before any rendering happens; the
+  // modal wiring is hooked up later from init() once the DOM is
+  // settled.
+  (function initThemePreference_() {
+    const KEY = 'dash-theme.v1';
+    let saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (e) {}
+    // First-time visitors land on cool; explicit saved preferences
+    // (including 'warm') are preserved untouched.
+    const initial = (saved === 'warm' || saved === 'cool' || saved === 'clinical')
+      ? saved : 'cool';
+    if (initial !== 'warm') document.body.dataset.theme = initial;
+    // Expose globally so the Settings modal init can read/write
+    // without re-parsing storage.
+    window.__themePref = {
+      get: function () {
+        return (document.body.dataset.theme === 'cool' ||
+                document.body.dataset.theme === 'clinical')
+          ? document.body.dataset.theme : 'warm';
+      },
+      set: function (theme) {
+        if (theme === 'cool' || theme === 'clinical') {
+          document.body.dataset.theme = theme;
+        } else {
+          delete document.body.dataset.theme;
+          theme = 'warm';
+        }
+        try { localStorage.setItem(KEY, theme); } catch (e) {}
+        // Tell chart renderers their tokens shifted so newly-built
+        // charts use the right palette.
+        window.dispatchEvent(new Event('dash-mode-change'));
+      },
+    };
+  })();
+
+  // window.__USER__ is injected by the dashboard template.
+  const USER = window.__USER__ || { role: 'none', email: '', department: null, departments: [] };
+
+  // -- Chart.js theme bridge (Step 4 of the Call-Analyzer visual parity).
+  // Reads the same CSS custom properties styles.html publishes and applies
+  // them to Chart.defaults so every Chart() instance picks up the slate
+  // palette + Inter / IBM Plex Mono typography without per-chart wiring.
+  // Resolved values are also exposed via THEME for the few sites that
+  // need to set dataset/datalabel colors explicitly.
+  // Toggling dark mode mid-session re-reads these tokens (see the
+  // dash-mode-change listener below). The always-on Overview trend
+  // chart is repainted live via repaintLiveCharts_; modal charts
+  // rebuild on reopen and pick up the new values then.
+  const THEME = {
+    paper: '', paperCard: '', paper2: '',
+    ink: '',   muted: '',     line: '',
+    accent: '', accentSoft: '',
+    good: '',   goodSoft: '',
+    warn: '',   warnSoft: '',
+  };
+  function refreshChartTheme() {
+    const css = getComputedStyle(document.body);
+    // Resolve each CSS custom property to a canvas-canonical
+    // form (#rrggbb / rgba(...)) so downstream Chart.js +
+    // chartjs-plugin-datalabels code never has to handle OKLCH
+    // -- some sub-paths in the plugin choke on OKLCH (silent
+    // failures: text rendered with empty fillStyle = invisible
+    // labels) even though core Chart.js does support it.
+    const read = function (name) {
+      const raw = (css.getPropertyValue(name) || '').trim();
+      return raw ? colorToCanvasRgb_(raw) : '';
+    };
+    // Read into a local first; only commit to THEME / Chart.defaults
+    // if the CSS variables actually resolved. If we run before the
+    // browser has fully computed styles (rare but seen in field),
+    // the reads return empty strings and would otherwise overwrite
+    // Chart.defaults with '' -- silently breaking scale rendering
+    // on bar / line charts (doughnut is unaffected because it has
+    // no scales).
+    const newValues = {
+      paper:      read('--paper'),      paperCard:  read('--paper-card'),
+      paper2:     read('--paper-2'),    ink:        read('--ink'),
+      muted:      read('--muted'),      line:       read('--line'),
+      accent:     read('--accent'),     accentSoft: read('--accent-soft'),
+      good:       read('--good'),       goodSoft:   read('--good-soft'),
+      warn:       read('--warn'),       warnSoft:   read('--warn-soft'),
+    };
+    // Commit only the non-empty values. THEME keeps any prior good
+    // values across re-runs.
+    Object.keys(newValues).forEach(function (k) {
+      if (newValues[k]) THEME[k] = newValues[k];
+    });
+
+    if (typeof Chart === 'undefined') return;
+    // Skip Chart.defaults pollution if the critical theme values
+    // didn't resolve. Chart.js library defaults are perfectly
+    // serviceable; better that than empty-string color props that
+    // can make scale-based charts vanish.
+    if (!THEME.muted || !THEME.line || !THEME.paperCard) return;
+
+    const FONT_MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    const FONT_DISPLAY = "'Inter Tight', -apple-system, BlinkMacSystemFont, sans-serif";
+    Chart.defaults.font.family = FONT_MONO;
+    Chart.defaults.font.size = 10.5;
+    Chart.defaults.color = THEME.muted;
+    Chart.defaults.borderColor = THEME.line;
+    // Per-scale-type defaults (Chart.js v4): grid lines + tick color
+    ['linear', 'category', 'time', 'logarithmic'].forEach(function (k) {
+      const s = Chart.defaults.scales && Chart.defaults.scales[k];
+      if (!s) return;
+      if (s.grid)   s.grid.color   = THEME.line;
+      if (s.border) s.border.color = THEME.line;
+      if (s.ticks)  s.ticks.color  = THEME.muted;
+    });
+    const radial = Chart.defaults.scales && Chart.defaults.scales.radialLinear;
+    if (radial) {
+      if (radial.grid)        radial.grid.color        = THEME.line;
+      if (radial.angleLines)  radial.angleLines.color  = THEME.line;
+      if (radial.pointLabels) radial.pointLabels.color = THEME.muted;
+      if (radial.ticks)       radial.ticks.color       = THEME.muted;
+    }
+    // Tooltip — paper-card panel with ink text, mono body, display title.
+    // O2: translucent so chart lines behind it stay legible (the Overview
+    // trend chart's tooltip used to fully occlude the lines). Alpha lowered
+    // 0.92 -> 0.6 so trend lines read through the card (the 1px border +
+    // ink text keep it legible on the paper theme).
+    const tt = Chart.defaults.plugins.tooltip;
+    tt.backgroundColor = (typeof rgbaWithAlpha_ === 'function')
+      ? rgbaWithAlpha_(THEME.paperCard, 0.6) : THEME.paperCard;
+    tt.titleColor      = THEME.ink;
+    tt.bodyColor       = THEME.ink;
+    tt.borderColor     = THEME.line;
+    tt.borderWidth     = 1;
+    tt.cornerRadius    = 2;
+    tt.padding         = 8;
+    tt.titleFont       = { family: FONT_DISPLAY, size: 12, weight: '500' };
+    tt.bodyFont        = { family: FONT_MONO,    size: 11 };
+    tt.boxPadding      = 4;
+    // R11-G (items 5a/5b): the shared pin-aware / global-off tooltip filter as
+    // the default -- charts with their own filter compose it in explicitly.
+    if (typeof chartTooltipPinFilter_ === 'function') tt.filter = chartTooltipPinFilter_;
+    // Legend — muted mono labels (matches the kicker rhythm)
+    const lg = Chart.defaults.plugins.legend.labels;
+    lg.color = THEME.muted;
+    lg.font  = { family: FONT_MONO, size: 10 };
+    // Title (used by IR charts' chartHeader)
+    if (Chart.defaults.plugins.title) {
+      Chart.defaults.plugins.title.color = THEME.muted;
+      Chart.defaults.plugins.title.font  = { family: FONT_MONO, size: 11, weight: '500' };
+    }
+  }
+  refreshChartTheme();
+  // Hook the dark-mode toggle wiring above so charts pick up the
+  // inverted palette. The always-on Overview trend chart is repainted
+  // live (repaintLiveCharts_); modal charts rebuild on reopen and pick
+  // up the new palette then.
+  window.addEventListener('dash-mode-change', function () {
+    refreshChartTheme();
+    IR_CHART_COLORS = irChartColors_();
+    IR_VOLUME_COLORS = irVolumeColors_();
+    repaintLiveCharts_();
+  });
+
+  // Re-render charts that are visible RIGHT NOW so a dark-mode toggle
+  // doesn't leave stale light-mode pixels. Only the Overview trend
+  // chart is always-on; modal charts repaint on reopen and are skipped.
+  // Re-invokes the existing builder with the last payload (ovLastData)
+  // so dataset colors are recomputed from THEME / the harmonized ramp.
+  function repaintLiveCharts_() {
+    if (document.body.getAttribute('data-page') === 'overview'
+        && typeof ovLastData !== 'undefined' && ovLastData && ovLastData.depts) {
+      ovRenderChart_(ovLastData);
+    }
+  }
+
+  // -- chartjs-plugin-datalabels global registration ------------------
+  // Chart.js v4 requires explicit registration -- the auto-registration
+  // the plugin did via script tag was a v3 behavior that v4 dropped.
+  // Without this, per-chart `plugins: [ChartDataLabels]` references
+  // sometimes work and sometimes don't (we suspect a load-order quirk
+  // in the Apps Script HtmlService environment).  Registering globally
+  // here is belt-and-suspenders; idempotent via the registry check.
+  // Charts that DON'T want labels (Missed Calls radar, Overview multi-
+  // line) opt out via `options.plugins.datalabels = { display: false }`.
+  (function registerChartDataLabels_() {
+    if (typeof Chart === 'undefined' || typeof ChartDataLabels === 'undefined') return;
+    try {
+      if (Chart.registry && Chart.registry.plugins
+          && Chart.registry.plugins.get && Chart.registry.plugins.get('datalabels')) {
+        return;   // already registered
+      }
+      Chart.register(ChartDataLabels);
+      // Plugin defaults to display=false starting in v1.0.0. Enable
+      // globally; per-chart `display: ...` settings still override
+      // (Missed Calls radar + Overview trend opt out via
+      // `options.plugins.datalabels.display = false`).
+      try {
+        if (!Chart.defaults.plugins) Chart.defaults.plugins = {};
+        if (!Chart.defaults.plugins.datalabels) Chart.defaults.plugins.datalabels = {};
+        Chart.defaults.plugins.datalabels.display = true;
+      } catch (e2) { /* defaults not ready; per-chart display still works */ }
+    } catch (e) { /* ignore -- fall back to per-chart `plugins` option */ }
+  })();
+
+  // R7 (G-3): admin UI-surface toggles. The server injects the sanitized
+  // UI_FLAGS list (window.__UI_FLAGS__); stamping it on <body> lets the
+  // enumerated `body[data-ui-flags~="key"]` CSS rules (styles.html) hide each
+  // surface with !important -- which beats the inline style.display='' the
+  // render paths set. uiFlagOn_ also gates a few fetches so hidden sections
+  // don't still burn server calls.
+  (function applyUiFlags_() {
+    try {
+      var f = window.__UI_FLAGS__ || [];
+      if (f.length) document.body.setAttribute('data-ui-flags', f.join(' '));
+    } catch (e) { /* flags are an admin escape hatch -- never block boot */ }
+  })();
+  function uiFlagOn_(key) {
+    try { return (window.__UI_FLAGS__ || []).indexOf(key) !== -1; }
+    catch (e) { return false; }
+  }
+
+  // R7 (O-2): smooth chart animations, globally. One default -- 400ms
+  // easeOutQuart on create/update -- honoring prefers-reduced-motion (falls
+  // back to Chart.js-off, the established reduced-motion discipline). The
+  // spotlight/pin interactions stay instant (they call update('none'));
+  // per-chart `animation:` options would still win but the old blanket
+  // `animation: false` opt-outs were removed with this change.
+  (function setChartAnimationDefaults_() {
+    if (typeof Chart === 'undefined') return;
+    try {
+      var reduce = false;
+      try { reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e2) {}
+      // R9-6: MUTATE the existing defaults.animation keys -- never REPLACE the
+      // object. Chart.js builds each animated-property group by copying only
+      // `Object.keys(defaults.animation)` (Animations.configure), so a
+      // replacement object holding just {duration, easing} drops the stock
+      // `type` key, the built-in `colors` group loses its type:'color' tag,
+      // and the first animated color throws "this._fn is not a function" in
+      // the SHARED animator loop -- freezing every chart on the page (the
+      // post-deploy "all charts not loading" outage). Reduced motion uses
+      // duration 0 (the transitions.resize convention) for the same reason:
+      // `animation = false` also empties that key list.
+      var anim = Chart.defaults.animation;
+      if (anim && typeof anim === 'object') {
+        anim.duration = reduce ? 0 : 400;
+        anim.easing = 'easeOutQuart';
+      }
+    } catch (e) { /* animations are polish -- never block chart setup */ }
+  })();
+
+  // O2: register the "topBand" tooltip positioner once at load. It pins the
+  // tooltip to the TOP of the plot area instead of the default 'average'
+  // (centered over the hovered index, occluding the lines). Opt-in per chart
+  // via options.plugins.tooltip.position='topBand' (the Overview trend chart).
+  // Guarded -- Chart.Tooltip may be absent in a partial build; consumers fall
+  // back to the default position when the positioner is missing.
+  (function registerTopBandPositioner_() {
+    try {
+      if (typeof Chart !== 'undefined' && Chart.Tooltip && Chart.Tooltip.positioners
+          && !Chart.Tooltip.positioners.topBand) {
+        Chart.Tooltip.positioners.topBand = function (elements, eventPosition) {
+          const ca = this.chart && this.chart.chartArea;
+          if (!ca) return eventPosition;
+          return { x: eventPosition.x, y: ca.top + 6 };
+        };
+      }
+    } catch (e) { /* positioner optional */ }
+  })();
+
+  // Graceful fallback when the Chart.js CDN fails to load (Part 4).
+  // Common path is provably unchanged: when Chart is defined this is a
+  // transparent pass-through to `new Chart(target, config)`. ONLY when
+  // the global is missing (blocked/failed CDN, SRI mismatch) do we hide
+  // the canvas and drop an inline "chart unavailable" note in its place.
+  // Scoped to the CDN-absent case only -- it does NOT try/catch per-chart
+  // render errors (that would change control flow on the happy path).
+  function safeChart_(target, config) {
+    if (typeof Chart !== 'undefined') return new Chart(target, config);
+    try { chartUnavailable_(target); } catch (e) { /* best-effort */ }
+    return null;
+  }
+
+  // `target` is either a 2d context (has .canvas) or a canvas element.
+  function chartUnavailable_(target) {
+    var canvas = target && target.canvas ? target.canvas
+               : (target && target.tagName === 'CANVAS' ? target : null);
+    if (!canvas || !canvas.parentNode) return;
+    canvas.style.display = 'none';
+    var sib = canvas.nextElementSibling;
+    if (sib && sib.classList && sib.classList.contains('ds-chart-unavailable')) return; // idempotent
+    var note = document.createElement('div');
+    note.className = 'ds-note ds-chart-unavailable';
+    note.textContent = 'Chart unavailable — the charting library could not load. '
+      + 'The numbers above are unaffected; try reloading the page.';
+    canvas.parentNode.insertBefore(note, canvas.nextSibling);
+  }
+
+  const state = {
+    rows: [],
+    totals: null,
+    meta: null,
+    qcd: null,   // Batch D: the dept QCD snapshot (data.qcd) -- team-strip range tiles read state.qcd.range
+    csrTransfer: null,   // R10-5: CSR-only range transfer stats (data.csrTransfer)
+    diagnostics: null,
+    sortKey: 'answerRate',   // default sort: the stacked Answered/Missed bar
+    sortDir: 'asc',          // 'asc' | 'desc' -- asc => worst answer rate first
+    // Scope: server is locked to 'both' since the Phase D toggle
+    // removal cleanup. Internal `computeSummary_` still accepts
+    // a scope arg (Digest.gs uses 'roster') but the public RPC
+    // doesn't expose it -- the client just doesn't pass it.
+  };
+
+  // -- Modal drag & resize --------------------------------------------------
+  function initModalDragResize_(panel) {
+    if (window.innerWidth < 768) return;
+    var header = panel.querySelector('.modal-panel-header');
+    if (!header) return;
+
+    // F-39: this runs on EVERY openModal of every modal, and each call used
+    // to stack fresh document-level mousemove/mouseup + header mousedown
+    // listeners that were never removed -- unbounded growth in a long-lived
+    // auto-refreshing page. Shared per-panel state + wire-once for
+    // everything EXCEPT the resize handle, which resetModalTransform_
+    // REMOVES on close, so its mousedown re-wires per (re)creation.
+    var st = panel._dragState || (panel._dragState = {
+      dragging: false, resizing: false,
+      startX: 0, startY: 0, startLeft: 0, startTop: 0, startW: 0, startH: 0,
+    });
+
+    function applyTransform() {
+      panel.style.position = 'absolute';
+      panel.style.margin = '0';
+    }
+
+    // Add resize handle if not present + wire its mousedown (per-creation).
+    if (!panel.querySelector('.modal-resize-handle')) {
+      var rh = document.createElement('div');
+      rh.className = 'modal-resize-handle';
+      rh.setAttribute('aria-hidden', 'true');
+      panel.appendChild(rh);
+      rh.addEventListener('mousedown', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        st.resizing = true;
+        st.startX = e.clientX; st.startY = e.clientY;
+        var rect = panel.getBoundingClientRect();
+        st.startW = rect.width; st.startH = rect.height;
+        st.startLeft = rect.left; st.startTop = rect.top;
+        applyTransform();
+      });
+    }
+
+    if (panel._dragResizeWired) return;
+    panel._dragResizeWired = true;
+
+    // Drag via header (once per panel)
+    header.addEventListener('mousedown', function (e) {
+      if (e.target.closest('.modal-close') || e.target.closest('button') || e.target.closest('a')) return;
+      e.preventDefault();
+      st.dragging = true;
+      var rect = panel.getBoundingClientRect();
+      st.startX = e.clientX; st.startY = e.clientY;
+      st.startLeft = rect.left; st.startTop = rect.top;
+      applyTransform();
+    });
+
+    document.addEventListener('mousemove', function (e) {
+      if (st.dragging) {
+        var dx = e.clientX - st.startX, dy = e.clientY - st.startY;
+        panel.style.left = Math.max(0, st.startLeft + dx) + 'px';
+        panel.style.top  = Math.max(0, st.startTop + dy) + 'px';
+      } else if (st.resizing) {
+        var w = Math.max(360, st.startW + (e.clientX - st.startX));
+        var h = Math.max(280, st.startH + (e.clientY - st.startY));
+        panel.style.width    = w + 'px';
+        panel.style.maxWidth = w + 'px';
+        panel.style.height    = h + 'px';
+        panel.style.maxHeight = h + 'px';
+        panel.style.left = st.startLeft + 'px';
+        panel.style.top  = st.startTop + 'px';
+      }
+    });
+
+    document.addEventListener('mouseup', function () {
+      st.dragging = false; st.resizing = false;
+    });
+  }
+
+  function resetModalTransform_(panel) {
+    panel.style.position = '';
+    panel.style.left = ''; panel.style.top = '';
+    panel.style.width = ''; panel.style.maxWidth = '';
+    panel.style.height = ''; panel.style.maxHeight = '';
+    panel.style.margin = '';
+    var rh = panel.querySelector('.modal-resize-handle');
+    if (rh) rh.remove();
+  }
+
+  // -- Modal focus trap -----------------------------------------------------
+  var activeFocusTrap_ = null;
+  function trapFocus_(modal) {
+    releaseFocus_();
+    var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    // R12-14: only VISIBLE elements count. The browser skips hidden nodes in
+    // tab order, so if the modal's LAST focusable node is display:none (a
+    // collapsed edit form -- Outlier Fix / Dept Config / Health), focus never
+    // lands on it, the boundary wrap below never fires, and Tab walks out of
+    // the dialog.
+    function focusables() {
+      return Array.prototype.filter.call(modal.querySelectorAll(FOCUSABLE),
+        function (el) { return el.offsetParent !== null; });
+    }
+    function handler(e) {
+      if (e.key !== 'Tab') return;
+      var els = focusables();
+      if (!els.length) return;
+      var first = els[0], last = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    }
+    modal.addEventListener('keydown', handler);
+    activeFocusTrap_ = { modal: modal, handler: handler };
+    setTimeout(function () {
+      var els = focusables();
+      if (els.length) els[0].focus();
+    }, 0);
+  }
+  function releaseFocus_() {
+    if (!activeFocusTrap_) return;
+    activeFocusTrap_.modal.removeEventListener('keydown', activeFocusTrap_.handler);
+    activeFocusTrap_ = null;
+  }
+
+  // -- Formatting helpers --------------------------------------------------
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function fmtDuration(seconds) {
+    seconds = Math.max(0, Math.round(Number(seconds) || 0));
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return h + ':' + pad2(m) + ':' + pad2(s);
+  }
+
+  function fmtNumber(n) {
+    n = Number(n) || 0;
+    return n.toLocaleString('en-US');
+  }
+
+  // Wraps a zero value so dense tables can mute it -- a column of 0 /
+  // 0:00:00 cells reads as "mostly quiet" rather than a wall of numbers.
+  // HTML-only (table cells); CSV + chart labels never pass through here.
+  function zeroCell_(s) { return '<span class="cell-zero">' + s + '</span>'; }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // -- F13: keyboard access for non-semantic click targets -----------------
+  // Most affordances in this file are real <button type="button"> elements
+  // (the correct pattern -- keyboard, focus ring and screen-reader role come
+  // free). A handful of older surfaces bind click to a <div>, <span> or <tr>
+  // instead, which makes them mouse-only: the Overview dept tiles + sub-queue
+  // chips, the My Department agent row's IR drill, the expandable QCD queue
+  // rows, and the QCD carousel dots. The heatmap cells (role=button +
+  // tabindex + Enter/Space) already show the house pattern; these two helpers
+  // apply it everywhere else.
+  //
+  // TABLE ROWS are deliberately NOT given role="button": that would override
+  // the implicit `row` role and break the table's semantics for a screen
+  // reader (the row would stop being reported as part of the grid). A row gets
+  // tabindex + a key handler and relies on its existing title/cell text for
+  // its accessible description; a div/span target, which has no semantics to
+  // preserve, gets the full role="button" treatment.
+
+  // Shared expand/collapse for a `tr.qcd-expandable` + its sibling
+  // `tr.qcd-detail-row` (the Insights Queue-health table and the all-dept QCD
+  // report render the same pair). Keeps the chevron glyph and aria-expanded in
+  // step with the row's state, so click and Enter/Space cannot diverge.
+  function qcdToggleExpandRow_(row) {
+    if (!row) return;
+    var detail = row.nextElementSibling;
+    if (!detail || !detail.classList.contains('qcd-detail-row')) return;
+    var open = detail.style.display !== 'none';
+    detail.style.display = open ? 'none' : '';
+    var icon = row.querySelector('.qcd-expand-icon');
+    if (icon) icon.textContent = open ? '▶' : '▼';
+    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+  }
+
+  // Activates on Enter/Space for an element already carrying a click handler.
+  // `fn` receives the originating keyboard event, so shift/meta/ctrl-modified
+  // activation behaves like the modified click it mirrors.
+  function keyActivate_(el, fn) {
+    if (!el) return;
+    el.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();           // Space must not scroll the page
+      fn.call(el, e);
+    });
+  }
+
+  // Makes a div/span click target a real, announced button.
+  function makeActivatable_(el, fn) {
+    if (!el) return;
+    el.setAttribute('role', 'button');
+    if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
+    keyActivate_(el, fn);
+  }
+
+  // Shared empty-state block so every "no data here" surface reads the
+  // same way as the My Department page's empty state (icon + title +
+  // hint) instead of ad-hoc one-liners. `icon` is a short emoji/glyph;
+  // title + hint are escaped. Reuses the existing .empty-state CSS.
+  function emptyStateHtml_(icon, title, hint) {
+    return '<div class="empty-state">'
+      +   '<div class="empty-state-icon" aria-hidden="true">' + (icon || '&#128202;') + '</div>'
+      +   '<div class="empty-state-title">' + escapeHtml(title || 'No data') + '</div>'
+      +   (hint ? '<div class="empty-state-hint">' + escapeHtml(hint) + '</div>' : '')
+      + '</div>';
+  }
+
+  // CSV formula-injection guard. Excel / Google Sheets treat a cell
+  // beginning with = + - @ (or a leading tab / CR) as a formula. Agent
+  // names flow in from the external CDR feed, so a crafted name like
+  // "=HYPERLINK(...)" would execute when a manager opens an exported
+  // CSV. Prefix such values with a single quote so the spreadsheet app
+  // forces them to plain text. Plain numbers (incl. negative / decimal)
+  // are left untouched so numeric columns aren't corrupted. Call this
+  // BEFORE the RFC-4180 quote-escaping (comma/quote/newline) in every
+  // CSV cell writer.
+  function csvSafeCell_(v) {
+    var s = String(v == null ? '' : v);
+    // Prefix only genuine formula text. The numeric-ish exclusion keeps
+    // server-computed cells intact -- signed deltas ("+5.0%", "-12.3 pts"),
+    // durations ("0:03:01"), and thousands-separated counts ("1,234") all
+    // legitimately start with + / - / a digit and must NOT be mangled.
+    if (/^[=+\-@\t\r]/.test(s) && !/^[-+]?[\d.,:]+\s*(%|pts)?$/.test(s)) {
+      return "'" + s;
+    }
+    return s;
+  }
+
+  // Shared failure handler for the html2canvas-based image exports
+  // (Individual / Performance / Compare Ranges). Without it a rejected
+  // capture promise leaves the user staring at a disabled "Capturing…"
+  // button with no feedback. Surface the error via a toast and re-enable
+  // any export button that a *Feedback_ helper left disabled (its
+  // original label is stashed in dataset.label). QCD has its own catch
+  // because it uses a status banner instead of a button-feedback helper.
+  function exportCaptureFailed_(err) {
+    try { console.error('Report image capture failed', err); } catch (e) {}
+    showToast("Couldn't capture the report image — please try again.", 'error');
+    // E-5: pr/cr export buttons died with the retired Performance / Compare
+    // Ranges reports -- only the two live exporters remain.
+    ['ir-export-btn', 'ins-export-btn'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn && btn.dataset && btn.dataset.label) {
+        btn.innerHTML = btn.dataset.label;
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function showToast(msg, kind, durationMs) {
+    var container = $('toast-container');
+    if (!container) return;
+    var el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' toast-' + kind : '');
+    el.textContent = msg;
+    container.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('toast-visible'); });
+    setTimeout(function () {
+      el.classList.remove('toast-visible');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+    }, durationMs || 3000);
+  }
+
+  /**
+   * App-styled confirmation dialog -- a themed replacement for the browser's
+   * native window.confirm (which renders in the Google Sheets / browser chrome
+   * style, incongruent with the app). Returns a Promise<boolean> that resolves
+   * true on confirm, false on cancel / Escape / backdrop click.
+   *
+   * opts: { title, message | messageHtml, confirmLabel, cancelLabel, tone }
+   *   - message     : plain text (escaped for you)
+   *   - messageHtml : pre-built HTML (caller MUST escape any dynamic values;
+   *                   use this for emphasis like <strong> around names)
+   *   - tone        : 'danger' tints the confirm button + header rule warn
+   * Layered above every modal (z-index in styles.html) so it works from within
+   * the Outlier Fix / Alerts / Dept Config modals.
+   */
+  function dsConfirm_(opts) {
+    return new Promise(function (resolve) {
+      var o = opts || {};
+      var toneCls = o.tone === 'danger' ? ' ds-confirm--danger' : '';
+      var overlay = document.createElement('div');
+      overlay.className = 'ds-confirm-overlay';
+      overlay.innerHTML =
+          '<div class="ds-confirm' + toneCls + '" role="alertdialog" aria-modal="true">'
+        +   '<div class="ds-confirm-title">' + escapeHtml(o.title || 'Please confirm') + '</div>'
+        +   '<div class="ds-confirm-body">' + (o.messageHtml || escapeHtml(o.message || '')) + '</div>'
+        +   '<div class="ds-confirm-actions">'
+        +     '<button type="button" class="btn btn-secondary ds-confirm-cancel">' + escapeHtml(o.cancelLabel || 'Cancel') + '</button>'
+        +     '<button type="button" class="btn ds-confirm-ok' + toneCls + '">' + escapeHtml(o.confirmLabel || 'Confirm') + '</button>'
+        +   '</div>'
+        + '</div>';
+      document.body.appendChild(overlay);
+      var okBtn = overlay.querySelector('.ds-confirm-ok');
+      var cancelBtn = overlay.querySelector('.ds-confirm-cancel');
+      var prevFocus = document.activeElement;   // E-6: focus-return (the F-42 discipline)
+      var settle = function (val) {
+        document.removeEventListener('keydown', onKey, true);
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        try { if (prevFocus && prevFocus.focus) prevFocus.focus(); } catch (e) { /* gone */ }
+        resolve(val);
+      };
+      var onKey = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); settle(false); }
+        else if (e.key === 'Enter') {
+          e.preventDefault(); e.stopPropagation();
+          // E-6: Enter follows FOCUS -- with the capture-phase intercept, a
+          // keyboard user who tabbed to Cancel and hit Enter used to CONFIRM
+          // (destructive actions included). Cancel-focused Enter cancels.
+          settle(document.activeElement !== cancelBtn);
+        } else if (e.key === 'Tab') {
+          // E-6: Tab TRAP. Without it, Tab walked out into the underlying
+          // page while the capture-phase Enter still resolved confirm -- a
+          // keyboard user interacting with what looks like the background
+          // could Enter-confirm a destructive action. Two focusables, so a
+          // simple toggle covers Shift+Tab too.
+          e.preventDefault(); e.stopPropagation();
+          (document.activeElement === okBtn ? cancelBtn : okBtn).focus();
+        }
+      };
+      okBtn.addEventListener('click', function () { settle(true); });
+      cancelBtn.addEventListener('click', function () { settle(false); });
+      overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) settle(false); });
+      document.addEventListener('keydown', onKey, true);
+      requestAnimationFrame(function () { overlay.classList.add('is-open'); okBtn.focus(); });
+    });
+  }
+
+  /**
+   * Renders the header data-freshness pill: "Data through Mon May 19
+   * · 14h ago".  Source is getLatestDataDates -- which returns
+   * { dqe, qcd, latest }.  The pill's visible date is `latest`
+   * (max across sources); the tooltip surfaces the per-source
+   * breakdown so a mid-migration state where one source is fresh
+   * and the other is stale is visible on hover.
+   *
+   * Accepts a string for backward-compat with the single-source
+   * caller (treated as if it were both dqe and latest).
+   *
+   * "Xh ago" is computed from end-of-day on the latest date in the
+   * user's local TZ (close enough -- the ingest typically lands
+   * the morning after the calendar day it covers).  Pill goes
+   * orange when 36h+ have passed since the latest date's end-of-
+   * day, which is the empirical threshold above which the operator
+   * usually wants to investigate.
+   */
+  function setFreshnessPill_(dates) {
+    const pill = $('freshness-pill');
+    if (!pill) return;
+
+    let dqeIso = null, qcdIso = null, latestIso = null;
+    if (typeof dates === 'string') {
+      latestIso = dates;
+      dqeIso = dates;
+    } else if (dates && typeof dates === 'object') {
+      dqeIso = dates.dqe || null;
+      qcdIso = dates.qcd || null;
+      latestIso = dates.latest || dqeIso || qcdIso || null;
+    }
+
+    if (!latestIso) {
+      pill.style.display = 'none';
+      pill.textContent = '';
+      pill.removeAttribute('title');
+      return;
+    }
+    const parts = String(latestIso).split('-');
+    if (parts.length !== 3) { pill.style.display = 'none'; return; }
+    // End-of-day local time on the latest date is the reference
+    // point for "how stale is the data": calls that came in at
+    // 14:55 PST land in that day's bucket.
+    const eod = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 23, 59, 59);
+    const dateLabel = eod.toLocaleDateString(undefined, {
+      weekday: 'short', month: 'short', day: 'numeric',
+    });
+    const ageMs = Date.now() - eod.getTime();
+    const ageHours = Math.max(0, Math.round(ageMs / 3600000));
+    let ageLabel;
+    if (ageHours < 1) {
+      ageLabel = 'just now';
+    } else if (ageHours < 48) {
+      ageLabel = ageHours + 'h ago';
+    } else {
+      const ageDays = Math.round(ageHours / 24);
+      ageLabel = ageDays + 'd ago';
+    }
+    pill.innerHTML = 'Data through <span class="freshness-date">'
+                   + escapeHtml(dateLabel) + '</span> &middot; '
+                   + escapeHtml(ageLabel);
+
+    // Tooltip: always include a per-source breakdown so a
+    // diverged DQE-vs-QCD state is visible. When the two agree,
+    // the breakdown reads as "DQE: X · QCD: X" -- redundant but
+    // honest. When they differ, the source of the recent number
+    // is the one the operator should trust.
+    const tipParts = ['Most recent date with data in any source.'];
+    if (dqeIso) tipParts.push('DQE Historical Data: ' + dqeIso);
+    if (qcdIso) tipParts.push('QCD Historical Data: ' + qcdIso);
+    if (dqeIso && qcdIso && dqeIso !== qcdIso) {
+      tipParts.push('Sources are out of sync -- the dashboard\'s '
+        + 'My Department agent table reads from DQE; the QCD report + '
+        + 'Overview QCD chips read from QCD. Pill shows whichever is '
+        + 'newest so a recent refresh on either path is visible.');
+    }
+    pill.setAttribute('title', tipParts.join('\n'));
+    pill.classList.toggle('is-stale', ageHours >= 36);
+    // Non-admins get the SUBTLE variant (owner note): freshness is an
+    // operational signal admins act on; for managers the loud boxed chip
+    // read as an alarm. The stale (36h+) warn tint still applies to both
+    // -- knowing the data is old changes how anyone reads the numbers.
+    pill.classList.toggle('freshness-pill--subtle',
+      !(typeof USER !== 'undefined' && USER && USER.role === 'admin'));
+    pill.style.display = '';
+  }
+
+  // Work-window pill (E2, Phase E). Reads window.__WORK_WINDOW__
+  // (injected server-side from DASHBOARD_WORK_WINDOW in Config.gs)
+  // and populates the static pill markup. One-shot at init -- the
+  // constants don't change during a session.
+  function initWorkWindowPill_() {
+    const pill = $('work-window-pill');
+    if (!pill) return;
+    const ww = window.__WORK_WINDOW__;
+    if (!ww || (!ww.pst && !ww.cst)) return;
+    const parts = [];
+    if (ww.pst) parts.push('<strong>' + escapeHtml(ww.pst) + '</strong>');
+    if (ww.cst) parts.push('<strong>' + escapeHtml(ww.cst) + '</strong>');
+    pill.innerHTML = 'Work window ' + parts.join('<span class="work-window-sep">&middot;</span>');
+    pill.setAttribute('title',
+      'Rung / Missed / Answered / TTT / ATT columns are scoped to this work window. '
+      + 'Calls before or after this window appear in the Missed Calls raw timestamps '
+      + 'but are not counted in the headline totals.');
+    pill.style.display = '';
+  }
+
+  function toIsoDate(d) {
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function defaultRange() {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: toIsoDate(first), to: toIsoDate(now) };
+  }
+
+  // -- Column model --------------------------------------------------------
+  // Order matches the <thead>; sortKey maps to a row property.
+  // `hideable: true` marks a detail column that folds away behind the
+  // "Show all columns" toggle (default hidden) -- toggled via the
+  // `hide-extra` class on #agents-table (see applyDeptColsPref_). The
+  // `bar` column folds Rung / Missed / Answered into one stacked
+  // horizontal bar (answered green + missed red, total = rung); it
+  // sorts by answer rate (`sortKey: 'answerRate'`, handled in sortRows).
+  const COLUMNS = [
+    { key: 'agent',                label: 'Agent',           type: 'text' },
+    // Phase D Source column. Renders a chip (ROSTER / BOTH / QUEUE)
+    // from each row's matchedViaRoster / matchedViaQueue flags --
+    // see fmtCell handling for `type: 'chip'`. Plain-text export
+    // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
+    { key: 'source',               label: 'Source',          type: 'chip',     hideable: true },
+    { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'answerRate' },
+    // #8 -> owner round 4: the dedicated Total-calls column was FOLDED into
+    // the split-bar cell (answeredBarHtml_ renders the rung total inline as
+    // the muted "(N)"), saving a column; the CSV still emits a numeric
+    // Total calls column (exportTableCsv_ splices it after the bar).
+    { key: 'answerRate',           label: 'Answer %',        type: 'pct', sortKey: 'answerRate' },
+    { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
+    { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
+    { key: 'attSeconds',           label: 'ATT (daily avg)', type: 'duration' },
+    { key: 'avgAbdWaitSeconds',    label: 'Avg Abd Wait',    type: 'duration', hideable: true },
+    { key: 'csrAvgAbdWaitSeconds', label: 'CSR Avg Abd Wait', type: 'duration', hideable: true },
+  ];
+
+  // Foldable detail-columns toggle for the My Department agent table.
+  // Default 'compact' (extra columns hidden); persisted per-browser.
+  const DEPT_COLS_KEY = 'cdr.dept.cols';
+  // R12-16 (#4): compact row density for big rosters -- tighter cell padding
+  // via .agents--compact; persisted; applied alongside the cols pref.
+  const DEPT_ROWS_KEY = 'cdr.dept.rowdensity';
+  function applyDeptColsPref_() {
+    var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+    var t2 = $('agents-table');
+    if (t2) t2.classList.toggle('agents--compact', dense);
+    var rbtn = $('dept-rows-toggle');
+    if (rbtn) {
+      rbtn.textContent = dense ? 'Comfortable rows' : 'Compact rows';
+      rbtn.setAttribute('aria-pressed', dense ? 'true' : 'false');
+    }
+    var compact = (localStorage.getItem(DEPT_COLS_KEY) !== 'all');   // default compact
+    var table = $('agents-table');
+    if (table) table.classList.toggle('hide-extra', compact);
+    var btn = $('dept-cols-toggle');
+    if (btn) {
+      btn.textContent = compact ? 'Show all columns' : 'Fewer columns';
+      btn.setAttribute('aria-expanded', compact ? 'false' : 'true');
+    }
+  }
+
+  // Shared td-class builder for the agent tables (main + Overview mini).
+  // Centralizes the agent/source/bar/num base class + the foldable
+  // `col-extra` marker so all four render sites stay consistent.
+  function cellClass_(col, i) {
+    var base;
+    if (i === 0) base = 'agent-name';
+    else if (col.type === 'chip' && col.key === 'source') base = 'src-cell';
+    else if (col.type === 'bar') base = 'ans-bar-cell';
+    else base = 'num';
+    return base + (col.hideable ? ' col-extra' : '');
+  }
+
+  // Round-16 (owner request): AGENT rows render a VOLUME-PROPORTIONAL TALLY --
+  // discrete color-coded blocks (answered sage, missed red), one block per
+  // `unit` calls -- instead of the fixed-length proportional bar, so a
+  // 400-call agent visibly dwarfs a 40-call one. The unit adapts to the
+  // COHORT (same scale for every row in a table, or block counts wouldn't be
+  // comparable): smallest ladder step that keeps the busiest agent within
+  // ANS_TALLY_MAX_BLOCKS_. Returns 0 for an empty/idle cohort (callers fall
+  // back to the classic bar). TOTALS + subtotal rows keep the classic
+  // proportional bar on purpose -- an aggregate tally at the agent scale
+  // would be hundreds of blocks, and totals aren't compared against agents.
+  var ANS_TALLY_MAX_BLOCKS_ = 36;
+  var ANS_TALLY_UNITS_ = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+  function ansTallyUnitFor_(rows) {
+    var max = 0;
+    (rows || []).forEach(function (r) {
+      var t = (Number(r.totalAnswered) || 0) + (Number(r.totalMissed) || 0);
+      if (t > max) max = t;
+    });
+    if (!max) return 0;
+    for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) {
+      if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= ANS_TALLY_MAX_BLOCKS_) return ANS_TALLY_UNITS_[i];
+    }
+    return ANS_TALLY_UNITS_[ANS_TALLY_UNITS_.length - 1];
+  }
+  // Blocks for one value: round to the nearest unit, but never hide a
+  // nonzero value (min 1 block) -- the exact numbers sit right beside the
+  // tally in .ans-nums, so block counts are a read of scale, not a count.
+  function ansTallyBlocks_(v, unit, cls) {
+    if (!(v > 0)) return '';
+    var n = Math.max(1, Math.round(v / unit));
+    var out = '';
+    for (var i = 0; i < n; i++) out += '<span class="tly ' + cls + '"></span>';
+    return out;
+  }
+
+  // Stacked Answered/Missed cell (green answered + red missed; total =
+  // rung). Carries the E5 prior-period WoW chips inline on the answered
+  // and missed counts so that signal survives the column consolidation.
+  // The answer-rate gets the 92% benchmark tint (symmetric).
+  // `tallyUnit` (Round-16): > 0 renders the volume-proportional tally for
+  // this row (agent rows -- callers compute it per cohort via
+  // ansTallyUnitFor_); 0/omitted keeps the classic proportional bar
+  // (totals + subtotal rows, and any legacy caller).
+  function answeredBarHtml_(row, tallyUnit) {
+    var a = Number(row.totalAnswered) || 0;
+    var m = Number(row.totalMissed)   || 0;
+    var total = a + m;
+    var pctA = total ? (a / total * 100) : 0;
+    var rate = total ? Math.round(a / total * 100) : 0;
+    var aChip = wowChipHtml_(row, { key: 'totalAnswered' });
+    var mChip = wowChipHtml_(row, { key: 'totalMissed' });
+    // Owner round 4: the rung total renders inline (the dedicated Total-calls
+    // column was folded away). Prefer the server's own totalRung when present
+    // (definitionally = answered + missed, but never invent a number).
+    var rung = (row.totalRung != null && row.totalRung !== '') ? (Number(row.totalRung) || 0) : total;
+    var useTally = tallyUnit > 0 && total > 0;
+    var title = a + ' answered · ' + m + ' missed · ' + rung + ' total calls (rung)'
+              + (total ? ' · ' + rate + '% answered' : '')
+              + (useTally && tallyUnit > 1 ? ' · each block ≈ ' + tallyUnit + ' calls' : '');
+    var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
+    // R10-4: threshold-aware red -- passing the 92% standard renders the
+    // missed segment light/translucent so healthy rows recede; failing keeps
+    // the full red + a bold value (styles.html .ans-bar--pass/--fail).
+    var passCls = total ? (rate >= answerTarget_('global') ? ' ans-bar--pass' : ' ans-bar--fail') : '';
+    var track;
+    if (useTally) {
+      track = '<div class="ans-tally" aria-hidden="true">'
+        + ansTallyBlocks_(a, tallyUnit, 'a')
+        + ansTallyBlocks_(m, tallyUnit, 'm')
+        + '</div>';
+    } else {
+      var segs = total
+        ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
+          + '<span class="ans-seg miss" style="width:' + (100 - pctA) + '%"></span>'
+        : '<span class="ans-seg none" style="width:100%"></span>';
+      track = '<div class="ans-track">' + segs + '</div>';
+    }
+    return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
+         +   track
+         +   '<div class="ans-nums">'
+         +     '<span class="ans-n">' + a + aChip + '</span>'
+         +     '<span class="ans-slash">/</span>'
+         +     '<span class="miss-n">' + m + mChip + '</span>'
+         +     '<span class="ans-total" title="Total calls (rung)">(' + rung + ')</span>'
+         +     '<span class="ans-rate' + rateCls + '">' + (total ? rate + '%' : '–') + '</span>'
+         +   '</div>'
+         + '</div>';
+  }
+

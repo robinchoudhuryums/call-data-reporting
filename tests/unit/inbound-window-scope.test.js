@@ -273,3 +273,33 @@ test('carve-out: a label with a quote is escaped, not injected', function () {
   assert.ok(p.indexOf("'o''brien co'") !== -1,
     'labels are admin free text -- they must route through inboundSqlLit_');
 });
+
+// ---- Round-16: internal-origin rows are metric-invisible --------------------
+// Internal-origin queue calls (is_internal=TRUE, the journey-only capture for
+// the Missed report's path drill) must be excluded from every METRIC query --
+// and must NOT be excluded from the journey lookups, or the fix defeats
+// itself. Count-based like the window guard above: a new metric sub-select
+// that forgets the clause (or a journey query that gains it) moves a count.
+const { test: testInt } = require('node:test');
+const assertInt = require('node:assert/strict');
+const fsInt = require('fs');
+const pathInt = require('path');
+const irSrcInt = fsInt.readFileSync(pathInt.join(__dirname, '..', '..',
+  'apps-script', 'department-dashboard', 'InboundReport.gs'), 'utf8');
+
+testInt('is_internal exclusion: on the 5 aliased metric ranges, the 4 parity queries, and nowhere else', function () {
+  // (The two regexes are disjoint -- "(c.is_internal" never matches the bare
+  // "(is_internal" pattern -- so no subtraction is needed.)
+  const aliased = (irSrcInt.match(/COALESCE\(c\.is_internal, FALSE\) = FALSE/g) || []).length;
+  const bare = (irSrcInt.match(/COALESCE\(is_internal, FALSE\) = FALSE/g) || []).length;
+  assertInt.equal(aliased, 5,
+    'aliased exclusions: report dr + insurer daily + heatmap + cell drill + compare');
+  assertInt.equal(bare, 4,
+    'bare exclusions: the two parity queue/call lists + the two parity breakdowns');
+  // getCallJourney's two lookups (scoped + exact-id fallback) must include
+  // internal rows -- pin by locality: no exclusion clause within the function.
+  const fnStart = irSrcInt.indexOf('function getCallJourney');
+  const fnSlice = irSrcInt.slice(fnStart, fnStart + 6000);
+  assertInt.ok(fnStart !== -1 && fnSlice.indexOf('is_internal') === -1,
+    'getCallJourney must NOT exclude internal rows -- serving them is the point');
+});

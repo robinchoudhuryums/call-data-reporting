@@ -1,0 +1,2533 @@
+  // -- Alerts modal (admin-only) ---------------------------------------
+  // Admin UI for the Low Answer Rate Alerts engine. Loads the
+  // current Alert Config + recent log via getAlertsInit(), lets
+  // admins preview/send the per-dept threshold check for a given
+  // date, and install or uninstall the daily 8AM trigger.
+
+  let alLastPreview = null;     // last preview result, used to gate Send
+
+  // -- C3 Alert/Digest Config editors (admin write surfaces) -----------
+  // Loaded rows for prefill; populated by the render functions above.
+  var alCfgRows_ = [];
+  var alDgRows_ = [];
+  var alDgLastInit_ = null;   // G-6: last full digest-init payload (see below)
+  // Batch 3: the unified Report Subscribers table draws from BOTH lists, each
+  // loaded by its own async init; track per-list load errors for a partial note.
+  var alDgLoadError_ = null, alQrLoadError_ = null;
+
+  // Populate a dept <select> from the admin's full dept list (USER.departments
+  // is all depts for an admin -- the Alerts modal is admin-only).
+  function alFillDeptSelect_(id) {
+    const sel = $(id);
+    if (!sel) return;
+    const want = sel.value;
+    const depts = (USER && USER.departments) || [];
+    sel.innerHTML = '<option value="">— pick —</option>'
+      + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+    if (want) sel.value = want;
+  }
+
+  function alCfgStatus_(kind, msg) { alMiniStatus_('al-cfg-status', kind, msg); }
+  function alDgStatus_(kind, msg)  { alMiniStatus_('al-rs-status', kind, msg); }
+  function alRsStatus_(kind, msg)  { alMiniStatus_('al-rs-status', kind, msg); }
+  function alMiniStatus_(id, kind, msg) {
+    const el = $(id);
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // ---- Alert Config editor ----
+  function alCfgEdit_(idx) {
+    const c = alCfgRows_[idx];
+    if (!c) return;
+    if ($('al-cfg-dept')) { alFillDeptSelect_('al-cfg-dept'); $('al-cfg-dept').value = c.department || ''; }
+    if ($('al-cfg-threshold')) $('al-cfg-threshold').value = c.invalidThreshold ? '' : Number(c.threshold) || '';
+    if ($('al-cfg-extras')) $('al-cfg-extras').value = (c.extraRecipients || []).join(', ');
+    if ($('al-cfg-skip')) $('al-cfg-skip').value = c.skipDatesRaw || '';
+    if ($('al-cfg-notes')) $('al-cfg-notes').value = c.notes || '';
+    if ($('al-cfg-active')) $('al-cfg-active').checked = !!c.active;
+    if ($('al-cfg-dept')) $('al-cfg-dept').focus();
+  }
+  function alCfgClear_() {
+    ['al-cfg-threshold', 'al-cfg-extras', 'al-cfg-skip', 'al-cfg-notes'].forEach(function (i) { if ($(i)) $(i).value = ''; });
+    if ($('al-cfg-dept')) $('al-cfg-dept').value = '';
+    if ($('al-cfg-active')) $('al-cfg-active').checked = true;
+    alCfgStatus_(null);
+  }
+  function alCfgSave_() {
+    const department = $('al-cfg-dept') ? $('al-cfg-dept').value : '';
+    if (!department) { alCfgStatus_('error', 'Pick a department.'); return; }
+    const req = {
+      department: department,
+      threshold: $('al-cfg-threshold') ? $('al-cfg-threshold').value : '',
+      extraRecipients: $('al-cfg-extras') ? $('al-cfg-extras').value : '',
+      skipDates: $('al-cfg-skip') ? $('al-cfg-skip').value : '',
+      notes: $('al-cfg-notes') ? $('al-cfg-notes').value : '',
+      active: $('al-cfg-active') ? $('al-cfg-active').checked : true,
+    };
+    const btn = $('al-cfg-save');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save dept'; } };
+    alCfgStatus_('loading', 'Saving ' + department + '…');
+    google.script.run
+      .withSuccessHandler(function () { restore(); showToast('Saved alert config for ' + department, 'success'); alCfgClear_(); alLoadInit_(); })
+      .withFailureHandler(function (err) { restore(); alCfgStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
+      .saveAlertConfigRow(req);
+  }
+  function alCfgRemove_(idx) {
+    const c = alCfgRows_[idx];
+    if (!c) return;
+    if (!window.confirm('Remove alert config for "' + c.department + '"? It will stop receiving low-answer-rate alerts.')) return;
+    alCfgStatus_('loading', 'Removing ' + c.department + '…');
+    google.script.run
+      .withSuccessHandler(function () { showToast('Removed alert config for ' + c.department, 'success'); alLoadInit_(); })
+      .withFailureHandler(function (err) { alCfgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .removeAlertConfigRow({ department: c.department });
+  }
+
+  // ---- Report Subscribers (Batch 3): unified Digest + Queue Report ----
+  // Presentation only -- routes to the existing per-report RPCs unchanged
+  // (saveDigestConfigRow / saveQueueReportSubscriber, and the remove/preview
+  // helpers below). One table, one add/edit form with a report-type multi-select.
+
+  // Reveal/hide the digest-only form fields based on the ticked report type(s).
+  function alRsSyncTypeFields_() {
+    const digest = !!($('al-rs-type-digest') && $('al-rs-type-digest').checked);
+    const form = $('al-rs-form');
+    if (form) form.classList.toggle('al-rs-hide-digest', !digest);
+  }
+
+  // Render the unified table from BOTH loaded lists (alDgRows_ + alQrRows_).
+  // Either list may arrive first (two async inits) or fail to load -- we render
+  // whatever we have and note a partial-load error.
+  function alRenderSubscribersTable_() {
+    const tbody = $('al-rs-tbody');
+    if (!tbody) return;
+    alFillDeptSelect_('al-rs-dept');
+    const dg = alDgRows_ || [], qr = alQrRows_ || [];
+    if (!dg.length && !qr.length) {
+      const err = alDgLoadError_ || alQrLoadError_;
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">'
+        + (err ? ('Could not load subscribers: ' + escapeHtml(err))
+               : 'No report subscribers yet. Add one with the form below.')
+        + '</td></tr>';
+      return;
+    }
+    let html = '';
+    dg.forEach(function (c, idx) {
+      const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
+      // OPS-6: an unrecognized cadence renders a warn chip (the row never sends)
+      // instead of silently vanishing from the table.
+      const cadenceCell = c.invalidCadence
+        ? '<span class="al-active al-active-no" title="Unrecognized cadence ('
+            + escapeHtml(c.cadenceRaw || 'blank') + ') -- this subscription NEVER sends. '
+            + 'Use daily, weekly, or monthly.">⚠ invalid</span>'
+        : escapeHtml(c.cadence);
+      // O-4: a duplicate (email, dept) row is inert (first row wins
+      // server-side) -- chip it so the admin removes it rather than editing
+      // the wrong row. Remove deletes ALL copies for the key.
+      const dgDupChip = c.duplicateRow
+        ? ' <span class="al-active al-active-no" title="Duplicate row for this email + department -- '
+            + 'the FIRST row wins; this one never sends. Remove re-adds cleanly.">⚠ duplicate</span>'
+        : '';
+      html += '<tr>'
+        + '<td>' + escapeHtml(c.email) + dgDupChip + '</td>'
+        + '<td><span class="al-report-chip al-report-digest">Digest</span></td>'
+        + '<td>' + escapeHtml(c.department) + '</td>'
+        + '<td>' + cadenceCell + '</td>'
+        + '<td>' + escapeHtml(c.format || 'summary') + '</td>'
+        + '<td><span class="al-active ' + activeCls + '">' + (c.active ? 'Yes' : 'No') + '</span></td>'
+        + '<td>' + escapeHtml(c.notes || '') + '</td>'
+        + '<td>'
+        +   '<button type="button" class="link-btn al-rs-dg-preview" data-idx="' + idx + '">Preview</button> '
+        +   '<button type="button" class="link-btn al-rs-dg-edit" data-idx="' + idx + '">Edit</button> '
+        +   '<button type="button" class="link-btn al-rs-dg-remove" data-idx="' + idx + '">Remove</button>'
+        + '</td></tr>';
+    });
+    qr.forEach(function (s, idx) {
+      const activeCls = s.active ? 'al-active-yes' : 'al-active-no';
+      // O-4: same duplicate-row chip for hand-edited Queue Report Subscribers
+      // duplicates (first row wins; the send loop skips flagged copies).
+      const qrDupChip = s.duplicateRow
+        ? ' <span class="al-active al-active-no" title="Duplicate row for this email -- '
+            + 'the FIRST row wins; this one never sends. Remove deletes all copies.">⚠ duplicate</span>'
+        : '';
+      html += '<tr>'
+        + '<td>' + escapeHtml(s.email) + qrDupChip + '</td>'
+        + '<td><span class="al-report-chip al-report-queue">Queue Report</span></td>'
+        // Round-16 To/Cc: which line of the single daily message this row
+        // rides (reuses the dept column, meaningless for queue rows).
+        + '<td>' + (s.cc ? 'Cc' : 'To') + '</td>'
+        + '<td class="al-empty-inline">—</td>'
+        + '<td class="al-empty-inline">—</td>'
+        + '<td><span class="al-active ' + activeCls + '">' + (s.active ? 'Yes' : 'No') + '</span></td>'
+        + '<td>' + escapeHtml(s.notes || '') + '</td>'
+        + '<td>'
+        +   '<button type="button" class="link-btn al-rs-qr-edit" data-idx="' + idx + '">Edit</button> '
+        +   '<button type="button" class="link-btn al-rs-qr-remove" data-idx="' + idx + '">Remove</button>'
+        + '</td></tr>';
+    });
+    tbody.innerHTML = html;
+    tbody.querySelectorAll('.al-rs-dg-preview').forEach(function (b) {
+      b.addEventListener('click', function () { const c = alDgRows_[Number(b.getAttribute('data-idx'))]; if (c) alSendDigestPreview_(b, c); });
+    });
+    tbody.querySelectorAll('.al-rs-dg-edit').forEach(function (b) {
+      b.addEventListener('click', function () { alRsEditDigest_(Number(b.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-rs-dg-remove').forEach(function (b) {
+      b.addEventListener('click', function () { alDgRemove_(Number(b.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-rs-qr-edit').forEach(function (b) {
+      b.addEventListener('click', function () { alRsEditQueue_(Number(b.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-rs-qr-remove').forEach(function (b) {
+      b.addEventListener('click', function () { alQrRemove_(Number(b.getAttribute('data-idx'))); });
+    });
+  }
+
+  function alRsEditDigest_(idx) {
+    const c = alDgRows_[idx]; if (!c) return;
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').checked = true;
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').checked = false;
+    alRsSyncTypeFields_();
+    if ($('al-rs-email'))   $('al-rs-email').value = c.email || '';
+    alFillDeptSelect_('al-rs-dept');
+    if ($('al-rs-dept'))    $('al-rs-dept').value = c.department || '';
+    if ($('al-rs-cadence')) $('al-rs-cadence').value = c.cadence || 'daily';
+    if ($('al-rs-format'))  $('al-rs-format').value = c.format || 'summary';
+    if ($('al-rs-notes'))   $('al-rs-notes').value = c.notes || '';
+    if ($('al-rs-active'))  $('al-rs-active').checked = !!c.active;
+    if ($('al-rs-email'))   $('al-rs-email').focus();
+  }
+
+  function alRsEditQueue_(idx) {
+    const s = alQrRows_[idx]; if (!s) return;
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').checked = false;
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').checked = true;
+    alRsSyncTypeFields_();
+    if ($('al-rs-email'))  $('al-rs-email').value = s.email || '';
+    if ($('al-rs-cc'))     $('al-rs-cc').checked = !!s.cc;
+    if ($('al-rs-notes'))  $('al-rs-notes').value = s.notes || '';
+    if ($('al-rs-active')) $('al-rs-active').checked = !!s.active;
+    if ($('al-rs-email'))  $('al-rs-email').focus();
+  }
+
+  function alRsClear_() {
+    if ($('al-rs-email'))  $('al-rs-email').value = '';
+    if ($('al-rs-cc'))     $('al-rs-cc').checked = false;
+    if ($('al-rs-notes'))  $('al-rs-notes').value = '';
+    if ($('al-rs-dept'))   $('al-rs-dept').value = '';
+    if ($('al-rs-cadence')) $('al-rs-cadence').value = 'daily';
+    if ($('al-rs-format'))  $('al-rs-format').value = 'summary';
+    if ($('al-rs-active'))  $('al-rs-active').checked = true;
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').checked = true;
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').checked = false;
+    alRsSyncTypeFields_();
+    alRsStatus_(null);
+  }
+
+  function alRsSave_() {
+    const email = (($('al-rs-email') && $('al-rs-email').value) || '').trim();
+    const wantDigest = !!($('al-rs-type-digest') && $('al-rs-type-digest').checked);
+    const wantQueue  = !!($('al-rs-type-queue')  && $('al-rs-type-queue').checked);
+    if (!email) { alRsStatus_('error', 'Enter an email address.'); return; }
+    if (!wantDigest && !wantQueue) { alRsStatus_('error', 'Tick at least one report type.'); return; }
+    const dept = $('al-rs-dept') ? $('al-rs-dept').value : '';
+    if (wantDigest && !dept) { alRsStatus_('error', 'Pick a department for the Manager Digest.'); return; }
+    const notes  = $('al-rs-notes') ? $('al-rs-notes').value.trim() : '';
+    const active = $('al-rs-active') ? $('al-rs-active').checked : true;
+    const btn = $('al-rs-save');
+    if (btn) btn.disabled = true;
+    alRsStatus_('loading', 'Saving ' + email + '…');
+
+    // Route to the existing per-report RPCs; both fire if both are ticked.
+    const tasks = [];
+    if (wantDigest) tasks.push(function (next) {
+      google.script.run
+        .withSuccessHandler(function () { next(); })
+        .withFailureHandler(function (err) { next(err || new Error('digest save failed')); })
+        .saveDigestConfigRow({
+          email: email, department: dept,
+          cadence: $('al-rs-cadence') ? $('al-rs-cadence').value : 'daily',
+          format:  $('al-rs-format')  ? $('al-rs-format').value  : 'summary',
+          notes: notes, active: active,
+        });
+    });
+    if (wantQueue) tasks.push(function (next) {
+      google.script.run
+        .withSuccessHandler(function () { next(); })
+        .withFailureHandler(function (err) { next(err || new Error('queue save failed')); })
+        .saveQueueReportSubscriber({ email: email, notes: notes, active: active,
+          cc: !!($('al-rs-cc') && $('al-rs-cc').checked) });
+    });
+    let i = 0;
+    (function run(err) {
+      if (err) {
+        if (btn) btn.disabled = false;
+        alRsStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
+        return;
+      }
+      if (i >= tasks.length) {
+        if (btn) btn.disabled = false;
+        showToast('Saved subscriber ' + email, 'success');
+        alRsClear_();
+        alLoadInit_();   // reload both lists + trigger status
+        return;
+      }
+      tasks[i++](run);
+    })();
+  }
+
+  function alDgRemove_(idx) {
+    const c = alDgRows_[idx];
+    if (!c) return;
+    if (!window.confirm('Remove digest subscription for "' + c.email + '" (' + c.department + ')?')) return;
+    alDgStatus_('loading', 'Removing ' + c.email + '…');
+    google.script.run
+      .withSuccessHandler(function () { showToast('Removed digest subscriber ' + c.email, 'success'); alLoadInit_(); })
+      .withFailureHandler(function (err) { alDgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .removeDigestConfigRow({ email: c.email, department: c.department });
+  }
+
+  function initAlerts() {
+    const btn = $('alerts-btn');
+    const modal = $('alerts-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      alLoadInit_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const previewBtn = $('al-preview-btn');
+    if (previewBtn) previewBtn.addEventListener('click', alRunPreview_);
+
+    const sendBtn = $('al-send-btn');
+    if (sendBtn) sendBtn.addEventListener('click', alRunSend_);
+
+    // C3 config-editor form buttons.
+    if ($('al-cfg-save'))  $('al-cfg-save').addEventListener('click', alCfgSave_);
+    if ($('al-cfg-clear')) $('al-cfg-clear').addEventListener('click', alCfgClear_);
+    // Unified Report Subscribers add/edit form (Batch 3).
+    if ($('al-rs-save'))       $('al-rs-save').addEventListener('click', alRsSave_);
+    if ($('al-rs-clear'))      $('al-rs-clear').addEventListener('click', alRsClear_);
+    if ($('al-rs-qr-preview')) $('al-rs-qr-preview').addEventListener('click', alQrPreview_);
+    if ($('al-rs-type-digest')) $('al-rs-type-digest').addEventListener('change', alRsSyncTypeFields_);
+    if ($('al-rs-type-queue'))  $('al-rs-type-queue').addEventListener('change', alRsSyncTypeFields_);
+    alRsSyncTypeFields_();
+
+    const installBtn = $('al-install-trigger-btn');
+    if (installBtn) installBtn.addEventListener('click', alInstallTrigger_);
+    const uninstallBtn = $('al-uninstall-trigger-btn');
+    if (uninstallBtn) uninstallBtn.addEventListener('click', alUninstallTrigger_);
+
+    // Digest install / uninstall.
+    const installDigestBtn = $('al-install-digest-btn');
+    if (installDigestBtn) installDigestBtn.addEventListener('click', alInstallDigestTriggers_);
+    const uninstallDigestBtn = $('al-uninstall-digest-btn');
+    if (uninstallDigestBtn) uninstallDigestBtn.addEventListener('click', alUninstallDigestTriggers_);
+
+    // Neon keep-warm enable / disable.
+    const installKwBtn = $('al-install-keepwarm-btn');
+    if (installKwBtn) installKwBtn.addEventListener('click', alInstallKeepWarm_);
+    const uninstallKwBtn = $('al-uninstall-keepwarm-btn');
+    if (uninstallKwBtn) uninstallKwBtn.addEventListener('click', alUninstallKeepWarm_);
+
+    // Report cache warming enable / disable / warm-now.
+    const installCwBtn = $('al-install-cachewarm-btn');
+    if (installCwBtn) installCwBtn.addEventListener('click', alInstallCacheWarm_);
+    const uninstallCwBtn = $('al-uninstall-cachewarm-btn');
+    if (uninstallCwBtn) uninstallCwBtn.addEventListener('click', alUninstallCacheWarm_);
+    const warmNowBtn = $('al-warm-now-btn');
+    if (warmNowBtn) warmNowBtn.addEventListener('click', alWarmNow_);
+
+    // Daily Call Queue Report trigger (subscribers live in the unified
+    // Report Subscribers table now; preview button is al-rs-qr-preview above).
+    const installQrBtn = $('al-install-qr-btn');
+    if (installQrBtn) installQrBtn.addEventListener('click', alInstallQueueReport_);
+    const uninstallQrBtn = $('al-uninstall-qr-btn');
+    if (uninstallQrBtn) uninstallQrBtn.addEventListener('click', alUninstallQueueReport_);
+    const whyQrBtn = $('al-qr-why-btn');
+    if (whyQrBtn) whyQrBtn.addEventListener('click', function () { alQrWhy_(whyQrBtn); });
+
+    const dateEl = $('al-date');
+    if (dateEl) dateEl.addEventListener('change', function () {
+      // Date change invalidates the previous preview -- Send must
+      // re-confirm against the new date.
+      alLastPreview = null;
+      $('al-send-btn').disabled = true;
+      alClearResults_();
+    });
+
+    // Answer-rate standards (ANSWER_TARGETS) save.
+    const targetsSaveBtn = $('al-targets-save-btn');
+    if (targetsSaveBtn) targetsSaveBtn.addEventListener('click', alSaveAnswerTargets_);
+  }
+
+  // -- Answer-rate standards (admin-tunable display thresholds) -----------
+  function alRenderAnswerTargets_(at) {
+    const eff = (at && at.effective) || {};
+    const seed = (at && at.seedDefault) || 92;
+    const g = $('al-target-global'), d = $('al-target-direct'), i = $('al-target-inbound');
+    if (g) { g.value = eff.global != null ? eff.global : ''; g.placeholder = String(seed); }
+    if (d) d.value = eff.direct != null ? eff.direct : '';
+    if (i) i.value = eff.inbound != null ? eff.inbound : '';
+    const st = $('al-targets-status');
+    if (st) {
+      st.textContent = 'Current: Global ' + (eff.global != null ? eff.global : seed) + '%'
+        + ' · Direct ' + (eff.direct != null ? eff.direct + '%' : 'inherits')
+        + ' · Inbound ' + (eff.inbound != null ? eff.inbound + '%' : 'inherits') + '.';
+    }
+  }
+
+  function alSaveAnswerTargets_() {
+    const btn = $('al-targets-save-btn');
+    if (!btn) return;
+    const req = {
+      global:  ($('al-target-global')  && $('al-target-global').value)  || '',
+      direct:  ($('al-target-direct')  && $('al-target-direct').value)  || '',
+      inbound: ($('al-target-inbound') && $('al-target-inbound').value) || '',
+    };
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Saving…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderAnswerTargets_({ effective: (res && res.effective) || {}, seedDefault: 92 });
+        const st = $('al-targets-status');
+        if (st) st.textContent += ' Saved — applies on each viewer’s next page load; emails at their next send.';
+        showToast('Answer-rate standards saved', 'success');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        const st = $('al-targets-status');
+        if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .saveAnswerTargets(req);
+  }
+
+  function alLoadInit_() {
+    $('al-loading').style.display = '';
+    $('al-body').style.display = 'none';
+    google.script.run
+      .withSuccessHandler(function (data) {
+        $('al-loading').style.display = 'none';
+        $('al-body').style.display = '';
+        alRenderInit_(data);
+        alRenderAnswerTargets_(data && data.answerTargets);
+        // Digest subscribers + trigger status is loaded separately
+        // so a missing Digest.gs (e.g. mid-deploy) doesn't break the
+        // whole Alerts modal.
+        google.script.run
+          .withSuccessHandler(function (digestData) {
+            alRenderDigestInit_(digestData || { config: [], trigger: {} });
+          })
+          .withFailureHandler(function (err) {
+            // Fall back to an empty state with the error in the
+            // trigger-status caption so the admin notices.
+            alRenderDigestInit_({ config: [], trigger: {},
+              loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getDigestsInit();
+        // Neon keep-warm status, loaded separately so a missing
+        // NeonKeepWarm.gs (mid-deploy) doesn't break the modal.
+        google.script.run
+          .withSuccessHandler(function (kw) { alRenderKeepWarm_(kw || {}); })
+          .withFailureHandler(function (err) {
+            alRenderKeepWarm_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getNeonKeepWarmStatus();
+        // Report cache-warming status (separate, same resilience).
+        google.script.run
+          .withSuccessHandler(function (cw) { alRenderCacheWarm_(cw || {}); })
+          .withFailureHandler(function (err) {
+            alRenderCacheWarm_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getCacheWarmStatus();
+        // Daily Call Queue Report subscribers + trigger status (separate, same
+        // resilience so a mid-deploy missing QueueReportEmail.gs doesn't break
+        // the whole Alerts modal).
+        google.script.run
+          .withSuccessHandler(function (qr) { alRenderQueueReport_(qr || {}); })
+          .withFailureHandler(function (err) {
+            alRenderQueueReport_({ loadError: (err && err.message) ? err.message : String(err) });
+          })
+          .getQueueReportInit();
+      })
+      .withFailureHandler(function (err) {
+        $('al-loading').textContent = 'Error: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getAlertsInit();
+  }
+
+  function alRenderDigestInit_(data) {
+    if (!data) return;
+    alDgLastInit_ = data;   // G-6: stash so a trigger-status-only update can merge
+    // Batch 3: feed the unified Report Subscribers table (the two async inits
+    // each set their list + call the shared renderer; trigger status is below).
+    alDgRows_ = data.config || [];
+    alDgLoadError_ = data.loadError || null;
+    alRenderSubscribersTable_();
+
+    // Trigger status caption + install/uninstall buttons.
+    const trig = data.trigger || { daily: false, weekly: false, monthly: false };
+    const installed = !!(trig.daily && trig.weekly && trig.monthly);
+    const partial   = !installed && (trig.daily || trig.weekly || trig.monthly);
+    alSetStatePill_('al-digest-pill', installed);
+    const statusEl  = $('al-digest-trigger-status');
+    if (statusEl) {
+      if (data.loadError) {
+        statusEl.textContent = 'Could not load digest config: ' + data.loadError;
+      } else if (installed) {
+        statusEl.textContent = 'Daily + weekly + monthly digest triggers are installed.';
+      } else if (partial) {
+        statusEl.textContent = 'Partial install (daily=' + trig.daily + ', weekly=' + trig.weekly
+                            + ', monthly=' + trig.monthly
+                            + '). Click "Install" to re-install all three.';
+      } else {
+        statusEl.textContent = 'No digest triggers installed. Subscribers won\'t receive scheduled digests until you click Install.';
+      }
+    }
+    const installBtn   = $('al-install-digest-btn');
+    const uninstallBtn = $('al-uninstall-digest-btn');
+    if (installBtn)   installBtn.style.display   = installed ? 'none' : '';
+    if (uninstallBtn) uninstallBtn.style.display = installed ? ''     : 'none';
+
+    if (data.spreadsheetUrl) {
+      const link = $('al-open-digest-sheet');
+      if (link) link.href = data.spreadsheetUrl;
+    }
+
+    // O-2: surface the last per-cadence run outcome (sendDigestsForCadence_'s
+    // DIGEST_LAST_RESULT_* records). A FAILED-ALL line is warn-tinted -- the
+    // marker was cleared server-side, so a same-day re-run/manual send works.
+    const lastEl = $('al-digest-last-results');
+    if (lastEl) {
+      const lr = data.lastResults || {};
+      const lines = ['daily', 'weekly', 'monthly']
+        .filter(function (c) { return lr[c]; })
+        .map(function (c) {
+          const failed = String(lr[c]).indexOf('FAILED-ALL') === 0;
+          return '<span' + (failed ? ' class="al-active al-active-no"' : '') + '>'
+            + escapeHtml(c) + ': ' + escapeHtml(lr[c]) + '</span>';
+        });
+      lastEl.innerHTML = lines.length ? ('Last runs — ' + lines.join('<br>')) : '';
+      lastEl.style.display = lines.length ? '' : 'none';
+    }
+  }
+
+  function alSendDigestPreview_(btn, row) {
+    if (!btn || !row) return;
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Sending…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false;
+        btn.textContent = 'Sent to ' + (res && res.to ? res.to : 'you');
+        setTimeout(function () { btn.textContent = prev; }, 2500);
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Preview failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .sendPreviewDigest({
+        email:      row.email,
+        department: row.department,
+        cadence:    row.cadence,
+        format:     row.format || 'summary',
+      });
+  }
+
+  function alInstallDigestTriggers_() {
+    const btn = $('al-install-digest-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Installing…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        // G-6: update the TRIGGER STATUS immediately but KEEP the current
+        // subscriber rows -- the old `{config: []}` interim render blanked
+        // the digest half of the unified table, and if the follow-up fetch
+        // failed it stayed blank for the rest of the modal session.
+        var kept = alDgLastInit_ || {};
+        alRenderDigestInit_({
+          config: kept.config || alDgRows_, loadError: kept.loadError,
+          spreadsheetUrl: kept.spreadsheetUrl, lastResults: kept.lastResults,
+          trigger: status || { daily: true, weekly: true, monthly: true },
+        });
+        // Re-fetch the full config so the table reflects any server changes.
+        google.script.run
+          .withSuccessHandler(function (data) { if (data) alRenderDigestInit_(data); })
+          .withFailureHandler(function () {
+            alSetRunStatus_('error', 'Triggers installed, but the config refresh failed — showing the previous list.');
+          })
+          .getDigestsInit();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Install failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installDigestTriggers();
+  }
+
+  function alUninstallDigestTriggers_() {
+    const ok = window.confirm('Stop all digest triggers (daily, weekly, monthly)? Subscribers will stop receiving scheduled digests until you re-install.');
+    if (!ok) return;
+    const btn = $('al-uninstall-digest-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Uninstalling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        // G-6: reflect the uninstall immediately (rows kept), then refresh.
+        var kept = alDgLastInit_ || {};
+        alRenderDigestInit_({
+          config: kept.config || alDgRows_, loadError: kept.loadError,
+          spreadsheetUrl: kept.spreadsheetUrl, lastResults: kept.lastResults,
+          trigger: status || { daily: false, weekly: false, monthly: false },
+        });
+        google.script.run
+          .withSuccessHandler(function (data) { if (data) alRenderDigestInit_(data); })
+          .withFailureHandler(function () {
+            alSetRunStatus_('error', 'Triggers removed, but the config refresh failed — showing the previous list.');
+          })
+          .getDigestsInit();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallDigestTriggers();
+  }
+
+  // -- Daily Call Queue Report subscribers + trigger ---------------------
+  var alQrRows_ = [];
+  function alQrSetStatus_(kind, msg) { alMiniStatus_('al-rs-status', kind, msg); }
+  function alRenderQueueReport_(data) {
+    data = data || {};
+    alQrRows_ = data.subscribers || [];
+    // Batch 3: feed the unified Report Subscribers table (trigger status below).
+    alQrLoadError_ = data.loadError || null;
+    alRenderSubscribersTable_();
+    const win = $('al-qr-window');
+    if (win) win.textContent = (!data.loadError && data.windowLabel) ? ('Runs ' + data.windowLabel + '.') : '';
+    const installed = !!data.installed;
+    alSetStatePill_('al-qr-pill', installed);
+    const statusEl = $('al-qr-trigger-status');
+    // O-9: installing the trigger does NOT subscribe you, and that is the
+    // single easiest way to end up with an engine that runs every weekday and
+    // emails nobody. Say so HERE, on the screen where the trigger was armed,
+    // rather than leaving it to be inferred from a "Last run" line the next
+    // morning. Duplicate rows are inert server-side, so they don't count.
+    const qrActive = (data.subscribers || [])
+      .filter(function (s) { return s.active && !s.duplicateRow; }).length;
+    if (statusEl) {
+      statusEl.classList.toggle('is-warn', installed && !qrActive && !data.loadError);
+      statusEl.textContent = data.loadError ? ''
+        : (installed
+            ? (qrActive
+                ? 'Installed — checks each weekday morning and emails once the previous workday’s data is fully processed.'
+                : 'Installed, but NO ONE is subscribed — it will run each weekday and send nothing. '
+                  + 'Add yourself under Report Subscribers above (choose “Queue Report”). '
+                  + 'Installing the trigger does not subscribe you.')
+            : 'No trigger installed. Subscribers won’t receive the report until you click Install.');
+    }
+    const lastEl = $('al-qr-last');
+    if (lastEl) lastEl.textContent = data.lastResult ? ('Last run: ' + data.lastResult) : '';
+    const installBtn = $('al-install-qr-btn'), uninstallBtn = $('al-uninstall-qr-btn');
+    if (installBtn)   installBtn.style.display   = installed ? 'none' : '';
+    if (uninstallBtn) uninstallBtn.style.display = installed ? ''     : 'none';
+  }
+  function alQrReload_() {
+    google.script.run
+      .withSuccessHandler(function (d) { alRenderQueueReport_(d || {}); })
+      .withFailureHandler(function (err) { alRenderQueueReport_({ loadError: (err && err.message) ? err.message : String(err) }); })
+      .getQueueReportInit();
+  }
+  // O-10: every non-send path in the trigger returns silently, so "it hasn't
+  // arrived" used to cost a day per hypothesis to test. This asks the REAL gate
+  // what it decided, right now, and reads back every input it used.
+  function alQrWhy_(btn) {
+    const host = $('al-qr-why');
+    if (!host) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    const done = function () {
+      if (btn) { btn.disabled = false; btn.textContent = 'Why hasn’t it sent?'; }
+    };
+    google.script.run
+      .withSuccessHandler(function (d) {
+        done();
+        d = d || {};
+        const row = function (k, v) {
+          return '<div class="al-qr-why-row"><span>' + escapeHtml(k) + '</span><b>'
+            + escapeHtml(v === '' || v == null ? '—' : String(v)) + '</b></div>';
+        };
+        host.style.display = '';
+        host.className = 'al-qr-why ' + (d.wouldSend ? 'is-good' : 'is-warn');
+        host.innerHTML =
+            '<div class="al-qr-why-verdict">' + escapeHtml(d.explanation || '') + '</div>'
+          + row('Checked at', d.now)
+          + row('Gate decision', d.decision)
+          + row('Target date (previous workday)', d.targetDate)
+          + row('QCD data reaches', d.latestQcdDate)
+          + row('Already-sent marker', d.lastSentMarker)
+          + row('Active subscribers', d.activeSubscribers)
+          + row('Trigger installed / enabled', (d.installed ? 'yes' : 'no') + ' / ' + (d.enabled ? 'yes' : 'no'))
+          + row('Send window', d.windowLabel)
+          + (d.nextWindowDate
+              ? row('Next window', d.nextWindowDate + ' — will send ' + (d.nextWindowTarget || '?'))
+              : '');
+      })
+      .withFailureHandler(function (err) {
+        done();
+        host.style.display = '';
+        host.className = 'al-qr-why is-warn';
+        host.textContent = 'Check failed: ' + ((err && err.message) ? err.message : String(err));
+      })
+      .runQueueReportGateCheck();
+  }
+  function alQrRemove_(idx) {
+    const s = alQrRows_[idx]; if (!s) return;
+    if (!window.confirm('Remove ' + s.email + ' from the Daily Call Queue Report?')) return;
+    google.script.run
+      .withSuccessHandler(function () { alQrReload_(); })
+      .withFailureHandler(function (err) { alQrSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .removeQueueReportSubscriber({ email: s.email });
+  }
+  function alQrPreview_() {
+    const btn = $('al-rs-qr-preview'); if (!btn) return;
+    btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Sending…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        alQrSetStatus_('success', 'Preview sent to ' + (res && res.to ? res.to : 'you')
+          + ' for ' + (res && res.date ? res.date : 'the previous workday') + '.');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alQrSetStatus_('error', 'Preview failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .sendQueueReportPreview();
+  }
+  function alInstallQueueReport_() {
+    const btn = $('al-install-qr-btn'); if (!btn) return;
+    btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Installing…';
+    google.script.run
+      .withSuccessHandler(function () { btn.disabled = false; btn.textContent = prev; alQrReload_(); })
+      .withFailureHandler(function (err) { btn.disabled = false; btn.textContent = prev; alQrSetStatus_('error', 'Install failed: ' + (err && err.message ? err.message : String(err))); })
+      .installQueueReportTrigger();
+  }
+  function alUninstallQueueReport_() {
+    if (!window.confirm('Stop the Daily Call Queue Report trigger? Subscribers stop receiving it until you re-install.')) return;
+    const btn = $('al-uninstall-qr-btn'); if (!btn) return;
+    btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Uninstalling…';
+    google.script.run
+      .withSuccessHandler(function () { btn.disabled = false; btn.textContent = prev; alQrReload_(); })
+      .withFailureHandler(function (err) { btn.disabled = false; btn.textContent = prev; alQrSetStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err))); })
+      .uninstallQueueReportTrigger();
+  }
+
+  function alRenderInit_(data) {
+    if (!data) return;
+    if ($('al-date') && !$('al-date').value) {
+      $('al-date').value = data.defaultDate || '';
+    }
+    if ($('al-open-sheet') && data.spreadsheetUrl) {
+      $('al-open-sheet').href = data.spreadsheetUrl;
+    }
+    alRenderConfigTable_(data.config || [], data.drift || {});
+    alRenderTriggerStatus_(data.trigger || { installed: false });
+    alRenderLog_(data.log || []);
+    alRenderNeonMirror_(data.neonMirror || null);
+    alRenderNeonRead_(data.neonRead || null);
+    alRenderPipelineHealth_(data.pipelineHealth || []);
+    alClearResults_();
+    alLastPreview = null;
+    $('al-send-btn').disabled = true;
+  }
+
+  // F2 divergence detector: render the sheet-vs-Neon DQE max-date status.
+  // Hidden entirely when Neon isn't configured on this project (status
+  // 'unconfigured') so non-Neon installs see nothing. 'behind' is the
+  // actionable case -- the mirror is stale by gapDays.
+  function alRenderNeonMirror_(m) {
+    const el = $('al-neon-mirror');
+    if (!el) return;
+    if (!m || !m.configured || m.status === 'unconfigured') {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.style.display = '';
+    let cls, msg;
+    if (m.status === 'behind') {
+      const days = (m.gapDays == null) ? '?' : m.gapDays;
+      cls = 'al-neon-mirror-warn';
+      // C-7: plain strings only -- this element is set via textContent, so
+      // escapeHtml here DOUBLE-encoded (& rendered literally as &amp;).
+      msg = '⚠ Neon mirror is behind the sheet by ' + days + ' day'
+          + (days === 1 ? '' : 's') + ' (sheet through '
+          + (m.sheetMax || '?') + ', Neon through '
+          + (m.neonMax || '?') + '). Re-import the missing date(s) '
+          + '— the dup-guard re-mirror heals it — or run '
+          + 'backfillDQEHistoryUpsert(). Only affects reads when '
+          + 'DQE_READ_SOURCE=neon.';
+    } else if (m.status === 'error') {
+      cls = 'al-neon-mirror-warn';
+      msg = '⚠ Neon mirror health: configured, but dqe_history MAX(call_date) '
+          + 'could not be read (Neon unreachable or empty). Check the NEON_* '
+          + 'Script Properties.';
+    } else {
+      cls = 'al-neon-mirror-ok';
+      msg = '✓ Neon mirror current with the sheet (both through '
+          + (m.neonMax || m.sheetMax || '?') + ').';   // C-7: textContent sink
+    }
+    el.className = 'al-neon-mirror ' + cls;
+    el.textContent = msg;
+  }
+
+  // F3: render the Neon READ-back health line. The cut-over readers
+  // (computeSummary_/getCompanyOverview/IR/PR/CR/Insights/Missed) fall back to
+  // the sheet on any Neon error, which is correct but silent -- once
+  // DQE_READ_SOURCE=neon and the sheet ages, a sustained outage serves stale
+  // data with no signal. This surfaces the recorded streak. Hidden when:
+  //   - Neon isn't configured on this project, OR
+  //   - the read source is still 'sheet' AND there's no recorded failure
+  //     (nothing relevant to show on a default sheet install).
+  function alRenderNeonRead_(m) {
+    const el = $('al-neon-read');
+    if (!el) return;
+    const failing = m && m.status === 'failing';
+    if (!m || !m.configured || (m.source !== 'neon' && !failing)) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    el.style.display = '';
+    let cls, msg;
+    if (failing) {
+      const n = Number(m.count) || 0;
+      cls = 'al-neon-mirror-warn';
+      // C-7: plain strings only (textContent sink; escapeHtml double-encoded
+      // any &/< in the recorded error message).
+      msg = '⚠ Neon read-back is FAILING — serving the sheet as a fallback'
+          + (m.source === 'neon' ? ' (reads may be stale if the sheet has aged)' : '')
+          + '. Last error ' + (m.at || '?')
+          + (m.label ? ' [' + (m.label) + ']' : '')
+          + ': ' + (m.message || '(no message)')
+          + '. ' + n + ' consecutive failure' + (n === 1 ? '' : 's')
+          + '. Check the NEON_* Script Properties / Neon instance.';
+    } else {
+      cls = 'al-neon-mirror-ok';
+      msg = '✓ Neon read-back healthy (DQE_READ_SOURCE=neon; no recent read failures).';
+    }
+    el.className = 'al-neon-mirror ' + cls;
+    el.textContent = msg;
+  }
+
+  function alRenderPipelineHealth_(events) {
+    const tbody = $('al-pipeline-tbody');
+    if (!tbody) return;
+    if (!events.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
+        + 'No pipeline events logged yet. The Pipeline Health sheet '
+        + 'starts capturing entries once the autoImport / buildDQE '
+        + 'steps next run (success or failure).'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = events.map(function (e) {
+      const statusCls = e.status === 'success' ? 'al-active-yes'
+                      : e.status === 'failure' ? 'al-active-no'
+                      : '';
+      const rowsCell = (e.rows == null || e.rows === '') ? '-'
+                                                         : escapeHtml(String(e.rows));
+      const durCell  = (e.durationMs == null || e.durationMs === '') ? '-'
+                       : (Math.round(Number(e.durationMs) / 100) / 10).toFixed(1) + 's';
+      return '<tr>'
+           +   '<td>' + escapeHtml(e.timestamp || '') + '</td>'
+           +   '<td>' + escapeHtml(e.step || '')      + '</td>'
+           +   '<td><span class="al-active ' + statusCls + '">' + escapeHtml(e.status || '') + '</span></td>'
+           +   '<td class="num">' + rowsCell + '</td>'
+           +   '<td class="num">' + durCell  + '</td>'
+           +   '<td>' + escapeHtml(e.notes || '') + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function alRenderConfigTable_(config, drift) {
+    const tbody = $('al-config-tbody');
+    if (!tbody) return;
+    alCfgRows_ = config || [];                 // C3 editor reads this for prefill
+    alFillDeptSelect_('al-cfg-dept');
+    if (!config.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">'
+        + 'No alert config yet. Add one dept with the form below.'
+        + '</td></tr>';
+      return;
+    }
+    const driftMap = drift || {};
+    tbody.innerHTML = config.map(function (c, idx) {
+      const activeCls = c.active ? 'al-active-yes' : 'al-active-no';
+      const activeLbl = c.active ? 'Yes' : 'No';
+      // E8 Skip Dates: prefer the parsed array (server-normalized,
+      // bad tokens dropped) for the display so a malformed cell
+      // doesn't show garbage. Fallback to the raw string when the
+      // parsed array is empty so admins can see what they typed
+      // before fixing it. Empty cell shows an em-dash.
+      const skipDates = Array.isArray(c.skipDates) ? c.skipDates : [];
+      let skipCell = '';
+      if (skipDates.length) {
+        skipCell = skipDates.map(function (r) {
+          return r.from === r.to ? r.from : (r.from + ' – ' + r.to);
+        }).join(', ');
+      } else if (c.skipDatesRaw) {
+        skipCell = '⚠︎ ' + c.skipDatesRaw;
+      } else {
+        skipCell = '—';
+      }
+      // F4: an invalid-threshold dept is flagged so the admin sees it's NOT
+      // being monitored, rather than the row showing a misleading "0%".
+      const threshCell = c.invalidThreshold
+        ? '<td class="num"><span class="al-active al-active-no" title="Invalid threshold ('
+            + escapeHtml(c.thresholdRaw || 'blank') + ') -- this dept is NOT monitored. '
+            + 'Set a positive number.">⚠ invalid</span></td>'
+        : '<td class="num">' + Number(c.threshold).toFixed(0) + '%</td>';
+      // OPS-9: a duplicate dept row is inert (first row wins server-side) --
+      // chip it so the admin removes it instead of editing the wrong row.
+      const dupChip = c.duplicateRow
+        ? ' <span class="al-active al-active-no" title="Duplicate row for this department -- '
+            + 'the FIRST row wins; this one is ignored. Remove it.">⚠ duplicate</span>'
+        : '';
+      // O-3: a dept name matching no roster header is silently un-monitored
+      // (empty roster -> perpetual no-data) -- chip it like the F4 invalid
+      // threshold so the admin fixes the Department cell.
+      const unknownChip = c.unknownDept
+        ? ' <span class="al-active al-active-no" title="This department matches no roster '
+            + '(DO NOT EDIT!) header -- renamed or typo? It is NOT monitored (reads an empty '
+            + 'roster, logs no-data every run). Fix it to match the header exactly '
+            + '(case-sensitive).">⚠ unknown dept</span>'
+        : '';
+      return '<tr>'
+           +   '<td>' + escapeHtml(c.department) + dupChip + unknownChip + '</td>'
+           +   threshCell
+           +   '<td>' + alDriftCellHtml_(c, driftMap[c.department]) + '</td>'
+           +   '<td>' + escapeHtml((c.extraRecipients || []).join(', ') || '(none)') + '</td>'
+           +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
+           +   '<td class="al-skip-dates">' + escapeHtml(skipCell) + '</td>'
+           +   '<td>' + escapeHtml(c.notes || '') + '</td>'
+           +   '<td>'
+           +     '<button type="button" class="link-btn al-cfg-edit" data-idx="' + idx + '">Edit</button> '
+           +     '<button type="button" class="link-btn al-cfg-remove" data-idx="' + idx + '">Remove</button>'
+           +   '</td>'
+           + '</tr>';
+    }).join('');
+    tbody.querySelectorAll('.al-cfg-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () { alCfgEdit_(Number(btn.getAttribute('data-idx'))); });
+    });
+    tbody.querySelectorAll('.al-cfg-remove').forEach(function (btn) {
+      btn.addEventListener('click', function () { alCfgRemove_(Number(btn.getAttribute('data-idx'))); });
+    });
+  }
+
+  // E10 threshold-drift chip. Renders per-dept summary of the most
+  // recent ~30 daily-trigger entries from the Alert Log: fire-rate
+  // and mean answer rate. Severity comes from the server
+  // (chronic / lenient / ok / cold); we just map it to the chip
+  // palette + tooltip. Falls back to a dash when no drift data is
+  // available (e.g. Alert Log unreadable, dept not yet on the
+  // sheet, or scaffold tests).
+  function alDriftCellHtml_(cfg, drift) {
+    if (!drift || !drift.total) {
+      return '<span class="al-drift-chip al-drift-cold" '
+           + 'title="No daily-trigger entries logged for this dept yet">—</span>';
+    }
+    if (drift.severity === 'cold') {
+      return '<span class="al-drift-chip al-drift-cold" '
+           + 'title="Only ' + drift.total + ' daily-trigger entries -- not enough to assess">'
+           + drift.fired + '/' + drift.total + '</span>';
+    }
+    let cls = 'al-drift-ok';
+    let tip = '';
+    if (drift.severity === 'chronic') {
+      cls = 'al-drift-chronic';
+      tip = 'Chronic: alerts firing nearly every day. Threshold of '
+          + Number(cfg.threshold).toFixed(0) + '% may be too strict, '
+          + 'or the dept is sustainedly under-performing.';
+    } else if (drift.severity === 'lenient') {
+      cls = 'al-drift-lenient';
+      tip = 'Lenient: 0 fires and the dept averages '
+          + (drift.meanRate != null ? drift.meanRate.toFixed(1) + '%' : 'high')
+          + ' -- threshold of ' + Number(cfg.threshold).toFixed(0)
+          + '% may be too low to catch a real degradation.';
+    } else {
+      tip = 'In range: ' + drift.fired + ' fires of ' + drift.total
+          + ' trigger runs.';
+    }
+    const mean = drift.meanRate != null ? (' · avg ' + drift.meanRate.toFixed(1) + '%') : '';
+    return '<span class="al-drift-chip ' + cls + '" title="' + escapeHtml(tip) + '">'
+         + drift.fired + '/' + drift.total + mean
+         + '</span>';
+  }
+
+  // #6: small ON/OFF state pill next to each Alerts-modal toggle section title,
+  // so the enabled state is obvious at a glance (not just inferable from the
+  // hint text + which button is showing).
+  function alSetStatePill_(pillId, on) {
+    const p = $(pillId);
+    if (!p) return;
+    p.textContent = on ? 'ON' : 'OFF';
+    p.className = 'al-state-pill ' + (on ? 'is-on' : 'is-off');
+  }
+
+  function alRenderTriggerStatus_(trigger) {
+    const el = $('al-trigger-status');
+    const installBtn = $('al-install-trigger-btn');
+    const uninstallBtn = $('al-uninstall-trigger-btn');
+    alSetStatePill_('al-trigger-pill', !!(trigger && trigger.installed));
+    if (!el) return;
+    if (trigger && trigger.installed) {
+      el.textContent = 'Daily trigger is installed (runs at '
+                     + (trigger.hour || 8) + ':00 ' + tzSuffix_()
+                     + '). The trigger runs the previous day\'s check; weekends are skipped.';
+      if (installBtn) installBtn.style.display = 'none';
+      if (uninstallBtn) uninstallBtn.style.display = '';
+    } else {
+      el.textContent = 'No daily trigger installed. Without it, alerts only fire when you click "Send alerts" below.';
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+    }
+  }
+
+  function alRenderKeepWarm_(kw) {
+    const el = $('al-keepwarm-status');
+    const installBtn = $('al-install-keepwarm-btn');
+    const uninstallBtn = $('al-uninstall-keepwarm-btn');
+    if (!el) return;
+    alSetStatePill_('al-keepwarm-pill', !!(kw && kw.installed && !kw.loadError));
+    if (kw && kw.loadError) {
+      el.textContent = 'Keep-warm status unavailable: ' + kw.loadError;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+      return;
+    }
+    const fmtH = function (h) {
+      const hr = ((h % 24) + 24) % 24;
+      const ampm = hr < 12 ? 'AM' : 'PM';
+      const h12 = (hr % 12) === 0 ? 12 : (hr % 12);
+      return h12 + ' ' + ampm;
+    };
+    if (kw && kw.installed) {
+      let txt = 'Keep-warm is ON — pinging Neon every ' + (kw.everyMinutes || 5)
+              + ' min, weekdays ' + fmtH(kw.startHour) + '–' + fmtH(kw.endHour)
+              + ' ' + tzSuffix_() + ' (~' + (kw.estMonthlyHours != null ? kw.estMonthlyHours : '?')
+              + ' compute-hrs/mo).';
+      if (!kw.neonConfigured) txt += ' ⚠ NEON_* Script Properties not set — pings will no-op.';
+      if (kw.readSource && kw.readSource !== 'neon') {
+        txt += ' Note: DQE_READ_SOURCE=' + kw.readSource + ', so reads still use the sheet;'
+             + ' keep-warm only matters once you flip to neon.';
+      }
+      if (kw.lastPing) {
+        txt += ' Last ping: ' + kw.lastPing.replace('T', ' ').replace(/\..*$/, '')
+             + ' (' + (kw.lastResult || '?') + ').';
+      }
+      el.textContent = txt;
+      if (installBtn) installBtn.style.display = 'none';
+      if (uninstallBtn) uninstallBtn.style.display = '';
+    } else {
+      el.textContent = 'Keep-warm is OFF. Enable it to keep the Neon free-tier instance '
+                     + 'awake during business hours so the first DQE read of a lull '
+                     + 'doesn\'t pay a cold-start penalty (only relevant when DQE_READ_SOURCE=neon).';
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+    }
+  }
+
+  // Returns "CST" or "CDT" (or whatever the user's browser
+  // observes for America/Chicago today). Apps Script triggers
+  // fire in the script TZ (America/Chicago) which is DST-aware,
+  // so the previous hardcoded "CST" was wrong half the year.
+  // Falls back to "CT" on browsers that don't expose timeZoneName.
+  function tzSuffix_() {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Chicago',
+        timeZoneName: 'short',
+      }).formatToParts(new Date());
+      const tzPart = parts.find(function (p) { return p.type === 'timeZoneName'; });
+      if (tzPart && tzPart.value) return tzPart.value;
+    } catch (e) { /* fall through */ }
+    return 'CT';
+  }
+
+  function alRenderLog_(log) {
+    const tbody = $('al-log-tbody');
+    if (!tbody) return;
+    if (!log.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No alerts logged yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = log.map(function (l) {
+      const sentCls = l.triggered ? 'al-active-yes' : 'al-active-no';
+      const sentLbl = l.triggered ? 'Yes' : 'No';
+      return '<tr>'
+           +   '<td>' + escapeHtml(l.timestamp || '') + '</td>'
+           +   '<td>' + escapeHtml(l.department || '') + '</td>'
+           +   '<td>' + escapeHtml(String(l.dateChecked || '')) + '</td>'
+           +   '<td class="num">' + (l.answerRate == null ? '-' : Number(l.answerRate).toFixed(1) + '%') + '</td>'
+           +   '<td class="num">' + escapeHtml(String(l.threshold || '')) + '</td>'
+           +   '<td><span class="al-active ' + sentCls + '">' + sentLbl + '</span></td>'
+           +   '<td>' + escapeHtml(l.triggeredBy || '') + '</td>'
+           +   '<td>' + escapeHtml(l.notes || '') + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function alSetRunStatus_(kind, msg) {
+    const el = $('al-run-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function alClearResults_() {
+    const wrap = $('al-results-wrap');
+    if (wrap) wrap.style.display = 'none';
+    $('al-results-tbody').innerHTML = '';
+    $('al-results-summary').innerHTML = '';
+  }
+
+  function alRunPreview_() {
+    const date = $('al-date').value;
+    if (!date) { alSetRunStatus_('error', 'Pick a date first.'); return; }
+    const btn = $('al-preview-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Loading…';
+    alSetRunStatus_('loading', 'Running preview for ' + date + '…');
+    google.script.run
+      .withSuccessHandler(function (results) {
+        btn.disabled = false; btn.textContent = prev;
+        alLastPreview = { date: date, results: results || [] };
+        alRenderResults_(results || [], /*isPreview=*/true);
+        const wouldFire = (results || []).filter(function (r) { return r.status === 'would-send'; }).length;
+        alSetRunStatus_(wouldFire > 0 ? 'success' : '', wouldFire > 0
+          ? 'Preview complete. ' + wouldFire + ' dept' + (wouldFire === 1 ? '' : 's')
+            + ' would be alerted. Review below, then click Send alerts.'
+          : 'Preview complete. No alerts would fire for ' + date + '.');
+        $('al-send-btn').disabled = wouldFire === 0;
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Preview failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .previewAlerts({ date: date });
+  }
+
+  function alRunSend_() {
+    const date = $('al-date').value;
+    if (!date) { alSetRunStatus_('error', 'Pick a date first.'); return; }
+    if (!alLastPreview || alLastPreview.date !== date) {
+      alSetRunStatus_('error', 'Preview for ' + date + ' first.');
+      return;
+    }
+    const wouldFire = alLastPreview.results.filter(function (r) { return r.status === 'would-send'; });
+    if (!wouldFire.length) {
+      alSetRunStatus_('error', 'Nothing to send for this date.');
+      return;
+    }
+    const ok = window.confirm(
+      'Send ' + wouldFire.length + ' alert email' + (wouldFire.length === 1 ? '' : 's')
+      + ' for ' + date + '? Recipients are listed in the preview table.');
+    if (!ok) return;
+
+    const btn = $('al-send-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Sending…';
+    alSetRunStatus_('loading', 'Sending alerts…');
+    google.script.run
+      .withSuccessHandler(function (results) {
+        btn.disabled = true; btn.textContent = prev;
+        alRenderResults_(results || [], /*isPreview=*/false);
+        const sent = (results || []).filter(function (r) { return r.status === 'sent'; }).length;
+        alSetRunStatus_('success', 'Done. ' + sent + ' alert' + (sent === 1 ? '' : 's')
+          + ' sent. Refresh the page to see the updated log.');
+        showToast(sent + ' alert' + (sent === 1 ? '' : 's') + ' sent', 'success');
+        // Re-fetch the log so the new entries appear inline.
+        google.script.run
+          .withSuccessHandler(function (data) { if (data) alRenderLog_(data.log || []); })
+          .withFailureHandler(function () { /* ignore */ })
+          .getAlertsInit();
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Send failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .sendAlerts({ date: date });
+  }
+
+  function alRenderResults_(results, isPreview) {
+    const wrap = $('al-results-wrap');
+    const tbody = $('al-results-tbody');
+    if (!wrap || !tbody) return;
+    wrap.style.display = '';
+
+    const counts = { sent: 0, 'would-send': 0, 'above-threshold': 0,
+                     'no-data': 0, 'no-recipients': 0, skipped: 0, error: 0 };
+    results.forEach(function (r) { counts[r.status] = (counts[r.status] || 0) + 1; });
+
+    const summary = [];
+    if (counts['sent'])          summary.push(counts['sent'] + ' sent');
+    if (counts['would-send'])    summary.push(counts['would-send'] + ' would fire');
+    if (counts['above-threshold']) summary.push(counts['above-threshold'] + ' above threshold');
+    if (counts['no-data'])       summary.push(counts['no-data'] + ' no data');
+    if (counts['no-recipients']) summary.push(counts['no-recipients'] + ' no recipients');
+    if (counts['skipped'])       summary.push(counts['skipped'] + ' inactive');
+    if (counts['error'])         summary.push(counts['error'] + ' errored');
+    $('al-results-summary').textContent = summary.join(' · ');
+
+    tbody.innerHTML = results.map(function (r) {
+      const rateCell = r.answerRate == null ? '-'
+        : Number(r.answerRate).toFixed(1) + '%';
+      const recipientsCell = (r.recipients || []).length
+        ? escapeHtml(r.recipients.join(', '))
+        : '<span class="al-empty-inline">-</span>';
+      const statusCell = alStatusBadge_(r.status, isPreview);
+      return '<tr class="al-row-' + r.status + '">'
+           +   '<td>' + escapeHtml(r.department) + '</td>'
+           +   '<td class="num">' + rateCell + '</td>'
+           +   '<td class="num">' + Number(r.threshold).toFixed(0) + '%</td>'
+           +   '<td class="al-recipients-cell">' + recipientsCell + '</td>'
+           +   '<td>' + statusCell + '</td>'
+           +   '<td>' + escapeHtml(r.notes || '') + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function alStatusBadge_(status, isPreview) {
+    const labels = {
+      'sent':            { text: 'Sent',            cls: 'pr-delta-pos' },
+      'would-send':      { text: 'Will alert',      cls: 'pr-delta-neg' },
+      'above-threshold': { text: 'Healthy',         cls: 'pr-delta-neu' },
+      'no-data':         { text: 'No data',         cls: 'pr-delta-neu' },
+      'no-recipients':   { text: 'No recipients',   cls: 'pr-delta-neg' },
+      'skipped':         { text: 'Inactive',        cls: 'pr-delta-neu' },
+      'error':           { text: 'Error',           cls: 'pr-delta-neg' },
+    };
+    const meta = labels[status] || { text: status, cls: 'pr-delta-neu' };
+    return '<span class="pr-delta ' + meta.cls + '">' + meta.text + '</span>';
+  }
+
+  function alInstallTrigger_() {
+    const btn = $('al-install-trigger-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Installing…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderTriggerStatus_(status || { installed: true });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Install failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installAlertTrigger();
+  }
+
+  function alUninstallTrigger_() {
+    const ok = window.confirm('Stop the daily alert trigger? Alerts will only fire when you click "Send alerts" manually.');
+    if (!ok) return;
+    const btn = $('al-uninstall-trigger-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Uninstalling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderTriggerStatus_(status || { installed: false });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Uninstall failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallAlertTrigger();
+  }
+
+  function alInstallKeepWarm_() {
+    const btn = $('al-install-keepwarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Enabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderKeepWarm_(status || { installed: true });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Enable keep-warm failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installNeonKeepWarmTrigger();
+  }
+
+  function alUninstallKeepWarm_() {
+    const ok = window.confirm('Disable the Neon keep-warm trigger? The free-tier instance will be allowed to suspend after ~5 min idle again.');
+    if (!ok) return;
+    const btn = $('al-uninstall-keepwarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Disabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderKeepWarm_(status || { installed: false });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Disable keep-warm failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallNeonKeepWarmTrigger();
+  }
+
+  function alRenderCacheWarm_(cw) {
+    const el = $('al-cachewarm-status');
+    const installBtn = $('al-install-cachewarm-btn');
+    const uninstallBtn = $('al-uninstall-cachewarm-btn');
+    if (!el) return;
+    alSetStatePill_('al-cachewarm-pill', !!(cw && cw.installed && !cw.loadError));
+    if (cw && cw.loadError) {
+      el.textContent = 'Cache-warming status unavailable: ' + cw.loadError;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+      return;
+    }
+    const fmtH = function (h) {
+      const hr = ((h % 24) + 24) % 24;
+      const ampm = hr < 12 ? 'AM' : 'PM';
+      const h12 = (hr % 12) === 0 ? 12 : (hr % 12);
+      return h12 + ' ' + ampm;
+    };
+    let tail = '';
+    if (cw && cw.lastRun) {
+      tail = ' Last run: ' + cw.lastRun.replace('T', ' ').replace(/\..*$/, '')
+           + ' (' + (cw.lastResult || '?') + ').';
+    }
+    if (cw && cw.installed) {
+      el.textContent = 'Cache warming is ON — runs daily at ' + fmtH(cw.hour) + ' '
+                     + tzSuffix_() + ', pre-warming the Overview + each dept\'s default view.' + tail;
+      if (installBtn) installBtn.style.display = 'none';
+      if (uninstallBtn) uninstallBtn.style.display = '';
+    } else {
+      el.textContent = 'Cache warming is OFF. Enable it to pre-warm the report caches '
+                     + 'after the morning ingest so the first manager of the day gets a '
+                     + 'cache hit instead of a cold aggregation.' + tail;
+      if (installBtn) installBtn.style.display = '';
+      if (uninstallBtn) uninstallBtn.style.display = 'none';
+    }
+  }
+
+  function alInstallCacheWarm_() {
+    const btn = $('al-install-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Enabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: true });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Enable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .installCacheWarmTrigger();
+  }
+
+  function alUninstallCacheWarm_() {
+    const ok = window.confirm('Disable the daily report cache-warming trigger?');
+    if (!ok) return;
+    const btn = $('al-uninstall-cachewarm-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Disabling…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || { installed: false });
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Disable cache warming failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .uninstallCacheWarmTrigger();
+  }
+
+  function alWarmNow_() {
+    const btn = $('al-warm-now-btn');
+    btn.disabled = true;
+    const prev = btn.textContent; btn.textContent = 'Warming…';
+    google.script.run
+      .withSuccessHandler(function (status) {
+        btn.disabled = false; btn.textContent = prev;
+        alRenderCacheWarm_(status || {});
+        alSetRunStatus_('success', 'Caches warmed.');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        alSetRunStatus_('error', 'Warm now failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .warmReportCachesNow();
+  }
+
+  // -- Outlier Fix modal (admin-only) ---------------------------------
+  // The only admin UI that triggers WRITES from the dashboard. The
+  // server-side OrphanFix.gs enforces the security model (assertAdmin
+  // + input validation + LockService + audit log); this client is
+  // just the form layer.
+  //
+  // Naming note: the feature is labeled "Outlier Fix" in user-
+  // facing copy (button, modal title, empty states). The file name
+  // (OrphanFix.gs), sheet names (Agent Alias Overrides, Orphan
+  // Fix Log), audit-log action values (alias-add, rename, rename+
+  // alias), and JS internals (initOrphanFix, ofRenderOrphans_, etc.)
+  // all keep the original "Orphan" naming so existing sheet data
+  // doesn't have to migrate. Search either term to find the
+  // feature.
+
+  let ofLastInit = null;
+  // Guards against the click-race the user hit: after Apply fired, the modal
+  // still accepted more clicks until the async write returned + relaunched.
+  // While true, every write handler no-ops and ofSetBusy_ disables the
+  // controls, so a batch/single apply can't be double-submitted.
+  let ofBusy_ = false;
+  // Batch 4: membership set of valid roster names, for the searchable
+  // "Map to roster name" input (an <input list> can hold free text -- a row is
+  // only rename-ready when its value is an EXACT roster name).
+  let ofRosterSet_ = {};
+
+  function initOrphanFix() {
+    const btn   = $('orphan-fix-btn');
+    const modal = $('orphan-fix-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    // Batch controls (static elements) wired once. Row checkboxes + selects
+    // are dynamic, wired per-render in ofRenderOrphans_.
+    const selAll = $('of-select-all');
+    if (selAll) selAll.addEventListener('change', function () {
+      if (ofBusy_) return;
+      const tbody = $('of-orphans-tbody');
+      if (tbody) tbody.querySelectorAll('.of-row-check:not(:disabled)')
+        .forEach(function (c) { c.checked = selAll.checked; });
+      ofUpdateBatchState_();
+    });
+    const batchApply = $('of-batch-apply');
+    if (batchApply) batchApply.addEventListener('click', ofBatchApply_);
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      ofLoadInit_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+  }
+
+  // preserveStatus: keep the current #of-run-status message across the reload
+  // (the write paths set a result message + reload; without this the reload's
+  // clear would wipe a batch's "N applied, M failed" summary). The status div
+  // lives inside #of-body, so it just re-appears when the body re-shows.
+  function ofLoadInit_(preserveStatus) {
+    $('of-loading').style.display = '';
+    $('of-body').style.display = 'none';
+    if (!preserveStatus) ofSetStatus_(null);
+    google.script.run
+      .withSuccessHandler(function (data) {
+        $('of-loading').style.display = 'none';
+        $('of-body').style.display = '';
+        ofLastInit = data || { orphans: [], rosterNames: [], aliases: [], log: [] };
+        ofRender_(ofLastInit);
+      })
+      .withFailureHandler(function (err) {
+        $('of-loading').textContent = 'Error: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getOrphanFixInit();
+  }
+
+  function ofRender_(data) {
+    if (data.spreadsheetUrl) {
+      const link = $('of-open-sheet');
+      if (link) link.href = data.spreadsheetUrl;
+    }
+    ofRenderOrphans_(data.orphans || [], data.rosterNames || []);
+    ofRenderAliases_(data.aliases || []);
+    ofRenderLog_(data.log || []);
+  }
+
+  function ofRenderOrphans_(orphans, rosterNames) {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    if (!orphans.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">'
+        + 'No outliers in the last 180 days. Every agent name in DQE '
+        + 'Historical Data maps to a roster entry. &#x1F389;'
+        + '</td></tr>';
+      const bar0 = $('of-batch-bar'); if (bar0) bar0.style.display = 'none';
+      const sa0 = $('of-select-all'); if (sa0) { sa0.checked = false; sa0.indeterminate = false; sa0.disabled = true; }
+      return;
+    }
+    // Batch 4: membership set for the searchable canonical-name input.
+    ofRosterSet_ = {};
+    rosterNames.forEach(function (n) { ofRosterSet_[n] = true; });
+    // Populate the shared datalist for the searchable "Map to roster name"
+    // inputs (one datalist, reused by every row via list="of-roster-datalist").
+    const dl = $('of-roster-datalist');
+    if (dl) {
+      dl.innerHTML = rosterNames.map(function (n) {
+        return '<option value="' + escapeHtml(n) + '"></option>';
+      }).join('');
+    }
+
+    // Dept options for the "New Assignment" add-to-roster flow.
+    const deptOptionsHtml = '<option value="">(pick department)</option>'
+      + ((ofLastInit && ofLastInit.departments) || []).map(function (d) {
+          return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+        }).join('');
+
+    tbody.innerHTML = orphans.map(function (o, idx) {
+      const exts = (o.sampleExts || []).map(escapeHtml).join(', ') || '<span class="al-empty-inline">-</span>';
+      // Two rows per orphan: the main row, plus a hidden inline form for
+      // the "this is actually a NEW ASSIGNMENT" flow -- adds them to a
+      // dept's DO NOT EDIT! column instead of renaming to someone else.
+      return '<tr data-orphan-idx="' + idx + '">'
+           +   '<td class="of-check-col"><input type="checkbox" class="of-row-check" data-idx="' + idx + '" '
+           +       'title="Select for batch apply (enabled once mapped or a new assignment is filled)" aria-label="Select ' + escapeHtml(o.name) + ' for batch apply" disabled></td>'
+           +   '<td>' + escapeHtml(o.name) + '</td>'
+           +   '<td class="num">' + o.rows + '</td>'
+           +   '<td>' + escapeHtml(o.lastSeen || '') + '</td>'
+           +   '<td>' + exts + '</td>'
+           +   '<td><input type="text" class="of-row-select" data-idx="' + idx + '" '
+           +       'list="of-roster-datalist" autocomplete="off" spellcheck="false" '
+           +       'placeholder="type to search roster…" aria-label="Map ' + escapeHtml(o.name) + ' to a roster name"></td>'
+           +   '<td class="of-action-cell">'
+           +     '<button type="button" class="btn btn-secondary of-row-apply" '
+           +       'data-idx="' + idx + '" disabled>Apply</button> '
+           +     '<button type="button" class="btn btn-secondary of-row-addnew" data-idx="' + idx + '" '
+           +       'title="This isn’t a misspelling of an existing agent — it’s a new assignment (a new employee, or someone being added to this department). Add them to a department’s roster.">New Assignment…</button>'
+           +   '</td>'
+           + '</tr>'
+           + '<tr class="of-add-row" data-add-idx="' + idx + '" style="display:none;">'
+           +   '<td colspan="7">'
+           +     '<div class="of-add-form">'
+           +       '<span class="of-add-label">Add <strong>' + escapeHtml(o.name) + '</strong> to roster:</span>'
+           +       '<select class="of-add-dept" data-idx="' + idx + '">' + deptOptionsHtml + '</select>'
+           +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
+           +         'placeholder="e.g. 1042 — the agent’s own extension" '
+           +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
+           +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
+           +       '<span class="of-add-hint"><strong>Enter the agent’s own individual (direct) extension</strong> — NOT the department queue extension. '
+           +         'Digit-only; comma-separate multiple. Writes one &ldquo;Name, ext1, ext2&rdquo; cell to the bottom of that dept’s '
+           +         'DO NOT EDIT! column (required; audited to Orphan Fix Log). Tick the row to include it in a batch apply.</span>'
+           +     '</div>'
+           +   '</td>'
+           + '</tr>';
+    }).join('');
+
+    // Searchable canonical-name input: a row is rename-ready only when its value
+    // is an EXACT roster name (ofSyncRowReady_ enforces membership). Both 'input'
+    // (typing) and 'change' (datalist pick / blur) update readiness live.
+    tbody.querySelectorAll('.of-row-select').forEach(function (inp) {
+      const sync = function () { ofSyncRowReady_(inp.getAttribute('data-idx')); };
+      inp.addEventListener('input', sync);
+      inp.addEventListener('change', sync);
+    });
+    tbody.querySelectorAll('.of-row-check').forEach(function (chk) {
+      chk.addEventListener('change', ofUpdateBatchState_);
+    });
+    tbody.querySelectorAll('.of-row-apply').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (ofBusy_) return;
+        const idx = Number(btn.getAttribute('data-idx'));
+        const orphan = (ofLastInit.orphans || [])[idx];
+        const inp = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
+        const canonical = (inp && ofRosterSet_[inp.value]) ? inp.value : '';
+        if (!orphan || !canonical) return;
+        ofConfirmAndApply_(orphan, canonical);
+      });
+    });
+
+    // "New Assignment…" toggles the inline add-to-roster form; opening/closing it
+    // (and editing dept/ext) updates batch readiness so a filled new-assignment
+    // row can be ticked for a batch apply alongside renames.
+    tbody.querySelectorAll('.of-row-addnew').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = btn.getAttribute('data-idx');
+        const row = tbody.querySelector('.of-add-row[data-add-idx="' + idx + '"]');
+        if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+        ofSyncRowReady_(idx);
+      });
+    });
+    tbody.querySelectorAll('.of-add-dept').forEach(function (sel) {
+      sel.addEventListener('change', function () { ofSyncRowReady_(sel.getAttribute('data-idx')); });
+    });
+    tbody.querySelectorAll('.of-add-exts').forEach(function (inp) {
+      inp.addEventListener('input', function () { ofSyncRowReady_(inp.getAttribute('data-idx')); });
+    });
+    tbody.querySelectorAll('.of-add-confirm').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (ofBusy_) return;
+        const idx = Number(btn.getAttribute('data-idx'));
+        const orphan = (ofLastInit.orphans || [])[idx];
+        const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+        const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+        if (!orphan || !dept || !dept.value || !exts || !exts.value.trim()) return;
+        ofConfirmAndAddToRoster_(orphan, dept.value, exts.value);
+      });
+    });
+
+    // Batch bar visible now there are outliers; reset selection state.
+    const bar = $('of-batch-bar');
+    if (bar) bar.style.display = '';
+    const selAll = $('of-select-all');
+    if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
+    ofUpdateBatchState_();
+  }
+
+  // Batch 4: a row's batch action + readiness. A row is batch-ready when its
+  // canonical-name input holds a valid roster name (=> rename) OR its New
+  // Assignment form is open and filled (=> roster-add). The New-Assignment path
+  // takes precedence when its form is open+filled (an explicit "new person"
+  // intent), else the canonical rename.
+  function ofRowReady_(idx) {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return { ready: false };
+    const inp  = tbody.querySelector('.of-row-select[data-idx="' + idx + '"]');
+    const dept = tbody.querySelector('.of-add-dept[data-idx="' + idx + '"]');
+    const exts = tbody.querySelector('.of-add-exts[data-idx="' + idx + '"]');
+    const addRow = tbody.querySelector('.of-add-row[data-add-idx="' + idx + '"]');
+    const canonical = (inp && ofRosterSet_[inp.value]) ? inp.value : '';
+    const addOpen = !!(addRow && addRow.style.display !== 'none');
+    const addFilled = !!(addOpen && dept && dept.value && exts && exts.value.trim());
+    let kind = null;
+    if (addFilled) kind = 'roster-add';
+    else if (canonical) kind = 'rename';
+    return {
+      ready:     !!kind,
+      kind:      kind,
+      canonical: canonical,
+      addFilled: addFilled,
+      department: (dept && dept.value) || '',
+      extensions: (exts && exts.value.trim()) || '',
+    };
+  }
+
+  // Reconciles a single row's Apply / Add-to-roster / checkbox enabled state
+  // from its current values, then refreshes the batch toolbar.
+  function ofSyncRowReady_(idx) {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    const r = ofRowReady_(idx);
+    const applyBtn   = tbody.querySelector('.of-row-apply[data-idx="' + idx + '"]');
+    const addConfirm = tbody.querySelector('.of-add-confirm[data-idx="' + idx + '"]');
+    const chk        = tbody.querySelector('.of-row-check[data-idx="' + idx + '"]');
+    if (applyBtn)   applyBtn.disabled   = !r.canonical;   // single Apply = rename only
+    if (addConfirm) addConfirm.disabled = !r.addFilled;
+    if (chk) { chk.disabled = !r.ready; if (!r.ready) chk.checked = false; }
+    ofUpdateBatchState_();
+  }
+
+  // Recomputes the batch toolbar + select-all from the current row state.
+  function ofUpdateBatchState_() {
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    const checked = tbody.querySelectorAll('.of-row-check:checked').length;
+    const enabled = tbody.querySelectorAll('.of-row-check:not(:disabled)').length;
+    const applyBtn = $('of-batch-apply');
+    if (applyBtn) {
+      applyBtn.disabled = ofBusy_ || checked === 0;
+      applyBtn.textContent = checked ? ('Apply ' + checked + ' selected') : 'Apply selected';
+    }
+    const selAll = $('of-select-all');
+    if (selAll) {
+      selAll.checked = enabled > 0 && checked === enabled;
+      selAll.indeterminate = checked > 0 && checked < enabled;
+      selAll.disabled = ofBusy_ || enabled === 0;
+    }
+  }
+
+  // Disables/enables every interactive control while a write is in flight so
+  // clicks can't queue up behind the async round-trip (the reported race).
+  function ofSetBusy_(busy) {
+    ofBusy_ = busy;
+    const body = $('of-body');
+    if (body) body.classList.toggle('of-busy', busy);
+    if (busy) {
+      ['of-orphans-tbody', 'of-aliases-tbody'].forEach(function (id) {
+        const t = $(id);
+        if (t) t.querySelectorAll('button, select, input').forEach(function (el) { el.disabled = true; });
+      });
+      const sa = $('of-select-all'); if (sa) sa.disabled = true;
+      const ba = $('of-batch-apply'); if (ba) ba.disabled = true;
+    } else {
+      ofRefreshRowStates_();
+    }
+  }
+
+  // Restores each control's correct enabled/disabled state after a busy spell
+  // (deterministic from the current DOM values -- no reload needed on failure).
+  function ofRefreshRowStates_() {
+    const tbody = $('of-orphans-tbody');
+    if (tbody) {
+      // Re-enable the inputs first, then reconcile each row's Apply /
+      // Add-to-roster / checkbox state from its current values (ofSyncRowReady_
+      // handles both the rename and new-assignment readiness paths).
+      tbody.querySelectorAll('.of-row-select, .of-row-addnew, .of-add-dept, .of-add-exts')
+        .forEach(function (el) { el.disabled = false; });
+      const seen = {};
+      tbody.querySelectorAll('.of-row-select').forEach(function (inp) {
+        const idx = inp.getAttribute('data-idx');
+        if (!seen[idx]) { seen[idx] = true; ofSyncRowReady_(idx); }
+      });
+    }
+    const aliasTbody = $('of-aliases-tbody');
+    if (aliasTbody) aliasTbody.querySelectorAll('.of-alias-remove').forEach(function (b) { b.disabled = false; });
+    ofUpdateBatchState_();
+  }
+
+  // Item 5a: seamless in-place refresh after a write, replacing ofLoadInit_(true)
+  // (which re-fetches getOrphanFixInit and re-runs the expensive orphan scan --
+  // the "relaunch" feel testers flagged). Removes the just-fixed orphans from
+  // the in-memory list and refreshes the aliases / log / rosterNames panels from
+  // the write RESPONSE (the RPCs now return them), then re-renders with no loader
+  // and no round-trip. The server busts its init cache on every write, so a
+  // subsequent COLD open still recomputes from scratch.
+  function ofApplyLocalUpdate_(res, removedNames) {
+    if (!ofLastInit) { ofLoadInit_(true); return; }   // nothing loaded -> fall back
+    res = res || {};
+    if (removedNames && removedNames.length) {
+      const drop = {};
+      removedNames.forEach(function (n) { drop[n] = true; });
+      ofLastInit.orphans = (ofLastInit.orphans || []).filter(function (o) { return !drop[o.name]; });
+    }
+    if (res.aliases)     ofLastInit.aliases = res.aliases;
+    if (res.log)         ofLastInit.log = res.log;
+    if (res.rosterNames) ofLastInit.rosterNames = res.rosterNames;
+    ofRender_(ofLastInit);   // re-renders + re-wires all three panels in place
+  }
+
+  // Applies a list of actions SEQUENTIALLY (server-side LockService serializes
+  // writes anyway, so parallel would just contend). Each item is a rename
+  // ({kind:'rename'|undefined, fromName, toName}) or a new-assignment
+  // ({kind:'roster-add', fromName, department, extensions}). Resolves
+  // { ok:[{item,renamed,res}], failed:[{item,err}] }.
+  function ofRunApplySequence_(items, onProgress) {
+    return new Promise(function (resolve) {
+      const ok = [], failed = [];
+      let i = 0;
+      const next = function () {
+        if (i >= items.length) { resolve({ ok: ok, failed: failed }); return; }
+        const it = items[i];
+        if (onProgress) onProgress(i, items.length, it);
+        const runner = google.script.run
+          .withSuccessHandler(function (res) { ok.push({ item: it, renamed: (res && res.renamed) || 0, res: res }); i++; next(); })
+          .withFailureHandler(function (err) { failed.push({ item: it, err: (err && err.message) ? err.message : String(err) }); i++; next(); });
+        if (it.kind === 'roster-add') {
+          runner.addOrphanToRoster({ name: it.fromName, department: it.department, extensions: it.extensions, notes: '' });
+        } else {
+          runner.applyOrphanRename({ fromName: it.fromName, toName: it.toName, alsoAddAlias: true, notes: '' });
+        }
+      };
+      next();
+    });
+  }
+
+  function ofBatchApply_() {
+    if (ofBusy_) return;
+    const tbody = $('of-orphans-tbody');
+    if (!tbody) return;
+    // Batch 4: a checked row is a rename OR a new-assignment (add-to-roster),
+    // per ofRowReady_. Collect the right action for each.
+    const items = [];
+    tbody.querySelectorAll('.of-row-check:checked').forEach(function (chk) {
+      const idx = Number(chk.getAttribute('data-idx'));
+      const orphan = (ofLastInit.orphans || [])[idx];
+      if (!orphan) return;
+      const r = ofRowReady_(idx);
+      if (r.kind === 'roster-add') {
+        items.push({ kind: 'roster-add', fromName: orphan.name,
+          department: r.department, extensions: r.extensions, rows: orphan.rows || 0 });
+      } else if (r.kind === 'rename') {
+        items.push({ kind: 'rename', fromName: orphan.name, toName: r.canonical, rows: orphan.rows || 0 });
+      }
+    });
+    if (!items.length) return;
+    const renameItems = items.filter(function (it) { return it.kind === 'rename'; });
+    const addItems    = items.filter(function (it) { return it.kind === 'roster-add'; });
+    const totalRows   = renameItems.reduce(function (a, b) { return a + (b.rows || 0); }, 0);
+    const parts = [];
+    if (renameItems.length) parts.push('<strong>' + renameItems.length + '</strong> rename'
+      + (renameItems.length === 1 ? '' : 's') + ' across <strong>' + totalRows + '</strong> historical row'
+      + (totalRows === 1 ? '' : 's'));
+    if (addItems.length) parts.push('<strong>' + addItems.length + '</strong> new roster assignment'
+      + (addItems.length === 1 ? '' : 's'));
+    dsConfirm_({
+      title: 'Apply ' + items.length + ' change' + (items.length === 1 ? '' : 's'),
+      tone: 'danger',
+      messageHtml: 'Apply ' + parts.join(' and ') + '? '
+        + (renameItems.length ? 'Renames modify past data in DQE Historical Data and add aliases so future imports map correctly. ' : '')
+        + (addItems.length ? 'New assignments append a cell to the department roster. ' : '')
+        + 'All actions are audited to Orphan Fix Log.',
+      confirmLabel: 'Apply ' + items.length, cancelLabel: 'Cancel',
+    }).then(function (okc) {
+      if (!okc) return;
+      ofSetBusy_(true);
+      ofRunApplySequence_(items, function (k, total, it) {
+        const label = it.kind === 'roster-add'
+          ? (it.fromName + ' → ' + it.department + ' (new)')
+          : (it.fromName + ' → ' + it.toName);
+        ofSetStatus_('loading', 'Applying ' + (k + 1) + ' of ' + total + ': ' + label + '…');
+      }).then(function (res) {
+        ofSetBusy_(false);
+        const renamedRows = res.ok.reduce(function (a, b) { return a + (b.renamed || 0); }, 0);
+        const okRenames = res.ok.filter(function (o) { return o.item.kind !== 'roster-add'; }).length;
+        const okAdds    = res.ok.filter(function (o) { return o.item.kind === 'roster-add'; }).length;
+        if (res.failed.length) {
+          ofSetStatus_('error', 'Applied ' + res.ok.length + ' of ' + items.length + '. '
+            + res.failed.length + ' failed: '
+            + res.failed.map(function (f) { return f.item.fromName + ' (' + f.err + ')'; }).join('; '));
+        } else {
+          const bits = [];
+          if (okRenames) bits.push('renamed ' + renamedRows + ' row' + (renamedRows === 1 ? '' : 's')
+            + ' across ' + okRenames + ' outlier' + (okRenames === 1 ? '' : 's'));
+          if (okAdds) bits.push('added ' + okAdds + ' new assignment' + (okAdds === 1 ? '' : 's'));
+          ofSetStatus_('success', 'Done — ' + bits.join(' and ')
+            + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
+        }
+        showToast('Applied ' + res.ok.length + ' change' + (res.ok.length === 1 ? '' : 's'),
+          res.failed.length ? 'error' : 'success');
+        // Seamless refresh (Batch 1): drop applied orphans + merge the freshest
+        // aliases / log / rosterNames across the batch (roster-adds return
+        // rosterNames+log; renames return aliases+log -- take the latest of each).
+        const applied = res.ok.map(function (o) { return o.item.fromName; });
+        const merged = {};
+        res.ok.forEach(function (o) {
+          const rr = o.res || {};
+          if (rr.aliases)     merged.aliases = rr.aliases;
+          if (rr.log)         merged.log = rr.log;
+          if (rr.rosterNames) merged.rosterNames = rr.rosterNames;
+        });
+        ofApplyLocalUpdate_(merged, applied);
+      });
+    });
+  }
+
+  function ofConfirmAndAddToRoster_(orphan, dept, exts) {
+    if (ofBusy_) return;
+    dsConfirm_({
+      title: 'Add new assignment to roster',
+      messageHtml: 'Add <strong>' + escapeHtml(orphan.name) + '</strong> to the <strong>'
+        + escapeHtml(dept) + '</strong> roster with extension(s) <strong>' + escapeHtml(exts) + '</strong>? '
+        + 'Enter the agent&rsquo;s own individual extension, not the department queue extension. '
+        + 'This writes one cell to the DO NOT EDIT! sheet. Their ' + orphan.rows + ' existing data row'
+        + (orphan.rows === 1 ? '' : 's') + ' will match immediately, and future imports canonicalize '
+        + 'against it. Audited to Orphan Fix Log.',
+      confirmLabel: 'Add to roster', cancelLabel: 'Cancel',
+    }).then(function (okc) {
+      if (!okc) return;
+      ofSetBusy_(true);
+      ofSetStatus_('loading', 'Adding ' + orphan.name + ' to the ' + dept + ' roster…');
+      ofDoAddToRoster_(orphan, dept, exts);
+    });
+  }
+
+  function ofDoAddToRoster_(orphan, dept, exts) {
+    google.script.run
+      .withSuccessHandler(function (res) {
+        ofSetBusy_(false);
+        ofSetStatus_('success',
+          'Added "' + orphan.name + '" to ' + dept
+          + (res && res.cell ? ' (cell ' + res.cell + ')' : '')
+          + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
+        showToast('Added to ' + dept + ' roster', 'success');
+        // Item 5a: drop the now-rostered agent from the outlier list + refresh
+        // the log / roster-name options in place (res carries rosterNames + log).
+        ofApplyLocalUpdate_(res, [orphan.name]);
+      })
+      .withFailureHandler(function (err) {
+        ofSetBusy_(false);
+        ofSetStatus_('error', 'Add failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .addOrphanToRoster({
+        name:       orphan.name,
+        department: dept,
+        extensions: exts,
+        notes:      '',
+      });
+  }
+
+  function ofConfirmAndApply_(orphan, canonical) {
+    if (ofBusy_) return;
+    dsConfirm_({
+      title: 'Rename outlier',
+      tone: 'danger',
+      messageHtml: 'Rename <strong>' + escapeHtml(orphan.name) + '</strong> to <strong>'
+        + escapeHtml(canonical) + '</strong> in <strong>' + orphan.rows + '</strong> historical row'
+        + (orphan.rows === 1 ? '' : 's') + '? This modifies past data in DQE Historical Data and adds '
+        + 'an alias to Agent Alias Overrides so the next daily build keeps the mapping. '
+        + 'Audited to Orphan Fix Log.',
+      confirmLabel: 'Rename', cancelLabel: 'Cancel',
+    }).then(function (okc) {
+      if (!okc) return;
+      ofSetBusy_(true);
+      ofSetStatus_('loading', 'Applying rename: ' + orphan.name + ' → ' + canonical + '…');
+      ofRunApplySequence_([{ fromName: orphan.name, toName: canonical, rows: orphan.rows }])
+        .then(function (res) {
+          ofSetBusy_(false);
+          if (res.failed.length) {
+            ofSetStatus_('error', 'Rename failed: ' + res.failed[0].err);
+            showToast('Rename failed', 'error');
+            return;
+          }
+          const n = res.ok[0].renamed;
+          ofSetStatus_('success',
+            'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
+            + '. Alias added so future imports map correctly. '
+            + 'Overview updates immediately; other dashboard views may take up to 30 minutes (cache TTL) to reflect the change.');
+          showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
+          // Item 5a: drop the renamed orphan + refresh aliases/log in place.
+          ofApplyLocalUpdate_(res.ok[0].res, [orphan.name]);
+        });
+    });
+  }
+
+  function ofRenderAliases_(aliases) {
+    const tbody = $('of-aliases-tbody');
+    if (!tbody) return;
+    if (!aliases.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="al-empty">'
+        + 'No aliases yet. Aliases get added automatically when you Apply '
+        + 'a rename above.'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = aliases.map(function (a) {
+      const activeCls = a.active ? 'al-active-yes' : 'al-active-no';
+      const activeLbl = a.active ? 'Yes' : 'No';
+      const removeBtn = a.active
+        ? '<button type="button" class="link-btn of-alias-remove" '
+          + 'data-old="' + escapeHtml(a.oldName) + '" title="Deactivate this alias">Deactivate</button>'
+        : '';
+      return '<tr>'
+           +   '<td>' + escapeHtml(a.oldName) + '</td>'
+           +   '<td>' + escapeHtml(a.canonicalName) + '</td>'
+           +   '<td><span class="al-active ' + activeCls + '">' + activeLbl + '</span></td>'
+           +   '<td>' + escapeHtml(a.addedBy || '') + '</td>'
+           +   '<td>' + escapeHtml(a.addedAt || '') + '</td>'
+           +   '<td>' + removeBtn + '</td>'
+           + '</tr>';
+    }).join('');
+
+    tbody.querySelectorAll('.of-alias-remove').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (ofBusy_) return;
+        const oldName = btn.getAttribute('data-old');
+        dsConfirm_({
+          title: 'Deactivate alias',
+          messageHtml: 'Deactivate the alias for <strong>' + escapeHtml(oldName) + '</strong>? '
+            + 'The pipeline will stop mapping this raw name on the next build. '
+            + 'Historical rows that were already renamed stay renamed.',
+          confirmLabel: 'Deactivate', cancelLabel: 'Cancel',
+        }).then(function (okc) {
+          if (!okc) return;
+          ofSetBusy_(true);
+          ofSetStatus_('loading', 'Deactivating alias…');
+          google.script.run
+            .withSuccessHandler(function (res) {
+              ofSetBusy_(false);
+              const n = (res && res.removed) || 0;
+              ofSetStatus_('success', 'Deactivated ' + n + ' alias row'
+                + (n === 1 ? '' : 's') + '.');
+              // Item 5a: refresh the aliases + log panels in place (res carries
+              // both); no orphan changes on an alias deactivate.
+              ofApplyLocalUpdate_(res, []);
+            })
+            .withFailureHandler(function (err) {
+              ofSetBusy_(false);
+              ofSetStatus_('error', 'Deactivate failed: '
+                + (err && err.message ? err.message : String(err)));
+            })
+            .removeAgentAlias({ oldName: oldName });
+        });
+      });
+    });
+  }
+
+  function ofRenderLog_(log) {
+    const tbody = $('of-log-tbody');
+    if (!tbody) return;
+    if (!log.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="al-empty">No outlier-fix actions logged yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = log.map(function (e) {
+      return '<tr>'
+           +   '<td>' + escapeHtml(e.timestamp || '') + '</td>'
+           +   '<td>' + escapeHtml(e.admin || '')     + '</td>'
+           +   '<td>' + escapeHtml(e.action || '')    + '</td>'
+           +   '<td>' + escapeHtml(e.fromName || '')  + '</td>'
+           +   '<td>' + escapeHtml(e.toName || '')    + '</td>'
+           +   '<td class="num">' + (e.affectedRows == null ? '-' : escapeHtml(String(e.affectedRows))) + '</td>'
+           +   '<td>' + escapeHtml(e.notes || '')     + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function ofSetStatus_(kind, msg) {
+    const el = $('of-run-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // -- Dept Config modal -----------------------------------------------
+  // Admin-only, no-redeploy authoring for the per-dept QCD queue map,
+  // Overview sub-queue nesting, and team-avg exclusions. Mirrors the
+  // Outlier Fix modal: load init -> render discovered queues +
+  // per-dept effective config -> inline edit form -> save/deactivate.
+  // Server (DeptConfig.gs) validates every save.
+
+  let dcLastInit = null;
+  let dcEditDept = null;
+
+  // -- Access Control modal (admin-only manager-access editor, C1) -----
+  // Add/edit/remove manager dashboard access (email + department). Writes
+  // the sheet via the admin-gated RPCs; changes take effect within the 60 s
+  // auth cache TTL. Mirrors the Dept Config modal pattern.
+  var acLastInit = { rows: [], departments: [], adminEmails: [] };
+
+  function initAccessControl() {
+    const btn = $('access-control-btn');
+    const modal = $('access-control-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      acLoadInit_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('ac-save-btn'))  $('ac-save-btn').addEventListener('click', acSave_);
+    if ($('ac-clear-btn')) $('ac-clear-btn').addEventListener('click', acClearForm_);
+    if ($('ac-tbody'))     $('ac-tbody').addEventListener('click', acOnTableClick_);
+  }
+
+  function acSetStatus_(kind, msg) {
+    const el = $('ac-run-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function acLoadInit_() {
+    $('ac-loading').style.display = '';
+    $('ac-body').style.display = 'none';
+    acSetStatus_(null);
+    google.script.run
+      .withSuccessHandler(function (data) {
+        $('ac-loading').style.display = 'none';
+        $('ac-body').style.display = '';
+        acLastInit = data || { rows: [], managers: [], departments: [], adminEmails: [] };
+        acRenderDeptOptions_(acLastInit.departments || []);
+        acRenderRows_(acLastInit.managers || []);
+        acClearForm_();
+      })
+      .withFailureHandler(function (err) {
+        $('ac-loading').textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getAccessControlInit();
+  }
+
+  function acRenderDeptOptions_(depts) {
+    const sel = $('ac-dept');
+    if (!sel) return;
+    // R5 (owner): surface the ALL-DEPARTMENTS sentinel the server already
+    // supports (saveAccessControlRow canonicalizes 'ALL'/'*'; see the
+    // role-model gotcha) -- a manager-role viewer with every dept's DATA
+    // breadth (dept selector like an admin) but no admin surfaces. No new
+    // role needed; this only makes the existing grant reachable from the UI.
+    // Tier C: the dept picker is a MULTI-select now (no "— pick —" placeholder).
+    sel.innerHTML = '<option value="ALL">ALL — every department (manager, no admin surfaces)</option>'
+      + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+  }
+
+  // Tier C: rows are the GROUPED managers now (one per email, dept LIST).
+  function acRenderRows_(managers) {
+    const tbody = $('ac-tbody');
+    const count = $('ac-count');
+    managers = managers || [];
+    if (count) count.textContent = managers.length;
+    if (!tbody) return;
+    if (!managers.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No managers yet. Add one above.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = managers.map(function (m, idx) {
+      const depts = (m.departments || []);
+      const deptCell = depts.length
+        ? depts.map(function (d) { return '<span class="ac-dept-chip">' + escapeHtml(d) + '</span>'; }).join(' ')
+        : '<span class="al-empty-inline">—</span>';
+      return '<tr data-ac-idx="' + idx + '">'
+        + '<td>' + escapeHtml(m.email) + '</td>'
+        + '<td>' + deptCell + '</td>'
+        + '<td>' + (m.notes ? escapeHtml(m.notes) : '<span class="al-empty-inline">—</span>') + '</td>'
+        + '<td>'
+        +   '<button type="button" class="link-btn ac-row-edit" data-idx="' + idx + '">Edit</button> '
+        +   '<button type="button" class="link-btn ac-row-remove" data-idx="' + idx + '">Remove</button>'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function acOnTableClick_(e) {
+    const editBtn = e.target.closest && e.target.closest('.ac-row-edit');
+    if (editBtn) { acEditRow_(Number(editBtn.getAttribute('data-idx'))); return; }
+    const remBtn = e.target.closest && e.target.closest('.ac-row-remove');
+    if (remBtn) { acRemoveRow_(Number(remBtn.getAttribute('data-idx'))); return; }
+  }
+
+  // Tier C: preselect the manager's assigned depts in the multi-select.
+  function acEditRow_(idx) {
+    const m = (acLastInit.managers || [])[idx];
+    if (!m) return;
+    if ($('ac-email')) $('ac-email').value = m.email;
+    const sel = $('ac-dept');
+    const depts = m.departments || [];
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) {
+      o.selected = depts.indexOf(o.value) !== -1;
+    });
+    if ($('ac-notes')) $('ac-notes').value = m.notes || '';
+    if ($('ac-form-title')) $('ac-form-title').textContent = 'Edit manager access';
+    if ($('ac-email')) $('ac-email').focus();
+  }
+
+  function acClearForm_() {
+    if ($('ac-email')) $('ac-email').value = '';
+    const sel = $('ac-dept');
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) { o.selected = false; });
+    if ($('ac-notes')) $('ac-notes').value = '';
+    if ($('ac-form-title')) $('ac-form-title').textContent = 'Add manager access';
+    acSetStatus_(null);
+  }
+
+  function acSave_() {
+    const email = ($('ac-email') ? $('ac-email').value : '').trim();
+    const sel = $('ac-dept');
+    const departments = sel
+      ? Array.prototype.filter.call(sel.options, function (o) { return o.selected; }).map(function (o) { return o.value; })
+      : [];
+    const notes = ($('ac-notes') ? $('ac-notes').value : '').trim();
+    if (!email) { acSetStatus_('error', 'Enter a manager email.'); return; }
+    if (!departments.length) { acSetStatus_('error', 'Pick at least one department.'); return; }
+    const label = departments.join(', ');
+    const btn = $('ac-save-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } };
+    acSetStatus_('loading', 'Saving ' + email + '…');
+    google.script.run
+      .withSuccessHandler(function () {
+        restore();
+        acSetStatus_('success', 'Saved ' + email + ' → ' + label + '. Takes effect within ~60 s.');
+        showToast('Saved access for ' + email, 'success');
+        acLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        restore();
+        acSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .saveAccessControlRow({ email: email, departments: departments, notes: notes });
+  }
+
+  function acRemoveRow_(idx) {
+    const r = (acLastInit.managers || [])[idx];
+    if (!r) return;
+    // R5: app-styled confirm (dsConfirm_) instead of the browser-native
+    // window.confirm that rendered in Sheets chrome (owner note).
+    dsConfirm_({
+      title: 'Remove dashboard access',
+      tone: 'danger',
+      message: 'Remove dashboard access for "' + r.email + '"? They will no longer be able to open the dashboard.',
+      confirmLabel: 'Remove access', cancelLabel: 'Cancel',
+    }).then(function (ok) {
+      if (!ok) return;
+      acSetStatus_('loading', 'Removing ' + r.email + '…');
+      google.script.run
+        .withSuccessHandler(function () {
+          acSetStatus_('success', 'Removed ' + r.email + '. Takes effect within ~60 s.');
+          showToast('Removed access for ' + r.email, 'success');
+          acLoadInit_();
+        })
+        .withFailureHandler(function (err) {
+          acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
+        })
+        .removeAccessControlRow({ email: r.email });
+    });
+  }
+
+  function initDeptConfig() {
+    const btn   = $('dept-config-btn');
+    const modal = $('dept-config-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      dcLoadInit_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Static edit-form buttons (wired once; the form is populated per
+    // dept by dcOpenEdit_).
+    const saveBtn = $('dc-save-btn');
+    if (saveBtn) saveBtn.addEventListener('click', dcSave_);
+    const deactivateBtn = $('dc-deactivate-btn');
+    if (deactivateBtn) deactivateBtn.addEventListener('click', dcDeactivate_);
+    const cancelBtn = $('dc-cancel-btn');
+    if (cancelBtn) cancelBtn.addEventListener('click', dcCloseEdit_);
+  }
+
+  function dcLoadInit_() {
+    $('dc-loading').style.display = '';
+    $('dc-body').style.display = 'none';
+    dcSetStatus_(null);
+    dcCloseEdit_();
+    google.script.run
+      .withSuccessHandler(function (data) {
+        $('dc-loading').style.display = 'none';
+        $('dc-body').style.display = '';
+        dcLastInit = data || { departments: [], rosterByDept: {}, effective: [], rows: [], discoveredQueues: [], unmappedCount: 0 };
+        dcRender_(dcLastInit);
+      })
+      .withFailureHandler(function (err) {
+        $('dc-loading').textContent = 'Error: '
+          + (err && err.message ? err.message : String(err));
+      })
+      .getDeptConfigInit();
+  }
+
+  function dcRender_(data) {
+    if (data.spreadsheetUrl) {
+      const link = $('dc-open-sheet');
+      if (link) link.href = data.spreadsheetUrl;
+    }
+    // Department datalist for the Overview-parent input.
+    const dl = $('dc-dept-datalist');
+    if (dl) {
+      dl.innerHTML = (data.departments || []).map(function (d) {
+        return '<option value="' + escapeHtml(d) + '"></option>';
+      }).join('');
+    }
+    dcRenderDiscovered_(data.discoveredQueues || [], data.unmappedCount || 0);
+    dcRenderInboundDiscovered_(data.inboundDiscovery || null);
+    dcRenderEffective_(data.effective || []);
+  }
+
+  // S1(c): the inbound name-space twin of dcRenderDiscovered_. Neon-backed,
+  // so it has an explicit "unavailable" state (distinct from "no rows").
+  function dcRenderInboundDiscovered_(disc) {
+    const tbody = $('dc-inbound-tbody');
+    if (!tbody) return;
+    const badge = $('dc-inbound-badge');
+    const queues = (disc && disc.queues) || [];
+    const unattributed = queues.filter(function (q) { return !q.mappedTo; }).length;
+    if (badge) {
+      if (unattributed > 0) {
+        badge.textContent = unattributed + ' unattributed';
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+    if (!disc || disc.available === false) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">'
+        + 'Inbound queue discovery is unavailable — Neon could not be reached '
+        + '(or isn’t configured on this project). The rest of this modal is unaffected.'
+        + '</td></tr>';
+      return;
+    }
+    if (!queues.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">'
+        + 'No inbound queue names found in inbound_calls (last 180 days).'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = queues.map(function (q) {
+      const mapped = q.mappedTo
+        ? '<span class="al-active al-active-yes">' + escapeHtml(q.mappedTo) + '</span>'
+        : '<span class="al-active al-active-no">unattributed</span>';
+      return '<tr>'
+           +   '<td>' + escapeHtml(q.queue) + '</td>'
+           +   '<td class="num">' + (q.calls || 0) + '</td>'
+           +   '<td>' + escapeHtml(q.lastSeen || '') + '</td>'
+           +   '<td>' + mapped + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function dcRenderDiscovered_(queues, unmappedCount) {
+    const badge = $('dc-unmapped-badge');
+    if (badge) {
+      if (unmappedCount > 0) {
+        badge.textContent = unmappedCount + ' unmapped';
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+    const tbody = $('dc-discovered-tbody');
+    if (!tbody) return;
+    if (!queues.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">'
+        + 'No queue names found in QCD Historical Data (last 180 days).'
+        + '</td></tr>';
+      return;
+    }
+    tbody.innerHTML = queues.map(function (q) {
+      const mapped = q.mappedTo
+        ? '<span class="al-active al-active-yes">' + escapeHtml(q.mappedTo) + '</span>'
+        : '<span class="al-active al-active-no">unmapped</span>';
+      return '<tr>'
+           +   '<td>' + escapeHtml(q.queue) + '</td>'
+           +   '<td class="num">' + (q.rows || 0) + '</td>'
+           +   '<td>' + escapeHtml(q.lastSeen || '') + '</td>'
+           +   '<td>' + mapped + '</td>'
+           + '</tr>';
+    }).join('');
+  }
+
+  function dcRenderEffective_(effective) {
+    const tbody = $('dc-effective-tbody');
+    if (!tbody) return;
+    if (!effective.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="al-empty">No departments found.</td></tr>';
+      return;
+    }
+    const cell = function (str) {
+      return str ? escapeHtml(str) : '<span class="al-empty-inline">-</span>';
+    };
+    tbody.innerHTML = effective.map(function (e, idx) {
+      const source = e.hasRow
+        ? '<span class="al-active al-active-yes">sheet</span>'
+        : '<span class="al-active al-active-no">default</span>';
+      return '<tr data-dc-idx="' + idx + '">'
+           +   '<td>' + escapeHtml(e.dept) + '</td>'
+           +   '<td>' + cell((e.qcdQueues || []).join(', ')) + '</td>'
+           +   '<td>' + cell(e.overviewParent || '') + '</td>'
+           +   '<td>' + cell((e.teamAvgExcludes || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.queueExtOverrides || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.inboundAliases || []).join(', ')) + '</td>'
+           +   '<td>' + cell((e.finalDeptLabels || []).join(', ')) + '</td>'
+           +   '<td>' + source + '</td>'
+           +   '<td><button type="button" class="link-btn dc-row-edit" data-idx="' + idx + '">Edit</button></td>'
+           + '</tr>';
+    }).join('');
+
+    tbody.querySelectorAll('.dc-row-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = Number(btn.getAttribute('data-idx'));
+        const e = (dcLastInit.effective || [])[idx];
+        if (e) dcOpenEdit_(e);
+      });
+    });
+  }
+
+  function dcOpenEdit_(eff) {
+    dcEditDept = eff.dept;
+    const nameEl = $('dc-edit-dept-name');
+    if (nameEl) nameEl.textContent = eff.dept;
+    $('dc-edit-qcd').value      = (eff.qcdQueues || []).join(', ');
+    $('dc-edit-parent').value   = eff.overviewParent || '';
+    $('dc-edit-excludes').value = (eff.teamAvgExcludes || []).join(', ');
+    $('dc-edit-qext').value     = (eff.queueExtOverrides || []).join(', ');
+    var inbAliasEl = $('dc-edit-inbound-aliases');
+    if (inbAliasEl) inbAliasEl.value = (eff.inboundAliases || []).join(', ');
+    var fdlEl = $('dc-edit-final-dept-labels');
+    if (fdlEl) fdlEl.value = (eff.finalDeptLabels || []).join(', ');
+    $('dc-edit-notes').value    = '';
+    // Deactivate only makes sense when a sheet row exists for the dept.
+    const deact = $('dc-deactivate-btn');
+    if (deact) deact.style.display = eff.hasRow ? '' : 'none';
+    $('dc-edit-section').style.display = '';
+    $('dc-edit-qcd').focus();
+  }
+
+  function dcCloseEdit_() {
+    dcEditDept = null;
+    const sec = $('dc-edit-section');
+    if (sec) sec.style.display = 'none';
+  }
+
+  function dcSave_() {
+    if (!dcEditDept) return;
+    const req = {
+      dept:              dcEditDept,
+      qcdQueues:         $('dc-edit-qcd').value,
+      overviewParent:    $('dc-edit-parent').value,
+      teamAvgExcludes:   $('dc-edit-excludes').value,
+      queueExtOverrides: $('dc-edit-qext').value,
+      inboundAliases:    ($('dc-edit-inbound-aliases') || {}).value || '',
+      finalDeptLabels:   ($('dc-edit-final-dept-labels') || {}).value || '',
+      active:            true,
+      notes:             $('dc-edit-notes').value,
+    };
+    const saveBtn = $('dc-save-btn');
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…';
+    }
+    const restoreSaveBtn = function () {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+    };
+    dcSetStatus_('loading', 'Saving config for ' + dcEditDept + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        restoreSaveBtn();
+        const warns = (res && res.warnings) || [];
+        if (warns.length) {
+          dcSetStatus_('success', 'Saved ' + dcEditDept + '. ⚠ ' + warns.join(' ')
+            + ' Double-mapped queues are tolerated but usually a config mistake — '
+            + 'remove the queue from one dept if unintended.');
+          showToast('Saved ' + dcEditDept + ' — queue mapped to 2+ depts', 'success');
+        } else {
+          dcSetStatus_('success', 'Saved ' + dcEditDept
+            + '. Changes take effect on the next request (Overview refreshes immediately; report caches within ~30 min).');
+          showToast('Saved config for ' + dcEditDept, 'success');
+        }
+        dcLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        restoreSaveBtn();
+        dcSetStatus_('error', 'Save failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .saveDeptConfig(req);
+  }
+
+  function dcDeactivate_() {
+    if (!dcEditDept) return;
+    if (!window.confirm('Deactivate the override row for "' + dcEditDept
+        + '"? This reverts the dept to the built-in defaults.')) return;
+    const deact = $('dc-deactivate-btn');
+    if (deact) deact.disabled = true;
+    dcSetStatus_('loading', 'Deactivating override for ' + dcEditDept + '…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (deact) deact.disabled = false;
+        const n = (res && res.removed) || 0;
+        dcSetStatus_('success', 'Deactivated ' + n + ' override row'
+          + (n === 1 ? '' : 's') + '. Reverted to defaults.');
+        showToast('Reverted ' + dcEditDept + ' to defaults', 'success');
+        dcLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        if (deact) deact.disabled = false;
+        dcSetStatus_('error', 'Deactivate failed: '
+          + (err && err.message ? err.message : String(err)));
+      })
+      .removeDeptConfig({ dept: dcEditDept });
+  }
+
+  function dcSetStatus_(kind, msg) {
+    const el = $('dc-run-status');
+    if (!el) return;
+    if (!kind) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.className = 'status status-' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+  }
+

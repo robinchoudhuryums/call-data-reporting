@@ -782,6 +782,27 @@
      split; give the cell room + a little vertical padding like the agent table. */
   td.qcd-daily-bar-cell { min-width: 180px; padding-top: 6px; padding-bottom: 6px; }
   .ans-bar { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+  /* Round-16 (owner request): volume-proportional TALLY for AGENT rows --
+     one block per `unit` calls (answered sage first, then missed red), so
+     row width reads as call volume and a high-volume agent visibly dwarfs a
+     low-volume one. Cohort-shared unit via ansTallyUnitFor_; totals +
+     subtotal rows keep the classic .ans-track proportional bar (an
+     aggregate at agent scale would be hundreds of blocks). The R10-4
+     pass/fail convention carries over: past the answer target the missed
+     blocks recede translucent, under it they keep full red. */
+  .ans-tally { display: flex; flex-wrap: wrap; gap: 2px; align-items: center;
+    max-width: 320px; min-height: 13px; }
+  .tly { width: 6px; height: 13px; border-radius: var(--r); flex: 0 0 auto;
+    display: inline-block; background: var(--muted); }
+  .tly.a { background: var(--good); }
+  .tly.m { background: var(--bad); }
+  .ans-bar--pass .tly.m { opacity: 0.35; }
+  /* "block = N calls" legend on the pinned totals row (renders only when the
+     cohort unit is > 1); the swatch reuses .tly at legend scale. */
+  .ans-tally-legend { display: flex; align-items: center; gap: 4px;
+    font: 500 10px/1 var(--mono); color: var(--muted); margin-top: 4px;
+    font-variant-numeric: tabular-nums; }
+  .ans-tally-legend .tly { width: 5px; height: 10px; }
   .ans-track {
     display: flex;
     height: 8px;
@@ -1360,11 +1381,21 @@
     margin-top: 2px;
   }
   .dept-qcd-value.dept-qcd-warn { color: var(--warn); }
-  /* Merged "Ans / Abd" tile (owner note): answered green, abandoned warm,
-     one glance instead of two look-alike number tiles. */
+  /* Merged "Total (ans / abd)" tile (owner note -> Round-16 refinement,
+     matching the team strip): answered green, abandoned warm -- muted when
+     0 (nothing to warn about) -- one glance instead of look-alike tiles. */
   .dept-qcd-ans { color: var(--good); }
   .dept-qcd-abd { color: var(--warn); }
-  .dept-qcd-sep { color: var(--muted); }
+  .dept-qcd-abd.is-zero { color: var(--muted); }
+  .dept-qcd-sep, .dept-qcd-paren { color: var(--muted); font-weight: 400; }
+  /* Round-16: MTD-view delta sub-lines (vs the ENTIRE previous month --
+     the QCD report band's semantics). Volume stays muted (no valence);
+     the aban% delta tints by direction, muted under 3 elapsed workdays. */
+  .dept-qcd-sub { font: 500 9.5px/1.4 var(--mono); color: var(--muted);
+    font-variant-numeric: tabular-nums; margin-top: 3px; }
+  .dept-qcd-sub.is-good { color: var(--good); }
+  .dept-qcd-sub.is-warn { color: var(--warn); }
+  .dept-qcd-sub.is-muted { color: var(--muted); }
 
   /* QCD snapshot carousel (multi-queue side card): one queue page at a time
      with ‹ › nav + a dot indicator, so the sticky side column stays compact
@@ -2277,6 +2308,13 @@
     gap: 14px;
     margin-bottom: 4px;
   }
+  /* Round-16 (owner cleanup): .ir-form-grid was referenced by five admin
+     forms (Alert Config, Report Subscribers, ...) but never DEFINED, so
+     their .ir-col children -- each carrying flex-basis inline styles that
+     assume a flex parent -- stacked as full-width block rows (a modal-wide
+     Department dropdown). One rule restores the intended compact wrap. */
+  .ir-form-grid { display: flex; flex-wrap: wrap; gap: 10px 12px;
+    align-items: flex-end; }
   .ir-col label {
     display: block;
     font-family: var(--mono);
@@ -4193,6 +4231,11 @@
   .al-rs-schedule { flex: 1 1 300px; min-width: 0; }
   /* Digest-only form fields hide when the Manager Digest type is unticked. */
   .al-rs-hide-digest .al-rs-digest-only { display: none; }
+  /* Round-16 To/Cc: the Cc checkbox is a Queue-Report-only field (the digest
+     stays per-recipient). Hidden in digest mode, mirrored from the
+     digest-only rule above. */
+  .al-rs-queue-only { display: none; }
+  .al-rs-hide-digest .al-rs-queue-only { display: block; }
   /* Report-type chip in the unified subscriber table. */
   .al-report-chip {
     display: inline-block;
@@ -4526,6 +4569,18 @@
   .qcd-hero-tick-lbl { position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
     font: 600 9px/1 var(--mono); letter-spacing: 0.08em; color: var(--muted); }
   .qcd-hero-sub { font: 500 12px/1.3 var(--body, inherit); color: var(--muted); }
+  /* MTD sub-lines on the verdict band (Round-16, owner spec): a quiet mono
+     line under each card's headline -- MTD value + an E5-style delta chip
+     vs the FULL previous month. The violations tile carries an invisible
+     spacer so the three tiles stay level. */
+  .qcd-mtd-sub { display: flex; flex-wrap: wrap; align-items: center;
+    gap: 4px 6px; justify-content: center; font: 500 11px/1.2 var(--mono);
+    color: var(--muted); font-variant-numeric: tabular-nums; width: 100%;
+    padding-top: 7px; margin-top: 2px; border-top: 1px dashed var(--line); }
+  .qcd-hero .qcd-mtd-sub { justify-content: flex-start; margin-top: 8px; }
+  .qcd-mtd-sub .mtd-k { font-weight: 600; letter-spacing: 0.1em; font-size: 9.5px; }
+  .qcd-mtd-sub .mtd-v { color: var(--ink); font-weight: 600; font-size: 12px; }
+  .qcd-mtd-sub--spacer { visibility: hidden; }
   @media (max-width: 720px) {
     .qcd-verdict-band--hero { grid-template-columns: 1fr; }
     .qcd-verdict-rest { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -4565,6 +4620,21 @@
     text-align: right; font-variant-numeric: tabular-nums;
   }
   .qcd-alldept-table thead th { color: var(--muted); font-weight: 600; }
+  /* Round-16 (Option 1): per-queue MTD pace sub-line under the queue name --
+     "MTD Ø N/day · Jul N ▲ x%", per-workday averages from the payload's mtd
+     block. Muted mono; the delta stays neutral text (volume, no valence). */
+  .qcd-q-sub { font: 500 10.5px/1.5 var(--mono); color: var(--muted);
+    font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .qcd-q-sub-delta { white-space: nowrap; }
+  /* Round-16b: journey overlay -- internal-call tag + the related-call
+     context line (the originating inbound call the employee was on). */
+  .cj-internal-tag { font: 600 9.5px/1 var(--mono); letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); background: var(--accent-soft);
+    border-radius: var(--r-pill); padding: 2px 7px; }
+  .cj-related { font: 500 11.5px/1.4 var(--mono); color: var(--muted);
+    margin: 6px 0 8px; }
+  .cj-related-btn { font: inherit; color: var(--accent); background: none;
+    border: none; padding: 0; cursor: pointer; text-decoration: underline; }
   /* #3d: abandon % over the 5% threshold reads bold (color comes from the
      bm-over / qcd-warn-light warn tint). */
   .qcd-rate-over { font-weight: 700; }
@@ -6407,6 +6477,15 @@
   .dept-team-strip[hidden] { display: none; }
   .dts-tile { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper-card);
     padding: 10px 12px; box-shadow: var(--shadow-1); }
+  /* Round-16 (owner): non-hero tiles center their content both axes -- the
+     R12-23 treatment the QCD verdict band's secondary tiles got ("looked
+     lost in the card"). The hero keeps its left alignment: its target bar
+     is a left-anchored scale and reads wrong centered. */
+  .dts-tile:not(.dts-tile--hero) { display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 5px; }
+  .dts-tile:not(.dts-tile--hero) .dts-label { justify-content: center; }
+  .dts-tile:not(.dts-tile--hero) .dts-value { margin-top: 0; }
+  .dts-tile:not(.dts-tile--hero) .dts-sub { margin-top: 0; }
   .dts-tile--hero { border-color: var(--accent); }
   .dts-label { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--muted); display: flex; align-items: baseline; gap: 6px; }
@@ -6415,6 +6494,17 @@
     color: var(--ink); margin-top: 6px; }
   .dts-value.bm-target { color: var(--good); }
   .dts-value.bm-over { color: var(--warn); }
+  /* Round-16 (owner-refined): merged "Queue calls (ans / abd)" tile --
+     "<total> (<answered> / <abandoned>)". Total plain ink (volume, no
+     valence); answered sage / abandoned warm, the side panel's
+     dept-qcd-ans/abd convention; a ZERO abandoned count mutes instead
+     (nothing to warn about). */
+  .dts-value--split .dts-ans { color: var(--good); }
+  .dts-value--split .dts-abd { color: var(--warn); }
+  .dts-value--split .dts-abd.is-zero { color: var(--muted); }
+  .dts-value--split .dts-sep,
+  .dts-value--split .dts-paren { color: var(--muted); font-weight: 400; }
+  .dts-value--split .dts-qcalls { color: var(--ink); }
   .dts-sub { font: 400 11px/1.3 var(--mono); color: var(--muted); margin-top: 3px;
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .dts-delta { font-weight: 600; }

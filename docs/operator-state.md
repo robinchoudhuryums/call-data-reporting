@@ -544,11 +544,23 @@ When something looks wrong, before assuming a code bug, check:
     Report** section (`installQueueReportTrigger` / `uninstallQueueReportTrigger`,
     admin) -- sets `QUEUE_REPORT_ENABLED=true` + installs `runDailyQueueReport_`
     (every 30 min). WHY POLL A WINDOW not a fixed hour: the import finishes at a
-    variable time; the trigger polls a weekday-morning window
-    (`QUEUE_REPORT_WINDOW_START_HOUR`=6 .. `QUEUE_REPORT_WINDOW_END_HOUR`=12
-    Central) and sends ONCE as soon as the data has landed, deduped by the
+    variable time; the trigger polls from `QUEUE_REPORT_WINDOW_START_HOUR`=6
+    Central onward (weekdays) and sends ONCE as soon as the data has landed.
+    Round-16 (owner): `QUEUE_REPORT_WINDOW_END_HOUR`=12 is CLASSIFICATION,
+    not a gate -- data landing after noon still sends the same day (result
+    reads "Sent ... (LATE)"; the target rolls at midnight so a stale resend
+    is impossible), and the O-7 flag fires once at window end saying the
+    poller keeps retrying. Dedupe stays the
     `QUEUE_REPORT_LAST_SENT` Script Property (target ISO); `QUEUE_REPORT_LAST_RESULT`
-    surfaces the last outcome in the modal. The pure `queueReportGateDecision_`
+    surfaces the last outcome in the modal. Round-16 (owner): the send is ONE
+    message per day -- subscriber rows marked `Cc` (new 4th sheet column /
+    modal checkbox) ride the Cc line, the rest join the To line (intended
+    model: a group inbox like departmentleads@ as To + a few Cc inboxes).
+    One message means anyone reachable more than one way (two groups, or
+    group + direct) gets exactly ONE copy -- Gmail dedupes by Message-ID
+    within a mailbox, which N separate sends structurally cannot do. A send
+    failure now fails the whole message into the FAILED-ALL retry path
+    (safe: nobody received it); legacy 3-column sheets read as all-To. The pure `queueReportGateDecision_`
     (disabled / outside-window / weekend / holiday / already-sent / not-ready /
     ready) is unit-pinned (`tests/unit/queue-report.test.js`); it skips weekends
     + `COMPANY_HOLIDAYS`. Subscribers are the `Queue Report Subscribers` sheet
@@ -985,7 +997,7 @@ When something looks wrong, before assuming a code bug, check:
     CSR + Spanish) no longer contributes their other department's calls to
     both. OFF: that over-count returns on the three parent depts (Sales / CSR /
     Power) and the My Department chip says so in as many words. Reversible
-    either way with no redeploy — the scope is part of the `summary:v18` cache
+    either way with no redeploy — the scope is part of the `summary:v19` cache
     key, so a flip cannot serve the other mode's table for the 30-minute TTL.
 
     **Prerequisite for it to do anything at all:** the Phase 1 pipeline must

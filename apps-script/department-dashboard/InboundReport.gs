@@ -667,7 +667,13 @@ function computeInboundReport_(scope) {
     // byDialInInsurer and daily -- so no dept-facing figure can drift out of
     // scope by being added later. `drOutside` feeds the research block only.
     const dateRange = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date" + deptPred;
-    const dr = dateRange + ' AND ' + inboundWindowClause_(true);
+    // Round-16: internal-origin queue calls (is_internal, journey-only
+    // capture) are excluded from EVERY metric surface -- they exist for
+    // the Missed report's path drill, not the inbound figures. Same
+    // clause on the insurer-daily / heatmap / cell-drill / compare /
+    // parity queries; getCallJourney + the missed-report enrichment
+    // deliberately KEEP them (serving those calls is the point).
+    const dr = dateRange + ' AND ' + inboundWindowClause_(true) + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     const drOutside = dateRange + ' AND ' + inboundWindowClause_(false);
     const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to
                   + "'::date" + deptPred + ' AND ' + inboundWindowClause_(true);
@@ -974,7 +980,7 @@ function getInboundInsurerDaily(req) {
     // Same work-window scope as computeInboundReport_ -- this drill hangs off a
     // byInsurer row, so an unscoped drill would not reconcile with the row's
     // own count.
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date"
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
              + deptPred + ' AND ' + inboundWindowClause_(true);
     const sql =
       "SELECT COALESCE(json_agg(t ORDER BY t.d), '[]')::text AS j FROM (" +
@@ -1034,10 +1040,10 @@ function scanInboundQueueNames_(lookbackDays) {
         "SELECT q.queue AS queue, count(DISTINCT q.call_id) AS calls, " +
           "max(q.call_date)::text AS last_seen FROM (" +
           "SELECT entry_queue AS queue, call_id, call_date FROM inbound_calls " +
-            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(entry_queue,'') <> '' " +
+            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(is_internal, FALSE) = FALSE AND COALESCE(entry_queue,'') <> '' " +
           "UNION ALL " +
           "SELECT final_queue AS queue, call_id, call_date FROM inbound_calls " +
-            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(final_queue,'') <> ''" +
+            "WHERE call_date >= (CURRENT_DATE - ?::int) AND COALESCE(is_internal, FALSE) = FALSE AND COALESCE(final_queue,'') <> ''" +
         ") q GROUP BY q.queue) t";
     const stmt = conn.prepareStatement(sql);
     stmt.setInt(1, days);
@@ -1130,7 +1136,7 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
     + inWindow + ') AS hold, '
     + "count(*) FILTER (WHERE c.disposition = 'abandoned' AND NOT " + inWindow + ') AS ab_outside, '
     + 'count(*) FILTER (WHERE NOT ' + inWindow + ') AS calls_outside '
-    + 'FROM inbound_calls c WHERE c.call_date BETWEEN ?::date AND ?::date' + predicate
+    + 'FROM inbound_calls c WHERE c.call_date BETWEEN ?::date AND ?::date' + predicate + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
     + ' GROUP BY call_date) t';
   const stmt = conn.prepareStatement(sql);
   stmt.setString(1, fromIso);
@@ -1220,7 +1226,7 @@ function runInboundQcdParityCheck() {
     const uStmt = conn.prepareStatement(
       "SELECT COALESCE(json_agg(t ORDER BY t.n DESC), '[]')::text AS j FROM ("
       + "SELECT entry_queue AS q, count(*) AS n FROM inbound_calls "
-      + "WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(entry_queue, '') <> '' "
+      + "WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(is_internal, FALSE) = FALSE AND COALESCE(entry_queue, '') <> '' "
       + 'GROUP BY entry_queue) t');
     uStmt.setString(1, fromIso);
     uStmt.setString(2, toIso);
@@ -1257,7 +1263,7 @@ function runInboundQcdParityCheck() {
         + "SELECT COALESCE(disposition,'(null)') AS disposition, "
         + "COALESCE(abandon_stage,'(n/a)') AS stage, count(*) AS n "
         + 'FROM inbound_calls '
-        + "WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(entry_queue, '') = '' "
+        + "WHERE call_date BETWEEN ?::date AND ?::date AND COALESCE(is_internal, FALSE) = FALSE AND COALESCE(entry_queue, '') = '' "
         + 'GROUP BY 1, 2) t');
       nqStmt.setString(1, fromIso);
       nqStmt.setString(2, toIso);
@@ -1345,7 +1351,7 @@ function getInboundHeatmap(req) {
     if (!conn) { out.meta.available = false; return out; }
 
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     // CST seconds-since-midnight for the shifted start time; bucket into
     // hourly slots (INBOUND_HEATMAP_SLOT_MINUTES=60) indexed from the 8 AM CST window start.
     const cstSecs = "(EXTRACT(EPOCH FROM ((c.call_start)::time + interval '"
@@ -1456,7 +1462,7 @@ function getInboundHeatmapCell(req) {
     if (!conn) { out.meta.available = false; return out; }
 
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
-    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred;
+    const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     // Identical shift + bucket expressions to getInboundHeatmap so the cell
     // and its drill can never disagree on which calls a bucket holds.
     const cstStart = "((c.call_start)::time + interval '"

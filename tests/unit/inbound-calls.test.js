@@ -687,3 +687,75 @@ test('C-6: an ALL-UNPARSED yield refuses the zero-record cleanup (format drift m
   assert.equal((cap.executed || []).length, 0,
     'no statement ran -- the expected date\'s rows are untouched');
 });
+
+// ---- Round-16: internal-origin queue calls (journey-only capture) -----------
+// An employee dials another dept's queue internally (every leg
+// Direction=Internal) and the call is abandoned. Previously dropped entirely,
+// so the Missed report's "path" drill answered "not in the inbound-call
+// records". Now captured as a FLAGGED record (isInternal) that every metric
+// query excludes -- fixture modeled on the 2026-08-04 production sample
+// (ext 270 -> A_Q_Eligibility_MM&R, ring cycling through three agents).
+
+test('internal-origin queue call: captured as an isInternal record with the full journey', function () {
+  const recs = build([
+    leg({ callId: '1783982365872', legId: 1, start: '08/04/2026 14:20:15', connected: '08/04/2026 14:20:16', stop: '08/04/2026 14:21:59', direction: 'Internal', callTime: '0:01:43', caller: '270', callerName: 'Sonia Santos', callee: '383', calleeName: 'A_Q_Eligibility_MM&R', missed: 'Missed', abandoned: 'Abandoned', dept: 'Patient Intake - Supplies' }),
+    leg({ callId: '1783982365878', legId: 1, parent: '1783982365872', start: '08/04/2026 14:20:16', stop: '08/04/2026 14:20:26', direction: 'Internal', callTime: '0:00:10', caller: 'CallQueue (383)', callee: '283', calleeName: 'Felisha Casey', missed: 'Missed', dept: 'Patient Intake - Mobility/DME' }),
+    leg({ callId: '1783982365947', legId: 1, parent: '1783982365872', start: '08/04/2026 14:20:36', stop: '08/04/2026 14:20:46', direction: 'Internal', callTime: '0:00:10', caller: '383', callee: '236', calleeName: 'Amber (Aayushi) Panchal', missed: 'Missed', dept: 'Eligibility Verification' }),
+  ]);
+  assert.equal(recs.length, 1, 'the internal queue call is captured');
+  const r = rec(recs, '1783982365872');
+  assert.equal(r.isInternal, true);
+  assert.equal(r.disposition, 'abandoned');
+  assert.equal(r.abandonStage, 'queue');
+  assert.equal(r.entryQueue, 'A_Q_Eligibility_MM&R');
+  assert.equal(r.callDate, '2026-08-04');
+  assert.equal(r.callStart, '14:20:15');
+  assert.equal(r.callerNumber, null, 'no external caller -- writes a NULL caller_hash');
+  assert.ok(r.waitSeconds >= 100 && r.waitSeconds <= 110, 'wait = origin start -> abandon stop (~104s)');
+  // Journey: the queue leg + both agent rings survive for the path drill.
+  const names = r.journey.map(function (ev) { return ev.name; });
+  assert.ok(names.indexOf('A_Q_Eligibility_MM&R') !== -1, 'queue event present');
+  assert.ok(names.indexOf('Felisha Casey') !== -1 && names.indexOf('Amber (Aayushi) Panchal') !== -1,
+    'agent ring events present');
+});
+
+test('internal agent-to-agent call (no queue leg) stays uncaptured', function () {
+  const recs = build([
+    leg({ callId: '990001', legId: 1, start: '08/04/2026 15:00:00', connected: '08/04/2026 15:00:02', stop: '08/04/2026 15:01:00', direction: 'Internal', talk: '0:00:58', caller: '270', callee: '283', calleeName: 'Felisha Casey', answered: 'Answered', dept: 'CSR' }),
+  ]);
+  assert.equal(recs.length, 0, 'no queue leg -> not captured');
+});
+
+test('external inbound records stay isInternal=false (metric queries key on the flag)', function () {
+  const recs = build(capturedInboundAnsweredBy215('830001'));
+  assert.equal(rec(recs, '830001').isInternal, false);
+});
+
+// ---- Round-16b: internal record links its originating inbound call ----------
+// The owner's "nested timeframe" heuristic: an internal queue call placed
+// WHILE the originating employee was answering a captured inbound call
+// (customer parked on hold) carries relatedCallId -> that call, so the path
+// drill can present the full story. Unique-match-only, the R11-N discipline.
+
+test('internal call nested in the originator’s answered inbound: relatedCallId links it (unique match)', function () {
+  const recs = build(capturedInboundAnsweredBy215('840001').concat([
+    // ext 215 dials A_Q_Spanish at 10:02, rings out MISSED (not abandoned --
+    // an abandoned unique match becomes R11-N enrichment instead).
+    leg({ callId: '840900', legId: 1, start: '06/04/2026 10:02:00', stop: '06/04/2026 10:02:30', direction: 'Internal', callTime: '0:00:30', caller: '215', callee: '260', calleeName: 'A_Q_Spanish', missed: 'Missed' }),
+  ]));
+  assert.equal(recs.length, 2, 'captured inbound + the standalone internal record');
+  const ir = rec(recs, '840900');
+  assert.equal(ir.isInternal, true);
+  assert.equal(ir.relatedCallId, '840001', 'linked to the call the employee was on');
+  assert.equal(rec(recs, '840001').relatedCallId, undefined, 'external record carries no link');
+});
+
+test('ambiguous nesting (two concurrent calls) or no concurrent call: no link', function () {
+  // Two captured inbounds answered by 215 over the same window -> ambiguous.
+  const recs = build(capturedInboundAnsweredBy215('850001')
+    .concat(capturedInboundAnsweredBy215('850002'))
+    .concat([
+      leg({ callId: '850900', legId: 1, start: '06/04/2026 10:02:00', stop: '06/04/2026 10:02:30', direction: 'Internal', callTime: '0:00:30', caller: '215', callee: '260', calleeName: 'A_Q_Spanish', missed: 'Missed' }),
+    ]));
+  assert.equal(rec(recs, '850900').relatedCallId, undefined, 'ambiguous -> never guesses');
+});

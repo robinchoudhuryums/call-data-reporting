@@ -124,7 +124,12 @@ bash scripts/check-duplicated-files.sh
 # INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
 # content appended to the END lands OUTSIDE the tag and renders as visible text
 # on the page. That shipped once, and the rendered-UI gate structurally cannot
-# see it: no console error, no blank canvas, no overflow), queue-split (the
+# see it: no console error, no blank canvas, no overflow. Since #4/Round-16 it
+# ALSO pins the assembled client: script.html is an ASSEMBLER whose
+# script-N-*.html fragments are raw JS spliced into ONE IIFE by the
+# template-evaluating include_ -- per-fragment purity, include-list<->disk
+# parity, and a node --check of the assembled body; see
+# docs/client-ui-conventions.md "The assembled client"), queue-split (the
 # sub-queue Phase 1 pipeline column -- pins cols A..AH byte-identical so the
 # append stays provably additive -- plus the Phase 2 reader's FOUR fail-open
 # paths, its S2-0 QUEUE_SPLIT_SCOPE gate (default off) and its INVERSION of the
@@ -215,7 +220,8 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # visible text, and the header dept selector throwing so no admin could switch
 # departments. Neither is reachable from `node --test` (one is markup structure,
 # the other needs a real click). Re-run it after touching
-# script.html, styles.html, dashboard.html, or any payload shape.
+# script.html or any script-*.html fragment, styles.html, dashboard.html,
+# or any payload shape.
 ```
 
 ## Common Gotchas
@@ -626,16 +632,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   column: the ordered leg-by-leg path, capped at `IC_JOURNEY_MAX_EVENTS`=40;
   callee names that look like phone numbers are MASKED so no raw number lands
   in Neon). Timelines append a synthetic "Call ended" row at last-leg
-  start+duration so a long abandoned wait doesn't read as an early disconnect
-  (owner note). The writer's idempotent `ALTER TABLE ... ADD COLUMN
-  IF NOT EXISTS` upgrades pre-extension tables in place, and the insert chunks
-  SIZE-AWARE via `icChunkTuplesByChars_` (`IC_SQL_CHUNK_BUDGET_CHARS`, 30K per
-  statement) because journey rows vary ~0.2-6KB and a fixed row count overran
-  Apps Script's JDBC cap. **There is NO sheet primary for this data** -- the
+  start+duration so a long abandoned wait doesn't read as an early
+  disconnect. The writer's idempotent `ALTER TABLE ... ADD COLUMN
+  IF NOT EXISTS` upgrades pre-extension tables in place, and the insert chunks SIZE-AWARE via
+  `icChunkTuplesByChars_` (30K/statement; journey rows vary ~0.2-6KB and a
+  fixed row count overran the JDBC cap). **There is NO sheet primary for this data** -- the
   "Inbound Calls" tab (`cdr-report/inboundCallsExport.js::exportInboundCalls`)
-  is a fallback COPY of Neon, not a source. History: editor-run
-  `backfillInboundCalls` (cdr-import) fills only from surviving `Call_Legs_*`
-  sheets, so it reaches at most the ~14-day retention window.
+  is a fallback COPY of Neon, not a source. History: editor-run `backfillInboundCalls`
+  (cdr-import) reaches at most the ~14-day `Call_Legs_*` retention window.
   **Queue-name recognition is config-fed AND brand-prefix aware (F1/F1b) -- do
   NOT re-hardcode it.** `icIsQueueName_` decides what counts as a queue leg and
   feeds `entry_queue` / `final_queue` / `num_queues` / `abandon_stage`. A name
@@ -671,18 +675,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   is NOT by itself a signal -- see Operator State #38 for the runbook.
   **Internal-transfer journey enrichment (R11-N).** When an agent answers an
   inbound call and transfers the caller to a queue where they then abandon,
-  that transfer is a separate internal-only leg group the record builder drops.
-  `buildInboundCallRecords_` cross-references it to the answering agent's
-  concurrent captured inbound call and, ONLY on a UNIQUE match, APPENDS one
+  `buildInboundCallRecords_` cross-references that internal leg group to the
+  answering agent's concurrent captured inbound call and, ONLY on a UNIQUE match, APPENDS one
   synthetic `{kind:queue, abandoned:true, transfer:true}` event to that call's
-  journey. Strictly JOURNEY-ONLY -- disposition / counts / entryQueue /
-  finalQueue / numQueues / numTransfers are NEVER touched (zero metric impact)
-  -- and 0-or->1 matches are left as-is; it never guesses. Idempotent on
-  re-import. The enrichment is COMPLETE as shipped; no widening is warranted
-  (R11-N5). Read-only editor diagnostics
+  journey. Strictly JOURNEY-ONLY (disposition/counts/queues NEVER touched);
+  an ambiguous match is left as-is -- it never guesses. Idempotent on
+  re-import; no widening is warranted (R11-N5). Editor diagnostics
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
-  (date-selectable via the CDR Tools menu or the `TRANSFER_PREVIEW_DATE`
-  cdr-import Script Property; R11-N4). Pinned by
+  (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
   `tests/unit/inbound-calls.test.js`.
   **Caller Lookup** (`CallerLookup.gs`, route `#/admin/caller-lookup`,
   admin-only) is the FULL communication history: the entered number is
@@ -695,11 +695,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   aggregates, rendered as "Earlier outbound activity" ONLY for dates the
   per-call capture doesn't cover -- day-level is the ceiling there). Each
   section is independently best-effort: a missing `outbound_calls` table
-  (dashboard deployed ahead of cdr-import) flags `meta.outboundAvailable=false`
-  without touching the inbound results.
+  flags `meta.outboundAvailable=false`; the inbound results stand.
   **Per-call drill-through.** `InboundReport.gs::getCallJourney({callId, date,
   department})` returns ONE call's journey for the "↳ path" affordance on
-  abandoned rings in the Missed views. Unlike the full Inbound report it is
+  abandoned rings in the Missed views. **INTERNAL-ORIGIN queue calls (an
+  employee dials another dept's queue; no Incoming leg) are captured as
+  `is_internal` rows for THIS drill only** -- every metric query excludes
+  them (pinned both ways); a uniquely-matched R11-N transfer group stays
+  enrichment-only, and a standalone internal record carries
+  `related_call_id` when uniquely nested in the originator's concurrent
+  answered inbound call (the path drill links the two). Unlike the full Inbound report it is
   manager-reachable for the manager's OWN dept: managers are pinned to their
   dept AND the query is scoped by `inboundDeptPredicate_`. **The entitlement is
   enforced SERVER-side (F-4):** the exact-`(call_date, call_id)` fallback --
@@ -724,11 +729,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   manager path is kept intact in `inboundResolveRequest_`, so restoring manager
   access is a one-line gate removal + un-hiding the `data-admin-only` tab.
   **Vetting tool: `runInboundQcdParityCheck`** (editor-run, admin-gated,
-  read-only; optional `INBOUND_QCD_PARITY_FROM/_TO/_DEPT` Script Properties)
-  joins the two lenses per dept per day and lists the window's UNATTRIBUTED raw
-  entry-queues (fix: the Dept Config "Inbound queue aliases" column). Pinned by
-  `tests/unit/inbound-qcd-parity.test.js`. Run it, populate aliases, re-run --
-  BEFORE any un-gating decision.
+  read-only; `INBOUND_QCD_PARITY_FROM/_TO/_DEPT` props) joins the two lenses
+  per dept/day and lists the window's UNATTRIBUTED raw entry-queues (fix: the
+  Dept Config "Inbound queue aliases" column; inbound-qcd-parity.test.js).
+  Run it, populate aliases, re-run -- BEFORE any un-gating decision.
   **⚠ The QCD-vs-inbound abandon gap is SETTLED -- read `docs/known-issues.md`
   "QCD Abandoned vs inbound_calls abandons" before re-investigating.** Four
   plausible explanations were eliminated and they all look plausible again from
@@ -1659,7 +1663,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   default -- so this is a client retirement, not a capability removal; don't
   "restore" the parameter thinking it was dropped, and don't hardcode that
   default in a second place. `subScope` is a cache-key dimension
-  (`summary:v18`); `cdr.dept.subscope` is now an orphan key.
+  (`summary:v19`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -1694,7 +1698,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   only once Phase 3 (Missed), Phase 4 (IR/Insights), the Overview and Alerts
   all narrow too -- see Operator State #42. The gate lives INSIDE the function
   so those phases inherit it by adopting it rather than each re-deciding, and
-  the scope joins the `summary:v18` cache key as a suffix (the CORE-3
+  the scope joins the `summary:v19` cache key as a suffix (the CORE-3
   read-source pattern) so a flip can't serve the other mode's table for the TTL.
   It **FAILS OPEN four ways** -- a dept with no mapped queues, a row with no
   split, and unparseable JSON all keep the rollup; and (B-1) so does a whole
@@ -1959,9 +1963,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table
   `ov-user-table` shares `COLUMNS` and must keep its own thead in sync).
-  Columns: Agent · Source · **Answered / Missed** (a `type:'bar'` stacked
-  bar — green answered + red missed, total = rung, which is why there is no
-  separate Rung / Missed / Answered / **Total calls** column; built by
+  Columns: Agent · Source · **Answered / Missed** (`type:'bar'`; since
+  Round-16 AGENT rows render a VOLUME-PROPORTIONAL TALLY — sage answered +
+  red missed blocks, one block per cohort-adaptive unit via
+  `ansTallyUnitFor_` (≤36 blocks for the busiest row; a >1 unit is disclosed
+  in tooltips + a totals-row legend) — while totals/subtotal rows keep the
+  classic proportional bar; there is no separate Rung / Missed / Answered /
+  **Total calls** column; built by
   `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
   counts and the rung total as a muted "(N)", answer-rate gets the 92%
   benchmark tint, sorts by computed `answerRate` via a special case in

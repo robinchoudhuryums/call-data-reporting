@@ -71,7 +71,13 @@ const QUEUE_REPORT_LAST_MISSED_PROP = 'QUEUE_REPORT_LAST_MISSED';  // O-7: targe
 function queueReportGateDecision_(ctx) {
   ctx = ctx || {};
   if (!ctx.enabled) return { send: false, reason: 'disabled' };
-  if (ctx.hour < QUEUE_REPORT_WINDOW_START_HOUR || ctx.hour >= QUEUE_REPORT_WINDOW_END_HOUR) {
+  // Round-16 (owner): only the window START blocks a send. The END hour is
+  // CLASSIFICATION, not a gate -- when QCD data lands after the morning
+  // window closes, the poller now sends LATE the same day (the target rolls
+  // at midnight) instead of flagging the day permanently missed. The O-7
+  // missed-day flag still fires once at window end so admins learn the data
+  // is late, but its text now says the poller keeps retrying.
+  if (ctx.hour < QUEUE_REPORT_WINDOW_START_HOUR) {
     return { send: false, reason: 'outside-window' };
   }
   if (ctx.dow === 0 || ctx.dow === 6) return { send: false, reason: 'weekend' };
@@ -99,13 +105,7 @@ function runDailyQueueReport_() {
       lastSent: props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '',
       latestQcd: '9999-99-99',   // readiness checked below only if the rest pass
     });
-    if (!pre.send) {
-      // O-7: the window closed without a send for the target day (data landed
-      // late, or never) -- surface it ONCE instead of silently moving on to
-      // the next weekday's target.
-      if (pre.reason === 'outside-window') queueReportFlagMissedDay_(props, now, targetIso);
-      return;
-    }
+    if (!pre.send) return;   // disabled / pre-6am / weekend / holiday / already sent
 
     // Readiness gate: has the import finished writing QCD for the target date?
     const latestQcd = queueReportQcdLatestIso_();
@@ -115,7 +115,16 @@ function runDailyQueueReport_() {
       lastSent: props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '',
       latestQcd: latestQcd,
     });
-    if (!decision.send) return;   // 'not-ready' -> no-op, retry next poll
+    if (!decision.send) {
+      // O-7 (reworked for the late catch-up): data still not ready after the
+      // morning window closed -- flag ONCE so admins learn it's late, but
+      // KEEP polling; a late-landing import now sends the same day.
+      if (decision.reason === 'not-ready'
+          && Number(Utilities.formatDate(now, TZ, 'H')) >= QUEUE_REPORT_WINDOW_END_HOUR) {
+        queueReportFlagMissedDay_(props, now, targetIso);
+      }
+      return;   // 'not-ready' -> no-op, retry next poll
+    }
 
     const result = sendQueueReportForDate_(targetIso, {});
     const failed = result.failed || [];
@@ -151,9 +160,11 @@ function runDailyQueueReport_() {
     //    retry can't duplicate. Notify once per target date.
     if (result.count > 0 || !failed.length) {
       props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
+      const lateSend = Number(Utilities.formatDate(now, TZ, 'H')) >= QUEUE_REPORT_WINDOW_END_HOUR;
       props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
         'Sent ' + targetIso + ' to ' + result.count + ' subscriber'
         + (result.count === 1 ? '' : 's')
+        + (lateSend ? ' (LATE — QCD data landed after the morning window)' : '')
         + (failed.length ? ' — FAILED for ' + failed.length + ' (see admin email)' : '')
         + ' at ' + new Date());
       if (failed.length) notifyQueueReportSendFailures_(targetIso, failed, /*allFailed=*/false);
@@ -215,11 +226,26 @@ function sendQueueReportForDate_(targetIso, opts) {
   // Recipients are resolved BEFORE the report is composed: an empty list means
   // there is nothing to do, and composing an all-departments report nobody will
   // receive is pure waste on every 30-min poll of the window.
-  const recipients = opts.to
-    ? [String(opts.to).trim()].filter(Boolean)
+  // Round-16 (owner decision): ONE message per day, To + Cc, replacing the
+  // per-recipient loop. The subscriber model is group inboxes now (e.g.
+  // departmentleads@) -- a single message means every person reachable more
+  // than one way (two groups, or group + direct) still gets exactly ONE copy,
+  // because Gmail dedupes by Message-ID within a mailbox; N separate sends
+  // structurally cannot do that. This supersedes O-1's two rationales: the
+  // privacy concern (recipients are a few org inboxes, not individuals --
+  // and reply-all reaching the leads group is a feature), and per-recipient
+  // failure isolation (a single send either lands -- claim the marker -- or
+  // throws, which is the existing FAILED-ALL path: nobody received it, so
+  // the next poll's retry cannot duplicate).
+  const subs = opts.to
+    ? [{ email: String(opts.to).trim(), cc: false }].filter(function (s) { return !!s.email; })
     : readQueueReportSubscribers_()
-        .filter(function (s) { return s.active && !s.duplicateRow; })   // O-4: dupes never double-send
-        .map(function (s) { return s.email; });
+        .filter(function (s) { return s.active && !s.duplicateRow; });   // O-4: dupes never double-send
+  let toList = subs.filter(function (s) { return !s.cc; }).map(function (s) { return s.email; });
+  let ccList = subs.filter(function (s) { return s.cc; }).map(function (s) { return s.email; });
+  // An email needs a To: -- if the admin marked every row Cc, promote them.
+  if (!toList.length && ccList.length) { toList = ccList; ccList = []; }
+  const recipients = toList.concat(ccList);
 
   if (!recipients.length) {
     Logger.log('sendQueueReportForDate_(%s): no active subscribers -- nothing sent.', targetIso);
@@ -236,27 +262,24 @@ function sendQueueReportForDate_(targetIso, opts) {
   const data = qcdAllDeptCachedData_(targetIso, targetIso).data;
   const subject = 'Daily Call Queue Report — ' + (data.dateLabel || targetIso);
   const html = buildQueueReportEmailHtml_(data, targetIso, !!opts.isPreview);
-  // One send with the full list on `to` would expose every subscriber's
-  // address to the others; send individually (small list, weekday-once).
-  // O-1: per-recipient isolation -- one malformed hand-edited address or a
-  // mid-list quota failure previously aborted the loop, so earlier
-  // subscribers were re-blasted on every 30-min poll (marker never set)
-  // while later ones never received the report at all. The single-address
-  // preview path (opts.to) still throws so the admin sees the error in the
-  // modal.
-  const sentTo = [];
-  const failed = [];
-  recipients.forEach(function (addr) {
-    try {
-      MailApp.sendEmail({ to: addr, subject: subject, htmlBody: html });
-      sentTo.push(addr);
-    } catch (e) {
-      if (opts.to) throw e;
-      failed.push({ email: addr, error: (e && e.message) ? e.message : String(e) });
-      Logger.log('sendQueueReportForDate_(%s): send to %s failed: %s', targetIso, addr, e);
-    }
-  });
-  return { count: sentTo.length, to: sentTo, failed: failed };
+  // Single send (see the To/Cc note above). One malformed hand-edited
+  // address now fails the WHOLE message -- acceptable: save-time validation
+  // guards the modal path, the poller retries all day, and the FAILED-ALL
+  // admin email names the error. The single-address preview path (opts.to)
+  // still throws so the admin sees the error in the modal.
+  try {
+    const msg = { to: toList.join(','), subject: subject, htmlBody: html };
+    if (ccList.length) msg.cc = ccList.join(',');
+    MailApp.sendEmail(msg);
+    return { count: recipients.length, to: recipients, failed: [] };
+  } catch (e) {
+    if (opts.to) throw e;
+    const errMsg = (e && e.message) ? e.message : String(e);
+    Logger.log('sendQueueReportForDate_(%s): send failed (single To/Cc message): %s', targetIso, e);
+    return { count: 0, to: [], failed: recipients.map(function (addr) {
+      return { email: addr, error: errMsg };
+    }) };
+  }
 }
 
 /**
@@ -307,19 +330,22 @@ function queueReportFlagMissedDay_(props, now, targetIso) {
     if ((props.getProperty(QUEUE_REPORT_LAST_MISSED_PROP) || '') === targetIso) return; // already flagged
     props.setProperty(QUEUE_REPORT_LAST_MISSED_PROP, targetIso);
     props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
-      'MISSED ' + targetIso + ' — QCD data was not ready before the window closed ('
-      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central). Not retried automatically; use '
-      + '"Send me a preview" to verify the data, or wait for the next weekday window. Flagged at ' + new Date());
+      'LATE ' + targetIso + ' — QCD data was not ready before the window closed ('
+      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central). The poller keeps retrying every '
+      + QUEUE_REPORT_EVERY_MINUTES + ' min until midnight and will send automatically '
+      + 'once the data lands. Flagged at ' + new Date());
     const to = getAdminEmails_().join(',');
     if (to) {
       MailApp.sendEmail({
         to: to,
-        subject: '[Dashboard] Daily Call Queue Report was NOT sent for ' + targetIso,
+        subject: '[Dashboard] Daily Call Queue Report is LATE for ' + targetIso,
         body: 'The ' + QUEUE_REPORT_WINDOW_START_HOUR + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR
           + ':00 send window closed without the report going out for ' + targetIso
           + ' (QCD data was not ready in time, or the import did not run).\n\n'
-          + 'It is NOT retried automatically. If the data has since landed, subscribers can be '
-          + 'served manually, or the next weekday\'s report resumes normally.\n\nTime: ' + new Date(),
+          + 'The poller KEEPS RETRYING every ' + QUEUE_REPORT_EVERY_MINUTES + ' minutes until '
+          + 'midnight and will send automatically as soon as the data lands (the result will '
+          + 'read "Sent ... (LATE)"). If the import is genuinely stuck, fix it and the send '
+          + 'follows; nothing else to do here.\n\nTime: ' + new Date(),
       });
     }
   } catch (e) {
@@ -496,23 +522,69 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // per-row color already carry it. (offenders still feed the preheader.)
 
   // ---- KPI row ----
-  const kpi = function (label, value, bg, bd, labelColor, valColor, pad) {
+  const kpi = function (label, value, bg, bd, labelColor, valColor, pad, subHtml) {
     return '<td class="kpi" width="25%" valign="top" style="' + (pad || '') + '">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:10px;"><tr>'
       + '<td class="kpi-cell" style="padding:12px 14px;">'
       + '<div style="font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:' + labelColor + ';">' + esc(label) + '</div>'
       + '<div style="font:bold 26px Arial,sans-serif;color:' + valColor + ';padding-top:2px;">' + esc(value) + '</div>'
+      + (subHtml || '')
       + '</td></tr></table></td>';
   };
+  // MTD sub-lines (owner spec, Round-16; mirrors the web band): MTD =
+  // month-start(report date)..report date vs the ENTIRE previous month.
+  // Total calls compares per-WORKDAY averages; aban down / answered up =
+  // green, reverse = orange, volume delta always gray; every delta grays
+  // under 3 elapsed workdays (low signal). Null-guarded so a payload
+  // without `mtd` renders the pre-v6 tiles unchanged.
+  const m = (data && data.mtd) || null;
+  const mtdUsable = !!(m && m.workdays > 0 && m.totalCalls > 0);
+  const mtdPriorUsable = !!(m && m.priorWorkdays > 0 && m.priorTotalCalls > 0);
+  const mtdLowSignal = !!(m && m.workdays < 3);
+  const mtdSub = function (valueTxt, deltaTxt, deltaColor) {
+    return '<div style="font:11px ' + sans + ';color:' + C.mut + ';padding-top:6px;white-space:nowrap;">'
+      + '<span style="font-weight:bold;font-size:9px;letter-spacing:0.6px;">MTD</span> '
+      + '<span style="color:' + C.ink + ';font-weight:bold;">' + esc(valueTxt) + '</span>'
+      + (deltaTxt ? ' &middot; <span style="color:' + (mtdLowSignal ? C.mut : deltaColor) + ';font-weight:bold;">' + esc(deltaTxt) + '</span>' : '')
+      + '</div>';
+  };
+  let mtdAbanSub = '', mtdCallsSub = '', mtdAnsSub = '';
+  if (mtdUsable) {
+    const mAbanPct = Number(m.abandonedPct) || 0;
+    const mAnsPct = m.totalCalls > 0 ? (m.answered / m.totalCalls * 100) : 0;
+    const mAvg = m.totalCalls / m.workdays;
+    const vsLbl = ' vs ' + (m.priorLabel || 'prior');
+    if (mtdPriorUsable) {
+      const pAbanPct = Number(m.priorAbandonedPct) || 0;
+      const pAnsPct = m.priorTotalCalls > 0 ? (m.priorAnswered / m.priorTotalCalls * 100) : 0;
+      const pAvg = m.priorTotalCalls / m.priorWorkdays;
+      const dAban = mAbanPct - pAbanPct;
+      const dAns = mAnsPct - pAnsPct;
+      const dAvgPct = pAvg > 0 ? ((mAvg - pAvg) / pAvg * 100) : 0;
+      mtdAbanSub = mtdSub(mAbanPct.toFixed(2) + '%',
+        (dAban <= 0 ? '▼ ' : '▲ ') + Math.abs(dAban).toFixed(2) + ' pts' + vsLbl,
+        dAban <= 0 ? C.good : C.watch);
+      mtdCallsSub = mtdSub(Math.round(mAvg) + '/day',
+        (dAvgPct >= 0 ? '▲ ' : '▼ ') + Math.abs(dAvgPct).toFixed(1) + '%' + vsLbl,
+        C.mut);
+      mtdAnsSub = mtdSub(mAnsPct.toFixed(1) + '%',
+        (dAns >= 0 ? '▲ ' : '▼ ') + Math.abs(dAns).toFixed(1) + ' pts' + vsLbl,
+        dAns >= 0 ? C.good : C.watch);
+    } else {
+      mtdAbanSub = mtdSub(mAbanPct.toFixed(2) + '%', '', '');
+      mtdCallsSub = mtdSub(Math.round(mAvg) + '/day', '', '');
+      mtdAnsSub = mtdSub(mAnsPct.toFixed(1) + '%', '', '');
+    }
+  }
   const abanOver = gPct >= 5;
   const kpiRow = '<tr><td style="padding:16px 26px 4px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
     + kpi('Company aban %', (gt.abandonedPctStr || gPct.toFixed(1) + '%'),
         abanOver ? C.badTile : C.neuTile, abanOver ? C.badTileB : C.neuTileB,
-        abanOver ? '#8a5a44' : '#6b7580', abanOver ? C.bad : C.ink, 'padding-right:6px;')
-    + kpi('Total calls', gTotal, C.neuTile, C.neuTileB, '#6b7580', C.ink, 'padding:0 3px;')
+        abanOver ? '#8a5a44' : '#6b7580', abanOver ? C.bad : C.ink, 'padding-right:6px;', mtdAbanSub)
+    + kpi('Total calls', gTotal, C.neuTile, C.neuTileB, '#6b7580', C.ink, 'padding:0 3px;', mtdCallsSub)
     + kpi('Queues in viol.', overCount, overCount > 0 ? C.badTile : C.neuTile, overCount > 0 ? C.badTileB : C.neuTileB,
         overCount > 0 ? '#8a5a44' : '#6b7580', overCount > 0 ? C.bad : C.ink, 'padding:0 3px;')
-    + kpi('Answered', gAnsPct.toFixed(1) + '%', C.goodTile, C.goodTileB, '#3f7a5f', C.good, 'padding-left:6px;')
+    + kpi('Answered', gAnsPct.toFixed(1) + '%', C.goodTile, C.goodTileB, '#3f7a5f', C.good, 'padding-left:6px;', mtdAnsSub)
     + '</tr></table></td></tr>';
 
   // ---- table (worst-first sections) ----
@@ -696,7 +768,10 @@ function readQueueReportSubscribers_() {
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  const values = sheet.getRange(2, 1, lastRow - 1, QUEUE_REPORT_SUBSCRIBERS_HEADERS.length).getValues();
+  // Round-16 (To/Cc): bounded to the sheet's real width -- a legacy 3-column
+  // sheet (pre-Cc) reads cleanly with every row defaulting to To.
+  const width = Math.min(QUEUE_REPORT_SUBSCRIBERS_HEADERS.length, sheet.getLastColumn());
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
   const out = [];
   const seenEmail = {};   // O-4: OPS-9 discipline -- first-row-wins on hand-edited duplicates
   for (let i = 0; i < values.length; i++) {
@@ -705,7 +780,9 @@ function readQueueReportSubscribers_() {
     const rawActive = values[i][1];
     const active = !(rawActive === false || rawActive === 'FALSE' || rawActive === 'false'
                    || rawActive === 0 || rawActive === 'no' || rawActive === 'No');
-    const entry = { email: email, active: active, notes: String(values[i][2] || '').trim() };
+    const rawCc = values[i][3];
+    const cc = (rawCc === true || rawCc === 'TRUE' || rawCc === 'true' || rawCc === 'yes' || rawCc === 'Yes');
+    const entry = { email: email, active: active, notes: String(values[i][2] || '').trim(), cc: cc };
     const key = email.toLowerCase();
     if (seenEmail[key]) {
       // Duplicate hand-edited row: flag it (kept in the list so the modal
@@ -746,6 +823,7 @@ function saveQueueReportSubscriber(req) {
   const email = String((req && req.email) || '').trim();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address.');
   const active = !(req && (req.active === false || req.active === 'false'));
+  const cc = !!(req && (req.cc === true || req.cc === 'true'));
   const notes = String((req && req.notes) || '').trim().slice(0, 500);
 
   const lock = LockService.getScriptLock();
@@ -768,7 +846,7 @@ function saveQueueReportSubscriber(req) {
         }
       }
     }
-    const rowVals = [email, active ? 'TRUE' : 'FALSE', notes];
+    const rowVals = [email, active ? 'TRUE' : 'FALSE', notes, cc ? 'TRUE' : 'FALSE'];
     if (foundRow > 0) {
       sheet.getRange(foundRow, 1, 1, rowVals.length).setValues([rowVals]);
     } else {

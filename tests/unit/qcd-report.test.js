@@ -13,7 +13,7 @@ const { rosterGrid } = require('../harness/fixtures');
 
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'DeptConfig.gs',
-          'QCDReport.gs', 'CompanyOverview.gs'],
+          'QCDReport.gs', 'CompanyOverview.gs', 'QueueReportEmail.gs'],
   capture: ['DEPT_CONFIG_HEADERS'],
 });
 const DC_HEADERS = h.consts.DEPT_CONFIG_HEADERS;
@@ -133,6 +133,93 @@ test('R12-24: violationsMtd sums month-to-date through the range end (range viol
   assert.equal(rep.grandTotals.violationsMtd, 4);
   // Counts/durations stay range-scoped: only Jun 10 rows.
   assert.equal(d.totals.totalCalls, 80);
+});
+
+// ---- Round-16: the MTD verdict block (owner spec) --------------------------
+//
+// The verdict band's MTD sub-lines compare month-start(range end)..end
+// against the ENTIRE previous month -- a FULL-MONTH baseline, deliberately
+// NOT the INV-28 same-length window (percentages are ratios; volume is
+// compared as per-WORKDAY averages so unequal window lengths stay fair).
+
+test('mtd block: month windows, workday counts, and totals include a dept quiet on the range day', function () {
+  // Jun 10 2026 = Wednesday. MTD Jun 1(Mon)..Jun 10 = 8 workdays.
+  // Prior = ALL of May 2026 = 21 workdays (no COMPANY_HOLIDAYS set).
+  // Beta has MTD activity but ZERO calls on the range day -- it is omitted
+  // from depts[] (the legacy active-queues rule) yet MUST still contribute
+  // to the company MTD totals, which is why the accumulation sits before
+  // the dTotal===0 skip.
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Ben, 401'] }),
+    [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Beta', 'A_Q_Beta')],
+    [
+      qcdRow('2026-06-10', 'A_Q_Alpha', 100, 90, 10, 0),   // the selected day
+      qcdRow('2026-06-03', 'A_Q_Alpha',  50, 45,  5, 0),   // MTD, before the range
+      qcdRow('2026-06-04', 'A_Q_Beta',   30, 30,  0, 0),   // MTD only -- Beta quiet on Jun 10
+      qcdRow('2026-05-15', 'A_Q_Alpha', 200, 180, 20, 0),  // prior month
+      qcdRow('2026-05-20', 'A_Q_Beta',  100, 95,  5, 0),   // prior month
+      qcdRow('2026-04-30', 'A_Q_Alpha', 999, 1, 998, 0),   // outside BOTH windows
+    ]);
+  const rep = h.call('getQcdAllDepartments', { from: '2026-06-10', to: '2026-06-10' });
+
+  assert.equal(rep.depts.length, 1, 'Beta (quiet on the range day) is not a section');
+  const m = rep.mtd;
+  assert.ok(m, 'payload carries the mtd block');
+  assert.equal(m.from, '2026-06-01');
+  assert.equal(m.to, '2026-06-10');
+  assert.equal(m.priorFrom, '2026-05-01');
+  assert.equal(m.priorTo, '2026-05-31', 'prior window is the FULL previous month');
+  assert.equal(m.priorLabel, 'May');
+  assert.equal(m.workdays, 8);
+  assert.equal(m.priorWorkdays, 21);
+  assert.equal(m.totalCalls, 180, 'MTD totals include the quiet dept (100+50+30)');
+  assert.equal(m.answered, 165);
+  assert.equal(m.abandoned, 15);
+  assert.ok(Math.abs(m.abandonedPct - (15 / 180 * 100)) < 1e-9);
+  assert.equal(m.priorTotalCalls, 300, 'April row excluded');
+  assert.equal(m.priorAnswered, 275);
+  assert.equal(m.priorAbandoned, 25);
+  // Round-16 Option 1: each queue row carries its own MTD/prior-month call
+  // totals (per-queue pace sub-line + CSV), from the same window passes.
+  const alphaQ = rep.depts[0].queues[0];
+  assert.equal(alphaQ.mtdTotalCalls, 150, 'Alpha queue MTD = Jun 3 + Jun 10 (50+100)');
+  assert.equal(alphaQ.priorTotalCalls, 200, 'Alpha queue prior = the May row');
+});
+
+test('mtd block: the F-36 unique-queue dedup applies to MTD and prior-month totals too', function () {
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Ben, 401'] }),
+    [dcRow('Alpha', 'A_Q_Shared'), dcRow('Beta', 'A_Q_Shared')],
+    [
+      qcdRow('2026-06-01', 'A_Q_Shared', 100, 90, 10, 0),
+      qcdRow('2026-05-10', 'A_Q_Shared', 80, 75, 5, 0),
+    ]);
+  const rep = h.call('getQcdAllDepartments', { from: '2026-06-01', to: '2026-06-01' });
+  assert.equal(rep.mtd.totalCalls, 100, 'double-mapped queue counts once in MTD');
+  assert.equal(rep.mtd.priorTotalCalls, 80, 'and once in the prior month');
+});
+
+test('mtd block: the email KPI tiles render the MTD sub-lines (and omit them without mtd)', function () {
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'] }),
+    [dcRow('Alpha', 'A_Q_Alpha')],
+    [
+      qcdRow('2026-06-10', 'A_Q_Alpha', 100, 90, 10, 0),
+      qcdRow('2026-06-03', 'A_Q_Alpha',  50, 45,  5, 0),
+      qcdRow('2026-05-15', 'A_Q_Alpha', 210, 190, 20, 0),
+    ]);
+  const rep = h.call('getQcdAllDepartments', { from: '2026-06-10', to: '2026-06-10' });
+  const html = h.call('buildQueueReportEmailHtml_', rep, '2026-06-10', false);
+  // ('MTD' alone is a weak marker -- the Viol column header carries it too.)
+  // MTD avg = 150 calls / 8 workdays = 18.75 -> 19/day; prior 210/21 = 10/day.
+  assert.ok(html.indexOf('19/day') !== -1, 'volume sub-line is a per-workday average');
+  assert.ok(html.indexOf('pts vs May') !== -1, 'percent deltas name the prior month');
+  // A payload with no mtd (defensive path) renders the pre-v6 tiles.
+  const stripped = JSON.parse(JSON.stringify(rep));
+  delete stripped.mtd;
+  const html2 = h.call('buildQueueReportEmailHtml_', stripped, '2026-06-10', false);
+  assert.ok(html2.indexOf('/day') === -1 && html2.indexOf('pts vs') === -1,
+    'no mtd block -> no MTD sub-lines');
 });
 
 test('rangeOnly perf flag: queueBreakdown + totals are byte-identical to a full compute when out-of-range trend rows exist', function () {
@@ -340,6 +427,37 @@ test('R-1: computeDeptQcdSnapshot_ (My Department panel) identical from sheet an
     { from: '2026-06-01', to: '2026-06-02' });
   assert.equal(JSON.stringify(n), JSON.stringify(s), 'panel payload matches across sources');
   assert.ok(s && s.date, 'sanity: non-null snapshot with a latest date');
+});
+
+test('Round-16: qcdSnapshot ships mtdPrior (ENTIRE previous month) + workday counts for the MTD-view deltas', function () {
+  // Latest data day Jun 10 2026 (Wed) -> MTD anchor month June: Jun 1(Mon)..
+  // Jun 10 = 8 workdays; prior = ALL of May = 21 workdays. April excluded.
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'] }),
+    [dcRow('Alpha', 'A_Q_Alpha')],
+    [
+      qcdRow('2026-06-10', 'A_Q_Alpha', 100, 90, 10, 1),
+      qcdRow('2026-06-03', 'A_Q_Alpha',  50, 45,  5, 0),
+      qcdRow('2026-05-15', 'A_Q_Alpha', 200, 180, 20, 2),
+      qcdRow('2026-04-30', 'A_Q_Alpha', 999, 1, 998, 9),   // outside both windows
+    ]);
+  // The R-1 parity tests above leave QCD_READ_SOURCE='neon' + a stubbed conn
+  // behind; this test reads the SHEET fixture.
+  h.state.props.QCD_READ_SOURCE = '';
+  const snap = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago', {});
+  assert.ok(snap && snap.mtd, 'snapshot with an mtd block');
+  assert.equal(snap.mtdStart, '2026-06-01');
+  assert.equal(snap.mtdPriorStart, '2026-05-01');
+  assert.equal(snap.mtdPriorEnd, '2026-05-31', 'prior window is the FULL previous month');
+  assert.equal(snap.mtdPriorLabel, 'May');
+  assert.equal(snap.mtdWorkdays, 8);
+  assert.equal(snap.mtdPriorWorkdays, 21);
+  assert.equal(snap.mtd.totalCalls, 150, 'MTD = Jun 3 + Jun 10');
+  assert.equal(snap.mtdPrior.totalCalls, 200, 'prior = the May row only');
+  assert.equal(snap.mtdPrior.abandoned, 20);
+  // Same builder both sides: the per-queue pages line up by queue name.
+  assert.equal(snap.mtdPrior.perQueue.length, 1);
+  assert.equal(snap.mtdPrior.perQueue[0].queue, 'A_Q_Alpha');
 });
 
 test('R-1: neonGetMaxQcdDate_ serves the freshness pill QCD component; null falls back', function () {

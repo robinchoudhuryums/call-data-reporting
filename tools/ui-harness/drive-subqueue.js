@@ -167,7 +167,11 @@ async function openDeptThirtyDays(page) {
       agent: px(agentRow, 'fontSize'),
       subtotal: px(subTd, 'fontSize'),
       total: px(totTd, 'fontSize'),
-      agentBar: px(q('#agents-tbody tr[data-agent] .ans-track'), 'height'),
+      // Round-16: AGENT rows carry the volume-proportional TALLY; subtotal +
+      // totals rows keep the classic proportional .ans-track bar. Measure the
+      // rendered reality of both, not a class name.
+      agentTallyBlocks: (q('#agents-tbody tr[data-agent] .ans-tally') || { children: [] }).children.length,
+      agentTrack: !!q('#agents-tbody tr[data-agent] .ans-track'),
       subBar: px(q('#agents-tbody tr.subq-subtotal .ans-track'), 'height'),
     };
   });
@@ -177,9 +181,10 @@ async function openDeptThirtyDays(page) {
   record('the grand total row renders larger than agent rows',
     !!weight.total && !!weight.agent && weight.total > weight.agent,
     'total=' + weight.total + ' agent=' + weight.agent);
-  record('and their split bars scale with them',
-    !weight.subBar || !weight.agentBar || weight.subBar > weight.agentBar,
-    'subBar=' + weight.subBar + ' agentBar=' + weight.agentBar);
+  record('agent rows render the volume tally; subtotal rows keep the proportional bar',
+    weight.agentTallyBlocks > 0 && !weight.agentTrack && !!weight.subBar,
+    'tallyBlocks=' + weight.agentTallyBlocks + ' agentTrack=' + weight.agentTrack
+    + ' subBar=' + weight.subBar);
 
   // ---- the parity property: parent subtotal == its own-scope total --------
   // Previously this switched to the "own" tab and compared the rendered totals

@@ -1,0 +1,963 @@
+  // ===================================================================
+  // All-departments daily call queue report (4b). Admin-only; launched
+  // from the Overview "Daily Call Queue Report" button. Flat company-wide
+  // queue table reproducing the legacy emailed PDF, with CSV + print.
+  // ===================================================================
+  var qcdAllDeptLast = null;
+  var qcdAllDeptReqSeq_ = 0;   // stale-response token for runQcdAllDept_
+
+  function initQcdAllDept_() {
+    const btn   = $('ov-qcd-alldept-btn');
+    const modal = $('qcd-alldept-modal');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel-wide') || modal.querySelector('.modal-panel'));
+      document.addEventListener('keydown', onKeyDown);
+      // Pre-load (#1a): default to yesterday and generate immediately, so the
+      // report opens ready-to-read instead of a blank form.
+      qcdAllDeptDefaultDates_();
+      runQcdAllDept_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel-wide') || modal.querySelector('.modal-panel'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // In-modal date changer (#1b): a preset change re-generates immediately; a
+    // manual date edit flips the preset to Custom and the user clicks Update.
+    const preset = $('qcd-alldept-preset');
+    if (preset) preset.addEventListener('change', function () { qcdAllDeptApplyPreset_(); runQcdAllDept_(); });
+    ['qcd-alldept-from', 'qcd-alldept-to'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.addEventListener('change', function () {
+        const p = $('qcd-alldept-preset');
+        if (p) p.value = 'custom';
+      });
+    });
+    const refresh = $('qcd-alldept-refresh-btn');
+    if (refresh) refresh.addEventListener('click', function () { runQcdAllDept_(); });
+
+    // R11-B3: Export dropdown (Download CSV / Print / Email me). QV-4's
+    // caller-only email rides the Export button for its "Sending…" feedback.
+    const qadExportBtn = $('qcd-alldept-export-btn');
+    const qadExportMenu = $('qcd-alldept-export-menu');
+    const qadEmailSelf = function () {
+      const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
+      if (!meta || !meta.from || !meta.to || !qadExportBtn) return;
+      qadExportBtn.disabled = true;
+      const prev = qadExportBtn.innerHTML;
+      qadExportBtn.textContent = 'Sending…';
+      google.script.run
+        .withSuccessHandler(function (res) {
+          qadExportBtn.disabled = false; qadExportBtn.innerHTML = prev;
+          showToast('Report emailed to ' + ((res && res.to) || 'you') + '.');
+        })
+        .withFailureHandler(function (err) {
+          qadExportBtn.disabled = false; qadExportBtn.innerHTML = prev;
+          showToast('Email failed: ' + (err && err.message ? err.message : String(err)), 'error');
+        })
+        .sendQcdAllDeptEmail({ from: meta.from, to: meta.to });
+    };
+    if (qadExportBtn && qadExportMenu) {
+      const setOpen = function (open) {
+        qadExportMenu.style.display = open ? '' : 'none';
+        qadExportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      qadExportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setOpen(qadExportMenu.style.display === 'none');
+      });
+      qadExportMenu.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        setOpen(false);
+        const action = item.getAttribute('data-action');
+        if (action === 'csv')        qcdAllDeptCsv_(qcdAllDeptLast);
+        else if (action === 'print') qcdAllDeptPrint_(qcdAllDeptLast);
+        else if (action === 'email') qadEmailSelf();
+      });
+      document.addEventListener('click', function (e) {
+        if (qadExportMenu.style.display === 'none') return;
+        if (qadExportBtn.contains(e.target) || qadExportMenu.contains(e.target)) return;
+        setOpen(false);
+      });
+    }
+
+    // QV-5 (admin-only): manual subscriber blast of the displayed SINGLE day.
+    // Ranges are for self-sends -- the subscriber engine is single-day, so
+    // qcdAllDeptRender_ disables this button on multi-day views. dsConfirm_
+    // per the confirm-dialog convention (never window.confirm).
+    const blastBtn = $('qcd-alldept-blast-btn');
+    if (blastBtn) blastBtn.addEventListener('click', function () {
+      const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
+      if (!meta || !meta.from || meta.from !== meta.to || blastBtn.disabled) return;
+      const day = meta.from;
+      dsConfirm_({
+        title: 'Send to all subscribers',
+        message: 'Email the ' + day + ' Daily Call Queue Report to every active subscriber now? '
+          + 'If this is the day the automated morning send targets, sending here claims that '
+          + 'day so subscribers are not emailed twice.',
+        confirmLabel: 'Send now', cancelLabel: 'Cancel',
+      }).then(function (ok) {
+        if (!ok) return;
+        blastBtn.disabled = true;
+        const prev = blastBtn.textContent;
+        blastBtn.textContent = 'Sending…';
+        google.script.run
+          .withSuccessHandler(function (res) {
+            blastBtn.disabled = false; blastBtn.textContent = prev;
+            const failed = (res && res.failed && res.failed.length) || 0;
+            showToast('Sent ' + day + ' to ' + ((res && res.count) || 0) + ' subscriber'
+              + (res && res.count === 1 ? '' : 's')
+              + (failed ? ' (' + failed + ' failed — admins notified via the modal log)' : '')
+              + (res && res.markerClaimed ? ' · claimed today’s automated send' : '')
+              + ((res && res.count) === 0 ? ' — no active subscribers' : '') + '.');
+          })
+          .withFailureHandler(function (err) {
+            blastBtn.disabled = false; blastBtn.textContent = prev;
+            showToast('Send failed: ' + (err && err.message ? err.message : String(err)), 'error');
+          })
+          .sendQcdAllDeptToSubscribers({ date: day });
+      });
+    });
+
+    // Delegated expand/collapse for the per-queue call-source detail (#1c).
+    // Wired once; survives re-renders (the tbody content is replaced, this
+    // listener on the container is not).
+    const bodyEl = $('qcd-alldept-body');
+    if (bodyEl && !bodyEl._qcdAllExpandWired) {
+      bodyEl._qcdAllExpandWired = true;
+      bodyEl.addEventListener('click', function (e) {
+        const row = e.target.closest && e.target.closest('tr.qcd-expandable');
+        if (!row) return;
+        qcdToggleExpandRow_(row);
+      });
+      // F13: keyboard equivalent (the per-source breakdown + violation dates
+      // are only reachable through this toggle).
+      bodyEl.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const row = e.target.closest && e.target.closest('tr.qcd-expandable');
+        if (!row) return;
+        if (e.target.closest('button')) return;   // let real buttons act
+        e.preventDefault();
+        qcdToggleExpandRow_(row);
+      });
+    }
+  }
+
+  function qcdAllDeptIsoOf_(d) {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  // Most recent WORKDAY on or before yesterday: walks back over Sat/Sun and
+  // company holidays (server-injected __COMPANY_HOLIDAYS__, the INV-35
+  // ranges). Client mirror of Util.gs::prevBusinessDayIso_'s semantics.
+  function prevWorkdayIso_() {
+    const holidays = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
+    const isHoliday = function (iso) {
+      for (let i = 0; i < holidays.length; i++) {
+        if (iso >= holidays[i].from && iso <= holidays[i].to) return true;
+      }
+      return false;
+    };
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    for (let guard = 0; guard < 30; guard++) {
+      const dow = d.getDay();
+      if (dow !== 0 && dow !== 6 && !isHoliday(qcdAllDeptIsoOf_(d))) break;
+      d.setDate(d.getDate() - 1);
+    }
+    return qcdAllDeptIsoOf_(d);
+  }
+
+  function qcdAllDeptDefaultDates_() {
+    // Default to the most recent day that actually has queue data (the
+    // latest QCD date from the init fetch), falling back to the previous
+    // WORKDAY -- literal calendar yesterday is a weekend/holiday after a
+    // Monday-morning open, which rendered an empty report.
+    const now = new Date();
+    const literalYesterday = qcdAllDeptIsoOf_(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+    const iso = latestQcdIso_ || prevWorkdayIso_();
+    $('qcd-alldept-from').value = iso;
+    $('qcd-alldept-to').value   = iso;
+    // Keep the preset honest: only claim "Yesterday" when the chosen date
+    // IS literal yesterday; otherwise show Custom so the label can't lie.
+    const p = $('qcd-alldept-preset');
+    if (p) p.value = (iso === literalYesterday) ? 'yesterday'
+      : (iso === qcdAllDeptIsoOf_(now) ? 'today' : 'custom');
+  }
+
+  function qcdAllDeptApplyPreset_() {
+    const v = $('qcd-alldept-preset').value;
+    if (v === 'custom') return;
+    const now = new Date();
+    let s, e;
+    if (v === 'today') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      e = new Date(s);
+    } else if (v === 'yesterday') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      e = new Date(s);
+    } else if (v === 'thisMonth') {
+      s = new Date(now.getFullYear(), now.getMonth(), 1);
+      e = now;
+    } else if (v === 'lastMonth') {
+      s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      e = new Date(now.getFullYear(), now.getMonth(), 0);
+    } else if (v === 'last30') {
+      // "Last 30 days" = 30 days ending yesterday (see applyIrPreset) --
+      // also matches this report's yesterday-anchored default date.
+      e = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+    } else {
+      return;
+    }
+    $('qcd-alldept-from').value = qcdAllDeptIsoOf_(s);
+    $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(e);
+  }
+
+  function runQcdAllDept_() {
+    const from = $('qcd-alldept-from').value;
+    const to   = $('qcd-alldept-to').value;
+    const err  = $('qcd-alldept-form-error');
+    err.style.display = 'none';
+    if (!from || !to) {
+      err.textContent = 'Pick a start and end date.';
+      err.style.display = '';
+      return;
+    }
+    if (from > to) {
+      err.textContent = 'Start date must be on or before end date.';
+      err.style.display = '';
+      return;
+    }
+    const gen = $('qcd-alldept-refresh-btn');
+    const orig = gen ? gen.innerHTML : '';
+    if (gen) { gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Updating…'; }
+    // Stale-response token: the preset selector re-runs immediately on every
+    // change, so rapid switches overlap requests -- only the newest response
+    // may write qcdAllDeptLast (which feeds CSV/Print) or repaint the table.
+    var __tok = ++qcdAllDeptReqSeq_;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__tok !== qcdAllDeptReqSeq_) return;   // superseded by a newer run
+        if (gen) { gen.disabled = false; gen.innerHTML = orig; }
+        qcdAllDeptLast = data;
+        qcdAllDeptRender_(data);
+      })
+      .withFailureHandler(function (e) {
+        if (__tok !== qcdAllDeptReqSeq_) return;   // a newer run owns the table
+        if (gen) { gen.disabled = false; gen.innerHTML = orig; }
+        err.textContent = (e && e.message) ? e.message : String(e);
+        err.style.display = '';
+      })
+      .getQcdAllDepartments({ from: from, to: to });
+  }
+
+  // Renders the flat company-wide table: a section per department (its
+  // subtotal as a heading row), one row per queue, and a grand-total
+  // footer. Abandoned % >= 5% and any violation count are warn-tinted
+  // (same thresholds as the per-dept QCD report).
+  // Seconds -> H:MM:SS (client-side; server uses formatSecondsHms_).
+  function qcdSecToHms_(sec) {
+    sec = Math.max(0, Math.round(Number(sec) || 0));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  // #3: combined section total across a set of queue rows (parent own +
+  // nested children). Sums volume/answered/abandoned/violations; longest =
+  // MAX; avg answer = volume-weighted -- using the raw *Sec fields the server
+  // now sends. Returns the same shape qcdDailyBarCell_ + the row cells read.
+  // R12-24: display violations are MONTH-TO-DATE (server violationsMtd);
+  // fall back to the range figure for a pre-v5 cached payload.
+  function qcdViolShow_(o) {
+    return (o && o.violationsMtd != null) ? (Number(o.violationsMtd) || 0)
+      : (Number((o || {}).violations) || 0);
+  }
+  function qcdAllDeptSectionTotal_(queues) {
+    var tot = 0, ans = 0, abnd = 0, viol = 0, violMtd = 0, longestSec = 0, avgWSum = 0, avgWN = 0;
+    (queues || []).forEach(function (q) {
+      tot  += Number(q.totalCalls)    || 0;
+      ans  += Number(q.totalAnswered) || 0;
+      abnd += Number(q.abandoned)     || 0;
+      viol += Number(q.violations)    || 0;
+      violMtd += qcdViolShow_(q);
+      var ls = Number(q.longestWaitSec) || 0;
+      if (ls > longestSec) longestSec = ls;
+      var as = Number(q.avgAnswerSec) || 0, a = Number(q.totalAnswered) || 0;
+      if (as > 0 && a > 0) { avgWSum += as * a; avgWN += a; }
+    });
+    var pct = tot > 0 ? (abnd / tot) * 100 : 0;
+    return {
+      totalCalls: tot, totalAnswered: ans, abandoned: abnd,
+      abandonedPct: pct, abandonedPctStr: pct.toFixed(2) + '%',
+      longestWait: qcdSecToHms_(longestSec),
+      avgAnswer: qcdSecToHms_(avgWN > 0 ? Math.round(avgWSum / avgWN) : 0),
+      violations: viol,
+      violationsMtd: violMtd,
+    };
+  }
+
+  // Verdict layer (design update): a KPI band + alert callout rendered ABOVE the
+  // table, derived from data.grandTotals (F-36-deduped, correct total-abandoned/
+  // total-offered basis -- NOT a client re-sum of the sections, which would
+  // double-count a queue mapped to two depts). "Queues in violation" = count of
+  // UNIQUE queues with abandoned % >= 5% (owner ruling; distinct from the
+  // Violations column). No new server call; the table/CSV/print are unchanged.
+  // The 5%-overage callout uses .is-warn (not .is-bad) per the CSS-token
+  // convention: --bad is hard errors, --warn is warnings (a threshold overage).
+  function qcdAllDeptVerdictHtml_(data) {
+    const g = (data && data.grandTotals) || {};
+    const depts = (data && data.depts) || [];
+    const total = Number(g.totalCalls) || 0;
+    const ans = Number(g.totalAnswered) || 0;
+    const companyPct = Number(g.abandonedPct) || 0;
+    const companyPctStr = g.abandonedPctStr || (companyPct.toFixed(2) + '%');
+    const answeredPct = total > 0 ? (ans / total * 100) : 0;
+    const seen = {}, offenders = [];
+    depts.forEach(function (d) {
+      (d.queues || []).forEach(function (q) {
+        if (seen[q.queue]) return; seen[q.queue] = true;
+        if (Number(q.abandonedPct) >= 5) {
+          offenders.push({ queue: q.queue, pct: Number(q.abandonedPct) || 0,
+            pctStr: q.abandonedPctStr || (Number(q.abandonedPct) || 0).toFixed(1) + '%',
+            viol: Number(q.violations) || 0 });
+        }
+      });
+    });
+    offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
+    const tile = function (label, value, tone, subHtml) {
+      return '<div class="qcd-verdict-tile qcd-verdict--' + tone + '">'
+        + '<div class="qcd-verdict-label">' + label + '</div>'
+        + '<div class="qcd-verdict-value">' + escapeHtml(String(value)) + '</div>'
+        + (subHtml || '') + '</div>';
+    };
+    // MTD sub-lines (owner spec, Round-16): MTD = month-start(range end)..end,
+    // compared against the ENTIRE previous month (full-month baseline, not
+    // INV-28 same-length). Percent deltas are pts; Total Calls compares
+    // per-WORKDAY averages so unequal window lengths stay comparable. Chip
+    // valence follows E5: aban down / answered up = sage, the reverse =
+    // orange; the volume delta stays MUTED (demand, not performance). Under
+    // MTD_MIN_WORKDAYS_ elapsed workdays every chip mutes (the E5
+    // noise-threshold idea). Renders nothing when the payload has no mtd
+    // (defensive: the v6 cache prefix already retires old blobs).
+    const MTD_MIN_WORKDAYS_ = 3;
+    const m = (data && data.mtd) || null;
+    const mtdUsable = !!(m && m.workdays > 0 && m.totalCalls > 0);
+    const priorUsable = !!(m && m.priorWorkdays > 0 && m.priorTotalCalls > 0);
+    const lowSignal = !!(m && m.workdays < MTD_MIN_WORKDAYS_);
+    const mtdWinTitle = m
+      ? ('MTD ' + m.from + ' → ' + m.to + ' (' + m.workdays + ' workdays) vs '
+         + m.priorFrom + ' → ' + m.priorTo + ' (' + m.priorWorkdays + ' workdays)'
+         + (lowSignal ? ' · under ' + MTD_MIN_WORKDAYS_ + ' workdays elapsed — low signal' : ''))
+      : '';
+    const mtdChip_ = function (deltaTxt, tone) {
+      const cls = lowSignal ? 'wow-chip-muted' : ('wow-chip-' + tone);
+      return '<span class="wow-chip ' + cls + '">' + escapeHtml(deltaTxt) + '</span>';
+    };
+    const mtdSub_ = function (valueTxt, chipHtml) {
+      return '<div class="qcd-mtd-sub" title="' + escapeHtml(mtdWinTitle) + '">'
+        + '<span class="mtd-k">MTD</span>'
+        + '<span class="mtd-v">' + escapeHtml(valueTxt) + '</span>'
+        + (chipHtml || '') + '</div>';
+    };
+    const mtdSpacer = mtdUsable
+      ? '<div class="qcd-mtd-sub qcd-mtd-sub--spacer" aria-hidden="true"><span class="mtd-k">·</span></div>'
+      : '';
+    let mtdAbanSub = '', mtdCallsSub = '', mtdAnsSub = '';
+    if (mtdUsable) {
+      const mAbanPct = Number(m.abandonedPct) || 0;
+      const mAnsPct = m.totalCalls > 0 ? (m.answered / m.totalCalls * 100) : 0;
+      const mAvg = m.workdays > 0 ? (m.totalCalls / m.workdays) : 0;
+      if (priorUsable) {
+        const pAbanPct = Number(m.priorAbandonedPct) || 0;
+        const pAnsPct = m.priorTotalCalls > 0 ? (m.priorAnswered / m.priorTotalCalls * 100) : 0;
+        const pAvg = m.priorWorkdays > 0 ? (m.priorTotalCalls / m.priorWorkdays) : 0;
+        const dAban = mAbanPct - pAbanPct;
+        const dAns = mAnsPct - pAnsPct;
+        const dAvgPct = pAvg > 0 ? ((mAvg - pAvg) / pAvg * 100) : 0;
+        const vsLbl = ' vs ' + (m.priorLabel || 'prior');
+        mtdAbanSub = mtdSub_(mAbanPct.toFixed(2) + '%',
+          mtdChip_((dAban <= 0 ? '▼ ' : '▲ ') + Math.abs(dAban).toFixed(2) + ' pts' + vsLbl,
+                   dAban <= 0 ? 'good' : 'warn'));
+        mtdCallsSub = mtdSub_(Math.round(mAvg).toLocaleString() + '/day',
+          '<span class="wow-chip wow-chip-muted">'
+          + escapeHtml((dAvgPct >= 0 ? '▲ ' : '▼ ') + Math.abs(dAvgPct).toFixed(1) + '%' + vsLbl)
+          + '</span>');
+        mtdAnsSub = mtdSub_(mAnsPct.toFixed(1) + '%',
+          mtdChip_((dAns >= 0 ? '▲ ' : '▼ ') + Math.abs(dAns).toFixed(1) + ' pts' + vsLbl,
+                   dAns >= 0 ? 'good' : 'warn'));
+      } else {
+        // No usable prior month: MTD values render, chips are omitted.
+        mtdAbanSub = mtdSub_(mAbanPct.toFixed(2) + '%');
+        mtdCallsSub = mtdSub_(Math.round(mAvg).toLocaleString() + '/day');
+        mtdAnsSub = mtdSub_(mAnsPct.toFixed(1) + '%');
+      }
+    }
+    // QV-3: the company abandon% leads as a HERO tile -- big number, a 0-10%
+    // target bar with the 5% tick at midpoint, and "N of M calls lost" --
+    // so "is today bad?" answers before the table. Company pct comes from
+    // grandTotals (total abandoned / total offered -- already the correct
+    // aggregate, never an average of per-queue rates). Tone stays BINARY on
+    // the 5% standard (the benchValueCls_ convention). The verdict container
+    // is outside #qcd-alldept-body, so it never enters the print clone.
+    const abandoned = Number(g.abandoned) || Math.max(0, total - ans);
+    const heroFill = Math.max(0, Math.min(100, companyPct * 10));   // 0-10% scale
+    const heroTone = companyPct >= 5 ? 'warn' : 'good';
+    const hero = '<div class="qcd-hero qcd-hero--' + heroTone + '">'
+      + '<div class="qcd-verdict-label">Company abandoned %</div>'
+      + '<div class="qcd-hero-value">' + escapeHtml(companyPctStr) + '</div>'
+      + '<div class="qcd-hero-bar" title="0–10% scale · tick = the 5% company standard">'
+      +   '<span class="qcd-hero-fill" style="width:' + heroFill + '%"></span>'
+      +   '<span class="qcd-hero-tick"><span class="qcd-hero-tick-lbl">5%</span></span>'
+      + '</div>'
+      + '<div class="qcd-hero-sub">' + fmtNumber(abandoned) + ' of ' + fmtNumber(total)
+      +   ' calls lost</div>'
+      + mtdAbanSub
+      + '</div>';
+    const band = '<div class="qcd-verdict-band qcd-verdict-band--hero">'
+      + hero
+      + '<div class="qcd-verdict-rest">'
+      + tile('Total calls', fmtNumber(total), 'neu', mtdCallsSub)
+      + tile('Queues in violation', fmtNumber(offenders.length), offenders.length > 0 ? 'warn' : 'neu', mtdSpacer)
+      + tile('Answered %', answeredPct.toFixed(1) + '%', 'good', mtdAnsSub)
+      + '</div></div>';
+    // R10-8: the Watch/On-track callout banner is RETIRED (owner): the queue
+    // rows are already color-coded and the "Queues in violation" tile carries
+    // the count, so the banner restated both.
+    return band;
+  }
+
+  function qcdAllDeptRender_(data) {
+    // R12-26: host is the RESULTS wrapper, not #qcd-alldept-body -- the body's
+    // innerHTML is rewritten below (which would wipe the note) and the print
+    // clone reads only the body, so the note stays out of print.
+    coverageNoteUpsert_('qcd-alldept-results', 'qcdAll',
+      (data && data.meta && data.meta.from) || null, 'qcd');
+    $('qcd-alldept-results-date').textContent = data.dateLabel || '';
+    // QV-5: the subscriber blast is single-day only (the engine's unit of
+    // send); disable it with a reason on multi-day views.
+    const blastBtn = $('qcd-alldept-blast-btn');
+    if (blastBtn) {
+      const singleDay = !!(data.meta && data.meta.from && data.meta.from === data.meta.to);
+      blastBtn.disabled = !singleDay;
+      blastBtn.title = singleDay
+        ? 'Email the displayed day to every active subscriber now'
+        : 'Subscriber sends are single-day — narrow the range to one day first';
+    }
+    const empty = $('qcd-alldept-empty');
+    const body  = $('qcd-alldept-body');
+    const verdict = $('qcd-alldept-verdict');
+    const depts = (data && data.depts) || [];
+    if (!depts.length) {
+      body.innerHTML = '';
+      if (verdict) verdict.innerHTML = '';
+      empty.innerHTML = emptyStateHtml_('&#128202;', 'No queue activity in range',
+        'No department had Total Calls in the selected window. Try a wider range.');
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+    if (verdict) verdict.innerHTML = qcdAllDeptVerdictHtml_(data);
+
+    const cell = function (pct, viol) {
+      return { violCls: (Number(viol) > 3 ? ' qcd-warn-strong' : (Number(viol) > 0 ? ' qcd-warn-light' : '')) };
+    };
+    // #3: nest sub-queue depts under their parent's banner. A dept is a child
+    // when its `parent` names another dept present here; otherwise it's a
+    // top-level section (an orphaned child falls back to its own banner).
+    const byName = {};
+    depts.forEach(function (d) { byName[d.dept] = d; });
+    const childrenOf = {};
+    const topLevel = [];
+    depts.forEach(function (d) {
+      if (d.parent && byName[d.parent]) {
+        (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d);
+      } else {
+        topLevel.push(d);
+      }
+    });
+    // Convenience: float the VIEWER's own dept's section to the top. If their
+    // dept is a sub-queue (nested child), float its parent section instead so
+    // their dept still appears in the first section. No-op for admins with no
+    // dept / a dept absent from this window. (Array.sort is stable in V8.)
+    const myDept = (typeof USER !== 'undefined' && USER && USER.department) ? USER.department : '';
+    let mySection = '';
+    if (myDept && byName[myDept]) {
+      const md = byName[myDept];
+      mySection = (md.parent && byName[md.parent]) ? md.parent : myDept;
+      topLevel.sort(function (a, b) {
+        return (a.dept === mySection ? 0 : 1) - (b.dept === mySection ? 0 : 1);
+      });
+    }
+
+    // #1d: Answered / Abandoned / Abandoned % fold into ONE split-bar column
+    // (shared qcdDailyBarCell_). 6 columns.
+    const NCOLS = 6;
+    let html = '<table class="qcd-alldept-table agents"><thead><tr>'
+      + '<th>Queue</th><th class="num">Total</th><th>Answered vs Abandoned</th>'
+      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num" title="Month-to-date 5%-violation days through this report\u2019s end date (not just this range)">Viol (MTD)</th>'
+      + '</tr></thead>';
+    // Round-16 per-queue MTD pace (Option 1): a muted mono sub-line under the
+    // queue name -- "MTD Ø <avg>/day · <prior month> <avg> <▲/▼ %>", averages
+    // per WORKDAY from the payload's mtd block (same windows + workday counts
+    // as the verdict band above, so every level reconciles). Deltas stay
+    // NEUTRAL text (volume is demand, not performance -- the band's rule).
+    // A queue with no prior-month activity reads "new this month"; a queue
+    // with no MTD activity at all renders no line. Null-guarded on mtd.
+    const mtdMeta = (data && data.mtd) || null;
+    const qMtdSub = function (q) {
+      if (!mtdMeta || !(mtdMeta.workdays > 0)) return '';
+      const mCalls = Number(q.mtdTotalCalls) || 0;
+      const pCalls = Number(q.priorTotalCalls) || 0;
+      if (!mCalls && !pCalls) return '';
+      const mAvg = Math.round(mCalls / mtdMeta.workdays);
+      const pAvg = mtdMeta.priorWorkdays > 0 ? (pCalls / mtdMeta.priorWorkdays) : 0;
+      const pLbl = mtdMeta.priorLabel || 'prior';
+      const title = 'MTD ' + mtdMeta.from + ' → ' + mtdMeta.to + ' (' + mtdMeta.workdays
+        + ' workdays): ' + fmtNumber(mCalls) + ' calls · ' + pLbl + ' '
+        + mtdMeta.priorFrom + ' → ' + mtdMeta.priorTo + ' (' + mtdMeta.priorWorkdays
+        + ' workdays): ' + fmtNumber(pCalls) + ' calls';
+      let tail;
+      if (pAvg > 0) {
+        const dPct = (mAvg - pAvg) / pAvg * 100;
+        tail = pLbl + ' ' + Math.round(pAvg)
+          + ' <span class="qcd-q-sub-delta">' + (dPct >= 0 ? '▲' : '▼') + ' '
+          + Math.abs(dPct).toFixed(1) + '%</span>';
+      } else {
+        tail = 'new this month';
+      }
+      return '<div class="qcd-q-sub" title="' + escapeHtml(title) + '">MTD Ø '
+        + mAvg + '/day &middot; ' + tail + '</div>';
+    };
+    const queueRow = function (q, sub) {
+      const qViolShow = qcdViolShow_(q);
+      const c = cell(q.abandonedPct, qViolShow);
+      const subTag = sub ? ' <span class="qcd-alldept-subq">&middot; ' + escapeHtml(sub) + '</span>' : '';
+      // #1c: expand into the per-call-source breakdown (+ violation dates).
+      const sources = q.bySource || [];
+      const hasViolDates = (Number(q.violations) || 0) > 0 && (q.violationDates || []).length;
+      const hasDetail = sources.length > 0 || hasViolDates;
+      const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
+      // F13: only the rows that actually expand become focusable.
+      let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '"'
+        + (hasDetail ? ' tabindex="0" aria-expanded="false"' : '') + '>'
+        + '<td>' + escapeHtml(q.queue) + subTag + chevron + qMtdSub(q) + '</td>'
+        + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
+        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true }) + '</td>'   // QV-1
+        + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
+        + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
+        + '<td class="num' + c.violCls + '">' + fmtNumber(qViolShow) + '</td>'
+        + '</tr>';
+      if (hasDetail) {
+        let detail = qcdSourceSubtableHtml_(sources);
+        if (hasViolDates) {
+          detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
+            + q.violationDates.map(fmtViolDate_).join(', ') + '</div>';
+        }
+        out += '<tr class="qcd-detail-row" style="display:none;"><td colspan="' + NCOLS + '">'
+          + '<div class="qcd-detail-wrap">' + detail + '</div></td></tr>';
+      }
+      return out;
+    };
+    topLevel.forEach(function (d) {
+      // Section queues: parent's own (untagged) + each child's (tagged).
+      const secItems = (d.queues || []).map(function (q) { return { q: q, sub: null }; });
+      (childrenOf[d.dept] || []).forEach(function (child) {
+        (child.queues || []).forEach(function (q) { secItems.push({ q: q, sub: child.dept }); });
+      });
+      // QV-2: the dept banner row leads with a health-toned rail + a bigger
+      // name + a right-aligned mini-summary. Tone is BINARY per the
+      // benchmark convention (no invented bands): warn when the section's
+      // abandon% >= 5 OR any of its queues is in violation; muted for a
+      // zero-call section; sage otherwise. The mini-summary is screen-only
+      // (stripped from the print clone; CSV builds from data).
+      const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
+      const secTotal = Number(st.totalCalls) || 0;
+      const secPct = Number(st.abandonedPct) || 0;
+      // R11-B2 (owner ruling): the dept banner's tone reads the department
+      // AS A WHOLE -- section abandon% vs the 5% standard ONLY. A sub-queue
+      // in violation keeps its own red row/violation cell, but no longer
+      // flips a healthy dept's banner to warn (CSR at 0.82% was reading red
+      // because A_Q_Spanish sat at 6.25%).
+      const tone = secTotal === 0 ? 'muted' : (secPct >= 5 ? 'warn' : 'good');
+      const secPctStr = st.abandonedPctStr || (secPct.toFixed(2) + '%');
+      // R10-8: the abandon% leads the mini-summary at full weight (it was an
+      // 11px muted afterthought); tone color rides the row's qcd-deptrow--*
+      // class via .qcd-mini-pct.
+      const mini = secTotal > 0
+        ? '<span class="qcd-deptrow-mini qcd-screen-only">' + fmtNumber(secTotal)
+          + ' calls &middot; <strong class="qcd-mini-pct">' + escapeHtml(secPctStr)
+          + '</strong> abandoned</span>'
+        : '<span class="qcd-deptrow-mini qcd-screen-only">no calls</span>';
+      html += '<tbody class="qcd-alldept-dept" data-dept="' + escapeHtml(d.dept) + '">'
+        + '<tr class="qcd-alldept-deptrow qcd-deptrow--' + tone + '"><td colspan="' + NCOLS + '">'
+        + '<span class="qcd-deptrow-name">' + escapeHtml(d.dept) + '</span>' + mini
+        + '</td></tr>';
+      secItems.forEach(function (item) { html += queueRow(item.q, item.sub); });
+      // #3: the "(dept) total" row is redundant for a single-queue section
+      // (the lone queue line IS the total), so show it only when >1 queue.
+      if (secItems.length > 1) {
+        const tc = cell(st.abandonedPct, qcdViolShow_(st));
+        html += '<tr class="qcd-alldept-subtotal">'
+          + '<td>' + escapeHtml(d.dept) + ' total</td>'
+          + '<td class="num">' + fmtNumber(st.totalCalls) + '</td>'
+          + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(st, { tick: true }) + '</td>'   // QV-1
+          + '<td class="num">' + escapeHtml(st.longestWait) + '</td>'
+          + '<td class="num">' + escapeHtml(st.avgAnswer) + '</td>'
+          + '<td class="num' + tc.violCls + '">' + fmtNumber(qcdViolShow_(st)) + '</td>'
+          + '</tr>';
+      }
+      html += '</tbody>';
+    });
+    const g = data.grandTotals || {};
+    const gc = cell(g.abandonedPct, qcdViolShow_(g));
+    html += '<tfoot><tr class="qcd-alldept-grand">'
+      + '<td>Company total</td>'
+      + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
+      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true }) + '</td>'   // QV-1
+      + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
+      + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
+      + '<td class="num' + gc.violCls + '">' + fmtNumber(qcdViolShow_(g)) + '</td>'
+      + '</tr></tfoot></table>';
+    body.innerHTML = html;
+    // Auto-expand the viewer's own dept section (its per-queue source detail)
+    // so their numbers are front-and-center on open. Mirrors the click-expand:
+    // reveal each queue's detail row + flip its chevron. Bounded to the one
+    // section; a no-op when the viewer has no dept in this window.
+    if (mySection) {
+      const sectionTbody = body.querySelector('.qcd-alldept-dept[data-dept="' + escCssId_(mySection) + '"]');
+      if (sectionTbody) {
+        sectionTbody.querySelectorAll('tr.qcd-detail-row').forEach(function (dr) { dr.style.display = ''; });
+        sectionTbody.querySelectorAll('tr.qcd-expandable .qcd-expand-icon').forEach(function (ic) { ic.innerHTML = '&#9660;'; });
+      }
+    }
+  }
+
+  function qcdAllDeptCsv_(data) {
+    if (!data || !(data.depts || []).length) return;
+    const esc = function (v) {
+      const s = csvSafeCell_(v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    // Round-16: per-queue MTD pace columns (per-WORKDAY averages from the
+    // payload's mtd block; blank when the payload predates it). Numeric-only
+    // in the CSV -- the arrow/label rendering stays a web affordance.
+    const mm = (data && data.mtd) || null;
+    const mtdAvgOf = function (calls, wd) {
+      return (mm && wd > 0) ? String(Math.round((Number(calls) || 0) / wd)) : '';
+    };
+    const mtdDeltaOf = function (mtdCalls, priorCalls) {
+      if (!mm || !(mm.workdays > 0) || !(mm.priorWorkdays > 0)) return '';
+      const mAvg = (Number(mtdCalls) || 0) / mm.workdays;
+      const pAvg = (Number(priorCalls) || 0) / mm.priorWorkdays;
+      if (!(pAvg > 0)) return '';
+      return ((mAvg - pAvg) / pAvg * 100).toFixed(1) + '%';
+    };
+    const lines = [];
+    // C-5: route the title cells through the shared escaper too -- the
+    // server-built dateLabel contains a comma ("Jul 10, 2026"), which split
+    // this line into three columns.
+    lines.push(row(['Daily Call Queue Report', data.dateLabel || '']));
+    lines.push('');
+    lines.push(row(['Department', 'Queue', 'Sub-dept', 'Total Calls', 'Answered', 'Abandoned',
+                    'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations (MTD)',
+                    'MTD Avg/Workday', 'Vs Prior Month %']));
+    // Same grouping as the table: children nested under their parent, section
+    // total only when the section has >1 queue (#3).
+    const depts = data.depts || [];
+    const byName = {};
+    depts.forEach(function (d) { byName[d.dept] = d; });
+    const childrenOf = {};
+    const topLevel = [];
+    depts.forEach(function (d) {
+      if (d.parent && byName[d.parent]) { (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d); }
+      else { topLevel.push(d); }
+    });
+    topLevel.forEach(function (d) {
+      const secItems = (d.queues || []).map(function (q) { return { q: q, sub: '' }; });
+      (childrenOf[d.dept] || []).forEach(function (child) {
+        (child.queues || []).forEach(function (q) { secItems.push({ q: q, sub: child.dept }); });
+      });
+      secItems.forEach(function (it) {
+        const q = it.q;
+        lines.push(row([d.dept, q.queue, it.sub, q.totalCalls, q.totalAnswered, q.abandoned,
+                        q.abandonedPctStr, q.longestWait, q.avgAnswer, qcdViolShow_(q),
+                        mtdAvgOf(q.mtdTotalCalls, mm && mm.workdays),
+                        mtdDeltaOf(q.mtdTotalCalls, q.priorTotalCalls)]));
+      });
+      if (secItems.length > 1) {
+        const t = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
+        const secMtd = secItems.reduce(function (acc, i) { return acc + (Number(i.q.mtdTotalCalls) || 0); }, 0);
+        const secPrior = secItems.reduce(function (acc, i) { return acc + (Number(i.q.priorTotalCalls) || 0); }, 0);
+        lines.push(row([d.dept, d.dept + ' total', '', t.totalCalls, t.totalAnswered, t.abandoned,
+                        t.abandonedPctStr, t.longestWait, t.avgAnswer, qcdViolShow_(t),
+                        mtdAvgOf(secMtd, mm && mm.workdays), mtdDeltaOf(secMtd, secPrior)]));
+      }
+    });
+    const g = data.grandTotals || {};
+    lines.push(row(['', 'Company total', '', g.totalCalls, g.totalAnswered, g.abandoned,
+                    g.abandonedPctStr, g.longestWait, g.avgAnswer, qcdViolShow_(g),
+                    mm ? mtdAvgOf(mm.totalCalls, mm.workdays) : '',
+                    mm ? mtdDeltaOf(mm.totalCalls, mm.priorTotalCalls) : '']));
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'daily_call_queue_report_' + (data.meta && data.meta.from || '')
+               + '_' + (data.meta && data.meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // Print the rendered table directly (no html2canvas needed -- this is a
+  // plain table). Opens a window with a minimal print stylesheet.
+  function qcdAllDeptPrint_(data) {
+    if (!data) return;
+    const tableEl = $('qcd-alldept-body');
+    const w = window.open('about:blank');
+    if (!w) {
+      // G-8: a popup blocker makes window.open return null -- say so instead
+      // of a silent no-op that reads as "Print does nothing".
+      showToast('Print window was blocked — allow pop-ups for this site and try again.', 'error');
+      return;
+    }
+    const css = 'body{font-family:Arial,Helvetica,sans-serif;color:#222;padding:18px;}'
+      + 'h1{font-size:16px;margin:0 0 2px;}.sub{color:#666;font-size:12px;margin:0 0 14px;}'
+      + 'table{width:100%;border-collapse:collapse;}'
+      + 'th,td{padding:3px 8px;border-bottom:1px solid #ddd;text-align:left;font-size:11.5px;}'
+      + 'td.num,th.num{text-align:right;}'
+      + '.qcd-alldept-deptrow td{font-weight:700;background:#f2f2f2;padding-top:8px;}'
+      + '.qcd-alldept-subtotal td{font-weight:600;border-top:1px solid #999;}'
+      + '.qcd-alldept-grand td{font-weight:700;border-top:2px solid #333;}'
+      + '.qcd-warn-light{background:#fff3e0;}.qcd-warn-strong{background:#ffd9b3;}';
+    // QV-1/QV-2: strip screen-only decorations (threshold ticks, banner
+    // mini-summaries) from the print clone so the printed table stays
+    // byte-identical to the pre-polish output. The print window's own CSS
+    // never styles them, but the mini-summary carries TEXT that would
+    // otherwise render.
+    let printHtml = '';
+    if (tableEl) {
+      const clone = tableEl.cloneNode(true);
+      clone.querySelectorAll('.qcd-screen-only').forEach(function (n) { n.remove(); });
+      printHtml = clone.innerHTML;
+    }
+    w.document.write('<title>Daily Call Queue Report</title><style>' + css + '</style>'
+      + '<h1>Daily Call Queue Report</h1><p class="sub">' + escapeHtml(data.dateLabel || '') + '</p>'
+      + printHtml);
+    w.document.close();
+    w.focus();
+    setTimeout(function () { try { w.print(); } catch (e) {} }, 250);
+  }
+
+  // ══ DEV OVERLAY -- panel + registry (O-11) ══════════════════════════════
+  //
+  // The capture half installs at the top of this file (see the block there,
+  // including the security rule). This half is the panel, and it only ever
+  // READS what capture already buffered plus what the server sends back.
+
+  // The registry is the point of the overlay: a new server diagnostic costs
+  // ONE ENTRY here -- no markup, no handler, no style rule. Every `fn` MUST be
+  // admin-gated server-side (assertAdmin_); the overlay is not a gate.
+  // `writes` marks a diagnostic with a SIDE EFFECT so nobody fires one
+  // expecting a passive read -- runLiveSmoke and runNeonCoverageCheck both
+  // email the admin list and stamp their outcome properties.
+  const DEV_DIAGNOSTICS_ = [
+    { fn: 'runQueueReportGateCheck', label: 'Queue report — why hasn’t it sent?',
+      desc: 'Evaluates the real send gate now: target date, QCD readiness, dedupe marker, subscribers, next window.' },
+    { fn: 'getSystemHealth', label: 'System health snapshot',
+      desc: 'The same payload the Health page renders — triggers, outcomes, properties, sheets.' },
+    { fn: 'runLiveSmoke', label: 'Live smoke test', writes: true,
+      desc: 'Read-only sweep of the live read paths. EMAILS the admin list and stamps SMOKE_LAST.' },
+    { fn: 'runNeonCoverageCheck', label: 'Neon coverage check', writes: true,
+      desc: 'Per-date sheet-vs-Neon reconciliation. EMAILS the admin list and stamps NEON_COVERAGE_LAST.' },
+  ];
+
+  function devEsc_(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function devHost_() {
+    let el = document.getElementById('dev-overlay');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'dev-overlay';
+    el.setAttribute('role', 'complementary');
+    el.setAttribute('aria-label', 'Developer diagnostics');
+    document.body.appendChild(el);
+    return el;
+  }
+
+  // App state. Deliberately IDENTIFIERS AND FLAGS ONLY -- never a payload.
+  // The Overview blob alone is ~27 KB, and dumping data the viewer is already
+  // looking at costs memory and screenshare exposure for nothing.
+  function devStateRows_() {
+    const u = window.__USER__ || {};
+    let slots = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        // The real prefix constant, not a literal -- a hardcoded guess here
+        // would silently report 0 forever and read as "SWR is not working".
+        if (String(localStorage.key(i)).indexOf(REPORT_LASTGOOD_PREFIX_) === 0) slots++;
+      }
+    } catch (e) {}
+    return [
+      ['role', u.role || '?'],
+      ['email', u.email || '?'],
+      ['department', u.department || '(none)'],
+      ['departments', (u.departments || []).join(', ') || '(single)'],
+      ['allDepts', String(!!u.allDepts)],
+      ['view-as', document.body.getAttribute('data-view-as') || 'off'],
+      ['page', document.body.getAttribute('data-page') || '?'],
+      ['route', (typeof currentRoute !== 'undefined' && currentRoute) || '(none)'],
+      ['mode / theme', (document.body.dataset.mode || 'light') + ' / '
+        + (document.body.dataset.theme || 'default')],
+      ['UI flags', ((window.__UI_FLAGS__ || []).join(', ')) || '(none)'],
+      ['DASHBOARD_URL', window.__DASHBOARD_URL__ ? 'set' : 'NOT SET'],
+      ['SWR slots cached', String(slots)],
+    ];
+  }
+
+  function devRender_() {
+    const host = devHost_();
+    let h = '<div class="dev-bar"><b>Dev overlay</b>'
+      + '<span class="dev-muted">Ctrl/Cmd+Alt+D to close</span>'
+      + '<button type="button" class="dev-x" id="dev-close">✕</button></div>';
+
+    h += '<div class="dev-sec"><div class="dev-h">Client errors <span class="dev-count'
+      + (DEV_.errors.length ? ' is-bad' : '') + '">' + DEV_.errors.length + '</span></div>';
+    if (!DEV_.errors.length) {
+      h += '<div class="dev-empty">None captured this session.</div>';
+    } else {
+      h += DEV_.errors.slice().reverse().map(function (e) {
+        return '<div class="dev-row dev-err"><div><b>' + devEsc_(e.msg) + '</b>'
+          + '<span class="dev-muted"> ' + devEsc_(e.kind) + ' · ' + devEsc_(e.at) + '</span></div>'
+          + (e.where ? '<div class="dev-muted">' + devEsc_(e.where) + '</div>' : '')
+          + (e.stack ? '<pre class="dev-pre">' + devEsc_(e.stack) + '</pre>' : '') + '</div>';
+      }).join('');
+    }
+    h += '</div>';
+
+    const fails = DEV_.rpc.filter(function (r) { return !r.ok; }).length;
+    h += '<div class="dev-sec"><div class="dev-h">Server calls <span class="dev-count'
+      + (fails ? ' is-bad' : '') + '">' + DEV_.rpc.length + (fails ? (' · ' + fails + ' failed') : '')
+      + '</span></div>';
+    if (!DEV_.rpc.length) {
+      h += '<div class="dev-empty">No calls recorded yet.</div>';
+    } else {
+      h += DEV_.rpc.slice().reverse().slice(0, 30).map(function (r) {
+        return '<div class="dev-row' + (r.ok ? '' : ' dev-err') + '">'
+          + '<div class="dev-kv"><span>' + devEsc_(r.name) + '</span>'
+          + '<b>' + (r.ok ? '' : 'FAILED · ') + r.ms + ' ms</b></div>'
+          + (r.detail ? '<div class="dev-muted">' + devEsc_(r.detail) + '</div>' : '')
+          + '</div>';
+      }).join('');
+    }
+    h += '</div>';
+
+    h += '<div class="dev-sec"><div class="dev-h">App state</div>'
+      + devStateRows_().map(function (kv) {
+          return '<div class="dev-row"><div class="dev-kv"><span>' + devEsc_(kv[0])
+            + '</span><b>' + devEsc_(kv[1]) + '</b></div></div>';
+        }).join('')
+      + '</div>';
+
+    h += '<div class="dev-sec"><div class="dev-h">Diagnostics</div>'
+      + DEV_DIAGNOSTICS_.map(function (d, i) {
+          return '<div class="dev-row"><div class="dev-kv"><span>' + devEsc_(d.label)
+            + (d.writes ? ' <b class="dev-warn">side effects</b>' : '')
+            + '</span><button type="button" class="dev-run" data-idx="' + i + '">Run</button></div>'
+            + '<div class="dev-muted">' + devEsc_(d.desc) + '</div>'
+            + '<div class="dev-out" id="dev-out-' + i + '"></div></div>';
+        }).join('')
+      + '</div>';
+
+    host.innerHTML = h;
+    const close = document.getElementById('dev-close');
+    if (close) close.addEventListener('click', function () { devToggle_(false); });
+    host.querySelectorAll('.dev-run').forEach(function (b) {
+      b.addEventListener('click', function () { devRunDiagnostic_(Number(b.getAttribute('data-idx')), b); });
+    });
+  }
+
+  function devRunDiagnostic_(idx, btn) {
+    const d = DEV_DIAGNOSTICS_[idx];
+    if (!d) return;
+    const out = document.getElementById('dev-out-' + idx);
+    if (d.writes && !window.confirm(d.label + ' has side effects (sends email, writes outcome '
+        + 'properties). Run it now?')) return;
+    if (out) out.textContent = 'Running…';
+    btn.disabled = true;
+    // Called through the SAME google.script.run every other caller uses, so
+    // the server's assertAdmin_ applies exactly as it would anywhere else.
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false;
+        if (out) out.innerHTML = '<pre class="dev-pre">' + devEsc_(JSON.stringify(res, null, 2)) + '</pre>';
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false;
+        if (out) out.innerHTML = '<pre class="dev-pre dev-err-text">'
+          + devEsc_((err && err.message) ? err.message : String(err)) + '</pre>';
+      })[d.fn]();
+  }
+
+  function devToggle_(next) {
+    if (!DEV_.admin) return;                 // cosmetic gate; the server gates the data
+    DEV_.on = (next === undefined) ? !DEV_.on : !!next;
+    try { localStorage.setItem(DEV_.KEY, DEV_.on ? 'on' : 'off'); } catch (e) {}
+    const host = devHost_();
+    host.classList.toggle('is-open', DEV_.on);
+    if (DEV_.on) devRender_();
+  }
+
+  function devInstallToggle_() {
+    if (!DEV_.admin) return;
+    document.addEventListener('keydown', function (e) {
+      // Ctrl/Cmd + Alt + D. Chrome reserves Ctrl+Shift+D (bookmark all tabs),
+      // so that chord is deliberately not used.
+      if (e.altKey && (e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        devToggle_();
+      }
+    });
+    // `#/dev` is the no-chord entry point: the whole point of this feature is
+    // that a diagnostic does not need its own button in the header.
+    try {
+      if (String(window.location.hash || '').indexOf('/dev') !== -1) devToggle_(true);
+    } catch (e) {}
+    if (DEV_.on) devToggle_(true);           // restore a persisted open state
+  }
+
+  // Wait for DOM, then go.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { init(); devInstallToggle_(); });
+  } else {
+    init();
+    devInstallToggle_();
+  }

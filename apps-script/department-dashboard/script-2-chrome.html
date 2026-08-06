@@ -1,0 +1,813 @@
+  // -- DOM ----------------------------------------------------------------
+
+  const $ = function (id) { return document.getElementById(id); };
+
+  // #1: an all-departments manager (Access Control dept = "ALL") sees every
+  // dept's non-admin data like an admin, but NOT admin surfaces. Use this for
+  // DATA-BREADTH gates (dept selector, cross-dept routing); admin-SURFACE gates
+  // stay `USER.role === 'admin'`, which excludes this role automatically.
+  function isAllDeptViewer_() {
+    return typeof USER !== 'undefined' && !!USER && (USER.role === 'admin' || USER.allDepts === true);
+  }
+  // Tier C: who gets the header dept SELECTOR. Admins + all-dept managers pick
+  // any dept; a MULTI-dept manager (>1 assigned dept, allDepts false) picks
+  // among their assigned subset. A single-dept manager has no selector (their
+  // one dept is USER.department). This is a superset of isAllDeptViewer_ used
+  // ONLY for the dept-switch surfaces (selector population, getRequestedDept,
+  // ovViewerDept_) -- the cross-dept Overview routing/spotlight affordances
+  // stay isAllDeptViewer_-gated (the server rejects a non-assigned dept
+  // regardless, so a multi-dept manager just uses the selector).
+  function canPickDept_() {
+    return isAllDeptViewer_()
+      || (typeof USER !== 'undefined' && !!USER && USER.role === 'manager'
+          && !!USER.departments && USER.departments.length > 1);
+  }
+
+  // #5 (Round-16): one-time sweep of ORPHANED localStorage prefs -- keys whose
+  // writer was retired and that nothing reads anymore. Read-before-remove keeps
+  // the steady state at a few cheap reads and ZERO writes (the objection that
+  // previously kept these keys in place). Only exact dead keys belong here:
+  // the bare pre-per-user prefs blobs are safe because irPrefsKey_()/
+  // insPrefsKey_() always append ':' + email (never the bare key), and the
+  // superseded Overview period keys (cdr.ov.cardperiod / cdr.ov.tableperiod.v1)
+  // are deliberately NOT listed -- the R12-19 window migration (the
+  // ovCardPeriod / ovTablePeriod init fallbacks) still reads them.
+  function sweepOrphanPrefs_() {
+    var dead = [
+      'cdr.pr.prefs.v1',     // retired Performance report prefs
+      'cdr.cr.prefs.v1',     // retired Compare Ranges prefs
+      'cdr.qcd.datalabels',  // retired QCD modal's datalabels toggle
+      'cdr.dept.subscope',   // retired sub-queue scope switcher
+      'cdr.ins.prefs.v2',    // pre-per-user Insights blob (live key is :<email>)
+      'cdr.ir.prefs.v1'      // pre-per-user IR blob (live key is :<email>, L3)
+    ];
+    try {
+      for (var i = 0; i < dead.length; i++) {
+        if (localStorage.getItem(dead[i]) !== null) localStorage.removeItem(dead[i]);
+      }
+    } catch (e) { /* storage unavailable -- nothing to tidy */ }
+  }
+
+  function init() {
+    sweepOrphanPrefs_();
+    // Header
+    $('user-email').textContent = USER.email || '(unknown)';
+    const tag = $('role-tag');
+    // Tier C: label a multi-dept manager so the extra reach is visible.
+    const multiDept = USER.role === 'manager' && !USER.allDepts
+      && USER.departments && USER.departments.length > 1;
+    tag.textContent = USER.allDepts ? 'manager · all depts'
+      : (multiDept ? ('manager · ' + USER.departments.length + ' depts') : USER.role);
+    tag.classList.add('tag-' + USER.role);
+
+    // Admin-only menu items: Compare Ranges (under Reports) and
+    // the entire Admin menu wrap (which holds Alerts). The Alerts
+    // menu item itself stays visible inside the admin wrap so a
+    // single role check governs both. Server enforces independently.
+    if (USER.role === 'admin') {
+      document.querySelectorAll('[data-admin-only]').forEach(function (el) {
+        el.style.display = '';
+      });
+      initViewAs_();   // admin-only "View as <dept> (manager)" preview control
+    }
+    // (The #10 manager-only #insights-solo-btn proxy is gone: Insights is a
+    // top-level tab visible to all roles since the modal->page conversion,
+    // so managers no longer need a stand-in for the admin-only Reports
+    // dropdown. Missed / Individual stay reachable via the Overview question
+    // chips + My Dept.)
+
+    // -- Header dropdown menus (Reports + Admin) --------------------
+    // Toggle behavior: clicking a menu button opens its list and
+    // closes any other open menu; clicking the same button again
+    // closes it; clicking outside or pressing Escape dismisses.
+    // Clicking a menu item dispatches the underlying button's
+    // click handler (the item IS the original report-launcher
+    // button, just restyled) and closes the menu.
+    (function initHeaderMenus_() {
+      const buttons = document.querySelectorAll('.header-menu-btn');
+      const lists   = document.querySelectorAll('.header-menu-list');
+      function closeAll() {
+        lists.forEach(function (l) { l.style.display = 'none'; });
+        buttons.forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+      }
+      // E-10: role="menu"/"menuitem" announce arrow-key semantics -- deliver
+      // them. Focusable items = the visible .header-menu-item buttons.
+      function menuItems_(list) {
+        return Array.prototype.filter.call(
+          list.querySelectorAll('.header-menu-item'),
+          function (el) { return el.offsetParent !== null && !el.disabled; });
+      }
+      buttons.forEach(function (btn) {
+        const listId = btn.getAttribute('aria-controls');
+        const list = document.getElementById(listId);
+        if (!list) return;
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const open = list.style.display !== 'none';
+          closeAll();
+          if (!open) {
+            list.style.display = '';
+            btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+        // E-10: ArrowDown on the trigger opens the menu and focuses item 1.
+        btn.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            closeAll();
+            list.style.display = '';
+            btn.setAttribute('aria-expanded', 'true');
+            const items = menuItems_(list);
+            if (items.length) items[0].focus();
+          }
+        });
+        // E-10: Arrow keys walk the open menu (wrapping); Home/End jump;
+        // Escape already closes via the document handler -- also return
+        // focus to the trigger so the keyboard user isn't dropped.
+        list.addEventListener('keydown', function (e) {
+          const items = menuItems_(list);
+          if (!items.length) return;
+          const idx = items.indexOf(document.activeElement);
+          if (e.key === 'ArrowDown') {
+            e.preventDefault(); items[(idx + 1) % items.length].focus();
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault(); items[(idx - 1 + items.length) % items.length].focus();
+          } else if (e.key === 'Home') {
+            e.preventDefault(); items[0].focus();
+          } else if (e.key === 'End') {
+            e.preventDefault(); items[items.length - 1].focus();
+          } else if (e.key === 'Escape') {
+            btn.focus();
+          }
+        });
+      });
+      // Close on outside click. Items inside the list don't bubble
+      // up to here because we listen on document.
+      document.addEventListener('click', function (e) {
+        if (!e.target.closest('.header-menu')) closeAll();
+      });
+      // Close on Escape.
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeAll();
+      });
+      // Close after a menu item is activated -- the modal-open
+      // handler already runs because the menu item IS the original
+      // launcher button.
+      lists.forEach(function (list) {
+        list.addEventListener('click', function (e) {
+          if (e.target.closest('.header-menu-item')) closeAll();
+        });
+      });
+    })();
+
+    // Department selector vs static label. All-dept managers get the selector
+    // too (#1); a multi-dept manager (Tier C) gets it populated with their
+    // assigned subset.
+    if (canPickDept_() && USER.departments && USER.departments.length) {
+      const sel = $('dept-selector');
+      USER.departments.forEach(function (d) {
+        const opt = document.createElement('option');
+        opt.value = d; opt.textContent = d;
+        sel.appendChild(opt);
+      });
+      $('dept-selector-wrap').style.display = '';
+      sel.addEventListener('change', function () {
+        // Admin switched depts; the per-report cached agent roster is now
+        // stale -- wipe so the next modal open refetches against the new dept.
+        //
+        // This ALSO cleared `prLastRoster` and `crLastRoster` until 2026-07,
+        // long after the Performance and Compare Ranges reports were retired
+        // and their variables deleted with them. script.html is 'use strict',
+        // so assigning to an undeclared identifier THROWS -- and the throw
+        // landed before refresh() on the next line, which meant the department
+        // selector silently did nothing for every admin and multi-dept manager.
+        // Found only when a harness driver first tried to switch departments;
+        // no automated check had ever exercised the control.
+        irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
+        refresh();
+        // If the Overview page is currently visible, re-render its
+        // viewer-personalized bits (hero + user-table) so they
+        // reflect the new dept without a full reload.
+        if (document.body.getAttribute('data-page') === 'overview' && ovLastData) {
+          ovRenderUserHero_(ovLastData);
+          ovRenderUserTable_(ovLastData);
+          ovRenderTiles_(ovLastData);  // exclude new viewer-dept from the grid
+        }
+      });
+      $('page-title').textContent = sel.value;
+    } else {
+      $('page-title').textContent = USER.department || '(no department)';
+    }
+
+    // Date range defaults. Provisional value = today (fallback if
+    // the getLatestDataDate fetch below is slow or fails); the
+    // actual default lands on the most recent date with data in
+    // DQE Historical Data so the table isn't empty when a manager
+    // first opens the dashboard before today's ingest has run.
+    const range = defaultRange();
+    $('from-date').value = range.from;
+    $('to-date').value = range.to;
+    $('from-date').addEventListener('change', function () { clearActivePreset_(); refreshOnDateEdit_(); });
+    $('to-date').addEventListener('change', function () { clearActivePreset_(); refreshOnDateEdit_(); });
+
+    initDatePresets_();
+
+    $('refresh-btn').addEventListener('click', refresh);
+    // R10-2: publish the sticky controls strip's real height as a CSS var so
+    // the QCD side card's sticky top clears it (styles.html .dept-side).
+    // ResizeObserver tracks wraps (admin selector row, narrow viewports);
+    // best-effort -- the CSS fallback (84px) covers no-RO browsers.
+    (function syncDeptStickyOffset_() {
+      var strip = document.querySelector('#dept-page .controls');
+      if (!strip) return;
+      var apply = function () {
+        try {
+          document.documentElement.style.setProperty('--dept-sticky-h', strip.offsetHeight + 'px');
+        } catch (e) {}
+      };
+      apply();
+      if (typeof ResizeObserver === 'function') {
+        try { new ResizeObserver(apply).observe(strip); } catch (e) {}
+      } else {
+        window.addEventListener('resize', apply);
+      }
+    })();
+    // R11-B6: the missed chart-row's grid-column transition (bucket drill
+    // open/close) changes the chart column's width -- re-measure once the
+    // 420ms transition settles so the canvas tracks its real slot.
+    var missedRowEl = $('dept-missed-chart-row');
+    if (missedRowEl) missedRowEl.addEventListener('transitionend', function (e) {
+      // R11-C6: resize ONLY -- never rebuild -- when the detail panel toggles.
+      // The tooNarrow rebuild guard is for the initial-paint stuck-square case;
+      // firing a full destroy+recreate here flashed the chart on every bar click.
+      if (e.propertyName === 'grid-template-columns') deptMissedResize_(false);
+    });
+    // R9-2: the one-click CSV icon became an Export dropdown (the Insights
+    // toolbar convention). #csv-export-btn is the WRAP now (id kept so the
+    // existing hidden-until-data gating shows/hides the same element);
+    // #dept-export-btn toggles the menu, data-action items dispatch.
+    var deptExportBtn = $('dept-export-btn');
+    var deptExportMenu = $('dept-export-menu');
+    if (deptExportBtn && deptExportMenu) {
+      var setDeptExportOpen = function (open) {
+        deptExportMenu.style.display = open ? '' : 'none';
+        deptExportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      deptExportBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setDeptExportOpen(deptExportMenu.style.display === 'none');
+      });
+      deptExportMenu.addEventListener('click', function (e) {
+        var item = e.target.closest('[data-action]');
+        if (!item) return;
+        setDeptExportOpen(false);
+        if (item.getAttribute('data-action') === 'csv') exportTableCsv_();
+      });
+      document.addEventListener('click', function (e) {
+        if (deptExportMenu.style.display === 'none') return;
+        if (deptExportBtn.contains(e.target) || deptExportMenu.contains(e.target)) return;
+        setDeptExportOpen(false);
+      });
+    }
+    // R9-1: the R7 (M-5) fixed sticky context BANNER is retired (it
+    // overlapped the QCD side card and couldn't edit the range) -- the
+    // CONTROLS ROW ITSELF is the sticky element now (CSS `position:sticky`
+    // on `#dept-page .controls`, opaque strip), so the real date inputs +
+    // Refresh + Export stay reachable while scrolling.
+
+    var colsToggle = $('dept-cols-toggle');
+    if (colsToggle) colsToggle.addEventListener('click', function () {
+      var next = (localStorage.getItem(DEPT_COLS_KEY) === 'all') ? 'compact' : 'all';
+      try { localStorage.setItem(DEPT_COLS_KEY, next); } catch (e) {}
+      applyDeptColsPref_();
+    });
+    var rowsBtn = $('dept-rows-toggle');
+    if (rowsBtn) rowsBtn.addEventListener('click', function () {
+      var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+      try { localStorage.setItem(DEPT_ROWS_KEY, dense ? 'comfortable' : 'compact'); } catch (e) {}
+      applyDeptColsPref_();
+    });
+    applyDeptColsPref_();
+
+    // Drill-through: clicking an agent row opens the Individual Report
+    // pre-seeded with that agent + the current From/To range and auto-
+    // generates. Delegated on the persistent #agents-tbody element (its
+    // innerHTML is replaced per render, but the element itself stays), so
+    // this listener is wired exactly once.
+    var agentsTbody = $('agents-tbody');
+    var agentRowDrill_ = function (e) {
+      var tr = e.target.closest('tr[data-agent]');
+      if (!tr) return;
+      var agent = tr.getAttribute('data-agent');   // browser-decoded
+      if (!agent) return;
+      var from = ($('from-date') && $('from-date').value) || '';
+      var to   = ($('to-date')   && $('to-date').value)   || '';
+      if (typeof irDrillToAgent_ === 'function') irDrillToAgent_(agent, from, to);
+    };
+    if (agentsTbody) {
+      agentsTbody.addEventListener('click', agentRowDrill_);
+      // F13: the same drill on Enter/Space. Delegated on the persistent tbody
+      // (rows are re-rendered every refresh and carry tabindex in their
+      // markup), so it is wired exactly once like the click handler above.
+      agentsTbody.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (!e.target.closest('tr[data-agent]')) return;
+        e.preventDefault();
+        agentRowDrill_(e);
+      });
+    }
+
+    // Sortable headers. R12-5: keyboard-operable too -- focusable, with
+    // Enter/Space triggering the same sort (they were click-only).
+    document.querySelectorAll('#agents-table thead th[data-sort]').forEach(function (th) {
+      th.tabIndex = 0;
+      th.addEventListener('click', function () { onSort(th.getAttribute('data-sort')); });
+      th.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();   // Space must not scroll the page
+        onSort(th.getAttribute('data-sort'));
+      });
+    });
+
+    var deptBucketClose = $('dept-bucket-detail-close');
+    if (deptBucketClose) deptBucketClose.addEventListener('click', function () { deptMissedBucketDetail_.hide(); });
+
+    initHelpModal();
+    loadEscBadge_();
+    initSettingsModal();
+    initCompanyOverview();
+    initIndividualReport();
+    initInsightsReport();
+    initInboundReport();
+    initDirectCallReport();
+    initAlerts();
+    initOrphanFix();
+    initDeptConfig();
+    initAccessControl();
+    initCallerLookup();
+    initEscalations();
+    initTour_();
+    initQcdAllDept_();
+    initSystemHealth_();
+    // Router last so its modal-close listeners attach after each
+    // per-modal init has wired up its own close-button handlers.
+    initRouter();
+    initOpenInNewTabButtons_();
+    initWorkWindowPill_();
+    initOverviewLauncher_();
+    initMetricGlossary_();
+    initCountUp_();   // R10-3: KPI count-up load animation (reduced-motion aware)
+    ovWireTrendCollapse_();   // R11-B5: collapsible Overview chart band
+    initChartHelp_();         // R11-B8: chart-tips popovers
+    initGlossTooltip_();
+    initDateRangeLinks_();
+
+    // Fetch the most recent date with data in DQE Historical Data
+    // and snap From/To to that date. Defers the initial table
+    // render until either the date is known (typical) or the
+    // server call fails (falls back to today's range from
+    // defaultRange above).
+    google.script.run
+      .withSuccessHandler(function (dates) {
+        // dates = { dqe, qcd, latest } per Data.gs::getLatestDataDates.
+        // From/To defaults use DQE specifically (the agent table
+        // draws from DQE; defaulting to a QCD-only date would
+        // empty the table). Pill uses the overall max + a
+        // per-source tooltip breakdown so an out-of-sync state
+        // (e.g. mid-migration) doesn't make the pill look stuck.
+        const dqe = dates && dates.dqe ? dates.dqe : null;
+        if (dqe) {
+          latestDqeIso_ = dqe;   // the Overview question-launcher reuses this
+          $('from-date').value = dqe;
+          $('to-date').value = dqe;
+        }
+        // Latest QCD day drives the Daily Call Queue Report's default
+        // date, so a Monday/holiday open lands on real data instead of
+        // an empty literal-yesterday (a weekend).
+        if (dates && dates.qcd) latestQcdIso_ = dates.qcd;
+        // R12-26: coverage starts (earliest data per source) for the
+        // shorter-than-claimed-range warnings on the report surfaces.
+        dataCoverage_ = { dqe: (dates && dates.dqeEarliest) || null,
+                          qcd: (dates && dates.qcdEarliest) || null };
+        setFreshnessPill_(dates || null);
+        refresh();
+      })
+      .withFailureHandler(function () { refresh(); })
+      .getLatestDataDates();
+
+    // Default landing page is the Overview. Calling setPage here
+    // (after refresh() has been kicked off above) sets the body
+    // attribute that controls page visibility AND triggers the
+    // Overview's data fetch.
+    setPage('overview');
+  }
+
+  // -- Date preset chips ---------------------------------------------------
+  function initDatePresets_() {
+    var wrap = $('date-presets');
+    if (!wrap) return;
+    var presets = [
+      { label: 'Yesterday', fn: function () { var d = daysAgo_(1); return { from: d, to: d }; } },
+      { label: 'Last 7 days', fn: function () { return { from: daysAgo_(7), to: daysAgo_(1) }; } },
+      { label: 'Last 30 days', fn: function () { return { from: daysAgo_(30), to: daysAgo_(1) }; } },
+      { label: 'This month', fn: function () { var t = new Date(); return { from: isoDate_(new Date(t.getFullYear(), t.getMonth(), 1)), to: isoDate_(t) }; } },
+      { label: 'Last month', fn: function () { var t = new Date(); var f = new Date(t.getFullYear(), t.getMonth() - 1, 1); var l = new Date(t.getFullYear(), t.getMonth(), 0); return { from: isoDate_(f), to: isoDate_(l) }; } },
+    ];
+    presets.forEach(function (p) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'date-preset-chip';
+      chip.textContent = p.label;
+      chip.addEventListener('click', function () {
+        var r = p.fn();
+        $('from-date').value = r.from;
+        $('to-date').value = r.to;
+        wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
+        chip.classList.add('active');
+        refresh();
+      });
+      wrap.appendChild(chip);
+    });
+  }
+  function clearActivePreset_() {
+    var wrap = $('date-presets');
+    if (wrap) wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
+  }
+  function daysAgo_(n) { var d = new Date(); d.setDate(d.getDate() - n); return isoDate_(d); }
+  // F-38: Mon-Fri count between two ISO dates inclusive -- the client
+  // mirror of Util.gs::countWorkingDays_ (INV-35), so the CR/Insights form
+  // hints agree with the server's working-day mismatch flag. UTC-noon
+  // iteration is DST-safe, same as the server helper.
+  function workingDaysBetween_(fromIso, toIso) {
+    if (!fromIso || !toIso) return 0;
+    var f = String(fromIso).split('-'), t = String(toIso).split('-');
+    var ms = Date.UTC(+f[0], f[1] - 1, +f[2], 12);
+    var end = Date.UTC(+t[0], t[1] - 1, +t[2], 12);
+    if (isNaN(ms) || isNaN(end)) return 0;
+    if (end < ms) { var tmp = ms; ms = end; end = tmp; }
+    // S5: exclude company holidays (server-injected __COMPANY_HOLIDAYS__,
+    // same ranges the server's countWorkingDays_ excludes) so the form
+    // hint and the results' INV-35 length-mismatch flag can't disagree
+    // across a holiday-straddling window.
+    var holidays = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
+    var isHoliday = function (iso) {
+      for (var i = 0; i < holidays.length; i++) {
+        if (iso >= holidays[i].from && iso <= holidays[i].to) return true;
+      }
+      return false;
+    };
+    var count = 0;
+    for (; ms <= end; ms += 86400000) {
+      var d = new Date(ms);
+      var dow = d.getUTCDay();
+      if (dow === 0 || dow === 6) continue;
+      if (isHoliday(d.toISOString().slice(0, 10))) continue;
+      count++;
+    }
+    return count;
+  }
+  function isoDate_(d) {
+    var m = String(d.getMonth() + 1); if (m.length < 2) m = '0' + m;
+    var day = String(d.getDate()); if (day.length < 2) day = '0' + day;
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
+  // Page switcher between the Overview "home" page and the dept
+  // detail page. Body[data-page] drives CSS visibility; this also
+  // updates the document title block and the active-nav state.
+  function setPage(page) {
+    if (page !== 'overview' && page !== 'dept' && page !== 'escalations'
+        && page !== 'insights') page = 'overview';
+    document.body.setAttribute('data-page', page);
+    const kicker = $('page-kicker');
+    const title  = $('page-title');
+    if (page === 'overview') {
+      if (kicker) kicker.textContent = 'Company · Overview';
+      if (title)  title.textContent  = 'Departments Snapshot';
+      ovLoad_();
+    } else if (page === 'escalations') {
+      if (kicker) kicker.textContent = 'Operations · Escalations';
+      if (title)  title.textContent  = 'Escalations';
+      // Lazy-init the controls + load on first entry (idempotent thereafter).
+      if (typeof escEnsureInit_ === 'function') escEnsureInit_(function () { escLoad_(); });
+      else if (typeof escLoad_ === 'function') escLoad_();
+    } else if (page === 'insights') {
+      if (kicker) kicker.textContent = 'Reports · Insights';
+      if (title)  title.textContent  = 'Insights';
+      // First entry runs the old openModal init (form + defaults + prefs +
+      // roster); re-entry only re-ensures the roster and never clobbers a
+      // rendered report (owner decision 3, docs/insights-page-plan.md).
+      if (typeof insEnsurePage_ === 'function') insEnsurePage_();
+      // R9-3: adopt My Department's window when it's the more recent one.
+      // First entry: the pending auto-run reads the (now-rewritten) inputs
+      // when it fires post-roster, so no explicit re-run. Re-entry: re-run
+      // for the adopted window.
+      if (typeof adoptSharedWindow_ === 'function' && adoptSharedWindow_('insights')
+          && !insAutoRunPending_ && typeof runInsReport === 'function') {
+        runInsReport();
+      }
+    } else {
+      if (kicker) kicker.textContent = 'Department Dashboard';
+      if (title)  title.textContent  = getRequestedDept() || '(no department)';
+      // R9-3: adopt the Insights window when it's the more recent one (sets
+      // the date inputs; the refresh below re-runs for it).
+      var adoptedWin_ = (typeof adoptSharedWindow_ === 'function') && adoptSharedWindow_('dept');
+      // setPage doesn't load the agent table itself. If we arrived showing a
+      // STALE prior dept -- the My Department nav button (which fires no
+      // selector 'change'), or view-as-manager where the selector is
+      // pinned+disabled -- load the CURRENT dept now, so the table (and its
+      // Missed / QCD side panels) match the dept instead of a leftover load.
+      // Skip when a load is already in flight (refresh disables the button) so
+      // a selector-change-driven load isn't doubled.
+      var _rb = $('refresh-btn');
+      if ((lastSummaryDept_ !== getRequestedDept() || adoptedWin_) && !(_rb && _rb.disabled)) {
+        refresh();
+      }
+      // R12-1: re-arm the missed chart when its data landed while this page
+      // was hidden -- the initial refresh() runs during the Overview landing,
+      // so deptMissedDrawChart_'s create-while-hidden guard (MC2) exhausts
+      // its 30 rAF attempts against the display:none page and nothing else
+      // re-draws on page entry (blank chart until a manual Refresh).
+      // Idempotent: if a refresh was also kicked above, its render rebuilds.
+      if (!deptMissedChart && deptMissedLastData
+          && typeof deptMissedDrawChart_ === 'function') {
+        deptMissedDrawAttempts_ = 0;
+        deptMissedDrawChart_(deptMissedLastData);
+      }
+    }
+    // Delegate the active-tab visual indicator to the router so all
+    // [data-route] tabs (page-toggles + report-openers) participate
+    // in the same active-state model. Phase C consolidated this from
+    // the per-button toggle that previously only handled overview /
+    // my-dept buttons.
+    if (typeof setRoute_ === 'function') {
+      setRoute_(page === 'dept' ? '/dept'
+        : (page === 'escalations' ? '/escalations'
+        : (page === 'insights' ? '/report/insights' : '/overview')));
+    }
+    // (R9-3: the Batch-E maybeShowDateSyncChip_ offer is retired -- the two
+    // pages now silently adopt each other's newer window via
+    // adoptSharedWindow_ in the per-page branches above.)
+    // R11-C2: arm the cross-page dwell-prefetch (no-op page values clear it).
+    if (typeof armDwellPrefetch_ === 'function') armDwellPrefetch_(page);
+  }
+
+  // R12-20 (#1): escalation counts surfaced on the landing chrome -- a count
+  // badge on the Escalations nav tab + a one-line Overview strip. Best-effort
+  // (silent on unavailable/zero); per-viewer scope enforced server-side.
+  // F10: renders the badge + Overview strip from a counts object, and is
+  // IDEMPOTENT -- it updates an existing badge and REMOVES it when the count
+  // reaches zero. The old version only ever APPENDED (guarded by
+  // `!tab.querySelector('.nav-count-badge')`) and ran once per page load, so
+  // after a manager resolved their last escalation the badge kept the old
+  // number for the rest of the session and the strip stayed visible.
+  function escApplyBadge_(counts) {
+    var open = Number(counts && counts.open) || 0;
+    var review = Number(counts && counts.review) || 0;
+    var over = Number(counts && counts.overdue) || 0;
+    var total = open + review;
+
+    var tab = $('escalations-btn');
+    if (tab) {
+      var sp = tab.querySelector('.nav-count-badge');
+      if (total <= 0) {
+        if (sp) sp.remove();                       // cleared -- don't leave a stale count
+      } else {
+        if (!sp) {
+          sp = document.createElement('span');
+          sp.className = 'nav-count-badge';
+          tab.appendChild(sp);
+        }
+        sp.classList.toggle('nav-count-badge--warn', over > 0);
+        sp.textContent = String(total);
+        sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '')
+          + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
+      }
+    }
+
+    var strip = $('ov-esc-strip');
+    if (strip) {
+      if (total <= 0) {
+        strip.style.display = 'none';
+        strip.innerHTML = '';
+      } else {
+        strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
+          + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
+          + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
+          + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
+        strip.style.display = '';
+        var btn = $('ov-esc-strip-open');
+        if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
+      }
+    }
+  }
+
+  function loadEscBadge_() {
+    try {
+      google.script.run.withSuccessHandler(function (b) {
+        if (!b || !b.available) return;   // unavailable -> leave whatever is shown
+        escApplyBadge_(b);
+      }).withFailureHandler(function () { /* silent */ }).getEscalationsBadge();
+    } catch (e) { /* silent */ }
+  }
+
+  // -- Help & FAQ modal ---------------------------------------------------
+  // Opens on "?" button in header. Closes on backdrop click, X button, or
+  // Escape key. Returns focus to the help button on close. Reuses the same
+  // modal infrastructure that upcoming report views will use.
+  // Floating Help FAB visibility pref (Settings toggle). 'off' hides it.
+  function helpFabHidden_() {
+    try { return localStorage.getItem('cdr.help.fab') === 'off'; } catch (e) { return false; }
+  }
+  function applyHelpFabPref_() {
+    const fab = $('help-fab');
+    if (fab) fab.classList.toggle('is-hidden', helpFabHidden_());
+  }
+  // R11-M: per-user toggle for the answer-first report summary banners
+  // (`.report-headline`). Some users find the "Watch" tone distracting. A body
+  // class + CSS hides ALL report headlines instantly + for future renders;
+  // admins can also hide them globally via the `report-headlines` UI flag.
+  function headlinesHidden_() {
+    try { return localStorage.getItem('cdr.headlines') === 'off'; } catch (e) { return false; }
+  }
+  function applyHeadlinesPref_() {
+    document.body.classList.toggle('headlines-off', headlinesHidden_());
+  }
+
+  function initHelpModal() {
+    const btn = $('help-btn');
+    const modal = $('help-modal');
+    const fab = $('help-fab');
+    if (!btn || !modal) return;
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      // Tuck the FAB away while Help itself is open (it floats above modals,
+      // so it would otherwise sit on top of its own panel). Restored on close.
+      if (fab) fab.classList.add('is-hidden');
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      applyHelpFabPref_();   // restore FAB per the Settings pref
+      btn.focus();
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') closeModal();
+    }
+
+    btn.addEventListener('click', openModal);
+    if (fab) fab.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    applyHelpFabPref_();   // honor the saved Settings pref on load
+    applyHeadlinesPref_();   // R11-M: honor the saved summary-banner pref on load
+    initHelpNav_();        // wire the two-pane topic tree + search
+  }
+
+  // Help modal: folder-tree nav -> single-topic content view, plus a search
+  // that filters topics by title AND body text.
+  function initHelpNav_() {
+    const modal = $('help-modal');
+    if (!modal) return;
+    const links = Array.prototype.slice.call(modal.querySelectorAll('.help-link'));
+    const topics = Array.prototype.slice.call(modal.querySelectorAll('.help-topic'));
+    const empty = $('help-search-empty');
+    if (!links.length) return;
+
+    function show(topic) {
+      topics.forEach(function (t) { t.hidden = (t.id !== 'help-topic-' + topic); });
+      links.forEach(function (l) { l.classList.toggle('active', l.getAttribute('data-topic') === topic); });
+      const content = $('help-content');
+      if (content) content.scrollTop = 0;
+      if (empty) empty.hidden = true;
+    }
+    links.forEach(function (l) {
+      l.addEventListener('click', function () {
+        const cat = l.closest('.help-cat');
+        if (cat && !cat.open) cat.open = true;
+        show(l.getAttribute('data-topic'));
+      });
+    });
+    links[0].classList.add('active');   // first topic is shown by default (others are [hidden])
+
+    const search = $('help-search');
+    if (search) {
+      search.addEventListener('input', function () {
+        const q = search.value.trim().toLowerCase();
+        let anyVisible = false;
+        modal.querySelectorAll('.help-cat').forEach(function (cat) {
+          let catMatch = false;
+          cat.querySelectorAll('.help-link').forEach(function (l) {
+            let hit = !q;
+            if (q) {
+              const sec = document.getElementById('help-topic-' + l.getAttribute('data-topic'));
+              const body = sec ? sec.textContent.toLowerCase() : '';
+              hit = l.textContent.toLowerCase().indexOf(q) !== -1 || body.indexOf(q) !== -1;
+            }
+            l.style.display = hit ? '' : 'none';
+            if (hit) catMatch = true;
+          });
+          cat.style.display = catMatch ? '' : 'none';
+          if (catMatch && q) cat.open = true;
+          if (catMatch) anyVisible = true;
+        });
+        if (empty) empty.hidden = anyVisible || !q;
+      });
+    }
+  }
+
+  // -- Settings modal (theme picker etc.) -----------------------------
+  function initSettingsModal() {
+    const btn = $('settings-btn');
+    const modal = $('settings-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function syncChips() {
+      const active = (window.__themePref && window.__themePref.get) ? window.__themePref.get() : 'warm';
+      document.querySelectorAll('.theme-chip').forEach(function (chip) {
+        chip.classList.toggle('active', chip.getAttribute('data-theme') === active);
+      });
+    }
+
+    function openModal() {
+      syncChips();
+      const fabToggle = $('help-fab-toggle');
+      if (fabToggle) fabToggle.checked = !helpFabHidden_();
+      const ttToggle = $('chart-tooltip-toggle');
+      if (ttToggle) ttToggle.checked = !CHART_TOOLTIPS_OFF_;
+      const bannerToggle = $('report-banner-toggle');
+      if (bannerToggle) bannerToggle.checked = !headlinesHidden_();
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    // Floating Help button toggle: persist + apply immediately so the user
+    // sees it appear/disappear behind the open Settings panel.
+    const fabToggle = $('help-fab-toggle');
+    if (fabToggle) fabToggle.addEventListener('change', function () {
+      try { localStorage.setItem('cdr.help.fab', fabToggle.checked ? 'on' : 'off'); } catch (e) {}
+      applyHelpFabPref_();
+    });
+
+    // R11-G (item 5b): global chart hover-card on/off. The filter reads
+    // CHART_TOOLTIPS_OFF_ live, so flipping it takes effect on the next hover
+    // -- no per-chart update needed.
+    const ttToggle = $('chart-tooltip-toggle');
+    if (ttToggle) ttToggle.addEventListener('change', function () {
+      CHART_TOOLTIPS_OFF_ = !ttToggle.checked;
+      try { localStorage.setItem('cdr.charts.tooltips', ttToggle.checked ? 'on' : 'off'); } catch (e) {}
+    });
+
+    // R11-M: hide the answer-first report summary banners (per user). Applies
+    // instantly via a body class; future report renders inherit it.
+    const bannerToggle = $('report-banner-toggle');
+    if (bannerToggle) bannerToggle.addEventListener('change', function () {
+      try { localStorage.setItem('cdr.headlines', bannerToggle.checked ? 'on' : 'off'); } catch (e) {}
+      applyHeadlinesPref_();
+    });
+
+    // Chip click: apply + persist theme. Modal stays open so the
+    // user can visually verify the change (the background updates
+    // behind the modal panel).
+    document.querySelectorAll('.theme-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        const t = chip.getAttribute('data-theme');
+        if (window.__themePref && window.__themePref.set) window.__themePref.set(t);
+        syncChips();
+      });
+    });
+  }
+
