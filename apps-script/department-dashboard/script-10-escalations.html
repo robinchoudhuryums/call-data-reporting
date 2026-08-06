@@ -1521,8 +1521,23 @@
     // light/translucent; failing keeps the full red (value bolding already
     // rides .qcd-rate-over above).
     var passCls = total ? (over ? ' ans-bar--fail' : ' ans-bar--pass') : '';
+    // Round-16 (owner): opts.tallyUnit > 0 renders the agent-table's
+    // volume-proportional TALLY instead of the fixed-length bar -- answered
+    // sage + abandoned red blocks at the caller's cohort-shared unit, so a
+    // busy queue visibly dwarfs a quiet one. Callers keep the classic bar on
+    // subtotal / company rows (aggregates dwarf queue-scale blocks) and pass
+    // nothing on the Insights daily breakdown (per-day rows, different job).
+    // The 5%-standard soft-red treatment rides the same ans-bar--pass class.
+    var useTally = opts && opts.tallyUnit > 0 && total > 0;
+    if (useTally && opts.tallyUnit > 1) title += ' · each block ≈ ' + opts.tallyUnit + ' calls';
+    var track = useTally
+      ? '<div class="ans-tally" aria-hidden="true">'
+        + ansTallyBlocks_(a, opts.tallyUnit, 'a')
+        + ansTallyBlocks_(ab, opts.tallyUnit, 'm')
+        + '</div>'
+      : '<div class="ans-track">' + segs + tick + '</div>';
     return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
-         +   '<div class="ans-track">' + segs + tick + '</div>'
+         +   track
          +   '<div class="ans-nums">'
          +     '<span class="ans-n">'   + fmtNumber(a)  + '</span>'
          +     '<span class="ans-slash">/</span>'
