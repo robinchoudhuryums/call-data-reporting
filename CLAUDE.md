@@ -640,8 +640,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Apps Script's JDBC cap. **There is NO sheet primary for this data** -- the
   "Inbound Calls" tab (`cdr-report/inboundCallsExport.js::exportInboundCalls`)
   is a fallback COPY of Neon, not a source. History: editor-run
-  `backfillInboundCalls` (cdr-import) fills only from surviving `Call_Legs_*`
-  sheets, so it reaches at most the ~14-day retention window.
+  `backfillInboundCalls` (cdr-import) reaches at most the ~14-day
+  `Call_Legs_*` retention window.
   **Queue-name recognition is config-fed AND brand-prefix aware (F1/F1b) -- do
   NOT re-hardcode it.** `icIsQueueName_` decides what counts as a queue leg and
   feeds `entry_queue` / `final_queue` / `num_queues` / `abandon_stage`. A name
@@ -677,18 +677,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   is NOT by itself a signal -- see Operator State #38 for the runbook.
   **Internal-transfer journey enrichment (R11-N).** When an agent answers an
   inbound call and transfers the caller to a queue where they then abandon,
-  that transfer is a separate internal-only leg group the record builder drops.
-  `buildInboundCallRecords_` cross-references it to the answering agent's
-  concurrent captured inbound call and, ONLY on a UNIQUE match, APPENDS one
+  `buildInboundCallRecords_` cross-references that internal leg group to the
+  answering agent's concurrent captured inbound call and, ONLY on a UNIQUE match, APPENDS one
   synthetic `{kind:queue, abandoned:true, transfer:true}` event to that call's
-  journey. Strictly JOURNEY-ONLY -- disposition / counts / entryQueue /
-  finalQueue / numQueues / numTransfers are NEVER touched (zero metric impact)
-  -- and 0-or->1 matches are left as-is; it never guesses. Idempotent on
-  re-import. The enrichment is COMPLETE as shipped; no widening is warranted
-  (R11-N5). Read-only editor diagnostics
+  journey. Strictly JOURNEY-ONLY (disposition/counts/queues NEVER touched);
+  an ambiguous match is left as-is -- it never guesses. Idempotent on
+  re-import; no widening is warranted (R11-N5). Editor diagnostics
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
-  (date-selectable via the CDR Tools menu or the `TRANSFER_PREVIEW_DATE`
-  cdr-import Script Property; R11-N4). Pinned by
+  (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
   `tests/unit/inbound-calls.test.js`.
   **Caller Lookup** (`CallerLookup.gs`, route `#/admin/caller-lookup`,
   admin-only) is the FULL communication history: the entered number is
@@ -705,7 +701,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   without touching the inbound results.
   **Per-call drill-through.** `InboundReport.gs::getCallJourney({callId, date,
   department})` returns ONE call's journey for the "↳ path" affordance on
-  abandoned rings in the Missed views. Unlike the full Inbound report it is
+  abandoned rings in the Missed views. **INTERNAL-ORIGIN queue calls (an
+  employee dials another dept's queue; no Incoming leg) are captured as
+  `is_internal` rows for THIS drill only** -- every metric query excludes
+  them (pinned both ways); a uniquely-matched R11-N transfer group stays
+  enrichment-only. Unlike the full Inbound report it is
   manager-reachable for the manager's OWN dept: managers are pinned to their
   dept AND the query is scoped by `inboundDeptPredicate_`. **The entitlement is
   enforced SERVER-side (F-4):** the exact-`(call_date, call_id)` fallback --

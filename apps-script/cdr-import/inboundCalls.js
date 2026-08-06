@@ -298,6 +298,7 @@ function buildInboundCallRecords_(rawRows) {
   }
 
   var records = [];
+  var internalPending = [];   // internal-origin queue records, merged after the R11-N pass
   Object.keys(groups).forEach(function (root) {
     var legs = groups[root].slice().sort(function (a, b) {
       var d = (icParseTs_(a[IC_COL.START]) || 0) - (icParseTs_(b[IC_COL.START]) || 0);
@@ -313,17 +314,35 @@ function buildInboundCallRecords_(rawRows) {
     var incoming = legs.filter(function (l) {
       return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
     });
-    if (!incoming.length) return;   // not an inbound call (outgoing / internal-only)
+    // Round-16 (owner): an INTERNAL-ORIGIN QUEUE call (an employee dials
+    // another dept's queue; every leg Direction=Internal) is captured as a
+    // FLAGGED record (isInternal) so the Missed report's "path" journey
+    // drill can serve it. JOURNEY-ONLY visibility: every dashboard metric
+    // query excludes is_internal rows, so no inbound figure moves. Groups
+    // with no queue leg (agent-to-agent internal, outbound-internal noise)
+    // stay uncaptured; groups the R11-N transfer enrichment uniquely matches
+    // are dropped AFTER that pass (they're already represented on the
+    // caller's captured journey).
+    var isInternalOrigin = false;
+    if (!incoming.length) {
+      var touchesQueue = legs.some(function (l) { return icIsQueueName_(l[IC_COL.CALLEE_NAME]); });
+      if (!touchesQueue) return;   // not an inbound call (outgoing / internal-only)
+      isInternalOrigin = true;
+    }
 
     // Caller number: first external number on an incoming leg; else anonymous
     // if the caller is blank/anon; else skip (internal-incoming noise).
+    // Internal-origin calls have no external caller by definition (the
+    // record writes with a NULL caller_hash, like Anonymous).
     var callerNumber = null;
-    for (var k = 0; k < incoming.length; k++) {
-      var n = icExternalNumber_(incoming[k][IC_COL.CALLER]);
-      if (n) { callerNumber = n; break; }
+    if (!isInternalOrigin) {
+      for (var k = 0; k < incoming.length; k++) {
+        var n = icExternalNumber_(incoming[k][IC_COL.CALLER]);
+        if (n) { callerNumber = n; break; }
+      }
+      var firstCaller = incoming[0][IC_COL.CALLER];
+      if (!callerNumber && !icIsAnonymous_(firstCaller)) return;   // not a real external inbound
     }
-    var firstCaller = incoming[0][IC_COL.CALLER];
-    if (!callerNumber && !icIsAnonymous_(firstCaller)) return;   // not a real external inbound
 
     // Disposition. Answered = a real talk leg (Talk>0) marked Answered. The
     // zero-talk queue/IVR/recording legs (which also say "Answered") are
@@ -359,7 +378,7 @@ function buildInboundCallRecords_(rawRows) {
     // Abandoned-on-hold: for inbound the customer is the CALLER, so the
     // signal is Caller Disconnect On Hold = TRUE on an incoming leg. This is
     // independent of `answered` (you can be answered THEN dropped on hold).
-    var abandonedOnHold = incoming.some(function (l) { return icIsTrue_(l[IC_COL.CALLER_DISC_ON_HOLD]); });
+    var abandonedOnHold = (isInternalOrigin ? [legs[0]] : incoming).some(function (l) { return icIsTrue_(l[IC_COL.CALLER_DISC_ON_HOLD]); });
 
     // Hold time the caller was parked (max across legs).
     var holdSeconds = 0;
@@ -410,7 +429,7 @@ function buildInboundCallRecords_(rawRows) {
 
     // Wait seconds: from first incoming Start to the first answer Connected,
     // or to the abandon Stop.
-    var firstStart = icParseTs_(incoming[0][IC_COL.START]);
+    var firstStart = icParseTs_((isInternalOrigin ? legs[0] : incoming[0])[IC_COL.START]);
     var endMs = NaN;
     if (answered) {
       for (var w = 0; w < legs.length; w++) {
@@ -427,8 +446,9 @@ function buildInboundCallRecords_(rawRows) {
 
     var callDate = icIsoDate_(firstStart);
 
-    records.push({
+    (isInternalOrigin ? internalPending : records).push({
       callId:          root,
+      isInternal:      isInternalOrigin,
       callDate:        callDate,
       callStart:       icIsoTime_(firstStart),
       callerNumber:    callerNumber,           // null = anonymous (hashed later)
@@ -469,6 +489,7 @@ function buildInboundCallRecords_(rawRows) {
   //   * PURE + DETERMINISTIC over rawRows, so a re-import reproduces the same
   //     journey (idempotent under the ON CONFLICT upsert).
   var recordByRoot = {};
+  var enrichedRoots = {};
   records.forEach(function (rr) { recordByRoot[rr.callId] = rr; });
 
   // Index: agent extension -> the captured inbound call they were talking on.
@@ -515,6 +536,15 @@ function buildInboundCallRecords_(rawRows) {
     };
     if (!isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - tMs) / 1000));
     rec.journey.push(ev);
+    enrichedRoots[root] = true;
+  });
+
+  // Round-16: internal-origin queue records stand alone ONLY when the R11-N
+  // pass did not already represent the group as a transfer-abandon event on
+  // a captured caller's journey (a unique match means the group IS that
+  // caller's transfer -- a standalone "internal call" would double-tell it).
+  internalPending.forEach(function (ir) {
+    if (!enrichedRoots[ir.callId]) records.push(ir);
   });
 
   return records;
@@ -804,6 +834,9 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // R5: first person the call rang (dial-in labeling); NULL on
       // pre-extension rows until re-imported/backfilled.
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS first_agent text');
+      // Round-16: internal-origin queue calls (journey-only; every dashboard
+      // metric query excludes is_internal=TRUE rows).
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS is_internal boolean');
       ddl.close();
 
       // L2: authoritative per-date replace. Delete the payload's distinct dates
@@ -825,7 +858,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -834,7 +867,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
         'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
-        'first_agent=EXCLUDED.first_agent, updated_at=now()';
+        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -855,7 +888,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers)
           + ',' + icSqlStr_(r.callStart)
           + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
-          + ',' + icSqlStr_(r.firstAgent) + ')';
+          + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ')';
       });
       var buildMs = Date.now() - tBuild;
 
