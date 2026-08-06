@@ -554,6 +554,18 @@ test('Insights: queueHealth daily series + always-separated sub-queues', functio
   assert.ok(overall, 'bySource has the Overall rollup row');
   assert.equal(overall.totalCalls, 180);
 
+  // Round-16 (sub-queue drill fix): each perQueue row carries its OWN
+  // per-day rows on the same zero-filled date axis as dailySeries, so a
+  // violation-date click can scope the Daily breakdown to that queue --
+  // the dept-total row for the date shows the PARENT's numbers (Beta's
+  // 2026-03-10 abandons live in a row reading 100 calls / 10 abandoned).
+  assert.equal(betaRow.daily.length, 2, 'per-queue daily spans the full date axis (F-15)');
+  assert.equal(betaRow.daily[0].date, '2026-03-10');
+  assert.equal(betaRow.daily[0].totalCalls, 50);
+  assert.equal(betaRow.daily[0].abandoned, 5);
+  assert.equal(betaRow.daily[1].totalCalls, 0, 'zero-filled on Beta\'s quiet day');
+  assert.equal(alphaRow.daily[1].totalCalls, 80);
+
   // Consolidation Phase 1 (gap 1): trend.metrics carries Total Calls +
   // Violations series parallel to the default abandoned-% series, so the
   // by-queue chart tab can switch metric. Own-dept total = Alpha only.

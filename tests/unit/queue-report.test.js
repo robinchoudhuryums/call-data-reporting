@@ -219,6 +219,34 @@ test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue 
   assert.equal((html.match(/A_Q_SALES/g) || []).length, 1);
 });
 
+test('Round-16: per-queue MTD pace sub-line in the email (queue rows + single-queue banner; absent pre-v6)', function () {
+  // No mtd block (a pre-v6 cached payload): no pace line anywhere.
+  const bare = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
+  assert.doesNotMatch(bare, /MTD &Oslash;/);
+
+  const d = emailFixture();
+  d.mtd = { from: '2026-07-01', to: '2026-07-10', workdays: 5,
+    priorFrom: '2026-06-01', priorTo: '2026-06-30', priorWorkdays: 22, priorLabel: 'Jun',
+    totalCalls: 700, answered: 660, abandoned: 40, abandonedPct: 5.71,
+    priorTotalCalls: 3000, priorAnswered: 2850, priorAbandonedPct: 5.0 };
+  // CSR gets a second queue so its section renders per-queue ROWS (a
+  // single-queue section collapses into the banner, R12-22).
+  d.depts[0].queues[0].mtdTotalCalls = 550;    // 550/5 = 110/day
+  d.depts[0].queues[0].priorTotalCalls = 2200; // 2200/22 = 100/day -> +10.0%
+  d.depts[0].queues.push({ queue: 'A_Q_CSR_2', totalCalls: 10, totalAnswered: 10,
+    abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 });
+  // Sales stays single-queue (banner-only) with no prior-month activity.
+  d.depts[1].queues[0].mtdTotalCalls = 100;    // 100/5 = 20/day, prior 0 -> "new this month"
+  const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
+  // Queue-row pace line: per-workday averages + neutral delta vs the ENTIRE
+  // prior month (mirrors the web table's qMtdSub math).
+  assert.match(html, /MTD &Oslash; 110\/day &middot; Jun 100 &#9650; 10\.0%/);
+  // Banner-only section: the pace line rides the banner name cell.
+  assert.match(html, /MTD &Oslash; 20\/day &middot; new this month/);
+  // A_Q_CSR_2 has no mtd fields at all -> exactly the two lines above.
+  assert.equal((html.match(/MTD &Oslash;/g) || []).length, 2);
+});
+
 // ── Owner round (2026-07): Viol MTD on the banner; no company roll-up ───────
 // Reported: "Resupply did not get a violation that day and is green, so it
 // does not show the Violations MTD value, even if they did get a violation

@@ -619,6 +619,32 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       mtdAnsSub = mtdSub(mAnsPct.toFixed(1) + '%', '', '');
     }
   }
+  // Round-16 (owner): the per-queue MTD pace sub-line, mirroring the web
+  // table's qMtdSub -- "MTD Ø <avg>/day · <prior month> <avg> ▲/▼ %", per-
+  // WORKDAY averages from the SAME mtd block as the KPI sub-lines so every
+  // level reconciles. Neutral gray throughout (volume is demand, not
+  // performance). A queue with no prior-month activity reads "new this
+  // month"; no activity in either window renders nothing. Null-guarded so a
+  // pre-v6 cached payload (no mtd / no per-queue fields) renders no line.
+  const qMtdSubEmail = function (q) {
+    if (!m || !(m.workdays > 0)) return '';
+    const mCalls = Number(q.mtdTotalCalls) || 0;
+    const pCalls = Number(q.priorTotalCalls) || 0;
+    if (!mCalls && !pCalls) return '';
+    const mAvg = Math.round(mCalls / m.workdays);
+    const pAvg = m.priorWorkdays > 0 ? (pCalls / m.priorWorkdays) : 0;
+    const pLbl = m.priorLabel || 'prior';
+    let tail;
+    if (pAvg > 0) {
+      const dPct = (mAvg - pAvg) / pAvg * 100;
+      tail = esc(pLbl) + ' ' + Math.round(pAvg) + ' '
+        + (dPct >= 0 ? '&#9650;' : '&#9660;') + ' ' + Math.abs(dPct).toFixed(1) + '%';
+    } else {
+      tail = 'new this month';
+    }
+    return '<div style="font:10px ' + sans + ';color:' + C.mut + ';padding-top:2px;white-space:nowrap;">'
+      + 'MTD &Oslash; ' + mAvg + '/day &middot; ' + tail + '</div>';
+  };
   const abanOver = gPct >= 5;
   const kpiRow = '<tr><td style="padding:16px 26px 4px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
     + kpi('Company aban %', (gt.abandonedPctStr || gPct.toFixed(1) + '%'),
@@ -701,7 +727,10 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     tbl += '<tr>'
       + '<td colspan="3" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
-      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
+      // A banner-only section (one queue) has no queue row to carry the MTD
+      // pace sub-line, so it rides the banner name instead (the banner IS
+      // that queue's line). Multi-row sections keep it on the queue rows.
+      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + (singleRow ? qMtdSubEmail(rowDefs[0].q) : '') + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
       +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
       +   '</td>'
@@ -723,7 +752,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
         ? '&#8627; <b>' + esc(rd.sub) + '</b> <span style="color:' + C.mut + ';">&middot; ' + esc(q.queue) + '</span>'
         : esc(q.queue);
       tbl += '<tr>'
-        + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + '</td>'
+        + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + qMtdSubEmail(q) + '</td>'
         + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
         + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (tallyUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, tallyUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
         + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'

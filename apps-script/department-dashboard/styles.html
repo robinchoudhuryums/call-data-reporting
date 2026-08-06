@@ -4495,6 +4495,20 @@
   .ins-viol-date:hover, .ins-viol-date:focus-visible {
     border-color: var(--accent); color: var(--accent);
   }
+  /* Round-16: the Daily-breakdown queue-scope chip (set when a violation-date
+     drill narrows the table to one queue; ✕ returns to the dept total). */
+  .ins-qh-scope-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: 6px; padding: 1px 4px 1px 8px;
+    font: 600 11px/1.5 var(--mono); color: var(--accent);
+    background: var(--accent-soft); border: 1px solid var(--line);
+    border-radius: var(--r-pill, 999px); vertical-align: middle;
+  }
+  .ins-qh-scope-clear {
+    border: 0; background: none; cursor: pointer; color: inherit;
+    font: inherit; font-size: 13px; line-height: 1; padding: 0 3px;
+  }
+  .ins-qh-scope-clear:hover, .ins-qh-scope-clear:focus-visible { color: var(--bad); }
   @keyframes ins-daily-hit {
     0%, 60% { background: var(--warn-soft); }
     100%    { background: transparent; }

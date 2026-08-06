@@ -1483,7 +1483,10 @@
                Populated by insRenderQueueHealth_ via the shared qcdDailyRowsHtml_;
                hidden when the dept/range has no daily QCD rows. -->
           <details id="ins-qh-daily" class="ins-qh-daily" style="display:none; margin:0 0 12px;">
-            <summary class="ins-qh-daily-summary">Daily breakdown</summary>
+            <!-- Round-16: #ins-qh-daily-scope carries the queue-scope chip when
+                 a violation-date drill narrows the table to one queue's own
+                 per-day rows (insQhDailyRender_); empty = dept total. -->
+            <summary class="ins-qh-daily-summary">Daily breakdown <span id="ins-qh-daily-scope"></span></summary>
             <div class="ds-card" style="overflow:auto; margin:8px 0 0;">
               <table class="ds-table">
                 <thead><tr>
@@ -1494,6 +1497,9 @@
                 </tr></thead>
                 <tbody id="ins-qh-daily-tbody"></tbody>
               </table>
+              <!-- Round-16: tally-unit legend, filled by insQhDailyRender_
+                   when the daily tally's unit exceeds 1 call per block. -->
+              <div id="ins-qh-daily-legend" class="ans-tally-legend" style="display:none;"></div>
             </div>
           </details>
           <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart at the bottom of the report switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;Abd&nbsp;%&rdquo; tab&rsquo;s metric selector.</div>
@@ -1516,7 +1522,12 @@
               <option value="regressors">Biggest regressors</option>
             </select>
           </label>
-          <div class="segmented" id="ins-cards-view-toggle" role="radiogroup" aria-label="Agent comparison view">
+          <!-- Round-16 (owner): Cards/Chart toggle HIDDEN while the Cards view
+               is under review (undecided whether it stays). Wiring + cards code
+               are intact -- remove the display:none to restore the choice. The
+               admin A/B remote's Cards button still forwards here, so an admin
+               can preview the hidden view. -->
+          <div class="segmented" id="ins-cards-view-toggle" role="radiogroup" aria-label="Agent comparison view" style="display:none;">
             <button type="button" class="seg-btn active" data-view="cards" role="radio" aria-checked="true">Cards</button>
             <button type="button" class="seg-btn" data-view="chart" role="radio" aria-checked="false">Chart</button>
           </div>

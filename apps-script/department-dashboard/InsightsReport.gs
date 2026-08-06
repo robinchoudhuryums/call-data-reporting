@@ -790,6 +790,15 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
           abandonedPctStr:  q.abandonedPctStr,
           violations:       q.violations,
           violationDates:   q.violationDates || [],
+          // Round-16 (sub-queue drill fix): this queue's OWN per-day rows
+          // (same zero-filled date axis as dailySeries, F-15) so a
+          // violation-date click can scope the Daily breakdown to the
+          // clicked queue -- the dept-total series shows the PARENT dept's
+          // numbers for that day, which for a sub-queue row (A_Q_Spanish
+          // under CSR) read as the wrong queue's data. Additive field; the
+          // client falls back to the unscoped jump when absent (a stale
+          // <=30-min cached payload).
+          daily:            (cur.perQueue && cur.perQueue[q.queue] && cur.perQueue[q.queue].daily) || [],
           // 4c: the call source driving the most abandons in this queue
           // (from the 4a bySource breakdown). Null when no sub-source has
           // any abandons -- the client renders nothing in that case.

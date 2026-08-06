@@ -1004,7 +1004,25 @@ defensible scope and a confusing one.
   (`.dept-qcd-sub`) vs the ENTIRE previous month, per-workday for volume.
 - **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD
   sub-lines (`.qcd-mtd-sub`, full-prior-month baseline, per-workday volume);
-  queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`).
+  queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`) — the EMAIL's
+  queue rows too (`qMtdSubEmail` in QueueReportEmail.gs; a banner-only
+  single-queue section carries it on the banner name).
+- **Insights Agents section**: the Cards view is HIDDEN for now (owner
+  undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
+  `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
+  the **Absolute** basis. All cards code is kept — single-agent reports still
+  force cards, and the admin A/B remote's Cards button still reaches the
+  hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
+- **Insights Daily breakdown**: violation-date chips carry `data-queue`; a
+  click SCOPES the table to that queue's own per-day rows
+  (`qh.perQueue[i].daily`, additive payload field) before jumping — the
+  dept-total row showed the PARENT's numbers for a sub-queue's date. A scope
+  chip in the `<summary>` (`.ins-qh-scope-chip`, ✕ = back to dept total)
+  names the active queue; scope resets on every fresh render. The daily rows
+  also render the volume TALLY now, unit computed from the DISPLAYED rows
+  (re-scoping re-normalizes) with a `#ins-qh-daily-legend` line when unit>1.
+  The agent-card `.ins-cbar-*` bars deliberately stay classic tracks — their
+  job is position vs the team-average marker, which blocks can't carry.
 - **Journey overlay**: internal-origin calls show a `.cj-internal-tag` and,
   when `relatedCallId` is present, a `.cj-related` context line whose button
   drills into the originating inbound call's path (delegated document

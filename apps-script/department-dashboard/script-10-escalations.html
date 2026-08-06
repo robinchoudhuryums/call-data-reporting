@@ -1525,9 +1525,12 @@
     // volume-proportional TALLY instead of the fixed-length bar -- answered
     // sage + abandoned red blocks at the caller's cohort-shared unit, so a
     // busy queue visibly dwarfs a quiet one. Callers keep the classic bar on
-    // subtotal / company rows (aggregates dwarf queue-scale blocks) and pass
-    // nothing on the Insights daily breakdown (per-day rows, different job).
-    // The 5%-standard soft-red treatment rides the same ans-bar--pass class.
+    // subtotal / company rows (aggregates dwarf queue-scale blocks). The
+    // Insights daily breakdown tallies too (owner follow-up) -- its unit is
+    // computed per render from the DISPLAYED rows (insQhDailyRender_), so a
+    // re-scope to a quiet sub-queue re-normalizes instead of shrinking to
+    // dots. The 5%-standard soft-red treatment rides the same ans-bar--pass
+    // class.
     var useTally = opts && opts.tallyUnit > 0 && total > 0;
     if (useTally && opts.tallyUnit > 1) title += ' · each block ≈ ' + opts.tallyUnit + ' calls';
     var track = useTally
@@ -1560,10 +1563,12 @@
       var violCls = viol > 0 ? 'num qcd-warn-light' : 'num';
       // data-date keys the violation-date -> daily-row jump (insJumpToDailyRow_).
       if (bar) {
+        // opts.tallyUnit forwards to the shared cell so the Insights Daily
+        // breakdown renders the volume tally (0/omitted keeps the classic bar).
         return '<tr data-date="' + escapeHtml(r.date) + '">'
              +   '<td>' + escapeHtml(r.date) + '</td>'
              +   '<td class="num">' + fmtNumber(r.totalCalls) + '</td>'
-             +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(r) + '</td>'
+             +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(r, (opts && opts.tallyUnit > 0) ? { tallyUnit: opts.tallyUnit } : null) + '</td>'
              +   '<td class="' + violCls + '">' + fmtNumber(r.violations) + '</td>'
              + '</tr>';
       }

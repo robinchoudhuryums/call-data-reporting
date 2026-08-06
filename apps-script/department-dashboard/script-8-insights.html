@@ -43,6 +43,12 @@
   // R11-H (owner): the per-agent Trend chart is the DEFAULT Agents view for
   // everyone now (was cards / role-split). A saved pref still wins; single-agent
   // reports + Simple density force cards, unchanged.
+  // Round-16 (owner): the CARDS view is HIDDEN for now (undecided whether it
+  // stays) -- the #ins-cards-view-toggle control is display:none in
+  // dashboard.html and insRestorePrefs_ only restores 'chart', so nothing can
+  // strand a viewer in a view with no visible way out. All the cards code is
+  // KEPT: single-agent reports still force cards (a one-card grid needs no
+  // chart), and un-hiding the toggle restores the choice wholesale.
   let insCardsView = 'chart';   // 'cards' | 'chart' (#3)
   let insCardsChartMetric = 'answered';   // metric for the grouped Chart view (gap mode)
   // Chart-view basis: 'gap' (diverging bars vs the team average, one metric)
@@ -52,7 +58,7 @@
   // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
   // the prior values stay reachable via the card delta-badge hover
   // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  let insCardsChartMode = 'trend';   // R11-H: 'gap' | 'abs' | 'trend'; Trend is the default basis now
+  let insCardsChartMode = 'abs';   // 'gap' | 'abs' | 'trend'; Round-16 (owner): Absolute is the default basis (was Trend, R11-H)
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   let insShareChartInstance = null;   // share-of-answered pie (PR port)
@@ -61,6 +67,14 @@
   // metric to plot -- 'abandonedPct' (default, the 5%-standard view) |
   // 'totalCalls' | 'violations'. Persisted in prefs.
   let insQueueMetric = 'abandonedPct';
+  // Round-16 (sub-queue drill fix): Daily-breakdown scope state. '' renders
+  // the dept-total dailySeries; a queue name renders that queue's OWN per-day
+  // rows (qh.perQueue[i].daily), set when a violation-date chip is clicked so
+  // the day's row shows the clicked queue's numbers rather than the parent
+  // dept total. Reset to '' on every fresh Queue-health render.
+  let insQhDailyAll_ = [];
+  let insQhDailyByQueue_ = {};
+  let insQhDailyScope_ = '';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // D1 (density design, Phase 1): Simple/Detailed disclosure mode.
   // PRESENTATION ONLY -- no compute, request, cache, or gate changes. Simple
@@ -1919,8 +1933,13 @@
           // row in the Daily breakdown table below (insJumpToDailyRow_).
           detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
             + q.violationDates.map(function (iso) {
+                // data-queue scopes the Daily breakdown to THIS queue's own
+                // per-day rows on click (sub-queue drill fix) -- without it
+                // the day's row showed the dept-total numbers, which for a
+                // sub-queue row is the wrong queue's data.
                 return '<button type="button" class="ins-viol-date" data-date="'
-                  + escapeHtml(String(iso)) + '" title="Show this day in the Daily breakdown">'
+                  + escapeHtml(String(iso)) + '" data-queue="' + escapeHtml(q.queue)
+                  + '" title="Show this day in the Daily breakdown (scoped to ' + escapeHtml(q.queue) + ')">'
                   + fmtViolDate_(iso) + '</button>';
               }).join(' ') + '</div>';
         }
@@ -1943,10 +1962,18 @@
       // rows but keeps the tbody element + this listener).
       if (!tbody._insQhExpandWired) {
         tbody.addEventListener('click', function (e) {
-          // Violation-date chip -> jump to that day in the Daily breakdown.
+          // Violation-date chip -> scope the Daily breakdown to the clicked
+          // row's queue (its violation happened on ITS numbers, not the dept
+          // total -- the old unscoped table showed the parent's row for a
+          // sub-queue's date), then jump to that day. Falls back to the
+          // unscoped jump when the payload has no per-queue daily rows (a
+          // stale <=30-min cached payload without the additive field).
           var chip = e.target.closest('.ins-viol-date');
           if (chip && tbody.contains(chip)) {
             e.preventDefault();
+            var vq = chip.getAttribute('data-queue') || '';
+            insQhDailyScope_ = (vq && insQhDailyByQueue_[vq]) ? vq : '';
+            insQhDailyRender_();
             insJumpToDailyRow_(chip.getAttribute('data-date') || '');
             return;
           }
@@ -1985,14 +2012,65 @@
     const dailyTbody = $('ins-qh-daily-tbody');
     const dailyWrap = $('ins-qh-daily');
     if (dailyTbody) {
-      const daily = qh.dailySeries || [];
-      if (daily.length) {
-        dailyTbody.innerHTML = qcdDailyRowsHtml_(daily, { bar: true });
+      // Round-16 (sub-queue drill fix): stash the dept-total series + each
+      // queue's own per-day rows, reset the scope, and render through the
+      // shared helper so a violation-date click can re-scope in place.
+      insQhDailyAll_ = qh.dailySeries || [];
+      insQhDailyByQueue_ = {};
+      (qh.perQueue || []).forEach(function (q) {
+        if (q.daily && q.daily.length) insQhDailyByQueue_[q.queue] = q.daily;
+      });
+      insQhDailyScope_ = '';
+      if (insQhDailyAll_.length) {
+        insQhDailyRender_();
         if (dailyWrap) dailyWrap.style.display = '';
       } else {
         dailyTbody.innerHTML = '';
         if (dailyWrap) dailyWrap.style.display = 'none';
       }
+      // The ✕ on the scope chip returns to the dept-total series. Wired once
+      // (the <details> is static markup); stopPropagation so the click can't
+      // toggle the <details> shut.
+      if (dailyWrap && !dailyWrap._insScopeWired) {
+        dailyWrap.addEventListener('click', function (e) {
+          var clr = e.target.closest('.ins-qh-scope-clear');
+          if (!clr) return;
+          e.preventDefault();
+          e.stopPropagation();
+          insQhDailyScope_ = '';
+          insQhDailyRender_();
+        });
+        dailyWrap._insScopeWired = true;
+      }
+    }
+  }
+
+  // Render the Daily breakdown table honoring the queue scope, and reflect
+  // the scope as a chip beside the summary label ('' = dept total, no chip).
+  function insQhDailyRender_() {
+    const tbody = $('ins-qh-daily-tbody');
+    if (!tbody) return;
+    const scoped = insQhDailyScope_ ? insQhDailyByQueue_[insQhDailyScope_] : null;
+    const rows = scoped || insQhDailyAll_;
+    // Round-16 (owner follow-up): the daily rows tally too. The unit comes
+    // from the rows being DISPLAYED (not the whole dept), so re-scoping to a
+    // quiet sub-queue re-normalizes the blocks instead of shrinking to dots.
+    const unit = ansTallyUnitFor_(rows.map(function (r) {
+      return { totalAnswered: r.totalAnswered, totalMissed: r.abandoned };
+    }));
+    tbody.innerHTML = qcdDailyRowsHtml_(rows, { bar: true, tallyUnit: unit });
+    const legEl = $('ins-qh-daily-legend');
+    if (legEl) {
+      legEl.innerHTML = unit > 1
+        ? '<span class="tly a"></span> = ' + unit + ' calls' : '';
+      legEl.style.display = unit > 1 ? '' : 'none';
+    }
+    const chipEl = $('ins-qh-daily-scope');
+    if (chipEl) {
+      chipEl.innerHTML = scoped
+        ? '<span class="ins-qh-scope-chip">' + escapeHtml(insQhDailyScope_)
+          + '<button type="button" class="ins-qh-scope-clear" title="Show all queues (department total)">&times;</button></span>'
+        : '';
     }
   }
 
@@ -3943,7 +4021,11 @@
       if (prefs.calMetric === 'pct' || prefs.calMetric === 'missed' || prefs.calMetric === 'abd') {
         insCalMetric = prefs.calMetric;   // 'abd' (R7) self-heals to 'pct' when no queue daily series
       }
-      if (prefs.cardsView === 'cards' || prefs.cardsView === 'chart') {
+      // Round-16 (owner): the Cards view is hidden for now (toggle
+      // display:none in dashboard.html) -- only restore 'chart' so a saved
+      // 'cards' pref can't resurrect a view with no visible way back. Widen
+      // this back to === 'cards' || === 'chart' when the toggle returns.
+      if (prefs.cardsView === 'chart') {
         insCardsView = prefs.cardsView;
         const vt = $('ins-cards-view-toggle');
         if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {
