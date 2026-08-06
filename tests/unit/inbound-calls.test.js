@@ -730,3 +730,32 @@ test('external inbound records stay isInternal=false (metric queries key on the 
   const recs = build(capturedInboundAnsweredBy215('830001'));
   assert.equal(rec(recs, '830001').isInternal, false);
 });
+
+// ---- Round-16b: internal record links its originating inbound call ----------
+// The owner's "nested timeframe" heuristic: an internal queue call placed
+// WHILE the originating employee was answering a captured inbound call
+// (customer parked on hold) carries relatedCallId -> that call, so the path
+// drill can present the full story. Unique-match-only, the R11-N discipline.
+
+test('internal call nested in the originator’s answered inbound: relatedCallId links it (unique match)', function () {
+  const recs = build(capturedInboundAnsweredBy215('840001').concat([
+    // ext 215 dials A_Q_Spanish at 10:02, rings out MISSED (not abandoned --
+    // an abandoned unique match becomes R11-N enrichment instead).
+    leg({ callId: '840900', legId: 1, start: '06/04/2026 10:02:00', stop: '06/04/2026 10:02:30', direction: 'Internal', callTime: '0:00:30', caller: '215', callee: '260', calleeName: 'A_Q_Spanish', missed: 'Missed' }),
+  ]));
+  assert.equal(recs.length, 2, 'captured inbound + the standalone internal record');
+  const ir = rec(recs, '840900');
+  assert.equal(ir.isInternal, true);
+  assert.equal(ir.relatedCallId, '840001', 'linked to the call the employee was on');
+  assert.equal(rec(recs, '840001').relatedCallId, undefined, 'external record carries no link');
+});
+
+test('ambiguous nesting (two concurrent calls) or no concurrent call: no link', function () {
+  // Two captured inbounds answered by 215 over the same window -> ambiguous.
+  const recs = build(capturedInboundAnsweredBy215('850001')
+    .concat(capturedInboundAnsweredBy215('850002'))
+    .concat([
+      leg({ callId: '850900', legId: 1, start: '06/04/2026 10:02:00', stop: '06/04/2026 10:02:30', direction: 'Internal', callTime: '0:00:30', caller: '215', callee: '260', calleeName: 'A_Q_Spanish', missed: 'Missed' }),
+    ]));
+  assert.equal(rec(recs, '850900').relatedCallId, undefined, 'ambiguous -> never guesses');
+});

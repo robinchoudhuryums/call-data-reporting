@@ -632,16 +632,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   column: the ordered leg-by-leg path, capped at `IC_JOURNEY_MAX_EVENTS`=40;
   callee names that look like phone numbers are MASKED so no raw number lands
   in Neon). Timelines append a synthetic "Call ended" row at last-leg
-  start+duration so a long abandoned wait doesn't read as an early disconnect
-  (owner note). The writer's idempotent `ALTER TABLE ... ADD COLUMN
-  IF NOT EXISTS` upgrades pre-extension tables in place, and the insert chunks
-  SIZE-AWARE via `icChunkTuplesByChars_` (`IC_SQL_CHUNK_BUDGET_CHARS`, 30K per
-  statement) because journey rows vary ~0.2-6KB and a fixed row count overran
-  Apps Script's JDBC cap. **There is NO sheet primary for this data** -- the
+  start+duration so a long abandoned wait doesn't read as an early
+  disconnect. The writer's idempotent `ALTER TABLE ... ADD COLUMN
+  IF NOT EXISTS` upgrades pre-extension tables in place, and the insert chunks SIZE-AWARE via
+  `icChunkTuplesByChars_` (30K/statement; journey rows vary ~0.2-6KB and a
+  fixed row count overran the JDBC cap). **There is NO sheet primary for this data** -- the
   "Inbound Calls" tab (`cdr-report/inboundCallsExport.js::exportInboundCalls`)
-  is a fallback COPY of Neon, not a source. History: editor-run
-  `backfillInboundCalls` (cdr-import) reaches at most the ~14-day
-  `Call_Legs_*` retention window.
+  is a fallback COPY of Neon, not a source. History: editor-run `backfillInboundCalls`
+  (cdr-import) reaches at most the ~14-day `Call_Legs_*` retention window.
   **Queue-name recognition is config-fed AND brand-prefix aware (F1/F1b) -- do
   NOT re-hardcode it.** `icIsQueueName_` decides what counts as a queue leg and
   feeds `entry_queue` / `final_queue` / `num_queues` / `abandon_stage`. A name
@@ -697,15 +695,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   aggregates, rendered as "Earlier outbound activity" ONLY for dates the
   per-call capture doesn't cover -- day-level is the ceiling there). Each
   section is independently best-effort: a missing `outbound_calls` table
-  (dashboard deployed ahead of cdr-import) flags `meta.outboundAvailable=false`
-  without touching the inbound results.
+  flags `meta.outboundAvailable=false`; the inbound results stand.
   **Per-call drill-through.** `InboundReport.gs::getCallJourney({callId, date,
   department})` returns ONE call's journey for the "↳ path" affordance on
   abandoned rings in the Missed views. **INTERNAL-ORIGIN queue calls (an
   employee dials another dept's queue; no Incoming leg) are captured as
   `is_internal` rows for THIS drill only** -- every metric query excludes
   them (pinned both ways); a uniquely-matched R11-N transfer group stays
-  enrichment-only. Unlike the full Inbound report it is
+  enrichment-only, and a standalone internal record carries
+  `related_call_id` when uniquely nested in the originator's concurrent
+  answered inbound call (the path drill links the two). Unlike the full Inbound report it is
   manager-reachable for the manager's OWN dept: managers are pinned to their
   dept AND the query is scoped by `inboundDeptPredicate_`. **The entitlement is
   enforced SERVER-side (F-4):** the exact-`(call_date, call_id)` fallback --
@@ -730,11 +729,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   manager path is kept intact in `inboundResolveRequest_`, so restoring manager
   access is a one-line gate removal + un-hiding the `data-admin-only` tab.
   **Vetting tool: `runInboundQcdParityCheck`** (editor-run, admin-gated,
-  read-only; optional `INBOUND_QCD_PARITY_FROM/_TO/_DEPT` Script Properties)
-  joins the two lenses per dept per day and lists the window's UNATTRIBUTED raw
-  entry-queues (fix: the Dept Config "Inbound queue aliases" column). Pinned by
-  `tests/unit/inbound-qcd-parity.test.js`. Run it, populate aliases, re-run --
-  BEFORE any un-gating decision.
+  read-only; `INBOUND_QCD_PARITY_FROM/_TO/_DEPT` props) joins the two lenses
+  per dept/day and lists the window's UNATTRIBUTED raw entry-queues (fix: the
+  Dept Config "Inbound queue aliases" column; inbound-qcd-parity.test.js).
+  Run it, populate aliases, re-run -- BEFORE any un-gating decision.
   **⚠ The QCD-vs-inbound abandon gap is SETTLED -- read `docs/known-issues.md`
   "QCD Abandoned vs inbound_calls abandons" before re-investigating.** Four
   plausible explanations were eliminated and they all look plausible again from

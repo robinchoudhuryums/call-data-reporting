@@ -4614,6 +4614,15 @@
   .qcd-q-sub { font: 500 10.5px/1.5 var(--mono); color: var(--muted);
     font-variant-numeric: tabular-nums; margin-top: 1px; }
   .qcd-q-sub-delta { white-space: nowrap; }
+  /* Round-16b: journey overlay -- internal-call tag + the related-call
+     context line (the originating inbound call the employee was on). */
+  .cj-internal-tag { font: 600 9.5px/1 var(--mono); letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); background: var(--accent-soft);
+    border-radius: var(--r-pill); padding: 2px 7px; }
+  .cj-related { font: 500 11.5px/1.4 var(--mono); color: var(--muted);
+    margin: 6px 0 8px; }
+  .cj-related-btn { font: inherit; color: var(--accent); background: none;
+    border: none; padding: 0; cursor: pointer; text-decoration: underline; }
   /* #3d: abandon % over the 5% threshold reads bold (color comes from the
      bm-over / qcd-warn-light warn tint). */
   .qcd-rate-over { font-weight: 700; }

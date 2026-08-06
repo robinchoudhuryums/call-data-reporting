@@ -544,9 +544,13 @@ When something looks wrong, before assuming a code bug, check:
     Report** section (`installQueueReportTrigger` / `uninstallQueueReportTrigger`,
     admin) -- sets `QUEUE_REPORT_ENABLED=true` + installs `runDailyQueueReport_`
     (every 30 min). WHY POLL A WINDOW not a fixed hour: the import finishes at a
-    variable time; the trigger polls a weekday-morning window
-    (`QUEUE_REPORT_WINDOW_START_HOUR`=6 .. `QUEUE_REPORT_WINDOW_END_HOUR`=12
-    Central) and sends ONCE as soon as the data has landed, deduped by the
+    variable time; the trigger polls from `QUEUE_REPORT_WINDOW_START_HOUR`=6
+    Central onward (weekdays) and sends ONCE as soon as the data has landed.
+    Round-16 (owner): `QUEUE_REPORT_WINDOW_END_HOUR`=12 is CLASSIFICATION,
+    not a gate -- data landing after noon still sends the same day (result
+    reads "Sent ... (LATE)"; the target rolls at midnight so a stale resend
+    is impossible), and the O-7 flag fires once at window end saying the
+    poller keeps retrying. Dedupe stays the
     `QUEUE_REPORT_LAST_SENT` Script Property (target ISO); `QUEUE_REPORT_LAST_RESULT`
     surfaces the last outcome in the modal. The pure `queueReportGateDecision_`
     (disabled / outside-window / weekend / holiday / already-sent / not-ready /

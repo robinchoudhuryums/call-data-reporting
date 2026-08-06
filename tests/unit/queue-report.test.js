@@ -30,7 +30,11 @@ test('gate: sends when enabled + in-window + weekday + data ready + not yet sent
 test('gate: skips when disabled / outside window / weekend / holiday', function () {
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ enabled: false })).reason, 'disabled');
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 5 })).reason, 'outside-window');   // before 6
-  assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 12 })).reason, 'outside-window');  // noon exclusive
+  // Round-16: the window END is classification, not a gate -- a post-noon
+  // poll with ready data SENDS (the late catch-up; the target rolls at
+  // midnight so this can never resend yesterday's report).
+  assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 12 })).send, true);
+  assert.equal(h.call('queueReportGateDecision_', baseCtx({ hour: 23 })).send, true);
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ dow: 6 })).reason, 'weekend');
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ dow: 0 })).reason, 'weekend');
   assert.equal(h.call('queueReportGateDecision_', baseCtx({ holiday: true })).reason, 'holiday');
@@ -375,7 +379,7 @@ test('O-1: the single-address preview path still throws (admin sees the error)',
   }, /quota/);
 });
 
-test('O-7: a window-closed-without-send day is flagged ONCE (MISSED result + one admin email)', function () {
+test('O-7 (late catch-up): a window-closed-without-send day is flagged ONCE (LATE result + one admin email; the poller keeps retrying)', function () {
   h.state.props = { ADMIN_EMAILS: 'admin@x.com', QUEUE_REPORT_LAST_SENT: '2026-07-08' };
   h.state.sentEmails.length = 0;
   const props = {
@@ -389,7 +393,8 @@ test('O-7: a window-closed-without-send day is flagged ONCE (MISSED result + one
   const afternoon = new Date('2026-07-10T14:00:00-05:00');
   h.call('queueReportFlagMissedDay_', props, afternoon, '2026-07-09');
   assert.equal(h.state.props.QUEUE_REPORT_LAST_MISSED, '2026-07-09');
-  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^MISSED 2026-07-09/);
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^LATE 2026-07-09/);
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /keeps retrying/);
   assert.equal(mails.length, 1, 'one admin notification');
   // Second post-window poll the same day: no re-flag, no second email.
   h.call('queueReportFlagMissedDay_', props, afternoon, '2026-07-09');

@@ -244,6 +244,8 @@ function callerLookupShapeCall_(r) {
     holdSeconds:     Number(r.hold_seconds) || 0,
     waitSeconds:     r.wait_seconds == null ? null : (Number(r.wait_seconds) || 0),
     entryQueue:      r.entry_queue || null,
+    isInternal:      !!r.is_internal,
+    relatedCallId:   r.related_call_id || null,
     finalQueue:      r.final_queue || null,
     finalDept:       r.final_dept || null,
     numQueues:       Number(r.num_queues) || 0,

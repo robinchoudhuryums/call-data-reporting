@@ -71,7 +71,13 @@ const QUEUE_REPORT_LAST_MISSED_PROP = 'QUEUE_REPORT_LAST_MISSED';  // O-7: targe
 function queueReportGateDecision_(ctx) {
   ctx = ctx || {};
   if (!ctx.enabled) return { send: false, reason: 'disabled' };
-  if (ctx.hour < QUEUE_REPORT_WINDOW_START_HOUR || ctx.hour >= QUEUE_REPORT_WINDOW_END_HOUR) {
+  // Round-16 (owner): only the window START blocks a send. The END hour is
+  // CLASSIFICATION, not a gate -- when QCD data lands after the morning
+  // window closes, the poller now sends LATE the same day (the target rolls
+  // at midnight) instead of flagging the day permanently missed. The O-7
+  // missed-day flag still fires once at window end so admins learn the data
+  // is late, but its text now says the poller keeps retrying.
+  if (ctx.hour < QUEUE_REPORT_WINDOW_START_HOUR) {
     return { send: false, reason: 'outside-window' };
   }
   if (ctx.dow === 0 || ctx.dow === 6) return { send: false, reason: 'weekend' };
@@ -99,13 +105,7 @@ function runDailyQueueReport_() {
       lastSent: props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '',
       latestQcd: '9999-99-99',   // readiness checked below only if the rest pass
     });
-    if (!pre.send) {
-      // O-7: the window closed without a send for the target day (data landed
-      // late, or never) -- surface it ONCE instead of silently moving on to
-      // the next weekday's target.
-      if (pre.reason === 'outside-window') queueReportFlagMissedDay_(props, now, targetIso);
-      return;
-    }
+    if (!pre.send) return;   // disabled / pre-6am / weekend / holiday / already sent
 
     // Readiness gate: has the import finished writing QCD for the target date?
     const latestQcd = queueReportQcdLatestIso_();
@@ -115,7 +115,16 @@ function runDailyQueueReport_() {
       lastSent: props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '',
       latestQcd: latestQcd,
     });
-    if (!decision.send) return;   // 'not-ready' -> no-op, retry next poll
+    if (!decision.send) {
+      // O-7 (reworked for the late catch-up): data still not ready after the
+      // morning window closed -- flag ONCE so admins learn it's late, but
+      // KEEP polling; a late-landing import now sends the same day.
+      if (decision.reason === 'not-ready'
+          && Number(Utilities.formatDate(now, TZ, 'H')) >= QUEUE_REPORT_WINDOW_END_HOUR) {
+        queueReportFlagMissedDay_(props, now, targetIso);
+      }
+      return;   // 'not-ready' -> no-op, retry next poll
+    }
 
     const result = sendQueueReportForDate_(targetIso, {});
     const failed = result.failed || [];
@@ -151,9 +160,11 @@ function runDailyQueueReport_() {
     //    retry can't duplicate. Notify once per target date.
     if (result.count > 0 || !failed.length) {
       props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
+      const lateSend = Number(Utilities.formatDate(now, TZ, 'H')) >= QUEUE_REPORT_WINDOW_END_HOUR;
       props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
         'Sent ' + targetIso + ' to ' + result.count + ' subscriber'
         + (result.count === 1 ? '' : 's')
+        + (lateSend ? ' (LATE — QCD data landed after the morning window)' : '')
         + (failed.length ? ' — FAILED for ' + failed.length + ' (see admin email)' : '')
         + ' at ' + new Date());
       if (failed.length) notifyQueueReportSendFailures_(targetIso, failed, /*allFailed=*/false);
@@ -307,19 +318,22 @@ function queueReportFlagMissedDay_(props, now, targetIso) {
     if ((props.getProperty(QUEUE_REPORT_LAST_MISSED_PROP) || '') === targetIso) return; // already flagged
     props.setProperty(QUEUE_REPORT_LAST_MISSED_PROP, targetIso);
     props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
-      'MISSED ' + targetIso + ' — QCD data was not ready before the window closed ('
-      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central). Not retried automatically; use '
-      + '"Send me a preview" to verify the data, or wait for the next weekday window. Flagged at ' + new Date());
+      'LATE ' + targetIso + ' — QCD data was not ready before the window closed ('
+      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central). The poller keeps retrying every '
+      + QUEUE_REPORT_EVERY_MINUTES + ' min until midnight and will send automatically '
+      + 'once the data lands. Flagged at ' + new Date());
     const to = getAdminEmails_().join(',');
     if (to) {
       MailApp.sendEmail({
         to: to,
-        subject: '[Dashboard] Daily Call Queue Report was NOT sent for ' + targetIso,
+        subject: '[Dashboard] Daily Call Queue Report is LATE for ' + targetIso,
         body: 'The ' + QUEUE_REPORT_WINDOW_START_HOUR + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR
           + ':00 send window closed without the report going out for ' + targetIso
           + ' (QCD data was not ready in time, or the import did not run).\n\n'
-          + 'It is NOT retried automatically. If the data has since landed, subscribers can be '
-          + 'served manually, or the next weekday\'s report resumes normally.\n\nTime: ' + new Date(),
+          + 'The poller KEEPS RETRYING every ' + QUEUE_REPORT_EVERY_MINUTES + ' minutes until '
+          + 'midnight and will send automatically as soon as the data lands (the result will '
+          + 'read "Sent ... (LATE)"). If the import is genuinely stuck, fix it and the send '
+          + 'follows; nothing else to do here.\n\nTime: ' + new Date(),
       });
     }
   } catch (e) {

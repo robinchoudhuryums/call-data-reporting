@@ -548,6 +548,14 @@
     var ov = $('call-journey-overlay');
     if (ov) ov.style.display = 'none';
   }
+  // Round-16b: delegated click for the related-call context drill (the
+  // overlay body is re-rendered per call, this listener is on document).
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('.cj-related-btn');
+    if (!b) return;
+    e.preventDefault();
+    callJourneyShow_(b.getAttribute('data-cj-related'), b.getAttribute('data-cj-date'));
+  });
   // Stale-response token: clicking a second "↳ path" link while the first
   // fetch is in flight must not let the OLDER response overwrite the newer
   // call's panel when it lands late.
@@ -597,20 +605,32 @@
   // Mirrors the Caller Lookup card body: full chain + timeline when the
   // journey was captured, else the entry->final summary for pre-extension rows.
   function callJourneyHtml_(c) {
+    // Round-16b: an internal-origin call placed while the employee was on a
+    // captured inbound call (customer parked on hold) links its originating
+    // call -- surface it as a drillable context line so the FULL story
+    // (customer call -> internal consult/transfer attempt) is one click.
+    var related = '';
+    if (c.relatedCallId && c.callDate) {
+      related = '<div class="cj-related">↩ Placed while this employee was on an active inbound call — '
+        + '<button type="button" class="cj-related-btn" data-cj-related="'
+        + escapeHtml(c.relatedCallId) + '" data-cj-date="' + escapeHtml(c.callDate) + '">'
+        + 'view that call’s path</button></div>';
+    }
     var head = '<div class="cj-head">'
       + (c.callStart ? escapeHtml(clCstTime_(c.callStart)) + ' · ' : '')
+      + (c.isInternal ? '<span class="cj-internal-tag">internal call</span> · ' : '')
       + escapeHtml(c.callDate || '')
       + (c.disposition ? ' · <strong>' + escapeHtml(c.disposition) + '</strong>' : '')
       + (c.abandonStage ? ' (' + escapeHtml(c.abandonStage) + ')' : '')
       + (c.dialIn ? ' · dial-in ' + escapeHtml(c.dialIn) : '')
       + '</div>';
     if (c.journey && c.journey.length) {
-      return head + clChainHtml_(c.journey)
+      return head + related + clChainHtml_(c.journey)
         + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
         + clJourneyEndRowHtml_(c.journey) + '</div>';
     }
     var path = [c.entryQueue, c.finalQueue].filter(Boolean).map(escapeHtml).join(' → ');
-    return head + '<div class="cl-journey-summary">' + (path || '(no queue path recorded)')
+    return head + related + '<div class="cl-journey-summary">' + (path || '(no queue path recorded)')
       + ' <span class="cl-journey-note">— leg-by-leg detail not captured for this call (recorded before the journey extension)</span></div>';
   }
 

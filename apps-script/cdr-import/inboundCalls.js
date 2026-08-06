@@ -449,6 +449,9 @@ function buildInboundCallRecords_(rawRows) {
     (isInternalOrigin ? internalPending : records).push({
       callId:          root,
       isInternal:      isInternalOrigin,
+      // Scratch for the related-call cross-ref (deleted before return):
+      _originExt:      isInternalOrigin ? icDigits_(legs[0][IC_COL.CALLER]) : null,
+      _startMs:        isInternalOrigin ? firstStart : null,
       callDate:        callDate,
       callStart:       icIsoTime_(firstStart),
       callerNumber:    callerNumber,           // null = anonymous (hashed later)
@@ -544,8 +547,25 @@ function buildInboundCallRecords_(rawRows) {
   // a captured caller's journey (a unique match means the group IS that
   // caller's transfer -- a standalone "internal call" would double-tell it).
   internalPending.forEach(function (ir) {
-    if (!enrichedRoots[ir.callId]) records.push(ir);
+    if (!enrichedRoots[ir.callId]) {
+      // Round-16b (owner): when the ORIGINATING employee placed this internal
+      // queue call WHILE answering a captured inbound call (the internal
+      // start nested in their answered talk-leg window, same ±5s slack as
+      // the R11-N matcher -- the customer parked on hold), link that call so
+      // the path drill can present the full context. UNIQUE match only; an
+      // ambiguous or absent match leaves the record standalone.
+      if (ir._originExt && ir._startMs != null && !isNaN(ir._startMs)) {
+        var ctxMatches = agentBusy.filter(function (a) {
+          return a.ext === ir._originExt && a.root !== ir.callId
+            && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
+        });
+        if (ctxMatches.length === 1) ir.relatedCallId = ctxMatches[0].root;
+      }
+      records.push(ir);
+    }
   });
+  records.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
+  internalPending.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
 
   return records;
 }
@@ -837,6 +857,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // Round-16: internal-origin queue calls (journey-only; every dashboard
       // metric query excludes is_internal=TRUE rows).
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS is_internal boolean');
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_id text');
       ddl.close();
 
       // L2: authoritative per-date replace. Delete the payload's distinct dates
@@ -858,7 +879,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -867,7 +888,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
         'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
-        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, updated_at=now()';
+        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -888,7 +909,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers)
           + ',' + icSqlStr_(r.callStart)
           + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
-          + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ')';
+          + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId) + ')';
       });
       var buildMs = Date.now() - tBuild;
 
