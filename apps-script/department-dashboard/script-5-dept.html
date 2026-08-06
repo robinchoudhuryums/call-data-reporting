@@ -2592,13 +2592,17 @@
       + '</div>'
       + (rateDeltaHtml ? '<div class="dts-sub">' + rateDeltaHtml + ' vs prior</div>' : '')
       + '</div>';
-    // Round-16 (owner request): the 'Answered' and 'Queue calls' tiles MERGE
-    // into ONE color-split tile (the side panel's "Ans / Abd" shape) when the
-    // dept has queue data in range -- answered in sage, queue calls in plain
-    // ink (different POPULATIONS: agent-answered rings vs calls offered to
-    // the mapped queues -- they don't subtract, which the tooltip says). The
-    // sub-line folds the E5 answered delta and the per-workday rate together.
-    // A dept with no queue range data keeps the plain Answered tile.
+    // Round-16 (owner request, refined): the 'Answered' and 'Queue calls'
+    // tiles MERGE into ONE tile reading "<queue total> (<answered> /
+    // <abandoned>)" -- total in ink, answered sage, abandoned warm (muted
+    // when 0). All three figures are the SAME population (QCD: total =
+    // answered + abandoned across the dept's mapped queues), which is what
+    // makes the parenthetical a true breakdown -- the earlier draft paired
+    // the DQE agent-answered count with the queue total, two populations
+    // that don't subtract. The DQE answered count still reads from the hero
+    // % and the table's pinned Total row. Sub-line keeps the multi-day
+    // per-workday pace. A dept with no queue range data keeps the plain
+    // (DQE) Answered tile.
     var ansTile;
     // Batch D: range-scoped queue figures come from the QCD snapshot's
     // `range` block (own-queues-only, the selected From/To); the per-WORKDAY
@@ -2615,31 +2619,36 @@
       var qFrom = (state.meta && state.meta.from) || ($('from-date') && $('from-date').value) || '';
       var qTo   = (state.meta && state.meta.to)   || ($('to-date')   && $('to-date').value)   || '';
       var wd = workingDaysBetween_(qFrom, qTo);
+      // QCD identity: total = answered + abandoned; prefer the block's own
+      // answered figure, derive only if a stale payload lacks it.
+      var qAns = (qr.totalAnswered != null) ? (Number(qr.totalAnswered) || 0)
+                                            : Math.max(0, qCalls - qAbd);
       // R7 (M-4): a 1-workday range's "≈ N/day over 1 workday" just restates
       // the headline number -- the per-day pace joins the sub only on
-      // multi-day ranges (the tile label already says "Queue calls", so a
-      // single-day filler phrase adds nothing; the tooltip carries scope).
-      var ansQSubParts = [];
-      if (ansDeltaHtml) ansQSubParts.push(ansDeltaHtml + ' answered vs prior');
-      if (wd > 1) {
-        ansQSubParts.push('&asymp; ' + (Math.round((qCalls / wd) * 10) / 10)
-          + ' queue calls/day over ' + wd + ' workdays');
-      }
+      // multi-day ranges (the tooltip carries scope on single days).
+      var qPaceSub = wd > 1
+        ? '<div class="dts-sub">&asymp; ' + (Math.round((qCalls / wd) * 10) / 10)
+          + '/day over ' + wd + ' workdays</div>'
+        : '';
       ansTile =
-          '<div class="dts-tile dts-tile--queue" title="Answered = rings answered by this department&#39;s agents (agent data). Queue calls = calls offered to the department&#39;s mapped queues (queue data). Different populations &mdash; the two counts don&#39;t subtract. Workdays = Mon&ndash;Fri minus company holidays.">'
-        +   '<div class="dts-label">Answered / Queue calls <span class="dts-scope">this range</span></div>'
+          '<div class="dts-tile dts-tile--queue" title="Calls offered to the department&#39;s mapped queues this range &mdash; total (answered / abandoned). Workdays = Mon&ndash;Fri minus company holidays.">'
+        +   '<div class="dts-label">Queue calls <span class="dts-scope">this range</span></div>'
         +   '<div class="dts-value dts-value--split">'
-        +     '<span class="dts-ans" data-flash-key="dts:answered">' + fmtNumber(a) + '</span>'
-        +     '<span class="dts-sep"> / </span>'
         +     '<span class="dts-qcalls" data-flash-key="dts:qcalls">' + fmtNumber(qCalls) + '</span>'
+        +     ' <span class="dts-paren">(</span>'
+        +     '<span class="dts-ans" data-flash-key="dts:qans">' + fmtNumber(qAns) + '</span>'
+        +     '<span class="dts-sep"> / </span>'
+        +     '<span class="dts-abd' + (qAbd > 0 ? '' : ' is-zero') + '" data-flash-key="dts:qabdn">' + fmtNumber(qAbd) + '</span>'
+        +     '<span class="dts-paren">)</span>'
         +   '</div>'
-        +   (ansQSubParts.length ? '<div class="dts-sub">' + ansQSubParts.join(' &middot; ') + '</div>' : '')
+        +   qPaceSub
         + '</div>';
+      // (Its "N abandoned" sub is gone -- the count now reads in warm type
+      // one tile over, and restating it side-by-side was pure duplication.)
       qAbdTile =
           '<div class="dts-tile dts-tile--queue">'
         +   '<div class="dts-label">Abandoned %</div>'
         +   '<div class="dts-value' + abCls + '" data-flash-key="dts:qabd">' + escapeHtml(abStr) + '</div>'
-        +   '<div class="dts-sub">' + fmtNumber(qAbd) + ' abandoned</div>'
         + '</div>';
     } else {
       ansTile = '<div class="dts-tile">'
