@@ -2308,6 +2308,13 @@
     gap: 14px;
     margin-bottom: 4px;
   }
+  /* Round-16 (owner cleanup): .ir-form-grid was referenced by five admin
+     forms (Alert Config, Report Subscribers, ...) but never DEFINED, so
+     their .ir-col children -- each carrying flex-basis inline styles that
+     assume a flex parent -- stacked as full-width block rows (a modal-wide
+     Department dropdown). One rule restores the intended compact wrap. */
+  .ir-form-grid { display: flex; flex-wrap: wrap; gap: 10px 12px;
+    align-items: flex-end; }
   .ir-col label {
     display: block;
     font-family: var(--mono);
