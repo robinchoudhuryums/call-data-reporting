@@ -398,6 +398,33 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // day clamped to a full orange bar that contradicted its own number.
   // Mirrors the web report's qcdDailyBarCell_; the red softens when the row
   // passes the 5% standard (the R10-4 convention).
+  // Round-16 (owner): queue rows mirror the web report's volume TALLY --
+  // fixed-width block cells (answered green, abandoned red; soft red under
+  // the 5% standard) at a cohort-shared unit, so a busy queue visibly
+  // dwarfs a quiet one in the email too. Section/company rows keep the
+  // proportional split bar (aggregates dwarf queue-scale blocks). Email-safe:
+  // table cells with inline styles, no flex/inline-block.
+  const tallyHtml = function (row, pctStr, textColor, bold, unit) {
+    const a = Number(row.totalAnswered) || 0;
+    const ab = Number(row.abandoned != null ? row.abandoned
+      : Math.round((Number(row.abandonedPct) || 0) / 100 * (Number(row.totalCalls) || 0))) || 0;
+    const abPct = Number(row.abandonedPct) || 0;
+    const redC = abPct >= 5 ? C.bad : '#e8c4b2';
+    const blocks = function (n, color) {
+      let out = '';
+      for (let i = 0; i < n; i++) {
+        out += '<td width="5" style="background:' + color + ';height:12px;line-height:12px;font-size:0;">&nbsp;</td>'
+             + '<td width="2" style="font-size:0;">&nbsp;</td>';
+      }
+      return out;
+    };
+    const nA = a > 0 ? Math.max(1, Math.round(a / unit)) : 0;
+    const nAb = ab > 0 ? Math.max(1, Math.round(ab / unit)) : 0;
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+      + blocks(nA, C.good) + blocks(nAb, redC)
+      + '<td align="right" style="font:' + (bold ? 'bold ' : '') + '11px ' + sans + ';color:' + textColor + ';padding-left:4px;white-space:nowrap;">' + esc(pctStr) + '</td>'
+      + '</tr></table>';
+  };
   const barHtml = function (row, pctStr, textColor, bold) {
     const total = Number(row.totalCalls) || 0;
     const abPct = Number(row.abandonedPct) || 0;
@@ -456,6 +483,22 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   });
   offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
 
+  // Cohort-shared tally unit across every queue line (the web report's
+  // ansTallyUnitFor_ ladder, replicated server-side; 0 = no volume).
+  let tallyUnit = 0;
+  (function () {
+    let max = 0;
+    depts.forEach(function (d) { deptQueues(d).forEach(function (q) {
+      const t = (Number(q.totalAnswered) || 0) + (Number(q.abandoned) || 0);
+      if (t > max) max = t;
+    }); });
+    if (!max) return;
+    const ladder = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+    for (let i = 0; i < ladder.length; i++) {
+      if (Math.ceil(max / ladder[i]) <= 36) { tallyUnit = ladder[i]; return; }
+    }
+    tallyUnit = ladder[ladder.length - 1];
+  })();
   // Worst-first dept order (EMAIL ONLY).
   // R12-22 (owner): sections are PARENT-GROUPED like the web report --
   // Spanish nests under CSR, PAP under Sales, PAK under Power (the payload's
@@ -682,7 +725,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       tbl += '<tr>'
         + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + '</td>'
         + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
-        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (tallyUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, tallyUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
         + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
         + '</tr>';
     });
@@ -696,7 +739,9 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   tbl += '<tr>'
     + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
     + '<td align="right" style="padding:9px 8px;font:bold 12px ' + sans + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
-    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true) + '</td>'
+    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true)
+    + (tallyUnit > 1 ? '<div style="font:10px ' + sans + ';color:' + C.mut + ';padding-top:3px;">each block &asymp; ' + tallyUnit + ' calls</div>' : '')
+    + '</td>'
     + '<td align="right" style="padding:9px 12px;border-top:2px solid ' + C.ink + ';">&nbsp;</td>'
     + '</tr>';
 

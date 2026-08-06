@@ -185,7 +185,11 @@ test('email HTML: over-threshold row fills red by its real share, full-strength 
   d.depts[0].queues.push({ queue: 'A_Q_CSR_2', totalCalls: 10, totalAnswered: 10,
     abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 });
   const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
-  assert.match(html, /width="50%" style="background:#b23a2c/);   // half red, full-strength (>=5%)
+  // Round-16: queue rows are volume TALLIES now -- an over-threshold row's
+  // abandoned blocks render FULL-strength red (soft #e8c4b2 stays reserved
+  // for under-5% rows); the proportional %-width bar survives only on the
+  // company-total row.
+  assert.match(html, /width="5" style="background:#b23a2c/);
   assert.doesNotMatch(html, /width="100%" style="background:#b23a2c/);
 });
 
