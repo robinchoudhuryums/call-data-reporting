@@ -39,6 +39,26 @@ function include_(filename) {
   return HtmlService.createTemplateFromFile(filename).evaluate().getContent();
 }
 
+/**
+ * Fragment include for the assembled client (#4 hotfix). Apps Script's
+ * HTML loader PARSES every file it loads -- raw JS outside any tag fails
+ * with "Malformed HTML content" (which took the deployed app down; the
+ * local harness cannot run Google's real template compiler, so only a
+ * live render sees it). Each script-N-*.html fragment therefore wraps its
+ * raw JS in its own <script> tags -- the shape the monolithic script.html
+ * proved safe for years -- and this helper STRIPS that wrapper so the
+ * assembler can splice the bodies into ONE script element / one IIFE.
+ */
+function includeJs_(filename) {
+  var s = HtmlService.createHtmlOutputFromFile(filename).getContent();
+  var open = s.indexOf('<' + 'script>');
+  var close = s.lastIndexOf('</' + 'script>');
+  if (open === -1 || close === -1 || close <= open) {
+    throw new Error('includeJs_(' + filename + '): fragment must be wrapped in script tags.');
+  }
+  return s.slice(open + 8, close);
+}
+
 function renderDashboard_(user) {
   const tmpl = HtmlService.createTemplateFromFile('dashboard');
   // Trim user envelope before injection: don't leak admin email list,
