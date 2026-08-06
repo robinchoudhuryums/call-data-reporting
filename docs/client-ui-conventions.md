@@ -986,3 +986,29 @@ abandoned section already includes the parent's sub-queue queues via
 abandon and every abandoned-ring chart bucket. `subqMissedScopeNote_` renders one
 line under the section title saying so, which is the difference between a
 defensible scope and a confusing one.
+
+## Round-16 additions (owner-driven, 2026-08)
+
+- **Agent-table volume tally**: agent rows render discrete answered/missed
+  blocks at a cohort-shared adaptive unit (`ansTallyUnitFor_`, script-1-core;
+  ≤36 blocks for the busiest row, unit disclosed in tooltips + a totals-row
+  legend when >1); totals/subtotal rows keep the classic proportional
+  `.ans-track` bar (an aggregate at agent scale would be hundreds of blocks).
+  The R10-4 pass/fail treatment carries over (`.ans-bar--pass .tly.m` recedes
+  translucent). `drive-subqueue.js` pins the agent-tally/subtotal-bar split.
+- **Team strip**: non-hero tiles center both axes (the R12-23 treatment); the
+  Answered + Queue-calls tiles merged into one "<total> (<ans> / <abd>)"
+  split-value tile (`.dts-value--split`; abandoned mutes at zero), the same
+  format the QCD side panel's Total Calls tile now uses — one dialect on both
+  surfaces. The side panel's MTD view carries delta sub-lines
+  (`.dept-qcd-sub`) vs the ENTIRE previous month, per-workday for volume.
+- **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD
+  sub-lines (`.qcd-mtd-sub`, full-prior-month baseline, per-workday volume);
+  queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`).
+- **Journey overlay**: internal-origin calls show a `.cj-internal-tag` and,
+  when `relatedCallId` is present, a `.cj-related` context line whose button
+  drills into the originating inbound call's path (delegated document
+  listener).
+- **`.ir-form-grid` is now DEFINED** (flex + wrap; it was referenced by five
+  admin forms but never styled, so their fields stacked full-width). New
+  admin form rows should use it rather than inventing another container.

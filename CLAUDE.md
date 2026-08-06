@@ -1963,9 +1963,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table
   `ov-user-table` shares `COLUMNS` and must keep its own thead in sync).
-  Columns: Agent · Source · **Answered / Missed** (a `type:'bar'` stacked
-  bar — green answered + red missed, total = rung, which is why there is no
-  separate Rung / Missed / Answered / **Total calls** column; built by
+  Columns: Agent · Source · **Answered / Missed** (`type:'bar'`; since
+  Round-16 AGENT rows render a VOLUME-PROPORTIONAL TALLY — sage answered +
+  red missed blocks, one block per cohort-adaptive unit via
+  `ansTallyUnitFor_` (≤36 blocks for the busiest row; a >1 unit is disclosed
+  in tooltips + a totals-row legend) — while totals/subtotal rows keep the
+  classic proportional bar; there is no separate Rung / Missed / Answered /
+  **Total calls** column; built by
   `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
   counts and the rung total as a muted "(N)", answer-rate gets the 92%
   benchmark tint, sorts by computed `answerRate` via a special case in
