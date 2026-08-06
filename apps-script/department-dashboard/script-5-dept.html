@@ -1791,18 +1791,22 @@
     const tileRow = function (q) {
       const violCls = (Number(q.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
       const pctCls  = (Number(q.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
-      // Owner note: Answered / Abandoned merged into ONE color-split tile
-      // ("Ans / Abd" -- green X / warm Y) so the compact side panel reads
-      // at a glance instead of two look-alike number tiles.
-      const ansAbd = '<div class="dept-qcd-tile">'
-        + '<div class="dept-qcd-label">Ans / Abd</div>'
+      // Owner note -> Round-16 refinement: Total Calls and Ans/Abd merged
+      // into ONE tile reading "<total> (<answered> / <abandoned>)" -- the
+      // team strip's format, so both surfaces read identically. Total plain
+      // ink, answered sage, abandoned warm (muted when 0).
+      const qAbdN = Number(q.abandoned) || 0;
+      const totalSplit = '<div class="dept-qcd-tile">'
+        + '<div class="dept-qcd-label">Total Calls</div>'
         + '<div class="dept-qcd-value">'
+        +   escapeHtml(fmtNumber(q.totalCalls || 0))
+        +   ' <span class="dept-qcd-paren">(</span>'
         +   '<span class="dept-qcd-ans">' + escapeHtml(fmtNumber(q.totalAnswered || 0)) + '</span>'
         +   '<span class="dept-qcd-sep"> / </span>'
-        +   '<span class="dept-qcd-abd">' + escapeHtml(fmtNumber(q.abandoned || 0)) + '</span>'
+        +   '<span class="dept-qcd-abd' + (qAbdN > 0 ? '' : ' is-zero') + '">' + escapeHtml(fmtNumber(qAbdN)) + '</span>'
+        +   '<span class="dept-qcd-paren">)</span>'
         + '</div></div>';
-      return tile('Total Calls', fmtNumber(q.totalCalls    || 0))
-           + ansAbd
+      return totalSplit
            + tile('Abandoned %', String(q.abandonedPctStr  || '0.00%'), pctCls)
            + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
     };

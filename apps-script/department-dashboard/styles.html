@@ -1381,11 +1381,13 @@
     margin-top: 2px;
   }
   .dept-qcd-value.dept-qcd-warn { color: var(--warn); }
-  /* Merged "Ans / Abd" tile (owner note): answered green, abandoned warm,
-     one glance instead of two look-alike number tiles. */
+  /* Merged "Total (ans / abd)" tile (owner note -> Round-16 refinement,
+     matching the team strip): answered green, abandoned warm -- muted when
+     0 (nothing to warn about) -- one glance instead of look-alike tiles. */
   .dept-qcd-ans { color: var(--good); }
   .dept-qcd-abd { color: var(--warn); }
-  .dept-qcd-sep { color: var(--muted); }
+  .dept-qcd-abd.is-zero { color: var(--muted); }
+  .dept-qcd-sep, .dept-qcd-paren { color: var(--muted); font-weight: 400; }
 
   /* QCD snapshot carousel (multi-queue side card): one queue page at a time
      with ‹ › nav + a dot indicator, so the sticky side column stays compact
@@ -6446,6 +6448,15 @@
   .dept-team-strip[hidden] { display: none; }
   .dts-tile { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper-card);
     padding: 10px 12px; box-shadow: var(--shadow-1); }
+  /* Round-16 (owner): non-hero tiles center their content both axes -- the
+     R12-23 treatment the QCD verdict band's secondary tiles got ("looked
+     lost in the card"). The hero keeps its left alignment: its target bar
+     is a left-anchored scale and reads wrong centered. */
+  .dts-tile:not(.dts-tile--hero) { display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 5px; }
+  .dts-tile:not(.dts-tile--hero) .dts-label { justify-content: center; }
+  .dts-tile:not(.dts-tile--hero) .dts-value { margin-top: 0; }
+  .dts-tile:not(.dts-tile--hero) .dts-sub { margin-top: 0; }
   .dts-tile--hero { border-color: var(--accent); }
   .dts-label { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--muted); display: flex; align-items: baseline; gap: 6px; }
