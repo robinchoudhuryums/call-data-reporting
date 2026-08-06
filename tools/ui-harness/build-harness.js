@@ -40,13 +40,25 @@ let html = fs.readFileSync(path.join(REPO, 'dashboard.html'), 'utf8');
 // missing fragment file is a hard build error (it would be a render error in
 // production too).
 function resolveIncludes_(content) {
-  return content.replace(/<\?!= include_\('([\w-]+)'\) \?>/g, function (_, name) {
+  return content.replace(/<\?!= include(Js)?_\('([\w-]+)'\) \?>/g, function (_, js, name) {
     const p = path.join(REPO, name + '.html');
     if (!fs.existsSync(p)) {
-      console.error('include_ references missing file: ' + name + '.html');
+      console.error('include reference to missing file: ' + name + '.html');
       process.exit(1);
     }
-    return resolveIncludes_(fs.readFileSync(p, 'utf8'));
+    let body = fs.readFileSync(p, 'utf8');
+    if (js) {
+      // includeJs_: strip the fragment's own <script> wrapper (Code.gs does
+      // the same) so the assembler's single script element stays single.
+      const o = body.indexOf('<' + 'script>');
+      const c = body.lastIndexOf('</' + 'script>');
+      if (o === -1 || c === -1 || c <= o) {
+        console.error('fragment ' + name + '.html is not script-tag wrapped');
+        process.exit(1);
+      }
+      body = body.slice(o + 8, c);
+    }
+    return resolveIncludes_(body);
   });
 }
 const styles = resolveIncludes_(fs.readFileSync(path.join(REPO, 'styles.html'), 'utf8'));

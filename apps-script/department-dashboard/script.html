@@ -9,12 +9,12 @@
      span fragment boundaries, so a fragment may freely call functions
      defined in a later one (from handlers; top-level code should only
      call earlier fragments). Editing rules:
-     - Fragments are RAW JS: no script/style TAGS, no template SCRIPTLETS
-       (this file is template-EVALUATED, so a stray scriptlet-open sequence
-       anywhere in it or a fragment would be executed -- which is why this
-       comment spells the patterns out in words), and never the literal
-       end-of-script-tag pattern (it would close the assembled block early,
-       the html-include-structure class of bug).
+     - Each fragment wraps its raw JS in its OWN script tags (Apps Script's
+       HTML loader parses every file; bare JS fails with 'Malformed HTML
+       content' -- learned in production). includeJs_ (Code.gs) strips the
+       wrapper at splice time so one IIFE still results. Inside the wrapper:
+       no template scriptlets, no NESTED script tags, and never an early
+       end-of-script-tag (the html-include-structure class of bug).
        tests/unit/html-include-structure.test.js enforces all of this and
        syntax-checks the assembled body.
      - A NEW fragment must be added BOTH on disk and as an include line
@@ -35,16 +35,16 @@
      script-10-escalations      Escalations page + triage, onboarding tour, caller-lookup card renderers
      script-11-qcd-boot         all-departments Daily Call Queue report, dev-overlay panel + registry, bootstrap (init on DOMContentLoaded)
      ======================================================================= */
-<?!= include_('script-1-core') ?>
-<?!= include_('script-2-chrome') ?>
-<?!= include_('script-3-overview') ?>
-<?!= include_('script-4-nav') ?>
-<?!= include_('script-5-dept') ?>
-<?!= include_('script-6-ir') ?>
-<?!= include_('script-7-admin') ?>
-<?!= include_('script-8-insights') ?>
-<?!= include_('script-9-inbound-direct') ?>
-<?!= include_('script-10-escalations') ?>
-<?!= include_('script-11-qcd-boot') ?>
+<?!= includeJs_('script-1-core') ?>
+<?!= includeJs_('script-2-chrome') ?>
+<?!= includeJs_('script-3-overview') ?>
+<?!= includeJs_('script-4-nav') ?>
+<?!= includeJs_('script-5-dept') ?>
+<?!= includeJs_('script-6-ir') ?>
+<?!= includeJs_('script-7-admin') ?>
+<?!= includeJs_('script-8-insights') ?>
+<?!= includeJs_('script-9-inbound-direct') ?>
+<?!= includeJs_('script-10-escalations') ?>
+<?!= includeJs_('script-11-qcd-boot') ?>
 })();
 </script>

@@ -74,7 +74,7 @@ INCLUDES.forEach(function (spec) {
 // check on the assembled body (the closest a zero-dep suite gets to "the
 // spliced JS actually parses as one program").
 
-const FRAGMENT_RE = /<\?!= include_\('([\w-]+)'\) \?>/g;
+const FRAGMENT_RE = /<\?!= includeJs_\('([\w-]+)'\) \?>/g;
 
 function scriptIncludeList() {
   const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');
@@ -108,26 +108,38 @@ test('styles.html: no scriptlets -- include_ template-evaluates it now', functio
     + 'templates now, so this would execute server-side at render.');
 });
 
-test('script fragments: raw JS only -- no script/style tags, no scriptlets', function () {
+test('script fragments: script-tag wrapped raw JS -- ONE wrapper pair, no scriptlets', function () {
+  // Apps Script's HTML loader parses every file it loads; a fragment of BARE
+  // JS fails live with "Malformed HTML content" (it took the deployed app
+  // down -- the harness cannot run Google's real template compiler). So each
+  // fragment wraps its JS in its own script tags and includeJs_ strips them
+  // at splice time. Exactly one opener + one closer; nothing outside them.
   const { names } = scriptIncludeList();
   names.forEach(function (name) {
     const body = fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
-    assert.equal(body.indexOf('</scr' + 'ipt'), -1,
-      name + '.html contains the end-of-script-tag pattern -- the browser closes '
-      + 'the ASSEMBLED block there and everything after renders as page text.');
-    assert.equal(body.indexOf('<scr' + 'ipt'), -1,
-      name + '.html contains a script-open tag -- fragments are spliced INSIDE '
-      + 'one script element and must stay raw JS.');
+    const opens = body.split('<' + 'script>').length - 1;
+    const closes = body.split('</' + 'script>').length - 1;
+    assert.equal(opens, 1, name + '.html must contain exactly ONE script-open wrapper tag');
+    assert.equal(closes, 1, name + '.html must contain exactly ONE script-close wrapper tag '
+      + '(a nested close would end the ASSEMBLED block early and render page text)');
+    assert.equal(body.slice(0, body.indexOf('<' + 'script>')).trim(), '',
+      name + '.html: nothing may precede the wrapper');
+    assert.equal(body.slice(body.indexOf('</' + 'script>') + 9).trim(), '',
+      name + '.html: nothing may follow the wrapper');
     assert.equal(body.indexOf('<' + '?'), -1,
-      name + '.html contains a scriptlet-open sequence -- include_ EVALUATES '
-      + 'templates now, so this would execute server-side at render.');
+      name + '.html contains a scriptlet-open sequence -- script.html is '
+      + 'template-EVALUATED, so this would execute server-side at render.');
   });
 });
 
 test('script.html + fragments: the assembled IIFE body parses as one program', function () {
   const { text, names } = scriptIncludeList();
   const assembled = text.replace(FRAGMENT_RE, function (_, name) {
-    return fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
+    // Mirror includeJs_: strip each fragment's own script-tag wrapper.
+    const body = fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
+    const o = body.indexOf('<' + 'script>');
+    const c = body.lastIndexOf('</' + 'script>');
+    return (o !== -1 && c > o) ? body.slice(o + 8, c) : body;
   });
   const open = assembled.indexOf('<script>');
   const close = assembled.indexOf('</script>');
