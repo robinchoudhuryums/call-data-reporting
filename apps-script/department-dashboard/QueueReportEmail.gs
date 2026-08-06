@@ -226,11 +226,26 @@ function sendQueueReportForDate_(targetIso, opts) {
   // Recipients are resolved BEFORE the report is composed: an empty list means
   // there is nothing to do, and composing an all-departments report nobody will
   // receive is pure waste on every 30-min poll of the window.
-  const recipients = opts.to
-    ? [String(opts.to).trim()].filter(Boolean)
+  // Round-16 (owner decision): ONE message per day, To + Cc, replacing the
+  // per-recipient loop. The subscriber model is group inboxes now (e.g.
+  // departmentleads@) -- a single message means every person reachable more
+  // than one way (two groups, or group + direct) still gets exactly ONE copy,
+  // because Gmail dedupes by Message-ID within a mailbox; N separate sends
+  // structurally cannot do that. This supersedes O-1's two rationales: the
+  // privacy concern (recipients are a few org inboxes, not individuals --
+  // and reply-all reaching the leads group is a feature), and per-recipient
+  // failure isolation (a single send either lands -- claim the marker -- or
+  // throws, which is the existing FAILED-ALL path: nobody received it, so
+  // the next poll's retry cannot duplicate).
+  const subs = opts.to
+    ? [{ email: String(opts.to).trim(), cc: false }].filter(function (s) { return !!s.email; })
     : readQueueReportSubscribers_()
-        .filter(function (s) { return s.active && !s.duplicateRow; })   // O-4: dupes never double-send
-        .map(function (s) { return s.email; });
+        .filter(function (s) { return s.active && !s.duplicateRow; });   // O-4: dupes never double-send
+  let toList = subs.filter(function (s) { return !s.cc; }).map(function (s) { return s.email; });
+  let ccList = subs.filter(function (s) { return s.cc; }).map(function (s) { return s.email; });
+  // An email needs a To: -- if the admin marked every row Cc, promote them.
+  if (!toList.length && ccList.length) { toList = ccList; ccList = []; }
+  const recipients = toList.concat(ccList);
 
   if (!recipients.length) {
     Logger.log('sendQueueReportForDate_(%s): no active subscribers -- nothing sent.', targetIso);
@@ -247,27 +262,24 @@ function sendQueueReportForDate_(targetIso, opts) {
   const data = qcdAllDeptCachedData_(targetIso, targetIso).data;
   const subject = 'Daily Call Queue Report — ' + (data.dateLabel || targetIso);
   const html = buildQueueReportEmailHtml_(data, targetIso, !!opts.isPreview);
-  // One send with the full list on `to` would expose every subscriber's
-  // address to the others; send individually (small list, weekday-once).
-  // O-1: per-recipient isolation -- one malformed hand-edited address or a
-  // mid-list quota failure previously aborted the loop, so earlier
-  // subscribers were re-blasted on every 30-min poll (marker never set)
-  // while later ones never received the report at all. The single-address
-  // preview path (opts.to) still throws so the admin sees the error in the
-  // modal.
-  const sentTo = [];
-  const failed = [];
-  recipients.forEach(function (addr) {
-    try {
-      MailApp.sendEmail({ to: addr, subject: subject, htmlBody: html });
-      sentTo.push(addr);
-    } catch (e) {
-      if (opts.to) throw e;
-      failed.push({ email: addr, error: (e && e.message) ? e.message : String(e) });
-      Logger.log('sendQueueReportForDate_(%s): send to %s failed: %s', targetIso, addr, e);
-    }
-  });
-  return { count: sentTo.length, to: sentTo, failed: failed };
+  // Single send (see the To/Cc note above). One malformed hand-edited
+  // address now fails the WHOLE message -- acceptable: save-time validation
+  // guards the modal path, the poller retries all day, and the FAILED-ALL
+  // admin email names the error. The single-address preview path (opts.to)
+  // still throws so the admin sees the error in the modal.
+  try {
+    const msg = { to: toList.join(','), subject: subject, htmlBody: html };
+    if (ccList.length) msg.cc = ccList.join(',');
+    MailApp.sendEmail(msg);
+    return { count: recipients.length, to: recipients, failed: [] };
+  } catch (e) {
+    if (opts.to) throw e;
+    const errMsg = (e && e.message) ? e.message : String(e);
+    Logger.log('sendQueueReportForDate_(%s): send failed (single To/Cc message): %s', targetIso, e);
+    return { count: 0, to: [], failed: recipients.map(function (addr) {
+      return { email: addr, error: errMsg };
+    }) };
+  }
 }
 
 /**
@@ -756,7 +768,10 @@ function readQueueReportSubscribers_() {
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  const values = sheet.getRange(2, 1, lastRow - 1, QUEUE_REPORT_SUBSCRIBERS_HEADERS.length).getValues();
+  // Round-16 (To/Cc): bounded to the sheet's real width -- a legacy 3-column
+  // sheet (pre-Cc) reads cleanly with every row defaulting to To.
+  const width = Math.min(QUEUE_REPORT_SUBSCRIBERS_HEADERS.length, sheet.getLastColumn());
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
   const out = [];
   const seenEmail = {};   // O-4: OPS-9 discipline -- first-row-wins on hand-edited duplicates
   for (let i = 0; i < values.length; i++) {
@@ -765,7 +780,9 @@ function readQueueReportSubscribers_() {
     const rawActive = values[i][1];
     const active = !(rawActive === false || rawActive === 'FALSE' || rawActive === 'false'
                    || rawActive === 0 || rawActive === 'no' || rawActive === 'No');
-    const entry = { email: email, active: active, notes: String(values[i][2] || '').trim() };
+    const rawCc = values[i][3];
+    const cc = (rawCc === true || rawCc === 'TRUE' || rawCc === 'true' || rawCc === 'yes' || rawCc === 'Yes');
+    const entry = { email: email, active: active, notes: String(values[i][2] || '').trim(), cc: cc };
     const key = email.toLowerCase();
     if (seenEmail[key]) {
       // Duplicate hand-edited row: flag it (kept in the list so the modal
@@ -806,6 +823,7 @@ function saveQueueReportSubscriber(req) {
   const email = String((req && req.email) || '').trim();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address.');
   const active = !(req && (req.active === false || req.active === 'false'));
+  const cc = !!(req && (req.cc === true || req.cc === 'true'));
   const notes = String((req && req.notes) || '').trim().slice(0, 500);
 
   const lock = LockService.getScriptLock();
@@ -828,7 +846,7 @@ function saveQueueReportSubscriber(req) {
         }
       }
     }
-    const rowVals = [email, active ? 'TRUE' : 'FALSE', notes];
+    const rowVals = [email, active ? 'TRUE' : 'FALSE', notes, cc ? 'TRUE' : 'FALSE'];
     if (foundRow > 0) {
       sheet.getRange(foundRow, 1, 1, rowVals.length).setValues([rowVals]);
     } else {

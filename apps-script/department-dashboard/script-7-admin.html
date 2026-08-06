@@ -158,7 +158,9 @@
       html += '<tr>'
         + '<td>' + escapeHtml(s.email) + qrDupChip + '</td>'
         + '<td><span class="al-report-chip al-report-queue">Queue Report</span></td>'
-        + '<td class="al-empty-inline">—</td>'
+        // Round-16 To/Cc: which line of the single daily message this row
+        // rides (reuses the dept column, meaningless for queue rows).
+        + '<td>' + (s.cc ? 'Cc' : 'To') + '</td>'
         + '<td class="al-empty-inline">—</td>'
         + '<td class="al-empty-inline">—</td>'
         + '<td><span class="al-active ' + activeCls + '">' + (s.active ? 'Yes' : 'No') + '</span></td>'
@@ -207,6 +209,7 @@
     if ($('al-rs-type-queue'))  $('al-rs-type-queue').checked = true;
     alRsSyncTypeFields_();
     if ($('al-rs-email'))  $('al-rs-email').value = s.email || '';
+    if ($('al-rs-cc'))     $('al-rs-cc').checked = !!s.cc;
     if ($('al-rs-notes'))  $('al-rs-notes').value = s.notes || '';
     if ($('al-rs-active')) $('al-rs-active').checked = !!s.active;
     if ($('al-rs-email'))  $('al-rs-email').focus();
@@ -214,6 +217,7 @@
 
   function alRsClear_() {
     if ($('al-rs-email'))  $('al-rs-email').value = '';
+    if ($('al-rs-cc'))     $('al-rs-cc').checked = false;
     if ($('al-rs-notes'))  $('al-rs-notes').value = '';
     if ($('al-rs-dept'))   $('al-rs-dept').value = '';
     if ($('al-rs-cadence')) $('al-rs-cadence').value = 'daily';
@@ -256,7 +260,8 @@
       google.script.run
         .withSuccessHandler(function () { next(); })
         .withFailureHandler(function (err) { next(err || new Error('queue save failed')); })
-        .saveQueueReportSubscriber({ email: email, notes: notes, active: active });
+        .saveQueueReportSubscriber({ email: email, notes: notes, active: active,
+          cc: !!($('al-rs-cc') && $('al-rs-cc').checked) });
     });
     let i = 0;
     (function run(err) {

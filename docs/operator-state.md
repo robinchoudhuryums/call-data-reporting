@@ -552,7 +552,15 @@ When something looks wrong, before assuming a code bug, check:
     is impossible), and the O-7 flag fires once at window end saying the
     poller keeps retrying. Dedupe stays the
     `QUEUE_REPORT_LAST_SENT` Script Property (target ISO); `QUEUE_REPORT_LAST_RESULT`
-    surfaces the last outcome in the modal. The pure `queueReportGateDecision_`
+    surfaces the last outcome in the modal. Round-16 (owner): the send is ONE
+    message per day -- subscriber rows marked `Cc` (new 4th sheet column /
+    modal checkbox) ride the Cc line, the rest join the To line (intended
+    model: a group inbox like departmentleads@ as To + a few Cc inboxes).
+    One message means anyone reachable more than one way (two groups, or
+    group + direct) gets exactly ONE copy -- Gmail dedupes by Message-ID
+    within a mailbox, which N separate sends structurally cannot do. A send
+    failure now fails the whole message into the FAILED-ALL retry path
+    (safe: nobody received it); legacy 3-column sheets read as all-To. The pure `queueReportGateDecision_`
     (disabled / outside-window / weekend / holiday / already-sent / not-ready /
     ready) is unit-pinned (`tests/unit/queue-report.test.js`); it skips weekends
     + `COMPANY_HOLIDAYS`. Subscribers are the `Queue Report Subscribers` sheet

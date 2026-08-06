@@ -4224,6 +4224,11 @@
   .al-rs-schedule { flex: 1 1 300px; min-width: 0; }
   /* Digest-only form fields hide when the Manager Digest type is unticked. */
   .al-rs-hide-digest .al-rs-digest-only { display: none; }
+  /* Round-16 To/Cc: the Cc checkbox is a Queue-Report-only field (the digest
+     stays per-recipient). Hidden in digest mode, mirrored from the
+     digest-only rule above. */
+  .al-rs-queue-only { display: none; }
+  .al-rs-hide-digest .al-rs-queue-only { display: block; }
   /* Report-type chip in the unified subscriber table. */
   .al-report-chip {
     display: inline-block;
