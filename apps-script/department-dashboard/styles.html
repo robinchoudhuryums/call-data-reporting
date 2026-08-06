@@ -1388,6 +1388,14 @@
   .dept-qcd-abd { color: var(--warn); }
   .dept-qcd-abd.is-zero { color: var(--muted); }
   .dept-qcd-sep, .dept-qcd-paren { color: var(--muted); font-weight: 400; }
+  /* Round-16: MTD-view delta sub-lines (vs the ENTIRE previous month --
+     the QCD report band's semantics). Volume stays muted (no valence);
+     the aban% delta tints by direction, muted under 3 elapsed workdays. */
+  .dept-qcd-sub { font: 500 9.5px/1.4 var(--mono); color: var(--muted);
+    font-variant-numeric: tabular-nums; margin-top: 3px; }
+  .dept-qcd-sub.is-good { color: var(--good); }
+  .dept-qcd-sub.is-warn { color: var(--warn); }
+  .dept-qcd-sub.is-muted { color: var(--muted); }
 
   /* QCD snapshot carousel (multi-queue side card): one queue page at a time
      with ‹ › nav + a dot indicator, so the sticky side column stays compact

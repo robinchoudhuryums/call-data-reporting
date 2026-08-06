@@ -429,6 +429,37 @@ test('R-1: computeDeptQcdSnapshot_ (My Department panel) identical from sheet an
   assert.ok(s && s.date, 'sanity: non-null snapshot with a latest date');
 });
 
+test('Round-16: qcdSnapshot ships mtdPrior (ENTIRE previous month) + workday counts for the MTD-view deltas', function () {
+  // Latest data day Jun 10 2026 (Wed) -> MTD anchor month June: Jun 1(Mon)..
+  // Jun 10 = 8 workdays; prior = ALL of May = 21 workdays. April excluded.
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'] }),
+    [dcRow('Alpha', 'A_Q_Alpha')],
+    [
+      qcdRow('2026-06-10', 'A_Q_Alpha', 100, 90, 10, 1),
+      qcdRow('2026-06-03', 'A_Q_Alpha',  50, 45,  5, 0),
+      qcdRow('2026-05-15', 'A_Q_Alpha', 200, 180, 20, 2),
+      qcdRow('2026-04-30', 'A_Q_Alpha', 999, 1, 998, 9),   // outside both windows
+    ]);
+  // The R-1 parity tests above leave QCD_READ_SOURCE='neon' + a stubbed conn
+  // behind; this test reads the SHEET fixture.
+  h.state.props.QCD_READ_SOURCE = '';
+  const snap = h.call('computeDeptQcdSnapshot_', 'Alpha', 'America/Chicago', {});
+  assert.ok(snap && snap.mtd, 'snapshot with an mtd block');
+  assert.equal(snap.mtdStart, '2026-06-01');
+  assert.equal(snap.mtdPriorStart, '2026-05-01');
+  assert.equal(snap.mtdPriorEnd, '2026-05-31', 'prior window is the FULL previous month');
+  assert.equal(snap.mtdPriorLabel, 'May');
+  assert.equal(snap.mtdWorkdays, 8);
+  assert.equal(snap.mtdPriorWorkdays, 21);
+  assert.equal(snap.mtd.totalCalls, 150, 'MTD = Jun 3 + Jun 10');
+  assert.equal(snap.mtdPrior.totalCalls, 200, 'prior = the May row only');
+  assert.equal(snap.mtdPrior.abandoned, 20);
+  // Same builder both sides: the per-queue pages line up by queue name.
+  assert.equal(snap.mtdPrior.perQueue.length, 1);
+  assert.equal(snap.mtdPrior.perQueue[0].queue, 'A_Q_Alpha');
+});
+
 test('R-1: neonGetMaxQcdDate_ serves the freshness pill QCD component; null falls back', function () {
   installQcd('neon');
   assert.equal(h.call('neonGetMaxQcdDate_'), '2026-06-02');

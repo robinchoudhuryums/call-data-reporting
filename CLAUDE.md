@@ -1665,7 +1665,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   default -- so this is a client retirement, not a capability removal; don't
   "restore" the parameter thinking it was dropped, and don't hardcode that
   default in a second place. `subScope` is a cache-key dimension
-  (`summary:v18`); `cdr.dept.subscope` is now an orphan key.
+  (`summary:v19`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -1700,7 +1700,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   only once Phase 3 (Missed), Phase 4 (IR/Insights), the Overview and Alerts
   all narrow too -- see Operator State #42. The gate lives INSIDE the function
   so those phases inherit it by adopting it rather than each re-deciding, and
-  the scope joins the `summary:v18` cache key as a suffix (the CORE-3
+  the scope joins the `summary:v19` cache key as a suffix (the CORE-3
   read-source pattern) so a flip can't serve the other mode's table for the TTL.
   It **FAILS OPEN four ways** -- a dept with no mapped queues, a row with no
   split, and unparseable JSON all keep the rollup; and (B-1) so does a whole

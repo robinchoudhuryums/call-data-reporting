@@ -985,7 +985,7 @@ When something looks wrong, before assuming a code bug, check:
     CSR + Spanish) no longer contributes their other department's calls to
     both. OFF: that over-count returns on the three parent depts (Sales / CSR /
     Power) and the My Department chip says so in as many words. Reversible
-    either way with no redeploy — the scope is part of the `summary:v18` cache
+    either way with no redeploy — the scope is part of the `summary:v19` cache
     key, so a flip cannot serve the other mode's table for the 30-minute TTL.
 
     **Prerequisite for it to do anything at all:** the Phase 1 pipeline must

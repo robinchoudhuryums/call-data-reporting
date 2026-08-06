@@ -1710,6 +1710,64 @@
     var hasMtd = !!qcd.mtd;
     var period = (deptQcdPeriod === 'mtd' && hasMtd) ? 'mtd' : 'yesterday';
     var block = (period === 'mtd') ? qcd.mtd : qcd;
+    // Round-16 (owner): the MTD view carries deltas vs the ENTIRE previous
+    // month (the QCD report band's semantics): aban% in pts (down = sage,
+    // up = warm), volume as per-WORKDAY averages (neutral gray); everything
+    // grays under 3 elapsed workdays. Null when the server didn't ship
+    // mtdPrior (older cache) or the prior month has no usable data.
+    var mtdCtx = null;
+    if (period === 'mtd' && qcd.mtdPrior && (Number(qcd.mtdWorkdays) || 0) > 0) {
+      var priorByQueue = {};
+      (qcd.mtdPrior.perQueue || []).forEach(function (pq) { priorByQueue[pq.queue] = pq; });
+      mtdCtx = {
+        wd: Number(qcd.mtdWorkdays) || 0,
+        pwd: Number(qcd.mtdPriorWorkdays) || 0,
+        label: qcd.mtdPriorLabel || 'prior',
+        lowSignal: (Number(qcd.mtdWorkdays) || 0) < 3,
+        title: 'MTD ' + (qcd.mtdStart || '') + ' → ' + (qcd.date || '') + ' ('
+          + (qcd.mtdWorkdays || 0) + ' workdays) vs ' + (qcd.mtdPriorStart || '')
+          + ' → ' + (qcd.mtdPriorEnd || '') + ' (' + (qcd.mtdPriorWorkdays || 0) + ' workdays)',
+        byQueue: priorByQueue,
+        prior: qcd.mtdPrior,
+      };
+    }
+    // Prior counterpart for a tile-row's stats object: a per-queue page maps
+    // by queue name; the gated summary pages map to the prior block's SAME
+    // aggregate (buildBlock_ emits identical shapes on both sides).
+    var mtdPriorOf = function (q, kind) {
+      if (!mtdCtx) return null;
+      if (kind === 'own') return mtdCtx.prior;
+      if (kind === 'sub') return mtdCtx.prior.subTotals || null;
+      if (kind === 'all') return mtdCtx.prior.allTotals || null;
+      return mtdCtx.byQueue[q.queue] || null;
+    };
+    // The two delta sub-lines. Volume: MTD per-workday average always shown
+    // (informative alone), delta only with a usable prior. Aban%: delta only.
+    var mtdSubs = function (q, prior) {
+      if (!mtdCtx) return { calls: '', abd: '' };
+      var mAvg = mtdCtx.wd > 0 ? (Number(q.totalCalls) || 0) / mtdCtx.wd : 0;
+      var callsTxt = 'Ø ' + Math.round(mAvg) + '/day';
+      var abdTxt = '';
+      var pOk = prior && (Number(prior.totalCalls) || 0) > 0 && mtdCtx.pwd > 0;
+      var abdCls = 'is-muted';
+      if (pOk) {
+        var pAvg = (Number(prior.totalCalls) || 0) / mtdCtx.pwd;
+        if (pAvg > 0) {
+          var dV = (mAvg - pAvg) / pAvg * 100;
+          callsTxt += ' · ' + (dV >= 0 ? '▲' : '▼') + ' '
+            + Math.abs(dV).toFixed(1) + '% vs ' + mtdCtx.label;
+        }
+        var dA = (Number(q.abandonedPct) || 0) - (Number(prior.abandonedPct) || 0);
+        abdCls = mtdCtx.lowSignal ? 'is-muted' : (dA <= 0 ? 'is-good' : 'is-warn');
+        abdTxt = (dA <= 0 ? '▼' : '▲') + ' ' + Math.abs(dA).toFixed(2)
+          + ' pts vs ' + mtdCtx.label;
+      }
+      var t = ' title="' + escapeHtml(mtdCtx.title) + '"';
+      return {
+        calls: '<div class="dept-qcd-sub"' + t + '>' + escapeHtml(callsTxt) + '</div>',
+        abd: abdTxt ? '<div class="dept-qcd-sub ' + abdCls + '"' + t + '>' + escapeHtml(abdTxt) + '</div>' : '',
+      };
+    };
     deptQcdWirePeriod_(hasMtd, period);
     var titleEl = $('dept-qcd-title');
     if (titleEl) {
@@ -1788,9 +1846,15 @@
            +   '</div>'
            + '</div>';
     };
-    const tileRow = function (q) {
+    // `kind` (Round-16): which prior-month counterpart this row compares
+    // against in the MTD view -- undefined = per-queue (matched by name),
+    // 'own' / 'sub' / 'all' = the gated summary pages' aggregates. Ignored
+    // outside the MTD view (mtdCtx null -> no sub-lines, Yesterday
+    // unchanged).
+    const tileRow = function (q, kind) {
       const violCls = (Number(q.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
       const pctCls  = (Number(q.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
+      const subs = mtdSubs(q, mtdPriorOf(q, kind));
       // Owner note -> Round-16 refinement: Total Calls and Ans/Abd merged
       // into ONE tile reading "<total> (<answered> / <abandoned>)" -- the
       // team strip's format, so both surfaces read identically. Total plain
@@ -1805,9 +1869,14 @@
         +   '<span class="dept-qcd-sep"> / </span>'
         +   '<span class="dept-qcd-abd' + (qAbdN > 0 ? '' : ' is-zero') + '">' + escapeHtml(fmtNumber(qAbdN)) + '</span>'
         +   '<span class="dept-qcd-paren">)</span>'
-        + '</div></div>';
+        + '</div>' + subs.calls + '</div>';
+      const abdTile = '<div class="dept-qcd-tile">'
+        + '<div class="dept-qcd-label">Abandoned %</div>'
+        + '<div class="dept-qcd-value' + (pctCls ? ' ' + pctCls : '') + '">'
+        +   escapeHtml(String(q.abandonedPctStr || '0.00%'))
+        + '</div>' + subs.abd + '</div>';
       return totalSplit
-           + tile('Abandoned %', String(q.abandonedPctStr  || '0.00%'), pctCls)
+           + abdTile
            + tile('Violations',  fmtNumber(q.violations    || 0),       violCls);
     };
 
@@ -1844,13 +1913,13 @@
         violations:      block.violations,
       };
       if ((block.mainQueueCount || 0) > 1) {
-        pages.push({ name: hasSub ? 'Main queues' : 'Department total', html: tileRow(ownTotals) });
+        pages.push({ name: hasSub ? 'Main queues' : 'Department total', html: tileRow(ownTotals, 'own') });
       }
       if ((block.subQueueCount || 0) > 1 && block.subTotals) {
-        pages.push({ name: 'Sub-queues (separate depts)', html: tileRow(block.subTotals) });
+        pages.push({ name: 'Sub-queues (separate depts)', html: tileRow(block.subTotals, 'sub') });
       }
       if (hasSub && block.allTotals) {
-        pages.push({ name: 'All queues (incl. sub-queues)', html: tileRow(block.allTotals) });
+        pages.push({ name: 'All queues (incl. sub-queues)', html: tileRow(block.allTotals, 'all') });
       }
 
       tiles.innerHTML =
@@ -1899,7 +1968,7 @@
       }
       showPage(0);
     } else {
-      tiles.innerHTML = tileRow(perQueue.length === 1 ? perQueue[0] : block);
+      tiles.innerHTML = perQueue.length === 1 ? tileRow(perQueue[0]) : tileRow(block, 'own');
     }
     wrap.style.display = '';
   }

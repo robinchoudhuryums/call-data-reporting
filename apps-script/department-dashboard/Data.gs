@@ -745,7 +745,7 @@ function getDepartmentSummary(req) {
   // rather than a version bump: the version tracks aggregation-RULE changes
   // (INV-30) and both modes are the same rule under a different scope.
   const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'summary:v18:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v19:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope;
   const cached = cache.get(cacheKey);
   if (cached) {
@@ -1462,15 +1462,34 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     // latest DATA date (not today's clock) so a stale-but-present month still
     // shows an MTD figure instead of an empty one.
     const mtdStart = latestDate.slice(0, 7) + '-01';
+    // Round-16 (owner): the MTD view carries deltas vs the ENTIRE previous
+    // month (the QCD report band's semantics -- full-month baseline, volume
+    // compared as per-WORKDAY averages client-side). The prior window keys
+    // off the MTD anchor month, so it accumulates in the SAME scan. On the
+    // Neon path the 180-day lookback covers it whenever latestDate is
+    // anywhere near current (prior-month start is <= ~62 days back); a
+    // degenerately stale dept yields a partial/empty prior block and the
+    // client simply renders no delta.
+    const _mtdP = mtdStart.split('-');
+    const _mtdPriorEndD = new Date(Number(_mtdP[0]), Number(_mtdP[1]) - 1, 0, 12);   // day 0 = last day of prev month
+    const _mtdPad2 = function (n) { return ('0' + n).slice(-2); };
+    const _mtdPriorMonth = _mtdPriorEndD.getFullYear() + '-' + _mtdPad2(_mtdPriorEndD.getMonth() + 1);
+    const mtdPriorStart = _mtdPriorMonth + '-01';
+    const mtdPriorEnd = _mtdPriorMonth + '-' + _mtdPad2(_mtdPriorEndD.getDate());
     const byQueueMtd = {};
+    const byQueueMtdPrior = {};
     for (let j = 0; j < values.length; j++) {
       const r2 = values[j];
       if (String(r2[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim() !== 'Total Calls') continue;
       const q2 = String(r2[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
       if (!queueSet[q2]) continue;
       const d2 = rowDateIso_(r2[QCD_HISTORICAL_COLS.DATE - 1], tz);
-      if (!d2 || d2 < mtdStart || d2 > latestDate) continue;
-      const b2 = byQueueMtd[q2] || (byQueueMtd[q2] = { total: 0, answered: 0, abandoned: 0, violations: 0 });
+      if (!d2) continue;
+      const inMtd = d2 >= mtdStart && d2 <= latestDate;
+      const inMtdPrior = d2 >= mtdPriorStart && d2 <= mtdPriorEnd;
+      if (!inMtd && !inMtdPrior) continue;
+      const tgt = inMtd ? byQueueMtd : byQueueMtdPrior;
+      const b2 = tgt[q2] || (tgt[q2] = { total: 0, answered: 0, abandoned: 0, violations: 0 });
       b2.total      += Number(r2[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0;
       b2.answered   += Number(r2[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0;
       b2.abandoned  += Number(r2[QCD_HISTORICAL_COLS.ABANDONED   - 1])    || 0;
@@ -1602,6 +1621,17 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     return Object.assign({}, latestBlock, {
       mtd: buildBlock_(byQueueMtd, latestDate),
       mtdStart: mtdStart,
+      // Round-16: the ENTIRE previous month (same builder, so perQueue /
+      // subTotals / allTotals line up page-for-page with `mtd`), plus the
+      // INV-35 workday counts, feeding the MTD view's delta sub-lines --
+      // aban% in pts (down = good), volume as per-workday averages
+      // (neutral). Client-side math mirrors the QCD report band.
+      mtdPrior: buildBlock_(byQueueMtdPrior, null),
+      mtdPriorStart: mtdPriorStart,
+      mtdPriorEnd: mtdPriorEnd,
+      mtdPriorLabel: Utilities.formatDate(_mtdPriorEndD, TZ, 'MMM'),
+      mtdWorkdays: countWorkingDays_(mtdStart, latestDate),
+      mtdPriorWorkdays: countWorkingDays_(mtdPriorStart, mtdPriorEnd),
       // Batch D: the selected-period block for the team-strip QCD tiles (null
       // when no range supplied). Carries from/to for the tile subtitle.
       range: (rFrom && rTo) ? Object.assign(buildBlock_(byQueueRange, null), { from: rFrom, to: rTo }) : null,
