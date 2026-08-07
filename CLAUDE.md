@@ -940,10 +940,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bites unrelated work; the full text is authoritative there, this is the index:
   Insights absorbed the Performance Report AND Compare Ranges (both retired,
   incl. the consolidated trend chart + per-agent cards/chart bases + IR
-  drill-through) · Insights period slider, trend-at-bottom and the
-  Insights↔My-Department hand-off (incl. the R9-3 shared date window) ·
-  Insights Simple/Detailed density toggle (and the C3 render-then-hide chart
-  trap) · Insights density Phase 2 (saved views, share link, calendar trend,
+  drill-through) · Insights header controls (From/To + shared Quick-select
+  chips; ex-period slider), trend-at-bottom, the lens switcher and the R9-3
+  shared date window · Insights per-section FOLDS (replaced the
+  Simple/Detailed density mode; incl. the C3 draw-on-open chart trap) ·
+  Insights Phase 2 (saved views, share link, calendar trend,
   summary email) · the guided onboarding tour · the Insights floating admin A/B
   remote · the anti-intimidation layer (answer-first headlines, quick-start
   chips, the metric glossary, benchmark tints) · per-report client prefs in
@@ -1720,10 +1721,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   per-DAY value on every row, so they were never per-agent. **Phase 2 INVERTS
   the Phase 0 rule:** a `queueScoped` row is never de-duplicated, because two
   narrowed rows PARTITION the agent's day and summing them is now correct --
-  subtracting would under-count. A range that is not fully split renders a
-  warn-toned "all queues before `<date>`" CHIP (`subqSplitChip_`) beside the
-  relationship line, since a split can never reach dates older than the ~14-day
-  `Call_Legs` retention; the chip removes itself once the range is fully split.
+  subtracting would under-count. The relationship bar + the `subqSplitChip_`
+  "all queues" chip are HIDDEN (Round-16 owner; `SUBQ_BAR_HIDDEN_`,
+  script-5-dept); the B-1 mismatch signal is now only
+  `auditQueueSplitAttribution()` (Operator State #41).
   **The CLIENT side of all of this -- the relationship bar, the grouped rows and
   subtotals, the IR/Insights picker groups, the combined CSV and the missed
   section's scope -- is in

@@ -400,16 +400,9 @@
       <div id="dept-team-zone" class="ds-zone" style="display:none;"><span class="ds-zone-label">Team &middot; this range</span></div>
       <div id="dept-team-strip" class="dept-team-strip" style="display:none;"></div>
 
-      <!-- Lighter Insights hand-off (kept as two pages, relationship made
-           explicit): a COLLAPSED one-line summary of the deeper Insights
-           report for THIS dept + range, expandable, with an "Open full
-           Insights" button that carries the current dept & dates
-           (handoffToInsights_). The one-line takeaway is derived from the
-           same server totals the team strip uses -- no new fetch; the full
-           per-agent / queue-health / heatmap story is one click away on the
-           Insights page. Rendered + wired by renderDeptInsightsStrip_;
-           hidden until data. -->
-      <div id="dept-insights-strip" class="dept-insights-strip" style="display:none;"></div>
+      <!-- (Round-16, owner: the Insights hand-off TEASER STRIP is RETIRED --
+           the lens switcher in the controls row is the route to Insights
+           now, carrying the same dept + window via handoffToInsights_.) -->
 
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
@@ -1612,9 +1605,10 @@
           <div id="ins-quiet-cards" class="ins-agent-cards"></div>
         </details>
 
-        <!-- I4: the 12-month team trend is the ONE view the period slider does
-             NOT govern -- it always spans ~12 months (or the selected window in
-             Daily), not the short windowed sections above -- so it lives here
+        <!-- I4: the 12-month team trend is the ONE view the header window
+             controls do NOT govern -- it always spans ~12 months (or the
+             selected window in Daily), not the short windowed sections above
+             -- so it lives here
              at the bottom of the report as its own full-width Trends section
              rather than beside the windowed sections. Moved out of the Team
              detail <details> (where it was A2-deferred); now rendered in the

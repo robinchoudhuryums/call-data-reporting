@@ -2833,73 +2833,9 @@
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
   }
 
-  // Lighter Insights hand-off strip: a COLLAPSED one-line summary of the
-  // deeper Insights report for this dept + range, expandable, with an
-  // "Open full report" button that carries the current dept & dates. The
-  // one-line takeaway is derived from the SAME server totals the team strip
-  // uses (no new fetch); the full per-agent / queue-health / heatmap story is
-  // one click away on the Insights page. Hidden when there are no data rows.
-  function renderDeptInsightsStrip_(state) {
-    var strip = $('dept-insights-strip');
-    if (!strip) return;
-    var t = state && state.totals;
-    if (!t || !state.rows || !state.rows.length) {
-      strip.style.display = 'none'; strip.innerHTML = '';
-      return;
-    }
-    var total = (Number(t.totalAnswered) || 0) + (Number(t.totalMissed) || 0);
-    var dept = getRequestedDept() || 'this department';
-    var from = ($('from-date') && $('from-date').value) || '';
-    var to   = ($('to-date')   && $('to-date').value)   || '';
-    // #3b: the rate% / missed count already live in the KPI tiles above, so the
-    // strip no longer restates them (that duplication was the flagged clutter).
-    // It keeps its "what the full report adds" hook + the Open-report hand-off.
-    var teaser = total
-      ? 'Deeper per-agent &amp; queue-health breakdown for this range.'
-      : 'No call activity in this range.';
-    strip.innerHTML =
-        '<div class="dis-row">'
-      +   '<button class="dis-toggle" type="button" aria-expanded="false" aria-controls="dept-insights-more" '
-      +           'title="Show what the full Insights report adds">'
-      +     '<span class="dis-chevron" aria-hidden="true">&#9656;</span>'
-      +     '<span class="dis-kicker">Insights</span>'
-      +   '</button>'
-      +   '<span class="dis-teaser">' + teaser + '</span>'
-      +   '<button class="btn btn-secondary dis-open" type="button" '
-      +           'title="Open the full Insights report for this department and date range.">Open full report &#8594;</button>'
-      + '</div>'
-      + '<div class="dis-more" id="dept-insights-more" hidden>'
-      +   'The full Insights report adds per-agent improvers &amp; laggards (vs the team average), '
-      +   'queue health &amp; violations, and the abandon heatmap &mdash; for <strong>' + escapeHtml(dept) + '</strong>'
-      +   (from && to ? ', <strong>' + escapeHtml(from) + '</strong> to <strong>' + escapeHtml(to) + '</strong>' : '') + '.'
-      + '</div>';
-    strip.style.display = '';
-    wireDeptInsightsStrip_();
-  }
-
-  // Delegated wiring for the Insights hand-off strip (attached once on the
-  // container so the per-render innerHTML swap never detaches it).
-  var deptInsightsStripWired_ = false;
-  function wireDeptInsightsStrip_() {
-    if (deptInsightsStripWired_) return;
-    var strip = $('dept-insights-strip');
-    if (!strip) return;
-    deptInsightsStripWired_ = true;
-    strip.addEventListener('click', function (e) {
-      if (e.target.closest('.dis-open')) {
-        handoffToInsights_(($('from-date') || {}).value, ($('to-date') || {}).value, null);
-        return;
-      }
-      var tog = e.target.closest('.dis-toggle');
-      if (tog) {
-        var more = $('dept-insights-more');
-        var expanded = tog.getAttribute('aria-expanded') === 'true';
-        tog.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-        tog.classList.toggle('is-open', !expanded);
-        if (more) more.hidden = expanded;
-      }
-    });
-  }
+  // (Round-16, owner: renderDeptInsightsStrip_/wireDeptInsightsStrip_ -- the
+  // Insights hand-off TEASER STRIP -- are RETIRED. The lens switcher in the
+  // controls row is the route to Insights now, via handoffToInsights_.)
 
   function render() {
     // Header sort arrows
@@ -2927,7 +2863,6 @@
       tbody.innerHTML = '';
       tfoot.innerHTML = '';
       renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
-      renderDeptInsightsStrip_(state);   // Insights hand-off strip (hides too)
       return;
     }
 
@@ -3007,7 +2942,6 @@
     // from the same server totals -- rendered here so it repaints on sort /
     // refresh alongside the table.
     renderDeptTeamStrip_(state);
-    renderDeptInsightsStrip_(state);   // Insights hand-off strip (collapsed summary + link-out)
     // B1: flash agents whose Answered/Missed changed since the last paint for
     // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
     // re-render leaves values unchanged per key, so it never flashes.
