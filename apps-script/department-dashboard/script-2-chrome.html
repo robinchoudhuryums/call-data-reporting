@@ -539,9 +539,9 @@
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
-      // R9-3: adopt the Insights window when it's the more recent one (sets
-      // the date inputs; the refresh below re-runs for it).
-      var adoptedWin_ = (typeof adoptSharedWindow_ === 'function') && adoptSharedWindow_('dept');
+      // (M2: the R9-3 adoptSharedWindow_ adoption is retired -- the dept
+      // controls are the single date authority; insSyncToDeptWindow_
+      // converges the Insights region instead.)
       // setPage doesn't load the agent table itself. If we arrived showing a
       // STALE prior dept -- the My Department nav button (which fires no
       // selector 'change'), or view-as-manager where the selector is
@@ -550,7 +550,7 @@
       // Skip when a load is already in flight (refresh disables the button) so
       // a selector-change-driven load isn't doubled.
       var _rb = $('refresh-btn');
-      if ((lastSummaryDept_ !== getRequestedDept() || adoptedWin_) && !(_rb && _rb.disabled)) {
+      if (lastSummaryDept_ !== getRequestedDept() && !(_rb && _rb.disabled)) {
         refresh();
       }
       // R12-1: re-arm the missed chart when its data landed while this page
@@ -567,10 +567,9 @@
     }
     // M1 (Insights merge): a legacy setPage('insights') lands here with the
     // dept branch already run -- now open + scroll the region (sync ensure;
-    // see deptInsightsOpen_ in script-8). The R9-3 insights-side
-    // adoptSharedWindow_ went with the retired page branch: on one page the
-    // dept-side adoption above plus the handoffs' explicit date carries
-    // cover the convergence.
+    // see deptInsightsOpen_ in script-8). M2: window convergence is
+    // insSyncToDeptWindow_'s job (refresh + region open); the R9-3
+    // adoptSharedWindow_ machinery is retired.
     if (openInsRegion_ && typeof deptInsightsOpen_ === 'function') {
       deptInsightsOpen_({ scroll: true });
     }
@@ -583,9 +582,6 @@
       setRoute_(page === 'dept' ? '/dept'
         : (page === 'escalations' ? '/escalations' : '/overview'));
     }
-    // (R9-3: the Batch-E maybeShowDateSyncChip_ offer is retired -- the two
-    // pages now silently adopt each other's newer window via
-    // adoptSharedWindow_ in the per-page branches above.)
     // R11-C2: arm the cross-page dwell-prefetch (no-op page values clear it).
     if (typeof armDwellPrefetch_ === 'function') armDwellPrefetch_(page);
   }

@@ -56,19 +56,40 @@ untouched across every phase. This is a client-side restructure.
   already route via `#my-dept-btn` → `#lens-ins-btn` and keep working
   unchanged.
 
-### M2 — Controls reconciliation
+### M2 — Controls reconciliation  ✅
 
-- One header: the dept controls row is the page's date authority. Decide the
-  Refresh contract: dept Refresh re-runs the summary + any OPEN insights
-  folds; closed folds mark stale and re-fetch on next open.
-- The region's collapsed summary carries a KPI headline after first load
-  (the `insQhFoldSync_` pattern) so a closed region still says something.
-- Region open-state persistence decision (per-user, like `insFolds_`) —
-  weigh the auto-RPC cost of restoring open=true on dept entry.
-- Each region keeps its own Export menu ("each report owns its export").
-- `adoptSharedWindow_` / `pageActiveWindow_` retire once the dept window is
-  the single source; the Insights header From/To + Quick-select chips fold
-  into (or defer to) the dept controls.
+- **One date authority — the dept controls row.** The region's own header
+  From/To + Quick-select row (`#ins-hdr-controls`) is hidden (markup +
+  wiring kept inert for M4); the results-date pill still states the rendered
+  window. `insSyncToDeptWindow_` (script-8) converges an OPEN region onto
+  the dept window: called from `refresh()` (a rendered report re-runs via
+  `insApplyWindow_` when the window moved) and from the region's toggle-open
+  (a stale closed region re-runs on its next open — the "mark stale,
+  re-fetch on open" contract, implemented as compare-rendered-meta-vs-dept
+  rather than a flag). It SKIPS while a programmatic run is armed
+  (`insLauncherAutoRun_`/`insAutoRunPending_`) — that run owns its window,
+  so the quick-start chips' 30-day promise and share-link windows can't
+  race a second dept-window run. Window priority ends up: share link >
+  chip/handoff > dept window > prefs > defaults. First open seeds the ins
+  dates from the dept inputs (overriding restored prefs dates).
+- **Region headline** (`insRegionHeadSync_` + `#ins-region-head`): after
+  each render the collapsed summary shows `% answered · missed rings ·
+  abandoned % · from → to`; the static sub line yields. The explicit window
+  makes post-change staleness visible on a closed region.
+- **Open-state persistence: DECIDED — none.** The region always starts
+  closed; restoring open=true would re-fire the report RPC on every dept
+  visit for users who left it open, violating the laziness contract. Deep
+  links, chips, and the lens switcher open it; one click otherwise.
+- **Exports: DECIDED — per-region menus stay** (each report owns its
+  export; the dept table's Export ▾ and the region's Export ▾ serve
+  different payloads).
+- **`adoptSharedWindow_` retired** (both call sites were already gone or
+  replaced by the sync); `pageActiveWindow_`/`recordPageWindow_` survive
+  only to feed the R11-C2 dwell prefetch — M4 slims further.
+- **Closed-mid-generate chart re-arm**: the toggle-open path recreates the
+  cards chart / trend chart / deferred detail charts from `insLastData`
+  (destroy + create, the C3-safe path — `resize()` alone does not reliably
+  recover a 0×0 create).
 
 ### M3 — Scope polish
 

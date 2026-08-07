@@ -1090,16 +1090,17 @@ behind the removed button.
   the blank-canvas harness gate: newer Chromium answers
   offsetParent/gBCR for closed-`<details>` content via forced layout, so
   `drive-smoke`'s checker also skips `details:not([open])` canvases.
-- **Insights header = the My Department controls pattern (Phase 2)**:
-  real From/To date inputs + the SHARED Quick-select preset chips
-  (`buildDatePresetChips_`, script-2 — one component, both pages) replace
-  the I4 period chips. The header inputs MIRROR the canonical
-  `#ins-from/#ins-to` (still in the hidden fallback form; what deep
-  links / saved views / the popover write): `insSyncHeaderDates_` copies
-  canonical→header per render, a header edit runs `insApplyWindow_`
-  (prior-window validation → picker regroup → prefs → runInsReport).
-  The Edit popover is now "Comparison & agents" (its date row is HIDDEN,
-  not removed — the apply flow still round-trips those inputs).
+- **Insights header dates (Phase 2, now HIDDEN — M2)**: the Phase-2 header
+  From/To + shared Quick-select row (`#ins-hdr-controls`) is
+  `display:none` since M2 — the dept controls row is the page's single
+  date authority (see the Insights-region bullet below). The canonical
+  `#ins-from/#ins-to` inputs survive in the hidden fallback form (what
+  deep links / saved views / the popover / `insSyncToDeptWindow_` write);
+  `insSyncHeaderDates_`/`insInitHeaderDates_`/`insApplyWindow_` stay wired
+  — `insApplyWindow_` (prior-window validation → picker regroup → prefs →
+  runInsReport) is the shared re-run tail the sync uses. The Edit popover
+  is "Comparison & agents" (its date row hidden, not removed — the apply
+  flow still round-trips those inputs).
 - **The INSIGHTS REGION (M1 merge, docs/insights-merge-plan.md)**: the whole
   ex-Insights-page lives in `<details id="dept-insights-region">` at the
   bottom of `#dept-page` — collapsed by default, with the LAZINESS CONTRACT
@@ -1127,8 +1128,24 @@ behind the removed button.
   null-guards it; the UI-harness drivers reach the region via
   `#my-dept-btn` → `#lens-ins-btn`. The Insights side's "Agent table"
   button keeps the `#ins-open-mydept-btn` id (scrolls back up via the same
-  hand-off). M2 (controls reconciliation), M3 (dept pill / scope polish),
-  M4 (retire the transition machinery) are specified in the plan doc.
+  hand-off). **M2 (shipped): the dept controls row is the page's single date
+  authority.** The region's own header From/To + Quick-select row
+  (`#ins-hdr-controls`) is hidden (wiring inert until M4);
+  `insSyncToDeptWindow_` converges an open region on `refresh()` and a stale
+  closed region on its next toggle-open (compare-rendered-meta-vs-dept, no
+  flag), SKIPPING while a programmatic run is armed so chip/share-link
+  windows never race a dept-window run — priority: share link >
+  chip/handoff > dept window > prefs > defaults. The collapsed summary
+  carries a live headline after each render (`insRegionHeadSync_` →
+  `#ins-region-head`: % answered · missed · abandoned % · window; the
+  static sub line yields). Open-state is deliberately NOT persisted (an
+  auto-open would re-fire the RPC on every dept visit); per-region Export
+  menus stay. `adoptSharedWindow_` is retired — `pageActiveWindow_` remains
+  only to feed the R11-C2 dwell prefetch. The toggle-open path also
+  RECREATES the charts from `insLastData` (destroy + create) so a report
+  that rendered while the region was collapsed mid-generate isn't left with
+  0×0 canvases. M3 (dept pill / scope polish) and M4 (retire the
+  transition machinery) are specified in the plan doc.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

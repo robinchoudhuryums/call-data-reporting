@@ -573,17 +573,12 @@
     refresh();
   }
 
-  // -- R9-3: shared date window between My Department and Insights ------------
-  // Owner feedback (post-deploy round): the two pages should feel like ONE
-  // top-line date strip -- so the Batch-E "Use these dates" offer chip is
-  // RETIRED and replaced with silent adoption. On entering either page, if
-  // the OTHER page rendered a window more RECENTLY than this one, this page
-  // adopts it (rewrites its date inputs; setPage re-runs the report). The
-  // newest explicit choice wins wherever it was made, so the two windows
-  // converge instead of drifting apart. Explicit hand-off buttons
-  // (handoffTo* above) still carry their window verbatim: they either set
-  // inputs AFTER setPage (Insights direction) or carry the other page's
-  // already-recorded window (dept direction), so adoption never fights them.
+  // -- Shared window store (ex-R9-3) -------------------------------------
+  // M2 (one date authority): the R9-3 silent ADOPTION (adoptSharedWindow_)
+  // is RETIRED -- the dept controls are the page's single date authority and
+  // insSyncToDeptWindow_ (script-8) converges the Insights region onto them
+  // (on refresh + on region open). This store still feeds the R11-C2
+  // dwell-prefetch below (pageActiveWindow_.dept is the window it warms).
   var pageActiveWindow_ = { dept: null, insights: null };   // last-rendered window per page (+ at: ms)
 
   function recordPageWindow_(page, from, to) {
@@ -652,29 +647,7 @@
       .getInsightsReport(req);
   }
 
-  // Returns true when the entered page's date inputs were rewritten to the
-  // other page's newer window (the setPage caller decides how to re-run).
-  // No-ops when the other page hasn't rendered yet, this page's own window
-  // is at least as recent, or the inputs already match.
-  function adoptSharedWindow_(page) {
-    if (page !== 'dept' && page !== 'insights') return false;
-    var other = pageActiveWindow_[page === 'dept' ? 'insights' : 'dept'];
-    var mine  = pageActiveWindow_[page];
-    if (!other) return false;
-    if (mine && mine.at >= other.at) return false;
-    var fromEl = page === 'dept' ? $('from-date') : $('ins-from');
-    var toEl   = page === 'dept' ? $('to-date')   : $('ins-to');
-    if (!fromEl || !toEl) return false;
-    if (fromEl.value === other.from && toEl.value === other.to) return false;
-    fromEl.value = other.from;
-    toEl.value   = other.to;
-    if (page === 'dept') {
-      if (typeof clearActivePreset_ === 'function') clearActivePreset_();
-    } else {
-      var p = $('ins-preset'); if (p) p.value = 'custom';
-    }
-    return true;
-  }
+  // (adoptSharedWindow_ retired in M2 -- see the store comment above.)
 
   // "Is one of my agents struggling or improving?" -> Individual Report
   // primed with a 30-day window; agent choice is deliberately left to

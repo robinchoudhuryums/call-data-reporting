@@ -1139,7 +1139,11 @@
     // would be WRONG, not merely stale. deptMissedFetch_ then falls back to the
     // header dept until the button is clicked again.
     subqMissedDeptOverride_ = null;
-    recordPageWindow_('dept', req.from, req.to);   // R9-3: the shared-window store
+    recordPageWindow_('dept', req.from, req.to);   // feeds the R11-C2 dwell prefetch
+    // M2 (one date authority): converge an OPEN Insights region onto this
+    // window -- a rendered report re-runs for the new dates; closed regions
+    // converge on their next open (insSyncToDeptWindow_ no-ops for them).
+    if (typeof insSyncToDeptWindow_ === 'function') insSyncToDeptWindow_();
     coverageNoteUpsert_('dept-coverage-host', 'dept', req.from, 'dqe');   // R12-26
 
     // M3: when the table already holds data for the SAME dept, frost it in

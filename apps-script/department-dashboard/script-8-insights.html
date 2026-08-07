@@ -162,18 +162,59 @@
       insPageInited_ = true;
       insSetDefaultDates();
       insRestorePrefs_();
-      // Owner decision: no setup-form step. First entry AUTO-GENERATES --
-      // restored prefs (dates + any saved agent selection) or the
-      // launcher-window default with an agent-free whole-department run
-      // (INV-45) -- and every later change goes through the "Edit dates &
-      // agents" popover in the results header. The form survives HIDDEN as
-      // the failure / empty-roster fallback surface only (insShowForm).
+      // M2 (one date authority): the dept controls own the page's window --
+      // seed the canonical ins dates from them, OVERRIDING any restored
+      // prefs dates (compare-mode/agent prefs still apply). Priority ends up
+      // share-link > quick-start chip / handoff > dept window > prefs >
+      // defaults, because each later writer runs after this seed. The old
+      // defaults survive only when the dept inputs are still blank (cold
+      // deep-link load before the latest-date fetch lands).
+      var df_ = $('from-date'), dt_ = $('to-date');
+      if (df_ && dt_ && df_.value && dt_.value) {
+        if ($('ins-from')) $('ins-from').value = df_.value;
+        if ($('ins-to'))   $('ins-to').value   = dt_.value;
+        if ($('ins-preset')) $('ins-preset').value = 'custom';
+      }
+      // Owner decision: no setup-form step. First OPEN AUTO-GENERATES --
+      // an agent-free whole-department run (INV-45) over the seeded window
+      // -- and every later change goes through the dept controls or the
+      // "Comparison & agents" popover. The form survives HIDDEN as the
+      // failure / empty-roster fallback surface only (insShowForm).
       insAutoRunPending_ = true;
       launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
         'How is my team doing lately?');
     }
     insEnsureRoster();
     insResizeCharts_();
+  }
+
+  // M2 (one date authority): converge an OPEN, initialized region onto the
+  // dept controls' window. Compares against the RENDERED window (insLastData
+  // meta) so a stale report re-runs even if the inputs were already
+  // rewritten. No-ops while the region is closed (the next open converges),
+  // while a programmatic run is armed (the launcher / handoff / first-open
+  // auto-run owns its window -- syncing then would race two windows), when
+  // either side is incomplete, or when already in sync. A rendered report
+  // re-runs via insApplyWindow_ (the validated shared tail); with nothing
+  // rendered yet it just rewrites the inputs.
+  function insSyncToDeptWindow_() {
+    var reg = $('dept-insights-region');
+    if (!reg || !reg.open || !insPageInited_) return;
+    if (insLauncherAutoRun_ || insAutoRunPending_) return;
+    var df = $('from-date'), dt = $('to-date');
+    if (!df || !dt || !df.value || !dt.value) return;
+    var f = $('ins-from'), t = $('ins-to');
+    if (!f || !t) return;
+    var curFrom = (insLastData && insLastData.meta && insLastData.meta.from) || f.value;
+    var curTo   = (insLastData && insLastData.meta && insLastData.meta.to)   || t.value;
+    if (curFrom === df.value && curTo === dt.value) return;
+    if (!insLastData) {
+      f.value = df.value;
+      t.value = dt.value;
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      return;
+    }
+    insApplyWindow_({ from: df.value, to: dt.value });
   }
   // M1: open the dept page's Insights region and run the ensure
   // SYNCHRONOUSLY -- a programmatic `details.open = true` fires its 'toggle'
@@ -225,7 +266,25 @@
     // is idempotent. Close is a no-op (the rendered report stays put).
     const insRegion = $('dept-insights-region');
     if (insRegion) insRegion.addEventListener('toggle', function () {
-      if (insRegion.open) insEnsurePage_();
+      if (!insRegion.open) return;
+      insEnsurePage_();
+      // M2 (one date authority): a re-open under a moved dept window
+      // converges + re-runs; skipped while a programmatic run is armed
+      // (that run owns its window -- see insSyncToDeptWindow_).
+      insSyncToDeptWindow_();
+      // M2: charts created while the region was CLOSED (user collapsed it
+      // mid-generate) measured zero -- recreate them from the last data on
+      // reveal. Destroy + create is the C3-safe path (a resize() alone does
+      // not reliably recover a 0x0 create); each helper is its own guard
+      // (fold-gated / detail-gated), and insApplyWindow_ above re-renders
+      // everything anyway when it fired.
+      if (insLastData) {
+        try {
+          if (insCardsView === 'chart') insRenderCardsChart_();
+          if (insFoldOpen_('trend')) insDrawTrendChart_(insLastData);
+          if (insDetailOpen_()) insRenderDeferredCharts_();
+        } catch (e) { /* redraw is best-effort decoration of a rendered report */ }
+      }
     });
 
     const preset = $('ins-preset');
@@ -1589,6 +1648,7 @@
     }
     insRenderSmallSampleNote_(data);   // D3 (#7): annotation only, both modes
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+    insRegionHeadSync_(data);   // M2: the collapsed region summary's headline
     // Quick-start chip landing: scroll to + spotlight the section that
     // answers the clicked question (one-shot; a small delay lets the page
     // swap / layout settle first). An SWR pre-paint consumes it too --
@@ -1777,6 +1837,37 @@
         });
       })
       .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to });
+  }
+
+  // M2: reflect the rendered report on the REGION's collapsed summary (the
+  // insQhFoldSync_ pattern one level up) -- a closed region still states
+  // where the team stands + which window it covers, so staleness after a
+  // dept-window change is visible rather than silent. The static "what's in
+  // here" sub line yields to the live headline once one exists.
+  function insRegionHeadSync_(data) {
+    const el = $('ins-region-head');
+    if (!el) return;
+    const t = (data && data.teamStats) || {};
+    const meta = (data && data.meta) || {};
+    const qh = data && data.queueHealth;
+    const bits = [];
+    // teamStats fields are STAT OBJECTS ({formatted, deltaPct, ...} -- what
+    // dsKpiTile_ consumes); .formatted is the display string.
+    const pctStr = t.pct && t.pct.formatted;
+    const missStr = t.missed && t.missed.formatted;
+    if (pctStr && pctStr !== '-')  bits.push(escapeHtml(String(pctStr)) + ' answered');
+    if (missStr && missStr !== '-') bits.push(escapeHtml(String(missStr)) + ' missed rings');
+    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && qh.totals.abandonedPctStr) {
+      bits.push(escapeHtml(String(qh.totals.abandonedPctStr)) + ' abandoned');
+    }
+    if (!bits.length) { el.innerHTML = ''; return; }
+    const win = (meta.from && meta.to)
+      ? '<span class="ins-region-win">' + escapeHtml(meta.from + ' → ' + meta.to) + '</span>' : '';
+    el.innerHTML = bits.map(function (b) {
+      return '<span class="ins-region-stat">' + b + '</span>';
+    }).join('<span class="ins-region-dot">&middot;</span>') + win;
+    const sub = $('ins-region-sub');
+    if (sub) sub.style.display = 'none';
   }
 
   // Round-16: sync the Queue-health FOLD around the section -- visibility +

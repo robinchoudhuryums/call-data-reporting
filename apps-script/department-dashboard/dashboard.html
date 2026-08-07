@@ -551,7 +551,12 @@
       <details id="dept-insights-region" class="ins-region">
         <summary class="ins-region-summary">
           <span class="ins-region-title">Insights</span>
-          <span class="ins-region-sub">Department rollup &middot; agent comparisons &middot; queue health &middot; 12-month trends</span>
+          <!-- M2: once a report has rendered, insRegionHeadSync_ fills
+               #ins-region-head with the live headline (answer rate, missed,
+               abandoned %, window) and hides the static sub line, so the
+               COLLAPSED region still states where the team stands. -->
+          <span class="ins-region-sub" id="ins-region-sub">Department rollup &middot; agent comparisons &middot; queue health &middot; 12-month trends</span>
+          <span class="ins-region-head" id="ins-region-head"></span>
         </summary>
         <div id="insights-page" class="page-insights">
     <!-- R9-1/Phase 2: the results header (title + toolbar + the From/To
@@ -712,16 +717,14 @@
                  hidden form remains only as the failure / empty-roster
                  fallback (insShowForm). -->
           </div>
-          <!-- Round-16 Phase 2 (header unification): the I4 period chips are
-               replaced by the My Department controls pattern -- real From/To
-               date inputs + the SAME Quick-select preset chips -- so the two
-               pages carry one identical strip. These header inputs MIRROR the
-               canonical #ins-from/#ins-to (still in the hidden fallback form;
-               what deep links / saved views / the popover write):
-               insSyncHeaderDates_ copies canonical -> header on every render,
-               and a header edit copies back + re-runs (insInitHeaderDates_).
-               The whole header stays the page's sticky strip (R11-B9). -->
-          <div class="controls ins-hdr-controls" id="ins-hdr-controls" role="group" aria-label="Report window">
+          <!-- M2 (one date authority): this header From/To + Quick-select row
+               is HIDDEN -- the dept controls at the top of the page own the
+               window now (insSyncToDeptWindow_ converges the region on
+               refresh + on open), and two visible date strips on one page
+               would fight. Markup + wiring (insInitHeaderDates_ /
+               insSyncHeaderDates_ mirroring) kept inert for M4's sweep; the
+               results-date pill still states the rendered window. -->
+          <div class="controls ins-hdr-controls" id="ins-hdr-controls" role="group" aria-label="Report window" style="display:none;">
             <div class="control">
               <label for="ins-hdr-from">From</label>
               <input type="date" id="ins-hdr-from">
