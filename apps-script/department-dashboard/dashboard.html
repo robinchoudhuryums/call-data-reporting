@@ -535,605 +535,25 @@
         </div>
       </aside>
       </div><!-- /.dept-layout -->
-    </section>
-  </div>
 
-  <div id="help-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Reference</div>
-        <h2 id="help-modal-title">Help &amp; Reference</h2>
-      </div>
-      <!-- R10-1: the quick-start question row lives HERE now (moved off the
-           page tops -- still global via Help). Chips are injected + wired by
-           initOverviewLauncher_; clicking one closes Help, then navigates.
-           The tour is replayable from here too (the tour's own closing step
-           already pointed at Help). -->
-      <div class="help-quickstart">
-        <div class="ov-launcher" id="help-launcher"></div>
-        <button class="btn btn-secondary help-tour-btn" type="button" id="help-tour-btn">&#9654; Take the tour</button>
-      </div>
-      <div class="modal-panel-body help-layout">
-        <nav class="help-nav" aria-label="Help topics">
-          <input type="search" id="help-search" class="help-search" placeholder="Search help&hellip;" aria-label="Search help topics">
-          <details class="help-cat" open>
-            <summary>Getting started</summary>
-            <button type="button" class="help-link" data-topic="pages">The three pages</button>
-            <button type="button" class="help-link" data-topic="nav">Navigating &amp; reports</button>
-            <button type="button" class="help-link" data-topic="dates">Dates, presets &amp; freshness</button>
-            <button type="button" class="help-link" data-topic="display">Themes, dark mode &amp; Help</button>
-          </details>
-          <details class="help-cat">
-            <summary>My Department table</summary>
-            <button type="button" class="help-link" data-topic="columns">Column meanings</button>
-            <button type="button" class="help-link" data-topic="source">Source &amp; floaters</button>
-            <button type="button" class="help-link" data-topic="wow">Prior-period chips</button>
-            <button type="button" class="help-link" data-topic="queuecall">Queue Call Data &amp; missed timelines</button>
-            <button type="button" class="help-link" data-topic="export">Export (CSV)</button>
-          </details>
-          <details class="help-cat">
-            <summary>Reports</summary>
-            <button type="button" class="help-link" data-topic="individual">Individual</button>
-            <button type="button" class="help-link" data-topic="insights">Insights</button>
-            <button type="button" class="help-link" data-topic="missed">Missed Calls</button>
-            <button type="button" class="help-link" data-topic="qcd">QCD (Queue Call Data)</button>
-            <button type="button" class="help-link" data-topic="inbound">Inbound Calls</button>
-            <button type="button" class="help-link" data-topic="heatmap">Abandon heatmap</button>
-          </details>
-          <details class="help-cat">
-            <summary>Metrics &amp; standards</summary>
-            <button type="button" class="help-link" data-topic="standards">The 92% / 5% standards</button>
-            <button type="button" class="help-link" data-topic="glossary">Metric glossary</button>
-            <button type="button" class="help-link" data-topic="attlens">Why ATT can differ</button>
-          </details>
-          <details class="help-cat">
-            <summary>Admin &amp; alerts</summary>
-            <button type="button" class="help-link" data-topic="alerts">Low answer-rate alerts</button>
-            <button type="button" class="help-link" data-topic="digests">Manager digests</button>
-            <button type="button" class="help-link" data-topic="deptconfig">Dept Config (queue mapping)</button>
-            <button type="button" class="help-link" data-topic="orphan">Outlier Fix (name cleanup)</button>
-            <button type="button" class="help-link" data-topic="caller">Caller Lookup</button>
-            <button type="button" class="help-link" data-topic="access">Access &amp; who sees what</button>
-          </details>
-          <details class="help-cat">
-            <summary>Troubleshooting</summary>
-            <button type="button" class="help-link" data-topic="faq">Common questions</button>
-            <button type="button" class="help-link" data-topic="contact">Contact</button>
-          </details>
-        </nav>
-        <div class="help-content" id="help-content">
-          <section class="help-topic" id="help-topic-pages">
-            <h3>The four pages</h3>
-            <p>The dashboard has four pages, switched from the header:</p>
-            <ul>
-              <li><strong>Overview</strong> (the landing page) &mdash; a company-wide snapshot: a tile per department with answer rate, abandonment and a 30-day trend chart. Admins also see a company aggregate hero. Click a department tile to jump into it.</li>
-              <li><strong>My Department</strong> &mdash; the per-agent table for one department, plus its Queue Call Data tiles and per-agent missed-call timelines.</li>
-              <li><strong>Escalations</strong> &mdash; the escalation worklist for your department: filter, review each escalation's activity timeline, resolve with a note, or reopen.</li>
-              <li><strong>Insights</strong> &mdash; the flagship report as a full page: a department rollup, per-agent comparisons, queue health, and the 12-month trend. Reached via the <strong>Agent table &middot; Insights</strong> switcher in the My Department header (same department and dates); coming back keeps your generated report.</li>
-            </ul>
-            <p>Other reports (Individual, plus the admin-vetted Inbound / Direct) open as modals over any page.</p>
-          </section>
-          <section class="help-topic" id="help-topic-nav" hidden>
-            <h3>Navigating &amp; reports</h3>
-            <p>The header row of tabs opens each report. Every report (the Insights page and each report modal) has an <strong>&#8599; Open in new tab</strong> button (top-right) for side-by-side viewing, and most carry an Export menu (Download CSV / Copy image / Email / Print).</p>
-            <p>The floating <strong>?</strong> button (bottom-right) opens this Help from anywhere, even over a report. Admin tools (Alerts, Outlier Fix, Dept Config, Access, Health) live under the <strong>Admin</strong> dropdown, which is hidden for managers along with Caller Lookup.</p>
-          </section>
-          <section class="help-topic" id="help-topic-dates" hidden>
-            <h3>Dates, presets &amp; freshness</h3>
-            <ul>
-              <li><strong>From / To</strong> default to the most recent day with data, so the table isn&rsquo;t empty before today&rsquo;s import runs. If you set a From date past the To date, the To date snaps to match.</li>
-              <li>Reports offer <strong>quick presets</strong> (Yesterday, Last month, etc.); picking custom dates clears the preset.</li>
-              <li>The <strong>freshness pill</strong> in the header (&ldquo;Data through &hellip; &middot; Nh ago&rdquo;) turns orange if the most recent data is more than ~36h old &mdash; usually a sign the daily import hasn&rsquo;t run.</li>
-            </ul>
-          </section>
-          <section class="help-topic" id="help-topic-display" hidden>
-            <h3>Themes, dark mode &amp; Help</h3>
-            <ul>
-              <li><strong>&#9680; Dark mode</strong> toggles light/dark; your choice is remembered on this device.</li>
-              <li><strong>&#9881; Settings</strong> picks a light-mode background theme (Warm Paper / Cool Blue / Clinical White) and toggles the floating Help button.</li>
-              <li>Hovering a <strong>metric label</strong> (with a small &#9432;) shows its definition; key metrics show a richer tooltip with the 92% / 5% benchmark.</li>
-            </ul>
-          </section>
-          <section class="help-topic" id="help-topic-columns" hidden>
-            <h3>Column meanings</h3>
-            <ul>
-              <li><strong>Unique vs Rung</strong> &mdash; &ldquo;Unique&rdquo; is one distinct caller attempt; &ldquo;Rung&rdquo; is how many times an agent&rsquo;s phone was rung. One overflow call can ring several agents. <strong>Missed</strong> and <strong>% Answered</strong> are based on Rung.</li>
-              <li><strong>Missed vs Answered</strong> &mdash; rings not picked up vs answered, inside the work window. A missed ring isn&rsquo;t a lost call &mdash; another agent may have answered it.</li>
-              <li><strong>TTT &middot; ATT</strong> &mdash; Total and Average Talk Time on answered queue calls.</li>
-              <li><strong>Avg Abd Wait &middot; CSR Avg Abd Wait</strong> &mdash; average time abandoning callers waited, dept-wide and CSR-specific.</li>
-            </ul>
-            <p>The work window is <strong>8:30 AM&ndash;5:00 PM CST</strong> (shown as a pill on the page). Rings outside it appear in the Missed timeline but don&rsquo;t count toward Missed/Answered.</p>
-          </section>
-          <section class="help-topic" id="help-topic-source" hidden>
-            <h3>Source &amp; floaters</h3>
-            <p>The <strong>Source</strong> column tags each agent&rsquo;s provenance:</p>
-            <ul>
-              <li><strong>ROSTER</strong> &mdash; on this department&rsquo;s roster.</li>
-              <li><strong>QUEUE</strong> &mdash; a &ldquo;floater&rdquo; from another dept who handled your queue extensions (their home dept follows the chip). Useful for spotting cross-coverage.</li>
-              <li><strong>BOTH</strong> &mdash; rostered here <em>and</em> matched via queue this period.</li>
-            </ul>
-            <div class="help-figure">
-              <div class="help-figure-row">
-                <span class="src-chip src-chip-roster"><span class="src-dot"></span>ROSTER</span>
-                <span class="src-chip src-chip-both"><span class="src-dot"></span>BOTH</span>
-                <span class="src-chip src-chip-queue"><span class="src-dot"></span>QUEUE &middot; Sales</span>
-              </div>
-              <div class="help-figure-cap">The chips as they appear in the Source column.</div>
-            </div>
-            <p>Department <strong>totals are roster-only</strong>; queue-only floaters are summed on a separate footer line so headline numbers stay stable. The <strong>Diagnostics</strong> panel lists roster agents with no data in range.</p>
-          </section>
-          <section class="help-topic" id="help-topic-wow" hidden>
-            <h3>Prior-period chips</h3>
-            <p>Rung / Missed / Answered each show a small delta chip comparing the selected window to the <strong>same-length window just before it</strong>. Green = a good move (more answered, fewer missed), orange = a watch (more missed, fewer answered); tiny changes (under 3 calls) stay muted. Hover a chip for the prior dates and exact numbers. Chips aren&rsquo;t included in the CSV export.</p>
-          </section>
-          <section class="help-topic" id="help-topic-queuecall" hidden>
-            <h3>Queue Call Data &amp; missed timelines</h3>
-            <p>Above the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date. Below the table, the <strong>Missed Calls</strong> section gives an hour-of-day chart (click a bar to drill into that bucket) plus each agent&rsquo;s <strong>missed-call timeline</strong> listing the timestamps of unanswered rings (abandoned ones flagged in red). It follows the page&rsquo;s From/To dates &mdash; change them and Refresh for a custom range (this section <em>is</em> the Missed Calls report; the old standalone report was folded in here).</p>
-          </section>
-          <section class="help-topic" id="help-topic-export" hidden>
-            <h3>Export (CSV)</h3>
-            <p>The <strong>Export</strong> menu (appears once data loads) downloads the current table view as CSV &mdash; respecting your date range and sort order &mdash; with no server round-trip. Agent names are sanitized so spreadsheet apps can&rsquo;t treat them as formulas.</p>
-          </section>
-          <section class="help-topic" id="help-topic-individual" hidden>
-            <h3>Individual Report</h3>
-            <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
-          </section>
-          <section class="help-topic" id="help-topic-insights" hidden>
-            <h3>Insights</h3>
-            <p>Insights is a full <strong>page</strong> &mdash; the deeper lens on My Department, opened via the <strong>Agent table &middot; Insights</strong> switcher in that page&rsquo;s header (it carries over the same department and dates). Your generated report stays put when you switch away and come back.</p>
-            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Absolute</strong> bases (Gap = who&rsquo;s above/below the team average; Absolute = stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots). For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
-            <ul>
-              <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
-              <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
-            </ul>
-            <div class="ds-card ds-card--rail help-mini-card" style="--status: var(--good);">
-              <div class="help-mini-card-head">
-                <span class="help-mini-name">Jordan A.</span>
-                <span class="ins-trend-pill ins-trend-up">&#9650; Improving</span>
-                <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 142 vs 98 ans</span>
-              </div>
-            </div>
-            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 142 answered vs the ~98 a teammate averaged).</div>
-            <p>The bars compare % Answered / Answered / Missed against the team average. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
-          </section>
-          <section class="help-topic" id="help-topic-missed" hidden>
-            <h3>Missed Calls</h3>
-            <p>Lives on the <strong>My Department</strong> page, below the agent table (the standalone report was folded in there). An 18-bucket bar chart (8 AM&ndash;5 PM CST, 30-minute buckets) plus per-agent cards listing each missed ring&rsquo;s timestamp; it follows the page&rsquo;s From/To dates. Calls the caller actually abandoned are flagged in red with a &#128680;. For callers who gave up in the queue (vs a ring another agent answered), see the abandonment metrics in QCD / Inbound.</p>
-          </section>
-          <section class="help-topic" id="help-topic-qcd" hidden>
-            <h3>QCD (Queue Call Data)</h3>
-            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 5%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the trend chart&rsquo;s &ldquo;by queue&rdquo; tab shows one line per queue plus a dept total, and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 5% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
-          </section>
-          <section class="help-topic" id="help-topic-inbound" hidden>
-            <h3>Inbound Calls <span class="help-admin-tag">admin</span></h3>
-            <p>Every distinct inbound call in the range: KPI tiles (total / answered / abandoned / on-hold / avg wait), breakdowns by insurer, dial-in number and entry queue, and a daily trend. Insurer labels come from the insurance-number block in the roster sheet. <em>Currently admin-only while its abandonment numbers are vetted against QCD</em> (the two use different sources and definitions).</p>
-          </section>
-          <section class="help-topic" id="help-topic-heatmap" hidden>
-            <h3>Abandon heatmap</h3>
-            <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 5% abandoned, warming as it rises past the 5% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion in the Insights report&rsquo;s Queue health (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
-            <div class="help-figure">
-              <div class="ds-heatmap-legend">
-                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--good) 50%, var(--paper-card));"></span>0&ndash;5% (on target)</span>
-                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 17%, var(--warn-soft));"></span>5&ndash;10%</span>
-                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 67%, var(--warn-soft));"></span>15%+</span>
-                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: var(--paper-2);"></span>low volume</span>
-              </div>
-              <div class="help-figure-cap">The cell color scale &mdash; the same legend shown under the heatmap.</div>
-            </div>
-          </section>
-          <section class="help-topic" id="help-topic-standards" hidden>
-            <h3>The answer-target / 5% standards</h3>
-            <p>Two company-wide benchmarks drive the color-coding everywhere:</p>
-            <ul>
-              <li><strong>The answer-rate target</strong> (92% unless an admin has tuned it) &mdash; values at/above read green &ldquo;on track&rdquo;; below read orange &ldquo;watch&rdquo;. Admins can adjust it &mdash; and set separate targets for the Direct and Inbound reports, whose answer rates measure different call populations &mdash; in Alerts &rarr; Answer-rate standards.</li>
-              <li><strong>5% abandonment</strong> &mdash; the ceiling, fixed. A queue over 5% on a day is a <strong>violation</strong>.</li>
-            </ul>
-            <div class="help-figure">
-              <div class="help-figure-row">
-                <span class="bm-target" style="font-weight:600;">94% answered</span>
-                <span style="color: var(--muted);">vs</span>
-                <span class="bm-over" style="font-weight:600;">6.2% abandoned</span>
-              </div>
-              <div class="help-figure-cap">Green = at/above the answer target; orange = at/over the 5% abandon ceiling. These are the tints you&rsquo;ll see on KPI tiles and cells across the app.</div>
-            </div>
-            <p>These are the <em>only</em> two thresholds used for tinting &mdash; counts and durations stay neutral. Department-specific alert thresholds are separate (see Alerts).</p>
-          </section>
-          <section class="help-topic" id="help-topic-glossary" hidden>
-            <h3>Metric glossary</h3>
-            <ul>
-              <li><strong>% Answered</strong> &mdash; answered &divide; calls that rang. Target 92%.</li>
-              <li><strong>Abandoned %</strong> &mdash; queue calls where the caller hung up before being answered. 5%+ in a day = violation.</li>
-              <li><strong>ATT</strong> &mdash; Average Talk Time per answered call. Longer isn&rsquo;t automatically worse.</li>
-              <li><strong>TTT</strong> &mdash; Total Talk Time (sum of an agent&rsquo;s own talk on answered calls).</li>
-              <li><strong>Violations</strong> &mdash; days a queue went over the 5% abandon line (month-to-date in totals).</li>
-              <li><strong>Avg / longest wait</strong> &mdash; time callers waited before being answered or giving up.</li>
-            </ul>
-            <p>Hovering most labels in the app shows these definitions inline.</p>
-          </section>
-          <section class="help-topic" id="help-topic-attlens" hidden>
-            <h3>Why ATT can differ</h3>
-            <p>The <strong>My Department</strong> table shows ATT as the simple mean of each day&rsquo;s stored value. The <strong>reports</strong> (Individual / Insights) use a per-call <em>weighted</em> average (total talk &divide; calls answered), so days with no answered calls don&rsquo;t drag it down. Same range can therefore show slightly different ATT in the two places &mdash; neither is wrong; they answer different questions.</p>
-          </section>
-          <section class="help-topic" id="help-topic-alerts" hidden>
-            <h3>Low answer-rate alerts <span class="help-admin-tag">admin</span></h3>
-            <p>Per-department email alerts when a day&rsquo;s answer rate falls below that dept&rsquo;s threshold. Preview a date, then send manually, or install a daily 8 AM trigger (weekends and configured skip-dates are skipped). The Alert Log records every outcome, and a &ldquo;last 30 days&rdquo; chip flags depts where the threshold may be too strict or too loose.</p>
-          </section>
-          <section class="help-topic" id="help-topic-digests" hidden>
-            <h3>Manager digests <span class="help-admin-tag">admin</span></h3>
-            <p>Scheduled email summaries per manager &mdash; daily, weekly, or monthly &mdash; in a KPI &ldquo;summary&rdquo; format or the richer &ldquo;insights&rdquo; format. Managed from the Alerts modal&rsquo;s Report Subscribers section (tick &ldquo;Manager Digest&rdquo;); install the digest triggers there.</p>
-          </section>
-          <section class="help-topic" id="help-topic-deptconfig" hidden>
-            <h3>Dept Config <span class="help-admin-tag">admin</span></h3>
-            <p>Maps each department to its <strong>queue names</strong> (the <code>A_Q_*</code> identifiers from the phone system) and a few per-dept options, without a redeploy. If a dept&rsquo;s QCD/Inbound view is empty or missing queues, map them here &mdash; the modal auto-discovers queue names seen in recent data and flags unmapped ones.</p>
-          </section>
-          <section class="help-topic" id="help-topic-orphan" hidden>
-            <h3>Outlier Fix <span class="help-admin-tag">admin</span></h3>
-            <p>Cleans up agent-name variants. If the phone system spells an agent slightly differently (e.g. a different parenthetical), this maps the variant to the canonical roster name so their numbers consolidate. Also handles new-hire roster additions. Every change is logged.</p>
-          </section>
-          <section class="help-topic" id="help-topic-caller" hidden>
-            <h3>Caller Lookup <span class="help-admin-tag">admin</span></h3>
-            <p>Look up one phone number&rsquo;s inbound call history over a date range, rendered as a timeline per call (the journey through IVR / queues / agents). The number is hashed for the query and never stored or logged.</p>
-          </section>
-          <section class="help-topic" id="help-topic-access" hidden>
-            <h3>Access &amp; who sees what</h3>
-            <p>Access is by an <strong>Email &rarr; Department</strong> mapping. <strong>Managers</strong> see only their own department; <strong>admins</strong> can switch departments and see admin-only surfaces (company aggregate, Alerts, Dept Config, Outlier Fix, Caller Lookup, Inbound). Anyone not mapped gets an access-denied page with no data.</p>
-          </section>
-          <section class="help-topic" id="help-topic-faq" hidden>
-            <h3>Common questions</h3>
-            <ul>
-              <li><strong>My table is empty.</strong> Check the From/To dates first. If they look right, the Diagnostics panel&rsquo;s &ldquo;Roster agents with no data in this range&rdquo; lists who was expected but absent.</li>
-              <li><strong>Numbers look stale.</strong> Check the header freshness pill &mdash; if it&rsquo;s orange (36h+), the daily import likely hasn&rsquo;t run. Reports also cache for up to 30 minutes.</li>
-              <li><strong>More missed timestamps than the Missed count.</strong> Rings outside the 8:30 AM&ndash;5 PM CST work window show in the timeline but don&rsquo;t count toward Missed.</li>
-              <li><strong>An agent shows in two departments.</strong> That&rsquo;s expected &mdash; agents can be on multiple rosters and appear under each.</li>
-              <li><strong>Inbound vs QCD abandonment differ.</strong> They use different sources and definitions; Inbound is being vetted, which is why it&rsquo;s admin-only for now.</li>
-            </ul>
-          </section>
-          <section class="help-topic" id="help-topic-contact" hidden>
-            <h3>Contact</h3>
-            <p>Questions, access requests, or threshold changes: <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a></p>
-          </section>
-          <p class="help-empty" id="help-search-empty" hidden>No topics match your search.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-close" id="settings-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Personal preferences</div>
-        <h2 id="settings-modal-title">Settings</h2>
-      </div>
-      <div class="modal-panel-body">
-      <div class="modal-content">
-        <h3>Background theme</h3>
-        <p>Affects your view only; other users see their own setting. Background themes apply to light mode only — turn off dark mode (<span aria-hidden="true">◐</span>) in the header to change them.</p>
-        <div class="theme-chip-grid" id="theme-chip-grid">
-          <button class="theme-chip" type="button" data-theme="warm" title="Warm-paper cream background — default">
-            <span class="theme-chip-swatch" style="background:#f7f2e6; border-color:#d6d1c2;"></span>
-            <span class="theme-chip-label">Warm Paper</span>
-          </button>
-          <button class="theme-chip" type="button" data-theme="cool" title="Cool blue paper background">
-            <span class="theme-chip-swatch" style="background:#f0f6fa; border-color:#c8d8e6;"></span>
-            <span class="theme-chip-label">Cool Blue</span>
-          </button>
-          <button class="theme-chip" type="button" data-theme="clinical" title="Neutral white background">
-            <span class="theme-chip-swatch" style="background:#fafafa; border-color:#d8d8d8;"></span>
-            <span class="theme-chip-label">Clinical White</span>
-          </button>
-        </div>
-        <h3>Help button</h3>
-        <p>The floating <span aria-hidden="true">?</span> button stays available in the corner even over report modals. Uncheck to hide it (the <span aria-hidden="true">?</span> in the header still opens Help).</p>
-        <label class="settings-toggle"><input type="checkbox" id="help-fab-toggle" checked> Show floating Help button</label>
-        <h3>Chart hover cards</h3>
-        <p>The pop-up card that appears when you hover a chart. Uncheck to turn it off across every chart &mdash; the hovered point still highlights, just without the card. (When you solo one or a few lines on a chart, the card shows only those.)</p>
-        <label class="settings-toggle"><input type="checkbox" id="chart-tooltip-toggle" checked> Show chart hover cards</label>
-        <h3>Report summary banners</h3>
-        <p>The plain-language summary strip at the top of each report (the green &ldquo;On track&rdquo; / orange &ldquo;Watch&rdquo; banners). Uncheck to hide them everywhere.</p>
-        <label class="settings-toggle"><input type="checkbox" id="report-banner-toggle" checked> Show report summary banners</label>
-        <h3>Guided tour</h3>
-        <p>A short walkthrough of the dashboard&rsquo;s main areas. It runs automatically the first time you visit; replay it any time here.</p>
-        <button class="btn" type="button" id="tour-replay-btn">Take the tour</button>
-      </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="individual-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="individual-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/individual"
-                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
-        <button class="modal-close" id="individual-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report</div>
-        <h2 id="individual-modal-title">Individual Report</h2>
-      </div>
-      <div class="modal-panel-body">
-      <!-- Drill-through loader: shown instead of the setup form when IR is
-           opened by drilling from Insights / My Department (auto-generates for
-           the same date), so the form doesn't flash before the report. -->
-      <div id="ir-drill-loader" class="ir-drill-loader" style="display:none;">
-        <div class="ir-drill-spinner" aria-hidden="true"></div>
-        <div class="ir-drill-loader-text">Generating report&hellip;</div>
-      </div>
-      <div id="individual-form" class="ir-form">
-        <div class="ir-section-title">1. Date Range</div>
-        <div class="ir-row">
-          <div class="ir-col">
-            <label for="ir-preset">Quick select</label>
-            <select id="ir-preset">
-              <option value="custom">Custom range</option>
-              <option value="thisMonth">This month</option>
-              <option value="lastMonth">Last month</option>
-              <option value="last30">Last 30 days</option>
-              <option value="last3Months">Last 3 months</option>
-              <option value="last12Months">Last 12 months</option>
-              <option value="lastYear">Last year</option>
-            </select>
-          </div>
-          <div class="ir-col">
-            <label for="ir-from">Start date</label>
-            <input type="date" id="ir-from">
-          </div>
-          <div class="ir-col">
-            <label for="ir-to">End date</label>
-            <input type="date" id="ir-to">
-          </div>
-        </div>
-
-        <div class="ir-row">
-          <div class="ir-col">
-            <label for="ir-compare-mode">Compare with</label>
-            <select id="ir-compare-mode">
-              <option value="none">No comparison</option>
-              <option value="yoy">Same window one year prior</option>
-              <option value="prevPeriod">Immediately-preceding period</option>
-              <option value="custom">Custom prior range&hellip;</option>
-            </select>
-          </div>
-          <div class="ir-col" id="ir-prior-from-wrap" style="display:none;">
-            <label for="ir-prior-from">Prior start</label>
-            <input type="date" id="ir-prior-from">
-          </div>
-          <div class="ir-col" id="ir-prior-to-wrap" style="display:none;">
-            <label for="ir-prior-to">Prior end</label>
-            <input type="date" id="ir-prior-to">
-          </div>
-        </div>
-        <div class="ir-hint ir-prior-hint" id="ir-prior-hint"></div>
-
-        <div class="ir-section-title">2. Agents</div>
-        <div class="ir-hint">Select 1 for an Individual Report (with optional self-comparison above). Select multiple for Peer Comparison.</div>
-        <div class="ir-search-row">
-          <input type="search" id="ir-agent-search" placeholder="Search agents by name..." aria-label="Search agents by name" autocomplete="off">
-        </div>
-        <div id="ir-agent-loader" class="ir-loader">
-          <div class="ir-skeleton-grid" aria-hidden="true">
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
-          </div>
-          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
-        </div>
-        <div id="ir-agent-list" class="ir-agent-list" style="display:none;"></div>
-        <div class="ir-agent-actions">
-          <a href="#" id="ir-select-all">Select all active</a>
-          <span class="sep">|</span>
-          <a href="#" id="ir-select-none">Select none</a>
-        </div>
-
-        <div id="ir-form-error" class="status status-error" style="display:none;"></div>
-
-        <button class="btn" id="ir-generate-btn" type="button" disabled>Generate report</button>
-      </div>
-
-      <div id="individual-results" class="ir-results" style="display:none;">
-        <div class="ir-results-header">
-          <div class="ir-results-header-left">
-            <div class="ir-results-title-line">
-              <span class="ir-results-title" id="ir-results-title">Individual Report</span>
-              <span class="ir-results-date" id="ir-results-date"></span>
-            </div>
-            <div class="ir-editing-line">
-              <span class="ir-editing-label">Showing:</span>
-              <span class="ir-editing-agents" id="ir-editing-agents"></span>
-              <button class="ir-editing-edit" id="ir-edit-selection-btn" type="button">change</button>
-            </div>
-          </div>
-          <div class="ir-action-buttons" id="ir-action-buttons">
-            <!-- Shown only when IR was opened by drilling through from the
-                 Insights report; returns to the already-rendered Insights
-                 view with no reload (#2/#7). -->
-            <button class="btn btn-secondary" id="ir-back-to-insights-btn" type="button" style="display:none;">&laquo; Back to Insights</button>
-            <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
-            <div class="ir-export-wrap">
-              <button class="btn btn-secondary" id="ir-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-                Export <span class="ir-export-caret">&#9662;</span>
-              </button>
-              <div class="ir-export-menu" id="ir-export-menu" role="menu" style="display:none;">
-                <button type="button" role="menuitem" data-action="copy">Copy image</button>
-                <button type="button" role="menuitem" data-action="email">Email image</button>
-                <button type="button" role="menuitem" data-action="print">Print</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div id="ir-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
-          <div class="ir-edit-popover-header">
-            <strong>Edit selection &amp; dates</strong>
-            <button class="ir-edit-popover-close" id="ir-edit-popover-close" type="button" aria-label="Close">&times;</button>
-          </div>
-          <div class="ir-edit-dates-row">
-            <label class="ir-edit-date-field">From<input type="date" id="ir-edit-from"></label>
-            <label class="ir-edit-date-field">To<input type="date" id="ir-edit-to"></label>
-            <label class="ir-edit-date-field">Compare
-              <select id="ir-edit-compare-mode">
-                <option value="none">No comparison</option>
-                <option value="prevPeriod">Immediately-preceding period</option>
-                <option value="yoy">Same window one year prior</option>
-              </select>
-            </label>
-          </div>
-          <div class="ir-search-row">
-            <input type="search" id="ir-edit-search" placeholder="Search agents..." aria-label="Search agents" autocomplete="off">
-          </div>
-          <div id="ir-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
-          <div class="ir-edit-popover-actions">
-            <a href="#" id="ir-edit-select-all">Select all active</a>
-            <span class="sep">|</span>
-            <a href="#" id="ir-edit-select-none">Select none</a>
-            <button class="btn" id="ir-edit-apply-btn" type="button" disabled>Apply</button>
-          </div>
-        </div>
-
-        <div id="ir-results-status" class="status" style="display:none;"></div>
-
-        <div class="ir-cards-toolbar" id="ir-cards-toolbar" style="display:none;">
-          <label class="ir-sort-control">
-            <span class="ir-sort-label">Sort agents:</span>
-            <select id="ir-card-sort">
-              <option value="selection">Selection order</option>
-              <option value="name">Name (A-Z)</option>
-              <option value="answered-desc">Answered (high to low)</option>
-              <option value="answered-asc">Answered (low to high)</option>
-              <option value="pct-desc">% Answered (high to low)</option>
-            </select>
-          </label>
-        </div>
-
-        <div id="ir-summary-container"></div>
-
-        <!-- Chart controls consolidated onto one band: the data-labels
-             toggle sits at the right end of the tab strip instead of on
-             its own row above it (pinned via .ir-chart-tabs > .ir-toggle-box). -->
-        <div class="ir-chart-tabs" id="ir-chart-tabs">
-          <span role="tablist" aria-label="Chart view" class="ir-tablist-inline">
-            <button type="button" class="ir-tab active" id="ir-tab-vol" data-tab="vol" role="tab" aria-selected="true" aria-controls="ir-wrap-vol" tabindex="0">Volume</button>
-            <button type="button" class="ir-tab" id="ir-tab-eff" data-tab="eff" role="tab" aria-selected="false" aria-controls="ir-wrap-eff" tabindex="-1">Efficiency</button>
-            <button type="button" class="ir-tab" id="ir-tab-dur" data-tab="dur" role="tab" aria-selected="false" aria-controls="ir-wrap-dur" tabindex="-1">Duration</button>
-          </span>
-          <!-- #4: stack all three trend charts (Volume/Efficiency/Duration)
-               instead of one tab at a time. -->
-          <button type="button" class="ir-allcharts-toggle" id="ir-allcharts-toggle" aria-pressed="false"
-                  title="Show Volume, Efficiency and Duration together instead of one tab at a time">ALL</button>
-          <div class="ir-toggle-box" id="ir-datalabels-box">
-            <label class="ir-toggle-label">
-              <input type="checkbox" id="ir-show-datalabels"> Show data labels
-            </label>
-          </div>
-          <button type="button" class="chart-help-btn" data-charthelp="ir" aria-label="Chart tips" title="Chart tips">?</button>
-        </div>
-
-        <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
-
-        <div id="ir-charts-container" class="ir-chart-area">
-          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol" role="tabpanel" aria-labelledby="ir-tab-vol">
-            <div class="ir-chart-header">Volume Trends</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
-          </div>
-          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" role="tabpanel" aria-labelledby="ir-tab-eff" style="display:none;">
-            <div class="ir-chart-header">Efficiency (% Answered)</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
-          </div>
-          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" role="tabpanel" aria-labelledby="ir-tab-dur" style="display:none;">
-            <div class="ir-chart-header">Duration (ATT)</div>
-            <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
-          </div>
-        </div>
-      </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="qcd-alldept-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="qcd-alldept-modal-title" style="display:none;">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-panel modal-panel-wide" role="document">
-      <div class="modal-panel-header">
-        <button class="modal-close" id="qcd-alldept-close" type="button" aria-label="Close">&times;</button>
-        <div class="modal-kicker">Report &middot; company</div>
-        <h2 id="qcd-alldept-modal-title">Daily Call Queue Report</h2>
-      </div>
-      <div class="modal-panel-body">
-        <!-- Pre-loads yesterday on open; the date toolbar in the results
-             header changes the range + re-generates IN PLACE (no separate
-             form step). -->
-        <div id="qcd-alldept-results" class="ir-results">
-          <div class="ir-results-header">
-            <div class="ir-results-header-left">
-              <div class="ir-results-title-line">
-                <span class="ir-results-title">Daily Call Queue Report</span>
-                <span class="ir-results-date" id="qcd-alldept-results-date"></span>
-              </div>
-              <div class="qcd-alldept-daterow">
-                <select id="qcd-alldept-preset" aria-label="Quick select">
-                  <option value="custom">Custom range</option>
-                  <option value="yesterday" selected>Yesterday</option>
-                  <option value="today">Today</option>
-                  <option value="thisMonth">This month</option>
-                  <option value="lastMonth">Last month</option>
-                  <option value="last30">Last 30 days</option>
-                </select>
-                <input type="date" id="qcd-alldept-from" aria-label="Start date">
-                <span class="qcd-alldept-dash">&ndash;</span>
-                <input type="date" id="qcd-alldept-to" aria-label="End date">
-                <button class="btn btn-secondary" id="qcd-alldept-refresh-btn" type="button" title="Re-generate for the selected range">&#8635; Update</button>
-                <span id="qcd-alldept-form-error" class="status status-error" style="display:none;"></span>
-              </div>
-            </div>
-            <!-- R11-B3: Download CSV / Print / Email me consolidated into the
-                 Export dropdown (Insights convention); the admin-only
-                 subscriber blast stays a separate, deliberate button. -->
-            <div class="ir-action-buttons">
-              <div class="ir-export-wrap">
-                <button class="btn btn-secondary" id="qcd-alldept-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-                  Export <span class="ir-export-caret">&#9662;</span>
-                </button>
-                <div class="ir-export-menu" id="qcd-alldept-export-menu" role="menu" style="display:none;">
-                  <button type="button" role="menuitem" data-action="csv">Download CSV</button>
-                  <button type="button" role="menuitem" data-action="print">Print</button>
-                  <button type="button" role="menuitem" data-action="email">Email me this report</button>
-                </div>
-              </div>
-              <button class="btn btn-secondary" id="qcd-alldept-blast-btn" type="button"
-                      data-admin-only style="display:none;"
-                      title="Email the displayed day to every active subscriber now">Send to subscribers&hellip;</button>
-            </div>
-          </div>
-          <div class="ir-hint">
-            Company-wide flat table across every mapped department, each dept&rsquo;s
-            own queues listed (sub-queues appear under their own department, never
-            double-counted). Scoped to the selected range. Click a queue row to see
-            its per-call-source breakdown.
-          </div>
-          <div id="qcd-alldept-status" class="status" style="display:none;"></div>
-          <div id="qcd-alldept-empty" class="empty-state" style="display:none;"></div>
-          <!-- Verdict layer (design update): a KPI band + alert callout painted
-               above the table by qcdAllDeptRender_ from data.grandTotals (no new
-               server call). "Lead with the answer." Table/CSV/print unchanged. -->
-          <div id="qcd-alldept-verdict"></div>
-          <div id="qcd-alldept-body"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Insights page (modal->page conversion; see docs/insights-page-plan.md).
-       The consolidation flagship (absorbed Performance / Compare / QCD) gets
-       page-level presence like Escalations (#6): a .page section outside the
-       main container, toggled by body[data-page="insights"] via
-       setPage('insights'). Every inner element id is unchanged from the
-       modal era so the ins-* JS is untouched; the global header supplies the
-       kicker/title (no in-page chrome). The open-in-new-tab button keeps its
-       .modal-open-tab-btn class -- the share-state wiring loop keys on the
-       class + data-open-tab-route, not on being inside a modal. -->
-  <section id="insights-page" class="page page-insights">
+      <!-- M1 (Insights merge, docs/insights-merge-plan.md): the Insights PAGE
+           is now a lazy collapsible REGION of My Department -- full width,
+           below the agent table + missed section. Every inner element id is
+           unchanged from the page era, incl. #insights-page itself (now a
+           plain div: launcherOpenInsights_/handoffToInsights_ existence-check
+           it, and all the #insights-page-scoped CSS still applies). The
+           heavy init + auto-generated report run on FIRST OPEN only
+           (deptInsightsOpen_ / the region toggle listener -> insEnsurePage_),
+           never on dept-page load -- laziness is the M1 contract.
+           setPage('insights') maps here (script-2), so every legacy entry
+           (deep links, quick-start chips, the lens switcher) lands on the
+           open region. -->
+      <details id="dept-insights-region" class="ins-region">
+        <summary class="ins-region-summary">
+          <span class="ins-region-title">Insights</span>
+          <span class="ins-region-sub">Department rollup &middot; agent comparisons &middot; queue health &middot; 12-month trends</span>
+        </summary>
+        <div id="insights-page" class="page-insights">
     <!-- R9-1/Phase 2: the results header (title + toolbar + the From/To
          controls row) is the sticky strip (CSS position:sticky, opaque), so
          the real date inputs stay reachable while scrolled. -->
@@ -1732,7 +1152,599 @@
         </div>
       </div>
     </div>
-  </section>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <div id="help-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="help-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Reference</div>
+        <h2 id="help-modal-title">Help &amp; Reference</h2>
+      </div>
+      <!-- R10-1: the quick-start question row lives HERE now (moved off the
+           page tops -- still global via Help). Chips are injected + wired by
+           initOverviewLauncher_; clicking one closes Help, then navigates.
+           The tour is replayable from here too (the tour's own closing step
+           already pointed at Help). -->
+      <div class="help-quickstart">
+        <div class="ov-launcher" id="help-launcher"></div>
+        <button class="btn btn-secondary help-tour-btn" type="button" id="help-tour-btn">&#9654; Take the tour</button>
+      </div>
+      <div class="modal-panel-body help-layout">
+        <nav class="help-nav" aria-label="Help topics">
+          <input type="search" id="help-search" class="help-search" placeholder="Search help&hellip;" aria-label="Search help topics">
+          <details class="help-cat" open>
+            <summary>Getting started</summary>
+            <button type="button" class="help-link" data-topic="pages">The three pages</button>
+            <button type="button" class="help-link" data-topic="nav">Navigating &amp; reports</button>
+            <button type="button" class="help-link" data-topic="dates">Dates, presets &amp; freshness</button>
+            <button type="button" class="help-link" data-topic="display">Themes, dark mode &amp; Help</button>
+          </details>
+          <details class="help-cat">
+            <summary>My Department table</summary>
+            <button type="button" class="help-link" data-topic="columns">Column meanings</button>
+            <button type="button" class="help-link" data-topic="source">Source &amp; floaters</button>
+            <button type="button" class="help-link" data-topic="wow">Prior-period chips</button>
+            <button type="button" class="help-link" data-topic="queuecall">Queue Call Data &amp; missed timelines</button>
+            <button type="button" class="help-link" data-topic="export">Export (CSV)</button>
+          </details>
+          <details class="help-cat">
+            <summary>Reports</summary>
+            <button type="button" class="help-link" data-topic="individual">Individual</button>
+            <button type="button" class="help-link" data-topic="insights">Insights</button>
+            <button type="button" class="help-link" data-topic="missed">Missed Calls</button>
+            <button type="button" class="help-link" data-topic="qcd">QCD (Queue Call Data)</button>
+            <button type="button" class="help-link" data-topic="inbound">Inbound Calls</button>
+            <button type="button" class="help-link" data-topic="heatmap">Abandon heatmap</button>
+          </details>
+          <details class="help-cat">
+            <summary>Metrics &amp; standards</summary>
+            <button type="button" class="help-link" data-topic="standards">The 92% / 5% standards</button>
+            <button type="button" class="help-link" data-topic="glossary">Metric glossary</button>
+            <button type="button" class="help-link" data-topic="attlens">Why ATT can differ</button>
+          </details>
+          <details class="help-cat">
+            <summary>Admin &amp; alerts</summary>
+            <button type="button" class="help-link" data-topic="alerts">Low answer-rate alerts</button>
+            <button type="button" class="help-link" data-topic="digests">Manager digests</button>
+            <button type="button" class="help-link" data-topic="deptconfig">Dept Config (queue mapping)</button>
+            <button type="button" class="help-link" data-topic="orphan">Outlier Fix (name cleanup)</button>
+            <button type="button" class="help-link" data-topic="caller">Caller Lookup</button>
+            <button type="button" class="help-link" data-topic="access">Access &amp; who sees what</button>
+          </details>
+          <details class="help-cat">
+            <summary>Troubleshooting</summary>
+            <button type="button" class="help-link" data-topic="faq">Common questions</button>
+            <button type="button" class="help-link" data-topic="contact">Contact</button>
+          </details>
+        </nav>
+        <div class="help-content" id="help-content">
+          <section class="help-topic" id="help-topic-pages">
+            <h3>The three pages</h3>
+            <p>The dashboard has three pages, switched from the header:</p>
+            <ul>
+              <li><strong>Overview</strong> (the landing page) &mdash; a company-wide snapshot: a tile per department with answer rate, abandonment and a 30-day trend chart. Admins also see a company aggregate hero. Click a department tile to jump into it.</li>
+              <li><strong>My Department</strong> &mdash; everything about one department on a single page: the per-agent table, Queue Call Data tiles, the Missed Calls report, and the expandable <strong>Insights</strong> section (department rollup, per-agent comparisons, queue health, 12-month trends) at the bottom.</li>
+              <li><strong>Escalations</strong> &mdash; the escalation worklist for your department: filter, review each escalation's activity timeline, resolve with a note, or reopen.</li>
+            </ul>
+            <p>Other reports (Individual, plus the admin-vetted Inbound / Direct) open as modals over any page.</p>
+          </section>
+          <section class="help-topic" id="help-topic-nav" hidden>
+            <h3>Navigating &amp; reports</h3>
+            <p>The header row of tabs opens each report. Every report (the Insights page and each report modal) has an <strong>&#8599; Open in new tab</strong> button (top-right) for side-by-side viewing, and most carry an Export menu (Download CSV / Copy image / Email / Print).</p>
+            <p>The floating <strong>?</strong> button (bottom-right) opens this Help from anywhere, even over a report. Admin tools (Alerts, Outlier Fix, Dept Config, Access, Health) live under the <strong>Admin</strong> dropdown, which is hidden for managers along with Caller Lookup.</p>
+          </section>
+          <section class="help-topic" id="help-topic-dates" hidden>
+            <h3>Dates, presets &amp; freshness</h3>
+            <ul>
+              <li><strong>From / To</strong> default to the most recent day with data, so the table isn&rsquo;t empty before today&rsquo;s import runs. If you set a From date past the To date, the To date snaps to match.</li>
+              <li>Reports offer <strong>quick presets</strong> (Yesterday, Last month, etc.); picking custom dates clears the preset.</li>
+              <li>The <strong>freshness pill</strong> in the header (&ldquo;Data through &hellip; &middot; Nh ago&rdquo;) turns orange if the most recent data is more than ~36h old &mdash; usually a sign the daily import hasn&rsquo;t run.</li>
+            </ul>
+          </section>
+          <section class="help-topic" id="help-topic-display" hidden>
+            <h3>Themes, dark mode &amp; Help</h3>
+            <ul>
+              <li><strong>&#9680; Dark mode</strong> toggles light/dark; your choice is remembered on this device.</li>
+              <li><strong>&#9881; Settings</strong> picks a light-mode background theme (Warm Paper / Cool Blue / Clinical White) and toggles the floating Help button.</li>
+              <li>Hovering a <strong>metric label</strong> (with a small &#9432;) shows its definition; key metrics show a richer tooltip with the 92% / 5% benchmark.</li>
+            </ul>
+          </section>
+          <section class="help-topic" id="help-topic-columns" hidden>
+            <h3>Column meanings</h3>
+            <ul>
+              <li><strong>Unique vs Rung</strong> &mdash; &ldquo;Unique&rdquo; is one distinct caller attempt; &ldquo;Rung&rdquo; is how many times an agent&rsquo;s phone was rung. One overflow call can ring several agents. <strong>Missed</strong> and <strong>% Answered</strong> are based on Rung.</li>
+              <li><strong>Missed vs Answered</strong> &mdash; rings not picked up vs answered, inside the work window. A missed ring isn&rsquo;t a lost call &mdash; another agent may have answered it.</li>
+              <li><strong>TTT &middot; ATT</strong> &mdash; Total and Average Talk Time on answered queue calls.</li>
+              <li><strong>Avg Abd Wait &middot; CSR Avg Abd Wait</strong> &mdash; average time abandoning callers waited, dept-wide and CSR-specific.</li>
+            </ul>
+            <p>The work window is <strong>8:30 AM&ndash;5:00 PM CST</strong> (shown as a pill on the page). Rings outside it appear in the Missed timeline but don&rsquo;t count toward Missed/Answered.</p>
+          </section>
+          <section class="help-topic" id="help-topic-source" hidden>
+            <h3>Source &amp; floaters</h3>
+            <p>The <strong>Source</strong> column tags each agent&rsquo;s provenance:</p>
+            <ul>
+              <li><strong>ROSTER</strong> &mdash; on this department&rsquo;s roster.</li>
+              <li><strong>QUEUE</strong> &mdash; a &ldquo;floater&rdquo; from another dept who handled your queue extensions (their home dept follows the chip). Useful for spotting cross-coverage.</li>
+              <li><strong>BOTH</strong> &mdash; rostered here <em>and</em> matched via queue this period.</li>
+            </ul>
+            <div class="help-figure">
+              <div class="help-figure-row">
+                <span class="src-chip src-chip-roster"><span class="src-dot"></span>ROSTER</span>
+                <span class="src-chip src-chip-both"><span class="src-dot"></span>BOTH</span>
+                <span class="src-chip src-chip-queue"><span class="src-dot"></span>QUEUE &middot; Sales</span>
+              </div>
+              <div class="help-figure-cap">The chips as they appear in the Source column.</div>
+            </div>
+            <p>Department <strong>totals are roster-only</strong>; queue-only floaters are summed on a separate footer line so headline numbers stay stable. The <strong>Diagnostics</strong> panel lists roster agents with no data in range.</p>
+          </section>
+          <section class="help-topic" id="help-topic-wow" hidden>
+            <h3>Prior-period chips</h3>
+            <p>Rung / Missed / Answered each show a small delta chip comparing the selected window to the <strong>same-length window just before it</strong>. Green = a good move (more answered, fewer missed), orange = a watch (more missed, fewer answered); tiny changes (under 3 calls) stay muted. Hover a chip for the prior dates and exact numbers. Chips aren&rsquo;t included in the CSV export.</p>
+          </section>
+          <section class="help-topic" id="help-topic-queuecall" hidden>
+            <h3>Queue Call Data &amp; missed timelines</h3>
+            <p>Above the agent table, a <strong>Queue Call Data</strong> tile row shows each mapped queue&rsquo;s abandoned % and violations for the latest data date. Below the table, the <strong>Missed Calls</strong> section gives an hour-of-day chart (click a bar to drill into that bucket) plus each agent&rsquo;s <strong>missed-call timeline</strong> listing the timestamps of unanswered rings (abandoned ones flagged in red). It follows the page&rsquo;s From/To dates &mdash; change them and Refresh for a custom range (this section <em>is</em> the Missed Calls report; the old standalone report was folded in here).</p>
+          </section>
+          <section class="help-topic" id="help-topic-export" hidden>
+            <h3>Export (CSV)</h3>
+            <p>The <strong>Export</strong> menu (appears once data loads) downloads the current table view as CSV &mdash; respecting your date range and sort order &mdash; with no server round-trip. Agent names are sanitized so spreadsheet apps can&rsquo;t treat them as formulas.</p>
+          </section>
+          <section class="help-topic" id="help-topic-individual" hidden>
+            <h3>Individual Report</h3>
+            <p>Per-agent KPI tiles (with a &ldquo;Team&rdquo; average marker, share-of-dept, and a sparkline) plus three trend chart tabs (Volume / Efficiency / Duration) and a 12-month window. Pick <strong>2+ agents</strong> for a peer-comparison view with a shared legend &mdash; click a legend chip to isolate one agent across all charts. The <strong>ALL</strong> button stacks all three charts; click a tab to return to one. Optionally compare each agent against their own prior window (None / year-ago / preceding period / custom).</p>
+          </section>
+          <section class="help-topic" id="help-topic-insights" hidden>
+            <h3>Insights</h3>
+            <p>Insights is an expandable <strong>section of the My Department page</strong> &mdash; the deeper lens on the same department and dates, at the bottom of the page. Open it by expanding the <strong>Insights</strong> heading (or the <strong>Agent table &middot; Insights</strong> switcher in the controls row, which jumps straight to it). It generates on first open, and your generated report stays put when you collapse it or navigate away.</p>
+            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Absolute</strong> bases (Gap = who&rsquo;s above/below the team average; Absolute = stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots). For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
+            <ul>
+              <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
+              <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>
+            </ul>
+            <div class="ds-card ds-card--rail help-mini-card" style="--status: var(--good);">
+              <div class="help-mini-card-head">
+                <span class="help-mini-name">Jordan A.</span>
+                <span class="ins-trend-pill ins-trend-up">&#9650; Improving</span>
+                <span class="cr-vs-team cr-vs-team-pos">&#9650; above team &middot; 142 vs 98 ans</span>
+              </div>
+            </div>
+            <div class="help-figure-cap">Sage rail + &ldquo;Improving&rdquo; pill = trend vs last period; the chip = standing vs the team average (here, 142 answered vs the ~98 a teammate averaged).</div>
+            <p>The bars compare % Answered / Answered / Missed against the team average. A <strong>Queue health</strong> section adds the dept&rsquo;s abandonment picture. If the two compared windows differ a lot in length, raw-count insights are dropped and a note appears.</p>
+          </section>
+          <section class="help-topic" id="help-topic-missed" hidden>
+            <h3>Missed Calls</h3>
+            <p>Lives on the <strong>My Department</strong> page, below the agent table (the standalone report was folded in there). An 18-bucket bar chart (8 AM&ndash;5 PM CST, 30-minute buckets) plus per-agent cards listing each missed ring&rsquo;s timestamp; it follows the page&rsquo;s From/To dates. Calls the caller actually abandoned are flagged in red with a &#128680;. For callers who gave up in the queue (vs a ring another agent answered), see the abandonment metrics in QCD / Inbound.</p>
+          </section>
+          <section class="help-topic" id="help-topic-qcd" hidden>
+            <h3>QCD (Queue Call Data)</h3>
+            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 5%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the trend chart&rsquo;s &ldquo;by queue&rdquo; tab shows one line per queue plus a dept total, and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 5% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
+          </section>
+          <section class="help-topic" id="help-topic-inbound" hidden>
+            <h3>Inbound Calls <span class="help-admin-tag">admin</span></h3>
+            <p>Every distinct inbound call in the range: KPI tiles (total / answered / abandoned / on-hold / avg wait), breakdowns by insurer, dial-in number and entry queue, and a daily trend. Insurer labels come from the insurance-number block in the roster sheet. <em>Currently admin-only while its abandonment numbers are vetted against QCD</em> (the two use different sources and definitions).</p>
+          </section>
+          <section class="help-topic" id="help-topic-heatmap" hidden>
+            <h3>Abandon heatmap</h3>
+            <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 5% abandoned, warming as it rises past the 5% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion in the Insights report&rsquo;s Queue health (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
+            <div class="help-figure">
+              <div class="ds-heatmap-legend">
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--good) 50%, var(--paper-card));"></span>0&ndash;5% (on target)</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 17%, var(--warn-soft));"></span>5&ndash;10%</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 67%, var(--warn-soft));"></span>15%+</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: var(--paper-2);"></span>low volume</span>
+              </div>
+              <div class="help-figure-cap">The cell color scale &mdash; the same legend shown under the heatmap.</div>
+            </div>
+          </section>
+          <section class="help-topic" id="help-topic-standards" hidden>
+            <h3>The answer-target / 5% standards</h3>
+            <p>Two company-wide benchmarks drive the color-coding everywhere:</p>
+            <ul>
+              <li><strong>The answer-rate target</strong> (92% unless an admin has tuned it) &mdash; values at/above read green &ldquo;on track&rdquo;; below read orange &ldquo;watch&rdquo;. Admins can adjust it &mdash; and set separate targets for the Direct and Inbound reports, whose answer rates measure different call populations &mdash; in Alerts &rarr; Answer-rate standards.</li>
+              <li><strong>5% abandonment</strong> &mdash; the ceiling, fixed. A queue over 5% on a day is a <strong>violation</strong>.</li>
+            </ul>
+            <div class="help-figure">
+              <div class="help-figure-row">
+                <span class="bm-target" style="font-weight:600;">94% answered</span>
+                <span style="color: var(--muted);">vs</span>
+                <span class="bm-over" style="font-weight:600;">6.2% abandoned</span>
+              </div>
+              <div class="help-figure-cap">Green = at/above the answer target; orange = at/over the 5% abandon ceiling. These are the tints you&rsquo;ll see on KPI tiles and cells across the app.</div>
+            </div>
+            <p>These are the <em>only</em> two thresholds used for tinting &mdash; counts and durations stay neutral. Department-specific alert thresholds are separate (see Alerts).</p>
+          </section>
+          <section class="help-topic" id="help-topic-glossary" hidden>
+            <h3>Metric glossary</h3>
+            <ul>
+              <li><strong>% Answered</strong> &mdash; answered &divide; calls that rang. Target 92%.</li>
+              <li><strong>Abandoned %</strong> &mdash; queue calls where the caller hung up before being answered. 5%+ in a day = violation.</li>
+              <li><strong>ATT</strong> &mdash; Average Talk Time per answered call. Longer isn&rsquo;t automatically worse.</li>
+              <li><strong>TTT</strong> &mdash; Total Talk Time (sum of an agent&rsquo;s own talk on answered calls).</li>
+              <li><strong>Violations</strong> &mdash; days a queue went over the 5% abandon line (month-to-date in totals).</li>
+              <li><strong>Avg / longest wait</strong> &mdash; time callers waited before being answered or giving up.</li>
+            </ul>
+            <p>Hovering most labels in the app shows these definitions inline.</p>
+          </section>
+          <section class="help-topic" id="help-topic-attlens" hidden>
+            <h3>Why ATT can differ</h3>
+            <p>The <strong>My Department</strong> table shows ATT as the simple mean of each day&rsquo;s stored value. The <strong>reports</strong> (Individual / Insights) use a per-call <em>weighted</em> average (total talk &divide; calls answered), so days with no answered calls don&rsquo;t drag it down. Same range can therefore show slightly different ATT in the two places &mdash; neither is wrong; they answer different questions.</p>
+          </section>
+          <section class="help-topic" id="help-topic-alerts" hidden>
+            <h3>Low answer-rate alerts <span class="help-admin-tag">admin</span></h3>
+            <p>Per-department email alerts when a day&rsquo;s answer rate falls below that dept&rsquo;s threshold. Preview a date, then send manually, or install a daily 8 AM trigger (weekends and configured skip-dates are skipped). The Alert Log records every outcome, and a &ldquo;last 30 days&rdquo; chip flags depts where the threshold may be too strict or too loose.</p>
+          </section>
+          <section class="help-topic" id="help-topic-digests" hidden>
+            <h3>Manager digests <span class="help-admin-tag">admin</span></h3>
+            <p>Scheduled email summaries per manager &mdash; daily, weekly, or monthly &mdash; in a KPI &ldquo;summary&rdquo; format or the richer &ldquo;insights&rdquo; format. Managed from the Alerts modal&rsquo;s Report Subscribers section (tick &ldquo;Manager Digest&rdquo;); install the digest triggers there.</p>
+          </section>
+          <section class="help-topic" id="help-topic-deptconfig" hidden>
+            <h3>Dept Config <span class="help-admin-tag">admin</span></h3>
+            <p>Maps each department to its <strong>queue names</strong> (the <code>A_Q_*</code> identifiers from the phone system) and a few per-dept options, without a redeploy. If a dept&rsquo;s QCD/Inbound view is empty or missing queues, map them here &mdash; the modal auto-discovers queue names seen in recent data and flags unmapped ones.</p>
+          </section>
+          <section class="help-topic" id="help-topic-orphan" hidden>
+            <h3>Outlier Fix <span class="help-admin-tag">admin</span></h3>
+            <p>Cleans up agent-name variants. If the phone system spells an agent slightly differently (e.g. a different parenthetical), this maps the variant to the canonical roster name so their numbers consolidate. Also handles new-hire roster additions. Every change is logged.</p>
+          </section>
+          <section class="help-topic" id="help-topic-caller" hidden>
+            <h3>Caller Lookup <span class="help-admin-tag">admin</span></h3>
+            <p>Look up one phone number&rsquo;s inbound call history over a date range, rendered as a timeline per call (the journey through IVR / queues / agents). The number is hashed for the query and never stored or logged.</p>
+          </section>
+          <section class="help-topic" id="help-topic-access" hidden>
+            <h3>Access &amp; who sees what</h3>
+            <p>Access is by an <strong>Email &rarr; Department</strong> mapping. <strong>Managers</strong> see only their own department; <strong>admins</strong> can switch departments and see admin-only surfaces (company aggregate, Alerts, Dept Config, Outlier Fix, Caller Lookup, Inbound). Anyone not mapped gets an access-denied page with no data.</p>
+          </section>
+          <section class="help-topic" id="help-topic-faq" hidden>
+            <h3>Common questions</h3>
+            <ul>
+              <li><strong>My table is empty.</strong> Check the From/To dates first. If they look right, the Diagnostics panel&rsquo;s &ldquo;Roster agents with no data in this range&rdquo; lists who was expected but absent.</li>
+              <li><strong>Numbers look stale.</strong> Check the header freshness pill &mdash; if it&rsquo;s orange (36h+), the daily import likely hasn&rsquo;t run. Reports also cache for up to 30 minutes.</li>
+              <li><strong>More missed timestamps than the Missed count.</strong> Rings outside the 8:30 AM&ndash;5 PM CST work window show in the timeline but don&rsquo;t count toward Missed.</li>
+              <li><strong>An agent shows in two departments.</strong> That&rsquo;s expected &mdash; agents can be on multiple rosters and appear under each.</li>
+              <li><strong>Inbound vs QCD abandonment differ.</strong> They use different sources and definitions; Inbound is being vetted, which is why it&rsquo;s admin-only for now.</li>
+            </ul>
+          </section>
+          <section class="help-topic" id="help-topic-contact" hidden>
+            <h3>Contact</h3>
+            <p>Questions, access requests, or threshold changes: <a href="mailto:robin.choudhury@universalmedsupply.com">robin.choudhury@universalmedsupply.com</a></p>
+          </section>
+          <p class="help-empty" id="help-search-empty" hidden>No topics match your search.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="settings-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Personal preferences</div>
+        <h2 id="settings-modal-title">Settings</h2>
+      </div>
+      <div class="modal-panel-body">
+      <div class="modal-content">
+        <h3>Background theme</h3>
+        <p>Affects your view only; other users see their own setting. Background themes apply to light mode only — turn off dark mode (<span aria-hidden="true">◐</span>) in the header to change them.</p>
+        <div class="theme-chip-grid" id="theme-chip-grid">
+          <button class="theme-chip" type="button" data-theme="warm" title="Warm-paper cream background — default">
+            <span class="theme-chip-swatch" style="background:#f7f2e6; border-color:#d6d1c2;"></span>
+            <span class="theme-chip-label">Warm Paper</span>
+          </button>
+          <button class="theme-chip" type="button" data-theme="cool" title="Cool blue paper background">
+            <span class="theme-chip-swatch" style="background:#f0f6fa; border-color:#c8d8e6;"></span>
+            <span class="theme-chip-label">Cool Blue</span>
+          </button>
+          <button class="theme-chip" type="button" data-theme="clinical" title="Neutral white background">
+            <span class="theme-chip-swatch" style="background:#fafafa; border-color:#d8d8d8;"></span>
+            <span class="theme-chip-label">Clinical White</span>
+          </button>
+        </div>
+        <h3>Help button</h3>
+        <p>The floating <span aria-hidden="true">?</span> button stays available in the corner even over report modals. Uncheck to hide it (the <span aria-hidden="true">?</span> in the header still opens Help).</p>
+        <label class="settings-toggle"><input type="checkbox" id="help-fab-toggle" checked> Show floating Help button</label>
+        <h3>Chart hover cards</h3>
+        <p>The pop-up card that appears when you hover a chart. Uncheck to turn it off across every chart &mdash; the hovered point still highlights, just without the card. (When you solo one or a few lines on a chart, the card shows only those.)</p>
+        <label class="settings-toggle"><input type="checkbox" id="chart-tooltip-toggle" checked> Show chart hover cards</label>
+        <h3>Report summary banners</h3>
+        <p>The plain-language summary strip at the top of each report (the green &ldquo;On track&rdquo; / orange &ldquo;Watch&rdquo; banners). Uncheck to hide them everywhere.</p>
+        <label class="settings-toggle"><input type="checkbox" id="report-banner-toggle" checked> Show report summary banners</label>
+        <h3>Guided tour</h3>
+        <p>A short walkthrough of the dashboard&rsquo;s main areas. It runs automatically the first time you visit; replay it any time here.</p>
+        <button class="btn" type="button" id="tour-replay-btn">Take the tour</button>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="individual-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="individual-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/individual"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="individual-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report</div>
+        <h2 id="individual-modal-title">Individual Report</h2>
+      </div>
+      <div class="modal-panel-body">
+      <!-- Drill-through loader: shown instead of the setup form when IR is
+           opened by drilling from Insights / My Department (auto-generates for
+           the same date), so the form doesn't flash before the report. -->
+      <div id="ir-drill-loader" class="ir-drill-loader" style="display:none;">
+        <div class="ir-drill-spinner" aria-hidden="true"></div>
+        <div class="ir-drill-loader-text">Generating report&hellip;</div>
+      </div>
+      <div id="individual-form" class="ir-form">
+        <div class="ir-section-title">1. Date Range</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="ir-preset">Quick select</label>
+            <select id="ir-preset">
+              <option value="custom">Custom range</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last30">Last 30 days</option>
+              <option value="last3Months">Last 3 months</option>
+              <option value="last12Months">Last 12 months</option>
+              <option value="lastYear">Last year</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="ir-from">Start date</label>
+            <input type="date" id="ir-from">
+          </div>
+          <div class="ir-col">
+            <label for="ir-to">End date</label>
+            <input type="date" id="ir-to">
+          </div>
+        </div>
+
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="ir-compare-mode">Compare with</label>
+            <select id="ir-compare-mode">
+              <option value="none">No comparison</option>
+              <option value="yoy">Same window one year prior</option>
+              <option value="prevPeriod">Immediately-preceding period</option>
+              <option value="custom">Custom prior range&hellip;</option>
+            </select>
+          </div>
+          <div class="ir-col" id="ir-prior-from-wrap" style="display:none;">
+            <label for="ir-prior-from">Prior start</label>
+            <input type="date" id="ir-prior-from">
+          </div>
+          <div class="ir-col" id="ir-prior-to-wrap" style="display:none;">
+            <label for="ir-prior-to">Prior end</label>
+            <input type="date" id="ir-prior-to">
+          </div>
+        </div>
+        <div class="ir-hint ir-prior-hint" id="ir-prior-hint"></div>
+
+        <div class="ir-section-title">2. Agents</div>
+        <div class="ir-hint">Select 1 for an Individual Report (with optional self-comparison above). Select multiple for Peer Comparison.</div>
+        <div class="ir-search-row">
+          <input type="search" id="ir-agent-search" placeholder="Search agents by name..." aria-label="Search agents by name" autocomplete="off">
+        </div>
+        <div id="ir-agent-loader" class="ir-loader">
+          <div class="ir-skeleton-grid" aria-hidden="true">
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+            <div class="ir-skeleton-row"></div><div class="ir-skeleton-row"></div>
+          </div>
+          <div class="ir-skeleton-label">Loading agent roster&hellip;</div>
+        </div>
+        <div id="ir-agent-list" class="ir-agent-list" style="display:none;"></div>
+        <div class="ir-agent-actions">
+          <a href="#" id="ir-select-all">Select all active</a>
+          <span class="sep">|</span>
+          <a href="#" id="ir-select-none">Select none</a>
+        </div>
+
+        <div id="ir-form-error" class="status status-error" style="display:none;"></div>
+
+        <button class="btn" id="ir-generate-btn" type="button" disabled>Generate report</button>
+      </div>
+
+      <div id="individual-results" class="ir-results" style="display:none;">
+        <div class="ir-results-header">
+          <div class="ir-results-header-left">
+            <div class="ir-results-title-line">
+              <span class="ir-results-title" id="ir-results-title">Individual Report</span>
+              <span class="ir-results-date" id="ir-results-date"></span>
+            </div>
+            <div class="ir-editing-line">
+              <span class="ir-editing-label">Showing:</span>
+              <span class="ir-editing-agents" id="ir-editing-agents"></span>
+              <button class="ir-editing-edit" id="ir-edit-selection-btn" type="button">change</button>
+            </div>
+          </div>
+          <div class="ir-action-buttons" id="ir-action-buttons">
+            <!-- Shown only when IR was opened by drilling through from the
+                 Insights report; returns to the already-rendered Insights
+                 view with no reload (#2/#7). -->
+            <button class="btn btn-secondary" id="ir-back-to-insights-btn" type="button" style="display:none;">&laquo; Back to Insights</button>
+            <button class="btn btn-secondary" id="ir-back-btn" type="button">&laquo; Back</button>
+            <div class="ir-export-wrap">
+              <button class="btn btn-secondary" id="ir-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                Export <span class="ir-export-caret">&#9662;</span>
+              </button>
+              <div class="ir-export-menu" id="ir-export-menu" role="menu" style="display:none;">
+                <button type="button" role="menuitem" data-action="copy">Copy image</button>
+                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="print">Print</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="ir-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
+          <div class="ir-edit-popover-header">
+            <strong>Edit selection &amp; dates</strong>
+            <button class="ir-edit-popover-close" id="ir-edit-popover-close" type="button" aria-label="Close">&times;</button>
+          </div>
+          <div class="ir-edit-dates-row">
+            <label class="ir-edit-date-field">From<input type="date" id="ir-edit-from"></label>
+            <label class="ir-edit-date-field">To<input type="date" id="ir-edit-to"></label>
+            <label class="ir-edit-date-field">Compare
+              <select id="ir-edit-compare-mode">
+                <option value="none">No comparison</option>
+                <option value="prevPeriod">Immediately-preceding period</option>
+                <option value="yoy">Same window one year prior</option>
+              </select>
+            </label>
+          </div>
+          <div class="ir-search-row">
+            <input type="search" id="ir-edit-search" placeholder="Search agents..." aria-label="Search agents" autocomplete="off">
+          </div>
+          <div id="ir-edit-list" class="ir-agent-list ir-agent-list-compact"></div>
+          <div class="ir-edit-popover-actions">
+            <a href="#" id="ir-edit-select-all">Select all active</a>
+            <span class="sep">|</span>
+            <a href="#" id="ir-edit-select-none">Select none</a>
+            <button class="btn" id="ir-edit-apply-btn" type="button" disabled>Apply</button>
+          </div>
+        </div>
+
+        <div id="ir-results-status" class="status" style="display:none;"></div>
+
+        <div class="ir-cards-toolbar" id="ir-cards-toolbar" style="display:none;">
+          <label class="ir-sort-control">
+            <span class="ir-sort-label">Sort agents:</span>
+            <select id="ir-card-sort">
+              <option value="selection">Selection order</option>
+              <option value="name">Name (A-Z)</option>
+              <option value="answered-desc">Answered (high to low)</option>
+              <option value="answered-asc">Answered (low to high)</option>
+              <option value="pct-desc">% Answered (high to low)</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="ir-summary-container"></div>
+
+        <!-- Chart controls consolidated onto one band: the data-labels
+             toggle sits at the right end of the tab strip instead of on
+             its own row above it (pinned via .ir-chart-tabs > .ir-toggle-box). -->
+        <div class="ir-chart-tabs" id="ir-chart-tabs">
+          <span role="tablist" aria-label="Chart view" class="ir-tablist-inline">
+            <button type="button" class="ir-tab active" id="ir-tab-vol" data-tab="vol" role="tab" aria-selected="true" aria-controls="ir-wrap-vol" tabindex="0">Volume</button>
+            <button type="button" class="ir-tab" id="ir-tab-eff" data-tab="eff" role="tab" aria-selected="false" aria-controls="ir-wrap-eff" tabindex="-1">Efficiency</button>
+            <button type="button" class="ir-tab" id="ir-tab-dur" data-tab="dur" role="tab" aria-selected="false" aria-controls="ir-wrap-dur" tabindex="-1">Duration</button>
+          </span>
+          <!-- #4: stack all three trend charts (Volume/Efficiency/Duration)
+               instead of one tab at a time. -->
+          <button type="button" class="ir-allcharts-toggle" id="ir-allcharts-toggle" aria-pressed="false"
+                  title="Show Volume, Efficiency and Duration together instead of one tab at a time">ALL</button>
+          <div class="ir-toggle-box" id="ir-datalabels-box">
+            <label class="ir-toggle-label">
+              <input type="checkbox" id="ir-show-datalabels"> Show data labels
+            </label>
+          </div>
+          <button type="button" class="chart-help-btn" data-charthelp="ir" aria-label="Chart tips" title="Chart tips">?</button>
+        </div>
+
+        <div id="ir-shared-legend" class="ir-shared-legend" style="display:none;"></div>
+
+        <div id="ir-charts-container" class="ir-chart-area">
+          <div class="ir-chart-wrap" id="ir-wrap-vol" data-panel="vol" role="tabpanel" aria-labelledby="ir-tab-vol">
+            <div class="ir-chart-header">Volume Trends</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-vol-chart"></canvas></div>
+          </div>
+          <div class="ir-chart-wrap" id="ir-wrap-eff" data-panel="eff" role="tabpanel" aria-labelledby="ir-tab-eff" style="display:none;">
+            <div class="ir-chart-header">Efficiency (% Answered)</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-eff-chart"></canvas></div>
+          </div>
+          <div class="ir-chart-wrap" id="ir-wrap-dur" data-panel="dur" role="tabpanel" aria-labelledby="ir-tab-dur" style="display:none;">
+            <div class="ir-chart-header">Duration (ATT)</div>
+            <div class="ir-chart-canvas-wrap"><canvas id="ir-dur-chart"></canvas></div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="qcd-alldept-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="qcd-alldept-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="qcd-alldept-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report &middot; company</div>
+        <h2 id="qcd-alldept-modal-title">Daily Call Queue Report</h2>
+      </div>
+      <div class="modal-panel-body">
+        <!-- Pre-loads yesterday on open; the date toolbar in the results
+             header changes the range + re-generates IN PLACE (no separate
+             form step). -->
+        <div id="qcd-alldept-results" class="ir-results">
+          <div class="ir-results-header">
+            <div class="ir-results-header-left">
+              <div class="ir-results-title-line">
+                <span class="ir-results-title">Daily Call Queue Report</span>
+                <span class="ir-results-date" id="qcd-alldept-results-date"></span>
+              </div>
+              <div class="qcd-alldept-daterow">
+                <select id="qcd-alldept-preset" aria-label="Quick select">
+                  <option value="custom">Custom range</option>
+                  <option value="yesterday" selected>Yesterday</option>
+                  <option value="today">Today</option>
+                  <option value="thisMonth">This month</option>
+                  <option value="lastMonth">Last month</option>
+                  <option value="last30">Last 30 days</option>
+                </select>
+                <input type="date" id="qcd-alldept-from" aria-label="Start date">
+                <span class="qcd-alldept-dash">&ndash;</span>
+                <input type="date" id="qcd-alldept-to" aria-label="End date">
+                <button class="btn btn-secondary" id="qcd-alldept-refresh-btn" type="button" title="Re-generate for the selected range">&#8635; Update</button>
+                <span id="qcd-alldept-form-error" class="status status-error" style="display:none;"></span>
+              </div>
+            </div>
+            <!-- R11-B3: Download CSV / Print / Email me consolidated into the
+                 Export dropdown (Insights convention); the admin-only
+                 subscriber blast stays a separate, deliberate button. -->
+            <div class="ir-action-buttons">
+              <div class="ir-export-wrap">
+                <button class="btn btn-secondary" id="qcd-alldept-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+                  Export <span class="ir-export-caret">&#9662;</span>
+                </button>
+                <div class="ir-export-menu" id="qcd-alldept-export-menu" role="menu" style="display:none;">
+                  <button type="button" role="menuitem" data-action="csv">Download CSV</button>
+                  <button type="button" role="menuitem" data-action="print">Print</button>
+                  <button type="button" role="menuitem" data-action="email">Email me this report</button>
+                </div>
+              </div>
+              <button class="btn btn-secondary" id="qcd-alldept-blast-btn" type="button"
+                      data-admin-only style="display:none;"
+                      title="Email the displayed day to every active subscriber now">Send to subscribers&hellip;</button>
+            </div>
+          </div>
+          <div class="ir-hint">
+            Company-wide flat table across every mapped department, each dept&rsquo;s
+            own queues listed (sub-queues appear under their own department, never
+            double-counted). Scoped to the selected range. Click a queue row to see
+            its per-call-source breakdown.
+          </div>
+          <div id="qcd-alldept-status" class="status" style="display:none;"></div>
+          <div id="qcd-alldept-empty" class="empty-state" style="display:none;"></div>
+          <!-- Verdict layer (design update): a KPI band + alert callout painted
+               above the table by qcdAllDeptRender_ from data.grandTotals (no new
+               server call). "Lead with the answer." Table/CSV/print unchanged. -->
+          <div id="qcd-alldept-verdict"></div>
+          <div id="qcd-alldept-body"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- (M1 Insights merge: the Insights page <section> moved INSIDE #dept-page
+       as the #dept-insights-region collapsible -- docs/insights-merge-plan.md.
+       Every inner element id is unchanged, incl. #insights-page itself.) -->
 
   <div id="inbound-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="inbound-modal-title" style="display:none;">
     <div class="modal-backdrop" data-close></div>

@@ -144,11 +144,13 @@
     return 'cdr.ins.prefs.v2:' + who;
   }
 
-  // Insights is a full PAGE (modal->page conversion, docs/insights-page-plan.md).
-  // setPage('insights') calls this: first entry runs the old openModal init
-  // (form + default dates + prefs restore + roster); re-entry only re-ensures
-  // the roster -- cheap when cached, re-splits the active grouping if the
-  // dept/dates changed -- and never clobbers a rendered report (decision 3).
+  // M1 (Insights merge): Insights is a lazy collapsible REGION of the dept
+  // page (#dept-insights-region, docs/insights-merge-plan.md). This ensure
+  // runs on region OPEN (deptInsightsOpen_ + the toggle listener), never on
+  // dept-page load: first open runs the old openModal init (form + default
+  // dates + prefs restore + roster); re-open only re-ensures the roster --
+  // cheap when cached, re-splits the active grouping if the dept/dates
+  // changed -- and never clobbers a rendered report (decision 3).
   var insPageInited_ = false;
   // First-entry auto-run one-shot (owner: the setup form is RETIRED from
   // the normal flow). Consumed in insRenderAgentList at the race-free
@@ -173,12 +175,28 @@
     insEnsureRoster();
     insResizeCharts_();
   }
-  // Re-measure charts rendered on a previous visit: the page section is
-  // display:none while the user is elsewhere, and a window resize in
-  // between leaves Chart.js instances mis-sized (the documented
-  // measure-while-hidden gotcha; the deptMissedResize_ pattern). Double-rAF
-  // waits for the page-swap layout to settle; no-ops on first entry (all
-  // instances null) and when Chart.js failed to load.
+  // M1: open the dept page's Insights region and run the ensure
+  // SYNCHRONOUSLY -- a programmatic `details.open = true` fires its 'toggle'
+  // event ASYNC, and callers like handoffToInsights_ / launcherOpenInsights_
+  // write ins-* fields right after setPage returns, so the ensure's
+  // defaults/prefs restore must run before those writes (the ordering the
+  // page era guaranteed). The later async toggle re-calls insEnsurePage_,
+  // which is idempotent (insPageInited_ + cached roster).
+  function deptInsightsOpen_(opts) {
+    var reg = $('dept-insights-region');
+    if (!reg) return;
+    if (!reg.open) reg.open = true;
+    insEnsurePage_();
+    if (opts && opts.scroll) {
+      try { reg.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
+    }
+  }
+  // Re-measure charts rendered on a previous visit: the region's content is
+  // hidden while the <details> is closed (or the user is on another page),
+  // and a window resize in between leaves Chart.js instances mis-sized (the
+  // documented measure-while-hidden gotcha; the deptMissedResize_ pattern).
+  // Double-rAF waits for the reveal layout to settle; no-ops on first entry
+  // (all instances null) and when Chart.js failed to load.
   function insResizeCharts_() {
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () { requestAnimationFrame(function () {
@@ -194,12 +212,21 @@
     // null-guarded rather than removed, and no longer gates the page init.
     const btn = $('insights-report-btn');
     const page = $('insights-page');
-    // Insights is a full PAGE (modal->page conversion): setPage('insights')
-    // runs insEnsurePage_ + the router highlight. No modal
-    // open/close/drag/focus-trap/scroll-lock/Escape -- the Escalations
-    // pattern (#6).
+    // M1 (Insights merge): setPage('insights') maps to the dept page + the
+    // #dept-insights-region collapsible. No modal open/close/drag/focus-trap/
+    // scroll-lock/Escape -- the Escalations pattern (#6).
     if (btn) btn.addEventListener('click', function () { setPage('insights'); });
     if (!page) return;
+
+    // M1: a USER-click open of the region lazily initializes / auto-generates
+    // (the laziness contract: nothing Insights-related runs on dept-page
+    // load). The programmatic path (deptInsightsOpen_) ensures synchronously
+    // and this async toggle re-fires the ensure -- harmless, insEnsurePage_
+    // is idempotent. Close is a no-op (the rendered report stays put).
+    const insRegion = $('dept-insights-region');
+    if (insRegion) insRegion.addEventListener('toggle', function () {
+      if (insRegion.open) insEnsurePage_();
+    });
 
     const preset = $('ins-preset');
     if (preset) preset.addEventListener('change', insApplyPreset);
@@ -411,7 +438,7 @@
       if (!link) return;
       const agent = link.getAttribute('data-agent');
       if (!agent || typeof irDrillToAgent_ !== 'function') return;
-      irDrillToAgent_(agent, $('ins-from').value, $('ins-to').value);
+      irDrillToAgent_(agent, $('ins-from').value, $('ins-to').value, { fromInsights: true });
     });
 
     // IR hover-prefetch: rest the pointer ~300ms on an agent card -> fetch
@@ -3222,7 +3249,7 @@
           if (els && els.length) {
             const name = labels[els[0].index];
             if (name && typeof irDrillToAgent_ === 'function') {
-              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
             }
           }
         },
@@ -3322,7 +3349,7 @@
             const ds = datasets[els[0].datasetIndex];
             const name = ds && ds.label;
             if (name && typeof irDrillToAgent_ === 'function') {
-              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
             }
           }
         },
@@ -3389,7 +3416,7 @@
       if (els && els.length) {
         const name = labels[els[0].index];
         if (name && typeof irDrillToAgent_ === 'function') {
-          irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+          irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
         }
       }
     };

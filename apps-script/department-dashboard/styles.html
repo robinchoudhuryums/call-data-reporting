@@ -202,7 +202,10 @@
   body[data-page="overview"]     #overview-page     { display: block; }
   body[data-page="dept"]         #dept-page         { display: block; }
   body[data-page="escalations"]  #escalations-page  { display: block; }
-  body[data-page="insights"]     #insights-page     { display: block; }
+  /* (M1 Insights merge: #insights-page is no longer a .page section -- it
+     lives inside #dept-page's #dept-insights-region collapsible, so the
+     data-page="insights" toggles are retired. setPage maps 'insights' to
+     the dept page.) */
   /* Round-16 Phase 3 (motion): a brief fade-in on the page swap -- CSS
      animations restart whenever display flips from none, so this needs no
      JS. Opacity only (no translate: the sticky strips must not shear).
@@ -210,8 +213,7 @@
   @media (prefers-reduced-motion: no-preference) {
     body[data-page="overview"]     #overview-page,
     body[data-page="dept"]         #dept-page,
-    body[data-page="escalations"]  #escalations-page,
-    body[data-page="insights"]     #insights-page { animation: page-in 160ms ease-out; }
+    body[data-page="escalations"]  #escalations-page { animation: page-in 160ms ease-out; }
   }
   @keyframes page-in { from { opacity: 0.35; } to { opacity: 1; } }
   /* The Escalations page lives outside the main page container (it was
@@ -870,6 +872,36 @@
      min-height so a first-load (empty) section can center the overlay. */
   #dept-missed-section.dm-loading { min-height: 220px; }
 
+  /* ---- M1 (Insights merge): the dept-page Insights REGION ----------------
+     The whole ex-page lives in <details id="dept-insights-region"> below the
+     dept layout -- collapsed by default, heavy init on first open (the
+     laziness contract). The summary reads as a section heading in the fold
+     family; the caret reuses the ins-fold square-box discipline (a rotated
+     bare glyph box once tripped the overflow gate). */
+  .ins-region { margin: 26px 0 8px; }
+  .ins-region-summary {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    cursor: pointer; user-select: none; list-style: none;
+    padding: 12px 0 10px; border-top: 2px solid var(--line);
+  }
+  .ins-region-summary::-webkit-details-marker { display: none; }
+  .ins-region-summary::after {
+    content: '\25b8'; color: var(--muted); font-size: 14px;
+    margin-left: auto; transition: transform 0.15s ease;
+    display: inline-block; width: 1em; height: 1em;
+    line-height: 1em; text-align: center; align-self: center;
+  }
+  .ins-region[open] > .ins-region-summary::after { transform: rotate(90deg); }
+  .ins-region-title {
+    font-family: var(--display);
+    font-size: 19px; font-weight: 700; color: var(--ink);
+  }
+  .ins-region-sub { color: var(--muted); font-size: 12.5px; }
+  .ins-region-summary:hover .ins-region-title { color: var(--accent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .ins-region[open] > #insights-page { animation: ins-fold-in 180ms ease-out; }
+  }
+
   /* ---- Round-16: Insights per-section FOLDS ------------------------------
      (Replaced the D1 Simple/Detailed density mode + its ds-density-simple
      CSS list. Each heavy section is an always-present <details class=
@@ -1012,6 +1044,18 @@
     padding-left: 0; padding-right: 0;
     box-shadow: -8px 0 0 var(--paper), 8px 0 0 var(--paper);
   }
+  /* M1 (Insights merge): the two sticky strips share ONE page now. The dept
+     controls keep the viewport top; the Insights results header pins right
+     BELOW them (the measured controls height -- the same --dept-sticky-h the
+     .dept-side offset uses), so the strips STACK instead of covering each
+     other. z one below the controls so a measurement-lag overlap resolves
+     in the controls' favor. (The is-stuck shadow never fires on the offset
+     strip -- its ratio stays 1 while pinned below the controls; decoration
+     only, the controls' own shadow reads for both.) */
+  #insights-page #insights-results > .ir-results-header {
+    top: var(--dept-sticky-h, 84px);
+    z-index: 59;
+  }
   /* Phase 3: elevation only while pinned (see the .is-stuck note above). */
   #dept-page .controls.is-stuck {
     box-shadow: 0 8px 10px -10px rgba(0, 0, 0, 0.35);
@@ -1082,7 +1126,6 @@
      then start ~12px under the divider, matching the in-container pages'
      header-mb(12)+page-mt(6). Earlier R11-E2/F1 attempts zeroed the page's own
      top spacing (which wasn't the culprit) and are superseded here. */
-  body[data-page="insights"] .container,
   body[data-page="escalations"] .container { padding-bottom: 0; }
   /* R11-E (item 5): make the active window PROMINENT on the sticky strip (the
      My Department treatment) -- a solid pill instead of a muted mono caption.
@@ -5010,13 +5053,16 @@
     body.cr-printing .ds-kpi,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
 
-    /* Insights is a PAGE (modal->page conversion): printing runs from the
-       page's Export menu, so body[data-page="insights"] already shows the
-       section (the display:block !important is belt-and-suspenders) and the
-       other .page sections are display:none. Un-constrain the page body for
-       paper -- there is no modal panel to unwrap anymore. */
-    body.ins-printing > .container { display: none !important; }
-    body.ins-printing #insights-page { display: block !important; }
+    /* M1 (Insights merge): Insights prints from the region ON the dept page
+       (body[data-page="dept"]) -- the Export menu lives inside the open
+       region, so the <details> is necessarily open when this class is set.
+       Hide the app chrome + every dept-page sibling and let the region
+       content own the paper; un-constrain the page body (no modal panel to
+       unwrap). */
+    body.ins-printing .dash-header { display: none !important; }
+    body.ins-printing #dept-page > :not(#dept-insights-region) { display: none !important; }
+    body.ins-printing #dept-insights-region > summary { display: none !important; }
+    body.ins-printing #dept-insights-region { margin: 0 !important; }
     body.ins-printing .ins-page-body {
       max-width: 100% !important;
       padding: 0 !important;

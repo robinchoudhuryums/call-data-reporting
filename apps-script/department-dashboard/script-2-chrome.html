@@ -512,6 +512,17 @@
   function setPage(page) {
     if (page !== 'overview' && page !== 'dept' && page !== 'escalations'
         && page !== 'insights') page = 'overview';
+    // M1 (Insights merge): 'insights' is no longer a standalone page -- the
+    // content is the #dept-insights-region collapsible ON the dept page.
+    // Every legacy caller (deep links via ROUTES_, the quick-start chips,
+    // handoffToInsights_, the lens switcher) still passes 'insights'; map it
+    // to the dept page here and open + scroll the region AFTER the dept
+    // branch runs. deptInsightsOpen_ runs insEnsurePage_ SYNCHRONOUSLY, so
+    // callers that write ins-* fields right after setPage returns (the
+    // handoff/launcher paths) keep the page-era ordering: ensure's
+    // defaults/prefs first, the caller's writes after.
+    var openInsRegion_ = page === 'insights';
+    if (openInsRegion_) page = 'dept';
     document.body.setAttribute('data-page', page);
     const kicker = $('page-kicker');
     const title  = $('page-title');
@@ -525,21 +536,6 @@
       // Lazy-init the controls + load on first entry (idempotent thereafter).
       if (typeof escEnsureInit_ === 'function') escEnsureInit_(function () { escLoad_(); });
       else if (typeof escLoad_ === 'function') escLoad_();
-    } else if (page === 'insights') {
-      if (kicker) kicker.textContent = 'Reports · Insights';
-      if (title)  title.textContent  = 'Insights';
-      // First entry runs the old openModal init (form + defaults + prefs +
-      // roster); re-entry only re-ensures the roster and never clobbers a
-      // rendered report (owner decision 3, docs/insights-page-plan.md).
-      if (typeof insEnsurePage_ === 'function') insEnsurePage_();
-      // R9-3: adopt My Department's window when it's the more recent one.
-      // First entry: the pending auto-run reads the (now-rewritten) inputs
-      // when it fires post-roster, so no explicit re-run. Re-entry: re-run
-      // for the adopted window.
-      if (typeof adoptSharedWindow_ === 'function' && adoptSharedWindow_('insights')
-          && !insAutoRunPending_ && typeof runInsReport === 'function') {
-        runInsReport();
-      }
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
@@ -569,6 +565,15 @@
         deptMissedDrawChart_(deptMissedLastData);
       }
     }
+    // M1 (Insights merge): a legacy setPage('insights') lands here with the
+    // dept branch already run -- now open + scroll the region (sync ensure;
+    // see deptInsightsOpen_ in script-8). The R9-3 insights-side
+    // adoptSharedWindow_ went with the retired page branch: on one page the
+    // dept-side adoption above plus the handoffs' explicit date carries
+    // cover the convergence.
+    if (openInsRegion_ && typeof deptInsightsOpen_ === 'function') {
+      deptInsightsOpen_({ scroll: true });
+    }
     // Delegate the active-tab visual indicator to the router so all
     // [data-route] tabs (page-toggles + report-openers) participate
     // in the same active-state model. Phase C consolidated this from
@@ -576,8 +581,7 @@
     // my-dept buttons.
     if (typeof setRoute_ === 'function') {
       setRoute_(page === 'dept' ? '/dept'
-        : (page === 'escalations' ? '/escalations'
-        : (page === 'insights' ? '/report/insights' : '/overview')));
+        : (page === 'escalations' ? '/escalations' : '/overview'));
     }
     // (R9-3: the Batch-E maybeShowDateSyncChip_ offer is retired -- the two
     // pages now silently adopt each other's newer window via

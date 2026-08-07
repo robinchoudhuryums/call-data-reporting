@@ -1100,19 +1100,35 @@ behind the removed button.
   (prior-window validation → picker regroup → prefs → runInsReport).
   The Edit popover is now "Comparison & agents" (its date row is HIDDEN,
   not removed — the apply flow still round-trips those inputs).
-- **The LENS SWITCHER**: one two-tab `ds-seg` ("Agent table · Insights")
-  renders in both sticky headers so the pages read as two lenses on one
-  dept + range. The Insights side's "Agent table" button KEEPS the
-  `#ins-open-mydept-btn` id (existing hand-off + hover-prefetch wiring);
-  the dept side's `#lens-ins-btn` runs `handoffToInsights_` with the
-  current window. **Round-16b: the top-nav Insights TAB is retired** —
-  `#insights-report-btn` is gone from dashboard.html and the switcher is
-  the route in (deep links `#/report/insights` still work: it's a
-  `kind:'page'` route, `setPage` needs no button). While Insights is
-  active, `updateTabActiveState_` maps `/report/insights`→`/dept` so the
-  My Department tab carries the highlight; `initInsightsReport` null-guards
-  the absent button; the UI-harness drivers reach Insights via
-  `#my-dept-btn` → `#lens-ins-btn`.
+- **The INSIGHTS REGION (M1 merge, docs/insights-merge-plan.md)**: the whole
+  ex-Insights-page lives in `<details id="dept-insights-region">` at the
+  bottom of `#dept-page` — collapsed by default, with the LAZINESS CONTRACT
+  that nothing Insights-related runs on dept-page load: `insEnsurePage_`
+  (init + auto-generate) fires on first OPEN, via the region's `toggle`
+  listener (user click) or `deptInsightsOpen_` (programmatic).
+  `setPage('insights')` still exists and MAPS to the dept page + open+scroll
+  region (script-2), so every legacy entry works unchanged: deep links
+  (`#/report/insights` + the three retired-report repoints + the Digest
+  email links), the quick-start chips, `handoffToInsights_`, and the dept
+  controls-row lens switcher (`#lens-ins-btn`). `deptInsightsOpen_` runs the
+  ensure SYNCHRONOUSLY because a programmatic `details.open=true` fires
+  `toggle` async and the handoff/launcher callers write `ins-*` fields right
+  after `setPage` returns — ensure-defaults-first is the page-era ordering
+  contract. Every inner element id is unchanged incl. `#insights-page`
+  (now a plain div; its scoped CSS + existence checks survive). Two sticky
+  strips share the page: the dept controls pin at top, the Insights results
+  header pins BELOW them at `var(--dept-sticky-h)` (z 59 vs 60; the
+  `.is-stuck` shadow intentionally never fires on the offset strip). The
+  Insights print path hides `#dept-page > :not(#dept-insights-region)` +
+  chrome (the old rule hid `> .container`, which now CONTAINS the region).
+  IR drill origin: the Insights call sites pass `{fromInsights:true}` to
+  `irDrillToAgent_` — `data-page === 'insights'` no longer exists to read.
+  The top-nav Insights TAB stayed retired (Round-16b); `initInsightsReport`
+  null-guards it; the UI-harness drivers reach the region via
+  `#my-dept-btn` → `#lens-ins-btn`. The Insights side's "Agent table"
+  button keeps the `#ins-open-mydept-btn` id (scrolls back up via the same
+  hand-off). M2 (controls reconciliation), M3 (dept pill / scope polish),
+  M4 (retire the transition machinery) are specified in the plan doc.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

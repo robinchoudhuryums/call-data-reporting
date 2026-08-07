@@ -1793,17 +1793,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
   Awaiting decommission of the spreadsheet; meanwhile accepts only
   cleanup deletions.
-- **Multi-page architecture: Overview + My Department + Escalations +
-  Insights.**
+- **Multi-page architecture: Overview + My Department + Escalations.**
   The dashboard is one HTML doc with top-level `<section>` pages toggled
-  by `body[data-page="overview|dept|escalations|insights"]` (the `.page`
+  by `body[data-page="overview|dept|escalations"]` (the `.page`
   CSS shows only the active one). **Overview is the default landing** for
   every page load; **My Department** is the per-dept agent table;
   **Escalations** (`#/escalations`) is an interactive worklist; **Insights**
-  (`#/report/insights`) is a full page reached via My Department's lens
-  switcher (its top-nav tab is retired). `setPage(name)` swaps the page, the header kicker/title, and triggers
+  (`#/report/insights`) is a lazy collapsible REGION at the bottom of My
+  Department (`#dept-insights-region`, M1 merge -- `setPage('insights')`
+  maps to the dept page and opens it; first open runs `insEnsurePage_`;
+  see docs/insights-merge-plan.md). `setPage(name)` swaps the page, the header kicker/title, and triggers
   that page's load (Overview -> `ovLoad_`; Escalations ->
-  `escEnsureInit_`+`escLoad_`; Insights -> `insEnsurePage_`). Modals (Help,
+  `escEnsureInit_`+`escLoad_`). Modals (Help,
   Settings, Individual, Alerts, Orphan Fix, Dept Config) overlay any page;
   there is no standalone Missed Calls modal -- **the My Department page's
   inline missed section IS the Missed Calls report.**
