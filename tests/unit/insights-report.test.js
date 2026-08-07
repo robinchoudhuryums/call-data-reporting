@@ -15,11 +15,12 @@ const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
           'InsightsReport.gs',
-          // Digest.gs provides renderInsightsEmailBody_ (+ digestTakeaway_/
-          // digestDeltaHtml_) that sendInsightsReportEmail reuses for the
-          // server-rendered HTML email. In Apps Script these share global
-          // scope; the harness must load the file that defines them.
-          'Digest.gs'],
+          // Digest.gs provides digestTakeaway_ + INSIGHTS_EMAIL_MIN_CALLS_
+          // that sendInsightsReportEmail reuses for the server-rendered HTML
+          // email; EmailKit.gs (Round-16) is the shared house-style layer the
+          // restyled email renders through. In Apps Script these share global
+          // scope; the harness must load the files that define them.
+          'Digest.gs', 'EmailKit.gs'],
 });
 
 const ROSTER = rosterGrid({
@@ -297,6 +298,11 @@ test('Insights: email export sends a server-rendered HTML report to the active u
   assert.ok(mail.htmlBody && mail.htmlBody.indexOf('Anna') !== -1, 'HTML body includes the agent');
   assert.ok(mail.htmlBody.indexOf('Alpha') !== -1, 'HTML body names the department');
   assert.ok(!mail.inlineImages, 'no inline image — server-rendered HTML, not a screenshot');
+  // Round-16: the report renders in the EmailKit house style -- the kicker +
+  // 600px card shell and the per-agent volume tally (green block cells).
+  assert.ok(mail.htmlBody.indexOf('Call Data · Insights') !== -1, 'EmailKit shell kicker');
+  assert.ok(mail.htmlBody.indexOf('width="600"') !== -1, 'EmailKit 600px card');
+  assert.ok(mail.htmlBody.indexOf('width="5" style="background:#3d9476') !== -1, 'agent rows carry the tally');
   // Agent-free run: an empty selection now DEFAULTS to the full department
   // roster (the digest pattern, INV-45) instead of throwing -- the
   // QCD-replacement queue / dept quick-look. The email still sends,

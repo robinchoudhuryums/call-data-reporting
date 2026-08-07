@@ -328,13 +328,18 @@
                #csv-export-btn gating, id kept on the wrap so the JS shows
                the same element). -->
           <div class="control-btn-row">
-            <button class="btn btn-secondary" id="refresh-btn" title="Refresh" aria-label="Refresh">&#8635; Refresh</button>
+            <!-- Round-16 (owner): icon-only -- the circular arrow alone; the
+                 title/aria-label carry the word for hover + screen readers. -->
+            <button class="btn btn-secondary btn-icon" id="refresh-btn" title="Refresh" aria-label="Refresh">&#8635;</button>
             <div class="ir-export-wrap" id="csv-export-btn" style="display:none;">
               <button class="btn btn-secondary" id="dept-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
                 Export <span class="ir-export-caret">&#9662;</span>
               </button>
               <div class="ir-export-menu" id="dept-export-menu" role="menu" style="display:none;">
                 <button type="button" role="menuitem" data-action="csv">Download CSV</button>
+                <!-- Round-16 (owner): styled EmailKit summary, caller-recipient
+                     only (sendDepartmentSummaryEmail). -->
+                <button type="button" role="menuitem" data-action="email">Email me this report</button>
               </div>
             </div>
           </div>
@@ -1252,8 +1257,8 @@
             <!-- R7 (N-1): re-run the report for the current selection (frosts
                  the results while the fresh fetch runs; server cache still
                  applies, so data refreshes as the 30-min report TTL allows). -->
-            <button class="btn btn-secondary" id="ins-refresh-btn" type="button"
-                    title="Re-run this report for the current dates, comparison, and agent selection.">&#8635; Refresh</button>
+            <button class="btn btn-secondary btn-icon" id="ins-refresh-btn" type="button" aria-label="Refresh"
+                    title="Re-run this report for the current dates, comparison, and agent selection.">&#8635;</button>
             <div class="ir-export-wrap">
               <button class="btn btn-secondary" id="ins-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
                 Export <span class="ir-export-caret">&#9662;</span>

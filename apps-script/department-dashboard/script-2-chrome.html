@@ -262,7 +262,9 @@
         var item = e.target.closest('[data-action]');
         if (!item) return;
         setDeptExportOpen(false);
-        if (item.getAttribute('data-action') === 'csv') exportTableCsv_();
+        var action = item.getAttribute('data-action');
+        if (action === 'csv') exportTableCsv_();
+        else if (action === 'email') deptEmailReport_();   // Round-16: EmailKit summary
       });
       document.addEventListener('click', function (e) {
         if (deptExportMenu.style.display === 'none') return;

@@ -483,8 +483,13 @@
     // visually anchors above the dept tiles (which cycle through
     // the IR palette starting at the same accent slot).
     const sparkColor = (THEME && THEME.accent) || IR_CHART_COLORS[0] || '#4E79A7';
-    // R11-L: honest 70-100% band + raw series (nulls gap-connected, not 0-filled).
-    const spark = (agg.trend || []).length ? irSparkline_(agg.trend || [], sparkColor, { band: [70, 100] }) : '';
+    // Round-16: the goal-gap treatment (dashed answer-rate goal + good/warn
+    // fill between the line and the goal) rides here too, same honest
+    // 70-100% band + gap-connected nulls as before (R11-L).
+    const spark = (agg.trend || []).length
+      ? irSparklineGoal_(agg.trend || [], sparkColor,
+          { label: 'Company % answered (30-day)', goal: answerTarget_('global') })
+      : '';
 
     wrap.style.display = '';
     wrap.innerHTML =
@@ -985,8 +990,9 @@
     const viol = (qcd && qcd.violations > 0)
       ? '<span class="ov-subq-metric ov-subq-metric-viol"><span class="ov-subq-metric-lbl">Viol</span> ' + qcd.violations + '</span>'
       : '';
-    // R11-L: honest 70-100% band + raw series (nulls gap-connected).
-    const spark = irSparkline_(dept.trend || [], color, { band: [70, 100] });
+    // Round-16: goal-gap treatment (see ovBuildGridTile_), same honest band.
+    const spark = irSparklineGoal_(dept.trend || [], color,
+      { label: '% answered (30-day)', goal: answerTarget_('global') });
     const routable = isAllDeptViewer_();
     const routeBtn = routable
       ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'

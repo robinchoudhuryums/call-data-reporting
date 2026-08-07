@@ -1053,3 +1053,25 @@ defensible scope and a confusing one.
   `renderDeptTeamStrip_` re-frosts when `.ds-frost-host` survives the wipe.
   The missed section's frost was already wired (R7 M-1) and is
   probe-verified working.
+- **Goal-gap sparkline everywhere % answered trends render small**: the
+  Overview grid tiles, the Company snapshot spark and the expanded
+  sub-queue card all draw through `irSparklineGoal_` (dashed
+  `answerTarget_('global')` line + good/warn fill between line and goal;
+  script-6-ir). The retired hero-tile builder keeps the plain sparkline
+  (uncalled). `irSparkline_`'s auto-scaled form stays for count/duration
+  KPI sparks (IR/Insights tiles) — no goal exists for those.
+- **Icon-only Refresh** on My Department (`#refresh-btn`) and Insights
+  (`#ins-refresh-btn`): the ↻ glyph alone via the existing `.btn-icon`
+  class; the label lives in `title`/`aria-label`.
+- **EmailKit (`EmailKit.gs`) is the outbound-email house style** — the
+  Daily Call Queue Report's design language (600px card, kicker/title
+  header, tinted KPI tiles, tally tables, bulletproof CTA, quiet footer)
+  extracted for the caller-requested report emails. Consumers: the NEW
+  My Department "Email me this report" export (`sendDepartmentSummaryEmail`
+  in DeptSummaryEmail.gs — caller-recipient, rides getDepartmentSummary
+  for auth + compute; menu item in the dept Export ▾) and the restyled
+  Insights "Email report" / "Email summary" (`sendInsightsReportEmail`).
+  QueueReportEmail.gs deliberately keeps its own pinned local copies; the
+  manager DIGEST keeps the older `renderInsightsEmail*` renderers.
+  Pinned by `tests/unit/dept-summary-email.test.js` + the insights email
+  test's EmailKit assertions.

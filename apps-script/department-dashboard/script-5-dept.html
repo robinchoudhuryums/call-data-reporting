@@ -3003,6 +3003,29 @@
     dsFlashChanged_($('agents-tbody'), 'dept:' + getRequestedDept());
   }
 
+  // Round-16 (owner): "Email me this report" -- the styled EmailKit summary
+  // of the current dept + range, sent to the signed-in requester only
+  // (server: sendDepartmentSummaryEmail, which re-runs the same auth +
+  // compute path as the table's own fetch).
+  function deptEmailReport_() {
+    var dept = getRequestedDept();
+    var from = $('from-date') ? $('from-date').value : '';
+    var to = $('to-date') ? $('to-date').value : '';
+    if (!dept || !from || !to) {
+      showToast('Pick a department and date range first', 'error');
+      return;
+    }
+    showToast('Sending…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
+      })
+      .withFailureHandler(function (err) {
+        showToast('Email failed: ' + (err && err.message ? err.message : err), 'error');
+      })
+      .sendDepartmentSummaryEmail({ department: dept, from: from, to: to });
+  }
+
   // -- CSV export for the main agent table --------------------------------
   function exportTableCsv_() {
     var sorted = sortRows(state.rows, state.sortKey, state.sortDir);
