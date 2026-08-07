@@ -72,8 +72,12 @@
   var currentRoute = '/overview';
 
   function updateTabActiveState_(route) {
+    // Round-16: the Insights TAB is retired (the dept page's lens switcher is
+    // the route), so on the Insights page the My Department tab carries the
+    // highlight -- the two pages are lenses on one dept + window.
+    const effRoute = route === '/report/insights' ? '/dept' : route;
     document.querySelectorAll('[data-route]').forEach(function (btn) {
-      const isActive = btn.getAttribute('data-route') === route;
+      const isActive = btn.getAttribute('data-route') === effRoute;
       btn.classList.toggle('header-nav-current', isActive);
       // R12-6: page-nav semantics, not tab semantics -- these buttons have no
       // tabpanels/arrow-key model, so aria-selected (a tab attribute) was

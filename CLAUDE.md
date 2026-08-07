@@ -1800,8 +1800,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   CSS shows only the active one). **Overview is the default landing** for
   every page load; **My Department** is the per-dept agent table;
   **Escalations** (`#/escalations`) is an interactive worklist; **Insights**
-  (`#/report/insights`) is a full page whose header tab is visible to ALL
-  roles. `setPage(name)` swaps the page, the header kicker/title, and triggers
+  (`#/report/insights`) is a full page reached via My Department's lens
+  switcher (its top-nav tab is retired). `setPage(name)` swaps the page, the header kicker/title, and triggers
   that page's load (Overview -> `ovLoad_`; Escalations ->
   `escEnsureInit_`+`escLoad_`; Insights -> `insEnsurePage_`). Modals (Help,
   Settings, Individual, Alerts, Orphan Fix, Dept Config) overlay any page;

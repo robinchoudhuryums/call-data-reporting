@@ -38,7 +38,10 @@ async function overflowPx(page) {
     }, [!!dark]);
     await page.goto(base + 'index-' + variant + '.html', { waitUntil: 'load' });
     await page.waitForTimeout(1800);
-    await page.click('#insights-report-btn');
+    // Round-16: no top-nav Insights tab -- go via the dept lens switcher.
+    await page.click('#my-dept-btn');
+    await page.waitForTimeout(1500);
+    await page.click('#lens-ins-btn');
     await page.waitForTimeout(3500);   // auto-run + render + deferred charts
     return { ctx, page };
   }

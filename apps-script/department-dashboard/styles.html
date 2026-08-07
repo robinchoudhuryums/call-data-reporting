@@ -792,6 +792,12 @@
   /* Insights Daily breakdown reuses .ans-bar for the Answered-vs-Abandoned
      split; give the cell room + a little vertical padding like the agent table. */
   td.qcd-daily-bar-cell { min-width: 180px; padding-top: 6px; padding-bottom: 6px; }
+  /* Round-16b (owner): on the QCD daily surfaces the counts color-code to
+     their blocks -- abandoned reads bad-red (the agent table keeps its warn
+     pairing for missed), and a zero count mutes so quiet days stay quiet. */
+  .qcd-daily-bar-cell .ans-nums .miss-n { color: var(--bad); }
+  .qcd-daily-bar-cell .ans-nums .miss-n.is-zero,
+  .qcd-daily-bar-cell .ans-nums .ans-n.is-zero { color: var(--muted); font-weight: 500; }
   .ans-bar { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
   /* Round-16 (owner request): volume-proportional TALLY for AGENT rows --
      one block per `unit` calls (answered sage first, then missed red), so
@@ -4575,6 +4581,17 @@
   }
   .ins-daily-hit td { animation: ins-daily-hit 1.6s var(--ease, ease-out); }
   @media (prefers-reduced-motion: reduce) { .ins-daily-hit td { animation: none; background: var(--warn-soft); } }
+  /* Round-16b: MULTI-queue Daily breakdown (parent + sub-queues + an
+     "All queues" total row per date). The Queue column exists only in this
+     mode (.ins-qh-daily--multi on the <details> reveals its th); date-group
+     head rows carry a top rule so the per-date groups read as blocks, and
+     the total row styles as the group's subtotal. */
+  .ins-qh-daily .ins-qh-daily-queue-th { display: none; }
+  .ins-qh-daily--multi .ins-qh-daily-queue-th { display: table-cell; }
+  .ins-qh-daily-queue-cell { white-space: nowrap; }
+  .ins-daily-q-sub { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .ins-qh-daily--multi .ins-daily-group-head td { border-top: 2px solid var(--line); }
+  .ins-daily-total-row td { font-weight: 600; background: var(--paper-2); }
 
   /* 4b: all-departments daily call queue report (Overview; open to managers). */
   .ov-admin-actions { margin: 8px 0 12px; }

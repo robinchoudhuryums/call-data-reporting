@@ -398,10 +398,11 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   only the `#tour-tip` card is interactive); reduced-motion aware.
   Steps (`tourAllSteps_`) anchor to stable IDs (`#page-title`,
   `#freshness-pill`, `#ov-trend-chart`, `#ov-period-bar`,
-  `#my-dept-btn`, `#escalations-btn`, `#insights-report-btn`,
+  `#my-dept-btn`, `#escalations-btn`,
   `#reports-menu-btn`, `#help-fab` -- the `#ov-launcher` step folded
   into the Help closing step when R10-1 moved the quick-start chips
-  into the Help modal) and `tourVisibleSteps_` drops any
+  into the Help modal; the Insights step folded into the My Department
+  step when Round-16b retired the top-nav Insights tab) and `tourVisibleSteps_` drops any
   target that's missing or hidden (so admin-only/not-yet-rendered
   elements are skipped gracefully -- e.g. the freshness pill before
   data loads, or -- since Batch F added the `#ov-trend-chart` /
@@ -994,16 +995,30 @@ behind the removed button.
   the **Absolute** basis. All cards code is kept — single-agent reports still
   force cards, and the admin A/B remote's Cards button still reaches the
   hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
-- **Insights Daily breakdown**: violation-date chips carry `data-queue`; a
-  click SCOPES the table to that queue's own per-day rows
-  (`qh.perQueue[i].daily`, additive payload field) before jumping — the
-  dept-total row showed the PARENT's numbers for a sub-queue's date. A scope
-  chip in the `<summary>` (`.ins-qh-scope-chip`, ✕ = back to dept total)
-  names the active queue; scope resets on every fresh render. The daily rows
-  also render the volume TALLY now, unit computed from the DISPLAYED rows
-  (re-scoping re-normalizes) with a `#ins-qh-daily-legend` line when unit>1.
-  The agent-card `.ins-cbar-*` bars deliberately stay classic tracks — their
-  job is position vs the team-average marker, which blocks can't carry.
+- **Insights Daily breakdown**: two modes, decided by how many queues carry
+  per-day rows (`insQhDailyMulti_`, ≥2 = MULTI). **MULTI (Round-16b, the
+  parent-with-sub-queues case)**: every date renders one TALLY row per queue
+  (Queue-health payload order; sub-queues tagged `.ins-daily-q-sub`) plus an
+  "All queues" total row from the dept-total `dailySeries` (the
+  `queuesForDept_` rollup) — total rows keep the CLASSIC bar per the house
+  tally convention. The Queue `<th>` is static markup revealed by
+  `.ins-qh-daily--multi` on the `<details>`; rows carry `data-date` +
+  `data-queue`, so a violation-date chip click just jumps (`insJumpToDailyRow_`
+  prefers the `[data-date][data-queue]` row) — no scoping needed, chip
+  suppressed. **SINGLE (one-queue depts)**: a violation-date click SCOPES the
+  table to that queue's own per-day rows (`qh.perQueue[i].daily`, additive
+  payload field) before jumping — the dept-total row showed the PARENT's
+  numbers for a sub-queue's date. A scope chip in the `<summary>`
+  (`.ins-qh-scope-chip`, ✕ = back to dept total) names the active queue;
+  scope resets on every fresh render. Both modes tally, unit computed from
+  the DISPLAYED per-queue rows (re-scoping re-normalizes) with a
+  `#ins-qh-daily-legend` line when unit>1. **Counts color-code to their
+  blocks on the QCD daily surfaces** (`.qcd-daily-bar-cell` scope): abandoned
+  `.miss-n` reads bad-red, a zero count carries `is-zero` and mutes
+  (`qcdDailyBarCell_` emits the class; the agent table keeps its warn
+  pairing). The agent-card `.ins-cbar-*` bars deliberately stay classic
+  tracks — their job is position vs the team-average marker, which blocks
+  can't carry.
 - **Journey overlay**: internal-origin calls show a `.cj-internal-tag` and,
   when `relatedCallId` is present, a `.cj-related` context line whose button
   drills into the originating inbound call's path (delegated document
@@ -1090,7 +1105,14 @@ behind the removed button.
   dept + range. The Insights side's "Agent table" button KEEPS the
   `#ins-open-mydept-btn` id (existing hand-off + hover-prefetch wiring);
   the dept side's `#lens-ins-btn` runs `handoffToInsights_` with the
-  current window.
+  current window. **Round-16b: the top-nav Insights TAB is retired** —
+  `#insights-report-btn` is gone from dashboard.html and the switcher is
+  the route in (deep links `#/report/insights` still work: it's a
+  `kind:'page'` route, `setPage` needs no button). While Insights is
+  active, `updateTabActiveState_` maps `/report/insights`→`/dept` so the
+  My Department tab carries the highlight; `initInsightsReport` null-guards
+  the absent button; the UI-harness drivers reach Insights via
+  `#my-dept-btn` → `#lens-ins-btn`.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

@@ -920,9 +920,8 @@
       { sel: '#freshness-pill',   title: 'Is the data current?',    body: 'Shows the most recent day with data and how long ago that was — it turns orange if the last import is over ~36 hours old.' },
       { sel: '#ov-trend-chart',   title: 'The department trend',    body: 'Each department’s answer rate over time. Click a card below to spotlight its line (Shift-click to compare a few); click a point on a line to open that department & day in My Department. The tabs switch to abandoned calls / %, and the range buttons zoom to 30 / 60 / 90 days.' },
       { sel: '#ov-period-bar',    title: 'Change the window',  body: 'One Window selector flips the department cards AND the agent table between Yesterday, Last 30 days, and Year-to-date. The trend chart keeps its own Chart: range control beside it.' },
-      { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent table — sortable by any column, worst answer rate first by default. A summary strip up top (% Answered, Queue calls with its answered/abandoned split, Abandoned % for the range) and the full Missed Calls report with per-agent timelines below the table.' },
+      { sel: '#my-dept-btn',      title: 'My Department',           body: 'Your team’s per-agent table — sortable by any column, worst answer rate first by default. A summary strip up top (% Answered, Queue calls with its answered/abandoned split, Abandoned % for the range) and the full Missed Calls report with per-agent timelines below the table. The Agent table · Insights switcher in its header flips to the deeper Insights lens — a department rollup, expandable Queue health and Trends sections, and per-agent comparisons — for the same department and dates.' },
       { sel: '#escalations-btn',  title: 'Escalations',             body: 'View and resolve escalation calls for your department — start one, mark it resolved with a note on how it was handled, and see the full activity trail.' },
-      { sel: '#insights-report-btn', title: 'Insights',             body: 'The flagship report, now a full page: a department rollup, expandable Queue health and Trends sections, and per-agent comparisons. Use the From/To dates or the Quick-select chips in its header to reframe it — Insights and My Department share one date window, so whichever you set most recently carries over. Your generated report stays put when you switch tabs.' },
       { sel: '#reports-menu-btn', title: 'Deeper reports',          body: 'Individual (the per-agent deep dive) lives here, alongside the admin-vetted Inbound and Direct reports. Missed-call detail is on the My Department page.' },
       { sel: '#help-fab',         title: 'Help is always here',     body: 'Stuck? This button opens Help from anywhere. Inside you’ll find plain-English quick-start questions that jump you straight into the right report, plus a button to replay this tour any time.' },
     ];
@@ -1539,12 +1538,15 @@
         + ansTallyBlocks_(ab, opts.tallyUnit, 'm')
         + '</div>'
       : '<div class="ans-track">' + segs + tick + '</div>';
+    // Round-16b (owner): the counts color-code to their blocks -- a zero
+    // count carries is-zero so quiet days mute instead of flashing a bold
+    // green/red 0 (CSS scopes the treatment to .qcd-daily-bar-cell).
     return '<div class="ans-bar' + passCls + '" title="' + escapeHtml(title) + '">'
          +   track
          +   '<div class="ans-nums">'
-         +     '<span class="ans-n">'   + fmtNumber(a)  + '</span>'
+         +     '<span class="ans-n'  + (a  === 0 ? ' is-zero' : '') + '">' + fmtNumber(a)  + '</span>'
          +     '<span class="ans-slash">/</span>'
-         +     '<span class="miss-n">'  + fmtNumber(ab) + '</span>'
+         +     '<span class="miss-n' + (ab === 0 ? ' is-zero' : '') + '">' + fmtNumber(ab) + '</span>'
          +     '<span class="ans-rate' + rateCls + '">' + (total ? abStr : '–') + '</span>'
          +   '</div>'
          + '</div>';
