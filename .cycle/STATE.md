@@ -2271,3 +2271,115 @@ commit/push/deploy direction.
   DeptSummaryEmail.gs are NEW server files, nothing deleted remotely).
   Open decisions: the hidden Cards view's fate; whether to retire the
   #dept-insights-strip teaser now that the lens switcher exists.
+
+## Increment 84 — M1 Insights merge (2026-08-07)
+
+  Owner approved folding the ENTIRE Insights page into My Department
+  (docs/insights-merge-plan.md, phases M1–M4). M1 shipped: the Insights
+  <section> moved inside #dept-page as the <details id="dept-insights-region">
+  collapsible (every inner id preserved incl. #insights-page), with the
+  LAZINESS CONTRACT (insEnsurePage_ + auto-generate on first OPEN only, via
+  the toggle listener / the sync deptInsightsOpen_ — sync because programmatic
+  details.open fires toggle async and handoff callers write ins-* fields right
+  after setPage returns). setPage('insights') maps to dept + open/scroll, so
+  deep links, Digest email links, quick-start chips, and the lens switcher all
+  land correctly. IR drill origin now travels as {fromInsights:true} (the four
+  script-8 call sites). Sticky strips stack (insights header at
+  --dept-sticky-h, z 59); print path retargeted; data-page="insights" CSS
+  retired; INV-37 amended. Earlier the same session (commit 7dbef14): top-nav
+  Insights tab retired, multi-queue Daily breakdown (per-queue tally rows + All
+  queues total per date, color-coded counts). 651/651, INV-16, full ci:ui,
+  plus two live-DOM probes (lazy cold load / lens open / chip route / drill
+  origins). Block in `.cycle/blocks/84-m1-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M1 pushed as e6a704f on claude/broad-scan-l9ojgm
+  (branch restarted from post-#220 main; 2 unmerged commits: 7dbef14 +
+  e6a704f). No PR opened (owner asks explicitly). Deploy on merge: dashboard
+  only (clasp push -f + new version; no remote deletions). Next: M2 controls
+  reconciliation per the plan doc — Refresh contract for open folds, region
+  headline on the collapsed summary, open-state persistence decision,
+  adoptSharedWindow_ retirement; then M3 (dept pill, Gap-vs-team default,
+  A/B panel scoping) and M4 (transition-machinery removal). Watch: the
+  closed-mid-generate chart-size exposure (M2 re-arm).
+
+## Increment 85 — M2 Insights merge: controls reconciliation (2026-08-07)
+
+  M2 shipped per docs/insights-merge-plan.md. The dept controls row is now
+  the page's SINGLE DATE AUTHORITY: the region's own header From/To +
+  Quick-select row (#ins-hdr-controls) is hidden (wiring inert until M4),
+  and the new insSyncToDeptWindow_ converges the region -- on refresh()
+  (open + rendered + window moved -> re-run via insApplyWindow_) and on
+  region toggle-open (stale closed region re-runs on next open). It skips
+  while a programmatic run is armed, so chip/share-link windows never race;
+  priority: share link > chip/handoff > dept window > prefs > defaults.
+  insRegionHeadSync_ puts a live headline on the collapsed summary
+  (% answered · missed rings · abandoned % · window; teamStats fields are
+  stat OBJECTS -- read .formatted). Decisions recorded: NO open-state
+  persistence (auto-open would re-fire the RPC per dept visit); per-region
+  Export menus stay. adoptSharedWindow_ (R9-3) retired; pageActiveWindow_
+  survives only as the dwell-prefetch feed. Toggle-open re-CREATES charts
+  from insLastData, closing the collapsed-mid-generate 0x0-canvas exposure
+  from the M1 block. Gates: 651/651, INV-16, full ci:ui + a live-DOM probe.
+  Block in `.cycle/blocks/85-m2-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M2 pushed as 8379956 on claude/broad-scan-l9ojgm
+  (3 unmerged commits: 7dbef14 tab-retire/daily-breakdown, e6a704f M1,
+  8379956 M2 + checkpoints). No PR opened (owner asks explicitly). Deploy
+  on merge: dashboard only. Next: M3 -- dept pill on the region header
+  (owns the dept-SWITCH convergence gap: an open region keeps the prior
+  dept's report until a window change), "See missed calls" as in-page
+  scroll, Agents default -> Gap vs team, A/B panel scoping. Then M4
+  retirement sweep (inert header-dates markup, lens switcher, handoff
+  detours, prefs-blob dates).
+
+## Increment 86 — M3 Insights merge: scope polish (2026-08-07)
+
+  M3 shipped per docs/insights-merge-plan.md. Dept identity: #ins-dept-pill
+  states the report's dept (warn --scoped variant when a sub-queue selection
+  narrowed it), the dept leads the collapsed headline, and
+  insSyncToDeptWindow_ now converges on a header dept SWITCH via
+  insLastHeaderDept_ (re-ensure roster + agent-free auto-run behind the
+  loading pane) -- closing the M2 gap where an open region kept the old
+  dept's report. Both same-page hand-offs became in-page scrolls
+  (missed-link -> qsSpotlight_, "Agent table" -> table scroll;
+  handoffToMyDept_ kept as fallback). The Agents chart defaults to Gap vs
+  team with a saved-'abs' self-heal (the same-page table carries Absolute).
+  The fixed A/B remote hides while the region is off-screen
+  (IntersectionObserver -> .ins-ab-offscreen). Gates: 651/651, INV-16,
+  full ci:ui + live-DOM probes (incl. the sync dept-switch pane proof).
+  Block in `.cycle/blocks/86-m3-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M3 pushed as dc02ea0 on claude/broad-scan-l9ojgm
+  (unmerged: 7dbef14, e6a704f M1, 8379956 M2, dc02ea0 M3 + checkpoints).
+  No PR opened (owner asks explicitly). Deploy on merge: dashboard only.
+  Next: M4 retirement sweep -- inert #ins-hdr-controls markup + header-date
+  wiring, the lens switcher decision (keep as scroll affordances vs drop),
+  handoff/launcher setPage detours, dead router branches
+  (basePageRoute_/updateTabActiveState_ insights arms), the irDrillToAgent_
+  data-page belt, insights-side recordPageWindow_, prefs-blob dates, the
+  ex-hand-off hover-prefetch.
+
+## Increment 87 — M4 Insights merge: retirement sweep — MERGE COMPLETE (2026-08-07)
+
+  M4 shipped; the M1-M4 Insights->My Department merge is COMPLETE
+  (docs/insights-merge-plan.md, all four phases checked). The lens switcher
+  is KEPT as a jump affordance ("Insights" -> deptInsightsOpen_ directly,
+  no date carry / no forced re-generate; "Agent table" scrolls up).
+  Deleted: handoffToInsights_, the #ins-hdr-controls header-dates row +
+  wiring + CSS, the ex-hand-off hover-prefetch, basePageRoute_'s insights
+  branch, updateTabActiveState_'s effRoute mapping, irDrillToAgent_'s
+  data-page belt, the dwell 'insights' arm + pageActiveWindow_.insights,
+  and the prefs blob's preset/from/to. setPage('insights') + the
+  '/report/insights' route/share-state entries are PERMANENT compat
+  surface (deep links + Digest email links). Net -62 lines. Gates:
+  651/651, INV-16, full ci:ui + a live-DOM probe (lens first-open
+  generates / re-click pure-scrolls / chip route lands / prefs slimmed).
+  Block in `.cycle/blocks/87-m4-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M4 pushed as 9a98ad2 on claude/broad-scan-l9ojgm.
+  Unmerged commits: 7dbef14 (tab retire + multi-queue daily breakdown),
+  e6a704f (M1), 8379956 (M2), dc02ea0 (M3), 9a98ad2 (M4) + checkpoints.
+  No PR opened (owner asks explicitly). Deploy on merge: dashboard only
+  (clasp push -f + new version; NO server .gs files changed across the
+  whole merge, so no web-editor deletions needed). Post-deploy: walk
+  S37/S32/S14/S18/S19/S23/S39 live. Nothing pending on the merge plan.

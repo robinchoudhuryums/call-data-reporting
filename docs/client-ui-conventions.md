@@ -398,10 +398,11 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   only the `#tour-tip` card is interactive); reduced-motion aware.
   Steps (`tourAllSteps_`) anchor to stable IDs (`#page-title`,
   `#freshness-pill`, `#ov-trend-chart`, `#ov-period-bar`,
-  `#my-dept-btn`, `#escalations-btn`, `#insights-report-btn`,
+  `#my-dept-btn`, `#escalations-btn`,
   `#reports-menu-btn`, `#help-fab` -- the `#ov-launcher` step folded
   into the Help closing step when R10-1 moved the quick-start chips
-  into the Help modal) and `tourVisibleSteps_` drops any
+  into the Help modal; the Insights step folded into the My Department
+  step when Round-16b retired the top-nav Insights tab) and `tourVisibleSteps_` drops any
   target that's missing or hidden (so admin-only/not-yet-rendered
   elements are skipped gracefully -- e.g. the freshness pill before
   data loads, or -- since Batch F added the `#ov-trend-chart` /
@@ -991,19 +992,37 @@ behind the removed button.
 - **Insights Agents section**: the Cards view is HIDDEN for now (owner
   undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
-  the **Absolute** basis. All cards code is kept — single-agent reports still
+  the **Gap vs team** basis (M3 — since the M1 merge the agent table on the
+  SAME page carries the Absolute information, so the section defaults to the
+  one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap, the
+  in-session sub-toggle / A/B remote still switch freely). All cards code is
+  kept — single-agent reports still
   force cards, and the admin A/B remote's Cards button still reaches the
   hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
-- **Insights Daily breakdown**: violation-date chips carry `data-queue`; a
-  click SCOPES the table to that queue's own per-day rows
-  (`qh.perQueue[i].daily`, additive payload field) before jumping — the
-  dept-total row showed the PARENT's numbers for a sub-queue's date. A scope
-  chip in the `<summary>` (`.ins-qh-scope-chip`, ✕ = back to dept total)
-  names the active queue; scope resets on every fresh render. The daily rows
-  also render the volume TALLY now, unit computed from the DISPLAYED rows
-  (re-scoping re-normalizes) with a `#ins-qh-daily-legend` line when unit>1.
-  The agent-card `.ins-cbar-*` bars deliberately stay classic tracks — their
-  job is position vs the team-average marker, which blocks can't carry.
+- **Insights Daily breakdown**: two modes, decided by how many queues carry
+  per-day rows (`insQhDailyMulti_`, ≥2 = MULTI). **MULTI (Round-16b, the
+  parent-with-sub-queues case)**: every date renders one TALLY row per queue
+  (Queue-health payload order; sub-queues tagged `.ins-daily-q-sub`) plus an
+  "All queues" total row from the dept-total `dailySeries` (the
+  `queuesForDept_` rollup) — total rows keep the CLASSIC bar per the house
+  tally convention. The Queue `<th>` is static markup revealed by
+  `.ins-qh-daily--multi` on the `<details>`; rows carry `data-date` +
+  `data-queue`, so a violation-date chip click just jumps (`insJumpToDailyRow_`
+  prefers the `[data-date][data-queue]` row) — no scoping needed, chip
+  suppressed. **SINGLE (one-queue depts)**: a violation-date click SCOPES the
+  table to that queue's own per-day rows (`qh.perQueue[i].daily`, additive
+  payload field) before jumping — the dept-total row showed the PARENT's
+  numbers for a sub-queue's date. A scope chip in the `<summary>`
+  (`.ins-qh-scope-chip`, ✕ = back to dept total) names the active queue;
+  scope resets on every fresh render. Both modes tally, unit computed from
+  the DISPLAYED per-queue rows (re-scoping re-normalizes) with a
+  `#ins-qh-daily-legend` line when unit>1. **Counts color-code to their
+  blocks on the QCD daily surfaces** (`.qcd-daily-bar-cell` scope): abandoned
+  `.miss-n` reads bad-red, a zero count carries `is-zero` and mutes
+  (`qcdDailyBarCell_` emits the class; the agent table keeps its warn
+  pairing). The agent-card `.ins-cbar-*` bars deliberately stay classic
+  tracks — their job is position vs the team-average marker, which blocks
+  can't carry.
 - **Journey overlay**: internal-origin calls show a `.cj-internal-tag` and,
   when `relatedCallId` is present, a `.cj-related` context line whose button
   drills into the originating inbound call's path (delegated document
@@ -1075,22 +1094,80 @@ behind the removed button.
   the blank-canvas harness gate: newer Chromium answers
   offsetParent/gBCR for closed-`<details>` content via forced layout, so
   `drive-smoke`'s checker also skips `details:not([open])` canvases.
-- **Insights header = the My Department controls pattern (Phase 2)**:
-  real From/To date inputs + the SHARED Quick-select preset chips
-  (`buildDatePresetChips_`, script-2 — one component, both pages) replace
-  the I4 period chips. The header inputs MIRROR the canonical
-  `#ins-from/#ins-to` (still in the hidden fallback form; what deep
-  links / saved views / the popover write): `insSyncHeaderDates_` copies
-  canonical→header per render, a header edit runs `insApplyWindow_`
-  (prior-window validation → picker regroup → prefs → runInsReport).
-  The Edit popover is now "Comparison & agents" (its date row is HIDDEN,
-  not removed — the apply flow still round-trips those inputs).
-- **The LENS SWITCHER**: one two-tab `ds-seg` ("Agent table · Insights")
-  renders in both sticky headers so the pages read as two lenses on one
-  dept + range. The Insights side's "Agent table" button KEEPS the
-  `#ins-open-mydept-btn` id (existing hand-off + hover-prefetch wiring);
-  the dept side's `#lens-ins-btn` runs `handoffToInsights_` with the
-  current window.
+- **Insights header dates (DELETED — M4)**: the Phase-2 header From/To +
+  shared Quick-select row (`#ins-hdr-controls`) was hidden in M2 (the dept
+  controls row is the page's single date authority) and DELETED in M4 with
+  its wiring (`insInitHeaderDates_`/`insSyncHeaderDates_`) and CSS. The
+  canonical `#ins-from/#ins-to` inputs survive in the hidden fallback form
+  (what deep links / saved views / the popover / `insSyncToDeptWindow_`
+  write); `insApplyWindow_` (prior-window validation → picker regroup →
+  prefs → runInsReport) survives as the shared re-run tail. The Edit
+  popover is "Comparison & agents" (its date row hidden, not removed — the
+  apply flow still round-trips those inputs). The prefs blob no longer
+  saves/restores `preset/from/to` (saved VIEWS keep their own dates).
+- **The INSIGHTS REGION (M1 merge, docs/insights-merge-plan.md)**: the whole
+  ex-Insights-page lives in `<details id="dept-insights-region">` at the
+  bottom of `#dept-page` — collapsed by default, with the LAZINESS CONTRACT
+  that nothing Insights-related runs on dept-page load: `insEnsurePage_`
+  (init + auto-generate) fires on first OPEN, via the region's `toggle`
+  listener (user click) or `deptInsightsOpen_` (programmatic).
+  `setPage('insights')` still exists and MAPS to the dept page + open+scroll
+  region (script-2), so every legacy entry works unchanged: deep links
+  (`#/report/insights` + the three retired-report repoints + the Digest
+  email links), the quick-start chips, `handoffToInsights_`, and the dept
+  controls-row lens switcher (`#lens-ins-btn`). `deptInsightsOpen_` runs the
+  ensure SYNCHRONOUSLY because a programmatic `details.open=true` fires
+  `toggle` async and the handoff/launcher callers write `ins-*` fields right
+  after `setPage` returns — ensure-defaults-first is the page-era ordering
+  contract. Every inner element id is unchanged incl. `#insights-page`
+  (now a plain div; its scoped CSS + existence checks survive). Two sticky
+  strips share the page: the dept controls pin at top, the Insights results
+  header pins BELOW them at `var(--dept-sticky-h)` (z 59 vs 60; the
+  `.is-stuck` shadow intentionally never fires on the offset strip). The
+  Insights print path hides `#dept-page > :not(#dept-insights-region)` +
+  chrome (the old rule hid `> .container`, which now CONTAINS the region).
+  IR drill origin: the Insights call sites pass `{fromInsights:true}` to
+  `irDrillToAgent_` — `data-page === 'insights'` no longer exists to read.
+  The top-nav Insights TAB stayed retired (Round-16b); `initInsightsReport`
+  null-guards it; the UI-harness drivers reach the region via
+  `#my-dept-btn` → `#lens-ins-btn`. The Insights side's "Agent table"
+  button keeps the `#ins-open-mydept-btn` id (scrolls back up via the same
+  hand-off). **M2 (shipped): the dept controls row is the page's single date
+  authority.** The region's own header From/To + Quick-select row
+  (`#ins-hdr-controls`) is hidden (wiring inert until M4);
+  `insSyncToDeptWindow_` converges an open region on `refresh()` and a stale
+  closed region on its next toggle-open (compare-rendered-meta-vs-dept, no
+  flag), SKIPPING while a programmatic run is armed so chip/share-link
+  windows never race a dept-window run — priority: share link >
+  chip/handoff > dept window > prefs > defaults. The collapsed summary
+  carries a live headline after each render (`insRegionHeadSync_` →
+  `#ins-region-head`: % answered · missed · abandoned % · window; the
+  static sub line yields). Open-state is deliberately NOT persisted (an
+  auto-open would re-fire the RPC on every dept visit); per-region Export
+  menus stay. `adoptSharedWindow_` is retired — `pageActiveWindow_` remains
+  only to feed the R11-C2 dwell prefetch. The toggle-open path also
+  RECREATES the charts from `insLastData` (destroy + create) so a report
+  that rendered while the region was collapsed mid-generate isn't left with
+  0×0 canvases. **M3 (shipped): scope polish** — the `#ins-dept-pill` LABEL
+  (not a second selector; the header dept selector stays the authority)
+  states the report's dept, warn-tinted when a sub-queue selection narrowed
+  it; the dept leads the collapsed headline; `insSyncToDeptWindow_` also
+  converges on a header dept SWITCH (`insLastHeaderDept_`, re-ensure roster
+  + agent-free auto-run); both same-page hand-offs became in-page scrolls
+  (`qsSpotlight_('dept-missed-section')` / scroll to the table,
+  `handoffToMyDept_` kept as the not-rendered fallback); the Agents chart
+  defaults to Gap vs team with a saved `'abs'` self-heal; the fixed A/B
+  remote hides while the region is off-screen (IntersectionObserver →
+  `.ins-ab-offscreen`). **M4 (shipped): the transition machinery is
+  retired** — the lens switcher is KEPT as a jump affordance ("Insights"
+  → `deptInsightsOpen_` directly, no date carry / forced re-generate;
+  "Agent table" scrolls up); `handoffToInsights_`, the header-dates row +
+  wiring, the ex-hand-off hover-prefetch, the dead router branches
+  (`basePageRoute_` insights arm, the effRoute mapping), the
+  `irDrillToAgent_` data-page belt, the dwell 'insights' arm and the
+  prefs-blob dates are all deleted. `setPage('insights')` + the
+  `/report/insights` route/share-state entries are PERMANENT compat
+  surface for deep links + the Digest email links.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

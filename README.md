@@ -7,10 +7,11 @@ Source of truth for the call-data reporting stack:
   Replaces the legacy `DQE Report` spreadsheet. Three-page UI: the
   **Overview** page (cross-department snapshot, the default landing),
   the **My Department** page (per-agent detail table with date-range
-  controls + the inline Missed Calls report), and the **Escalations**
-  worklist page, toggled via header buttons; the Individual + Insights
-  report modals overlay any page (Insights absorbed the retired
-  Performance / Compare Ranges / QCD reports).
+  controls + the inline Missed Calls report + the expandable **Insights**
+  section at the bottom — the deeper lens that absorbed the retired
+  Performance / Compare Ranges / QCD reports), and the **Escalations**
+  worklist page, toggled via header buttons; the Individual report modal
+  (plus the admin-vetted Inbound / Direct) overlays any page.
 - **Reference copies** of related Apps Script code from sibling projects
   (CDR Report, CDR Import) that the dashboard depends on. Pulled in
   gradually so changes across projects can be reviewed in one place.
@@ -520,7 +521,9 @@ the deployed web-app URL to land on that view:
 - `#/report/performance` — legacy (Performance Report retired — lands on Insights)
 - `#/report/compare` — legacy (Compare Ranges retired — lands on Insights)
 - `#/report/qcd` — legacy (QCD modal retired — lands on Insights Queue health)
-- `#/report/insights` — Insights (period comparison: team rollup + per-agent delta cards)
+- `#/report/insights` — Insights (period comparison: team rollup + per-agent
+  delta cards; lives as an expandable section on the My Department page —
+  the deep link opens that page, expands it, and scrolls to it)
 - `#/report/inbound` — Inbound Report (per-dept gated; Neon-backed)
 - `#/report/direct` — Direct Call Report (admin-only while the busy
   carve-out numbers are vetted; Neon-backed)

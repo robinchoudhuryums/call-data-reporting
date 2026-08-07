@@ -99,8 +99,11 @@ async function horizontalOverflow(page) {
     const { page, errors } = await bootPage(browser, role);
 
     // Visit every page the role can reach; each is a fresh render pass.
+    // Round-16: the top-nav Insights tab is retired -- the dept header's lens
+    // switcher (#lens-ins-btn) is the route in. The dept step runs first, so
+    // the switcher is on screen when the insights step clicks it.
     const navs = [['overview', '#overview-btn'], ['dept', '#my-dept-btn'],
-                  ['insights', '#insights-report-btn'], ['escalations', '#escalations-btn']];
+                  ['insights', '#lens-ins-btn'], ['escalations', '#escalations-btn']];
     for (const [name, sel] of navs) {
       const btn = page.locator(sel);
       if (!(await btn.count())) { record(role + ': ' + name + ' tab present', false, sel + ' missing'); continue; }

@@ -278,12 +278,15 @@
     // on `#dept-page .controls`, opaque strip), so the real date inputs +
     // Refresh + Export stay reachable while scrolling.
 
-    // Round-16 (owner): the lens switcher's "Insights" tab -- same hand-off
-    // as the bottom teaser strip's Open-full-report button (carries the
-    // current window; handoffToInsights_ lives in script-4, hoisted).
+    // M4 (owner-endorsed): the lens switcher survives as a JUMP AFFORDANCE
+    // on the long merged page -- "Insights" opens + scrolls to the region
+    // directly (deptInsightsOpen_, script-8, hoisted). No date carry (the
+    // dept controls are the authority, M2) and no forced re-generate per
+    // click (the old handoffToInsights_ armed one; the convergence sync +
+    // first-open auto-run cover every case that actually needs a run).
     var lensIns = $('lens-ins-btn');
     if (lensIns) lensIns.addEventListener('click', function () {
-      handoffToInsights_(($('from-date') || {}).value, ($('to-date') || {}).value, null);
+      if (typeof deptInsightsOpen_ === 'function') deptInsightsOpen_({ scroll: true });
     });
 
     // Round-16 Phase 3 (motion): elevation-on-stuck for the two sticky
@@ -430,10 +433,9 @@
   }
 
   // -- Date preset chips ---------------------------------------------------
-  // Round-16 Phase 2 (header unification): the chip list + builder are SHARED
-  // between My Department's Quick select and the Insights header's identical
-  // strip (insInitHeaderDates_) -- one component, two pages, so the two
-  // headers can't drift apart. onPick receives { from, to }.
+  // The Quick-select chip list + builder. (M4: the Insights header's twin
+  // strip is retired with the one-date-authority model -- My Department's
+  // controls row is the only consumer now.) onPick receives { from, to }.
   function buildDatePresetChips_(wrap, onPick) {
     if (!wrap) return;
     var presets = [
@@ -512,6 +514,17 @@
   function setPage(page) {
     if (page !== 'overview' && page !== 'dept' && page !== 'escalations'
         && page !== 'insights') page = 'overview';
+    // M1 (Insights merge): 'insights' is no longer a standalone page -- the
+    // content is the #dept-insights-region collapsible ON the dept page.
+    // The remaining callers (deep links via ROUTES_, the quick-start chips'
+    // launcherOpenInsights_) still pass 'insights'; map it to the dept page
+    // here and open + scroll the region AFTER the dept branch runs.
+    // deptInsightsOpen_ runs insEnsurePage_ SYNCHRONOUSLY, so callers that
+    // write ins-* fields right after setPage returns (the launcher path)
+    // keep the page-era ordering: ensure's defaults first, the caller's
+    // writes after.
+    var openInsRegion_ = page === 'insights';
+    if (openInsRegion_) page = 'dept';
     document.body.setAttribute('data-page', page);
     const kicker = $('page-kicker');
     const title  = $('page-title');
@@ -525,27 +538,12 @@
       // Lazy-init the controls + load on first entry (idempotent thereafter).
       if (typeof escEnsureInit_ === 'function') escEnsureInit_(function () { escLoad_(); });
       else if (typeof escLoad_ === 'function') escLoad_();
-    } else if (page === 'insights') {
-      if (kicker) kicker.textContent = 'Reports · Insights';
-      if (title)  title.textContent  = 'Insights';
-      // First entry runs the old openModal init (form + defaults + prefs +
-      // roster); re-entry only re-ensures the roster and never clobbers a
-      // rendered report (owner decision 3, docs/insights-page-plan.md).
-      if (typeof insEnsurePage_ === 'function') insEnsurePage_();
-      // R9-3: adopt My Department's window when it's the more recent one.
-      // First entry: the pending auto-run reads the (now-rewritten) inputs
-      // when it fires post-roster, so no explicit re-run. Re-entry: re-run
-      // for the adopted window.
-      if (typeof adoptSharedWindow_ === 'function' && adoptSharedWindow_('insights')
-          && !insAutoRunPending_ && typeof runInsReport === 'function') {
-        runInsReport();
-      }
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';
-      // R9-3: adopt the Insights window when it's the more recent one (sets
-      // the date inputs; the refresh below re-runs for it).
-      var adoptedWin_ = (typeof adoptSharedWindow_ === 'function') && adoptSharedWindow_('dept');
+      // (M2: the R9-3 adoptSharedWindow_ adoption is retired -- the dept
+      // controls are the single date authority; insSyncToDeptWindow_
+      // converges the Insights region instead.)
       // setPage doesn't load the agent table itself. If we arrived showing a
       // STALE prior dept -- the My Department nav button (which fires no
       // selector 'change'), or view-as-manager where the selector is
@@ -554,7 +552,7 @@
       // Skip when a load is already in flight (refresh disables the button) so
       // a selector-change-driven load isn't doubled.
       var _rb = $('refresh-btn');
-      if ((lastSummaryDept_ !== getRequestedDept() || adoptedWin_) && !(_rb && _rb.disabled)) {
+      if (lastSummaryDept_ !== getRequestedDept() && !(_rb && _rb.disabled)) {
         refresh();
       }
       // R12-1: re-arm the missed chart when its data landed while this page
@@ -569,6 +567,14 @@
         deptMissedDrawChart_(deptMissedLastData);
       }
     }
+    // M1 (Insights merge): a legacy setPage('insights') lands here with the
+    // dept branch already run -- now open + scroll the region (sync ensure;
+    // see deptInsightsOpen_ in script-8). M2: window convergence is
+    // insSyncToDeptWindow_'s job (refresh + region open); the R9-3
+    // adoptSharedWindow_ machinery is retired.
+    if (openInsRegion_ && typeof deptInsightsOpen_ === 'function') {
+      deptInsightsOpen_({ scroll: true });
+    }
     // Delegate the active-tab visual indicator to the router so all
     // [data-route] tabs (page-toggles + report-openers) participate
     // in the same active-state model. Phase C consolidated this from
@@ -576,12 +582,8 @@
     // my-dept buttons.
     if (typeof setRoute_ === 'function') {
       setRoute_(page === 'dept' ? '/dept'
-        : (page === 'escalations' ? '/escalations'
-        : (page === 'insights' ? '/report/insights' : '/overview')));
+        : (page === 'escalations' ? '/escalations' : '/overview'));
     }
-    // (R9-3: the Batch-E maybeShowDateSyncChip_ offer is retired -- the two
-    // pages now silently adopt each other's newer window via
-    // adoptSharedWindow_ in the per-page branches above.)
     // R11-C2: arm the cross-page dwell-prefetch (no-op page values clear it).
     if (typeof armDwellPrefetch_ === 'function') armDwellPrefetch_(page);
   }

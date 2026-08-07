@@ -55,7 +55,13 @@
   // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
   // the prior values stay reachable via the card delta-badge hover
   // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  let insCardsChartMode = 'abs';   // 'gap' | 'abs' | 'trend'; Round-16 (owner): Absolute is the default basis (was Trend, R11-H)
+  // 'gap' | 'abs' | 'trend'. M3 (owner): Gap vs team is the default basis --
+  // since the M1 merge the agent table on the SAME page already carries the
+  // Absolute information (per-agent answered/missed volume tallies + rate),
+  // so the section defaults to the one view the table can't show: each
+  // agent's position vs the team average. Abs/Trend stay one click away
+  // (the Basis sub-toggle / the admin A/B remote).
+  let insCardsChartMode = 'gap';
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   // (the share-of-answered pie's insShareChartInstance is GONE -- Round-16
@@ -73,6 +79,12 @@
   let insQhDailyAll_ = [];
   let insQhDailyByQueue_ = {};
   let insQhDailyScope_ = '';
+  // Round-16b (owner): with 2+ queues carrying daily rows the table goes
+  // MULTI mode -- per date one tally row per queue (parent + sub-queues, in
+  // Queue-health order) + an "All queues" total row -- so no scoping is
+  // needed; scope + chip only serve the single-queue fallback. This meta
+  // list ([{queue, subDept}]) preserves payload order and drives the mode.
+  let insQhDailyQueueMeta_ = [];
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
   // Round-16 (owner): the D1 Simple/Detailed MODE is RETIRED for per-section
   // PROGRESSIVE DISCLOSURE. Each heavy section is an always-present
@@ -138,28 +150,47 @@
     return 'cdr.ins.prefs.v2:' + who;
   }
 
-  // Insights is a full PAGE (modal->page conversion, docs/insights-page-plan.md).
-  // setPage('insights') calls this: first entry runs the old openModal init
-  // (form + default dates + prefs restore + roster); re-entry only re-ensures
-  // the roster -- cheap when cached, re-splits the active grouping if the
-  // dept/dates changed -- and never clobbers a rendered report (decision 3).
+  // M1 (Insights merge): Insights is a lazy collapsible REGION of the dept
+  // page (#dept-insights-region, docs/insights-merge-plan.md). This ensure
+  // runs on region OPEN (deptInsightsOpen_ + the toggle listener), never on
+  // dept-page load: first open runs the old openModal init (form + default
+  // dates + prefs restore + roster); re-open only re-ensures the roster --
+  // cheap when cached, re-splits the active grouping if the dept/dates
+  // changed -- and never clobbers a rendered report (decision 3).
   var insPageInited_ = false;
   // First-entry auto-run one-shot (owner: the setup form is RETIRED from
   // the normal flow). Consumed in insRenderAgentList at the race-free
   // post-roster point, like the launcher flag.
   var insAutoRunPending_ = false;
+  // M3 (dept identity): the HEADER dept the last run was fired under
+  // (getRequestedDept at run time -- NOT meta.department, which a sub-queue
+  // picker selection legitimately narrows to a child dept). Lets the sync
+  // detect a header dept SWITCH, which a window-only compare misses.
+  var insLastHeaderDept_ = null;
   function insEnsurePage_() {
     if (!$('insights-page')) return;
     if (!insPageInited_) {
       insPageInited_ = true;
       insSetDefaultDates();
       insRestorePrefs_();
-      // Owner decision: no setup-form step. First entry AUTO-GENERATES --
-      // restored prefs (dates + any saved agent selection) or the
-      // launcher-window default with an agent-free whole-department run
-      // (INV-45) -- and every later change goes through the "Edit dates &
-      // agents" popover in the results header. The form survives HIDDEN as
-      // the failure / empty-roster fallback surface only (insShowForm).
+      // M2 (one date authority): the dept controls own the page's window --
+      // seed the canonical ins dates from them (M4: date prefs are gone from
+      // the blob entirely; compare-mode/agent prefs still apply). Priority
+      // ends up share-link > quick-start chip > dept window > defaults,
+      // because each later writer runs after this seed. The defaults survive
+      // only when the dept inputs are still blank (cold deep-link load
+      // before the latest-date fetch lands).
+      var df_ = $('from-date'), dt_ = $('to-date');
+      if (df_ && dt_ && df_.value && dt_.value) {
+        if ($('ins-from')) $('ins-from').value = df_.value;
+        if ($('ins-to'))   $('ins-to').value   = dt_.value;
+        if ($('ins-preset')) $('ins-preset').value = 'custom';
+      }
+      // Owner decision: no setup-form step. First OPEN AUTO-GENERATES --
+      // an agent-free whole-department run (INV-45) over the seeded window
+      // -- and every later change goes through the dept controls or the
+      // "Comparison & agents" popover. The form survives HIDDEN as the
+      // failure / empty-roster fallback surface only (insShowForm).
       insAutoRunPending_ = true;
       launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
         'How is my team doing lately?');
@@ -167,12 +198,74 @@
     insEnsureRoster();
     insResizeCharts_();
   }
-  // Re-measure charts rendered on a previous visit: the page section is
-  // display:none while the user is elsewhere, and a window resize in
-  // between leaves Chart.js instances mis-sized (the documented
-  // measure-while-hidden gotcha; the deptMissedResize_ pattern). Double-rAF
-  // waits for the page-swap layout to settle; no-ops on first entry (all
-  // instances null) and when Chart.js failed to load.
+
+  // M2 (one date authority): converge an OPEN, initialized region onto the
+  // dept controls' window. Compares against the RENDERED window (insLastData
+  // meta) so a stale report re-runs even if the inputs were already
+  // rewritten. No-ops while the region is closed (the next open converges),
+  // while a programmatic run is armed (the launcher / handoff / first-open
+  // auto-run owns its window -- syncing then would race two windows), when
+  // either side is incomplete, or when already in sync. A rendered report
+  // re-runs via insApplyWindow_ (the validated shared tail); with nothing
+  // rendered yet it just rewrites the inputs.
+  function insSyncToDeptWindow_() {
+    var reg = $('dept-insights-region');
+    if (!reg || !reg.open || !insPageInited_) return;
+    if (insLauncherAutoRun_ || insAutoRunPending_) return;
+    var df = $('from-date'), dt = $('to-date');
+    if (!df || !dt || !df.value || !dt.value) return;
+    var f = $('ins-from'), t = $('ins-to');
+    if (!f || !t) return;
+    // M3 (dept identity): a header dept SWITCH converges too -- a rendered
+    // report for the OLD dept re-ensures the roster for the new one and arms
+    // the agent-free first-open-style run (consumed post-roster at the
+    // race-free point; the old dept's checked agents die with the old
+    // picker). The window rewrite rides the same run; the loading pane
+    // covers the swap like a first open.
+    var dept = getRequestedDept();
+    if (insLastData && insLastHeaderDept_ && dept && dept !== insLastHeaderDept_) {
+      f.value = df.value;
+      t.value = dt.value;
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      insAutoRunPending_ = true;
+      launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+        'Insights for ' + dept);
+      insEnsureRoster();
+      return;
+    }
+    var curFrom = (insLastData && insLastData.meta && insLastData.meta.from) || f.value;
+    var curTo   = (insLastData && insLastData.meta && insLastData.meta.to)   || t.value;
+    if (curFrom === df.value && curTo === dt.value) return;
+    if (!insLastData) {
+      f.value = df.value;
+      t.value = dt.value;
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      return;
+    }
+    insApplyWindow_({ from: df.value, to: dt.value });
+  }
+  // M1: open the dept page's Insights region and run the ensure
+  // SYNCHRONOUSLY -- a programmatic `details.open = true` fires its 'toggle'
+  // event ASYNC, and callers like launcherOpenInsights_
+  // write ins-* fields right after setPage returns, so the ensure's
+  // defaults/prefs restore must run before those writes (the ordering the
+  // page era guaranteed). The later async toggle re-calls insEnsurePage_,
+  // which is idempotent (insPageInited_ + cached roster).
+  function deptInsightsOpen_(opts) {
+    var reg = $('dept-insights-region');
+    if (!reg) return;
+    if (!reg.open) reg.open = true;
+    insEnsurePage_();
+    if (opts && opts.scroll) {
+      try { reg.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
+    }
+  }
+  // Re-measure charts rendered on a previous visit: the region's content is
+  // hidden while the <details> is closed (or the user is on another page),
+  // and a window resize in between leaves Chart.js instances mis-sized (the
+  // documented measure-while-hidden gotcha; the deptMissedResize_ pattern).
+  // Double-rAF waits for the reveal layout to settle; no-ops on first entry
+  // (all instances null) and when Chart.js failed to load.
   function insResizeCharts_() {
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () { requestAnimationFrame(function () {
@@ -183,15 +276,61 @@
   }
 
   function initInsightsReport() {
+    // Round-16: the top-level Insights TAB is retired (the dept page's lens
+    // switcher is the route), so #insights-report-btn is normally absent --
+    // null-guarded rather than removed, and no longer gates the page init.
     const btn = $('insights-report-btn');
     const page = $('insights-page');
-    // Insights is a full PAGE (modal->page conversion): the top-level tab
-    // navigates like the Overview / My Department / Escalations tabs;
-    // setPage('insights') runs insEnsurePage_ + the router highlight. No
-    // modal open/close/drag/focus-trap/scroll-lock/Escape -- the Escalations
-    // pattern (#6).
+    // M1 (Insights merge): setPage('insights') maps to the dept page + the
+    // #dept-insights-region collapsible. No modal open/close/drag/focus-trap/
+    // scroll-lock/Escape -- the Escalations pattern (#6).
     if (btn) btn.addEventListener('click', function () { setPage('insights'); });
-    if (!btn || !page) return;
+    if (!page) return;
+
+    // M1: a USER-click open of the region lazily initializes / auto-generates
+    // (the laziness contract: nothing Insights-related runs on dept-page
+    // load). The programmatic path (deptInsightsOpen_) ensures synchronously
+    // and this async toggle re-fires the ensure -- harmless, insEnsurePage_
+    // is idempotent. Close is a no-op (the rendered report stays put).
+    const insRegion = $('dept-insights-region');
+    if (insRegion) insRegion.addEventListener('toggle', function () {
+      if (!insRegion.open) return;
+      insEnsurePage_();
+      // M2 (one date authority): a re-open under a moved dept window
+      // converges + re-runs; skipped while a programmatic run is armed
+      // (that run owns its window -- see insSyncToDeptWindow_).
+      insSyncToDeptWindow_();
+      // M2: charts created while the region was CLOSED (user collapsed it
+      // mid-generate) measured zero -- recreate them from the last data on
+      // reveal. Destroy + create is the C3-safe path (a resize() alone does
+      // not reliably recover a 0x0 create); each helper is its own guard
+      // (fold-gated / detail-gated), and insApplyWindow_ above re-renders
+      // everything anyway when it fired.
+      if (insLastData) {
+        try {
+          if (insCardsView === 'chart') insRenderCardsChart_();
+          if (insFoldOpen_('trend')) insDrawTrendChart_(insLastData);
+          if (insDetailOpen_()) insRenderDeferredCharts_();
+        } catch (e) { /* redraw is best-effort decoration of a rendered report */ }
+      }
+    });
+
+    // M3: the fixed admin A/B remote only makes sense while the region is
+    // actually ON SCREEN -- inside the region it already hides while the
+    // <details> is closed, but position:fixed floats it over the agent
+    // table / missed section whenever the region is open off-screen below.
+    // An IntersectionObserver on the region toggles a hide class (threshold
+    // 0: any visible part keeps it). Decoration only -- silently skipped
+    // without IntersectionObserver, and non-admins never see the panel
+    // regardless (data-admin-only).
+    if (insRegion && $('ins-ab-panel') && typeof IntersectionObserver === 'function') {
+      try {
+        new IntersectionObserver(function (entries) {
+          var panel = $('ins-ab-panel');
+          if (panel) panel.classList.toggle('ins-ab-offscreen', !entries[0].isIntersecting);
+        }, { threshold: 0 }).observe(insRegion);
+      } catch (e) { /* decoration only */ }
+    }
 
     const preset = $('ins-preset');
     if (preset) preset.addEventListener('change', insApplyPreset);
@@ -234,45 +373,41 @@
     if (editClose) editClose.addEventListener('click', insCloseEditPopover_);
     const editApply = $('ins-edit-apply-btn');
     if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
-    insInitHeaderDates_();   // Phase 2: header From/To + shared Quick-select chips
-    // Lighter hand-off: Insights -> My Department (agent table / Missed detail)
-    // for the same dept + window. handoffToMyDept_ carries the dates.
+    // (M4: insInitHeaderDates_ is RETIRED with the #ins-hdr-controls row --
+    // the dept controls are the date authority since M2.)
+    // M3 (in-page scroll): the agent table and the missed section live ON
+    // THIS PAGE now, so the two Insights -> My Department hand-offs scroll
+    // instead of the old setPage + refresh round trip (which re-fetched a
+    // summary that is already rendered). The dept window is the authority
+    // (M2), so there are no dates to carry; handoffToMyDept_ survives as
+    // the fallback when the target isn't rendered (e.g. the missed section
+    // hidden on a fetch failure) -- it still works, it just costs a refresh.
     const insMyDeptBtn = $('ins-open-mydept-btn');
     if (insMyDeptBtn) insMyDeptBtn.addEventListener('click', function () {
-      handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, {});
+      const wrap = document.querySelector('.agents-table-wrap');
+      if (wrap) {
+        try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { window.scrollTo(0, 0); }
+      } else {
+        handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, {});
+      }
     });
     // R7 (N-1): re-run the report in place for the current selection. Rides
     // runInsReport's SWR + the I-3 whole-report frost; note the server-side
     // report cache still applies (data refreshes as the 30-min TTL allows).
     const insRefreshBtn = $('ins-refresh-btn');
     if (insRefreshBtn) insRefreshBtn.addEventListener('click', function () { runInsReport(); });
-    // R9-1/Phase 2: the results header (title + toolbar + the From/To
-    // controls row) is the page's sticky strip, so the real date inputs
-    // stay reachable while scrolling -- the My Department pattern.
     const insQhMissedBtn = $('ins-qh-missed-link');
     if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
-      handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
+      const sec = $('dept-missed-section');
+      if (sec && sec.style.display !== 'none') {
+        qsSpotlight_('dept-missed-section');   // scroll + the quick-start ring
+      } else {
+        handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
+      }
     });
-    // #5 Option A: delegated ~300ms hover-prefetch on the two Insights -> My
-    // Department hand-offs (the button + the Queue-health missed link, which is
-    // re-rendered with each report) so the jump SWR-paints instantly. Delegated
-    // on the page (not the elements) so dynamically-rendered targets are
-    // covered; the window is read lazily at fire time so a period/date edit
-    // between hover and click is respected.
-    let insMdPrefetchTimer = null;
-    page.addEventListener('mouseover', function (e) {
-      const t = e.target.closest && e.target.closest('#ins-open-mydept-btn, #ins-qh-missed-link');
-      if (!t || !page.contains(t)) return;
-      if (insMdPrefetchTimer) clearTimeout(insMdPrefetchTimer);
-      insMdPrefetchTimer = setTimeout(function () {
-        insMdPrefetchTimer = null;
-        prefetchDeptSummary_(($('ins-from') || {}).value, ($('ins-to') || {}).value);
-      }, 300);
-    });
-    page.addEventListener('mouseout', function (e) {
-      const t = e.target.closest && e.target.closest('#ins-open-mydept-btn, #ins-qh-missed-link');
-      if (t && insMdPrefetchTimer) { clearTimeout(insMdPrefetchTimer); insMdPrefetchTimer = null; }
-    });
+    // (M4: the #5-Option-A hover-prefetch on the two ex-hand-off buttons is
+    // RETIRED -- since M3 those buttons SCROLL on the same page, so there is
+    // no jump to warm; the summary they'd prefetch is already rendered.)
     const editSelAll  = $('ins-edit-select-all');
     const editSelNone = $('ins-edit-select-none');
     if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); insTogglePopoverAgents_(true);  });
@@ -403,7 +538,7 @@
       if (!link) return;
       const agent = link.getAttribute('data-agent');
       if (!agent || typeof irDrillToAgent_ !== 'function') return;
-      irDrillToAgent_(agent, $('ins-from').value, $('ins-to').value);
+      irDrillToAgent_(agent, $('ins-from').value, $('ins-to').value, { fromInsights: true });
     });
 
     // IR hover-prefetch: rest the pointer ~300ms on an agent card -> fetch
@@ -1002,24 +1137,15 @@
     selectAllActiveAgents_($('ins-edit-list'), checked);
   }
 
-  // Round-16 Phase 2 (header unification): the I4 period chips are replaced
-  // by the My-Department controls pattern -- real From/To inputs + the SHARED
-  // Quick-select preset chips (buildDatePresetChips_, script-2). The header
-  // inputs MIRROR the canonical #ins-from/#ins-to (still in the hidden
-  // fallback form; what deep links / saved views / the popover write): this
-  // sync copies canonical -> header on every render, and a header edit
-  // copies back + re-runs through insApplyWindow_ (the old period-chip
-  // pipeline: prior-window validation, picker regroup, prefs, runInsReport).
-  function insSyncHeaderDates_(meta) {
-    const from = meta && meta.from, to = meta && meta.to;
-    recordPageWindow_('insights', from, to);   // R9-3: the shared-window store
-    const f = $('ins-hdr-from'), t = $('ins-hdr-to');
-    if (f && from) f.value = from;
-    if (t && to) t.value = to;
-  }
+  // (M4: insSyncHeaderDates_ / insInitHeaderDates_ and the #ins-hdr-controls
+  // row are RETIRED -- the dept controls have been the single date authority
+  // since M2, and the mirrored header inputs mirrored nothing a user could
+  // see. The canonical #ins-from/#ins-to inputs live on in the hidden
+  // fallback form; insApplyWindow_ below remains the shared re-run tail for
+  // insSyncToDeptWindow_ and the popover.)
 
-  // Apply a { from, to } window to the report -- the shared tail every entry
-  // point uses (preset chip, header date edit).
+  // Apply a { from, to } window to the report -- the shared validated tail
+  // (prior-window check, picker regroup, prefs, runInsReport).
   function insApplyWindow_(r) {
     if (!r || !r.from || !r.to) return;
     if (r.from > r.to) { insSetResultsStatus_('error', 'Start date must be on or before end date.'); return; }
@@ -1034,25 +1160,6 @@
     insSavePrefs_();
     insSetResultsStatus_('loading', 'Refreshing report…');
     runInsReport();
-  }
-
-  let insHeaderDatesWired_ = false;
-  function insInitHeaderDates_() {
-    if (insHeaderDatesWired_) return;
-    const f = $('ins-hdr-from'), t = $('ins-hdr-to');
-    if (!f || !t) return;
-    insHeaderDatesWired_ = true;
-    buildDatePresetChips_($('ins-date-presets'), insApplyWindow_);
-    // Debounced like the dept page's date edits, so typing / rapid arrow
-    // presses coalesce into one request.
-    const onEdit = debounce_(function () {
-      if (!f.value || !t.value) return;
-      const w = $('ins-date-presets');
-      if (w) w.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
-      insApplyWindow_({ from: f.value, to: t.value });
-    }, 350);
-    f.addEventListener('change', onEdit);
-    t.addEventListener('change', onEdit);
   }
 
   function insApplyEditPopover_() {
@@ -1124,6 +1231,7 @@
     }
     const reportDept = __sq.dept || dept;
     insSetFormError('');
+    insLastHeaderDept_ = dept;   // M3: the header dept this run fired under
     insLastRequestedAgents_ = agents.slice();   // edit popover reads the REQUESTED form
     const req = { department: reportDept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
@@ -1440,8 +1548,23 @@
       const wd = insWorkdaysLabel_(meta.currentWorkDays, meta.from, meta.to);
       if (wd) bits.push(wd);
       $('ins-results-date').textContent = '(' + bits.filter(Boolean).join(' · ') + ')';
+      // M3: the dept pill -- which department THIS report covers (a parent's
+      // agent table above is combined; a sub-queue selection narrows to a
+      // child dept). Marked scoped when it differs from the header dept.
+      const pill = $('ins-dept-pill');
+      if (pill) {
+        const rd = meta.department || '';
+        const hd = getRequestedDept() || '';
+        pill.textContent = rd;
+        pill.style.display = rd ? '' : 'none';
+        pill.classList.toggle('ins-dept-pill--scoped', !!rd && !!hd && rd !== hd);
+        pill.title = (rd && hd && rd !== hd)
+          ? 'This report is scoped to ' + rd + ' (a sub-queue of the selected department) — the agent selection narrowed it.'
+          : 'The department this report covers. Switch departments with the header selector.';
+      }
     })();
-    insSyncHeaderDates_(data.meta);   // Phase 2: reflect the rendered window on the header inputs
+    // (M4: the header-date mirror is retired; the results-date pill above +
+    // the region headline state the rendered window.)
     const cmp = $('ins-compare-line');
     if (cmp) {
       const mode = data.meta && data.meta.comparisonMode;
@@ -1554,6 +1677,7 @@
     }
     insRenderSmallSampleNote_(data);   // D3 (#7): annotation only, both modes
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
+    insRegionHeadSync_(data);   // M2: the collapsed region summary's headline
     // Quick-start chip landing: scroll to + spotlight the section that
     // answers the clicked question (one-shot; a small delay lets the page
     // swap / layout settle first). An SWR pre-paint consumes it too --
@@ -1742,6 +1866,41 @@
         });
       })
       .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to });
+  }
+
+  // M2: reflect the rendered report on the REGION's collapsed summary (the
+  // insQhFoldSync_ pattern one level up) -- a closed region still states
+  // where the team stands + which window it covers, so staleness after a
+  // dept-window change is visible rather than silent. The static "what's in
+  // here" sub line yields to the live headline once one exists.
+  function insRegionHeadSync_(data) {
+    const el = $('ins-region-head');
+    if (!el) return;
+    const t = (data && data.teamStats) || {};
+    const meta = (data && data.meta) || {};
+    const qh = data && data.queueHealth;
+    const bits = [];
+    // teamStats fields are STAT OBJECTS ({formatted, deltaPct, ...} -- what
+    // dsKpiTile_ consumes); .formatted is the display string.
+    // M3: the dept leads the headline -- a PARENT dept's page shows the
+    // combined table, so the collapsed region must say which dept its
+    // report covers.
+    if (meta.department) bits.push(escapeHtml(String(meta.department)));
+    const pctStr = t.pct && t.pct.formatted;
+    const missStr = t.missed && t.missed.formatted;
+    if (pctStr && pctStr !== '-')  bits.push(escapeHtml(String(pctStr)) + ' answered');
+    if (missStr && missStr !== '-') bits.push(escapeHtml(String(missStr)) + ' missed rings');
+    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && qh.totals.abandonedPctStr) {
+      bits.push(escapeHtml(String(qh.totals.abandonedPctStr)) + ' abandoned');
+    }
+    if (!bits.length) { el.innerHTML = ''; return; }
+    const win = (meta.from && meta.to)
+      ? '<span class="ins-region-win">' + escapeHtml(meta.from + ' → ' + meta.to) + '</span>' : '';
+    el.innerHTML = bits.map(function (b) {
+      return '<span class="ins-region-stat">' + b + '</span>';
+    }).join('<span class="ins-region-dot">&middot;</span>') + win;
+    const sub = $('ins-region-sub');
+    if (sub) sub.style.display = 'none';
   }
 
   // Round-16: sync the Queue-health FOLD around the section -- visibility +
@@ -1942,9 +2101,14 @@
           if (chip && tbody.contains(chip)) {
             e.preventDefault();
             var vq = chip.getAttribute('data-queue') || '';
-            insQhDailyScope_ = (vq && insQhDailyByQueue_[vq]) ? vq : '';
-            insQhDailyRender_();
-            insJumpToDailyRow_(chip.getAttribute('data-date') || '');
+            // Round-16b: MULTI mode already shows every queue's rows, so the
+            // click just jumps to the clicked queue's row for that date; the
+            // scope re-render only serves the single-queue fallback.
+            if (!insQhDailyMulti_()) {
+              insQhDailyScope_ = (vq && insQhDailyByQueue_[vq]) ? vq : '';
+              insQhDailyRender_();
+            }
+            insJumpToDailyRow_(chip.getAttribute('data-date') || '', vq);
             return;
           }
           // Phase 3: per-queue DQE missed-ring drill (in-place toggle).
@@ -1987,8 +2151,12 @@
       // shared helper so a violation-date click can re-scope in place.
       insQhDailyAll_ = qh.dailySeries || [];
       insQhDailyByQueue_ = {};
+      insQhDailyQueueMeta_ = [];
       (qh.perQueue || []).forEach(function (q) {
-        if (q.daily && q.daily.length) insQhDailyByQueue_[q.queue] = q.daily;
+        if (q.daily && q.daily.length) {
+          insQhDailyByQueue_[q.queue] = q.daily;
+          insQhDailyQueueMeta_.push({ queue: q.queue, subDept: q.subDept || null });
+        }
       });
       insQhDailyScope_ = '';
       if (insQhDailyAll_.length) {
@@ -2015,45 +2183,124 @@
     }
   }
 
-  // Render the Daily breakdown table honoring the queue scope, and reflect
-  // the scope as a chip beside the summary label ('' = dept total, no chip).
+  // True when the Daily breakdown should render every queue's own rows per
+  // date (parent + sub-queues + total) instead of one series at a time.
+  function insQhDailyMulti_() {
+    return insQhDailyQueueMeta_.length >= 2 && insQhDailyAll_.length > 0;
+  }
+
+  // Round-16b: MULTI-mode rows -- for each date on the shared zero-filled
+  // axis (F-15), one tally row per queue (Queue-health payload order, sub-
+  // queues tagged with their dept) then an "All queues" total row from the
+  // dept-total dailySeries (the queuesForDept_ rollup, so it includes the
+  // sub-queues). Total rows keep the CLASSIC proportional bar per the house
+  // tally convention -- an aggregate would dwarf the queue-scale blocks.
+  // Returns { html, unit }; the cohort tally unit comes from the per-queue
+  // rows only, for the same reason.
+  function insQhDailyMultiRowsHtml_() {
+    const queues = insQhDailyQueueMeta_.map(function (m) {
+      const byDate = {};
+      (insQhDailyByQueue_[m.queue] || []).forEach(function (r) { byDate[r.date] = r; });
+      return { queue: m.queue, subDept: m.subDept, byDate: byDate };
+    });
+    const unitRows = [];
+    queues.forEach(function (m) {
+      insQhDailyAll_.forEach(function (d) {
+        const r = m.byDate[d.date];
+        if (r) unitRows.push({ totalAnswered: r.totalAnswered, totalMissed: r.abandoned });
+      });
+    });
+    const unit = ansTallyUnitFor_(unitRows);
+    let html = '';
+    insQhDailyAll_.forEach(function (d) {
+      queues.forEach(function (m, qi) {
+        // The axes are zero-filled to the same dates (F-15); the empty
+        // fallback just keeps a missing row from breaking the group.
+        const r = m.byDate[d.date] || { date: d.date, totalCalls: 0, totalAnswered: 0,
+          abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 };
+        const viol = Number(r.violations) || 0;
+        html += '<tr data-date="' + escapeHtml(d.date) + '" data-queue="' + escapeHtml(m.queue) + '"'
+             +   (qi === 0 ? ' class="ins-daily-group-head"' : '') + '>'
+             +   '<td>' + (qi === 0 ? escapeHtml(d.date) : '') + '</td>'
+             +   '<td class="ins-qh-daily-queue-cell">' + escapeHtml(m.queue)
+             +     (m.subDept ? ' <span class="ins-daily-q-sub">&middot; ' + escapeHtml(m.subDept) + '</span>' : '')
+             +   '</td>'
+             +   '<td class="num">' + fmtNumber(r.totalCalls) + '</td>'
+             +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(r, unit > 0 ? { tallyUnit: unit } : null) + '</td>'
+             +   '<td class="' + (viol > 0 ? 'num qcd-warn-light' : 'num') + '">' + fmtNumber(r.violations) + '</td>'
+             + '</tr>';
+      });
+      const dViol = Number(d.violations) || 0;
+      html += '<tr class="ins-daily-total-row" data-date="' + escapeHtml(d.date) + '">'
+           +   '<td></td>'
+           +   '<td class="ins-qh-daily-queue-cell">All queues</td>'
+           +   '<td class="num">' + fmtNumber(d.totalCalls) + '</td>'
+           +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(d, null) + '</td>'
+           +   '<td class="' + (dViol > 0 ? 'num qcd-warn-light' : 'num') + '">' + fmtNumber(d.violations) + '</td>'
+           + '</tr>';
+    });
+    return { html: html, unit: unit };
+  }
+
+  // Render the Daily breakdown table. MULTI mode (2+ queues with daily rows)
+  // shows every queue + a total per date; otherwise the single-series path
+  // honors the queue scope and reflects it as a chip beside the summary
+  // label ('' = dept total, no chip).
   function insQhDailyRender_() {
     const tbody = $('ins-qh-daily-tbody');
     if (!tbody) return;
-    const scoped = insQhDailyScope_ ? insQhDailyByQueue_[insQhDailyScope_] : null;
-    const rows = scoped || insQhDailyAll_;
-    // Round-16 (owner follow-up): the daily rows tally too. The unit comes
-    // from the rows being DISPLAYED (not the whole dept), so re-scoping to a
-    // quiet sub-queue re-normalizes the blocks instead of shrinking to dots.
-    const unit = ansTallyUnitFor_(rows.map(function (r) {
-      return { totalAnswered: r.totalAnswered, totalMissed: r.abandoned };
-    }));
-    tbody.innerHTML = qcdDailyRowsHtml_(rows, { bar: true, tallyUnit: unit });
+    const wrap = $('ins-qh-daily');
+    const chipEl = $('ins-qh-daily-scope');
+    const multi = insQhDailyMulti_();
+    if (wrap) wrap.classList.toggle('ins-qh-daily--multi', multi);
+    let unit;
+    if (multi) {
+      const built = insQhDailyMultiRowsHtml_();
+      tbody.innerHTML = built.html;
+      unit = built.unit;
+      if (chipEl) chipEl.innerHTML = '';   // every queue is on screen already
+    } else {
+      const scoped = insQhDailyScope_ ? insQhDailyByQueue_[insQhDailyScope_] : null;
+      const rows = scoped || insQhDailyAll_;
+      // Round-16 (owner follow-up): the daily rows tally too. The unit comes
+      // from the rows being DISPLAYED (not the whole dept), so re-scoping to a
+      // quiet sub-queue re-normalizes the blocks instead of shrinking to dots.
+      unit = ansTallyUnitFor_(rows.map(function (r) {
+        return { totalAnswered: r.totalAnswered, totalMissed: r.abandoned };
+      }));
+      tbody.innerHTML = qcdDailyRowsHtml_(rows, { bar: true, tallyUnit: unit });
+      if (chipEl) {
+        chipEl.innerHTML = scoped
+          ? '<span class="ins-qh-scope-chip">' + escapeHtml(insQhDailyScope_)
+            + '<button type="button" class="ins-qh-scope-clear" title="Show all queues (department total)">&times;</button></span>'
+          : '';
+      }
+    }
     const legEl = $('ins-qh-daily-legend');
     if (legEl) {
       legEl.innerHTML = unit > 1
         ? '<span class="tly a"></span> = ' + unit + ' calls' : '';
       legEl.style.display = unit > 1 ? '' : 'none';
     }
-    const chipEl = $('ins-qh-daily-scope');
-    if (chipEl) {
-      chipEl.innerHTML = scoped
-        ? '<span class="ins-qh-scope-chip">' + escapeHtml(insQhDailyScope_)
-          + '<button type="button" class="ins-qh-scope-clear" title="Show all queues (department total)">&times;</button></span>'
-        : '';
-    }
   }
 
   // Violation-date drill: open the collapsed Daily breakdown, scroll the
-  // day's row into view, and flash it. Silent no-op when the table is hidden
-  // or the date isn't in the series (shouldn't happen -- violation dates come
-  // from the same window the daily series covers).
-  function insJumpToDailyRow_(iso) {
+  // day's row into view, and flash it. In MULTI mode the optional queue arg
+  // targets that queue's own row for the date (falling back to the date's
+  // first row). Silent no-op when the table is hidden or the date isn't in
+  // the series (shouldn't happen -- violation dates come from the same
+  // window the daily series covers).
+  function insJumpToDailyRow_(iso, queue) {
     if (!iso) return;
     const wrap = $('ins-qh-daily');
     const rowsBody = $('ins-qh-daily-tbody');
     if (!wrap || !rowsBody || wrap.style.display === 'none') return;
-    const dayRow = rowsBody.querySelector('tr[data-date="' + iso + '"]');
+    let dayRow = null;
+    if (queue) {
+      const qSel = String(queue).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      dayRow = rowsBody.querySelector('tr[data-date="' + iso + '"][data-queue="' + qSel + '"]');
+    }
+    if (!dayRow) dayRow = rowsBody.querySelector('tr[data-date="' + iso + '"]');
     if (!dayRow) return;
     wrap.open = true;
     try { dayRow.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* best-effort */ }
@@ -3088,7 +3335,8 @@
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
     // Round-16: the density mode is gone -- the basis is simply the saved /
-    // default insCardsChartMode ('abs' since the owner's default change).
+    // default insCardsChartMode ('gap' since M3; the same-page agent table
+    // carries the Absolute information).
     const mode = insCardsChartMode;
     if (mode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
     if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
@@ -3126,7 +3374,7 @@
           if (els && els.length) {
             const name = labels[els[0].index];
             if (name && typeof irDrillToAgent_ === 'function') {
-              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
             }
           }
         },
@@ -3226,7 +3474,7 @@
             const ds = datasets[els[0].datasetIndex];
             const name = ds && ds.label;
             if (name && typeof irDrillToAgent_ === 'function') {
-              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+              irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
             }
           }
         },
@@ -3293,7 +3541,7 @@
       if (els && els.length) {
         const name = labels[els[0].index];
         if (name && typeof irDrillToAgent_ === 'function') {
-          irDrillToAgent_(name, $('ins-from').value, $('ins-to').value);
+          irDrillToAgent_(name, $('ins-from').value, $('ins-to').value, { fromInsights: true });
         }
       }
     };
@@ -3902,9 +4150,10 @@
   function insSavePrefs_() {
     try {
       localStorage.setItem(insPrefsKey_(), JSON.stringify({
-        preset: $('ins-preset') ? $('ins-preset').value : 'custom',
-        from:   $('ins-from')   ? $('ins-from').value   : '',
-        to:     $('ins-to')     ? $('ins-to').value     : '',
+        // (M4: preset/from/to are no longer saved -- the dept controls are
+        // the date authority since M2, so first-open seeds from them and a
+        // saved window had nothing left to restore onto. Saved VIEWS still
+        // carry dates -- their own storage, deliberately.)
         compareMode: $('ins-compare-mode') ? $('ins-compare-mode').value : 'prevPeriod',
         priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
@@ -3929,9 +4178,9 @@
     try {
       const prefs = JSON.parse(localStorage.getItem(insPrefsKey_()) || 'null');
       if (!prefs || typeof prefs !== 'object') return;
-      if (prefs.preset && $('ins-preset')) $('ins-preset').value = prefs.preset;
-      if (prefs.from   && $('ins-from'))   $('ins-from').value   = prefs.from;
-      if (prefs.to     && $('ins-to'))     $('ins-to').value     = prefs.to;
+      // (M4: preset/from/to are neither saved nor restored -- the dept
+      // controls seed the window on first open; old blobs' date fields are
+      // simply ignored.)
       if (prefs.compareMode && $('ins-compare-mode')) {
         $('ins-compare-mode').value = prefs.compareMode;
         $('ins-compare-mode').dispatchEvent(new Event('change'));
@@ -3993,7 +4242,12 @@
       }
       // 'prior' basis retired (owner note: the 3-way sub-selector read as
       // confusing); a saved 'prior' pref falls back to the default gap view.
-      if (prefs.cardsChartMode === 'gap' || prefs.cardsChartMode === 'abs') {
+      // M3 (owner): a saved 'abs' SELF-HEALS to the gap default too -- most
+      // blobs carry 'abs' from mere usage under the old default (prefs save
+      // the active mode on every change), not from intent, and the agent
+      // table on the same page now carries the Absolute information. The
+      // in-session sub-toggle / A/B remote still switch freely.
+      if (prefs.cardsChartMode === 'gap') {
         insCardsChartMode = prefs.cardsChartMode;
         insSyncCardsChartMode_();
       }

@@ -1,5 +1,11 @@
 # Insights modal → dedicated page — approved plan
 
+> **SUPERSEDED (2026-08-07):** the Insights PAGE this plan created has since
+> been folded INTO My Department as the `#dept-insights-region` collapsible —
+> see [`insights-merge-plan.md`](insights-merge-plan.md) (M1–M4). This doc
+> stays as the history of the modal→page conversion and the decisions
+> (id stability, no-setup-form auto-generate) the merge inherited.
+
 Owner-approved 2026-07-10. Client-only conversion (script.html /
 dashboard.html / styles.html); InsightsReport.gs, the `insights:v19`
 cache, and the consolidation-freeze test are untouched. Single PR,

@@ -202,7 +202,10 @@
   body[data-page="overview"]     #overview-page     { display: block; }
   body[data-page="dept"]         #dept-page         { display: block; }
   body[data-page="escalations"]  #escalations-page  { display: block; }
-  body[data-page="insights"]     #insights-page     { display: block; }
+  /* (M1 Insights merge: #insights-page is no longer a .page section -- it
+     lives inside #dept-page's #dept-insights-region collapsible, so the
+     data-page="insights" toggles are retired. setPage maps 'insights' to
+     the dept page.) */
   /* Round-16 Phase 3 (motion): a brief fade-in on the page swap -- CSS
      animations restart whenever display flips from none, so this needs no
      JS. Opacity only (no translate: the sticky strips must not shear).
@@ -210,8 +213,7 @@
   @media (prefers-reduced-motion: no-preference) {
     body[data-page="overview"]     #overview-page,
     body[data-page="dept"]         #dept-page,
-    body[data-page="escalations"]  #escalations-page,
-    body[data-page="insights"]     #insights-page { animation: page-in 160ms ease-out; }
+    body[data-page="escalations"]  #escalations-page { animation: page-in 160ms ease-out; }
   }
   @keyframes page-in { from { opacity: 0.35; } to { opacity: 1; } }
   /* The Escalations page lives outside the main page container (it was
@@ -792,6 +794,12 @@
   /* Insights Daily breakdown reuses .ans-bar for the Answered-vs-Abandoned
      split; give the cell room + a little vertical padding like the agent table. */
   td.qcd-daily-bar-cell { min-width: 180px; padding-top: 6px; padding-bottom: 6px; }
+  /* Round-16b (owner): on the QCD daily surfaces the counts color-code to
+     their blocks -- abandoned reads bad-red (the agent table keeps its warn
+     pairing for missed), and a zero count mutes so quiet days stay quiet. */
+  .qcd-daily-bar-cell .ans-nums .miss-n { color: var(--bad); }
+  .qcd-daily-bar-cell .ans-nums .miss-n.is-zero,
+  .qcd-daily-bar-cell .ans-nums .ans-n.is-zero { color: var(--muted); font-weight: 500; }
   .ans-bar { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
   /* Round-16 (owner request): volume-proportional TALLY for AGENT rows --
      one block per `unit` calls (answered sage first, then missed red), so
@@ -863,6 +871,57 @@
   /* R5: the missed section hosts a frost-and-ripple while its fetch runs;
      min-height so a first-load (empty) section can center the overlay. */
   #dept-missed-section.dm-loading { min-height: 220px; }
+
+  /* ---- M1 (Insights merge): the dept-page Insights REGION ----------------
+     The whole ex-page lives in <details id="dept-insights-region"> below the
+     dept layout -- collapsed by default, heavy init on first open (the
+     laziness contract). The summary reads as a section heading in the fold
+     family; the caret reuses the ins-fold square-box discipline (a rotated
+     bare glyph box once tripped the overflow gate). */
+  .ins-region { margin: 26px 0 8px; }
+  .ins-region-summary {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    cursor: pointer; user-select: none; list-style: none;
+    padding: 12px 0 10px; border-top: 2px solid var(--line);
+  }
+  .ins-region-summary::-webkit-details-marker { display: none; }
+  .ins-region-summary::after {
+    content: '\25b8'; color: var(--muted); font-size: 14px;
+    margin-left: auto; transition: transform 0.15s ease;
+    display: inline-block; width: 1em; height: 1em;
+    line-height: 1em; text-align: center; align-self: center;
+  }
+  .ins-region[open] > .ins-region-summary::after { transform: rotate(90deg); }
+  .ins-region-title {
+    font-family: var(--display);
+    font-size: 19px; font-weight: 700; color: var(--ink);
+  }
+  .ins-region-sub { color: var(--muted); font-size: 12.5px; }
+  /* M2: the live headline on the collapsed summary (insRegionHeadSync_) --
+     mono stats in ink, muted separators, the window as a quiet mono tail. */
+  .ins-region-head { display: inline-flex; align-items: baseline; gap: 7px;
+    flex-wrap: wrap; font-family: var(--mono); font-size: 11.5px;
+    font-variant-numeric: tabular-nums; color: var(--muted); }
+  .ins-region-head .ins-region-stat { color: var(--ink); font-weight: 600; }
+  .ins-region-head .ins-region-win { color: var(--muted); font-weight: 400;
+    margin-left: 5px; }
+  .ins-region-summary:hover .ins-region-title { color: var(--accent); }
+  /* M3: the dept pill on the results title line -- which dept THIS report
+     covers (load-bearing on parent depts whose table above is combined);
+     the scoped variant marks a sub-queue-narrowed run. */
+  .ins-dept-pill {
+    font: 600 12px/1.6 var(--ui); color: var(--accent);
+    background: var(--accent-soft); border-radius: var(--r-pill, 999px);
+    padding: 2px 10px; white-space: nowrap;
+  }
+  .ins-dept-pill--scoped { color: var(--warn); background: var(--warn-soft); }
+  /* M3: the fixed A/B remote hides while the Insights region is off-screen
+     (IntersectionObserver in script-8) -- !important beats the admin
+     reveal loop's inline display:''. */
+  #ins-ab-panel.ins-ab-offscreen { display: none !important; }
+  @media (prefers-reduced-motion: no-preference) {
+    .ins-region[open] > #insights-page { animation: ins-fold-in 180ms ease-out; }
+  }
 
   /* ---- Round-16: Insights per-section FOLDS ------------------------------
      (Replaced the D1 Simple/Detailed density mode + its ds-density-simple
@@ -989,12 +1048,10 @@
     #insights-page #insights-results > .ir-results-header {
       padding-top: 4px; padding-bottom: 4px;
     }
-    #insights-page #insights-results > .ir-results-header .ins-hdr-controls { margin-top: 2px; }
   }
   /* R11-B9/Phase 2: the Insights sticky strip is the WHOLE results header
-     (title + toolbar + the From/To controls row -- the My Department
-     pattern). The controls row sits as a full-width third row inside the
-     flex header. */
+     (title + toolbar -- the M4 sweep deleted the header's own From/To row;
+     the dept controls are the date authority). */
   #insights-page #insights-results > .ir-results-header { flex-wrap: wrap; }
   /* R12-10 (I-1): on the Insights page the -8px bleed margins pushed the
      strip 4px past the viewport (a permanent horizontal wiggle --
@@ -1005,6 +1062,18 @@
     margin-left: 0; margin-right: 0;
     padding-left: 0; padding-right: 0;
     box-shadow: -8px 0 0 var(--paper), 8px 0 0 var(--paper);
+  }
+  /* M1 (Insights merge): the two sticky strips share ONE page now. The dept
+     controls keep the viewport top; the Insights results header pins right
+     BELOW them (the measured controls height -- the same --dept-sticky-h the
+     .dept-side offset uses), so the strips STACK instead of covering each
+     other. z one below the controls so a measurement-lag overlap resolves
+     in the controls' favor. (The is-stuck shadow never fires on the offset
+     strip -- its ratio stays 1 while pinned below the controls; decoration
+     only, the controls' own shadow reads for both.) */
+  #insights-page #insights-results > .ir-results-header {
+    top: var(--dept-sticky-h, 84px);
+    z-index: 59;
   }
   /* Phase 3: elevation only while pinned (see the .is-stuck note above). */
   #dept-page .controls.is-stuck {
@@ -1018,10 +1087,7 @@
      Insights headers -- a ds-seg with a hair border so it reads as a
      navigational element among the flat controls. */
   .ds-lens-switch { border: 1px solid var(--line); }
-  #insights-page #insights-results > .ir-results-header .ins-hdr-controls {
-    flex: 1 1 100%; margin: 6px 0 0; margin-bottom: 0;
-    align-items: flex-end; gap: 12px;
-  }
+  /* (M4: the .ins-hdr-controls rules went with the deleted header date row.) */
   /* R11-I (item 2): the compare + selection context, relocated out of the
      sticky header into normal flow so the pinned strip is shorter. */
   #insights-page .ins-subhead { margin: 8px 0 10px; }
@@ -1076,7 +1142,6 @@
      then start ~12px under the divider, matching the in-container pages'
      header-mb(12)+page-mt(6). Earlier R11-E2/F1 attempts zeroed the page's own
      top spacing (which wasn't the culprit) and are superseded here. */
-  body[data-page="insights"] .container,
   body[data-page="escalations"] .container { padding-bottom: 0; }
   /* R11-E (item 5): make the active window PROMINENT on the sticky strip (the
      My Department treatment) -- a solid pill instead of a muted mono caption.
@@ -4575,6 +4640,17 @@
   }
   .ins-daily-hit td { animation: ins-daily-hit 1.6s var(--ease, ease-out); }
   @media (prefers-reduced-motion: reduce) { .ins-daily-hit td { animation: none; background: var(--warn-soft); } }
+  /* Round-16b: MULTI-queue Daily breakdown (parent + sub-queues + an
+     "All queues" total row per date). The Queue column exists only in this
+     mode (.ins-qh-daily--multi on the <details> reveals its th); date-group
+     head rows carry a top rule so the per-date groups read as blocks, and
+     the total row styles as the group's subtotal. */
+  .ins-qh-daily .ins-qh-daily-queue-th { display: none; }
+  .ins-qh-daily--multi .ins-qh-daily-queue-th { display: table-cell; }
+  .ins-qh-daily-queue-cell { white-space: nowrap; }
+  .ins-daily-q-sub { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .ins-qh-daily--multi .ins-daily-group-head td { border-top: 2px solid var(--line); }
+  .ins-daily-total-row td { font-weight: 600; background: var(--paper-2); }
 
   /* 4b: all-departments daily call queue report (Overview; open to managers). */
   .ov-admin-actions { margin: 8px 0 12px; }
@@ -4993,13 +5069,16 @@
     body.cr-printing .ds-kpi,
     body.cr-printing .cr-agent-card { page-break-inside: avoid; }
 
-    /* Insights is a PAGE (modal->page conversion): printing runs from the
-       page's Export menu, so body[data-page="insights"] already shows the
-       section (the display:block !important is belt-and-suspenders) and the
-       other .page sections are display:none. Un-constrain the page body for
-       paper -- there is no modal panel to unwrap anymore. */
-    body.ins-printing > .container { display: none !important; }
-    body.ins-printing #insights-page { display: block !important; }
+    /* M1 (Insights merge): Insights prints from the region ON the dept page
+       (body[data-page="dept"]) -- the Export menu lives inside the open
+       region, so the <details> is necessarily open when this class is set.
+       Hide the app chrome + every dept-page sibling and let the region
+       content own the paper; un-constrain the page body (no modal panel to
+       unwrap). */
+    body.ins-printing .dash-header { display: none !important; }
+    body.ins-printing #dept-page > :not(#dept-insights-region) { display: none !important; }
+    body.ins-printing #dept-insights-region > summary { display: none !important; }
+    body.ins-printing #dept-insights-region { margin: 0 !important; }
     body.ins-printing .ins-page-body {
       max-width: 100% !important;
       padding: 0 !important;

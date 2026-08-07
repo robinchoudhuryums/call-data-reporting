@@ -168,7 +168,7 @@
    * row click. No comparison (plain Individual Report); the user can add a
    * vs-self comparison from the form afterward.
    */
-  function irDrillToAgent_(agentName, from, to) {
+  function irDrillToAgent_(agentName, from, to, opts) {
     if (!agentName) return;
     if (from && $('ir-from')) $('ir-from').value = from;
     if (to   && $('ir-to'))   $('ir-to').value   = to;
@@ -184,11 +184,15 @@
     // (and applies the pending selection + auto-run) even if the cached
     // roster matched.
     irLastRoster = { dept: null, agents: [], activeAgents: null, activeFloaters: null, rangeKey: '' };
-    // Drill-through from the Insights PAGE (modal->page conversion): the IR
-    // modal simply overlays it -- the rendered report stays put behind the
-    // overlay, so nothing is hidden or restored. Just flag the origin and
-    // reveal the "Back to Insights" button on the IR modal (#2).
-    const fromInsights = document.body.getAttribute('data-page') === 'insights';
+    // Drill-through from an Insights surface: the IR modal simply overlays
+    // the page -- the rendered report stays put behind the overlay, so
+    // nothing is hidden or restored. Just flag the origin and reveal the
+    // "Back to Insights" button on the IR modal (#2). Insights is a REGION
+    // of the dept page (M1 merge), so the origin travels as
+    // opts.fromInsights from the Insights call sites; the dept agent-table
+    // drill passes nothing. (M4: the legacy data-page belt is gone --
+    // data-page is never 'insights' anymore.)
+    const fromInsights = !!(opts && opts.fromInsights);
     if (fromInsights) {
       irCameFromInsights_ = true;
       const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = '';

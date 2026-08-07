@@ -482,8 +482,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Volume & Efficiency view (stacked Answered+Missed per agent + %
   Answered dots, `insRenderCardsChartAbs_`). `PerformanceReport.gs` was
   DELETED (`deltaBlock_` moved to Util.gs -- Insights consumes it);
-  legacy `#/report/performance` deep links land on the Insights page
-  (router page repoint); the `performance:` cache prefix and the
+  legacy `#/report/performance` deep links land on the Insights region
+  (router repoint); the `performance:` cache prefix and the
   `cdr.pr.prefs.v1` localStorage key are orphans. The frozen-literal
   test in insights-report.test.js pins the inherited semantics
   (ex-parity gate). NOTE (INV-17): `clasp push -f` does not delete
@@ -940,9 +940,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bites unrelated work; the full text is authoritative there, this is the index:
   Insights absorbed the Performance Report AND Compare Ranges (both retired,
   incl. the consolidated trend chart + per-agent cards/chart bases + IR
-  drill-through) · Insights header controls (From/To + shared Quick-select
-  chips; ex-period slider), trend-at-bottom, the lens switcher and the R9-3
-  shared date window · Insights per-section FOLDS (replaced the
+  drill-through) · Insights header dates (DELETED in M4 -- the dept
+  controls row is the page's single date authority; `insSyncToDeptWindow_`),
+  trend-at-bottom, the INSIGHTS REGION (the M1 merge: the whole ex-page is a
+  lazy `<details>` on My Department) · Insights per-section FOLDS (replaced the
   Simple/Detailed density mode; incl. the C3 draw-on-open chart trap) ·
   Insights Phase 2 (saved views, share link, calendar trend,
   summary email) · the guided onboarding tour · the Insights floating admin A/B
@@ -1793,26 +1794,28 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Calls) plus the Low Answer Rate Alerts engine are in the dashboard.
   Awaiting decommission of the spreadsheet; meanwhile accepts only
   cleanup deletions.
-- **Multi-page architecture: Overview + My Department + Escalations +
-  Insights.**
+- **Multi-page architecture: Overview + My Department + Escalations.**
   The dashboard is one HTML doc with top-level `<section>` pages toggled
-  by `body[data-page="overview|dept|escalations|insights"]` (the `.page`
+  by `body[data-page="overview|dept|escalations"]` (the `.page`
   CSS shows only the active one). **Overview is the default landing** for
   every page load; **My Department** is the per-dept agent table;
   **Escalations** (`#/escalations`) is an interactive worklist; **Insights**
-  (`#/report/insights`) is a full page whose header tab is visible to ALL
-  roles. `setPage(name)` swaps the page, the header kicker/title, and triggers
+  (`#/report/insights`) is a lazy collapsible REGION at the bottom of My
+  Department (`#dept-insights-region`, M1 merge -- `setPage('insights')`
+  maps to the dept page and opens it; first open runs `insEnsurePage_`;
+  see docs/insights-merge-plan.md). `setPage(name)` swaps the page, the header kicker/title, and triggers
   that page's load (Overview -> `ovLoad_`; Escalations ->
-  `escEnsureInit_`+`escLoad_`; Insights -> `insEnsurePage_`). Modals (Help,
+  `escEnsureInit_`+`escLoad_`). Modals (Help,
   Settings, Individual, Alerts, Orphan Fix, Dept Config) overlay any page;
   there is no standalone Missed Calls modal -- **the My Department page's
   inline missed section IS the Missed Calls report.**
-  **Insights has no setup-form step:** first entry AUTO-GENERATES the report
-  (restored prefs, or the launcher-window default with an agent-free
-  whole-dept run, INV-45), re-entry keeps the rendered report, and all editing
-  goes through the results-header "Edit dates & agents" popover. The form
-  survives HIDDEN as the failure / empty-roster fallback only (`insShowForm`)
-  -- see docs/insights-page-plan.md.
+  **Insights has no setup-form step:** first OPEN auto-generates an
+  agent-free whole-dept run (INV-45) over the dept controls' window (the
+  page's single date authority -- `insSyncToDeptWindow_` converges the open
+  region on date/dept changes; date prefs are gone), re-open keeps the
+  rendered report, and editing is the dept controls + the "Comparison &
+  agents" popover. The form survives HIDDEN as the failure / empty-roster
+  fallback only (`insShowForm`) -- see docs/insights-merge-plan.md.
   Overview auto-refreshes silently every 5 minutes while active, re-fetching
   from the server cache. **A dept-TILE click SOLOS that dept's line on the
   30-day trend chart; it does NOT navigate** --
@@ -2203,7 +2206,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
