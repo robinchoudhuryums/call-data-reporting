@@ -2301,3 +2301,33 @@ commit/push/deploy direction.
   adoptSharedWindow_ retirement; then M3 (dept pill, Gap-vs-team default,
   A/B panel scoping) and M4 (transition-machinery removal). Watch: the
   closed-mid-generate chart-size exposure (M2 re-arm).
+
+## Increment 85 — M2 Insights merge: controls reconciliation (2026-08-07)
+
+  M2 shipped per docs/insights-merge-plan.md. The dept controls row is now
+  the page's SINGLE DATE AUTHORITY: the region's own header From/To +
+  Quick-select row (#ins-hdr-controls) is hidden (wiring inert until M4),
+  and the new insSyncToDeptWindow_ converges the region -- on refresh()
+  (open + rendered + window moved -> re-run via insApplyWindow_) and on
+  region toggle-open (stale closed region re-runs on next open). It skips
+  while a programmatic run is armed, so chip/share-link windows never race;
+  priority: share link > chip/handoff > dept window > prefs > defaults.
+  insRegionHeadSync_ puts a live headline on the collapsed summary
+  (% answered · missed rings · abandoned % · window; teamStats fields are
+  stat OBJECTS -- read .formatted). Decisions recorded: NO open-state
+  persistence (auto-open would re-fire the RPC per dept visit); per-region
+  Export menus stay. adoptSharedWindow_ (R9-3) retired; pageActiveWindow_
+  survives only as the dwell-prefetch feed. Toggle-open re-CREATES charts
+  from insLastData, closing the collapsed-mid-generate 0x0-canvas exposure
+  from the M1 block. Gates: 651/651, INV-16, full ci:ui + a live-DOM probe.
+  Block in `.cycle/blocks/85-m2-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M2 pushed as 8379956 on claude/broad-scan-l9ojgm
+  (3 unmerged commits: 7dbef14 tab-retire/daily-breakdown, e6a704f M1,
+  8379956 M2 + checkpoints). No PR opened (owner asks explicitly). Deploy
+  on merge: dashboard only. Next: M3 -- dept pill on the region header
+  (owns the dept-SWITCH convergence gap: an open region keeps the prior
+  dept's report until a window change), "See missed calls" as in-page
+  scroll, Agents default -> Gap vs team, A/B panel scoping. Then M4
+  retirement sweep (inert header-dates markup, lens switcher, handoff
+  detours, prefs-blob dates).
