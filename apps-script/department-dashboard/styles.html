@@ -906,6 +906,19 @@
   .ins-region-head .ins-region-win { color: var(--muted); font-weight: 400;
     margin-left: 5px; }
   .ins-region-summary:hover .ins-region-title { color: var(--accent); }
+  /* M3: the dept pill on the results title line -- which dept THIS report
+     covers (load-bearing on parent depts whose table above is combined);
+     the scoped variant marks a sub-queue-narrowed run. */
+  .ins-dept-pill {
+    font: 600 12px/1.6 var(--ui); color: var(--accent);
+    background: var(--accent-soft); border-radius: var(--r-pill, 999px);
+    padding: 2px 10px; white-space: nowrap;
+  }
+  .ins-dept-pill--scoped { color: var(--warn); background: var(--warn-soft); }
+  /* M3: the fixed A/B remote hides while the Insights region is off-screen
+     (IntersectionObserver in script-8) -- !important beats the admin
+     reveal loop's inline display:''. */
+  #ins-ab-panel.ins-ab-offscreen { display: none !important; }
   @media (prefers-reduced-motion: no-preference) {
     .ins-region[open] > #insights-page { animation: ins-fold-in 180ms ease-out; }
   }

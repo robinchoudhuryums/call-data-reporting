@@ -992,7 +992,11 @@ behind the removed button.
 - **Insights Agents section**: the Cards view is HIDDEN for now (owner
   undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
-  the **Absolute** basis. All cards code is kept — single-agent reports still
+  the **Gap vs team** basis (M3 — since the M1 merge the agent table on the
+  SAME page carries the Absolute information, so the section defaults to the
+  one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap, the
+  in-session sub-toggle / A/B remote still switch freely). All cards code is
+  kept — single-agent reports still
   force cards, and the admin A/B remote's Cards button still reaches the
   hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
 - **Insights Daily breakdown**: two modes, decided by how many queues carry
@@ -1144,8 +1148,18 @@ behind the removed button.
   only to feed the R11-C2 dwell prefetch. The toggle-open path also
   RECREATES the charts from `insLastData` (destroy + create) so a report
   that rendered while the region was collapsed mid-generate isn't left with
-  0×0 canvases. M3 (dept pill / scope polish) and M4 (retire the
-  transition machinery) are specified in the plan doc.
+  0×0 canvases. **M3 (shipped): scope polish** — the `#ins-dept-pill` LABEL
+  (not a second selector; the header dept selector stays the authority)
+  states the report's dept, warn-tinted when a sub-queue selection narrowed
+  it; the dept leads the collapsed headline; `insSyncToDeptWindow_` also
+  converges on a header dept SWITCH (`insLastHeaderDept_`, re-ensure roster
+  + agent-free auto-run); both same-page hand-offs became in-page scrolls
+  (`qsSpotlight_('dept-missed-section')` / scroll to the table,
+  `handoffToMyDept_` kept as the not-rendered fallback); the Agents chart
+  defaults to Gap vs team with a saved `'abs'` self-heal; the fixed A/B
+  remote hides while the region is off-screen (IntersectionObserver →
+  `.ins-ab-offscreen`). M4 (retire the transition machinery) is specified
+  in the plan doc.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

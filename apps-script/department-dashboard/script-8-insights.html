@@ -55,7 +55,13 @@
   // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
   // the prior values stay reachable via the card delta-badge hover
   // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  let insCardsChartMode = 'abs';   // 'gap' | 'abs' | 'trend'; Round-16 (owner): Absolute is the default basis (was Trend, R11-H)
+  // 'gap' | 'abs' | 'trend'. M3 (owner): Gap vs team is the default basis --
+  // since the M1 merge the agent table on the SAME page already carries the
+  // Absolute information (per-agent answered/missed volume tallies + rate),
+  // so the section defaults to the one view the table can't show: each
+  // agent's position vs the team average. Abs/Trend stay one click away
+  // (the Basis sub-toggle / the admin A/B remote).
+  let insCardsChartMode = 'gap';
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
   // (the share-of-answered pie's insShareChartInstance is GONE -- Round-16
@@ -156,6 +162,11 @@
   // the normal flow). Consumed in insRenderAgentList at the race-free
   // post-roster point, like the launcher flag.
   var insAutoRunPending_ = false;
+  // M3 (dept identity): the HEADER dept the last run was fired under
+  // (getRequestedDept at run time -- NOT meta.department, which a sub-queue
+  // picker selection legitimately narrows to a child dept). Lets the sync
+  // detect a header dept SWITCH, which a window-only compare misses.
+  var insLastHeaderDept_ = null;
   function insEnsurePage_() {
     if (!$('insights-page')) return;
     if (!insPageInited_) {
@@ -205,6 +216,23 @@
     if (!df || !dt || !df.value || !dt.value) return;
     var f = $('ins-from'), t = $('ins-to');
     if (!f || !t) return;
+    // M3 (dept identity): a header dept SWITCH converges too -- a rendered
+    // report for the OLD dept re-ensures the roster for the new one and arms
+    // the agent-free first-open-style run (consumed post-roster at the
+    // race-free point; the old dept's checked agents die with the old
+    // picker). The window rewrite rides the same run; the loading pane
+    // covers the swap like a first open.
+    var dept = getRequestedDept();
+    if (insLastData && insLastHeaderDept_ && dept && dept !== insLastHeaderDept_) {
+      f.value = df.value;
+      t.value = dt.value;
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+      insAutoRunPending_ = true;
+      launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
+        'Insights for ' + dept);
+      insEnsureRoster();
+      return;
+    }
     var curFrom = (insLastData && insLastData.meta && insLastData.meta.from) || f.value;
     var curTo   = (insLastData && insLastData.meta && insLastData.meta.to)   || t.value;
     if (curFrom === df.value && curTo === dt.value) return;
@@ -287,6 +315,23 @@
       }
     });
 
+    // M3: the fixed admin A/B remote only makes sense while the region is
+    // actually ON SCREEN -- inside the region it already hides while the
+    // <details> is closed, but position:fixed floats it over the agent
+    // table / missed section whenever the region is open off-screen below.
+    // An IntersectionObserver on the region toggles a hide class (threshold
+    // 0: any visible part keeps it). Decoration only -- silently skipped
+    // without IntersectionObserver, and non-admins never see the panel
+    // regardless (data-admin-only).
+    if (insRegion && $('ins-ab-panel') && typeof IntersectionObserver === 'function') {
+      try {
+        new IntersectionObserver(function (entries) {
+          var panel = $('ins-ab-panel');
+          if (panel) panel.classList.toggle('ins-ab-offscreen', !entries[0].isIntersecting);
+        }, { threshold: 0 }).observe(insRegion);
+      } catch (e) { /* decoration only */ }
+    }
+
     const preset = $('ins-preset');
     if (preset) preset.addEventListener('change', insApplyPreset);
     const fromEl = $('ins-from'), toEl = $('ins-to');
@@ -329,23 +374,35 @@
     const editApply = $('ins-edit-apply-btn');
     if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
     insInitHeaderDates_();   // Phase 2: header From/To + shared Quick-select chips
-    // Lighter hand-off: Insights -> My Department (agent table / Missed detail)
-    // for the same dept + window. handoffToMyDept_ carries the dates.
+    // M3 (in-page scroll): the agent table and the missed section live ON
+    // THIS PAGE now, so the two Insights -> My Department hand-offs scroll
+    // instead of the old setPage + refresh round trip (which re-fetched a
+    // summary that is already rendered). The dept window is the authority
+    // (M2), so there are no dates to carry; handoffToMyDept_ survives as
+    // the fallback when the target isn't rendered (e.g. the missed section
+    // hidden on a fetch failure) -- it still works, it just costs a refresh.
     const insMyDeptBtn = $('ins-open-mydept-btn');
     if (insMyDeptBtn) insMyDeptBtn.addEventListener('click', function () {
-      handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, {});
+      const wrap = document.querySelector('.agents-table-wrap');
+      if (wrap) {
+        try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { window.scrollTo(0, 0); }
+      } else {
+        handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, {});
+      }
     });
     // R7 (N-1): re-run the report in place for the current selection. Rides
     // runInsReport's SWR + the I-3 whole-report frost; note the server-side
     // report cache still applies (data refreshes as the 30-min TTL allows).
     const insRefreshBtn = $('ins-refresh-btn');
     if (insRefreshBtn) insRefreshBtn.addEventListener('click', function () { runInsReport(); });
-    // R9-1/Phase 2: the results header (title + toolbar + the From/To
-    // controls row) is the page's sticky strip, so the real date inputs
-    // stay reachable while scrolling -- the My Department pattern.
     const insQhMissedBtn = $('ins-qh-missed-link');
     if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
-      handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
+      const sec = $('dept-missed-section');
+      if (sec && sec.style.display !== 'none') {
+        qsSpotlight_('dept-missed-section');   // scroll + the quick-start ring
+      } else {
+        handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
+      }
     });
     // #5 Option A: delegated ~300ms hover-prefetch on the two Insights -> My
     // Department hand-offs (the button + the Queue-health missed link, which is
@@ -1218,6 +1275,7 @@
     }
     const reportDept = __sq.dept || dept;
     insSetFormError('');
+    insLastHeaderDept_ = dept;   // M3: the header dept this run fired under
     insLastRequestedAgents_ = agents.slice();   // edit popover reads the REQUESTED form
     const req = { department: reportDept, from: from, to: to, agents: agents };
     if (prior) { req.priorFrom = prior.from; req.priorTo = prior.to; }
@@ -1534,6 +1592,20 @@
       const wd = insWorkdaysLabel_(meta.currentWorkDays, meta.from, meta.to);
       if (wd) bits.push(wd);
       $('ins-results-date').textContent = '(' + bits.filter(Boolean).join(' · ') + ')';
+      // M3: the dept pill -- which department THIS report covers (a parent's
+      // agent table above is combined; a sub-queue selection narrows to a
+      // child dept). Marked scoped when it differs from the header dept.
+      const pill = $('ins-dept-pill');
+      if (pill) {
+        const rd = meta.department || '';
+        const hd = getRequestedDept() || '';
+        pill.textContent = rd;
+        pill.style.display = rd ? '' : 'none';
+        pill.classList.toggle('ins-dept-pill--scoped', !!rd && !!hd && rd !== hd);
+        pill.title = (rd && hd && rd !== hd)
+          ? 'This report is scoped to ' + rd + ' (a sub-queue of the selected department) — the agent selection narrowed it.'
+          : 'The department this report covers. Switch departments with the header selector.';
+      }
     })();
     insSyncHeaderDates_(data.meta);   // Phase 2: reflect the rendered window on the header inputs
     const cmp = $('ins-compare-line');
@@ -1853,6 +1925,10 @@
     const bits = [];
     // teamStats fields are STAT OBJECTS ({formatted, deltaPct, ...} -- what
     // dsKpiTile_ consumes); .formatted is the display string.
+    // M3: the dept leads the headline -- a PARENT dept's page shows the
+    // combined table, so the collapsed region must say which dept its
+    // report covers.
+    if (meta.department) bits.push(escapeHtml(String(meta.department)));
     const pctStr = t.pct && t.pct.formatted;
     const missStr = t.missed && t.missed.formatted;
     if (pctStr && pctStr !== '-')  bits.push(escapeHtml(String(pctStr)) + ' answered');
@@ -3302,7 +3378,8 @@
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
     // Round-16: the density mode is gone -- the basis is simply the saved /
-    // default insCardsChartMode ('abs' since the owner's default change).
+    // default insCardsChartMode ('gap' since M3; the same-page agent table
+    // carries the Absolute information).
     const mode = insCardsChartMode;
     if (mode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
     if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
@@ -4207,7 +4284,12 @@
       }
       // 'prior' basis retired (owner note: the 3-way sub-selector read as
       // confusing); a saved 'prior' pref falls back to the default gap view.
-      if (prefs.cardsChartMode === 'gap' || prefs.cardsChartMode === 'abs') {
+      // M3 (owner): a saved 'abs' SELF-HEALS to the gap default too -- most
+      // blobs carry 'abs' from mere usage under the old default (prefs save
+      // the active mode on every change), not from intent, and the agent
+      // table on the same page now carries the Absolute information. The
+      // in-session sub-toggle / A/B remote still switch freely.
+      if (prefs.cardsChartMode === 'gap') {
         insCardsChartMode = prefs.cardsChartMode;
         insSyncCardsChartMode_();
       }

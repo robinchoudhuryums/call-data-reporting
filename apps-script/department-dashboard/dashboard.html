@@ -649,6 +649,15 @@
           <div class="ir-results-header-left">
             <div class="ir-results-title-line">
               <span class="ir-results-title">Insights</span>
+              <!-- M3: the dept PILL states which department this report
+                   covers -- load-bearing for parent depts, whose agent table
+                   above is the COMBINED multi-dept view while Insights runs
+                   ONE dept (and a sub-queue picker selection can narrow the
+                   run to a child dept). Filled from meta.department by
+                   insRenderReport_; the header dept selector is the
+                   authority for changing it (insSyncToDeptWindow_ converges
+                   an open region on a switch). -->
+              <span class="ins-dept-pill" id="ins-dept-pill"></span>
               <span class="ir-results-date" id="ins-results-date"></span>
             </div>
             <!-- R11-I (item 2): the "Comparing against…" + "Showing: N agents"

@@ -91,18 +91,37 @@ untouched across every phase. This is a client-side restructure.
   (destroy + create, the C3-safe path — `resize()` alone does not reliably
   recover a 0×0 create).
 
-### M3 — Scope polish
+### M3 — Scope polish  ✅
 
-- Dept pill on the region header for parent depts (primary dept default;
-  drives the insights RPC's `department` param; `subqPickerScope_` still
-  refuses cross-dept selections).
-- Queue health "See missed calls →" becomes an in-page scroll to the missed
-  section (no `handoffToMyDept_` round trip).
-- Agents section defaults to **Gap vs team** (the tally table on the same
-  page already carries the Absolute information).
-- A/B panel visibility: currently shows whenever the region is open (it's
-  inside the region, `position: fixed`); scope it to "region open AND in
-  view" or fold it into the region header.
+- **Dept identity — a LABEL pill, not a second selector.** `#ins-dept-pill`
+  (results title line) states which dept the report covers, filled from
+  `meta.department` per render; a warn-tinted `--scoped` variant marks a
+  sub-queue-narrowed run (`meta.department ≠ getRequestedDept()`). The
+  HEADER dept selector stays the only way to change dept (one-authority,
+  the M2 model — parent managers can already pick children there via
+  `canPickDept_`). The dept also LEADS the collapsed region headline.
+  **Dept-switch convergence** (the M2 gap): `insSyncToDeptWindow_` now
+  tracks `insLastHeaderDept_` (the header dept at run time — deliberately
+  not `meta.department`, which a sub-queue selection legitimately narrows)
+  and on a switch re-ensures the roster + arms the agent-free
+  first-open-style run behind the loading pane, so an open region follows
+  the header selector. `subqPickerScope_` still refuses cross-dept
+  selections.
+- **In-page scrolls** replaced BOTH same-page hand-offs (each previously
+  cost a `setPage` + `refresh()` round trip re-fetching an
+  already-rendered summary): Queue health's "See missed calls →" spotlights
+  `#dept-missed-section` (`qsSpotlight_`), and the lens switcher's "Agent
+  table" side scrolls to the table. `handoffToMyDept_` survives as the
+  fallback when the target isn't rendered.
+- **Agents section defaults to Gap vs team** (`insCardsChartMode = 'gap'`);
+  a saved `'abs'` pref SELF-HEALS to gap (most blobs carry `'abs'` from
+  mere usage under the old default, not intent — the non-admin `'att'`
+  self-heal precedent). Abs/Trend stay one click away.
+- **A/B panel scoped to "region on screen"**: an IntersectionObserver on
+  the region toggles `.ins-ab-offscreen` (CSS `display:none !important`
+  beats the admin reveal loop's inline `display:''`), so the fixed remote
+  no longer floats over the agent table / missed section while the open
+  region is scrolled out of view.
 
 ### M4 — Retirement + cleanup
 
