@@ -1729,6 +1729,77 @@
          + '</svg>';
   }
 
+  // -- Round-16 (owner, Option 3): GOAL-GAP sparkline ------------------------
+  // The Overview grid tiles' trend corner: a mini line chart on the same
+  // honest 70-100% band as irSparkline_, with the answer-rate goal drawn as a
+  // dashed line and the area BETWEEN the line and the goal filled -- good-
+  // tinted above, warn-tinted below -- so the amount of warn fill IS the
+  // amount of missed goal (how far below, for how long), not just "below".
+  // Replaces the R11-L regression arrow on the grid tiles (the arrow
+  // compressed 30 days into one angle with no shape and no goal reference;
+  // irTrendArrow_ is kept below, currently uncalled). Nulls gap-connect like
+  // irSparkline_'s band mode; colors resolve through THEME (INV-42) with
+  // static fallbacks for a pre-theme first paint.
+  function irSparklineGoal_(values, color, opts) {
+    opts = opts || {};
+    const W = 70, H = 22, pad = 2;
+    const goal = Number(opts.goal);
+    const n = (values || []).length;
+    const empty = '<svg class="ir-spark-svg" width="' + W + '" height="' + H + '"></svg>';
+    if (n < 2 || !isFinite(goal)) return empty;
+    const eff = honestBand_(values, opts.band || [70, 100]);
+    const min = eff[0], range = (eff[1] - eff[0]) || 1;
+    const innerH = H - pad * 2;
+    const yOf = function (v) { return pad + innerH - ((v - min) / range) * innerH; };
+    const xStep = W / (n - 1);
+    const pts = [];
+    let latest = null;
+    for (let i = 0; i < n; i++) {
+      const raw = values[i];
+      if (raw == null || !isFinite(Number(raw))) continue;   // gap-connect
+      latest = Number(raw);
+      pts.push([i * xStep, yOf(latest)]);
+    }
+    if (pts.length < 2) return empty;
+    const gy = yOf(Math.max(eff[0], Math.min(eff[1], goal)));
+    const lineD = 'M' + pts.map(function (p) { return p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' L');
+    // The fill between the line and the goal, one path per side: the line
+    // clamped to the goal on the other side collapses to zero area wherever
+    // the series is on the wrong side, so each path only paints its own side.
+    const gapD = function (above) {
+      let d = 'M' + pts[0][0].toFixed(1) + ',' + gy.toFixed(1);
+      pts.forEach(function (p) {
+        const y = above ? Math.min(p[1], gy) : Math.max(p[1], gy);
+        d += ' L' + p[0].toFixed(1) + ',' + y.toFixed(1);
+      });
+      return d + ' L' + pts[pts.length - 1][0].toFixed(1) + ',' + gy.toFixed(1) + ' Z';
+    };
+    const good = THEME.good || '#3d9476';
+    const warn = THEME.warn || '#c66b4b';
+    const mut  = THEME.muted || '#6b7580';
+    const end = pts[pts.length - 1];
+    const title = (opts.label || 'Trend') + ' · latest '
+      + (latest != null ? latest.toFixed(1) + '%' : '–') + ' · goal ' + goal
+      + '% (dashed line; green fill = above goal, warm = below)';
+    // preserveAspectRatio="none" stretches the drawing to the CSS box (the
+    // tile CSS is width:100%; the default xMidYMid letterboxes a 70x22
+    // viewBox to ~89px centered). Strokes carry vector-effect=
+    // non-scaling-stroke so the stretch doesn't fatten them, and the end dot
+    // is a zero-length round-cap stroke for the same reason (a <circle>
+    // would stretch into a lozenge).
+    return '<svg class="ir-spark-svg ir-spark-goal" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H
+      + '" preserveAspectRatio="none" role="img" aria-label="' + escapeHtml(title) + '">'
+      + '<title>' + escapeHtml(title) + '</title>'
+      + '<path d="' + gapD(true) + '" fill="' + good + '" fill-opacity="0.22" stroke="none"/>'
+      + '<path d="' + gapD(false) + '" fill="' + warn + '" fill-opacity="0.26" stroke="none"/>'
+      + '<line x1="0" y1="' + gy.toFixed(1) + '" x2="' + W + '" y2="' + gy.toFixed(1) + '" stroke="' + mut
+      + '" stroke-width="1" stroke-dasharray="3 3" stroke-opacity="0.65" vector-effect="non-scaling-stroke"/>'
+      + '<path d="' + lineD + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'
+      + '<path d="M' + end[0].toFixed(1) + ',' + end[1].toFixed(1) + ' l0.01,0" fill="none" stroke="' + color
+      + '" stroke-width="4" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
+      + '</svg>';
+  }
+
   // -- R11-L: compact trend ARROW (dense-tile alternative to the sparkline) ----
   // The angle is the REAL least-squares slope of the series over the period,
   // measured against a FIXED value band (default 70-100% for answer rate, grown

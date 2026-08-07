@@ -871,13 +871,19 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   The Neon/sheet FETCH range stays the full calendar window so no
   weekday row is lost. Unset `COMPANY_HOLIDAYS` = no holidays dropped =
   pre-R11-L behavior (no cache bump, the S5 precedent). **Overview
-  dept-grid tiles show a TREND ARROW, not a sparkline (R11-L)** --
-  `irTrendArrow_` renders the real least-squares slope of the 30-day
-  % answered series as an angled, color-graded arrow (angle measured on
-  a fixed 70-100% band grown to include outliers, capped ±60°;
-  red-amber-green gradient saturating by ±30°; nulls skipped). The
-  auto-scaled sparkline exaggerated tiny drifts; the arrow reads
-  direction+magnitude at a glance. Sparklines STAY on the roomier
+  dept-grid tiles show a GOAL-GAP MINI LINE CHART (Round-16, replacing
+  the R11-L trend arrow)** -- `irSparklineGoal_(vals, color, {goal, band})`
+  draws the 30-day % answered series on the same honest 70-100% grown
+  band, a dashed line at `answerTarget_('global')`, and fills the area
+  BETWEEN the line and the goal (good-tinted above, warn below), so the
+  amount of warn fill IS the amount of missed goal. The svg stretches
+  full-width (`preserveAspectRatio="none"` + `vector-effect:
+  non-scaling-stroke` on every stroke -- the default aspect-preserve
+  letterboxed a 70x22 viewBox to ~89px centered; the end dot is a
+  zero-length round-cap stroke so the stretch can't lozenge it). Colors
+  ride THEME (INV-42). `irTrendArrow_` (the R11-L least-squares slope
+  arrow it replaced) is kept in script-6-ir but currently uncalled.
+  Sparklines STAY on the roomier
   surfaces (hero tile, company aggregate, expanded sub-queue card) but
   are now HONEST-SCALED there too -- `irSparkline_(vals, color, {band:[70,100]})`
   uses the same grown fixed band + gap-connects nulls (a no-data day no

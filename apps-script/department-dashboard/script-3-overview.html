@@ -896,10 +896,17 @@
   // accent-tinted background + tree-line connector via CSS.
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
     const st = ovPeriodStats_(dept);
-    // R11-L: dense grid tiles use the compact trend ARROW (real regression
-    // slope on the fixed 70-100% band) instead of the auto-scaled sparkline,
-    // which exaggerated tiny drifts. Nulls skipped (not zero-filled).
-    const spark = irTrendArrow_(dept.trend || [], { label: '% answered (30-day)' });
+    // Round-16 (owner, Option 3): the grid tiles' trend corner is a GOAL-GAP
+    // mini line chart -- the honest 70-100% band (R11-L's fix carries over),
+    // a dashed line at the answer-rate goal, and the area between the line
+    // and the goal filled good above / warn below, so the amount of warn
+    // fill IS the amount of missed goal. Replaced the R11-L regression
+    // arrow (direction only, no shape, no goal reference). Line color =
+    // the dept's chart palette color, tying tile to trend line.
+    const spark = irSparklineGoal_(dept.trend || [], color, {
+      label: '% answered (30-day)',
+      goal: answerTarget_('global'),
+    });
     const parentTag = isChild
       ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
       : '';
@@ -942,7 +949,7 @@
          +   '<div class="ov-dept-tile-row">'
          +     '<span><span class="ov-dept-stat-label">ATT</span> ' + escapeHtml(st.attFormatted) + '</span>'
          +   '</div>'
-         +   '<div class="ov-dept-tile-spark ov-dept-tile-arrow">' + spark + '</div>'
+         +   '<div class="ov-dept-tile-spark">' + spark + '</div>'
          + '</div>';
   }
 
