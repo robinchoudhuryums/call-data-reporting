@@ -134,9 +134,9 @@ function record(name, pass, detail) {
   const expandableSurfaces = [
     { label: 'Insights Queue health', sel: '#ins-queue-health tr.qcd-expandable',
       open: async () => {
-        // Round-16: no top-nav Insights tab -- go via the dept lens switcher.
-        await page.click('#my-dept-btn'); await page.waitForTimeout(1500);
-        await page.click('#lens-ins-btn'); await page.waitForTimeout(4000);
+        // N1: the Insights section renders open inline on the dept page and
+        // generates with it -- just enter the page and wait for the render.
+        await page.click('#my-dept-btn'); await page.waitForTimeout(5000);
       } },
     { label: 'all-dept QCD report', sel: '#qcd-alldept-body tr.qcd-expandable',
       open: async () => {

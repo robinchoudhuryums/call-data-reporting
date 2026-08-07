@@ -38,11 +38,10 @@ async function overflowPx(page) {
     }, [!!dark]);
     await page.goto(base + 'index-' + variant + '.html', { waitUntil: 'load' });
     await page.waitForTimeout(1800);
-    // Round-16: no top-nav Insights tab -- go via the dept lens switcher.
+    // N1: the Insights section renders open inline on the dept page and
+    // generates with it -- entering the page is the whole route.
     await page.click('#my-dept-btn');
-    await page.waitForTimeout(1500);
-    await page.click('#lens-ins-btn');
-    await page.waitForTimeout(3500);   // auto-run + render + deferred charts
+    await page.waitForTimeout(5000);   // summary + auto-run + render + deferred charts
     return { ctx, page };
   }
 

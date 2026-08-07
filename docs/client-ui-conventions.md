@@ -1105,12 +1105,17 @@ behind the removed button.
   popover is "Comparison & agents" (its date row hidden, not removed — the
   apply flow still round-trips those inputs). The prefs blob no longer
   saves/restores `preset/from/to` (saved VIEWS keep their own dates).
-- **The INSIGHTS REGION (M1 merge, docs/insights-merge-plan.md)**: the whole
-  ex-Insights-page lives in `<details id="dept-insights-region">` at the
-  bottom of `#dept-page` — collapsed by default, with the LAZINESS CONTRACT
-  that nothing Insights-related runs on dept-page load: `insEnsurePage_`
-  (init + auto-generate) fires on first OPEN, via the region's `toggle`
-  listener (user click) or `deptInsightsOpen_` (programmatic).
+- **The INSIGHTS REGION (M1 merge + N1 always-inline,
+  docs/insights-merge-plan.md)**: the whole ex-Insights-page lives in
+  `<details id="dept-insights-region" open>` at the bottom of `#dept-page` —
+  OPEN by default, rendering + GENERATING with the dept page:
+  `deptInsightsEnsureLive_` runs on dept entry + every `refresh()`, gated on
+  `data-page='dept'` (the Overview landing pays nothing) and on the region
+  being open (a manual collapse is respected for the session; the `toggle`
+  listener re-ensures on reopen). It wraps `insEnsurePage_` (first call arms
+  the INV-45 auto-run), the M2/M3 sync, and `insRearmZeroCharts_` (recreates
+  charts created while the page was hidden — the page-switch variant of the
+  toggle re-arm).
   `setPage('insights')` still exists and MAPS to the dept page + open+scroll
   region (script-2), so every legacy entry works unchanged: deep links
   (`#/report/insights` + the three retired-report repoints + the Digest
@@ -1159,13 +1164,16 @@ behind the removed button.
   defaults to Gap vs team with a saved `'abs'` self-heal; the fixed A/B
   remote hides while the region is off-screen (IntersectionObserver →
   `.ins-ab-offscreen`). **M4 (shipped): the transition machinery is
-  retired** — the lens switcher is KEPT as a jump affordance ("Insights"
-  → `deptInsightsOpen_` directly, no date carry / forced re-generate;
-  "Agent table" scrolls up); `handoffToInsights_`, the header-dates row +
-  wiring, the ex-hand-off hover-prefetch, the dead router branches
-  (`basePageRoute_` insights arm, the effRoute mapping), the
-  `irDrillToAgent_` data-page belt, the dwell 'insights' arm and the
-  prefs-blob dates are all deleted. `setPage('insights')` + the
+  retired** — `handoffToInsights_`, the header-dates row + wiring, the
+  ex-hand-off hover-prefetch, the dead router branches (`basePageRoute_`
+  insights arm, the effRoute mapping), the `irDrillToAgent_` data-page belt
+  and the prefs-blob dates are deleted. **N1 (shipped, post-deploy owner
+  feedback): the LENS SWITCHER is REMOVED on both sides** — it read as a
+  page toggle; with the region open-inline there is nothing to switch (the
+  `.ds-lens-switch` CSS and the whole dwell-prefetch / shared-window-store
+  family — `pageActiveWindow_`, `recordPageWindow_`, `armDwellPrefetch_`,
+  `insDwellPrefetch_`, `prefetchDeptSummary_` — went with it; the real
+  fetch fires up front now). `setPage('insights')` + the
   `/report/insights` route/share-state entries are PERMANENT compat
   surface for deep links + the Digest email links.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page

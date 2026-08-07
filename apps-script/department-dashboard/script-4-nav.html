@@ -558,75 +558,12 @@
     refresh();
   }
 
-  // -- Shared window store (ex-R9-3) -------------------------------------
-  // M2 (one date authority): the R9-3 silent ADOPTION (adoptSharedWindow_)
-  // is RETIRED -- the dept controls are the page's single date authority and
-  // insSyncToDeptWindow_ (script-8) converges the Insights region onto them
-  // (on refresh + on region open). This store still feeds the R11-C2
-  // dwell-prefetch below (pageActiveWindow_.dept is the window it warms;
-  // M4 dropped the 'insights' slot with its recorder).
-  var pageActiveWindow_ = { dept: null };   // last-rendered dept window (+ at: ms)
-
-  function recordPageWindow_(page, from, to) {
-    if (!from || !to) return;
-    pageActiveWindow_[page] = { from: from, to: to, at: Date.now() };
-    // R11-C2: a fresh render restarts the dwell-prefetch clock, so date
-    // changes made while staying on the page get their own warm pass.
-    if (typeof armDwellPrefetch_ === 'function'
-        && document.body.getAttribute('data-page') === page) {
-      armDwellPrefetch_(page);
-    }
-  }
-
-  // -- R11-C2: dwell-prefetch for the Insights region ------------------------
-  // The region's first open is a heavy cold aggregation (30-60s, owner
-  // report), and its window follows the dept controls (M2) -- so after ~10s
-  // of dwelling on My Department we silently fire the EXACT request the
-  // region's agent-free first open would run (dept + the rendered window +
-  // empty agents = the INV-45 whole-department default; prevPeriod compare
-  // adds no prior fields, matching insResolvePriorRange_'s null) and seed the
-  // D1b keep-last-good store under its reportSig_, so the open SWR-paints
-  // instantly. Guards: one fetch per signature per session, skipped when the
-  // region already shows that window, best-effort (failures silent). A user
-  // with SAVED agent/compare prefs produces a different signature on open --
-  // the prefetch then just warms the server cache for the agent-free key
-  // (documented cost; warmed requests count in Report Usage). (M4: the
-  // reverse 'insights' arm -- warming the dept summary while dwelling on the
-  // ex-page -- went with the page; the summary is on the same page now.)
-  var DWELL_PREFETCH_MS_ = 10000;
-  var dwellTimer_ = null;
-  var insPrefetchedSigs_ = {};
-  function clearDwellTimer_() { if (dwellTimer_) { clearTimeout(dwellTimer_); dwellTimer_ = null; } }
-  function armDwellPrefetch_(page) {
-    clearDwellTimer_();
-    if (page !== 'dept') return;
-    dwellTimer_ = setTimeout(function () {
-      try {
-        if (document.body.getAttribute('data-page') !== 'dept') return;
-        insDwellPrefetch_();
-      } catch (e) { /* best-effort */ }
-    }, DWELL_PREFETCH_MS_);
-  }
-  function insDwellPrefetch_() {
-    var dept = getRequestedDept(); if (!dept) return;
-    var win = pageActiveWindow_.dept;
-    if (!win || !win.from || !win.to) return;
-    // Already showing this window on Insights? Nothing to warm.
-    if (typeof insLastData !== 'undefined' && insLastData && insLastData.meta
-        && insLastData.meta.from === win.from && insLastData.meta.to === win.to) return;
-    var req = { department: dept, from: win.from, to: win.to, agents: [] };
-    var sig = reportSig_(req);
-    if (insPrefetchedSigs_[sig]) return;
-    insPrefetchedSigs_[sig] = true;
-    google.script.run
-      .withSuccessHandler(function (data) {
-        try { reportLastGoodWrite_('ins', sig, data); } catch (e) { /* storage full etc. */ }
-      })
-      .withFailureHandler(function () { /* best-effort: entry takes the cold path */ })
-      .getInsightsReport(req);
-  }
-
-  // (adoptSharedWindow_ retired in M2 -- see the store comment above.)
+  // (N1: the ex-R9-3 shared-window store + the R11-C2 dwell-prefetch are
+  // RETIRED -- the Insights region loads WITH the dept page now
+  // (deptInsightsEnsureLive_, script-8), so there is nothing left to
+  // pre-warm and no cross-page window to record. adoptSharedWindow_ went
+  // in M2; pageActiveWindow_/recordPageWindow_/armDwellPrefetch_/
+  // insDwellPrefetch_ went here.)
 
   // "Is one of my agents struggling or improving?" -> Individual Report
   // primed with a 30-day window; agent choice is deliberately left to

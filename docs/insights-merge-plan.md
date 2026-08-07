@@ -151,6 +151,36 @@ untouched across every phase. This is a client-side restructure.
 - Harness drivers unchanged — they click `#my-dept-btn` → `#lens-ins-btn`,
   which is exactly the kept jump affordance.
 
+### N1 — Always-inline (post-deploy owner feedback)  ✅
+
+The deployed M1–M4 shape — collapsed-by-default region + a tab-styled jump
+switcher — read as "still two pages." Owner ruling: ONE CONTINUOUS page,
+no toggle. So:
+
+- **The region renders OPEN by default and the report loads WITH the dept
+  page**: `deptInsightsEnsureLive_` (script-8) runs on dept-page entry
+  (`setPage`'s dept branch) + every `refresh()`, gated on
+  `data-page === 'dept'` — the Overview landing still pays nothing, so the
+  laziness contract narrows from "on first region open" to "never for
+  Overview-only visits." It ensures (first call arms the INV-45 auto-run),
+  converges window/dept (the M2/M3 sync), and re-arms zero-sized charts
+  (`insRearmZeroCharts_` — the page-switch variant of the toggle re-arm).
+- **The lens switcher is REMOVED on both sides** (it read as a page
+  toggle); the `.ds-lens-switch` CSS went with it. Deep links, the Digest
+  email links, and the quick-start chips still land via the mapped
+  `setPage('insights')` → open + scroll.
+- The `<details>` survives purely as skim-relief: a manual collapse is
+  respected for the session (`deptInsightsEnsureLive_` no-ops while
+  closed); the toggle listener re-ensures on reopen. Not persisted.
+- **Retired as a consequence**: the R11-C2 dwell prefetch + the ex-R9-3
+  shared-window store (`pageActiveWindow_`/`recordPageWindow_`/
+  `armDwellPrefetch_`/`insDwellPrefetch_`) and `prefetchDeptSummary_` —
+  the real fetch fires up front now, so there is nothing left to pre-warm.
+- Escape hatch if cold generates ever feel heavy live: move the trigger
+  from "dept entry" to "section approaches the viewport"
+  (IntersectionObserver, the A/B-panel pattern) — still one continuous
+  page, lazy again.
+
 ## Watchpoints (all phases)
 
 - The C3 draw-on-open trap: charts must never instantiate inside a closed

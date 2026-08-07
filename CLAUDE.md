@@ -942,8 +942,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   incl. the consolidated trend chart + per-agent cards/chart bases + IR
   drill-through) · Insights header dates (DELETED in M4 -- the dept
   controls row is the page's single date authority; `insSyncToDeptWindow_`),
-  trend-at-bottom, the INSIGHTS REGION (the M1 merge: the whole ex-page is a
-  lazy `<details>` on My Department) · Insights per-section FOLDS (replaced the
+  trend-at-bottom, the INSIGHTS REGION (the M1 merge + N1: the whole ex-page
+  renders open-inline on My Department, generating with it) · Insights per-section FOLDS (replaced the
   Simple/Detailed density mode; incl. the C3 draw-on-open chart trap) ·
   Insights Phase 2 (saved views, share link, calendar trend,
   summary email) · the guided onboarding tour · the Insights floating admin A/B
@@ -1800,22 +1800,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   CSS shows only the active one). **Overview is the default landing** for
   every page load; **My Department** is the per-dept agent table;
   **Escalations** (`#/escalations`) is an interactive worklist; **Insights**
-  (`#/report/insights`) is a lazy collapsible REGION at the bottom of My
-  Department (`#dept-insights-region`, M1 merge -- `setPage('insights')`
-  maps to the dept page and opens it; first open runs `insEnsurePage_`;
+  (`#/report/insights`) is an open-inline REGION at the bottom of My
+  Department (`#dept-insights-region`, M1 merge + N1 -- renders and
+  GENERATES with the dept page via `deptInsightsEnsureLive_`, never on the
+  Overview landing; `setPage('insights')` maps there;
   see docs/insights-merge-plan.md). `setPage(name)` swaps the page, the header kicker/title, and triggers
   that page's load (Overview -> `ovLoad_`; Escalations ->
   `escEnsureInit_`+`escLoad_`). Modals (Help,
   Settings, Individual, Alerts, Orphan Fix, Dept Config) overlay any page;
   there is no standalone Missed Calls modal -- **the My Department page's
   inline missed section IS the Missed Calls report.**
-  **Insights has no setup-form step:** first OPEN auto-generates an
-  agent-free whole-dept run (INV-45) over the dept controls' window (the
+  **Insights has no setup-form step:** it generates WITH the dept page --
+  an agent-free whole-dept run (INV-45) over the dept controls' window (the
   page's single date authority -- `insSyncToDeptWindow_` converges the open
-  region on date/dept changes; date prefs are gone), re-open keeps the
-  rendered report, and editing is the dept controls + the "Comparison &
-  agents" popover. The form survives HIDDEN as the failure / empty-roster
-  fallback only (`insShowForm`) -- see docs/insights-merge-plan.md.
+  region on date/dept changes; date prefs are gone) -- and editing is the
+  dept controls + the "Comparison & agents" popover. The form survives
+  HIDDEN as the failure / empty-roster fallback only (`insShowForm`) --
+  see docs/insights-merge-plan.md.
   Overview auto-refreshes silently every 5 minutes while active, re-fetching
   from the server cache. **A dept-TILE click SOLOS that dept's line on the
   30-day trend chart; it does NOT navigate** --
