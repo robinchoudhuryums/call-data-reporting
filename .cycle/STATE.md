@@ -2271,3 +2271,33 @@ commit/push/deploy direction.
   DeptSummaryEmail.gs are NEW server files, nothing deleted remotely).
   Open decisions: the hidden Cards view's fate; whether to retire the
   #dept-insights-strip teaser now that the lens switcher exists.
+
+## Increment 84 — M1 Insights merge (2026-08-07)
+
+  Owner approved folding the ENTIRE Insights page into My Department
+  (docs/insights-merge-plan.md, phases M1–M4). M1 shipped: the Insights
+  <section> moved inside #dept-page as the <details id="dept-insights-region">
+  collapsible (every inner id preserved incl. #insights-page), with the
+  LAZINESS CONTRACT (insEnsurePage_ + auto-generate on first OPEN only, via
+  the toggle listener / the sync deptInsightsOpen_ — sync because programmatic
+  details.open fires toggle async and handoff callers write ins-* fields right
+  after setPage returns). setPage('insights') maps to dept + open/scroll, so
+  deep links, Digest email links, quick-start chips, and the lens switcher all
+  land correctly. IR drill origin now travels as {fromInsights:true} (the four
+  script-8 call sites). Sticky strips stack (insights header at
+  --dept-sticky-h, z 59); print path retargeted; data-page="insights" CSS
+  retired; INV-37 amended. Earlier the same session (commit 7dbef14): top-nav
+  Insights tab retired, multi-queue Daily breakdown (per-queue tally rows + All
+  queues total per date, color-coded counts). 651/651, INV-16, full ci:ui,
+  plus two live-DOM probes (lazy cold load / lens open / chip route / drill
+  origins). Block in `.cycle/blocks/84-m1-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M1 pushed as e6a704f on claude/broad-scan-l9ojgm
+  (branch restarted from post-#220 main; 2 unmerged commits: 7dbef14 +
+  e6a704f). No PR opened (owner asks explicitly). Deploy on merge: dashboard
+  only (clasp push -f + new version; no remote deletions). Next: M2 controls
+  reconciliation per the plan doc — Refresh contract for open folds, region
+  headline on the collapsed summary, open-state persistence decision,
+  adoptSharedWindow_ retirement; then M3 (dept pill, Gap-vs-team default,
+  A/B panel scoping) and M4 (transition-machinery removal). Watch: the
+  closed-mid-generate chart-size exposure (M2 re-arm).
