@@ -1066,12 +1066,24 @@ defensible scope and a confusing one.
 - **EmailKit (`EmailKit.gs`) is the outbound-email house style** — the
   Daily Call Queue Report's design language (600px card, kicker/title
   header, tinted KPI tiles, tally tables, bulletproof CTA, quiet footer)
-  extracted for the caller-requested report emails. Consumers: the NEW
+  extracted as a shared layer. Consumers (Round-16, two passes): the
   My Department "Email me this report" export (`sendDepartmentSummaryEmail`
   in DeptSummaryEmail.gs — caller-recipient, rides getDepartmentSummary
-  for auth + compute; menu item in the dept Export ▾) and the restyled
-  Insights "Email report" / "Email summary" (`sendInsightsReportEmail`).
-  QueueReportEmail.gs deliberately keeps its own pinned local copies; the
-  manager DIGEST keeps the older `renderInsightsEmail*` renderers.
-  Pinned by `tests/unit/dept-summary-email.test.js` + the insights email
-  test's EmailKit assertions.
+  for auth + compute; menu item in the dept Export ▾), the Insights
+  "Email report" / "Email summary" (`sendInsightsReportEmail`), the
+  MANAGER DIGEST (all cadences + both formats — `sendDigestEmail_`'s
+  shell, `digestSummaryHtml_`'s KPI rows, and the insights format now
+  renders the SAME `insEmailReportRows_` as the Insights email; the old
+  `renderInsightsEmail*`/`digestDeltaHtml_`/`digestHeroHtml_`/
+  `digestStatTile_` renderers are retired), the low-answer-rate ALERT
+  (`sendAlertEmail_`), the escalation notification (`escNotifyHtml_`),
+  the Inbound report email, and the IR snapshot email's wrapper.
+  QueueReportEmail.gs deliberately keeps its own pinned local copies.
+  Plain-text admin/ops notices (failure emails, watchdogs, the
+  pending-review ping) stay plain on purpose. Pinned by
+  `tests/unit/dept-summary-email.test.js`, the insights email test's
+  EmailKit assertions, and the digest-insights/digest-wow pins.
+- **The Insights Simple-mode banner is RETIRED** (`#ins-simple-note`):
+  the density toggle's own tooltips carry what each mode shows; the
+  per-render banner read as noise. The Simple/Detailed machinery itself
+  is unchanged (pending the owner's progressive-disclosure decision).

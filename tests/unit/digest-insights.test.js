@@ -12,7 +12,10 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
-          'InsightsReport.gs', 'Digest.gs'],
+          'InsightsReport.gs', 'Digest.gs',
+          // Round-16: the digest renders through the shared EmailKit layer
+          // (digestInsightsHtml_ -> insEmailReportRows_).
+          'EmailKit.gs'],
 });
 
 const ROSTER = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'] });
@@ -123,8 +126,11 @@ test('digest: insights-format body carries the rollup + per-agent deltas vs the 
     dqeRow({ date: '2026-04-10', agent: 'Anna', ext: '501', rung: 4,  missed: 2, answered: 3, att: '0:04:00' }),
   ]);
   const html = h.call('digestInsightsHtml_', 'Alpha', '2026-05-01', '2026-05-31', 'monthly');
-  assert.ok(html.indexOf('Department rollup') !== -1, 'rollup section present');
-  assert.ok(html.indexOf('Per-agent') !== -1, 'per-agent section present');
+  // Round-16: the body renders through the shared EmailKit rows
+  // (insEmailReportRows_) -- KPI tiles + the per-agent tally table.
+  assert.ok(html.indexOf('% answered') !== -1, 'team KPI tiles present');
+  assert.ok(html.indexOf('Answered vs missed') !== -1, 'per-agent tally table present');
+  assert.ok(html.indexOf('width="5" style="background:#3d9476') !== -1, 'agent rows carry the volume tally');
   assert.ok(html.indexOf('Anna') !== -1 && html.indexOf('Ben') !== -1, 'both roster agents render');
   // Anna's rung went 4 -> 10 (+150%): an up-arrow delta should render.
   assert.ok(html.indexOf('&#9650;') !== -1, 'an up-delta arrow renders');

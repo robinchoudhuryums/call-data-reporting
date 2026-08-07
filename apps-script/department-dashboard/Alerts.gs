@@ -1181,57 +1181,68 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
   const dashboardUrl = PropertiesService.getScriptProperties()
     .getProperty('DASHBOARD_URL') || '';
 
-  let agentsTable = '';
+  // Round-16 (owner): EmailKit house style. The verdict leads (a warn
+  // callout naming the breach), the KPI row carries the tinted answer rate
+  // vs the configured threshold, and the low-agent rows carry the volume
+  // tally like every other report email.
+  const C = EK_C_, sans = EK_SANS_;
+  const kpis = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+    + ekKpiTd_('Answer rate', pctStr, {
+        tone: 'bad', subHtml: ekKpiSub_(ekEsc_(thresholdStr + ' alert threshold')),
+        pad: 'padding-right:6px;' })
+    + ekKpiTd_('Rung', ekFmtInt_(stats.rung), { pad: 'padding:0 3px;' })
+    + ekKpiTd_('Answered', ekFmtInt_(stats.answered), { pad: 'padding:0 3px;' })
+    + ekKpiTd_('Missed', ekFmtInt_(stats.missed), { pad: 'padding-left:6px;' })
+    + '</tr></table>';
+
+  let agentsRow = '';
   if (stats.lowAgents.length) {
-    agentsTable =
-      '<h3 style="margin: 20px 0 8px; color: #6b7280; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">'
-      +   'Agents below ' + ALERT_LOW_AGENT_THRESHOLD + '% on ' + dateIso
-      + '</h3>'
-      + '<table style="border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 13px;">'
-      + '<thead><tr style="background: #f9fafb;">'
-      +   '<th style="text-align: left; padding: 8px 12px; border-bottom: 1px solid #e5e7eb;">Agent</th>'
-      +   '<th style="text-align: right; padding: 8px 12px; border-bottom: 1px solid #e5e7eb;">Rung</th>'
-      +   '<th style="text-align: right; padding: 8px 12px; border-bottom: 1px solid #e5e7eb;">Answered</th>'
-      +   '<th style="text-align: right; padding: 8px 12px; border-bottom: 1px solid #e5e7eb;">Missed</th>'
-      +   '<th style="text-align: right; padding: 8px 12px; border-bottom: 1px solid #e5e7eb;">% Answered</th>'
-      + '</tr></thead><tbody>';
+    let maxVol = 0;
     stats.lowAgents.forEach(function (a) {
-      agentsTable +=
-        '<tr>'
-        +   '<td style="padding: 6px 12px; border-bottom: 1px solid #f3f4f6;">' + escapeHtmlServer_(a.name) + '</td>'
-        +   '<td style="padding: 6px 12px; text-align: right; border-bottom: 1px solid #f3f4f6;">' + a.rung + '</td>'
-        +   '<td style="padding: 6px 12px; text-align: right; border-bottom: 1px solid #f3f4f6;">' + a.answered + '</td>'
-        +   '<td style="padding: 6px 12px; text-align: right; border-bottom: 1px solid #f3f4f6;">' + a.missed + '</td>'
-        +   '<td style="padding: 6px 12px; text-align: right; border-bottom: 1px solid #f3f4f6; font-weight: 700; color: #9A3412;">' + a.pct.toFixed(1) + '%</td>'
+      const v = (Number(a.answered) || 0) + (Number(a.missed) || 0);
+      if (v > maxVol) maxVol = v;
+    });
+    const unit = ekTallyUnit_(maxVol);
+    let tbl = ekTheadRow_([
+      { label: 'Agent' },
+      { label: 'Answered vs missed', pad: '8px' },
+      { label: '% Ans', align: 'right' },
+    ]);
+    stats.lowAgents.forEach(function (a) {
+      const tail = '<span style="color:' + C.ink + ';">' + ekFmtInt_(a.answered) + '</span>'
+        + '<span style="color:' + C.mut + ';"> / </span>'
+        + '<span style="color:' + C.bad + ';">' + ekFmtInt_(a.missed) + '</span>';
+      tbl += '<tr>'
+        + '<td style="padding:6px 12px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';white-space:nowrap;">' + escapeHtmlServer_(a.name) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + ekTallyHtml_(a.answered, a.missed, unit, { tailHtml: tail }) + '</td>'
+        + '<td align="right" style="padding:6px 12px;font:bold 12px ' + sans + ';color:' + C.watch + ';border-top:1px solid ' + C.rowline + ';">' + a.pct.toFixed(1) + '%</td>'
         + '</tr>';
     });
-    agentsTable += '</tbody></table>';
+    agentsRow = ekRow_(
+      '<div style="font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;padding-bottom:6px;">'
+      +   'Agents below ' + ALERT_LOW_AGENT_THRESHOLD + '% on ' + ekEsc_(dateIso) + '</div>'
+      + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
+      + tbl + '</table>'
+      + (unit > 1 ? '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">each block &asymp; ' + unit + ' calls</div>' : ''),
+      '18px 26px 6px');
   }
 
-  const htmlBody =
-    '<div style="font-family: sans-serif; color: #1f2937; max-width: 720px;">'
-    +   '<div style="background: #FEF2F2; border-left: 4px solid #DC2626; padding: 16px 20px; border-radius: 4px;">'
-    +     '<h2 style="margin: 0 0 4px; color: #991B1B; font-size: 18px;">'
-    +       'Low Answer Rate &mdash; ' + escapeHtmlServer_(dept)
-    +     '</h2>'
-    +     '<div style="color: #7C2D12; font-size: 13px;">' + dateIso + '</div>'
-    +   '</div>'
-    +   '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +     '<div style="font-size: 12px; color: #6b7280; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Answer Rate</div>'
-    +     '<div style="font-size: 36px; font-weight: 700; color: #DC2626; line-height: 1.1; margin: 4px 0;">' + pctStr + '</div>'
-    +     '<div style="font-size: 13px; color: #6b7280;">Threshold: ' + thresholdStr + ' &middot; '
-    +       stats.answered + ' answered of ' + stats.rung + ' rung &middot; '
-    +       stats.missed + ' missed'
-    +     '</div>'
-    +   '</div>'
-    +   agentsTable
-    +   (dashboardUrl
-        ? '<div style="margin-top: 20px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">Open Department Dashboard</a></div>'
-        : '')
-    +   '<div style="margin-top: 24px; font-size: 11px; color: #9ca3af;">'
-    +     'Sent by the Department Dashboard alert engine. Threshold and recipients are configured in the "Alert Config" sheet.'
-    +   '</div>'
-    + '</div>';
+  const htmlBody = ekShellHtml_({
+    kicker: 'Call Data · Low answer rate alert',
+    title: dept,
+    subtitle: dateIso,
+    preheader: dept + ' answered ' + pctStr + ' on ' + dateIso + ' — below the ' + thresholdStr + ' threshold.',
+    rowsHtml: ekRow_(ekCalloutHtml_('Threshold breached',
+        ekEsc_(dept) + ' answered <strong>' + ekEsc_(pctStr) + '</strong> of rung calls on '
+        + ekEsc_(dateIso) + ' — below the configured <strong>' + ekEsc_(thresholdStr)
+        + '</strong> alert threshold.', 'warn'), '16px 26px 0')
+      + ekRow_(kpis)
+      + agentsRow,
+    ctaUrl: dashboardUrl,
+    ctaLabel: 'Open the dashboard',
+    footerHtml: 'Sent by the Department Dashboard alert engine. Threshold and recipients are '
+      + 'configured in the &ldquo;Alert Config&rdquo; sheet.',
+  });
 
   MailApp.sendEmail({
     to:       recipientsTo.join(','),

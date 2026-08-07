@@ -1195,37 +1195,37 @@ function escNotifyNewEscalation_(rec) {
   }
 }
 
-/** Email-safe HTML for the new-escalation notification (table layout, inline styles). */
+/** Email-safe HTML for the new-escalation notification -- the EmailKit house
+ * style since Round-16 (shell + a label/value detail card + the shell CTA). */
 function escNotifyHtml_(rec, link) {
-  var esc = (typeof escapeHtmlServer_ === 'function')
-    ? escapeHtmlServer_
-    : function (s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  var esc = ekEsc_;
+  var C = EK_C_, sans = EK_SANS_;
   var row = function (label, val) {
     if (!val) return '';
     return '<tr>'
-         +   '<td style="padding:5px 14px 5px 0;color:#667085;font:13px -apple-system,Segoe UI,Roboto,sans-serif;vertical-align:top;white-space:nowrap;">' + esc(label) + '</td>'
-         +   '<td style="padding:5px 0;color:#101828;font:13px -apple-system,Segoe UI,Roboto,sans-serif;">' + esc(val) + '</td>'
+         +   '<td style="padding:6px 14px 6px 12px;color:' + C.mut + ';font:12px ' + sans + ';vertical-align:top;white-space:nowrap;border-top:1px solid ' + C.rowline + ';">' + esc(label) + '</td>'
+         +   '<td style="padding:6px 12px 6px 0;color:' + C.ink + ';font:13px ' + sans + ';border-top:1px solid ' + C.rowline + ';">' + esc(val) + '</td>'
          + '</tr>';
   };
-  var btn = link
-    ? '<tr><td colspan="2" style="padding:18px 0 2px;">'
-      + '<a href="' + esc(link) + '" style="display:inline-block;background:#2f5b8f;color:#ffffff;text-decoration:none;'
-      + 'font:600 13px -apple-system,Segoe UI,Roboto,sans-serif;padding:10px 18px;border-radius:4px;">Open in the dashboard &rsaquo;</a>'
-      + '</td></tr>'
-    : '';
-  return '<div style="font:14px -apple-system,Segoe UI,Roboto,sans-serif;color:#101828;max-width:560px;">'
-       +   '<p style="margin:0 0 4px;font-size:16px;font-weight:600;">New escalation — ' + esc(rec.department) + '</p>'
-       +   '<p style="margin:0 0 14px;color:#667085;font-size:13px;">An escalation was just logged for your department.</p>'
-       +   '<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">'
-       +     row('When', rec.occurredAt)
-       +     row('Caller / relation', rec.caller)
-       +     row('Patient', rec.patientName)
-       +     row('Trx #', rec.trx)
-       +     row('Area', rec.area)
-       +     row('Reason', rec.reason)
-       +     btn
-       +   '</table>'
-       + '</div>';
+  return ekShellHtml_({
+    kicker: 'Call Data · Escalations',
+    title: 'New escalation — ' + rec.department,
+    subtitle: 'An escalation was just logged for your department.',
+    preheader: 'New escalation for ' + rec.department + (rec.area ? ' · ' + rec.area : ''),
+    rowsHtml: ekRow_(
+      '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
+      + row('When', rec.occurredAt)
+      + row('Caller / relation', rec.caller)
+      + row('Patient', rec.patientName)
+      + row('Trx #', rec.trx)
+      + row('Area', rec.area)
+      + row('Reason', rec.reason)
+      + '</table>', '18px 26px 6px'),
+    ctaUrl: link || '',
+    ctaLabel: 'Open the worklist',
+    footerHtml: 'Sent because NOTIFY_ON_NEW_ESCALATION is enabled for your department. '
+      + 'Manage escalations from the dashboard’s Escalations page.',
+  });
 }
 
 /** Idempotent table creation (lazy, like inbound_calls). */

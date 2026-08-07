@@ -557,27 +557,25 @@ function sendInboundReportEmail(req) {
     + inboundEmailKpiRow_('Avg wait', inboundEmailDur_(k.avgWaitSec), inboundEmailDelta_(k.avgWaitSec, p.avgWaitSec, false))
     + inboundEmailKpiRow_('Avg hold', inboundEmailDur_(k.avgHoldSec), '');
 
+  // Round-16 (owner): the EmailKit house style -- the KPI list + breakdown
+  // tables ride inside the shared shell (kicker/title header, bulletproof
+  // CTA, quiet footer) like every other report email.
   const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
-  const htmlBody =
-    '<div style="font-family: Arial, sans-serif; color:#1f2937; max-width:760px;">'
-    + '<div style="background:#FFF7ED;border-left:4px solid #c2703a;padding:16px 20px;border-radius:4px;">'
-    +   '<h2 style="margin:0 0 4px;color:#9a3412;font-size:18px;">Inbound Calls &mdash; ' + escapeHtmlServer_(scopeLabel) + '</h2>'
-    +   '<div style="color:#7c2d12;font-size:13px;">' + escapeHtmlServer_(dateLabel)
-    +     ' &middot; vs prior ' + escapeHtmlServer_(priorLabel) + '</div>'
-    + '</div>'
-    + '<table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:420px;">' + kpiRows + '</table>'
-    + inboundEmailBreakdownTable_('By insurer', data.byInsurer)
-    + inboundEmailBreakdownTable_('By advertised line', data.byDialIn)
-    + (dashboardUrl
-        ? '<div style="margin-top:20px;"><a href="' + escapeHtmlServer_(dashboardUrl)
-          + '" style="display:inline-block;background:#c2703a;color:#fff;padding:8px 16px;border-radius:6px;'
-          + 'text-decoration:none;font-size:13px;font-weight:600;">Open Department Dashboard</a></div>'
-        : '')
-    + '<div style="margin-top:24px;font-size:11px;color:#9ca3af;">'
-    +   'Sent from the Department Dashboard Inbound report. The daily trend + per-insurer drill charts '
-    +   'are in the web app. Numbers are from the inbound-calls capture (a different lens than QCD).'
-    + '</div>'
-    + '</div>';
+  const htmlBody = ekShellHtml_({
+    kicker: 'Call Data · Inbound calls',
+    title: scopeLabel,
+    subtitle: dateLabel + ' · vs prior ' + priorLabel,
+    preheader: scopeLabel + ': ' + fmtNum_(k.total) + ' inbound calls, '
+      + (k.abandonRate || 0) + '% abandoned · ' + dateLabel,
+    rowsHtml: ekRow_('<table style="border-collapse:collapse;width:100%;max-width:420px;">' + kpiRows + '</table>')
+      + ekRow_(inboundEmailBreakdownTable_('By insurer', data.byInsurer)
+          + inboundEmailBreakdownTable_('By advertised line', data.byDialIn), '4px 26px 6px'),
+    ctaUrl: dashboardUrl,
+    ctaLabel: 'Open the Inbound report',
+    footerHtml: 'Requested from the Inbound report — sent only to you. The daily trend + '
+      + 'per-insurer drill charts are in the web app. Numbers are from the inbound-calls '
+      + 'capture (a different lens than QCD).',
+  });
 
   MailApp.sendEmail({ to: email,
     subject: 'Inbound Calls Report: ' + dateLabel + ' (' + scopeLabel + ')',

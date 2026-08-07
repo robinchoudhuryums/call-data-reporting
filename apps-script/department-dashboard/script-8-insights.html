@@ -94,7 +94,8 @@
     return insDensity === 'simple';
   }
   // Reflect the mode on the DOM: the gating class on #insights-results (the
-  // CSS hides the heavy blocks), the toggle buttons, and the Simple note.
+  // CSS hides the heavy blocks) + the toggle buttons. (The Simple-mode
+  // disclosure banner is RETIRED, Round-16 -- owner: it read as noise.)
   function insSyncDensity_() {
     const simple = insIsSimple_();
     const res = $('insights-results');
@@ -105,8 +106,6 @@
       b.classList.toggle('active', on);
       b.setAttribute('aria-checked', on ? 'true' : 'false');
     });
-    const note = $('ins-simple-note');
-    if (note) note.style.display = (simple && insLastData) ? '' : 'none';
   }
   function insSetDensity_(mode) {
     if (mode !== 'simple' && mode !== 'detailed') return;
@@ -472,10 +471,6 @@
       const b = e.target.closest('.seg-btn');
       if (!b) return;
       insSetDensity_(b.getAttribute('data-density') || 'detailed');
-    });
-    const simpleNoteBtn = $('ins-simple-note-detailed');
-    if (simpleNoteBtn) simpleNoteBtn.addEventListener('click', function () {
-      insSetDensity_('detailed');
     });
     const introDismiss = $('ins-intro-dismiss');
     if (introDismiss) introDismiss.addEventListener('click', function () {

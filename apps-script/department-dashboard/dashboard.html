@@ -1395,13 +1395,9 @@
         <!-- D3 (#7): small-sample annotation -- front-end display constant
              only; never hides data (see INS_SMALL_SAMPLE_PER_AGENT_). -->
         <div id="ins-small-sample" class="ds-note" style="display:none;"></div>
-        <!-- D1: Simple-mode disclosure note so the hidden sections read as a
-             choice, not a bug. Shown only in Simple (insSyncDensity_). -->
-        <div id="ins-simple-note" class="ds-note ins-simple-note" style="display:none;">
-          Simple view &mdash; queue health, the heatmap, share of answered, and the
-          team's 12-month trend are hidden, and Agents shows the per-agent trend chart.
-          <button type="button" class="link-btn" id="ins-simple-note-detailed">Switch to Detailed</button>
-        </div>
+        <!-- (Round-16, owner: the D1 Simple-mode disclosure note is RETIRED --
+             the toggle's own tooltips carry what each mode shows, and the
+             banner read as noise on every Simple render.) -->
         <div id="ins-team-insights"></div>
 
         <!-- A3: zone wayfinding. The report splits into a Team zone (rollup +

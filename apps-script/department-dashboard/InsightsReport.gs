@@ -1035,8 +1035,13 @@ function insEmailHeadRows_(data) {
     + ekKpiTd_('Avg talk time', String((t.att && t.att.formatted) || '—'), {
         subHtml: sub(t.att, 'neu'), pad: 'padding-left:6px;' })
     + '</tr></table>';
+  // Name the comparison window under the tiles -- the deltas mean nothing
+  // without it, and the digest (which reuses these rows) has no subtitle
+  // carrying it.
+  const priorCap = '<div style="font:10px ' + EK_SANS_ + ';color:#9aa6b2;padding-top:6px;">'
+    + ekEsc_('Deltas vs ' + ((data && data.priorDateLabel) || 'the prior period')) + '</div>';
   return (takeaway ? ekRow_(ekCalloutHtml_('At a glance', ekEsc_(takeaway), tone), '16px 26px 0') : '')
-    + ekRow_(kpis);
+    + ekRow_(kpis + priorCap);
 }
 
 /** Full-report body rows: head + the per-agent tally/delta table. */
