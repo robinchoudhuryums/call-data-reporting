@@ -203,6 +203,17 @@
   body[data-page="dept"]         #dept-page         { display: block; }
   body[data-page="escalations"]  #escalations-page  { display: block; }
   body[data-page="insights"]     #insights-page     { display: block; }
+  /* Round-16 Phase 3 (motion): a brief fade-in on the page swap -- CSS
+     animations restart whenever display flips from none, so this needs no
+     JS. Opacity only (no translate: the sticky strips must not shear).
+     Reduced-motion users keep the instant cut. */
+  @media (prefers-reduced-motion: no-preference) {
+    body[data-page="overview"]     #overview-page,
+    body[data-page="dept"]         #dept-page,
+    body[data-page="escalations"]  #escalations-page,
+    body[data-page="insights"]     #insights-page { animation: page-in 160ms ease-out; }
+  }
+  @keyframes page-in { from { opacity: 0.35; } to { opacity: 1; } }
   /* The Escalations page lives outside the main page container (it was
      converted in place from a modal), so give it the same bounded, centered
      content width the other pages get from that container. Widened from the
@@ -853,39 +864,52 @@
      min-height so a first-load (empty) section can center the overlay. */
   #dept-missed-section.dm-loading { min-height: 220px; }
 
-  /* ---- D1-D3: Insights Simple/Detailed density (presentation only) ------ */
-  /* Simple hides the heavy analytical blocks. display:none (not collapse):
-     render code keeps populating the DOM nodes; the trend/share CANVASES are
-     skipped in Simple and built on the toggle (the hidden-chart trap). */
-  /* R11-M: Simple now SHOWS the per-agent Chart (forced to the Trend basis) --
-     the cards move to Detailed. So #ins-cards-chart-wrap is NO LONGER hidden;
-     only the cross-agent CONTROLS (view/basis/metric) + the heavy team blocks
-     stay hidden in Simple. */
-  #insights-results.ds-density-simple #ins-team-detail,
-  #insights-results.ds-density-simple #ins-queue-health,
-  #insights-results.ds-density-simple #ins-trend-wrap,
-  #insights-results.ds-density-simple #ins-cards-view-toggle,
-  #insights-results.ds-density-simple #ins-cards-chart-mode,
-  #insights-results.ds-density-simple #ins-cards-chart-metric-wrap {
-    display: none !important;
+  /* ---- Round-16: Insights per-section FOLDS ------------------------------
+     (Replaced the D1 Simple/Detailed density mode + its ds-density-simple
+     CSS list. Each heavy section is an always-present <details class=
+     "ins-fold"> whose collapsed summary carries the section headline.) */
+  .ins-fold { margin: 18px 0 6px; }
+  .ins-fold-summary {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    cursor: pointer; user-select: none; list-style: none;
+    padding: 6px 0; border-top: 1px solid var(--line);
   }
-  /* The Trends zone label would otherwise float alone above the hidden chart. */
-  #insights-results.ds-density-simple .ds-zone:has(+ #ins-trend-wrap) { display: none; }
-  .ins-density-seg .seg-btn { min-width: 64px; }
-  /* (.ins-simple-note RETIRED, Round-16 -- the Simple-mode banner is gone.) */
-  /* D1: Simple's collapsed on-track tiers -- a full-width item inside the
-     card grid (like the triage headers); the inner wrapper re-grids the
-     cards. Summary styled after the quiet-agents details. */
+  .ins-fold-summary::-webkit-details-marker { display: none; }
+  .ins-fold-summary::after {
+    content: '\25b8'; color: var(--muted); font-size: 12px;
+    margin-left: auto; transition: transform 0.15s ease;
+    /* Square box so the 90° open-rotation stays INSIDE it -- a bare inline
+       glyph box is taller than wide, and its rotated corners poked ~2px past
+       the page edge (the drive-smoke overflow gate caught it). */
+    display: inline-block; width: 1em; height: 1em;
+    line-height: 1em; text-align: center; align-self: center;
+  }
+  .ins-fold[open] > .ins-fold-summary::after { transform: rotate(90deg); }
+  .ins-fold-summary:hover .ds-zone-label { color: var(--ink); }
+  .ins-fold-head { color: var(--muted); font-size: 12.5px; }
+  .ins-fold-head .ins-fold-muted { color: var(--muted); font-style: italic; }
+  .ins-fold-body { padding-top: 4px; }
+  /* Phase 3 motion: the fold body slides/fades in on expand (reduced-motion
+     users get the instant swap). */
+  @media (prefers-reduced-motion: no-preference) {
+    .ins-fold[open] > .ins-fold-body { animation: ins-fold-in 180ms ease-out; }
+  }
+  @keyframes ins-fold-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: none; }
+  }
+  /* The on-track fold (ex-D1 Simple treatment, universal since Round-16) --
+     a full-width item inside the card grid (like the triage headers); the
+     inner wrapper re-grids the cards. Summary styled after the quiet-agents
+     details. */
   .ins-agent-cards .ins-ontrack-details { grid-column: 1 / -1; }
   .ins-ontrack-details > summary {
     cursor: pointer; color: var(--muted); font-size: 13px;
     padding: 6px 2px; user-select: none;
   }
   .ins-ontrack-details[open] > summary { margin-bottom: 8px; }
-  /* (.ins-ontrack-cards also carries .ins-agent-cards, whose grid def applies.) */
-  /* D3 (#4): plain-language Agents caption, Simple only. */
-  .ins-agents-cap { display: none; color: var(--muted); font-size: 13px; margin: -2px 0 10px; }
-  #insights-results.ds-density-simple .ins-agents-cap { display: block; }
+  /* (.ins-ontrack-cards also carries .ins-agent-cards, whose grid def applies.)
+     (.ins-agents-cap RETIRED with the density mode, Round-16.) */
   /* D3 (#6): all-clear line appended to the headline banner. */
   .ins-headline-allclear { color: var(--muted); font-size: 13px; margin-top: 6px; }
   /* D3 (#7): small-sample mode mutes the per-card delta pills (annotation --
@@ -947,7 +971,11 @@
   #insights-page #insights-results > .ir-results-header {
     position: sticky; top: 0; z-index: 60;
     background: var(--paper);
-    box-shadow: 0 8px 10px -10px rgba(0, 0, 0, 0.25);
+    /* Round-16 Phase 3: the drop shadow rides .is-stuck (added by the
+       IntersectionObserver in script-2 only while actually pinned) so the
+       strip reads flat in normal flow and elevated once it pins. */
+    box-shadow: none;
+    transition: box-shadow 150ms ease;
     margin-left: -8px; margin-right: -8px;
     padding-left: 8px; padding-right: 8px;
     padding-top: 8px; padding-bottom: 8px;
@@ -961,11 +989,12 @@
     #insights-page #insights-results > .ir-results-header {
       padding-top: 4px; padding-bottom: 4px;
     }
-    #insights-page #insights-results > .ir-results-header .ins-period-bar { margin-top: 2px; }
+    #insights-page #insights-results > .ir-results-header .ins-hdr-controls { margin-top: 2px; }
   }
-  /* R11-B9: the Insights sticky strip is the WHOLE results header now
-     (title + toolbar + period presets -- the My Department pattern). The
-     period bar sits as a full-width third row inside the flex header. */
+  /* R11-B9/Phase 2: the Insights sticky strip is the WHOLE results header
+     (title + toolbar + the From/To controls row -- the My Department
+     pattern). The controls row sits as a full-width third row inside the
+     flex header. */
   #insights-page #insights-results > .ir-results-header { flex-wrap: wrap; }
   /* R12-10 (I-1): on the Insights page the -8px bleed margins pushed the
      strip 4px past the viewport (a permanent horizontal wiggle --
@@ -975,11 +1004,23 @@
   #insights-page #insights-results > .ir-results-header {
     margin-left: 0; margin-right: 0;
     padding-left: 0; padding-right: 0;
-    box-shadow: -8px 0 0 var(--paper), 8px 0 0 var(--paper),
-                0 8px 10px -10px rgba(0, 0, 0, 0.25);
+    box-shadow: -8px 0 0 var(--paper), 8px 0 0 var(--paper);
   }
-  #insights-page #insights-results > .ir-results-header .ins-period-bar {
-    flex: 1 1 100%; margin: 6px 0 0;
+  /* Phase 3: elevation only while pinned (see the .is-stuck note above). */
+  #dept-page .controls.is-stuck {
+    box-shadow: 0 8px 10px -10px rgba(0, 0, 0, 0.35);
+  }
+  #insights-page #insights-results > .ir-results-header.is-stuck {
+    box-shadow: -8px 0 0 var(--paper), 8px 0 0 var(--paper),
+                0 8px 10px -10px rgba(0, 0, 0, 0.35);
+  }
+  /* Round-16 (owner): the two-tab lens switcher shared by the dept +
+     Insights headers -- a ds-seg with a hair border so it reads as a
+     navigational element among the flat controls. */
+  .ds-lens-switch { border: 1px solid var(--line); }
+  #insights-page #insights-results > .ir-results-header .ins-hdr-controls {
+    flex: 1 1 100%; margin: 6px 0 0; margin-bottom: 0;
+    align-items: flex-end; gap: 12px;
   }
   /* R11-I (item 2): the compare + selection context, relocated out of the
      sticky header into normal flow so the pinned strip is shorter. */

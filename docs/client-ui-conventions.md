@@ -1083,7 +1083,53 @@ defensible scope and a confusing one.
   pending-review ping) stay plain on purpose. Pinned by
   `tests/unit/dept-summary-email.test.js`, the insights email test's
   EmailKit assertions, and the digest-insights/digest-wow pins.
-- **The Insights Simple-mode banner is RETIRED** (`#ins-simple-note`):
-  the density toggle's own tooltips carry what each mode shows; the
-  per-render banner read as noise. The Simple/Detailed machinery itself
-  is unchanged (pending the owner's progressive-disclosure decision).
+- **The Insights Simple/Detailed MODE is RETIRED for per-section
+  progressive disclosure** (owner decision). Each heavy section is an
+  always-present `<details class="ins-fold">` whose collapsed summary
+  carries its headline (`insQhFoldSync_` fills Queue health's — e.g.
+  "4.8% abandoned · 1,510 queue calls · 1 viol MTD"); Trends is the other
+  fold, Team detail keeps its own `<details>`. Open state persists per
+  user per section (`cdr.ins.folds.v1:<email>`); role seeds the defaults
+  (admins open, managers collapsed) and an old saved density pref
+  migrates once. Draw-on-open: the trend chart renders only while its
+  fold is open (the C3 zero-height trap) and the admin heatmap fetches
+  on Team-detail expand. The on-track card fold (ex-Simple treatment) is
+  universal now. `ds-density-simple`, the toggle, the D3 Simple caption
+  and the mode's special cases are all gone; an old share link's
+  `view=detailed/simple` param maps onto the fold open-state. NOTE for
+  the blank-canvas harness gate: newer Chromium answers
+  offsetParent/gBCR for closed-`<details>` content via forced layout, so
+  `drive-smoke`'s checker also skips `details:not([open])` canvases.
+- **Insights header = the My Department controls pattern (Phase 2)**:
+  real From/To date inputs + the SHARED Quick-select preset chips
+  (`buildDatePresetChips_`, script-2 — one component, both pages) replace
+  the I4 period chips. The header inputs MIRROR the canonical
+  `#ins-from/#ins-to` (still in the hidden fallback form; what deep
+  links / saved views / the popover write): `insSyncHeaderDates_` copies
+  canonical→header per render, a header edit runs `insApplyWindow_`
+  (prior-window validation → picker regroup → prefs → runInsReport).
+  The Edit popover is now "Comparison & agents" (its date row is HIDDEN,
+  not removed — the apply flow still round-trips those inputs).
+- **The LENS SWITCHER**: one two-tab `ds-seg` ("Agent table · Insights")
+  renders in both sticky headers so the pages read as two lenses on one
+  dept + range. The Insights side's "Agent table" button KEEPS the
+  `#ins-open-mydept-btn` id (existing hand-off + hover-prefetch wiring);
+  the dept side's `#lens-ins-btn` runs `handoffToInsights_` with the
+  current window.
+- **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
+  swap (pure CSS — animations restart when display flips), a 180ms
+  slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for
+  the two sticky strips (IntersectionObserver toggles `.is-stuck`; the
+  drop shadow only paints while pinned). The fold caret is a SQUARE
+  inline-block box — a bare glyph box rotated 90° poked 2px past the
+  page edge and tripped the overflow gate.
+- **Round-16 removals** (all code kept inert behind flags/hidden markup):
+  the Missed-report Bars/Radar toggle is hidden for everyone
+  (`missedChartMode_` hardcodes bars); the My Department sub-queue
+  relationship bar — the "Combined view…" banner, the child's upward
+  pointer AND the `subqSplitChip_` "all queues" flag — is hidden
+  (`SUBQ_BAR_HIDDEN_`; the chip's B-1 mapping-mismatch warnings now
+  surface only via `auditQueueSplitAttribution()`, Op State #41); the
+  group-heading "View X's missed calls" button and the missed-section
+  "Per-agent timelines below…" scope banner are gone
+  (`drive-subqueue.js` pins all of these hidden).

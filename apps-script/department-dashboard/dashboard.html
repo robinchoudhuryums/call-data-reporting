@@ -322,6 +322,19 @@
         </div>
         <div class="control">
           <label>&nbsp;</label>
+          <!-- Round-16 (owner): the LENS SWITCHER -- the same two-tab segment
+               renders on both this page and Insights, so the two read as two
+               lenses on one dept + range rather than separate destinations.
+               "Insights" hands off with the current window (handoffToInsights_,
+               the same path the bottom teaser strip's button uses). -->
+          <div class="ds-seg ds-lens-switch" role="group" aria-label="Department lens">
+            <button type="button" aria-pressed="true">Agent table</button>
+            <button type="button" id="lens-ins-btn" aria-pressed="false"
+                    title="Open the Insights report for this department and the same date range.">Insights</button>
+          </div>
+        </div>
+        <div class="control">
+          <label>&nbsp;</label>
           <!-- R9-2: Refresh + Export sit side by side (Insights-toolbar
                convention). Export is the same .ir-export-wrap dropdown the
                Insights page uses; hidden until data loads (the old
@@ -456,18 +469,19 @@
           <div class="ds-note" id="dept-missed-error" style="display:none;"></div>
           <div class="ds-note subq-note" id="dept-missed-scope-note" style="display:none;"></div>
           <div class="report-summary" id="dept-missed-summary" style="display:none;"></div>
-          <!-- Bars/Radar toggle (shared mode, persisted in localStorage). -->
-          <!-- R11-B7: the Bars/Radar SEGMENT is ADMIN-ONLY now (owner: fewer
-               options for managers; radar kept behind the admin fence in case
-               it proves generally preferred). Managers always get bars --
-               missedChartMode_ ignores a saved radar pref for non-admins.
-               The toolbar itself stays visible for the B8 chart-tips button. -->
+          <!-- Round-16 (owner): the Bars/Radar SEGMENT is HIDDEN for everyone
+               now -- always bars (missedChartMode_ hardcodes it). Markup +
+               radar code kept so the choice can return by removing the
+               display:none. The toolbar stays for the B8 chart-tips button
+               + the R11-C4 scope chip. -->
           <div class="missed-chart-toolbar">
             <!-- R11-C4: shows "Chart: <agent> ✕" while the hour-of-day chart is
                  scoped to one agent via a card's ■ chart button. -->
             <span id="dept-missed-scope-chip" class="missed-scope-chip" style="display:none;"></span>
             <button type="button" class="chart-help-btn" data-charthelp="missed" aria-label="Chart tips" title="Chart tips">?</button>
-            <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type" data-admin-only>
+            <!-- no data-admin-only: the admin reveal loop sets display:'' on
+                 tagged elements, which would un-hide this for admins. -->
+            <div class="ds-seg missed-chart-mode" role="group" aria-label="Missed-calls chart type" style="display:none;">
               <button type="button" data-mode="bars" aria-pressed="true">Bars</button>
               <button type="button" data-mode="radar" aria-pressed="false">Radar</button>
             </div>
@@ -1128,10 +1142,9 @@
        .modal-open-tab-btn class -- the share-state wiring loop keys on the
        class + data-open-tab-route, not on being inside a modal. -->
   <section id="insights-page" class="page page-insights">
-    <!-- R9-1: the R7 I-2 sticky context BANNER is retired -- the period bar
-         itself (#ins-period-bar) is the sticky element now (CSS
-         position:sticky, opaque strip), so the real range presets stay
-         reachable while scrolled. -->
+    <!-- R9-1/Phase 2: the results header (title + toolbar + the From/To
+         controls row) is the sticky strip (CSS position:sticky, opaque), so
+         the real date inputs stay reachable while scrolled. -->
     <div class="ins-page-body">
       <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/insights"
               aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
@@ -1228,32 +1241,28 @@
                  (#ins-compare-line / #ins-editing-agents) is unchanged. -->
           </div>
           <div class="ir-action-buttons">
-            <!-- D1 (density design, Phase 1): Simple/Detailed disclosure toggle.
-                 Presentation-only -- Simple hides the Team-detail block, the
-                 12-month trend, and the cross-agent Chart controls via a
-                 ds-density-simple class on #insights-results (all IDs + render
-                 code unchanged). Default by role (manager=Simple,
-                 admin=Detailed, owner ruling); sticky per user via the
-                 cdr.ins.prefs blob. -->
-            <div class="segmented ins-density-seg" id="ins-density-toggle" role="radiogroup" aria-label="Report detail level">
-              <button type="button" class="seg-btn" data-density="simple" role="radio" aria-checked="false"
-                      title="The short view: headline, team tiles, and agent cards.">Simple</button>
-              <button type="button" class="seg-btn" data-density="detailed" role="radio" aria-checked="false"
-                      title="The full analytical view: adds queue health, the heatmap, share of answered, the 12-month trend, and the cross-agent chart.">Detailed</button>
-            </div>
+            <!-- (Round-16 owner decision: the D1 Simple/Detailed MODE is
+                 RETIRED for per-section progressive disclosure -- each heavy
+                 section is now an always-present collapsible fold whose
+                 collapsed summary carries its headline. Open state persists
+                 per user per section; role seeds the defaults.) -->
             <!-- Owner note: the tiny inline "change" link read as
                  undiscoverable -- the edit popover's trigger is now a real
                  button up here with the other report actions. Same id, so
                  all the popover wiring (open/apply/outside-click) is
                  untouched. -->
             <button class="btn btn-secondary" id="ins-edit-selection-btn" type="button"
-                    title="Change the dates, comparison window, or agent selection without leaving the report.">&#9998; Edit dates &amp; agents</button>
-            <!-- Lighter Insights<->My Department hand-off: jump to the agent
-                 table / Missed Calls detail for THIS dept + the same date
-                 window (handoffToMyDept_ carries the dates). The reverse
-                 hand-off lives on the My Department page (#dept-insights-strip). -->
-            <button class="btn btn-secondary" id="ins-open-mydept-btn" type="button"
-                    title="Open the My Department agent table for this department and the same date range.">My Department &#8594;</button>
+                    title="Change the comparison window or agent selection without leaving the report (dates live in the header row below).">&#9998; Comparison &amp; agents</button>
+            <!-- Round-16 (owner): the LENS SWITCHER replaces the one-way
+                 "My Department →" button -- the same two-tab segment as the
+                 dept page's controls row. "Agent table" KEEPS the old
+                 button's id, so the existing click handler + hover-prefetch
+                 wiring (#ins-open-mydept-btn) run untouched. -->
+            <div class="ds-seg ds-lens-switch" role="group" aria-label="Department lens">
+              <button type="button" id="ins-open-mydept-btn" aria-pressed="false"
+                      title="Open the My Department agent table for this department and the same date range.">Agent table</button>
+              <button type="button" aria-pressed="true">Insights</button>
+            </div>
             <!-- R7 (N-1): re-run the report for the current selection (frosts
                  the results while the fresh fetch runs; server cache still
                  applies, so data refreshes as the 30-min report TTL allows). -->
@@ -1275,7 +1284,7 @@
             </div>
             <!-- Phase 2 #8: saved views + share link. Views are PERSONAL
                  (localStorage, per user) and carry dates + compare mode +
-                 agents + Simple/Detailed -- NOT the department (the header
+                 agents -- NOT the department (the header
                  selector owns that, and managers are pinned anyway). The
                  share link reuses the SHARE_STATE_ deep-link machinery, so
                  opening one runs the normal auth + fetch path. -->
@@ -1291,31 +1300,45 @@
                  hidden form remains only as the failure / empty-roster
                  fallback (insShowForm). -->
           </div>
-          <!-- I4: unified period slider. One control drives the whole report
-               window; "Custom…" opens the Edit popover. R11-B9: the bar
-               lives INSIDE the results header now, and the whole header
-               (title + toolbar + period presets) is the page's sticky strip
-               -- the My Department pattern (same JS ids, only DOM position
-               moved). -->
-          <div id="ins-period-bar" class="ov-period-bar ins-period-bar" role="group" aria-label="Report period">
-            <span class="ov-period-lbl">Period:</span>
-            <button type="button" class="ov-period-btn" data-ins-period="last7" aria-pressed="false">Last 7</button>
-            <button type="button" class="ov-period-btn" data-ins-period="last30" aria-pressed="false">Last 30</button>
-            <button type="button" class="ov-period-btn" data-ins-period="mtd" aria-pressed="false">MTD</button>
-            <button type="button" class="ov-period-btn" data-ins-period="ytd" aria-pressed="false">YTD</button>
-            <button type="button" class="ov-period-btn" data-ins-period="custom" aria-pressed="false">Custom&hellip;</button>
+          <!-- Round-16 Phase 2 (header unification): the I4 period chips are
+               replaced by the My Department controls pattern -- real From/To
+               date inputs + the SAME Quick-select preset chips -- so the two
+               pages carry one identical strip. These header inputs MIRROR the
+               canonical #ins-from/#ins-to (still in the hidden fallback form;
+               what deep links / saved views / the popover write):
+               insSyncHeaderDates_ copies canonical -> header on every render,
+               and a header edit copies back + re-runs (insInitHeaderDates_).
+               The whole header stays the page's sticky strip (R11-B9). -->
+          <div class="controls ins-hdr-controls" id="ins-hdr-controls" role="group" aria-label="Report window">
+            <div class="control">
+              <label for="ins-hdr-from">From</label>
+              <input type="date" id="ins-hdr-from">
+            </div>
+            <div class="control">
+              <label for="ins-hdr-to">To</label>
+              <input type="date" id="ins-hdr-to">
+            </div>
+            <div class="control">
+              <label>Quick select</label>
+              <div class="date-presets" id="ins-date-presets"></div>
+            </div>
           </div>
         </div>
 
         <!-- R9-3: the Batch-E date-sync offer chip is retired -- the dept and
              Insights pages share one date window now (silent adoption). -->
 
-        <div id="ins-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit selection and dates">
+        <div id="ins-edit-popover" class="ir-edit-popover" style="display:none;" role="dialog" aria-label="Edit comparison and agents">
           <div class="ir-edit-popover-header">
-            <strong>Edit selection &amp; dates</strong>
+            <strong>Comparison &amp; agents</strong>
             <button class="ir-edit-popover-close" id="ins-edit-popover-close" type="button" aria-label="Close">&times;</button>
           </div>
-          <div class="ir-edit-dates-row">
+          <!-- Round-16 Phase 2: the From/To row is HIDDEN, not removed --
+               the dates moved into the header controls, but the popover's
+               apply flow still round-trips these inputs (insOpenEditPopover_
+               seeds them from the canonical dates; unchanged values apply
+               back verbatim). -->
+          <div class="ir-edit-dates-row" style="display:none;">
             <label class="ir-edit-date-field">From<input type="date" id="ins-edit-from"></label>
             <label class="ir-edit-date-field">To<input type="date" id="ins-edit-to"></label>
           </div>
@@ -1378,8 +1401,9 @@
         <div id="ins-intro-card" class="ds-note ins-intro-card" style="display:none;">
           <strong>What this report answers:</strong> how the team performed over the
           selected window, which agents are behind or ahead of the team average, and
-          (in Detailed) how the queues and the last 12 months look. The question
-          chips above run it for you &mdash; no setup needed.
+          &mdash; in the expandable sections below &mdash; how the queues and the
+          last 12 months look. The question chips above run it for you &mdash;
+          no setup needed.
           <button type="button" class="link-btn" id="ins-intro-dismiss">Got it</button>
         </div>
         <div id="ins-results-status" class="status" style="display:none;"></div>
@@ -1418,7 +1442,7 @@
              only wraps them. (I4: the 12-month trend chart was moved OUT of
              this section to the bottom of the report -- see #ins-trend-wrap.) -->
         <details id="ins-team-detail" class="ds-team-detail">
-          <summary class="ds-team-detail-summary">Team detail &mdash; queue health, heatmap &amp; share</summary>
+          <summary class="ds-team-detail-summary">Team detail &mdash; abandon heatmap &amp; share of answered</summary>
 
         <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
 
@@ -1434,11 +1458,18 @@
         </details>
         <!-- /A2 Team detail -->
 
-        <!-- R12-17 (#5): Queue health PROMOTED out of the Team-detail fold to
-             its own always-visible zone (Detailed mode) -- it is the QCD
-             replacement, the consolidation's point. Simple mode still hides it
-             (styles.html ds-density-simple list). -->
-        <div class="ds-zone"><span class="ds-zone-label">Queue health</span></div>
+        <!-- Round-16: Queue health is a per-section FOLD (the progressive-
+             disclosure layer that replaced the Simple/Detailed mode). The
+             collapsed summary carries the section's headline
+             (#ins-qh-fold-head, filled by insRenderQueueHealth_) so it
+             answers its question even closed. The fold hides entirely when
+             the section has nothing to show (missing QCD sheet). -->
+        <details id="ins-qh-fold" class="ins-fold" data-fold="qh" style="display:none;">
+          <summary class="ins-fold-summary">
+            <span class="ds-zone-label">Queue health</span>
+            <span class="ins-fold-head" id="ins-qh-fold-head"></span>
+          </summary>
+          <div class="ins-fold-body">
         <!-- Queue health (QCD-into-Insights consolidation): the dept's
              queue-level abandoned % / violations for the same window +
              prior window. THE queue deep-dive since the standalone QCD
@@ -1507,13 +1538,13 @@
           </details>
           <div class="ins-qh-footnote">Reads <code>QCD Historical Data</code> &mdash; the trend chart at the bottom of the report switches to per-queue Total&nbsp;Calls / Violations via the &ldquo;Abd&nbsp;%&rdquo; tab&rsquo;s metric selector.</div>
         </div>
+          </div>
+        </details>
+        <!-- /Queue health fold -->
 
-
-
-        <!-- A3: Agents zone -->
+        <!-- A3: Agents zone. (Round-16: the D3 Simple-only caption is gone
+             with the density mode.) -->
         <div class="ds-zone"><span class="ds-zone-label">Agents</span></div>
-        <!-- D3 (#4): plain-language caption, Simple mode only (CSS-gated). -->
-        <div id="ins-agents-cap" class="ins-agents-cap">Each agent's trend over the last 12 months &mdash; click a point to open that agent's report, or switch to Detailed for the per-agent cards and comparison views.</div>
         <div class="al-section-title">Per-agent comparison (vs prior period)</div>
         <div class="ir-cards-toolbar" id="ins-cards-toolbar">
           <label class="ir-sort-control">
@@ -1591,7 +1622,16 @@
              (like the missed chart, MC2) since this section can be laid out
              before the results container is shown on first paint. All controls
              keep their ids, so the view/metric/datalabels wiring is untouched. -->
-        <div class="ds-zone"><span class="ds-zone-label">Trends</span></div>
+        <!-- Round-16: the Trends section is a FOLD too (see the Queue-health
+             fold above). Draw-on-open: insDrawTrendChart_ runs only while
+             the fold is open (a canvas built inside a closed <details> is
+             the C3 zero-height trap); the toggle handler draws on expand. -->
+        <details id="ins-trend-fold" class="ins-fold" data-fold="trend">
+          <summary class="ins-fold-summary">
+            <span class="ds-zone-label">Trends</span>
+            <span class="ins-fold-head" id="ins-trend-fold-head">12-month team trend</span>
+          </summary>
+          <div class="ins-fold-body">
         <div class="ir-chart-wrap" id="ins-trend-wrap">
           <div class="ins-trend-headrow">
             <div class="ir-chart-header" id="ins-trend-header">12-month team trend</div>
@@ -1644,6 +1684,9 @@
                Chart.js). Populated by insRenderTrendCalendar_. -->
           <div id="ins-trend-calendar" class="ins-trend-calendar" style="display:none;"></div>
         </div>
+          </div>
+        </details>
+        <!-- /Trends fold -->
       </div>
     </div>
 

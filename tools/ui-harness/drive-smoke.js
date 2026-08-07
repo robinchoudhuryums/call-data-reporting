@@ -61,6 +61,10 @@ async function blankCanvases(page) {
     document.querySelectorAll('canvas').forEach((c) => {
       if (blankOkIds.includes(c.id)) return;
       if (!c.offsetParent) return;                       // hidden
+      // Closed-<details> content is skipped rendering (content-visibility)
+      // but newer Chromium still answers offsetParent/gBCR for it via forced
+      // layout -- a chart inside a collapsed fold is legitimately undrawn.
+      if (c.closest('details:not([open])')) return;
       const r = c.getBoundingClientRect();
       if (r.width < 40 || r.height < 40) return;         // not laid out / sparkline-sized
       let ctx;
