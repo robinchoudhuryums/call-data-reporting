@@ -174,12 +174,12 @@
       insSetDefaultDates();
       insRestorePrefs_();
       // M2 (one date authority): the dept controls own the page's window --
-      // seed the canonical ins dates from them, OVERRIDING any restored
-      // prefs dates (compare-mode/agent prefs still apply). Priority ends up
-      // share-link > quick-start chip / handoff > dept window > prefs >
-      // defaults, because each later writer runs after this seed. The old
-      // defaults survive only when the dept inputs are still blank (cold
-      // deep-link load before the latest-date fetch lands).
+      // seed the canonical ins dates from them (M4: date prefs are gone from
+      // the blob entirely; compare-mode/agent prefs still apply). Priority
+      // ends up share-link > quick-start chip > dept window > defaults,
+      // because each later writer runs after this seed. The defaults survive
+      // only when the dept inputs are still blank (cold deep-link load
+      // before the latest-date fetch lands).
       var df_ = $('from-date'), dt_ = $('to-date');
       if (df_ && dt_ && df_.value && dt_.value) {
         if ($('ins-from')) $('ins-from').value = df_.value;
@@ -246,7 +246,7 @@
   }
   // M1: open the dept page's Insights region and run the ensure
   // SYNCHRONOUSLY -- a programmatic `details.open = true` fires its 'toggle'
-  // event ASYNC, and callers like handoffToInsights_ / launcherOpenInsights_
+  // event ASYNC, and callers like launcherOpenInsights_
   // write ins-* fields right after setPage returns, so the ensure's
   // defaults/prefs restore must run before those writes (the ordering the
   // page era guaranteed). The later async toggle re-calls insEnsurePage_,
@@ -373,7 +373,8 @@
     if (editClose) editClose.addEventListener('click', insCloseEditPopover_);
     const editApply = $('ins-edit-apply-btn');
     if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
-    insInitHeaderDates_();   // Phase 2: header From/To + shared Quick-select chips
+    // (M4: insInitHeaderDates_ is RETIRED with the #ins-hdr-controls row --
+    // the dept controls are the date authority since M2.)
     // M3 (in-page scroll): the agent table and the missed section live ON
     // THIS PAGE now, so the two Insights -> My Department hand-offs scroll
     // instead of the old setPage + refresh round trip (which re-fetched a
@@ -404,26 +405,9 @@
         handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
       }
     });
-    // #5 Option A: delegated ~300ms hover-prefetch on the two Insights -> My
-    // Department hand-offs (the button + the Queue-health missed link, which is
-    // re-rendered with each report) so the jump SWR-paints instantly. Delegated
-    // on the page (not the elements) so dynamically-rendered targets are
-    // covered; the window is read lazily at fire time so a period/date edit
-    // between hover and click is respected.
-    let insMdPrefetchTimer = null;
-    page.addEventListener('mouseover', function (e) {
-      const t = e.target.closest && e.target.closest('#ins-open-mydept-btn, #ins-qh-missed-link');
-      if (!t || !page.contains(t)) return;
-      if (insMdPrefetchTimer) clearTimeout(insMdPrefetchTimer);
-      insMdPrefetchTimer = setTimeout(function () {
-        insMdPrefetchTimer = null;
-        prefetchDeptSummary_(($('ins-from') || {}).value, ($('ins-to') || {}).value);
-      }, 300);
-    });
-    page.addEventListener('mouseout', function (e) {
-      const t = e.target.closest && e.target.closest('#ins-open-mydept-btn, #ins-qh-missed-link');
-      if (t && insMdPrefetchTimer) { clearTimeout(insMdPrefetchTimer); insMdPrefetchTimer = null; }
-    });
+    // (M4: the #5-Option-A hover-prefetch on the two ex-hand-off buttons is
+    // RETIRED -- since M3 those buttons SCROLL on the same page, so there is
+    // no jump to warm; the summary they'd prefetch is already rendered.)
     const editSelAll  = $('ins-edit-select-all');
     const editSelNone = $('ins-edit-select-none');
     if (editSelAll)  editSelAll.addEventListener('click',  function (e) { e.preventDefault(); insTogglePopoverAgents_(true);  });
@@ -1153,24 +1137,15 @@
     selectAllActiveAgents_($('ins-edit-list'), checked);
   }
 
-  // Round-16 Phase 2 (header unification): the I4 period chips are replaced
-  // by the My-Department controls pattern -- real From/To inputs + the SHARED
-  // Quick-select preset chips (buildDatePresetChips_, script-2). The header
-  // inputs MIRROR the canonical #ins-from/#ins-to (still in the hidden
-  // fallback form; what deep links / saved views / the popover write): this
-  // sync copies canonical -> header on every render, and a header edit
-  // copies back + re-runs through insApplyWindow_ (the old period-chip
-  // pipeline: prior-window validation, picker regroup, prefs, runInsReport).
-  function insSyncHeaderDates_(meta) {
-    const from = meta && meta.from, to = meta && meta.to;
-    recordPageWindow_('insights', from, to);   // R9-3: the shared-window store
-    const f = $('ins-hdr-from'), t = $('ins-hdr-to');
-    if (f && from) f.value = from;
-    if (t && to) t.value = to;
-  }
+  // (M4: insSyncHeaderDates_ / insInitHeaderDates_ and the #ins-hdr-controls
+  // row are RETIRED -- the dept controls have been the single date authority
+  // since M2, and the mirrored header inputs mirrored nothing a user could
+  // see. The canonical #ins-from/#ins-to inputs live on in the hidden
+  // fallback form; insApplyWindow_ below remains the shared re-run tail for
+  // insSyncToDeptWindow_ and the popover.)
 
-  // Apply a { from, to } window to the report -- the shared tail every entry
-  // point uses (preset chip, header date edit).
+  // Apply a { from, to } window to the report -- the shared validated tail
+  // (prior-window check, picker regroup, prefs, runInsReport).
   function insApplyWindow_(r) {
     if (!r || !r.from || !r.to) return;
     if (r.from > r.to) { insSetResultsStatus_('error', 'Start date must be on or before end date.'); return; }
@@ -1185,25 +1160,6 @@
     insSavePrefs_();
     insSetResultsStatus_('loading', 'Refreshing report…');
     runInsReport();
-  }
-
-  let insHeaderDatesWired_ = false;
-  function insInitHeaderDates_() {
-    if (insHeaderDatesWired_) return;
-    const f = $('ins-hdr-from'), t = $('ins-hdr-to');
-    if (!f || !t) return;
-    insHeaderDatesWired_ = true;
-    buildDatePresetChips_($('ins-date-presets'), insApplyWindow_);
-    // Debounced like the dept page's date edits, so typing / rapid arrow
-    // presses coalesce into one request.
-    const onEdit = debounce_(function () {
-      if (!f.value || !t.value) return;
-      const w = $('ins-date-presets');
-      if (w) w.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
-      insApplyWindow_({ from: f.value, to: t.value });
-    }, 350);
-    f.addEventListener('change', onEdit);
-    t.addEventListener('change', onEdit);
   }
 
   function insApplyEditPopover_() {
@@ -1607,7 +1563,8 @@
           : 'The department this report covers. Switch departments with the header selector.';
       }
     })();
-    insSyncHeaderDates_(data.meta);   // Phase 2: reflect the rendered window on the header inputs
+    // (M4: the header-date mirror is retired; the results-date pill above +
+    // the region headline state the rendered window.)
     const cmp = $('ins-compare-line');
     if (cmp) {
       const mode = data.meta && data.meta.comparisonMode;
@@ -4193,9 +4150,10 @@
   function insSavePrefs_() {
     try {
       localStorage.setItem(insPrefsKey_(), JSON.stringify({
-        preset: $('ins-preset') ? $('ins-preset').value : 'custom',
-        from:   $('ins-from')   ? $('ins-from').value   : '',
-        to:     $('ins-to')     ? $('ins-to').value     : '',
+        // (M4: preset/from/to are no longer saved -- the dept controls are
+        // the date authority since M2, so first-open seeds from them and a
+        // saved window had nothing left to restore onto. Saved VIEWS still
+        // carry dates -- their own storage, deliberately.)
         compareMode: $('ins-compare-mode') ? $('ins-compare-mode').value : 'prevPeriod',
         priorFrom:   $('ins-prior-from')   ? $('ins-prior-from').value   : '',
         priorTo:     $('ins-prior-to')     ? $('ins-prior-to').value     : '',
@@ -4220,9 +4178,9 @@
     try {
       const prefs = JSON.parse(localStorage.getItem(insPrefsKey_()) || 'null');
       if (!prefs || typeof prefs !== 'object') return;
-      if (prefs.preset && $('ins-preset')) $('ins-preset').value = prefs.preset;
-      if (prefs.from   && $('ins-from'))   $('ins-from').value   = prefs.from;
-      if (prefs.to     && $('ins-to'))     $('ins-to').value     = prefs.to;
+      // (M4: preset/from/to are neither saved nor restored -- the dept
+      // controls seed the window on first open; old blobs' date fields are
+      // simply ignored.)
       if (prefs.compareMode && $('ins-compare-mode')) {
         $('ins-compare-mode').value = prefs.compareMode;
         $('ins-compare-mode').dispatchEvent(new Event('change'));

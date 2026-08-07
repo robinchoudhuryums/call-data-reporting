@@ -321,15 +321,15 @@
         </div>
         <div class="control">
           <label>&nbsp;</label>
-          <!-- Round-16 (owner): the LENS SWITCHER -- the same two-tab segment
-               renders on both this page and Insights, so the two read as two
-               lenses on one dept + range rather than separate destinations.
-               "Insights" hands off with the current window (handoffToInsights_,
-               the same path the bottom teaser strip's button uses). -->
+          <!-- M4 (owner-endorsed): the LENS SWITCHER survives as a JUMP
+               AFFORDANCE on the long merged page -- "Insights" opens +
+               scrolls to the #dept-insights-region below (deptInsightsOpen_,
+               no date carry, no forced re-generate); the region's own
+               "Agent table" side scrolls back up. -->
           <div class="ds-seg ds-lens-switch" role="group" aria-label="Department lens">
             <button type="button" aria-pressed="true">Agent table</button>
             <button type="button" id="lens-ins-btn" aria-pressed="false"
-                    title="Open the Insights report for this department and the same date range.">Insights</button>
+                    title="Jump to the Insights section below — the deeper lens on this department and date range.">Insights</button>
           </div>
         </div>
         <div class="control">
@@ -400,8 +400,8 @@
       <div id="dept-team-strip" class="dept-team-strip" style="display:none;"></div>
 
       <!-- (Round-16, owner: the Insights hand-off TEASER STRIP is RETIRED --
-           the lens switcher in the controls row is the route to Insights
-           now, carrying the same dept + window via handoffToInsights_.) -->
+           the lens switcher in the controls row jumps to the Insights
+           region below.) -->
 
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
@@ -540,14 +540,14 @@
            is now a lazy collapsible REGION of My Department -- full width,
            below the agent table + missed section. Every inner element id is
            unchanged from the page era, incl. #insights-page itself (now a
-           plain div: launcherOpenInsights_/handoffToInsights_ existence-check
-           it, and all the #insights-page-scoped CSS still applies). The
+           plain div: launcherOpenInsights_ existence-checks it, and all the
+           #insights-page-scoped CSS still applies). The
            heavy init + auto-generated report run on FIRST OPEN only
            (deptInsightsOpen_ / the region toggle listener -> insEnsurePage_),
            never on dept-page load -- laziness is the M1 contract.
-           setPage('insights') maps here (script-2), so every legacy entry
-           (deep links, quick-start chips, the lens switcher) lands on the
-           open region. -->
+           setPage('insights') maps here (script-2), so deep links + the
+           quick-start chips land on the open region; the lens switcher
+           calls deptInsightsOpen_ directly (M4). -->
       <details id="dept-insights-region" class="ins-region">
         <summary class="ins-region-summary">
           <span class="ins-region-title">Insights</span>
@@ -678,15 +678,13 @@
                  all the popover wiring (open/apply/outside-click) is
                  untouched. -->
             <button class="btn btn-secondary" id="ins-edit-selection-btn" type="button"
-                    title="Change the comparison window or agent selection without leaving the report (dates live in the header row below).">&#9998; Comparison &amp; agents</button>
-            <!-- Round-16 (owner): the LENS SWITCHER replaces the one-way
-                 "My Department →" button -- the same two-tab segment as the
-                 dept page's controls row. "Agent table" KEEPS the old
-                 button's id, so the existing click handler + hover-prefetch
-                 wiring (#ins-open-mydept-btn) run untouched. -->
+                    title="Change the comparison window or agent selection without leaving the report (the report's dates follow the page's From/To controls).">&#9998; Comparison &amp; agents</button>
+            <!-- M4: the LENS SWITCHER is a JUMP AFFORDANCE -- "Agent table"
+                 scrolls back up to the table (M3 in-page scroll; the old
+                 hover-prefetch went with the hand-off it warmed). -->
             <div class="ds-seg ds-lens-switch" role="group" aria-label="Department lens">
               <button type="button" id="ins-open-mydept-btn" aria-pressed="false"
-                      title="Open the My Department agent table for this department and the same date range.">Agent table</button>
+                      title="Jump back up to the agent table.">Agent table</button>
               <button type="button" aria-pressed="true">Insights</button>
             </div>
             <!-- R7 (N-1): re-run the report for the current selection (frosts
@@ -726,27 +724,10 @@
                  hidden form remains only as the failure / empty-roster
                  fallback (insShowForm). -->
           </div>
-          <!-- M2 (one date authority): this header From/To + Quick-select row
-               is HIDDEN -- the dept controls at the top of the page own the
-               window now (insSyncToDeptWindow_ converges the region on
-               refresh + on open), and two visible date strips on one page
-               would fight. Markup + wiring (insInitHeaderDates_ /
-               insSyncHeaderDates_ mirroring) kept inert for M4's sweep; the
-               results-date pill still states the rendered window. -->
-          <div class="controls ins-hdr-controls" id="ins-hdr-controls" role="group" aria-label="Report window" style="display:none;">
-            <div class="control">
-              <label for="ins-hdr-from">From</label>
-              <input type="date" id="ins-hdr-from">
-            </div>
-            <div class="control">
-              <label for="ins-hdr-to">To</label>
-              <input type="date" id="ins-hdr-to">
-            </div>
-            <div class="control">
-              <label>Quick select</label>
-              <div class="date-presets" id="ins-date-presets"></div>
-            </div>
-          </div>
+          <!-- (M4: the region's own header From/To + Quick-select row --
+               #ins-hdr-controls, hidden since M2 -- is DELETED. The dept
+               controls at the top of the page are the single date authority;
+               the results-date pill states the rendered window.) -->
         </div>
 
         <!-- R9-3: the Batch-E date-sync offer chip is retired -- the dept and

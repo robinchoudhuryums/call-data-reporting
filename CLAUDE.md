@@ -940,7 +940,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bites unrelated work; the full text is authoritative there, this is the index:
   Insights absorbed the Performance Report AND Compare Ranges (both retired,
   incl. the consolidated trend chart + per-agent cards/chart bases + IR
-  drill-through) · Insights header dates (HIDDEN since M2 -- the dept
+  drill-through) · Insights header dates (DELETED in M4 -- the dept
   controls row is the page's single date authority; `insSyncToDeptWindow_`),
   trend-at-bottom, the INSIGHTS REGION (the M1 merge: the whole ex-page is a
   lazy `<details>` on My Department) · Insights per-section FOLDS (replaced the

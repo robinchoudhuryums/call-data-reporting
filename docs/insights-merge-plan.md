@@ -123,17 +123,33 @@ untouched across every phase. This is a client-side restructure.
   no longer floats over the agent table / missed section while the open
   region is scrolled out of view.
 
-### M4 — Retirement + cleanup
+### M4 — Retirement + cleanup  ✅
 
-- Delete: `handoffToInsights_` / `launcherOpenInsights_`'s setPage detour
-  (they become open-region helpers), `adoptSharedWindow_`, the dwell-prefetch
-  'insights' page arm, the lens switcher (both sides), the dead
-  `basePageRoute_` insights branch, the `updateTabActiveState_` effRoute
-  mapping, the `data-page === 'insights'` belt in `irDrillToAgent_`.
-- Tour + Help rewording; docs + scenarios sweep (S14/S18/S19/S32/S37);
-  CLAUDE.md multi-page bullet → three pages (Overview / My Department /
-  Escalations).
-- Harness drivers walk the region natively (no lens-button dependency).
+- **Lens switcher: KEPT as a jump affordance (owner-endorsed lean)** — the
+  merged page is long, so "Insights" opens + scrolls to the region
+  (`deptInsightsOpen_` directly; no date carry, no forced re-generate — the
+  old `handoffToInsights_` armed a run per click that the convergence sync
+  + first-open auto-run make unnecessary) and "Agent table" scrolls back up
+  (M3). Titles reworded to say "jump".
+- Deleted: `handoffToInsights_` (no callers left); the `#ins-hdr-controls`
+  markup + `insInitHeaderDates_`/`insSyncHeaderDates_`/`insHeaderDatesWired_`
+  + their CSS (the row had been hidden since M2; `insApplyWindow_` survives
+  as the shared re-run tail); the #5-Option-A hover-prefetch on the two
+  ex-hand-off buttons (they scroll now — nothing to warm); the
+  `basePageRoute_` insights branch; the `updateTabActiveState_` effRoute
+  mapping; the `data-page === 'insights'` belt in `irDrillToAgent_`
+  (origin travels solely as `opts.fromInsights`); the dwell-prefetch
+  'insights' arm + the `pageActiveWindow_.insights` slot (the store is
+  dept-only, feeding the kept region-open dwell warm); the prefs blob's
+  `preset/from/to` fields (neither saved nor restored — the dept controls
+  seed the window; saved VIEWS keep their own dates deliberately).
+- `setPage('insights')` and the `ROUTES_`/`SHARE_STATE_` `/report/insights`
+  entries are PERMANENT compat surface, not leftovers — deep links and the
+  Digest email links ride them.
+- Comment/doc sweep: dashboard.html (lens titles, region comment, popover
+  title), script-2/4/5 comments, conventions, scenarios, this plan.
+- Harness drivers unchanged — they click `#my-dept-btn` → `#lens-ins-btn`,
+  which is exactly the kept jump affordance.
 
 ## Watchpoints (all phases)
 

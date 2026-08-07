@@ -1094,17 +1094,17 @@ behind the removed button.
   the blank-canvas harness gate: newer Chromium answers
   offsetParent/gBCR for closed-`<details>` content via forced layout, so
   `drive-smoke`'s checker also skips `details:not([open])` canvases.
-- **Insights header dates (Phase 2, now HIDDEN — M2)**: the Phase-2 header
-  From/To + shared Quick-select row (`#ins-hdr-controls`) is
-  `display:none` since M2 — the dept controls row is the page's single
-  date authority (see the Insights-region bullet below). The canonical
-  `#ins-from/#ins-to` inputs survive in the hidden fallback form (what
-  deep links / saved views / the popover / `insSyncToDeptWindow_` write);
-  `insSyncHeaderDates_`/`insInitHeaderDates_`/`insApplyWindow_` stay wired
-  — `insApplyWindow_` (prior-window validation → picker regroup → prefs →
-  runInsReport) is the shared re-run tail the sync uses. The Edit popover
-  is "Comparison & agents" (its date row hidden, not removed — the apply
-  flow still round-trips those inputs).
+- **Insights header dates (DELETED — M4)**: the Phase-2 header From/To +
+  shared Quick-select row (`#ins-hdr-controls`) was hidden in M2 (the dept
+  controls row is the page's single date authority) and DELETED in M4 with
+  its wiring (`insInitHeaderDates_`/`insSyncHeaderDates_`) and CSS. The
+  canonical `#ins-from/#ins-to` inputs survive in the hidden fallback form
+  (what deep links / saved views / the popover / `insSyncToDeptWindow_`
+  write); `insApplyWindow_` (prior-window validation → picker regroup →
+  prefs → runInsReport) survives as the shared re-run tail. The Edit
+  popover is "Comparison & agents" (its date row hidden, not removed — the
+  apply flow still round-trips those inputs). The prefs blob no longer
+  saves/restores `preset/from/to` (saved VIEWS keep their own dates).
 - **The INSIGHTS REGION (M1 merge, docs/insights-merge-plan.md)**: the whole
   ex-Insights-page lives in `<details id="dept-insights-region">` at the
   bottom of `#dept-page` — collapsed by default, with the LAZINESS CONTRACT
@@ -1158,8 +1158,16 @@ behind the removed button.
   `handoffToMyDept_` kept as the not-rendered fallback); the Agents chart
   defaults to Gap vs team with a saved `'abs'` self-heal; the fixed A/B
   remote hides while the region is off-screen (IntersectionObserver →
-  `.ins-ab-offscreen`). M4 (retire the transition machinery) is specified
-  in the plan doc.
+  `.ins-ab-offscreen`). **M4 (shipped): the transition machinery is
+  retired** — the lens switcher is KEPT as a jump affordance ("Insights"
+  → `deptInsightsOpen_` directly, no date carry / forced re-generate;
+  "Agent table" scrolls up); `handoffToInsights_`, the header-dates row +
+  wiring, the ex-hand-off hover-prefetch, the dead router branches
+  (`basePageRoute_` insights arm, the effRoute mapping), the
+  `irDrillToAgent_` data-page belt, the dwell 'insights' arm and the
+  prefs-blob dates are all deleted. `setPage('insights')` + the
+  `/report/insights` route/share-state entries are PERMANENT compat
+  surface for deep links + the Digest email links.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

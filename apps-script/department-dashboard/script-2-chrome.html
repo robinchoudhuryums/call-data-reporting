@@ -278,12 +278,15 @@
     // on `#dept-page .controls`, opaque strip), so the real date inputs +
     // Refresh + Export stay reachable while scrolling.
 
-    // Round-16 (owner): the lens switcher's "Insights" tab -- same hand-off
-    // as the bottom teaser strip's Open-full-report button (carries the
-    // current window; handoffToInsights_ lives in script-4, hoisted).
+    // M4 (owner-endorsed): the lens switcher survives as a JUMP AFFORDANCE
+    // on the long merged page -- "Insights" opens + scrolls to the region
+    // directly (deptInsightsOpen_, script-8, hoisted). No date carry (the
+    // dept controls are the authority, M2) and no forced re-generate per
+    // click (the old handoffToInsights_ armed one; the convergence sync +
+    // first-open auto-run cover every case that actually needs a run).
     var lensIns = $('lens-ins-btn');
     if (lensIns) lensIns.addEventListener('click', function () {
-      handoffToInsights_(($('from-date') || {}).value, ($('to-date') || {}).value, null);
+      if (typeof deptInsightsOpen_ === 'function') deptInsightsOpen_({ scroll: true });
     });
 
     // Round-16 Phase 3 (motion): elevation-on-stuck for the two sticky
@@ -430,10 +433,9 @@
   }
 
   // -- Date preset chips ---------------------------------------------------
-  // Round-16 Phase 2 (header unification): the chip list + builder are SHARED
-  // between My Department's Quick select and the Insights header's identical
-  // strip (insInitHeaderDates_) -- one component, two pages, so the two
-  // headers can't drift apart. onPick receives { from, to }.
+  // The Quick-select chip list + builder. (M4: the Insights header's twin
+  // strip is retired with the one-date-authority model -- My Department's
+  // controls row is the only consumer now.) onPick receives { from, to }.
   function buildDatePresetChips_(wrap, onPick) {
     if (!wrap) return;
     var presets = [
@@ -514,13 +516,13 @@
         && page !== 'insights') page = 'overview';
     // M1 (Insights merge): 'insights' is no longer a standalone page -- the
     // content is the #dept-insights-region collapsible ON the dept page.
-    // Every legacy caller (deep links via ROUTES_, the quick-start chips,
-    // handoffToInsights_, the lens switcher) still passes 'insights'; map it
-    // to the dept page here and open + scroll the region AFTER the dept
-    // branch runs. deptInsightsOpen_ runs insEnsurePage_ SYNCHRONOUSLY, so
-    // callers that write ins-* fields right after setPage returns (the
-    // handoff/launcher paths) keep the page-era ordering: ensure's
-    // defaults/prefs first, the caller's writes after.
+    // The remaining callers (deep links via ROUTES_, the quick-start chips'
+    // launcherOpenInsights_) still pass 'insights'; map it to the dept page
+    // here and open + scroll the region AFTER the dept branch runs.
+    // deptInsightsOpen_ runs insEnsurePage_ SYNCHRONOUSLY, so callers that
+    // write ins-* fields right after setPage returns (the launcher path)
+    // keep the page-era ordering: ensure's defaults first, the caller's
+    // writes after.
     var openInsRegion_ = page === 'insights';
     if (openInsRegion_) page = 'dept';
     document.body.setAttribute('data-page', page);

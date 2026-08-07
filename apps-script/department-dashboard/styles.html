@@ -1048,12 +1048,10 @@
     #insights-page #insights-results > .ir-results-header {
       padding-top: 4px; padding-bottom: 4px;
     }
-    #insights-page #insights-results > .ir-results-header .ins-hdr-controls { margin-top: 2px; }
   }
   /* R11-B9/Phase 2: the Insights sticky strip is the WHOLE results header
-     (title + toolbar + the From/To controls row -- the My Department
-     pattern). The controls row sits as a full-width third row inside the
-     flex header. */
+     (title + toolbar -- the M4 sweep deleted the header's own From/To row;
+     the dept controls are the date authority). */
   #insights-page #insights-results > .ir-results-header { flex-wrap: wrap; }
   /* R12-10 (I-1): on the Insights page the -8px bleed margins pushed the
      strip 4px past the viewport (a permanent horizontal wiggle --
@@ -1089,10 +1087,7 @@
      Insights headers -- a ds-seg with a hair border so it reads as a
      navigational element among the flat controls. */
   .ds-lens-switch { border: 1px solid var(--line); }
-  #insights-page #insights-results > .ir-results-header .ins-hdr-controls {
-    flex: 1 1 100%; margin: 6px 0 0; margin-bottom: 0;
-    align-items: flex-end; gap: 12px;
-  }
+  /* (M4: the .ins-hdr-controls rules went with the deleted header date row.) */
   /* R11-I (item 2): the compare + selection context, relocated out of the
      sticky header into normal flow so the pinned strip is shorter. */
   #insights-page .ins-subhead { margin: 8px 0 10px; }

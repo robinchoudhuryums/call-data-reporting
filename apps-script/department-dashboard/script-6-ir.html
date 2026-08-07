@@ -187,13 +187,12 @@
     // Drill-through from an Insights surface: the IR modal simply overlays
     // the page -- the rendered report stays put behind the overlay, so
     // nothing is hidden or restored. Just flag the origin and reveal the
-    // "Back to Insights" button on the IR modal (#2). M1 (Insights merge):
-    // Insights is a REGION of the dept page now, so data-page can't carry
-    // the origin -- the Insights call sites pass opts.fromInsights
-    // explicitly (the dept agent-table drill passes nothing); the legacy
-    // data-page check is kept as a harmless belt.
-    const fromInsights = (opts && opts.fromInsights)
-      || document.body.getAttribute('data-page') === 'insights';
+    // "Back to Insights" button on the IR modal (#2). Insights is a REGION
+    // of the dept page (M1 merge), so the origin travels as
+    // opts.fromInsights from the Insights call sites; the dept agent-table
+    // drill passes nothing. (M4: the legacy data-page belt is gone --
+    // data-page is never 'insights' anymore.)
+    const fromInsights = !!(opts && opts.fromInsights);
     if (fromInsights) {
       irCameFromInsights_ = true;
       const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = '';
