@@ -61,7 +61,8 @@
   let insCardsChartMode = 'abs';   // 'gap' | 'abs' | 'trend'; Round-16 (owner): Absolute is the default basis (was Trend, R11-H)
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
-  let insShareChartInstance = null;   // share-of-answered pie (PR port)
+  // (the share-of-answered pie's insShareChartInstance is GONE -- Round-16
+  // replaced the doughnut with HTML share-tally rows, no chart instance)
   let insActiveTrendMetric = 'answered';
   // gap 1: when the trend chart's "By Queue" tab is active, which per-queue
   // metric to plot -- 'abandonedPct' (default, the 5%-standard view) |
@@ -118,7 +119,7 @@
     // refetch. Cards re-render both ways (the on-track collapse differs);
     // switching to Detailed must BUILD what Simple skipped: the trend chart
     // (insDrawTrendChart_ gives up after 30 hidden frames, so a
-    // render-while-hidden never drew it -- the C3 trap), the share doughnut
+    // render-while-hidden never drew it -- the C3 trap), the share tally
     // (only if Team detail is open), and the admin heatmap fetch.
     insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
     if (mode === 'detailed') {
@@ -180,7 +181,7 @@
   function insResizeCharts_() {
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () { requestAnimationFrame(function () {
-      [insChartInstance, insShareChartInstance, insCardsChartInstance].forEach(function (c) {
+      [insChartInstance, insCardsChartInstance].forEach(function (c) {
         try { if (c) c.resize(); } catch (e) { /* destroyed mid-swap */ }
       });
     }); });
@@ -1260,7 +1261,7 @@
   // main pass whether or not this section is open.
   function insRenderDeferredCharts_() {
     if (!insLastData || !insDetailOpen_()) return;
-    // I4: only the share doughnut is deferred now -- the trend chart moved out
+    // I4: only the share tally is deferred now -- the trend chart moved out
     // of this <details> to the always-visible bottom Trends section and renders
     // in the main pass (insDrawTrendChart_).
     insRenderShareChart_(insLastData.agentData || []);
@@ -1562,10 +1563,11 @@
     // its own always-visible section at the bottom of the report, so it renders
     // in the main pass now -- measure-guarded (insDrawTrendChart_), since this
     // pass can run before the results container is shown on first paint.
-    // The share doughnut still lives inside the Team-detail <details>, so it
-    // stays deferred (renders at zero height while collapsed) -- only rendered
-    // here when the section is already open; the toggle handler renders it on
-    // first open. Queue health + heatmap already ran above (DOM/CSS-grid).
+    // The share tally still lives inside the Team-detail <details>, so it
+    // stays deferred -- only rendered here when the section is already open;
+    // the toggle handler renders it on first open. (It's plain DOM now, so
+    // the zero-height chart concern is gone, but deferring a hidden render
+    // stays correct and cheap.) Queue health + heatmap already ran above.
     // D1: Simple SKIPS the trend + share draws (not render-then-hide --
     // insDrawTrendChart_ gives up after 30 hidden frames and the chart would
     // never exist; insSetDensity_ builds both on the switch to Detailed).
@@ -1605,85 +1607,56 @@
   }
 
   /**
-   * Share-of-answered doughnut (ported from the Performance Report so
-   * PR can retire without losing the view). Built client-side from
-   * agentData (each card already carries answered.val for the range);
-   * slices sorted largest-first, datalabels suppressed under 4% of
-   * total (PR's threshold). Hidden when fewer than 2 agents answered.
+   * Share of answered calls -- Round-16 (owner): the doughnut (PR port) is
+   * RETIRED in favor of SHARE-TALLY ROWS, the block dialect the agent
+   * table / QCD report / email already speak: one row per selected agent
+   * (sage blocks at a cohort-shared unit + exact count + share %), sorted
+   * most-answered first. Row lengths rank directly (adjacent donut slices
+   * didn't) and identity is the row label, so it scales past six agents
+   * without a color per agent. R11-E semantics KEPT: shares are of the
+   * WHOLE department's answered calls -- unselected agents fold into one
+   * muted "Other agents" row, so the list still sums to the true 100%.
+   * Hidden under 2 rows (a lone share is always 100%). The function name
+   * survives the retirement (three call sites; no chart instance now).
    */
   function insRenderShareChart_(cards) {
     const wrap = $('ins-share-wrap');
     if (!wrap) return;
+    const host = $('ins-share-tally');
     const agentSlices = (cards || [])
       .map(function (c) {
         return { label: c.name, value: Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0) };
       })
       .filter(function (d) { return d.value > 0; })
       .sort(function (a, b) { return b.value - a.value; });
-    // R11-E (item 6): shares are of the WHOLE department's answered calls, not
-    // just the selected agents -- so an agent's slice reads the same whether the
-    // report is run for the whole dept or a subset. The unselected agents fold
-    // into a single muted "Other agents" slice (deptTotal - sum(selected)), so
-    // the donut still sums to the true 100%.
     const selectedTotal = agentSlices.reduce(function (a, s) { return a + s.value; }, 0);
     const deptTotal = Number(insLastData && insLastData.meta && insLastData.meta.answeredDeptTotal) || selectedTotal;
     const other = Math.max(0, deptTotal - selectedTotal);
     const slices = agentSlices.slice();
     if (other > 0) slices.push({ label: 'Other agents', value: other, other: true });
-    if (insShareChartInstance) { try { insShareChartInstance.destroy(); } catch (e) {} insShareChartInstance = null; }
-    if (slices.length < 2) { wrap.style.display = 'none'; return; }
+    if (slices.length < 2 || !host) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
-    refreshChartTheme();
-    destroyOrphanedChartOnCanvas_('ins-share-chart');
 
-    const colors = slices.map(function (d, i) { return d.other ? THEME.muted : IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
-    const plugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
-    insShareChartInstance = safeChart_($('ins-share-chart').getContext('2d'), {
-      type: 'doughnut',
-      data: {
-        labels: slices.map(function (d) { return d.label; }),
-        datasets: [{
-          data: slices.map(function (d) { return d.value; }),
-          backgroundColor: colors,
-          borderColor: THEME.paperCard,
-          borderWidth: 2,
-        }],
-      },
-      plugins: plugins,
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } },
-          tooltip: {
-            callbacks: {
-              label: function (ctx) {
-                const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
-                const pct = total > 0 ? (ctx.parsed / total) * 100 : 0;
-                return ctx.label + ': ' + ctx.parsed + ' (' + pct.toFixed(1) + '%)';
-              },
-            },
-          },
-          datalabels: {
-            display: function (ctx) {
-              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
-              return total > 0 && (ctx.dataset.data[ctx.dataIndex] / total) >= 0.04;
-            },
-            color: THEME.paper,
-            font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
-            textAlign: 'center',
-            // #2: name the slice on the donut itself (truncated to fit), not
-            // just in the right-side legend, so each slice is self-identifying.
-            formatter: function (value, ctx) {
-              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
-              const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
-              const name = String((ctx.chart.data.labels || [])[ctx.dataIndex] || '');
-              const shown = name.length > 13 ? name.slice(0, 12) + '…' : name;
-              return shown + '\n' + value + ' (' + pct + '%)';
-            },
-          },
-        },
-      },
-    });
+    const unit = ansTallyUnitFor_(slices.map(function (s) {
+      return { totalAnswered: s.value, totalMissed: 0 };
+    }));
+    host.innerHTML = slices.map(function (s) {
+      const pct = deptTotal > 0 ? (s.value / deptTotal * 100) : 0;
+      const title = s.label + ': ' + fmtNumber(s.value) + ' answered · '
+        + pct.toFixed(1) + '% of the department’s answered calls'
+        + (unit > 1 ? ' · each block ≈ ' + unit + ' calls' : '');
+      return '<div class="ins-share-row' + (s.other ? ' is-other' : '') + '" title="' + escapeHtml(title) + '">'
+        + '<span class="ins-share-name">' + escapeHtml(s.label) + '</span>'
+        + '<span class="ins-share-blocks">' + ansTallyBlocks_(s.value, unit, s.other ? 'oth' : 'a') + '</span>'
+        + '<span class="ins-share-num">' + fmtNumber(s.value) + ' <span class="ins-share-pct">· ' + pct.toFixed(1) + '%</span></span>'
+        + '</div>';
+    }).join('');
+    const leg = $('ins-share-legend');
+    if (leg) {
+      leg.style.display = '';
+      leg.innerHTML = (unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls · ' : '')
+        + 'sorted most-answered first · shares are of the whole department';
+    }
   }
 
   /**

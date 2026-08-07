@@ -1421,12 +1421,14 @@
 
         <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
 
-        <!-- Share-of-answered pie (ported from the Performance Report so
-             PR can retire without losing the view): each selected
-             agent's slice of the team's answered calls in the range. -->
+        <!-- Share of answered calls -- Round-16 (owner): the doughnut became
+             SHARE-TALLY ROWS (one row per agent: blocks at a shared unit +
+             count + share %, "Other agents" folding the unselected rest per
+             R11-E). Built by insRenderShareChart_ (name kept, no canvas). -->
         <div class="ir-chart-wrap ins-share-wrap" id="ins-share-wrap" style="display:none;">
           <div class="ir-chart-header">Share of answered calls</div>
-          <div class="ir-chart-canvas-wrap ins-share-canvas-wrap"><canvas id="ins-share-chart"></canvas></div>
+          <div id="ins-share-tally" class="ins-share-tally"></div>
+          <div id="ins-share-legend" class="ans-tally-legend" style="display:none;"></div>
         </div>
         </details>
         <!-- /A2 Team detail -->

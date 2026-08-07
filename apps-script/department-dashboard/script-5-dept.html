@@ -1153,6 +1153,15 @@
     var __useFrost = !__deptSwitch && state.rows.length > 0 && !!__frostHost;
     if (__useFrost) { dsFrostShow_(__frostHost, 'Refreshing…'); setStatus(null); }
     else { setStatus('loading', 'Loading...'); }
+    // Round-16 (owner): the Team-strip cards at the top frost alongside the
+    // table on a same-dept refresh -- they render from the same summary
+    // payload, so while the table said "Refreshing…" the strip sat stale
+    // with no signal. First load / dept switch keeps them hidden instead
+    // (renderDeptTeamStrip_ shows them only once data exists).
+    var __stripHost = $('dept-team-strip');
+    if (__useFrost && __stripHost && __stripHost.style.display !== 'none' && __stripHost.innerHTML) {
+      dsFrostShow_(__stripHost, 'Refreshing…');
+    }
     $('refresh-btn').disabled = true;
     // Page title belongs to the dept page; only update it when
     // we're actually showing that page (otherwise we'd clobber
@@ -1236,6 +1245,8 @@
     if (!(opts && opts.swr)) {
       var __fh = document.querySelector('.agents-table-wrap');
       if (__fh) dsFrostHide_(__fh);
+      var __sh = $('dept-team-strip');
+      if (__sh) dsFrostHide_(__sh);
     }
     lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
@@ -2114,6 +2125,8 @@
     // M3: clear the frost overlay on failure (the stale table stays visible).
     var __fh = document.querySelector('.agents-table-wrap');
     if (__fh) dsFrostHide_(__fh);
+    var __sh = $('dept-team-strip');
+    if (__sh) dsFrostHide_(__sh);
     // R7 (M-1): the missed-section frost armed at refresh() start has no
     // deptMissedFetch_ coming to clear it -- unfrost here (content stays as-is).
     var __mw = $('dept-missed-section');
@@ -2650,6 +2663,7 @@
     var t = state && state.totals;
     if (!t || !state.rows || !state.rows.length) {
       strip.style.display = 'none'; strip.innerHTML = '';
+      strip.classList.remove('ds-frost-host');   // a frosted strip that empties out drops its overlay too
       if (zone) zone.style.display = 'none';
       return;
     }
@@ -2800,6 +2814,11 @@
     strip.innerHTML = heroTile + ansTile + qAbdTile + qAvgTile + trTile;
     strip.style.display = '';
     if (zone) zone.style.display = '';
+    // Round-16: the innerHTML replace above destroyed any active frost
+    // overlay (the SWR pre-paint renders while the live fetch is still out;
+    // the .ds-frost-host class survives the wipe) -- restore it so the strip
+    // stays visibly "refreshing" until the live repaint unfrosts.
+    if (strip.classList.contains('ds-frost-host')) dsFrostShow_(strip, 'Refreshing…');
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
   }
 

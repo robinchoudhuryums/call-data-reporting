@@ -562,11 +562,20 @@
   // `!tab.querySelector('.nav-count-badge')`) and ran once per page load, so
   // after a manager resolved their last escalation the badge kept the old
   // number for the rest of the session and the strip stayed visible.
+  // Last-known viewer-scope escalation counts, shared with the Company
+  // snapshot card's pending-escalations line (script-3-overview).
+  var escBadgeLast_ = null;
   function escApplyBadge_(counts) {
     var open = Number(counts && counts.open) || 0;
     var review = Number(counts && counts.review) || 0;
     var over = Number(counts && counts.overdue) || 0;
     var total = open + review;
+    // Round-16 (owner): the Company snapshot card carries a pending-
+    // escalations line too. Stash the counts (the card can render before or
+    // after this badge fetch) and repaint its line in place -- ovAggEscRender_
+    // lives in script-3-overview (function hoisting spans fragments).
+    escBadgeLast_ = { open: open, review: review, overdue: over };
+    try { ovAggEscRender_(); } catch (e) { /* card not rendered yet */ }
 
     var tab = $('escalations-btn');
     if (tab) {

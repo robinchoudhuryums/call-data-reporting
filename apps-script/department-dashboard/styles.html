@@ -3640,7 +3640,26 @@
   .ds-tooltip .ds-tip-bench.is-warn { background: var(--warn-soft); color: var(--warn); }
 
   /* Insights: share-of-answered pie (PR port) + card IR drill link. */
-  .ins-share-canvas-wrap { height: 220px; position: relative; }
+  /* Round-16: share-of-answered TALLY ROWS (the doughnut's successor) --
+     one grid row per agent: name | blocks | count · share %. */
+  .ins-share-tally { display: flex; flex-direction: column; padding: 2px 0 4px; }
+  .ins-share-row {
+    display: grid; grid-template-columns: minmax(90px, 160px) 1fr auto;
+    gap: 10px; align-items: center; padding: 5px 0;
+  }
+  .ins-share-row + .ins-share-row { border-top: 1px solid var(--line); }
+  .ins-share-name {
+    font-size: 12.5px; color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ins-share-row.is-other .ins-share-name { color: var(--muted); font-style: italic; }
+  .ins-share-blocks { display: flex; flex-wrap: wrap; gap: 2px; }
+  .ins-share-num {
+    font: 12px var(--mono); color: var(--ink);
+    white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+  .ins-share-pct { color: var(--muted); }
+  .tly.oth { background: var(--muted); opacity: 0.45; }
   .ins-card-ir-link {
     margin-left: auto;
     font-family: var(--mono);
@@ -5726,6 +5745,14 @@
     .ov-company-aggregate .ov-agg-row { grid-template-columns: 1fr; }
     .ov-agg-spark { border-left: none; padding-left: 0; border-top: 1px dashed var(--line); padding-top: 8px; }
   }
+  /* Round-16: pending-escalations line on the Company snapshot card. */
+  .ov-agg-esc {
+    margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
+    font-size: 12px; color: var(--ink);
+  }
+  .ov-agg-esc:empty { display: none; }
+  .ov-agg-esc .ov-esc-overdue { color: var(--warn); font-weight: 600; }
+  .ov-agg-esc .ov-agg-esc-zero { color: var(--muted); }
 
   /* Child sub-queue tiles nested INSIDE the user-hero block, used
      when the viewer's dept is a top-level parent (e.g. Sales viewer

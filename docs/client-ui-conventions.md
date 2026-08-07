@@ -1030,3 +1030,20 @@ defensible scope and a confusing one.
 - **`.ir-form-grid` is now DEFINED** (flex + wrap; it was referenced by five
   admin forms but never styled, so their fields stacked full-width). New
   admin form rows should use it rather than inventing another container.
+- **Share of answered = TALLY ROWS, not a doughnut**: `insRenderShareChart_`
+  (name kept, three call sites) builds `#ins-share-tally` — one grid row per
+  agent (name | sage blocks at an `ansTallyUnitFor_` unit | count · share %),
+  sorted most-answered first, the R11-E "Other agents" fold as a muted row
+  (`.tly.oth`). No Chart.js instance anymore (`insShareChartInstance` is
+  gone); still deferred behind the Team-detail `<details>`.
+- **Company snapshot carries a pending-escalations line** (`#ov-agg-esc`,
+  `ovAggEscRender_` in script-3): filled from the badge fetch's counts
+  (`escBadgeLast_`, script-2 — `escApplyBadge_` repaints it on every badge
+  refresh, so it follows mutations); zero renders a muted "none pending"
+  statement, non-zero gets the overdue warn + an Open-worklist button.
+- **My Department team strip frosts on refresh**: a same-dept refresh frosts
+  `#dept-team-strip` alongside the agents table (M3 pattern); the SWR
+  pre-paint's innerHTML replace destroys the overlay, so
+  `renderDeptTeamStrip_` re-frosts when `.ds-frost-host` survives the wipe.
+  The missed section's frost was already wired (R7 M-1) and is
+  probe-verified working.

@@ -502,7 +502,35 @@
       +     '<div class="ov-agg-stat" title="' + escapeHtml(ovActiveTooltip_(agg)) + '"><span class="ov-agg-stat-label">Active</span><span class="ov-agg-stat-val">' + agg.activeAgents + ' of ' + (agg.recentlyActiveCount != null ? agg.recentlyActiveCount : agg.rosterSize) + '</span></div>'
       +   '</div>'
       +   (spark ? '<div class="ov-agg-spark" title="30-day company % answered trend">' + spark + '</div>' : '')
-      + '</div>';
+      + '</div>'
+      // Round-16 (owner): pending-escalations line on the company card --
+      // filled from the badge fetch's counts (escApplyBadge_ repaints it in
+      // place whenever the badge refreshes, so it follows every mutation).
+      + '<div class="ov-agg-esc" id="ov-agg-esc"></div>';
+    ovAggEscRender_();
+  }
+
+  // The Company snapshot's pending-escalations line. Renders from the
+  // last-known badge counts (escBadgeLast_, script-2-chrome); empty until the
+  // first badge fetch lands. Admin viewer => the counts are company-wide (the
+  // badge is viewer-FULL scope). Zero pending renders a quiet muted line
+  // rather than nothing, so "none pending" is a statement, not an absence.
+  function ovAggEscRender_() {
+    const host = $('ov-agg-esc');
+    if (!host) return;
+    const b = escBadgeLast_;
+    if (!b) { host.innerHTML = ''; return; }
+    const total = b.open + b.review;
+    if (total <= 0) {
+      host.innerHTML = '<span class="ov-agg-esc-zero">⚑ Escalations · none pending</span>';
+      return;
+    }
+    host.innerHTML = '⚑ <strong>Escalations:</strong> ' + b.open + ' open'
+      + (b.overdue ? ' · <span class="ov-esc-overdue">' + b.overdue + ' overdue</span>' : '')
+      + (b.review ? ' · ' + b.review + ' awaiting review' : '')
+      + ' <button type="button" class="link-btn" id="ov-agg-esc-open">Open worklist →</button>';
+    const btn = $('ov-agg-esc-open');
+    if (btn) btn.addEventListener('click', function () { setPage('escalations'); });
   }
 
   // Hero block: featured rendering of the viewer's own department,
