@@ -502,37 +502,31 @@ function sendDigestEmail_(opts) {
     || PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
   const linkLabel = deepLink ? 'See the full breakdown in the dashboard' : 'Open Dashboard';
 
-  const previewBanner = opts.isPreview
-    ? ('<div style="background:#FEF3C7;border-left:4px solid #D97706;padding:10px 14px;border-radius:4px;margin-bottom:12px;">'
-      +   '<strong style="color:#92400E;">Preview only.</strong> '
-      +   '<span style="color:#7C2D12;">This is what '
-      +   escapeHtmlServer_(opts.previewFor || '(the subscriber)')
-      +   ' would receive for the '
-      +   escapeHtmlServer_(opts.cadence) + ' ' + escapeHtmlServer_(format) + ' digest on '
-      +   escapeHtmlServer_(rangeLabel) + '.</span>'
-      + '</div>')
+  // Round-16 (owner): the digest renders in the EmailKit house style (the
+  // Daily Call Queue Report's design language), like every other report
+  // email. The preview banner becomes a warn-toned callout row inside the
+  // card; the CTA is the shell's bulletproof button.
+  const previewRow = opts.isPreview
+    ? ekRow_(ekCalloutHtml_('Preview only',
+        'This is what ' + ekEsc_(opts.previewFor || '(the subscriber)')
+        + ' would receive for the ' + ekEsc_(opts.cadence) + ' ' + ekEsc_(format)
+        + ' digest on ' + ekEsc_(rangeLabel) + '.', 'warn'), '16px 26px 0')
     : '';
 
   const subject = (opts.isPreview ? '[Preview] ' : '')
     + 'Dashboard digest — ' + dept + ' — ' + rangeLabel;
 
-  const htmlBody =
-      '<div style="font-family: sans-serif; color: #1f2937; max-width: 720px;">'
-    +   previewBanner
-    +   '<div style="background: #EFF6FF; border-left: 4px solid #1d4ed8; padding: 16px 20px; border-radius: 4px;">'
-    +     '<h2 style="margin: 0 0 4px; color: #1e3a8a; font-size: 18px;">'
-    +       escapeHtmlServer_(dept) + ' digest'
-    +     '</h2>'
-    +     '<div style="color: #1e3a8a; font-size: 13px;">' + escapeHtmlServer_(rangeLabel) + '</div>'
-    +   '</div>'
-    +   coreHtml
-    +   (dashboardUrl
-        ? '<div style="margin-top: 16px;"><a href="' + escapeHtmlServer_(dashboardUrl) + '" style="display: inline-block; background: #1d4ed8; color: #fff; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">' + escapeHtmlServer_(linkLabel) + '</a></div>'
-        : '')
-    +   '<div style="margin-top: 24px; font-size: 11px; color: #9ca3af;">'
-    +     'Sent by the Department Dashboard digest engine. To stop receiving these, ask an admin to remove your row from the "Digest Config" sheet (or set Active=FALSE).'
-    +   '</div>'
-    + '</div>';
+  const htmlBody = ekShellHtml_({
+    kicker: 'Call Data · ' + (opts.cadence || 'scheduled') + ' digest',
+    title: dept,
+    subtitle: rangeLabel,
+    preheader: dept + ' ' + (opts.cadence || '') + ' digest · ' + rangeLabel,
+    rowsHtml: previewRow + coreHtml,
+    ctaUrl: dashboardUrl,
+    ctaLabel: linkLabel,
+    footerHtml: 'Sent by the Department Dashboard digest engine. To stop receiving these, '
+      + 'ask an admin to remove your row from the &ldquo;Digest Config&rdquo; sheet (or set Active=FALSE).',
+  });
 
   MailApp.sendEmail({
     to:       to,
@@ -542,21 +536,38 @@ function sendDigestEmail_(opts) {
 }
 
 /**
- * The original 'summary' digest body: 4 KPI tiles + the WoW driver
- * callout (#11). Extracted unchanged from sendDigestEmail_ when the
- * Format column landed, so the summary path stays byte-identical.
+ * The 'summary' digest body, in the EmailKit house style (Round-16): the
+ * answer-rate KPI tinted against the admin-tunable goal + Rung/Answered/
+ * Missed tiles, the ATT caption, and the WoW driver callout (#11) with an
+ * answer-first quiet-week fallback. Returns shell ROWS for ekShellHtml_.
  */
 function digestSummaryHtml_(dept, fromIso, toIso) {
   const stats   = computeDigestStats_(dept, fromIso, toIso);
   const totals  = stats.totals || {};
-  const pct = (Number(totals.totalRung) || 0) > 0
-    ? ((Number(totals.totalAnswered) || 0) / Number(totals.totalRung)) * 100
+  const rung = Number(totals.totalRung) || 0;
+  const pct = rung > 0
+    ? ((Number(totals.totalAnswered) || 0) / rung) * 100
     : 0;
   const pctStr     = pct.toFixed(1) + '%';
-  const rungStr    = String(Number(totals.totalRung)     || 0);
-  const ansStr     = String(Number(totals.totalAnswered) || 0);
-  const missedStr  = String(Number(totals.totalMissed)   || 0);
+  const rungStr    = ekFmtInt_(Number(totals.totalRung)     || 0);
+  const ansStr     = ekFmtInt_(Number(totals.totalAnswered) || 0);
+  const missedStr  = ekFmtInt_(Number(totals.totalMissed)   || 0);
   const attStr     = digestFormatHms_(Number(totals.attSeconds) || 0);
+  const target     = digestAnswerTarget_();
+
+  const kpis = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+    + ekKpiTd_('% answered', rung > 0 ? pctStr : '—', {
+        tone: rung > 0 ? (pct >= target ? 'good' : 'bad') : 'neutral',
+        subHtml: ekKpiSub_(ekEsc_(target + '% goal')),
+        pad: 'padding-right:6px;' })
+    + ekKpiTd_('Rung', rungStr, { pad: 'padding:0 3px;' })
+    + ekKpiTd_('Answered', ansStr, { pad: 'padding:0 3px;' })
+    + ekKpiTd_('Missed', missedStr, { pad: 'padding-left:6px;' })
+    + '</tr></table>'
+    + '<div style="font:11px ' + EK_SANS_ + ';color:' + EK_C_.mut + ';padding-top:8px;">'
+    +   'Avg talk time: <strong>' + ekEsc_(attStr) + '</strong>'
+    +   ' · ' + stats.rows + ' agent' + (stats.rows === 1 ? '' : 's') + ' with activity'
+    + '</div>';
 
   // WoW "driver" narrative (#11): which agent's net answered/missed
   // change most explains the dept's week-over-week answer-rate shift.
@@ -566,29 +577,16 @@ function digestSummaryHtml_(dept, fromIso, toIso) {
   let wowNarrative = digestWowNarrative_(wow);
   // Answer-first fallback: on a quiet week (no notable WoW driver) the
   // digest still ends with one plain-language takeaway, never bare tiles.
-  if (!wowNarrative && Number(totals.totalRung) > 0) {
-    wowNarrative =
-        '<div style="margin:16px 0;padding:12px 16px;background:#EFF6FF;border-left:3px solid #1d4ed8;'
-      +   'border-radius:4px;font-size:14px;color:#1f2937;line-height:1.5;">'
-      +   'The team answered ' + escapeHtmlServer_(ansStr) + ' of ' + escapeHtmlServer_(rungStr)
-      +   ' rung calls (' + escapeHtmlServer_(pctStr) + ') across ' + stats.rows + ' agent'
-      +   (stats.rows === 1 ? '' : 's') + ' — no notable week-over-week shift.'
-      + '</div>';
+  if (!wowNarrative && rung > 0) {
+    wowNarrative = ekCalloutHtml_('At a glance',
+      'The team answered ' + ekEsc_(ansStr) + ' of ' + ekEsc_(rungStr)
+      + ' rung calls (' + ekEsc_(pctStr) + ') across ' + stats.rows + ' agent'
+      + (stats.rows === 1 ? '' : 's') + ' — no notable week-over-week shift.',
+      'neutral');
   }
 
-  return '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +     digestHeroHtml_(pct, Number(totals.totalRung) || 0)
-    +     '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">'
-    +       digestStatTile_('Rung',         rungStr)
-    +       digestStatTile_('Answered',     ansStr)
-    +       digestStatTile_('Missed',       missedStr)
-    +     '</div>'
-    +     '<div style="margin-top:12px;font-size:13px;color:#6b7280;">'
-    +       'Avg talk time: <strong>' + escapeHtmlServer_(attStr) + '</strong>'
-    +       ' · ' + stats.rows + ' agent' + (stats.rows === 1 ? '' : 's') + ' with activity'
-    +     '</div>'
-    +   '</div>'
-    +   wowNarrative;
+  return ekRow_(kpis)
+    + (wowNarrative ? ekRow_(wowNarrative, '12px 26px 4px') : '');
 }
 
 /**
@@ -667,21 +665,8 @@ function digestTakeaway_(teamStats) {
        + ((pct.formatted) || '0%') + phrase + ').';
 }
 
-/** Inline-styled delta span for the insights digest (sage up / amber down by valence). */
-function digestDeltaHtml_(stat, valence) {
-  const s = stat || { deltaPct: 0, type: 'volume' };
-  const dp = Number(s.deltaPct || 0);
-  if (Math.abs(dp) < 0.05) {
-    return '<span style="color:#9ca3af;font-size:11px;">&ndash;</span>';
-  }
-  let color = '#6b7280';                                   // neutral grey
-  if (valence === 'pos') color = dp > 0 ? '#059669' : '#D97706';
-  else if (valence === 'neg') color = dp > 0 ? '#D97706' : '#059669';
-  const arrow = dp > 0 ? '&#9650;' : '&#9660;';
-  const suffix = s.type === 'pctPoints' ? ' pts' : '%';
-  return '<span style="color:' + color + ';font-size:11px;font-weight:700;white-space:nowrap;">'
-       + arrow + ' ' + Math.abs(dp).toFixed(1) + suffix + '</span>';
-}
+// (digestDeltaHtml_ RETIRED, Round-16 -- insEkDelta_ in InsightsReport.gs is
+// the kit-styled delta span every email renders through now.)
 
 /**
  * The 'insights' digest body: the dept's full-roster Insights run
@@ -695,91 +680,22 @@ function digestDeltaHtml_(stat, valence) {
 function digestInsightsHtml_(dept, fromIso, toIso, cadence) {
   const roster = getRosterForDepartment_(dept);
   if (!roster.names.length) {
-    return '<div style="margin:20px 0;padding:16px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;color:#6b7280;font-size:13px;">'
-         + 'No roster found for ' + escapeHtmlServer_(dept) + ' — nothing to report.'
-         + '</div>';
+    return ekRow_(ekCalloutHtml_('', 'No roster found for ' + ekEsc_(dept)
+      + ' — nothing to report.', 'neutral'), '16px 26px 4px');
   }
   const prior = digestInsightsPrior_(cadence, fromIso, toIso);
   const data = computeInsights_(dept, fromIso, toIso, roster.names.slice(), roster,
                                 prior ? prior.from : '', prior ? prior.to : '');
-  return renderInsightsEmailBody_(data);
+  // Round-16: the digest's insights format renders through the SAME EmailKit
+  // rows as the Insights page's "Email report" (insEmailReportRows_,
+  // InsightsReport.gs) -- one renderer, two senders, identical output. The
+  // old renderInsightsEmailBody_/Summary renderers are retired with it.
+  return insEmailReportRows_(data);
 }
 
-/**
- * Shared server-rendered HTML body for an Insights report email: the
- * answer-first takeaway + department rollup KPI tiles + per-agent table
- * (current value with delta vs the prior window). Email-safe inline styles
- * (mail clients strip <style>/CSS custom properties). Consumed by the manager
- * digest (digestInsightsHtml_) AND the Insights modal's "Email report" action
- * (InsightsReport.gs::sendInsightsReportEmail) so the two render identically.
- * Takes an already-computed computeInsights_ `data` object.
- */
-function renderInsightsEmailBody_(data) {
-  const t = (data && data.teamStats) || {};
-
-  // Answer-first takeaway line before any tile (anti-intimidation).
-  const takeaway = digestTakeaway_(t);
-  const takeawayHtml = takeaway
-    ? '<div style="margin:16px 0 0;padding:12px 16px;background:#EFF6FF;border-left:3px solid #1d4ed8;'
-      + 'border-radius:4px;font-size:14px;color:#1f2937;line-height:1.5;">'
-      + escapeHtmlServer_(takeaway) + '</div>'
-    : '';
-
-  const tile = function (label, stat, valence) {
-    return '<td style="padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;text-align:center;">'
-      + '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">'
-      +   escapeHtmlServer_(label) + '</div>'
-      + '<div style="font-size:18px;color:#111827;font-weight:700;margin-top:2px;">'
-      +   escapeHtmlServer_(String((stat && stat.formatted) || '-')) + '</div>'
-      + '<div style="margin-top:2px;">' + digestDeltaHtml_(stat, valence) + '</div>'
-      + '</td>';
-  };
-
-  const agentRows = (data.agentData || []).map(function (a) {
-    const m = a.metrics || {};
-    const cell = function (stat, valence) {
-      return '<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #f3f4f6;white-space:nowrap;">'
-        + escapeHtmlServer_(String((stat && stat.formatted) || '-'))
-        + ' ' + digestDeltaHtml_(stat, valence)
-        + '</td>';
-    };
-    return '<tr>'
-      + '<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;">' + escapeHtmlServer_(a.name) + '</td>'
-      + cell(m.rung, 'pos') + cell(m.missed, 'neg') + cell(m.answered, 'pos')
-      + cell(m.pct, 'pos') + cell(m.att, 'neu')
-      + '</tr>';
-  }).join('');
-
-  return takeawayHtml
-    + '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
-    +     'Department rollup &middot; vs ' + escapeHtmlServer_(data.priorDateLabel || 'prior period')
-    +   '</div>'
-    +   '<table style="border-collapse:separate;border-spacing:6px;width:100%;"><tr>'
-    +     tile('Rung', t.rung, 'pos') + tile('Missed', t.missed, 'neg')
-    +     tile('Answered', t.answered, 'pos') + tile('% Answered', t.pct, 'pos')
-    +     tile('Avg ATT', t.att, 'neu')
-    +   '</tr></table>'
-    + '</div>'
-    + '<div style="margin: 16px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
-    +     'Per-agent &middot; current value with change vs the prior window'
-    +   '</div>'
-    +   '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
-    +     '<thead><tr style="background:#f9fafb;">'
-    +       '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Agent</th>'
-    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Rung</th>'
-    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Missed</th>'
-    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Answered</th>'
-    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">% Ans</th>'
-    +       '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">ATT</th>'
-    +     '</tr></thead>'
-    +     '<tbody>' + (agentRows
-            || '<tr><td colspan="6" style="padding:8px 10px;color:#6b7280;">No agent activity in this window.</td></tr>')
-    +     '</tbody>'
-    +   '</table>'
-    + '</div>';
-}
+// (renderInsightsEmailBody_ RETIRED, Round-16 -- the digest's insights
+// format and the Insights page email both render insEmailReportRows_,
+// InsightsReport.gs.)
 
 /**
  * Density Phase 2 (#9): the SUMMARY variant of the Insights email --
@@ -793,78 +709,9 @@ function renderInsightsEmailBody_(data) {
  */
 var INSIGHTS_EMAIL_MIN_CALLS_ = 10;   // answerable calls (answered+missed) gate
 
-function renderInsightsEmailSummary_(data) {
-  const t = (data && data.teamStats) || {};
-  const takeaway = digestTakeaway_(t);
-  const takeawayHtml = takeaway
-    ? '<div style="margin:16px 0 0;padding:12px 16px;background:#EFF6FF;border-left:3px solid #1d4ed8;'
-      + 'border-radius:4px;font-size:14px;color:#1f2937;line-height:1.5;">'
-      + escapeHtmlServer_(takeaway) + '</div>'
-    : '';
-
-  const tile = function (label, stat, valence) {
-    return '<td style="padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;text-align:center;">'
-      + '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">'
-      +   escapeHtmlServer_(label) + '</div>'
-      + '<div style="font-size:18px;color:#111827;font-weight:700;margin-top:2px;">'
-      +   escapeHtmlServer_(String((stat && stat.formatted) || '-')) + '</div>'
-      + '<div style="margin-top:2px;">' + digestDeltaHtml_(stat, valence) + '</div>'
-      + '</td>';
-  };
-
-  const teamPct = Number((t.pct && t.pct.val) || 0);
-  const behind = (data.agentData || []).filter(function (a) {
-    const m = a.metrics || {};
-    const vol = (Number(m.answered && m.answered.val) || 0)
-              + (Number(m.missed && m.missed.val) || 0);
-    return vol >= INSIGHTS_EMAIL_MIN_CALLS_
-        && (Number(m.pct && m.pct.val) || 0) < teamPct;
-  }).sort(function (a, b) {
-    return (Number(a.metrics.pct && a.metrics.pct.val) || 0)
-         - (Number(b.metrics.pct && b.metrics.pct.val) || 0);
-  });
-
-  const behindRows = behind.map(function (a) {
-    const pct = Number(a.metrics.pct && a.metrics.pct.val) || 0;
-    const gap = Math.round(teamPct - pct);
-    return '<tr>'
-      + '<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;">' + escapeHtmlServer_(a.name) + '</td>'
-      + '<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #f3f4f6;">'
-      +   escapeHtmlServer_(String((a.metrics.pct && a.metrics.pct.formatted) || '-')) + '</td>'
-      + '<td style="padding:6px 10px;text-align:right;border-bottom:1px solid #f3f4f6;color:#92400E;">'
-      +   (gap > 0 ? gap + ' pts behind' : 'behind') + '</td>'
-      + '</tr>';
-  }).join('');
-
-  return takeawayHtml
-    + '<div style="margin: 20px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
-    +     'Department rollup &middot; vs ' + escapeHtmlServer_(data.priorDateLabel || 'prior period')
-    +   '</div>'
-    +   '<table style="border-collapse:separate;border-spacing:6px;width:100%;"><tr>'
-    +     tile('% Answered', t.pct, 'pos') + tile('Answered', t.answered, 'pos')
-    +     tile('Missed', t.missed, 'neg') + tile('Avg ATT', t.att, 'neu')
-    +   '</tr></table>'
-    + '</div>'
-    + '<div style="margin: 16px 0; padding: 20px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">'
-    +   '<div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;margin-bottom:8px;">'
-    +     'Behind the team average'
-    +   '</div>'
-    +   (behindRows
-          ? '<table style="border-collapse:collapse;width:100%;font-size:13px;">'
-            + '<thead><tr style="background:#f9fafb;">'
-            +   '<th style="text-align:left;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Agent</th>'
-            +   '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">% Ans</th>'
-            +   '<th style="text-align:right;padding:8px 10px;border-bottom:1px solid #e5e7eb;">Gap</th>'
-            + '</tr></thead><tbody>' + behindRows + '</tbody></table>'
-          : '<div style="font-size:13px;color:#065F46;">No agent is behind the team average this window.</div>')
-    +   '<div style="margin-top:8px;font-size:11px;color:#9ca3af;">'
-    +     'Answer rate below the team average this window, minimum '
-    +     INSIGHTS_EMAIL_MIN_CALLS_ + ' answerable calls. The full per-agent table is in the '
-    +     'web report (or use Email report for the long form).'
-    +   '</div>'
-    + '</div>';
-}
+// (renderInsightsEmailSummary_ RETIRED, Round-16 -- insEmailSummaryRows_
+// in InsightsReport.gs is the kit-styled summary body now; the min-calls
+// gate above still feeds it.)
 
 /**
  * Renders the WoW "driver" callout (#11) from a computeDigestWowDriver_
@@ -889,33 +736,16 @@ function digestWowNarrative_(wow) {
     + ' — the biggest driver of the department’s '
     + (up ? 'answer-rate gain' : 'answer-rate drop') + '.';
 
-  const c = up
-    ? { bg: '#ECFDF5', border: '#059669', head: '#065F46', body: '#064E3B' }
-    : { bg: '#FFFBEB', border: '#D97706', head: '#92400E', body: '#7C2D12' };
-
-  return '<div style="margin:16px 0;padding:12px 16px;background:' + c.bg
-       +   ';border-left:4px solid ' + c.border + ';border-radius:4px;">'
-       +   '<div style="font-size:11px;font-weight:700;text-transform:uppercase;'
-       +     'letter-spacing:0.05em;color:' + c.head + ';">'
-       +     'What changed · answer rate ' + arrow + ' '
-       +     escapeHtmlServer_(deltaTxt) + ' week-over-week'
-       +   '</div>'
-       +   '<div style="font-size:13px;color:' + c.body + ';margin-top:4px;line-height:1.4;">'
-       +     sentence
-       +   '</div>'
-       + '</div>';
+  // Round-16: EmailKit callout (sage gain / warm drop), rendered inside the
+  // digest's shell row rather than carrying its own outer margins.
+  return ekCalloutHtml_(
+    'What changed · answer rate ' + arrow + ' ' + deltaTxt + ' week-over-week',
+    sentence, up ? 'good' : 'warn');
 }
 
-function digestStatTile_(label, value) {
-  return '<div style="padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;text-align:center;">'
-       +   '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">'
-       +     escapeHtmlServer_(label)
-       +   '</div>'
-       +   '<div style="font-size:20px;color:#111827;font-weight:700;margin-top:2px;">'
-       +     escapeHtmlServer_(value)
-       +   '</div>'
-       + '</div>';
-}
+// (digestStatTile_ + digestHeroHtml_ RETIRED, Round-16 -- the summary
+// digest renders EmailKit KPI tiles; the answer-rate hero folded into the
+// tinted %-answered tile with its goal sub-line.)
 
 // F (digest redesign): the answer-first hero -- a big answer-rate %, a
 // status verdict pill (the SAME 92% company standard the dashboard tints
@@ -929,40 +759,6 @@ function digestStatTile_(label, value) {
 function digestAnswerTarget_() {
   try { return getAnswerTargets_().global; } catch (e) { return 92; }
 }
-function digestHeroHtml_(pctNum, rung) {
-  if (!(Number(rung) > 0)) return '';                 // no calls -> no hero
-  var pct = Math.max(0, Number(pctNum) || 0);
-  var answerTarget = digestAnswerTarget_();
-  var onTrack = pct >= answerTarget;
-  var accent  = onTrack ? '#059669' : '#d97706';      // green / amber
-  var pillBg  = onTrack ? '#ECFDF5' : '#FFFBEB';
-  var pillFg  = onTrack ? '#065F46' : '#92400E';
-  var verdict = onTrack ? 'On track' : 'Watch';
-  var fill    = Math.max(0, Math.min(100, pct));
-  // Target bar: two filled cells (fill + track). Guard the 0/100 edges so a
-  // zero-width cell doesn't render oddly across mail clients.
-  var bar;
-  if (fill <= 0) {
-    bar = '<td style="height:10px;background:#e5e7eb;border-radius:6px;font-size:0;line-height:0;">&nbsp;</td>';
-  } else if (fill >= 100) {
-    bar = '<td style="height:10px;background:' + accent + ';border-radius:6px;font-size:0;line-height:0;">&nbsp;</td>';
-  } else {
-    bar = '<td width="' + Math.round(fill) + '%" style="height:10px;background:' + accent + ';border-radius:6px 0 0 6px;font-size:0;line-height:0;">&nbsp;</td>'
-        + '<td style="height:10px;background:#e5e7eb;border-radius:0 6px 6px 0;font-size:0;line-height:0;">&nbsp;</td>';
-  }
-  return '<div style="margin-bottom:16px;">'
-       +   '<div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;">Answer rate</div>'
-       +   '<div style="margin-top:2px;">'
-       +     '<span style="font-size:34px;font-weight:800;color:' + accent + ';">' + escapeHtmlServer_(pct.toFixed(1)) + '%</span>'
-       +     '<span style="display:inline-block;margin-left:10px;padding:3px 11px;border-radius:999px;background:' + pillBg + ';color:' + pillFg + ';font-size:12px;font-weight:700;vertical-align:middle;">' + verdict + '</span>'
-       +   '</div>'
-       +   '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;border-collapse:collapse;"><tr>' + bar + '</tr></table>'
-       +   '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>'
-       +     '<td width="' + answerTarget + '%" style="text-align:right;font-size:10px;color:#6b7280;padding-top:3px;">target ' + answerTarget + '% &#9662;</td><td></td>'
-       +   '</tr></table>'
-       + '</div>';
-}
-
 function digestFormatHms_(totalSeconds) {
   totalSeconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
   const h = Math.floor(totalSeconds / 3600);

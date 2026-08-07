@@ -15,11 +15,12 @@ const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
           'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
           'InsightsReport.gs',
-          // Digest.gs provides renderInsightsEmailBody_ (+ digestTakeaway_/
-          // digestDeltaHtml_) that sendInsightsReportEmail reuses for the
-          // server-rendered HTML email. In Apps Script these share global
-          // scope; the harness must load the file that defines them.
-          'Digest.gs'],
+          // Digest.gs provides digestTakeaway_ + INSIGHTS_EMAIL_MIN_CALLS_
+          // that sendInsightsReportEmail reuses for the server-rendered HTML
+          // email; EmailKit.gs (Round-16) is the shared house-style layer the
+          // restyled email renders through. In Apps Script these share global
+          // scope; the harness must load the files that define them.
+          'Digest.gs', 'EmailKit.gs'],
 });
 
 const ROSTER = rosterGrid({
@@ -297,6 +298,11 @@ test('Insights: email export sends a server-rendered HTML report to the active u
   assert.ok(mail.htmlBody && mail.htmlBody.indexOf('Anna') !== -1, 'HTML body includes the agent');
   assert.ok(mail.htmlBody.indexOf('Alpha') !== -1, 'HTML body names the department');
   assert.ok(!mail.inlineImages, 'no inline image — server-rendered HTML, not a screenshot');
+  // Round-16: the report renders in the EmailKit house style -- the kicker +
+  // 600px card shell and the per-agent volume tally (green block cells).
+  assert.ok(mail.htmlBody.indexOf('Call Data · Insights') !== -1, 'EmailKit shell kicker');
+  assert.ok(mail.htmlBody.indexOf('width="600"') !== -1, 'EmailKit 600px card');
+  assert.ok(mail.htmlBody.indexOf('width="5" style="background:#3d9476') !== -1, 'agent rows carry the tally');
   // Agent-free run: an empty selection now DEFAULTS to the full department
   // roster (the digest pattern, INV-45) instead of throwing -- the
   // QCD-replacement queue / dept quick-look. The email still sends,
@@ -553,6 +559,18 @@ test('Insights: queueHealth daily series + always-separated sub-queues', functio
   const overall = alphaRow.bySource.filter(function (s) { return s.isOverall; })[0];
   assert.ok(overall, 'bySource has the Overall rollup row');
   assert.equal(overall.totalCalls, 180);
+
+  // Round-16 (sub-queue drill fix): each perQueue row carries its OWN
+  // per-day rows on the same zero-filled date axis as dailySeries, so a
+  // violation-date click can scope the Daily breakdown to that queue --
+  // the dept-total row for the date shows the PARENT's numbers (Beta's
+  // 2026-03-10 abandons live in a row reading 100 calls / 10 abandoned).
+  assert.equal(betaRow.daily.length, 2, 'per-queue daily spans the full date axis (F-15)');
+  assert.equal(betaRow.daily[0].date, '2026-03-10');
+  assert.equal(betaRow.daily[0].totalCalls, 50);
+  assert.equal(betaRow.daily[0].abandoned, 5);
+  assert.equal(betaRow.daily[1].totalCalls, 0, 'zero-filled on Beta\'s quiet day');
+  assert.equal(alphaRow.daily[1].totalCalls, 80);
 
   // Consolidation Phase 1 (gap 1): trend.metrics carries Total Calls +
   // Violations series parallel to the default abandoned-% series, so the

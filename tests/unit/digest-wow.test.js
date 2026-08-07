@@ -9,7 +9,8 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // computeDigestWowDriver_ reuses CompanyOverview's computeWowDelta_ /
 // computeWowDriver_ (INV-48) over a stats shape it builds from DQE.
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs', 'Data.gs', 'Digest.gs'],
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs', 'Data.gs', 'Digest.gs',
+          'EmailKit.gs'],   // Round-16: digestWowNarrative_ renders an EmailKit callout
 });
 
 const ROSTER = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'] });
@@ -102,7 +103,7 @@ test('digestWowNarrative_ renders sage gain copy and is empty when no driver', f
   assert.match(html, /9 vs 5/);
   assert.match(html, /answer-rate gain/);
   assert.match(html, /\+20\.0 pts week-over-week/);
-  assert.match(html, /#ECFDF5/);   // sage background
+  assert.match(html, /#e6f0ea/);   // sage background (EmailKit good tone, Round-16)
 
   // No driver / null -> empty string (digest renders without the callout).
   assert.equal(h.call('digestWowNarrative_', { deltaPct: 0.4 }), '');
@@ -116,7 +117,7 @@ test('digestWowNarrative_ escapes the agent name (no HTML injection)', function 
   assert.ok(html.indexOf('<b>x</b>') === -1, 'raw tag must not appear');
   assert.match(html, /&lt;b&gt;x&lt;\/b&gt;/);
   assert.match(html, /answer-rate drop/);
-  assert.match(html, /#FFFBEB/);   // amber background
+  assert.match(html, /#f6e2d4/);   // warm background (EmailKit warn tone, Round-16)
 });
 
 test('RPT-7: a GAIN driven by a missed-call DROP narrates via missed, not "answered +0/+1"', function () {

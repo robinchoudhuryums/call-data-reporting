@@ -237,45 +237,32 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   it's answered ÷ rung, and rung counts RINGS -- one call can ring several
   agents -- so it's ring-level, not share-of-unique-calls; the glossary
   carries a matching `'% answered (rings)'` entry (plain + rich).
-- **Insights period slider, trend-at-bottom, and the Insights<->My-Department
-  hand-off (PRs #167-169, all client-only except the one drill endpoint).**
-  Three pieces that de-clutter Insights and make the two-page relationship
-  explicit. (1) **I4 period slider:** the Insights results header carries a
-  compact preset slider (`#ins-period-bar`: Last 7 / Last 30 / MTD / YTD /
-  Custom...) that drives the WHOLE report window via `runInsReport`
-  (preserving compare mode + agents; Custom... opens the Edit popover),
-  reusing the Overview O4 `.ov-period-*` styling; the active button re-syncs
-  from `meta.from/to` every render, so NO prefs bump. (R11-B9: the period bar moved INSIDE the results header, and the WHOLE
-  header -- title + Simple/Detailed + Edit dates + Refresh/Export/Views +
-  period presets -- is the Insights page's sticky strip now, mirroring the
-  My Department controls row; both pin via `position:sticky; top:0` on an
-  opaque strip, styles.html R9-1/R11-B9 block, replacing the retired R7 B3
-  fixed context banners. Same element ids -- only DOM position moved.) The **12-mo team-trend
-  chart moved OUT of the Team-detail `<details>` to its own always-visible
-  "Trends" section at the BOTTOM** of the report -- it's the one view the
-  slider doesn't govern (always ~12 months) -- rendered in the main pass via
-  the measure-guarded `insDrawTrendChart_` (the MC2 offsetParent lesson, since
-  the render pass can run before the results container is shown); the share
-  doughnut stays deferred inside Team-detail (`insRenderDeferredCharts_` is
-  share-only now). NB since R11-C3 the by-queue metrics are entries in the
-  ONE `#ins-trend-metric` dropdown ("Queue: Abandoned %" etc. -- the
-  mega-bullet's "Abandoned % by Queue" is the internal
-  `data-metric="queues"` + `insQueueMetric`; the old sub-tab row + queue
-  select are retired). (2) **Hand-off (the department is the shared global
+- **Insights window controls, trend-at-bottom, and the Insights<->My-Department
+  hand-off.** (1) **Window controls (Round-16 Phase 2 -- superseded the I4
+  period slider):** see the Round-16 section's "Insights header = the My
+  Department controls pattern" bullet; the WHOLE results header (title +
+  toolbar + the From/To controls row) is the page's sticky strip, mirroring
+  the My Department controls row -- both pin via `position:sticky; top:0` on
+  an opaque strip (styles.html R9-1/R11-B9 block) with the Phase 3
+  elevation-on-stuck shadow. The **12-mo team-trend
+  chart lives at the BOTTOM in its own "Trends" section** (now a Round-16
+  FOLD; drawn on open) -- it's the one view the window controls don't govern
+  (always ~12 months); the share tally stays deferred inside Team-detail
+  (`insRenderDeferredCharts_` is share-only now). NB since R11-C3 the
+  by-queue metrics are entries in the ONE `#ins-trend-metric` dropdown
+  ("Queue: Abandoned %" etc. -- internally `data-metric="queues"` +
+  `insQueueMetric`; the old sub-tab row + queue select are retired).
+  (2) **Hand-off (the department is the shared global
   selector, so only DATES are carried):** `handoffToInsights_(from,to,scroll)`
   (a parametrized `launcherOpenInsights_`) and `handoffToMyDept_(from,to,{missed})`
   (mirrors `launcherOpenMissed_`; `missed:true` arms `deptMissedScrollPending_`).
-  My Department renders a **collapsed one-line Insights summary strip**
-  (`#dept-insights-strip`, `renderDeptInsightsStrip_` beside
-  `renderDeptTeamStrip_`) -- a value-prompt + an expand + "Open full report
-  ->" (-> Insights, carrying the dept-page dates). (Batch A dropped the
-  strip's numeric rate%/missed restatement -- it duplicated the KPI tiles
-  in `renderDeptTeamStrip_` directly above it, whose answer-rate tile is now
-  labeled "% Answered (rings)" to match the Insights rollup; R10-5 added an
-  answered-weighted "Avg answer" tile for QCD-mapped depts (qcd.range.avgAnswer)
-  and a CSR-only "Transfer %" tile from the `csrTransfer` block (the R10-5 v14 bump); R11-C1 added prior-window delta chips to both via qcd.rangePrior + csrTransfer.prior -- summary:v19.) Insights carries a header **"My Department ->"** button and
-  a Queue-health **"See missed calls ->"** drill (both -> `handoffToMyDept_`,
-  wired in `initInsightsReport`). **R9-3 shared date window (client-only, no
+  Round-16: the LENS SWITCHER (see its bullet below) is the visible route in
+  both directions -- the `#dept-insights-strip` teaser strip that used to
+  render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
+  (the team strip itself is unchanged: "% Answered (rings)" labeling, the
+  R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
+  summary:v19). Insights' Queue-health **"See missed calls ->"** drill
+  (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
   cross over; the plain NAV-TAB path now SILENTLY converges --
@@ -330,32 +317,13 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   The full design + owner rulings live in
   **`docs/insights-drilldown-spec.md`**. Pinned by
   `tests/unit/missed-slice.test.js`.
-- **Insights Simple/Detailed density toggle (D1-D3, density-design Phase 1)
-  is client-only; keep it that way.** One disclosure mode per user
-  (`insDensity`, persisted in the `cdr.ins.prefs` blob as an additive
-  `density` field; ROLE DEFAULT when never toggled: manager=simple,
-  admin=detailed -- owner ruling). PRESENTATION ONLY -- no compute,
-  request-shape, cache, or gate changes. **Simple** hides (CSS
-  `ds-density-simple` class on `#insights-results`): the Team-detail
-  `<details>` (admin heatmap + share donut) AND the `#ins-queue-health`
-  block -- R12-17 PROMOTED Queue health OUT of that fold to its own
-  always-visible zone in Detailed (it is the QCD replacement), with the
-  Simple hide preserved via its own `ds-density-simple` selector -- the 12-mo
-  team trend (`#ins-trend-wrap` + its zone label), and the cross-agent Chart
-  controls (view/basis/metric). **R11-M: in Simple the Agents section shows
-  the per-agent CHART forced to the Trend basis** (`insApplyCardsView_` sets
-  `chartView=true` in Simple; `insRenderCardsChart_` forces `mode='trend'` --
-  neither touches the saved `insCardsView`/`insCardsChartMode` prefs, which
-  restore in Detailed); the per-agent cards + the On-par/Ahead tier collapse
-  are the DETAILED view now (was: Simple forced the cards; `#ins-cards-chart-wrap`
-  was dropped from the `ds-density-simple` hide list). Simple shows a "Simple
-  view -- ...hidden, and Agents shows the per-agent trend chart. Switch to
-  Detailed" note. **Chart trap (C3):** Simple SKIPS
-  the trend/share/heatmap builds (`insDrawTrendChart_` gives up after 30
-  hidden frames), and `insSetDensity_('detailed')` rebuilds all three --
-  never render-then-hide a chart. The quick-start chips keep their promise
-  in Simple: a chip landing inside Team detail switches to Detailed first
-  (the `insScrollPending_` branch). Companion D2/D3 pieces: the edit
+- **(RETIRED, Round-16) Insights Simple/Detailed density toggle (D1-D3)** --
+  the mode is replaced by the per-section FOLDS (see the Round-16 section's
+  bullet, which carries the live rules: fold state, role seeds, the density
+  pref migration, and the C3 lesson re-expressed as draw-on-open). Kept
+  here: the **C3 chart trap itself is timeless** -- never render-then-hide
+  a chart (`insDrawTrendChart_` gives up after 30 hidden frames); build on
+  expand instead. Companion D2/D3 pieces STILL LIVE: the edit
   popover's compare/prior/agent controls live behind an **Advanced
   options** `<details>` (`#ins-edit-advanced`, field IDs unchanged;
   auto-opens when the current report uses a custom prior or a partial
@@ -442,9 +410,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   they always show on replay + warm loads, the established freshness-pill
   pattern). The nav-button step bodies also describe the newer per-page
   surfaces they open (My Department's team strip + range Queue tiles +
-  inline Missed report; Insights' period slider + the R9-3 shared date
-  window) since those live off the Overview landing and can't be their own
-  visible steps. Auto-runs ONCE for first-time visitors (localStorage
+  inline Missed report; Insights' header date controls + the R9-3 shared
+  date window) since those live off the Overview landing and can't be their
+  own visible steps. Auto-runs ONCE for first-time visitors (localStorage
   `cdr.tour.done`, gated to the Overview landing, 1.2s after load) and
   is always replayable from **Settings -> "Take the tour"** (`#tour-replay-btn`
   lives in the Settings modal, dashboard.html; the replay handler closes the
@@ -871,13 +839,19 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   The Neon/sheet FETCH range stays the full calendar window so no
   weekday row is lost. Unset `COMPANY_HOLIDAYS` = no holidays dropped =
   pre-R11-L behavior (no cache bump, the S5 precedent). **Overview
-  dept-grid tiles show a TREND ARROW, not a sparkline (R11-L)** --
-  `irTrendArrow_` renders the real least-squares slope of the 30-day
-  % answered series as an angled, color-graded arrow (angle measured on
-  a fixed 70-100% band grown to include outliers, capped ±60°;
-  red-amber-green gradient saturating by ±30°; nulls skipped). The
-  auto-scaled sparkline exaggerated tiny drifts; the arrow reads
-  direction+magnitude at a glance. Sparklines STAY on the roomier
+  dept-grid tiles show a GOAL-GAP MINI LINE CHART (Round-16, replacing
+  the R11-L trend arrow)** -- `irSparklineGoal_(vals, color, {goal, band})`
+  draws the 30-day % answered series on the same honest 70-100% grown
+  band, a dashed line at `answerTarget_('global')`, and fills the area
+  BETWEEN the line and the goal (good-tinted above, warn below), so the
+  amount of warn fill IS the amount of missed goal. The svg stretches
+  full-width (`preserveAspectRatio="none"` + `vector-effect:
+  non-scaling-stroke` on every stroke -- the default aspect-preserve
+  letterboxed a 70x22 viewBox to ~89px centered; the end dot is a
+  zero-length round-cap stroke so the stretch can't lozenge it). Colors
+  ride THEME (INV-42). `irTrendArrow_` (the R11-L least-squares slope
+  arrow it replaced) is kept in script-6-ir but currently uncalled.
+  Sparklines STAY on the roomier
   surfaces (hero tile, company aggregate, expanded sub-queue card) but
   are now HONEST-SCALED there too -- `irSparkline_(vals, color, {band:[70,100]})`
   uses the same grown fixed band + gap-connects nulls (a no-data day no
@@ -915,6 +889,15 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   update, and the hovered point still highlights.
 
 ## Sub-queue relationship bar + grouped rows (My Department, Phase 1)
+
+**Round-16 (owner): the relationship BAR is HIDDEN** — the "Combined
+view…" banner, the child's upward pointer and the `subqSplitChip_`
+"all queues" chip all sit behind `SUBQ_BAR_HIDDEN_` (script-5-dept; the
+render code is intact — flip the constant to restore). The grouped table's
+own subheaders + subtotals carry the relationship now, and the chip's B-1
+mapping-mismatch signal surfaces only via `auditQueueSplitAttribution()`
+(Operator State #41). The paragraphs below describe the bar as built, for
+whenever it returns.
 
 `#dept-subq-bar` sits above `.agents-table-wrap` and is rendered by
 `subqRenderScopeBar_(state)` on every table paint. It renders whenever a
@@ -975,17 +958,15 @@ exporting two scopes of the same dept and range doesn't silently overwrite. The
 client no longer sends a scope, so in practice the tag now reflects the server's
 default — kept because the server still varies it.
 
-The **missed section** shows ONE dept at a time. It stays on the parent unless a
-sub-queue's group-header button re-scopes it (`subqMissedDept_` reads
-`subqMissedDeptOverride_` and nothing else -- never a scope; it resets on every
-dept or window change, because a
-child's missed calls left pinned across a department switch would be *wrong*,
-not merely stale). It never merges, because the queue-only
-abandoned section already includes the parent's sub-queue queues via
+The **missed section** shows ONE dept at a time and never merges, because the
+queue-only abandoned section already includes the parent's sub-queue queues via
 `queuesForDept_` — merging a child's report in would double-count every queue
-abandon and every abandoned-ring chart bucket. `subqMissedScopeNote_` renders one
-line under the section title saying so, which is the difference between a
-defensible scope and a confusing one.
+abandon and every abandoned-ring chart bucket. **Round-16 (owner): the
+group-header "View X's missed calls" button and the `subqMissedScopeNote_`
+scope banner are RETIRED** (the button's render is removed; the note hides
+behind `SUBQ_BAR_HIDDEN_`) — a child's own missed calls are reached via the
+header dept selector; the `subqMissedDeptOverride_` machinery stays inert
+behind the removed button.
 
 ## Round-16 additions (owner-driven, 2026-08)
 
@@ -1004,7 +985,25 @@ defensible scope and a confusing one.
   (`.dept-qcd-sub`) vs the ENTIRE previous month, per-workday for volume.
 - **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD
   sub-lines (`.qcd-mtd-sub`, full-prior-month baseline, per-workday volume);
-  queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`).
+  queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`) — the EMAIL's
+  queue rows too (`qMtdSubEmail` in QueueReportEmail.gs; a banner-only
+  single-queue section carries it on the banner name).
+- **Insights Agents section**: the Cards view is HIDDEN for now (owner
+  undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
+  `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
+  the **Absolute** basis. All cards code is kept — single-agent reports still
+  force cards, and the admin A/B remote's Cards button still reaches the
+  hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
+- **Insights Daily breakdown**: violation-date chips carry `data-queue`; a
+  click SCOPES the table to that queue's own per-day rows
+  (`qh.perQueue[i].daily`, additive payload field) before jumping — the
+  dept-total row showed the PARENT's numbers for a sub-queue's date. A scope
+  chip in the `<summary>` (`.ins-qh-scope-chip`, ✕ = back to dept total)
+  names the active queue; scope resets on every fresh render. The daily rows
+  also render the volume TALLY now, unit computed from the DISPLAYED rows
+  (re-scoping re-normalizes) with a `#ins-qh-daily-legend` line when unit>1.
+  The agent-card `.ins-cbar-*` bars deliberately stay classic tracks — their
+  job is position vs the team-average marker, which blocks can't carry.
 - **Journey overlay**: internal-origin calls show a `.cj-internal-tag` and,
   when `relatedCallId` is present, a `.cj-related` context line whose button
   drills into the originating inbound call's path (delegated document
@@ -1012,3 +1011,103 @@ defensible scope and a confusing one.
 - **`.ir-form-grid` is now DEFINED** (flex + wrap; it was referenced by five
   admin forms but never styled, so their fields stacked full-width). New
   admin form rows should use it rather than inventing another container.
+- **Share of answered = TALLY ROWS, not a doughnut**: `insRenderShareChart_`
+  (name kept, three call sites) builds `#ins-share-tally` — one grid row per
+  agent (name | sage blocks at an `ansTallyUnitFor_` unit | count · share %),
+  sorted most-answered first, the R11-E "Other agents" fold as a muted row
+  (`.tly.oth`). No Chart.js instance anymore (`insShareChartInstance` is
+  gone); still deferred behind the Team-detail `<details>`.
+- **Company snapshot carries a pending-escalations line** (`#ov-agg-esc`,
+  `ovAggEscRender_` in script-3): filled from the badge fetch's counts
+  (`escBadgeLast_`, script-2 — `escApplyBadge_` repaints it on every badge
+  refresh, so it follows mutations); zero renders a muted "none pending"
+  statement, non-zero gets the overdue warn + an Open-worklist button.
+- **My Department team strip frosts on refresh**: a same-dept refresh frosts
+  `#dept-team-strip` alongside the agents table (M3 pattern); the SWR
+  pre-paint's innerHTML replace destroys the overlay, so
+  `renderDeptTeamStrip_` re-frosts when `.ds-frost-host` survives the wipe.
+  The missed section's frost was already wired (R7 M-1) and is
+  probe-verified working.
+- **Goal-gap sparkline everywhere % answered trends render small**: the
+  Overview grid tiles, the Company snapshot spark and the expanded
+  sub-queue card all draw through `irSparklineGoal_` (dashed
+  `answerTarget_('global')` line + good/warn fill between line and goal;
+  script-6-ir). The retired hero-tile builder keeps the plain sparkline
+  (uncalled). `irSparkline_`'s auto-scaled form stays for count/duration
+  KPI sparks (IR/Insights tiles) — no goal exists for those.
+- **Icon-only Refresh** on My Department (`#refresh-btn`) and Insights
+  (`#ins-refresh-btn`): the ↻ glyph alone via the existing `.btn-icon`
+  class; the label lives in `title`/`aria-label`.
+- **EmailKit (`EmailKit.gs`) is the outbound-email house style** — the
+  Daily Call Queue Report's design language (600px card, kicker/title
+  header, tinted KPI tiles, tally tables, bulletproof CTA, quiet footer)
+  extracted as a shared layer. Consumers (Round-16, two passes): the
+  My Department "Email me this report" export (`sendDepartmentSummaryEmail`
+  in DeptSummaryEmail.gs — caller-recipient, rides getDepartmentSummary
+  for auth + compute; menu item in the dept Export ▾), the Insights
+  "Email report" / "Email summary" (`sendInsightsReportEmail`), the
+  MANAGER DIGEST (all cadences + both formats — `sendDigestEmail_`'s
+  shell, `digestSummaryHtml_`'s KPI rows, and the insights format now
+  renders the SAME `insEmailReportRows_` as the Insights email; the old
+  `renderInsightsEmail*`/`digestDeltaHtml_`/`digestHeroHtml_`/
+  `digestStatTile_` renderers are retired), the low-answer-rate ALERT
+  (`sendAlertEmail_`), the escalation notification (`escNotifyHtml_`),
+  the Inbound report email, and the IR snapshot email's wrapper.
+  QueueReportEmail.gs deliberately keeps its own pinned local copies.
+  Plain-text admin/ops notices (failure emails, watchdogs, the
+  pending-review ping) stay plain on purpose. Pinned by
+  `tests/unit/dept-summary-email.test.js`, the insights email test's
+  EmailKit assertions, and the digest-insights/digest-wow pins.
+- **The Insights Simple/Detailed MODE is RETIRED for per-section
+  progressive disclosure** (owner decision). Each heavy section is an
+  always-present `<details class="ins-fold">` whose collapsed summary
+  carries its headline (`insQhFoldSync_` fills Queue health's — e.g.
+  "4.8% abandoned · 1,510 queue calls · 1 viol MTD"); Trends is the other
+  fold, Team detail keeps its own `<details>`. Open state persists per
+  user per section (`cdr.ins.folds.v1:<email>`); role seeds the defaults
+  (admins open, managers collapsed) and an old saved density pref
+  migrates once. Draw-on-open: the trend chart renders only while its
+  fold is open (the C3 zero-height trap) and the admin heatmap fetches
+  on Team-detail expand. The on-track card fold (ex-Simple treatment) is
+  universal now. `ds-density-simple`, the toggle, the D3 Simple caption
+  and the mode's special cases are all gone; an old share link's
+  `view=detailed/simple` param maps onto the fold open-state. NOTE for
+  the blank-canvas harness gate: newer Chromium answers
+  offsetParent/gBCR for closed-`<details>` content via forced layout, so
+  `drive-smoke`'s checker also skips `details:not([open])` canvases.
+- **Insights header = the My Department controls pattern (Phase 2)**:
+  real From/To date inputs + the SHARED Quick-select preset chips
+  (`buildDatePresetChips_`, script-2 — one component, both pages) replace
+  the I4 period chips. The header inputs MIRROR the canonical
+  `#ins-from/#ins-to` (still in the hidden fallback form; what deep
+  links / saved views / the popover write): `insSyncHeaderDates_` copies
+  canonical→header per render, a header edit runs `insApplyWindow_`
+  (prior-window validation → picker regroup → prefs → runInsReport).
+  The Edit popover is now "Comparison & agents" (its date row is HIDDEN,
+  not removed — the apply flow still round-trips those inputs).
+- **The LENS SWITCHER**: one two-tab `ds-seg` ("Agent table · Insights")
+  renders in both sticky headers so the pages read as two lenses on one
+  dept + range. The Insights side's "Agent table" button KEEPS the
+  `#ins-open-mydept-btn` id (existing hand-off + hover-prefetch wiring);
+  the dept side's `#lens-ins-btn` runs `handoffToInsights_` with the
+  current window.
+- **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
+  swap (pure CSS — animations restart when display flips), a 180ms
+  slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for
+  the two sticky strips (IntersectionObserver toggles `.is-stuck`; the
+  drop shadow only paints while pinned). The fold caret is a SQUARE
+  inline-block box — a bare glyph box rotated 90° poked 2px past the
+  page edge and tripped the overflow gate.
+- **Round-16 removals** (all code kept inert behind flags/hidden markup):
+  the Missed-report Bars/Radar toggle is hidden for everyone
+  (`missedChartMode_` hardcodes bars); the My Department sub-queue
+  relationship bar — the "Combined view…" banner, the child's upward
+  pointer AND the `subqSplitChip_` "all queues" flag — is hidden
+  (`SUBQ_BAR_HIDDEN_`; the chip's B-1 mapping-mismatch warnings now
+  surface only via `auditQueueSplitAttribution()`, Op State #41); the
+  group-heading "View X's missed calls" button and the missed-section
+  "Per-agent timelines below…" scope banner are gone
+  (`drive-subqueue.js` pins all of these hidden); and the My Department
+  `#dept-insights-strip` Insights TEASER STRIP is retired outright
+  (markup, `renderDeptInsightsStrip_`/`wireDeptInsightsStrip_`, `.dis-*`
+  CSS) — the lens switcher is the route to Insights.

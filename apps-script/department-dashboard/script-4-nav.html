@@ -339,23 +339,24 @@
     },
   };
 
-  // Phase 2 #8: the Insights provider also carries the Simple/Detailed mode
-  // (`view` param) so a shared link / saved view restores the disclosure
-  // level. Wrapper over the generic provider -- collect/apply run on user
-  // action, long after insDensity is initialized.
+  // Phase 2 #8 carried the Simple/Detailed mode in a `view` param here.
+  // Round-16: the density mode is RETIRED for the per-section folds, so the
+  // wrapper now maps an old link's view=detailed/simple onto the fold
+  // open-state (backwards compatibility for saved views + shared links) and
+  // no longer emits the param on new links.
   (function () {
     const base = SHARE_STATE_['/report/insights'];
     SHARE_STATE_['/report/insights'] = {
-      collect: function () {
-        const s = base.collect() || {};
-        if (insDensity === 'simple' || insDensity === 'detailed') s.view = insDensity;
-        return (s.from || s.view) ? s : null;
-      },
+      collect: function () { return base.collect(); },
       apply: function (params) {
         base.apply(params || {});
         if (params && (params.view === 'simple' || params.view === 'detailed')) {
-          insDensity = params.view;
-          insSyncDensity_();
+          const open = params.view === 'detailed';
+          if (typeof insFoldSet_ === 'function') {
+            insFoldSet_('qh', open);
+            insFoldSet_('trend', open);
+            if (typeof insFoldsApply_ === 'function') insFoldsApply_();
+          }
         }
       },
     };

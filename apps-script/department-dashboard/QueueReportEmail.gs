@@ -398,6 +398,33 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // day clamped to a full orange bar that contradicted its own number.
   // Mirrors the web report's qcdDailyBarCell_; the red softens when the row
   // passes the 5% standard (the R10-4 convention).
+  // Round-16 (owner): queue rows mirror the web report's volume TALLY --
+  // fixed-width block cells (answered green, abandoned red; soft red under
+  // the 5% standard) at a cohort-shared unit, so a busy queue visibly
+  // dwarfs a quiet one in the email too. Section/company rows keep the
+  // proportional split bar (aggregates dwarf queue-scale blocks). Email-safe:
+  // table cells with inline styles, no flex/inline-block.
+  const tallyHtml = function (row, pctStr, textColor, bold, unit) {
+    const a = Number(row.totalAnswered) || 0;
+    const ab = Number(row.abandoned != null ? row.abandoned
+      : Math.round((Number(row.abandonedPct) || 0) / 100 * (Number(row.totalCalls) || 0))) || 0;
+    const abPct = Number(row.abandonedPct) || 0;
+    const redC = abPct >= 5 ? C.bad : '#e8c4b2';
+    const blocks = function (n, color) {
+      let out = '';
+      for (let i = 0; i < n; i++) {
+        out += '<td width="5" style="background:' + color + ';height:12px;line-height:12px;font-size:0;">&nbsp;</td>'
+             + '<td width="2" style="font-size:0;">&nbsp;</td>';
+      }
+      return out;
+    };
+    const nA = a > 0 ? Math.max(1, Math.round(a / unit)) : 0;
+    const nAb = ab > 0 ? Math.max(1, Math.round(ab / unit)) : 0;
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+      + blocks(nA, C.good) + blocks(nAb, redC)
+      + '<td align="right" style="font:' + (bold ? 'bold ' : '') + '11px ' + sans + ';color:' + textColor + ';padding-left:4px;white-space:nowrap;">' + esc(pctStr) + '</td>'
+      + '</tr></table>';
+  };
   const barHtml = function (row, pctStr, textColor, bold) {
     const total = Number(row.totalCalls) || 0;
     const abPct = Number(row.abandonedPct) || 0;
@@ -456,6 +483,22 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   });
   offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
 
+  // Cohort-shared tally unit across every queue line (the web report's
+  // ansTallyUnitFor_ ladder, replicated server-side; 0 = no volume).
+  let tallyUnit = 0;
+  (function () {
+    let max = 0;
+    depts.forEach(function (d) { deptQueues(d).forEach(function (q) {
+      const t = (Number(q.totalAnswered) || 0) + (Number(q.abandoned) || 0);
+      if (t > max) max = t;
+    }); });
+    if (!max) return;
+    const ladder = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+    for (let i = 0; i < ladder.length; i++) {
+      if (Math.ceil(max / ladder[i]) <= 36) { tallyUnit = ladder[i]; return; }
+    }
+    tallyUnit = ladder[ladder.length - 1];
+  })();
   // Worst-first dept order (EMAIL ONLY).
   // R12-22 (owner): sections are PARENT-GROUPED like the web report --
   // Spanish nests under CSR, PAP under Sales, PAK under Power (the payload's
@@ -576,6 +619,32 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       mtdAnsSub = mtdSub(mAnsPct.toFixed(1) + '%', '', '');
     }
   }
+  // Round-16 (owner): the per-queue MTD pace sub-line, mirroring the web
+  // table's qMtdSub -- "MTD Ø <avg>/day · <prior month> <avg> ▲/▼ %", per-
+  // WORKDAY averages from the SAME mtd block as the KPI sub-lines so every
+  // level reconciles. Neutral gray throughout (volume is demand, not
+  // performance). A queue with no prior-month activity reads "new this
+  // month"; no activity in either window renders nothing. Null-guarded so a
+  // pre-v6 cached payload (no mtd / no per-queue fields) renders no line.
+  const qMtdSubEmail = function (q) {
+    if (!m || !(m.workdays > 0)) return '';
+    const mCalls = Number(q.mtdTotalCalls) || 0;
+    const pCalls = Number(q.priorTotalCalls) || 0;
+    if (!mCalls && !pCalls) return '';
+    const mAvg = Math.round(mCalls / m.workdays);
+    const pAvg = m.priorWorkdays > 0 ? (pCalls / m.priorWorkdays) : 0;
+    const pLbl = m.priorLabel || 'prior';
+    let tail;
+    if (pAvg > 0) {
+      const dPct = (mAvg - pAvg) / pAvg * 100;
+      tail = esc(pLbl) + ' ' + Math.round(pAvg) + ' '
+        + (dPct >= 0 ? '&#9650;' : '&#9660;') + ' ' + Math.abs(dPct).toFixed(1) + '%';
+    } else {
+      tail = 'new this month';
+    }
+    return '<div style="font:10px ' + sans + ';color:' + C.mut + ';padding-top:2px;white-space:nowrap;">'
+      + 'MTD &Oslash; ' + mAvg + '/day &middot; ' + tail + '</div>';
+  };
   const abanOver = gPct >= 5;
   const kpiRow = '<tr><td style="padding:16px 26px 4px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
     + kpi('Company aban %', (gt.abandonedPctStr || gPct.toFixed(1) + '%'),
@@ -658,7 +727,10 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     tbl += '<tr>'
       + '<td colspan="3" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
-      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
+      // A banner-only section (one queue) has no queue row to carry the MTD
+      // pace sub-line, so it rides the banner name instead (the banner IS
+      // that queue's line). Multi-row sections keep it on the queue rows.
+      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + (singleRow ? qMtdSubEmail(rowDefs[0].q) : '') + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
       +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
       +   '</td>'
@@ -680,9 +752,9 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
         ? '&#8627; <b>' + esc(rd.sub) + '</b> <span style="color:' + C.mut + ';">&middot; ' + esc(q.queue) + '</span>'
         : esc(q.queue);
       tbl += '<tr>'
-        + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + '</td>'
+        + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + qMtdSubEmail(q) + '</td>'
         + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
-        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (tallyUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, tallyUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
         + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
         + '</tr>';
     });
@@ -696,7 +768,9 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   tbl += '<tr>'
     + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
     + '<td align="right" style="padding:9px 8px;font:bold 12px ' + sans + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
-    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true) + '</td>'
+    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true)
+    + (tallyUnit > 1 ? '<div style="font:10px ' + sans + ';color:' + C.mut + ';padding-top:3px;">each block &asymp; ' + tallyUnit + ' calls</div>' : '')
+    + '</td>'
     + '<td align="right" style="padding:9px 12px;border-top:2px solid ' + C.ink + ';">&nbsp;</td>'
     + '</tr>';
 

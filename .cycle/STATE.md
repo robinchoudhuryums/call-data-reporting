@@ -2240,13 +2240,34 @@ commit/push/deploy direction.
   INV-16 clean, npm run ci:ui FULL PASS. NET 0 − 0 = 0. Block in
   `.cycle/blocks/82-round16-nul-prefs-split-broad-implement.md`.
 
-  **WHERE I LEFT OFF:** Round-16 items #7/#5/#4 are code-complete on
-  claude/broad-scan-l9ojgm (restarted from post-#217 main). Deploy needed:
-  dashboard (new version — picks up the 11 fragments + Code.gs + script.html;
-  NO web-editor deletion, script.html was kept) + cdr-report (#7). Remaining
-  Round-16 recommendations, by priority: #8 (Neon backup as a hard pre-trim
-  precondition — runbook edit), #1 (post-soak flag retirement), #2
-  (dqe-report decommission scheduling), #3 (INV-16 build-time copy), #6
-  (automate syncInsuranceNumbersToNeon), #9 (NeonMirror payload-mapping
-  test), #10 (usage-telemetry review), #11 (CLAUDE.md F8 shrink). C-7 and
-  the strategic tracks stay as recorded at increment 81.
+- **Increment 83 (Round-16 owner batch, session continuation):** the Insights
+  progressive-disclosure restructure shipped -- Simple/Detailed mode RETIRED
+  for per-section folds (Queue health + Trends <details> with headline
+  summaries, per-user open-state, density-pref migration, draw-on-open for
+  trend chart + admin heatmap), the Insights header unified onto the My
+  Department controls pattern (From/To + shared Quick-select chips via the
+  new buildDatePresetChips_; popover slimmed to "Comparison & agents"), a
+  Phase-3 motion layer (page-swap fade, fold animation, elevation-on-stuck),
+  and the shared "Agent table / Insights" lens switcher in both sticky
+  headers. Owner removals: Bars/Radar toggle hidden (always bars), the
+  sub-queue relationship bar + "all queues" chip hidden (SUBQ_BAR_HIDDEN_),
+  the group-heading missed-calls button + missed-section scope banner gone.
+  Harness: drive-subqueue re-pinned to the hidden states; drive-smoke's
+  blank-canvas checker skips closed-<details> canvases (Chromium forced-
+  layout change). Earlier in the same session: EmailKit.gs became the
+  outbound-email house style (dept summary email NEW, Insights report/
+  summary, digest all cadences, alert, escalation notify, inbound, IR
+  snapshot; queue report stays the pinned reference), goal-gap sparklines
+  everywhere applicable, icon-only Refresh, share-tally rows replaced the
+  Insights donut, company-card escalations line, team-strip frost, the
+  sub-queue violation-date drill fix + Insights daily tally, email MTD pace
+  line, Cards view hidden + abs default. 651/651, INV-16, full ci:ui. Block
+  in `.cycle/blocks/83-round16-insights-disclosure-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** All of the above is code-complete + pushed on
+  claude/broad-scan-l9ojgm (post-#219 main + 9 unmerged commits through
+  3f36283). No PR opened yet (owner asks explicitly). Deploy on merge:
+  dashboard only (`clasp push -f` + new version; EmailKit.gs +
+  DeptSummaryEmail.gs are NEW server files, nothing deleted remotely).
+  Open decisions: the hidden Cards view's fate; whether to retire the
+  #dept-insights-strip teaser now that the lens switcher exists.

@@ -790,6 +790,15 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
           abandonedPctStr:  q.abandonedPctStr,
           violations:       q.violations,
           violationDates:   q.violationDates || [],
+          // Round-16 (sub-queue drill fix): this queue's OWN per-day rows
+          // (same zero-filled date axis as dailySeries, F-15) so a
+          // violation-date click can scope the Daily breakdown to the
+          // clicked queue -- the dept-total series shows the PARENT dept's
+          // numbers for that day, which for a sub-queue row (A_Q_Spanish
+          // under CSR) read as the wrong queue's data. Additive field; the
+          // client falls back to the unscoped jump when absent (a stale
+          // <=30-min cached payload).
+          daily:            (cur.perQueue && cur.perQueue[q.queue] && cur.perQueue[q.queue].daily) || [],
           // 4c: the call source driving the most abandons in this queue
           // (from the 4a bySource breakdown). Null when no sub-source has
           // any abandons -- the client renders nothing in that case.
@@ -965,28 +974,166 @@ function sendInsightsReportEmail(req) {
   const dateLabel  = (data && data.dateLabel) || (from + ' - ' + to);
   const priorLabel = (data && data.priorDateLabel) || 'the prior period';
 
+  // Round-16 (owner): both variants render in the EmailKit house style (the
+  // Daily Call Queue Report's design language) -- kicker/title header, tinted
+  // KPI tiles with delta sub-lines, an agent table with the volume tally, a
+  // bulletproof CTA. The manager DIGEST keeps the older renderInsightsEmail*
+  // renderers in Digest.gs unchanged; this restyle is the Insights page's
+  // caller-requested emails only.
   const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
-  const htmlBody =
-    '<div style="font-family: sans-serif; color: #1f2937; max-width: 760px;">'
-    + '<div style="background:#EFF6FF;border-left:4px solid #1d4ed8;padding:16px 20px;border-radius:4px;">'
-    +   '<h2 style="margin:0 0 4px;color:#1e3a8a;font-size:18px;">Insights &mdash; ' + escapeHtmlServer_(dept) + '</h2>'
-    +   '<div style="color:#3730a3;font-size:13px;">' + escapeHtmlServer_(dateLabel)
-    +     ' &middot; vs ' + escapeHtmlServer_(priorLabel) + '</div>'
-    + '</div>'
-    + (summary ? renderInsightsEmailSummary_(data) : renderInsightsEmailBody_(data))
-    + (dashboardUrl
-        ? '<div style="margin-top:20px;"><a href="' + escapeHtmlServer_(dashboardUrl)
-          + '" style="display:inline-block;background:#1d4ed8;color:#fff;padding:8px 16px;border-radius:6px;'
-          + 'text-decoration:none;font-size:13px;font-weight:600;">Open Department Dashboard</a></div>'
-        : '')
-    + '<div style="margin-top:24px;font-size:11px;color:#9ca3af;">'
-    +   'Sent from the Department Dashboard Insights report. Charts (trend, share, per-agent) '
-    +   'are available in the web app via Copy image / Print.'
-    + '</div>'
-    + '</div>';
+  const takeaway = digestTakeaway_((data && data.teamStats) || {});
+  const htmlBody = ekShellHtml_({
+    kicker: 'Call Data · Insights',
+    title: dept,
+    subtitle: dateLabel + ' · vs ' + priorLabel,
+    preheader: takeaway || ('Insights for ' + dept + ' · ' + dateLabel),
+    rowsHtml: summary ? insEmailSummaryRows_(data) : insEmailReportRows_(data),
+    ctaUrl: dashboardUrl ? dashboardUrl + '#/report/insights' : '',
+    ctaLabel: 'Open the Insights report',
+    footerHtml: 'Requested from the Insights page — sent only to you, not a subscription. '
+      + 'Charts (trend, share, per-agent) live in the web app via Copy image / Print.',
+  });
 
   MailApp.sendEmail({ to: email,
     subject: (summary ? 'Insights Summary: ' : 'Insights Report: ') + dateLabel,
     htmlBody: htmlBody });
   return { to: email };
+}
+
+/** Delta chip for a computeInsights_ stat, in kit colors (mirrors
+ * digestDeltaHtml_'s semantics: deltaPct, pctPoints suffix, 0.05 floor). */
+function insEkDelta_(stat, valence) {
+  const s = stat || {};
+  const dp = Number(s.deltaPct || 0);
+  if (Math.abs(dp) < 0.05) return '<span style="color:#9aa6b2;font-size:11px;">&ndash;</span>';
+  const goodWhenUp = valence === 'pos' ? true : (valence === 'neg' ? false : null);
+  return ekDeltaHtml_(dp, { goodWhenUp: goodWhenUp, suffix: s.type === 'pctPoints' ? ' pts' : '%', vs: '' });
+}
+
+/** The takeaway callout + team KPI row shared by both email variants. */
+function insEmailHeadRows_(data) {
+  const t = (data && data.teamStats) || {};
+  const takeaway = digestTakeaway_(t);
+  const dp = Number((t.pct && t.pct.deltaPct) || 0);
+  const tone = !takeaway || Math.abs(dp) < 0.05 ? 'neutral' : (dp > 0 ? 'good' : 'warn');
+  let target = 92;
+  try { target = Number(getAnswerTargets_().global) || 92; } catch (e) { /* seed */ }
+  const pctVal = Number((t.pct && t.pct.val) || 0);
+  const hasCalls = Number((t.rung && t.rung.val) || 0) > 0;
+  const sub = function (stat, valence) {
+    const d = insEkDelta_(stat, valence);
+    return ekKpiSub_(d + '<span style="color:' + EK_C_.mut + ';"> vs prior</span>');
+  };
+  const kpis = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+    + ekKpiTd_('% answered', String((t.pct && t.pct.formatted) || '—'), {
+        tone: hasCalls ? (pctVal >= target ? 'good' : 'bad') : 'neutral',
+        subHtml: sub(t.pct, 'pos'), pad: 'padding-right:6px;' })
+    + ekKpiTd_('Answered', String((t.answered && t.answered.formatted) || '0'), {
+        subHtml: sub(t.answered, 'pos'), pad: 'padding:0 3px;' })
+    + ekKpiTd_('Missed', String((t.missed && t.missed.formatted) || '0'), {
+        subHtml: sub(t.missed, 'neg'), pad: 'padding:0 3px;' })
+    + ekKpiTd_('Avg talk time', String((t.att && t.att.formatted) || '—'), {
+        subHtml: sub(t.att, 'neu'), pad: 'padding-left:6px;' })
+    + '</tr></table>';
+  // Name the comparison window under the tiles -- the deltas mean nothing
+  // without it, and the digest (which reuses these rows) has no subtitle
+  // carrying it.
+  const priorCap = '<div style="font:10px ' + EK_SANS_ + ';color:#9aa6b2;padding-top:6px;">'
+    + ekEsc_('Deltas vs ' + ((data && data.priorDateLabel) || 'the prior period')) + '</div>';
+  return (takeaway ? ekRow_(ekCalloutHtml_('At a glance', ekEsc_(takeaway), tone), '16px 26px 0') : '')
+    + ekRow_(kpis + priorCap);
+}
+
+/** Full-report body rows: head + the per-agent tally/delta table. */
+function insEmailReportRows_(data) {
+  const C = EK_C_, sans = EK_SANS_;
+  const agents = (data && data.agentData) || [];
+  let maxVol = 0;
+  agents.forEach(function (a) {
+    const m = a.metrics || {};
+    const v = (Number(m.answered && m.answered.val) || 0) + (Number(m.missed && m.missed.val) || 0);
+    if (v > maxVol) maxVol = v;
+  });
+  const unit = ekTallyUnit_(maxVol);
+  let tbl = ekTheadRow_([
+    { label: 'Agent' },
+    { label: 'Answered vs missed', pad: '8px' },
+    { label: '% Ans', align: 'right', pad: '8px' },
+    { label: 'ATT', align: 'right' },
+  ]);
+  if (!agents.length) {
+    tbl += '<tr><td colspan="4" style="padding:10px 12px;font:12px ' + sans + ';color:' + C.mut + ';border-top:1px solid ' + C.rowline + ';">No agent activity in this window.</td></tr>';
+  }
+  agents.forEach(function (a) {
+    const m = a.metrics || {};
+    const ans = Number(m.answered && m.answered.val) || 0;
+    const mis = Number(m.missed && m.missed.val) || 0;
+    const tail = '<span style="color:' + C.ink + ';">' + ekFmtInt_(ans) + '</span>'
+      + '<span style="color:' + C.mut + ';"> / </span>'
+      + '<span style="color:' + (mis > 0 ? C.bad : C.mut) + ';">' + ekFmtInt_(mis) + '</span>';
+    tbl += '<tr>'
+      + '<td style="padding:6px 12px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';white-space:nowrap;">' + ekEsc_(a.name) + '</td>'
+      + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">'
+      +   ((ans + mis) > 0 ? ekTallyHtml_(ans, mis, unit, { tailHtml: tail })
+                           : '<span style="font:11px ' + sans + ';color:' + C.mut + ';">no calls</span>')
+      + '</td>'
+      + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';white-space:nowrap;">'
+      +   ekEsc_(String((m.pct && m.pct.formatted) || '–')) + ' ' + insEkDelta_(m.pct, 'pos') + '</td>'
+      + '<td align="right" style="padding:6px 12px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';white-space:nowrap;">'
+      +   ekEsc_(String((m.att && m.att.formatted) || '–')) + ' ' + insEkDelta_(m.att, 'neu') + '</td>'
+      + '</tr>';
+  });
+  const legend = '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">'
+    + ekEsc_((unit > 1 ? 'each block ≈ ' + unit + ' calls · ' : '')
+      + 'deltas compare against the prior window in the header') + '</div>';
+  return insEmailHeadRows_(data)
+    + ekRow_('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
+        + tbl + '</table>' + legend, '18px 26px 6px');
+}
+
+/** Summary body rows (Phase 2 #9 short form): head + only the agents behind
+ * the team's answer rate (min-volume gated), in kit style. */
+function insEmailSummaryRows_(data) {
+  const C = EK_C_, sans = EK_SANS_;
+  const t = (data && data.teamStats) || {};
+  const teamPct = Number((t.pct && t.pct.val) || 0);
+  const behind = ((data && data.agentData) || []).filter(function (a) {
+    const m = a.metrics || {};
+    const vol = (Number(m.answered && m.answered.val) || 0)
+              + (Number(m.missed && m.missed.val) || 0);
+    return vol >= INSIGHTS_EMAIL_MIN_CALLS_
+        && (Number(m.pct && m.pct.val) || 0) < teamPct;
+  }).sort(function (a, b) {
+    return (Number(a.metrics.pct && a.metrics.pct.val) || 0)
+         - (Number(b.metrics.pct && b.metrics.pct.val) || 0);
+  });
+  let block;
+  if (!behind.length) {
+    block = ekCalloutHtml_('Behind the team average',
+      'No agent is behind the team average this window.', 'good');
+  } else {
+    let tbl = ekTheadRow_([
+      { label: 'Agent' },
+      { label: '% Ans', align: 'right', pad: '8px' },
+      { label: 'Gap', align: 'right' },
+    ]);
+    behind.forEach(function (a) {
+      const pct = Number(a.metrics.pct && a.metrics.pct.val) || 0;
+      const gap = Math.round(teamPct - pct);
+      tbl += '<tr>'
+        + '<td style="padding:6px 12px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';white-space:nowrap;">' + ekEsc_(a.name) + '</td>'
+        + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">'
+        +   ekEsc_(String((a.metrics.pct && a.metrics.pct.formatted) || '–')) + '</td>'
+        + '<td align="right" style="padding:6px 12px;font:bold 12px ' + sans + ';color:' + C.watch + ';border-top:1px solid ' + C.rowline + ';white-space:nowrap;">'
+        +   (gap > 0 ? gap + ' pts behind' : 'behind') + '</td>'
+        + '</tr>';
+    });
+    block = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
+      + tbl + '</table>';
+  }
+  const note = '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">'
+    + ekEsc_('Answer rate below the team average this window, minimum '
+      + INSIGHTS_EMAIL_MIN_CALLS_ + ' answerable calls. The full per-agent table is in the web report (or use Email report for the long form).')
+    + '</div>';
+  return insEmailHeadRows_(data) + ekRow_(block + note, '18px 26px 6px');
 }

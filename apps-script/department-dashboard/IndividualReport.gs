@@ -909,16 +909,25 @@ function sendIndividualReportEmail(req) {
   const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
   const blob = Utilities.newBlob(decoded, 'image/png', 'Individual_Report.png');
 
+  // Round-16 (owner): the snapshot rides inside the EmailKit shell so this
+  // email reads as part of the same family — the content itself stays the
+  // rendered report image (this export IS the visual snapshot).
+  const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
   MailApp.sendEmail({
     to: email,
     subject: 'Individual Report: ' + dateLabel,
-    htmlBody:
-      '<div style="font-family: sans-serif; color: #444; margin-bottom: 20px;">'
-      + 'Here is the visual snapshot of the individual performance report.'
-      + '</div>'
-      + '<div style="text-align: center; border: 1px solid #eee; padding: 10px;">'
-      + '<img src="cid:reportImg" style="width:100%; max-width:1200px; height:auto;">'
-      + '</div>',
+    htmlBody: ekShellHtml_({
+      kicker: 'Call Data · Individual report',
+      title: dateLabel,
+      subtitle: 'Visual snapshot of the on-screen report',
+      preheader: 'Individual report snapshot · ' + dateLabel,
+      rowsHtml: ekRow_('<div style="text-align:center;border:1px solid ' + EK_C_.line + ';border-radius:10px;padding:10px;">'
+        + '<img src="cid:reportImg" style="width:100%;max-width:548px;height:auto;" alt="Individual report snapshot">'
+        + '</div>', '18px 26px 6px'),
+      ctaUrl: dashboardUrl ? dashboardUrl + '#/report/individual' : '',
+      ctaLabel: 'Open the Individual report',
+      footerHtml: 'Requested from the Individual Report — sent only to you.',
+    }),
     inlineImages: { reportImg: blob },
   });
   return { to: email };

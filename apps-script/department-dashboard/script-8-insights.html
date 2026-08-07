@@ -37,12 +37,15 @@
   // the report window changes.
   let insCalMonth_ = '';
   let insCalWinKey_ = '';
-  // I5a: MANAGERS default to the Absolute bar chart (chart view + 'abs' basis)
-  // -- a glanceable per-agent volume read -- while admins/owner keep the cards
-  // grid default. A saved pref (insRestorePrefs_) still overrides either way.
-  // R11-H (owner): the per-agent Trend chart is the DEFAULT Agents view for
-  // everyone now (was cards / role-split). A saved pref still wins; single-agent
-  // reports + Simple density force cards, unchanged.
+  // I5a/R11-H history: the Agents default moved cards -> trend chart -> the
+  // Absolute chart (Round-16 owner). A saved pref (insRestorePrefs_) still
+  // wins; single-agent reports force cards.
+  // Round-16 (owner): the CARDS view is HIDDEN for now (undecided whether it
+  // stays) -- the #ins-cards-view-toggle control is display:none in
+  // dashboard.html and insRestorePrefs_ only restores 'chart', so nothing can
+  // strand a viewer in a view with no visible way out. All the cards code is
+  // KEPT: single-agent reports still force cards (a one-card grid needs no
+  // chart), and un-hiding the toggle restores the choice wholesale.
   let insCardsView = 'chart';   // 'cards' | 'chart' (#3)
   let insCardsChartMetric = 'answered';   // metric for the grouped Chart view (gap mode)
   // Chart-view basis: 'gap' (diverging bars vs the team average, one metric)
@@ -52,69 +55,76 @@
   // RETIRED by owner note -- the 3-way sub-selector read as confusing, and
   // the prior values stay reachable via the card delta-badge hover
   // tooltips. Persisted in the ins prefs blob ('prior' restores as 'gap').
-  let insCardsChartMode = 'trend';   // R11-H: 'gap' | 'abs' | 'trend'; Trend is the default basis now
+  let insCardsChartMode = 'abs';   // 'gap' | 'abs' | 'trend'; Round-16 (owner): Absolute is the default basis (was Trend, R11-H)
   let insCardsChartInstance = null;
   let insHasQuiet_ = false;        // whether the current render has quiet agents
-  let insShareChartInstance = null;   // share-of-answered pie (PR port)
+  // (the share-of-answered pie's insShareChartInstance is GONE -- Round-16
+  // replaced the doughnut with HTML share-tally rows, no chart instance)
   let insActiveTrendMetric = 'answered';
   // gap 1: when the trend chart's "By Queue" tab is active, which per-queue
   // metric to plot -- 'abandonedPct' (default, the 5%-standard view) |
   // 'totalCalls' | 'violations'. Persisted in prefs.
   let insQueueMetric = 'abandonedPct';
+  // Round-16 (sub-queue drill fix): Daily-breakdown scope state. '' renders
+  // the dept-total dailySeries; a queue name renders that queue's OWN per-day
+  // rows (qh.perQueue[i].daily), set when a violation-date chip is clicked so
+  // the day's row shows the clicked queue's numbers rather than the parent
+  // dept total. Reset to '' on every fresh Queue-health render.
+  let insQhDailyAll_ = [];
+  let insQhDailyByQueue_ = {};
+  let insQhDailyScope_ = '';
   let insCardSort = 'default';      // default (answered desc) | name | improvers | regressors
-  // D1 (density design, Phase 1): Simple/Detailed disclosure mode.
-  // PRESENTATION ONLY -- no compute, request, cache, or gate changes. Simple
-  // hides the Team-detail <details> (queue health + heatmap + share), the
-  // 12-month trend, and the cross-agent Chart controls, and collapses the
-  // on-track card tiers. Role default (owner ruling): managers=simple,
-  // admins=detailed; sticky per user via the prefs blob once toggled.
-  // null = not yet resolved (insIsSimple_ lazily applies the role default,
-  // so a restored pref set before first use wins).
-  let insDensity = null;            // 'simple' | 'detailed' | null
-  function insIsSimple_() {
-    if (insDensity !== 'simple' && insDensity !== 'detailed') {
-      insDensity = (typeof USER !== 'undefined' && USER && USER.role === 'admin')
-        ? 'detailed' : 'simple';
-    }
-    return insDensity === 'simple';
+  // Round-16 (owner): the D1 Simple/Detailed MODE is RETIRED for per-section
+  // PROGRESSIVE DISCLOSURE. Each heavy section is an always-present
+  // collapsible fold (<details class="ins-fold">) whose collapsed summary
+  // carries its headline -- nothing is hidden behind an invisible mode, and
+  // the mode's special cases (Simple forcing the chart basis, the
+  // build-on-switch chart rebuilds) are gone with it. Open state persists
+  // per user per section; role seeds the defaults (admins open, managers
+  // collapsed -- the same intent as the old role default). An old saved
+  // density pref migrates: 'detailed' seeds the folds open, 'simple' closed.
+  // The on-track card collapse that Simple introduced is UNIVERSAL now (it
+  // was already the better disclosure).
+  function insFoldsKey_() {
+    var who = '';
+    try { who = (typeof USER !== 'undefined' && USER && USER.email) ? USER.email : ''; } catch (e) {}
+    return 'cdr.ins.folds.v1:' + who;
   }
-  // Reflect the mode on the DOM: the gating class on #insights-results (the
-  // CSS hides the heavy blocks), the toggle buttons, and the Simple note.
-  function insSyncDensity_() {
-    const simple = insIsSimple_();
-    const res = $('insights-results');
-    if (res) res.classList.toggle('ds-density-simple', simple);
-    const seg = $('ins-density-toggle');
-    if (seg) seg.querySelectorAll('.seg-btn').forEach(function (b) {
-      const on = (b.getAttribute('data-density') === insDensity);
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
-    const note = $('ins-simple-note');
-    if (note) note.style.display = (simple && insLastData) ? '' : 'none';
-  }
-  function insSetDensity_(mode) {
-    if (mode !== 'simple' && mode !== 'detailed') return;
-    if (insDensity === mode) return;
-    insDensity = mode;
-    insSyncDensity_();
-    insSavePrefs_();
-    if (!insLastData) return;
-    // Re-render the disclosure-dependent pieces from the LAST payload -- no
-    // refetch. Cards re-render both ways (the on-track collapse differs);
-    // switching to Detailed must BUILD what Simple skipped: the trend chart
-    // (insDrawTrendChart_ gives up after 30 hidden frames, so a
-    // render-while-hidden never drew it -- the C3 trap), the share doughnut
-    // (only if Team detail is open), and the admin heatmap fetch.
-    insRenderAgentCards_(insLastData.agentData || [], insLastData.meta, insLastData.teamStats);
-    if (mode === 'detailed') {
-      insDrawTrendChart_(insLastData);
-      if (insDetailOpen_()) insRenderShareChart_(insLastData.agentData || []);
-      if (USER.role === 'admin' && insLastData.meta) {
-        loadAbandonHeatmap_('ins-heatmap', insLastData.meta.department || '',
-          insLastData.meta.from, insLastData.meta.to);
+  let insFolds_ = null;   // { qh, trend } open-state (team detail keeps its own element state)
+  function insFoldsLoad_() {
+    if (insFolds_) return insFolds_;
+    try {
+      const saved = JSON.parse(localStorage.getItem(insFoldsKey_()) || 'null');
+      if (saved && typeof saved === 'object') { insFolds_ = saved; return insFolds_; }
+    } catch (e) { /* fall through to defaults */ }
+    // Migration: honor an old density pref once, then the folds key owns it.
+    let seed = null;
+    try {
+      const prefs = JSON.parse(localStorage.getItem(insPrefsKey_()) || 'null');
+      if (prefs && (prefs.density === 'simple' || prefs.density === 'detailed')) {
+        seed = prefs.density === 'detailed';
       }
+    } catch (e) { /* ignore */ }
+    if (seed === null) {
+      seed = (typeof USER !== 'undefined' && USER && USER.role === 'admin');
     }
+    insFolds_ = { qh: !!seed, trend: !!seed };
+    return insFolds_;
+  }
+  function insFoldOpen_(key) { return !!insFoldsLoad_()[key]; }
+  function insFoldSet_(key, open) {
+    const f = insFoldsLoad_();
+    f[key] = !!open;
+    try { localStorage.setItem(insFoldsKey_(), JSON.stringify(f)); } catch (e) { /* ignore */ }
+  }
+  // Reflect the saved open-state onto the fold elements (render-time; the
+  // toggle listeners keep the store in sync the other way).
+  function insFoldsApply_() {
+    const f = insFoldsLoad_();
+    ['qh', 'trend'].forEach(function (k) {
+      const el = document.querySelector('.ins-fold[data-fold="' + k + '"]');
+      if (el && el.open !== !!f[k]) el.open = !!f[k];
+    });
   }
   // v2: prefs gain compareMode / priorFrom / priorTo / trendMetric
   // (older v1 blobs are silently dropped per the prefs-versioning
@@ -166,7 +176,7 @@
   function insResizeCharts_() {
     if (typeof requestAnimationFrame !== 'function') return;
     requestAnimationFrame(function () { requestAnimationFrame(function () {
-      [insChartInstance, insShareChartInstance, insCardsChartInstance].forEach(function (c) {
+      [insChartInstance, insCardsChartInstance].forEach(function (c) {
         try { if (c) c.resize(); } catch (e) { /* destroyed mid-swap */ }
       });
     }); });
@@ -224,7 +234,7 @@
     if (editClose) editClose.addEventListener('click', insCloseEditPopover_);
     const editApply = $('ins-edit-apply-btn');
     if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
-    insWirePeriodBar_();   // I4: unified period slider drives the report window
+    insInitHeaderDates_();   // Phase 2: header From/To + shared Quick-select chips
     // Lighter hand-off: Insights -> My Department (agent table / Missed detail)
     // for the same dept + window. handoffToMyDept_ carries the dates.
     const insMyDeptBtn = $('ins-open-mydept-btn');
@@ -236,9 +246,9 @@
     // report cache still applies (data refreshes as the 30-min TTL allows).
     const insRefreshBtn = $('ins-refresh-btn');
     if (insRefreshBtn) insRefreshBtn.addEventListener('click', function () { runInsReport(); });
-    // R9-1: the R7 (I-2) fixed sticky banner is retired -- the period bar
-    // itself is sticky now (CSS on #ins-period-bar), so the real preset
-    // slider + Custom… stay reachable while scrolling.
+    // R9-1/Phase 2: the results header (title + toolbar + the From/To
+    // controls row) is the page's sticky strip, so the real date inputs
+    // stay reachable while scrolling -- the My Department pattern.
     const insQhMissedBtn = $('ins-qh-missed-link');
     if (insQhMissedBtn) insQhMissedBtn.addEventListener('click', function () {
       handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, { missed: true });
@@ -298,7 +308,15 @@
     // at zero height inside a collapsed <details>.
     const teamDetail = $('ins-team-detail');
     if (teamDetail) teamDetail.addEventListener('toggle', function () {
-      if (teamDetail.open) insRenderDeferredCharts_();
+      if (teamDetail.open) {
+        insRenderDeferredCharts_();
+        // Round-16: the admin abandon heatmap lives in this fold and is only
+        // fetched while it's open (was: density-gated) -- fetch on expand.
+        if (USER.role === 'admin' && insLastData && insLastData.meta) {
+          loadAbandonHeatmap_('ins-heatmap', insLastData.meta.department || '',
+            insLastData.meta.from, insLastData.meta.to);
+        }
+      }
     });
 
     // Consolidated trend chart: Monthly/Daily view toggle (client-only
@@ -450,17 +468,17 @@
       }
     });
 
-    // D1: Simple/Detailed density toggle + the Simple note's inline switch +
-    // the D3 first-run intro dismiss.
-    const densitySeg = $('ins-density-toggle');
-    if (densitySeg) densitySeg.addEventListener('click', function (e) {
-      const b = e.target.closest('.seg-btn');
-      if (!b) return;
-      insSetDensity_(b.getAttribute('data-density') || 'detailed');
-    });
-    const simpleNoteBtn = $('ins-simple-note-detailed');
-    if (simpleNoteBtn) simpleNoteBtn.addEventListener('click', function () {
-      insSetDensity_('detailed');
+    // Round-16 fold layer (replaced the D1 density toggle): apply the saved
+    // open-state, then wire each fold's toggle -- persist the choice and run
+    // the section's deferred draw on expand (the trend chart is the C3 case:
+    // built while collapsed it renders at zero height and gives up).
+    insFoldsApply_();
+    document.querySelectorAll('.ins-fold').forEach(function (fold) {
+      fold.addEventListener('toggle', function () {
+        const key = fold.getAttribute('data-fold') || '';
+        if (key) insFoldSet_(key, fold.open);
+        if (key === 'trend' && fold.open && insLastData) insDrawTrendChart_(insLastData);
+      });
     });
     const introDismiss = $('ins-intro-dismiss');
     if (introDismiss) introDismiss.addEventListener('click', function () {
@@ -984,83 +1002,57 @@
     selectAllActiveAgents_($('ins-edit-list'), checked);
   }
 
-  // I4: unified period slider. Resolves a preset id to an absolute { from, to }
-  // window that ENDS yesterday (the launcher convention every Insights default
-  // uses). 'custom' returns null -- that button opens the Edit popover instead.
-  function insPeriodRange_(preset) {
-    const to = launcherIsoDaysAgo_(1);
-    if (preset === 'last7')  return { from: launcherIsoDaysAgo_(7),  to: to };
-    if (preset === 'last30') return { from: launcherIsoDaysAgo_(30), to: to };
-    if (preset === 'mtd')    return { from: String(to).slice(0, 8) + '01', to: to };   // first of to's month
-    if (preset === 'ytd')    return { from: String(to).slice(0, 4) + '-01-01', to: to };
-    return null;
-  }
-
-  // Sync the active preset button to the currently-rendered window; highlight
-  // "Custom…" when the window matches no preset (e.g. after an Edit-popover
-  // custom range, or when viewing a report generated on a prior day).
-  function insSyncPeriodBar_(meta) {
-    const bar = $('ins-period-bar');
-    if (!bar) return;
+  // Round-16 Phase 2 (header unification): the I4 period chips are replaced
+  // by the My-Department controls pattern -- real From/To inputs + the SHARED
+  // Quick-select preset chips (buildDatePresetChips_, script-2). The header
+  // inputs MIRROR the canonical #ins-from/#ins-to (still in the hidden
+  // fallback form; what deep links / saved views / the popover write): this
+  // sync copies canonical -> header on every render, and a header edit
+  // copies back + re-runs through insApplyWindow_ (the old period-chip
+  // pipeline: prior-window validation, picker regroup, prefs, runInsReport).
+  function insSyncHeaderDates_(meta) {
     const from = meta && meta.from, to = meta && meta.to;
     recordPageWindow_('insights', from, to);   // R9-3: the shared-window store
-    let active = 'custom';
-    ['last7', 'last30', 'mtd', 'ytd'].some(function (p) {
-      const r = insPeriodRange_(p);
-      if (r && r.from === from && r.to === to) { active = p; return true; }
-      return false;
-    });
-    bar.querySelectorAll('.ov-period-btn').forEach(function (b) {
-      const on = b.getAttribute('data-ins-period') === active;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
+    const f = $('ins-hdr-from'), t = $('ins-hdr-to');
+    if (f && from) f.value = from;
+    if (t && to) t.value = to;
   }
 
-  // Wire the period slider once. A preset drives the WHOLE report window by
-  // setting the hidden form dates + reusing runInsReport (so it inherits the
-  // SWR paint, D1b keep-last-good, and stale-response guard), preserving the
-  // compare mode + agent selection -- the same path insApplyEditPopover_ takes,
-  // minus the popover. "Custom…" defers to the Edit popover for arbitrary
-  // windows / agents / comparison. No prefs schema change: the window persists
-  // via the existing from/to prefs and the button re-syncs from meta on render.
-  let insPeriodBarWired_ = false;
-  function insWirePeriodBar_() {
-    const bar = $('ins-period-bar');
-    if (!bar || insPeriodBarWired_) return;
-    insPeriodBarWired_ = true;
-    bar.addEventListener('click', function (e) {
-      const b = e.target.closest('.ov-period-btn');
-      if (!b) return;
-      const preset = b.getAttribute('data-ins-period');
-      if (preset === 'custom') {
-        // Custom opens the Edit-selection popover (its From/To are the custom
-        // range). #3c: the popover can open below the fold / not obviously tied
-        // to this click ("Custom did nothing"), so scroll it into view and land
-        // focus on the From date -- without touching the shared open handler.
-        const eb = $('ins-edit-selection-btn'); if (eb) eb.click();
-        const pop = $('ins-edit-popover');
-        if (pop && pop.style.display !== 'none') {
-          try { pop.scrollIntoView({ block: 'nearest' }); } catch (scrollErr) { /* older browsers */ }
-          const fromEl = $('ins-edit-from');
-          if (fromEl) setTimeout(function () { try { fromEl.focus(); } catch (focusErr) {} }, 0);
-        }
-        return;
-      }
-      const r = insPeriodRange_(preset);
-      if (!r) return;
-      if ($('ins-from')) $('ins-from').value = r.from;
-      if ($('ins-to'))   $('ins-to').value   = r.to;
-      if ($('ins-preset')) $('ins-preset').value = 'custom';
-      // Validate the (kept) comparison before firing -- the setup form is
-      // hidden, so its error line would be invisible; surface on the results.
-      const prior = insResolvePriorRange_(r.from, r.to);
-      if (prior && prior.error) { insSetResultsStatus_('error', prior.error); return; }
-      insScheduleActiveRefetch_();   // re-group the picker for the new range
-      insSavePrefs_();
-      insSetResultsStatus_('loading', 'Refreshing report…');
-      runInsReport();
-    });
+  // Apply a { from, to } window to the report -- the shared tail every entry
+  // point uses (preset chip, header date edit).
+  function insApplyWindow_(r) {
+    if (!r || !r.from || !r.to) return;
+    if (r.from > r.to) { insSetResultsStatus_('error', 'Start date must be on or before end date.'); return; }
+    if ($('ins-from')) $('ins-from').value = r.from;
+    if ($('ins-to'))   $('ins-to').value   = r.to;
+    if ($('ins-preset')) $('ins-preset').value = 'custom';
+    // Validate the (kept) comparison before firing -- the setup form is
+    // hidden, so its error line would be invisible; surface on the results.
+    const prior = insResolvePriorRange_(r.from, r.to);
+    if (prior && prior.error) { insSetResultsStatus_('error', prior.error); return; }
+    insScheduleActiveRefetch_();   // re-group the picker for the new range
+    insSavePrefs_();
+    insSetResultsStatus_('loading', 'Refreshing report…');
+    runInsReport();
+  }
+
+  let insHeaderDatesWired_ = false;
+  function insInitHeaderDates_() {
+    if (insHeaderDatesWired_) return;
+    const f = $('ins-hdr-from'), t = $('ins-hdr-to');
+    if (!f || !t) return;
+    insHeaderDatesWired_ = true;
+    buildDatePresetChips_($('ins-date-presets'), insApplyWindow_);
+    // Debounced like the dept page's date edits, so typing / rapid arrow
+    // presses coalesce into one request.
+    const onEdit = debounce_(function () {
+      if (!f.value || !t.value) return;
+      const w = $('ins-date-presets');
+      if (w) w.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
+      insApplyWindow_({ from: f.value, to: t.value });
+    }, 350);
+    f.addEventListener('change', onEdit);
+    t.addEventListener('change', onEdit);
   }
 
   function insApplyEditPopover_() {
@@ -1246,7 +1238,7 @@
   // main pass whether or not this section is open.
   function insRenderDeferredCharts_() {
     if (!insLastData || !insDetailOpen_()) return;
-    // I4: only the share doughnut is deferred now -- the trend chart moved out
+    // I4: only the share tally is deferred now -- the trend chart moved out
     // of this <details> to the always-visible bottom Trends section and renders
     // in the main pass (insDrawTrendChart_).
     insRenderShareChart_(insLastData.agentData || []);
@@ -1414,9 +1406,9 @@
     insLastData = data;
     coverageNoteUpsert_('insights-results', 'insights',
       (data && data.meta && data.meta.from) || null, 'dqe');   // R12-26
-    // D1: apply the density class + toggle state before painting so the
-    // Simple gating is in effect for everything below (incl. SWR pre-paints).
-    insSyncDensity_();
+    // Round-16: reflect the saved fold open-state before painting so the
+    // draw-on-open gating below reads the right state (incl. SWR pre-paints).
+    insFoldsApply_();
     // D3: one-time first-run intro. R7 (I-3, owner): shown ONCE, period --
     // the first render auto-marks it seen, so it never re-nags on later
     // entries even if the user doesn't click Got it (the dismiss button still
@@ -1449,7 +1441,7 @@
       if (wd) bits.push(wd);
       $('ins-results-date').textContent = '(' + bits.filter(Boolean).join(' · ') + ')';
     })();
-    insSyncPeriodBar_(data.meta);   // I4: reflect the rendered window on the slider
+    insSyncHeaderDates_(data.meta);   // Phase 2: reflect the rendered window on the header inputs
     const cmp = $('ins-compare-line');
     if (cmp) {
       const mode = data.meta && data.meta.comparisonMode;
@@ -1535,9 +1527,9 @@
     // report's vetting gate, so managers never call it and the panel stays
     // hidden for them (same gate as the QCD report's heatmap). Skipped on
     // the SWR pre-paint -- the live repaint fetches it once.
-    // D1: in Simple the heatmap's host section is hidden -- skip the fetch
-    // (insSetDensity_ fires it when the admin switches to Detailed).
-    if (USER.role === 'admin' && data.meta && !insIsSimple_()) {
+    // Round-16: the heatmap lives inside the Team-detail fold -- fetch only
+    // while it's open (the fold's toggle handler fetches on expand).
+    if (USER.role === 'admin' && data.meta && insDetailOpen_()) {
       if (!(opts && opts.swr)) loadAbandonHeatmap_('ins-heatmap', data.meta.department || '', data.meta.from, data.meta.to);
     } else if (USER.role !== 'admin') {
       var insHeat = $('ins-heatmap'); if (insHeat) { insHeat.style.display = 'none'; insHeat.innerHTML = ''; }
@@ -1548,18 +1540,17 @@
     // its own always-visible section at the bottom of the report, so it renders
     // in the main pass now -- measure-guarded (insDrawTrendChart_), since this
     // pass can run before the results container is shown on first paint.
-    // The share doughnut still lives inside the Team-detail <details>, so it
-    // stays deferred (renders at zero height while collapsed) -- only rendered
-    // here when the section is already open; the toggle handler renders it on
-    // first open. Queue health + heatmap already ran above (DOM/CSS-grid).
-    // D1: Simple SKIPS the trend + share draws (not render-then-hide --
-    // insDrawTrendChart_ gives up after 30 hidden frames and the chart would
-    // never exist; insSetDensity_ builds both on the switch to Detailed).
-    if (!insIsSimple_()) {
+    // The share tally still lives inside the Team-detail <details>, so it
+    // stays deferred -- only rendered here when the section is already open;
+    // the toggle handler renders it on first open. Round-16: the trend chart
+    // is fold-gated the same way -- drawn only while its fold is open (a
+    // canvas built inside a closed <details> is the C3 zero-height trap);
+    // the fold's toggle handler draws on expand.
+    if (insFoldOpen_('trend')) {
       insDrawTrendChart_(data);
-      if (insDetailOpen_()) {
-        insRenderShareChart_(data.agentData || []);
-      }
+    }
+    if (insDetailOpen_()) {
+      insRenderShareChart_(data.agentData || []);
     }
     insRenderSmallSampleNote_(data);   // D3 (#7): annotation only, both modes
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
@@ -1570,20 +1561,22 @@
     if (insScrollPending_) {
       const target = insScrollPending_;
       insScrollPending_ = null;
-      // A2: if the target section moved inside the collapsed Team-detail
-      // (e.g. the "abandons" chip -> ins-queue-health), open it + render its
-      // deferred charts so the spotlight lands on a visible element, not a
-      // zero-height collapsed panel.
+      // Round-16: the target may live inside ANY collapsed fold (the
+      // quick-start chips promise a section -- honor the promise by opening
+      // whichever <details> contains it, then run that fold's deferred draw
+      // so the spotlight lands on a visible element).
       const tEl = $(target);
-      const det = $('ins-team-detail');
-      if (tEl && det && det.contains(tEl)) {
-        // D1: the chips promise a section Simple hides (e.g. "abandons" ->
-        // Queue health inside Team detail) -- honor the promise by switching
-        // to Detailed first, then opening the collapsed panel.
-        if (insIsSimple_()) insSetDensity_('detailed');
-        if (!det.open) {
-          det.open = true;
-          insRenderDeferredCharts_();
+      if (tEl) {
+        let anc = tEl.closest ? tEl.closest('details') : null;
+        while (anc) {
+          if (!anc.open) {
+            anc.open = true;
+            const key = anc.getAttribute('data-fold') || '';
+            if (key) insFoldSet_(key, true);
+            if (key === 'trend') insDrawTrendChart_(data);
+            if (anc.id === 'ins-team-detail') insRenderDeferredCharts_();
+          }
+          anc = anc.parentElement ? anc.parentElement.closest('details') : null;
         }
       }
       setTimeout(function () { qsSpotlight_(target); }, 200);
@@ -1591,85 +1584,56 @@
   }
 
   /**
-   * Share-of-answered doughnut (ported from the Performance Report so
-   * PR can retire without losing the view). Built client-side from
-   * agentData (each card already carries answered.val for the range);
-   * slices sorted largest-first, datalabels suppressed under 4% of
-   * total (PR's threshold). Hidden when fewer than 2 agents answered.
+   * Share of answered calls -- Round-16 (owner): the doughnut (PR port) is
+   * RETIRED in favor of SHARE-TALLY ROWS, the block dialect the agent
+   * table / QCD report / email already speak: one row per selected agent
+   * (sage blocks at a cohort-shared unit + exact count + share %), sorted
+   * most-answered first. Row lengths rank directly (adjacent donut slices
+   * didn't) and identity is the row label, so it scales past six agents
+   * without a color per agent. R11-E semantics KEPT: shares are of the
+   * WHOLE department's answered calls -- unselected agents fold into one
+   * muted "Other agents" row, so the list still sums to the true 100%.
+   * Hidden under 2 rows (a lone share is always 100%). The function name
+   * survives the retirement (three call sites; no chart instance now).
    */
   function insRenderShareChart_(cards) {
     const wrap = $('ins-share-wrap');
     if (!wrap) return;
+    const host = $('ins-share-tally');
     const agentSlices = (cards || [])
       .map(function (c) {
         return { label: c.name, value: Number((c.metrics && c.metrics.answered && c.metrics.answered.val) || 0) };
       })
       .filter(function (d) { return d.value > 0; })
       .sort(function (a, b) { return b.value - a.value; });
-    // R11-E (item 6): shares are of the WHOLE department's answered calls, not
-    // just the selected agents -- so an agent's slice reads the same whether the
-    // report is run for the whole dept or a subset. The unselected agents fold
-    // into a single muted "Other agents" slice (deptTotal - sum(selected)), so
-    // the donut still sums to the true 100%.
     const selectedTotal = agentSlices.reduce(function (a, s) { return a + s.value; }, 0);
     const deptTotal = Number(insLastData && insLastData.meta && insLastData.meta.answeredDeptTotal) || selectedTotal;
     const other = Math.max(0, deptTotal - selectedTotal);
     const slices = agentSlices.slice();
     if (other > 0) slices.push({ label: 'Other agents', value: other, other: true });
-    if (insShareChartInstance) { try { insShareChartInstance.destroy(); } catch (e) {} insShareChartInstance = null; }
-    if (slices.length < 2) { wrap.style.display = 'none'; return; }
+    if (slices.length < 2 || !host) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
-    refreshChartTheme();
-    destroyOrphanedChartOnCanvas_('ins-share-chart');
 
-    const colors = slices.map(function (d, i) { return d.other ? THEME.muted : IR_CHART_COLORS[i % IR_CHART_COLORS.length]; });
-    const plugins = (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [];
-    insShareChartInstance = safeChart_($('ins-share-chart').getContext('2d'), {
-      type: 'doughnut',
-      data: {
-        labels: slices.map(function (d) { return d.label; }),
-        datasets: [{
-          data: slices.map(function (d) { return d.value; }),
-          backgroundColor: colors,
-          borderColor: THEME.paperCard,
-          borderWidth: 2,
-        }],
-      },
-      plugins: plugins,
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } },
-          tooltip: {
-            callbacks: {
-              label: function (ctx) {
-                const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
-                const pct = total > 0 ? (ctx.parsed / total) * 100 : 0;
-                return ctx.label + ': ' + ctx.parsed + ' (' + pct.toFixed(1) + '%)';
-              },
-            },
-          },
-          datalabels: {
-            display: function (ctx) {
-              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
-              return total > 0 && (ctx.dataset.data[ctx.dataIndex] / total) >= 0.04;
-            },
-            color: THEME.paper,
-            font: { family: "'IBM Plex Mono', monospace", size: 11, weight: '500' },
-            textAlign: 'center',
-            // #2: name the slice on the donut itself (truncated to fit), not
-            // just in the right-side legend, so each slice is self-identifying.
-            formatter: function (value, ctx) {
-              const total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
-              const pct = total > 0 ? (value / total * 100).toFixed(1) : '0';
-              const name = String((ctx.chart.data.labels || [])[ctx.dataIndex] || '');
-              const shown = name.length > 13 ? name.slice(0, 12) + '…' : name;
-              return shown + '\n' + value + ' (' + pct + '%)';
-            },
-          },
-        },
-      },
-    });
+    const unit = ansTallyUnitFor_(slices.map(function (s) {
+      return { totalAnswered: s.value, totalMissed: 0 };
+    }));
+    host.innerHTML = slices.map(function (s) {
+      const pct = deptTotal > 0 ? (s.value / deptTotal * 100) : 0;
+      const title = s.label + ': ' + fmtNumber(s.value) + ' answered · '
+        + pct.toFixed(1) + '% of the department’s answered calls'
+        + (unit > 1 ? ' · each block ≈ ' + unit + ' calls' : '');
+      return '<div class="ins-share-row' + (s.other ? ' is-other' : '') + '" title="' + escapeHtml(title) + '">'
+        + '<span class="ins-share-name">' + escapeHtml(s.label) + '</span>'
+        + '<span class="ins-share-blocks">' + ansTallyBlocks_(s.value, unit, s.other ? 'oth' : 'a') + '</span>'
+        + '<span class="ins-share-num">' + fmtNumber(s.value) + ' <span class="ins-share-pct">· ' + pct.toFixed(1) + '%</span></span>'
+        + '</div>';
+    }).join('');
+    const leg = $('ins-share-legend');
+    if (leg) {
+      leg.style.display = '';
+      leg.innerHTML = (unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls · ' : '')
+        + 'sorted most-answered first · shares are of the whole department';
+    }
   }
 
   /**
@@ -1780,6 +1744,17 @@
       .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to });
   }
 
+  // Round-16: sync the Queue-health FOLD around the section -- visibility +
+  // the collapsed summary's headline, so the fold answers its question even
+  // closed. '' hides the whole fold (missing QCD sheet / pre-v4 payload).
+  function insQhFoldSync_(headHtml) {
+    const fold = $('ins-qh-fold');
+    if (!fold) return;
+    fold.style.display = headHtml === '' ? 'none' : '';
+    const head = $('ins-qh-fold-head');
+    if (head) head.innerHTML = headHtml || '';
+  }
+
   function insRenderQueueHealth_(qh) {
     const wrap = $('ins-queue-health');
     if (!wrap) return;
@@ -1788,6 +1763,7 @@
     // legitimate "no mapped queues" case and could mask a real data problem.
     if (qh && qh.error) {
       wrap.style.display = '';
+      insQhFoldSync_('<span class="ins-fold-muted">temporarily unavailable</span>');
       const tEl = $('ins-qh-tiles');
       if (tEl) tEl.innerHTML = '<div class="ds-note">Queue health is temporarily unavailable — '
         + 'the queue data could not be loaded. The rest of this report is unaffected.</div>';
@@ -1802,6 +1778,7 @@
     // this section is now where a manager learns their dept needs mapping.
     if (qh && qh.unmapped) {
       wrap.style.display = '';
+      insQhFoldSync_('<span class="ins-fold-muted">no queues mapped</span>');
       const uEl = $('ins-qh-tiles');
       if (uEl) {
         const isAdmin = (USER.role === 'admin');
@@ -1827,7 +1804,7 @@
       const sec2 = $('ins-qh-secondary'); if (sec2) sec2.innerHTML = '';
       return;
     }
-    if (!qh || !qh.totals) { wrap.style.display = 'none'; return; }
+    if (!qh || !qh.totals) { wrap.style.display = 'none'; insQhFoldSync_(''); return; }
     wrap.style.display = '';
 
     const cap = $('ins-qh-cap');
@@ -1852,6 +1829,13 @@
     // light/strong gradient).
     const violMtd = Number(qh.violationsMtd) || 0;
     const violValCls = violMtd > 0 ? ' bm-over' : ' bm-target';
+    // Fold headline: the answer while collapsed. Abandoned % carries its
+    // benchmark tint; violations only appear when non-zero.
+    insQhFoldSync_(
+      '<span class="' + benchValueCls_('abandoned %', t.abandonedPctStr, true).trim() + '">'
+      + escapeHtml(t.abandonedPctStr) + ' abandoned</span>'
+      + ' · ' + fmtNumber(t.totalCalls) + ' queue calls'
+      + (violMtd > 0 ? ' · <span class="bm-over">' + fmtNumber(violMtd) + ' viol MTD</span>' : ''));
     const tiles = [
       inboundKpiTile_('Queue calls', fmtNumber(t.totalCalls), '',
         p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : ''),
@@ -1919,8 +1903,13 @@
           // row in the Daily breakdown table below (insJumpToDailyRow_).
           detail += '<div class="qcd-detail-viol"><strong>Violation dates:</strong> '
             + q.violationDates.map(function (iso) {
+                // data-queue scopes the Daily breakdown to THIS queue's own
+                // per-day rows on click (sub-queue drill fix) -- without it
+                // the day's row showed the dept-total numbers, which for a
+                // sub-queue row is the wrong queue's data.
                 return '<button type="button" class="ins-viol-date" data-date="'
-                  + escapeHtml(String(iso)) + '" title="Show this day in the Daily breakdown">'
+                  + escapeHtml(String(iso)) + '" data-queue="' + escapeHtml(q.queue)
+                  + '" title="Show this day in the Daily breakdown (scoped to ' + escapeHtml(q.queue) + ')">'
                   + fmtViolDate_(iso) + '</button>';
               }).join(' ') + '</div>';
         }
@@ -1943,10 +1932,18 @@
       // rows but keeps the tbody element + this listener).
       if (!tbody._insQhExpandWired) {
         tbody.addEventListener('click', function (e) {
-          // Violation-date chip -> jump to that day in the Daily breakdown.
+          // Violation-date chip -> scope the Daily breakdown to the clicked
+          // row's queue (its violation happened on ITS numbers, not the dept
+          // total -- the old unscoped table showed the parent's row for a
+          // sub-queue's date), then jump to that day. Falls back to the
+          // unscoped jump when the payload has no per-queue daily rows (a
+          // stale <=30-min cached payload without the additive field).
           var chip = e.target.closest('.ins-viol-date');
           if (chip && tbody.contains(chip)) {
             e.preventDefault();
+            var vq = chip.getAttribute('data-queue') || '';
+            insQhDailyScope_ = (vq && insQhDailyByQueue_[vq]) ? vq : '';
+            insQhDailyRender_();
             insJumpToDailyRow_(chip.getAttribute('data-date') || '');
             return;
           }
@@ -1985,14 +1982,65 @@
     const dailyTbody = $('ins-qh-daily-tbody');
     const dailyWrap = $('ins-qh-daily');
     if (dailyTbody) {
-      const daily = qh.dailySeries || [];
-      if (daily.length) {
-        dailyTbody.innerHTML = qcdDailyRowsHtml_(daily, { bar: true });
+      // Round-16 (sub-queue drill fix): stash the dept-total series + each
+      // queue's own per-day rows, reset the scope, and render through the
+      // shared helper so a violation-date click can re-scope in place.
+      insQhDailyAll_ = qh.dailySeries || [];
+      insQhDailyByQueue_ = {};
+      (qh.perQueue || []).forEach(function (q) {
+        if (q.daily && q.daily.length) insQhDailyByQueue_[q.queue] = q.daily;
+      });
+      insQhDailyScope_ = '';
+      if (insQhDailyAll_.length) {
+        insQhDailyRender_();
         if (dailyWrap) dailyWrap.style.display = '';
       } else {
         dailyTbody.innerHTML = '';
         if (dailyWrap) dailyWrap.style.display = 'none';
       }
+      // The ✕ on the scope chip returns to the dept-total series. Wired once
+      // (the <details> is static markup); stopPropagation so the click can't
+      // toggle the <details> shut.
+      if (dailyWrap && !dailyWrap._insScopeWired) {
+        dailyWrap.addEventListener('click', function (e) {
+          var clr = e.target.closest('.ins-qh-scope-clear');
+          if (!clr) return;
+          e.preventDefault();
+          e.stopPropagation();
+          insQhDailyScope_ = '';
+          insQhDailyRender_();
+        });
+        dailyWrap._insScopeWired = true;
+      }
+    }
+  }
+
+  // Render the Daily breakdown table honoring the queue scope, and reflect
+  // the scope as a chip beside the summary label ('' = dept total, no chip).
+  function insQhDailyRender_() {
+    const tbody = $('ins-qh-daily-tbody');
+    if (!tbody) return;
+    const scoped = insQhDailyScope_ ? insQhDailyByQueue_[insQhDailyScope_] : null;
+    const rows = scoped || insQhDailyAll_;
+    // Round-16 (owner follow-up): the daily rows tally too. The unit comes
+    // from the rows being DISPLAYED (not the whole dept), so re-scoping to a
+    // quiet sub-queue re-normalizes the blocks instead of shrinking to dots.
+    const unit = ansTallyUnitFor_(rows.map(function (r) {
+      return { totalAnswered: r.totalAnswered, totalMissed: r.abandoned };
+    }));
+    tbody.innerHTML = qcdDailyRowsHtml_(rows, { bar: true, tallyUnit: unit });
+    const legEl = $('ins-qh-daily-legend');
+    if (legEl) {
+      legEl.innerHTML = unit > 1
+        ? '<span class="tly a"></span> = ' + unit + ' calls' : '';
+      legEl.style.display = unit > 1 ? '' : 'none';
+    }
+    const chipEl = $('ins-qh-daily-scope');
+    if (chipEl) {
+      chipEl.innerHTML = scoped
+        ? '<span class="ins-qh-scope-chip">' + escapeHtml(insQhDailyScope_)
+          + '<button type="button" class="ins-qh-scope-clear" title="Show all queues (department total)">&times;</button></span>'
+        : '';
     }
   }
 
@@ -2868,45 +2916,32 @@
     const strong    = sortedMain.filter(function (x) { return x.standing === 'strong'; });
     if (sortedMain.length > 1) {
       let html = insTriageLegend_();
-      const tiers = [
-        { group: attention, label: 'Behind team', tone: 'warn' },
-        { group: steady,    label: 'On par',      tone: 'muted' },
-        { group: strong,    label: 'Ahead of team', tone: 'good' },
-      ];
-      if (insIsSimple_()) {
-        // D1 Simple: only the Behind-team tier stays expanded; On par +
-        // Ahead of team fold behind one "+N on track" expander (full-width
-        // grid item, same headers inside). Quiet agents keep their own
-        // existing <details> below. Presentation only -- same cards, same
-        // order, same renderCard.
-        if (attention.length) {
-          html += insTriageHeader_('Behind team', attention.length, 'warn')
-                + attention.map(renderCard).join('');
-        }
-        const onTrack = steady.concat(strong);
-        if (onTrack.length) {
-          let inner = '';
-          [{ group: steady, label: 'On par', tone: 'muted' },
-           { group: strong, label: 'Ahead of team', tone: 'good' }].forEach(function (t) {
-            if (!t.group.length) return;
-            inner += insTriageHeader_(t.label, t.group.length, t.tone)
-                   + t.group.map(renderCard).join('');
-          });
-          html += '<details class="ins-ontrack-details">'
-                +   '<summary>+ ' + onTrack.length + ' agent' + (onTrack.length === 1 ? '' : 's')
-                +     ' on track (on par or ahead of the team average)</summary>'
-                +   '<div class="ins-agent-cards ins-ontrack-cards">' + inner + '</div>'
-                + '</details>';
-        }
-        wrap.innerHTML = html;
-      } else {
-        tiers.forEach(function (t) {
-          if (!t.group.length) return;
-          html += insTriageHeader_(t.label, t.group.length, t.tone)
-                + t.group.map(renderCard).join('');
-        });
-        wrap.innerHTML = html;
+      // Round-16: the on-track fold (the D1 Simple treatment) is UNIVERSAL
+      // now that the density mode is retired -- the Behind-team tier stays
+      // expanded, On par + Ahead of team fold behind one "+N on track"
+      // expander (full-width grid item, same headers inside). Quiet agents
+      // keep their own <details> below. Presentation only -- same cards,
+      // same order, same renderCard.
+      if (attention.length) {
+        html += insTriageHeader_('Behind team', attention.length, 'warn')
+              + attention.map(renderCard).join('');
       }
+      const onTrack = steady.concat(strong);
+      if (onTrack.length) {
+        let inner = '';
+        [{ group: steady, label: 'On par', tone: 'muted' },
+         { group: strong, label: 'Ahead of team', tone: 'good' }].forEach(function (t) {
+          if (!t.group.length) return;
+          inner += insTriageHeader_(t.label, t.group.length, t.tone)
+                 + t.group.map(renderCard).join('');
+        });
+        html += '<details class="ins-ontrack-details">'
+              +   '<summary>+ ' + onTrack.length + ' agent' + (onTrack.length === 1 ? '' : 's')
+              +     ' on track (on par or ahead of the team average)</summary>'
+              +   '<div class="ins-agent-cards ins-ontrack-cards">' + inner + '</div>'
+              + '</details>';
+      }
+      wrap.innerHTML = html;
     } else {
       wrap.innerHTML = sortedMain.map(renderCard).join('');
     }
@@ -2972,11 +3007,9 @@
   }
 
   function insApplyCardsView_() {
-    // R11-M: Simple now shows the per-agent CHART (forced to the Trend basis in
-    // insRenderCardsChart_) -- the cards are the Detailed view. Detailed honors
-    // the saved insCardsView pref (cards or chart), untouched. (Was: Simple
-    // forced cards.)
-    const chartView = insIsSimple_() ? true : (insCardsView === 'chart');
+    // Round-16: the density mode is gone -- the view is simply insCardsView
+    // (chart by default; single-agent reports still force cards upstream).
+    const chartView = (insCardsView === 'chart');
     // I5a: sync the Cards/Chart toggle + Gap/Absolute sub-toggle to the active
     // state on every render, so a role default (or programmatic change) with no
     // saved pref is reflected in the buttons.
@@ -3054,9 +3087,9 @@
     const cards = ((insLastData && insLastData.agentData) || []).filter(insAgentHasActivity_);
     const meta  = (insLastData && insLastData.meta) || {};
     const ts    = (insLastData && insLastData.teamStats) || {};
-    // R11-M: Simple forces the Trend basis (the glanceable per-agent view)
-    // without mutating the saved insCardsChartMode pref.
-    const mode = insIsSimple_() ? 'trend' : insCardsChartMode;
+    // Round-16: the density mode is gone -- the basis is simply the saved /
+    // default insCardsChartMode ('abs' since the owner's default change).
+    const mode = insCardsChartMode;
     if (mode === 'abs')   { insRenderCardsChartAbs_(canvas, cards); return; }
     if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
     const metric = insCardsChartMetric;
@@ -3885,10 +3918,9 @@
         cardsView:   insCardsView,
         cardsChartMetric: insCardsChartMetric,
         cardsChartMode: insCardsChartMode,
-        // D1: Simple/Detailed disclosure mode. null (never toggled and never
-        // resolved) is simply omitted -- the role default applies at read
-        // time via insIsSimple_. Additive field; tolerant parser, no bump.
-        density:     insDensity || undefined,
+        // (Round-16: the D1 density field is GONE -- fold open-state lives in
+        // its own cdr.ins.folds key; an old saved density still seeds the
+        // folds once via insFoldsLoad_'s migration.)
         agents: irGetCheckedAgents_($('ins-agent-list')),
       }));
     } catch (e) { /* ignore */ }
@@ -3934,16 +3966,19 @@
       if (typeof prefs.showLabels === 'boolean' && $('ins-show-datalabels')) {
         $('ins-show-datalabels').checked = prefs.showLabels;
       }
-      if (prefs.density === 'simple' || prefs.density === 'detailed') {
-        insDensity = prefs.density;   // D1: sticky per user; else role default
-      }
+      // (Round-16: prefs.density is no longer restored here -- it feeds the
+      // one-time folds migration in insFoldsLoad_ instead.)
       if (prefs.trendRender === 'line' || prefs.trendRender === 'calendar') {
         insTrendRender = prefs.trendRender;   // #10 (button state synced per render)
       }
       if (prefs.calMetric === 'pct' || prefs.calMetric === 'missed' || prefs.calMetric === 'abd') {
         insCalMetric = prefs.calMetric;   // 'abd' (R7) self-heals to 'pct' when no queue daily series
       }
-      if (prefs.cardsView === 'cards' || prefs.cardsView === 'chart') {
+      // Round-16 (owner): the Cards view is hidden for now (toggle
+      // display:none in dashboard.html) -- only restore 'chart' so a saved
+      // 'cards' pref can't resurrect a view with no visible way back. Widen
+      // this back to === 'cards' || === 'chart' when the toggle returns.
+      if (prefs.cardsView === 'chart') {
         insCardsView = prefs.cardsView;
         const vt = $('ins-cards-view-toggle');
         if (vt) vt.querySelectorAll('.seg-btn').forEach(function (b) {

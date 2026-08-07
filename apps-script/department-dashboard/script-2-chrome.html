@@ -262,7 +262,9 @@
         var item = e.target.closest('[data-action]');
         if (!item) return;
         setDeptExportOpen(false);
-        if (item.getAttribute('data-action') === 'csv') exportTableCsv_();
+        var action = item.getAttribute('data-action');
+        if (action === 'csv') exportTableCsv_();
+        else if (action === 'email') deptEmailReport_();   // Round-16: EmailKit summary
       });
       document.addEventListener('click', function (e) {
         if (deptExportMenu.style.display === 'none') return;
@@ -275,6 +277,30 @@
     // CONTROLS ROW ITSELF is the sticky element now (CSS `position:sticky`
     // on `#dept-page .controls`, opaque strip), so the real date inputs +
     // Refresh + Export stay reachable while scrolling.
+
+    // Round-16 (owner): the lens switcher's "Insights" tab -- same hand-off
+    // as the bottom teaser strip's Open-full-report button (carries the
+    // current window; handoffToInsights_ lives in script-4, hoisted).
+    var lensIns = $('lens-ins-btn');
+    if (lensIns) lensIns.addEventListener('click', function () {
+      handoffToInsights_(($('from-date') || {}).value, ($('to-date') || {}).value, null);
+    });
+
+    // Round-16 Phase 3 (motion): elevation-on-stuck for the two sticky
+    // strips -- the drop shadow appears only while the strip is actually
+    // pinned (intersectionRatio < 1 with threshold 1 = the top edge left
+    // the viewport), instead of painting permanently. Decoration only;
+    // silently skipped without IntersectionObserver.
+    if (typeof IntersectionObserver === 'function') {
+      document.querySelectorAll('#dept-page .controls, #insights-page .ir-results-header')
+        .forEach(function (strip) {
+          try {
+            new IntersectionObserver(function (entries) {
+              strip.classList.toggle('is-stuck', entries[0].intersectionRatio < 1);
+            }, { threshold: [1] }).observe(strip);
+          } catch (e) { /* decoration only */ }
+        });
+    }
 
     var colsToggle = $('dept-cols-toggle');
     if (colsToggle) colsToggle.addEventListener('click', function () {
@@ -404,8 +430,11 @@
   }
 
   // -- Date preset chips ---------------------------------------------------
-  function initDatePresets_() {
-    var wrap = $('date-presets');
+  // Round-16 Phase 2 (header unification): the chip list + builder are SHARED
+  // between My Department's Quick select and the Insights header's identical
+  // strip (insInitHeaderDates_) -- one component, two pages, so the two
+  // headers can't drift apart. onPick receives { from, to }.
+  function buildDatePresetChips_(wrap, onPick) {
     if (!wrap) return;
     var presets = [
       { label: 'Yesterday', fn: function () { var d = daysAgo_(1); return { from: d, to: d }; } },
@@ -420,14 +449,18 @@
       chip.className = 'date-preset-chip';
       chip.textContent = p.label;
       chip.addEventListener('click', function () {
-        var r = p.fn();
-        $('from-date').value = r.from;
-        $('to-date').value = r.to;
         wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
         chip.classList.add('active');
-        refresh();
+        onPick(p.fn());
       });
       wrap.appendChild(chip);
+    });
+  }
+  function initDatePresets_() {
+    buildDatePresetChips_($('date-presets'), function (r) {
+      $('from-date').value = r.from;
+      $('to-date').value = r.to;
+      refresh();
     });
   }
   function clearActivePreset_() {
@@ -562,11 +595,20 @@
   // `!tab.querySelector('.nav-count-badge')`) and ran once per page load, so
   // after a manager resolved their last escalation the badge kept the old
   // number for the rest of the session and the strip stayed visible.
+  // Last-known viewer-scope escalation counts, shared with the Company
+  // snapshot card's pending-escalations line (script-3-overview).
+  var escBadgeLast_ = null;
   function escApplyBadge_(counts) {
     var open = Number(counts && counts.open) || 0;
     var review = Number(counts && counts.review) || 0;
     var over = Number(counts && counts.overdue) || 0;
     var total = open + review;
+    // Round-16 (owner): the Company snapshot card carries a pending-
+    // escalations line too. Stash the counts (the card can render before or
+    // after this badge fetch) and repaint its line in place -- ovAggEscRender_
+    // lives in script-3-overview (function hoisting spans fragments).
+    escBadgeLast_ = { open: open, review: review, overdue: over };
+    try { ovAggEscRender_(); } catch (e) { /* card not rendered yet */ }
 
     var tab = $('escalations-btn');
     if (tab) {

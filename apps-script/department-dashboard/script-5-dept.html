@@ -326,14 +326,12 @@
   // legible view).
   const MISSED_CHART_MODE_KEY = 'cdr.missed.chartmode';
   function missedChartMode_() {
-    // R11-B7: the Bars/Radar toggle is admin-only -- a manager with a saved
-    // 'radar' pref (from before the fence) would otherwise be stuck in radar
-    // with no way back, so non-admins always resolve to bars.
-    try {
-      if (typeof USER !== 'undefined' && USER && USER.role !== 'admin') return 'bars';
-      return localStorage.getItem(MISSED_CHART_MODE_KEY) === 'radar' ? 'radar' : 'bars';
-    }
-    catch (e) { return 'bars'; }
+    // Round-16 (owner): the Bars/Radar toggle is HIDDEN for everyone --
+    // always bars. The radar code + this resolver + the (hidden) segment
+    // stay so the choice can return by removing one display:none; a saved
+    // 'radar' pref (R11-B7 era) is ignored rather than honored so nobody is
+    // stuck in a view with no visible way back.
+    return 'bars';
   }
   function missedChartCfg_(chart, onBucketClick) {
     return missedChartMode_() === 'radar'
@@ -1153,6 +1151,15 @@
     var __useFrost = !__deptSwitch && state.rows.length > 0 && !!__frostHost;
     if (__useFrost) { dsFrostShow_(__frostHost, 'Refreshing…'); setStatus(null); }
     else { setStatus('loading', 'Loading...'); }
+    // Round-16 (owner): the Team-strip cards at the top frost alongside the
+    // table on a same-dept refresh -- they render from the same summary
+    // payload, so while the table said "Refreshing…" the strip sat stale
+    // with no signal. First load / dept switch keeps them hidden instead
+    // (renderDeptTeamStrip_ shows them only once data exists).
+    var __stripHost = $('dept-team-strip');
+    if (__useFrost && __stripHost && __stripHost.style.display !== 'none' && __stripHost.innerHTML) {
+      dsFrostShow_(__stripHost, 'Refreshing…');
+    }
     $('refresh-btn').disabled = true;
     // Page title belongs to the dept page; only update it when
     // we're actually showing that page (otherwise we'd clobber
@@ -1236,6 +1243,8 @@
     if (!(opts && opts.swr)) {
       var __fh = document.querySelector('.agents-table-wrap');
       if (__fh) dsFrostHide_(__fh);
+      var __sh = $('dept-team-strip');
+      if (__sh) dsFrostHide_(__sh);
     }
     lastSummaryDept_ = getRequestedDept();   // the dept now painted (stale-flash guard)
     state.rows = (data && data.rows) || [];
@@ -1353,6 +1362,12 @@
   function subqMissedScopeNote_(shownDept) {
     var host = $('dept-missed-scope-note');
     if (!host) return;
+    // Round-16 (owner): the "Per-agent timelines below are X's only..."
+    // banner is RETIRED (with the heading-row missed button gone, the
+    // sub-queue override state it also served is unreachable). The scope
+    // fact it disclosed -- queue abandons already include the sub-queues'
+    // queues -- lives on in docs/client-ui-conventions.md.
+    if (SUBQ_BAR_HIDDEN_) { host.style.display = 'none'; host.innerHTML = ''; return; }
     var m = (state && state.meta) || {};
     var subs = m.subQueues || [];
     if (!subs.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
@@ -2114,6 +2129,8 @@
     // M3: clear the frost overlay on failure (the stale table stays visible).
     var __fh = document.querySelector('.agents-table-wrap');
     if (__fh) dsFrostHide_(__fh);
+    var __sh = $('dept-team-strip');
+    if (__sh) dsFrostHide_(__sh);
     // R7 (M-1): the missed-section frost armed at refresh() start has no
     // deptMissedFetch_ coming to clear it -- unfrost here (content stays as-is).
     var __mw = $('dept-missed-section');
@@ -2399,9 +2416,17 @@
    * (Named for the scope switcher it used to carry; the switcher is retired.
    * The name is kept because it is referenced from docs and the harness.)
    */
+  var SUBQ_BAR_HIDDEN_ = true;   // Round-16 owner removal; false restores the bar + chip
   function subqRenderScopeBar_(state) {
     var host = $('dept-subq-bar');
     if (!host) return;
+    // Round-16 (owner): the relationship bar is HIDDEN entirely -- the
+    // "Combined view: X and Y..." banner, the child's upward pointer AND the
+    // subqSplitChip_ "all queues" flag. The grouped table's own subheaders +
+    // subtotals carry the relationship; the chip's mapping-mismatch warnings
+    // now surface only via auditQueueSplitAttribution() (Operator State #41).
+    // Everything below is kept intact -- flip the constant to restore it.
+    if (SUBQ_BAR_HIDDEN_) { host.style.display = 'none'; host.innerHTML = ''; return; }
     var m = (state && state.meta) || {};
     var subs = m.subQueues || [];
     var parentOf = m.subQueueOf || null;
@@ -2582,13 +2607,12 @@
         + escapeHtml(d) + (isChild ? ' <span class="subq-tag">sub-queue</span>' : '')
         + ' <span class="subq-count">' + rows.length + ' agent'
         + (rows.length === 1 ? '' : 's') + '</span>'
-        // Phase 3 does NOT merge the missed section across depts (queue abandons
-        // would double-count), so a sub-queue's own missed calls had no route
-        // once the scope tabs went away. This button is that route.
-        + (isChild
-            ? ' <button type="button" class="subq-missed-btn" data-subq-missed="'
-              + escapeHtml(d) + '">View ' + escapeHtml(d) + '\u2019s missed calls</button>'
-            : '')
+        // Round-16 (owner): the "View <sub-queue>'s missed calls" button is
+        // REMOVED from the group heading (it was the route to a child's own
+        // missed report after the scope tabs retired; the owner ruled the
+        // heading should stay clean -- a child's missed calls are reachable
+        // from its own dept view via the header selector). The
+        // subqMissedSetDept_ machinery stays inert behind it.
         + '</td></tr>');
       if (!isShut) rows.forEach(function (row) { out.push(subqAgentRowHtml_(row, tallyUnit)); });
       out.push(subqSubtotalRowHtml_(d, totalsFor[d] || {}));
@@ -2650,6 +2674,7 @@
     var t = state && state.totals;
     if (!t || !state.rows || !state.rows.length) {
       strip.style.display = 'none'; strip.innerHTML = '';
+      strip.classList.remove('ds-frost-host');   // a frosted strip that empties out drops its overlay too
       if (zone) zone.style.display = 'none';
       return;
     }
@@ -2800,76 +2825,17 @@
     strip.innerHTML = heroTile + ansTile + qAbdTile + qAvgTile + trTile;
     strip.style.display = '';
     if (zone) zone.style.display = '';
+    // Round-16: the innerHTML replace above destroyed any active frost
+    // overlay (the SWR pre-paint renders while the live fetch is still out;
+    // the .ds-frost-host class survives the wipe) -- restore it so the strip
+    // stays visibly "refreshing" until the live repaint unfrosts.
+    if (strip.classList.contains('ds-frost-host')) dsFrostShow_(strip, 'Refreshing…');
     dsFlashChanged_(strip, 'deptstrip:' + getRequestedDept());
   }
 
-  // Lighter Insights hand-off strip: a COLLAPSED one-line summary of the
-  // deeper Insights report for this dept + range, expandable, with an
-  // "Open full report" button that carries the current dept & dates. The
-  // one-line takeaway is derived from the SAME server totals the team strip
-  // uses (no new fetch); the full per-agent / queue-health / heatmap story is
-  // one click away on the Insights page. Hidden when there are no data rows.
-  function renderDeptInsightsStrip_(state) {
-    var strip = $('dept-insights-strip');
-    if (!strip) return;
-    var t = state && state.totals;
-    if (!t || !state.rows || !state.rows.length) {
-      strip.style.display = 'none'; strip.innerHTML = '';
-      return;
-    }
-    var total = (Number(t.totalAnswered) || 0) + (Number(t.totalMissed) || 0);
-    var dept = getRequestedDept() || 'this department';
-    var from = ($('from-date') && $('from-date').value) || '';
-    var to   = ($('to-date')   && $('to-date').value)   || '';
-    // #3b: the rate% / missed count already live in the KPI tiles above, so the
-    // strip no longer restates them (that duplication was the flagged clutter).
-    // It keeps its "what the full report adds" hook + the Open-report hand-off.
-    var teaser = total
-      ? 'Deeper per-agent &amp; queue-health breakdown for this range.'
-      : 'No call activity in this range.';
-    strip.innerHTML =
-        '<div class="dis-row">'
-      +   '<button class="dis-toggle" type="button" aria-expanded="false" aria-controls="dept-insights-more" '
-      +           'title="Show what the full Insights report adds">'
-      +     '<span class="dis-chevron" aria-hidden="true">&#9656;</span>'
-      +     '<span class="dis-kicker">Insights</span>'
-      +   '</button>'
-      +   '<span class="dis-teaser">' + teaser + '</span>'
-      +   '<button class="btn btn-secondary dis-open" type="button" '
-      +           'title="Open the full Insights report for this department and date range.">Open full report &#8594;</button>'
-      + '</div>'
-      + '<div class="dis-more" id="dept-insights-more" hidden>'
-      +   'The full Insights report adds per-agent improvers &amp; laggards (vs the team average), '
-      +   'queue health &amp; violations, and the abandon heatmap &mdash; for <strong>' + escapeHtml(dept) + '</strong>'
-      +   (from && to ? ', <strong>' + escapeHtml(from) + '</strong> to <strong>' + escapeHtml(to) + '</strong>' : '') + '.'
-      + '</div>';
-    strip.style.display = '';
-    wireDeptInsightsStrip_();
-  }
-
-  // Delegated wiring for the Insights hand-off strip (attached once on the
-  // container so the per-render innerHTML swap never detaches it).
-  var deptInsightsStripWired_ = false;
-  function wireDeptInsightsStrip_() {
-    if (deptInsightsStripWired_) return;
-    var strip = $('dept-insights-strip');
-    if (!strip) return;
-    deptInsightsStripWired_ = true;
-    strip.addEventListener('click', function (e) {
-      if (e.target.closest('.dis-open')) {
-        handoffToInsights_(($('from-date') || {}).value, ($('to-date') || {}).value, null);
-        return;
-      }
-      var tog = e.target.closest('.dis-toggle');
-      if (tog) {
-        var more = $('dept-insights-more');
-        var expanded = tog.getAttribute('aria-expanded') === 'true';
-        tog.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-        tog.classList.toggle('is-open', !expanded);
-        if (more) more.hidden = expanded;
-      }
-    });
-  }
+  // (Round-16, owner: renderDeptInsightsStrip_/wireDeptInsightsStrip_ -- the
+  // Insights hand-off TEASER STRIP -- are RETIRED. The lens switcher in the
+  // controls row is the route to Insights now, via handoffToInsights_.)
 
   function render() {
     // Header sort arrows
@@ -2897,7 +2863,6 @@
       tbody.innerHTML = '';
       tfoot.innerHTML = '';
       renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
-      renderDeptInsightsStrip_(state);   // Insights hand-off strip (hides too)
       return;
     }
 
@@ -2977,11 +2942,33 @@
     // from the same server totals -- rendered here so it repaints on sort /
     // refresh alongside the table.
     renderDeptTeamStrip_(state);
-    renderDeptInsightsStrip_(state);   // Insights hand-off strip (collapsed summary + link-out)
     // B1: flash agents whose Answered/Missed changed since the last paint for
     // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
     // re-render leaves values unchanged per key, so it never flashes.
     dsFlashChanged_($('agents-tbody'), 'dept:' + getRequestedDept());
+  }
+
+  // Round-16 (owner): "Email me this report" -- the styled EmailKit summary
+  // of the current dept + range, sent to the signed-in requester only
+  // (server: sendDepartmentSummaryEmail, which re-runs the same auth +
+  // compute path as the table's own fetch).
+  function deptEmailReport_() {
+    var dept = getRequestedDept();
+    var from = $('from-date') ? $('from-date').value : '';
+    var to = $('to-date') ? $('to-date').value : '';
+    if (!dept || !from || !to) {
+      showToast('Pick a department and date range first', 'error');
+      return;
+    }
+    showToast('Sending…');
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showToast('Report emailed to ' + (res && res.to ? res.to : 'you'), 'success');
+      })
+      .withFailureHandler(function (err) {
+        showToast('Email failed: ' + (err && err.message ? err.message : err), 'error');
+      })
+      .sendDepartmentSummaryEmail({ department: dept, from: from, to: to });
   }
 
   // -- CSV export for the main agent table --------------------------------

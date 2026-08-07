@@ -82,11 +82,12 @@ async function openDeptThirtyDays(page) {
       chip: !!el.querySelector('.subq-split-chip'),
     };
   });
-  record('the scope bar renders for a parent dept', !!(bar && bar.visible));
-  record('the scope TABS are gone (retired for collapsible groups)',
-    !!bar && bar.tabs === 0, bar ? 'tabs=' + bar.tabs : 'missing');
-  record('the relationship line still names the sub-queue',
-    !!bar && /Spanish/.test(bar.note), bar ? bar.note.slice(0, 90) : '');
+  // Round-16 (owner): the relationship bar is HIDDEN entirely -- no
+  // "Combined view..." banner and no "all queues" split chip. The grouped
+  // table's subheaders + subtotals carry the relationship now.
+  record('the relationship bar is hidden for a parent dept (owner removal)',
+    !!bar && !bar.visible, bar ? 'visible=' + bar.visible : 'missing');
+  record('and carries no split chip', !!bar && !bar.chip);
 
   const groups = await page.evaluate(() => {
     const heads = Array.from(document.querySelectorAll('#agents-tbody tr.subq-group-head'));
@@ -103,8 +104,9 @@ async function openDeptThirtyDays(page) {
     groups.every((g) => g.expanded === 'true'));
   record('the group header looks clickable',
     groups.every((g) => g.clickable === 'pointer'));
-  record('only the SUB-QUEUE header carries the missed-calls button',
-    groups.filter((g) => g.hasMissedBtn).length === 1,
+  // Round-16 (owner): the heading-row "View X's missed calls" button is gone.
+  record('no group header carries a missed-calls button (owner removal)',
+    groups.filter((g) => g.hasMissedBtn).length === 0,
     JSON.stringify(groups.map((g) => g.dept + ':' + g.hasMissedBtn)));
 
   // Collapsing must hide the agent rows and KEEP the subtotal -- that is the
@@ -335,15 +337,15 @@ async function openDeptThirtyDays(page) {
   await page.selectOption('#dept-selector', 'CSR');
   await page.waitForTimeout(2500);
 
-  // ---- the missed section's scope note ------------------------------------
+  // ---- the missed section's scope note (Round-16: RETIRED) -----------------
   const missedNote = await page.evaluate(() => {
     const el = document.getElementById('dept-missed-scope-note');
     return el ? { visible: el.offsetParent !== null,
                   text: (el.textContent || '').replace(/\s+/g, ' ').trim() } : null;
   });
-  record('missed section discloses its scope in the combined view',
-    !!missedNote && missedNote.visible && /not added twice/i.test(missedNote.text),
-    missedNote ? missedNote.text.slice(0, 110) : 'missing');
+  record('the missed-section scope banner is hidden (owner removal)',
+    !!missedNote && !missedNote.visible,
+    missedNote ? ('visible=' + missedNote.visible) : 'missing');
 
   const realErrors = errors.filter((e) => !/favicon|Failed to load resource|ERR_FILE_NOT_FOUND/i.test(e));
   record('no page/console errors during the walk', realErrors.length === 0,
