@@ -2331,3 +2331,30 @@ commit/push/deploy direction.
   scroll, Agents default -> Gap vs team, A/B panel scoping. Then M4
   retirement sweep (inert header-dates markup, lens switcher, handoff
   detours, prefs-blob dates).
+
+## Increment 86 — M3 Insights merge: scope polish (2026-08-07)
+
+  M3 shipped per docs/insights-merge-plan.md. Dept identity: #ins-dept-pill
+  states the report's dept (warn --scoped variant when a sub-queue selection
+  narrowed it), the dept leads the collapsed headline, and
+  insSyncToDeptWindow_ now converges on a header dept SWITCH via
+  insLastHeaderDept_ (re-ensure roster + agent-free auto-run behind the
+  loading pane) -- closing the M2 gap where an open region kept the old
+  dept's report. Both same-page hand-offs became in-page scrolls
+  (missed-link -> qsSpotlight_, "Agent table" -> table scroll;
+  handoffToMyDept_ kept as fallback). The Agents chart defaults to Gap vs
+  team with a saved-'abs' self-heal (the same-page table carries Absolute).
+  The fixed A/B remote hides while the region is off-screen
+  (IntersectionObserver -> .ins-ab-offscreen). Gates: 651/651, INV-16,
+  full ci:ui + live-DOM probes (incl. the sync dept-switch pane proof).
+  Block in `.cycle/blocks/86-m3-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M3 pushed as dc02ea0 on claude/broad-scan-l9ojgm
+  (unmerged: 7dbef14, e6a704f M1, 8379956 M2, dc02ea0 M3 + checkpoints).
+  No PR opened (owner asks explicitly). Deploy on merge: dashboard only.
+  Next: M4 retirement sweep -- inert #ins-hdr-controls markup + header-date
+  wiring, the lens switcher decision (keep as scroll affordances vs drop),
+  handoff/launcher setPage detours, dead router branches
+  (basePageRoute_/updateTabActiveState_ insights arms), the irDrillToAgent_
+  data-page belt, insights-side recordPageWindow_, prefs-blob dates, the
+  ex-hand-off hover-prefetch.
