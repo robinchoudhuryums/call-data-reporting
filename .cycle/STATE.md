@@ -2358,3 +2358,28 @@ commit/push/deploy direction.
   (basePageRoute_/updateTabActiveState_ insights arms), the irDrillToAgent_
   data-page belt, insights-side recordPageWindow_, prefs-blob dates, the
   ex-hand-off hover-prefetch.
+
+## Increment 87 — M4 Insights merge: retirement sweep — MERGE COMPLETE (2026-08-07)
+
+  M4 shipped; the M1-M4 Insights->My Department merge is COMPLETE
+  (docs/insights-merge-plan.md, all four phases checked). The lens switcher
+  is KEPT as a jump affordance ("Insights" -> deptInsightsOpen_ directly,
+  no date carry / no forced re-generate; "Agent table" scrolls up).
+  Deleted: handoffToInsights_, the #ins-hdr-controls header-dates row +
+  wiring + CSS, the ex-hand-off hover-prefetch, basePageRoute_'s insights
+  branch, updateTabActiveState_'s effRoute mapping, irDrillToAgent_'s
+  data-page belt, the dwell 'insights' arm + pageActiveWindow_.insights,
+  and the prefs blob's preset/from/to. setPage('insights') + the
+  '/report/insights' route/share-state entries are PERMANENT compat
+  surface (deep links + Digest email links). Net -62 lines. Gates:
+  651/651, INV-16, full ci:ui + a live-DOM probe (lens first-open
+  generates / re-click pure-scrolls / chip route lands / prefs slimmed).
+  Block in `.cycle/blocks/87-m4-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M4 pushed as 9a98ad2 on claude/broad-scan-l9ojgm.
+  Unmerged commits: 7dbef14 (tab retire + multi-queue daily breakdown),
+  e6a704f (M1), 8379956 (M2), dc02ea0 (M3), 9a98ad2 (M4) + checkpoints.
+  No PR opened (owner asks explicitly). Deploy on merge: dashboard only
+  (clasp push -f + new version; NO server .gs files changed across the
+  whole merge, so no web-editor deletions needed). Post-deploy: walk
+  S37/S32/S14/S18/S19/S23/S39 live. Nothing pending on the merge plan.
