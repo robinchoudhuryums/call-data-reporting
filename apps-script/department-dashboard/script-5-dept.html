@@ -1034,32 +1034,10 @@
     } catch (e) { return false; }
   }
 
-  // #5 Option A: intent-gated prefetch of the OTHER page's data on hand-off
-  // hover, so the cross-page jump SWR-paints instantly instead of showing a
-  // skeleton for the full round-trip. Mirrors the IR hover-prefetch: one fetch
-  // per (report, signature) per session, skipped when the D1b store already
-  // holds the signature, best-effort throughout (a failed prefetch is silent;
-  // the real navigation fetch still surfaces any error). Scoped to the
-  // reliably-reconstructable direction -> My Department (getDepartmentSummary,
-  // req = {department, from, to}, so reportSig_ matches refresh()'s to the byte).
-  // The Insights direction is intentionally NOT prefetched: its request
-  // signature (agents + compare mode + resolved prior window) isn't reliably
-  // known at hover time, so a prefetch would usually miss the sig and just
-  // waste the call (see the follow-on note).
-  var deptSummaryPrefetched_ = {};   // sig -> true (one speculative fetch per window per session)
-  function prefetchDeptSummary_(fromIso, toIso) {
-    var dept = (typeof getRequestedDept === 'function') ? getRequestedDept() : '';
-    if (!dept || !fromIso || !toIso) return;
-    var req = { department: dept, from: fromIso, to: toIso };
-    var sig = reportSig_(req);
-    if (!sig || deptSummaryPrefetched_[sig]) return;
-    deptSummaryPrefetched_[sig] = true;               // mark up front so hover jitter can't double-fire
-    if (reportLastGoodRead_('summary', sig)) return;  // already warm (a real run or prior prefetch)
-    google.script.run
-      .withSuccessHandler(function (data) { reportLastGoodWrite_('summary', sig, data); })
-      .withFailureHandler(function () { /* best-effort -- the navigation's own fetch surfaces errors */ })
-      .getDepartmentSummary(req);
-  }
+  // (N1: prefetchDeptSummary_ -- the #5-Option-A hover-prefetch target -- is
+  // RETIRED with its last callers. The M3 in-page scrolls removed the jump
+  // it warmed, and the dwell-prefetch that also called it went when the
+  // Insights region started loading with the page.)
 
   // -- Data-coverage warnings (R12-26) ------------------------------------
   // getLatestDataDates now carries dqeEarliest/qcdEarliest (the earliest date
@@ -1139,11 +1117,13 @@
     // would be WRONG, not merely stale. deptMissedFetch_ then falls back to the
     // header dept until the button is clicked again.
     subqMissedDeptOverride_ = null;
-    recordPageWindow_('dept', req.from, req.to);   // feeds the R11-C2 dwell prefetch
-    // M2 (one date authority): converge an OPEN Insights region onto this
-    // window -- a rendered report re-runs for the new dates; closed regions
-    // converge on their next open (insSyncToDeptWindow_ no-ops for them).
-    if (typeof insSyncToDeptWindow_ === 'function') insSyncToDeptWindow_();
+    // N1 (always-inline): the Insights region loads WITH the page --
+    // ensures/generates on the first dept load and converges an open
+    // region's window/dept on every later refresh. Gated inside on
+    // data-page='dept', so the Overview-landing refresh still costs
+    // nothing Insights-side. (The R11-C2 dwell prefetch is retired -- the
+    // real fetch fires up front now.)
+    if (typeof deptInsightsEnsureLive_ === 'function') deptInsightsEnsureLive_();
     coverageNoteUpsert_('dept-coverage-host', 'dept', req.from, 'dqe');   // R12-26
 
     // M3: when the table already holds data for the SAME dept, frost it in

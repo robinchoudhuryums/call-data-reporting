@@ -54,14 +54,13 @@
                 title="View and resolve escalation calls for your department. Admins can log new escalations.">
           Escalations
         </button>
-        <!-- (Round-16, owner: the top-level INSIGHTS TAB is retired -- with
-             the two pages sharing one header + window, the dept page's lens
-             switcher ("Agent table · Insights") is the route. The Insights
-             PAGE + the '/report/insights' route + every deep link / launcher
-             chip still work (page routes run setPage directly, no button);
-             on the Insights page the My Department tab carries the
-             highlight via updateTabActiveState_'s route mapping. The old
-             #insights-report-btn wiring in script-8 is null-guarded.) -->
+        <!-- (Round-16/N1, owner: the top-level INSIGHTS TAB is retired --
+             Insights renders INLINE on the My Department page (the
+             #dept-insights-region section, open by default, loads with the
+             page). The '/report/insights' route + every deep link / launcher
+             chip still work (page routes run setPage directly, no button).
+             The old #insights-report-btn wiring in script-8 is
+             null-guarded.) -->
         <!-- Reports group: the report launchers collapsed into a
              single dropdown to de-clutter the header row. Each menu item
              keeps its stable button id + data-route, so the Phase C
@@ -70,7 +69,7 @@
              aria-controls. The trigger lights up via updateTabActiveState_
              when a report route is active. (Missed Calls lives inline on
              the My Department page; QCD / Performance / Compare retired
-             into Insights, reached via the My Department lens switcher.) -->
+             into the inline Insights section there.) -->
         <div class="header-menu" data-admin-only style="display:none;">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
@@ -319,19 +318,9 @@
           <label>Quick select</label>
           <div class="date-presets" id="date-presets"></div>
         </div>
-        <div class="control">
-          <label>&nbsp;</label>
-          <!-- M4 (owner-endorsed): the LENS SWITCHER survives as a JUMP
-               AFFORDANCE on the long merged page -- "Insights" opens +
-               scrolls to the #dept-insights-region below (deptInsightsOpen_,
-               no date carry, no forced re-generate); the region's own
-               "Agent table" side scrolls back up. -->
-          <div class="ds-seg ds-lens-switch" role="group" aria-label="Department lens">
-            <button type="button" aria-pressed="true">Agent table</button>
-            <button type="button" id="lens-ins-btn" aria-pressed="false"
-                    title="Jump to the Insights section below — the deeper lens on this department and date range.">Insights</button>
-          </div>
-        </div>
+        <!-- (N1, owner: the LENS SWITCHER is REMOVED -- it read as a page
+             toggle. The Insights section is open inline below and loads
+             with the page, so there is nothing to switch to.) -->
         <div class="control">
           <label>&nbsp;</label>
           <!-- R9-2: Refresh + Export sit side by side (Insights-toolbar
@@ -400,8 +389,7 @@
       <div id="dept-team-strip" class="dept-team-strip" style="display:none;"></div>
 
       <!-- (Round-16, owner: the Insights hand-off TEASER STRIP is RETIRED --
-           the lens switcher in the controls row jumps to the Insights
-           region below.) -->
+           the Insights section renders inline below since N1.) -->
 
       <div id="dqe-table-header" class="dept-qcd-header" style="display:none; margin-top:20px; margin-bottom:8px;">
         <strong id="dqe-table-title">Agent Call Metrics</strong>
@@ -536,19 +524,20 @@
       </aside>
       </div><!-- /.dept-layout -->
 
-      <!-- M1 (Insights merge, docs/insights-merge-plan.md): the Insights PAGE
-           is now a lazy collapsible REGION of My Department -- full width,
-           below the agent table + missed section. Every inner element id is
-           unchanged from the page era, incl. #insights-page itself (now a
-           plain div: launcherOpenInsights_ existence-checks it, and all the
-           #insights-page-scoped CSS still applies). The
-           heavy init + auto-generated report run on FIRST OPEN only
-           (deptInsightsOpen_ / the region toggle listener -> insEnsurePage_),
-           never on dept-page load -- laziness is the M1 contract.
+      <!-- Insights REGION (M1 merge + N1 always-inline,
+           docs/insights-merge-plan.md): the ex-Insights-page content, full
+           width below the agent table + missed section. Every inner element
+           id is unchanged from the page era, incl. #insights-page itself
+           (now a plain div: launcherOpenInsights_ existence-checks it, and
+           all the #insights-page-scoped CSS still applies). N1 (owner): the
+           region is OPEN by default and the report loads WITH the dept page
+           (deptInsightsEnsureLive_ on dept entry + refresh -- gated on
+           data-page='dept', so the Overview landing still pays nothing);
+           the <details> stays only as skim-relief (collapse is per-session,
+           reopening re-ensures via the toggle listener).
            setPage('insights') maps here (script-2), so deep links + the
-           quick-start chips land on the open region; the lens switcher
-           calls deptInsightsOpen_ directly (M4). -->
-      <details id="dept-insights-region" class="ins-region">
+           quick-start chips land on it. -->
+      <details id="dept-insights-region" class="ins-region" open>
         <summary class="ins-region-summary">
           <span class="ins-region-title">Insights</span>
           <!-- M2: once a report has rendered, insRegionHeadSync_ fills
@@ -679,14 +668,9 @@
                  untouched. -->
             <button class="btn btn-secondary" id="ins-edit-selection-btn" type="button"
                     title="Change the comparison window or agent selection without leaving the report (the report's dates follow the page's From/To controls).">&#9998; Comparison &amp; agents</button>
-            <!-- M4: the LENS SWITCHER is a JUMP AFFORDANCE -- "Agent table"
-                 scrolls back up to the table (M3 in-page scroll; the old
-                 hover-prefetch went with the hand-off it warmed). -->
-            <div class="ds-seg ds-lens-switch" role="group" aria-label="Department lens">
-              <button type="button" id="ins-open-mydept-btn" aria-pressed="false"
-                      title="Jump back up to the agent table.">Agent table</button>
-              <button type="button" aria-pressed="true">Insights</button>
-            </div>
+            <!-- (N1: the Insights-side lens switcher is REMOVED with its
+                 dept-side twin -- one continuous page, nothing to switch.) -->
+
             <!-- R7 (N-1): re-run the report for the current selection (frosts
                  the results while the fresh fetch runs; server cache still
                  applies, so data refreshes as the 30-min report TTL allows). -->
@@ -1293,7 +1277,7 @@
           </section>
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
-            <p>Insights is an expandable <strong>section of the My Department page</strong> &mdash; the deeper lens on the same department and dates, at the bottom of the page. Open it by expanding the <strong>Insights</strong> heading (or the <strong>Agent table &middot; Insights</strong> switcher in the controls row, which jumps straight to it). It generates on first open, and your generated report stays put when you collapse it or navigate away.</p>
+            <p>Insights is a <strong>section of the My Department page</strong> &mdash; the deeper lens on the same department and dates, rendered at the bottom of the page and generated automatically with it. Just scroll down; collapsing the <strong>Insights</strong> heading tucks it away for the session, and your generated report stays put when you navigate away and come back.</p>
             <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Absolute</strong> bases (Gap = who&rsquo;s above/below the team average; Absolute = stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots). For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>

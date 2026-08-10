@@ -2383,3 +2383,26 @@ commit/push/deploy direction.
   (clasp push -f + new version; NO server .gs files changed across the
   whole merge, so no web-editor deletions needed). Post-deploy: walk
   S37/S32/S14/S18/S19/S23/S39 live. Nothing pending on the merge plan.
+
+## Increment 88 — N1 always-inline Insights (2026-08-07)
+
+  Post-deploy owner feedback: M1-M4's collapsed region + tab-styled jump
+  switcher still read as two pages. N1 makes it ONE CONTINUOUS page: the
+  region is OPEN by default and GENERATES with the dept page
+  (deptInsightsEnsureLive_ on dept entry + refresh, data-page-gated so the
+  Overview landing pays nothing; manual collapse respected per session;
+  insRearmZeroCharts_ covers hidden-created charts). The lens switcher is
+  REMOVED on both sides; deep links/chips land via the mapped
+  setPage('insights'). Retired as a consequence: the dwell prefetch, the
+  shared-window store, prefetchDeptSummary_. Harness: smoke navs drop the
+  lens step (24 checks). Gates green + live-DOM probe. Block in
+  `.cycle/blocks/88-n1-always-inline-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** N1 pushed as 5991e17 on claude/broad-scan-l9ojgm
+  (branch = post-#221 main + 009278a sync-docs? NO -- #221 merged through
+  009278a; unmerged: 5991e17 only). No PR opened for N1 yet (owner asks
+  explicitly). Deploy on merge: dashboard only. Open decisions: the
+  overlapping-surfaces merge (team strip vs KPI tiles, QCD panel vs Queue
+  health) -- owner to judge on the live continuous page; the
+  viewport-approach fetch trigger stays as the escape hatch if cold
+  generates feel heavy.

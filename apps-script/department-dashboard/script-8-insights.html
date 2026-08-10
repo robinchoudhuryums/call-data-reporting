@@ -150,13 +150,14 @@
     return 'cdr.ins.prefs.v2:' + who;
   }
 
-  // M1 (Insights merge): Insights is a lazy collapsible REGION of the dept
-  // page (#dept-insights-region, docs/insights-merge-plan.md). This ensure
-  // runs on region OPEN (deptInsightsOpen_ + the toggle listener), never on
-  // dept-page load: first open runs the old openModal init (form + default
-  // dates + prefs restore + roster); re-open only re-ensures the roster --
-  // cheap when cached, re-splits the active grouping if the dept/dates
-  // changed -- and never clobbers a rendered report (decision 3).
+  // Insights is a REGION of the dept page (#dept-insights-region, M1 merge;
+  // docs/insights-merge-plan.md). N1 (owner): the region is OPEN by default
+  // and this ensure runs WITH the dept page (deptInsightsEnsureLive_ on
+  // entry + refresh) as well as on a manual reopen (the toggle listener):
+  // the first call runs the old openModal init (form + default dates +
+  // roster) and arms the INV-45 auto-run; later calls only re-ensure the
+  // roster -- cheap when cached, re-splits the active grouping if the
+  // dept/dates changed -- and never clobber a rendered report (decision 3).
   var insPageInited_ = false;
   // First-entry auto-run one-shot (owner: the setup form is RETIRED from
   // the normal flow). Consumed in insRenderAgentList at the race-free
@@ -260,6 +261,36 @@
       try { reg.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
     }
   }
+  // N1 (always-inline): the report loads WITH the dept page. Called from
+  // setPage's dept branch + refresh(); gated on data-page='dept' so the
+  // Overview-landing refresh still costs nothing, and on the region being
+  // open so a user's manual collapse is respected for the session (the
+  // toggle listener re-ensures on reopen). Ensures (first call arms the
+  // auto-run), converges window/dept (M2/M3 sync), and re-arms any chart
+  // created while the page was hidden.
+  function deptInsightsEnsureLive_() {
+    var reg = $('dept-insights-region');
+    if (!reg || !reg.open) return;
+    if (document.body.getAttribute('data-page') !== 'dept') return;
+    insEnsurePage_();
+    insSyncToDeptWindow_();
+    insRearmZeroCharts_();
+  }
+  // N1: a chart created while the dept page was HIDDEN (user navigated away
+  // mid-generate) measures 0x0 -- recreate exactly those on page re-entry
+  // (destroy + create, the C3-safe path). The toggle listener covers the
+  // collapse/expand variant of the same trap; this covers page-switch.
+  function insRearmZeroCharts_() {
+    if (!insLastData) return;
+    try {
+      if (insCardsView === 'chart' && insCardsChartInstance && !insCardsChartInstance.width) {
+        insRenderCardsChart_();
+      }
+      if (insChartInstance && !insChartInstance.width && insFoldOpen_('trend')) {
+        insDrawTrendChart_(insLastData);
+      }
+    } catch (e) { /* decoration only -- the rendered report stands */ }
+  }
   // Re-measure charts rendered on a previous visit: the region's content is
   // hidden while the <details> is closed (or the user is on another page),
   // and a window resize in between leaves Chart.js instances mis-sized (the
@@ -287,11 +318,11 @@
     if (btn) btn.addEventListener('click', function () { setPage('insights'); });
     if (!page) return;
 
-    // M1: a USER-click open of the region lazily initializes / auto-generates
-    // (the laziness contract: nothing Insights-related runs on dept-page
-    // load). The programmatic path (deptInsightsOpen_) ensures synchronously
-    // and this async toggle re-fires the ensure -- harmless, insEnsurePage_
-    // is idempotent. Close is a no-op (the rendered report stays put).
+    // Region toggle (N1: the region is open by default and loads with the
+    // page -- this listener now serves the manual collapse/REOPEN cycle).
+    // The programmatic path (deptInsightsOpen_) ensures synchronously and
+    // this async toggle re-fires the ensure -- harmless, insEnsurePage_ is
+    // idempotent. Close is a no-op (the rendered report stays put).
     const insRegion = $('dept-insights-region');
     if (insRegion) insRegion.addEventListener('toggle', function () {
       if (!insRegion.open) return;
@@ -375,22 +406,10 @@
     if (editApply) editApply.addEventListener('click', insApplyEditPopover_);
     // (M4: insInitHeaderDates_ is RETIRED with the #ins-hdr-controls row --
     // the dept controls are the date authority since M2.)
-    // M3 (in-page scroll): the agent table and the missed section live ON
-    // THIS PAGE now, so the two Insights -> My Department hand-offs scroll
-    // instead of the old setPage + refresh round trip (which re-fetched a
-    // summary that is already rendered). The dept window is the authority
-    // (M2), so there are no dates to carry; handoffToMyDept_ survives as
-    // the fallback when the target isn't rendered (e.g. the missed section
-    // hidden on a fetch failure) -- it still works, it just costs a refresh.
-    const insMyDeptBtn = $('ins-open-mydept-btn');
-    if (insMyDeptBtn) insMyDeptBtn.addEventListener('click', function () {
-      const wrap = document.querySelector('.agents-table-wrap');
-      if (wrap) {
-        try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { window.scrollTo(0, 0); }
-      } else {
-        handoffToMyDept_(($('ins-from') || {}).value, ($('ins-to') || {}).value, {});
-      }
-    });
+    // (N1: the Insights-side lens switcher is removed with its dept-side
+    // twin -- #ins-open-mydept-btn no longer exists; the page is one
+    // continuous scroll.) The Queue-health "See missed calls" scroll below
+    // keeps its handoffToMyDept_ fallback for the not-rendered edge.
     // R7 (N-1): re-run the report in place for the current selection. Rides
     // runInsReport's SWR + the I-3 whole-report frost; note the server-side
     // report cache still applies (data refreshes as the 30-min TTL allows).
