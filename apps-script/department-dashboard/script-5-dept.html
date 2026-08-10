@@ -1117,13 +1117,6 @@
     // would be WRONG, not merely stale. deptMissedFetch_ then falls back to the
     // header dept until the button is clicked again.
     subqMissedDeptOverride_ = null;
-    // N1 (always-inline): the Insights region loads WITH the page --
-    // ensures/generates on the first dept load and converges an open
-    // region's window/dept on every later refresh. Gated inside on
-    // data-page='dept', so the Overview-landing refresh still costs
-    // nothing Insights-side. (The R11-C2 dwell prefetch is retired -- the
-    // real fetch fires up front now.)
-    if (typeof deptInsightsEnsureLive_ === 'function') deptInsightsEnsureLive_();
     coverageNoteUpsert_('dept-coverage-host', 'dept', req.from, 'dqe');   // R12-26
 
     // M3: when the table already holds data for the SAME dept, frost it in
@@ -1212,6 +1205,17 @@
         onError(err, !!__swrHit);
       })
       .getDepartmentSummary(req);
+
+    // N1 (always-inline): the Insights region loads WITH the page --
+    // ensures/generates on the first dept load and converges an open
+    // region's window/dept on every later refresh. Gated inside on
+    // data-page='dept', so the Overview-landing refresh still costs
+    // nothing Insights-side.
+    // PERF-2: deliberately AFTER the summary dispatch above -- the agent
+    // table is what the manager reads first, so its request goes out
+    // first and the Insights legs queue behind it. (The report leg itself
+    // is deferred another tick inside insEnsurePage_.)
+    if (typeof deptInsightsEnsureLive_ === 'function') deptInsightsEnsureLive_();
   }
 
   // Date-edit-only entry point: debounced so free typing / rapid arrow

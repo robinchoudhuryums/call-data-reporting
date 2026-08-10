@@ -300,12 +300,20 @@ When something looks wrong, before assuming a code bug, check:
     Daily Queue Report for YESTERDAY (the exact key its modal pre-loads;
     6h `qcdAll` TTL keeps it hot -- the warm is SKIPPED when the QCD latest
     date is older than yesterday, so a late ingest can't pin an empty report
-    for the long TTL) + each dept's AGENT-FREE Insights over the launcher
-    window (last 30 days ending yesterday -- the exact request the Insights-routing
-    quick-start chips (Help modal since R10-1) auto-run; runs LAST under a 4-min runtime budget so the
-    trigger can't be killed mid-warm; unwarmed depts take the cold path and
-    the outcome line reports how many were skipped) so the first manager of
-    the day gets cache hits instead of cold aggregations. **Must run in the
+    for the long TTL) + each dept's AGENT-FREE Insights over TWO
+    windows, most-used first (PERF-1): (a) the **dept-page default**
+    (`latest..latest`, INV-43) -- since the N1 merge Insights renders INLINE
+    on My Department and inherits that page's window, so this is what every
+    manager's page load actually requests; and (b) the **launcher window**
+    (last 30 days ending yesterday) the Help quick-start chips auto-run.
+    Both run LAST under a SHARED 4-min runtime budget so the trigger can't be
+    killed mid-warm; unwarmed depts take the cold path and the outcome line
+    reports how many were skipped (across both passes). **Warming only (b)
+    was a silent miss** -- the cache key carries the window, so every first
+    dept open paid a full cold aggregation while the warm sat unread.
+    A 1-day window is NOT cheaper to compute than a 30-day one (both fetch
+    the whole 12-month trend range, INV-29), so if the budget is tight,
+    ordering is what protects the common path. **Must run in the
     dashboard project** -- CacheService is per-project, so the cdr-import
     ingest can't warm it. "Warm now" (`warmReportCachesNow`, admin) primes on
     demand. Reuses `script.scriptapp`; independent of `DQE_READ_SOURCE`

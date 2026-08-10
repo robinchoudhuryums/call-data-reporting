@@ -17,9 +17,12 @@
  *   - getQcdAllDepartments(yesterday, yesterday) -- the exact key the
  *     all-departments Daily Queue Report modal pre-loads (6h qcdAll TTL);
  *     freshness-guarded so a late ingest can't pin an empty blob.
- *   - getInsightsReport({dept, last-30-days, agents: []}) for every dept --
- *     the agent-free launcher window both Overview chips auto-run; runs
- *     LAST under a 4-minute runtime budget (partial warm is fine).
+ *   - getInsightsReport({dept, agents: []}) for every dept, over TWO
+ *     windows most-used-first (PERF-1): the dept-page default
+ *     (latest..latest -- what the inline Insights section loads on every
+ *     My Department open) and then the last-30-days launcher window the
+ *     Help quick-start chips run. Runs LAST under a shared 4-minute
+ *     runtime budget (a partial warm is fine).
  *
  * NOTE: CacheService is per-Apps-Script-PROJECT, so this MUST run in the
  * dashboard project (it can't be warmed from the cdr-import ingest project).
@@ -123,31 +126,52 @@ function warmReportCaches_() {
       + (e && e.message ? e.message : e));
   }
 
-  // Agent-free Insights per dept, over the Overview launcher window (last
-  // 30 days ending yesterday, empty selection = whole roster -- the exact
-  // request BOTH launcher chips auto-run, so the key matches). This is the
-  // heaviest per-dept aggregation, so it runs LAST under a runtime budget:
-  // Apps Script kills triggers around the 6-minute mark, and a partial
-  // warm is fine -- unwarmed depts just take the normal cold path.
+  // Agent-free Insights per dept (empty selection = whole roster, INV-45).
+  // The heaviest per-dept aggregation, so it runs LAST under a runtime
+  // budget: Apps Script kills triggers around the 6-minute mark, and a
+  // partial warm is fine -- unwarmed depts just take the normal cold path.
+  //
+  // PERF-1: TWO windows, most-used first. Insights renders INLINE on My
+  // Department and takes that page's window (the N1 merge + the M2
+  // one-date-authority rule), so the window every manager actually loads
+  // is the dept default -- `latest..latest`, INV-43 -- NOT the 30-day
+  // launcher window this only used to warm. The cache key carries the
+  // window (`insights:v19:<dept>:<from>:<to>:...`), so warming just the
+  // 30-day key left EVERY first dept open paying a full cold aggregation
+  // while the warm sat unread. The launcher window still gets warmed
+  // second, since the Help quick-start chips run exactly that request.
+  // Cost note: a 1-day window is NOT cheaper to compute than a 30-day one
+  // -- both fetch the whole 12-month trend range (computeTrendStartDate_,
+  // INV-29) -- so ordering, not window size, is what the budget buys.
   var INSIGHTS_WARM_BUDGET_MS = 4 * 60 * 1000;
+  var insSkipped = 0;
+  var warmInsightsWindow_ = function (from, to, label) {
+    var skipped = 0;
+    for (var j = 0; j < depts.length; j++) {
+      if (Date.now() - start > INSIGHTS_WARM_BUDGET_MS) { skipped = depts.length - j; break; }
+      try {
+        getInsightsReport({ department: depts[j], from: from, to: to, agents: [] });
+        warmed++;
+      } catch (e) {
+        failed++;
+        Logger.log('warmReportCaches_: insights (' + label + ') ' + depts[j]
+          + ' failed: ' + (e && e.message ? e.message : e));
+      }
+    }
+    if (skipped) {
+      Logger.log('warmReportCaches_: insights (' + label + ') budget hit -- '
+        + skipped + ' dept(s) left cold.');
+    }
+    return skipped;
+  };
+  // 1. The dept-page default window -- what an inline Insights section
+  //    loads on every My Department open.
+  insSkipped += warmInsightsWindow_(latest, latest, 'dept default');
+  // 2. The Overview/Help quick-start chip window (last 30 days ending
+  //    yesterday) -- the exact agent-free request both chips auto-run.
   var insFrom = Utilities.formatDate(new Date(Date.now() - 30 * 86400000), TZ, 'yyyy-MM-dd');
   var insTo   = Utilities.formatDate(new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
-  var insSkipped = 0;
-  for (var j = 0; j < depts.length; j++) {
-    if (Date.now() - start > INSIGHTS_WARM_BUDGET_MS) { insSkipped = depts.length - j; break; }
-    try {
-      getInsightsReport({ department: depts[j], from: insFrom, to: insTo, agents: [] });
-      warmed++;
-    } catch (e) {
-      failed++;
-      Logger.log('warmReportCaches_: insights ' + depts[j] + ' failed: '
-        + (e && e.message ? e.message : e));
-    }
-  }
-  if (insSkipped) {
-    Logger.log('warmReportCaches_: insights warm budget hit -- '
-      + insSkipped + ' dept(s) left cold.');
-  }
+  insSkipped += warmInsightsWindow_(insFrom, insTo, 'launcher 30d');
 
   var ms = Date.now() - start;
   Logger.log('warmReportCaches_: warmed=' + warmed + ' failed=' + failed

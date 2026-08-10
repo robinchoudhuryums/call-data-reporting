@@ -2406,3 +2406,38 @@ commit/push/deploy direction.
   health) -- owner to judge on the live continuous page; the
   viewport-approach fetch trigger stays as the escape hatch if cold
   generates feel heavy.
+
+## Increment 89 — PERF-1/2 cold-load fixes (2026-08-07)
+
+  Owner asked whether first-open latency could be improved after the N1
+  always-inline deploy. Investigation found two real defects, both fixed:
+  **PERF-1** -- CacheWarm warmed getInsightsReport over the LAUNCHER window
+  (30d), but since M2 the inline section takes the DEPT window
+  (latest..latest, INV-43). The cache key carries the window, so the warm
+  was never read: every first dept open paid a cold aggregation while the
+  heaviest ~4 min of the warm job produced unread entries. Now two passes,
+  most-used first (dept default, then launcher), one shared budget.
+  **PERF-2** -- the first-open auto-run was consumed POST-roster, so
+  getInsightsReport waited a full round trip behind getInsightsReportInit.
+  An agent-free run needs nothing from the roster (INV-45), so it now
+  fires in parallel, deferred one tick so the launcher/deep-link paths
+  (which own their window/selection) still win. refresh() also dispatches
+  the dept summary BEFORE the Insights legs. Measured: report dispatch
+  went from a full round trip behind the roster to the SAME millisecond;
+  guards verified end-to-end (chip keeps its 29d window; deep link keeps
+  its shared window + agents; exactly one run each). Gates: 651/651,
+  INV-16, ci:ui 24+16+30+14. Block in
+  `.cycle/blocks/89-perf-cold-load-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** Pushed as 98a4f6b on claude/broad-scan-l9ojgm
+  (branch restarted from post-#222 main; 1 commit + this checkpoint).
+  No PR opened yet (owner asks explicitly). Deploy on merge: dashboard
+  only. **Operator note: PERF-1 only pays off if the cache-warm trigger
+  is actually installed** (Alerts modal -> Report cache warming) -- worth
+  confirming; likewise DQE_READ_SOURCE (Op State #19) is the largest
+  remaining server-side lever. Known follow-ons: the dept-SWITCH path
+  still serializes init->report (and double-dispatches the init) --
+  deliberately out of scope since firing early there would read the
+  outgoing dept's checked agents; cold boot double-dispatches
+  getDepartmentSummary (pre-existing); splitting the insights endpoint
+  for progressive render is the next lever if cold loads still drag.

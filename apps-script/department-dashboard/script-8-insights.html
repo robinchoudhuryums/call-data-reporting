@@ -195,6 +195,35 @@
       insAutoRunPending_ = true;
       launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
         'How is my team doing lately?');
+      // PERF-2: fire the agent-free run IN PARALLEL with the roster fetch.
+      // The auto-run used to be consumed post-roster (insRenderAgentList),
+      // which put TWO sequential Apps Script round trips on the critical
+      // path -- getInsightsReportInit (roster + its own DQE scan via
+      // computeActiveAgentsInRange_) and only then getInsightsReport. An
+      // agent-free run needs NOTHING from the roster: the empty picker
+      // yields agents=[] (irGetCheckedAgents_ -> [], subqPickerScope_ ->
+      // {dept:null}) and the server defaults to the whole roster (INV-45).
+      // The picker fills in whenever its fetch lands.
+      //
+      // Deferred one tick ON PURPOSE, so every SYNCHRONOUS post-entry
+      // writer lands first and this stands down for the paths that own
+      // their own window/selection:
+      //   * quick-start chip  -> sets insLauncherAutoRun_ after setPage
+      //   * share/deep link   -> SHARE_STATE_.apply sets the dates and may
+      //                          set insPendingAgentSelection_ (which NEEDS
+      //                          the roster to apply, so we defer to it)
+      //   * refresh()         -> dispatches the dept summary first, so the
+      //                          agent table's fetch keeps the head start
+      // Re-checked at fire time rather than captured, since all three of
+      // those flags are set after this function returns.
+      setTimeout(function () {
+        if (!insAutoRunPending_) return;            // another path claimed the run
+        if (insLauncherAutoRun_) return;            // launcher owns its window
+        if (insPendingAgentSelection_) return;      // needs the roster to apply
+        if (!$('ins-from') || !$('ins-from').value) return;
+        insAutoRunPending_ = false;
+        try { runInsReport(); } catch (e) { insAutoRunPending_ = true; }
+      }, 0);
     }
     insEnsureRoster();
     insResizeCharts_();
@@ -924,10 +953,13 @@
   }
   function insSetDefaultDates() {
     if ($('ins-from') && $('ins-from').value) return;   // keep restored/last value
-    // Default = the launcher window (last 30 days ending yesterday) -- the
-    // exact agent-free request CacheWarm pre-warms per dept, so the
-    // form-less first entry usually paints from cache instead of a cold
-    // aggregation. (Was month-to-date, which was never warmed.)
+    // Default = the launcher window (last 30 days ending yesterday), which
+    // CacheWarm warms per dept (pass 2). NOTE this default is the FALLBACK
+    // only: since M2 the dept controls are the date authority, so
+    // insEnsurePage_ overwrites it with the dept window whenever those
+    // inputs are populated -- which is the normal path. It survives on a
+    // cold deep-link load that beats the latest-dates fetch. CacheWarm
+    // warms BOTH windows for that reason (PERF-1).
     if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
     if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
   }
