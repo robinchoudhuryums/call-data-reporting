@@ -2468,3 +2468,26 @@ commit/push/deploy direction.
   / post-deploy; (c) the deeper email consolidation (ONE email = dept
   table + insights) proposed, not built. Follow-on: insBtnFeedback_
   retarget to #dept-export-btn.
+
+## Increment 91 — R16d email polish + Queue-health columns (2026-08-10)
+
+  Owner batch answering increment 90's open threads. Daily Call Queue
+  Report email: 'Daily Company Aban %' retitle with tier-colored value
+  (green ≤3 / amber 3–4 / red >4; tile bg keeps the ≥5 flag), all KPI
+  cards centered, the banner-only single-queue collapse RETIRED (every
+  queue gets its own tally row; some repeats accepted — the dedup was
+  why tallies went missing), and '/day' added to the MTD pace line's
+  prior value (web twin in script-11-qcd-boot too; "Jul 100" read as a
+  date). queue-report pins updated (37 pass; the clean-banner Viol pin
+  re-targeted by padding signature). Insights Queue health: KPI tiles
+  stack in a left third beside the per-queue table (.ins-qh-cols —
+  NOT .ins-qh-row, which is already the table's <tr> class and a flex
+  rule there wrecks the rows; the probe caught it). ≤900px stacks the
+  columns AND restores the horizontal tile grid in one media query.
+  Mocks rendered from the REAL builders (harness + playwright) and sent:
+  full email, 3-tier company-aban strip, queue-health row. Gates:
+  node --test 0 fail, INV-16, ci:ui 24+16+30+14. Block in
+  `.cycle/blocks/91-r16d-email-polish-qh-cols.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Awaiting owner verdict on both mocks.

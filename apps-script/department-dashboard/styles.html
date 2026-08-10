@@ -4675,6 +4675,28 @@
   .ins-detail-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
   .ins-detail-row > #ins-heatmap { flex: 1 1 420px; min-width: 360px; margin: 0; }
   .ins-detail-row > .ins-share-wrap { flex: 1 1 340px; min-width: 300px; margin: 0; }
+  /* R16d (owner): Queue-health KPI tiles stack in a left third beside the
+     per-queue table (right two-thirds). align-items:flex-start makes the
+     table's variable height a non-issue (the shorter column just ends).
+     Same wrap-on-narrow discipline as .ins-detail-row; when the columns DO
+     wrap, the tiles return to a horizontal grid so three full-width tiles
+     don't tower over the table. NB the class is .ins-qh-cols, NOT
+     .ins-qh-row -- that name is already the queue table's <tr> class
+     (insRenderQueueHealth_'s row builder), and a flex rule there would
+     wreck the table rows. */
+  .ins-qh-cols { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin: 0 0 16px; }
+  .ins-qh-cols > .ins-qh-left { flex: 1 1 250px; min-width: 230px; max-width: 340px; }
+  .ins-qh-cols > .ins-qh-table-card { flex: 2 1 460px; min-width: 360px; margin: 0; }
+  .ins-qh-left > .pr-kpi-row { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+  .ins-qh-left > .ins-qh-secondary { margin: 0; }
+  @media (max-width: 900px) {
+    /* Force the stack at the same breakpoint the tiles go horizontal --
+       otherwise a 3-across tile grid lands inside the still-narrow left
+       column. */
+    .ins-qh-cols > .ins-qh-left,
+    .ins-qh-cols > .ins-qh-table-card { flex-basis: 100%; max-width: none; }
+    .ins-qh-left > .pr-kpi-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
 
   /* 4b: all-departments daily call queue report (Overview; open to managers). */
   .ov-admin-actions { margin: 8px 0 12px; }

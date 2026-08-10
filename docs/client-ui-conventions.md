@@ -1198,7 +1198,14 @@ behind the removed button.
   The My Department email renders per-dept SECTIONS on combined payloads
   (heading band + worst-first agents + a `deptGroups` subtotal per dept, no
   Dept column); the Insights email is ONE consolidated form (see the email
-  bullet).
+  bullet). **R16d**: the Queue-health KPI tiles STACK in a left third beside
+  the per-queue table (right two-thirds) in `.ins-qh-cols` — same flex-wrap
+  discipline; ≤900px stacks the columns and returns the tiles to a
+  horizontal grid in one media query (splitting the two left 3-across tiles
+  inside a 250px column). ⚠ The wrapper class is `.ins-qh-cols`, NOT
+  `.ins-qh-row` — that name is already the queue table's `<tr>` class
+  (`insRenderQueueHealth_`'s row builder), and a flex rule on it wrecks the
+  table rows.
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

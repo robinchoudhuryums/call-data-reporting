@@ -885,8 +885,18 @@
                     title="Open the My Department Missed Calls detail for this department and date range.">See missed calls &#8594;</button>
           </div>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
-          <div id="ins-qh-tiles" class="pr-kpi-row"></div>
-          <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
+          <!-- R16d (owner): the KPI tiles STACK in a left column beside the
+               per-queue table (two-thirds right) -- the 3 tiles filled only
+               half the 6-col .pr-kpi-row grid and the table is narrow, so
+               side-by-side reclaims a screen of vertical space. The columns
+               wrap on narrow viewports (flex-wrap), where the tiles return
+               to a horizontal grid (.ins-qh-cols media query; the class is
+               NOT .ins-qh-row -- that's the queue table's <tr> class). -->
+          <div class="ins-qh-cols">
+            <div class="ins-qh-left">
+              <div id="ins-qh-tiles" class="pr-kpi-row"></div>
+              <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
+            </div>
           <!-- The per-queue abandoned-% trend chart now lives in the
                consolidated trend chart below (its "Abandoned % by Queue"
                tab); this section keeps the tiles + per-queue detail table. -->
@@ -898,17 +908,18 @@
                instances are untouched. The .num / .qcd-warn-* classes the JS
                row builder emits stay harmless: ds-table right-aligns every
                cell except the first, and the warn classes are color-only. -->
-          <div class="ds-card" style="overflow:hidden; margin:8px 0 16px;">
-            <table class="ds-table">
-              <thead><tr>
-                <th>Queue</th>
-                <th class="num">Total Calls</th>
-                <th class="num">Abandoned</th>
-                <th class="num">Abandoned %</th>
-                <th class="num">Violations</th>
-              </tr></thead>
-              <tbody id="ins-qh-tbody"></tbody>
-            </table>
+            <div class="ds-card ins-qh-table-card" style="overflow:auto;">
+              <table class="ds-table">
+                <thead><tr>
+                  <th>Queue</th>
+                  <th class="num">Total Calls</th>
+                  <th class="num">Abandoned</th>
+                  <th class="num">Abandoned %</th>
+                  <th class="num">Violations</th>
+                </tr></thead>
+                <tbody id="ins-qh-tbody"></tbody>
+              </table>
+            </div>
           </div>
           <!-- Consolidation Phase 1 (gap 3): the per-day numeric table the QCD
                modal shows, collapsed by default to keep the section compact.
