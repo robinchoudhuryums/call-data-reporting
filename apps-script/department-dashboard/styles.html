@@ -4743,13 +4743,26 @@
      promoted, Transfer % added), so the left column is a 2-UP GRID at roughly
      half width rather than a single tall stack -- 6 cards read as 3 compact
      rows beside a 4-5 row table instead of towering over it. */
-  .ins-qh-cols > .ins-qh-left { flex: 1 1 380px; min-width: 300px; max-width: 480px; }
+  .ins-qh-cols > .ins-qh-left { flex: 1 1 340px; min-width: 280px; max-width: 400px; }
   .ins-qh-cols > .ins-qh-table-card { flex: 1 1 420px; min-width: 340px; margin: 0; }
   .ins-qh-left > .pr-kpi-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
   .ins-qh-left > .ins-qh-secondary { margin: 0; }
+  /* R16e (owner): these cards CENTER -- label, value and foot. Scoped to the
+     queue-health column so the IR / Inbound / Direct KPI rows (same .ds-kpi
+     component, left-aligned in a wide row) are untouched. The top line's
+     default space-between would fling a lone label to the left edge, so it
+     centers as a group with its delta badge. Narrower column to match: the
+     text no longer needs the run-up room. */
+  .ins-qh-left .ds-kpi { text-align: center; }
+  /* nowrap keeps "Abandoned %" and a "0.9 pts" badge from breaking mid-phrase
+     in a half-width card; flex-wrap lets the BADGE drop under the label
+     instead, which is the readable failure mode. */
+  .ins-qh-left .ds-kpi__top {
+    justify-content: center; gap: 6px; flex-wrap: wrap; white-space: nowrap;
+  }
   /* The split "total (ans / abd)" value needs a smaller size than a bare
      number to survive a half-width card without wrapping. */
-  .ins-qh-left .ds-kpi__value.dts-value--split { font-size: 19px; }
+  .ins-qh-left .ds-kpi__value.dts-value--split { font-size: 18px; }
   @media (max-width: 900px) {
     /* Force the stack at the same breakpoint the tiles go 3-across --
        otherwise a wide tile grid lands inside the still-narrow left column. */

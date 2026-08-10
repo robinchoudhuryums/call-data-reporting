@@ -57,3 +57,16 @@ Gates: node --test 652/0, INV-16, ci:ui 36+16+30+14. Mocks sent
 
 **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
 No PR (owner asks explicitly).
+
+## Follow-up (same day): centered queue-health cards
+
+Owner: "center the text of the cards (and reduce width if necessary)."
+`.ins-qh-left .ds-kpi { text-align:center }` + a centered `__top`, SCOPED
+to the queue-health column so the IR / Inbound / Direct rows sharing the
+same `.ds-kpi` component keep their left alignment. The top line needed
+`white-space:nowrap` + `flex-wrap:wrap`: at the narrower width the
+default space-between flung a lone label left, and centering alone broke
+"Abandoned %" across two lines with the delta badge wedged beside it --
+now the badge drops under the label instead. Column trimmed 480 -> 400px
+max (centered text needs no run-up), giving the queue table 968px.
+Gates re-run: 652/0, INV-16, ci:ui 36+16+30+14.

@@ -1257,7 +1257,11 @@ behind the removed button.
   (the DEPT payload, CSR-only) and renders ONLY when both surfaces show the
   same window — a share link or saved view can put Insights on its own, and a
   transfer rate from another range inside this section would be a quiet lie.
-  Six cards make the left column a 2-up grid. **R16d**: the Queue-health KPI tiles STACK in a left third beside
+  Six cards make the left column a 2-up grid, CENTER-aligned (label, value,
+  foot) in a narrower column — scoped to `.ins-qh-left` so the IR / Inbound /
+  Direct KPI rows sharing `.ds-kpi` stay left-aligned; the top line centers as
+  a group (`justify-content:center`) and wraps its delta badge under the label
+  rather than breaking "Abandoned %" mid-phrase. **R16d**: the Queue-health KPI tiles STACK in a left third beside
   the per-queue table (right two-thirds) in `.ins-qh-cols` — same flex-wrap
   discipline; ≤900px stacks the columns and returns the tiles to a
   horizontal grid in one media query (splitting the two left 3-across tiles
