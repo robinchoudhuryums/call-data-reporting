@@ -2516,3 +2516,22 @@ commit/push/deploy direction.
   **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
   No PR (owner asks explicitly). Awaiting the owner's verdict on the two
   mocks.
+
+## Increment 93 — R16g calendar drill + Absolute retire (2026-08-10)
+
+  The Agents chart's Absolute basis is hidden (it restated the same
+  page's agent table; the M3 self-heal already existed) and Rung left
+  the metric selector with a pref self-heal. Calendar day-clicks now
+  JUMP to the Daily breakdown -- fold+details open, day group expands,
+  and a per-date drill row lists every missed ring + queue abandon
+  (getMissedCallsSlice, from=to=date, no filter; missedSliceListHtml_
+  renderer so "↳ path" chips work) -- replacing the single-day region
+  reload that left the page's halves on conflicting windows. Fallback to
+  the old reload only when the daily table can't take the jump. Wait
+  times would need a new per-date inbound RPC (noted in block 93).
+  Gates: 653/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/93-r16g-cal-drill-abs-retire.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Mock sent; owner may refine the drill's
+  content (they offered to guide from the mock).

@@ -4680,6 +4680,15 @@
   .ins-daily-day-row.is-open .ins-daily-caret { transform: rotate(90deg); }
   .ins-daily-sub-row { display: none; }
   .ins-daily-sub-row.is-open { display: table-row; }
+  /* R16g: the per-DATE missed/abandoned drill row a calendar day-click
+     inserts under the day group (insQhDayDetail_). Same open/close model
+     as the sub-rows so insQhDayToggle_ drives all three row kinds. */
+  .ins-daily-detail-row { display: none; }
+  .ins-daily-detail-row.is-open { display: table-row; }
+  .ins-daily-detail-row > td {
+    background: var(--paper-2); padding: 10px 14px;
+    border-top: 1px dashed var(--line);
+  }
   /* R16e (owner): expanding a day felt "jumpy" -- rows appeared instantly at
      full height. A <tr> can't animate its own height (display flips between
      none and table-row), so the CELLS fade + settle instead, which reads as
@@ -4695,6 +4704,8 @@
        `open` off (a native details close is instant). `forwards` holds the
        faded end-state so there's no last-frame flash. */
     .ins-daily-sub-row.is-open.is-closing > td { animation: ins-daily-row-out 140ms ease-in forwards; }
+    .ins-daily-detail-row.is-open > td { animation: ins-daily-row-in 180ms ease-out; }
+    .ins-daily-detail-row.is-open.is-closing > td { animation: ins-daily-row-out 140ms ease-in forwards; }
     .ins-qh-daily.is-closing > .ds-card { animation: ins-fold-out 150ms ease-in forwards; }
   }
   @keyframes ins-daily-row-in {

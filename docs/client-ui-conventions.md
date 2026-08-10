@@ -384,7 +384,21 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   hides while Calendar is active (a calendar is inherently daily), and
   the calendar's day-drill + month-nav clicks are wired DIRECTLY on the
   rendered nodes each render (belt-and-braces after the delegated
-  handler missed on some paths — the reported day-click no-op). (#9→R16c) the separate **Email summary** is RETIRED —
+  handler missed on some paths — the reported day-click no-op).
+  **R16g: a calendar day-click JUMPS to the Daily breakdown instead of
+  reloading the region for that one date** (the reload left the page's two
+  halves on conflicting windows). `insCalJumpToDaily_` opens the Queue-health
+  fold + the daily `<details>`, expands the date's day group
+  (`insJumpToDailyRow_`), and inserts the per-DATE drill row
+  (`insQhDayDetail_` → `getMissedCallsSlice` with from=to=the date, no
+  dow/hour filter — every missed ring + queue abandon for the day, rendered
+  by the heatmap drill's `missedSliceListHtml_` so the 🚨 + "↳ path" chips
+  ride the existing `.pid-journey` handler). The detail row joins the day
+  group's open/close (the `insQhDayToggle_` selector covers all three row
+  kinds). Falls back to the old single-day reload ONLY when the daily table
+  can't take the jump (no QCD daily rows / date outside the series). The
+  trend LINE chart's point-drill keeps the old reload behavior — only the
+  calendar was retargeted. (#9→R16c) the separate **Email summary** is RETIRED —
   `sendInsightsReportEmail` sends ONE consolidated email (a legacy
   `style` param is ignored): takeaway + rollup tiles + the behind-team
   block (`insEmailBehindBlock_` — answer rate below the team average, min
@@ -1025,9 +1039,14 @@ behind the removed button.
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
   the **Gap vs team** basis (M3 — since the M1 merge the agent table on the
   SAME page carries the Absolute information, so the section defaults to the
-  one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap, the
-  in-session sub-toggle / A/B remote still switch freely). All cards code is
-  kept — single-agent reports still
+  one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap).
+  **R16g completes that logic: the Absolute OPTION is HIDDEN too** — the
+  sub-toggle shows only Gap vs team / Trend (the abs button keeps its
+  markup + wiring + renderer inert per the Round-16 removal convention; the
+  admin A/B remote still reaches it). The metric selector dropped **Rung**
+  (≈ answered + missed, so its gap/trend lines restated the other two; a
+  saved `'rung'` pref self-heals to answered; the renderers still accept it
+  if fed). All cards code is kept — single-agent reports still
   force cards, and the admin A/B remote's Cards button still reaches the
   hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
 - **Insights Daily breakdown**: two modes, decided by how many queues carry

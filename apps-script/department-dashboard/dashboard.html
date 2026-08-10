@@ -1012,7 +1012,15 @@
               <span class="seg-title">Gap vs team</span>
               <span class="seg-hint">who&#8217;s above / below the team average</span>
             </button>
-            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false">
+            <!-- R16g (owner): the Absolute OPTION is HIDDEN -- since the M1
+                 merge the agent table at the top of the SAME page carries the
+                 per-agent answered/missed volumes, so this view restated it.
+                 The Round-16 removal convention: markup + wiring + renderer
+                 (insRenderCardsChartAbs_) stay inert, the saved-'abs' pref
+                 already self-heals to gap (M3), and the admin A/B remote can
+                 still reach it for live comparison. Un-hiding = drop the
+                 display:none. -->
+            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false" style="display:none;">
               <span class="seg-title">Absolute</span>
               <span class="seg-hint">each agent&#8217;s answered + missed volumes</span>
             </button>
@@ -1023,9 +1031,12 @@
           </div>
           <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
             <span class="ir-sort-label">Metric:</span>
+            <!-- (R16g owner: the Rung option is REMOVED -- rung ≈ answered +
+                 missed, so its gap/trend lines restated the other two. The
+                 renderers still accept 'rung' if fed; a saved pref self-heals
+                 in insRestorePrefs_.) -->
             <select id="ins-cards-chart-metric">
               <option value="answered">Answered</option>
-              <option value="rung">Rung</option>
               <option value="missed">Missed</option>
               <option value="pct">% Answered</option>
             </select>
