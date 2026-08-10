@@ -95,3 +95,28 @@ Owner, from the live deploy:
    compression that forced the email's 14 does not exist there.
 
 Gates: node --test 653/0 (queue-report 39), INV-16, ci:ui 36+16+30+14.
+
+## Follow-up 3 (R16f): collapse motion, two-line Queue calls, legend clipping
+
+Three owner notes off the live deploy:
+
+1. **Collapse animates like the expand.** Day rows: `.is-closing` plays
+   `ins-daily-row-out` (140ms) while `.is-open` is HELD, then
+   `insQhDayToggle_`'s timer (150ms, stored on the day row so a rapid
+   re-open cancels it) removes both. The "Daily breakdown" `<details>`:
+   a native details close is INSTANT, so the summary click is intercepted
+   while open -- fold-out on the card, then `open=false`. Probes: closing
+   row keeps display through the beat with the out animation live; gone
+   after; rapid close->reopen stays open; details intercept holds
+   open+is-closing then closes clean.
+2. **Queue calls card is two lines** -- `.qh-calls-total` (full card size)
+   over `.qh-calls-split` (13px) -- the one-line value read
+   disproportionate on a half-width card. dts-ans/dts-abd colors still
+   ride the dts-value--split scoping.
+3. **Tally legend clipping**: a legend as the LAST child of a `.ds-card`
+   sat flush against the edge, where the rounded corner + overflow cut it
+   half off. Card-scoped fix (`.ds-card > .ans-tally-legend` gets
+   padding), so every such placement heals; the share-wrap + agent-table
+   legends were never flush and are untouched.
+
+Gates: 653/0, INV-16, ci:ui 36+16+30+14. No PR (not requested).

@@ -822,6 +822,13 @@
     font: 500 10px/1 var(--mono); color: var(--muted); margin-top: 4px;
     font-variant-numeric: tabular-nums; }
   .ans-tally-legend .tly { width: 5px; height: 10px; }
+  /* R16f (owner): a legend rendered as the LAST child of a .ds-card sat flush
+     against the card's edge, where the rounded corner + overflow clipping cut
+     it half off (the Daily breakdown's "= N calls" key was the reported case;
+     the rule is card-scoped so it heals every such placement). The table
+     above it is flush-edge by design, so the breathing room lives on the
+     legend, not the card. */
+  .ds-card > .ans-tally-legend { margin: 6px 0 0; padding: 0 10px 8px; }
   .ans-track {
     display: flex;
     height: 8px;
@@ -4682,10 +4689,25 @@
   @media (prefers-reduced-motion: no-preference) {
     .ins-daily-sub-row.is-open > td { animation: ins-daily-row-in 180ms ease-out; }
     .ins-qh-daily[open] > .ds-card { animation: ins-fold-in 180ms ease-out; }
+    /* R16f: the COLLAPSE animates too -- rows fade out before leaving the
+       table (insQhDayToggle_ holds .is-open through the beat), and closing
+       the whole <details> plays the mirrored fold-out before the JS flips
+       `open` off (a native details close is instant). `forwards` holds the
+       faded end-state so there's no last-frame flash. */
+    .ins-daily-sub-row.is-open.is-closing > td { animation: ins-daily-row-out 140ms ease-in forwards; }
+    .ins-qh-daily.is-closing > .ds-card { animation: ins-fold-out 150ms ease-in forwards; }
   }
   @keyframes ins-daily-row-in {
     from { opacity: 0; transform: translateY(-3px); }
     to   { opacity: 1; transform: none; }
+  }
+  @keyframes ins-daily-row-out {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: translateY(-3px); }
+  }
+  @keyframes ins-fold-out {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: translateY(-4px); }
   }
   /* R16e (owner): an abandoned rate at/over the 5% company standard reads BOLD
      + RED here, matching the Daily Call Queue Report's treatment -- the softer
@@ -4760,9 +4782,15 @@
   .ins-qh-left .ds-kpi__top {
     justify-content: center; gap: 6px; flex-wrap: wrap; white-space: nowrap;
   }
-  /* The split "total (ans / abd)" value needs a smaller size than a bare
-     number to survive a half-width card without wrapping. */
-  .ins-qh-left .ds-kpi__value.dts-value--split { font-size: 18px; }
+  /* R16f (owner): the Queue-calls value is TWO lines -- the total at full
+     card size, the (answered / abandoned) split smaller beneath -- instead
+     of one long inline value whose halves fought for width. The dts-ans /
+     dts-abd child colors still ride the dts-value--split scoping. */
+  .ins-qh-left .qh-calls-total { display: block; line-height: 1.1; }
+  .ins-qh-left .qh-calls-split {
+    display: block; font: 600 13px/1.4 var(--ui); margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
   @media (max-width: 900px) {
     /* Force the stack at the same breakpoint the tiles go 3-across --
        otherwise a wide tile grid lands inside the still-narrow left column. */

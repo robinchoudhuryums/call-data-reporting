@@ -1261,11 +1261,22 @@ behind the removed button.
   the shared `ins-fold-in`, both reduced-motion-gated; an at/over-5% abandoned
   rate reads bold + `--bad` — the weight has to be restated locally because
   the global `.qcd-rate-over` loses on specificity to `.ans-nums .ans-rate`.
+  R16f: the COLLAPSE animates too — closing rows hold `.is-open` through a
+  140ms `.is-closing` fade-out before `insQhDayToggle_`'s timer removes them
+  (the timer lives on the day row so a rapid re-open cancels it), and closing
+  the "Daily breakdown" `<details>` intercepts the summary click to play the
+  mirrored `ins-fold-out` before flipping `open` off — a native details close
+  is instant, so without the intercept only the open direction animated. Also
+  R16f: a tally legend rendered as the last child of a `.ds-card` gets its
+  own padding (`.ds-card > .ans-tally-legend`) — flush against the card edge
+  the rounded corner + overflow clipped it half off.
   (5) Queue health gained cards: **Avg answer** + **Longest wait** promoted
   out of the muted secondary strip (now empty for the dept total; it still
   serves the per-queue expanded rows), **Transfer %** mirrored from the dept
   strip, and **Queue calls** adopting the strip's "total (answered /
-  abandoned)" split + per-workday foot. Transfer % reads `state.csrTransfer`
+  abandoned)" split + per-workday foot — since R16f as TWO lines
+  (`.qh-calls-total` full-size, `.qh-calls-split` 13px beneath; one long
+  inline value read disproportionate on a half-width card). Transfer % reads `state.csrTransfer`
   (the DEPT payload, CSR-only) and renders ONLY when both surfaces show the
   same window — a share link or saved view can put Insights on its own, and a
   transfer rate from another range inside this section would be a quiet lie.

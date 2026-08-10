@@ -2055,14 +2055,20 @@
     const qhPaceFoot = qhWd > 1
       ? ('≈ ' + (Math.round((t.totalCalls / qhWd) * 10) / 10) + '/day over ' + qhWd + ' workdays')
       : (fmtNumber(t.totalAnswered) + ' answered · ' + fmtNumber(t.abandoned) + ' abandoned');
+    // R16f (owner): the TOTAL sits on its own line at full card size with the
+    // (answered / abandoned) split on a smaller line beneath -- one long
+    // inline value made the two parts fight for width and read
+    // disproportionate on a half-width card.
     const qhCallsValue =
-        '<span class="dts-qcalls">' + fmtNumber(t.totalCalls) + '</span>'
-      + ' <span class="dts-paren">(</span>'
-      + '<span class="dts-ans">' + fmtNumber(t.totalAnswered) + '</span>'
-      + '<span class="dts-sep"> / </span>'
-      + '<span class="dts-abd' + ((Number(t.abandoned) || 0) > 0 ? '' : ' is-zero') + '">'
-      +   fmtNumber(t.abandoned) + '</span>'
-      + '<span class="dts-paren">)</span>';
+        '<span class="qh-calls-total dts-qcalls">' + fmtNumber(t.totalCalls) + '</span>'
+      + '<span class="qh-calls-split">'
+      +   '<span class="dts-paren">(</span>'
+      +   '<span class="dts-ans">' + fmtNumber(t.totalAnswered) + '</span>'
+      +   '<span class="dts-sep"> / </span>'
+      +   '<span class="dts-abd' + ((Number(t.abandoned) || 0) > 0 ? '' : ' is-zero') + '">'
+      +     fmtNumber(t.abandoned) + '</span>'
+      +   '<span class="dts-paren">)</span>'
+      + '</span>';
     const tiles = [
       insQhKpiTileHtml_('Queue calls', qhCallsValue, qhPaceFoot,
         p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : '',
@@ -2289,6 +2295,23 @@
           e.preventDefault();
           insQhDayToggle_(dayRow);
         });
+        // R16f (owner): a <details> collapse is natively INSTANT -- so when
+        // the summary is clicked while open, intercept, play the fold-out on
+        // the card, then close for real. Opening keeps the native flip (the
+        // existing [open] fold-in animates it). Enter/Space on the summary
+        // fires a synthetic click, so the keyboard path rides this too.
+        var dailySummary = dailyWrap.querySelector('summary');
+        if (dailySummary) {
+          dailySummary.addEventListener('click', function (e) {
+            if (!dailyWrap.open || dailyWrap.classList.contains('is-closing')) return;
+            e.preventDefault();
+            dailyWrap.classList.add('is-closing');
+            setTimeout(function () {
+              dailyWrap.classList.remove('is-closing');
+              dailyWrap.open = false;
+            }, 150);
+          });
+        }
         dailyWrap._insScopeWired = true;
       }
     }
@@ -2359,6 +2382,12 @@
 
   // R16c: expand/collapse one day's per-queue rows. `force` pins a state
   // (the violation drill passes true); a bare call toggles.
+  // R16f (owner): CLOSING is animated too -- rows play a short fade-out
+  // (.is-closing, ins-daily-row-out) and only then leave the table, so the
+  // collapse reads as smooth as the expand instead of snapping. The pending
+  // timer lives on the day row so a rapid re-open cancels the close cleanly
+  // (the timeout runs slightly past the 140ms animation; reduced-motion
+  // users just get the rows removed after the same short beat).
   function insQhDayToggle_(dayRow, force) {
     const tbody = $('ins-qh-daily-tbody');
     if (!tbody || !dayRow) return;
@@ -2367,8 +2396,17 @@
       ? force : dayRow.getAttribute('aria-expanded') !== 'true';
     dayRow.setAttribute('aria-expanded', open ? 'true' : 'false');
     dayRow.classList.toggle('is-open', open);
-    tbody.querySelectorAll('tr.ins-daily-sub-row[data-date="' + iso + '"]')
-      .forEach(function (tr) { tr.classList.toggle('is-open', open); });
+    const subs = tbody.querySelectorAll('tr.ins-daily-sub-row[data-date="' + iso + '"]');
+    if (dayRow._insCloseTimer) { clearTimeout(dayRow._insCloseTimer); dayRow._insCloseTimer = null; }
+    if (open) {
+      subs.forEach(function (tr) { tr.classList.remove('is-closing'); tr.classList.add('is-open'); });
+    } else {
+      subs.forEach(function (tr) { tr.classList.add('is-closing'); });
+      dayRow._insCloseTimer = setTimeout(function () {
+        dayRow._insCloseTimer = null;
+        subs.forEach(function (tr) { tr.classList.remove('is-open', 'is-closing'); });
+      }, 150);
+    }
   }
 
   // Render the Daily breakdown table. MULTI mode (2+ queues with daily rows)
