@@ -164,6 +164,20 @@ days.slice(-90).forEach((dIso, i) => {
   });
 });
 
+// CSR Transfer Historical Data (INV-52 schema; computeCsrTransferRange_ reads
+// cols 3/6/7 over the range and is CSR-only). Without this sheet every payload
+// carried `csrTransfer: null`, so the My Department Transfer % tile -- and the
+// R16e Queue-health Transfer % card that mirrors it -- were structurally
+// unreachable from the gate. One row per day is enough: the range rollup sums
+// Total Calls + Transferred and never reads the agent column.
+const CSR_TRANSFER = [['Month Year', 'Week', 'Date', 'Agent', 'Trans %', 'Total Calls', 'Transferred']];
+days.slice(-90).forEach((dIso) => {
+  const total = 90 + Math.round(rnd() * 40);
+  const transferred = Math.round(total * (0.08 + rnd() * 0.06));
+  CSR_TRANSFER.push([dIso.slice(0, 7), '', dIso, 'CSR team',
+    (transferred / total * 100).toFixed(1) + '%', total, transferred]);
+});
+
 // Pipeline Health: recent DQE success so the admin staleness banner stays off.
 const PH = [['Timestamp', 'Step', 'Status', 'Rows', 'Duration (ms)', 'Notes']];
 PH.push([new Date(today.getTime() - 3600e3).toISOString(), 'processIntegratedHistory:DQE', 'success', 42, 1200, LATEST]);
@@ -173,6 +187,7 @@ const SHEETS = {
   'DO NOT EDIT!': ROSTER,
   'DQE Historical Data': dqeSheet(dqeRows),
   'QCD Historical Data': qcdRows,
+  'CSR Transfer Historical Data': CSR_TRANSFER,
   'Pipeline Health': PH,
   'Access Control': [['Email', 'Department', 'Notes'], ['manager@ums.com', 'CSR', '']],
 };

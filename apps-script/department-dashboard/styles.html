@@ -2617,6 +2617,11 @@
   }
   .ir-results-header-left { flex: 1; min-width: 0; }
   .ir-results-title-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+  /* R16e (owner): the "Comparison & agents" trigger sits inline with the title
+     + date pill (the action group beside it is empty since R16c/R16e). A
+     baseline-aligned flex row would sit the button on the 20px title's
+     baseline, so it centers itself and takes a small step left. */
+  .ins-edit-inline-btn { align-self: center; margin-left: 4px; }
   .ir-results-title {
     font-family: var(--display);
     font-size: 20px;
@@ -4668,13 +4673,62 @@
   .ins-daily-day-row.is-open .ins-daily-caret { transform: rotate(90deg); }
   .ins-daily-sub-row { display: none; }
   .ins-daily-sub-row.is-open { display: table-row; }
+  /* R16e (owner): expanding a day felt "jumpy" -- rows appeared instantly at
+     full height. A <tr> can't animate its own height (display flips between
+     none and table-row), so the CELLS fade + settle instead, which reads as
+     the row easing in. Same 180ms/ease-out language as the folds. The
+     "Daily breakdown" <details> itself gets the shared ins-fold-in on its
+     body. Reduced-motion users keep the instant swap. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ins-daily-sub-row.is-open > td { animation: ins-daily-row-in 180ms ease-out; }
+    .ins-qh-daily[open] > .ds-card { animation: ins-fold-in 180ms ease-out; }
+  }
+  @keyframes ins-daily-row-in {
+    from { opacity: 0; transform: translateY(-3px); }
+    to   { opacity: 1; transform: none; }
+  }
+  /* R16e (owner): an abandoned rate at/over the 5% company standard reads BOLD
+     + RED here, matching the Daily Call Queue Report's treatment -- the softer
+     warn tint didn't pop against the split bar. NB the weight has to be
+     restated: the global `.qcd-rate-over { font-weight: 700 }` loses to
+     `.ans-nums .ans-rate { font-weight: 500 }` on specificity, so an
+     over-threshold rate was never actually bold here. */
+  #ins-qh-daily .qcd-rate-over { color: var(--bad); font-weight: 700; }
   /* R16c (owner): Team-detail heatmap + share table share one row. Flex so
      a display:none heatmap (managers -- the admin vetting gate) leaves the
      share table full-width with zero JS; min-width guards the heatmap's
      grid from crushing, and narrow viewports wrap to stacked. */
-  .ins-detail-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
-  .ins-detail-row > #ins-heatmap { flex: 1 1 420px; min-width: 360px; margin: 0; }
+  /* R16e (owner): STRETCH, so the heatmap grows to the share table's height
+     instead of floating short beside it -- the panel becomes a flex column
+     whose grid fills the leftover space, and the DAY rows (not the hour-label
+     header row) absorb it: `grid-template-rows: auto` pins row 1 to its
+     content, `grid-auto-rows: 1fr` splits the rest evenly. Cells keep their
+     26px floor, so a tall neighbour makes them taller, never shorter. */
+  .ins-detail-row { display: flex; gap: 16px; align-items: stretch; flex-wrap: wrap; }
+  .ins-detail-row > #ins-heatmap {
+    flex: 1 1 420px; min-width: 360px; margin: 0;
+    display: flex; flex-direction: column;
+  }
+  .ins-detail-row > #ins-heatmap .ds-heatmap-wrap { flex: 1 1 auto; display: flex; flex-direction: column; }
+  .ins-detail-row > #ins-heatmap .ds-heatmap {
+    flex: 1 1 auto; grid-template-rows: auto; grid-auto-rows: minmax(26px, 1fr);
+  }
   .ins-detail-row > .ins-share-wrap { flex: 1 1 340px; min-width: 300px; margin: 0; }
+  /* R16e: the heatmap cell drill renders BELOW the row (see dashboard.html's
+     #ins-heat-detail + the data-heat-detail opt-out), with its two lenses --
+     abandoned inbound calls / DQE missed rings -- side by side across the full
+     page width. Narrow viewports stack them. The Inbound report's in-panel
+     detail is untouched (no .ins-heat-detail class there). */
+  .ins-heat-detail { margin-top: 14px; }
+  .ins-heat-detail .heat-lens { min-width: 0; }
+  @media (min-width: 900px) {
+    .ins-heat-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+    /* The stacked separator is wrong once they are columns. */
+    .ins-heat-detail .heat-lens + .heat-lens {
+      margin-top: 0; padding-top: 0; border-top: 0;
+      padding-left: 18px; border-left: 1px solid var(--line);
+    }
+  }
   /* R16d (owner): Queue-health KPI tiles stack in a left third beside the
      per-queue table (right two-thirds). align-items:flex-start makes the
      table's variable height a non-issue (the shorter column just ends).
@@ -4685,17 +4739,42 @@
      (insRenderQueueHealth_'s row builder), and a flex rule there would
      wreck the table rows. */
   .ins-qh-cols { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin: 0 0 16px; }
-  .ins-qh-cols > .ins-qh-left { flex: 1 1 250px; min-width: 230px; max-width: 340px; }
-  .ins-qh-cols > .ins-qh-table-card { flex: 2 1 460px; min-width: 360px; margin: 0; }
-  .ins-qh-left > .pr-kpi-row { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+  /* R16e: the card set grew from 3 to as many as 6 (Avg answer + Longest wait
+     promoted, Transfer % added), so the left column is a 2-UP GRID at roughly
+     half width rather than a single tall stack -- 6 cards read as 3 compact
+     rows beside a 4-5 row table instead of towering over it. */
+  .ins-qh-cols > .ins-qh-left { flex: 1 1 340px; min-width: 280px; max-width: 400px; }
+  .ins-qh-cols > .ins-qh-table-card { flex: 1 1 420px; min-width: 340px; margin: 0; }
+  .ins-qh-left > .pr-kpi-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
   .ins-qh-left > .ins-qh-secondary { margin: 0; }
+  /* R16e (owner): these cards CENTER -- label, value and foot. Scoped to the
+     queue-health column so the IR / Inbound / Direct KPI rows (same .ds-kpi
+     component, left-aligned in a wide row) are untouched. The top line's
+     default space-between would fling a lone label to the left edge, so it
+     centers as a group with its delta badge. Narrower column to match: the
+     text no longer needs the run-up room. */
+  .ins-qh-left .ds-kpi { text-align: center; }
+  /* nowrap keeps "Abandoned %" and a "0.9 pts" badge from breaking mid-phrase
+     in a half-width card; flex-wrap lets the BADGE drop under the label
+     instead, which is the readable failure mode. */
+  .ins-qh-left .ds-kpi__top {
+    justify-content: center; gap: 6px; flex-wrap: wrap; white-space: nowrap;
+  }
+  /* The split "total (ans / abd)" value needs a smaller size than a bare
+     number to survive a half-width card without wrapping. */
+  .ins-qh-left .ds-kpi__value.dts-value--split { font-size: 18px; }
   @media (max-width: 900px) {
-    /* Force the stack at the same breakpoint the tiles go horizontal --
-       otherwise a 3-across tile grid lands inside the still-narrow left
-       column. */
+    /* Force the stack at the same breakpoint the tiles go 3-across --
+       otherwise a wide tile grid lands inside the still-narrow left column. */
     .ins-qh-cols > .ins-qh-left,
     .ins-qh-cols > .ins-qh-table-card { flex-basis: 100%; max-width: none; }
-    .ins-qh-left > .pr-kpi-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .ins-qh-left > .pr-kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  /* R16e (owner): the Total row's roster/crossover caption moved into a
+     tooltip -- a dotted underline is what tells a reader the cell has one. */
+  .agents-total-label.has-note {
+    text-decoration: underline dotted var(--line-strong, var(--line));
+    text-underline-offset: 3px; cursor: help;
   }
 
   /* 4b: all-departments daily call queue report (Overview; open to managers). */

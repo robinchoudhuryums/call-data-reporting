@@ -692,6 +692,16 @@
     if (!el) return;
     var meta = (data && data.meta) || {};
     var cells = (data && data.cells) || [];
+    // R16e: an EXTERNAL drill panel lives outside this element, so the
+    // innerHTML swap below can't clear it -- a stale cell list would otherwise
+    // survive a dept/window change and read as current. Reset it on every
+    // render, including the hidden-panel early return.
+    var extDetail = heatDetailEl_(el);
+    if (extDetail && extDetail !== el.querySelector('.ds-heatmap-detail')) {
+      extDetail.style.display = 'none';
+      extDetail.innerHTML = '';
+      extDetail.removeAttribute('data-cell');
+    }
     // Companion panel: stay quiet (hidden) when there's nothing useful to show
     // -- unavailable Neon, unmapped dept, or no time-of-day rows at all (e.g.
     // a range with only pre-extension inbound rows that lack call_start).
@@ -785,8 +795,26 @@
       + sw('var(--paper-2)', 'low volume (<' + HEAT_MIN_VOLUME_ + ' calls)')
       + '</div>';
     // Cell-drill detail panel (hidden until a cell with abandons is clicked).
-    html += '<div class="ds-heatmap-detail" style="display:none;"></div>';
+    // R16e: a host that declares `data-heat-detail` renders its drill into an
+    // EXTERNAL panel instead (Insights puts it below the heatmap/share row), so
+    // this one would be dead markup -- skip it there. Hosts without the
+    // attribute (the Inbound report) are unchanged.
+    if (!el.getAttribute('data-heat-detail')) {
+      html += '<div class="ds-heatmap-detail" style="display:none;"></div>';
+    }
     el.innerHTML = html;
+  }
+
+  /**
+   * The drill panel a heatmap host writes into: the element named by
+   * `data-heat-detail` when the host declares one (R16e -- Insights renders
+   * the drill below its heatmap/share row), else the panel's own internal
+   * `.ds-heatmap-detail`. Null when neither exists.
+   */
+  function heatDetailEl_(host) {
+    const ext = host && host.getAttribute && host.getAttribute('data-heat-detail');
+    if (ext) return document.getElementById(ext);
+    return host ? host.querySelector('.ds-heatmap-detail') : null;
   }
 
   // -- Heatmap cell drill --------------------------------------------------
@@ -816,7 +844,7 @@
   }
 
   function heatCellToggleDrill_(host, cell) {
-    const detail = host.querySelector('.ds-heatmap-detail');
+    const detail = heatDetailEl_(host);
     if (!detail) return;
     // Ensure the delegated .pid-journey handler is live -- both lenses emit
     // "↳ path" chips, and on an Insights-only session initClipboardOnce may not

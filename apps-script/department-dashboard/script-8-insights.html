@@ -1943,6 +1943,23 @@
     if (head) head.innerHTML = headHtml || '';
   }
 
+  /**
+   * R16e: `inboundKpiTile_` with the value taken as HTML rather than escaped
+   * text, so a card can carry the dept strip's "total (answered / abandoned)"
+   * split markup. CALLERS MUST ESCAPE their own dynamic values -- every call
+   * site here passes either builder-composed markup or an escapeHtml'd string.
+   */
+  function insQhKpiTileHtml_(label, valueHtml, foot, deltaHtml, valueCls) {
+    return '<div class="ds-kpi">'
+      + '<div class="ds-kpi__top">'
+      +   '<span class="ds-kpi__label">' + escapeHtml(label) + '</span>'
+      +   (deltaHtml || '')
+      + '</div>'
+      + '<div class="ds-kpi__value' + (valueCls || '') + '">' + valueHtml + '</div>'
+      + (foot ? '<div class="ds-kpi__foot">' + escapeHtml(foot) + '</div>' : '')
+      + '</div>';
+  }
+
   function insRenderQueueHealth_(qh) {
     const wrap = $('ins-queue-health');
     if (!wrap) return;
@@ -2024,25 +2041,73 @@
       + escapeHtml(t.abandonedPctStr) + ' abandoned</span>'
       + ' · ' + fmtNumber(t.totalCalls) + ' queue calls'
       + (violMtd > 0 ? ' · <span class="bm-over">' + fmtNumber(violMtd) + ' viol MTD</span>' : ''));
+    // R16e (owner): Queue calls adopts the My Department team-strip FORMAT --
+    // "total (answered / abandoned)" plus the per-workday pace -- so the same
+    // figure reads the same way on both halves of the page. Same split markup
+    // + `.dts-value--split` child classes as `renderDeptTeamStrip_` (those
+    // rules are not strip-scoped), rendered through a value-as-HTML tile
+    // because inboundKpiTile_ escapes its value.
+    const qhFrom = (qh.meta && qh.meta.from) || (insLastData && insLastData.meta && insLastData.meta.from) || '';
+    const qhTo   = (qh.meta && qh.meta.to)   || (insLastData && insLastData.meta && insLastData.meta.to)   || '';
+    const qhWd = workingDaysBetween_(qhFrom, qhTo);
+    // A 1-workday range's "≈ N/day over 1 workday" only restates the headline
+    // (the R7/M-4 rule on the dept strip) -- fall back to the plain count.
+    const qhPaceFoot = qhWd > 1
+      ? ('≈ ' + (Math.round((t.totalCalls / qhWd) * 10) / 10) + '/day over ' + qhWd + ' workdays')
+      : (fmtNumber(t.totalAnswered) + ' answered · ' + fmtNumber(t.abandoned) + ' abandoned');
+    const qhCallsValue =
+        '<span class="dts-qcalls">' + fmtNumber(t.totalCalls) + '</span>'
+      + ' <span class="dts-paren">(</span>'
+      + '<span class="dts-ans">' + fmtNumber(t.totalAnswered) + '</span>'
+      + '<span class="dts-sep"> / </span>'
+      + '<span class="dts-abd' + ((Number(t.abandoned) || 0) > 0 ? '' : ' is-zero') + '">'
+      +   fmtNumber(t.abandoned) + '</span>'
+      + '<span class="dts-paren">)</span>';
     const tiles = [
-      inboundKpiTile_('Queue calls', fmtNumber(t.totalCalls), '',
-        p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : ''),
+      insQhKpiTileHtml_('Queue calls', qhCallsValue, qhPaceFoot,
+        p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : '',
+        ' dts-value--split'),
       inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
         p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : '',
         benchValueCls_('abandoned %', t.abandonedPctStr, true)),
       inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the 5% threshold this month', '',
         violValCls),
     ];
+    // R16e (owner): Avg answer + Longest wait are PROMOTED from the muted
+    // secondary strip to real cards -- they answer "how long did callers
+    // wait", which sits beside the abandon story rather than under it. Each
+    // renders only when the payload carries it (an unmapped/partial QCD range
+    // can leave them blank), so no card ever shows a bare dash.
+    if (t.avgAnswer) {
+      tiles.push(insQhKpiTileHtml_('Avg answer', escapeHtml(t.avgAnswer),
+        'answered-weighted, this range', '', ''));
+    }
+    if (t.longestWait) {
+      tiles.push(insQhKpiTileHtml_('Longest wait', escapeHtml(t.longestWait),
+        'worst single wait in range', '', ''));
+    }
+    // R16e (owner): the My-Department Transfer % card, mirrored here. The
+    // figure comes from the DEPT summary payload (`state.csrTransfer`, CSR-only
+    // today), NOT from the Insights payload -- so it renders ONLY when the two
+    // surfaces are showing the SAME window. Since M2 the dept controls are the
+    // page's single date authority and they normally agree; a saved view or
+    // share link can still put Insights on its own window, and a transfer rate
+    // from a different range sitting inside this section would be a quiet lie.
+    const tr = (typeof state !== 'undefined' && state) ? state.csrTransfer : null;
+    const trSameWindow = !!(tr && tr.pctStr && state.meta
+      && state.meta.from === qhFrom && state.meta.to === qhTo);
+    if (trSameWindow) {
+      tiles.push(insQhKpiTileHtml_('Transfer %', escapeHtml(tr.pctStr),
+        fmtNumber(tr.transferred) + ' of ' + fmtNumber(tr.totalCalls) + ' calls', '', ''));
+    }
     $('ins-qh-tiles').innerHTML = tiles.join('');
 
-    // Secondary dept-total metrics (#1) -- Answered / Longest wait / Avg answer.
-    // A muted line under the headline tiles rather than three more tiles, so
-    // the tile row stays focused on the abandon story. Full QCD parity, minus
-    // the clutter.
+    // (R16e: the muted Answered / Longest wait / Avg answer strip is retired
+    // for this dept-total row -- the two time metrics are cards above and
+    // Answered now reads inside the Queue calls split value. insQhStatStrip_
+    // still serves the PER-QUEUE expanded rows below, unchanged.)
     const sec = $('ins-qh-secondary');
-    if (sec) {
-      sec.innerHTML = insQhStatStrip_(t.totalAnswered, t.longestWait, t.avgAnswer);
-    }
+    if (sec) { sec.innerHTML = ''; sec.style.display = 'none'; }
 
     // The per-queue abandoned-% chart now lives in the consolidated trend
     // chart above (the "Abandoned % by Queue" tab); this section keeps the

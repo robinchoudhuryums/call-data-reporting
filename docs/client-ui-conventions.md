@@ -1226,7 +1226,42 @@ behind the removed button.
   The My Department email renders per-dept SECTIONS on combined payloads
   (heading band + worst-first agents + a `deptGroups` subtotal per dept, no
   Dept column); the Insights email is ONE consolidated form (see the email
-  bullet). **R16d**: the Queue-health KPI tiles STACK in a left third beside
+  bullet). **R16e (owner round)**: five more. (1) The agent table's Total cell
+  reads a bare **"Total"** — the roster/floater/crossover caption moved into
+  its `title` (dotted-underline `.agents-total-label.has-note`) and the CSV
+  total row still spells it out; the caption is NOT droppable (an unexplained
+  subtotal-vs-total shortfall reads as a bug), so `drive-smoke.js` asserts the
+  label is bare AND the tooltip survives. (2) The Insights **Views** menu is
+  hidden for everyone (markup + wiring inert, the Round-16 removal convention)
+  and **"Comparison & agents"** moved into the results title line
+  (`.ins-edit-inline-btn`, same id, same popover wiring). (3) The heatmap
+  **cell drill renders BELOW** the heatmap/share row in `#ins-heat-detail`,
+  its two lenses side by side ≥900px: a host that sets `data-heat-detail`
+  opts out of the shared renderer's in-panel `.ds-heatmap-detail` and writes
+  to the named element instead (`heatDetailEl_`), and `renderAbandonHeatmap_`
+  RESETS that external panel on every render since the innerHTML swap can no
+  longer clear it. The Inbound report sets no attribute and is unchanged. The
+  row also STRETCHES — the heatmap grid fills the share table's height via
+  `grid-template-rows: auto` + `grid-auto-rows: minmax(26px, 1fr)`, so the
+  day rows absorb the slack and the hour-label row doesn't. (4) Daily
+  breakdown motion: sub-rows fade+settle through `ins-daily-row-in` on their
+  CELLS (a `<tr>` can't animate a display flip) and the `<details>` body gets
+  the shared `ins-fold-in`, both reduced-motion-gated; an at/over-5% abandoned
+  rate reads bold + `--bad` — the weight has to be restated locally because
+  the global `.qcd-rate-over` loses on specificity to `.ans-nums .ans-rate`.
+  (5) Queue health gained cards: **Avg answer** + **Longest wait** promoted
+  out of the muted secondary strip (now empty for the dept total; it still
+  serves the per-queue expanded rows), **Transfer %** mirrored from the dept
+  strip, and **Queue calls** adopting the strip's "total (answered /
+  abandoned)" split + per-workday foot. Transfer % reads `state.csrTransfer`
+  (the DEPT payload, CSR-only) and renders ONLY when both surfaces show the
+  same window — a share link or saved view can put Insights on its own, and a
+  transfer rate from another range inside this section would be a quiet lie.
+  Six cards make the left column a 2-up grid, CENTER-aligned (label, value,
+  foot) in a narrower column — scoped to `.ins-qh-left` so the IR / Inbound /
+  Direct KPI rows sharing `.ds-kpi` stay left-aligned; the top line centers as
+  a group (`justify-content:center`) and wraps its delta badge under the label
+  rather than breaking "Abandoned %" mid-phrase. **R16d**: the Queue-health KPI tiles STACK in a left third beside
   the per-queue table (right two-thirds) in `.ins-qh-cols` — same flex-wrap
   discipline; ≤900px stacks the columns and returns the tiles to a
   horizontal grid in one media query (splitting the two left 3-across tiles
