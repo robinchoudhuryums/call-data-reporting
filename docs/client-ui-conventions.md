@@ -1007,7 +1007,19 @@ behind the removed button.
   queue and discloses "block ≈ N calls" on its banner when N > 1 (the
   company-row "each block ≈" note went with it — one number would now lie).
   The trade-off is deliberate: blocks compare WITHIN a section, never
-  across; cross-dept magnitude is the Total column's job.
+  across; cross-dept magnitude is the Total column's job. **R16e applies the
+  same per-section unit to the WEB all-departments report** (`qcdSectionUnit`
+  in script-11-qcd-boot, disclosed as `.qcd-deptrow-unit` on each dept
+  banner; the single company-row `= N calls` legend went with the
+  cohort-wide unit — one number would now be wrong for every section but
+  one). **The email's block CEILING is 14, not the web's shared 36, and that
+  is a LAYOUT constraint**: the email tally is a table of `width="5"` cells
+  inside the ~150px Abandoned-% column, and past ~16 blocks the renderer
+  shrinks every cell to fit, so blocks stop being uniform ROW TO ROW
+  (measured: 20 blocks → 4.09px vs 5px on a 9-block row). The web tally's
+  blocks are `flex: 0 0 auto` and wrap instead of shrinking, so it keeps the
+  finer 36. Raising the email number without widening the column
+  re-introduces the squeeze; `queue-report.test.js` pins the ceiling.
 - **Insights Agents section**: the Cards view is HIDDEN for now (owner
   undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
