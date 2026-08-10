@@ -990,8 +990,24 @@ behind the removed button.
 - **Daily Call Queue Report**: the verdict band + email KPI tiles carry MTD
   sub-lines (`.qcd-mtd-sub`, full-prior-month baseline, per-workday volume);
   queue rows carry the `MTD Ø N/day` pace sub-line (`.qcd-q-sub`) — the EMAIL's
-  queue rows too (`qMtdSubEmail` in QueueReportEmail.gs; a banner-only
-  single-queue section carries it on the banner name).
+  queue rows too (`qMtdSubEmail` in QueueReportEmail.gs). Both surfaces put
+  `/day` on the PRIOR value as well (R16c: a bare "Jun 100" read as a date).
+  **R16c/R16d email shape** (owner rounds, pinned by
+  `tests/unit/queue-report.test.js`): EVERY queue renders its own data row
+  under its section banner — the banner-only collapse for single-queue
+  sections is retired, because only queue rows carry the visual tally, so a
+  dept without sub-queues had none. All four KPI cards center their content.
+  The company card is titled "Daily Company Aban %" and tiers on its OWN
+  ladder — value green ≤3% / amber 3–4% / red >4%, and the RED tier also
+  tints the card (the Queues-in-viol treatment); the 5% queue-violation line
+  still drives everything else, so the two thresholds are deliberately
+  different numbers. The tally unit is **per SECTION**, not cohort-wide: one
+  shared unit let a ~350-call/day dept set a block size that rendered a
+  ~8-call/day queue as a sliver, so each section scales to its own busiest
+  queue and discloses "block ≈ N calls" on its banner when N > 1 (the
+  company-row "each block ≈" note went with it — one number would now lie).
+  The trade-off is deliberate: blocks compare WITHIN a section, never
+  across; cross-dept magnitude is the Total column's job.
 - **Insights Agents section**: the Cards view is HIDDEN for now (owner
   undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
@@ -1058,9 +1074,10 @@ behind the removed button.
   script-6-ir). The retired hero-tile builder keeps the plain sparkline
   (uncalled). `irSparkline_`'s auto-scaled form stays for count/duration
   KPI sparks (IR/Insights tiles) — no goal exists for those.
-- **Icon-only Refresh** on My Department (`#refresh-btn`) and Insights
-  (`#ins-refresh-btn`): the ↻ glyph alone via the existing `.btn-icon`
-  class; the label lives in `title`/`aria-label`.
+- **Icon-only Refresh** on My Department (`#refresh-btn`): the ↻ glyph
+  alone via the existing `.btn-icon` class; the label lives in
+  `title`/`aria-label`. (R16c: the Insights region's own ↻ is GONE — one
+  Refresh serves the whole page, see the R16c bullet.)
 - **EmailKit (`EmailKit.gs`) is the outbound-email house style** — the
   Daily Call Queue Report's design language (600px card, kicker/title
   header, tinted KPI tiles, tally tables, bulletproof CTA, quiet footer)
@@ -1124,8 +1141,8 @@ behind the removed button.
   `setPage('insights')` still exists and MAPS to the dept page + open+scroll
   region (script-2), so every legacy entry works unchanged: deep links
   (`#/report/insights` + the three retired-report repoints + the Digest
-  email links), the quick-start chips, `handoffToInsights_`, and the dept
-  controls-row lens switcher (`#lens-ins-btn`). `deptInsightsOpen_` runs the
+  email links), the quick-start chips, and `handoffToInsights_`.
+  `deptInsightsOpen_` runs the
   ensure SYNCHRONOUSLY because a programmatic `details.open=true` fires
   `toggle` async and the handoff/launcher callers write `ins-*` fields right
   after `setPage` returns — ensure-defaults-first is the page-era ordering
@@ -1139,10 +1156,19 @@ behind the removed button.
   IR drill origin: the Insights call sites pass `{fromInsights:true}` to
   `irDrillToAgent_` — `data-page === 'insights'` no longer exists to read.
   The top-nav Insights TAB stayed retired (Round-16b); `initInsightsReport`
-  null-guards it; the UI-harness drivers reach the region via
-  `#my-dept-btn` → `#lens-ins-btn`. The Insights side's "Agent table"
-  button keeps the `#ins-open-mydept-btn` id (scrolls back up via the same
-  hand-off). **M2 (shipped): the dept controls row is the page's single date
+  null-guards it; the UI-harness drivers reach the region via `#my-dept-btn`
+  ALONE — since N1 it is open and generating on arrival, so there is no
+  switcher to click (`#lens-ins-btn` and the Insights-side "Agent table"
+  button `#ins-open-mydept-btn` are both GONE; the Queue-health "See missed
+  calls" scroll is the surviving in-page hand-off).
+  **PERF-2: the first-init auto-run is deferred ONE TICK** (`setTimeout(0)`
+  in `insEnsurePage_`) so the report RPC leaves in PARALLEL with the roster
+  load instead of waiting behind it — that is the whole point of the odd-
+  looking defer; do not "clean it up" into a straight call, which
+  re-serializes two 2–5s Apps Script legs on every dept load. It stands
+  down when a launcher/chip run is already armed (`insLauncherAutoRun_`), a
+  pending agent selection is queued (`insPendingAgentSelection_`), or the
+  dates are blank. **M2 (shipped): the dept controls row is the page's single date
   authority.** The region's own header From/To + Quick-select row
   (`#ins-hdr-controls`) is hidden (wiring inert until M4);
   `insSyncToDeptWindow_` converges an open region on `refresh()` and a stale
@@ -1152,9 +1178,11 @@ behind the removed button.
   chip/handoff > dept window > prefs > defaults. The collapsed summary
   carries a live headline after each render (`insRegionHeadSync_` →
   `#ins-region-head`: % answered · missed · abandoned % · window; the
-  static sub line yields). Open-state is deliberately NOT persisted (an
-  auto-open would re-fire the RPC on every dept visit); per-region Export
-  menus stay. `adoptSharedWindow_` is retired — `pageActiveWindow_` remains
+  static sub line yields). Open-state is deliberately NOT persisted — since
+  N1 open-and-generating IS the default, so persistence could only ever
+  remember a COLLAPSE, and a manual collapse is meant to last the session
+  only. The region's own Export menu is gone (R16c: one dept Export menu
+  with an Insights group). `adoptSharedWindow_` is retired — `pageActiveWindow_` remains
   only to feed the R11-C2 dwell prefetch. The toggle-open path also
   RECREATES the charts from `insLastData` (destroy + create) so a report
   that rendered while the region was collapsed mid-generate isn't left with
