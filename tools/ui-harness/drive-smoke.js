@@ -118,6 +118,47 @@ async function horizontalOverflow(page) {
       record(role + '/' + name + ': no horizontal page overflow', overflow <= 0, 'scrollWidth-clientWidth=' + overflow);
     }
 
+    // R16e (owner round): the My Department totals label and the Insights
+    // header/queue-health surfaces. All read-only assertions on the dept page.
+    {
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(5000);
+      // 1. The roster/crossover caption moved OUT of the visible label into a
+      //    tooltip -- but it must NOT be lost (an unexplained shortfall between
+      //    the subtotals and the grand total reads as a bug), so assert BOTH:
+      //    the label is bare AND the explanation is still on the cell.
+      const totalCell = page.locator('#agents-tfoot td').first();
+      if (await totalCell.count()) {
+        const txt = (await totalCell.textContent() || '').trim();
+        const title = await totalCell.getAttribute('title');
+        record(role + ': totals label is bare "Total"', txt === 'Total', 'text=' + txt);
+        record(role + ': totals caption survives as a tooltip',
+          !!title && /roster only/i.test(title), 'title=' + title);
+      }
+      // 2. Views is hidden for everyone; the edit trigger moved into the
+      //    title line (and must still be reachable there).
+      const viewsShown = await page.locator('#ins-views-btn').isVisible().catch(() => false);
+      record(role + ': Insights Views button is hidden', !viewsShown, 'visible=' + viewsShown);
+      const editInTitle = await page.locator('.ir-results-title-line #ins-edit-selection-btn').count();
+      const editShown = await page.locator('#ins-edit-selection-btn').isVisible().catch(() => false);
+      record(role + ': "Comparison & agents" sits in the Insights title line',
+        editInTitle === 1 && editShown, 'inTitleLine=' + editInTitle + ' visible=' + editShown);
+      // 3. Queue health: Avg answer + Longest wait are CARDS now, and the
+      //    muted secondary strip they came from is empty for the dept total.
+      const qhFold = page.locator('#ins-qh-fold');
+      if (await qhFold.count() && await qhFold.isVisible().catch(() => false)) {
+        await page.evaluate(() => { const f = document.getElementById('ins-qh-fold'); if (f) f.open = true; });
+        await page.waitForTimeout(400);
+        const labels = await page.$$eval('#ins-qh-tiles .ds-kpi__label',
+          function (ns) { return ns.map(function (n) { return n.textContent.trim(); }); });
+        record(role + ': queue-health promotes Avg answer + Longest wait to cards',
+          labels.indexOf('Avg answer') >= 0 && labels.indexOf('Longest wait') >= 0, labels.join(' | '));
+        const secTxt = await page.locator('#ins-qh-secondary').textContent().catch(() => '');
+        record(role + ': the dept-total secondary strip is retired',
+          (secTxt || '').trim() === '', 'strip="' + (secTxt || '').trim() + '"');
+      }
+    }
+
     // F10: the escalations nav badge used to be append-only, so every render
     // path that re-ran it could stack a second count onto the tab. Reload the
     // list (each mutation reloads it too) and assert the badge stays singular.

@@ -2491,3 +2491,28 @@ commit/push/deploy direction.
 
   **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
   No PR (owner asks explicitly). Awaiting owner verdict on both mocks.
+
+## Increment 92 — R16e owner round (2026-08-10)
+
+  Five owner notes off the #224 deploy. Totals label bare with the
+  crossover caption moved to a tooltip (NOT dropped -- the shortfall
+  rule needs it, and drive-smoke asserts both halves); Views hidden +
+  "Comparison & agents" moved into the Insights title line; the heatmap
+  now STRETCHES to the share table's height (grid-auto-rows absorbs the
+  slack in the day rows, not the hour header) and its cell drill renders
+  BELOW the row with both lenses side by side, via a `data-heat-detail`
+  opt-out on the shared renderer (+ an external-panel reset, since the
+  innerHTML swap can't reach it); Daily breakdown rows fade+settle and an
+  over-5% rate is finally bold (the global weight rule lost on
+  specificity to `.ans-nums .ans-rate` -- it had never applied); Queue
+  health promotes Avg answer + Longest wait, mirrors Transfer %
+  (same-window-guarded, since a saved view can decouple the windows) and
+  adopts the dept strip's split Queue-calls format. Harness fixture
+  gained CSR Transfer Historical Data -- every payload was
+  `csrTransfer: null`, so that tile was unreachable from the gate.
+  Gates: 652/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/92-r16e-owner-round.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Awaiting the owner's verdict on the two
+  mocks.

@@ -2935,11 +2935,20 @@
       if (crossCount > 0) {
         parts.push(crossCount + ' in both departments, counted once');
       }
-      const totalLabel = parts.length
-        ? 'Total (roster only · ' + parts.join(' · ') + ')'
-        : 'Total';
+      // R16e (owner): the caption moves OUT of the visible label -- it read as
+      // clutter on every combined view. It is NOT dropped: the rule above
+      // stands (an unexplained shortfall reads as a bug), so it rides the
+      // cell's tooltip, and the CSV total row still spells it out in full for
+      // the reader most likely to add the subtotals up. A dotted underline
+      // marks the cell as carrying an explanation.
+      const totalLabel = 'Total';
+      const totalTitle = parts.length
+        ? 'Roster only · ' + parts.join(' · ')
+        : 'Roster only — queue-only floaters are excluded from every total.';
+      const totalCellAttrs = ' class="agents-total-label' + (parts.length ? ' has-note' : '')
+        + '" title="' + escapeHtml(totalTitle) + '"';
       tfoot.innerHTML = '<tr>' + COLUMNS.map(function (col, i) {
-        if (i === 0) return '<td>' + totalLabel + '</td>';
+        if (i === 0) return '<td' + totalCellAttrs + '>' + totalLabel + '</td>';
         // Source column has no aggregate value -- leave its tfoot
         // cell empty so it doesn't try to render a chip from totals.
         if (col.type === 'chip' && col.key === 'source') return '<td class="src-cell' + (col.hideable ? ' col-extra' : '') + '"></td>';

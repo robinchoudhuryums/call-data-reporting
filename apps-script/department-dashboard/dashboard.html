@@ -663,6 +663,13 @@
                    an open region on a switch). -->
               <span class="ins-dept-pill" id="ins-dept-pill"></span>
               <span class="ir-results-date" id="ins-results-date"></span>
+              <!-- R16e (owner): the edit popover's trigger sits INLINE with the
+                   title + date pill, not over in the action group -- with Views
+                   hidden and the ↻/Export gone (R16c) it was the lone button in
+                   an otherwise empty right-hand block. Same id, so every bit of
+                   popover wiring (open / apply / outside-click) is untouched. -->
+              <button class="btn btn-secondary ins-edit-inline-btn" id="ins-edit-selection-btn" type="button"
+                      title="Change the comparison window or agent selection without leaving the report (the report's dates follow the page's From/To controls).">&#9998; Comparison &amp; agents</button>
             </div>
             <!-- R11-I (item 2): the "Comparing against…" + "Showing: N agents"
                  lines were MOVED OUT of the sticky header (below, in .ins-subhead)
@@ -676,13 +683,8 @@
                  section is now an always-present collapsible fold whose
                  collapsed summary carries its headline. Open state persists
                  per user per section; role seeds the defaults.) -->
-            <!-- Owner note: the tiny inline "change" link read as
-                 undiscoverable -- the edit popover's trigger is now a real
-                 button up here with the other report actions. Same id, so
-                 all the popover wiring (open/apply/outside-click) is
-                 untouched. -->
-            <button class="btn btn-secondary" id="ins-edit-selection-btn" type="button"
-                    title="Change the comparison window or agent selection without leaving the report (the report's dates follow the page's From/To controls).">&#9998; Comparison &amp; agents</button>
+            <!-- (R16e: the "Comparison & agents" trigger MOVED UP into the
+                 title line -- see .ins-edit-inline-btn above. Same id.) -->
             <!-- (N1: the Insights-side lens switcher is REMOVED with its
                  dept-side twin -- one continuous page, nothing to switch.) -->
 
@@ -698,7 +700,13 @@
                  selector owns that, and managers are pinned anyway). The
                  share link reuses the SHARE_STATE_ deep-link machinery, so
                  opening one runs the normal auth + fetch path. -->
-            <div class="ir-export-wrap">
+            <!-- R16e (owner): the Views MENU is HIDDEN for everyone -- the
+                 Round-16 removal convention (markup + wiring kept inert, no
+                 code deleted), so saved views / share link come back by
+                 dropping the display:none. Nothing else reads these ids, and
+                 the share-link deep-link machinery (SHARE_STATE_) is
+                 independent of this trigger. -->
+            <div class="ir-export-wrap" style="display:none;">
               <button class="btn btn-secondary" id="ins-views-btn" type="button" aria-haspopup="menu" aria-expanded="false">
                 Views <span class="ir-export-caret">&#9662;</span>
               </button>
@@ -841,7 +849,7 @@
              simply takes the full row when its neighbor is display:none;
              narrow viewports stack them again. Ids + renderers unchanged. -->
         <div class="ins-detail-row">
-        <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
+        <div id="ins-heatmap" class="ds-heatmap-panel" data-heat-detail="ins-heat-detail" style="display:none;"></div>
 
         <!-- Share of answered calls -- Round-16 (owner): the doughnut became
              SHARE-TALLY ROWS (one row per agent: blocks at a shared unit +
@@ -853,6 +861,15 @@
           <div id="ins-share-legend" class="ans-tally-legend" style="display:none;"></div>
         </div>
         </div><!-- /.ins-detail-row -->
+        <!-- R16e (owner): the heatmap CELL DRILL renders BELOW the row, not
+             inside the heatmap panel -- growing the left column stranded the
+             share table beside a wall of rows. `data-heat-detail` on the panel
+             (read by heatCellToggleDrill_) opts this host out of the shared
+             renderer's internal panel; the Inbound report has no attribute and
+             keeps its in-panel detail. The two lenses (abandoned inbound calls
+             / DQE missed rings) sit side by side here -- full page width, one
+             lens each. -->
+        <div id="ins-heat-detail" class="ds-heatmap-detail ins-heat-detail" style="display:none;"></div>
         </details>
         <!-- /A2 Team detail -->
 
