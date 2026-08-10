@@ -384,12 +384,15 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   hides while Calendar is active (a calendar is inherently daily), and
   the calendar's day-drill + month-nav clicks are wired DIRECTLY on the
   rendered nodes each render (belt-and-braces after the delegated
-  handler missed on some paths — the reported day-click no-op). (#9) `sendInsightsReportEmail` accepts `style:'summary'`
-  (Export → **Email summary**): `renderInsightsEmailSummary_`
-  (Digest.gs) sends takeaway + rollup tiles + ONLY the behind-team
-  list (answer rate below the team average, min
+  handler missed on some paths — the reported day-click no-op). (#9→R16c) the separate **Email summary** is RETIRED —
+  `sendInsightsReportEmail` sends ONE consolidated email (a legacy
+  `style` param is ignored): takeaway + rollup tiles + the behind-team
+  block (`insEmailBehindBlock_` — answer rate below the team average, min
   `INSIGHTS_EMAIL_MIN_CALLS_`=10 answerable calls — a PLAIN DEFINITION,
-  deliberately not a replica of the client tier classifier); same auth,
+  deliberately not a replica of the client tier classifier) + the
+  per-agent table filtered to agents WITH activity (the legend counts the
+  hidden). NB the manager DIGEST's insights format reuses
+  `insEmailReportRows_`, so it inherits both; same auth,
   same compute, same caller-recipient as the full email.
 - **Guided onboarding tour is client-only (#5).** A self-built
   coachmark walkthrough (no dependency): `initTour_` / `startTour_`
@@ -1000,15 +1003,16 @@ behind the removed button.
   force cards, and the admin A/B remote's Cards button still reaches the
   hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
 - **Insights Daily breakdown**: two modes, decided by how many queues carry
-  per-day rows (`insQhDailyMulti_`, ≥2 = MULTI). **MULTI (Round-16b, the
-  parent-with-sub-queues case)**: every date renders one TALLY row per queue
-  (Queue-health payload order; sub-queues tagged `.ins-daily-q-sub`) plus an
-  "All queues" total row from the dept-total `dailySeries` (the
-  `queuesForDept_` rollup) — total rows keep the CLASSIC bar per the house
-  tally convention. The Queue `<th>` is static markup revealed by
+  per-day rows (`insQhDailyMulti_`, ≥2 = MULTI). **MULTI (Round-16b/R16c, the
+  parent-with-sub-queues case)**: every date renders ONE clickable "All
+  queues" DAY row (dept-total `dailySeries` — the `queuesForDept_` rollup,
+  CLASSIC bar per the house tally convention) with its per-queue TALLY rows
+  (Queue-health payload order; sub-queues tagged `.ins-daily-q-sub`)
+  COLLAPSED beneath (`insQhDayToggle_`; click or Enter/Space, the F13
+  discipline). The Queue `<th>` is static markup revealed by
   `.ins-qh-daily--multi` on the `<details>`; rows carry `data-date` +
-  `data-queue`, so a violation-date chip click just jumps (`insJumpToDailyRow_`
-  prefers the `[data-date][data-queue]` row) — no scoping needed, chip
+  `data-queue`, and a violation-date chip click force-opens its day before
+  flashing the queue row (`insJumpToDailyRow_`) — no scoping needed, chip
   suppressed. **SINGLE (one-queue depts)**: a violation-date click SCOPES the
   table to that queue's own per-day rows (`qh.perQueue[i].daily`, additive
   payload field) before jumping — the dept-total row showed the PARENT's
@@ -1064,7 +1068,8 @@ behind the removed button.
   My Department "Email me this report" export (`sendDepartmentSummaryEmail`
   in DeptSummaryEmail.gs — caller-recipient, rides getDepartmentSummary
   for auth + compute; menu item in the dept Export ▾), the Insights
-  "Email report" / "Email summary" (`sendInsightsReportEmail`), the
+  "Email report" (`sendInsightsReportEmail` — one consolidated form since
+  R16c), the
   MANAGER DIGEST (all cadences + both formats — `sendDigestEmail_`'s
   shell, `digestSummaryHtml_`'s KPI rows, and the insights format now
   renders the SAME `insEmailReportRows_` as the Insights email; the old
@@ -1176,6 +1181,24 @@ behind the removed button.
   fetch fires up front now). `setPage('insights')` + the
   `/report/insights` route/share-state entries are PERMANENT compat
   surface for deep links + the Digest email links.
+- **R16c (post-N1 owner notes)**: the Team-detail heatmap + share table sit
+  SIDE BY SIDE in `.ins-detail-row` (flex-wrap; managers never get the
+  admin-gated heatmap, so the share table takes the full row with zero JS;
+  narrow viewports stack). **ONE Export menu + ONE Refresh** on the dept
+  controls row: `#dept-export-menu` carries two labeled groups
+  (`.ir-export-group-label` — "Agent table" / "Insights", the Insights
+  group revealed at menu-open once `insLastData` exists) dispatching to the
+  hoisted `insDownloadCsv_`/`insCopyImage_`/`insEmailReport_`/`insPrint_`;
+  the region's own ↻/Export are gone, and the dept Refresh's click handler
+  adds a SAME-window `runInsReport()` pass (deferred a tick, standing down
+  when the convergence sync already fired — the in-flight check is the
+  generate button's disabled state). The missed section's loader now covers
+  `#dept-missed-detail` too (`deptMissedDetailFrost_` — the queue-only +
+  agent-timeline block is a SIBLING the section frost never reached).
+  The My Department email renders per-dept SECTIONS on combined payloads
+  (heading band + worst-first agents + a `deptGroups` subtotal per dept, no
+  Dept column); the Insights email is ONE consolidated form (see the email
+  bullet).
 - **Phase 3 motion** (all reduced-motion-safe): a 160ms fade on the page
   swap (pure CSS — animations restart when display flips), a 180ms
   slide/fade on fold expand (`ins-fold-in`), and elevation-on-stuck for

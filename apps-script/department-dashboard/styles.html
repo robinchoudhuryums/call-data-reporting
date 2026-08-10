@@ -2644,6 +2644,13 @@
     transition: transform 0.15s;
   }
   #ir-export-btn.open .ir-export-caret { transform: rotate(180deg); }
+  /* R16c: labeled groups inside the consolidated dept Export menu
+     ("Agent table" / "Insights"). */
+  .ir-export-group-label {
+    font: 600 9.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); padding: 7px 12px 3px; border-top: 1px solid var(--line);
+  }
+  .ir-export-menu .ir-export-group-label:first-child { border-top: none; padding-top: 5px; }
   .ir-export-menu {
     position: absolute;
     top: calc(100% + 4px);
@@ -4638,17 +4645,36 @@
   }
   .ins-daily-hit td { animation: ins-daily-hit 1.6s var(--ease, ease-out); }
   @media (prefers-reduced-motion: reduce) { .ins-daily-hit td { animation: none; background: var(--warn-soft); } }
-  /* Round-16b: MULTI-queue Daily breakdown (parent + sub-queues + an
-     "All queues" total row per date). The Queue column exists only in this
-     mode (.ins-qh-daily--multi on the <details> reveals its th); date-group
-     head rows carry a top rule so the per-date groups read as blocks, and
-     the total row styles as the group's subtotal. */
+  /* Round-16b / R16c (owner): MULTI-queue Daily breakdown. Each date shows
+     ONE "All queues" DAY row (bold, subtotal-styled, clickable) whose
+     per-queue detail rows are COLLAPSED beneath it -- .is-open (toggled by
+     insQhDayToggle_; the violation drill force-opens its day) reveals them.
+     The Queue column exists only in this mode (.ins-qh-daily--multi on the
+     <details> reveals its th). Caret reuses the fold square-box discipline
+     (a rotated bare glyph box once tripped the overflow gate). */
   .ins-qh-daily .ins-qh-daily-queue-th { display: none; }
   .ins-qh-daily--multi .ins-qh-daily-queue-th { display: table-cell; }
   .ins-qh-daily-queue-cell { white-space: nowrap; }
   .ins-daily-q-sub { color: var(--muted); font-size: 11px; font-weight: 400; }
-  .ins-qh-daily--multi .ins-daily-group-head td { border-top: 2px solid var(--line); }
-  .ins-daily-total-row td { font-weight: 600; background: var(--paper-2); }
+  .ins-daily-day-row td { font-weight: 600; background: var(--paper-2); cursor: pointer; }
+  .ins-daily-day-row:hover td { background: var(--accent-soft); }
+  .ins-daily-day-row.is-open td { border-bottom: none; }
+  .ins-daily-caret {
+    color: var(--muted); font-size: 11px; margin-right: 6px;
+    transition: transform 0.15s ease;
+    display: inline-block; width: 1em; height: 1em;
+    line-height: 1em; text-align: center;
+  }
+  .ins-daily-day-row.is-open .ins-daily-caret { transform: rotate(90deg); }
+  .ins-daily-sub-row { display: none; }
+  .ins-daily-sub-row.is-open { display: table-row; }
+  /* R16c (owner): Team-detail heatmap + share table share one row. Flex so
+     a display:none heatmap (managers -- the admin vetting gate) leaves the
+     share table full-width with zero JS; min-width guards the heatmap's
+     grid from crushing, and narrow viewports wrap to stacked. */
+  .ins-detail-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .ins-detail-row > #ins-heatmap { flex: 1 1 420px; min-width: 360px; margin: 0; }
+  .ins-detail-row > .ins-share-wrap { flex: 1 1 340px; min-width: 300px; margin: 0; }
 
   /* 4b: all-departments daily call queue report (Overview; open to managers). */
   .ov-admin-actions { margin: 8px 0 12px; }
