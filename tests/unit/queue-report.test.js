@@ -250,6 +250,30 @@ test('Round-16/R16c: per-queue MTD pace sub-line in the email (on every queue ro
   assert.equal((html.match(/MTD &Oslash;/g) || []).length, 2);
 });
 
+test('R16d: company-aban card tint follows the value tier; tally unit is per-section', function () {
+  // Fixture company aban is 5.71% -> red tier: value red AND the card
+  // carries the badTile background (the Queues-in-viol treatment).
+  const red = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
+  assert.match(red, /background:#fbeae2;border:1px solid #eccbbb;[^>]*><tr>\s*<td class="kpi-cell"[^>]*>\s*<div[^>]*>Daily Company Aban %/,
+    'red-tier company card gets the light-red tile');
+  // Amber tier (3-4%): value #c66b4b but the tile stays NEUTRAL.
+  const amberFx = emailFixture();
+  amberFx.grandTotals.abandonedPct = 3.6;
+  amberFx.grandTotals.abandonedPctStr = '3.60%';
+  const amber = h.call('buildQueueReportEmailHtml_', amberFx, '2026-07-10', false);
+  assert.match(amber, /background:#f2f6fa;border:1px solid #dde6ee;[^>]*><tr>\s*<td class="kpi-cell"[^>]*>\s*<div[^>]*>Daily Company Aban %/,
+    'amber tier keeps the neutral tile');
+  assert.match(amber, /color:#c66b4b;padding-top:2px;">3\.60%/,
+    'amber tier colors the value');
+  // Per-section tally units: CSR's busiest queue is 100 calls (unit 5),
+  // Sales's is 40 (unit 2) -- each banner discloses its OWN block size
+  // (the old cohort-wide unit rendered a quiet dept's tally as a sliver
+  // on the busiest dept's scale; the company-row note is gone with it).
+  assert.match(red, /7\.0%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 5 calls<\/span>/);
+  assert.match(red, /2\.5%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 2 calls<\/span>/);
+  assert.doesNotMatch(red, /each block/);
+});
+
 // ── Owner round (2026-07): Viol MTD on the banner; no company roll-up ───────
 // Reported: "Resupply did not get a violation that day and is green, so it
 // does not show the Violations MTD value, even if they did get a violation

@@ -57,3 +57,23 @@ with the R16d layout + the class trap.
 No PR (owner asks explicitly). Awaiting owner verdict on the email mock
 (tier colors / centered cards / per-queue tallies / '/day' pace) and the
 queue-health column mock.
+
+## Follow-up (same day): red-tier card tint + per-section tally units
+
+Owner approved the mock with two notes, both landed:
+
+- **Red tier tints the CARD too**: `abanOver` now keys off the value tier
+  (`gValColor === C.bad`, i.e. >4%) instead of the old ≥5% -- badTile
+  bg/border + the warm label ink, matching the Queues-in-viol card.
+  Green/amber keep the neutral tile.
+- **Tally unit is PER SECTION, not cohort-wide** (the owner's scale
+  concern: CSR ~350/day set a block size that rendered Power ~8/day as a
+  sliver). `tallyUnitFor_(max)` (the extracted ladder) runs per section
+  over its own rowDefs; each banner discloses "block ≈ N calls" when
+  N > 1; the company-row "each block ≈" note is gone (a single note
+  would lie now). The tally reads each queue's answered/abandoned MIX;
+  cross-dept magnitude stays on the Total column + banner counts.
+  Trade-off accepted: blocks are not comparable ACROSS sections.
+- New pin `R16d: company-aban card tint follows the value tier; tally
+  unit is per-section` (queue-report 38 pass). Full suite 652, INV-16
+  clean; ci:ui not re-run (server-email-only change, no client surface).
