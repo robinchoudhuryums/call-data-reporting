@@ -193,7 +193,7 @@ test('email HTML: over-threshold row fills red by its real share, full-strength 
   assert.doesNotMatch(html, /width="100%" style="background:#b23a2c/);
 });
 
-test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue is banner-only, section total sums', function () {
+test('R12-22/R16c: parent-grouped sections -- child nests as a sub-row, single-queue gets banner + its own row, section total sums', function () {
   const d = emailFixture();
   d.depts.push({ dept: 'Spanish', parent: 'CSR',
     totals: { totalCalls: 20, totalAnswered: 18, abandoned: 2, abandonedPct: 10.0,
@@ -213,13 +213,14 @@ test('R12-22: parent-grouped sections -- child nests as a sub-row, single-queue 
   // violationsMtd figure (6), not the range figure (2).
   assert.match(html, /Viol \(MTD\)/);
   assert.match(html, /month-to-date/);
-  // Sales stays single-queue: banner-only with the queue name inline -- the
-  // old duplicate row (same numbers twice) is gone.
-  assert.match(html, /Sales <span[^>]*>&middot; A_Q_SALES<\/span>/);
+  // R16c (owner): the banner-only collapse is RETIRED -- a single-queue
+  // section renders a plain banner (no inline queue name) PLUS its own
+  // queue data row, so the visual tally appears for EVERY queue.
+  assert.doesNotMatch(html, /Sales <span[^>]*>&middot; A_Q_SALES<\/span>/);
   assert.equal((html.match(/A_Q_SALES/g) || []).length, 1);
 });
 
-test('Round-16: per-queue MTD pace sub-line in the email (queue rows + single-queue banner; absent pre-v6)', function () {
+test('Round-16/R16c: per-queue MTD pace sub-line in the email (on every queue row; absent pre-v6)', function () {
   // No mtd block (a pre-v6 cached payload): no pace line anywhere.
   const bare = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
   assert.doesNotMatch(bare, /MTD &Oslash;/);
@@ -229,22 +230,48 @@ test('Round-16: per-queue MTD pace sub-line in the email (queue rows + single-qu
     priorFrom: '2026-06-01', priorTo: '2026-06-30', priorWorkdays: 22, priorLabel: 'Jun',
     totalCalls: 700, answered: 660, abandoned: 40, abandonedPct: 5.71,
     priorTotalCalls: 3000, priorAnswered: 2850, priorAbandonedPct: 5.0 };
-  // CSR gets a second queue so its section renders per-queue ROWS (a
-  // single-queue section collapses into the banner, R12-22).
+  // CSR gets a second queue to prove the multi-row shape too (R16c: every
+  // section renders queue rows now -- the banner-only collapse is retired).
   d.depts[0].queues[0].mtdTotalCalls = 550;    // 550/5 = 110/day
   d.depts[0].queues[0].priorTotalCalls = 2200; // 2200/22 = 100/day -> +10.0%
   d.depts[0].queues.push({ queue: 'A_Q_CSR_2', totalCalls: 10, totalAnswered: 10,
     abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 });
-  // Sales stays single-queue (banner-only) with no prior-month activity.
+  // Sales stays single-queue, with no prior-month activity.
   d.depts[1].queues[0].mtdTotalCalls = 100;    // 100/5 = 20/day, prior 0 -> "new this month"
   const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
   // Queue-row pace line: per-workday averages + neutral delta vs the ENTIRE
   // prior month (mirrors the web table's qMtdSub math).
-  assert.match(html, /MTD &Oslash; 110\/day &middot; Jun 100 &#9650; 10\.0%/);
-  // Banner-only section: the pace line rides the banner name cell.
+  // R16c: '/day' on the PRIOR value too -- a bare "Jun 100" read as a date.
+  assert.match(html, /MTD &Oslash; 110\/day &middot; Jun 100\/day &#9650; 10\.0%/);
+  // Single-queue section: the pace line sits on its queue ROW (the
+  // banner-only ride-along is retired with the collapse).
   assert.match(html, /MTD &Oslash; 20\/day &middot; new this month/);
   // A_Q_CSR_2 has no mtd fields at all -> exactly the two lines above.
   assert.equal((html.match(/MTD &Oslash;/g) || []).length, 2);
+});
+
+test('R16d: company-aban card tint follows the value tier; tally unit is per-section', function () {
+  // Fixture company aban is 5.71% -> red tier: value red AND the card
+  // carries the badTile background (the Queues-in-viol treatment).
+  const red = h.call('buildQueueReportEmailHtml_', emailFixture(), '2026-07-10', false);
+  assert.match(red, /background:#fbeae2;border:1px solid #eccbbb;[^>]*><tr>\s*<td class="kpi-cell"[^>]*>\s*<div[^>]*>Daily Company Aban %/,
+    'red-tier company card gets the light-red tile');
+  // Amber tier (3-4%): value #c66b4b but the tile stays NEUTRAL.
+  const amberFx = emailFixture();
+  amberFx.grandTotals.abandonedPct = 3.6;
+  amberFx.grandTotals.abandonedPctStr = '3.60%';
+  const amber = h.call('buildQueueReportEmailHtml_', amberFx, '2026-07-10', false);
+  assert.match(amber, /background:#f2f6fa;border:1px solid #dde6ee;[^>]*><tr>\s*<td class="kpi-cell"[^>]*>\s*<div[^>]*>Daily Company Aban %/,
+    'amber tier keeps the neutral tile');
+  assert.match(amber, /color:#c66b4b;padding-top:2px;">3\.60%/,
+    'amber tier colors the value');
+  // Per-section tally units: CSR's busiest queue is 100 calls (unit 5),
+  // Sales's is 40 (unit 2) -- each banner discloses its OWN block size
+  // (the old cohort-wide unit rendered a quiet dept's tally as a sliver
+  // on the busiest dept's scale; the company-row note is gone with it).
+  assert.match(red, /7\.0%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 5 calls<\/span>/);
+  assert.match(red, /2\.5%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 2 calls<\/span>/);
+  assert.doesNotMatch(red, /each block/);
 });
 
 // ── Owner round (2026-07): Viol MTD on the banner; no company roll-up ───────
@@ -293,9 +320,12 @@ test('a dept with NO month-to-date violations renders no MTD chip at all', funct
   fx.depts[1].totals.violationsMtd = 0;
   fx.depts[1].queues[0].violationsMtd = 0;
   const html = h.call('buildQueueReportEmailHtml_', fx, '2026-07-10', false);
-  assert.doesNotMatch(html, /<\/table><\/td><td align="right"[^>]*>0<\/td>/,
-    'a clean dept leaves the cell EMPTY rather than advertising a zero');
-  assert.match(html, /<\/table><\/td><td align="right"[^>]*>6<\/td>/,
+  // R16c: target the BANNER MTD cell by its 8px padding signature -- queue
+  // rows (6px padding) legitimately show a muted 0 in the Viol column now
+  // that every section renders them.
+  assert.match(html, /padding:8px 12px;font:12px Arial,Helvetica,sans-serif;color:#606872;"><\/td>/,
+    'a clean dept leaves the banner cell EMPTY rather than advertising a zero');
+  assert.match(html, /padding:8px 12px;font:bold 12px Arial,Helvetica,sans-serif;color:#c66b4b;">6<\/td>/,
     "but CSR's still shows");
 });
 

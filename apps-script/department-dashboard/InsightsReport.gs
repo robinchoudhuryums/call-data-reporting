@@ -962,13 +962,11 @@ function sendInsightsReportEmail(req) {
   const selectedAgents = resolveInsightsAgents_(req && req.agents, roster);
   if (!selectedAgents.length) throw new Error('No agents on this department\'s roster.');
 
-  // Density Phase 2 (#9): style='summary' sends the short form -- takeaway +
-  // rollup tiles + only the behind-team-average agents -- instead of the full
-  // per-agent table. Same auth, same compute, same recipient (the caller);
-  // only the TEMPLATE differs, so the dept-permission story is unchanged.
-  const style = String((req && req.style) || '').trim().toLowerCase();
-  const summary = style === 'summary';
-
+  // R16c (owner): the separate 'summary' style is RETIRED -- the two emails
+  // were near-duplicates. ONE consolidated email now: takeaway + rollup
+  // tiles + the behind-team-average list (the summary's unique value) + the
+  // per-agent table filtered to agents WITH activity. A legacy req.style is
+  // simply ignored.
   const data = computeInsights_(dept, from, to, selectedAgents, roster,
                                 customPriorFrom, customPriorTo);
   const dateLabel  = (data && data.dateLabel) || (from + ' - ' + to);
@@ -987,7 +985,7 @@ function sendInsightsReportEmail(req) {
     title: dept,
     subtitle: dateLabel + ' · vs ' + priorLabel,
     preheader: takeaway || ('Insights for ' + dept + ' · ' + dateLabel),
-    rowsHtml: summary ? insEmailSummaryRows_(data) : insEmailReportRows_(data),
+    rowsHtml: insEmailReportRows_(data),
     ctaUrl: dashboardUrl ? dashboardUrl + '#/report/insights' : '',
     ctaLabel: 'Open the Insights report',
     footerHtml: 'Requested from the Insights page — sent only to you, not a subscription. '
@@ -995,7 +993,7 @@ function sendInsightsReportEmail(req) {
   });
 
   MailApp.sendEmail({ to: email,
-    subject: (summary ? 'Insights Summary: ' : 'Insights Report: ') + dateLabel,
+    subject: 'Insights Report: ' + dateLabel,
     htmlBody: htmlBody });
   return { to: email };
 }
@@ -1044,10 +1042,23 @@ function insEmailHeadRows_(data) {
     + ekRow_(kpis + priorCap);
 }
 
-/** Full-report body rows: head + the per-agent tally/delta table. */
+/** Consolidated body rows (R16c -- the separate summary email is retired):
+ * head (takeaway + KPI tiles) + the behind-team-average list (the summary's
+ * unique value) + the per-agent tally/delta table, filtered to agents WITH
+ * activity in the window (owner: zero-activity roster rows added length,
+ * not information -- the legend says how many were hidden). NB the manager
+ * DIGEST's insights format reuses these rows (digestInsightsHtml_), so it
+ * inherits both the behind-team block and the active-only filter. */
 function insEmailReportRows_(data) {
   const C = EK_C_, sans = EK_SANS_;
-  const agents = (data && data.agentData) || [];
+  const allAgents = (data && data.agentData) || [];
+  const agents = allAgents.filter(function (a) {
+    const m = a.metrics || {};
+    return (Number(m.answered && m.answered.val) || 0)
+         + (Number(m.missed && m.missed.val) || 0)
+         + (Number(m.rung && m.rung.val) || 0) > 0;
+  });
+  const hidden = allAgents.length - agents.length;
   let maxVol = 0;
   agents.forEach(function (a) {
     const m = a.metrics || {};
@@ -1085,15 +1096,19 @@ function insEmailReportRows_(data) {
   });
   const legend = '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">'
     + ekEsc_((unit > 1 ? 'each block ≈ ' + unit + ' calls · ' : '')
-      + 'deltas compare against the prior window in the header') + '</div>';
+      + 'deltas compare against the prior window in the header'
+      + (hidden > 0 ? ' · ' + hidden + ' agent' + (hidden === 1 ? '' : 's')
+          + ' with no calls this window hidden' : '')) + '</div>';
   return insEmailHeadRows_(data)
+    + insEmailBehindBlock_(data)
     + ekRow_('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
         + tbl + '</table>' + legend, '18px 26px 6px');
 }
 
-/** Summary body rows (Phase 2 #9 short form): head + only the agents behind
- * the team's answer rate (min-volume gated), in kit style. */
-function insEmailSummaryRows_(data) {
+/** Behind-the-team-average block (ex-summary email's unique value, R16c):
+ * the agents under the team's answer rate (min-volume gated), worst first,
+ * or a good-toned callout when nobody is behind. Returns a full ekRow_. */
+function insEmailBehindBlock_(data) {
   const C = EK_C_, sans = EK_SANS_;
   const t = (data && data.teamStats) || {};
   const teamPct = Number((t.pct && t.pct.val) || 0);
@@ -1128,12 +1143,16 @@ function insEmailSummaryRows_(data) {
         +   (gap > 0 ? gap + ' pts behind' : 'behind') + '</td>'
         + '</tr>';
     });
-    block = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
+    // R16c: mid-email now (between the tiles and the full table), so the
+    // table needs its own label -- the ex-summary email's subject carried it.
+    block = '<div style="font:bold 11px ' + sans + ';color:' + C.mut
+      + ';text-transform:uppercase;letter-spacing:0.06em;padding:0 2px 6px;">Behind the team average</div>'
+      + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
       + tbl + '</table>';
   }
   const note = '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">'
     + ekEsc_('Answer rate below the team average this window, minimum '
-      + INSIGHTS_EMAIL_MIN_CALLS_ + ' answerable calls. The full per-agent table is in the web report (or use Email report for the long form).')
+      + INSIGHTS_EMAIL_MIN_CALLS_ + ' answerable calls. The full per-agent table follows below.')
     + '</div>';
-  return insEmailHeadRows_(data) + ekRow_(block + note, '18px 26px 6px');
+  return ekRow_(block + note, '18px 26px 0');
 }

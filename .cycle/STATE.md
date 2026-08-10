@@ -2441,3 +2441,53 @@ commit/push/deploy direction.
   outgoing dept's checked agents; cold boot double-dispatches
   getDepartmentSummary (pre-existing); splitting the insights endpoint
   for progressive render is the next lever if cold loads still drag.
+
+## Increment 90 — R16c owner test-pass notes (2026-08-07)
+
+  Seven owner notes on the always-inline deploy, all landed (9851d32):
+  collapsed "All queues" day rows in the multi-queue Daily breakdown
+  (violation chips force-open their day); Team-detail heatmap + share
+  table side by side (.ins-detail-row; mock screenshot sent — stand-in
+  heatmap data, real share table); ONE Export menu (labeled groups) + ONE
+  Refresh on the dept controls with the region's own pair removed (Views
+  wiring un-nested from the dead guard; refresh's same-window insights
+  pass has an in-flight guard — the probe caught a double-fetch);
+  missed-detail frost unified (deptMissedDetailFrost_); My Department
+  email grouped into per-dept sections with deptGroups subtotals;
+  Insights email consolidated to ONE form (behind-team block +
+  active-only agent table; digest inherits via the shared rows). Item 3
+  ("remove the toggle") was already done in N1 — stale cache sighting.
+  Gates: 651/651, INV-16, ci:ui 24+16+30+14 + live-DOM probe. Block in
+  `.cycle/blocks/90-r16c-test-notes-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** Pushed as 9851d32 on claude/broad-scan-l9ojgm
+  (branch = post-#223 main + this commit + checkpoint). No PR opened
+  (owner asks explicitly). OPEN QUESTIONS FOR THE OWNER: (a) their note
+  "could potentially make the same change to" was cut off — which other
+  pairing did they mean?; (b) judge the side-by-side layout from the mock
+  / post-deploy; (c) the deeper email consolidation (ONE email = dept
+  table + insights) proposed, not built. Follow-on: insBtnFeedback_
+  retarget to #dept-export-btn.
+
+## Increment 91 — R16d email polish + Queue-health columns (2026-08-10)
+
+  Owner batch answering increment 90's open threads. Daily Call Queue
+  Report email: 'Daily Company Aban %' retitle with tier-colored value
+  (green ≤3 / amber 3–4 / red >4; tile bg keeps the ≥5 flag), all KPI
+  cards centered, the banner-only single-queue collapse RETIRED (every
+  queue gets its own tally row; some repeats accepted — the dedup was
+  why tallies went missing), and '/day' added to the MTD pace line's
+  prior value (web twin in script-11-qcd-boot too; "Jul 100" read as a
+  date). queue-report pins updated (37 pass; the clean-banner Viol pin
+  re-targeted by padding signature). Insights Queue health: KPI tiles
+  stack in a left third beside the per-queue table (.ins-qh-cols —
+  NOT .ins-qh-row, which is already the table's <tr> class and a flex
+  rule there wrecks the rows; the probe caught it). ≤900px stacks the
+  columns AND restores the horizontal tile grid in one media query.
+  Mocks rendered from the REAL builders (harness + playwright) and sent:
+  full email, 3-tier company-aban strip, queue-health row. Gates:
+  node --test 0 fail, INV-16, ci:ui 24+16+30+14. Block in
+  `.cycle/blocks/91-r16d-email-polish-qh-cols.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Awaiting owner verdict on both mocks.

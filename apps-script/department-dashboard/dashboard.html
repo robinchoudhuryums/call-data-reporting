@@ -336,11 +336,26 @@
               <button class="btn btn-secondary" id="dept-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
                 Export <span class="ir-export-caret">&#9662;</span>
               </button>
+              <!-- R16c (owner): ONE export menu for the whole page -- the
+                   Insights header's own Refresh/Export were redundant clutter
+                   on the stacked sticky strips. Two labeled groups; the
+                   Insights group reveals once a report has rendered
+                   (insLastData), toggled at menu-open time. -->
               <div class="ir-export-menu" id="dept-export-menu" role="menu" style="display:none;">
+                <div class="ir-export-group-label">Agent table</div>
                 <button type="button" role="menuitem" data-action="csv">Download CSV</button>
                 <!-- Round-16 (owner): styled EmailKit summary, caller-recipient
                      only (sendDepartmentSummaryEmail). -->
                 <button type="button" role="menuitem" data-action="email">Email me this report</button>
+                <div id="dept-export-ins-items" style="display:none;">
+                  <div class="ir-export-group-label">Insights</div>
+                  <button type="button" role="menuitem" data-action="ins-csv">Download CSV</button>
+                  <button type="button" role="menuitem" data-action="ins-copy">Copy image</button>
+                  <!-- R16c: ONE consolidated Insights email (the separate
+                       summary/report pair is retired server-side). -->
+                  <button type="button" role="menuitem" data-action="ins-email">Email report</button>
+                  <button type="button" role="menuitem" data-action="ins-print">Print</button>
+                </div>
               </div>
             </div>
           </div>
@@ -671,25 +686,12 @@
             <!-- (N1: the Insights-side lens switcher is REMOVED with its
                  dept-side twin -- one continuous page, nothing to switch.) -->
 
-            <!-- R7 (N-1): re-run the report for the current selection (frosts
-                 the results while the fresh fetch runs; server cache still
-                 applies, so data refreshes as the 30-min report TTL allows). -->
-            <button class="btn btn-secondary btn-icon" id="ins-refresh-btn" type="button" aria-label="Refresh"
-                    title="Re-run this report for the current dates, comparison, and agent selection.">&#8635;</button>
-            <div class="ir-export-wrap">
-              <button class="btn btn-secondary" id="ins-export-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-                Export <span class="ir-export-caret">&#9662;</span>
-              </button>
-              <div class="ir-export-menu" id="ins-export-menu" role="menu" style="display:none;">
-                <button type="button" role="menuitem" data-action="csv">Download CSV</button>
-                <button type="button" role="menuitem" data-action="copy">Copy image</button>
-                <button type="button" role="menuitem" data-action="email">Email report</button>
-                <!-- Phase 2 #9: the short form -- takeaway + rollup tiles +
-                     behind-team list only (style='summary' server-side). -->
-                <button type="button" role="menuitem" data-action="email-summary">Email summary</button>
-                <button type="button" role="menuitem" data-action="print">Print</button>
-              </div>
-            </div>
+            <!-- (R16c, owner: the Insights header's OWN Refresh + Export are
+                 REMOVED -- on the stacked sticky strips they duplicated the
+                 dept controls' pair. The dept Refresh re-runs the whole page
+                 incl. an open region; the dept Export menu carries the
+                 Insights actions as a labeled group. Views + the popover
+                 stay here -- report-specific, not duplicated.) -->
             <!-- Phase 2 #8: saved views + share link. Views are PERSONAL
                  (localStorage, per user) and carry dates + compare mode +
                  agents -- NOT the department (the header
@@ -833,6 +835,12 @@
         <details id="ins-team-detail" class="ds-team-detail">
           <summary class="ds-team-detail-summary">Team detail &mdash; abandon heatmap &amp; share of answered</summary>
 
+        <!-- R16c (owner): heatmap + share table sit SIDE BY SIDE on one row
+             (each was half-empty at full width). Flex with wrap: managers
+             never get the heatmap (admin vetting gate), so the share table
+             simply takes the full row when its neighbor is display:none;
+             narrow viewports stack them again. Ids + renderers unchanged. -->
+        <div class="ins-detail-row">
         <div id="ins-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
 
         <!-- Share of answered calls -- Round-16 (owner): the doughnut became
@@ -844,6 +852,7 @@
           <div id="ins-share-tally" class="ins-share-tally"></div>
           <div id="ins-share-legend" class="ans-tally-legend" style="display:none;"></div>
         </div>
+        </div><!-- /.ins-detail-row -->
         </details>
         <!-- /A2 Team detail -->
 
@@ -876,8 +885,18 @@
                     title="Open the My Department Missed Calls detail for this department and date range.">See missed calls &#8594;</button>
           </div>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
-          <div id="ins-qh-tiles" class="pr-kpi-row"></div>
-          <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
+          <!-- R16d (owner): the KPI tiles STACK in a left column beside the
+               per-queue table (two-thirds right) -- the 3 tiles filled only
+               half the 6-col .pr-kpi-row grid and the table is narrow, so
+               side-by-side reclaims a screen of vertical space. The columns
+               wrap on narrow viewports (flex-wrap), where the tiles return
+               to a horizontal grid (.ins-qh-cols media query; the class is
+               NOT .ins-qh-row -- that's the queue table's <tr> class). -->
+          <div class="ins-qh-cols">
+            <div class="ins-qh-left">
+              <div id="ins-qh-tiles" class="pr-kpi-row"></div>
+              <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
+            </div>
           <!-- The per-queue abandoned-% trend chart now lives in the
                consolidated trend chart below (its "Abandoned % by Queue"
                tab); this section keeps the tiles + per-queue detail table. -->
@@ -889,17 +908,18 @@
                instances are untouched. The .num / .qcd-warn-* classes the JS
                row builder emits stay harmless: ds-table right-aligns every
                cell except the first, and the warn classes are color-only. -->
-          <div class="ds-card" style="overflow:hidden; margin:8px 0 16px;">
-            <table class="ds-table">
-              <thead><tr>
-                <th>Queue</th>
-                <th class="num">Total Calls</th>
-                <th class="num">Abandoned</th>
-                <th class="num">Abandoned %</th>
-                <th class="num">Violations</th>
-              </tr></thead>
-              <tbody id="ins-qh-tbody"></tbody>
-            </table>
+            <div class="ds-card ins-qh-table-card" style="overflow:auto;">
+              <table class="ds-table">
+                <thead><tr>
+                  <th>Queue</th>
+                  <th class="num">Total Calls</th>
+                  <th class="num">Abandoned</th>
+                  <th class="num">Abandoned %</th>
+                  <th class="num">Violations</th>
+                </tr></thead>
+                <tbody id="ins-qh-tbody"></tbody>
+              </table>
+            </div>
           </div>
           <!-- Consolidation Phase 1 (gap 3): the per-day numeric table the QCD
                modal shows, collapsed by default to keep the section compact.

@@ -1300,6 +1300,27 @@
     wrap.style.display = '';
     wrap.classList.add('dm-loading');
     dsFrostShow_(wrap, 'Loading missed calls…');
+    deptMissedDetailFrost_(true);   // R16c: the detail block loads in step
+  }
+
+  // R16c (owner): the queue-only-abandoned + per-agent-timeline DETAIL block
+  // (#dept-missed-detail -- a SIBLING of the chart section, so the section
+  // frost never covered it) sat stale with no signal while the fetch ran.
+  // One overlay across the whole block unifies the page's loading states.
+  // Frosted only when it's showing a prior render (hidden first loads have
+  // nothing stale to signal -- the table's frost-with-content discipline);
+  // its static children (qoWrap/agWrap) are what re-render, so the overlay
+  // on the wrapper survives until the handlers clear it.
+  function deptMissedDetailFrost_(show) {
+    const detail = $('dept-missed-detail');
+    if (!detail) return;
+    if (show) {
+      if (detail.style.display !== 'none' && detail.innerHTML) {
+        dsFrostShow_(detail, 'Loading missed calls…');
+      }
+    } else {
+      dsFrostHide_(detail);
+    }
   }
 
   /**
@@ -1414,16 +1435,19 @@
     const errNote = $('dept-missed-error'); if (errNote) errNote.style.display = 'none';
     const chartRow = $('dept-missed-chart-row'); if (chartRow) chartRow.style.display = '';
     dsFrostShow_(wrap, 'Loading missed calls…');
+    deptMissedDetailFrost_(true);   // R16c: detail block loads in step
     google.script.run
       .withSuccessHandler(function (data) {
         if (deptMissedReqKey !== key) return;   // stale response
         dsFrostHide_(wrap);
+        deptMissedDetailFrost_(false);
         wrap.classList.remove('dm-loading');
         deptMissedRender_(data, from, to);
       })
       .withFailureHandler(function (err) {
         if (deptMissedReqKey !== key) return;
         dsFrostHide_(wrap);
+        deptMissedDetailFrost_(false);
         wrap.classList.remove('dm-loading');
         // Disarm the one-shot launcher/deep-link scroll: the render it was
         // waiting for isn't coming, and a leaked flag would yank the page

@@ -16,7 +16,14 @@ untouched across every phase. This is a client-side restructure.
 
 1. **Laziness is non-negotiable.** The Insights region's RPC fires on FIRST
    fold open, never on dept-page load — otherwise every manager pays a second
-   2–5s Apps Script round trip on every visit. Cold dept-page load stays
+   2–5s Apps Script round trip on every visit.
+   ⚠ **SUPERSEDED BY N1 (below) — this was the M1–M4 contract.** The owner
+   ruled for one continuous page, so the report now loads WITH the dept page
+   and the contract narrowed to "never for Overview-only visits." The cost
+   it was written to avoid is real and was paid down separately, not
+   accepted: PERF-1 warms the dept-default window and PERF-2 fires the
+   report RPC in parallel with the roster load. Read the N1 section before
+   treating this rule as current. Cold dept-page load stays
    byte-identical to the pre-merge page.
 2. **"One report run is one department" survives.** Parent depts (CSR /
    Sales / Power) see a COMBINED agent table but Insights runs one dept;
@@ -188,7 +195,8 @@ no toggle. So:
   re-measures on region open.
 - `npm run ci:ui` must keep asserting the Insights surfaces at every phase —
   the drivers were kept on the lens-switcher path in M1 precisely so the gate
-  never goes blind.
+  never goes blind. (Post-N1 they arrive on `#my-dept-btn` alone: the region
+  is open and generating on dept entry, and the switcher no longer exists.)
 - Losing the "Insights in its own browser tab beside the table" workflow is
   accepted (post-merge that's scrolling); the Open-in-new-tab button still
   deep-links to the region.

@@ -483,22 +483,22 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   });
   offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
 
-  // Cohort-shared tally unit across every queue line (the web report's
-  // ansTallyUnitFor_ ladder, replicated server-side; 0 = no volume).
-  let tallyUnit = 0;
-  (function () {
-    let max = 0;
-    depts.forEach(function (d) { deptQueues(d).forEach(function (q) {
-      const t = (Number(q.totalAnswered) || 0) + (Number(q.abandoned) || 0);
-      if (t > max) max = t;
-    }); });
-    if (!max) return;
+  // R16d (owner): the tally unit is PER SECTION (dept + its children), not
+  // cohort-wide. One shared unit let the busiest dept (~350 calls/day) set a
+  // block size that rendered a quiet queue (~8/day) as a sliver -- but the
+  // tally's job is each queue's answered/abandoned MIX, and cross-dept
+  // magnitude is already carried by the Total column + the banner call
+  // counts. Each section discloses its own block size on the banner when a
+  // block is worth more than one call. Ladder = the web report's
+  // ansTallyUnitFor_, replicated server-side; 0 = no volume.
+  const tallyUnitFor_ = function (max) {
+    if (!max) return 0;
     const ladder = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
     for (let i = 0; i < ladder.length; i++) {
-      if (Math.ceil(max / ladder[i]) <= 36) { tallyUnit = ladder[i]; return; }
+      if (Math.ceil(max / ladder[i]) <= 36) return ladder[i];
     }
-    tallyUnit = ladder[ladder.length - 1];
-  })();
+    return ladder[ladder.length - 1];
+  };
   // Worst-first dept order (EMAIL ONLY).
   // R12-22 (owner): sections are PARENT-GROUPED like the web report --
   // Spanish nests under CSR, PAP under Sales, PAK under Power (the payload's
@@ -565,10 +565,13 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // per-row color already carry it. (offenders still feed the preheader.)
 
   // ---- KPI row ----
+  // R16c (owner): every tile centers its content -- the sub-line-less
+  // "Queues in viol." tile read awkward left-aligned, and centering only
+  // it would have broken the row's symmetry.
   const kpi = function (label, value, bg, bd, labelColor, valColor, pad, subHtml) {
     return '<td class="kpi" width="25%" valign="top" style="' + (pad || '') + '">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:10px;"><tr>'
-      + '<td class="kpi-cell" style="padding:12px 14px;">'
+      + '<td class="kpi-cell" align="center" style="padding:12px 14px;text-align:center;">'
       + '<div style="font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:' + labelColor + ';">' + esc(label) + '</div>'
       + '<div style="font:bold 26px Arial,sans-serif;color:' + valColor + ';padding-top:2px;">' + esc(value) + '</div>'
       + (subHtml || '')
@@ -637,7 +640,9 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     let tail;
     if (pAvg > 0) {
       const dPct = (mAvg - pAvg) / pAvg * 100;
-      tail = esc(pLbl) + ' ' + Math.round(pAvg) + ' '
+      // R16c (owner): '/day' on the PRIOR value too -- a bare "Jun 100"
+      // read as a date rather than the prior month's per-day average.
+      tail = esc(pLbl) + ' ' + Math.round(pAvg) + '/day '
         + (dPct >= 0 ? '&#9650;' : '&#9660;') + ' ' + Math.abs(dPct).toFixed(1) + '%';
     } else {
       tail = 'new this month';
@@ -645,11 +650,18 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     return '<div style="font:10px ' + sans + ';color:' + C.mut + ';padding-top:2px;white-space:nowrap;">'
       + 'MTD &Oslash; ' + mAvg + '/day &middot; ' + tail + '</div>';
   };
-  const abanOver = gPct >= 5;
+  // R16c/R16d (owner): the daily company aban VALUE color-codes on its own
+  // tier ladder -- green <=3%, amber 3-4%, red >4% (tighter than the 5%
+  // queue violation line: the company-wide blend should sit well under it).
+  // R16d: when the value goes RED the CARD tints light red too (the same
+  // badTile treatment as the Queues-in-viol card); green/amber keep the
+  // neutral tile.
+  const gValColor = gPct <= 3 ? C.good : (gPct <= 4 ? C.watch : C.bad);
+  const abanOver = gValColor === C.bad;
   const kpiRow = '<tr><td style="padding:16px 26px 4px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
-    + kpi('Company aban %', (gt.abandonedPctStr || gPct.toFixed(1) + '%'),
+    + kpi('Daily Company Aban %', (gt.abandonedPctStr || gPct.toFixed(1) + '%'),
         abanOver ? C.badTile : C.neuTile, abanOver ? C.badTileB : C.neuTileB,
-        abanOver ? '#8a5a44' : '#6b7580', abanOver ? C.bad : C.ink, 'padding-right:6px;', mtdAbanSub)
+        abanOver ? '#8a5a44' : '#6b7580', gValColor, 'padding-right:6px;', mtdAbanSub)
     + kpi('Total calls', gTotal, C.neuTile, C.neuTileB, '#6b7580', C.ink, 'padding:0 3px;', mtdCallsSub)
     + kpi('Queues in viol.', overCount, overCount > 0 ? C.badTile : C.neuTile, overCount > 0 ? C.badTileB : C.neuTileB,
         overCount > 0 ? '#8a5a44' : '#6b7580', overCount > 0 ? C.bad : C.ink, 'padding:0 3px;')
@@ -680,7 +692,13 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     kids.forEach(function (c) {
       deptQueues(c).forEach(function (q) { rowDefs.push({ q: q, sub: c.dept }); });
     });
-    const singleRow = rowDefs.length === 1;
+    // R16c (owner): the banner-only collapse for single-queue sections is
+    // RETIRED -- every queue now renders its own data row beneath the
+    // banner, so the visual TALLY (which only queue rows carry) appears for
+    // every queue, not just sub-queue depts. The banner keeps the section
+    // rollup; the row carries the tally + per-queue viol + MTD pace line.
+    // Some numbers repeat on single-queue sections -- accepted for the
+    // uniform structure (the old dedup was why the tally went missing).
     // Owner round: the dept name is a LINK into that dept's My Department page.
     //
     // Authorization is NOT delegated to this link, and must never be read as if
@@ -698,10 +716,9 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     const deptLink = dashUrl
       ? (dashUrl + '#/dept?dept=' + encodeURIComponent(d.dept))
       : '';
-    const deptLabel = esc(d.dept)
-      + (singleRow && rowDefs[0].q.queue !== d.dept
-          ? ' <span style="font-weight:normal;font-size:11px;color:' + C.mut + ';">&middot; ' + esc(rowDefs[0].q.queue) + '</span>'
-          : '');
+    // (R16c: the single-queue banner no longer carries the queue name inline
+    // -- the queue's own row below shows it.)
+    const deptLabel = esc(d.dept);
     // Underline-free + inherited color so the banner looks unchanged; without
     // the explicit color some clients paint it link-blue against the tinted
     // strip. Falls back to plain text when DASHBOARD_URL is unset, exactly as
@@ -718,6 +735,14 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     // opposite of what the column is for. Rendered whenever > 0, on every
     // section, so it does not depend on today's tier.
     const secViolMtd = Number(sec.violMtd) || 0;
+    // R16d: this section's own tally unit (see tallyUnitFor_ above).
+    const secUnit = tallyUnitFor_(rowDefs.reduce(function (mx, rd) {
+      const tot = (Number(rd.q.totalAnswered) || 0) + (Number(rd.q.abandoned) || 0);
+      return tot > mx ? tot : mx;
+    }, 0));
+    const secUnitNote = secUnit > 1
+      ? ' &middot; <span style="color:' + C.mut + ';">block &asymp; ' + secUnit + ' calls</span>'
+      : '';
     // Owner round: the section's MTD violations move OUT of the summary text and
     // into the real Viol column, so the banner reads "4" under the "Viol (MTD)"
     // header instead of repeating the label as " 4 viol MTD". That means the
@@ -727,12 +752,11 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     tbl += '<tr>'
       + '<td colspan="3" style="padding:0;border-top:1px solid ' + C.rowline + ';">'
       + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + stripBg + ';border-left:4px solid ' + dt.color + ';border-collapse:separate;"><tr>'
-      // A banner-only section (one queue) has no queue row to carry the MTD
-      // pace sub-line, so it rides the banner name instead (the banner IS
-      // that queue's line). Multi-row sections keep it on the queue rows.
-      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + (singleRow ? qMtdSubEmail(rowDefs[0].q) : '') + '</td>'
+      // (R16c: the MTD pace line lives on the queue rows for EVERY section
+      // now -- the banner-only collapse that parked it here is retired.)
+      +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
-      +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
+      +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>' + secUnitNote
       +   '</td>'
       + '</tr></table></td>'
       + '<td align="right" style="background:' + stripBg + ';border-top:1px solid ' + C.rowline
@@ -741,7 +765,6 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       +   (secViolMtd > 0 ? esc(String(secViolMtd)) : '')
       + '</td>'
       + '</tr>';
-    if (singleRow) return;   // the banner IS the row -- no duplicate numbers
     rowDefs.forEach(function (rd) {
       const q = rd.q;
       const pct = Number(q.abandonedPct) || 0;
@@ -754,7 +777,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       tbl += '<tr>'
         + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + qMtdSubEmail(q) + '</td>'
         + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
-        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (tallyUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, tallyUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (secUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, secUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
         + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
         + '</tr>';
     });
@@ -769,7 +792,8 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
     + '<td align="right" style="padding:9px 8px;font:bold 12px ' + sans + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
     + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true)
-    + (tallyUnit > 1 ? '<div style="font:10px ' + sans + ';color:' + C.mut + ';padding-top:3px;">each block &asymp; ' + tallyUnit + ' calls</div>' : '')
+    // (R16d: the "each block ≈ N" note moved to each section's banner --
+    // the unit is per-section now, so a single company-row note would lie.)
     + '</td>'
     + '<td align="right" style="padding:9px 12px;border-top:2px solid ' + C.ink + ';">&nbsp;</td>'
     + '</tr>';

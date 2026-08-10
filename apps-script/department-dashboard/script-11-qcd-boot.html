@@ -544,7 +544,9 @@
       let tail;
       if (pAvg > 0) {
         const dPct = (mAvg - pAvg) / pAvg * 100;
-        tail = pLbl + ' ' + Math.round(pAvg)
+        // R16c (owner): '/day' on the PRIOR value too -- a bare "Jul 38"
+        // read as a date rather than the prior month's per-day average.
+        tail = pLbl + ' ' + Math.round(pAvg) + '/day'
           + ' <span class="qcd-q-sub-delta">' + (dPct >= 0 ? '▲' : '▼') + ' '
           + Math.abs(dPct).toFixed(1) + '%</span>';
       } else {

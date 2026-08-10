@@ -778,26 +778,14 @@
       });
     }
 
-    // Export dropdown -- same pattern as Individual / Performance.
-    const exportBtn  = $('ins-export-btn');
-    const exportMenu = $('ins-export-menu');
-    if (exportBtn && exportMenu) {
-      exportBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        insSetExportMenuOpen_(exportMenu.style.display === 'none');
-      });
-      exportMenu.addEventListener('click', function (e) {
-        const item = e.target.closest('[data-action]');
-        if (!item) return;
-        const action = item.getAttribute('data-action');
-        insSetExportMenuOpen_(false);
-        if (action === 'csv')        insDownloadCsv_();
-        else if (action === 'copy')  insCopyImage_();
-        else if (action === 'email') insEmailReport_();
-        else if (action === 'email-summary') insEmailReport_({ summary: true });   // Phase 2 #9
-        else if (action === 'print') insPrint_();
-      });
+    // (R16c, owner: the region's own Export dropdown + ↻ are REMOVED -- the
+    // dept controls' Export menu carries the Insights actions as a labeled
+    // group (script-2 dispatches to the same insDownloadCsv_/insCopyImage_/
+    // insEmailReport_/insPrint_ helpers, hoisted) and the dept Refresh
+    // re-runs an open region. The Views wiring below was nested inside the
+    // export-button guard and is now standalone.)
 
+    {
       // Phase 2 #8: Views menu (saved views + copy share link). Rebuilt on
       // every open so the list reflects saves/deletes; clicks inside the
       // save row keep the menu open.
@@ -847,16 +835,6 @@
           }
         });
       }
-      document.addEventListener('click', function (e) {
-        if (exportMenu.style.display === 'none') return;
-        if (exportMenu.contains(e.target) || e.target === exportBtn) return;
-        insSetExportMenuOpen_(false);
-      });
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && exportMenu.style.display !== 'none') {
-          insSetExportMenuOpen_(false);
-        }
-      });
     }
   }
 
@@ -2217,17 +2195,34 @@
         dailyTbody.innerHTML = '';
         if (dailyWrap) dailyWrap.style.display = 'none';
       }
-      // The ✕ on the scope chip returns to the dept-total series. Wired once
-      // (the <details> is static markup); stopPropagation so the click can't
-      // toggle the <details> shut.
+      // Delegated wiring, once (the <details> is static markup; rows are
+      // re-rendered per report): the scope-chip ✕ (single mode) and the
+      // R16c day-row expand/collapse (multi mode). stopPropagation so
+      // neither click can toggle the <details> shut.
       if (dailyWrap && !dailyWrap._insScopeWired) {
         dailyWrap.addEventListener('click', function (e) {
           var clr = e.target.closest('.ins-qh-scope-clear');
-          if (!clr) return;
+          if (clr) {
+            e.preventDefault();
+            e.stopPropagation();
+            insQhDailyScope_ = '';
+            insQhDailyRender_();
+            return;
+          }
+          var dayRow = e.target.closest('tr.ins-daily-day-row');
+          if (dayRow && dailyWrap.contains(dayRow)) {
+            e.preventDefault();
+            insQhDayToggle_(dayRow);
+          }
+        });
+        // F13: Enter/Space expands a day too -- the per-queue rows behind
+        // the day toggle have no other route.
+        dailyWrap.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          var dayRow = e.target.closest && e.target.closest('tr.ins-daily-day-row');
+          if (!dayRow || !dailyWrap.contains(dayRow)) return;
           e.preventDefault();
-          e.stopPropagation();
-          insQhDailyScope_ = '';
-          insQhDailyRender_();
+          insQhDayToggle_(dayRow);
         });
         dailyWrap._insScopeWired = true;
       }
@@ -2240,14 +2235,17 @@
     return insQhDailyQueueMeta_.length >= 2 && insQhDailyAll_.length > 0;
   }
 
-  // Round-16b: MULTI-mode rows -- for each date on the shared zero-filled
-  // axis (F-15), one tally row per queue (Queue-health payload order, sub-
-  // queues tagged with their dept) then an "All queues" total row from the
-  // dept-total dailySeries (the queuesForDept_ rollup, so it includes the
-  // sub-queues). Total rows keep the CLASSIC proportional bar per the house
-  // tally convention -- an aggregate would dwarf the queue-scale blocks.
+  // Round-16b / R16c (owner): MULTI-mode rows -- for each date on the shared
+  // zero-filled axis (F-15), ONE visible "All queues" DAY row (the dept-total
+  // dailySeries -- the queuesForDept_ rollup, classic proportional bar per
+  // the house tally convention) that toggles the per-queue detail rows
+  // (Queue-health payload order, sub-queues tagged with their dept) hidden
+  // beneath it. Default = every day COLLAPSED, so the table reads as one
+  // totals row per day; a click (or Enter/Space -- the F13 discipline) on
+  // the day row expands it, and the violation-date drill expands its day
+  // before flashing the queue row (insJumpToDailyRow_).
   // Returns { html, unit }; the cohort tally unit comes from the per-queue
-  // rows only, for the same reason.
+  // rows only -- an aggregate would dwarf the queue-scale blocks.
   function insQhDailyMultiRowsHtml_() {
     const queues = insQhDailyQueueMeta_.map(function (m) {
       const byDate = {};
@@ -2264,15 +2262,24 @@
     const unit = ansTallyUnitFor_(unitRows);
     let html = '';
     insQhDailyAll_.forEach(function (d) {
-      queues.forEach(function (m, qi) {
+      const dViol = Number(d.violations) || 0;
+      html += '<tr class="ins-daily-day-row" data-date="' + escapeHtml(d.date) + '"'
+           +   ' tabindex="0" role="button" aria-expanded="false"'
+           +   ' title="Show this day’s per-queue breakdown">'
+           +   '<td><span class="ins-daily-caret" aria-hidden="true">&#9656;</span>' + escapeHtml(d.date) + '</td>'
+           +   '<td class="ins-qh-daily-queue-cell">All queues</td>'
+           +   '<td class="num">' + fmtNumber(d.totalCalls) + '</td>'
+           +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(d, null) + '</td>'
+           +   '<td class="' + (dViol > 0 ? 'num qcd-warn-light' : 'num') + '">' + fmtNumber(d.violations) + '</td>'
+           + '</tr>';
+      queues.forEach(function (m) {
         // The axes are zero-filled to the same dates (F-15); the empty
         // fallback just keeps a missing row from breaking the group.
         const r = m.byDate[d.date] || { date: d.date, totalCalls: 0, totalAnswered: 0,
           abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 };
         const viol = Number(r.violations) || 0;
-        html += '<tr data-date="' + escapeHtml(d.date) + '" data-queue="' + escapeHtml(m.queue) + '"'
-             +   (qi === 0 ? ' class="ins-daily-group-head"' : '') + '>'
-             +   '<td>' + (qi === 0 ? escapeHtml(d.date) : '') + '</td>'
+        html += '<tr class="ins-daily-sub-row" data-date="' + escapeHtml(d.date) + '" data-queue="' + escapeHtml(m.queue) + '">'
+             +   '<td></td>'
              +   '<td class="ins-qh-daily-queue-cell">' + escapeHtml(m.queue)
              +     (m.subDept ? ' <span class="ins-daily-q-sub">&middot; ' + escapeHtml(m.subDept) + '</span>' : '')
              +   '</td>'
@@ -2281,16 +2288,22 @@
              +   '<td class="' + (viol > 0 ? 'num qcd-warn-light' : 'num') + '">' + fmtNumber(r.violations) + '</td>'
              + '</tr>';
       });
-      const dViol = Number(d.violations) || 0;
-      html += '<tr class="ins-daily-total-row" data-date="' + escapeHtml(d.date) + '">'
-           +   '<td></td>'
-           +   '<td class="ins-qh-daily-queue-cell">All queues</td>'
-           +   '<td class="num">' + fmtNumber(d.totalCalls) + '</td>'
-           +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(d, null) + '</td>'
-           +   '<td class="' + (dViol > 0 ? 'num qcd-warn-light' : 'num') + '">' + fmtNumber(d.violations) + '</td>'
-           + '</tr>';
     });
     return { html: html, unit: unit };
+  }
+
+  // R16c: expand/collapse one day's per-queue rows. `force` pins a state
+  // (the violation drill passes true); a bare call toggles.
+  function insQhDayToggle_(dayRow, force) {
+    const tbody = $('ins-qh-daily-tbody');
+    if (!tbody || !dayRow) return;
+    const iso = dayRow.getAttribute('data-date') || '';
+    const open = typeof force === 'boolean'
+      ? force : dayRow.getAttribute('aria-expanded') !== 'true';
+    dayRow.setAttribute('aria-expanded', open ? 'true' : 'false');
+    dayRow.classList.toggle('is-open', open);
+    tbody.querySelectorAll('tr.ins-daily-sub-row[data-date="' + iso + '"]')
+      .forEach(function (tr) { tr.classList.toggle('is-open', open); });
   }
 
   // Render the Daily breakdown table. MULTI mode (2+ queues with daily rows)
@@ -2346,6 +2359,10 @@
     const wrap = $('ins-qh-daily');
     const rowsBody = $('ins-qh-daily-tbody');
     if (!wrap || !rowsBody || wrap.style.display === 'none') return;
+    // R16c: in multi mode the days default COLLAPSED -- expand the clicked
+    // date's group first, so the queue row exists on screen to land on.
+    const dayHead = rowsBody.querySelector('tr.ins-daily-day-row[data-date="' + iso + '"]');
+    if (dayHead) insQhDayToggle_(dayHead, true);
     let dayRow = null;
     if (queue) {
       const qSel = String(queue).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -4043,7 +4060,7 @@
     showToast('View “' + name + '” saved.', 'success');
   }
 
-  function insEmailReport_(opts) {
+  function insEmailReport_() {
     if (!insLastData || !insLastData.meta) {
       showToast('Generate a report first.', 'error');
       return;
@@ -4068,8 +4085,8 @@
         agents:     m.agents || [],
         priorFrom:  m.priorFrom || '',
         priorTo:    m.priorTo || '',
-        // Phase 2 #9: 'summary' = takeaway + tiles + behind-team list only.
-        style:      (opts && opts.summary) ? 'summary' : '',
+        // (R16c: the separate 'summary' style is retired -- ONE consolidated
+        // email: takeaway + tiles + behind-team list + active-agent table.)
       });
   }
 

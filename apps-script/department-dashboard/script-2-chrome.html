@@ -213,7 +213,37 @@
 
     initDatePresets_();
 
-    $('refresh-btn').addEventListener('click', refresh);
+    // R16c (owner): ONE Refresh for the whole page -- the Insights header's
+    // own ↻ is removed, so the explicit button also re-runs an open,
+    // rendered region over the SAME window. (A changed window/dept already
+    // re-runs via insSyncToDeptWindow_ inside refresh(); this covers the
+    // same-window "give me fresh numbers" click, which the sync deliberately
+    // no-ops. Deferred a tick so refresh()'s own dispatches go out first;
+    // the armed-run guard inside the sync machinery keeps this from ever
+    // doubling a converging run -- runInsReport's F10 token also makes the
+    // last request win.)
+    $('refresh-btn').addEventListener('click', function () {
+      refresh();
+      setTimeout(function () {
+        try {
+          var reg = $('dept-insights-region');
+          if (!reg || !reg.open) return;
+          if (typeof insLastData === 'undefined' || !insLastData || !insLastData.meta) return;
+          // A run is already IN FLIGHT (the convergence sync fired inside
+          // refresh() -- runInsReport disables the generate button
+          // synchronously) -> nothing to add.
+          var gen = $('ins-generate-btn');
+          if (gen && gen.disabled) return;
+          // Rendered window differs from the inputs -> the sync owns the
+          // re-run (or a programmatic run is armed); only the SAME-window
+          // "give me fresh numbers" case needs this explicit pass.
+          var f = $('from-date'), t = $('to-date');
+          if (!f || !t || !f.value || !t.value) return;
+          if (insLastData.meta.from !== f.value || insLastData.meta.to !== t.value) return;
+          if (typeof runInsReport === 'function') runInsReport();
+        } catch (e) { /* best-effort -- the summary refresh already ran */ }
+      }, 0);
+    });
     // R10-2: publish the sticky controls strip's real height as a CSS var so
     // the QCD side card's sticky top clears it (styles.html .dept-side).
     // ResizeObserver tracks wraps (admin selector row, narrow viewports);
@@ -256,7 +286,18 @@
       };
       deptExportBtn.addEventListener('click', function (e) {
         e.stopPropagation();
-        setDeptExportOpen(deptExportMenu.style.display === 'none');
+        var opening = deptExportMenu.style.display === 'none';
+        // R16c: the Insights group appears once a report has rendered --
+        // its actions read insLastData (script-8, hoisted), so an empty
+        // region offers only the table items.
+        if (opening) {
+          var insItems = $('dept-export-ins-items');
+          if (insItems) {
+            insItems.style.display =
+              (typeof insLastData !== 'undefined' && insLastData) ? '' : 'none';
+          }
+        }
+        setDeptExportOpen(opening);
       });
       deptExportMenu.addEventListener('click', function (e) {
         var item = e.target.closest('[data-action]');
@@ -265,6 +306,12 @@
         var action = item.getAttribute('data-action');
         if (action === 'csv') exportTableCsv_();
         else if (action === 'email') deptEmailReport_();   // Round-16: EmailKit summary
+        // R16c: the Insights actions, relocated from the region's own
+        // (removed) Export menu. Same handlers, hoisted from script-8.
+        else if (action === 'ins-csv')   insDownloadCsv_();
+        else if (action === 'ins-copy')  insCopyImage_();
+        else if (action === 'ins-email') insEmailReport_();
+        else if (action === 'ins-print') insPrint_();
       });
       document.addEventListener('click', function (e) {
         if (deptExportMenu.style.display === 'none') return;
