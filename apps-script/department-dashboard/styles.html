@@ -2278,6 +2278,19 @@
     color: var(--warn);
     font-weight: 500;
   }
+  /* R17a: rings of ONE abandoned call group under a warm left rail (the
+     wrap <li> exists only because a <ul> may not nest directly in a <ul>;
+     it must stay visually inert). The rail + tint mark the group; the
+     explainer is the group's hover title -- no visible caption (owner). */
+  .agent-card .missed-list li.ms-callgroup-wrap { padding: 0; border-bottom: 1px solid var(--paper-2); }
+  .agent-card .missed-list .ms-callgroup {
+    list-style: none; margin: 3px 0; padding: 2px 0 2px 9px;
+    border-left: 2px solid color-mix(in srgb, var(--warn) 55%, transparent);
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--warn) 5%, transparent);
+    cursor: help;
+  }
+  .agent-card .missed-list .ms-callgroup > li { border-bottom: 0; }
   .agent-card .missed-list .date {
     color: var(--muted);
     margin-right: 6px;

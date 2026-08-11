@@ -105,18 +105,34 @@ days.forEach((dIso, di) => {
     // Missed section has a chart + timelines + journeys.
     if (missed > 0 && DEPT_OF[agent] === 'CSR' && di >= days.length - 22) {
       const slots = new Array(19).fill('');
-      const times = [];
+      const picks = [];   // { slot, t } per generated ring
       for (let k = 0; k < Math.min(missed, 4); k++) {
         const slot = 1 + Math.floor(rnd() * 16);
         const hh = 8 + Math.floor(slot / 2), mm = (slot % 2) * 30 + Math.floor(rnd() * 29);
         const t = (hh > 12 ? hh - 12 : hh) + ':' + (mm < 10 ? '0' + mm : mm) + ':15 ' + (hh >= 12 ? 'PM' : 'AM');
         slots[slot] = slots[slot] ? slots[slot] + ',' + t : t;
-        times.push(t);
+        picks.push({ slot: slot, t: t });
       }
       row.slots = slots;
-      if (di >= days.length - 8 && times.length >= 2) {   // some abandoned parents recently
-        row.abdIds = times.slice(0, 2).map((_, i2) => String(1762242202000 + di * 100 + i2)).join(',');
-        row.abdTimes = times.slice(0, 2).join(',');
+      if (di >= days.length - 8 && picks.length >= 2) {   // some abandoned parents recently
+        // R17a: alternate between a RE-RUNG parent -- one call, two rings 40s
+        // apart (a SIBLING ring appended to the same slot so the timeline
+        // carries both, chronologically ADJACENT, sharing one id: the shape
+        // the agent card groups) -- and two DISTINCT abandoned calls (no
+        // group), so both shapes of the F-2 lockstep are exercised.
+        // (the LATEST day always takes the re-rung branch -- it is the dept
+        // page's default window, which is where drive-smoke asserts the group)
+        if (di % 2 === 0 || di === days.length - 1) {
+          const p0 = picks[0];
+          const tb = p0.t.replace(':15 ', ':55 ');
+          slots[p0.slot] += ',' + tb;
+          const id = String(1762242202000 + di * 100);
+          row.abdIds = [id, id].join(',');
+          row.abdTimes = [p0.t, tb].join(',');
+        } else {
+          row.abdIds = picks.slice(0, 2).map((_, i2) => String(1762242202000 + di * 100 + i2)).join(',');
+          row.abdTimes = picks.slice(0, 2).map(function (p) { return p.t; }).join(',');
+        }
       }
     }
     dqeRows.push(dqeRow(row));

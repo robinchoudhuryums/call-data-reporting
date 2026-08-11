@@ -159,6 +159,31 @@ async function horizontalOverflow(page) {
       }
     }
 
+    // R17a: rings of one abandoned call group on the agent cards -- the
+    // fixture seeds a re-rung parent (same id twice), so at least one group
+    // must render, with the id badge ONCE inside it (deduping the repeat)
+    // and the explainer as a hover title, not visible text.
+    {
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(4000);
+      const groups = await page.$$eval('#dept-missed-detail .ms-callgroup', function (ns) {
+        return ns.map(function (n) {
+          return { rings: n.querySelectorAll('li').length,
+                   badges: n.querySelectorAll('.parent-id').length,
+                   title: n.getAttribute('title') || '',
+                   captionText: (n.textContent.match(/same call/i) || []).length };
+        });
+      }).catch(function () { return []; });
+      record(role + ': re-rung abandoned call renders as ONE group', groups.length >= 1,
+        'groups=' + groups.length);
+      if (groups.length) {
+        const g = groups[0];
+        record(role + ': group carries one id badge + a hover explainer, no visible caption',
+          g.rings >= 2 && g.badges === 1 && /rang \d+×/.test(g.title) && g.captionText === 0,
+          JSON.stringify(g));
+      }
+    }
+
     // F10: the escalations nav badge used to be append-only, so every render
     // path that re-ran it could stack a second count onto the tab. Reload the
     // list (each mutation reloads it too) and assert the badge stays singular.

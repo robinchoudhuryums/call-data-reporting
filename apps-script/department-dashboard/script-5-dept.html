@@ -733,15 +733,51 @@
     const cutLow = useTiers ? missedQuantile_(totalsAsc, 0.34) : -Infinity;
 
     return sorted.map(function (a) {
-      const itemsHtml = a.missedTimes.map(function (m) {
-        const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
-        const cls = m.abandoned ? 'abandoned' : '';
-        const siren = m.abandoned ? ' 🚨' : '';
-        return '<li class="' + cls + '">'
-             +   dateLabel + escapeHtml(m.label) + siren
+      // R17a (owner): CONSECUTIVE entries sharing (date, parentId) are one
+      // CALL that rang this agent repeatedly before the caller gave up (the
+      // F-2 lockstep emits one AF entry per ring, each paired to the same AD
+      // parent id) -- group them under a warm left rail, with the siren + the
+      // id badge/path drill rendered ONCE on the last ring instead of
+      // repeated per ring. The explainer lives in the group's hover title
+      // (owner: no visible caption). Only abandoned rings carry an id --
+      // plain missed rings (answered elsewhere) have none in DQE, so they
+      // stay ungrouped; that is the data, not a rendering choice.
+      const dateLabelOf = function (m) {
+        return m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
+      };
+      const singleLi = function (m) {
+        return '<li class="' + (m.abandoned ? 'abandoned' : '') + '">'
+             +   dateLabelOf(m) + escapeHtml(m.label) + (m.abandoned ? ' 🚨' : '')
              +   parentIdBadge(m.parentId, m.date)
              + '</li>';
-      }).join('');
+      };
+      let itemsHtml = '';
+      const times = a.missedTimes;
+      for (let ti = 0; ti < times.length;) {
+        const m = times[ti];
+        let tj = ti + 1;
+        while (m.parentId && tj < times.length
+               && times[tj].parentId === m.parentId && times[tj].date === m.date) tj++;
+        if (m.parentId && tj - ti >= 2) {
+          const group = times.slice(ti, tj);
+          const gTitle = 'Same call — rang ' + group.length
+            + '× before the caller hung up (call ID ' + String(m.parentId) + ')';
+          itemsHtml += '<li class="ms-callgroup-wrap">'
+            + '<ul class="ms-callgroup" title="' + escapeHtml(gTitle) + '">'
+            + group.map(function (g, gi) {
+                const last = gi === group.length - 1;
+                return '<li class="abandoned">'
+                  + dateLabelOf(g) + escapeHtml(g.label)
+                  + (last ? ' 🚨' + parentIdBadge(g.parentId, g.date) : '')
+                  + '</li>';
+              }).join('')
+            + '</ul></li>';
+          ti = tj;
+        } else {
+          itemsHtml += singleLi(m);
+          ti++;
+        }
+      }
 
       var tier = '', tierChip = '';
       if (useTiers) {
