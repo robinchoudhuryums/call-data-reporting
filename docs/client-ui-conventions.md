@@ -421,7 +421,14 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   not a text box. The same R17e pass made the abandons lens render
   CHRONOLOGICALLY (a display-only re-sort after the newest-N cap, so the
   truncation note stays true) and gave each lens in the daily-breakdown
-  detail row its own bordered card surface.
+  detail row its own bordered card surface. R17f adds two row treatments:
+  the missed-rings lens groups CONSECUTIVE same-parentId rings as a
+  connected run (warm rail + tint, id badge once, "rang N×" on the first
+  row — the R17a agent-card grouping applied to this lens; adjacency is the
+  key on purpose, a same-id ring later in the list is a re-rung call), and
+  the abandons lens carries a stage TICK per row (`.hd-stage`: warm = in
+  queue, accent = on hold, muted = IVR) — redundant with the facts text on
+  purpose (colorblind-safe).
   **R17d: the Calendar is available at EVERY window length.** The 14–366-day
   span rule now gates only the QUEUE metric (`queueHealth.dailySeries` is
   window-scoped); for the TEAM metrics a window that can't fill a calendar

@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
-## Latest session (R17e — post-deploy polish round from the owner's screenshot)
+## Latest session (R17f — follow-ups on the R17e round)
+Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests**, INV-16 green, UI gate 50/50 + 16/16 + 30/30 + 14/14. Increment 100. NOT yet PR'd — R17e + R17f ride together on the owner's word.
+- **Panel-1 tile values 15px → 18px** — R17c's shrink served a one-line split that has been two-line since that same round.
+- **Email tally widened instead of slimmed:** the "Abandoned %" column is 190px (was 150 — the Viol column had slack), block cells back to 4px+1px from R17e's 3px slivers, ceiling and 20-calls/block landing unchanged. The comment now carries the full width-budget math (25×5px + ~45px label + padding = 186 ≤ 190).
+- **Both lens tables gained a meaningful row treatment:** missed-rings groups CONSECUTIVE same-parentId rings as a connected run (warm rail, id badge once, "rang N×" — the R17a grouping applied here; adjacency is the key on purpose, a later same-id ring is a re-rung call), and the abandons lens carries a stage tick (warm = queue, accent = on hold, muted = IVR; redundant with the text on purpose).
+- **Where I left off:** committed + pushed. Deploy is Department Dashboard only. When the owner approves, PR + merge R17e+R17f together, then restart the branch from origin/main.
+
+## Prior session (R17e — post-deploy polish round from the owner's screenshot)
 Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests** (queue-report 39/39 after re-targeting three pins), INV-16 green, UI gate 50/50 + 16/16 + 30/30 + 14/14. Increment 99. NOT yet PR'd — owner reviewing.
 - **The one real bug: the Queue Call Data panel rendered HALF-width for every multi-queue dept.** The carousel is a single child of the `#dept-qcd-tiles` grid, and R17c's side-column `1fr 1fr` override put it in column 1 with its tiles overflowing the track. `.dept-qcd-carousel { grid-column: 1 / -1; }` — the span `.dept-qcd-queue-row` already had. Single-queue depts never showed it, which is why R17c's probes missed it.
 - **Daily-breakdown lenses:** each is its own bordered `--paper` card on the row's `--paper-2`; the abandons lens displays CHRONOLOGICALLY (display-only re-sort AFTER the newest-N cap, so the truncation note stays true — the SQL's DESC order is what the cap semantics need); `meta.reconcileNote` is a hover-ⓘ on the heading now, not a text box (the R16i ships-with-the-data rule survives, only the form changed).

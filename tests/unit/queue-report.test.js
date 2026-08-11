@@ -189,7 +189,7 @@ test('email HTML: over-threshold row fills red by its real share, full-strength 
   // abandoned blocks render FULL-strength red (soft #e8c4b2 stays reserved
   // for under-5% rows); the proportional %-width bar survives only on the
   // company-total row.
-  assert.match(html, /width="3" style="background:#b23a2c/);
+  assert.match(html, /width="4" style="background:#b23a2c/);
   assert.doesNotMatch(html, /width="100%" style="background:#b23a2c/);
 });
 
@@ -275,12 +275,12 @@ test('R16d: company-aban card tint follows the value tier; tally unit is per-sec
 });
 
 test('R16e/R17e: no tally row exceeds the 25-block width the email column can fit', function () {
-  // The block cells are width="3" (+1px gap) inside a ~150px column; past
-  // ~112px of natural cell width the renderer shrinks EVERY cell to fit, so
-  // blocks stop being uniform between rows. The unit ladder exists to keep
-  // the widest row under that threshold -- this pins the ceiling so a future
-  // ladder edit can't quietly re-introduce the squeeze (R17e slimmed the
-  // cells to buy the 25-block ceiling that lands 20 calls/block on a
+  // The block cells are width="4" (+1px gap) inside the 190px column; past
+  // the column's natural-width budget the renderer shrinks EVERY cell to
+  // fit, so blocks stop being uniform between rows. The unit ladder exists
+  // to keep the widest row under that threshold -- this pins the ceiling so
+  // a future ladder edit can't quietly re-introduce the squeeze (R17e/R17f:
+  // the 25-block ceiling + widened column land 20 calls/block on a
   // ~350-500-call queue day). Volumes spanning three orders of magnitude in
   // ONE section.
   const d = emailFixture();
@@ -294,10 +294,10 @@ test('R16e/R17e: no tally row exceeds the 25-block width the email column can fi
   ];
   const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
   // Count the block cells in each tally table (width="5" + a background).
-  const tallies = html.match(/<table role="presentation"[^>]*><tr>(?:<td width="3"[\s\S]*?)<\/tr><\/table>/g) || [];
+  const tallies = html.match(/<table role="presentation"[^>]*><tr>(?:<td width="4"[\s\S]*?)<\/tr><\/table>/g) || [];
   assert.ok(tallies.length >= 3, 'expected a tally per queue row, got ' + tallies.length);
   tallies.forEach(function (t) {
-    const blocks = (t.match(/<td width="3"/g) || []).length;
+    const blocks = (t.match(/<td width="4"/g) || []).length;
     assert.ok(blocks <= 25, 'a tally row rendered ' + blocks + ' blocks (max 25 fits the column)');
   });
   // ...and the smallest queue still shows at least one block (never hidden).
