@@ -1382,3 +1382,18 @@ behind the removed button.
   `#dept-insights-strip` Insights TEASER STRIP is retired outright
   (markup, `renderDeptInsightsStrip_`/`wireDeptInsightsStrip_`, `.dis-*`
   CSS) — the lens switcher is the route to Insights.
+- **R17c (owner, post-R17b deploy): side-panel fit + share deltas.** Both
+  side panels fit ONE viewport: the explainer text on each became a hover
+  `ⓘ` (`.side-hint-i`, title attr — no visible hint), panel 1's side-column
+  tiles go two-up with a two-line Total-Calls split (`.dept-qcd-split`,
+  side-scoped; the inline snapshot keeps its one-line form) at 15px, the
+  Team Rings cards compact (17px value, tighter padding) with **Avg ans
+  time as mm:ss** (`0:MM:SS` → `MM:SS`; an hour-reaching value keeps the
+  full form), and the condensed table caps at 240px — the aside's
+  `overflow:auto` stays only as a safety net. The share-of-answered rows
+  carry a NEUTRAL-gray delta vs the EQUAL share (100% ÷ answering agents)
+  — rendered ONLY on a whole-department run (no "Other agents" remainder):
+  with a subset selected the dept's answering-agent count is unknown and an
+  average over the shown agents would mislead, so the deltas hide rather
+  than guess; the legend states the baseline and each row's tooltip carries
+  the exact math.
