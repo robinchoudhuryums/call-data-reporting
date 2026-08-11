@@ -607,11 +607,11 @@
         </div>
         <div class="ir-hint" id="ins-prior-hint"></div>
         <div class="ir-hint">
-          Combines a <strong>department rollup</strong> (current vs the
-          comparison window picked above) with <strong>per-agent
-          cards</strong>, each comparing that agent to their own prior
-          period. Floaters appear as cards but don’t factor into the
-          department rollup.
+          Each <strong>agent card</strong> compares that agent&rsquo;s
+          selected window against the comparison window picked above
+          (the department-level rollup lives on the sticky
+          <strong>Team Rings Data</strong> side panel). Floaters appear
+          as cards but don&rsquo;t factor into department totals.
         </div>
 
         <div class="ir-section-title">2. Agents</div>
@@ -1301,7 +1301,7 @@
             <p>The dashboard has three pages, switched from the header:</p>
             <ul>
               <li><strong>Overview</strong> (the landing page) &mdash; a company-wide snapshot: a tile per department with answer rate, abandonment and a 30-day trend chart. Admins also see a company aggregate hero. Click a department tile to jump into it.</li>
-              <li><strong>My Department</strong> &mdash; everything about one department on a single page: the per-agent table, Queue Call Data tiles, the Missed Calls report, and the expandable <strong>Insights</strong> section (department rollup, per-agent comparisons, queue health, 12-month trends) at the bottom.</li>
+              <li><strong>My Department</strong> &mdash; everything about one department on a single page: the per-agent table, the two sticky side panels (Queue Call Data + Team Rings Data), the Missed Calls report, and the expandable <strong>Insights</strong> section (per-agent comparisons, queue health, 12-month trends) at the bottom.</li>
               <li><strong>Escalations</strong> &mdash; the escalation worklist for your department: filter, review each escalation's activity timeline, resolve with a note, or reopen.</li>
             </ul>
             <p>Other reports (Individual, plus the admin-vetted Inbound / Direct) open as modals over any page.</p>
@@ -1374,7 +1374,7 @@
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
             <p>Insights is a <strong>section of the My Department page</strong> &mdash; the deeper lens on the same department and dates, rendered at the bottom of the page and generated automatically with it. Just scroll down; collapsing the <strong>Insights</strong> heading tucks it away for the session, and your generated report stays put when you navigate away and come back.</p>
-            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Absolute</strong> bases (Gap = who&rsquo;s above/below the team average; Absolute = stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots). For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
+            <p>Per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: every delta compares against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Trend</strong> bases (Gap = who&rsquo;s above/below the team average; Trend = each agent&rsquo;s metric over time, one line each). The department-level rollup lives on the sticky <strong>Team Rings Data</strong> side panel. For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
               <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>

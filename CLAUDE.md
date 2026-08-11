@@ -475,12 +475,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the IR team-avg reads (IndividualReport.gs), `getDeptQueueExts_`
   (Data.gs).
 - **The Performance Report is RETIRED (PR->Insights consolidation).**
-  Its semantics live on in Insights: the KPI tiles compare against the
-  immediately-preceding same-length window (INV-28 -- NOT "previous
-  calendar month"), the share-of-answered donut renders below the trend
-  chart, and the per-agent Chart view's **Absolute** sub-toggle is PR's
-  Volume & Efficiency view (stacked Answered+Missed per agent + %
-  Answered dots, `insRenderCardsChartAbs_`). `PerformanceReport.gs` was
+  Its semantics live on in Insights: the INV-28 comparison window is the
+  immediately-preceding same-length window (NOT "previous calendar
+  month") -- since R17b carried by the agent-card delta badges + the
+  emails (the rollup KPI tile row is hidden); the share-of-answered
+  breakdown sits in Team detail; the **Absolute** chart basis
+  (`insRenderCardsChartAbs_`) is HIDDEN since R16g (the agent table on
+  the same page carries it; renderer inert, A/B remote still reaches it). `PerformanceReport.gs` was
   DELETED (`deltaBlock_` moved to Util.gs -- Insights consumes it);
   legacy `#/report/performance` deep links land on the Insights region
   (router repoint); the `performance:` cache prefix and the
@@ -1810,7 +1811,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`#/report/insights`) is an open-inline REGION at the bottom of My
   Department (`#dept-insights-region`, M1 merge + N1 -- renders and
   GENERATES with the dept page via `deptInsightsEnsureLive_`, never on the
-  Overview landing; `setPage('insights')` maps there;
+  Overview landing; `setPage('insights')` maps there; since R17b it sits
+  INSIDE `.dept-layout`'s main column so the two sticky side panels (Queue
+  Call Data + Team Rings Data) ride the whole page;
   see docs/insights-merge-plan.md). `setPage(name)` swaps the page, the header kicker/title, and triggers
   that page's load (Overview -> `ovLoad_`; Escalations ->
   `escEnsureInit_`+`escLoad_`). Modals (Help,

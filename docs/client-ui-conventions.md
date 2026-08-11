@@ -232,7 +232,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `workingDaysBetween_` fallback); the compare line appends the PRIOR
   window's workdays likewise. The team
   rollup tiles dropped Total Rung / Total TTT; Queue health dropped Longest
-  wait (decluttered to two labeled groups: Department rollup + Queue health).
+  wait (decluttered to two labeled groups: Department rollup + Queue health
+  -- both card sets since HIDDEN entirely, R16e/R17b: the sticky Team Rings
+  Data panel, panel 1's tiles and the queue table carry their figures; see
+  the R17 bullet).
   The rollup's rate tile is labeled **"% Answered (rings)"** (owner note):
   it's answered ÷ rung, and rung counts RINGS -- one call can ring several
   agents -- so it's ring-level, not share-of-unique-calls; the glossary
