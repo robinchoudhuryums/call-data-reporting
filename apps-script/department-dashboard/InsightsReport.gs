@@ -74,13 +74,17 @@
 //     queueHealth now always-separates sub-queues (seq #5) -- the
 //     `queueHealthOwnOnly` request flag + the cache `qhown/qhroll`
 //     dimension are retired, and queueHealth.perQueue rows carry `subDept`.
+// v20 (R17d): response gains `trendYtd` (year-to-date daily team series,
+//     Jan 1 of the end date's year -> the end date) so the Calendar view
+//     is available for ANY window length. Accumulated from rows the
+//     12-month trend pass already reads -- no extra data fetch.
 // v9..v18: see CLAUDE.md INV-30 -- the canonical version history.
 // v8: queueHealth.perQueue rows gain `topAbandonSource` (4c) -- the
 //     non-Overall call source driving the most abandons in that queue
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v19';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v20';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -389,6 +393,17 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // trend chart's Daily view; the Monthly view uses monthlyTeam). Roster-
   // gated like teamCurr so floaters don't dilute it (INV-53).
   const dailyTeam = {};   // iso -> blank()
+  // R17d: YEAR-TO-DATE daily team series -- Jan 1 of the END date's year
+  // through the end date. Accumulated from rows the 12-month TREND pass
+  // already visits, so it costs no extra read: `computeTrendStartDate_`
+  // always starts at or before that Jan 1 (12 months back from the end
+  // date, or the window start when the window is longer than a year), so
+  // every YTD row is inside the trend range by construction. It backs the
+  // Calendar view when the SELECTED window is too short to fill a calendar
+  // (a 1-day window would otherwise render one cell), which is why it is
+  // roster-gated exactly like dailyTeam (INV-53).
+  const ytdTeam = {};     // iso -> blank()
+  const ytdFrom = endDate.getFullYear() + '-01-01';
   // Roster members with ANY activity in the CURRENT window. This is the
   // team-average divisor the client uses (team-total / rosterAgentCount).
   // Matches the Individual Report's active-agent denominator (INV-27) so
@@ -467,6 +482,12 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       }
     }
     if (inTrend && isRoster) {
+      // R17d: YTD daily buckets ride this pass (see ytdTeam above).
+      if (dateIso >= ytdFrom) {
+        var yb = ytdTeam[dateIso] || (ytdTeam[dateIso] = blank());
+        yb.rung += rung; yb.missed += missed; yb.answered += answered;
+        yb.ttt += tttSec; yb.att_sum += attTotal;
+      }
       const ym = dateIso.slice(0, 7);
       const mb = monthlyTeam[ym];
       if (mb) {
@@ -595,6 +616,23 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     return { rung: b.rung, missed: b.missed, answered: b.answered, pct: pct, ttt: b.ttt, att: att };
   });
 
+  // R17d: the YTD daily series, same per-bucket shape + 'MM-DD' label form as
+  // trendDaily (unambiguous inside one calendar year), so the calendar
+  // renderer consumes either without a second code path. Carries its own
+  // from/to because it deliberately does NOT track the selected window.
+  const ytdKeys = Object.keys(ytdTeam).sort();
+  const trendYtd = {
+    from: ytdFrom,
+    to: isoOf(endDate),
+    labels: ytdKeys.map(function (iso) { return iso.slice(5); }),
+    series: ytdKeys.map(function (iso) {
+      const b = ytdTeam[iso];
+      const pct = b.rung     > 0 ? (b.answered / b.rung)   * 100 : 0;
+      const att = b.answered > 0 ? (b.att_sum  / b.answered)     : 0;
+      return { rung: b.rung, missed: b.missed, answered: b.answered, pct: pct, ttt: b.ttt, att: att };
+    }),
+  };
+
   const fmt = function (d) { return Utilities.formatDate(d, TZ, 'MMM d, yyyy'); };
   // Selected roster survivors -- used ONLY to derive the floater count.
   const selectedRosterCount = visibleAgents.filter(function (a) { return agentMatchedViaRoster[a]; }).length;
@@ -640,6 +678,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     // chart's Monthly/Daily toggle. trendData stays the 12-mo monthly
     // series (parity-pinned); this is additive.
     trendDaily:   { labels: trendDailyLabels, series: trendDailySeries },
+    // R17d: year-to-date daily series -- the Calendar view's source when
+    // the selected window is too short to fill a calendar (below).
+    trendYtd:     trendYtd,
     // Queue health (the QCD-into-Insights consolidation): the dept's
     // queue-level abandoned % / violations for the SAME window + prior
     // window, sourced from the same computeQcdReport_ the QCD modal
@@ -908,6 +949,7 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
     // and this one should too. trendDaily empty mirrors trendData's empty form;
     // queueHealth null is what insightsQueueHealth_ returns when unmapped.
     trendDaily: { labels: [], series: [] },
+    trendYtd: { labels: [], series: [], from: '', to: '' },   // R17d (shape consistency)
     queueHealth: null,
   };
 }

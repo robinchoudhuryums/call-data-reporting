@@ -203,7 +203,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v19` already makes a fresh re-generate fast too).
+  `insights:v20` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -416,7 +416,29 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   place. The payload carries `meta.reconcileNote`, rendered by
   `heatCellDetailHtml_` whenever present: this list sits directly beneath a
   QCD-sourced abandoned count and the two differ by definition, so the
-  explanation ships WITH the data rather than being opt-in per call site. (#9→R16c) the separate **Email summary** is RETIRED —
+  explanation ships WITH the data rather than being opt-in per call site.
+  **R17d: the Calendar is available at EVERY window length.** The 14–366-day
+  span rule now gates only the QUEUE metric (`queueHealth.dailySeries` is
+  window-scoped); for the TEAM metrics a window that can't fill a calendar
+  falls back to `trendYtd` — the server's Jan-1-to-end-date daily series
+  (`insights:v20`), roster-gated and accumulated inside the existing 12-month
+  trend pass, so it costs no extra read. `insCalendarUsesYtd_` is the single
+  decision (window fills a calendar → use `trendDaily`; else → YTD if it has
+  more than one day), and `insCalendarEligible_` / `insRenderTrendCalendar_`
+  / the trend header all read it, so they cannot disagree about which series
+  is on screen. In YTD mode the month list, the month-reset key and the
+  in-window cell gate ALL come from `trendYtd.from/.to` — driving any of them
+  from `meta` would blank most of the year. **The grid MUST stay captioned**
+  (`.ins-cal-ytd-note`, which names the SELECTED window since the header
+  already names the YTD span): cells that describe the year sitting under a
+  page scoped to one day read as that day's data, which is the misreading the
+  old refuse-to-render gate avoided by showing nothing. **The day-drill's
+  out-of-window branch moves the DEPT controls**, not just `ins-from`/`ins-to`
+  — under YTD most clicks land outside the window, and rewriting the Insights
+  window alone re-creates the split-range state R16g removed. It sets
+  `from-date`/`to-date` + calls `refresh()`, and a one-shot `insCalDayPending_`
+  re-lands on the Daily breakdown after the cascaded Insights render (read and
+  cleared unconditionally, the `insScrollPending_` leak discipline). (#9→R16c) the separate **Email summary** is RETIRED —
   `sendInsightsReportEmail` sends ONE consolidated email (a legacy
   `style` param is ignored): takeaway + rollup tiles + the behind-team
   block (`insEmailBehindBlock_` — answer rate below the team average, min

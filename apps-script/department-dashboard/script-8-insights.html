@@ -163,6 +163,12 @@
   // the normal flow). Consumed in insRenderAgentList at the race-free
   // post-roster point, like the launcher flag.
   var insAutoRunPending_ = false;
+  // R17d: a calendar day-click on a date OUTSIDE the selected window (the
+  // common case once the calendar falls back to year-to-date) moves the DEPT
+  // window to that date and re-lands on the Daily breakdown once Insights
+  // re-renders. One-shot ISO, consumed at the end of insRenderReport_ (and
+  // cleared there unconditionally, the insScrollPending_ leak discipline).
+  var insCalDayPending_ = null;
   // M3 (dept identity): the HEADER dept the last run was fired under
   // (getRequestedDept at run time -- NOT meta.department, which a sub-queue
   // picker selection legitimately narrows to a child dept). Lets the sync
@@ -1708,6 +1714,16 @@
     insRenderSmallSampleNote_(data);   // D3 (#7): annotation only, both modes
     insRenderAgentCards_(data.agentData || [], data.meta, data.teamStats);
     insRegionHeadSync_(data);   // M2: the collapsed region summary's headline
+    // R17d: land the out-of-window calendar day-click on the Daily breakdown
+    // for the date now in the window. Read-and-clear unconditionally so a
+    // date the rebuilt table still lacks can't leave the flag armed.
+    if (insCalDayPending_) {
+      const calIso = insCalDayPending_;
+      insCalDayPending_ = null;
+      const qhFold = $('ins-qh-fold');
+      if (qhFold) { qhFold.open = true; insFoldSet_('qh', true); }
+      setTimeout(function () { insJumpToDailyRow_(calIso); insQhDayDetail_(calIso); }, 120);
+    }
     // Quick-start chip landing: scroll to + spotlight the section that
     // answers the clicked question (one-shot; a small delay lets the page
     // swap / layout settle first). An SWR pre-paint consumes it too --
@@ -2486,7 +2502,27 @@
     const tbody = $('ins-qh-daily-tbody');
     const canJump = wrap && wrap.style.display !== 'none' && tbody
       && tbody.querySelector('tr[data-date="' + iso + '"]');
-    if (!canJump) { insDrillToRange_({ from: iso, to: iso }); return; }
+    // R17d: no row for that date means it is OUTSIDE the selected window --
+    // routine now that the calendar can show the whole year. Move the DEPT
+    // controls (the page's single date authority, M4) rather than only the
+    // Insights window: writing ins-from/ins-to alone leaves the page's two
+    // halves on different ranges, which is exactly the split-range state
+    // R16g removed. refresh() cascades to Insights via insSyncToDeptWindow_,
+    // and the pending ISO re-lands on the Daily breakdown after that render.
+    if (!canJump) {
+      const df = $('from-date'), dt = $('to-date');
+      if (df && dt && document.body.getAttribute('data-page') === 'dept'
+          && typeof refresh === 'function') {
+        df.value = iso;
+        dt.value = iso;
+        if (typeof clearActivePreset_ === 'function') clearActivePreset_();
+        insCalDayPending_ = iso;
+        refresh();
+        return;
+      }
+      insDrillToRange_({ from: iso, to: iso });
+      return;
+    }
     // The daily table lives inside the Queue-health FOLD, which may be
     // closed when clicking from the Trends calendar at the page bottom.
     const fold = $('ins-qh-fold');
@@ -2724,19 +2760,45 @@
   // R7 (I-1): the Abd % (queues) tab is calendar-eligible too, backed by the
   // dept-total daily abandoned-% series (queueHealth.dailySeries). ATT stays
   // line-only.
+  /**
+   * R17d: does the calendar fall back to the YEAR-TO-DATE series?
+   * TRUE when the metric is a TEAM one and the selected window is too short
+   * (or too long) to fill a calendar itself. The YTD series is roster-gated
+   * and comes free with the 12-month trend pass (server v20), so a 1-day
+   * window can still show a calendar -- of the year, clearly captioned as
+   * such, never of the selected window.
+   */
+  function insCalendarUsesYtd_(data) {
+    if (insActiveTrendMetric === 'queues') return false;   // queue series is window-scoped
+    const meta = (data && data.meta) || {};
+    const span = isoRangeDays_(meta.from, meta.to);
+    const windowOk = span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_
+      && (((data && data.trendDaily && data.trendDaily.labels) || []).length > 1);
+    if (windowOk) return false;
+    return (((data && data.trendYtd && data.trendYtd.labels) || []).length > 1);
+  }
+
   function insCalendarEligible_(data) {
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
-    if (span == null || span < INS_CALENDAR_MIN_DAYS_ || span > INS_CALENDAR_MAX_DAYS_) return false;
     if (insActiveTrendMetric === 'queues') {
       // R11-C3: only the abandoned-% queue metric has a calendar rendering.
+      // It stays WINDOW-scoped (queueHealth.dailySeries covers the selected
+      // range only), so it keeps the original span rule -- R17d's YTD
+      // fallback is for the TEAM metrics, whose series the server now ships
+      // for the whole year.
+      if (span == null || span < INS_CALENDAR_MIN_DAYS_ || span > INS_CALENDAR_MAX_DAYS_) return false;
       if (insQueueMetric !== 'abandonedPct') return false;
       return (((data && data.queueHealth && data.queueHealth.dailySeries) || []).length > 1);
     }
     // R11-C3: every team COUNT/RATE metric is calendar-capable; ATT stays
     // line-only (a duration grid reads poorly and invites misreading).
     if (['answered', 'pct', 'missed', 'volume'].indexOf(insActiveTrendMetric) === -1) return false;
-    return (((data && data.trendDaily && data.trendDaily.labels) || []).length > 1);
+    // R17d: eligible when EITHER the selected window fills a calendar or the
+    // YTD fallback can (which, past the year's first fortnight, it always can).
+    if (span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_
+        && ((data && data.trendDaily && data.trendDaily.labels) || []).length > 1) return true;
+    return insCalendarUsesYtd_(data);
   }
 
   // R7 (I-1): why the Calendar option is unavailable right now -- shown as the
@@ -2749,15 +2811,20 @@
     if (insActiveTrendMetric === 'queues' && insQueueMetric !== 'abandonedPct') {
       return 'Calendar view is available for Queue: Abandoned % (the count queue metrics are line-only).';
     }
+    // R17d: the span rules only gate the QUEUE metric now -- team metrics
+    // fall back to the year-to-date series for any window length.
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
-    if (span != null && span < INS_CALENDAR_MIN_DAYS_) {
-      return 'Calendar view needs a report window of at least ' + INS_CALENDAR_MIN_DAYS_ + ' days.';
+    if (insActiveTrendMetric === 'queues') {
+      if (span != null && span < INS_CALENDAR_MIN_DAYS_) {
+        return 'Queue calendar view needs a report window of at least ' + INS_CALENDAR_MIN_DAYS_
+          + ' days (the queue daily series covers the selected window only).';
+      }
+      if (span != null && span > INS_CALENDAR_MAX_DAYS_) {
+        return 'Queue calendar view supports report windows up to ' + INS_CALENDAR_MAX_DAYS_ + ' days.';
+      }
     }
-    if (span != null && span > INS_CALENDAR_MAX_DAYS_) {
-      return 'Calendar view supports report windows up to ' + INS_CALENDAR_MAX_DAYS_ + ' days.';
-    }
-    return 'Calendar view is unavailable here — this tab has no daily series for the window.';
+    return 'Calendar view is unavailable here — this tab has no daily series to draw.';
   }
 
   // R11-C3: reflect the state pair (insActiveTrendMetric + insQueueMetric)
@@ -2830,8 +2897,15 @@
       if (qmw0) qmw0.style.display = 'none';
       const head0 = $('ins-trend-header');
       const tm0 = data.meta || {};
-      if (head0) head0.textContent = 'Daily calendar'
-        + (tm0.from && tm0.to ? ' · ' + isoDateShort_(tm0.from) + '–' + isoDateShort_(tm0.to) + ' (selected window)' : '');
+      // R17d: name the range the CELLS cover -- the YTD fallback's own span
+      // when it is in play, the selected window otherwise.
+      const ytd0 = insCalendarUsesYtd_(data) ? (data.trendYtd || {}) : null;
+      if (head0) {
+        head0.textContent = ytd0
+          ? ('Daily calendar · ' + isoDateShort_(ytd0.from || '') + '–' + isoDateShort_(ytd0.to || '') + ' (year to date)')
+          : ('Daily calendar'
+             + (tm0.from && tm0.to ? ' · ' + isoDateShort_(tm0.from) + '–' + isoDateShort_(tm0.to) + ' (selected window)' : ''));
+      }
       insRenderTrendCalendar_(data);
       return;
     }
@@ -3119,7 +3193,14 @@
     const host = $('ins-trend-calendar');
     if (!host) return;
     const meta = (data && data.meta) || {};
-    const td = (data && data.trendDaily) || {};
+    // R17d: when the selected window can't fill a calendar, render the
+    // YEAR-TO-DATE series instead (server v20 `trendYtd`) -- with its OWN
+    // from/to driving the month list + the in-window gate, and a caption
+    // saying so, since the cells then do NOT describe the selected window.
+    const usesYtd = insCalendarUsesYtd_(data);
+    const td = (usesYtd ? (data && data.trendYtd) : (data && data.trendDaily)) || {};
+    const calFrom = usesYtd ? (td.from || '') : meta.from;
+    const calTo   = usesYtd ? (td.to   || '') : meta.to;
     const byLabel = {};
     (td.labels || []).forEach(function (l, i) { byLabel[l] = (td.series || [])[i]; });
     // R7 (I-1): dept-total daily abandoned % (queueHealth.dailySeries, ISO
@@ -3151,9 +3232,9 @@
     });
 
     // Month pagination: one month per view; ‹ › flip within the window.
-    const months = insCalMonthsInWindow_(meta.from, meta.to);
+    const months = insCalMonthsInWindow_(calFrom, calTo);
     if (!months.length) { host.innerHTML = ''; return; }
-    const winKey = String(meta.from || '') + '|' + String(meta.to || '');
+    const winKey = String(calFrom || '') + '|' + String(calTo || '');
     if (winKey !== insCalWinKey_ || months.indexOf(insCalMonth_) === -1) {
       insCalWinKey_ = winKey;
       insCalMonth_ = months[months.length - 1];   // default: most recent month
@@ -3185,7 +3266,20 @@
           + navBtn(mi + 1, '&rsaquo;', 'Next month') + '</div>'
         : '<span class="ins-cal-month">' + escapeHtml(insCalMonthLabel_(insCalMonth_)) + '</span>')
       + '<span class="ins-cal-legend">' + legend + '</span>'
-      + '</div>';
+      + '</div>'
+      // R17d: when the calendar fell back to YTD, say so -- the cells cover
+      // the YEAR, not the selected window, and an uncaptioned grid would read
+      // as the window's data (the exact failure the old >=14-day gate avoided
+      // by refusing to render at all). The trend HEADER already names the YTD
+      // span, so this line names the SELECTED window instead of repeating it.
+      + (usesYtd
+        ? '<div class="ins-cal-ytd-note">Showing the year to date &mdash; the selected window'
+          + (meta.from && meta.to
+             ? ' (' + escapeHtml(isoDateShort_(meta.from))
+               + (meta.to !== meta.from ? '–' + escapeHtml(isoDateShort_(meta.to)) : '') + ')'
+             : '')
+          + ' <span class="ins-cal-ytd-why">is too short to fill a calendar.</span></div>'
+        : '');
     html += '<div class="ins-cal-head">'
       + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(function (d) {
           return '<span>' + d + '</span>';
@@ -3206,7 +3300,7 @@
       for (let i = 0; i < 5; i++) {
         const iso = insIsoOf_(cur);
         const inMonth = iso.slice(0, 7) === insCalMonth_;
-        const inWin = inMonth && iso >= meta.from && iso <= meta.to;
+        const inWin = inMonth && iso >= calFrom && iso <= calTo;
         const s = inWin ? (isAbd ? byIsoAbd[iso] : byLabel[iso.slice(5)]) : null;
         const dayNum = cur.getDate();
         if (!inWin) {

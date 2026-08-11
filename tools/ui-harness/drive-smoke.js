@@ -192,6 +192,48 @@ async function horizontalOverflow(page) {
         'kpiRow=' + trp.kpiRowHidden + ' qhCards=' + trp.qhCardsHidden);
     }
 
+    // R17d: the trend Calendar is available at ANY window length. On the dept
+    // page's default single-day window (INV-43) the selected range cannot fill
+    // a calendar, so the renderer falls back to the server's year-to-date
+    // series -- which must (a) leave the toggle enabled, (b) draw a grid with
+    // more months than the window has, and (c) CAPTION itself, since an
+    // uncaptioned grid of the year reads as the selected day's data.
+    {
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(4000);
+      await page.evaluate(() => {
+        const f = document.getElementById('ins-trend-fold');
+        if (f && !f.open) f.querySelector('summary').click();
+      });
+      await page.waitForTimeout(1200);
+      await page.evaluate(() => {
+        const b = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn'))
+          .find((x) => (x.textContent || '').trim() === 'Calendar');
+        if (b) b.click();
+      });
+      await page.waitForTimeout(1200);
+      const cal = await page.evaluate(() => {
+        const host = document.getElementById('ins-trend-calendar');
+        const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn'))
+          .find((x) => (x.textContent || '').trim() === 'Calendar');
+        return {
+          span: (document.getElementById('from-date') || {}).value + '..'
+                + (document.getElementById('to-date') || {}).value,
+          enabled: !!btn && !btn.disabled,
+          active: !!btn && /\bactive\b/.test(btn.className),
+          shown: !!host && host.style.display !== 'none',
+          cells: host ? host.querySelectorAll('.ins-cal-drill').length : 0,
+          months: host ? ((host.querySelector('.ins-cal-month-pos') || {}).textContent || '') : '',
+          note: host ? ((host.querySelector('.ins-cal-ytd-note') || {}).textContent || '') : '',
+        };
+      });
+      record(role + ': calendar is offered on a window too short to fill one',
+        cal.enabled && cal.active && cal.shown && cal.cells > 0, JSON.stringify(cal));
+      record(role + ': the short-window calendar draws the YEAR, captioned as such',
+        /of \d+/.test(cal.months) && /year to date/i.test(cal.note),
+        'months="' + cal.months + '" note="' + cal.note.trim() + '"');
+    }
+
     // R17a: rings of one abandoned call group on the agent cards -- the
     // fixture seeds a re-rung parent (same id twice), so at least one group
     // must render, with the id badge ONCE inside it (deduping the repeat)

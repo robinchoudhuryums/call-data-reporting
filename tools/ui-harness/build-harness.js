@@ -116,7 +116,13 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getIndividualReportInit: function () { return P['ir-init']; },
     getIndividualReport: function () { return P['ir-report']; },
     getInsightsReportInit: function () { return P['insights-init']; },
-    getInsightsReport: function () { return P['insights']; },
+    // R17d: span-aware, like getDepartmentSummary. The dept page's default
+    // window is a single day (INV-43), and only that payload exercises the
+    // calendar's year-to-date fallback -- one fixture for every span pinned
+    // the region to a 30-day shape it rarely renders in practice.
+    getInsightsReport: function (req) {
+      return spanDays(req) <= 2 ? P['insights-day'] : P['insights'];
+    },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },
     getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1 }; },

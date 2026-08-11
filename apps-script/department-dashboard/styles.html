@@ -1204,6 +1204,15 @@
   .segmented.is-disabled { opacity: 0.45; }
   .segmented.is-disabled .seg-btn { cursor: default; }
   .ins-cal-legend { color: var(--muted); font-size: 12px; }
+  /* R17d: the YTD-fallback caption -- the cells cover the year, not the
+     selected window, so this must never read as decoration. */
+  .ins-cal-ytd-note {
+    font: 500 11px/1.5 var(--mono); color: var(--ink-muted, var(--muted));
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: var(--r); padding: 4px 8px; margin: 0 0 6px;
+  }
+  .ins-cal-ytd-why { color: var(--muted); font-weight: 400; }
   .ins-cal-head, .ins-cal-week {
     display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
   }
