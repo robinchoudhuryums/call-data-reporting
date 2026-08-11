@@ -410,11 +410,15 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       : Math.round((Number(row.abandonedPct) || 0) / 100 * (Number(row.totalCalls) || 0))) || 0;
     const abPct = Number(row.abandonedPct) || 0;
     const redC = abPct >= 5 ? C.bad : '#e8c4b2';
+    // R17e (owner): 3px blocks + 1px gaps (was 5px + 2px). Slimmer cells buy
+    // a higher block ceiling (TALLY_MAX_BLOCKS below), which lets the unit
+    // ladder land on 20 calls/block for a ~350-500-call queue day where the
+    // old ceiling forced 50/block and hid the scale.
     const blocks = function (n, color) {
       let out = '';
       for (let i = 0; i < n; i++) {
-        out += '<td width="5" style="background:' + color + ';height:12px;line-height:12px;font-size:0;">&nbsp;</td>'
-             + '<td width="2" style="font-size:0;">&nbsp;</td>';
+        out += '<td width="3" style="background:' + color + ';height:12px;line-height:12px;font-size:0;">&nbsp;</td>'
+             + '<td width="1" style="font-size:0;">&nbsp;</td>';
       }
       return out;
     };
@@ -491,17 +495,21 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // counts. Each section discloses its own block size on the banner when a
   // block is worth more than one call. Ladder = the web report's
   // ansTallyUnitFor_, replicated server-side; 0 = no volume.
-  // R16e (owner): the block CEILING is 14, not the web app's 36, and that
-  // number is a LAYOUT constraint rather than a taste call. The tally is an
-  // HTML-email table of width="5" cells inside the ~150px "Abandoned %"
-  // column: past ~16 blocks the column can no longer fit their natural width,
-  // so the renderer SHRINKS every cell to fit (measured: 20 blocks render at
-  // 4.09px against 5px for a 9-block row). Blocks then stop being uniform
-  // between rows, which is exactly what a tally must never do -- a busy
-  // queue's blocks looked thinner than a quiet one's. Keeping the widest row
-  // under the fit threshold makes every block identical everywhere. Raising
-  // this without widening the column re-introduces the squeeze.
-  const TALLY_MAX_BLOCKS = 14;
+  // R16e (owner): the block CEILING is a LAYOUT constraint, not a taste
+  // call. The tally is an HTML-email table of fixed-width cells inside the
+  // ~150px "Abandoned %" column: past ~112px of natural cell width the
+  // renderer SHRINKS every cell to fit (measured at the old 5px+2px cells:
+  // 20 blocks rendered 4.09px against 5px for a 9-block row). Blocks then
+  // stop being uniform between rows, which is exactly what a tally must
+  // never do. Keeping the widest row under the fit threshold makes every
+  // block identical everywhere.
+  // R17e (owner): cells are now 3px+1px (4px/block), so 25 blocks = 100px
+  // stays under that threshold -- and the higher ceiling lets the ladder
+  // pick 20 calls/block for a ~350-500-call queue day (the old 14-block
+  // ceiling forced 50/block there, which read as a much quieter queue).
+  // Raising this without slimming the cells re-introduces the squeeze;
+  // 25 x 4px + the ~45px % label is already near the column's edge.
+  const TALLY_MAX_BLOCKS = 25;
   const tallyUnitFor_ = function (max) {
     if (!max) return 0;
     const ladder = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];

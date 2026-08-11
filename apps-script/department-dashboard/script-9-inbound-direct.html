@@ -968,9 +968,18 @@
       return '<div class="ds-note">No abandoned calls recorded '
         + (meta.scope === 'range' ? 'for this day' : 'in this slot for the selected range') + '.</div>';
     }
+    // R17e (owner): display CHRONOLOGICALLY (earliest first), matching the
+    // missed-rings lens beside it. The SQL keeps ORDER BY ... DESC so the
+    // row cap retains the NEWEST calls; this re-sort is display-only and
+    // runs AFTER truncation, so the "(newest N shown)" note stays true.
+    const chrono = calls.slice().sort(function (a, b) {
+      const ka = (a.callDate || '') + ' ' + (a.cstStart || '');
+      const kb = (b.callDate || '') + ' ' + (b.cstStart || '');
+      return ka < kb ? -1 : (ka > kb ? 1 : 0);
+    });
     // Rows grouped by date (the date is in the group header, so each row shows
     // the CST time only).
-    const body = heatDrillGroupedList_(calls,
+    const body = heatDrillGroupedList_(chrono,
       function (c) { return c.callDate || ''; },
       function (c) {
         const path = [c.entryQueue, c.finalQueue].filter(Boolean)
@@ -995,18 +1004,21 @@
             : '')
           + '</div>';
       });
-    const head = '<div class="heat-drill-head"><strong>' + escapeHtml(label) + '</strong>'
-      + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
-      + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
-      + '</div>';
     // R16i: the payload's own reconcile note (getDeptDayAbandons ships it).
     // This list renders directly beneath a QCD-sourced abandoned count, and
     // the two figures differ by definition -- showing them adjacent WITHOUT
     // saying why is the thing the note exists to prevent, so it renders
     // whenever the server sends one rather than being opt-in per call site.
+    // R17e (owner): as a hover-ⓘ on the heading (the side-hint-i pattern),
+    // not a text box -- the box crowded the lens; the explainer still ships
+    // WITH the data, one hover away.
     const note = meta.reconcileNote
-      ? '<div class="ds-note heat-drill-note">' + escapeHtml(meta.reconcileNote) + '</div>' : '';
-    return head + note + '<div class="heat-drill-list">' + body + '</div>';
+      ? ' <span class="side-hint-i" tabindex="0" title="' + escapeHtml(meta.reconcileNote) + '">&#9432;</span>' : '';
+    const head = '<div class="heat-drill-head"><strong>' + escapeHtml(label) + '</strong>'
+      + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
+      + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
+      + note + '</div>';
+    return head + '<div class="heat-drill-list">' + body + '</div>';
   }
 
   // Shared renderer for a getMissedCallsSlice payload (the DQE missed-ring
