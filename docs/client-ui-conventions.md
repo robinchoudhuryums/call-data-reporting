@@ -1175,7 +1175,11 @@ behind the removed button.
   saves/restores `preset/from/to` (saved VIEWS keep their own dates).
 - **The INSIGHTS REGION (M1 merge + N1 always-inline,
   docs/insights-merge-plan.md)**: the whole ex-Insights-page lives in
-  `<details id="dept-insights-region" open>` at the bottom of `#dept-page` —
+  `<details id="dept-insights-region" open>` at the bottom of the page —
+  since R17b INSIDE `.dept-layout > .dept-main` (not a direct `#dept-page`
+  child), so the aside's sticky side panels ride the whole page and Insights
+  renders at the main-column width; the print path's show-only-the-region
+  selectors walk the new chain (styles.html `ins-printing` block) —
   OPEN by default, rendering + GENERATING with the dept page:
   `deptInsightsEnsureLive_` runs on dept entry + every `refresh()`, gated on
   `data-page='dept'` (the Overview landing pays nothing) and on the region
@@ -1333,7 +1337,36 @@ behind the removed button.
   drop shadow only paints while pinned). The fold caret is a SQUARE
   inline-block box — a bare glyph box rotated 90° poked 2px past the
   page edge and tripped the overflow gate.
-- **Round-16 removals** (all code kept inert behind flags/hidden markup):
+- **R17 (owner round): same-call grouping + the Team Rings Data panel.**
+  (1) On the missed agent cards, CONSECUTIVE timeline entries sharing
+  (date, parentId) — one abandoned call that rang the agent repeatedly, the
+  F-2 lockstep shape — group under a warm left rail (`.ms-callgroup`, inside
+  an `.ms-callgroup-wrap` `<li>` since a `<ul>` can't nest bare); the siren +
+  id badge/path drill render ONCE on the last ring and the explainer is the
+  group's hover title (no visible caption). Plain missed rings carry no id
+  in DQE (identity lives only in Call_Legs at build time), so they stay
+  ungrouped — that's the data, not a choice. Pinned by drive-smoke; the
+  harness fixture seeds a genuinely ADJACENT re-rung parent (same slot,
+  40s apart) because random-slot pairs interleave once sorted and no group
+  could ever form.
+  (2) **`#dept-team-rings` ("Team Rings Data")** is the SECOND sticky side
+  panel, below Queue Call Data in the same aside: the `% Ans (rings)` KPI
+  (rings `(ans / miss)` foot + the team-strip prior-window delta), the queue
+  `Avg ans time`, and a condensed agent table — short names via
+  `trpShortName_` ("Roman P.", parentheticals stripped, FULL name on the
+  row's `title`), a per-row mini tally (`ansTallyUnitFor_(rows, 12)` — the
+  helper gained an optional maxBlocks cap; all prior callers unchanged),
+  Ans/Miss + %, worst-%-first, PER-DEPT mini-groups in a combined view,
+  ~10 rows then internal scroll with a sticky thead, row click/Enter jumps
+  to + flashes the agent's main-table row. Rendered by
+  `renderTeamRingsPanel_` from the SAME dept-summary payload as the table
+  (no extra RPC; repaints wherever `renderDeptTeamStrip_` does); hideable
+  via the `dept-team-rings` UI flag. It REPLACES the Insights
+  Department-rollup card row (+ its section title, removed per owner) and
+  the Queue-health card column — both hidden with wiring inert (Round-16
+  convention); their figures live on in this panel, panel 1's tiles, the
+  queue table (now full width) and the team strip. The rollup's deltas +
+  sparklines survive in the per-agent cards, the emails and the CSV.
   the Missed-report Bars/Radar toggle is hidden for everyone
   (`missedChartMode_` hardcodes bars); the My Department sub-queue
   relationship bar — the "Combined view…" banner, the child's upward

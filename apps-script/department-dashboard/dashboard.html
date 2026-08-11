@@ -519,26 +519,16 @@
         <div id="diag-content"></div>
       </details>
 
-      </div><!-- /.dept-main -->
 
-      <aside class="dept-side">
-        <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
-          <div class="dept-qcd-header">
-            <strong id="dept-qcd-title">Queue Call Data</strong>
-            <span class="dept-qcd-date" id="dept-qcd-date"></span>
-            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, open the Insights report — its Queue health section is the range view.</span>
-          </div>
-          <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date).
-               Hidden when the server didn't ship an MTD block. -->
-          <div id="dept-qcd-period" class="dept-qcd-period" role="group" aria-label="Queue data period" style="display:none;">
-            <button type="button" class="dept-qcd-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
-            <button type="button" class="dept-qcd-period-btn" data-period="mtd" aria-pressed="false">MTD</button>
-          </div>
-          <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
-        </div>
-      </aside>
-      </div><!-- /.dept-layout -->
-
+      <!-- R17b (owner): the Insights REGION moved INSIDE the dept-layout
+           MAIN column, so the aside's sticky panels (Queue Call Data +
+           Team Rings Data) ride the right rail for the WHOLE page instead
+           of ending where the agent table does. Insights renders at the
+           main-column width (~1fr) rather than full page width; the print
+           path's show-only-the-region selectors changed with it (styles).
+           Everything else about the region -- ids, the N1 open-by-default
+           + generate-with-the-page contract, setPage('insights') mapping
+           -- is unchanged. -->
       <!-- Insights REGION (M1 merge + N1 always-inline,
            docs/insights-merge-plan.md): the ex-Insights-page content, full
            width below the agent table + missed section. Every inner element
@@ -559,7 +549,7 @@
                #ins-region-head with the live headline (answer rate, missed,
                abandoned %, window) and hides the static sub line, so the
                COLLAPSED region still states where the team stands. -->
-          <span class="ins-region-sub" id="ins-region-sub">Department rollup &middot; agent comparisons &middot; queue health &middot; 12-month trends</span>
+          <span class="ins-region-sub" id="ins-region-sub">Agent comparisons &middot; queue health &middot; 12-month trends</span>
           <span class="ins-region-head" id="ins-region-head"></span>
         </summary>
         <div id="insights-page" class="page-insights">
@@ -826,8 +816,17 @@
         <!-- A3: zone wayfinding. The report splits into a Team zone (rollup +
              collapsible team detail) and an Agents zone (per-agent cards). -->
         <div class="ds-zone"><span class="ds-zone-label">Team</span></div>
-        <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
-        <div id="ins-kpi-row" class="pr-kpi-row"></div>
+        <!-- R17b (owner): the Department-rollup CARD ROW is HIDDEN -- its
+             % Ans (rings) headline moved to the sticky Team Rings Data side
+             panel (which shows for the SAME window, always in view), and the
+             Answered/Missed volumes fold into that card's rings (ans/miss)
+             foot. The section title goes with it (owner: remove entirely).
+             Round-16 removal convention: markup + the insRenderReport_
+             wiring stay inert; un-hiding = drop the display:none pair. The
+             prior-window deltas + sparklines these cards carried live on in
+             the per-agent cards, the emails and the CSV. -->
+        <div class="al-section-title" style="display:none;">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
+        <div id="ins-kpi-row" class="pr-kpi-row" style="display:none;"></div>
 
         <!-- A2: Team detail (progressive disclosure). Queue health, heatmap,
              and the share-of-answered chart collapse here so the report leads
@@ -910,7 +909,13 @@
                to a horizontal grid (.ins-qh-cols media query; the class is
                NOT .ins-qh-row -- that's the queue table's <tr> class). -->
           <div class="ins-qh-cols">
-            <div class="ins-qh-left">
+            <!-- R17b (owner): the Queue-health CARD column is HIDDEN -- its
+                 figures live on panel 1 (Queue Call Data tiles), the queue
+                 table beside it (which now takes the full width via the flex
+                 wrap), the team strip (Transfer %), and the sticky Team
+                 Rings Data panel. Renderer wiring stays inert (Round-16
+                 convention); un-hiding = drop the display:none. -->
+            <div class="ins-qh-left" style="display:none;">
               <div id="ins-qh-tiles" class="pr-kpi-row"></div>
               <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
             </div>
@@ -1179,6 +1184,49 @@
     </div>
         </div>
       </details>
+      </div><!-- /.dept-main -->
+
+      <aside class="dept-side">
+        <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong id="dept-qcd-title">Queue Call Data</strong>
+            <span class="dept-qcd-date" id="dept-qcd-date"></span>
+            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, open the Insights report — its Queue health section is the range view.</span>
+          </div>
+          <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date).
+               Hidden when the server didn't ship an MTD block. -->
+          <div id="dept-qcd-period" class="dept-qcd-period" role="group" aria-label="Queue data period" style="display:none;">
+            <button type="button" class="dept-qcd-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
+            <button type="button" class="dept-qcd-period-btn" data-period="mtd" aria-pressed="false">MTD</button>
+          </div>
+          <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
+        </div>
+        <!-- R17b (owner): SECOND sticky panel -- the ring-level (DQE) rollup
+             + the agent table at a glance, so the numbers stay in view while
+             scrolling the whole page (the aside is the sticky element; both
+             cards ride it). Rendered by renderTeamRingsPanel_ (script-5)
+             from the SAME dept-summary payload as the agent table -- no
+             extra RPC, refreshes with the page. Replaces the Insights
+             Department-rollup + Queue-health card sets (hidden below). -->
+        <div id="dept-team-rings" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong>Team Rings Data</strong>
+            <span class="dept-qcd-date" id="trp-date"></span>
+            <span class="dept-qcd-hint">Ring-level rollup + the agent table at a glance, for the selected range. Full detail in the table above.</span>
+          </div>
+          <div class="trp-tiles" id="trp-tiles"></div>
+          <div class="trp-table-wrap" id="trp-table-wrap">
+            <table class="trp-table">
+              <thead><tr>
+                <th>Agent</th><th class="trp-num">Rings</th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th>
+              </tr></thead>
+              <tbody id="trp-tbody"></tbody>
+            </table>
+          </div>
+          <div id="trp-legend" class="ans-tally-legend" style="display:none;"></div>
+        </div>
+      </aside>
+      </div><!-- /.dept-layout -->
     </section>
   </div>
 

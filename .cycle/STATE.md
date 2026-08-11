@@ -2555,3 +2555,25 @@ commit/push/deploy direction.
 
   **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
   No PR (owner asks explicitly).
+
+## Increments 96–97 — R17: call grouping + Team Rings Data panel (2026-08-11)
+
+  Owner-approved two-part round, both client-only. R17a: consecutive
+  missed-timeline entries sharing (date, parentId) group under a warm
+  rail -- one abandoned call that rang repeatedly; siren + id badge once
+  per group, explainer on hover (no caption, owner). Plain rings can't
+  group (no id in DQE; identity dies with Call_Legs). Fixture now seeds
+  an ADJACENT re-rung parent (random pairs interleaved and never
+  grouped) with the LATEST day always groupable (the dept default
+  window drive-smoke sees). R17b: the Insights region moved INSIDE
+  .dept-layout > .dept-main so the aside stickies the whole page (print
+  carve re-chained); #dept-team-rings renders % Ans (rings) + Avg ans
+  time + the condensed agent table (short names/full-name hover,
+  per-row tallies capped at 12 blocks via ansTallyUnitFor_'s new
+  optional cap, per-dept mini-groups, 10-row scroll, row-jump flash)
+  from the same summary payload; the Insights rollup cards (+ title,
+  removed per owner) and queue-health cards are hidden inert. Gates:
+  660/0, INV-16, ci:ui 46+16+30+14. Blocks 96/97.
+
+  **WHERE I LEFT OFF:** committed + pushed. No PR (owner asks
+  explicitly). Awaiting owner's live-deploy verdict on the panel.
