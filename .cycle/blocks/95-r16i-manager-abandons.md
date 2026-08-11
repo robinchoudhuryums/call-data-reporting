@@ -51,3 +51,14 @@ Gates: node --test 660/0, INV-16, ci:ui 36+16+30+14.
 
 **FOLLOW-ON (owner's call):** releasing the full Inbound report is still the
 one-line `inboundResolveRequest_` gate removal, unchanged by this.
+
+## Note: the per-bullet ratchet caught a CLAUDE.md addition
+
+I first documented the new endpoint inside CLAUDE.md's inbound-capture
+bullet -- the file's LARGEST (12.8 KB) and a grandfathered one, so
+`claude-md-split.test.js` failed with "a grandfathered bullet GREW". That
+is the ratchet working as designed, and the fix it prescribes is the one
+taken: the detail lives in docs/client-ui-conventions.md (the R16g/R16h
+day-drill bullet), the endpoint's own docstring, and the unit pins --
+CLAUDE.md gains nothing. Reverted in the follow-up commit; the failing
+commit was 7df3ee8 and was green on every other gate.
