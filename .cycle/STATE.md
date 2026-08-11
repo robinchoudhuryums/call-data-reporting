@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
-## Latest session (R17f — follow-ups on the R17e round)
+## Latest session (R17g — header date cleanup, share overflow, tile centering + the consolidation investigation)
+Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests**, INV-16 green, UI gate 50/50 + 16/16 + 30/30 + 14/14. Increment 101. NOT yet PR'd.
+- **The Insights header date chip is HIDDEN when the report covers the page controls' window** (the normal case — the dept controls are the single date authority, M4) and survives WARN-TINTED ("(scoped: …)", `.ins-results-date--scoped`) when a monthly trend-point drill diverges the two — a split range stays visible, never silent. The workday count moved to the sticky controls strip (`#dept-workdays`, `updateDeptWorkdays_`: S5 client mirror every refresh, refined by the server INV-35 count from a same-window Insights render; a diverged render passes 0 so the strip keeps the DEPT window's number).
+- **Call-share overflow root cause:** the card inherits `.ir-chart-wrap`'s fixed 420px canvas height, but the tally is DOM rows — a real roster spilled past `overflow: visible` into the drills below (the 5-agent fixture fits, which is why no probe saw it). Now auto-height capped at 560px with the ROWS scrolling internally.
+- **Panel-1 tiles** get the flex-center treatment (Abandoned % sat top-anchored at the equal grid height).
+- **Consolidation investigation (NO CHANGES — owner decision pending):** five missed/abandoned list surfaces, all slices of two stores; 3 of 5 already share renderers. Real redundancy: the missed chart's hour-bucket drill still uses its own older `bucket-detail-list` renderer, and the agent cards vs the shared lens carry two same-call grouping implementations. Recommended Option A (port the bucket drill onto the shared renderer, nothing removed); Option C (universal explorer) recommended AGAINST — kills in-context affordances and risks blurring the settled DQE-vs-inbound definition split. See `.cycle/blocks/101-*.md`.
+- **Where I left off:** committed + pushed; PR on the owner's word. Consolidation awaits an A/B/C pick.
+
+## Prior session (R17f — follow-ups on the R17e round)
 Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests**, INV-16 green, UI gate 50/50 + 16/16 + 30/30 + 14/14. Increment 100. NOT yet PR'd — R17e + R17f ride together on the owner's word.
 - **Panel-1 tile values 15px → 18px** — R17c's shrink served a one-line split that has been two-line since that same round.
 - **Email tally widened instead of slimmed:** the "Abandoned %" column is 190px (was 150 — the Viol column had slack), block cells back to 4px+1px from R17e's 3px slivers, ceiling and 20-calls/block landing unchanged. The comment now carries the full width-budget math (25×5px + ~45px label + padding = 186 ≤ 190).

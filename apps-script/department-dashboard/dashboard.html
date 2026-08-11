@@ -318,6 +318,17 @@
           <label>Quick select</label>
           <div class="date-presets" id="date-presets"></div>
         </div>
+        <!-- R17g (owner): the workday count for the selected window lives
+             HERE on the sticky strip -- the Insights header's date
+             restatement is gone (the dept controls are the page's single
+             date authority). Filled by updateDeptWorkdays_ (client
+             holiday-aware mirror, overwritten by the server's INV-35 count
+             when an Insights report lands); wrapper hidden while empty. -->
+        <div class="control" id="dept-workdays-wrap" style="display:none;">
+          <label>&nbsp;</label>
+          <span class="dept-workdays-pill" id="dept-workdays"
+                title="Mon–Fri minus company holidays, across the selected From–To window"></span>
+        </div>
         <!-- (N1, owner: the LENS SWITCHER is REMOVED -- it read as a page
              toggle. The Insights section is open inline below and loads
              with the page, so there is nothing to switch to.) -->

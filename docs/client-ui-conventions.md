@@ -1214,6 +1214,18 @@ behind the removed button.
   popover is "Comparison & agents" (its date row hidden, not removed — the
   apply flow still round-trips those inputs). The prefs blob no longer
   saves/restores `preset/from/to` (saved VIEWS keep their own dates).
+  **R17g finishes the thought:** the results-header date chip
+  (`#ins-results-date`) is HIDDEN whenever the report covers the page
+  controls' window (the normal case — restating the single authority read
+  as a second, possibly-conflicting range), and the workday count moved to
+  the sticky controls strip (`#dept-workdays`, filled by
+  `updateDeptWorkdays_`: the S5 client mirror on every `refresh()`,
+  refined by the server's INV-35 `meta.currentWorkDays` when a same-window
+  Insights render lands). The chip SURVIVES warn-tinted
+  (`.ins-results-date--scoped`, the `ins-dept-pill--scoped` discipline)
+  for the one legitimate divergence — a MONTHLY trend-point drill reruns
+  Insights for that month without moving the dept controls (R16h) — so a
+  split range is visible, never silent.
 - **The INSIGHTS REGION (M1 merge + N1 always-inline,
   docs/insights-merge-plan.md)**: the whole ex-Insights-page lives in
   `<details id="dept-insights-region" open>` at the bottom of the page —

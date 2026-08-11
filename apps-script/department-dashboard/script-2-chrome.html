@@ -509,6 +509,22 @@
     if (wrap) wrap.querySelectorAll('.date-preset-chip').forEach(function (c) { c.classList.remove('active'); });
   }
   function daysAgo_(n) { var d = new Date(); d.setDate(d.getDate() - n); return isoDate_(d); }
+  // R17g (owner): the sticky controls strip carries the window's workday
+  // count (the Insights header date restatement is retired -- the dept
+  // controls are the single date authority). serverCount, when passed, is
+  // the INV-35 holiday-aware number from an Insights payload covering the
+  // SAME window; otherwise the S5 client mirror computes it, so the pill is
+  // live from the first date edit.
+  function updateDeptWorkdays_(serverCount) {
+    var el = $('dept-workdays');
+    if (!el) return;
+    var f = $('from-date'), t = $('to-date');
+    var label = (f && t && f.value && t.value)
+      ? insWorkdaysLabel_(serverCount || 0, f.value, t.value) : '';
+    el.textContent = label;
+    var wrap = $('dept-workdays-wrap');
+    if (wrap) wrap.style.display = label ? '' : 'none';
+  }
   // F-38: Mon-Fri count between two ISO dates inclusive -- the client
   // mirror of Util.gs::countWorkingDays_ (INV-35), so the CR/Insights form
   // hints agree with the server's working-day mismatch flag. UTC-noon

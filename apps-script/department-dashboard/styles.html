@@ -1152,6 +1152,15 @@
   /* R11-E (item 5): make the active window PROMINENT on the sticky strip (the
      My Department treatment) -- a solid pill instead of a muted mono caption.
      Scoped to #insights-page so the Individual Report's date is untouched. */
+  /* R17g: hidden while the report covers the page controls' window (the
+     normal case -- the dept controls are the single date authority and the
+     sticky strip carries the workday count); renders ONLY when a trend
+     drill diverged the report's window, warn-tinted via --scoped. */
+  #insights-page #ins-results-date.ins-results-date--scoped {
+    color: var(--warn);
+    background: var(--warn-soft);
+    border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+  }
   #insights-page #ins-results-date {
     font-family: var(--ui);
     font-size: 14px;
@@ -1401,6 +1410,12 @@
     /* R17f (owner): 18px, up from R17c's 15px -- the split moved to its own
        line, so the value line is just the number and can carry more size. */
     .dept-side .dept-qcd-value { font-size: 18px; }
+    /* R17g (owner): tiles render at equal grid heights and the shorter one
+       (Abandoned %, no MTD sub-lines) sat top-anchored -- center each tile's
+       content vertically, the Team Rings card treatment. */
+    .dept-side .dept-qcd-tile {
+      display: flex; flex-direction: column; justify-content: center;
+    }
     .dept-side .dept-qcd-split { display: block; font-size: 11.5px; font-weight: 600; line-height: 1.3; }
     .dept-side .dept-qcd-tile { padding: 5px 6px; }
   }
@@ -4875,7 +4890,18 @@
   .ins-detail-row > #ins-heatmap .ds-heatmap {
     flex: 1 1 auto; grid-template-rows: auto; grid-auto-rows: minmax(26px, 1fr);
   }
-  .ins-detail-row > .ins-share-wrap { flex: 1 1 340px; min-width: 300px; margin: 0; }
+  /* R17g (owner: share rows overran the card into the drill tables below):
+     the share card inherits .ir-chart-wrap's FIXED 420px height, sized for a
+     canvas -- but the tally is DOM rows, one per agent, and a real roster
+     overflows a fixed box (overflow was visible). Auto-height with a cap:
+     the card grows to its rows, and past the cap the ROWS scroll internally
+     while the header + legend stay put. The heatmap beside it stretches to
+     the row height either way (the R16e equal-height intent). */
+  .ins-detail-row > .ins-share-wrap {
+    flex: 1 1 340px; min-width: 300px; margin: 0;
+    height: auto; max-height: 560px;
+  }
+  .ins-detail-row > .ins-share-wrap .ins-share-tally { min-height: 0; overflow-y: auto; }
   /* R16e: the heatmap cell drill renders BELOW the row (see dashboard.html's
      #ins-heat-detail + the data-heat-detail opt-out), with its two lenses --
      abandoned inbound calls / DQE missed rings -- side by side across the full
@@ -6449,6 +6475,14 @@
   }
 
   /* -------- Date preset chips ------------------------------------ */
+  /* R17g: the sticky-strip workday count (see #dept-workdays-wrap). Aligns
+     with the input row via the control's spacer label. */
+  .dept-workdays-pill {
+    display: inline-block; white-space: nowrap;
+    font: 500 11px/1 var(--mono); letter-spacing: 0.06em;
+    color: var(--muted); text-transform: uppercase;
+    padding: 9px 0;
+  }
   .date-presets {
     display: flex;
     gap: 6px;

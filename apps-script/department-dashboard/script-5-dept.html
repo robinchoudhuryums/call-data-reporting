@@ -1276,6 +1276,10 @@
 
   function refresh() {
     const dept = getRequestedDept();
+    // R17g: keep the sticky-strip workday count live from the client mirror
+    // on every run; an Insights render for the same window refines it with
+    // the server's INV-35 number.
+    if (typeof updateDeptWorkdays_ === 'function') updateDeptWorkdays_();
     if (!dept) {
       setStatus('error', 'No department available.');
       return;
