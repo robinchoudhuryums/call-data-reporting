@@ -282,6 +282,35 @@ try {
   }));
 } catch (e) { console.log('missed-slice skipped: ' + e.message); }
 
+// R16h: the inbound abandon list behind the heatmap cell drill AND the
+// Insights Daily-breakdown day drill's second lens. HAND-AUTHORED, unlike
+// every payload above: getInboundHeatmapCell reads Neon, which this generator
+// has no connection to. The shape is the one the server's row mapper emits
+// and `tests/unit/heatmap-cell-drill.test.js` pins field by field, so a
+// server-side shape change fails there rather than silently drifting here.
+// (getInboundHeatmap itself stays UNMOCKED on purpose -- the panel hiding
+// silently on failure is part of what the gate audits.)
+dump('heatmap-cell', {
+  meta: { available: true, scope: 'range', from: LATEST, to: LATEST,
+    department: 'CSR', companyView: false, unmapped: false,
+    dow: null, slot: null, truncated: false,
+    windowStartHour: 8, slotMinutes: 60, tzLabel: 'CST' },
+  calls: [
+    { callDate: LATEST, callId: '1762242202191', cstStart: '09:12:44', entryQueue: 'A_Q_CustomerSuccess',
+      finalQueue: 'A_Q_CustomerSuccess', abandonStage: 'queue', abandonedOnHold: false,
+      waitSeconds: 96, holdSeconds: null },
+    { callDate: LATEST, callId: '1762242165529', cstStart: '10:41:09', entryQueue: 'A_Q_CustomerSuccess',
+      finalQueue: 'Backup CSR', abandonStage: 'queue', abandonedOnHold: false,
+      waitSeconds: 142, holdSeconds: null },
+    { callDate: LATEST, callId: '1762242119004', cstStart: '13:28:31', entryQueue: 'A_Q_CustomerSuccess',
+      finalQueue: 'A_Q_CustomerSuccess', abandonStage: null, abandonedOnHold: true,
+      waitSeconds: 58, holdSeconds: 74 },
+    { callDate: LATEST, callId: '1762242093117', cstStart: '15:02:10', entryQueue: 'A_Q_Spanish',
+      finalQueue: 'A_Q_Spanish', abandonStage: 'queue', abandonedOnHold: false,
+      waitSeconds: 211, holdSeconds: null },
+  ],
+});
+
 // All-departments Daily Call Queue Report (F7 fixture gap): without this the
 // #qcd-alldept-modal had no payload, so its `tr.qcd-expandable` rows never
 // rendered and the F13 keyboard fix could only be verified on the Insights

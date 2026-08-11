@@ -139,3 +139,54 @@ test('heatmap cell drill: Neon unreachable -> available=false, no throw', functi
   assert.equal(out.meta.available, false);
   assert.equal(out.calls.length, 0);
 });
+
+// ── R16h: RANGE scope (the Insights Daily-breakdown day drill) ──────────────
+// Omitting dow+slot asks for every in-band abandon across from..to. The
+// day drill passes from = to = the clicked date. Everything the cell scope
+// guarantees -- auth, dept predicate, the abandon definition, the CST shift,
+// the 8a-5p band, the cap -- must hold IDENTICALLY, or the two surfaces
+// would disagree about what an abandon is.
+test('R16h range scope: omitting dow+slot drops ONLY the bucket clauses', function () {
+  install('admin', { CSR: ['A_Q_CSR'] });
+  const capture = {};
+  h.ctx.getDashboardNeonConn_ = function () { return fakeConn('[]', capture); };
+  const out = h.call('getInboundHeatmapCell', { department: 'CSR', from: '2026-06-23', to: '2026-06-23' });
+  assert.equal(out.meta.scope, 'range');
+  assert.equal(out.meta.dow, null);
+  assert.equal(out.meta.slot, null);
+  // The two bucket filters are gone...
+  assert.doesNotMatch(capture.sql, /EXTRACT\(ISODOW FROM c\.call_date\)/);
+  assert.doesNotMatch(capture.sql, /\)::int = /);
+  // ...and every shared guarantee still stands.
+  assert.match(capture.sql, /disposition='abandoned'/);
+  assert.match(capture.sql, /interval '2 hours'/);
+  assert.match(capture.sql, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
+  assert.match(capture.sql, /lower\(trim\(coalesce\(c\.entry_queue,''\)\)\) IN \('a_q_csr'\)/);
+  assert.match(capture.sql, /BETWEEN '2026-06-23'::date AND '2026-06-23'::date/);
+  assert.match(capture.sql, />= 28800 AND .* < 61200/);      // the 8a-5p CST band survives
+  assert.match(capture.sql, /LIMIT 201/);                    // same cap
+});
+
+test('R16h range scope: cell scope still pins dow+slot, and half a pair is rejected', function () {
+  install('admin', { CSR: ['A_Q_CSR'] });
+  const capture = {};
+  h.ctx.getDashboardNeonConn_ = function () { return fakeConn('[]', capture); };
+  const cell = h.call('getInboundHeatmapCell', REQ);
+  assert.equal(cell.meta.scope, 'cell');
+  assert.match(capture.sql, /EXTRACT\(ISODOW FROM c\.call_date\) = 2/);
+  // A lone dow (or slot) is a caller bug, not a silent whole-range read --
+  // returning the whole day for a cell click would over-report by ~9x.
+  assert.throws(function () {
+    h.call('getInboundHeatmapCell', { department: 'CSR', from: '2026-06-01', to: '2026-06-30', dow: 2 });
+  }, /must be given together/);
+  assert.throws(function () {
+    h.call('getInboundHeatmapCell', { department: 'CSR', from: '2026-06-01', to: '2026-06-30', slot: 1 });
+  }, /must be given together/);
+});
+
+test('R16h range scope: the admin-only vetting gate still applies', function () {
+  install('manager', { CSR: ['A_Q_CSR'] });
+  assert.throws(function () {
+    h.call('getInboundHeatmapCell', { department: 'CSR', from: '2026-06-23', to: '2026-06-23' });
+  }, /admin-only/);
+});

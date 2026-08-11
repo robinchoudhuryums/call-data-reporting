@@ -396,9 +396,18 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   ride the existing `.pid-journey` handler). The detail row joins the day
   group's open/close (the `insQhDayToggle_` selector covers all three row
   kinds). Falls back to the old single-day reload ONLY when the daily table
-  can't take the jump (no QCD daily rows / date outside the series). The
-  trend LINE chart's point-drill keeps the old reload behavior — only the
-  calendar was retargeted. (#9→R16c) the separate **Email summary** is RETIRED —
+  can't take the jump (no QCD daily rows / date outside the series).
+  **R16h: the trend LINE chart's point-drill joins it** — a point that
+  resolves to ONE day (`range.from === range.to`, i.e. Daily mode) jumps like
+  the calendar; a MONTHLY point spans a month the day drill cannot represent,
+  so it keeps the re-run. **R16h also gives the drill TWO labeled lenses**,
+  the heatmap-cell-drill shape: DQE missed RINGS (time · agent · path) beside
+  inbound ABANDONS (wait/hold seconds · entry→final queue · stage · path).
+  They answer different questions from different sources and are not expected
+  to reconcile. The inbound lens is fetched ONLY for `USER.role === 'admin'`
+  — `inboundResolveRequest_` still carries the Inbound report's vetting gate,
+  so a manager request would throw; a manager sees the missed lens alone at
+  full width (the `.ins-detail-row` no-JS discipline). (#9→R16c) the separate **Email summary** is RETIRED —
   `sendInsightsReportEmail` sends ONE consolidated email (a legacy
   `style` param is ignored): takeaway + rollup tiles + the behind-team
   block (`insEmailBehindBlock_` — answer rate below the team average, min

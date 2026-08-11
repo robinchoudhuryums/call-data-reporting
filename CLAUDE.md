@@ -864,6 +864,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   lists that cell's individual abandoned calls (date, CST time, entry->final
   queue, stage, wait/hold) into a panel below the legend, each row carrying
   the existing "↳ path" journey drill (`.pid-journey` -> `getCallJourney`).
+  **`dow`+`slot` are OPTIONAL and must be passed TOGETHER (R16h):** omit both
+  and it answers for the WHOLE `from..to` range instead of one bucket -- how
+  the Insights Daily-breakdown day drill asks for a single date's abandons
+  (`from = to = date`). Half a pair THROWS rather than silently widening to
+  the day (a cell click would over-report ~9x). Everything else is shared
+  verbatim between the two scopes, so they can never disagree on what an
+  abandon is; `meta.scope` says which one answered.
   Same auth (the admin-only vetting gate via `inboundResolveRequest_`) +
   dept predicate + TZ-shift/window/slot math as the heatmap SQL, so the list
   always reconciles with the cell's count; `disposition='abandoned'` only;

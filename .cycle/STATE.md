@@ -2535,3 +2535,23 @@ commit/push/deploy direction.
   **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
   No PR (owner asks explicitly). Mock sent; owner may refine the drill's
   content (they offered to guide from the mock).
+
+## Increment 94 — R16h trend jump + wait-time lens (2026-08-10)
+
+  Trend LINE point-clicks now jump to the Daily breakdown like the
+  calendar when the point is a single DAY; a monthly point keeps the
+  re-run (a month can't be a day drill). Wait times reached the day
+  drill without a new endpoint: `getInboundHeatmapCell`'s dow/slot are
+  now optional-but-paired, so omitting both answers for the whole
+  from..to range (the drill passes from=to=date) while every other
+  guarantee stays shared; half a pair throws rather than silently
+  widening. The drill renders two labeled lenses -- DQE missed rings
+  (agent + path) and inbound abandons (wait/hold + queue path) -- with
+  the inbound half ADMIN-ONLY, since inboundResolveRequest_ still
+  carries the Inbound report's vetting gate. Harness mocks the cell
+  endpoint (hand-authored; getInboundHeatmap stays unmocked by design).
+  Gates: 656/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/94-r16h-trend-jump-wait-lens.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly).

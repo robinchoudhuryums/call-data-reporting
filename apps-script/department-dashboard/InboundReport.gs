@@ -1431,19 +1431,36 @@ const INBOUND_HEATMAP_CELL_MAX = 200;
 
 function getInboundHeatmapCell(req) {
   const scope = inboundResolveRequest_(req);   // auth + dept scoping (throws on bad access)
-  const dow = Math.floor(Number(req && req.dow));
-  const slot = Math.floor(Number(req && req.slot));
+  // R16h: `dow`/`slot` are OPTIONAL. Given (together) they select one heatmap
+  // CELL, as before. Omitted (both) they select the whole from..to RANGE --
+  // which is how the Insights Daily-breakdown day drill asks for "every
+  // abandoned call on this date" (it passes from = to = the clicked day).
+  // Everything else is unchanged and deliberately SHARED: same auth gate,
+  // same dept predicate, same internal-call exclusion, same CST shift, same
+  // 8 AM-5 PM heatmap band, same cap, same row shape -- so the two callers
+  // can never disagree about what counts as an abandon.
+  const hasDow  = !!(req && req.dow  != null && req.dow  !== '');
+  const hasSlot = !!(req && req.slot != null && req.slot !== '');
+  if (hasDow !== hasSlot) throw new Error('dow and slot must be given together (omit both for the whole range).');
+  const cellScope = hasDow;
+  const dow  = cellScope ? Math.floor(Number(req.dow))  : null;
+  const slot = cellScope ? Math.floor(Number(req.slot)) : null;
   const slotCount = Math.max(1, Math.round(
     (INBOUND_HEATMAP_WINDOW_END_HOUR - INBOUND_HEATMAP_WINDOW_START_HOUR)
     * 60 / INBOUND_HEATMAP_SLOT_MINUTES));
-  if (!(dow >= 1 && dow <= 5)) throw new Error('dow must be 1-5 (Mon-Fri).');
-  if (!(slot >= 0 && slot < slotCount)) throw new Error('slot must be 0-' + (slotCount - 1) + '.');
+  if (cellScope) {
+    if (!(dow >= 1 && dow <= 5)) throw new Error('dow must be 1-5 (Mon-Fri).');
+    if (!(slot >= 0 && slot < slotCount)) throw new Error('slot must be 0-' + (slotCount - 1) + '.');
+  }
 
   const out = {
     meta: {
       from: scope.from, to: scope.to, available: true,
       department: scope.dept || null, companyView: scope.companyView,
       unmapped: false, dow: dow, slot: slot, truncated: false,
+      // 'cell' = one weekday x hour bucket; 'range' = every abandon in
+      // from..to (still inside the heatmap's own hour band).
+      scope: cellScope ? 'cell' : 'range',
       windowStartHour: INBOUND_HEATMAP_WINDOW_START_HOUR,
       slotMinutes: INBOUND_HEATMAP_SLOT_MINUTES, tzLabel: 'CST',
     },
@@ -1480,8 +1497,12 @@ function getInboundHeatmapCell(req) {
           "AND c.disposition='abandoned' " +
           "AND c.call_start ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' " +
           'AND ' + cstSecs + ' >= ' + winStartSecs + ' AND ' + cstSecs + ' < ' + winEndSecs + ' ' +
-          'AND EXTRACT(ISODOW FROM c.call_date) = ' + dow + ' ' +
-          'AND floor((' + cstSecs + ' - ' + winStartSecs + ') / ' + slotSecs + ')::int = ' + slot + ' ' +
+          // R16h: the bucket clauses apply to CELL scope only; a range-scope
+          // request keeps every in-band abandon across from..to.
+          (cellScope
+            ? ('AND EXTRACT(ISODOW FROM c.call_date) = ' + dow + ' ' +
+               'AND floor((' + cstSecs + ' - ' + winStartSecs + ') / ' + slotSecs + ')::int = ' + slot + ' ')
+            : '') +
         'ORDER BY c.call_date DESC, cst_start DESC ' +
         'LIMIT ' + (INBOUND_HEATMAP_CELL_MAX + 1) +
       ') t';

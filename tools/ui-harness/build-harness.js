@@ -133,6 +133,10 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getUiFlags: function () { return P['ui-flags']; },
     // getInboundHeatmap intentionally UNMOCKED: Neon-backed; the panel must
     // hide silently on failure (that IS part of the audit).
+    // Its CELL drill is mocked (R16h) -- it backs the heatmap cell list AND
+    // the Insights day drill's wait-time lens, whose failure mode is an
+    // in-panel error rather than the silent hide being audited above.
+    getInboundHeatmapCell: function () { return P['heatmap-cell']; },
   };
   function makeRunner() {
     var ok = null, fail = null;

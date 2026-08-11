@@ -4689,6 +4689,23 @@
     background: var(--paper-2); padding: 10px 14px;
     border-top: 1px dashed var(--line);
   }
+  /* R16h: the day drill's TWO lenses (DQE missed rings / inbound abandons
+     with wait times) sit side by side on a wide row, stacking narrow. A
+     manager sees only the missed lens (the inbound one is admin-gated), and
+     the lone block then takes the full width with no JS -- the
+     .ins-detail-row discipline. */
+  .ins-daily-detail-lenses { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .ins-daily-detail-lenses > .heat-lens { flex: 1 1 340px; min-width: 300px; }
+  .ins-daily-detail-lenses > .heat-lens + .heat-lens {
+    margin-top: 0; padding-top: 0; border-top: 0;
+    padding-left: 18px; border-left: 1px solid var(--line);
+  }
+  @media (max-width: 820px) {
+    .ins-daily-detail-lenses > .heat-lens + .heat-lens {
+      padding-left: 0; border-left: 0;
+      margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
+    }
+  }
   /* R16e (owner): expanding a day felt "jumpy" -- rows appeared instantly at
      full height. A <tr> can't animate its own height (display flips between
      none and table-row), so the CELLS fade + settle instead, which reads as

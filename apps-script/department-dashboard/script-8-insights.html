@@ -2497,27 +2497,59 @@
     detailRow = document.createElement('tr');
     detailRow.className = 'ins-daily-detail-row is-open';
     detailRow.setAttribute('data-date', iso);
+    // R16h: TWO labeled lenses, the heatmap cell drill's shape -- (1) DQE
+    // missed RINGS (who was rung and didn't answer: time + agent + path) and
+    // (2) inbound ABANDONS (the caller's side: wait/hold seconds, entry→final
+    // queue, abandon stage). They answer different questions from different
+    // sources and are NOT expected to reconcile, so each is labeled. The
+    // inbound lens is ADMIN-ONLY -- `inboundResolveRequest_` still carries the
+    // Inbound report's vetting gate, so a manager request would throw; the
+    // Insights heatmap gates on the same `USER.role === 'admin'` check.
+    const wantInbound = (USER.role === 'admin');
     detailRow.innerHTML = '<td colspan="' + cols + '">'
-      + dsRingsHtml_('Loading this day’s missed & abandoned calls…') + '</td>';
+      + '<div class="ins-daily-detail-lenses">'
+      +   '<div class="heat-lens" data-lens="missed">' + dsRingsHtml_('Loading missed rings…') + '</div>'
+      +   (wantInbound
+            ? '<div class="heat-lens" data-lens="inbound">' + dsRingsHtml_('Loading abandoned calls…') + '</div>'
+            : '')
+      + '</div></td>';
     last.parentNode.insertBefore(detailRow, last.nextSibling);
     // The "↳ path" chips need the delegated journey handler live (its other
     // init sites are the My-Dept missed render paths + the heatmap drill).
     initClipboardOnce();
     const dept = (insLastData && insLastData.meta && insLastData.meta.department) || getRequestedDept();
     const guard = function () { return detailRow.isConnected; };
+    const slotOf = function (lens) { return detailRow.querySelector('[data-lens="' + lens + '"]'); };
+    const failInto = function (lens, err) {
+      if (!guard()) return;
+      const el = slotOf(lens);
+      if (el) el.innerHTML = '<div class="status status-error">'
+        + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+    };
+
+    // Lens 1 -- DQE missed rings for the date (no dow/hour filter).
     google.script.run
       .withSuccessHandler(function (resp) {
         if (!guard()) return;
-        const td = detailRow.querySelector('td');
-        if (td) td.innerHTML = missedSliceListHtml_(resp, 'Missed & abandoned — ' + iso);
+        const el = slotOf('missed');
+        if (el) el.innerHTML = missedSliceListHtml_(resp, 'Missed rings — ' + iso);
       })
-      .withFailureHandler(function (err) {
-        if (!guard()) return;
-        const td = detailRow.querySelector('td');
-        if (td) td.innerHTML = '<div class="status status-error">'
-          + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
-      })
+      .withFailureHandler(function (err) { failInto('missed', err); })
       .getMissedCallsSlice({ department: dept, from: iso, to: iso });
+
+    // Lens 2 -- inbound abandons for the SAME date, carrying wait/hold time.
+    // Omitting dow+slot asks getInboundHeatmapCell for the whole range (R16h);
+    // from = to = this date makes that range one day.
+    if (wantInbound) {
+      google.script.run
+        .withSuccessHandler(function (resp) {
+          if (!guard()) return;
+          const el = slotOf('inbound');
+          if (el) el.innerHTML = heatCellDetailHtml_(resp, 'Abandoned calls — ' + iso);
+        })
+        .withFailureHandler(function (err) { failInto('inbound', err); })
+        .getInboundHeatmapCell({ department: dept, from: iso, to: iso });
+    }
   }
 
   // Violation-date drill: open the collapsed Daily breakdown, scroll the
@@ -2644,6 +2676,12 @@
     const ds = chartObj.data.datasets[hits[0].datasetIndex];
     if (ds && ds.label === '5% threshold') return;   // reference line, not data
     const range = insTrendLabelToRange_((chartObj.data.labels || [])[hits[0].index], daily);
+    // R16h (owner): a point that resolves to ONE DAY behaves like the calendar
+    // day-click -- jump to that date in the Daily breakdown instead of
+    // reloading the region for it (which left the page's two halves on
+    // conflicting windows). A MONTHLY point spans a whole month, which the
+    // day-scoped drill cannot represent, so it keeps the re-run.
+    if (range && range.from && range.from === range.to) { insCalJumpToDaily_(range.from); return; }
     insDrillToRange_(range);
   }
 
