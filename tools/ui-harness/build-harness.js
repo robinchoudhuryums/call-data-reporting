@@ -137,6 +137,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     // the Insights day drill's wait-time lens, whose failure mode is an
     // in-panel error rather than the silent hide being audited above.
     getInboundHeatmapCell: function () { return P['heatmap-cell']; },
+    getDeptDayAbandons: function () { return P['dept-day-abandons']; },
   };
   function makeRunner() {
     var ok = null, fail = null;

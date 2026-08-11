@@ -190,3 +190,77 @@ test('R16h range scope: the admin-only vetting gate still applies', function () 
     h.call('getInboundHeatmapCell', { department: 'CSR', from: '2026-06-23', to: '2026-06-23' });
   }, /admin-only/);
 });
+
+// ── R16i: getDeptDayAbandons — the manager-reachable narrow slice ───────────
+// The Inbound REPORT stays admin-gated while vetted; this endpoint releases
+// exactly one dept-day's abandoned-call LIST so a manager can see wait times
+// in the Daily-breakdown drill. What keeps it from becoming the report: one
+// date, one required + access-checked dept, no company view, list only.
+function installDay(role, opts) {
+  install(role, (opts && opts.queues) || { CSR: ['A_Q_CSR'], Sales: ['A_Q_SALES'] });
+  h.ctx.resolveUser_ = function () {
+    return { role: role, email: 'x@x.com',
+             department: role === 'manager' ? 'CSR' : null,
+             departments: role === 'manager' ? ['CSR'] : [] };
+  };
+  h.ctx.assertDeptAccess_ = function (user, dept) {
+    if (user.role === 'admin') return;
+    if ((user.departments || []).indexOf(dept) === -1) throw new Error('Not authorized for this department.');
+  };
+  h.ctx.logReportUsage_ = function () {};
+}
+
+test('R16i: a MANAGER reaches their own dept-day abandons (the Inbound report does not)', function () {
+  installDay('manager');
+  const capture = {};
+  h.ctx.getDashboardNeonConn_ = function () { return fakeConn('[]', capture); };
+  const out = h.call('getDeptDayAbandons', { department: 'CSR', date: '2026-06-23' });
+  assert.equal(out.meta.scope, 'day');
+  assert.equal(out.meta.department, 'CSR');
+  assert.equal(out.meta.companyView, false);
+  // Single DATE: from and to are the same day, so no range can be requested.
+  assert.equal(out.meta.from, '2026-06-23');
+  assert.equal(out.meta.to, '2026-06-23');
+  assert.match(capture.sql, /BETWEEN '2026-06-23'::date AND '2026-06-23'::date/);
+  // Same definition as the heatmap drill -- shared builder, not a copy.
+  assert.match(capture.sql, /disposition='abandoned'/);
+  assert.match(capture.sql, /interval '2 hours'/);
+  assert.match(capture.sql, /lower\(trim\(coalesce\(c\.entry_queue,''\)\)\) IN \('a_q_csr'\)/);
+  assert.doesNotMatch(capture.sql, /EXTRACT\(ISODOW FROM c\.call_date\)/);
+});
+
+test('R16i: the reconcile note ships WITH the payload (QCD differs by definition)', function () {
+  installDay('manager');
+  h.ctx.getDashboardNeonConn_ = function () { return fakeConn('[]'); };
+  const out = h.call('getDeptDayAbandons', { department: 'CSR', date: '2026-06-23' });
+  // The list renders directly under a QCD-sourced abandoned count; the note is
+  // the standing prerequisite for showing the two adjacent, so it must travel
+  // with the data rather than being an optional client decoration.
+  assert.match(out.meta.reconcileNote, /hung up before reaching an agent/i);
+  assert.match(out.meta.reconcileNote, /waited past its\s+threshold/i);
+});
+
+test('R16i: a manager cannot reach another dept, and a date is mandatory', function () {
+  installDay('manager');
+  h.ctx.getDashboardNeonConn_ = function () { return fakeConn('[]'); };
+  assert.throws(function () {
+    h.call('getDeptDayAbandons', { department: 'Sales', date: '2026-06-23' });
+  }, /Not authorized for this department/);
+  assert.throws(function () {
+    h.call('getDeptDayAbandons', { department: 'CSR', date: '2026-06' });
+  }, /date must be YYYY-MM-DD/);
+  assert.throws(function () {
+    h.call('getDeptDayAbandons', { department: 'CSR', from: '2026-06-01', to: '2026-06-30' });
+  }, /date must be YYYY-MM-DD/, 'a from/to range is not an accepted shape');
+  // Blank dept falls back to the manager's OWN dept, never to a company view.
+  const own = h.call('getDeptDayAbandons', { date: '2026-06-23' });
+  assert.equal(own.meta.department, 'CSR');
+  assert.equal(own.meta.companyView, false);
+});
+
+test('R16i: signed-out / unmapped users get nothing', function () {
+  installDay('none');
+  assert.throws(function () {
+    h.call('getDeptDayAbandons', { department: 'CSR', date: '2026-06-23' });
+  }, /Not authorized/);
+});

@@ -311,6 +311,20 @@ dump('heatmap-cell', {
   ],
 });
 
+// R16i: the SAME rows as the cell drill, plus the reconcile note only
+// getDeptDayAbandons ships (it renders beneath a QCD-sourced abandon count,
+// and the two figures differ by definition). Separate key so the heatmap
+// cell fixture keeps NOT carrying the note -- that endpoint doesn't send one.
+dump('dept-day-abandons', (function () {
+  const cell = JSON.parse(fs.readFileSync(path.join(OUT, 'heatmap-cell.json'), 'utf8'));
+  cell.meta.scope = 'day';
+  cell.meta.reconcileNote = 'Counts callers who hung up before reaching an agent. '
+    + 'The Queue-health \u201cAbandoned\u201d figure counts only callers who waited past its '
+    + 'threshold, so the two numbers differ \u2014 often several-fold. Both are correct; '
+    + 'they answer different questions.';
+  return cell;
+})());
+
 // All-departments Daily Call Queue Report (F7 fixture gap): without this the
 // #qcd-alldept-modal had no payload, so its `tr.qcd-expandable` rows never
 // rendered and the F13 keyboard fix could only be verified on the Insights

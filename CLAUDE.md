@@ -704,7 +704,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   them (pinned both ways); a uniquely-matched R11-N transfer group stays
   enrichment-only, and a standalone internal record carries
   `related_call_id` when uniquely nested in the originator's concurrent
-  answered inbound call (the path drill links the two). Unlike the full Inbound report it is
+  answered inbound call (the path drill links the two).
+  **`getDeptDayAbandons({department, date})` (R16i) is the SECOND
+  manager-reachable carve-out from this admin-gated store:** ONE date, ONE
+  required + `assertDeptAccess_`-checked dept, no company view, the
+  abandoned-call LIST only (no KPIs, no breakdowns, no prior window) -- so it
+  structurally cannot serve the report it is carved out of. It shares
+  `inboundAbandonList_` with the heatmap cell drill (each public function owns
+  its AUTH; the shared helper owns the DEFINITION), and ships
+  `meta.reconcileNote`, which the renderer always shows -- the list renders
+  under a QCD-sourced abandon count and the two differ by definition.
+  Unlike the full Inbound report the journey drill is
   manager-reachable for the manager's OWN dept: managers are pinned to their
   dept AND the query is scoped by `inboundDeptPredicate_`. **The entitlement is
   enforced SERVER-side (F-4):** the exact-`(call_date, call_id)` fallback --

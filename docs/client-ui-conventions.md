@@ -404,10 +404,16 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   the heatmap-cell-drill shape: DQE missed RINGS (time · agent · path) beside
   inbound ABANDONS (wait/hold seconds · entry→final queue · stage · path).
   They answer different questions from different sources and are not expected
-  to reconcile. The inbound lens is fetched ONLY for `USER.role === 'admin'`
-  — `inboundResolveRequest_` still carries the Inbound report's vetting gate,
-  so a manager request would throw; a manager sees the missed lens alone at
-  full width (the `.ins-detail-row` no-JS discipline). (#9→R16c) the separate **Email summary** is RETIRED —
+  to reconcile. **R16i: BOTH lenses are manager-reachable.** The abandons lens
+  calls `getDeptDayAbandons` (Inbound&nbsp;Report.gs) — one date, one required
+  and access-checked dept, no company view, the call list only — NOT the
+  admin-gated `getInboundHeatmapCell`. The two share `inboundAbandonList_`, so
+  the AUTH decision lives in each public function while the DEFINITION (what
+  counts as an abandon, which hours, which dept, the 200 cap) lives in one
+  place. The payload carries `meta.reconcileNote`, rendered by
+  `heatCellDetailHtml_` whenever present: this list sits directly beneath a
+  QCD-sourced abandoned count and the two differ by definition, so the
+  explanation ships WITH the data rather than being opt-in per call site. (#9→R16c) the separate **Email summary** is RETIRED —
   `sendInsightsReportEmail` sends ONE consolidated email (a legacy
   `style` param is ignored): takeaway + rollup tiles + the behind-team
   block (`insEmailBehindBlock_` — answer rate below the team average, min

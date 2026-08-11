@@ -999,7 +999,14 @@
       + ' · ' + calls.length + ' abandoned call' + (calls.length === 1 ? '' : 's')
       + (meta.truncated ? ' <span class="heat-drill-cap">(newest ' + calls.length + ' shown)</span>' : '')
       + '</div>';
-    return head + '<div class="heat-drill-list">' + body + '</div>';
+    // R16i: the payload's own reconcile note (getDeptDayAbandons ships it).
+    // This list renders directly beneath a QCD-sourced abandoned count, and
+    // the two figures differ by definition -- showing them adjacent WITHOUT
+    // saying why is the thing the note exists to prevent, so it renders
+    // whenever the server sends one rather than being opt-in per call site.
+    const note = meta.reconcileNote
+      ? '<div class="ds-note heat-drill-note">' + escapeHtml(meta.reconcileNote) + '</div>' : '';
+    return head + note + '<div class="heat-drill-list">' + body + '</div>';
   }
 
   // Shared renderer for a getMissedCallsSlice payload (the DQE missed-ring

@@ -2501,17 +2501,14 @@
     // missed RINGS (who was rung and didn't answer: time + agent + path) and
     // (2) inbound ABANDONS (the caller's side: wait/hold seconds, entry→final
     // queue, abandon stage). They answer different questions from different
-    // sources and are NOT expected to reconcile, so each is labeled. The
-    // inbound lens is ADMIN-ONLY -- `inboundResolveRequest_` still carries the
-    // Inbound report's vetting gate, so a manager request would throw; the
-    // Insights heatmap gates on the same `USER.role === 'admin'` check.
-    const wantInbound = (USER.role === 'admin');
+    // sources and are NOT expected to reconcile, so each is labeled.
+    // R16i: BOTH lenses are manager-reachable now -- the abandons list comes
+    // from `getDeptDayAbandons` (one dept, one date, list only), NOT from the
+    // admin-gated Inbound report endpoint. No role check here.
     detailRow.innerHTML = '<td colspan="' + cols + '">'
       + '<div class="ins-daily-detail-lenses">'
       +   '<div class="heat-lens" data-lens="missed">' + dsRingsHtml_('Loading missed rings…') + '</div>'
-      +   (wantInbound
-            ? '<div class="heat-lens" data-lens="inbound">' + dsRingsHtml_('Loading abandoned calls…') + '</div>'
-            : '')
+      +   '<div class="heat-lens" data-lens="inbound">' + dsRingsHtml_('Loading abandoned calls…') + '</div>'
       + '</div></td>';
     last.parentNode.insertBefore(detailRow, last.nextSibling);
     // The "↳ path" chips need the delegated journey handler live (its other
@@ -2538,18 +2535,16 @@
       .getMissedCallsSlice({ department: dept, from: iso, to: iso });
 
     // Lens 2 -- inbound abandons for the SAME date, carrying wait/hold time.
-    // Omitting dow+slot asks getInboundHeatmapCell for the whole range (R16h);
-    // from = to = this date makes that range one day.
-    if (wantInbound) {
-      google.script.run
-        .withSuccessHandler(function (resp) {
-          if (!guard()) return;
-          const el = slotOf('inbound');
-          if (el) el.innerHTML = heatCellDetailHtml_(resp, 'Abandoned calls — ' + iso);
-        })
-        .withFailureHandler(function (err) { failInto('inbound', err); })
-        .getInboundHeatmapCell({ department: dept, from: iso, to: iso });
-    }
+    // R16i: the manager-reachable per-dept/per-day endpoint (the heatmap's own
+    // list endpoint stays behind the Inbound report's vetting gate).
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (!guard()) return;
+        const el = slotOf('inbound');
+        if (el) el.innerHTML = heatCellDetailHtml_(resp, 'Abandoned calls — ' + iso);
+      })
+      .withFailureHandler(function (err) { failInto('inbound', err); })
+      .getDeptDayAbandons({ department: dept, date: iso });
   }
 
   // Violation-date drill: open the collapsed Daily breakdown, scroll the

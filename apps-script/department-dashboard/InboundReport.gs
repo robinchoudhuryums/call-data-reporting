@@ -1442,9 +1442,26 @@ function getInboundHeatmapCell(req) {
   const hasDow  = !!(req && req.dow  != null && req.dow  !== '');
   const hasSlot = !!(req && req.slot != null && req.slot !== '');
   if (hasDow !== hasSlot) throw new Error('dow and slot must be given together (omit both for the whole range).');
-  const cellScope = hasDow;
-  const dow  = cellScope ? Math.floor(Number(req.dow))  : null;
-  const slot = cellScope ? Math.floor(Number(req.slot)) : null;
+  return inboundAbandonList_(scope, hasDow ? { dow: req.dow, slot: req.slot } : null);
+}
+
+/**
+ * R16i: the abandoned-call list, SHARED by every caller that shows one.
+ * `scope` is the resolved {from,to,dept,companyView,deptQueues} shape --
+ * whichever public function produced it owns the AUTH decision; this helper
+ * owns the DEFINITION (what counts as an abandon, which hours, which dept,
+ * how many rows). Keeping those two concerns in different places is the
+ * point: `getInboundHeatmapCell` carries the Inbound report's admin-only
+ * vetting gate, `getDeptDayAbandons` carries the ordinary per-dept report
+ * gate, and neither can drift from the other on what the data MEANS.
+ *
+ * `bucket` = {dow, slot} narrows to one heatmap cell; null answers for the
+ * whole from..to range.
+ */
+function inboundAbandonList_(scope, bucket) {
+  const cellScope = !!bucket;
+  const dow  = cellScope ? Math.floor(Number(bucket.dow))  : null;
+  const slot = cellScope ? Math.floor(Number(bucket.slot)) : null;
   const slotCount = Math.max(1, Math.round(
     (INBOUND_HEATMAP_WINDOW_END_HOUR - INBOUND_HEATMAP_WINDOW_START_HOUR)
     * 60 / INBOUND_HEATMAP_SLOT_MINUTES));
@@ -1534,10 +1551,71 @@ function getInboundHeatmapCell(req) {
     });
     return out;
   } catch (e) {
-    Logger.log('getInboundHeatmapCell failed (best-effort): ' + (e && e.message ? e.message : e));
+    Logger.log('inboundAbandonList_ failed (best-effort): ' + (e && e.message ? e.message : e));
     out.meta.available = false;
     return out;
   } finally {
     if (conn) { try { conn.close(); } catch (ce) {} }
   }
+}
+
+/**
+ * R16i: ONE DEPARTMENT'S ABANDONED CALLS FOR ONE DAY -- the narrow slice of
+ * inbound data a MANAGER can reach, so the Insights Daily-breakdown day drill
+ * shows wait times to the people who run the queue.
+ *
+ * Why this exists instead of relaxing `inboundResolveRequest_`: that gate is
+ * a VETTING hold on the full Inbound report (its aggregate abandon counts sit
+ * ~4x from QCD's -- different definitions, both correct -- and shipping those
+ * side by side without explanation is the thing being avoided). This endpoint
+ * deliberately cannot serve that report:
+ *   - ONE DATE, never a range (no trend, no month, no window totals);
+ *   - ONE DEPARTMENT, always required and always access-checked -- no company
+ *     view, so no cross-dept comparison;
+ *   - the call LIST only -- no insurer / dial-in / journey-length breakdowns,
+ *     no KPI block, no prior-window deltas;
+ *   - the same 8 AM-5 PM band, abandon definition and 200-row cap as the
+ *     heatmap drill, via the shared `inboundAbandonList_`.
+ * What a manager gains over what they already have (their Missed report
+ * already lists their dept's abandoned ring times + parent ids) is the
+ * caller-side facts: wait/hold seconds, entry->final queue, abandon stage.
+ *
+ * `meta.reconcileNote` travels WITH the payload, not as client decoration:
+ * this list renders directly beneath a QCD-sourced daily row, and the
+ * standing ruling is that the two abandon figures must never appear side by
+ * side without saying why they differ. A caller that drops the note is
+ * showing an unexplained contradiction.
+ */
+function getDeptDayAbandons(req) {
+  req = req || {};
+  const user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  const date = String(req.date || '').trim();
+  if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
+
+  // Dept is REQUIRED (no company view) and gated by the shared per-dept
+  // report check -- the same one the 8 report endpoints use, which honors
+  // single-dept pinning, multi-dept managers, the ALL sentinel and sub-queue
+  // widening without this function re-deciding any of it.
+  let dept = String(req.department || '').trim();
+  if (!dept) {
+    const mine = (user.departments && user.departments.length)
+      ? user.departments : (user.department ? [user.department] : []);
+    dept = mine[0] || '';
+  }
+  if (!dept) throw new Error('Department is required.');
+  assertDeptAccess_(user, dept);
+
+  const scope = {
+    from: date, to: date, dept: dept, companyView: false,
+    deptQueues: inboundQueuesForDept_(dept),
+  };
+  const out = inboundAbandonList_(scope, null);
+  out.meta.scope = 'day';
+  out.meta.reconcileNote = 'Counts callers who hung up before reaching an agent. '
+    + 'The Queue-health “Abandoned” figure counts only callers who waited past its '
+    + 'threshold, so the two numbers differ — often several-fold. Both are correct; '
+    + 'they answer different questions.';
+  logReportUsage_('deptDayAbandons', dept, user, false);
+  return out;
 }
