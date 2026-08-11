@@ -1381,24 +1381,36 @@
        QCD panel underneath the pinned strip. */
     .dept-side { order: 0; position: sticky; top: calc(var(--dept-sticky-h, 84px) + 10px); align-self: start; max-height: calc(100vh - var(--dept-sticky-h, 84px) - 20px); overflow: auto; }
   }
-  /* In the narrow side column the per-queue tiles stack rather than squeeze. */
+  /* In the narrow side column the per-queue tiles stack rather than squeeze.
+     R17c (owner): two tiles per row + a two-line Total-Calls split + a
+     smaller value -- the one-line "60 (58 / 2)" at 16px fought the narrow
+     tile and the pair read awkward. Elsewhere (the inline snapshot) the
+     tiles keep their one-line inline form. */
   @media (min-width: 1100px) {
-    .dept-side .dept-qcd-tiles { grid-template-columns: 1fr; }
+    .dept-side .dept-qcd-tiles,
+    .dept-side .dept-qcd-tiles-inner { grid-template-columns: 1fr 1fr; }
+    .dept-side .dept-qcd-value { font-size: 15px; }
+    .dept-side .dept-qcd-split { display: block; font-size: 11.5px; font-weight: 600; line-height: 1.3; }
+    .dept-side .dept-qcd-tile { padding: 5px 6px; }
   }
 
   /* ── R17b: Team Rings Data (the second sticky side panel) ──────────────
      Rides the same .dept-qcd-snapshot card chrome as panel 1; the aside is
      the sticky element, so both panels scroll together (internal overflow
      past one viewport is panel-1's existing behavior). */
-  #dept-team-rings { margin-top: 14px; }
-  .trp-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
-  .trp-tiles .ds-kpi { text-align: center; }
+  #dept-team-rings { margin-top: 12px; }
+  .trp-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+  /* R17c (owner): compact cards -- the full ds-kpi scale crowded the panel
+     out of the viewport. Smaller padding/value/foot, same component. */
+  .trp-tiles .ds-kpi { text-align: center; padding: 7px 8px; }
   .trp-tiles .ds-kpi__top { justify-content: center; gap: 6px; flex-wrap: wrap; }
+  .trp-tiles .ds-kpi__value { font-size: 17px; }
+  .trp-tiles .ds-kpi__foot { font-size: 9px; margin-top: 2px; }
   .trp-tiles .trp-a { color: var(--good); }
   .trp-tiles .trp-m { color: var(--bad); }
   /* Owner (vertical budget): the condensed table caps at ~10 rows and
      scrolls internally; the thead stays pinned inside the scroll. */
-  .trp-table-wrap { max-height: 300px; overflow-y: auto; }
+  .trp-table-wrap { max-height: 240px; overflow-y: auto; }
   .trp-table { width: 100%; border-collapse: collapse; }
   .trp-table th {
     position: sticky; top: 0; background: var(--paper-card); z-index: 1;
@@ -1440,7 +1452,7 @@
   .dept-qcd-snapshot {
     margin-top: 24px;
     margin-bottom: 16px;
-    padding: 14px 16px;
+    padding: 12px 14px;   /* R17c: tighter -- both side panels in one viewport */
     background: var(--paper-card);
     border: 1px solid var(--line);
     border-radius: var(--r);
@@ -1489,6 +1501,13 @@
     font-size: 11px;
     color: var(--muted);
   }
+  /* R17c (owner): the side panels' explainer text moved into a hover ⓘ so
+     both panels fit one viewport without the aside's own scrollbar. */
+  .side-hint-i {
+    font-size: 12px; color: var(--muted); cursor: help; line-height: 1;
+    align-self: center;
+  }
+  .side-hint-i:hover, .side-hint-i:focus-visible { color: var(--accent); }
   .dept-qcd-tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
@@ -3847,6 +3866,8 @@
     white-space: nowrap; font-variant-numeric: tabular-nums;
   }
   .ins-share-pct { color: var(--muted); }
+  /* R17c: pts vs the equal share -- neutral gray (workload, not good/bad). */
+  .ins-share-delta { color: var(--muted); font-size: 10px; font-weight: 500; }
   .tly.oth { background: var(--muted); opacity: 0.45; }
   .ins-card-ir-link {
     margin-left: auto;

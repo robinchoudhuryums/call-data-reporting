@@ -55,3 +55,31 @@ node --test 660/0, INV-16, ci:ui 46+16+30+14.
 **WHERE I LEFT OFF:** R17a (increment 96) + R17b committed + pushed on
 claude/broad-scan-l9ojgm. No PR (owner asks explicitly). Owner may want
 live-deploy tweaks to the panel's density/columns.
+
+## Follow-up (R17c): live-deploy polish + share deltas
+
+Owner notes off the deployed panels, all client-only:
+1. BOTH panels fit one viewport (probe: aside scrollHeight 688 ==
+   clientHeight 688 at 1500x900): explainers -> hover ⓘ
+   (.side-hint-i), panel-1 side tiles two-up + two-line Total-Calls
+   split at 15px (side-scoped -- the inline snapshot keeps one-line),
+   Team Rings cards compacted (17px value), trp table cap 300 -> 240,
+   snapshot padding tightened. The aside's overflow:auto stays as a
+   safety net only.
+2. Avg ans time renders mm:ss ("0:00:38" -> "00:38"); an hour-reaching
+   value keeps the full form rather than lying.
+3. Share-of-answered rows gain a neutral-gray delta vs the EQUAL share
+   (100% / answering agents) -- ONLY on a whole-dept run (no "Other
+   agents" remainder); with a subset the dept agent count is unknown so
+   the deltas hide rather than guess. Legend names the baseline; row
+   titles carry the exact math.
+
+Gates: 660/0, INV-16, ci:ui 46+16+30+14.
+
+DEFERRED (owner asked feasibility, not yet approved to build): the
+always-available YTD Calendar. Feasible cheaply -- the 12-month trend
+already fetches the full INV-29 row range, so the server can emit a
+year-long daily series without extra data reads; needs an insights
+cache-version bump + the client defaulting the calendar to the current
+month with month-nav when the selected window is shorter than
+INS_CALENDAR_MIN_DAYS_. Awaiting go-ahead.

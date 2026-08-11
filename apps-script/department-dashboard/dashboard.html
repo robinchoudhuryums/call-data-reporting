@@ -1190,8 +1190,10 @@
         <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
           <div class="dept-qcd-header">
             <strong id="dept-qcd-title">Queue Call Data</strong>
+            <!-- R17c (owner): the explainer is a HOVER tooltip on the ⓘ, not
+                 visible text -- both side panels must fit one viewport. -->
+            <span class="side-hint-i" tabindex="0" title="Daily roll-up across this dept's mapped queues from QCD Historical Data. For a date range, open the Insights report — its Queue health section is the range view.">&#9432;</span>
             <span class="dept-qcd-date" id="dept-qcd-date"></span>
-            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, open the Insights report — its Queue health section is the range view.</span>
           </div>
           <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date).
                Hidden when the server didn't ship an MTD block. -->
@@ -1211,8 +1213,9 @@
         <div id="dept-team-rings" class="dept-qcd-snapshot" style="display:none;">
           <div class="dept-qcd-header">
             <strong>Team Rings Data</strong>
+            <!-- R17c (owner): explainer on hover, same as panel 1. -->
+            <span class="side-hint-i" tabindex="0" title="Ring-level rollup + the agent table at a glance, for the selected range. Full detail in the table above.">&#9432;</span>
             <span class="dept-qcd-date" id="trp-date"></span>
-            <span class="dept-qcd-hint">Ring-level rollup + the agent table at a glance, for the selected range. Full detail in the table above.</span>
           </div>
           <div class="trp-tiles" id="trp-tiles"></div>
           <div class="trp-table-wrap" id="trp-table-wrap">

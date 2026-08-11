@@ -1771,22 +1771,41 @@
     const unit = ansTallyUnitFor_(slices.map(function (s) {
       return { totalAnswered: s.value, totalMissed: 0 };
     }));
+    // R17c (owner): per-row delta vs the EQUAL share (100% ÷ answering
+    // agents) -- only when the run covers the WHOLE department (no "Other
+    // agents" remainder, the N1 default). With a subset selected the dept's
+    // answering-agent count is unknown, and an average over just the shown
+    // agents would mislead, so the deltas hide rather than guess. NEUTRAL
+    // gray on purpose: a big share is workload distribution, not good/bad.
+    const eqShare = other === 0 && agentSlices.length > 1
+      ? (100 / agentSlices.length) : null;
     host.innerHTML = slices.map(function (s) {
       const pct = deptTotal > 0 ? (s.value / deptTotal * 100) : 0;
+      let deltaHtml = '', deltaTxt = '';
+      if (eqShare != null && !s.other) {
+        const d = pct - eqShare;
+        const arrow = d >= 0 ? '▲' : '▼';
+        deltaHtml = ' <span class="ins-share-delta" aria-hidden="true">'
+          + arrow + ' ' + Math.abs(d).toFixed(1) + '</span>';
+        deltaTxt = ' · ' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1)
+          + ' pts vs an equal share (100% ÷ ' + agentSlices.length
+          + ' agents = ' + eqShare.toFixed(1) + '%)';
+      }
       const title = s.label + ': ' + fmtNumber(s.value) + ' answered · '
-        + pct.toFixed(1) + '% of the department’s answered calls'
+        + pct.toFixed(1) + '% of the department’s answered calls' + deltaTxt
         + (unit > 1 ? ' · each block ≈ ' + unit + ' calls' : '');
       return '<div class="ins-share-row' + (s.other ? ' is-other' : '') + '" title="' + escapeHtml(title) + '">'
         + '<span class="ins-share-name">' + escapeHtml(s.label) + '</span>'
         + '<span class="ins-share-blocks">' + ansTallyBlocks_(s.value, unit, s.other ? 'oth' : 'a') + '</span>'
-        + '<span class="ins-share-num">' + fmtNumber(s.value) + ' <span class="ins-share-pct">· ' + pct.toFixed(1) + '%</span></span>'
+        + '<span class="ins-share-num">' + fmtNumber(s.value) + ' <span class="ins-share-pct">· ' + pct.toFixed(1) + '%</span>' + deltaHtml + '</span>'
         + '</div>';
     }).join('');
     const leg = $('ins-share-legend');
     if (leg) {
       leg.style.display = '';
       leg.innerHTML = (unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls · ' : '')
-        + 'sorted most-answered first · shares are of the whole department';
+        + 'sorted most-answered first · shares are of the whole department'
+        + (eqShare != null ? ' · ▲▼ = pts vs an equal share (' + eqShare.toFixed(1) + '%)' : '');
     }
   }
 
