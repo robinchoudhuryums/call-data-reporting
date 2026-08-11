@@ -429,6 +429,46 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   the abandons lens carries a stage TICK per row (`.hd-stage`: warm = in
   queue, accent = on hold, muted = IVR) — redundant with the facts text on
   purpose (colorblind-safe).
+  **R17h consolidates the family.** The missed chart's HOUR-BUCKET drill
+  (`makeMissedBucketDetail_`, My Department) was the last surface on its own
+  private markup; it now renders through `missedSliceListHtml_` too, so all
+  four drills — bucket, per-queue, day, heatmap-cell — share one visual
+  language (date treatment, the R17f run grouping, the "↳ path" chips). Its
+  panel header keeps the bucket identity and the shared head carries the
+  count + lens note, so neither repeats the other; `.bucket-detail-list` /
+  `.bucket-detail-empty` / the bucket-scoped `.ring-*` rules are RETIRED (the
+  queue-only list keeps its own `.queue-only-list .ring-*`).
+  **The renderer gained a SPARSE mode in the same pass, and it is not
+  cosmetic:** a date header exists to stop the date repeating per row, so in
+  a slice averaging under 1.5 rings per date (the bucket and heatmap-cell
+  drills — one half-hour across many dates) every header served a single row
+  at ~3x the vertical cost, in the shortest panels on the page. Under that
+  ratio the list goes flat with a compact `.heat-drill-inline-date` chip.
+  Dense slices never trip it by construction (the day drill is ONE date; the
+  per-queue drill spans a window), so their appearance is unchanged.
+- **Missed-slice CROSS-LINKS (R17h, Option B).** The five missed/abandoned
+  lists are slices of the same rings, so each raises two questions the page
+  can answer without a fetch: a drill row's AGENT NAME (`.ms-agent-link`)
+  jumps to that agent's card in the Missed section
+  (`data-agent-card` anchor → `missedAgentCardEl_` → `deptMissedJumpToAgent_`,
+  which opens the whole `<details>` chain then spotlights), and an agent
+  card's RING TIME (`.ms-bucket-link`, carrying `m.bucket`) opens the
+  dept-wide hour-bucket drill for that half-hour — `show`, never `toggle`, so
+  clicking a ring can't close the bucket it meant to open. Both are wired on
+  the existing `document`-delegated chain ahead of the id-chip handlers, with
+  `stopPropagation` so neither also toggles a `<details>` it sits inside.
+  Two rules worth keeping: the agent link renders ONLY when the card exists
+  (queue-sentinel rows, off-section agents and the Inbound report's own
+  heatmap drill all degrade to plain text rather than a dead click), and
+  `missedAgentCardEl_` matches the attribute by ITERATION, not a
+  `[data-agent-card="…"]` selector — agent names are external CDR text and a
+  quote would break the selector string (the `csvSafeCell_` lesson).
+  **Both are link-styled SPANS, not buttons, deliberately:** a day slice runs
+  to hundreds of rings and that many tab stops would bury the page's real
+  controls; nothing becomes keyboard-unreachable, since both destinations are
+  themselves in the tab order on the same page. `qsSpotlight_` accepts an
+  element as well as an id for this (agent cards are keyed by name, which
+  makes a poor id fragment).
   **R17d: the Calendar is available at EVERY window length.** The 14–366-day
   span rule now gates only the QUEUE metric (`queueHealth.dailySeries` is
   window-scoped); for the TEAM metrics a window that can't fill a calendar

@@ -578,8 +578,13 @@
   // target into view and pulses an accent ring so the eye lands on the
   // exact part of the report that answers the question. Reduced-motion
   // users get a static ring (no pulse) for the same duration.
-  function qsSpotlight_(id) {
-    const el = document.getElementById(id);
+  // R17h: accepts an ELEMENT as well as an id -- the missed-slice cross-links
+  // spotlight an agent card, which has no id (it is keyed by data-agent-card,
+  // since agent names are external text and make poor id fragments). Existing
+  // string callers are unchanged.
+  function qsSpotlight_(idOrEl) {
+    const el = (idOrEl && typeof idOrEl === 'object')
+      ? idOrEl : document.getElementById(idOrEl);
     if (!el) return;
     try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
     el.classList.remove('qs-spotlight');

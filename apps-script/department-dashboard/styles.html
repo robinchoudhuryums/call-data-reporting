@@ -2166,46 +2166,14 @@
     padding: 0;
   }
   .link-btn:hover { color: var(--ink); text-decoration: underline; }
-  .bucket-detail-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-size: 13px;
-    font-family: var(--mono);
-    font-variant-numeric: tabular-nums;
-    max-height: 280px;
-    overflow-y: auto;
-  }
-  .bucket-detail-list li {
-    padding: 4px 0;
-    border-bottom: 1px solid var(--paper-2);
-    display: grid;
-    grid-template-columns: 80px 1fr 110px;
-    gap: 12px;
-    align-items: baseline;
-  }
-  .bucket-detail-list li:last-child { border-bottom: 0; }
-  .bucket-detail-list li.abandoned {
-    color: var(--warn);
-    font-weight: 500;
-  }
-  .bucket-detail-list .ring-date  { color: var(--muted); }
-  .bucket-detail-list .ring-agent { color: var(--ink); font-family: var(--ui); }
-  /* Let the time cell wrap its parent-id chip + "↳ path" button onto a second
-     line when the panel is narrow, instead of forcing the column to its full
-     nowrap max-content width -- which overflowed the drill-in (and, since the
-     list has overflow-y:auto, made overflow-x compute to auto = the stray
-     horizontal scrollbar). minmax(0,auto) lets the column shrink below its
-     content; white-space:normal lets the contents wrap. */
-  .bucket-detail-list .ring-time  {
-    text-align: right;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-  .bucket-detail-list li {
-    grid-template-columns: 80px minmax(0, 1fr) minmax(0, auto);
-  }
-
+  /* R17h (Option A): the bucket drill renders through the SHARED missed-ring
+     lens (missedSliceListHtml_) now, so this panel's own list markup --
+     .bucket-detail-list and its ring-date / ring-agent / ring-time grid, plus
+     .bucket-detail-empty -- is retired. The queue-only list keeps its OWN
+     .queue-only-list .ring-* rules; only the bucket-scoped copies went. The
+     shared list's 260px cap is lifted to the 280px this panel used to give,
+     so the drill shows the same number of rows as before. */
+  .bucket-detail .heat-drill-list { max-height: 280px; }
   /* Parent-call-ID chip + copy button. Renders inline next to the
      siren on abandoned timestamps. Compact in normal flow, with the
      ID in monospace so it's recognizable at a glance and the copy
@@ -2262,11 +2230,16 @@
     font-weight: 400;
     white-space: nowrap;
   }
-  .bucket-detail-empty {
-    color: var(--muted);
-    font-size: 13px;
-    margin: 0;
+  /* R17h (Option B): the missed-slice cross-links -- a drill row's agent name
+     jumps to that agent's card, an agent card's ring time jumps to the
+     dept-wide hour-bucket drill. Link-styled SPANS, not buttons (see the
+     tab-stop reasoning at missedAgentCardEl_), so the affordance is the
+     dotted underline + the pointer + the hover tint. */
+  .ms-agent-link, .ms-bucket-link {
+    cursor: pointer;
+    border-bottom: 1px dotted color-mix(in srgb, var(--accent) 55%, transparent);
   }
+  .ms-agent-link:hover, .ms-bucket-link:hover { color: var(--accent); border-bottom-style: solid; }
 
   /* Queue-only abandoned section (no agent rang) — warn-stripe panel
      with a soft-bg fill. The 3px left stripe carries the urgency so the
@@ -6904,6 +6877,13 @@
   }
   .hd-stage.is-hold { background: var(--accent); }
   .hd-stage.is-ivr  { background: var(--muted); }
+  /* R17h: the flat-mode date chip (see missedSliceListHtml_'s sparse-slice
+     branch) -- carries the date on the row when per-date headers would each
+     serve a single ring. */
+  .heat-drill-inline-date {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    white-space: nowrap; flex: 0 0 auto;
+  }
   .heat-drill-when { font-family: var(--mono); color: var(--ink); white-space: nowrap; }
   .heat-drill-path { color: var(--ink); min-width: 0; }
   .heat-drill-facts { color: var(--muted); }
