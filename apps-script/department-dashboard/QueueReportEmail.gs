@@ -410,11 +410,17 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       : Math.round((Number(row.abandonedPct) || 0) / 100 * (Number(row.totalCalls) || 0))) || 0;
     const abPct = Number(row.abandonedPct) || 0;
     const redC = abPct >= 5 ? C.bad : '#e8c4b2';
+    // R17e (owner): slimmer cells than the original 5px+2px buy the higher
+    // block ceiling (TALLY_MAX_BLOCKS below), which lets the unit ladder
+    // land on 20 calls/block for a ~350-500-call queue day where the old
+    // 14-block ceiling forced 50/block and hid the scale. R17f (owner):
+    // 4px+1px, not R17e's 3px+1px -- the column widened to 190px, so the
+    // 25-block ceiling no longer needs sliver cells.
     const blocks = function (n, color) {
       let out = '';
       for (let i = 0; i < n; i++) {
-        out += '<td width="5" style="background:' + color + ';height:12px;line-height:12px;font-size:0;">&nbsp;</td>'
-             + '<td width="2" style="font-size:0;">&nbsp;</td>';
+        out += '<td width="4" style="background:' + color + ';height:12px;line-height:12px;font-size:0;">&nbsp;</td>'
+             + '<td width="1" style="font-size:0;">&nbsp;</td>';
       }
       return out;
     };
@@ -491,17 +497,22 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // counts. Each section discloses its own block size on the banner when a
   // block is worth more than one call. Ladder = the web report's
   // ansTallyUnitFor_, replicated server-side; 0 = no volume.
-  // R16e (owner): the block CEILING is 14, not the web app's 36, and that
-  // number is a LAYOUT constraint rather than a taste call. The tally is an
-  // HTML-email table of width="5" cells inside the ~150px "Abandoned %"
-  // column: past ~16 blocks the column can no longer fit their natural width,
-  // so the renderer SHRINKS every cell to fit (measured: 20 blocks render at
-  // 4.09px against 5px for a 9-block row). Blocks then stop being uniform
-  // between rows, which is exactly what a tally must never do -- a busy
-  // queue's blocks looked thinner than a quiet one's. Keeping the widest row
-  // under the fit threshold makes every block identical everywhere. Raising
-  // this without widening the column re-introduces the squeeze.
-  const TALLY_MAX_BLOCKS = 14;
+  // R16e (owner): the block CEILING is a LAYOUT constraint, not a taste
+  // call. The tally is an HTML-email table of fixed-width cells inside the
+  // "Abandoned %" column: past the column's natural-width budget the
+  // renderer SHRINKS every cell to fit (measured at the original 5px+2px
+  // cells in the 150px column: 20 blocks rendered 4.09px against 5px for a
+  // 9-block row). Blocks then stop being uniform between rows, which is
+  // exactly what a tally must never do. Keeping the widest row under the
+  // fit threshold makes every block identical everywhere.
+  // R17e/R17f (owner): the ceiling is 25 so the unit ladder lands on
+  // 20 calls/block for a ~350-500-call queue day (the old 14-block ceiling
+  // forced 50/block, which read as a much quieter queue); the column is
+  // 190px wide (was 150) so those 25 blocks keep 4px+1px cells -- 25 x 5px
+  // = 125px + the ~45px % label + 16px padding = 186px, just under the
+  // column's edge. Raising the ceiling or fattening the cells without
+  // widening the column re-introduces the squeeze.
+  const TALLY_MAX_BLOCKS = 25;
   const tallyUnitFor_ = function (max) {
     if (!max) return 0;
     const ladder = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
@@ -684,7 +695,10 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   let tbl = '<tr style="background:' + C.headbg + ';">'
     + '<td style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
     + '<td align="right" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Total</td>'
-    + '<td width="150" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
+    // R17f (owner): 190px, up from 150 -- the Viol column had slack, and the
+    // extra width lets the tally blocks keep 4px cells at the 25-block
+    // ceiling instead of the 3px slivers the 150px column forced.
+    + '<td width="190" style="padding:9px 8px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Abandoned %</td>'
     + '<td align="right" style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;white-space:nowrap;">' + violHdr + '</td></tr>';
   ordered.forEach(function (d) {
     const sec = secTotals(d);

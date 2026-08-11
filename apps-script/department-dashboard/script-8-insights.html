@@ -102,12 +102,22 @@
     try { who = (typeof USER !== 'undefined' && USER && USER.email) ? USER.email : ''; } catch (e) {}
     return 'cdr.ins.folds.v1:' + who;
   }
-  let insFolds_ = null;   // { qh, trend } open-state (team detail keeps its own element state)
+  // { qh, trend, detail } open-state. R17e: `detail` (the #ins-team-detail
+  // heatmap + call-share row) joined the store -- it used to keep bare
+  // element state (closed by default, forgotten across loads); the owner
+  // wants it OPEN by default and every fold remembered per user.
+  let insFolds_ = null;
   function insFoldsLoad_() {
     if (insFolds_) return insFolds_;
     try {
       const saved = JSON.parse(localStorage.getItem(insFoldsKey_()) || 'null');
-      if (saved && typeof saved === 'object') { insFolds_ = saved; return insFolds_; }
+      if (saved && typeof saved === 'object') {
+        // Pre-R17e blobs lack `detail`; absent means "never chose", and the
+        // default for it is OPEN (unlike qh/trend's role-seeded default).
+        if (saved.detail === undefined) saved.detail = true;
+        insFolds_ = saved;
+        return insFolds_;
+      }
     } catch (e) { /* fall through to defaults */ }
     // Migration: honor an old density pref once, then the folds key owns it.
     let seed = null;
@@ -120,7 +130,7 @@
     if (seed === null) {
       seed = (typeof USER !== 'undefined' && USER && USER.role === 'admin');
     }
-    insFolds_ = { qh: !!seed, trend: !!seed };
+    insFolds_ = { qh: !!seed, trend: !!seed, detail: true };
     return insFolds_;
   }
   function insFoldOpen_(key) { return !!insFoldsLoad_()[key]; }
@@ -130,11 +140,13 @@
     try { localStorage.setItem(insFoldsKey_(), JSON.stringify(f)); } catch (e) { /* ignore */ }
   }
   // Reflect the saved open-state onto the fold elements (render-time; the
-  // toggle listeners keep the store in sync the other way).
+  // toggle listeners keep the store in sync the other way). Selector is the
+  // bare data-fold attribute: #ins-team-detail carries it without the
+  // .ins-fold class (it predates the fold system and keeps its own chrome).
   function insFoldsApply_() {
     const f = insFoldsLoad_();
-    ['qh', 'trend'].forEach(function (k) {
-      const el = document.querySelector('.ins-fold[data-fold="' + k + '"]');
+    ['qh', 'trend', 'detail'].forEach(function (k) {
+      const el = document.querySelector('[data-fold="' + k + '"]');
       if (el && el.open !== !!f[k]) el.open = !!f[k];
     });
   }
@@ -497,6 +509,9 @@
     // at zero height inside a collapsed <details>.
     const teamDetail = $('ins-team-detail');
     if (teamDetail) teamDetail.addEventListener('toggle', function () {
+      // R17e: this fold is remembered per user like qh/trend (a programmatic
+      // insFoldsApply_ open fires this too -- re-saving the same value).
+      insFoldSet_('detail', teamDetail.open);
       if (teamDetail.open) {
         insRenderDeferredCharts_();
         // Round-16: the admin abandon heatmap lives in this fold and is only
@@ -1791,8 +1806,10 @@
     // agents) -- only when the run covers the WHOLE department (no "Other
     // agents" remainder, the N1 default). With a subset selected the dept's
     // answering-agent count is unknown, and an average over just the shown
-    // agents would mislead, so the deltas hide rather than guess. NEUTRAL
-    // gray on purpose: a big share is workload distribution, not good/bad.
+    // agents would mislead, so the deltas hide rather than guess. R17e
+    // (owner): color-coded -- sage above the equal share, warm below, but a
+    // delta under 2 pts stays muted gray so ordinary spread doesn't shout
+    // (the WOW_NOISE_THRESHOLD spirit).
     const eqShare = other === 0 && agentSlices.length > 1
       ? (100 / agentSlices.length) : null;
     host.innerHTML = slices.map(function (s) {
@@ -1801,7 +1818,8 @@
       if (eqShare != null && !s.other) {
         const d = pct - eqShare;
         const arrow = d >= 0 ? '▲' : '▼';
-        deltaHtml = ' <span class="ins-share-delta" aria-hidden="true">'
+        const dCls = Math.abs(d) < 2 ? '' : (d >= 0 ? ' is-up' : ' is-down');
+        deltaHtml = ' <span class="ins-share-delta' + dCls + '" aria-hidden="true">'
           + arrow + ' ' + Math.abs(d).toFixed(1) + '</span>';
         deltaTxt = ' · ' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1)
           + ' pts vs an equal share (100% ÷ ' + agentSlices.length

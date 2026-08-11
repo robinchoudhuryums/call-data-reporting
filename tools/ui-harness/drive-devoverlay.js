@@ -121,9 +121,14 @@ async function boot(browser, role, prep) {
       // reported a visible panel as hidden.
       const cs = getComputedStyle(el);
       const box = el.getBoundingClientRect();
+      // Slice generously: the panel lists captured server calls ABOVE the
+      // App-state block, and that list grew when R17e opened the Insights
+      // team-detail fold by default (its heatmap fetch is one more RPC) --
+      // a 400-char slice pushed "App state" out of the sample and failed
+      // the assertion on a probe artifact.
       return { open: el.classList.contains('is-open'),
                visible: cs.display !== 'none' && box.width > 0 && box.height > 0,
-               text: (el.textContent || '').slice(0, 400) };
+               text: (el.textContent || '').slice(0, 2000) };
     });
     record('overlay: the chord opens it', !!(shown && shown.open && shown.visible));
     record('overlay: it lists captured server calls',

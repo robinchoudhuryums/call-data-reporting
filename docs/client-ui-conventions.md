@@ -416,7 +416,19 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   place. The payload carries `meta.reconcileNote`, rendered by
   `heatCellDetailHtml_` whenever present: this list sits directly beneath a
   QCD-sourced abandoned count and the two differ by definition, so the
-  explanation ships WITH the data rather than being opt-in per call site.
+  explanation ships WITH the data rather than being opt-in per call site —
+  since R17e as a hover-ⓘ on the lens heading (the `side-hint-i` pattern),
+  not a text box. The same R17e pass made the abandons lens render
+  CHRONOLOGICALLY (a display-only re-sort after the newest-N cap, so the
+  truncation note stays true) and gave each lens in the daily-breakdown
+  detail row its own bordered card surface. R17f adds two row treatments:
+  the missed-rings lens groups CONSECUTIVE same-parentId rings as a
+  connected run (warm rail + tint, id badge once, "rang N×" on the first
+  row — the R17a agent-card grouping applied to this lens; adjacency is the
+  key on purpose, a same-id ring later in the list is a re-rung call), and
+  the abandons lens carries a stage TICK per row (`.hd-stage`: warm = in
+  queue, accent = on hold, muted = IVR) — redundant with the facts text on
+  purpose (colorblind-safe).
   **R17d: the Calendar is available at EVERY window length.** The 14–366-day
   span rule now gates only the QUEUE metric (`queueHealth.dailySeries` is
   window-scoped); for the TEAM metrics a window that can't fill a calendar
@@ -1175,10 +1187,14 @@ behind the removed button.
   always-present `<details class="ins-fold">` whose collapsed summary
   carries its headline (`insQhFoldSync_` fills Queue health's — e.g.
   "4.8% abandoned · 1,510 queue calls · 1 viol MTD"); Trends is the other
-  fold, Team detail keeps its own `<details>`. Open state persists per
-  user per section (`cdr.ins.folds.v1:<email>`); role seeds the defaults
-  (admins open, managers collapsed) and an old saved density pref
-  migrates once. Draw-on-open: the trend chart renders only while its
+  fold, and since R17e **Team detail (the heatmap + call-share row) is in the
+  store too** (`data-fold="detail"`, no `.ins-fold` class — `insFoldsApply_`
+  matches on the bare attribute) — it used to keep bare element state, closed
+  and forgotten. Open state persists per
+  user per section (`cdr.ins.folds.v1:<email>`); role seeds the qh/trend
+  defaults (admins open, managers collapsed), **`detail` defaults OPEN for
+  everyone** (owner R17e; absent in a pre-R17e blob ⇒ treated as open), and
+  an old saved density pref migrates once. Draw-on-open: the trend chart renders only while its
   fold is open (the C3 zero-height trap) and the admin heatmap fetches
   on Team-detail expand. The on-track card fold (ex-Simple treatment) is
   universal now. `ds-density-simple`, the toggle, the D3 Simple caption
