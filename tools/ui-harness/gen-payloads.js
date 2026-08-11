@@ -291,6 +291,14 @@ dump('ir-init', h.call('getIndividualReportInit', { department: 'CSR' }));
 dump('insights', h.call('getInsightsReport', {
   department: 'CSR', from: s30.from, to: s30.to, agents: [],
 }));
+// R17d: the SINGLE-DAY insights payload. The dept page's default window is
+// one day (INV-43), so this -- not the 30-day capture above -- is what the
+// region actually renders on a cold load, and it is the only payload whose
+// `trendDaily` is too short to fill a calendar (the trendYtd fallback path).
+// Serving one payload for every span hid that whole branch from the gate.
+dump('insights-day', h.call('getInsightsReport', {
+  department: 'CSR', from: LATEST, to: LATEST, agents: [],
+}));
 dump('insights-init', h.call('getInsightsReportInit', { department: 'CSR' }));
 try {
   dump('missed-slice', h.call('getMissedCallsSlice', {

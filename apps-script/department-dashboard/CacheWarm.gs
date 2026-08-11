@@ -136,7 +136,7 @@ function warmReportCaches_() {
   // one-date-authority rule), so the window every manager actually loads
   // is the dept default -- `latest..latest`, INV-43 -- NOT the 30-day
   // launcher window this only used to warm. The cache key carries the
-  // window (`insights:v19:<dept>:<from>:<to>:...`), so warming just the
+  // window (`insights:v20:<dept>:<from>:<to>:...`), so warming just the
   // 30-day key left EVERY first dept open paying a full cold aggregation
   // while the warm sat unread. The launcher window still gets warmed
   // second, since the Help quick-start chips run exactly that request.

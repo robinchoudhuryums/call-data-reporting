@@ -266,6 +266,31 @@ test('Insights trendData: monthly team rollup excludes floaters (INV-53)', funct
   assert.equal(data.trendData.series[12].rung, 10);
 });
 
+test('R17d: trendYtd spans Jan 1 of the end year regardless of the selected window', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-01-05', agent: 'Anna', ext: '501', rung: 6,  missed: 2, answered: 4, att: '0:02:00' }),
+    dqeRow({ date: '2025-12-09', agent: 'Anna', ext: '501', rung: 99, missed: 9, answered: 90, att: '0:05:00' }), // PRIOR year
+    dqeRow({ date: '2026-03-10', agent: 'Cara', ext: '501', rung: 100, missed: 5, answered: 50, att: '0:09:00' }), // floater
+  ]);
+  // A ONE-DAY window: too short to fill a calendar, which is exactly when the
+  // client falls back to this series. It must still cover the whole year --
+  // it rides the 12-month trend pass, so it costs no extra read.
+  const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-10', to: '2026-03-10', agents: ['Anna', 'Cara'] });
+  assert.equal(data.trendYtd.from, '2026-01-01');
+  assert.equal(data.trendYtd.to, '2026-03-10');
+  // Labels are MM-DD and one per date WITH data, oldest first.
+  deepEqual(data.trendYtd.labels, ['01-05', '03-10']);
+  assert.equal(data.trendYtd.series.length, 2);
+  assert.equal(data.trendYtd.series[0].answered, 4);
+  // Roster-gated exactly like the monthly rollup: floater Cara's 50 is absent.
+  assert.equal(data.trendYtd.series[1].answered, 8);
+  assert.equal(data.trendYtd.series[1].rung, 10);
+  // Dec '25 belongs to the PRIOR year and must not leak into the YTD window,
+  // even though the 12-month trend pass visits it.
+  assert.ok(data.trendYtd.labels.indexOf('12-09') === -1);
+});
+
 test('Insights: 1-day range (from == to) compares against the previous day', function () {
   install([
     dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' }),
