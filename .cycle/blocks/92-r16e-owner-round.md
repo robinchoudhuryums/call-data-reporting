@@ -70,3 +70,53 @@ default space-between flung a lone label left, and centering alone broke
 now the badge drops under the label instead. Column trimmed 480 -> 400px
 max (centered text needs no run-up), giving the queue table 968px.
 Gates re-run: 652/0, INV-16, ci:ui 36+16+30+14.
+
+## Follow-up 2: tally block uniformity (email) + per-section units (web)
+
+Owner, from the live deploy:
+
+1. **Email blocks were not uniform between rows.** Measured in headless
+   Chromium against the real builder: a 20-block row rendered each cell at
+   4.09px while a 9-block row rendered 5px. Cause is layout, not the unit
+   ladder -- the tally is a table of width="5" cells inside the ~150px
+   "Abandoned %" column, and past ~16 blocks the renderer shrinks every
+   cell to fit. Fix: `TALLY_MAX_BLOCKS = 14` (email-local, NOT the web's
+   shared 36), so the widest row stays under the fit threshold and every
+   block renders at its natural 5px everywhere. Re-measured: all rows 5px.
+   New pin asserts no tally row exceeds 14 blocks across a fixture spanning
+   three orders of magnitude in one section.
+2. **The web all-dept report never got the per-section unit** (R16d changed
+   the email only). `qcdSectionUnit` is now computed per section inside the
+   `topLevel.forEach` and read by `queueRow`; each dept banner discloses
+   "block ≈ N calls" (`.qcd-deptrow-unit`); the single company-row
+   "= N calls" legend is removed (one number would be wrong for every
+   section but one). The web keeps the shared 36-block ceiling on purpose:
+   its blocks are `flex: 0 0 auto` and WRAP rather than shrink, so the
+   compression that forced the email's 14 does not exist there.
+
+Gates: node --test 653/0 (queue-report 39), INV-16, ci:ui 36+16+30+14.
+
+## Follow-up 3 (R16f): collapse motion, two-line Queue calls, legend clipping
+
+Three owner notes off the live deploy:
+
+1. **Collapse animates like the expand.** Day rows: `.is-closing` plays
+   `ins-daily-row-out` (140ms) while `.is-open` is HELD, then
+   `insQhDayToggle_`'s timer (150ms, stored on the day row so a rapid
+   re-open cancels it) removes both. The "Daily breakdown" `<details>`:
+   a native details close is INSTANT, so the summary click is intercepted
+   while open -- fold-out on the card, then `open=false`. Probes: closing
+   row keeps display through the beat with the out animation live; gone
+   after; rapid close->reopen stays open; details intercept holds
+   open+is-closing then closes clean.
+2. **Queue calls card is two lines** -- `.qh-calls-total` (full card size)
+   over `.qh-calls-split` (13px) -- the one-line value read
+   disproportionate on a half-width card. dts-ans/dts-abd colors still
+   ride the dts-value--split scoping.
+3. **Tally legend clipping**: a legend as the LAST child of a `.ds-card`
+   sat flush against the edge, where the rounded corner + overflow cut it
+   half off. Card-scoped fix (`.ds-card > .ans-tally-legend` gets
+   padding), so every such placement heals; the share-wrap + agent-table
+   legends were never flush and are untouched.
+
+Gates: 653/0, INV-16, ci:ui 36+16+30+14. No PR (not requested).

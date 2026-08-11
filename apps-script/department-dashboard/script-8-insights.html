@@ -563,7 +563,8 @@
       const cell = e.target.closest('.ins-cal-drill');
       if (cell) {
         const iso = cell.getAttribute('data-iso') || '';
-        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) insDrillToRange_({ from: iso, to: iso });
+        // R16g (owner): jump to the Daily breakdown, not a single-day reload.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) insCalJumpToDaily_(iso);
       }
     });
 
@@ -2055,14 +2056,20 @@
     const qhPaceFoot = qhWd > 1
       ? ('≈ ' + (Math.round((t.totalCalls / qhWd) * 10) / 10) + '/day over ' + qhWd + ' workdays')
       : (fmtNumber(t.totalAnswered) + ' answered · ' + fmtNumber(t.abandoned) + ' abandoned');
+    // R16f (owner): the TOTAL sits on its own line at full card size with the
+    // (answered / abandoned) split on a smaller line beneath -- one long
+    // inline value made the two parts fight for width and read
+    // disproportionate on a half-width card.
     const qhCallsValue =
-        '<span class="dts-qcalls">' + fmtNumber(t.totalCalls) + '</span>'
-      + ' <span class="dts-paren">(</span>'
-      + '<span class="dts-ans">' + fmtNumber(t.totalAnswered) + '</span>'
-      + '<span class="dts-sep"> / </span>'
-      + '<span class="dts-abd' + ((Number(t.abandoned) || 0) > 0 ? '' : ' is-zero') + '">'
-      +   fmtNumber(t.abandoned) + '</span>'
-      + '<span class="dts-paren">)</span>';
+        '<span class="qh-calls-total dts-qcalls">' + fmtNumber(t.totalCalls) + '</span>'
+      + '<span class="qh-calls-split">'
+      +   '<span class="dts-paren">(</span>'
+      +   '<span class="dts-ans">' + fmtNumber(t.totalAnswered) + '</span>'
+      +   '<span class="dts-sep"> / </span>'
+      +   '<span class="dts-abd' + ((Number(t.abandoned) || 0) > 0 ? '' : ' is-zero') + '">'
+      +     fmtNumber(t.abandoned) + '</span>'
+      +   '<span class="dts-paren">)</span>'
+      + '</span>';
     const tiles = [
       insQhKpiTileHtml_('Queue calls', qhCallsValue, qhPaceFoot,
         p ? inboundDelta_(t.totalCalls, p.totalCalls, 'neu', false) : '',
@@ -2289,6 +2296,23 @@
           e.preventDefault();
           insQhDayToggle_(dayRow);
         });
+        // R16f (owner): a <details> collapse is natively INSTANT -- so when
+        // the summary is clicked while open, intercept, play the fold-out on
+        // the card, then close for real. Opening keeps the native flip (the
+        // existing [open] fold-in animates it). Enter/Space on the summary
+        // fires a synthetic click, so the keyboard path rides this too.
+        var dailySummary = dailyWrap.querySelector('summary');
+        if (dailySummary) {
+          dailySummary.addEventListener('click', function (e) {
+            if (!dailyWrap.open || dailyWrap.classList.contains('is-closing')) return;
+            e.preventDefault();
+            dailyWrap.classList.add('is-closing');
+            setTimeout(function () {
+              dailyWrap.classList.remove('is-closing');
+              dailyWrap.open = false;
+            }, 150);
+          });
+        }
         dailyWrap._insScopeWired = true;
       }
     }
@@ -2359,6 +2383,12 @@
 
   // R16c: expand/collapse one day's per-queue rows. `force` pins a state
   // (the violation drill passes true); a bare call toggles.
+  // R16f (owner): CLOSING is animated too -- rows play a short fade-out
+  // (.is-closing, ins-daily-row-out) and only then leave the table, so the
+  // collapse reads as smooth as the expand instead of snapping. The pending
+  // timer lives on the day row so a rapid re-open cancels the close cleanly
+  // (the timeout runs slightly past the 140ms animation; reduced-motion
+  // users just get the rows removed after the same short beat).
   function insQhDayToggle_(dayRow, force) {
     const tbody = $('ins-qh-daily-tbody');
     if (!tbody || !dayRow) return;
@@ -2367,8 +2397,19 @@
       ? force : dayRow.getAttribute('aria-expanded') !== 'true';
     dayRow.setAttribute('aria-expanded', open ? 'true' : 'false');
     dayRow.classList.toggle('is-open', open);
-    tbody.querySelectorAll('tr.ins-daily-sub-row[data-date="' + iso + '"]')
-      .forEach(function (tr) { tr.classList.toggle('is-open', open); });
+    // (R16g: the per-date detail row rides the day group's open/close too.)
+    const subs = tbody.querySelectorAll(
+      'tr.ins-daily-sub-row[data-date="' + iso + '"], tr.ins-daily-detail-row[data-date="' + iso + '"]');
+    if (dayRow._insCloseTimer) { clearTimeout(dayRow._insCloseTimer); dayRow._insCloseTimer = null; }
+    if (open) {
+      subs.forEach(function (tr) { tr.classList.remove('is-closing'); tr.classList.add('is-open'); });
+    } else {
+      subs.forEach(function (tr) { tr.classList.add('is-closing'); });
+      dayRow._insCloseTimer = setTimeout(function () {
+        dayRow._insCloseTimer = null;
+        subs.forEach(function (tr) { tr.classList.remove('is-open', 'is-closing'); });
+      }, 150);
+    }
   }
 
   // Render the Daily breakdown table. MULTI mode (2+ queues with daily rows)
@@ -2411,6 +2452,99 @@
         ? '<span class="tly a"></span> = ' + unit + ' calls' : '';
       legEl.style.display = unit > 1 ? '' : 'none';
     }
+  }
+
+  // R16g (owner): a calendar day-click used to RELOAD the whole Insights
+  // region for that one date -- while the top half of My Department kept the
+  // page range, so the two halves showed CONFLICTING windows. It now JUMPS
+  // (smooth-scrolls) to the Daily breakdown, expands that date's day group,
+  // and opens the per-date missed/abandoned detail beneath it. Falls back to
+  // the old single-day reload ONLY when the daily table can't take the jump
+  // (dept with no QCD daily rows, or a date outside its series) -- a dead
+  // click would be worse than the old behavior.
+  function insCalJumpToDaily_(iso) {
+    const wrap = $('ins-qh-daily');
+    const tbody = $('ins-qh-daily-tbody');
+    const canJump = wrap && wrap.style.display !== 'none' && tbody
+      && tbody.querySelector('tr[data-date="' + iso + '"]');
+    if (!canJump) { insDrillToRange_({ from: iso, to: iso }); return; }
+    // The daily table lives inside the Queue-health FOLD, which may be
+    // closed when clicking from the Trends calendar at the page bottom.
+    const fold = $('ins-qh-fold');
+    if (fold) fold.open = true;
+    insJumpToDailyRow_(iso);
+    insQhDayDetail_(iso);
+  }
+
+  // R16g: the per-DATE drill row under a Daily-breakdown day -- every missed
+  // ring + queue abandon for that date (time · agent/queue · 🚨 · "↳ path"),
+  // via getMissedCallsSlice with no dow/hour filter (from=to=the date) and
+  // the SAME missedSliceListHtml_ renderer the heatmap drill uses, so the
+  // path chips ride the existing delegated .pid-journey handler. Lazily
+  // inserted once per render; a re-render of the tbody discards it; the
+  // day-group toggle hides/shows it with the queue rows (insQhDayToggle_'s
+  // selector includes it).
+  function insQhDayDetail_(iso) {
+    const tbody = $('ins-qh-daily-tbody');
+    if (!tbody) return;
+    let detailRow = tbody.querySelector('tr.ins-daily-detail-row[data-date="' + iso + '"]');
+    if (detailRow) { detailRow.classList.add('is-open'); return; }   // already loaded
+    const dateRows = tbody.querySelectorAll('tr[data-date="' + iso + '"]');
+    if (!dateRows.length) return;
+    const last = dateRows[dateRows.length - 1];
+    const table = tbody.closest('table');
+    const cols = table ? (table.querySelectorAll('thead th').length || 5) : 5;
+    detailRow = document.createElement('tr');
+    detailRow.className = 'ins-daily-detail-row is-open';
+    detailRow.setAttribute('data-date', iso);
+    // R16h: TWO labeled lenses, the heatmap cell drill's shape -- (1) DQE
+    // missed RINGS (who was rung and didn't answer: time + agent + path) and
+    // (2) inbound ABANDONS (the caller's side: wait/hold seconds, entry→final
+    // queue, abandon stage). They answer different questions from different
+    // sources and are NOT expected to reconcile, so each is labeled.
+    // R16i: BOTH lenses are manager-reachable now -- the abandons list comes
+    // from `getDeptDayAbandons` (one dept, one date, list only), NOT from the
+    // admin-gated Inbound report endpoint. No role check here.
+    detailRow.innerHTML = '<td colspan="' + cols + '">'
+      + '<div class="ins-daily-detail-lenses">'
+      +   '<div class="heat-lens" data-lens="missed">' + dsRingsHtml_('Loading missed rings…') + '</div>'
+      +   '<div class="heat-lens" data-lens="inbound">' + dsRingsHtml_('Loading abandoned calls…') + '</div>'
+      + '</div></td>';
+    last.parentNode.insertBefore(detailRow, last.nextSibling);
+    // The "↳ path" chips need the delegated journey handler live (its other
+    // init sites are the My-Dept missed render paths + the heatmap drill).
+    initClipboardOnce();
+    const dept = (insLastData && insLastData.meta && insLastData.meta.department) || getRequestedDept();
+    const guard = function () { return detailRow.isConnected; };
+    const slotOf = function (lens) { return detailRow.querySelector('[data-lens="' + lens + '"]'); };
+    const failInto = function (lens, err) {
+      if (!guard()) return;
+      const el = slotOf(lens);
+      if (el) el.innerHTML = '<div class="status status-error">'
+        + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+    };
+
+    // Lens 1 -- DQE missed rings for the date (no dow/hour filter).
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (!guard()) return;
+        const el = slotOf('missed');
+        if (el) el.innerHTML = missedSliceListHtml_(resp, 'Missed rings — ' + iso);
+      })
+      .withFailureHandler(function (err) { failInto('missed', err); })
+      .getMissedCallsSlice({ department: dept, from: iso, to: iso });
+
+    // Lens 2 -- inbound abandons for the SAME date, carrying wait/hold time.
+    // R16i: the manager-reachable per-dept/per-day endpoint (the heatmap's own
+    // list endpoint stays behind the Inbound report's vetting gate).
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (!guard()) return;
+        const el = slotOf('inbound');
+        if (el) el.innerHTML = heatCellDetailHtml_(resp, 'Abandoned calls — ' + iso);
+      })
+      .withFailureHandler(function (err) { failInto('inbound', err); })
+      .getDeptDayAbandons({ department: dept, date: iso });
   }
 
   // Violation-date drill: open the collapsed Daily breakdown, scroll the
@@ -2537,6 +2671,12 @@
     const ds = chartObj.data.datasets[hits[0].datasetIndex];
     if (ds && ds.label === '5% threshold') return;   // reference line, not data
     const range = insTrendLabelToRange_((chartObj.data.labels || [])[hits[0].index], daily);
+    // R16h (owner): a point that resolves to ONE DAY behaves like the calendar
+    // day-click -- jump to that date in the Daily breakdown instead of
+    // reloading the region for it (which left the page's two halves on
+    // conflicting windows). A MONTHLY point spans a whole month, which the
+    // day-scoped drill cannot represent, so it keeps the re-run.
+    if (range && range.from && range.from === range.to) { insCalJumpToDaily_(range.from); return; }
     insDrillToRange_(range);
   }
 
@@ -3067,7 +3207,7 @@
               : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (abd - 5) * 6)) + '%, var(--paper-card));';
             valHtml = abd + '%';
             title = iso + ' — ' + calls + ' queue call' + (calls === 1 ? '' : 's') + ' · '
-              + (Number(s.abandoned) || 0) + ' abandoned · ' + abd + '% abandoned (5% threshold). Click to reload for this day.';
+              + (Number(s.abandoned) || 0) + ' abandoned · ' + abd + '% abandoned (5% threshold). Click to open this day in the Daily breakdown.';
           } else {
             const pct = Math.round(Number(s.pct) || 0);
             const missed = Number(s.missed) || 0;
@@ -3094,7 +3234,7 @@
             }
             valHtml = isMissed ? String(missed) : (isVol ? String(rung) : (isAns ? String(answeredN) : pct + '%'));
             title = iso + ' — ' + answeredN + ' answered · '
-              + missed + ' missed · ' + pct + '% answered. Click to reload for this day.';
+              + missed + ' missed · ' + pct + '% answered. Click to open this day in the Daily breakdown.';
           }
           cells += '<button type="button" class="ins-cal-cell ins-cal-drill" data-iso="' + iso + '"'
             + ' style="' + style + '" title="' + escapeHtml(title) + '">'
@@ -3117,7 +3257,8 @@
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
         const iso = btn.getAttribute('data-iso') || '';
-        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) insDrillToRange_({ from: iso, to: iso });
+        // R16g (owner): jump to the Daily breakdown, not a single-day reload.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) insCalJumpToDaily_(iso);
       });
     });
     host.querySelectorAll('[data-cal-nav]').forEach(function (btn) {
@@ -4369,7 +4510,9 @@
           b.setAttribute('aria-checked', active ? 'true' : 'false');
         });
       }
-      if (prefs.cardsChartMetric) {
+      // R16g: 'rung' left the metric selector (≈ answered + missed) -- a
+      // saved 'rung' pref self-heals to the answered default.
+      if (prefs.cardsChartMetric && prefs.cardsChartMetric !== 'rung') {
         insCardsChartMetric = prefs.cardsChartMetric;
         if ($('ins-cards-chart-metric')) $('ins-cards-chart-metric').value = insCardsChartMetric;
       }

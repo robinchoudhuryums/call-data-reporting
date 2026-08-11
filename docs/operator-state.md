@@ -724,7 +724,8 @@ When something looks wrong, before assuming a code bug, check:
 34. `UI_FLAGS` Script Property (dashboard; optional, R7/G-3) -- admin
     UI-surface toggles. Comma-separated keys from the CURATED
     `Config.gs::UI_FLAG_SURFACES` registry (dept-team-strip,
-    dept-queue-tiles, dept-missed-section, dept-qcd-side, ov-user-table,
+    dept-queue-tiles, dept-missed-section, dept-qcd-side, dept-team-rings
+    -- R17b, the Team Rings Data side card -- ov-user-table,
     ins-heatmap, ins-queue-health, report-headlines -- R11-M, the answer-first
     summary banners); each listed key HIDES that surface for
     ALL viewers (presentation-only -- data/endpoints/caches unchanged) while

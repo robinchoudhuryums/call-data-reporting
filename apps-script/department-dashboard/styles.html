@@ -822,6 +822,13 @@
     font: 500 10px/1 var(--mono); color: var(--muted); margin-top: 4px;
     font-variant-numeric: tabular-nums; }
   .ans-tally-legend .tly { width: 5px; height: 10px; }
+  /* R16f (owner): a legend rendered as the LAST child of a .ds-card sat flush
+     against the card's edge, where the rounded corner + overflow clipping cut
+     it half off (the Daily breakdown's "= N calls" key was the reported case;
+     the rule is card-scoped so it heals every such placement). The table
+     above it is flush-edge by design, so the breathing room lives on the
+     legend, not the card. */
+  .ds-card > .ans-tally-legend { margin: 6px 0 0; padding: 0 10px 8px; }
   .ans-track {
     display: flex;
     height: 8px;
@@ -1005,6 +1012,7 @@
   body[data-ui-flags~="dept-missed-section"] #dept-missed-section,
   body[data-ui-flags~="dept-missed-section"] #dept-missed-detail { display: none !important; }
   body[data-ui-flags~="dept-qcd-side"] #dept-qcd-snapshot { display: none !important; }
+  body[data-ui-flags~="dept-team-rings"] #dept-team-rings { display: none !important; }
   body[data-ui-flags~="ov-user-table"] #ov-user-table-wrap { display: none !important; }
   body[data-ui-flags~="ins-heatmap"] #ins-heatmap { display: none !important; }
   body[data-ui-flags~="ins-queue-health"] #ins-queue-health { display: none !important; }
@@ -1376,6 +1384,57 @@
   /* In the narrow side column the per-queue tiles stack rather than squeeze. */
   @media (min-width: 1100px) {
     .dept-side .dept-qcd-tiles { grid-template-columns: 1fr; }
+  }
+
+  /* ── R17b: Team Rings Data (the second sticky side panel) ──────────────
+     Rides the same .dept-qcd-snapshot card chrome as panel 1; the aside is
+     the sticky element, so both panels scroll together (internal overflow
+     past one viewport is panel-1's existing behavior). */
+  #dept-team-rings { margin-top: 14px; }
+  .trp-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+  .trp-tiles .ds-kpi { text-align: center; }
+  .trp-tiles .ds-kpi__top { justify-content: center; gap: 6px; flex-wrap: wrap; }
+  .trp-tiles .trp-a { color: var(--good); }
+  .trp-tiles .trp-m { color: var(--bad); }
+  /* Owner (vertical budget): the condensed table caps at ~10 rows and
+     scrolls internally; the thead stays pinned inside the scroll. */
+  .trp-table-wrap { max-height: 300px; overflow-y: auto; }
+  .trp-table { width: 100%; border-collapse: collapse; }
+  .trp-table th {
+    position: sticky; top: 0; background: var(--paper-card); z-index: 1;
+    text-align: left; font: 600 9px var(--mono); letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); padding: 0 0 4px;
+  }
+  .trp-table th.trp-num, .trp-table td.trp-num { text-align: right; }
+  .trp-table td { padding: 3px 0; font-size: 11.5px; border-bottom: 1px solid var(--paper-2); }
+  .trp-table tr:last-child td { border-bottom: 0; }
+  .trp-row { cursor: pointer; }
+  .trp-row:hover td, .trp-row:focus-visible td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .trp-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 84px; }
+  .trp-table .trp-a { color: var(--good); font: 500 11.5px var(--mono); }
+  .trp-table .trp-m { color: var(--bad); font: 500 11.5px var(--mono); }
+  .trp-table .trp-m.is-zero { color: var(--muted); }
+  .trp-sep { color: var(--muted); }
+  .trp-pct { font: 600 11.5px var(--mono); padding-left: 6px; }
+  .trp-pct--good { color: var(--good); }
+  .trp-pct--warn { color: var(--warn); }
+  .trp-pct--idle { color: var(--muted); }
+  /* Mini tally: the main table's blocks at side-panel scale. */
+  .trp-tally { max-width: 96px; gap: 1px; min-height: 10px; justify-content: flex-end; }
+  .trp-tally .tly { width: 5px; height: 10px; }
+  .trp-tally-cell { padding-right: 6px; }
+  /* Per-dept mini-group header in a combined (parent + sub-queue) view. */
+  .trp-group-head td {
+    font: 600 9.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); background: var(--paper-2); padding: 3px 4px;
+  }
+  /* R17b: jump-flash on the main-table row a panel row click lands on. */
+  @media (prefers-reduced-motion: no-preference) {
+    tr.trp-jump-hit > td { animation: trp-jump-hit 1.6s ease-out; }
+  }
+  @keyframes trp-jump-hit {
+    from { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+    to   { background: transparent; }
   }
 
   .dept-qcd-snapshot {
@@ -2271,6 +2330,19 @@
     color: var(--warn);
     font-weight: 500;
   }
+  /* R17a: rings of ONE abandoned call group under a warm left rail (the
+     wrap <li> exists only because a <ul> may not nest directly in a <ul>;
+     it must stay visually inert). The rail + tint mark the group; the
+     explainer is the group's hover title -- no visible caption (owner). */
+  .agent-card .missed-list li.ms-callgroup-wrap { padding: 0; border-bottom: 1px solid var(--paper-2); }
+  .agent-card .missed-list .ms-callgroup {
+    list-style: none; margin: 3px 0; padding: 2px 0 2px 9px;
+    border-left: 2px solid color-mix(in srgb, var(--warn) 55%, transparent);
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--warn) 5%, transparent);
+    cursor: help;
+  }
+  .agent-card .missed-list .ms-callgroup > li { border-bottom: 0; }
   .agent-card .missed-list .date {
     color: var(--muted);
     margin-right: 6px;
@@ -4673,6 +4745,32 @@
   .ins-daily-day-row.is-open .ins-daily-caret { transform: rotate(90deg); }
   .ins-daily-sub-row { display: none; }
   .ins-daily-sub-row.is-open { display: table-row; }
+  /* R16g: the per-DATE missed/abandoned drill row a calendar day-click
+     inserts under the day group (insQhDayDetail_). Same open/close model
+     as the sub-rows so insQhDayToggle_ drives all three row kinds. */
+  .ins-daily-detail-row { display: none; }
+  .ins-daily-detail-row.is-open { display: table-row; }
+  .ins-daily-detail-row > td {
+    background: var(--paper-2); padding: 10px 14px;
+    border-top: 1px dashed var(--line);
+  }
+  /* R16h: the day drill's TWO lenses (DQE missed rings / inbound abandons
+     with wait times) sit side by side on a wide row, stacking narrow. A
+     manager sees only the missed lens (the inbound one is admin-gated), and
+     the lone block then takes the full width with no JS -- the
+     .ins-detail-row discipline. */
+  .ins-daily-detail-lenses { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .ins-daily-detail-lenses > .heat-lens { flex: 1 1 340px; min-width: 300px; }
+  .ins-daily-detail-lenses > .heat-lens + .heat-lens {
+    margin-top: 0; padding-top: 0; border-top: 0;
+    padding-left: 18px; border-left: 1px solid var(--line);
+  }
+  @media (max-width: 820px) {
+    .ins-daily-detail-lenses > .heat-lens + .heat-lens {
+      padding-left: 0; border-left: 0;
+      margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
+    }
+  }
   /* R16e (owner): expanding a day felt "jumpy" -- rows appeared instantly at
      full height. A <tr> can't animate its own height (display flips between
      none and table-row), so the CELLS fade + settle instead, which reads as
@@ -4682,10 +4780,27 @@
   @media (prefers-reduced-motion: no-preference) {
     .ins-daily-sub-row.is-open > td { animation: ins-daily-row-in 180ms ease-out; }
     .ins-qh-daily[open] > .ds-card { animation: ins-fold-in 180ms ease-out; }
+    /* R16f: the COLLAPSE animates too -- rows fade out before leaving the
+       table (insQhDayToggle_ holds .is-open through the beat), and closing
+       the whole <details> plays the mirrored fold-out before the JS flips
+       `open` off (a native details close is instant). `forwards` holds the
+       faded end-state so there's no last-frame flash. */
+    .ins-daily-sub-row.is-open.is-closing > td { animation: ins-daily-row-out 140ms ease-in forwards; }
+    .ins-daily-detail-row.is-open > td { animation: ins-daily-row-in 180ms ease-out; }
+    .ins-daily-detail-row.is-open.is-closing > td { animation: ins-daily-row-out 140ms ease-in forwards; }
+    .ins-qh-daily.is-closing > .ds-card { animation: ins-fold-out 150ms ease-in forwards; }
   }
   @keyframes ins-daily-row-in {
     from { opacity: 0; transform: translateY(-3px); }
     to   { opacity: 1; transform: none; }
+  }
+  @keyframes ins-daily-row-out {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: translateY(-3px); }
+  }
+  @keyframes ins-fold-out {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: translateY(-4px); }
   }
   /* R16e (owner): an abandoned rate at/over the 5% company standard reads BOLD
      + RED here, matching the Daily Call Queue Report's treatment -- the softer
@@ -4760,9 +4875,15 @@
   .ins-qh-left .ds-kpi__top {
     justify-content: center; gap: 6px; flex-wrap: wrap; white-space: nowrap;
   }
-  /* The split "total (ans / abd)" value needs a smaller size than a bare
-     number to survive a half-width card without wrapping. */
-  .ins-qh-left .ds-kpi__value.dts-value--split { font-size: 18px; }
+  /* R16f (owner): the Queue-calls value is TWO lines -- the total at full
+     card size, the (answered / abandoned) split smaller beneath -- instead
+     of one long inline value whose halves fought for width. The dts-ans /
+     dts-abd child colors still ride the dts-value--split scoping. */
+  .ins-qh-left .qh-calls-total { display: block; line-height: 1.1; }
+  .ins-qh-left .qh-calls-split {
+    display: block; font: 600 13px/1.4 var(--ui); margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
   @media (max-width: 900px) {
     /* Force the stack at the same breakpoint the tiles go 3-across --
        otherwise a wide tile grid lands inside the still-narrow left column. */
@@ -4883,6 +5004,9 @@
   .qcd-deptrow-mini { font: 500 13px/1.5 var(--mono); margin-left: 14px;
     font-variant-numeric: tabular-nums; color: var(--ink); }
   .qcd-mini-pct { font-weight: 700; }
+  /* R16e: the section's tally block size, disclosed on its banner (the tally
+     unit is per-section now, so there is no single company-wide legend). */
+  .qcd-deptrow-unit { font-weight: 400; color: var(--muted); font-size: 12px; }
   .qcd-deptrow--warn .qcd-mini-pct { color: var(--warn); }
   .qcd-deptrow--good .qcd-mini-pct { color: var(--good); }
   .qcd-deptrow--muted .qcd-deptrow-mini { color: var(--muted); }
@@ -5201,7 +5325,14 @@
        content own the paper; un-constrain the page body (no modal panel to
        unwrap). */
     body.ins-printing .dash-header { display: none !important; }
-    body.ins-printing #dept-page > :not(#dept-insights-region) { display: none !important; }
+    /* R17b: the region lives inside .dept-layout > .dept-main now, so the
+       show-only-the-region carve walks that chain (the old direct-child
+       selector would hide the region's own ancestors). The layout grid
+       collapses to a block so the hidden 320px aside column leaves no gap. */
+    body.ins-printing #dept-page > :not(.dept-layout) { display: none !important; }
+    body.ins-printing #dept-page .dept-layout { display: block !important; }
+    body.ins-printing #dept-page .dept-layout > :not(.dept-main) { display: none !important; }
+    body.ins-printing #dept-page .dept-main > :not(#dept-insights-region) { display: none !important; }
     body.ins-printing #dept-insights-region > summary { display: none !important; }
     body.ins-printing #dept-insights-region { margin: 0 !important; }
     body.ins-printing .ins-page-body {
@@ -6664,6 +6795,8 @@
   }
   .heat-drill-head { font-size: 12px; color: var(--ink); margin-bottom: 6px; }
   .heat-drill-cap { color: var(--muted); font-size: 11px; }
+  /* R16i: the QCD-vs-inbound reconcile note above a day's abandon list. */
+  .heat-drill-note { margin: 0 0 8px; font-size: 11px; line-height: 1.5; }
   .heat-drill-list { max-height: 260px; overflow-y: auto; }
   .heat-drill-row {
     display: flex; align-items: baseline; gap: 10px; padding: 4px 0;

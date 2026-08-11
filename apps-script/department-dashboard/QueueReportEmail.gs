@@ -491,11 +491,22 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // counts. Each section discloses its own block size on the banner when a
   // block is worth more than one call. Ladder = the web report's
   // ansTallyUnitFor_, replicated server-side; 0 = no volume.
+  // R16e (owner): the block CEILING is 14, not the web app's 36, and that
+  // number is a LAYOUT constraint rather than a taste call. The tally is an
+  // HTML-email table of width="5" cells inside the ~150px "Abandoned %"
+  // column: past ~16 blocks the column can no longer fit their natural width,
+  // so the renderer SHRINKS every cell to fit (measured: 20 blocks render at
+  // 4.09px against 5px for a 9-block row). Blocks then stop being uniform
+  // between rows, which is exactly what a tally must never do -- a busy
+  // queue's blocks looked thinner than a quiet one's. Keeping the widest row
+  // under the fit threshold makes every block identical everywhere. Raising
+  // this without widening the column re-introduces the squeeze.
+  const TALLY_MAX_BLOCKS = 14;
   const tallyUnitFor_ = function (max) {
     if (!max) return 0;
     const ladder = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
     for (let i = 0; i < ladder.length; i++) {
-      if (Math.ceil(max / ladder[i]) <= 36) return ladder[i];
+      if (Math.ceil(max / ladder[i]) <= TALLY_MAX_BLOCKS) return ladder[i];
     }
     return ladder[ladder.length - 1];
   };

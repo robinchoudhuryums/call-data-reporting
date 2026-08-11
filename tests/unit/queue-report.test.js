@@ -265,13 +265,41 @@ test('R16d: company-aban card tint follows the value tier; tally unit is per-sec
     'amber tier keeps the neutral tile');
   assert.match(amber, /color:#c66b4b;padding-top:2px;">3\.60%/,
     'amber tier colors the value');
-  // Per-section tally units: CSR's busiest queue is 100 calls (unit 5),
-  // Sales's is 40 (unit 2) -- each banner discloses its OWN block size
+  // Per-section tally units: CSR's busiest queue is 100 calls (unit 10),
+  // Sales's is 40 (unit 5) -- each banner discloses its OWN block size
   // (the old cohort-wide unit rendered a quiet dept's tally as a sliver
   // on the busiest dept's scale; the company-row note is gone with it).
-  assert.match(red, /7\.0%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 5 calls<\/span>/);
-  assert.match(red, /2\.5%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 2 calls<\/span>/);
+  assert.match(red, /7\.0%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 10 calls<\/span>/);
+  assert.match(red, /2\.5%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 5 calls<\/span>/);
   assert.doesNotMatch(red, /each block/);
+});
+
+test('R16e: no tally row exceeds the 14-block width the email column can fit', function () {
+  // The block cells are width="5" inside a ~150px column; past ~16 the
+  // renderer shrinks EVERY cell to fit, so blocks stop being uniform between
+  // rows (measured: 20 blocks -> 4.09px vs 5px on a 9-block row). The unit
+  // ladder exists to keep the widest row under that threshold -- this pins
+  // the ceiling so a future ladder edit can't quietly re-introduce the
+  // squeeze. Volumes spanning three orders of magnitude in ONE section.
+  const d = emailFixture();
+  d.depts[0].queues = [
+    { queue: 'A_Q_BIG', totalCalls: 4000, totalAnswered: 3800, abandoned: 200,
+      abandonedPct: 5, abandonedPctStr: '5.00%', violations: 1, violationsMtd: 1 },
+    { queue: 'A_Q_MID', totalCalls: 260, totalAnswered: 250, abandoned: 10,
+      abandonedPct: 3.85, abandonedPctStr: '3.85%', violations: 0, violationsMtd: 0 },
+    { queue: 'A_Q_TINY', totalCalls: 7, totalAnswered: 7, abandoned: 0,
+      abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0, violationsMtd: 0 },
+  ];
+  const html = h.call('buildQueueReportEmailHtml_', d, '2026-07-10', false);
+  // Count the block cells in each tally table (width="5" + a background).
+  const tallies = html.match(/<table role="presentation"[^>]*><tr>(?:<td width="5"[\s\S]*?)<\/tr><\/table>/g) || [];
+  assert.ok(tallies.length >= 3, 'expected a tally per queue row, got ' + tallies.length);
+  tallies.forEach(function (t) {
+    const blocks = (t.match(/<td width="5"/g) || []).length;
+    assert.ok(blocks <= 14, 'a tally row rendered ' + blocks + ' blocks (max 14 fits the column)');
+  });
+  // ...and the smallest queue still shows at least one block (never hidden).
+  assert.match(html, /block &asymp; 500 calls/);
 });
 
 // ── Owner round (2026-07): Viol MTD on the banner; no company roll-up ───────

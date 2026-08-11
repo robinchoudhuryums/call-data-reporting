@@ -519,26 +519,16 @@
         <div id="diag-content"></div>
       </details>
 
-      </div><!-- /.dept-main -->
 
-      <aside class="dept-side">
-        <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
-          <div class="dept-qcd-header">
-            <strong id="dept-qcd-title">Queue Call Data</strong>
-            <span class="dept-qcd-date" id="dept-qcd-date"></span>
-            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, open the Insights report — its Queue health section is the range view.</span>
-          </div>
-          <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date).
-               Hidden when the server didn't ship an MTD block. -->
-          <div id="dept-qcd-period" class="dept-qcd-period" role="group" aria-label="Queue data period" style="display:none;">
-            <button type="button" class="dept-qcd-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
-            <button type="button" class="dept-qcd-period-btn" data-period="mtd" aria-pressed="false">MTD</button>
-          </div>
-          <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
-        </div>
-      </aside>
-      </div><!-- /.dept-layout -->
-
+      <!-- R17b (owner): the Insights REGION moved INSIDE the dept-layout
+           MAIN column, so the aside's sticky panels (Queue Call Data +
+           Team Rings Data) ride the right rail for the WHOLE page instead
+           of ending where the agent table does. Insights renders at the
+           main-column width (~1fr) rather than full page width; the print
+           path's show-only-the-region selectors changed with it (styles).
+           Everything else about the region -- ids, the N1 open-by-default
+           + generate-with-the-page contract, setPage('insights') mapping
+           -- is unchanged. -->
       <!-- Insights REGION (M1 merge + N1 always-inline,
            docs/insights-merge-plan.md): the ex-Insights-page content, full
            width below the agent table + missed section. Every inner element
@@ -559,7 +549,7 @@
                #ins-region-head with the live headline (answer rate, missed,
                abandoned %, window) and hides the static sub line, so the
                COLLAPSED region still states where the team stands. -->
-          <span class="ins-region-sub" id="ins-region-sub">Department rollup &middot; agent comparisons &middot; queue health &middot; 12-month trends</span>
+          <span class="ins-region-sub" id="ins-region-sub">Agent comparisons &middot; queue health &middot; 12-month trends</span>
           <span class="ins-region-head" id="ins-region-head"></span>
         </summary>
         <div id="insights-page" class="page-insights">
@@ -617,11 +607,11 @@
         </div>
         <div class="ir-hint" id="ins-prior-hint"></div>
         <div class="ir-hint">
-          Combines a <strong>department rollup</strong> (current vs the
-          comparison window picked above) with <strong>per-agent
-          cards</strong>, each comparing that agent to their own prior
-          period. Floaters appear as cards but don’t factor into the
-          department rollup.
+          Each <strong>agent card</strong> compares that agent&rsquo;s
+          selected window against the comparison window picked above
+          (the department-level rollup lives on the sticky
+          <strong>Team Rings Data</strong> side panel). Floaters appear
+          as cards but don&rsquo;t factor into department totals.
         </div>
 
         <div class="ir-section-title">2. Agents</div>
@@ -826,8 +816,17 @@
         <!-- A3: zone wayfinding. The report splits into a Team zone (rollup +
              collapsible team detail) and an Agents zone (per-agent cards). -->
         <div class="ds-zone"><span class="ds-zone-label">Team</span></div>
-        <div class="al-section-title">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
-        <div id="ins-kpi-row" class="pr-kpi-row"></div>
+        <!-- R17b (owner): the Department-rollup CARD ROW is HIDDEN -- its
+             % Ans (rings) headline moved to the sticky Team Rings Data side
+             panel (which shows for the SAME window, always in view), and the
+             Answered/Missed volumes fold into that card's rings (ans/miss)
+             foot. The section title goes with it (owner: remove entirely).
+             Round-16 removal convention: markup + the insRenderReport_
+             wiring stay inert; un-hiding = drop the display:none pair. The
+             prior-window deltas + sparklines these cards carried live on in
+             the per-agent cards, the emails and the CSV. -->
+        <div class="al-section-title" style="display:none;">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
+        <div id="ins-kpi-row" class="pr-kpi-row" style="display:none;"></div>
 
         <!-- A2: Team detail (progressive disclosure). Queue health, heatmap,
              and the share-of-answered chart collapse here so the report leads
@@ -910,7 +909,13 @@
                to a horizontal grid (.ins-qh-cols media query; the class is
                NOT .ins-qh-row -- that's the queue table's <tr> class). -->
           <div class="ins-qh-cols">
-            <div class="ins-qh-left">
+            <!-- R17b (owner): the Queue-health CARD column is HIDDEN -- its
+                 figures live on panel 1 (Queue Call Data tiles), the queue
+                 table beside it (which now takes the full width via the flex
+                 wrap), the team strip (Transfer %), and the sticky Team
+                 Rings Data panel. Renderer wiring stays inert (Round-16
+                 convention); un-hiding = drop the display:none. -->
+            <div class="ins-qh-left" style="display:none;">
               <div id="ins-qh-tiles" class="pr-kpi-row"></div>
               <div id="ins-qh-secondary" class="ins-qh-secondary"></div>
             </div>
@@ -1012,7 +1017,15 @@
               <span class="seg-title">Gap vs team</span>
               <span class="seg-hint">who&#8217;s above / below the team average</span>
             </button>
-            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false">
+            <!-- R16g (owner): the Absolute OPTION is HIDDEN -- since the M1
+                 merge the agent table at the top of the SAME page carries the
+                 per-agent answered/missed volumes, so this view restated it.
+                 The Round-16 removal convention: markup + wiring + renderer
+                 (insRenderCardsChartAbs_) stay inert, the saved-'abs' pref
+                 already self-heals to gap (M3), and the admin A/B remote can
+                 still reach it for live comparison. Un-hiding = drop the
+                 display:none. -->
+            <button type="button" class="seg-btn" data-mode="abs" role="radio" aria-checked="false" style="display:none;">
               <span class="seg-title">Absolute</span>
               <span class="seg-hint">each agent&#8217;s answered + missed volumes</span>
             </button>
@@ -1023,9 +1036,12 @@
           </div>
           <label class="ir-sort-control" id="ins-cards-chart-metric-wrap" style="display:none;">
             <span class="ir-sort-label">Metric:</span>
+            <!-- (R16g owner: the Rung option is REMOVED -- rung ≈ answered +
+                 missed, so its gap/trend lines restated the other two. The
+                 renderers still accept 'rung' if fed; a saved pref self-heals
+                 in insRestorePrefs_.) -->
             <select id="ins-cards-chart-metric">
               <option value="answered">Answered</option>
-              <option value="rung">Rung</option>
               <option value="missed">Missed</option>
               <option value="pct">% Answered</option>
             </select>
@@ -1168,6 +1184,49 @@
     </div>
         </div>
       </details>
+      </div><!-- /.dept-main -->
+
+      <aside class="dept-side">
+        <div id="dept-qcd-snapshot" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong id="dept-qcd-title">Queue Call Data</strong>
+            <span class="dept-qcd-date" id="dept-qcd-date"></span>
+            <span class="dept-qcd-hint">Daily roll-up across this dept's mapped queues from <code>QCD Historical Data</code>. For a date range, open the Insights report — its Queue health section is the range view.</span>
+          </div>
+          <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date).
+               Hidden when the server didn't ship an MTD block. -->
+          <div id="dept-qcd-period" class="dept-qcd-period" role="group" aria-label="Queue data period" style="display:none;">
+            <button type="button" class="dept-qcd-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
+            <button type="button" class="dept-qcd-period-btn" data-period="mtd" aria-pressed="false">MTD</button>
+          </div>
+          <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
+        </div>
+        <!-- R17b (owner): SECOND sticky panel -- the ring-level (DQE) rollup
+             + the agent table at a glance, so the numbers stay in view while
+             scrolling the whole page (the aside is the sticky element; both
+             cards ride it). Rendered by renderTeamRingsPanel_ (script-5)
+             from the SAME dept-summary payload as the agent table -- no
+             extra RPC, refreshes with the page. Replaces the Insights
+             Department-rollup + Queue-health card sets (hidden below). -->
+        <div id="dept-team-rings" class="dept-qcd-snapshot" style="display:none;">
+          <div class="dept-qcd-header">
+            <strong>Team Rings Data</strong>
+            <span class="dept-qcd-date" id="trp-date"></span>
+            <span class="dept-qcd-hint">Ring-level rollup + the agent table at a glance, for the selected range. Full detail in the table above.</span>
+          </div>
+          <div class="trp-tiles" id="trp-tiles"></div>
+          <div class="trp-table-wrap" id="trp-table-wrap">
+            <table class="trp-table">
+              <thead><tr>
+                <th>Agent</th><th class="trp-num">Rings</th><th class="trp-num">Ans / Miss</th><th class="trp-num">%</th>
+              </tr></thead>
+              <tbody id="trp-tbody"></tbody>
+            </table>
+          </div>
+          <div id="trp-legend" class="ans-tally-legend" style="display:none;"></div>
+        </div>
+      </aside>
+      </div><!-- /.dept-layout -->
     </section>
   </div>
 
@@ -1242,7 +1301,7 @@
             <p>The dashboard has three pages, switched from the header:</p>
             <ul>
               <li><strong>Overview</strong> (the landing page) &mdash; a company-wide snapshot: a tile per department with answer rate, abandonment and a 30-day trend chart. Admins also see a company aggregate hero. Click a department tile to jump into it.</li>
-              <li><strong>My Department</strong> &mdash; everything about one department on a single page: the per-agent table, Queue Call Data tiles, the Missed Calls report, and the expandable <strong>Insights</strong> section (department rollup, per-agent comparisons, queue health, 12-month trends) at the bottom.</li>
+              <li><strong>My Department</strong> &mdash; everything about one department on a single page: the per-agent table, the two sticky side panels (Queue Call Data + Team Rings Data), the Missed Calls report, and the expandable <strong>Insights</strong> section (per-agent comparisons, queue health, 12-month trends) at the bottom.</li>
               <li><strong>Escalations</strong> &mdash; the escalation worklist for your department: filter, review each escalation's activity timeline, resolve with a note, or reopen.</li>
             </ul>
             <p>Other reports (Individual, plus the admin-vetted Inbound / Direct) open as modals over any page.</p>
@@ -1315,7 +1374,7 @@
           <section class="help-topic" id="help-topic-insights" hidden>
             <h3>Insights</h3>
             <p>Insights is a <strong>section of the My Department page</strong> &mdash; the deeper lens on the same department and dates, rendered at the bottom of the page and generated automatically with it. Just scroll down; collapsing the <strong>Insights</strong> heading tucks it away for the session, and your generated report stays put when you navigate away and come back.</p>
-            <p>A team rollup + per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: the KPI tiles compare against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Absolute</strong> bases (Gap = who&rsquo;s above/below the team average; Absolute = stacked Answered&thinsp;+&thinsp;Missed volumes with % answered dots). For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
+            <p>Per-agent cards + 12-month trend, with comparison modes (preceding period / same window a year ago / custom). It absorbed the retired <strong>Performance Report</strong> and <strong>Compare Ranges</strong>: every delta compares against the immediately-preceding same-length window, the share-of-answered breakdown (one tally row per agent) sits in the Team detail section, and the per-agent Chart view has <strong>Gap vs team / Trend</strong> bases (Gap = who&rsquo;s above/below the team average; Trend = each agent&rsquo;s metric over time, one line each). The department-level rollup lives on the sticky <strong>Team Rings Data</strong> side panel. For a year-over-year or any two arbitrary windows, use <strong>Compare against &rarr; Same window one year prior</strong> or <strong>Custom prior range</strong>; hover a delta badge on a card for the prior window&rsquo;s exact value. When the two windows differ in length, a note appears and per-day figures keep volumes comparable. On each <strong>agent card</strong>:</p>
             <ul>
               <li>The colored <strong>left rail</strong> and the <strong>&#9650; Improving / &#9660; Slipping / &#8776; Mixed</strong> pill show that agent&rsquo;s <em>trend</em> vs the prior period (across rung, missed, answered, % answered). Hover the card and the rail glows.</li>
               <li>The <strong>above team / below team</strong> chip shows their <em>standing</em> &mdash; answered calls vs the team average <em>this</em> period (the marker on the Answered bar). So a card can be &ldquo;Improving&rdquo; yet &ldquo;below team&rdquo;: better than last period, still under the average.</li>

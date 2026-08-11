@@ -105,18 +105,34 @@ days.forEach((dIso, di) => {
     // Missed section has a chart + timelines + journeys.
     if (missed > 0 && DEPT_OF[agent] === 'CSR' && di >= days.length - 22) {
       const slots = new Array(19).fill('');
-      const times = [];
+      const picks = [];   // { slot, t } per generated ring
       for (let k = 0; k < Math.min(missed, 4); k++) {
         const slot = 1 + Math.floor(rnd() * 16);
         const hh = 8 + Math.floor(slot / 2), mm = (slot % 2) * 30 + Math.floor(rnd() * 29);
         const t = (hh > 12 ? hh - 12 : hh) + ':' + (mm < 10 ? '0' + mm : mm) + ':15 ' + (hh >= 12 ? 'PM' : 'AM');
         slots[slot] = slots[slot] ? slots[slot] + ',' + t : t;
-        times.push(t);
+        picks.push({ slot: slot, t: t });
       }
       row.slots = slots;
-      if (di >= days.length - 8 && times.length >= 2) {   // some abandoned parents recently
-        row.abdIds = times.slice(0, 2).map((_, i2) => String(1762242202000 + di * 100 + i2)).join(',');
-        row.abdTimes = times.slice(0, 2).join(',');
+      if (di >= days.length - 8 && picks.length >= 2) {   // some abandoned parents recently
+        // R17a: alternate between a RE-RUNG parent -- one call, two rings 40s
+        // apart (a SIBLING ring appended to the same slot so the timeline
+        // carries both, chronologically ADJACENT, sharing one id: the shape
+        // the agent card groups) -- and two DISTINCT abandoned calls (no
+        // group), so both shapes of the F-2 lockstep are exercised.
+        // (the LATEST day always takes the re-rung branch -- it is the dept
+        // page's default window, which is where drive-smoke asserts the group)
+        if (di % 2 === 0 || di === days.length - 1) {
+          const p0 = picks[0];
+          const tb = p0.t.replace(':15 ', ':55 ');
+          slots[p0.slot] += ',' + tb;
+          const id = String(1762242202000 + di * 100);
+          row.abdIds = [id, id].join(',');
+          row.abdTimes = [p0.t, tb].join(',');
+        } else {
+          row.abdIds = picks.slice(0, 2).map((_, i2) => String(1762242202000 + di * 100 + i2)).join(',');
+          row.abdTimes = picks.slice(0, 2).map(function (p) { return p.t; }).join(',');
+        }
       }
     }
     dqeRows.push(dqeRow(row));
@@ -281,6 +297,49 @@ try {
     department: 'CSR', from: s30.from, to: s30.to, filter: {},
   }));
 } catch (e) { console.log('missed-slice skipped: ' + e.message); }
+
+// R16h: the inbound abandon list behind the heatmap cell drill AND the
+// Insights Daily-breakdown day drill's second lens. HAND-AUTHORED, unlike
+// every payload above: getInboundHeatmapCell reads Neon, which this generator
+// has no connection to. The shape is the one the server's row mapper emits
+// and `tests/unit/heatmap-cell-drill.test.js` pins field by field, so a
+// server-side shape change fails there rather than silently drifting here.
+// (getInboundHeatmap itself stays UNMOCKED on purpose -- the panel hiding
+// silently on failure is part of what the gate audits.)
+dump('heatmap-cell', {
+  meta: { available: true, scope: 'range', from: LATEST, to: LATEST,
+    department: 'CSR', companyView: false, unmapped: false,
+    dow: null, slot: null, truncated: false,
+    windowStartHour: 8, slotMinutes: 60, tzLabel: 'CST' },
+  calls: [
+    { callDate: LATEST, callId: '1762242202191', cstStart: '09:12:44', entryQueue: 'A_Q_CustomerSuccess',
+      finalQueue: 'A_Q_CustomerSuccess', abandonStage: 'queue', abandonedOnHold: false,
+      waitSeconds: 96, holdSeconds: null },
+    { callDate: LATEST, callId: '1762242165529', cstStart: '10:41:09', entryQueue: 'A_Q_CustomerSuccess',
+      finalQueue: 'Backup CSR', abandonStage: 'queue', abandonedOnHold: false,
+      waitSeconds: 142, holdSeconds: null },
+    { callDate: LATEST, callId: '1762242119004', cstStart: '13:28:31', entryQueue: 'A_Q_CustomerSuccess',
+      finalQueue: 'A_Q_CustomerSuccess', abandonStage: null, abandonedOnHold: true,
+      waitSeconds: 58, holdSeconds: 74 },
+    { callDate: LATEST, callId: '1762242093117', cstStart: '15:02:10', entryQueue: 'A_Q_Spanish',
+      finalQueue: 'A_Q_Spanish', abandonStage: 'queue', abandonedOnHold: false,
+      waitSeconds: 211, holdSeconds: null },
+  ],
+});
+
+// R16i: the SAME rows as the cell drill, plus the reconcile note only
+// getDeptDayAbandons ships (it renders beneath a QCD-sourced abandon count,
+// and the two figures differ by definition). Separate key so the heatmap
+// cell fixture keeps NOT carrying the note -- that endpoint doesn't send one.
+dump('dept-day-abandons', (function () {
+  const cell = JSON.parse(fs.readFileSync(path.join(OUT, 'heatmap-cell.json'), 'utf8'));
+  cell.meta.scope = 'day';
+  cell.meta.reconcileNote = 'Counts callers who hung up before reaching an agent. '
+    + 'The Queue-health \u201cAbandoned\u201d figure counts only callers who waited past its '
+    + 'threshold, so the two numbers differ \u2014 often several-fold. Both are correct; '
+    + 'they answer different questions.';
+  return cell;
+})());
 
 // All-departments Daily Call Queue Report (F7 fixture gap): without this the
 // #qcd-alldept-modal had no payload, so its `tr.qcd-expandable` rows never

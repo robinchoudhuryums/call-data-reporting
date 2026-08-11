@@ -555,17 +555,22 @@
       return '<div class="qcd-q-sub" title="' + escapeHtml(title) + '">MTD Ø '
         + mAvg + '/day &middot; ' + tail + '</div>';
     };
-    // Round-16 tally: ONE unit across every queue row in the table (all
-    // sections), from the shared ansTallyUnitFor_ ladder -- QCD rows map
-    // answered/abandoned onto its answered/missed shape.
-    const qcdTallyUnit = ansTallyUnitFor_(
-      (topLevel.reduce(function (acc, d) {
-        acc = acc.concat(d.queues || []);
-        (childrenOf[d.dept] || []).forEach(function (c) { acc = acc.concat(c.queues || []); });
-        return acc;
-      }, [])).map(function (q) {
+    // R16e (owner): the tally unit is PER SECTION (dept + its children), not
+    // one unit across the whole table -- the email report made this change
+    // first and the two must read alike. A single unit let the busiest dept
+    // (~350 calls/day) set a block size that rendered a quiet queue (~8/day)
+    // as one block; each section now scales to its OWN busiest queue and
+    // discloses its block size on the dept banner. Trade-off, same as the
+    // email's: blocks compare WITHIN a section, never across -- cross-dept
+    // magnitude is the Total column's job. Computed inside the section loop
+    // below; `qcdSectionUnit` is what queueRow reads.
+    let qcdSectionUnit = 0;
+    const qcdUnitFor = function (items) {
+      return ansTallyUnitFor_(items.map(function (i) {
+        const q = i.q || i;
         return { totalAnswered: q.totalAnswered, totalMissed: q.abandoned };
       }));
+    };
     const queueRow = function (q, sub) {
       const qViolShow = qcdViolShow_(q);
       const c = cell(q.abandonedPct, qViolShow);
@@ -580,7 +585,7 @@
         + (hasDetail ? ' tabindex="0" aria-expanded="false"' : '') + '>'
         + '<td>' + escapeHtml(q.queue) + subTag + chevron + qMtdSub(q) + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
-        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true, tallyUnit: qcdTallyUnit }) + '</td>'   // QV-1 + Round-16 tally
+        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true, tallyUnit: qcdSectionUnit }) + '</td>'   // QV-1 + R16e per-section tally
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
         + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
         + '<td class="num' + c.violCls + '">' + fmtNumber(qViolShow) + '</td>'
@@ -621,10 +626,15 @@
       // R10-8: the abandon% leads the mini-summary at full weight (it was an
       // 11px muted afterthought); tone color rides the row's qcd-deptrow--*
       // class via .qcd-mini-pct.
+      // R16e: this section's own tally unit + its disclosure on the banner.
+      qcdSectionUnit = qcdUnitFor(secItems);
+      const secUnitNote = qcdSectionUnit > 1
+        ? ' &middot; <span class="qcd-deptrow-unit">block &asymp; ' + qcdSectionUnit + ' calls</span>'
+        : '';
       const mini = secTotal > 0
         ? '<span class="qcd-deptrow-mini qcd-screen-only">' + fmtNumber(secTotal)
           + ' calls &middot; <strong class="qcd-mini-pct">' + escapeHtml(secPctStr)
-          + '</strong> abandoned</span>'
+          + '</strong> abandoned' + secUnitNote + '</span>'
         : '<span class="qcd-deptrow-mini qcd-screen-only">no calls</span>';
       html += '<tbody class="qcd-alldept-dept" data-dept="' + escapeHtml(d.dept) + '">'
         + '<tr class="qcd-alldept-deptrow qcd-deptrow--' + tone + '"><td colspan="' + NCOLS + '">'
@@ -651,9 +661,10 @@
     html += '<tfoot><tr class="qcd-alldept-grand">'
       + '<td>Company total</td>'
       + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
-      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true })
-      +   (qcdTallyUnit > 1 ? '<div class="ans-tally-legend qcd-screen-only"><span class="tly a"></span> = ' + qcdTallyUnit + ' calls</div>' : '')
-      + '</td>'   // QV-1; legend explains the queue rows' block unit
+      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true }) + '</td>'
+      // (R16e: the single company-wide "= N calls" legend is GONE with the
+      // cohort-wide unit -- each dept banner discloses its own block size,
+      // and one number here would now be wrong for every section but one.)
       + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
       + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
       + '<td class="num' + gc.violCls + '">' + fmtNumber(qcdViolShow_(g)) + '</td>'

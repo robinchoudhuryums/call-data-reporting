@@ -1065,7 +1065,11 @@
   // would be hundreds of blocks, and totals aren't compared against agents.
   var ANS_TALLY_MAX_BLOCKS_ = 36;
   var ANS_TALLY_UNITS_ = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
-  function ansTallyUnitFor_(rows) {
+  // R17b: optional maxBlocks overrides the shared 36-block ceiling for
+  // narrow surfaces (the Team Rings side panel fits ~12 blocks per row);
+  // every pre-existing caller omits it and is byte-identical.
+  function ansTallyUnitFor_(rows, maxBlocks) {
+    var cap = maxBlocks > 0 ? maxBlocks : ANS_TALLY_MAX_BLOCKS_;
     var max = 0;
     (rows || []).forEach(function (r) {
       var t = (Number(r.totalAnswered) || 0) + (Number(r.totalMissed) || 0);
@@ -1073,7 +1077,7 @@
     });
     if (!max) return 0;
     for (var i = 0; i < ANS_TALLY_UNITS_.length; i++) {
-      if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= ANS_TALLY_MAX_BLOCKS_) return ANS_TALLY_UNITS_[i];
+      if (Math.ceil(max / ANS_TALLY_UNITS_[i]) <= cap) return ANS_TALLY_UNITS_[i];
     }
     return ANS_TALLY_UNITS_[ANS_TALLY_UNITS_.length - 1];
   }

@@ -419,6 +419,7 @@ const UI_FLAG_SURFACES = Object.freeze({
   'dept-queue-tiles':    'My Department — Queue calls / Abandoned % tiles',
   'dept-missed-section': 'My Department — Missed Calls section',
   'dept-qcd-side':       'My Department — Queue Call Data side card',
+  'dept-team-rings':     'My Department — Team Rings Data side card',
   'ov-user-table':       'Overview — dept agent mini-table',
   'ins-heatmap':         'Insights — abandon heatmap (admin panel)',
   'ins-queue-health':    'Insights — Queue health section',

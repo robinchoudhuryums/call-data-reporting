@@ -2516,3 +2516,64 @@ commit/push/deploy direction.
   **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
   No PR (owner asks explicitly). Awaiting the owner's verdict on the two
   mocks.
+
+## Increment 93 — R16g calendar drill + Absolute retire (2026-08-10)
+
+  The Agents chart's Absolute basis is hidden (it restated the same
+  page's agent table; the M3 self-heal already existed) and Rung left
+  the metric selector with a pref self-heal. Calendar day-clicks now
+  JUMP to the Daily breakdown -- fold+details open, day group expands,
+  and a per-date drill row lists every missed ring + queue abandon
+  (getMissedCallsSlice, from=to=date, no filter; missedSliceListHtml_
+  renderer so "↳ path" chips work) -- replacing the single-day region
+  reload that left the page's halves on conflicting windows. Fallback to
+  the old reload only when the daily table can't take the jump. Wait
+  times would need a new per-date inbound RPC (noted in block 93).
+  Gates: 653/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/93-r16g-cal-drill-abs-retire.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Mock sent; owner may refine the drill's
+  content (they offered to guide from the mock).
+
+## Increment 94 — R16h trend jump + wait-time lens (2026-08-10)
+
+  Trend LINE point-clicks now jump to the Daily breakdown like the
+  calendar when the point is a single DAY; a monthly point keeps the
+  re-run (a month can't be a day drill). Wait times reached the day
+  drill without a new endpoint: `getInboundHeatmapCell`'s dow/slot are
+  now optional-but-paired, so omitting both answers for the whole
+  from..to range (the drill passes from=to=date) while every other
+  guarantee stays shared; half a pair throws rather than silently
+  widening. The drill renders two labeled lenses -- DQE missed rings
+  (agent + path) and inbound abandons (wait/hold + queue path) -- with
+  the inbound half ADMIN-ONLY, since inboundResolveRequest_ still
+  carries the Inbound report's vetting gate. Harness mocks the cell
+  endpoint (hand-authored; getInboundHeatmap stays unmocked by design).
+  Gates: 656/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/94-r16h-trend-jump-wait-lens.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly).
+
+## Increments 96–97 — R17: call grouping + Team Rings Data panel (2026-08-11)
+
+  Owner-approved two-part round, both client-only. R17a: consecutive
+  missed-timeline entries sharing (date, parentId) group under a warm
+  rail -- one abandoned call that rang repeatedly; siren + id badge once
+  per group, explainer on hover (no caption, owner). Plain rings can't
+  group (no id in DQE; identity dies with Call_Legs). Fixture now seeds
+  an ADJACENT re-rung parent (random pairs interleaved and never
+  grouped) with the LATEST day always groupable (the dept default
+  window drive-smoke sees). R17b: the Insights region moved INSIDE
+  .dept-layout > .dept-main so the aside stickies the whole page (print
+  carve re-chained); #dept-team-rings renders % Ans (rings) + Avg ans
+  time + the condensed agent table (short names/full-name hover,
+  per-row tallies capped at 12 blocks via ansTallyUnitFor_'s new
+  optional cap, per-dept mini-groups, 10-row scroll, row-jump flash)
+  from the same summary payload; the Insights rollup cards (+ title,
+  removed per owner) and queue-health cards are hidden inert. Gates:
+  660/0, INV-16, ci:ui 46+16+30+14. Blocks 96/97.
+
+  **WHERE I LEFT OFF:** committed + pushed. No PR (owner asks
+  explicitly). Awaiting owner's live-deploy verdict on the panel.

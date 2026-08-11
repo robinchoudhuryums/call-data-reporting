@@ -733,15 +733,51 @@
     const cutLow = useTiers ? missedQuantile_(totalsAsc, 0.34) : -Infinity;
 
     return sorted.map(function (a) {
-      const itemsHtml = a.missedTimes.map(function (m) {
-        const dateLabel = m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
-        const cls = m.abandoned ? 'abandoned' : '';
-        const siren = m.abandoned ? ' 🚨' : '';
-        return '<li class="' + cls + '">'
-             +   dateLabel + escapeHtml(m.label) + siren
+      // R17a (owner): CONSECUTIVE entries sharing (date, parentId) are one
+      // CALL that rang this agent repeatedly before the caller gave up (the
+      // F-2 lockstep emits one AF entry per ring, each paired to the same AD
+      // parent id) -- group them under a warm left rail, with the siren + the
+      // id badge/path drill rendered ONCE on the last ring instead of
+      // repeated per ring. The explainer lives in the group's hover title
+      // (owner: no visible caption). Only abandoned rings carry an id --
+      // plain missed rings (answered elsewhere) have none in DQE, so they
+      // stay ungrouped; that is the data, not a rendering choice.
+      const dateLabelOf = function (m) {
+        return m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
+      };
+      const singleLi = function (m) {
+        return '<li class="' + (m.abandoned ? 'abandoned' : '') + '">'
+             +   dateLabelOf(m) + escapeHtml(m.label) + (m.abandoned ? ' 🚨' : '')
              +   parentIdBadge(m.parentId, m.date)
              + '</li>';
-      }).join('');
+      };
+      let itemsHtml = '';
+      const times = a.missedTimes;
+      for (let ti = 0; ti < times.length;) {
+        const m = times[ti];
+        let tj = ti + 1;
+        while (m.parentId && tj < times.length
+               && times[tj].parentId === m.parentId && times[tj].date === m.date) tj++;
+        if (m.parentId && tj - ti >= 2) {
+          const group = times.slice(ti, tj);
+          const gTitle = 'Same call — rang ' + group.length
+            + '× before the caller hung up (call ID ' + String(m.parentId) + ')';
+          itemsHtml += '<li class="ms-callgroup-wrap">'
+            + '<ul class="ms-callgroup" title="' + escapeHtml(gTitle) + '">'
+            + group.map(function (g, gi) {
+                const last = gi === group.length - 1;
+                return '<li class="abandoned">'
+                  + dateLabelOf(g) + escapeHtml(g.label)
+                  + (last ? ' 🚨' + parentIdBadge(g.parentId, g.date) : '')
+                  + '</li>';
+              }).join('')
+            + '</ul></li>';
+          ti = tj;
+        } else {
+          itemsHtml += singleLi(m);
+          ti++;
+        }
+      }
 
       var tier = '', tierChip = '';
       if (useTiers) {
@@ -780,6 +816,149 @@
       return sel ? sel.value : '';
     }
     return USER.department || '';
+  }
+
+  // ── R17b: "Team Rings Data" -- the SECOND sticky side panel ──────────────
+  // Ring-level (DQE) rollup + a condensed agent table, rendered from the SAME
+  // dept-summary payload as the main table (no extra RPC; repaints wherever
+  // renderDeptTeamStrip_ does). Replaces the Insights Department-rollup +
+  // Queue-health card sets (hidden in dashboard.html), whose figures either
+  // moved here or already lived on panel 1 / the queue table / the team strip.
+
+  // "Roman (Robin) Paulose" -> "Roman P." -- parentheticals stripped, first
+  // name + last initial; the FULL name rides the row's title (owner spec).
+  function trpShortName_(name) {
+    const parts = String(name || '').replace(/\s*\([^)]*\)\s*/g, ' ').trim().split(/\s+/);
+    if (parts.length < 2) return name;
+    return parts[0] + ' ' + parts[parts.length - 1].charAt(0) + '.';
+  }
+
+  function trpRowHtml_(r, unit) {
+    const a = Number(r.totalAnswered) || 0;
+    const m = Number(r.totalMissed) || 0;
+    const rings = a + m;
+    const pct = rings ? Math.round(a / rings * 100) : 0;
+    const pctCls = rings === 0 ? ' trp-pct--idle'
+      : (pct >= answerTarget_('global') ? ' trp-pct--good' : (pct < 85 ? ' trp-pct--warn' : ''));
+    // The mini tally rides the same blocks/unit machinery as the main table
+    // (owner: the visual alongside the numbers); zero-ring rows skip it.
+    const tally = (unit > 0 && rings > 0)
+      ? '<div class="ans-tally trp-tally" aria-hidden="true">'
+        + ansTallyBlocks_(a, unit, 'a') + ansTallyBlocks_(m, unit, 'm') + '</div>'
+      : '';
+    return '<tr class="trp-row" data-trp-agent="' + escapeHtml(r.agent) + '"'
+      + ' title="' + escapeHtml(r.agent) + ' — click to jump to the full row" tabindex="0">'
+      + '<td class="trp-name">' + escapeHtml(trpShortName_(r.agent)) + '</td>'
+      + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
+      + '<td class="trp-num"><span class="trp-a">' + fmtNumber(a) + '</span>'
+      +   '<span class="trp-sep"> / </span>'
+      +   '<span class="trp-m' + (m === 0 ? ' is-zero' : '') + '">' + fmtNumber(m) + '</span></td>'
+      + '<td class="trp-num trp-pct' + pctCls + '">' + (rings ? pct + '%' : '–') + '</td>'
+      + '</tr>';
+  }
+
+  function renderTeamRingsPanel_(state) {
+    const panel = $('dept-team-rings');
+    if (!panel) return;
+    const rows = (state && state.rows) || [];
+    if (!rows.length) { panel.style.display = 'none'; return; }
+    panel.style.display = '';
+
+    const dateEl = $('trp-date');
+    if (dateEl) dateEl.textContent = (state.meta && state.meta.from && state.meta.to)
+      ? (state.meta.from === state.meta.to ? state.meta.from : state.meta.from + ' – ' + state.meta.to)
+      : 'this range';
+
+    // KPI pair: % Ans (Rings) -- the DQE rollup with the rings (ans/miss)
+    // split as its foot + the team strip's prior-window delta -- and the
+    // queue Avg ans time (renders only when QCD shipped it; owner: optional).
+    const t = state.totals || {};
+    const a = Number(t.totalAnswered) || 0;
+    const m = Number(t.totalMissed) || 0;
+    const rings = a + m;
+    const pct = rings ? Math.round(a / rings * 100) : 0;
+    const prior = deptTeamPrior_(state.rows);
+    let chip = '';
+    if (prior.has) {
+      const pTotal = prior.answered + prior.missed;
+      const pRate = pTotal ? Math.round(prior.answered / pTotal * 100) : 0;
+      const tip = 'Prior period ' + ((state.meta && state.meta.priorFrom) || '') + ' – '
+        + ((state.meta && state.meta.priorTo) || '') + ': ' + pRate + '%';
+      chip = deptStripDelta_(pct - pRate, 'good', 1, ' pts', tip);
+    }
+    const pctCls = rings ? (pct >= answerTarget_('global') ? ' bm-target' : ' bm-over') : '';
+    let tiles =
+        '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">% Ans (rings)</span>'
+      +   (chip || '') + '</div>'
+      + '<div class="ds-kpi__value' + pctCls + '">' + (rings ? pct + '%' : '–') + '</div>'
+      + '<div class="ds-kpi__foot">' + fmtNumber(rings) + ' rings (<span class="trp-a">' + fmtNumber(a)
+      +   '</span> / <span class="trp-m">' + fmtNumber(m) + '</span>)</div></div>';
+    const qr = state.qcd && state.qcd.range;
+    if (qr && qr.avgAnswer) {
+      tiles += '<div class="ds-kpi"><div class="ds-kpi__top"><span class="ds-kpi__label">Avg ans time</span></div>'
+        + '<div class="ds-kpi__value">' + escapeHtml(qr.avgAnswer) + '</div>'
+        + '<div class="ds-kpi__foot">answered-weighted, queue</div></div>';
+    }
+    const tilesEl = $('trp-tiles');
+    if (tilesEl) tilesEl.innerHTML = tiles;
+
+    // Condensed table: default worst-%-first (the main table's default), one
+    // shared tally unit across every row shown, PER-DEPT mini-groups in a
+    // combined view (owner) in the same order as the main table's groups.
+    const unit = ansTallyUnitFor_(rows, 12);
+    const sortRows_ = function (list) {
+      return list.slice().sort(function (x, y) {
+        const rx = (Number(x.totalAnswered) || 0) + (Number(x.totalMissed) || 0);
+        const ry = (Number(y.totalAnswered) || 0) + (Number(y.totalMissed) || 0);
+        const px = rx ? (Number(x.totalAnswered) || 0) / rx : Infinity;   // idle sinks last
+        const py = ry ? (Number(y.totalAnswered) || 0) / ry : Infinity;
+        return px - py || String(x.agent).localeCompare(String(y.agent));
+      });
+    };
+    let body = '';
+    const groups = state.deptGroups;
+    if (groups && groups.length > 1) {
+      groups.forEach(function (g) {
+        const mine = rows.filter(function (r) { return r.dept === g.dept; });
+        if (!mine.length) return;
+        body += '<tr class="trp-group-head"><td colspan="4">' + escapeHtml(g.dept) + '</td></tr>'
+              + sortRows_(mine).map(function (r) { return trpRowHtml_(r, unit); }).join('');
+      });
+    } else {
+      body = sortRows_(rows).map(function (r) { return trpRowHtml_(r, unit); }).join('');
+    }
+    const tbody = $('trp-tbody');
+    if (tbody) tbody.innerHTML = body;
+    const legEl = $('trp-legend');
+    if (legEl) {
+      legEl.innerHTML = unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls' : '';
+      legEl.style.display = unit > 1 ? '' : 'none';
+    }
+
+    // Row click / Enter -> jump to the agent's full row in the main table
+    // (delegated once; rows re-render per fetch).
+    if (!panel._trpWired) {
+      panel._trpWired = true;
+      const jump = function (tr) {
+        const name = tr.getAttribute('data-trp-agent') || '';
+        const cell = document.querySelector('#agents-tbody [data-flash-key="ag:' + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]');
+        const target = cell ? cell.closest('tr') : null;
+        if (!target) return;
+        try { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+        target.classList.remove('trp-jump-hit');
+        void target.offsetWidth;                    // restart the animation
+        target.classList.add('trp-jump-hit');
+      };
+      panel.addEventListener('click', function (e) {
+        const tr = e.target.closest && e.target.closest('tr.trp-row');
+        if (tr) jump(tr);
+      });
+      panel.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const tr = e.target.closest && e.target.closest('tr.trp-row');
+        if (tr) { e.preventDefault(); jump(tr); }
+      });
+    }
   }
 
   function setStatus(kind, msg) {
@@ -2875,6 +3054,7 @@
       tbody.innerHTML = '';
       tfoot.innerHTML = '';
       renderDeptTeamStrip_(state);   // B1: hides itself when there are no rows
+      renderTeamRingsPanel_(state);  // R17b: ditto -- the 2nd sticky panel
       return;
     }
 
@@ -2963,6 +3143,7 @@
     // from the same server totals -- rendered here so it repaints on sort /
     // refresh alongside the table.
     renderDeptTeamStrip_(state);
+    renderTeamRingsPanel_(state);   // R17b: the 2nd sticky panel repaints with the strip
     // B1: flash agents whose Answered/Missed changed since the last paint for
     // this dept. Scoped per dept so switching depts doesn't cross-flash; a sort
     // re-render leaves values unchanged per key, so it never flashes.

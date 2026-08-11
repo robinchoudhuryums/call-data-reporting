@@ -232,7 +232,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `workingDaysBetween_` fallback); the compare line appends the PRIOR
   window's workdays likewise. The team
   rollup tiles dropped Total Rung / Total TTT; Queue health dropped Longest
-  wait (decluttered to two labeled groups: Department rollup + Queue health).
+  wait (decluttered to two labeled groups: Department rollup + Queue health
+  -- both card sets since HIDDEN entirely, R16e/R17b: the sticky Team Rings
+  Data panel, panel 1's tiles and the queue table carry their figures; see
+  the R17 bullet).
   The rollup's rate tile is labeled **"% Answered (rings)"** (owner note):
   it's answered ÷ rung, and rung counts RINGS -- one call can ring several
   agents -- so it's ring-level, not share-of-unique-calls; the glossary
@@ -384,7 +387,36 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   hides while Calendar is active (a calendar is inherently daily), and
   the calendar's day-drill + month-nav clicks are wired DIRECTLY on the
   rendered nodes each render (belt-and-braces after the delegated
-  handler missed on some paths — the reported day-click no-op). (#9→R16c) the separate **Email summary** is RETIRED —
+  handler missed on some paths — the reported day-click no-op).
+  **R16g: a calendar day-click JUMPS to the Daily breakdown instead of
+  reloading the region for that one date** (the reload left the page's two
+  halves on conflicting windows). `insCalJumpToDaily_` opens the Queue-health
+  fold + the daily `<details>`, expands the date's day group
+  (`insJumpToDailyRow_`), and inserts the per-DATE drill row
+  (`insQhDayDetail_` → `getMissedCallsSlice` with from=to=the date, no
+  dow/hour filter — every missed ring + queue abandon for the day, rendered
+  by the heatmap drill's `missedSliceListHtml_` so the 🚨 + "↳ path" chips
+  ride the existing `.pid-journey` handler). The detail row joins the day
+  group's open/close (the `insQhDayToggle_` selector covers all three row
+  kinds). Falls back to the old single-day reload ONLY when the daily table
+  can't take the jump (no QCD daily rows / date outside the series).
+  **R16h: the trend LINE chart's point-drill joins it** — a point that
+  resolves to ONE day (`range.from === range.to`, i.e. Daily mode) jumps like
+  the calendar; a MONTHLY point spans a month the day drill cannot represent,
+  so it keeps the re-run. **R16h also gives the drill TWO labeled lenses**,
+  the heatmap-cell-drill shape: DQE missed RINGS (time · agent · path) beside
+  inbound ABANDONS (wait/hold seconds · entry→final queue · stage · path).
+  They answer different questions from different sources and are not expected
+  to reconcile. **R16i: BOTH lenses are manager-reachable.** The abandons lens
+  calls `getDeptDayAbandons` (Inbound&nbsp;Report.gs) — one date, one required
+  and access-checked dept, no company view, the call list only — NOT the
+  admin-gated `getInboundHeatmapCell`. The two share `inboundAbandonList_`, so
+  the AUTH decision lives in each public function while the DEFINITION (what
+  counts as an abandon, which hours, which dept, the 200 cap) lives in one
+  place. The payload carries `meta.reconcileNote`, rendered by
+  `heatCellDetailHtml_` whenever present: this list sits directly beneath a
+  QCD-sourced abandoned count and the two differ by definition, so the
+  explanation ships WITH the data rather than being opt-in per call site. (#9→R16c) the separate **Email summary** is RETIRED —
   `sendInsightsReportEmail` sends ONE consolidated email (a legacy
   `style` param is ignored): takeaway + rollup tiles + the behind-team
   block (`insEmailBehindBlock_` — answer rate below the team average, min
@@ -1007,15 +1039,32 @@ behind the removed button.
   queue and discloses "block ≈ N calls" on its banner when N > 1 (the
   company-row "each block ≈" note went with it — one number would now lie).
   The trade-off is deliberate: blocks compare WITHIN a section, never
-  across; cross-dept magnitude is the Total column's job.
+  across; cross-dept magnitude is the Total column's job. **R16e applies the
+  same per-section unit to the WEB all-departments report** (`qcdSectionUnit`
+  in script-11-qcd-boot, disclosed as `.qcd-deptrow-unit` on each dept
+  banner; the single company-row `= N calls` legend went with the
+  cohort-wide unit — one number would now be wrong for every section but
+  one). **The email's block CEILING is 14, not the web's shared 36, and that
+  is a LAYOUT constraint**: the email tally is a table of `width="5"` cells
+  inside the ~150px Abandoned-% column, and past ~16 blocks the renderer
+  shrinks every cell to fit, so blocks stop being uniform ROW TO ROW
+  (measured: 20 blocks → 4.09px vs 5px on a 9-block row). The web tally's
+  blocks are `flex: 0 0 auto` and wrap instead of shrinking, so it keeps the
+  finer 36. Raising the email number without widening the column
+  re-introduces the squeeze; `queue-report.test.js` pins the ceiling.
 - **Insights Agents section**: the Cards view is HIDDEN for now (owner
   undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to
   the **Gap vs team** basis (M3 — since the M1 merge the agent table on the
   SAME page carries the Absolute information, so the section defaults to the
-  one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap, the
-  in-session sub-toggle / A/B remote still switch freely). All cards code is
-  kept — single-agent reports still
+  one view the table can't show; a saved `'abs'` pref SELF-HEALS to gap).
+  **R16g completes that logic: the Absolute OPTION is HIDDEN too** — the
+  sub-toggle shows only Gap vs team / Trend (the abs button keeps its
+  markup + wiring + renderer inert per the Round-16 removal convention; the
+  admin A/B remote still reaches it). The metric selector dropped **Rung**
+  (≈ answered + missed, so its gap/trend lines restated the other two; a
+  saved `'rung'` pref self-heals to answered; the renderers still accept it
+  if fed). All cards code is kept — single-agent reports still
   force cards, and the admin A/B remote's Cards button still reaches the
   hidden view. Un-hiding = remove the `display:none` + widen the pref restore.
 - **Insights Daily breakdown**: two modes, decided by how many queues carry
@@ -1129,7 +1178,11 @@ behind the removed button.
   saves/restores `preset/from/to` (saved VIEWS keep their own dates).
 - **The INSIGHTS REGION (M1 merge + N1 always-inline,
   docs/insights-merge-plan.md)**: the whole ex-Insights-page lives in
-  `<details id="dept-insights-region" open>` at the bottom of `#dept-page` —
+  `<details id="dept-insights-region" open>` at the bottom of the page —
+  since R17b INSIDE `.dept-layout > .dept-main` (not a direct `#dept-page`
+  child), so the aside's sticky side panels ride the whole page and Insights
+  renders at the main-column width; the print path's show-only-the-region
+  selectors walk the new chain (styles.html `ins-printing` block) —
   OPEN by default, rendering + GENERATING with the dept page:
   `deptInsightsEnsureLive_` runs on dept entry + every `refresh()`, gated on
   `data-page='dept'` (the Overview landing pays nothing) and on the region
@@ -1249,11 +1302,22 @@ behind the removed button.
   the shared `ins-fold-in`, both reduced-motion-gated; an at/over-5% abandoned
   rate reads bold + `--bad` — the weight has to be restated locally because
   the global `.qcd-rate-over` loses on specificity to `.ans-nums .ans-rate`.
+  R16f: the COLLAPSE animates too — closing rows hold `.is-open` through a
+  140ms `.is-closing` fade-out before `insQhDayToggle_`'s timer removes them
+  (the timer lives on the day row so a rapid re-open cancels it), and closing
+  the "Daily breakdown" `<details>` intercepts the summary click to play the
+  mirrored `ins-fold-out` before flipping `open` off — a native details close
+  is instant, so without the intercept only the open direction animated. Also
+  R16f: a tally legend rendered as the last child of a `.ds-card` gets its
+  own padding (`.ds-card > .ans-tally-legend`) — flush against the card edge
+  the rounded corner + overflow clipped it half off.
   (5) Queue health gained cards: **Avg answer** + **Longest wait** promoted
   out of the muted secondary strip (now empty for the dept total; it still
   serves the per-queue expanded rows), **Transfer %** mirrored from the dept
   strip, and **Queue calls** adopting the strip's "total (answered /
-  abandoned)" split + per-workday foot. Transfer % reads `state.csrTransfer`
+  abandoned)" split + per-workday foot — since R16f as TWO lines
+  (`.qh-calls-total` full-size, `.qh-calls-split` 13px beneath; one long
+  inline value read disproportionate on a half-width card). Transfer % reads `state.csrTransfer`
   (the DEPT payload, CSR-only) and renders ONLY when both surfaces show the
   same window — a share link or saved view can put Insights on its own, and a
   transfer rate from another range inside this section would be a quiet lie.
@@ -1276,7 +1340,36 @@ behind the removed button.
   drop shadow only paints while pinned). The fold caret is a SQUARE
   inline-block box — a bare glyph box rotated 90° poked 2px past the
   page edge and tripped the overflow gate.
-- **Round-16 removals** (all code kept inert behind flags/hidden markup):
+- **R17 (owner round): same-call grouping + the Team Rings Data panel.**
+  (1) On the missed agent cards, CONSECUTIVE timeline entries sharing
+  (date, parentId) — one abandoned call that rang the agent repeatedly, the
+  F-2 lockstep shape — group under a warm left rail (`.ms-callgroup`, inside
+  an `.ms-callgroup-wrap` `<li>` since a `<ul>` can't nest bare); the siren +
+  id badge/path drill render ONCE on the last ring and the explainer is the
+  group's hover title (no visible caption). Plain missed rings carry no id
+  in DQE (identity lives only in Call_Legs at build time), so they stay
+  ungrouped — that's the data, not a choice. Pinned by drive-smoke; the
+  harness fixture seeds a genuinely ADJACENT re-rung parent (same slot,
+  40s apart) because random-slot pairs interleave once sorted and no group
+  could ever form.
+  (2) **`#dept-team-rings` ("Team Rings Data")** is the SECOND sticky side
+  panel, below Queue Call Data in the same aside: the `% Ans (rings)` KPI
+  (rings `(ans / miss)` foot + the team-strip prior-window delta), the queue
+  `Avg ans time`, and a condensed agent table — short names via
+  `trpShortName_` ("Roman P.", parentheticals stripped, FULL name on the
+  row's `title`), a per-row mini tally (`ansTallyUnitFor_(rows, 12)` — the
+  helper gained an optional maxBlocks cap; all prior callers unchanged),
+  Ans/Miss + %, worst-%-first, PER-DEPT mini-groups in a combined view,
+  ~10 rows then internal scroll with a sticky thead, row click/Enter jumps
+  to + flashes the agent's main-table row. Rendered by
+  `renderTeamRingsPanel_` from the SAME dept-summary payload as the table
+  (no extra RPC; repaints wherever `renderDeptTeamStrip_` does); hideable
+  via the `dept-team-rings` UI flag. It REPLACES the Insights
+  Department-rollup card row (+ its section title, removed per owner) and
+  the Queue-health card column — both hidden with wiring inert (Round-16
+  convention); their figures live on in this panel, panel 1's tiles, the
+  queue table (now full width) and the team strip. The rollup's deltas +
+  sparklines survive in the per-agent cards, the emails and the CSV.
   the Missed-report Bars/Radar toggle is hidden for everyone
   (`missedChartMode_` hardcodes bars); the My Department sub-queue
   relationship bar — the "Combined view…" banner, the child's upward
