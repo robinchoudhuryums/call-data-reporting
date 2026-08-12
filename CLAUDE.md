@@ -646,15 +646,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   feeds `entry_queue` / `final_queue` / `num_queues` / `abandon_stage`. A name
   it fails to recognize yields `entry_queue = NULL`, which makes the call
   attributable to NO dept (`inboundDeptPredicate_` matches on `entry_queue`) --
-  invisible in every dept's Inbound report and heatmap. **The blindness is
-  SELF-CONCEALING:** `scanInboundQueueNames_` (the Dept Config "Discovered
-  inbound queues" panel) and `runInboundQcdParityCheck`'s unattributed list
-  BOTH filter `COALESCE(entry_queue,'') <> ''`, so an unrecognized queue has no
-  row to discover. Two sources feed it, and the pattern arm alone still matches
+  invisible in every dept's Inbound report and heatmap, AND invisible to the
+  panels that would report it (the blindness is self-concealing; F1 has the
+  mechanism). Two sources feed it, and the pattern arm alone still matches
   (strictly additive): (1) the PATTERN -- `A_Q_` at string start **or after an
-  underscore** (the `_` alternative is F1b and is load-bearing: this install
-  runs BRAND-PREFIXED queues like `UDC_A_Q_Main` / `UUC_A_Q_Main` that a
-  `^A_Q_` anchor misses entirely), plus an exact `Backup CSR` -- keep that arm
+  underscore** (the `_` alternative is F1b -- do NOT re-anchor it), plus an
+  exact `Backup CSR` -- keep that arm
   EXACT, since widening it the way the DQE regex does would make "Jane Backup
   CSR" a queue (IMP-1 pins it false); (2) the `Dept Config` SHEET via
   `icLoadConfiguredQueueNames_` (QCD Queues + Inbound Queue Aliases, incl. the
@@ -735,18 +732,19 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Dept Config "Inbound queue aliases" column; inbound-qcd-parity.test.js).
   Run it, populate aliases, re-run -- BEFORE any un-gating decision.
   **⚠ The QCD-vs-inbound abandon gap is SETTLED -- read `docs/known-issues.md`
-  "QCD Abandoned vs inbound_calls abandons" before re-investigating.** Four
-  plausible explanations were eliminated and they all look plausible again from
-  a standing start. Three LIVE RULES came out of it:
-  (1) **QCD's Abandoned applies a minimum QUEUE-WAIT threshold (>48s observed;
-  60s fits) and the inbound capture applies NONE.** Inbound answers "did this
+  "QCD Abandoned vs inbound_calls abandons" before re-investigating** -- the
+  eliminated explanations all look plausible again from a standing start, and
+  the measurements behind the three LIVE RULES live there:
+  (1) **QCD's Abandoned applies a minimum QUEUE-WAIT threshold and the inbound
+  capture applies NONE.** Inbound answers "did this
   caller hang up without reaching a human?", QCD answers "did this caller wait
-  past the threshold and give up?". Both are correct; they are ~4x apart on CSR
-  and must never be shown side by side without saying so -- that caption is the
-  prerequisite for un-gating.
+  past the threshold and give up?". Both are correct; they are several-fold
+  apart and must never be shown side by side without saying so -- that caption
+  is the prerequisite for un-gating.
   (2) **`wait_seconds` is WHOLE-CALL elapsed time from IVR pickup
-  (`abandonLeg.stop - firstLeg.start`), NOT queue wait.** The IVR runs 54-65s
-  on nearly every call here, so a 1-second queue abandon stores as 55. Never
+  (`abandonLeg.stop - firstLeg.start`), NOT queue wait.** The IVR runs on
+  nearly every call here, so a near-instant queue abandon still stores tens of
+  seconds. Never
   compare it to a queue threshold or read it as "time waiting for an agent";
   the per-leg `secs` inside `journey` is where a real queue wait is derivable.
   It feeds the heatmap cell drill's "wait/hold" label, which is misleading for
@@ -1034,8 +1032,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`exportTableCsv_`'s `csvEscape`), the Insights CSV (`insDownloadCsv_`),
   the Inbound CSV (`inboundDownloadCsv_`), the Direct CSV
   (`directCallDownloadCsv_`), and the all-dept QCD CSV (`qcdAllDeptCsv_`).
-  Any new CSV cell writer must call `csvSafeCell_`
-  before the RFC-4180 quote-escaping.
+  Any new TABULAR cell writer must call `csvSafeCell_`
+  before the RFC-4180 quote-escaping -- CSV or not: the IR card's
+  copy-as-TSV clipboard button (E-3) is a sixth writer feeding the same
+  spreadsheet paste target.
 - **Chart.js v4 + chartjs-plugin-datalabels needs explicit
   registration.** v4 dropped the auto-register-on-script-tag
   behavior the plugin relied on, and the plugin itself defaults
