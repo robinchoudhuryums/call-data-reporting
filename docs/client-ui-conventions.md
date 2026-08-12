@@ -801,6 +801,31 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   storage/parse error falls back to the normal fetch, and the live fetch
   always runs). Bump the `v1` if the Overview payload shape changes
   meaningfully.
+- **The diagonal wave, and where a spotlight has to stop scrolling (R18b,
+  owner).** Two small motion/geometry rules that are easy to reimplement
+  wrongly. (1) `waveIn_(container, selector)` (script-1-core) staggers a grid
+  so it arrives top-left → bottom-right. The rank is MEASURED from each
+  element's own position inside the container, never derived from its index:
+  the callers' grids reflow with the viewport, so an index diagonal is right
+  at one width and meaningless at another. It skips entirely under
+  `prefers-reduced-motion`, caps the stagger at `WAVE_MAX_STEPS_` so a big
+  grid still feels prompt, and the `.wave-in` class uses `both` fill and is
+  removed on `animationend` — an element whose animation never runs must
+  still end visible, and a re-open must not inherit a stale delay. Callers:
+  the per-agent missed cards on expand, and the abandon heatmap on render.
+  (2) The per-agent missed cards live in `#dept-missed-agents-fold`, CLOSED by
+  default (`cdr.dept.missedagents`) with the agent COUNT on the summary — a
+  collapsed section that doesn't say how much it hides gives no reason to open
+  it. The cross-link spotlight still reaches a card inside it, because
+  `deptMissedJumpToAgent_` opens the whole `<details>` chain first. (3)
+  `qsSpotlight_` scrolls through `scrollFullyIntoView_`, not
+  `scrollIntoView({block:'start'})` — that put the target's top at the
+  VIEWPORT top, i.e. underneath the pinned controls strip, so the very card it
+  was drawing attention to was the part that got covered. The helper measures
+  the sticky inset from each candidate's resolved `top` + height (not its
+  current position: the scroll being computed is the one that pins it),
+  scrolls the minimum distance that clears it, and never pushes the top back
+  under the strip when the element is taller than the space.
 - **A light/dark flip must REBUILD every chart that is on screen
   (`repaintLiveCharts_`, script-1-core).** Chart.js bakes `THEME.*` into a
   chart at CONSTRUCTION, so `refreshChartTheme()` alone changes nothing
@@ -1193,15 +1218,26 @@ behind the removed button.
   the `»` legend are disclosed ONCE, in the table footnote beside the
   sentence that already explains the bars — the per-section banner note was
   what made a changing scale look sanctioned, and the column header is too
-  narrow to carry the text without wrapping to two lines. **R16e applies the
-  per-section unit to the WEB all-departments report** (NOT yet revisited for
-  R18 — the web report is one scrollable page where a reader can see the
-  Total column beside every bar, and no one has reported the inversion there;
-  if it is unified later, `tallyBasisFor_` is the piece to port) (`qcdSectionUnit`
-  in script-11-qcd-boot, disclosed as `.qcd-deptrow-unit` on each dept
-  banner; the single company-row `= N calls` legend went with the
-  cohort-wide unit — one number would now be wrong for every section but
-  one). **The email's block CEILING is 14, not the web's shared 36, and that
+  narrow to carry the text without wrapping to two lines.
+  **R18b (owner) refined it twice over.** (a) The unit now PREFERS
+  2 calls/block: the adaptive basis landed on 5 on a typical day, which is
+  coarse where most queues actually live (an 11-call queue and a 13-call one
+  drew the same length). The ladder survives as a FALLBACK rather than being
+  deleted, because clipping is only honest while it is RARE — once a large
+  share of rows sit at the ceiling they all draw the same length and the
+  tally ranks nothing — so 2 wins only when it would clip at most a quarter
+  of the rows. That test is a STRICT minority with no floor: a report of two
+  or three queues may not clip at all, since one of two rows at the ceiling
+  is not "rare", it is half the report. (b) The WEB all-departments report
+  now shares the same scale (`qcdSectionUnit` in script-11-qcd-boot, computed
+  ONCE before the section loop from every queue row the table will draw; the
+  per-dept `.qcd-deptrow-unit` note is gone and a single `.qcd-tally-legend`
+  sits under the company row). `qcdDailyBarCell_` gained `opts.tallyMax` for
+  it — a shared-scale caller MUST clip, since a fine unit is what makes the
+  small queues separable and without a ceiling the busiest queue wraps into a
+  block of colour that dwarfs the table. Callers with a per-cohort unit pass
+  no max and are byte-unchanged. `drive-smoke` asserts the same monotonicity
+  property there that `queue-report.test.js` asserts for the email. **The email's block CEILING is 14, not the web's shared 36, and that
   is a LAYOUT constraint**: the email tally is a table of `width="5"` cells
   inside the ~150px Abandoned-% column, and past ~16 blocks the renderer
   shrinks every cell to fit, so blocks stop being uniform ROW TO ROW

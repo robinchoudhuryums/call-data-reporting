@@ -582,11 +582,58 @@
   // spotlight an agent card, which has no id (it is keyed by data-agent-card,
   // since agent names are external text and make poor id fragments). Existing
   // string callers are unchanged.
+  // R18b (owner): how far down the viewport is covered by whatever is pinned
+  // to the top right now -- the dept controls strip, and on the dept page the
+  // Insights results header stacked under it. Read from each candidate's
+  // RESOLVED sticky `top` plus its height rather than from its current
+  // position, so the answer is the same whether or not it happens to be
+  // pinned at the moment of the call (it usually is not: the scroll that
+  // pins it is the one being computed).
+  function stickyTopInset_() {
+    var inset = 0;
+    var sel = '#dept-page .controls, #insights-results > .ir-results-header';
+    document.querySelectorAll(sel).forEach(function (el) {
+      if (!el || el.offsetHeight === 0) return;
+      var cs = window.getComputedStyle(el);
+      if (cs.position !== 'sticky') return;
+      var top = parseFloat(cs.top);
+      if (!isFinite(top)) top = 0;
+      var h = el.getBoundingClientRect().height;
+      if (top + h > inset) inset = top + h;
+    });
+    return Math.round(inset);
+  }
+
+  // Scroll the MINIMUM distance that leaves `el` fully visible below the
+  // sticky chrome. `scrollIntoView({block:'start'})` put the element's top at
+  // the viewport top -- i.e. UNDER the pinned strip -- which is what made a
+  // spotlighted agent card land half-covered (owner, R18b). An element taller
+  // than the remaining viewport aligns its top under the inset, which is the
+  // old behavior minus the overlap.
+  function scrollFullyIntoView_(el, extraGap) {
+    if (!el) return;
+    var gap = extraGap > 0 ? extraGap : 12;
+    var inset = stickyTopInset_() + gap;
+    var r = el.getBoundingClientRect();
+    var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    var delta = 0;
+    if (r.top < inset) {
+      delta = r.top - inset;                                  // negative: scroll up
+    } else if (r.bottom > vh - gap) {
+      // Bring the bottom into view, but never at the cost of pushing the top
+      // back under the strip -- a card taller than the space just tops out.
+      delta = Math.min(r.bottom - (vh - gap), r.top - inset);
+    }
+    if (!delta) return;
+    try { window.scrollBy({ top: delta, behavior: 'smooth' }); }
+    catch (e) { window.scrollBy(0, delta); }
+  }
+
   function qsSpotlight_(idOrEl) {
     const el = (idOrEl && typeof idOrEl === 'object')
       ? idOrEl : document.getElementById(idOrEl);
     if (!el) return;
-    try { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* best-effort */ }
+    scrollFullyIntoView_(el);
     el.classList.remove('qs-spotlight');
     void el.offsetWidth;   // restart the CSS animation on repeat clicks
     el.classList.add('qs-spotlight');

@@ -1532,10 +1532,29 @@
     // class.
     var useTally = opts && opts.tallyUnit > 0 && total > 0;
     if (useTally && opts.tallyUnit > 1) title += ' · each block ≈ ' + opts.tallyUnit + ' calls';
+    // R18b (owner): CLIP at opts.tallyMax when the caller sets one. Callers
+    // that share ONE unit across a whole report (the all-departments table)
+    // need it: a fine unit is what makes the small queues separable, and
+    // without a ceiling the busiest queue then wraps into a block of colour
+    // that dwarfs the table. Proportions between answered and abandoned are
+    // preserved inside the ceiling, and the row carries a "»" so a clipped
+    // bar reads as "off the scale, see the count" rather than as a tie with
+    // the longest. Callers with a per-cohort unit pass no max and are
+    // unchanged (their unit already fits by construction).
+    var nA = a > 0 ? Math.max(1, Math.round(a / (opts && opts.tallyUnit))) : 0;
+    var nAb = ab > 0 ? Math.max(1, Math.round(ab / (opts && opts.tallyUnit))) : 0;
+    var tallyMax = (opts && opts.tallyMax > 0) ? opts.tallyMax : 0;
+    var clipped = useTally && tallyMax > 0 && (nA + nAb) > tallyMax;
+    if (clipped) {
+      var keepAb = nAb > 0 ? Math.min(nAb, Math.max(1, Math.round(tallyMax * nAb / (nA + nAb)))) : 0;
+      nAb = keepAb;
+      nA = Math.max(0, tallyMax - keepAb);
+      title += ' · bar clipped at ' + tallyMax + ' blocks';
+    }
     var track = useTally
       ? '<div class="ans-tally" aria-hidden="true">'
-        + ansTallyBlocks_(a, opts.tallyUnit, 'a')
-        + ansTallyBlocks_(ab, opts.tallyUnit, 'm')
+        + ansTallyBlocksN_(nA, 'a') + ansTallyBlocksN_(nAb, 'm')
+        + (clipped ? '<span class="tly-clip" title="past the end of the shared scale">&raquo;</span>' : '')
         + '</div>'
       : '<div class="ans-track">' + segs + tick + '</div>';
     // Round-16b (owner): the counts color-code to their blocks -- a zero

@@ -740,15 +740,45 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   // will draw -- own queues and sub-queue children alike, using the exact
   // same answered+abandoned total tallyHtml renders, so the scale cannot
   // disagree with the bars. Disclosed once in the column header below.
-  const tallyScale = tallyBasisFor_(ordered.reduce(function (acc, d) {
+  const tallyTotals = ordered.reduce(function (acc, d) {
     const push = function (q) {
       acc.push((Number(q.totalAnswered) || 0) + (Number(q.abandoned) || 0));
     };
     deptQueues(d).forEach(push);
     (childrenOf[d.dept] || []).forEach(function (c) { deptQueues(c).forEach(push); });
     return acc;
-  }, []));
-  const tallyUnit = tallyUnitFor_(tallyScale.basis);
+  }, []);
+  const tallyScale = tallyBasisFor_(tallyTotals);
+  // R18b (owner): PREFER 2 calls/block. The adaptive basis landed on 5 for a
+  // typical day, which is coarse where most queues live -- an 11-call queue
+  // and a 13-call one drew the same 2-3 blocks. At 2/block the bottom half of
+  // the report regains resolution and the top simply clips, which is the
+  // trade the clip marker exists to make legible. The adaptive ladder is kept
+  // as a FALLBACK, not deleted: clipping is only honest while it is rare, and
+  // once a large share of rows sit at the ceiling they all draw the same
+  // length and the tally stops ranking anything. So take 2 when it clips at
+  // most a quarter of the rows, else fall back to the basis-derived unit.
+  const TALLY_UNIT_PREFERRED = 2;
+  const tallyUnit = (function () {
+    const basisUnit = tallyUnitFor_(tallyScale.basis);
+    if (!basisUnit || basisUnit <= TALLY_UNIT_PREFERRED) return basisUnit;
+    const vals = tallyTotals.filter(function (v) { return v > 0; });
+    const wouldClip = vals.filter(function (v) {
+      return Math.round(v / TALLY_UNIT_PREFERRED) > TALLY_MAX_BLOCKS;
+    }).length;
+    // Strict minority, with no floor: a report of two or three queues may not
+    // clip at all (one of two rows at the ceiling is not "rare", it is half
+    // the report), and four or more may clip a quarter of them.
+    return wouldClip <= Math.floor(vals.length / 4)
+      ? TALLY_UNIT_PREFERRED : basisUnit;
+  })();
+  // Rows past the ceiling at the unit actually chosen -- what the "»" legend
+  // is gating on. Recomputed rather than reusing tallyScale.clipped, which
+  // counts outliers dropped from the BASIS and is only equal to this when the
+  // basis-derived unit won.
+  const tallyClipped = tallyTotals.filter(function (v) {
+    return v > 0 && tallyUnit > 0 && Math.round(v / tallyUnit) > TALLY_MAX_BLOCKS;
+  }).length;
   const violHdr = 'Viol (MTD)';
   let tbl = '<tr style="background:' + C.headbg + ';">'
     + '<td style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
@@ -884,7 +914,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       // header is too narrow to carry it without wrapping to two lines.
       + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls'
       +   (tallyUnit > 1 ? ' &middot; one block &asymp; ' + tallyUnit + ' calls, the same across every queue below' : '')
-      +   (tallyScale.clipped > 0 ? ' &middot; &raquo; marks a queue past the end of that scale \u2014 read its count' : '')
+      +   (tallyClipped > 0 ? ' &middot; &raquo; marks a queue past the end of that scale \u2014 read its count' : '')
       +   ' &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol = each queue\u2019s 5%-violation days month-to-date (through this report\u2019s end date).</div>'
       + '</td></tr>')
     : '<tr><td style="padding:18px 26px 6px;font:400 14px Arial,sans-serif;color:' + C.mut + ';">No queue activity recorded for this day.</td></tr>';

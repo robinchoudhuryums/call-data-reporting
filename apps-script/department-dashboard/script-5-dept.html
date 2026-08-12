@@ -1971,13 +1971,36 @@
     });
     return { labels: base.labels, counts: counts, abandoned: abandoned };
   }
+  // ── R18b (owner): the per-agent card fold + the diagonal wave ───────────
+  // The cards are the tallest block on the page and are DETAIL, so they sit
+  // behind a summary now. Open state is per user, like the Insights folds.
+  const DEPT_MISSED_AGENTS_FOLD_KEY_ = 'cdr.dept.missedagents';
+  function deptMissedAgentsFoldOpen_() {
+    try {
+      const v = localStorage.getItem(DEPT_MISSED_AGENTS_FOLD_KEY_);
+      return v === null ? false : v === '1';       // default CLOSED (owner)
+    } catch (e) { return false; }
+  }
+  function deptMissedAgentsFoldWire_(fold) {
+    if (!fold || fold._wired) return;
+    fold._wired = true;
+    fold.addEventListener('toggle', function () {
+      try { localStorage.setItem(DEPT_MISSED_AGENTS_FOLD_KEY_, fold.open ? '1' : '0'); } catch (e) {}
+      if (fold.open) waveIn_($('dept-missed-agents'), '.agent-card');
+    });
+  }
+
   function deptMissedSetScope_(name) {
     deptMissedAgentScope_ = (deptMissedAgentScope_ === name) ? null : name;
     if (deptMissedLastData) {
       deptMissedDrawChart_(deptMissedLastData);
       // Re-render the cards so the active button state tracks.
       const agWrap0 = $('dept-missed-agents');
-      if (agWrap0) agWrap0.innerHTML = missedAgentsHtml_(deptMissedLastData.agents || []);
+      if (agWrap0) {
+        agWrap0.innerHTML = missedAgentsHtml_(deptMissedLastData.agents || []);
+        const f0 = $('dept-missed-agents-fold');
+        if (!f0 || f0.open) waveIn_(agWrap0, '.agent-card');
+      }
     }
   }
   function deptMissedDrawChart_(data) {
@@ -2108,15 +2131,29 @@
 
     const agents = (data && data.agents) || [];
     const agWrap = $('dept-missed-agents');
+    const agFold = $('dept-missed-agents-fold');
     if (agWrap) {
       if (agents.length) {
         agWrap.innerHTML = missedAgentsHtml_(agents);
         agWrap.style.display = '';
+        // R18b: the cards live inside a remembered fold. The COUNT rides the
+        // summary so the collapsed state still says how much is hidden --
+        // a bare "Per-agent detail" gives no reason to open it.
+        const cnt = $('dept-missed-agents-count');
+        if (cnt) cnt.textContent = agents.length + (agents.length === 1 ? ' agent' : ' agents');
+        if (agFold) {
+          agFold.style.display = '';
+          deptMissedAgentsFoldWire_(agFold);
+          const want = deptMissedAgentsFoldOpen_();
+          if (agFold.open !== want) agFold.open = want;
+          if (agFold.open) waveIn_(agWrap, '.agent-card');
+        }
       } else {
         // Zero-missed day: keep the inline section tidy (the headline already
         // conveys "no missed"); hide the empty grid rather than show a card.
         agWrap.innerHTML = '';
         agWrap.style.display = 'none';
+        if (agFold) agFold.style.display = 'none';
       }
     }
     // parentId badges (queue-only + agent cards) use a delegated copy handler.

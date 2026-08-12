@@ -1181,9 +1181,63 @@
   // Blocks for one value: round to the nearest unit, but never hide a
   // nonzero value (min 1 block) -- the exact numbers sit right beside the
   // tally in .ans-nums, so block counts are a read of scale, not a count.
+  // ── R18b (owner): diagonal "wave" entrance ──────────────────────────────
+  // Stagger a grid of elements so they arrive top-left -> bottom-right rather
+  // than all at once. The rank is MEASURED from each element's own position
+  // inside the container (left + top, bucketed), not derived from its index:
+  // the callers' grids reflow with the viewport, so an index-based diagonal
+  // would be right at one width and meaningless at another.
+  //
+  // Two things this must not do: fight reduced-motion (skipped entirely), and
+  // leave elements stuck at opacity 0 if the animation never runs (the class
+  // uses `both` fill with a from-state, so a browser that drops the animation
+  // still ends at the final frame; the class is also removed on animationend
+  // so a re-render never inherits a stale delay).
+  var WAVE_STEP_MS_ = 34;
+  var WAVE_MAX_STEPS_ = 14;      // cap the total so a big grid still feels prompt
+  function waveIn_(container, selector) {
+    if (!container) return;
+    var els = Array.prototype.slice.call(container.querySelectorAll(selector || '*'));
+    if (!els.length) return;
+    var reduce = false;
+    try {
+      reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) { /* treat as no preference */ }
+    if (reduce) return;
+    var base = container.getBoundingClientRect();
+    // Bucket the diagonal into steps so items in the same visual band share a
+    // delay -- a per-pixel rank reads as noise rather than a wave.
+    var ranks = els.map(function (el) {
+      var r = el.getBoundingClientRect();
+      return (r.left - base.left) + (r.top - base.top) * 1.6;   // weight rows a little heavier
+    });
+    var min = Math.min.apply(null, ranks);
+    var max = Math.max.apply(null, ranks);
+    var span = Math.max(1, max - min);
+    els.forEach(function (el, i) {
+      var step = Math.round((ranks[i] - min) / span * WAVE_MAX_STEPS_);
+      el.style.setProperty('--wave', String(step));
+      el.classList.remove('wave-in');
+      void el.offsetWidth;                       // restart on a re-open
+      el.classList.add('wave-in');
+      var done = function () {
+        el.classList.remove('wave-in');
+        el.style.removeProperty('--wave');
+        el.removeEventListener('animationend', done);
+      };
+      el.addEventListener('animationend', done);
+    });
+  }
+
   function ansTallyBlocks_(v, unit, cls) {
     if (!(v > 0)) return '';
-    var n = Math.max(1, Math.round(v / unit));
+    return ansTallyBlocksN_(Math.max(1, Math.round(v / unit)), cls);
+  }
+  // R18b: the same emitter taking an already-resolved BLOCK COUNT. Callers
+  // that clip (a shared-scale report capping its busiest row) have to decide
+  // the count before emitting, so they can't go through the value+unit form.
+  function ansTallyBlocksN_(n, cls) {
+    if (!(n > 0)) return '';
     var out = '';
     for (var i = 0; i < n; i++) out += '<span class="tly ' + cls + '"></span>';
     return out;
