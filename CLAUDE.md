@@ -671,10 +671,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   re-anchoring inbound makes brand-prefixed queues invisible again. Two
   subsystems, two rules. **Diagnosing a suspected miss:** `entry_queue IS NULL`
   is NOT by itself a signal -- see Operator State #38 for the runbook.
-  **Internal-transfer journey enrichment (R11-N).** When an agent answers an
-  inbound call and transfers the caller to a queue where they then abandon,
-  `buildInboundCallRecords_` cross-references that internal leg group to the
-  answering agent's concurrent captured inbound call and, ONLY on a UNIQUE match, APPENDS one
+- **Internal-transfer journey enrichment (R11-N) -- inbound capture.**
+  When an agent answers an inbound call and transfers the caller to a queue
+  where they then abandon, `buildInboundCallRecords_` cross-references that
+  internal leg group to the answering agent's concurrent captured inbound call
+  and, ONLY on a UNIQUE match, APPENDS one
   synthetic `{kind:queue, abandoned:true, transfer:true}` event to that call's
   journey. Strictly JOURNEY-ONLY (disposition/counts/queues NEVER touched);
   an ambiguous match is left as-is -- it never guesses. Idempotent on
@@ -682,7 +683,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
   (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
   `tests/unit/inbound-calls.test.js`.
-  **Caller Lookup** (`CallerLookup.gs`, route `#/admin/caller-lookup`,
+- **Caller Lookup** (`CallerLookup.gs`, route `#/admin/caller-lookup`,
   admin-only) is the FULL communication history: the entered number is
   normalized to `+<digits>`, HMAC-hashed with the dashboard's `HMAC_SECRET`
   (must match cdr-import's -- cross-project hash parity pinned by
@@ -694,9 +695,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   per-call capture doesn't cover -- day-level is the ceiling there). Each
   section is independently best-effort: a missing `outbound_calls` table
   flags `meta.outboundAvailable=false`; the inbound results stand.
-  **Per-call drill-through.** `InboundReport.gs::getCallJourney({callId, date,
-  department})` returns ONE call's journey for the "↳ path" affordance on
-  abandoned rings in the Missed views. **INTERNAL-ORIGIN queue calls (an
+- **Per-call journey drill-through (inbound capture).**
+  `InboundReport.gs::getCallJourney({callId, date, department})` returns ONE
+  call's journey for the "↳ path" affordance on abandoned rings in the Missed
+  views. **INTERNAL-ORIGIN queue calls (an
   employee dials another dept's queue; no Incoming leg) are captured as
   `is_internal` rows for THIS drill only** -- every metric query excludes
   them (pinned both ways); a uniquely-matched R11-N transfer group stays
@@ -715,7 +717,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   to run, so a gate-closed manager learns nothing. The journey carries no
   caller identity; the client reuses the Caller Lookup renderers
   (`clChainHtml_` / `clJourneyRowHtml_`) in a `#call-journey-overlay`.
-  **Insurer labels** come from `insurance_numbers`, synced by the editor-run
+- **Insurer labels, and the Inbound report's TEMPORARY admin-only gate.**
+  Insurer labels come from `insurance_numbers`, synced by the editor-run
   `syncInsuranceNumbersToNeon` (`cdr-report/insuranceNumbers.js`) from the
   insurance block in `DO NOT EDIT!` cols X-AG. Re-run it after editing that
   block or new numbers stay unlabeled in the Inbound report
@@ -731,7 +734,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   per dept/day and lists the window's UNATTRIBUTED raw entry-queues (fix: the
   Dept Config "Inbound queue aliases" column; inbound-qcd-parity.test.js).
   Run it, populate aliases, re-run -- BEFORE any un-gating decision.
-  **⚠ The QCD-vs-inbound abandon gap is SETTLED -- read `docs/known-issues.md`
+- **⚠ The QCD-vs-inbound abandon gap is SETTLED -- read `docs/known-issues.md`
   "QCD Abandoned vs inbound_calls abandons" before re-investigating** -- the
   eliminated explanations all look plausible again from a standing start, and
   the measurements behind the three LIVE RULES live there:
@@ -766,9 +769,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   clause on top of it.** `tests/unit/inbound-window-scope.test.js` pins both
   exemptions plus a count-based guard that every `FROM inbound_calls c`
   sub-select carries the window.
-  **Dept attribution contract:** a call belongs to the dept whose effective
-  queue list (`queuesForDept_`, same map as QCD) contains its ENTRY queue -- one
-  call = one dept; overflow stays with the entry queue's dept -- EXCEPT an
+- **Dept attribution contract (inbound capture):** a call belongs to the
+  dept whose effective queue list (`queuesForDept_`, same map as QCD) contains
+  its ENTRY queue -- one call = one dept; overflow stays with the entry
+  queue's dept -- EXCEPT an
   answered call abandoned ON HOLD, which attributes by `final_dept` (the
   answering agent owned it). `final_dept` carries the raw CDR ORG-CHART label
   (`Customer Success`, `Inside Sales`, ...), which in this install matches no

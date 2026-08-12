@@ -206,17 +206,19 @@ const SECTIONS = [
     heading: '\n## Common Gotchas',
     endHeading: '\n## Key Design Decisions',
     grandfathered: {
-      // 2026-08-12 /sync-docs: 12834 -> 12551. Cut the F1/F1b narrative that
-      // docs/fix-history.md already carried verbatim (the self-concealing
-      // discovery gap; the UDC_/UUC_ brand-prefix measurement) and the
-      // QCD-gap measurements that live in docs/known-issues.md, keeping every
-      // rule + its pointer. A marker scan of what remains finds no narrative,
-      // which is why the cut is small: this bullet is long because it fuses
-      // ~8 SUBJECTS (capture, queue recognition, transfer enrichment, Caller
-      // Lookup, the journey drill, insurer labels, the QCD gap, dept
-      // attribution), not because any one of them is over-told. Splitting it
-      // -- not shaving it -- is the next real reduction.
-      'Inbound-call capture is Neon-only and rides the daily import.': 12551,
+      // 2026-08-12 /sync-docs: 'Inbound-call capture …' is GONE from this map,
+      // and that is the outcome to protect. It was 12,834 B -- 3.4x the budget
+      // and 7.6% of the whole file -- but a narrative-marker scan found almost
+      // nothing to shave: it was long because it fused ~8 SUBJECTS, not
+      // because any one was over-told. A 283 B prune (F1/F1b narrative already
+      // verbatim in fix-history; QCD-gap measurements already in
+      // known-issues) then a SPLIT into seven topical bullets left the biggest
+      // at 3,771 B -- under budget, so no grandfathering is needed at all.
+      //
+      // The lesson for the next oversized bullet: ask whether it is ONE rule
+      // told at length (shave it) or SEVERAL rules fused (split it). Adding a
+      // grandfathered entry is the last resort, not the first move -- an entry
+      // here freezes a bullet nobody can then edit without special-casing.
       'Role model + the all-departments manager (`allDepts`).': 6156,
       'Neon read-back (F1) is flag-gated and defaults OFF.': 5554,
       "Neon write discipline (don't regress this — it caused a daily-import\n  timeout).": 4881,
