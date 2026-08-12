@@ -469,6 +469,32 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   themselves in the tab order on the same page. `qsSpotlight_` accepts an
   element as well as an id for this (agent cards are keyed by name, which
   makes a poor id fragment).
+- **"These rings are one call" has ONE definition:
+  `groupConsecutiveByCall_` (script-1-core.html), R17i.** Consecutive entries
+  sharing a `parentId` on the same `date`; returns runs (`{start, end,
+  length, isRun}`) covering the input exactly, and renders nothing itself.
+  The rule used to be written twice — `missedAgentsHtml_` and
+  `missedSliceListHtml_` — with nothing making the copies agree; change the
+  key in one place and the two surfaces silently disagree about what one call
+  IS while both still look right. Pinned by
+  `tests/unit/call-grouping.test.js`, which lifts the function out of the
+  fragment by brace-matching and exercises it directly (the first unit
+  coverage of client-fragment logic; the rendered-UI gate can only see THAT
+  grouping happened, not that both surfaces used the same rule) and also
+  asserts both call sites still call it. **Two properties are load-bearing:**
+  adjacency is part of the rule (a re-rung parent later in the list is its
+  own event, not a group spanning the rings between), and a ring with no
+  `parentId` never groups (in DQE only abandoned rings carry an id, so
+  grouping on null would fuse unrelated rings into one "call").
+  **The RENDERINGS stay deliberately different and must not be "unified":**
+  the agent card has no visible "rang N×" caption (owner, R17a: hover only)
+  and puts the siren + id badge on the LAST ring, while the lens shows the
+  count and puts them on the FIRST row. The two also consume different
+  sequences, so the runs mean different things — a card iterates ONE agent's
+  rings (a run is that agent rung repeatedly), while a lens iterates a slice
+  sorted chronologically ACROSS agents (`missedSliceFilter_`), so a run there
+  can span agents. That is exactly why the helper returns runs and lets each
+  caller phrase them.
   **R17d: the Calendar is available at EVERY window length.** The 14–366-day
   span rule now gates only the QUEUE metric (`queueHealth.dailySeries` is
   window-scoped); for the TEAM metrics a window that can't fill a calendar

@@ -43,7 +43,7 @@ Deploy: Department Dashboard: `clasp push -f` from repo root, then Apps Script e
 the deploy step is confirmed.)
 
 FOLLOW-ON ITEMS:
-- The agent cards and the shared lens still carry TWO same-call grouping implementations (`ms-callgroup` in `missedAgentsHtml_`, `hd-run` in `missedSliceListHtml_`). They agree on behavior but are separate code; a future round could extract one. Deliberately out of scope here — merging them touches the agent cards' markup, which Option A did not ask for.
+- ~~The agent cards and the shared lens still carry TWO same-call grouping implementations.~~ CLOSED in R17i (increment 103, same branch): the RULE is extracted to `groupConsecutiveByCall_`; the renderings stay deliberately different (owner R17a). Proven behavior-identical against both old loops over 200k randomized inputs before shipping.
 - The ABANDONS lens (`heatCellDetailHtml_`) does not share the new sparse-date mode; in the heatmap cell drill it has the same one-row-per-date shape. Left alone to keep this change to the missed-ring renderer Option A named.
 - `.bucket-detail-empty`'s removal leaves the bucket drill's empty state on the shared renderer's wording ("No missed rings recorded here for the selected range"), which is true but less specific than the old "No rings in this bucket."
 

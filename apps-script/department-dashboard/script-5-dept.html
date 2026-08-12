@@ -839,33 +839,28 @@
              +   parentIdBadge(m.parentId, m.date)
              + '</li>';
       };
-      let itemsHtml = '';
-      const times = a.missedTimes;
-      for (let ti = 0; ti < times.length;) {
-        const m = times[ti];
-        let tj = ti + 1;
-        while (m.parentId && tj < times.length
-               && times[tj].parentId === m.parentId && times[tj].date === m.date) tj++;
-        if (m.parentId && tj - ti >= 2) {
-          const group = times.slice(ti, tj);
-          const gTitle = 'Same call — rang ' + group.length
-            + '× before the caller hung up (call ID ' + String(m.parentId) + ')';
-          itemsHtml += '<li class="ms-callgroup-wrap">'
-            + '<ul class="ms-callgroup" title="' + escapeHtml(gTitle) + '">'
-            + group.map(function (g, gi) {
-                const last = gi === group.length - 1;
-                return '<li class="abandoned">'
-                  + dateLabelOf(g) + timeLabelOf(g)
-                  + (last ? ' 🚨' + parentIdBadge(g.parentId, g.date) : '')
-                  + '</li>';
-              }).join('')
-            + '</ul></li>';
-          ti = tj;
-        } else {
-          itemsHtml += singleLi(m);
-          ti++;
-        }
-      }
+      // R17i: the run DETECTION is the shared groupConsecutiveByCall_ (see
+      // its docstring); only the rendering is local. This card's treatment
+      // stays deliberately its own -- no visible "rang N×" caption (owner,
+      // R17a: hover only), and the siren + id badge on the LAST ring rather
+      // than the first -- so unifying the rule must not drag the look along.
+      const times = a.missedTimes || [];
+      const itemsHtml = groupConsecutiveByCall_(times).map(function (run) {
+        const group = times.slice(run.start, run.end);
+        if (!run.isRun) return singleLi(group[0]);
+        const gTitle = 'Same call — rang ' + run.length
+          + '× before the caller hung up (call ID ' + String(group[0].parentId) + ')';
+        return '<li class="ms-callgroup-wrap">'
+          + '<ul class="ms-callgroup" title="' + escapeHtml(gTitle) + '">'
+          + group.map(function (g, gi) {
+              const last = gi === group.length - 1;
+              return '<li class="abandoned">'
+                + dateLabelOf(g) + timeLabelOf(g)
+                + (last ? ' 🚨' + parentIdBadge(g.parentId, g.date) : '')
+                + '</li>';
+            }).join('')
+          + '</ul></li>';
+      }).join('');
 
       var tier = '', tierChip = '';
       if (useTiers) {

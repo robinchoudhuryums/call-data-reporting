@@ -1051,24 +1051,20 @@
     // R17f (owner): CONSECUTIVE rings that share a parentId are ONE abandoned
     // call ringing several agents/times -- render them as a connected run
     // (shared warm rail, id badge once, a "rang N×" count on the first row):
-    // the R17a agent-card grouping applied to this lens. Chronologically
-    // adjacent is the grouping key on purpose -- a same-id ring much later in
-    // the list is a re-rung call and reads better as its own event.
+    // the R17a agent-card grouping applied to this lens.
+    // R17i: the RULE is groupConsecutiveByCall_ (shared with the agent cards
+    // -- see its docstring for why adjacency is part of it, and for why a run
+    // here can span agents while a card's cannot). Only the run-position
+    // annotation below is this renderer's own.
     var annotated = entries.map(function (e) { return Object.assign({}, e); });
-    var ri = 0;
-    while (ri < annotated.length) {
-      var rj = ri + 1;
-      while (rj < annotated.length && annotated[ri].parentId
-             && annotated[rj].parentId === annotated[ri].parentId
-             && annotated[rj].date === annotated[ri].date) rj++;
-      if (rj - ri > 1 && annotated[ri].parentId) {
-        for (var rk = ri; rk < rj; rk++) {
-          annotated[rk]._run = rk === ri ? 'start' : (rk === rj - 1 ? 'end' : 'mid');
-          annotated[rk]._runLen = rj - ri;
-        }
+    groupConsecutiveByCall_(annotated).forEach(function (run) {
+      if (!run.isRun) return;
+      for (var rk = run.start; rk < run.end; rk++) {
+        annotated[rk]._run = rk === run.start ? 'start'
+          : (rk === run.end - 1 ? 'end' : 'mid');
+        annotated[rk]._runLen = run.length;
       }
-      ri = rj;
-    }
+    });
     // R11-H: grouped by date (the date is in the group header, so each row
     // shows the ring time only) -- but ONLY while the grouping earns its
     // keep. R17h: a date header exists to stop the date repeating on every
