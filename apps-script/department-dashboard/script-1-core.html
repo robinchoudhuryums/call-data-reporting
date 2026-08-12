@@ -387,15 +387,64 @@
   });
 
   // Re-render charts that are visible RIGHT NOW so a dark-mode toggle
-  // doesn't leave stale light-mode pixels. Only the Overview trend
-  // chart is always-on; modal charts repaint on reopen and are skipped.
+  // doesn't leave stale light-mode pixels. R18 widened this from the
+  // Overview chart alone to the dept page's charts too (see
+  // repaintLiveCharts_); MODAL charts are still skipped, since they rebuild
+  // on reopen and repaint then.
   // Re-invokes the existing builder with the last payload (ovLastData)
   // so dataset colors are recomputed from THEME / the harmonized ramp.
+  /**
+   * Rebuild the charts on the ACTIVE page after a light/dark flip.
+   *
+   * Chart.js bakes THEME.* colors into a chart at construction, so an
+   * already-mounted chart keeps its old palette until it is rebuilt. This
+   * used to repaint the Overview chart ONLY, which left every dept-page
+   * chart painting the light palette on a dark background after a toggle.
+   * The visible symptom was the gap chart's ZERO gridline -- drawn in
+   * `THEME.ink`, which under a stale light theme is near-black and vanishes
+   * on the dark canvas, while the other gridlines (`THEME.line`, light gray)
+   * stayed visible. Measured before the fix: after toggling to dark the zero
+   * line sampled rgb(16,20,24) against a rgb(12,15,20) background.
+   *
+   * Rendering is guarded per surface: each renderer is optional (fragments
+   * load independently) and each is skipped unless its data + container are
+   * live, because rebuilding inside a `display:none` container renders at
+   * zero size -- the C3 trap.
+   */
   function repaintLiveCharts_() {
-    if (document.body.getAttribute('data-page') === 'overview'
-        && typeof ovLastData !== 'undefined' && ovLastData && ovLastData.depts) {
-      ovRenderChart_(ovLastData);
+    const page = document.body.getAttribute('data-page');
+    if (page === 'overview') {
+      if (typeof ovLastData !== 'undefined' && ovLastData && ovLastData.depts) {
+        ovRenderChart_(ovLastData);
+      }
+      return;
     }
+    if (page !== 'dept') return;
+    const visible = function (id) {
+      const el = document.getElementById(id);
+      return el && el.offsetParent !== null;
+    };
+    // Missed-calls chart (dept section).
+    try {
+      if (typeof deptMissedChart !== 'undefined' && deptMissedChart
+          && typeof deptMissedLastData !== 'undefined' && deptMissedLastData
+          && typeof deptMissedDrawChart_ === 'function'
+          && visible('dept-missed-chart-wrap')) {
+        deptMissedDrawChart_(deptMissedLastData);
+      }
+    } catch (e) { /* one stale chart must not block the others */ }
+    // Insights region: the 12-month trend + the per-agent cards chart. Both
+    // read their own cached payload, so this is a repaint, not a refetch.
+    try {
+      if (typeof insLastData !== 'undefined' && insLastData) {
+        if (typeof insDrawTrendChart_ === 'function' && visible('ins-trend-canvas-wrap')) {
+          insDrawTrendChart_(insLastData);
+        }
+        if (typeof insRenderCardsChart_ === 'function' && visible('ins-cards-chart')) {
+          insRenderCardsChart_();
+        }
+      }
+    } catch (e) { /* as above */ }
   }
 
   // -- chartjs-plugin-datalabels global registration ------------------

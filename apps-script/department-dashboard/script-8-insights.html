@@ -1506,7 +1506,8 @@
     var cards = (data && data.agentData) || [];
     if (cards.length <= 1) return;
     var ts = (data && data.teamStats) || {};
-    var teamPct = Number((ts.pct && ts.pct.val) || 0);
+    // R18: benchmark against the excluded-manager baseline, not the dept rate.
+    var teamPct = insTeamBenchmarkPct_(data);
     var behind = cards.filter(function (c) { return insClassifyAgent_(c, teamPct) === 'attention'; });
     if (!behind.length) {
       // D3 (#6): an explicit all-clear beats empty space for occasional
@@ -1820,28 +1821,51 @@
     const unit = ansTallyUnitFor_(slices.map(function (s) {
       return { totalAnswered: s.value, totalMissed: 0 };
     }));
-    // R17c (owner): per-row delta vs the EQUAL share (100% ÷ answering
-    // agents) -- only when the run covers the WHOLE department (no "Other
-    // agents" remainder, the N1 default). With a subset selected the dept's
-    // answering-agent count is unknown, and an average over just the shown
-    // agents would mislead, so the deltas hide rather than guess. R17e
-    // (owner): color-coded -- sage above the equal share, warm below, but a
-    // delta under 2 pts stays muted gray so ordinary spread doesn't shout
-    // (the WOW_NOISE_THRESHOLD spirit).
-    const eqShare = other === 0 && agentSlices.length > 1
-      ? (100 / agentSlices.length) : null;
+    // R17c (owner): per-row delta vs the EQUAL share -- only when the run
+    // covers the WHOLE department (no "Other agents" remainder, the N1
+    // default). With a subset selected the dept's answering-agent count is
+    // unknown, and an average over just the shown agents would mislead, so
+    // the deltas hide rather than guess. R17e (owner): color-coded -- sage
+    // above the equal share, warm below, but a delta under 2 pts stays muted
+    // gray so ordinary spread doesn't shout (the WOW_NOISE_THRESHOLD spirit).
+    //
+    // R18 (owner ruling): MANAGERS are out of the benchmark. This was the
+    // reported symptom -- a manager taking a token number of calls counted
+    // as a full team member and pulled the equal share down for everyone.
+    // The maths keeps every row's SHARE % as a share of the whole dept
+    // (dept totals include managers), and only moves the THRESHOLD: take the
+    // share NOT held by excluded agents and split THAT evenly among the
+    // non-excluded answering agents. Splitting a flat 100% would overstate
+    // it in the opposite direction.
+    const basis = (insLastData && insLastData.meta && insLastData.meta.teamAvgBasis) || null;
+    const excludedSet = {};
+    ((basis && basis.excluded) || []).forEach(function (n) { excludedSet[n] = true; });
+    const benchSlices = agentSlices.filter(function (s) { return !excludedSet[s.label]; });
+    const excludedShare = Math.max(0, Math.min(100,
+      Number(basis && basis.excludedAnsweredShare) || 0));
+    const eqShare = other === 0 && benchSlices.length > 1
+      ? ((100 - excludedShare) / benchSlices.length) : null;
     host.innerHTML = slices.map(function (s) {
       const pct = deptTotal > 0 ? (s.value / deptTotal * 100) : 0;
       let deltaHtml = '', deltaTxt = '';
-      if (eqShare != null && !s.other) {
+      // R18: an EXCLUDED manager gets no delta -- they are not measured
+      // against a benchmark they are deliberately outside of. Their row
+      // still shows its real share, and a chip names why.
+      const isExcluded = !!excludedSet[s.label];
+      if (eqShare != null && !s.other && !isExcluded) {
         const d = pct - eqShare;
         const arrow = d >= 0 ? '▲' : '▼';
         const dCls = Math.abs(d) < 2 ? '' : (d >= 0 ? ' is-up' : ' is-down');
         deltaHtml = ' <span class="ins-share-delta' + dCls + '" aria-hidden="true">'
           + arrow + ' ' + Math.abs(d).toFixed(1) + '</span>';
         deltaTxt = ' · ' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1)
-          + ' pts vs an equal share (100% ÷ ' + agentSlices.length
-          + ' agents = ' + eqShare.toFixed(1) + '%)';
+          + ' pts vs an equal share (' + benchSlices.length
+          + ' agents share the ' + (100 - excludedShare).toFixed(1)
+          + '% not held by excluded managers = ' + eqShare.toFixed(1) + '% each)';
+      } else if (isExcluded) {
+        deltaHtml = ' <span class="ins-share-exempt" title="Excluded from the'
+          + ' team benchmark (Dept Config \u2192 Team Avg Excludes)">exempt</span>';
+        deltaTxt = ' · excluded from the team benchmark';
       }
       const title = s.label + ': ' + fmtNumber(s.value) + ' answered · '
         + pct.toFixed(1) + '% of the department’s answered calls' + deltaTxt
@@ -1857,7 +1881,8 @@
       leg.style.display = '';
       leg.innerHTML = (unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls · ' : '')
         + 'sorted most-answered first · shares are of the whole department'
-        + (eqShare != null ? ' · ▲▼ = pts vs an equal share (' + eqShare.toFixed(1) + '%)' : '');
+        + (eqShare != null ? ' · ▲▼ = pts vs an equal share (' + eqShare.toFixed(1) + '%)'
+            + (excludedShare > 0 ? ' · managers excluded from the benchmark' : '') : '');
     }
   }
 
@@ -2805,10 +2830,21 @@
    * such, never of the selected window.
    */
   function insCalendarUsesYtd_(data) {
-    if (insActiveTrendMetric === 'queues') return false;   // queue series is window-scoped
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
-    const windowOk = span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_
+    const windowFits = span != null && span >= INS_CALENDAR_MIN_DAYS_
+      && span <= INS_CALENDAR_MAX_DAYS_;
+    // R18 (item 8): the QUEUE metric can fall back too now. R17d gated it out
+    // because queueHealth.dailySeries is window-scoped and no YTD queue series
+    // existed; QCDReport now accumulates one inside the 12-month trend pass it
+    // already runs (trend.ytdLabels/ytdTotal), so the reason is gone.
+    if (insActiveTrendMetric === 'queues') {
+      const qh = (data && data.queueHealth) || {};
+      const winOkQ = windowFits && (((qh.dailySeries) || []).length > 1);
+      if (winOkQ) return false;
+      return (((qh.ytdDailySeries) || []).length > 1);
+    }
+    const windowOk = windowFits
       && (((data && data.trendDaily && data.trendDaily.labels) || []).length > 1);
     if (windowOk) return false;
     return (((data && data.trendYtd && data.trendYtd.labels) || []).length > 1);
@@ -2818,14 +2854,16 @@
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
     if (insActiveTrendMetric === 'queues') {
-      // R11-C3: only the abandoned-% queue metric has a calendar rendering.
-      // It stays WINDOW-scoped (queueHealth.dailySeries covers the selected
-      // range only), so it keeps the original span rule -- R17d's YTD
-      // fallback is for the TEAM metrics, whose series the server now ships
-      // for the whole year.
-      if (span == null || span < INS_CALENDAR_MIN_DAYS_ || span > INS_CALENDAR_MAX_DAYS_) return false;
+      // R11-C3: only the abandoned-% queue metric has a calendar rendering
+      // (the count metrics are line-only).
       if (insQueueMetric !== 'abandonedPct') return false;
-      return (((data && data.queueHealth && data.queueHealth.dailySeries) || []).length > 1);
+      // R18 (item 8): eligible when EITHER the selected window fills a
+      // calendar or the YTD queue series can -- the same two-way rule the
+      // team metrics have had since R17d.
+      const qh = (data && data.queueHealth) || {};
+      if (span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_
+          && ((qh.dailySeries) || []).length > 1) return true;
+      return insCalendarUsesYtd_(data);
     }
     // R11-C3: every team COUNT/RATE metric is calendar-capable; ATT stays
     // line-only (a duration grid reads poorly and invites misreading).
@@ -2847,18 +2885,12 @@
     if (insActiveTrendMetric === 'queues' && insQueueMetric !== 'abandonedPct') {
       return 'Calendar view is available for Queue: Abandoned % (the count queue metrics are line-only).';
     }
-    // R17d: the span rules only gate the QUEUE metric now -- team metrics
-    // fall back to the year-to-date series for any window length.
-    const meta = (data && data.meta) || {};
-    const span = isoRangeDays_(meta.from, meta.to);
+    // R18 (item 8): the span rules are GONE for the queue metric too -- it now
+    // falls back to queueHealth.ytdDailySeries the way the team metrics fall
+    // back to trendYtd, so the only remaining reason is "no daily series at
+    // all" (a dept with no mapped queues, or a year with under two QCD days).
     if (insActiveTrendMetric === 'queues') {
-      if (span != null && span < INS_CALENDAR_MIN_DAYS_) {
-        return 'Queue calendar view needs a report window of at least ' + INS_CALENDAR_MIN_DAYS_
-          + ' days (the queue daily series covers the selected window only).';
-      }
-      if (span != null && span > INS_CALENDAR_MAX_DAYS_) {
-        return 'Queue calendar view supports report windows up to ' + INS_CALENDAR_MAX_DAYS_ + ' days.';
-      }
+      return 'Queue calendar view needs at least two days of queue data — this department has none in the selected window or year to date.';
     }
     return 'Calendar view is unavailable here — this tab has no daily series to draw.';
   }
@@ -2934,8 +2966,18 @@
       const head0 = $('ins-trend-header');
       const tm0 = data.meta || {};
       // R17d: name the range the CELLS cover -- the YTD fallback's own span
-      // when it is in play, the selected window otherwise.
-      const ytd0 = insCalendarUsesYtd_(data) ? (data.trendYtd || {}) : null;
+      // when it is in play, the selected window otherwise. R18 (item 8): the
+      // queue metric has its OWN ytd series, so read its first/last row rather
+      // than the team trendYtd span (the two need not start on the same day).
+      let ytd0 = null;
+      if (insCalendarUsesYtd_(data)) {
+        if (insActiveTrendMetric === 'queues') {
+          const qy0 = ((data && data.queueHealth && data.queueHealth.ytdDailySeries) || []);
+          if (qy0.length) ytd0 = { from: qy0[0].date, to: qy0[qy0.length - 1].date };
+        } else {
+          ytd0 = data.trendYtd || {};
+        }
+      }
       if (head0) {
         head0.textContent = ytd0
           ? ('Daily calendar · ' + isoDateShort_(ytd0.from || '') + '–' + isoDateShort_(ytd0.to || '') + ' (year to date)')
@@ -3235,13 +3277,30 @@
     // saying so, since the cells then do NOT describe the selected window.
     const usesYtd = insCalendarUsesYtd_(data);
     const td = (usesYtd ? (data && data.trendYtd) : (data && data.trendDaily)) || {};
-    const calFrom = usesYtd ? (td.from || '') : meta.from;
-    const calTo   = usesYtd ? (td.to   || '') : meta.to;
+    // R18: in YTD mode the QUEUE metric drives its window from its OWN series
+    // (QCD-sourced) rather than the team one (DQE-sourced). The two ranges are
+    // Jan 1..end by construction, but their COVERAGE can differ -- a dept with
+    // queue data and no DQE rows (or the reverse) would otherwise render a
+    // month list the cells can't fill.
+    const isQueueCal = insActiveTrendMetric === 'queues';
+    const qhYtdRows = (data && data.queueHealth && data.queueHealth.ytdDailySeries) || [];
+    let calFrom, calTo;
+    if (usesYtd && isQueueCal && qhYtdRows.length) {
+      calFrom = qhYtdRows[0].date;
+      calTo   = qhYtdRows[qhYtdRows.length - 1].date;
+    } else if (usesYtd) {
+      calFrom = td.from || ''; calTo = td.to || '';
+    } else {
+      calFrom = meta.from; calTo = meta.to;
+    }
     const byLabel = {};
     (td.labels || []).forEach(function (l, i) { byLabel[l] = (td.series || [])[i]; });
     // R7 (I-1): dept-total daily abandoned % (queueHealth.dailySeries, ISO
     // dates) backs the new 'Abd %' calendar metric. Offered only when present.
-    const qhDaily = (data && data.queueHealth && data.queueHealth.dailySeries) || [];
+    // R18: same row shape either way, so one reader serves both scopes.
+    const qhDaily = (usesYtd && isQueueCal && qhYtdRows.length)
+      ? qhYtdRows
+      : ((data && data.queueHealth && data.queueHealth.dailySeries) || []);
     const byIsoAbd = {};
     qhDaily.forEach(function (d) { if (d && d.date) byIsoAbd[d.date] = d; });
     const hasAbd = qhDaily.length > 0;
@@ -3477,7 +3536,28 @@
   // change TREND stays a separate secondary pill (insTrendPill_).
   var INS_PEER_GAP_PTS = 5;   // >= this many points below/above team = Behind/Ahead
   var INS_MIN_VOL      = 5;   // fewer rung calls than this = on par (low signal)
+  /**
+   * R18: THE benchmark an agent is measured against -- the excluded-manager
+   * baseline (`meta.teamAvgBasis.pct`, INV-26 reaching Insights) rather than
+   * the dept rate. Read through this everywhere: the three classification
+   * sites used to each pull `teamStats.pct.val` independently, which is the
+   * same shape of drift that let IR and Insights disagree in the first place.
+   * Falls back to the dept rate for a pre-v21 cached payload.
+   */
+  function insTeamBenchmarkPct_(data) {
+    const basis = data && data.meta && data.meta.teamAvgBasis;
+    if (basis && basis.agents > 0) return Number(basis.pct) || 0;
+    const ts = (data && data.teamStats) || {};
+    return Number((ts.pct && ts.pct.val) || 0);
+  }
+  /** R18: is this card exempt from the team benchmark (a manager)? */
+  function insIsExempt_(card) { return !!(card && card.excludedFromTeamAvg); }
+
   function insClassifyAgent_(card, teamPct) {
+    // R18: an excluded manager is never classified against the benchmark
+    // they sit outside of -- they would otherwise show as "behind the team"
+    // on a token call volume, which is the opposite of the ruling's intent.
+    if (insIsExempt_(card)) return 'steady';
     var m = (card && card.metrics) || {};
     var pct  = Number((m.pct  && m.pct.val)  || 0);   // current % answered (0-100)
     var rung = Number((m.rung && m.rung.val) || 0);   // volume (total rings)
@@ -3527,7 +3607,10 @@
     const teamScore = deltaImprovementScore_(insPerDayMetrics_(teamStats || {}, meta));
     // I6/I7: peer baseline for the standing classification -- the team's answer
     // rate this window. The rail/tier compare each agent to THIS, not 92%.
-    const teamPctForStanding = Number((teamStats && teamStats.pct && teamStats.pct.val) || 0);
+    // R18: the rail/tier benchmark is the excluded-manager baseline too
+    // (insTeamBenchmarkPct_), so the cards, the headline chip and the email
+    // all agree on what "the team average" means.
+    const teamPctForStanding = insTeamBenchmarkPct_(insLastData);
     const enriched = cards.map(function (c) {
       // Classification runs on per-working-day-adjusted metrics (see
       // insPerDayMetrics_) so an unequal-window comparison can't brand an
@@ -3765,12 +3848,23 @@
     if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
-    const nRoster = meta.rosterAgentCount
+    // R18 (owner ruling): the "vs team average" baseline EXCLUDES managers
+    // (server `meta.teamAvgBasis`, INV-26 reaching Insights). A manager on
+    // the roster takes a token number of calls, so counting them dragged
+    // every teammate's gap toward zero. Dept totals/rates are unaffected --
+    // `teamStats` is untouched and still backs the KPI tiles.
+    // Falls back to the pre-R18 teamStats basis when the payload predates
+    // v21 (a cached blob mid-deploy), so the chart never renders empty.
+    const basis = meta.teamAvgBasis;
+    const nRoster = (basis && basis.agents)
+      || meta.rosterAgentCount
       || cards.filter(function (c) { return c.matchedViaRoster; }).length
       || cards.length || 1;
     const teamAvg = isPct
-      ? ((ts.pct && Number(ts.pct.val)) || 0)
-      : (((ts[metric] && Number(ts[metric].val)) || 0) / nRoster);
+      ? (basis ? (Number(basis.pct) || 0) : ((ts.pct && Number(ts.pct.val)) || 0))
+      : (basis
+          ? ((Number(basis[metric]) || 0) / nRoster)
+          : (((ts[metric] && Number(ts[metric].val)) || 0) / nRoster));
     const labels = cards.map(function (c) { return c.name; });
     const vals = cards.map(function (c) {
       const s = c.metrics && c.metrics[metric]; return s ? (Number(s.val) || 0) : 0;

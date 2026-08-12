@@ -203,7 +203,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v20` already makes a fresh re-generate fast too).
+  `insights:v22` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -495,11 +495,25 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   sorted chronologically ACROSS agents (`missedSliceFilter_`), so a run there
   can span agents. That is exactly why the helper returns runs and lets each
   caller phrase them.
-  **R17d: the Calendar is available at EVERY window length.** The 14–366-day
-  span rule now gates only the QUEUE metric (`queueHealth.dailySeries` is
-  window-scoped); for the TEAM metrics a window that can't fill a calendar
+  **R17d/R18: the Calendar is available at EVERY window length, for EVERY
+  calendar-capable metric.** The 14–366-day span rule is gone. R17d dropped it
+  for the TEAM metrics and left it on the QUEUE metric only because
+  `queueHealth.dailySeries` is window-scoped and no year-scoped queue series
+  existed; R18 (item 8) added `queueHealth.ytdDailySeries` — a dept-total daily
+  series accumulated inside `QCDReport.gs`'s EXISTING 12-month trend pass (no
+  extra read, no second query) and passed through `computeInsights_` — so the
+  queue metric now takes the same two-way route: window-fills-a-calendar →
+  `queueHealth.dailySeries`, else the YTD series. `insCalendarUsesYtd_`,
+  `insCalendarEligible_`, `insCalendarIneligibleReason_`, the trend header and
+  `insRenderTrendCalendar_` all branch on `insActiveTrendMetric === 'queues'`
+  to pick the queue pair over the team pair; the queue header derives its span
+  from the series' own first/last row rather than `trendYtd.from/.to`, since
+  QCD history need not start the same day the DQE history does. The remaining
+  ineligible reasons are ATT (line-only), a non-abandoned-% queue metric
+  (line-only), and genuinely having under two days of data.
+  For the TEAM metrics a window that can't fill a calendar
   falls back to `trendYtd` — the server's Jan-1-to-end-date daily series
-  (`insights:v20`), roster-gated and accumulated inside the existing 12-month
+  (`insights:v22`), roster-gated and accumulated inside the existing 12-month
   trend pass, so it costs no extra read. `insCalendarUsesYtd_` is the single
   decision (window fills a calendar → use `trendDaily`; else → YTD if it has
   more than one day), and `insCalendarEligible_` / `insRenderTrendCalendar_`
@@ -765,7 +779,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   open/collapsed state; default collapsed, R12-11), `cdr.ov.window`
   (R12-19: the ONE Overview window driving cards + agent table --
   superseded `cdr.ov.cardperiod`/`cdr.ov.tableperiod.v1`, migrated
-  table-pref-first), `cdr.dept.rowdensity` (R12-16 compact rows), and
+  table-pref-first), `cdr.dept.rowdensity` (R12-16 compact rows),
+  `cdr.dept.trp.period` (R18 item 1 — the Team Rings panel's
+  Range/Yesterday/MTD period; default `range`), and
   `cdr.dev.overlay` (O-11 dev overlay open/closed; ADMIN-ONLY and read only
   after the role check — it is a display preference, never an entitlement,
   and a manager setting it by hand gets nothing) — the theme
@@ -785,6 +801,29 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   storage/parse error falls back to the normal fetch, and the live fetch
   always runs). Bump the `v1` if the Overview payload shape changes
   meaningfully.
+- **A light/dark flip must REBUILD every chart that is on screen
+  (`repaintLiveCharts_`, script-1-core).** Chart.js bakes `THEME.*` into a
+  chart at CONSTRUCTION, so `refreshChartTheme()` alone changes nothing
+  already mounted — the `dash-mode-change` listener has to re-invoke each
+  visible builder from its cached payload. This covered the Overview chart
+  ALONE until R18 (item 4a), which left every dept-page chart painting the
+  light palette on a dark background after a toggle. The symptom is
+  deliberately narrow and easy to misfile as a CSS bug: only the gap chart's
+  ZERO gridline is drawn in `THEME.ink`, so under a stale light theme it is
+  near-black on a near-black canvas and vanishes while the `THEME.line`
+  gridlines around it stay visible. **It reproduces on the TOGGLE path only** —
+  loading straight into dark builds correctly, so a check that only ever loads
+  one mode cannot see it. Two rules for adding a chart to the repaint set:
+  guard on the renderer EXISTING (fragments load independently) and on the
+  container being visible (`offsetParent !== null`) — rebuilding inside a
+  `display:none` container renders at zero size, the C3 draw-on-open trap —
+  and wrap each surface in its own try/catch so one stale chart can't block
+  the rest. MODAL charts stay out: they rebuild on reopen. `drive-smoke`
+  asserts both halves (every on-screen dept chart gets a NEW Chart.js
+  instance id, and comes back carrying dark tokens) by reading
+  `Chart.getChart(canvas).config._config.options` — note the RAW config, not
+  `chart.options`, whose scriptable color resolvers throw without a render
+  context.
 - **CSS design-token conventions (post-redesign Phase A).** The
   dashboard's design system is centralized in `styles.html :root`;
   three conventions established by commit 99e7253 are worth respecting:
@@ -1133,14 +1172,32 @@ behind the removed button.
   ladder — value green ≤3% / amber 3–4% / red >4%, and the RED tier also
   tints the card (the Queues-in-viol treatment); the 5% queue-violation line
   still drives everything else, so the two thresholds are deliberately
-  different numbers. The tally unit is **per SECTION**, not cohort-wide: one
-  shared unit let a ~350-call/day dept set a block size that rendered a
-  ~8-call/day queue as a sliver, so each section scales to its own busiest
-  queue and discloses "block ≈ N calls" on its banner when N > 1 (the
-  company-row "each block ≈" note went with it — one number would now lie).
-  The trade-off is deliberate: blocks compare WITHIN a section, never
-  across; cross-dept magnitude is the Total column's job. **R16e applies the
-  same per-section unit to the WEB all-departments report** (`qcdSectionUnit`
+  different numbers. **R18 (owner): the tally unit is EMAIL-WIDE, and the R16d
+  per-section unit is RETIRED.** Per-section reasoning was that blocks
+  compare within a section and cross-dept magnitude is the Total column's
+  job — but bar length is pre-attentive and a caption is not, so nobody
+  checks "block ≈ N calls" before comparing two bars. Measured on the
+  2026-08-11 email: CSR's 349 calls drew 17 blocks while Sales (50) and Field
+  Ops Power (25) each drew 25, so the busiest queue in the company rendered
+  as the shortest of the three. One unit restores the only property a tally
+  has — length ∝ quantity — and `queue-report.test.js` pins it as a
+  MONOTONICITY property over every queue row, not as an arithmetic result.
+  The unit comes from `tallyBasisFor_`: scaling to the true maximum fails
+  here (a ~349-to-1 day puts nine of twelve queues under one block), so
+  leading OUTLIERS — a value more than `TALLY_OUTLIER_RATIO` = 2.5× the next
+  one down — are dropped, the largest survivor sets the scale, and the
+  dropped rows CLIP at the ceiling with a `»`. Two guards: a broad top is not
+  an outlier (349 vs 300 stops the walk, so nothing clips and the squeeze is
+  real rather than an artifact), and the walk can never drop more than a
+  quarter of the rows or leave fewer than two survivors. The block size and
+  the `»` legend are disclosed ONCE, in the table footnote beside the
+  sentence that already explains the bars — the per-section banner note was
+  what made a changing scale look sanctioned, and the column header is too
+  narrow to carry the text without wrapping to two lines. **R16e applies the
+  per-section unit to the WEB all-departments report** (NOT yet revisited for
+  R18 — the web report is one scrollable page where a reader can see the
+  Total column beside every bar, and no one has reported the inversion there;
+  if it is unified later, `tallyBasisFor_` is the piece to port) (`qcdSectionUnit`
   in script-11-qcd-boot, disclosed as `.qcd-deptrow-unit` on each dept
   banner; the single company-row `= N calls` legend went with the
   cohort-wide unit — one number would now be wrong for every section but
@@ -1292,6 +1349,21 @@ behind the removed button.
   for the one legitimate divergence — a MONTHLY trend-point drill reruns
   Insights for that month without moving the dept controls (R16h) — so a
   split range is visible, never silent.
+  **R18 clamps the To-date to the last day WITH DATA** (`clampToLatestData_`
+  / `clampDeptToDate_`, script-2-chrome), on both entry points — the preset
+  chips and a hand-typed date — BEFORE the fetch, so the request already
+  carries the corrected window rather than firing twice. This is a NUMBERS
+  fix, not a convenience: every per-workday figure divides by the INV-35
+  working-day count of the SELECTED window, so "This month" on the 12th with
+  data through the 10th counted two empty days and deflated the pace —
+  Insights read 273.8/day over 8 workdays where the side panel's MTD tile
+  said 365/day over 6. Clamping fixes the divisor at the source instead of
+  making each per-day figure separately data-aware. Two rules: it NO-OPS
+  while `latestDqeIso_` is still null (the init fetch is async — clamping
+  against a null would land everyone on today), and it pulls `From` back with
+  `To` so a fully-future window can't invert the range. The correction is
+  always stated (`#dept-clamp-note`) — a silently different window would make
+  every number right for a range the user did not choose.
 - **The INSIGHTS REGION (M1 merge + N1 always-inline,
   docs/insights-merge-plan.md)**: the whole ex-Insights-page lives in
   `<details id="dept-insights-region" open>` at the bottom of the page —
@@ -1480,7 +1552,26 @@ behind the removed button.
   to + flashes the agent's main-table row. Rendered by
   `renderTeamRingsPanel_` from the SAME dept-summary payload as the table
   (no extra RPC; repaints wherever `renderDeptTeamStrip_` does); hideable
-  via the `dept-team-rings` UI flag. It REPLACES the Insights
+  via the `dept-team-rings` UI flag.
+  **R18 (item 1) added a Range / Yesterday / MTD toggle** (`#trp-period`,
+  panel 1's control markup, persisted in `cdr.dept.trp.period`).
+  **Range is the default and must stay it** — it is the page's own window and
+  therefore the only period whose figures reconcile with the agent table
+  beside it; defaulting elsewhere would silently break that reconciliation.
+  The two fixed periods are windows off `latestDqeIso_` (latest day; month
+  start → latest day), deliberately DECOUPLED from the page's dates the way
+  panel 1's already are, and the date chip NAMES them (`· MTD` / `· latest
+  day`) because an unlabelled span next to a table built from another window
+  reads as a bug. They are fetched on demand via `getDepartmentSummary` with
+  a different from/to — the same endpoint reuse the Overview mini-table
+  does — rather than by widening `computeSummary_`'s read: MTD can sit months
+  from the selected window, and paying that on EVERY dept load to serve a
+  panel toggle is the wrong trade. Memoized per (dept, from, to) on top of
+  the server's 30-min `summary:` cache, and the memo is DROPPED in
+  `refresh()` — surviving an explicit Refresh is the one way this panel could
+  lie. A pending fetch FROSTS the panel rather than flashing it empty (stale
+  numbers under a newly-selected label is the failure to avoid), and a failed
+  one falls back to Range with the chip saying so. It REPLACES the Insights
   Department-rollup card row (+ its section title, removed per owner) and
   the Queue-health card column — both hidden with wiring inert (Round-16
   convention); their figures live on in this panel, panel 1's tiles, the

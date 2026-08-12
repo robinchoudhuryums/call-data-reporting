@@ -190,6 +190,48 @@ async function horizontalOverflow(page) {
       record(role + ': the replaced Insights card sets are hidden',
         trp.kpiRowHidden && trp.qhCardsHidden,
         'kpiRow=' + trp.kpiRowHidden + ' qhCards=' + trp.qhCardsHidden);
+
+      // R18 (item 1): the panel's Range / Yesterday / MTD toggle. Range is the
+      // page's own window and must stay the default -- it is the only period
+      // whose figures reconcile with the agent table. MTD fetches a DIFFERENT
+      // window through the same endpoint, so the assertion is that the numbers
+      // actually move AND that the date chip names the period: an unlabelled
+      // span beside a table built from another window reads as a bug.
+      const trpRead = () => page.evaluate(() => {
+        const tiles = document.querySelector('#trp-tiles .ds-kpi__foot');
+        return {
+          date: (document.getElementById('trp-date') || {}).textContent || '',
+          active: Array.from(document.querySelectorAll('#trp-period .dept-qcd-period-btn'))
+            .filter((b) => b.classList.contains('active'))
+            .map((b) => b.getAttribute('data-trp-period')).join(','),
+          rings: tiles ? tiles.textContent : '',
+          rows: document.querySelectorAll('#trp-tbody tr.trp-row').length,
+        };
+      });
+      // In-page clicks, not page.click: the panel rides a sticky aside and
+      // can sit under the frost overlay, so Playwright's actionability wait
+      // times out where a dispatched click is exactly what a user's is.
+      const trpPick = (p) => page.evaluate((sel) => {
+        const b = document.querySelector('#trp-period [data-trp-period="' + sel + '"]');
+        if (b) b.click();
+      }, p);
+      const trpRange = await trpRead();
+      await trpPick('mtd');
+      await page.waitForTimeout(1800);
+      const trpMtd = await trpRead();
+      await trpPick('range');
+      await page.waitForTimeout(1500);
+      const trpBack = await trpRead();
+      record(role + ': the Team Rings panel defaults to Range (reconciles with the table)',
+        trpRange.active === 'range' && !/MTD|latest day/.test(trpRange.date),
+        JSON.stringify(trpRange));
+      record(role + ': switching to MTD loads a DIFFERENT window and says so',
+        trpMtd.active === 'mtd' && /MTD/.test(trpMtd.date) && trpMtd.rings !== trpRange.rings,
+        JSON.stringify(trpMtd));
+      record(role + ': switching back to Range restores the page-window figures',
+        trpBack.active === 'range' && trpBack.rings === trpRange.rings
+          && trpBack.rows === trpRange.rows,
+        JSON.stringify(trpBack));
     }
 
     // R17d: the trend Calendar is available at ANY window length. On the dept
@@ -232,6 +274,117 @@ async function horizontalOverflow(page) {
       record(role + ': the short-window calendar draws the YEAR, captioned as such',
         /of \d+/.test(cal.months) && /year to date/i.test(cal.note),
         'months="' + cal.months + '" note="' + cal.note.trim() + '"');
+    }
+
+    // R18 (item 8): the QUEUE metric reaches the calendar too. R17d left it
+    // span-gated because queueHealth.dailySeries covers the selected window
+    // only and no year-scoped queue series existed; QCDReport now emits
+    // ytdDailySeries from the 12-month trend pass it already runs. The
+    // assertion is the same three-part one as the team metrics -- enabled,
+    // drawn, and CAPTIONED -- because an uncaptioned year of abandon rates
+    // reads as the selected day's.
+    if (role === 'admin') {
+      await page.selectOption('#ins-trend-metric', 'queues:abandonedPct');
+      await page.waitForTimeout(1500);
+      const qcal = await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn'))
+          .find((x) => (x.textContent || '').trim() === 'Calendar');
+        if (btn && !btn.disabled) btn.click();
+        return btn ? { enabled: !btn.disabled, title: (btn.closest('#ins-trend-render-toggle') || {}).title } : null;
+      });
+      await page.waitForTimeout(1200);
+      const qdrawn = await page.evaluate(() => {
+        const host = document.getElementById('ins-trend-calendar');
+        return {
+          shown: !!host && host.style.display !== 'none',
+          cells: host ? host.querySelectorAll('.ins-cal-drill').length : 0,
+          note: host ? ((host.querySelector('.ins-cal-ytd-note') || {}).textContent || '') : '',
+          header: (document.getElementById('ins-trend-header') || {}).textContent || '',
+        };
+      });
+      record(role + ': the queue abandon-% metric offers the calendar at any window length',
+        !!qcal && qcal.enabled, JSON.stringify(qcal));
+      record(role + ': the queue calendar draws from the year-to-date queue series, captioned',
+        qdrawn.shown && qdrawn.cells > 0
+          && /year to date/i.test(qdrawn.note + ' ' + qdrawn.header),
+        JSON.stringify(qdrawn));
+      await page.selectOption('#ins-trend-metric', 'answered');
+      await page.waitForTimeout(900);
+    }
+
+    // R18 (item 4a): flipping light -> dark REPAINTS the charts that are on
+    // screen, not just the Overview one. Chart.js bakes THEME.* at
+    // construction, so a chart built under the light palette keeps drawing
+    // near-black gridlines on a near-black canvas after the flip -- the zero
+    // baseline vanished. Asserted on the palette each chart was BUILT with
+    // (baked in at construction, not readable from any DOM attribute) via the
+    // raw per-chart config -- both that the chart was rebuilt at all and that
+    // it came back carrying dark tokens.
+    {
+      const snap = () => page.evaluate(() => {
+        const out = { mode: document.body.getAttribute('data-mode'),
+                      line: getComputedStyle(document.body).getPropertyValue('--line').trim(),
+                      charts: {} };
+        ['dept-missed-chart', 'ins-trend-chart', 'ins-cards-chart'].forEach((id) => {
+          const c = document.getElementById(id);
+          if (!c || c.offsetParent === null) return;
+          const ch = (window.Chart && window.Chart.getChart) ? window.Chart.getChart(c) : null;
+          if (!ch) return;
+          const raw = ((ch.config && ch.config._config && ch.config._config.options) || {});
+          const y = ((raw.scales || {}).y) || ((raw.scales || {}).y1) || {};
+          out.charts[id] = { cid: ch.id, tick: (y.ticks || {}).color || '' };
+        });
+        return out;
+      });
+      const before = await snap();
+      await page.click('#mode-btn');
+      await page.waitForTimeout(1600);
+      const after = await snap();
+      const ids = Object.keys(before.charts);
+      const rebuilt = ids.filter((id) => after.charts[id] && after.charts[id].cid !== before.charts[id].cid);
+      const retinted = ids.filter((id) => after.charts[id]
+        && after.charts[id].tick && after.charts[id].tick !== before.charts[id].tick);
+      record(role + ': dark-mode flip rebuilds every on-screen dept chart (not just Overview)',
+        ids.length >= 2 && rebuilt.length === ids.length && after.mode === 'dark',
+        'mode=' + after.mode + ' charts=' + ids.join(',') + ' rebuilt=' + rebuilt.join(','));
+      record(role + ': the rebuilt dept charts carry the DARK palette, not stale light tokens',
+        ids.length >= 2 && retinted.length === ids.length && after.line !== before.line,
+        'line ' + before.line + '->' + after.line + ' retinted=' + retinted.join(','));
+      await page.click('#mode-btn');           // leave the page as we found it
+      await page.waitForTimeout(1200);
+    }
+
+    // R18: a To-date past the last day WITH DATA is clamped, and the
+    // correction is stated. This is a numbers bug, not a cosmetic one: every
+    // per-workday figure divides by the INV-35 working-day count of the
+    // SELECTED window, so trailing empty days silently deflated the pace
+    // (two surfaces disagreed -- 273.8/day vs 365/day on the same data).
+    // Asserted on the HAND-TYPED path, which is the one with no preset to
+    // fall back on.
+    {
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(3800);
+      const clamp = await page.evaluate(async () => {
+        const t = document.getElementById('to-date');
+        const latest = t.value;                       // default == latest data
+        t.value = '2026-12-31';
+        t.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 1200));
+        const note = document.getElementById('dept-clamp-note');
+        return {
+          latest: latest,
+          to: t.value,
+          from: (document.getElementById('from-date') || {}).value,
+          noteShown: !!note && note.style.display !== 'none' && !!note.textContent,
+        };
+      });
+      record(role + ': a To-date past the data is clamped back to it',
+        clamp.to === clamp.latest && clamp.to <= clamp.latest, JSON.stringify(clamp));
+      record(role + ': the clamp states the correction rather than moving dates silently',
+        clamp.noteShown, JSON.stringify(clamp));
+      // Never invert the range: a fully-future window pulls From back too.
+      record(role + ': clamping never leaves From after To',
+        !clamp.from || !clamp.to || clamp.from <= clamp.to, JSON.stringify(clamp));
     }
 
     // R17h (Options A+B): the missed-call slices share ONE renderer and

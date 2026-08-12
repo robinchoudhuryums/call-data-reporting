@@ -324,6 +324,10 @@
              date authority). Filled by updateDeptWorkdays_ (client
              holiday-aware mirror, overwritten by the server's INV-35 count
              when an Insights report lands); wrapper hidden while empty. -->
+        <!-- R18: states a To-date correction when the requested range ran
+             past the data (clampDeptToDate_). Silence would leave the user
+             looking at a window they did not pick. -->
+        <div class="dept-clamp-note" id="dept-clamp-note" style="display:none;"></div>
         <div class="control" id="dept-workdays-wrap" style="display:none;">
           <label>&nbsp;</label>
           <span class="dept-workdays-pill" id="dept-workdays"
@@ -1225,8 +1229,20 @@
           <div class="dept-qcd-header">
             <strong>Team Rings Data</strong>
             <!-- R17c (owner): explainer on hover, same as panel 1. -->
-            <span class="side-hint-i" tabindex="0" title="Ring-level rollup + the agent table at a glance, for the selected range. Full detail in the table above.">&#9432;</span>
+            <span class="side-hint-i" tabindex="0" title="Ring-level rollup + the agent table at a glance. Range follows the page's dates and reconciles with the table above; Yesterday and MTD are fixed windows off the latest data day, independent of the page.">&#9432;</span>
             <span class="dept-qcd-date" id="trp-date"></span>
+          </div>
+          <!-- R18 (owner, item 1): period toggle, panel 1's control with a
+               third option. Range is the DEFAULT and is what this panel has
+               always shown -- the page's own window, so its figures reconcile
+               with the agent table. Yesterday / MTD are fixed windows off the
+               latest DQE day and are fetched on demand (getDepartmentSummary
+               with a different from/to -- the same endpoint the Overview
+               mini-table reuses), so they do NOT match the table above. -->
+          <div id="trp-period" class="dept-qcd-period" role="group" aria-label="Team rings period">
+            <button type="button" class="dept-qcd-period-btn active" data-trp-period="range" aria-pressed="true">Range</button>
+            <button type="button" class="dept-qcd-period-btn" data-trp-period="yesterday" aria-pressed="false">Yesterday</button>
+            <button type="button" class="dept-qcd-period-btn" data-trp-period="mtd" aria-pressed="false">MTD</button>
           </div>
           <div class="trp-tiles" id="trp-tiles"></div>
           <div class="trp-table-wrap" id="trp-table-wrap">

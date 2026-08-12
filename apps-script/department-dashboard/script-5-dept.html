@@ -943,7 +943,120 @@
       + '</tr>';
   }
 
+  // ── R18 (owner, item 1): the panel's period toggle ───────────────────────
+  // Range (default) is the page's own window -- what this panel has always
+  // shown, and the only period whose figures reconcile with the agent table.
+  // Yesterday / MTD are fixed windows off the latest DQE day, so they are
+  // deliberately DECOUPLED from the page's dates (panel 1 behaves the same
+  // way). They are fetched on demand from `getDepartmentSummary` with a
+  // different from/to -- the endpoint the Overview mini-table already reuses
+  // this way -- rather than widening `computeSummary_`'s read: MTD can sit
+  // months away from the selected window, and paying that on EVERY dept load
+  // to serve a panel toggle would be the wrong trade. Memoized per
+  // (dept, from, to) on top of the server's own 30-min `summary:` cache.
+  const TRP_PERIOD_KEY_ = 'cdr.dept.trp.period';
+  var trpPeriod = (function () {
+    try {
+      var v = localStorage.getItem(TRP_PERIOD_KEY_);
+      return (v === 'yesterday' || v === 'mtd') ? v : 'range';
+    } catch (e) { return 'range'; }
+  })();
+  var trpRangeState_ = null;    // the page's own summary payload
+  var trpFetched_ = {};         // 'dept|from|to' -> payload
+  var trpFetchSeq_ = 0;
+  var trpPeriodWired_ = false;
+
+  function trpWindowFor_(period) {
+    if (period !== 'yesterday' && period !== 'mtd') return null;
+    const latest = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : null;
+    if (!latest) return null;                    // init fetch hasn't landed yet
+    return (period === 'yesterday')
+      ? { from: latest, to: latest }
+      : { from: latest.slice(0, 8) + '01', to: latest };
+  }
+
+  function trpKey_(dept, win) { return dept + '|' + win.from + '|' + win.to; }
+
+  function trpSyncButtons_(active, disabled) {
+    const box = $('trp-period');
+    if (!box) return;
+    box.querySelectorAll('.dept-qcd-period-btn').forEach(function (b) {
+      const p = b.getAttribute('data-trp-period');
+      const on = p === active;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      // Until the latest-date init fetch lands there is no window to ask for,
+      // so the two fixed periods are inert rather than silently no-ops.
+      b.disabled = disabled && p !== 'range';
+    });
+  }
+
+  function trpFetchPeriod_(dept, win, key) {
+    const seq = ++trpFetchSeq_;
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (seq !== trpFetchSeq_) return;        // a newer toggle superseded this
+        trpFetched_[key] = data;
+        trpRenderActive_();
+      })
+      .withFailureHandler(function (err) {
+        if (seq !== trpFetchSeq_) return;
+        // Fall back to the page's own window rather than leaving the panel
+        // frosted forever; the toggle stays where the user put it so a retry
+        // is one click, but the numbers on screen are labelled honestly.
+        const panel = $('dept-team-rings');
+        if (panel) dsFrostHide_(panel);
+        const dateEl = $('trp-date');
+        if (dateEl) dateEl.textContent = 'unavailable — showing the selected range';
+        trpPaint_(trpRangeState_);
+      })
+      .getDepartmentSummary({ department: dept, from: win.from, to: win.to });
+  }
+
+  // Resolve the active period, paint what we have, and fetch what we don't.
+  function trpRenderActive_() {
+    const panel = $('dept-team-rings');
+    if (!panel) return;
+    if (!trpRangeState_ || !((trpRangeState_.rows || []).length)) {
+      panel.style.display = 'none';
+      return;
+    }
+    const dept = getRequestedDept();
+    const win = trpWindowFor_(trpPeriod);
+    trpSyncButtons_(win ? trpPeriod : 'range', !trpWindowFor_('yesterday'));
+    if (!win) { dsFrostHide_(panel); trpPaint_(trpRangeState_); return; }
+    const key = trpKey_(dept, win);
+    if (trpFetched_[key]) {
+      dsFrostHide_(panel);
+      trpPaint_(trpFetched_[key], win, trpPeriod);
+      return;
+    }
+    // Pending: frost over whatever is painted rather than flashing to empty.
+    // The frost is what keeps a stale set of numbers from being read as the
+    // newly-selected period's.
+    trpFetchPeriod_(dept, win, key);
+    dsFrostShow_(panel, 'Loading…');
+  }
+
   function renderTeamRingsPanel_(state) {
+    trpRangeState_ = state;
+    if (!trpPeriodWired_) {
+      trpPeriodWired_ = true;
+      const box = $('trp-period');
+      if (box) {
+        box.addEventListener('click', function (e) {
+          const b = e.target.closest && e.target.closest('.dept-qcd-period-btn');
+          if (!b || b.disabled) return;
+          trpPeriod = b.getAttribute('data-trp-period') || 'range';
+          try { localStorage.setItem(TRP_PERIOD_KEY_, trpPeriod); } catch (err) {}
+          trpRenderActive_();
+        });
+      }
+    }
+    trpRenderActive_();
+  }
+
+  function trpPaint_(state, win, period) {
     const panel = $('dept-team-rings');
     if (!panel) return;
     const rows = (state && state.rows) || [];
@@ -951,9 +1064,17 @@
     panel.style.display = '';
 
     const dateEl = $('trp-date');
-    if (dateEl) dateEl.textContent = (state.meta && state.meta.from && state.meta.to)
-      ? (state.meta.from === state.meta.to ? state.meta.from : state.meta.from + ' – ' + state.meta.to)
-      : 'this range';
+    if (dateEl) {
+      const from = (win && win.from) || (state.meta && state.meta.from);
+      const to   = (win && win.to)   || (state.meta && state.meta.to);
+      const span = (from && to) ? (from === to ? from : from + ' – ' + to) : 'this range';
+      // Name the PERIOD as well as the span on the two fixed windows: those
+      // numbers do not match the agent table, and an unlabelled date span
+      // sitting beside a table built from a different window reads as a bug.
+      dateEl.textContent = (period === 'mtd') ? (span + ' · MTD')
+        : (period === 'yesterday') ? (span + ' · latest day')
+        : span;
+    }
 
     // KPI pair: % Ans (Rings) -- the DQE rollup with the rings (ans/miss)
     // split as its foot + the team strip's prior-window delta -- and the
@@ -1375,6 +1496,11 @@
       from: $('from-date').value,
       to: $('to-date').value,
     };
+    // R18 (item 1): a user-initiated load drops the Team Rings panel's
+    // fixed-period memo. The memo exists to make toggling free, not to
+    // outlive an explicit Refresh -- pressing Refresh and still reading
+    // pre-refresh MTD numbers is the one way this panel could lie.
+    trpFetched_ = {};
     // Sub-queue: the client no longer sends `subScope` at all. The scope
     // switcher is retired -- collapsing a group in the combined table gives
     // every view it offered, instantly and without a round trip -- so the

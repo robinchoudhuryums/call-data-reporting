@@ -28,13 +28,19 @@ const ROSTER = rosterGrid({
   Beta:  ['Cara, 301'],
 });
 
-function install(rows) {
+function install(rows, deptConfig) {
   h.state.userEmail = 'admin@x.com';
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  const sheets = { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows) };
+  // R18: the Dept Config "Team Avg Excludes" column is the REAL mechanism an
+  // admin uses (INV-54) and the only one a test can drive -- Config.gs's
+  // TEAM_AVG_EXCLUDES seed is a frozen `const`, a lexical binding the harness
+  // cannot rebind through h.ctx.
+  if (deptConfig) sheets['Dept Config'] = deptConfig;
   h.state.spreadsheet = makeFakeSpreadsheet({
     timeZone: 'America/Chicago',
-    sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows) },
+    sheets: sheets,
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
@@ -289,6 +295,65 @@ test('R17d: trendYtd spans Jan 1 of the end year regardless of the selected wind
   // Dec '25 belongs to the PRIOR year and must not leak into the YTD window,
   // even though the 12-month trend pass visits it.
   assert.ok(data.trendYtd.labels.indexOf('12-09') === -1);
+});
+
+test('R18: managers are excluded from the per-agent baseline, NOT from dept totals', function () {
+  // The owner ruling: manager call volume stays in dept totals and rates, and
+  // is removed only from per-agent averages and benchmarks. Ben is the
+  // manager here (a token 2 answered against Anna's 80), which is exactly the
+  // shape that dragged the real call-share benchmark down.
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '201', rung: 100, missed: 20, answered: 80, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '202', rung: 4,   missed: 2,  answered: 2,  att: '0:01:00' }),
+  ], [DC_HEADERS, ['Alpha', '', '', 'Ben', '', 'TRUE', 'admin@x.com', '', '']]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-10', to: '2026-03-10', agents: ['Anna', 'Ben'] });
+
+  // DEPT TOTALS keep the manager -- this is the half that must NOT move.
+  assert.equal(data.teamStats.answered.val, 82);
+  assert.equal(data.teamStats.rung.val, 104);
+  assert.equal(data.meta.answeredDeptTotal, 82);
+  assert.equal(data.meta.rosterAgentCount, 2);
+
+  // The PER-AGENT BASELINE drops them: one agent, Anna's numbers only.
+  const b = data.meta.teamAvgBasis;
+  assert.equal(b.agents, 1);
+  assert.equal(b.answered, 80);
+  assert.equal(b.rung, 100);
+  assert.equal(b.missed, 20);
+  // ...and its rate is recomputed over that population, not reused from the
+  // dept rate (82/104 = 78.8% vs Anna's own 80%).
+  assert.equal(Math.round(b.pct * 10) / 10, 80);
+  assert.notEqual(Math.round(b.pct * 10) / 10,
+    Math.round((82 / 104) * 1000) / 10);
+
+  // The share the benchmark must set aside before splitting the remainder.
+  assert.equal(Math.round(b.excludedAnsweredShare * 10) / 10,
+    Math.round((2 / 82) * 1000) / 10);
+  deepEqual(b.excluded, ['Ben']);
+
+  // The manager still gets a card, flagged so the client can say why.
+  assert.equal(agent(data, 'Ben').excludedFromTeamAvg, true);
+  assert.equal(agent(data, 'Anna').excludedFromTeamAvg, false);
+  assert.equal(agent(data, 'Ben').metrics.answered.val, 2);
+});
+
+test('R18: with no excludes configured the baseline equals the dept rollup', function () {
+  // The no-op case matters as much as the fix: 13 of 14 depts have no
+  // excludes, and their numbers must not move at all.
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '201', rung: 10, missed: 2, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '202', rung: 6,  missed: 1, answered: 5, att: '0:02:00' }),
+  ], [DC_HEADERS, ['Alpha', '', '', '', '', 'TRUE', 'admin@x.com', '', '']]);
+  const data = h.call('getInsightsReport', {
+    department: 'Alpha', from: '2026-03-10', to: '2026-03-10', agents: ['Anna', 'Ben'] });
+  const b = data.meta.teamAvgBasis;
+  assert.equal(b.agents, data.meta.rosterAgentCount);
+  assert.equal(b.answered, data.teamStats.answered.val);
+  assert.equal(b.rung, data.teamStats.rung.val);
+  assert.equal(b.missed, data.teamStats.missed.val);
+  assert.equal(b.excludedAnsweredShare, 0);
+  deepEqual(b.excluded, []);
 });
 
 test('Insights: 1-day range (from == to) compares against the previous day', function () {

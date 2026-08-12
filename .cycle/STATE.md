@@ -2632,3 +2632,50 @@ commit/push/deploy direction.
 
   **WHERE I LEFT OFF:** committed + pushed. No PR (owner asks
   explicitly). Awaiting owner's live-deploy verdict on the panel.
+
+## Increments 98–106 — R17d–R18: always-on Calendar, then the R18 owner list (2026-08-12)
+
+  Four merged rounds then an unmerged one. **R17d** (PR #228) made the
+  Insights trend Calendar available at EVERY window length: a window too
+  short to fill one falls back to the server's new year-to-date daily
+  series (`trendYtd`, accumulated inside the 12-month trend pass, so no
+  extra read), captioned so a grid of the year under a one-day page
+  can't read as that day. **R17e–R17i** (PRs #229, #230) were owner
+  polish: lens cards, chronological abandons with a hover-ⓘ, the Queue
+  Call Data panel's half-width bug, per-user fold memory, the email
+  tally at 20 calls/block, ring-run grouping, the redundant Insights
+  header date chip removed (the dept controls are the page's single date
+  authority), bucket drill onto the shared missed-ring renderer, and
+  `groupConsecutiveByCall_` extracted. **PR #231** was a /sync-docs pass;
+  **PR #232** split the 12.5 KB fused Inbound-capture bullet into seven
+  topical bullets, all under the 4 KB ratchet.
+
+  **R18** is the current owner list, worked in four phases and NOT yet
+  PR'd. Phase 1: visual fixes (tally alignment, dark-mode select
+  options, share-list scroll). Phase 2 + the phase-3 follow-on: the
+  owner's ruling that **manager call volume stays in dept totals and
+  rates but leaves per-agent averages and benchmarks** — INV-26's
+  `TEAM_AVG_EXCLUDES` reached ONLY the Individual Report, so a manager
+  on the roster diluted every Insights "vs team average". `insights:v22`
+  now carries `meta.teamAvgBasis` and per-row `excludedFromTeamAvg`, and
+  all four classification surfaces (headline chip, card rails, the
+  call-share equal-share benchmark, the email's behind-team block) read
+  ONE accessor. Phase 3 also clamps a selected To-date back to the last
+  day with data — trailing empty days were deflating every per-workday
+  figure (the measured 273.8/day vs 365/day disagreement). Phase 4:
+  `repaintLiveCharts_` widened from the Overview chart alone to every
+  visible dept-page chart, which is what made the gap chart's zero
+  baseline vanish after a light→dark TOGGLE (load-in-dark was always
+  fine); and the Calendar now accepts the Queue: Abandoned % metric via
+  `queueHealth.ytdDailySeries` — free, because the QCD 12-month trend
+  pass already spans Jan 1. Gates across the phases: 671/0, INV-16,
+  ci:ui 68+16+30+14. Blocks 98–106.
+
+  **WHERE I LEFT OFF:** R18 phases 1–4 committed on
+  claude/broad-scan-l9ojgm, no PR (owner asks explicitly). Owner items
+  still open: 1's second half (a Yesterday/MTD toggle on the Team Rings
+  panel — needs a data decision, the rings payload has no MTD block), 5
+  (Sales' agent count overruns its container), 6 (confirm the
+  Gap-vs-Team colour valence on the Missed metric), 7. Standing
+  constraint from an earlier round: the Spanish-vs-CSR queue-split
+  separation was INVESTIGATED ONLY — owner asked for no pipeline changes.

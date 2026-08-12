@@ -445,6 +445,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Report's team-average. Used for managers who are on the roster but
   take only a token number of calls (default seed
   `'CSR': ['Robin Choudhury']`). Match is exact on the roster name.
+  **Scope (owner ruling, R18): the exclusion applies to PER-AGENT AVERAGES
+  AND BENCHMARKS only -- manager volume stays in dept TOTALS and RATES.**
+  Consumers are the IR team-average and, since R18, Insights via
+  `meta.teamAvgBasis` (the gap-vs-team baseline, the call-share equal-share
+  benchmark, the behind-team classification); Insights' `teamStats`,
+  `rosterAgentCount`, trends and dept rates deliberately keep every agent.
   Read the effective list via `getTeamAvgExcludes_(dept)`
   (DeptConfig.gs) -- the constant is now the seed default beneath the
   admin-authored `Dept Config` sheet (INV-54), which can override it

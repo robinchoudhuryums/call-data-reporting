@@ -424,10 +424,30 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       }
       return out;
     };
-    const nA = a > 0 ? Math.max(1, Math.round(a / unit)) : 0;
-    const nAb = ab > 0 ? Math.max(1, Math.round(ab / unit)) : 0;
+    let nA = a > 0 ? Math.max(1, Math.round(a / unit)) : 0;
+    let nAb = ab > 0 ? Math.max(1, Math.round(ab / unit)) : 0;
+    // R18 (owner): CLIP rather than re-scale. The unit is now email-wide
+    // (tallyBasisFor_ below), so a queue far above the rest would otherwise
+    // run past the column and force the shrink-to-fit that R16e's ceiling
+    // exists to prevent. A clipped row keeps its proportions between
+    // answered and abandoned, and carries a "»" so it reads as "off the
+    // scale, see the count" instead of as a row that merely tied with the
+    // longest bar -- which is exactly the misread the per-section unit
+    // produced in the other direction.
+    let clipped = false;
+    if (nA + nAb > TALLY_MAX_BLOCKS) {
+      clipped = true;
+      const keepAb = nAb > 0
+        ? Math.min(nAb, Math.max(1, Math.round(TALLY_MAX_BLOCKS * nAb / (nA + nAb))))
+        : 0;
+      nAb = keepAb;
+      nA = Math.max(0, TALLY_MAX_BLOCKS - keepAb);
+    }
     return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
       + blocks(nA, C.good) + blocks(nAb, redC)
+      + (clipped
+          ? '<td style="font:bold 11px ' + sans + ';color:' + C.mut + ';padding:0 2px 0 1px;line-height:12px;">&raquo;</td>'
+          : '')
       + '<td align="right" style="font:' + (bold ? 'bold ' : '') + '11px ' + sans + ';color:' + textColor + ';padding-left:4px;white-space:nowrap;">' + esc(pctStr) + '</td>'
       + '</tr></table>';
   };
@@ -489,14 +509,18 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   });
   offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
 
-  // R16d (owner): the tally unit is PER SECTION (dept + its children), not
-  // cohort-wide. One shared unit let the busiest dept (~350 calls/day) set a
-  // block size that rendered a quiet queue (~8/day) as a sliver -- but the
-  // tally's job is each queue's answered/abandoned MIX, and cross-dept
-  // magnitude is already carried by the Total column + the banner call
-  // counts. Each section discloses its own block size on the banner when a
-  // block is worth more than one call. Ladder = the web report's
-  // ansTallyUnitFor_, replicated server-side; 0 = no volume.
+  // R18 (owner): the tally unit is EMAIL-WIDE again, and the R16d per-section
+  // unit is RETIRED. Per-section was a defensible trade on paper -- each
+  // section reads well, and cross-dept magnitude is in the Total column --
+  // but it does not survive contact with a reader. Bar length is
+  // pre-attentive and a caption is not, so nobody checks "block ≈ N calls"
+  // before comparing two bars. Measured on the 2026-08-11 email: CSR's 349
+  // calls drew 17 blocks while Sales (50) and Field Ops Power (25) each drew
+  // 25 -- the busiest queue in the company rendered as the shortest of the
+  // three, and Field Ops (42) read as quieter than Field Ops Power (25).
+  // One unit restores the only property a tally has: length ∝ quantity.
+  // Ladder = the web report's ansTallyUnitFor_, replicated server-side;
+  // 0 = no volume.
   // R16e (owner): the block CEILING is a LAYOUT constraint, not a taste
   // call. The tally is an HTML-email table of fixed-width cells inside the
   // "Abandoned %" column: past the column's natural-width budget the
@@ -520,6 +544,27 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       if (Math.ceil(max / ladder[i]) <= TALLY_MAX_BLOCKS) return ladder[i];
     }
     return ladder[ladder.length - 1];
+  };
+  // R18: which value the ONE unit is derived from. Scaling to the true
+  // maximum is the naive answer and it fails: this company's queue day spans
+  // ~349 to ~1, so a unit that fits CSR puts nine of twelve queues under a
+  // single block and the small half of the report stops saying anything.
+  // Instead, drop leading OUTLIERS -- a value more than TALLY_OUTLIER_RATIO
+  // times the next one down -- and scale to the largest survivor; the dropped
+  // rows clip with a "»". Two genuinely-large queues are NOT outliers (349 vs
+  // 300 stops the walk immediately), so a day whose top is broad sets the
+  // scale from that top and nothing clips -- the squeeze is then real, not an
+  // artifact. Bounded twice so the scale can never be set by the tail: at
+  // most a quarter of the rows may be dropped, and never below two survivors.
+  const TALLY_OUTLIER_RATIO = 2.5;
+  const tallyBasisFor_ = function (totals) {
+    const vals = (totals || []).filter(function (v) { return v > 0; })
+      .sort(function (a, b) { return b - a; });
+    if (!vals.length) return { basis: 0, clipped: 0 };
+    const maxDrop = Math.min(Math.floor(vals.length / 4), Math.max(0, vals.length - 2));
+    let i = 0;
+    while (i < maxDrop && vals[i] > TALLY_OUTLIER_RATIO * vals[i + 1]) i++;
+    return { basis: vals[i], clipped: i };
   };
   // Worst-first dept order (EMAIL ONLY).
   // R12-22 (owner): sections are PARENT-GROUPED like the web report --
@@ -691,6 +736,19 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     + '</tr></table></td></tr>';
 
   // ---- table (worst-first sections) ----
+  // R18: ONE tally unit for the whole email, derived from every queue row it
+  // will draw -- own queues and sub-queue children alike, using the exact
+  // same answered+abandoned total tallyHtml renders, so the scale cannot
+  // disagree with the bars. Disclosed once in the column header below.
+  const tallyScale = tallyBasisFor_(ordered.reduce(function (acc, d) {
+    const push = function (q) {
+      acc.push((Number(q.totalAnswered) || 0) + (Number(q.abandoned) || 0));
+    };
+    deptQueues(d).forEach(push);
+    (childrenOf[d.dept] || []).forEach(function (c) { deptQueues(c).forEach(push); });
+    return acc;
+  }, []));
+  const tallyUnit = tallyUnitFor_(tallyScale.basis);
   const violHdr = 'Viol (MTD)';
   let tbl = '<tr style="background:' + C.headbg + ';">'
     + '<td style="padding:9px 12px;font:600 9px ' + sans + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">Queue</td>'
@@ -760,14 +818,9 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     // opposite of what the column is for. Rendered whenever > 0, on every
     // section, so it does not depend on today's tier.
     const secViolMtd = Number(sec.violMtd) || 0;
-    // R16d: this section's own tally unit (see tallyUnitFor_ above).
-    const secUnit = tallyUnitFor_(rowDefs.reduce(function (mx, rd) {
-      const tot = (Number(rd.q.totalAnswered) || 0) + (Number(rd.q.abandoned) || 0);
-      return tot > mx ? tot : mx;
-    }, 0));
-    const secUnitNote = secUnit > 1
-      ? ' &middot; <span style="color:' + C.mut + ';">block &asymp; ' + secUnit + ' calls</span>'
-      : '';
+    // R18: the unit is email-wide (tallyUnit, computed before this loop) and
+    // disclosed ONCE in the column header, so the per-section block-size note
+    // is gone -- it was the thing that made a changing scale look sanctioned.
     // Owner round: the section's MTD violations move OUT of the summary text and
     // into the real Viol column, so the banner reads "4" under the "Viol (MTD)"
     // header instead of repeating the label as " 4 viol MTD". That means the
@@ -781,7 +834,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       // now -- the banner-only collapse that parked it here is retired.)
       +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
-      +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>' + secUnitNote
+      +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
       +   '</td>'
       + '</tr></table></td>'
       + '<td align="right" style="background:' + stripBg + ';border-top:1px solid ' + C.rowline
@@ -802,7 +855,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       tbl += '<tr>'
         + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + qMtdSubEmail(q) + '</td>'
         + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
-        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (secUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, secUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (tallyUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, tallyUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
         + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
         + '</tr>';
     });
@@ -826,7 +879,13 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   const tableBlock = depts.length
     ? ('<tr><td style="padding:18px 26px 6px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
       + tbl + '</table>'
-      + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol = each queue\u2019s 5%-violation days month-to-date (through this report\u2019s end date).</div>'
+      // R18: the tally scale is disclosed ONCE, here, next to the sentence that
+      // already explains the bars -- it belongs with them, and the column
+      // header is too narrow to carry it without wrapping to two lines.
+      + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls'
+      +   (tallyUnit > 1 ? ' &middot; one block &asymp; ' + tallyUnit + ' calls, the same across every queue below' : '')
+      +   (tallyScale.clipped > 0 ? ' &middot; &raquo; marks a queue past the end of that scale \u2014 read its count' : '')
+      +   ' &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol = each queue\u2019s 5%-violation days month-to-date (through this report\u2019s end date).</div>'
       + '</td></tr>')
     : '<tr><td style="padding:18px 26px 6px;font:400 14px Arial,sans-serif;color:' + C.mut + ';">No queue activity recorded for this day.</td></tr>';
 

@@ -208,8 +208,13 @@
     const range = defaultRange();
     $('from-date').value = range.from;
     $('to-date').value = range.to;
+    // R18: a hand-typed To past the data is clamped like a preset's. The
+    // clamp runs BEFORE the debounced refresh so the fetch already carries
+    // the corrected window (clamping after would fire two requests).
     $('from-date').addEventListener('change', function () { clearActivePreset_(); refreshOnDateEdit_(); });
-    $('to-date').addEventListener('change', function () { clearActivePreset_(); refreshOnDateEdit_(); });
+    $('to-date').addEventListener('change', function () {
+      clearActivePreset_(); clampDeptToDate_(); refreshOnDateEdit_();
+    });
 
     initDatePresets_();
 
@@ -497,10 +502,58 @@
       wrap.appendChild(chip);
     });
   }
+  /**
+   * R18 (owner): clamp a To-date to the latest date that actually HAS data.
+   *
+   * "This month" on the 12th selects through the 12th, but the pipeline has
+   * only landed through the 10th -- so the window carried two empty days.
+   * They were not merely cosmetic: every per-workday figure divides by the
+   * INV-35 working-day count of the SELECTED window, so the Insights queue
+   * pace read 273.8/day over 8 workdays where the side panel's MTD tile said
+   * 365/day over 6. Two surfaces, same data, different answers, because one
+   * counted days the data does not cover.
+   *
+   * Clamping the window fixes the divisor at the source rather than making
+   * each per-day figure separately data-aware. Returns the input unchanged
+   * when the latest date isn't known yet (the init fetch is async -- never
+   * clamp against a null and land everyone on today).
+   */
+  function clampToLatestData_(iso) {
+    if (!iso || !latestDqeIso_) return iso;
+    return iso > latestDqeIso_ ? latestDqeIso_ : iso;
+  }
+  /**
+   * Apply the clamp to the dept To-date and say so when it moved. Silence
+   * would be worse than the original bug: the user picked a range and got a
+   * different one, and every number would be right for a window they did not
+   * choose. Returns true when a correction happened.
+   */
+  function clampDeptToDate_() {
+    const t = $('to-date');
+    if (!t || !t.value) return false;
+    const clamped = clampToLatestData_(t.value);
+    if (clamped === t.value) { deptClampNoteSet_(''); return false; }
+    const asked = t.value;
+    t.value = clamped;
+    // Guard the degenerate case: a From past the latest date (a fully-future
+    // window) would otherwise invert the range.
+    const f = $('from-date');
+    if (f && f.value && f.value > clamped) f.value = clamped;
+    deptClampNoteSet_('Adjusted to ' + clamped + ' — data runs through there ('
+      + asked + ' requested).');
+    return true;
+  }
+  function deptClampNoteSet_(msg) {
+    const el = $('dept-clamp-note');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.display = msg ? '' : 'none';
+  }
   function initDatePresets_() {
     buildDatePresetChips_($('date-presets'), function (r) {
       $('from-date').value = r.from;
       $('to-date').value = r.to;
+      clampDeptToDate_();
       refresh();
     });
   }
