@@ -234,6 +234,55 @@ async function horizontalOverflow(page) {
         'months="' + cal.months + '" note="' + cal.note.trim() + '"');
     }
 
+    // R17h (Options A+B): the missed-call slices share ONE renderer and
+    // cross-link to each other. Three load-bearing properties: an agent
+    // card's ring time opens the DEPT-WIDE hour-bucket drill; that drill
+    // renders through the shared lens (not its retired private markup); and
+    // a row's agent name jumps back to that agent's card. The round trip is
+    // the assertion -- each half is useless if the other end is missing.
+    {
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(4000);
+      const bucketOpened = await page.evaluate(() => {
+        const link = document.querySelector('#dept-missed-detail .ms-bucket-link');
+        if (!link) return null;
+        link.click();
+        return true;
+      });
+      await page.waitForTimeout(900);
+      const drill = await page.evaluate(() => {
+        const body = document.getElementById('dept-bucket-detail-body');
+        const wrap = document.getElementById('dept-missed-bucket-detail');
+        if (!body || !wrap) return null;
+        return {
+          open: wrap.style.display !== 'none',
+          shared: !!body.querySelector('.heat-drill-list'),
+          legacy: !!body.querySelector('.bucket-detail-list'),
+          rows: body.querySelectorAll('.heat-drill-row').length,
+          agentLinks: body.querySelectorAll('.ms-agent-link').length,
+          // the retired grid's trap: content wider than the narrow panel
+          overflowX: body.scrollWidth - body.clientWidth,
+        };
+      });
+      record(role + ': an agent card ring opens the dept-wide bucket drill',
+        !!bucketOpened && !!drill && drill.open && drill.rows > 0, JSON.stringify(drill));
+      record(role + ': the bucket drill renders through the SHARED missed lens',
+        !!drill && drill.shared && !drill.legacy && drill.overflowX <= 0, JSON.stringify(drill));
+      if (drill && drill.agentLinks > 0) {
+        const landed = await page.evaluate(async () => {
+          const link = document.querySelector('#dept-bucket-detail-body .ms-agent-link');
+          const want = link.getAttribute('data-ms-agent');
+          link.click();
+          await new Promise((r) => setTimeout(r, 700));
+          const lit = document.querySelector('#dept-missed-detail [data-agent-card].qs-spotlight');
+          return { want: want, got: lit ? lit.getAttribute('data-agent-card') : null,
+                   open: lit ? lit.open : false };
+        });
+        record(role + ': a drill row\'s agent name jumps to that agent\'s card',
+          !!landed.got && landed.got === landed.want && landed.open, JSON.stringify(landed));
+      }
+    }
+
     // R17a: rings of one abandoned call group on the agent cards -- the
     // fixture seeds a re-rung parent (same id twice), so at least one group
     // must render, with the id badge ONCE inside it (deduping the repeat)

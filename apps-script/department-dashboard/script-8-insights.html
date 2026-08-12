@@ -1587,18 +1587,36 @@
     // visible, reads as a large blank band above the results.
     launcherHideLoading_('ins-launcher-loading');
     insRenderEditingLine_(data);
-    // Date line: label the window so the range doesn't read as arbitrary --
-    // name the launcher-default shape ("last 30 days") when it matches, and
-    // always show how many workdays the window actually represents.
+    // R17g (owner): the dept controls are the page's single date authority
+    // (M4), so restating the window beside the Insights title was redundant
+    // -- the workday count lives on the sticky controls strip instead
+    // (updateDeptWorkdays_, fed the server's INV-35 number here). The chip
+    // SURVIVES for the one case where the two halves legitimately diverge
+    // (a MONTHLY trend-point drill reruns Insights for that month without
+    // moving the dept controls, R16h): it then names the scoped window with
+    // a warn tint -- the ins-dept-pill--scoped discipline -- so a split
+    // range is visible, never silent.
     (function () {
       const meta = data.meta || {};
-      const bits = [data.dateLabel || ''];
-      if (meta.from === launcherIsoDaysAgo_(30) && meta.to === launcherIsoDaysAgo_(1)) {
-        bits.push('last 30 days');
-      }
+      const el = $('ins-results-date');
+      const df = $('from-date'), dt = $('to-date');
+      const matchesDept = !!(df && dt && meta.from === df.value && meta.to === dt.value);
       const wd = insWorkdaysLabel_(meta.currentWorkDays, meta.from, meta.to);
-      if (wd) bits.push(wd);
-      $('ins-results-date').textContent = '(' + bits.filter(Boolean).join(' · ') + ')';
+      if (el) {
+        if (matchesDept) {
+          el.textContent = '';
+          el.style.display = 'none';
+        } else {
+          el.textContent = '(scoped: ' + [data.dateLabel || '', wd].filter(Boolean).join(' · ') + ')';
+          el.style.display = '';
+          el.title = 'This report covers a different window than the page controls above '
+            + '(a trend drill narrowed it). Change the From/To controls to re-align.';
+        }
+        el.classList.toggle('ins-results-date--scoped', !matchesDept);
+      }
+      // The sticky-strip count always describes the DEPT window: pass the
+      // server count only when this report covers that same window.
+      updateDeptWorkdays_(matchesDept ? meta.currentWorkDays : 0);
       // M3: the dept pill -- which department THIS report covers (a parent's
       // agent table above is combined; a sub-queue selection narrows to a
       // child dept). Marked scoped when it differs from the header dept.

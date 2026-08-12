@@ -50,22 +50,24 @@
       var rings = collectRings(data, idx);
       var titleEl = $(ids.title), bodyEl = $(ids.body), wrap = $(ids.wrap);
       if (!titleEl || !bodyEl || !wrap) return;
-      titleEl.textContent = labels[idx] + ' CST  ·  ' + rings.length + ' ring' + (rings.length === 1 ? '' : 's');
-      if (!rings.length) {
-        bodyEl.innerHTML = '<p class="bucket-detail-empty">No rings in this bucket.</p>';
-      } else {
-        bodyEl.innerHTML = '<ul class="bucket-detail-list">' + rings.map(function (r) {
-          var cls = r.abandoned ? 'abandoned' : '';
-          var siren = r.abandoned ? ' 🚨' : '';
-          var dateLabel = r.date ? r.date.slice(5) : '';   // MM-DD
-          return '<li class="' + cls + '">'
-               +   '<span class="ring-date">'  + escapeHtml(dateLabel) + '</span>'
-               +   '<span class="ring-agent">' + escapeHtml(r.agent)   + '</span>'
-               +   '<span class="ring-time">'  + escapeHtml(r.label) + siren + parentIdBadge(r.parentId, r.date)
-               +   '</span>'
-               + '</li>';
-        }).join('') + '</ul>';
-      }
+      // R17h (Option A): render through the SHARED missed-ring lens
+      // (missedSliceListHtml_) instead of this panel's own older list markup.
+      // Every timestamp list on the page -- this bucket drill, the
+      // Queue-health per-queue drill, the Daily-breakdown day drill and the
+      // heatmap cell drill -- now speaks ONE visual language: date group
+      // headers, the R17f same-call run grouping, and the "↳ path" chips.
+      // The collected rings are already the slice's entry shape apart from
+      // the field name (agent -> who). The panel header keeps the bucket
+      // identity; the shared head carries the count + the lens note, so
+      // neither repeats the other.
+      titleEl.textContent = labels[idx] + ' CST';
+      bodyEl.innerHTML = missedSliceListHtml_({
+        meta: { abandonedDetailLost: !!(data.meta && data.meta.abandonedDetailLost) },
+        entries: rings.map(function (r) {
+          return { date: r.date, label: r.label, who: r.agent,
+                   abandoned: r.abandoned, parentId: r.parentId };
+        }),
+      }, 'Missed rings');
       wrap.style.display = '';
       if (ids.row) { var row = $(ids.row); if (row) row.classList.remove('no-detail'); }
       if (ids.onGridChange) ids.onGridChange();   // R11-M: smooth resize during the column transition
@@ -83,7 +85,60 @@
       if (ids.onGridChange) ids.onGridChange();   // R11-M
     }
     function toggle(idx) { if (idx === active) hide(); else show(idx); }
-    return { toggle: toggle, hide: hide };
+    // R17h (Option B): `show` is exposed for the agent-card ring cross-link,
+    // which must always OPEN the bucket (toggle would close it when the
+    // clicked ring's bucket happens to be the one already on screen).
+    return { toggle: toggle, hide: hide, show: show };
+  }
+
+  // ── R17h (Option B): cross-links between the missed-call slices ──────────
+  // The five missed/abandoned lists on this page are slices of the SAME rings
+  // (by agent / by hour / by queue / by date / by weekday-slot), so "who is
+  // this?" and "what else happened in this half-hour?" are the two questions
+  // a drill row raises. These helpers answer both without leaving the page.
+  //
+  // The affordance is a LINK-STYLED SPAN, deliberately not a <button>: a day
+  // slice runs to hundreds of rings, and that many tab stops would bury the
+  // page's real controls. Nothing becomes keyboard-unreachable -- both
+  // destinations (the agent cards, the chart's bucket bars) are themselves in
+  // the tab order on the same page; the links are a shortcut, not the route.
+  function missedAgentCardEl_(name) {
+    var host = $('dept-missed-detail');
+    if (!host || !name) return null;
+    // Attribute-VALUE match by iteration rather than a selector: agent names
+    // are external CDR/roster text and can carry quotes, which would break a
+    // [data-agent-card="..."] selector string (the csvSafeCell_ lesson --
+    // treat the feed as untrusted input to whatever syntax you build).
+    var cards = host.querySelectorAll('[data-agent-card]');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-agent-card') === String(name)) return cards[i];
+    }
+    return null;
+  }
+  // The link is a SAME-PAGE shortcut, so it is offered only when the jump
+  // would actually land somewhere the user can see. The case that forces
+  // this: the Inbound report is a MODAL over the dept page and carries its
+  // own heatmap cell drill on the same shared renderer -- ungated, its rows
+  // would offer links that spotlight a card behind the modal. Same reasoning
+  // for any other page (`data-page`): the missed section is dept-page-only.
+  function missedAgentCardExists_(name) {
+    if (document.body.getAttribute('data-page') !== 'dept') return false;
+    if (document.querySelector('.modal[aria-hidden="false"]')) return false;
+    return !!missedAgentCardEl_(name);
+  }
+
+  function deptMissedJumpToAgent_(name) {
+    var card = missedAgentCardEl_(name);
+    if (!card) return;
+    // Open the whole <details> chain up from the card (the card itself, the
+    // missed section, any fold above it) so the spotlight lands on something
+    // actually on screen -- the insScrollPending_ discipline.
+    var anc = card.closest ? card.closest('details') : null;
+    while (anc) {
+      if (!anc.open) anc.open = true;
+      anc = anc.parentElement ? anc.parentElement.closest('details') : null;
+    }
+    qsSpotlight_(card);
   }
 
   const deptMissedBucketDetail_ = makeMissedBucketDetail_(
@@ -474,6 +529,27 @@
         deptMissedSetScope_(deptMissedAgentScope_);   // toggle-off the active scope
         return;
       }
+      // R17h (Option B): a drill row's agent name -> that agent's missed card.
+      // Runs BEFORE the id-chip handlers below, and stops propagation so it
+      // can never also toggle a <details> or a group row it sits inside.
+      const alink = e.target.closest && e.target.closest('.ms-agent-link');
+      if (alink) {
+        e.preventDefault(); e.stopPropagation();
+        deptMissedJumpToAgent_(alink.getAttribute('data-ms-agent') || '');
+        return;
+      }
+      // R17h (Option B), the reverse: an agent card's ring timestamp -> the
+      // hour-bucket drill for that half-hour, which is DEPT-WIDE (who else
+      // was rung while this agent missed). `show`, never `toggle`: clicking a
+      // ring must open its bucket even when that bucket is already the one on
+      // screen.
+      const blink = e.target.closest && e.target.closest('.ms-bucket-link');
+      if (blink) {
+        e.preventDefault(); e.stopPropagation();
+        const bi = Number(blink.getAttribute('data-ms-bucket'));
+        if (bi >= 0) deptMissedBucketDetail_.show(bi);
+        return;
+      }
       // #3: "↳ path" drill -> open the inbound-call journey for this parent id.
       const jbtn = e.target.closest && e.target.closest('.pid-journey');
       if (jbtn) {
@@ -745,39 +821,46 @@
       const dateLabelOf = function (m) {
         return m.date ? '<span class="date">' + escapeHtml(m.date.slice(5)) + '</span>' : '';
       };
+      // R17h (Option B): the ring TIME cross-links to the hour-bucket drill
+      // for its half-hour -- the dept-wide view of who else was rung while
+      // this agent missed. Falls back to plain text when the payload carries
+      // no bucket (pre-bucket rows / a sentinel), so the link only ever
+      // appears when it can actually go somewhere.
+      const timeLabelOf = function (m) {
+        const lbl = escapeHtml(m.label);
+        const b = Number(m.bucket);
+        if (!(b >= 0)) return lbl;
+        return '<span class="ms-bucket-link" data-ms-bucket="' + b
+             + '" title="Show every agent rung in this half-hour">' + lbl + '</span>';
+      };
       const singleLi = function (m) {
         return '<li class="' + (m.abandoned ? 'abandoned' : '') + '">'
-             +   dateLabelOf(m) + escapeHtml(m.label) + (m.abandoned ? ' 🚨' : '')
+             +   dateLabelOf(m) + timeLabelOf(m) + (m.abandoned ? ' 🚨' : '')
              +   parentIdBadge(m.parentId, m.date)
              + '</li>';
       };
-      let itemsHtml = '';
-      const times = a.missedTimes;
-      for (let ti = 0; ti < times.length;) {
-        const m = times[ti];
-        let tj = ti + 1;
-        while (m.parentId && tj < times.length
-               && times[tj].parentId === m.parentId && times[tj].date === m.date) tj++;
-        if (m.parentId && tj - ti >= 2) {
-          const group = times.slice(ti, tj);
-          const gTitle = 'Same call — rang ' + group.length
-            + '× before the caller hung up (call ID ' + String(m.parentId) + ')';
-          itemsHtml += '<li class="ms-callgroup-wrap">'
-            + '<ul class="ms-callgroup" title="' + escapeHtml(gTitle) + '">'
-            + group.map(function (g, gi) {
-                const last = gi === group.length - 1;
-                return '<li class="abandoned">'
-                  + dateLabelOf(g) + escapeHtml(g.label)
-                  + (last ? ' 🚨' + parentIdBadge(g.parentId, g.date) : '')
-                  + '</li>';
-              }).join('')
-            + '</ul></li>';
-          ti = tj;
-        } else {
-          itemsHtml += singleLi(m);
-          ti++;
-        }
-      }
+      // R17i: the run DETECTION is the shared groupConsecutiveByCall_ (see
+      // its docstring); only the rendering is local. This card's treatment
+      // stays deliberately its own -- no visible "rang N×" caption (owner,
+      // R17a: hover only), and the siren + id badge on the LAST ring rather
+      // than the first -- so unifying the rule must not drag the look along.
+      const times = a.missedTimes || [];
+      const itemsHtml = groupConsecutiveByCall_(times).map(function (run) {
+        const group = times.slice(run.start, run.end);
+        if (!run.isRun) return singleLi(group[0]);
+        const gTitle = 'Same call — rang ' + run.length
+          + '× before the caller hung up (call ID ' + String(group[0].parentId) + ')';
+        return '<li class="ms-callgroup-wrap">'
+          + '<ul class="ms-callgroup" title="' + escapeHtml(gTitle) + '">'
+          + group.map(function (g, gi) {
+              const last = gi === group.length - 1;
+              return '<li class="abandoned">'
+                + dateLabelOf(g) + timeLabelOf(g)
+                + (last ? ' 🚨' + parentIdBadge(g.parentId, g.date) : '')
+                + '</li>';
+            }).join('')
+          + '</ul></li>';
+      }).join('');
 
       var tier = '', tierChip = '';
       if (useTiers) {
@@ -793,7 +876,10 @@
       // above to this agent's own rings (client rebucket; the button never
       // toggles the <details>, stopPropagation in the delegated handler).
       const scoped = deptMissedAgentScope_ === a.name;
-      return '<details class="agent-card' + (tier ? ' agent-card--tier-' + tier : '') + '" open>'
+      // R17h (Option B): data-agent-card is the cross-link ANCHOR -- a drill
+      // row's agent name resolves to this element (missedAgentCardEl_).
+      return '<details class="agent-card' + (tier ? ' agent-card--tier-' + tier : '') + '" open'
+           +   ' data-agent-card="' + escapeHtml(a.name) + '">'
            +   '<summary class="agent-card-head">'
            +     '<span class="agent-name">' + escapeHtml(a.name) + '</span>'
            +     '<span class="agent-card-meta">' + tierChip
@@ -1276,6 +1362,10 @@
 
   function refresh() {
     const dept = getRequestedDept();
+    // R17g: keep the sticky-strip workday count live from the client mirror
+    // on every run; an Insights render for the same window refines it with
+    // the server's INV-35 number.
+    if (typeof updateDeptWorkdays_ === 'function') updateDeptWorkdays_();
     if (!dept) {
       setStatus('error', 'No department available.');
       return;

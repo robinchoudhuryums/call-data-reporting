@@ -1051,29 +1051,38 @@
     // R17f (owner): CONSECUTIVE rings that share a parentId are ONE abandoned
     // call ringing several agents/times -- render them as a connected run
     // (shared warm rail, id badge once, a "rang N×" count on the first row):
-    // the R17a agent-card grouping applied to this lens. Chronologically
-    // adjacent is the grouping key on purpose -- a same-id ring much later in
-    // the list is a re-rung call and reads better as its own event.
+    // the R17a agent-card grouping applied to this lens.
+    // R17i: the RULE is groupConsecutiveByCall_ (shared with the agent cards
+    // -- see its docstring for why adjacency is part of it, and for why a run
+    // here can span agents while a card's cannot). Only the run-position
+    // annotation below is this renderer's own.
     var annotated = entries.map(function (e) { return Object.assign({}, e); });
-    var ri = 0;
-    while (ri < annotated.length) {
-      var rj = ri + 1;
-      while (rj < annotated.length && annotated[ri].parentId
-             && annotated[rj].parentId === annotated[ri].parentId
-             && annotated[rj].date === annotated[ri].date) rj++;
-      if (rj - ri > 1 && annotated[ri].parentId) {
-        for (var rk = ri; rk < rj; rk++) {
-          annotated[rk]._run = rk === ri ? 'start' : (rk === rj - 1 ? 'end' : 'mid');
-          annotated[rk]._runLen = rj - ri;
-        }
+    groupConsecutiveByCall_(annotated).forEach(function (run) {
+      if (!run.isRun) return;
+      for (var rk = run.start; rk < run.end; rk++) {
+        annotated[rk]._run = rk === run.start ? 'start'
+          : (rk === run.end - 1 ? 'end' : 'mid');
+        annotated[rk]._runLen = run.length;
       }
-      ri = rj;
-    }
-    // R11-H: grouped by date (the date is in the group header, so each row shows
-    // the ring time only).
-    var rows = heatDrillGroupedList_(annotated,
-      function (e) { return e.date || ''; },
-      function (e) {
+    });
+    // R11-H: grouped by date (the date is in the group header, so each row
+    // shows the ring time only) -- but ONLY while the grouping earns its
+    // keep. R17h: a date header exists to stop the date repeating on every
+    // row; in a SPARSE slice (the hour-bucket drill, the heatmap cell drill
+    // -- one half-hour across many dates, often one ring each) every header
+    // serves a single row, so the header IS the repetition, at ~3x the
+    // vertical cost in panels that are already short. Under ~1.5 rings per
+    // date the list goes FLAT with a compact inline date chip instead.
+    // Dense slices are untouched: the day drill is one date (172 rings/date)
+    // and the per-queue drill runs a whole window, so neither ever trips it.
+    var dateSet = {}, dateCount = 0;
+    annotated.forEach(function (e) {
+      var d = e.date || '';
+      if (!dateSet[d]) { dateSet[d] = 1; dateCount++; }
+    });
+    var flatDates = annotated.length > 3 && dateCount > 1
+      && (annotated.length / dateCount) < 1.5;
+    var rowHtml = function (e) {
         var siren = e.abandoned ? ' 🚨' : '';
         var runCls = e._run ? ' hd-run hd-run-' + e._run : '';
         var runTitle = e._run
@@ -1084,13 +1093,43 @@
         // The id badge renders ONCE per run (on its first row); repeats would
         // restate the same call id line after line.
         var badge = (!e._run || e._run === 'start') ? parentIdBadge(e.parentId, e.date) : '';
+        // In flat mode the date rides the row (the group header is gone).
+        var inlineDate = flatDates && e.date
+          ? '<span class="heat-drill-inline-date">' + escapeHtml(String(e.date).slice(5)) + '</span>' : '';
         return '<div class="heat-drill-row' + (e.abandoned ? ' abandoned' : '') + runCls + '"' + runTitle + '>'
+          + inlineDate
           + '<span class="heat-drill-when">' + escapeHtml(e.label || e.time || '') + siren + '</span>'
-          + '<span class="heat-drill-path">' + escapeHtml(e.who || '') + runCount + '</span>'
+          + '<span class="heat-drill-path">' + missedSliceWhoHtml_(e.who) + runCount + '</span>'
           + badge
           + '</div>';
-      });
+    };
+    var rows = flatDates
+      ? annotated.map(rowHtml).join('')
+      : heatDrillGroupedList_(annotated, function (e) { return e.date || ''; }, rowHtml);
     return head + lost + '<div class="heat-drill-list">' + rows + '</div>';
+  }
+
+  /**
+   * R17h (Option B): the WHO cell of a missed-ring row, cross-linked to that
+   * agent's card in the Missed Calls section when one is on the page. Every
+   * surface built on this renderer -- the hour-bucket drill, the per-queue
+   * drill, the day drill, the heatmap cell drill -- inherits the link at
+   * once, which is the point of Option A having unified them first.
+   *
+   * The link renders ONLY when the card actually exists, so a queue-sentinel
+   * row ("A_Q_CSR (no agent rang)"), an agent outside the rendered section,
+   * and the Inbound report's own heatmap drill (a page with no missed
+   * section at all) all degrade silently to plain text rather than offering
+   * a dead click. Deliberately a link-styled SPAN, not a button -- see the
+   * tab-stop reasoning on missedAgentCardEl_.
+   */
+  function missedSliceWhoHtml_(who) {
+    var name = String(who || '');
+    if (!name) return '';
+    var safe = escapeHtml(name);
+    if (typeof missedAgentCardExists_ !== 'function' || !missedAgentCardExists_(name)) return safe;
+    return '<span class="ms-agent-link" data-ms-agent="' + safe
+      + '" title="Show this agent’s missed-call card">' + safe + '</span>';
   }
 
   // "HH:MM" from minutes-past-midnight (CST), for the slice hour window.

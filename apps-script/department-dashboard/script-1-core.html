@@ -680,6 +680,54 @@
   // HTML-only (table cells); CSV + chart labels never pass through here.
   function zeroCell_(s) { return '<span class="cell-zero">' + s + '</span>'; }
 
+  /**
+   * R17i: THE definition of "these rings are one call", shared by every
+   * surface that groups them. Splits a time-ordered ring list into runs of
+   * CONSECUTIVE entries carrying the same `parentId` on the same `date`;
+   * returns [{ start, end, length, isRun }] covering the input exactly, in
+   * order (isRun false = a lone ring, which callers render ungrouped).
+   *
+   * Why it is extracted rather than written twice (R17h follow-on): the rule
+   * lived in `missedAgentsHtml_` (agent cards) AND `missedSliceListHtml_`
+   * (the four drills). Both said consecutive + same parentId + same date, and
+   * nothing made them agree -- change the key in one place (drop the date,
+   * decide non-adjacent rings should also group) and the two surfaces
+   * silently disagree about what one call IS, while both still look right.
+   * That is the drift class INV-16's byte-identical guard exists for; here a
+   * shared pure function is the cheaper version of the same discipline.
+   *
+   * ADJACENCY is deliberately part of the rule: a re-rung parent appearing
+   * again much later in the list is a separate event and reads better as
+   * one. Rings with NO parentId never group -- in DQE only abandoned rings
+   * carry an id (a ring answered elsewhere has none), so that is the data
+   * speaking, not a rendering choice.
+   *
+   * NOTE the two callers feed DIFFERENT sequences, and the runs therefore
+   * mean slightly different things -- which is why this returns runs and
+   * lets each caller phrase them, rather than rendering anything itself:
+   *   - agent cards iterate ONE agent's rings, so a run is that agent rung
+   *     repeatedly;
+   *   - the drill lenses iterate a whole slice sorted chronologically ACROSS
+   *     agents (missedSliceFilter_), so a run can span agents -- rang Ben,
+   *     then Carla, then the caller gave up.
+   */
+  function groupConsecutiveByCall_(list) {
+    const out = [];
+    const items = list || [];
+    let i = 0;
+    while (i < items.length) {
+      const head = items[i];
+      const pid = head && head.parentId;
+      let j = i + 1;
+      while (pid && j < items.length
+             && items[j].parentId === pid && items[j].date === head.date) j++;
+      const length = j - i;
+      out.push({ start: i, end: j, length: length, isRun: !!pid && length > 1 });
+      i = j;
+    }
+    return out;
+  }
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
