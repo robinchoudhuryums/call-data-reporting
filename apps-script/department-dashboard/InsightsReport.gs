@@ -84,7 +84,12 @@
 //     (from the bySource breakdown 4a added to computeQcdReport_), so
 //     the Queue health table can annotate WHERE a queue's abandons come
 //     from. Null when no sub-source has abandons.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v20';
+// v21 (R18): adds `meta.teamAvgBasis` -- the per-agent average baseline
+// with TEAM_AVG_EXCLUDES managers removed (INV-26 now reaches Insights,
+// not just the Individual Report). Dept totals/rates are unchanged, but
+// every 'vs team average' comparison moves, so the old blobs must not be
+// served.
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v21';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -411,6 +416,40 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // inputs -- counting all SELECTED roster members (incl. zero-activity
   // ones) understated the baseline (F1).
   const activeRosterCurr = {};   // agent -> true
+  // R18 (owner ruling): manager call volume must NOT be factored into
+  // PER-AGENT AVERAGES AND BENCHMARKS, but MUST stay in dept totals and
+  // rates. A manager carried on the roster takes a token number of calls, so
+  // including them in a per-agent baseline drags every teammate's "vs team"
+  // comparison toward zero -- the reported symptom was the call-share
+  // threshold. INV-26's `TEAM_AVG_EXCLUDES` / Dept Config "Team Avg Excludes"
+  // already expressed this, but ONLY the Individual Report consumed it; this
+  // report's comment even claimed its denominator "matches" IR's, which was
+  // half-true and is exactly how the two drifted.
+  //
+  // So the exclusion applies to the BASELINE accumulators below and to
+  // nothing else: `teamCurr` / `teamPrev` / `dailyTeam` / `monthlyTeam` /
+  // `ytdTeam` / `deptAnsweredCurr` all keep every roster agent, so
+  // `teamStats`, the trends and every dept rate are byte-unchanged.
+  const teamAvgExcluded = {};
+  (function () {
+    try {
+      (getTeamAvgExcludes_(dept) || []).forEach(function (n) {
+        const t = String(n || '').trim();
+        if (t) teamAvgExcluded[t] = true;   // exact roster-name match (INV-04)
+      });
+    } catch (e) {
+      // Best-effort: an unreadable Dept Config must not lose the whole
+      // report. It MUST log, though -- this catch first shipped silent and
+      // swallowed a mistyped variable name, degrading to "no excludes" with
+      // the report still rendering perfectly. A silent fallback to the
+      // pre-fix numbers is the one failure mode this change must not have.
+      Logger.log('teamAvgExcludes unavailable for %s (per-agent baseline keeps '
+        + 'every roster agent): %s', dept, (e && e.message) || e);
+    }
+  })();
+  const teamAvgBase = blank();     // per-agent baseline numerators
+  const activeRosterAvg = {};      // agent -> true (baseline divisor members)
+  let deptAnsweredExcluded = 0;    // excluded agents' answered, for the share benchmark
   // R11-E (item 6): full-department answered total in the CURRENT window over
   // ALL active roster agents -- NOT just the selected ones. The share-of-
   // answered donut divides by this (and folds unselected agents into an
@@ -468,6 +507,17 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         teamCurr.rung += rung; teamCurr.missed += missed; teamCurr.answered += answered;
         teamCurr.ttt += tttSec; teamCurr.att_sum += attTotal;
         if (rung || missed || answered) activeRosterCurr[agent] = true;
+        // R18: the per-agent BASELINE skips excluded managers (see above).
+        // Their calls still landed in teamCurr on the lines just above, so
+        // the dept total keeps them.
+        if (teamAvgExcluded[agent]) {
+          deptAnsweredExcluded += answered;
+        } else {
+          teamAvgBase.rung += rung; teamAvgBase.missed += missed;
+          teamAvgBase.answered += answered;
+          teamAvgBase.ttt += tttSec; teamAvgBase.att_sum += attTotal;
+          if (rung || missed || answered) activeRosterAvg[agent] = true;
+        }
         var db = dailyTeam[dateIso] || (dailyTeam[dateIso] = blank());
         db.rung += rung; db.missed += missed; db.answered += answered;
         db.ttt += tttSec; db.att_sum += attTotal;
@@ -551,6 +601,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       name: agent,
       matchedViaRoster: matchedViaRoster,
       matchedViaQueue:  matchedViaQueue,
+      // R18: same field name IR uses, so the client's existing
+      // 'EXCLUDED FROM TEAM AVG' pill works here unchanged (INV-26).
+      excludedFromTeamAvg: !!teamAvgExcluded[agent],
       sourceHomes:      sourceHomes,
       // Each metric is a deltaBlock_ (current vs prior), same shape the
       // team tiles use -- so the client renders both with one helper.
@@ -639,6 +692,34 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // Team-average divisor: roster members with activity in the current
   // window (INV-27 / F1), not all selected roster members.
   const activeRosterCount = Object.keys(activeRosterCurr).length;
+  // R18: the per-agent baseline, shipped ALONGSIDE (never instead of)
+  // teamStats. teamStats is the dept rollup and keeps every roster agent;
+  // this is what "vs team average" compares against. `pct` and `att` are
+  // recomputed from the excluded-base sums rather than reused from
+  // teamStats -- a rate over a different population is a different rate.
+  const activeRosterAvgCount = Object.keys(activeRosterAvg).length;
+  const avgPct = teamAvgBase.rung     > 0
+    ? (teamAvgBase.answered / teamAvgBase.rung) * 100 : 0;
+  const avgAtt = teamAvgBase.answered > 0
+    ? (teamAvgBase.att_sum / teamAvgBase.answered) : 0;
+  const teamAvgBasis = {
+    agents:   activeRosterAvgCount,
+    rung:     teamAvgBase.rung,
+    missed:   teamAvgBase.missed,
+    answered: teamAvgBase.answered,
+    ttt:      teamAvgBase.ttt,
+    pct:      avgPct,
+    att:      avgAtt,
+    // Share of the DEPT's answered calls held by excluded agents. The client
+    // subtracts it before splitting the remainder evenly, so the equal-share
+    // benchmark describes the call-taking team without pretending the
+    // manager's calls never happened.
+    excludedAnsweredShare: deptAnsweredCurr > 0
+      ? (deptAnsweredExcluded / deptAnsweredCurr) * 100 : 0,
+    excluded: Object.keys(teamAvgExcluded).filter(function (n) {
+      return !!activeRosterCurr[n];   // only those actually in this window
+    }),
+  };
   return {
     meta: {
       department: dept,
@@ -662,6 +743,9 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       agents: selectedAgents,
       rosterSize: roster.names.length,
       rosterAgentCount: activeRosterCount,
+      // R18: the per-agent baseline (managers excluded per the owner
+      // ruling). teamStats + rosterAgentCount stay the DEPT rollup.
+      teamAvgBasis: teamAvgBasis,
       queueOnlyAgentCount: visibleAgents.length - selectedRosterCount,
       // R11-E (item 6): whole-department answered total (current window, all
       // active roster agents) -- the true denominator for the share donut.
@@ -926,6 +1010,8 @@ function emptyInsights_(dept, from, to, priorFrom, priorTo, selectedAgents,
       agents: selectedAgents,
       rosterSize: roster.names.length,
       rosterAgentCount: 0, queueOnlyAgentCount: 0,
+      teamAvgBasis: { agents: 0, rung: 0, missed: 0, answered: 0, ttt: 0,
+                      pct: 0, att: 0, excludedAnsweredShare: 0, excluded: [] },
       generatedAt: new Date().toISOString(),
     },
     dateLabel: from + ' - ' + to,

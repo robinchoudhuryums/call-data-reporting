@@ -3896,6 +3896,14 @@
   /* R17e: valence tint past 2 pts (under that the muted base wins). */
   .ins-share-delta.is-up   { color: var(--good); }
   .ins-share-delta.is-down { color: var(--warn); }
+  /* R18: a manager excluded from the team benchmark. Quiet on purpose --
+     it explains an absent delta, it is not a judgement about the row. */
+  .ins-share-exempt {
+    font: 500 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); background: var(--paper-2);
+    border: 1px solid var(--line); border-radius: 999px; padding: 2px 6px;
+    cursor: help;
+  }
   .tly.oth { background: var(--muted); opacity: 0.45; }
   .ins-card-ir-link {
     margin-left: auto;

@@ -1820,28 +1820,51 @@
     const unit = ansTallyUnitFor_(slices.map(function (s) {
       return { totalAnswered: s.value, totalMissed: 0 };
     }));
-    // R17c (owner): per-row delta vs the EQUAL share (100% ÷ answering
-    // agents) -- only when the run covers the WHOLE department (no "Other
-    // agents" remainder, the N1 default). With a subset selected the dept's
-    // answering-agent count is unknown, and an average over just the shown
-    // agents would mislead, so the deltas hide rather than guess. R17e
-    // (owner): color-coded -- sage above the equal share, warm below, but a
-    // delta under 2 pts stays muted gray so ordinary spread doesn't shout
-    // (the WOW_NOISE_THRESHOLD spirit).
-    const eqShare = other === 0 && agentSlices.length > 1
-      ? (100 / agentSlices.length) : null;
+    // R17c (owner): per-row delta vs the EQUAL share -- only when the run
+    // covers the WHOLE department (no "Other agents" remainder, the N1
+    // default). With a subset selected the dept's answering-agent count is
+    // unknown, and an average over just the shown agents would mislead, so
+    // the deltas hide rather than guess. R17e (owner): color-coded -- sage
+    // above the equal share, warm below, but a delta under 2 pts stays muted
+    // gray so ordinary spread doesn't shout (the WOW_NOISE_THRESHOLD spirit).
+    //
+    // R18 (owner ruling): MANAGERS are out of the benchmark. This was the
+    // reported symptom -- a manager taking a token number of calls counted
+    // as a full team member and pulled the equal share down for everyone.
+    // The maths keeps every row's SHARE % as a share of the whole dept
+    // (dept totals include managers), and only moves the THRESHOLD: take the
+    // share NOT held by excluded agents and split THAT evenly among the
+    // non-excluded answering agents. Splitting a flat 100% would overstate
+    // it in the opposite direction.
+    const basis = (insLastData && insLastData.meta && insLastData.meta.teamAvgBasis) || null;
+    const excludedSet = {};
+    ((basis && basis.excluded) || []).forEach(function (n) { excludedSet[n] = true; });
+    const benchSlices = agentSlices.filter(function (s) { return !excludedSet[s.label]; });
+    const excludedShare = Math.max(0, Math.min(100,
+      Number(basis && basis.excludedAnsweredShare) || 0));
+    const eqShare = other === 0 && benchSlices.length > 1
+      ? ((100 - excludedShare) / benchSlices.length) : null;
     host.innerHTML = slices.map(function (s) {
       const pct = deptTotal > 0 ? (s.value / deptTotal * 100) : 0;
       let deltaHtml = '', deltaTxt = '';
-      if (eqShare != null && !s.other) {
+      // R18: an EXCLUDED manager gets no delta -- they are not measured
+      // against a benchmark they are deliberately outside of. Their row
+      // still shows its real share, and a chip names why.
+      const isExcluded = !!excludedSet[s.label];
+      if (eqShare != null && !s.other && !isExcluded) {
         const d = pct - eqShare;
         const arrow = d >= 0 ? '▲' : '▼';
         const dCls = Math.abs(d) < 2 ? '' : (d >= 0 ? ' is-up' : ' is-down');
         deltaHtml = ' <span class="ins-share-delta' + dCls + '" aria-hidden="true">'
           + arrow + ' ' + Math.abs(d).toFixed(1) + '</span>';
         deltaTxt = ' · ' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1)
-          + ' pts vs an equal share (100% ÷ ' + agentSlices.length
-          + ' agents = ' + eqShare.toFixed(1) + '%)';
+          + ' pts vs an equal share (' + benchSlices.length
+          + ' agents share the ' + (100 - excludedShare).toFixed(1)
+          + '% not held by excluded managers = ' + eqShare.toFixed(1) + '% each)';
+      } else if (isExcluded) {
+        deltaHtml = ' <span class="ins-share-exempt" title="Excluded from the'
+          + ' team benchmark (Dept Config \u2192 Team Avg Excludes)">exempt</span>';
+        deltaTxt = ' · excluded from the team benchmark';
       }
       const title = s.label + ': ' + fmtNumber(s.value) + ' answered · '
         + pct.toFixed(1) + '% of the department’s answered calls' + deltaTxt
@@ -1857,7 +1880,8 @@
       leg.style.display = '';
       leg.innerHTML = (unit > 1 ? '<span class="tly a"></span> = ' + unit + ' calls · ' : '')
         + 'sorted most-answered first · shares are of the whole department'
-        + (eqShare != null ? ' · ▲▼ = pts vs an equal share (' + eqShare.toFixed(1) + '%)' : '');
+        + (eqShare != null ? ' · ▲▼ = pts vs an equal share (' + eqShare.toFixed(1) + '%)'
+            + (excludedShare > 0 ? ' · managers excluded from the benchmark' : '') : '');
     }
   }
 
@@ -3765,12 +3789,23 @@
     if (mode === 'trend') { insRenderCardsChartTrend_(canvas, cards); return; }
     const metric = insCardsChartMetric;
     const isPct = (metric === 'pct');
-    const nRoster = meta.rosterAgentCount
+    // R18 (owner ruling): the "vs team average" baseline EXCLUDES managers
+    // (server `meta.teamAvgBasis`, INV-26 reaching Insights). A manager on
+    // the roster takes a token number of calls, so counting them dragged
+    // every teammate's gap toward zero. Dept totals/rates are unaffected --
+    // `teamStats` is untouched and still backs the KPI tiles.
+    // Falls back to the pre-R18 teamStats basis when the payload predates
+    // v21 (a cached blob mid-deploy), so the chart never renders empty.
+    const basis = meta.teamAvgBasis;
+    const nRoster = (basis && basis.agents)
+      || meta.rosterAgentCount
       || cards.filter(function (c) { return c.matchedViaRoster; }).length
       || cards.length || 1;
     const teamAvg = isPct
-      ? ((ts.pct && Number(ts.pct.val)) || 0)
-      : (((ts[metric] && Number(ts[metric].val)) || 0) / nRoster);
+      ? (basis ? (Number(basis.pct) || 0) : ((ts.pct && Number(ts.pct.val)) || 0))
+      : (basis
+          ? ((Number(basis[metric]) || 0) / nRoster)
+          : (((ts[metric] && Number(ts[metric].val)) || 0) / nRoster));
     const labels = cards.map(function (c) { return c.name; });
     const vals = cards.map(function (c) {
       const s = c.metrics && c.metrics[metric]; return s ? (Number(s.val) || 0) : 0;
