@@ -203,7 +203,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v21` already makes a fresh re-generate fast too).
+  `insights:v22` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -495,11 +495,25 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   sorted chronologically ACROSS agents (`missedSliceFilter_`), so a run there
   can span agents. That is exactly why the helper returns runs and lets each
   caller phrase them.
-  **R17d: the Calendar is available at EVERY window length.** The 14–366-day
-  span rule now gates only the QUEUE metric (`queueHealth.dailySeries` is
-  window-scoped); for the TEAM metrics a window that can't fill a calendar
+  **R17d/R18: the Calendar is available at EVERY window length, for EVERY
+  calendar-capable metric.** The 14–366-day span rule is gone. R17d dropped it
+  for the TEAM metrics and left it on the QUEUE metric only because
+  `queueHealth.dailySeries` is window-scoped and no year-scoped queue series
+  existed; R18 (item 8) added `queueHealth.ytdDailySeries` — a dept-total daily
+  series accumulated inside `QCDReport.gs`'s EXISTING 12-month trend pass (no
+  extra read, no second query) and passed through `computeInsights_` — so the
+  queue metric now takes the same two-way route: window-fills-a-calendar →
+  `queueHealth.dailySeries`, else the YTD series. `insCalendarUsesYtd_`,
+  `insCalendarEligible_`, `insCalendarIneligibleReason_`, the trend header and
+  `insRenderTrendCalendar_` all branch on `insActiveTrendMetric === 'queues'`
+  to pick the queue pair over the team pair; the queue header derives its span
+  from the series' own first/last row rather than `trendYtd.from/.to`, since
+  QCD history need not start the same day the DQE history does. The remaining
+  ineligible reasons are ATT (line-only), a non-abandoned-% queue metric
+  (line-only), and genuinely having under two days of data.
+  For the TEAM metrics a window that can't fill a calendar
   falls back to `trendYtd` — the server's Jan-1-to-end-date daily series
-  (`insights:v21`), roster-gated and accumulated inside the existing 12-month
+  (`insights:v22`), roster-gated and accumulated inside the existing 12-month
   trend pass, so it costs no extra read. `insCalendarUsesYtd_` is the single
   decision (window fills a calendar → use `trendDaily`; else → YTD if it has
   more than one day), and `insCalendarEligible_` / `insRenderTrendCalendar_`
@@ -785,6 +799,29 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   storage/parse error falls back to the normal fetch, and the live fetch
   always runs). Bump the `v1` if the Overview payload shape changes
   meaningfully.
+- **A light/dark flip must REBUILD every chart that is on screen
+  (`repaintLiveCharts_`, script-1-core).** Chart.js bakes `THEME.*` into a
+  chart at CONSTRUCTION, so `refreshChartTheme()` alone changes nothing
+  already mounted — the `dash-mode-change` listener has to re-invoke each
+  visible builder from its cached payload. This covered the Overview chart
+  ALONE until R18 (item 4a), which left every dept-page chart painting the
+  light palette on a dark background after a toggle. The symptom is
+  deliberately narrow and easy to misfile as a CSS bug: only the gap chart's
+  ZERO gridline is drawn in `THEME.ink`, so under a stale light theme it is
+  near-black on a near-black canvas and vanishes while the `THEME.line`
+  gridlines around it stay visible. **It reproduces on the TOGGLE path only** —
+  loading straight into dark builds correctly, so a check that only ever loads
+  one mode cannot see it. Two rules for adding a chart to the repaint set:
+  guard on the renderer EXISTING (fragments load independently) and on the
+  container being visible (`offsetParent !== null`) — rebuilding inside a
+  `display:none` container renders at zero size, the C3 draw-on-open trap —
+  and wrap each surface in its own try/catch so one stale chart can't block
+  the rest. MODAL charts stay out: they rebuild on reopen. `drive-smoke`
+  asserts both halves (every on-screen dept chart gets a NEW Chart.js
+  instance id, and comes back carrying dark tokens) by reading
+  `Chart.getChart(canvas).config._config.options` — note the RAW config, not
+  `chart.options`, whose scriptable color resolvers throw without a render
+  context.
 - **CSS design-token conventions (post-redesign Phase A).** The
   dashboard's design system is centralized in `styles.html :root`;
   three conventions established by commit 99e7253 are worth respecting:

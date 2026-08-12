@@ -687,6 +687,16 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   const trendStartDate = computeTrendStartDate_(startDate, endDate);
   const trendStartIso = Utilities.formatDate(trendStartDate, TZ, 'yyyy-MM-dd');
   const trendEndIso   = to;
+  // R18 (owner, item 8): a YEAR-TO-DATE DAILY dept-total series, so the
+  // Insights trend chart's CALENDAR view works for the Queue: Abandoned %
+  // metric at any window length -- the same fallback R17d gave the team
+  // metrics. It rides the EXISTING 12-month trend pass below: that loop
+  // already visits every QCD row with a dateIso, and the trend window
+  // always starts at or before Jan 1 of the end year by construction
+  // (computeTrendStartDate_), so every YTD day is inside it. No extra read,
+  // no second query -- the reason this was worth doing rather than gating.
+  const ytdFromIso  = String(trendEndIso).slice(0, 4) + '-01-01';
+  const ytdDailyAcc = {};
   const monthKeys = generateMonthList_(trendStartDate, endDate);
 
   // Read window (#3, Neon path): a SUPERSET of every window the consumers
@@ -857,6 +867,21 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       }
     }
     if (inTrendRange) {
+      // R18: YTD daily buckets ride this pass. Gated on isOwn() exactly like
+      // the range-scoped dailyAcc above, so "dept total" means the same thing
+      // in both series -- a child queue renders as its own line, never folded
+      // into the parent's rollup.
+      if (dateIso >= ytdFromIso && isOwn(callQueue)) {
+        let yb = ytdDailyAcc[dateIso];
+        if (!yb) {
+          yb = { totalCalls: 0, totalAnswered: 0, abandoned: 0, violations: 0 };
+          ytdDailyAcc[dateIso] = yb;
+        }
+        yb.totalCalls    += totalCalls;
+        yb.totalAnswered += totalAnswered;
+        yb.abandoned     += abandoned;
+        yb.violations    += violations;
+      }
       const monthKey = dateIso.slice(0, 7);
       let mb = bucket.monthly[monthKey];
       if (!mb) {
@@ -1047,6 +1072,20 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
     totals:          totals,
     queueBreakdown:  queueBreakdown,
     trendData:       { labels: trendLabels, series: trendSeries, perQueue: perQueue },
+    // R18: same row shape as dailySeries, so every consumer that maps an
+    // ISO date to an abandoned-% can read either without a second code path.
+    ytdDailySeries:  Object.keys(ytdDailyAcc).sort().map(function (iso) {
+      const b = ytdDailyAcc[iso];
+      const pct = b.totalCalls > 0 ? (b.abandoned / b.totalCalls) * 100 : 0;
+      return {
+        date:          iso,
+        totalCalls:    b.totalCalls,
+        totalAnswered: b.totalAnswered,
+        abandoned:     b.abandoned,
+        abandonedPct:  round1_(pct),
+        violations:    b.violations,
+      };
+    }),
     dailySeries:     dailySeries,
     perQueue:        perQueue,
   };
@@ -1099,6 +1138,7 @@ function emptyQcdReport_(dept, from, to, includeSubQueues, separateSubQueues) {
       return row;
     }),
     trendData: { labels: [], series: [], perQueue: perQueueEmpty },
+    ytdDailySeries: [],   // R18 (shape consistency)
     dailySeries: [],
     perQueue: perQueueEmpty,
   };

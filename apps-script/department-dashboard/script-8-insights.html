@@ -2830,10 +2830,21 @@
    * such, never of the selected window.
    */
   function insCalendarUsesYtd_(data) {
-    if (insActiveTrendMetric === 'queues') return false;   // queue series is window-scoped
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
-    const windowOk = span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_
+    const windowFits = span != null && span >= INS_CALENDAR_MIN_DAYS_
+      && span <= INS_CALENDAR_MAX_DAYS_;
+    // R18 (item 8): the QUEUE metric can fall back too now. R17d gated it out
+    // because queueHealth.dailySeries is window-scoped and no YTD queue series
+    // existed; QCDReport now accumulates one inside the 12-month trend pass it
+    // already runs (trend.ytdLabels/ytdTotal), so the reason is gone.
+    if (insActiveTrendMetric === 'queues') {
+      const qh = (data && data.queueHealth) || {};
+      const winOkQ = windowFits && (((qh.dailySeries) || []).length > 1);
+      if (winOkQ) return false;
+      return (((qh.ytdDailySeries) || []).length > 1);
+    }
+    const windowOk = windowFits
       && (((data && data.trendDaily && data.trendDaily.labels) || []).length > 1);
     if (windowOk) return false;
     return (((data && data.trendYtd && data.trendYtd.labels) || []).length > 1);
@@ -2843,14 +2854,16 @@
     const meta = (data && data.meta) || {};
     const span = isoRangeDays_(meta.from, meta.to);
     if (insActiveTrendMetric === 'queues') {
-      // R11-C3: only the abandoned-% queue metric has a calendar rendering.
-      // It stays WINDOW-scoped (queueHealth.dailySeries covers the selected
-      // range only), so it keeps the original span rule -- R17d's YTD
-      // fallback is for the TEAM metrics, whose series the server now ships
-      // for the whole year.
-      if (span == null || span < INS_CALENDAR_MIN_DAYS_ || span > INS_CALENDAR_MAX_DAYS_) return false;
+      // R11-C3: only the abandoned-% queue metric has a calendar rendering
+      // (the count metrics are line-only).
       if (insQueueMetric !== 'abandonedPct') return false;
-      return (((data && data.queueHealth && data.queueHealth.dailySeries) || []).length > 1);
+      // R18 (item 8): eligible when EITHER the selected window fills a
+      // calendar or the YTD queue series can -- the same two-way rule the
+      // team metrics have had since R17d.
+      const qh = (data && data.queueHealth) || {};
+      if (span != null && span >= INS_CALENDAR_MIN_DAYS_ && span <= INS_CALENDAR_MAX_DAYS_
+          && ((qh.dailySeries) || []).length > 1) return true;
+      return insCalendarUsesYtd_(data);
     }
     // R11-C3: every team COUNT/RATE metric is calendar-capable; ATT stays
     // line-only (a duration grid reads poorly and invites misreading).
@@ -2872,18 +2885,12 @@
     if (insActiveTrendMetric === 'queues' && insQueueMetric !== 'abandonedPct') {
       return 'Calendar view is available for Queue: Abandoned % (the count queue metrics are line-only).';
     }
-    // R17d: the span rules only gate the QUEUE metric now -- team metrics
-    // fall back to the year-to-date series for any window length.
-    const meta = (data && data.meta) || {};
-    const span = isoRangeDays_(meta.from, meta.to);
+    // R18 (item 8): the span rules are GONE for the queue metric too -- it now
+    // falls back to queueHealth.ytdDailySeries the way the team metrics fall
+    // back to trendYtd, so the only remaining reason is "no daily series at
+    // all" (a dept with no mapped queues, or a year with under two QCD days).
     if (insActiveTrendMetric === 'queues') {
-      if (span != null && span < INS_CALENDAR_MIN_DAYS_) {
-        return 'Queue calendar view needs a report window of at least ' + INS_CALENDAR_MIN_DAYS_
-          + ' days (the queue daily series covers the selected window only).';
-      }
-      if (span != null && span > INS_CALENDAR_MAX_DAYS_) {
-        return 'Queue calendar view supports report windows up to ' + INS_CALENDAR_MAX_DAYS_ + ' days.';
-      }
+      return 'Queue calendar view needs at least two days of queue data — this department has none in the selected window or year to date.';
     }
     return 'Calendar view is unavailable here — this tab has no daily series to draw.';
   }
@@ -2959,8 +2966,18 @@
       const head0 = $('ins-trend-header');
       const tm0 = data.meta || {};
       // R17d: name the range the CELLS cover -- the YTD fallback's own span
-      // when it is in play, the selected window otherwise.
-      const ytd0 = insCalendarUsesYtd_(data) ? (data.trendYtd || {}) : null;
+      // when it is in play, the selected window otherwise. R18 (item 8): the
+      // queue metric has its OWN ytd series, so read its first/last row rather
+      // than the team trendYtd span (the two need not start on the same day).
+      let ytd0 = null;
+      if (insCalendarUsesYtd_(data)) {
+        if (insActiveTrendMetric === 'queues') {
+          const qy0 = ((data && data.queueHealth && data.queueHealth.ytdDailySeries) || []);
+          if (qy0.length) ytd0 = { from: qy0[0].date, to: qy0[qy0.length - 1].date };
+        } else {
+          ytd0 = data.trendYtd || {};
+        }
+      }
       if (head0) {
         head0.textContent = ytd0
           ? ('Daily calendar · ' + isoDateShort_(ytd0.from || '') + '–' + isoDateShort_(ytd0.to || '') + ' (year to date)')
@@ -3260,13 +3277,30 @@
     // saying so, since the cells then do NOT describe the selected window.
     const usesYtd = insCalendarUsesYtd_(data);
     const td = (usesYtd ? (data && data.trendYtd) : (data && data.trendDaily)) || {};
-    const calFrom = usesYtd ? (td.from || '') : meta.from;
-    const calTo   = usesYtd ? (td.to   || '') : meta.to;
+    // R18: in YTD mode the QUEUE metric drives its window from its OWN series
+    // (QCD-sourced) rather than the team one (DQE-sourced). The two ranges are
+    // Jan 1..end by construction, but their COVERAGE can differ -- a dept with
+    // queue data and no DQE rows (or the reverse) would otherwise render a
+    // month list the cells can't fill.
+    const isQueueCal = insActiveTrendMetric === 'queues';
+    const qhYtdRows = (data && data.queueHealth && data.queueHealth.ytdDailySeries) || [];
+    let calFrom, calTo;
+    if (usesYtd && isQueueCal && qhYtdRows.length) {
+      calFrom = qhYtdRows[0].date;
+      calTo   = qhYtdRows[qhYtdRows.length - 1].date;
+    } else if (usesYtd) {
+      calFrom = td.from || ''; calTo = td.to || '';
+    } else {
+      calFrom = meta.from; calTo = meta.to;
+    }
     const byLabel = {};
     (td.labels || []).forEach(function (l, i) { byLabel[l] = (td.series || [])[i]; });
     // R7 (I-1): dept-total daily abandoned % (queueHealth.dailySeries, ISO
     // dates) backs the new 'Abd %' calendar metric. Offered only when present.
-    const qhDaily = (data && data.queueHealth && data.queueHealth.dailySeries) || [];
+    // R18: same row shape either way, so one reader serves both scopes.
+    const qhDaily = (usesYtd && isQueueCal && qhYtdRows.length)
+      ? qhYtdRows
+      : ((data && data.queueHealth && data.queueHealth.dailySeries) || []);
     const byIsoAbd = {};
     qhDaily.forEach(function (d) { if (d && d.date) byIsoAbd[d.date] = d; });
     const hasAbd = qhDaily.length > 0;

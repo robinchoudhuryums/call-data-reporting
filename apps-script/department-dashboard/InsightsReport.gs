@@ -89,7 +89,11 @@
 // not just the Individual Report). Dept totals/rates are unchanged, but
 // every 'vs team average' comparison moves, so the old blobs must not be
 // served.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v21';
+// v22 (R18 item 8): adds `queueHealth.ytdDailySeries` -- the year-to-date
+// daily dept-total queue rows -- so the Calendar view works for Queue:
+// Abandoned % at any window length. Payload SHAPE change, so old blobs
+// would leave the calendar gated for the TTL.
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v22';
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -886,10 +890,19 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
         trend.metrics.violations.dailyTotal    = dailyTotalOf('violations');
         trend.metrics.violations.dailyPerQueue = dailyPerQueueOf('violations');
       }
+
     }
     return {
       hasSubQueues:       !!cur.meta.hasSubQueues,
       subQueuesSeparated: true,
+      // R18 (item 8): the YEAR-TO-DATE daily dept-total rows, SAME shape as
+      // dailySeries so the calendar reads either through one code path. This
+      // is what makes the Calendar view available for Queue: Abandoned % at
+      // any window length -- the team metrics got the equivalent in R17d
+      // (trendYtd), and the queue metric was gated out then only because no
+      // YTD queue series existed. It costs no extra read: QCDReport
+      // accumulates it inside the 12-month trend pass it already runs.
+      ytdDailySeries:     cur.ytdDailySeries || [],
       queues:        cur.meta.queues || [],
       totals:        pick(cur.totals),
       priorTotals:   prior && prior.meta && !prior.meta.unmapped ? pick(prior.totals) : null,

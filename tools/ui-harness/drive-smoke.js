@@ -234,6 +234,84 @@ async function horizontalOverflow(page) {
         'months="' + cal.months + '" note="' + cal.note.trim() + '"');
     }
 
+    // R18 (item 8): the QUEUE metric reaches the calendar too. R17d left it
+    // span-gated because queueHealth.dailySeries covers the selected window
+    // only and no year-scoped queue series existed; QCDReport now emits
+    // ytdDailySeries from the 12-month trend pass it already runs. The
+    // assertion is the same three-part one as the team metrics -- enabled,
+    // drawn, and CAPTIONED -- because an uncaptioned year of abandon rates
+    // reads as the selected day's.
+    if (role === 'admin') {
+      await page.selectOption('#ins-trend-metric', 'queues:abandonedPct');
+      await page.waitForTimeout(1500);
+      const qcal = await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('#ins-trend-render-toggle .seg-btn'))
+          .find((x) => (x.textContent || '').trim() === 'Calendar');
+        if (btn && !btn.disabled) btn.click();
+        return btn ? { enabled: !btn.disabled, title: (btn.closest('#ins-trend-render-toggle') || {}).title } : null;
+      });
+      await page.waitForTimeout(1200);
+      const qdrawn = await page.evaluate(() => {
+        const host = document.getElementById('ins-trend-calendar');
+        return {
+          shown: !!host && host.style.display !== 'none',
+          cells: host ? host.querySelectorAll('.ins-cal-drill').length : 0,
+          note: host ? ((host.querySelector('.ins-cal-ytd-note') || {}).textContent || '') : '',
+          header: (document.getElementById('ins-trend-header') || {}).textContent || '',
+        };
+      });
+      record(role + ': the queue abandon-% metric offers the calendar at any window length',
+        !!qcal && qcal.enabled, JSON.stringify(qcal));
+      record(role + ': the queue calendar draws from the year-to-date queue series, captioned',
+        qdrawn.shown && qdrawn.cells > 0
+          && /year to date/i.test(qdrawn.note + ' ' + qdrawn.header),
+        JSON.stringify(qdrawn));
+      await page.selectOption('#ins-trend-metric', 'answered');
+      await page.waitForTimeout(900);
+    }
+
+    // R18 (item 4a): flipping light -> dark REPAINTS the charts that are on
+    // screen, not just the Overview one. Chart.js bakes THEME.* at
+    // construction, so a chart built under the light palette keeps drawing
+    // near-black gridlines on a near-black canvas after the flip -- the zero
+    // baseline vanished. Asserted on the palette each chart was BUILT with
+    // (baked in at construction, not readable from any DOM attribute) via the
+    // raw per-chart config -- both that the chart was rebuilt at all and that
+    // it came back carrying dark tokens.
+    {
+      const snap = () => page.evaluate(() => {
+        const out = { mode: document.body.getAttribute('data-mode'),
+                      line: getComputedStyle(document.body).getPropertyValue('--line').trim(),
+                      charts: {} };
+        ['dept-missed-chart', 'ins-trend-chart', 'ins-cards-chart'].forEach((id) => {
+          const c = document.getElementById(id);
+          if (!c || c.offsetParent === null) return;
+          const ch = (window.Chart && window.Chart.getChart) ? window.Chart.getChart(c) : null;
+          if (!ch) return;
+          const raw = ((ch.config && ch.config._config && ch.config._config.options) || {});
+          const y = ((raw.scales || {}).y) || ((raw.scales || {}).y1) || {};
+          out.charts[id] = { cid: ch.id, tick: (y.ticks || {}).color || '' };
+        });
+        return out;
+      });
+      const before = await snap();
+      await page.click('#mode-btn');
+      await page.waitForTimeout(1600);
+      const after = await snap();
+      const ids = Object.keys(before.charts);
+      const rebuilt = ids.filter((id) => after.charts[id] && after.charts[id].cid !== before.charts[id].cid);
+      const retinted = ids.filter((id) => after.charts[id]
+        && after.charts[id].tick && after.charts[id].tick !== before.charts[id].tick);
+      record(role + ': dark-mode flip rebuilds every on-screen dept chart (not just Overview)',
+        ids.length >= 2 && rebuilt.length === ids.length && after.mode === 'dark',
+        'mode=' + after.mode + ' charts=' + ids.join(',') + ' rebuilt=' + rebuilt.join(','));
+      record(role + ': the rebuilt dept charts carry the DARK palette, not stale light tokens',
+        ids.length >= 2 && retinted.length === ids.length && after.line !== before.line,
+        'line ' + before.line + '->' + after.line + ' retinted=' + retinted.join(','));
+      await page.click('#mode-btn');           // leave the page as we found it
+      await page.waitForTimeout(1200);
+    }
+
     // R18: a To-date past the last day WITH DATA is clamped, and the
     // correction is stated. This is a numbers bug, not a cosmetic one: every
     // per-workday figure divides by the INV-35 working-day count of the
