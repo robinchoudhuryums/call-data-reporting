@@ -1172,14 +1172,32 @@ behind the removed button.
   ladder — value green ≤3% / amber 3–4% / red >4%, and the RED tier also
   tints the card (the Queues-in-viol treatment); the 5% queue-violation line
   still drives everything else, so the two thresholds are deliberately
-  different numbers. The tally unit is **per SECTION**, not cohort-wide: one
-  shared unit let a ~350-call/day dept set a block size that rendered a
-  ~8-call/day queue as a sliver, so each section scales to its own busiest
-  queue and discloses "block ≈ N calls" on its banner when N > 1 (the
-  company-row "each block ≈" note went with it — one number would now lie).
-  The trade-off is deliberate: blocks compare WITHIN a section, never
-  across; cross-dept magnitude is the Total column's job. **R16e applies the
-  same per-section unit to the WEB all-departments report** (`qcdSectionUnit`
+  different numbers. **R18 (owner): the tally unit is EMAIL-WIDE, and the R16d
+  per-section unit is RETIRED.** Per-section reasoning was that blocks
+  compare within a section and cross-dept magnitude is the Total column's
+  job — but bar length is pre-attentive and a caption is not, so nobody
+  checks "block ≈ N calls" before comparing two bars. Measured on the
+  2026-08-11 email: CSR's 349 calls drew 17 blocks while Sales (50) and Field
+  Ops Power (25) each drew 25, so the busiest queue in the company rendered
+  as the shortest of the three. One unit restores the only property a tally
+  has — length ∝ quantity — and `queue-report.test.js` pins it as a
+  MONOTONICITY property over every queue row, not as an arithmetic result.
+  The unit comes from `tallyBasisFor_`: scaling to the true maximum fails
+  here (a ~349-to-1 day puts nine of twelve queues under one block), so
+  leading OUTLIERS — a value more than `TALLY_OUTLIER_RATIO` = 2.5× the next
+  one down — are dropped, the largest survivor sets the scale, and the
+  dropped rows CLIP at the ceiling with a `»`. Two guards: a broad top is not
+  an outlier (349 vs 300 stops the walk, so nothing clips and the squeeze is
+  real rather than an artifact), and the walk can never drop more than a
+  quarter of the rows or leave fewer than two survivors. The block size and
+  the `»` legend are disclosed ONCE, in the table footnote beside the
+  sentence that already explains the bars — the per-section banner note was
+  what made a changing scale look sanctioned, and the column header is too
+  narrow to carry the text without wrapping to two lines. **R16e applies the
+  per-section unit to the WEB all-departments report** (NOT yet revisited for
+  R18 — the web report is one scrollable page where a reader can see the
+  Total column beside every bar, and no one has reported the inversion there;
+  if it is unified later, `tallyBasisFor_` is the piece to port) (`qcdSectionUnit`
   in script-11-qcd-boot, disclosed as `.qcd-deptrow-unit` on each dept
   banner; the single company-row `= N calls` legend went with the
   cohort-wide unit — one number would now be wrong for every section but

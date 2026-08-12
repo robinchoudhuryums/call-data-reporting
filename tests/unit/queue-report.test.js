@@ -265,13 +265,89 @@ test('R16d: company-aban card tint follows the value tier; tally unit is per-sec
     'amber tier keeps the neutral tile');
   assert.match(amber, /color:#c66b4b;padding-top:2px;">3\.60%/,
     'amber tier colors the value');
-  // Per-section tally units: CSR's busiest queue is 100 calls (unit 10),
-  // Sales's is 40 (unit 5) -- each banner discloses its OWN block size
-  // (the old cohort-wide unit rendered a quiet dept's tally as a sliver
-  // on the busiest dept's scale; the company-row note is gone with it).
-  assert.match(red, /7\.0%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 5 calls<\/span>/);
-  assert.match(red, /2\.5%\)<\/span> &middot; <span style="color:#606872;">block &asymp; 2 calls<\/span>/);
+  // R18: ONE tally unit for the whole email, disclosed ONCE in the column
+  // header. The R16d per-section unit is retired: it made bar length
+  // incomparable across depts, and a per-section caption never wins against
+  // a bar the eye has already measured.
+  assert.equal((red.match(/block &asymp;/g) || []).length, 1,
+    'the block size is stated exactly once, in the column header');
+  assert.match(red, /one block &asymp; 5 calls, the same across every queue below/);
+  assert.doesNotMatch(red, /\)<\/span> &middot; <span style="color:#606872;">block &asymp;/,
+    'no per-section block-size note on a dept banner');
   assert.doesNotMatch(red, /each block/);
+});
+
+test('R18: one email-wide tally scale -- a busier queue never draws a SHORTER bar', function () {
+  // The reported defect, from the 2026-08-11 email: the unit was per section,
+  // so Field Ops (42 calls, unit 2) drew 21 blocks while Field Ops Power
+  // (25 calls, unit 1) drew 25 -- and CSR's 349 drew 17, the shortest of the
+  // three. This pins the property that was violated, not the arithmetic that
+  // happened to fix it: across EVERY queue row in the email, block count must
+  // be monotonic in call volume.
+  const d = emailFixture();
+  d.depts = [
+    ['CSR', 349], ['Sales', 50], ['Field Ops', 42], ['Field Ops Power', 25],
+    ['Resupply', 13], ['Denials', 2],
+  ].map(function (p) {
+    const q = { queue: 'A_Q_' + p[0].replace(/\s/g, ''), totalCalls: p[1], totalAnswered: p[1],
+      abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0, violationsMtd: 0 };
+    return { dept: p[0], parent: null,
+      totals: { totalCalls: p[1], totalAnswered: p[1], abandoned: 0, abandonedPct: 0,
+        abandonedPctStr: '0.00%', longestWait: '0:01:00', avgAnswer: '0:00:15',
+        violations: 0, violationsMtd: 0 },
+      queues: [q] };
+  });
+  const html = h.call('buildQueueReportEmailHtml_', d, '2026-08-11', false);
+  // Pair each queue row's volume with the blocks its tally drew.
+  // NB: split('<tr>') does not work here -- the tally is a NESTED table with
+  // its own <tr>, so a row would be torn in half. Match name -> total ->
+  // tally in one go instead.
+  const seen = [];
+  const rowRe = /(A_Q_[A-Za-z0-9_&]+)<\/td><td align="right"[^>]*>(\d+)<\/td><td style="padding:6px 8px;[^"]*">([\s\S]*?)<\/table><\/td>/g;
+  let mm;
+  while ((mm = rowRe.exec(html)) !== null) {
+    seen.push({ queue: mm[1], calls: Number(mm[2]),
+                blocks: (mm[3].match(/<td width="4"/g) || []).length,
+                clipped: /&raquo;/.test(mm[3]) });
+  }
+  assert.equal(seen.length, 6, 'one tally row per queue, got ' + JSON.stringify(seen));
+  seen.sort(function (a, b) { return a.calls - b.calls; });
+  seen.forEach(function (r, i) {
+    if (!i) return;
+    const prev = seen[i - 1];
+    assert.ok(r.blocks >= prev.blocks || r.clipped,
+      r.calls + ' calls drew ' + r.blocks + ' blocks but ' + prev.calls
+        + ' calls drew ' + prev.blocks);
+  });
+  // The specific inversion the owner reported is gone.
+  const at = function (n) { return seen.filter(function (r) { return r.calls === n; })[0]; };
+  assert.ok(at(42).blocks > at(25).blocks, '42 calls must out-draw 25');
+  // CSR is the lone outlier: it clips, says so, and stays inside the column.
+  assert.equal(at(349).clipped, true, 'the 349-call outlier clips');
+  assert.ok(at(349).blocks <= 25, 'a clipped row still fits the column');
+  assert.equal(seen.filter(function (r) { return r.clipped; }).length, 1,
+    'only the outlier clips -- the scale is set by the largest survivor');
+  assert.match(html, /&raquo; marks a queue past the end of that scale/,
+    'the clip marker is explained in the footnote, beside the bar legend');
+});
+
+test('R18: a broad top is NOT an outlier -- two large queues set the scale, nothing clips', function () {
+  // The guard against over-clipping. When the top two are comparable the
+  // spread is real, so the scale comes from the top and the squeeze is
+  // honest rather than an artifact of dropping rows.
+  const d = emailFixture();
+  d.depts = [['A', 349], ['B', 300], ['C', 50]].map(function (p) {
+    const q = { queue: 'A_Q_' + p[0], totalCalls: p[1], totalAnswered: p[1], abandoned: 0,
+      abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0, violationsMtd: 0 };
+    return { dept: p[0], parent: null,
+      totals: { totalCalls: p[1], totalAnswered: p[1], abandoned: 0, abandonedPct: 0,
+        abandonedPctStr: '0.00%', longestWait: '0:01:00', avgAnswer: '0:00:15',
+        violations: 0, violationsMtd: 0 },
+      queues: [q] };
+  });
+  const html = h.call('buildQueueReportEmailHtml_', d, '2026-08-11', false);
+  assert.doesNotMatch(html, /&raquo;/, 'no row clips when the top is broad');
+  assert.doesNotMatch(html, /past the end of that scale/, 'and the legend for it is absent');
 });
 
 test('R16e/R17e: no tally row exceeds the 25-block width the email column can fit', function () {
@@ -301,7 +377,15 @@ test('R16e/R17e: no tally row exceeds the 25-block width the email column can fi
     assert.ok(blocks <= 25, 'a tally row rendered ' + blocks + ' blocks (max 25 fits the column)');
   });
   // ...and the smallest queue still shows at least one block (never hidden).
-  assert.match(html, /block &asymp; 200 calls/);
+  // R18: the unit is email-wide now and comes from the largest NON-outlier
+  // (260, not the 4000 that clips), so a three-orders-of-magnitude section
+  // keeps its small queues legible instead of scaling everything to the
+  // giant. The 4000 row clips at the ceiling above.
+  assert.match(html, /one block &asymp; 20 calls, the same across every queue below/);
+  assert.match(html, /&raquo; marks a queue past the end of that scale/);
+  const tiny = (/A_Q_TINY<\/td><td align="right"[^>]*>\d+<\/td><td style="padding:6px 8px;[^"]*">([\s\S]*?)<\/table><\/td>/.exec(html) || [, ''])[1];
+  assert.ok((tiny.match(/<td width="4"/g) || []).length >= 1,
+    'the 7-call queue keeps a visible block on the shared scale');
 });
 
 // ── Owner round (2026-07): Viol MTD on the banner; no company roll-up ───────
