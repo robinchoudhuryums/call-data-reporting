@@ -179,5 +179,15 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
 - **Regression Scenarios (`docs/regression-scenarios.md`):** the floater-exclusion contract
   (S35) and the Sonia `0:15:03 / 0:03:01` durations (S7) are now asserted
   as unit tests; the rest remain manual deploy-time checks.
-- **No browser/DOM tests.** `script.html` client logic is out of scope
-  for a Node harness.
+- **No browser/DOM tests** — but PURE client logic is no longer out of
+  scope. Anything needing a document, a layout or an event stays with the
+  rendered-UI gate (`npm run ci:ui`, headless Chromium). A dependency-free
+  helper inside a `script-*.html` fragment, however, can be lifted out and
+  unit-tested here: read the fragment, brace-match the `function NAME(...)
+  {...}` declaration, and `new Function('return (' + src + ')')()` it.
+  `call-grouping.test.js` does this for `groupConsecutiveByCall_` (the
+  shared "these rings are one call" rule, R17i) and is the pattern to copy;
+  `html-include-structure.test.js` reads the same fragments as text for its
+  structural pins. Worth doing whenever a client RULE is shared by more than
+  one surface — the UI gate can see THAT something rendered, not that two
+  surfaces agreed on the rule behind it.
