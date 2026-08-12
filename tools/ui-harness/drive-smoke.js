@@ -190,6 +190,48 @@ async function horizontalOverflow(page) {
       record(role + ': the replaced Insights card sets are hidden',
         trp.kpiRowHidden && trp.qhCardsHidden,
         'kpiRow=' + trp.kpiRowHidden + ' qhCards=' + trp.qhCardsHidden);
+
+      // R18 (item 1): the panel's Range / Yesterday / MTD toggle. Range is the
+      // page's own window and must stay the default -- it is the only period
+      // whose figures reconcile with the agent table. MTD fetches a DIFFERENT
+      // window through the same endpoint, so the assertion is that the numbers
+      // actually move AND that the date chip names the period: an unlabelled
+      // span beside a table built from another window reads as a bug.
+      const trpRead = () => page.evaluate(() => {
+        const tiles = document.querySelector('#trp-tiles .ds-kpi__foot');
+        return {
+          date: (document.getElementById('trp-date') || {}).textContent || '',
+          active: Array.from(document.querySelectorAll('#trp-period .dept-qcd-period-btn'))
+            .filter((b) => b.classList.contains('active'))
+            .map((b) => b.getAttribute('data-trp-period')).join(','),
+          rings: tiles ? tiles.textContent : '',
+          rows: document.querySelectorAll('#trp-tbody tr.trp-row').length,
+        };
+      });
+      // In-page clicks, not page.click: the panel rides a sticky aside and
+      // can sit under the frost overlay, so Playwright's actionability wait
+      // times out where a dispatched click is exactly what a user's is.
+      const trpPick = (p) => page.evaluate((sel) => {
+        const b = document.querySelector('#trp-period [data-trp-period="' + sel + '"]');
+        if (b) b.click();
+      }, p);
+      const trpRange = await trpRead();
+      await trpPick('mtd');
+      await page.waitForTimeout(1800);
+      const trpMtd = await trpRead();
+      await trpPick('range');
+      await page.waitForTimeout(1500);
+      const trpBack = await trpRead();
+      record(role + ': the Team Rings panel defaults to Range (reconciles with the table)',
+        trpRange.active === 'range' && !/MTD|latest day/.test(trpRange.date),
+        JSON.stringify(trpRange));
+      record(role + ': switching to MTD loads a DIFFERENT window and says so',
+        trpMtd.active === 'mtd' && /MTD/.test(trpMtd.date) && trpMtd.rings !== trpRange.rings,
+        JSON.stringify(trpMtd));
+      record(role + ': switching back to Range restores the page-window figures',
+        trpBack.active === 'range' && trpBack.rings === trpRange.rings
+          && trpBack.rows === trpRange.rows,
+        JSON.stringify(trpBack));
     }
 
     // R17d: the trend Calendar is available at ANY window length. On the dept

@@ -779,7 +779,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   open/collapsed state; default collapsed, R12-11), `cdr.ov.window`
   (R12-19: the ONE Overview window driving cards + agent table --
   superseded `cdr.ov.cardperiod`/`cdr.ov.tableperiod.v1`, migrated
-  table-pref-first), `cdr.dept.rowdensity` (R12-16 compact rows), and
+  table-pref-first), `cdr.dept.rowdensity` (R12-16 compact rows),
+  `cdr.dept.trp.period` (R18 item 1 — the Team Rings panel's
+  Range/Yesterday/MTD period; default `range`), and
   `cdr.dev.overlay` (O-11 dev overlay open/closed; ADMIN-ONLY and read only
   after the role check — it is a display preference, never an entitlement,
   and a manager setting it by hand gets nothing) — the theme
@@ -1532,7 +1534,26 @@ behind the removed button.
   to + flashes the agent's main-table row. Rendered by
   `renderTeamRingsPanel_` from the SAME dept-summary payload as the table
   (no extra RPC; repaints wherever `renderDeptTeamStrip_` does); hideable
-  via the `dept-team-rings` UI flag. It REPLACES the Insights
+  via the `dept-team-rings` UI flag.
+  **R18 (item 1) added a Range / Yesterday / MTD toggle** (`#trp-period`,
+  panel 1's control markup, persisted in `cdr.dept.trp.period`).
+  **Range is the default and must stay it** — it is the page's own window and
+  therefore the only period whose figures reconcile with the agent table
+  beside it; defaulting elsewhere would silently break that reconciliation.
+  The two fixed periods are windows off `latestDqeIso_` (latest day; month
+  start → latest day), deliberately DECOUPLED from the page's dates the way
+  panel 1's already are, and the date chip NAMES them (`· MTD` / `· latest
+  day`) because an unlabelled span next to a table built from another window
+  reads as a bug. They are fetched on demand via `getDepartmentSummary` with
+  a different from/to — the same endpoint reuse the Overview mini-table
+  does — rather than by widening `computeSummary_`'s read: MTD can sit months
+  from the selected window, and paying that on EVERY dept load to serve a
+  panel toggle is the wrong trade. Memoized per (dept, from, to) on top of
+  the server's 30-min `summary:` cache, and the memo is DROPPED in
+  `refresh()` — surviving an explicit Refresh is the one way this panel could
+  lie. A pending fetch FROSTS the panel rather than flashing it empty (stale
+  numbers under a newly-selected label is the failure to avoid), and a failed
+  one falls back to Range with the chip saying so. It REPLACES the Insights
   Department-rollup card row (+ its section title, removed per owner) and
   the Queue-health card column — both hidden with wiring inert (Round-16
   convention); their figures live on in this panel, panel 1's tiles, the
