@@ -276,6 +276,47 @@ async function horizontalOverflow(page) {
         'months="' + cal.months + '" note="' + cal.note.trim() + '"');
     }
 
+    // R18b (owner): the all-departments report shares ONE tally scale, the
+    // same fix the email got in R18 -- a per-section unit made bar length
+    // incomparable between departments, which is the same misread whether the
+    // rows sit in an inbox or on a page. Asserted as the PROPERTY (monotonic
+    // in volume) plus the two structural consequences: exactly one legend,
+    // and no per-dept block-size note left behind.
+    if (role === 'admin') {
+      await page.evaluate(() => {
+        const b = document.getElementById('ov-qcd-alldept-btn');
+        if (b) b.click();
+      });
+      await page.waitForTimeout(2600);
+      const qcd = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('.qcd-alldept-table tbody tr'))
+          .filter((tr) => tr.querySelector('.ans-tally'));
+        return {
+          legends: document.querySelectorAll('.qcd-tally-legend').length,
+          perDeptNotes: document.querySelectorAll('.qcd-deptrow-unit').length,
+          pairs: rows.map((tr) => ({
+            calls: Number(((tr.querySelectorAll('td.num')[0] || {}).textContent || '0').replace(/[^0-9]/g, '')),
+            blocks: tr.querySelectorAll('.ans-tally .tly').length,
+            clip: !!tr.querySelector('.tly-clip'),
+          })),
+        };
+      });
+      const sorted = qcd.pairs.slice().sort((a, b) => a.calls - b.calls);
+      const inversion = sorted.find((r, i) => i > 0 && r.blocks < sorted[i - 1].blocks && !sorted[i - 1].clip);
+      record(role + ': the all-dept report tally is monotonic in call volume',
+        qcd.pairs.length >= 3 && !inversion,
+        inversion ? JSON.stringify(inversion) : JSON.stringify(qcd.pairs.slice(0, 4)));
+      record(role + ': its block size is disclosed ONCE, with no per-dept note left over',
+        qcd.legends === 1 && qcd.perDeptNotes === 0,
+        'legends=' + qcd.legends + ' perDeptNotes=' + qcd.perDeptNotes);
+      await page.evaluate(() => {
+        const m = document.getElementById('qcd-alldept-modal');
+        const c = m && m.querySelector('.modal-close');
+        if (c) c.click();
+      });
+      await page.waitForTimeout(600);
+    }
+
     // R18 (item 8): the QUEUE metric reaches the calendar too. R17d left it
     // span-gated because queueHealth.dailySeries covers the selected window
     // only and no year-scoped queue series existed; QCDReport now emits
@@ -426,13 +467,42 @@ async function horizontalOverflow(page) {
           const link = document.querySelector('#dept-bucket-detail-body .ms-agent-link');
           const want = link.getAttribute('data-ms-agent');
           link.click();
-          await new Promise((r) => setTimeout(r, 700));
-          const lit = document.querySelector('#dept-missed-detail [data-agent-card].qs-spotlight');
-          return { want: want, got: lit ? lit.getAttribute('data-agent-card') : null,
-                   open: lit ? lit.open : false };
+          // The scroll is smooth; wait past it before measuring where it landed.
+          await new Promise((r) => setTimeout(r, 1600));
+          const lit = document.querySelector('#dept-missed-detail [data-agent-card].qs-spotlight')
+            || document.querySelector('#dept-missed-detail [data-agent-card="' + want + '"]');
+          const out = { want: want, got: lit ? lit.getAttribute('data-agent-card') : null,
+                        open: lit ? lit.open : false };
+          if (lit) {
+            // R18b: how much of the sticky chrome covers the top of the page.
+            let inset = 0;
+            document.querySelectorAll('#dept-page .controls, #insights-results > .ir-results-header')
+              .forEach((el) => {
+                if (!el || !el.offsetHeight) return;
+                const cs = getComputedStyle(el);
+                if (cs.position !== 'sticky') return;
+                inset = Math.max(inset, (parseFloat(cs.top) || 0) + el.getBoundingClientRect().height);
+              });
+            const r = lit.getBoundingClientRect();
+            out.top = Math.round(r.top);
+            out.bottom = Math.round(r.bottom);
+            out.inset = Math.round(inset);
+            out.vh = window.innerHeight;
+            out.fits = r.height <= (window.innerHeight - inset);
+          }
+          return out;
         });
         record(role + ': a drill row\'s agent name jumps to that agent\'s card',
           !!landed.got && landed.got === landed.want && landed.open, JSON.stringify(landed));
+        // R18b (owner): the spotlight must land the card FULLY visible. The old
+        // scrollIntoView({block:'start'}) put its top at the viewport top --
+        // i.e. underneath the pinned controls strip -- so the card it was
+        // drawing attention to was the part that got covered.
+        record(role + ': the spotlighted card clears the sticky chrome',
+          landed.top == null || landed.top >= landed.inset - 1, JSON.stringify(landed));
+        record(role + ': and its bottom is on screen when it can be',
+          landed.top == null || !landed.fits || landed.bottom <= landed.vh + 1,
+          JSON.stringify(landed));
       }
     }
 

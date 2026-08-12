@@ -564,12 +564,26 @@
     // email's: blocks compare WITHIN a section, never across -- cross-dept
     // magnitude is the Total column's job. Computed inside the section loop
     // below; `qcdSectionUnit` is what queueRow reads.
+    // R18b (owner): ONE unit for the WHOLE report, ported from the email's
+    // R18 fix -- the per-section unit made bar length incomparable between
+    // departments, which is the same misread whether the rows sit in an
+    // inbox or on a page. Prefer 2 calls/block (fine enough to separate an
+    // 11-call queue from a 13-call one, where most queues live); fall back to
+    // the ladder when 2 would put more than a quarter of the rows at the
+    // ceiling, since clipping only stays honest while it is rare. The busiest
+    // queue then CLIPS with a "»" rather than setting a coarse scale for
+    // everyone -- see qcdDailyBarCell_'s opts.tallyMax.
+    const QCD_TALLY_MAX_BLOCKS = 25;
+    const QCD_TALLY_UNIT_PREFERRED = 2;
+    const qcdRowTotal_ = function (q) {
+      return (Number(q.totalAnswered) || 0) + (Number(q.abandoned) || 0);
+    };
     let qcdSectionUnit = 0;
     const qcdUnitFor = function (items) {
       return ansTallyUnitFor_(items.map(function (i) {
         const q = i.q || i;
         return { totalAnswered: q.totalAnswered, totalMissed: q.abandoned };
-      }));
+      }), QCD_TALLY_MAX_BLOCKS);
     };
     const queueRow = function (q, sub) {
       const qViolShow = qcdViolShow_(q);
@@ -585,7 +599,7 @@
         + (hasDetail ? ' tabindex="0" aria-expanded="false"' : '') + '>'
         + '<td>' + escapeHtml(q.queue) + subTag + chevron + qMtdSub(q) + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
-        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true, tallyUnit: qcdSectionUnit }) + '</td>'   // QV-1 + R16e per-section tally
+        + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true, tallyUnit: qcdSectionUnit, tallyMax: QCD_TALLY_MAX_BLOCKS }) + '</td>'   // QV-1 + R16e per-section tally
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
         + '<td class="num">' + escapeHtml(q.avgAnswer) + '</td>'
         + '<td class="num' + c.violCls + '">' + fmtNumber(qViolShow) + '</td>'
@@ -601,6 +615,34 @@
       }
       return out;
     };
+    // R18b: resolve the ONE unit from every queue row the table will draw --
+    // parent queues and sub-queue children alike, the same answered+abandoned
+    // total qcdDailyBarCell_ renders, so the scale cannot disagree with the
+    // bars. Done BEFORE the section loop; qcdSectionUnit keeps its name (and
+    // its single read site in queueRow) but is now report-wide.
+    const qcdAllTotals = [];
+    topLevel.forEach(function (d) {
+      (d.queues || []).forEach(function (q) { qcdAllTotals.push(qcdRowTotal_(q)); });
+      (childrenOf[d.dept] || []).forEach(function (child) {
+        (child.queues || []).forEach(function (q) { qcdAllTotals.push(qcdRowTotal_(q)); });
+      });
+    });
+    let qcdTallyClipped = 0;
+    (function () {
+      const vals = qcdAllTotals.filter(function (v) { return v > 0; });
+      if (!vals.length) { qcdSectionUnit = 0; return; }
+      const ladderUnit = ansTallyUnitFor_(vals.map(function (v) {
+        return { totalAnswered: v, totalMissed: 0 };
+      }), QCD_TALLY_MAX_BLOCKS);
+      const clipsAt = function (u) {
+        return vals.filter(function (v) { return Math.round(v / u) > QCD_TALLY_MAX_BLOCKS; }).length;
+      };
+      const preferClips = clipsAt(QCD_TALLY_UNIT_PREFERRED);
+      qcdSectionUnit = (ladderUnit <= QCD_TALLY_UNIT_PREFERRED
+        || preferClips <= Math.floor(vals.length / 4))
+        ? QCD_TALLY_UNIT_PREFERRED : ladderUnit;
+      qcdTallyClipped = clipsAt(qcdSectionUnit);
+    })();
     topLevel.forEach(function (d) {
       // Section queues: parent's own (untagged) + each child's (tagged).
       const secItems = (d.queues || []).map(function (q) { return { q: q, sub: null }; });
@@ -626,11 +668,10 @@
       // R10-8: the abandon% leads the mini-summary at full weight (it was an
       // 11px muted afterthought); tone color rides the row's qcd-deptrow--*
       // class via .qcd-mini-pct.
-      // R16e: this section's own tally unit + its disclosure on the banner.
-      qcdSectionUnit = qcdUnitFor(secItems);
-      const secUnitNote = qcdSectionUnit > 1
-        ? ' &middot; <span class="qcd-deptrow-unit">block &asymp; ' + qcdSectionUnit + ' calls</span>'
-        : '';
+      // R18b: the unit is REPORT-wide (qcdSectionUnit is set once, before the
+      // loop) and disclosed once in the footer, so the per-section banner note
+      // is gone -- it was what made a changing scale look sanctioned.
+      const secUnitNote = '';
       const mini = secTotal > 0
         ? '<span class="qcd-deptrow-mini qcd-screen-only">' + fmtNumber(secTotal)
           + ' calls &middot; <strong class="qcd-mini-pct">' + escapeHtml(secPctStr)
@@ -661,10 +702,17 @@
     html += '<tfoot><tr class="qcd-alldept-grand">'
       + '<td>Company total</td>'
       + '<td class="num">' + fmtNumber(g.totalCalls) + '</td>'
-      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true }) + '</td>'
-      // (R16e: the single company-wide "= N calls" legend is GONE with the
-      // cohort-wide unit -- each dept banner discloses its own block size,
-      // and one number here would now be wrong for every section but one.)
+      + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(g, { tick: true })
+      // R18b: the single report-wide legend is BACK, because the unit is
+      // report-wide again. The company row keeps the proportional split bar
+      // (an aggregate dwarfs queue-scale blocks), so the note rides beside it.
+      + (qcdSectionUnit > 1
+          ? '<div class="qcd-tally-legend">one block &asymp; ' + qcdSectionUnit
+            + ' calls, the same for every queue above'
+            + (qcdTallyClipped > 0 ? ' &middot; &raquo; = past the end of that scale' : '')
+            + '</div>'
+          : '')
+      + '</td>'
       + '<td class="num">' + escapeHtml(g.longestWait) + '</td>'
       + '<td class="num">' + escapeHtml(g.avgAnswer) + '</td>'
       + '<td class="num' + gc.violCls + '">' + fmtNumber(qcdViolShow_(g)) + '</td>'

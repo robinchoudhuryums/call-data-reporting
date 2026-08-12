@@ -803,6 +803,15 @@
       html += '<div class="ds-heatmap-detail" style="display:none;"></div>';
     }
     el.innerHTML = html;
+    // R18b (owner): the grid arrives as a diagonal wave, matching the
+    // per-agent cards' expand. The cells are a CSS grid whose column count is
+    // fixed by the hour band, so the measured rank in waveIn_ reduces to
+    // row+col here -- but measuring keeps it correct if the band ever
+    // narrows responsively.
+    if (typeof waveIn_ === 'function') {
+      var grid = el.querySelector('.ds-heatmap');
+      if (grid) waveIn_(grid, '.ds-heatmap__cell');
+    }
   }
 
   /**

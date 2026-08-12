@@ -331,6 +331,44 @@ test('R18: one email-wide tally scale -- a busier queue never draws a SHORTER ba
     'the clip marker is explained in the footnote, beside the bar legend');
 });
 
+test('R18b: the unit PREFERS 2 calls/block, and falls back when clipping stops being rare', function () {
+  // Owner: 5 calls/block is coarse where most queues live -- an 11-call queue
+  // and a 13-call one drew the same length. 2/block restores the bottom half
+  // of the report and lets the top clip, which is what the marker is for.
+  // The fallback exists because clipping is only honest while it is RARE:
+  // once a large share of rows sit at the ceiling they all draw the same
+  // length and the tally ranks nothing.
+  const mk = function (name, calls) {
+    const q = { queue: 'A_Q_' + name, totalCalls: calls, totalAnswered: calls, abandoned: 0,
+      abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0, violationsMtd: 0 };
+    return { dept: name, parent: null,
+      totals: { totalCalls: calls, totalAnswered: calls, abandoned: 0, abandonedPct: 0,
+        abandonedPctStr: '0.00%', longestWait: '0:01:00', avgAnswer: '0:00:15',
+        violations: 0, violationsMtd: 0 },
+      queues: [q] };
+  };
+  // A real-shaped day: 12 queues, one giant. One row clips out of twelve.
+  const day = emailFixture();
+  day.depts = [349, 50, 42, 25, 14, 13, 11, 9, 9, 8, 2, 1]
+    .map(function (n, i) { return mk('Q' + i, n); });
+  const html = h.call('buildQueueReportEmailHtml_', day, '2026-08-11', false);
+  assert.match(html, /one block &asymp; 2 calls/, 'the preferred unit wins on a normal day');
+  // ...and the small end is now separable, which is the point of the change.
+  const blocksOf = function (name) {
+    const m = new RegExp('A_Q_' + name + '<\\/td><td align="right"[^>]*>\\d+<\\/td><td style="padding:6px 8px;[^"]*">([\\s\\S]*?)<\\/table><\\/td>').exec(html);
+    return m ? (m[1].match(/<td width="4"/g) || []).length : -1;
+  };
+  assert.ok(blocksOf('Q6') > blocksOf('Q9'), '11 calls must out-draw 8 (they tied at 5/block)');
+  // Now a day where 2/block would put half the rows at the ceiling: the
+  // adaptive unit takes over rather than flattening the report.
+  const heavy = emailFixture();
+  heavy.depts = [400, 300, 200, 8].map(function (n, i) { return mk('H' + i, n); });
+  const html2 = h.call('buildQueueReportEmailHtml_', heavy, '2026-08-11', false);
+  assert.doesNotMatch(html2, /one block &asymp; 2 calls/,
+    'three of four rows would clip at 2/block -- fall back');
+  assert.match(html2, /one block &asymp; \d+ calls/, 'and still disclose whatever unit won');
+});
+
 test('R18: a broad top is NOT an outlier -- two large queues set the scale, nothing clips', function () {
   // The guard against over-clipping. When the top two are comparable the
   // spread is real, so the scale comes from the top and the squeeze is

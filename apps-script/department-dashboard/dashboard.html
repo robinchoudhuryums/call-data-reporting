@@ -526,7 +526,18 @@
           </div>
           <div id="dept-queue-only-body"></div>
         </div>
-        <div id="dept-missed-agents" class="agent-grid" style="display:none;"></div>
+        <!-- R18b (owner): the per-agent cards are the tallest thing in this
+             section and are DETAIL, so they collapse behind a summary. Open
+             state is remembered per user (cdr.dept.missedagents); expanding
+             plays a diagonal wave so a wall of cards arrives in a readable
+             order instead of all at once. -->
+        <details id="dept-missed-agents-fold" class="missed-agents-fold" style="display:none;">
+          <summary>
+            <span class="missed-agents-fold-label">Per-agent detail</span>
+            <span class="missed-agents-fold-count" id="dept-missed-agents-count"></span>
+          </summary>
+          <div id="dept-missed-agents" class="agent-grid"></div>
+        </details>
       </div>
 
       <details id="diagnostics" class="diagnostics" data-admin-only style="display:none;">

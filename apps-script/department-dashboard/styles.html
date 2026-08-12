@@ -1407,7 +1407,34 @@
        strip (whose measured height lands in --dept-sticky-h, set by
        syncDeptStickyOffset_ in script.html), so scrolling never slides the
        QCD panel underneath the pinned strip. */
-    .dept-side { order: 0; position: sticky; top: calc(var(--dept-sticky-h, 84px) + 10px); align-self: start; max-height: calc(100vh - var(--dept-sticky-h, 84px) - 20px); overflow: auto; }
+    /* R18b (owner): the column must FIT rather than grow its own scrollbar.
+       Two panels plus a big roster used to overflow the sticky max-height, so
+       the whole aside scrolled -- which hides half of panel 1 behind a bar
+       nobody looks for. As a bounded flex COLUMN the panels can shrink
+       instead: panel 1 keeps its natural height (its content is a fixed set
+       of tiles), and panel 2's agent table -- the only genuinely unbounded
+       part, since it grows with team size -- absorbs whatever is left.
+       `overflow: auto` stays as the last resort for a viewport too short even
+       for the floors below; in that case a scrollbar is correct. */
+    .dept-side {
+      order: 0; position: sticky; top: calc(var(--dept-sticky-h, 84px) + 10px);
+      align-self: start; max-height: calc(100vh - var(--dept-sticky-h, 84px) - 20px);
+      overflow: auto;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    /* Panel 1 never shrinks; panel 2 does, down to its table floor. */
+    .dept-side > #dept-qcd-snapshot { flex: 0 0 auto; }
+    .dept-side > #dept-team-rings {
+      flex: 1 1 auto; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    /* The table is what gives: max-height gives way to the flex box, and the
+       floor keeps it a table rather than a sliver (below ~4 rows the panel
+       stops being readable and the aside's own scrollbar is the better
+       answer). */
+    .dept-side > #dept-team-rings .trp-table-wrap {
+      flex: 1 1 auto; min-height: 108px; max-height: none;
+    }
   }
   /* In the narrow side column the per-queue tiles stack rather than squeeze.
      R17c (owner): two tiles per row + a two-line Total-Calls split + a
@@ -1478,6 +1505,54 @@
      that grow rightward from a shared origin are comparable down the column;
      right-aligned ones share only their END, so the eye has to re-find each
      row's start to compare lengths. */
+  /* R18b (owner): the diagonal wave entrance (waveIn_ in script-1-core sets
+     --wave per element). `both` fill matters -- an element whose animation is
+     dropped still ends on the final frame instead of stranding at opacity 0. */
+  @keyframes wave-in {
+    from { opacity: 0; transform: translateY(7px) scale(0.985); }
+    to   { opacity: 1; transform: none; }
+  }
+  .wave-in {
+    animation: wave-in 250ms cubic-bezier(0.22, 0.8, 0.3, 1) both;
+    animation-delay: calc(var(--wave, 0) * 34ms);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wave-in { animation: none; }
+  }
+  /* The per-agent missed-card fold. Sits in the flow of #dept-missed-detail,
+     so it reuses the section's own quiet chrome rather than inventing more. */
+  .missed-agents-fold { margin-top: 10px; }
+  .missed-agents-fold > summary {
+    cursor: pointer; list-style: none; user-select: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--paper-card);
+    font: 500 11px var(--mono); letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .missed-agents-fold > summary::-webkit-details-marker { display: none; }
+  .missed-agents-fold > summary::before {
+    content: '\25B8'; font-size: 10px; letter-spacing: 0;
+    transition: transform 160ms ease;
+  }
+  .missed-agents-fold[open] > summary::before { transform: rotate(90deg); }
+  .missed-agents-fold > summary:hover { color: var(--ink); border-color: var(--muted); }
+  .missed-agents-fold-count {
+    margin-left: auto; letter-spacing: 0;
+    font: 400 11px var(--mono); color: var(--muted);
+  }
+  .missed-agents-fold > .agent-grid { margin-top: 10px; }
+
+  /* R18b: the clip marker on a shared-scale tally, and the report-wide
+     block-size legend under the company row. */
+  .tly-clip {
+    font: 600 10px var(--mono); color: var(--muted);
+    margin-left: 2px; line-height: 1;
+  }
+  .qcd-tally-legend {
+    font: 10px var(--mono); color: var(--muted);
+    letter-spacing: 0; margin-top: 3px;
+  }
   .trp-tally { max-width: 96px; gap: 1px; min-height: 10px; justify-content: flex-start; }
   .trp-tally .tly { width: 5px; height: 10px; }
   .trp-tally-cell { padding-right: 6px; }
