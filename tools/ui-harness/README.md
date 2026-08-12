@@ -51,6 +51,10 @@ quietly verify the client against a different Chart.js than production ships.
 node gen-payloads.js          # Overview/dept/missed/IR/Insights payloads (real server code)
 node gen-phase3.js            # Escalations (fake JDBC) + admin-modal inits
 node build-harness.js admin && node build-harness.js manager
+# NB both roles: `build-harness.js` builds ONE site and defaults to admin, so a
+# bare `node build-harness.js` leaves site/index-manager.html STALE. New markup is
+# then invisible to half of drive-smoke, which fails on a locator that never
+# matches -- a confusing error with a trivial cause. ci.mjs always builds both.
 node drive.js                 # Phase 1: Overview + My Department sweep
 node drive-insights.js        # Phase 2: Insights
 node drive-phase3.js          # Phase 3: Escalations + modals
