@@ -324,6 +324,10 @@
              date authority). Filled by updateDeptWorkdays_ (client
              holiday-aware mirror, overwritten by the server's INV-35 count
              when an Insights report lands); wrapper hidden while empty. -->
+        <!-- R18: states a To-date correction when the requested range ran
+             past the data (clampDeptToDate_). Silence would leave the user
+             looking at a window they did not pick. -->
+        <div class="dept-clamp-note" id="dept-clamp-note" style="display:none;"></div>
         <div class="control" id="dept-workdays-wrap" style="display:none;">
           <label>&nbsp;</label>
           <span class="dept-workdays-pill" id="dept-workdays"

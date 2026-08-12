@@ -6501,6 +6501,16 @@
   }
 
   /* -------- Date preset chips ------------------------------------ */
+  /* R18: the To-date clamp note. Sits on its own line across the controls
+     strip so it can't squeeze the inputs; warn-tinted because it reports a
+     correction the user did not ask for. */
+  .dept-clamp-note {
+    flex: 1 0 100%; order: 99;
+    font: 500 11px/1.5 var(--mono); color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+    border-left: 2px solid color-mix(in srgb, var(--warn) 50%, transparent);
+    border-radius: var(--r); padding: 4px 8px; margin-top: 6px;
+  }
   /* R17g: the sticky-strip workday count (see #dept-workdays-wrap). Aligns
      with the input row via the control's spacer label. */
   .dept-workdays-pill {

@@ -1506,7 +1506,8 @@
     var cards = (data && data.agentData) || [];
     if (cards.length <= 1) return;
     var ts = (data && data.teamStats) || {};
-    var teamPct = Number((ts.pct && ts.pct.val) || 0);
+    // R18: benchmark against the excluded-manager baseline, not the dept rate.
+    var teamPct = insTeamBenchmarkPct_(data);
     var behind = cards.filter(function (c) { return insClassifyAgent_(c, teamPct) === 'attention'; });
     if (!behind.length) {
       // D3 (#6): an explicit all-clear beats empty space for occasional
@@ -3501,7 +3502,28 @@
   // change TREND stays a separate secondary pill (insTrendPill_).
   var INS_PEER_GAP_PTS = 5;   // >= this many points below/above team = Behind/Ahead
   var INS_MIN_VOL      = 5;   // fewer rung calls than this = on par (low signal)
+  /**
+   * R18: THE benchmark an agent is measured against -- the excluded-manager
+   * baseline (`meta.teamAvgBasis.pct`, INV-26 reaching Insights) rather than
+   * the dept rate. Read through this everywhere: the three classification
+   * sites used to each pull `teamStats.pct.val` independently, which is the
+   * same shape of drift that let IR and Insights disagree in the first place.
+   * Falls back to the dept rate for a pre-v21 cached payload.
+   */
+  function insTeamBenchmarkPct_(data) {
+    const basis = data && data.meta && data.meta.teamAvgBasis;
+    if (basis && basis.agents > 0) return Number(basis.pct) || 0;
+    const ts = (data && data.teamStats) || {};
+    return Number((ts.pct && ts.pct.val) || 0);
+  }
+  /** R18: is this card exempt from the team benchmark (a manager)? */
+  function insIsExempt_(card) { return !!(card && card.excludedFromTeamAvg); }
+
   function insClassifyAgent_(card, teamPct) {
+    // R18: an excluded manager is never classified against the benchmark
+    // they sit outside of -- they would otherwise show as "behind the team"
+    // on a token call volume, which is the opposite of the ruling's intent.
+    if (insIsExempt_(card)) return 'steady';
     var m = (card && card.metrics) || {};
     var pct  = Number((m.pct  && m.pct.val)  || 0);   // current % answered (0-100)
     var rung = Number((m.rung && m.rung.val) || 0);   // volume (total rings)
@@ -3551,7 +3573,10 @@
     const teamScore = deltaImprovementScore_(insPerDayMetrics_(teamStats || {}, meta));
     // I6/I7: peer baseline for the standing classification -- the team's answer
     // rate this window. The rail/tier compare each agent to THIS, not 92%.
-    const teamPctForStanding = Number((teamStats && teamStats.pct && teamStats.pct.val) || 0);
+    // R18: the rail/tier benchmark is the excluded-manager baseline too
+    // (insTeamBenchmarkPct_), so the cards, the headline chip and the email
+    // all agree on what "the team average" means.
+    const teamPctForStanding = insTeamBenchmarkPct_(insLastData);
     const enriched = cards.map(function (c) {
       // Classification runs on per-working-day-adjusted metrics (see
       // insPerDayMetrics_) so an unequal-window comparison can't brand an

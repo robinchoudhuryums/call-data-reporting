@@ -234,6 +234,39 @@ async function horizontalOverflow(page) {
         'months="' + cal.months + '" note="' + cal.note.trim() + '"');
     }
 
+    // R18: a To-date past the last day WITH DATA is clamped, and the
+    // correction is stated. This is a numbers bug, not a cosmetic one: every
+    // per-workday figure divides by the INV-35 working-day count of the
+    // SELECTED window, so trailing empty days silently deflated the pace
+    // (two surfaces disagreed -- 273.8/day vs 365/day on the same data).
+    // Asserted on the HAND-TYPED path, which is the one with no preset to
+    // fall back on.
+    {
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(3800);
+      const clamp = await page.evaluate(async () => {
+        const t = document.getElementById('to-date');
+        const latest = t.value;                       // default == latest data
+        t.value = '2026-12-31';
+        t.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 1200));
+        const note = document.getElementById('dept-clamp-note');
+        return {
+          latest: latest,
+          to: t.value,
+          from: (document.getElementById('from-date') || {}).value,
+          noteShown: !!note && note.style.display !== 'none' && !!note.textContent,
+        };
+      });
+      record(role + ': a To-date past the data is clamped back to it',
+        clamp.to === clamp.latest && clamp.to <= clamp.latest, JSON.stringify(clamp));
+      record(role + ': the clamp states the correction rather than moving dates silently',
+        clamp.noteShown, JSON.stringify(clamp));
+      // Never invert the range: a fully-future window pulls From back too.
+      record(role + ': clamping never leaves From after To',
+        !clamp.from || !clamp.to || clamp.from <= clamp.to, JSON.stringify(clamp));
+    }
+
     // R17h (Options A+B): the missed-call slices share ONE renderer and
     // cross-link to each other. Three load-bearing properties: an agent
     // card's ring time opens the DEPT-WIDE hour-bucket drill; that drill

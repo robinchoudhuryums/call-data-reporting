@@ -1239,12 +1239,20 @@ function insEmailReportRows_(data) {
 function insEmailBehindBlock_(data) {
   const C = EK_C_, sans = EK_SANS_;
   const t = (data && data.teamStats) || {};
-  const teamPct = Number((t.pct && t.pct.val) || 0);
+  // R18: measure against the excluded-manager baseline (meta.teamAvgBasis,
+  // INV-26 reaching Insights), NOT the dept rate -- and never list an
+  // excluded manager as "behind" a benchmark they sit outside of. The email
+  // and the on-screen cards must not disagree about who is behind.
+  const basis = (data && data.meta && data.meta.teamAvgBasis) || null;
+  const teamPct = (basis && basis.agents > 0)
+    ? (Number(basis.pct) || 0)
+    : Number((t.pct && t.pct.val) || 0);
   const behind = ((data && data.agentData) || []).filter(function (a) {
     const m = a.metrics || {};
     const vol = (Number(m.answered && m.answered.val) || 0)
               + (Number(m.missed && m.missed.val) || 0);
-    return vol >= INSIGHTS_EMAIL_MIN_CALLS_
+    return !a.excludedFromTeamAvg
+        && vol >= INSIGHTS_EMAIL_MIN_CALLS_
         && (Number(m.pct && m.pct.val) || 0) < teamPct;
   }).sort(function (a, b) {
     return (Number(a.metrics.pct && a.metrics.pct.val) || 0)

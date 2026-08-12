@@ -1292,6 +1292,21 @@ behind the removed button.
   for the one legitimate divergence — a MONTHLY trend-point drill reruns
   Insights for that month without moving the dept controls (R16h) — so a
   split range is visible, never silent.
+  **R18 clamps the To-date to the last day WITH DATA** (`clampToLatestData_`
+  / `clampDeptToDate_`, script-2-chrome), on both entry points — the preset
+  chips and a hand-typed date — BEFORE the fetch, so the request already
+  carries the corrected window rather than firing twice. This is a NUMBERS
+  fix, not a convenience: every per-workday figure divides by the INV-35
+  working-day count of the SELECTED window, so "This month" on the 12th with
+  data through the 10th counted two empty days and deflated the pace —
+  Insights read 273.8/day over 8 workdays where the side panel's MTD tile
+  said 365/day over 6. Clamping fixes the divisor at the source instead of
+  making each per-day figure separately data-aware. Two rules: it NO-OPS
+  while `latestDqeIso_` is still null (the init fetch is async — clamping
+  against a null would land everyone on today), and it pulls `From` back with
+  `To` so a fully-future window can't invert the range. The correction is
+  always stated (`#dept-clamp-note`) — a silently different window would make
+  every number right for a range the user did not choose.
 - **The INSIGHTS REGION (M1 merge + N1 always-inline,
   docs/insights-merge-plan.md)**: the whole ex-Insights-page lives in
   `<details id="dept-insights-region" open>` at the bottom of the page —
