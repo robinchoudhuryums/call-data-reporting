@@ -111,13 +111,35 @@
       const meta = qcdAllDeptLast && qcdAllDeptLast.meta;
       if (!meta || !meta.from || meta.from !== meta.to || blastBtn.disabled) return;
       const day = meta.from;
-      dsConfirm_({
-        title: 'Send to all subscribers',
-        message: 'Email the ' + day + ' Daily Call Queue Report to every active subscriber now? '
-          + 'If this is the day the automated morning send targets, sending here claims that '
-          + 'day so subscribers are not emailed twice.',
-        confirmLabel: 'Send now', cancelLabel: 'Cancel',
-      }).then(function (ok) {
+      // R18c (owner): fetch the day's send state FRESH before the dialog, so
+      // "already sent" is a warning the admin reads BEFORE confirming, not a
+      // surprise after. The read can still go stale between dialog and click
+      // (the automated poll, another admin) -- the server's !force refusal is
+      // what closes that race; force is passed only when THIS dialog warned,
+      // so a stale-read send is refused with a re-open message instead of
+      // double-notifying. NB the marker records only the gate's current
+      // target day: a repeat blast of an OLDER date has no record to warn
+      // from, which the unwarned dialog text states.
+      blastBtn.disabled = true;
+      google.script.run
+        .withSuccessHandler(function (init) { blastConfirm_(!!(init && init.lastSent === day)); })
+        .withFailureHandler(function () { blastConfirm_(false); })   // warn-read down: dialog still guards via the server
+        .getQueueReportInit();
+      function blastConfirm_(alreadySent) {
+        blastBtn.disabled = false;
+        dsConfirm_({
+          title: 'Send to all subscribers',
+          tone: alreadySent ? 'danger' : undefined,
+          message: (alreadySent
+            ? '⚠ The ' + day + ' report was ALREADY sent to subscribers today (automated send '
+              + 'or a manual blast). Sending again emails every active subscriber a SECOND copy. '
+            : 'Email the ' + day + ' Daily Call Queue Report to every active subscriber now? '
+              + 'If this is the day the automated morning send targets, sending here claims that '
+              + 'day so subscribers are not emailed twice. (Repeat sends of an OLDER day are not '
+              + 'tracked — check with other admins before re-sending one.) '),
+          confirmLabel: alreadySent ? 'Send a second copy' : 'Send now',
+          cancelLabel: 'Cancel',
+        }).then(function (ok) {
         if (!ok) return;
         blastBtn.disabled = true;
         const prev = blastBtn.textContent;
@@ -136,8 +158,9 @@
             blastBtn.disabled = false; blastBtn.textContent = prev;
             showToast('Send failed: ' + (err && err.message ? err.message : String(err)), 'error');
           })
-          .sendQcdAllDeptToSubscribers({ date: day });
-      });
+          .sendQcdAllDeptToSubscribers({ date: day, force: alreadySent });
+        });
+      }
     });
 
     // Delegated expand/collapse for the per-queue call-source detail (#1c).
