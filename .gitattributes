@@ -1,0 +1,45 @@
+# Line-ending policy. Git for Windows defaults to core.autocrlf=true, which
+# checks every text file out with CRLF. Without this file that silently broke
+# the test suite on a Windows checkout -- 7 of 675 tests failed, none of them
+# a real defect (2026-08-13, first Windows clone):
+#
+#   * tests/unit/claude-md-split.test.js searches for "\n## Heading\n"; a CRLF
+#     file has "\r\n## Heading\r\n", so every section lookup missed and four
+#     index tests reported CLAUDE.md as missing its headings.
+#   * The same suite's per-bullet byte budget inflated by exactly one byte per
+#     line, pushing grandfathered bullets over a ratchet they had not grown by.
+#   * tests/unit/ui-harness-vendor.test.js (F-11) hashes the vendored Chart.js
+#     bundle's RAW BYTES against a pinned sha256; a rewritten line ending
+#     changes the bytes and the hash can never match.
+#
+# Those failures are indistinguishable from real ones at a glance, which is
+# the actual cost: a developer either chases a phantom or learns to ignore a
+# red suite. LF everywhere removes the ambiguity.
+#
+# The repo was already LF-clean when this landed, so normalization rewrites
+# nothing -- it pins the state rather than changing it.
+* text=auto eol=lf
+
+# scripts/*.sh MUST be LF regardless: a CRLF shebang line makes the kernel
+# look for an interpreter named "bash\r", which fails with a confusing
+# "bad interpreter" error. Covered by the rule above; stated explicitly
+# because it is the one case where CRLF breaks execution, not just a test.
+*.sh text eol=lf
+
+# Vendored bundles are byte-pinned by sha256 in tools/ui-harness/vendor/
+# VERSIONS.json (F-11). Mark them binary so git NEVER rewrites their content
+# on any platform -- for a hash-pinned artifact, "auto-detected as text and
+# normalized" is exactly the behavior that must not happen.
+tools/ui-harness/vendor/*.js -text
+
+# Images and fonts, should any be committed later (screenshots for docs, an
+# embedded font). Nothing matches today; here so the first one added does not
+# get corrupted by normalization.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
