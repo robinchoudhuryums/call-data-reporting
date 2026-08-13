@@ -147,7 +147,15 @@ test('script.html + fragments: the assembled IIFE body parses as one program', f
   const js = assembled.slice(open + '<script>'.length, close);
   const os = require('os');
   const cp = require('child_process');
-  const tmp = path.join(os.tmpdir(), 'assembled-client-' + process.pid + '.js');
+  // .cjs, NOT .js: for a `.js` file Node has to decide CommonJS-vs-ESM, which
+  // means reading the nearest package.json -- and the nearest one to a temp
+  // file is whatever happens to be sitting in the OS temp directory. A stray
+  // corrupt package.json there (common enough on Windows; an installer drops
+  // one) made this test fail with ERR_INVALID_PACKAGE_CONFIG, reported as
+  // "assembled client body fails to parse", which is the opposite of the
+  // truth. The explicit extension tells Node the format outright so it never
+  // consults ambient state. Verified: a genuine syntax error still fails.
+  const tmp = path.join(os.tmpdir(), 'assembled-client-' + process.pid + '.cjs');
   fs.writeFileSync(tmp, js);
   try {
     const r = cp.spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
