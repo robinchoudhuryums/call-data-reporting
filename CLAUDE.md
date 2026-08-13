@@ -1007,9 +1007,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   app). It's layered above every modal + toast (z-index in styles.html),
   supports Enter/Escape/backdrop, a `danger` tone for destructive actions,
   and either `message` (plain, auto-escaped) or `messageHtml` (caller MUST
-  escape dynamic values). Currently wired in the **Outlier Fix** modal
-  (rename / add-to-roster / deactivate-alias); the ~12 other legacy
-  `window.confirm` callsites can adopt it incrementally. New confirmation
+  escape dynamic values). Wired in the **Outlier Fix** modal
+  (rename / add-to-roster / deactivate-alias) and the **Daily Call Queue
+  Report subscriber blast** (QV-5/R18c -- which also shows the tone-varying
+  pattern: neutral normally, `danger` when re-sending an already-sent day);
+  the remaining legacy `window.confirm` callsites can adopt it incrementally.
+  New confirmation
   UI should use `dsConfirm_` rather than adding another `window.confirm`.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an

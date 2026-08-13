@@ -2679,3 +2679,29 @@ commit/push/deploy direction.
   Gap-vs-Team colour valence on the Missed metric), 7. Standing
   constraint from an earlier round: the Spanish-vs-CSR queue-split
   separation was INVESTIGATED ONLY — owner asked for no pipeline changes.
+
+## Increments 107–109 — R18b/R18c: tally scale everywhere, layout, blast guard (2026-08-13)
+
+  **R18b** (PR #235): the email tally PREFERS 2 calls/block (adaptive ladder
+  as fallback -- 2 wins only when it clips a strict minority, since clipping
+  is only honest while rare) and the WEB all-dept report got the SAME
+  one-unit scale, superseding R18's deliberate deferral (qcdDailyBarCell_
+  gained opts.tallyMax so a shared-scale caller can clip). Per-agent missed
+  cards moved behind a per-user fold (closed default, count on summary) with
+  a measured-rank diagonal wave (waveIn_, reduced-motion-safe, `both` fill);
+  heatmap waves on render. The sticky aside became a bounded flex column so
+  panel 2's table shrinks instead of the column growing a scrollbar.
+  qsSpotlight_ scrolls via scrollFullyIntoView_ (sticky inset from resolved
+  top+height) so the spotlighted card clears the pinned strip.
+  **Pre-rollout audit** (owner rolling out to managers): all RPC-callables
+  verified gated (7 apparent gaps were resolver-internal gates); flagged the
+  manager-visible all-dept QCD report (deliberate prior decision) and the
+  client-only diagnostics hiding (own-dept data, cosmetic). **R18c**: the
+  blast button's double-send gap closed BOTH directions -- fresh lastSent
+  read -> danger dialog "Send a second copy" -> force:true; server refuses
+  an unforced already-sent day (closes the stale-read race). Blocks 108-109.
+
+  **WHERE I LEFT OFF:** committed + pushed, PRs #233-#235 merged; R18c PR
+  pending. Owner deploying to managers today. Open: EMAIL_ALIASES /
+  Team-Avg-Excludes population are operator steps; Spanish/CSR crossover
+  stays a messaging caveat until QUEUE_SPLIT_SCOPE phases finish.

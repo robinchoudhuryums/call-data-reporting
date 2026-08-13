@@ -10,7 +10,7 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 // after that day's QCD data has landed. The gate decision is a pure helper
 // (queueReportGateDecision_) so the window / weekday / holiday / dedupe /
 // readiness logic is testable without a clock.
-const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Data.gs', 'QueueReportEmail.gs'] });
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'QueueReportEmail.gs'] });
 
 function baseCtx(over) {
   // A "would send" context: enabled, mid-window, a weekday, no holiday, data
@@ -98,6 +98,42 @@ test('readiness read: no QCD sheet -> empty (not-ready)', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {} });
   assert.equal(h.call('queueReportQcdLatestIso_', null), '');
+});
+
+// R18c (owner): the manual subscriber blast REFUSES a repeat send of an
+// already-sent day unless forced. The confirm dialog warns and passes
+// force:true, so the refusal fires only when the dialog's read went stale --
+// the automated poll or another admin sent in between. Without this the
+// protection was one-directional: a manual blast claimed the marker so the
+// AUTOMATION could not double-send, but nothing stopped a manual send after
+// the automation already had.
+test('R18c: subscriber blast refuses an already-sent day unless forced', function () {
+  // The RPC is assertAdmin_-gated (Auth.gs now in the load list); sign in as
+  // the admin so the test exercises the marker guard, not the auth gate.
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.QUEUE_REPORT_LAST_SENT = '2026-07-10';
+  assert.throws(function () {
+    h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' });
+  }, /ALREADY been sent/, 'unforced repeat of the sent day must refuse');
+  // A DIFFERENT day sails past the marker check (it then fails deeper on the
+  // missing spreadsheet fixture -- the assertion is only that the refusal is
+  // scoped to the recorded day, so match the message, not the throw).
+  try {
+    h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-09' });
+  } catch (e) {
+    assert.doesNotMatch(String(e && e.message), /ALREADY been sent/,
+      'a different day must not trip the already-sent refusal');
+  }
+  // Forced: the guard steps aside (same deeper fixture failure is fine).
+  try {
+    h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10', force: true });
+  } catch (e) {
+    assert.doesNotMatch(String(e && e.message), /ALREADY been sent/,
+      'force must bypass the refusal');
+  }
+  delete h.state.props.QUEUE_REPORT_LAST_SENT;
+  delete h.state.props.ADMIN_EMAILS;
 });
 
 // Verdict-layer email (design update): verdict alert + KPI row + worst-first

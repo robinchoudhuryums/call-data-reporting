@@ -1303,6 +1303,20 @@ function sendQcdAllDeptToSubscribers(req) {
   assertAdmin_();
   const date = String((req && req.date) || '').trim();
   if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
+  // R18c (owner): REFUSE a repeat send of an already-sent day unless the
+  // caller explicitly forces it. The confirm dialog warns and passes
+  // force:true, so this branch fires only when the dialog's read was STALE --
+  // the automated poll or another admin sent between the dialog opening and
+  // the click. The marker only ever records the gate's current target day, so
+  // this cannot catch a repeat blast of an OLDER date; there is no per-date
+  // send log to check against, and that limitation is documented in the
+  // dialog rather than silently absorbed here.
+  const props = PropertiesService.getScriptProperties();
+  const lastSent = props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '';
+  if (!req.force && lastSent === date) {
+    throw new Error('The ' + date + ' report has ALREADY been sent to subscribers today '
+      + '(by the automated send or another admin). Re-open the dialog to send again anyway.');
+  }
   const result = sendQueueReportForDate_(date, {});
   let markerClaimed = false;
   if (result.count > 0 && date === prevBusinessDayIso_(new Date())) {

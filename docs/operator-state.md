@@ -660,7 +660,16 @@ When something looks wrong, before assuming a code bug, check:
     `QUEUE_REPORT_LAST_SENT` when it delivers the gate's current target day
     (so the poll can't double-blast) and never writes
     `QUEUE_REPORT_LAST_RESULT` (that stays the trigger run's diagnostic --
-    a manual send must not repaint the Health outcome row).
+    a manual send must not repaint the Health outcome row). **R18c closed the
+    reverse direction:** the blast REFUSES an already-sent day unless
+    `force:true` -- the confirm dialog reads `lastSent` fresh
+    (`getQueueReportInit`), warns "ALREADY sent today" with the danger tone
+    and a "Send a second copy" button, and passes force only when it warned;
+    an unforced send that races a claim in between is refused server-side
+    with a re-open message instead of double-notifying. The marker records
+    only the CURRENT target day, so a repeat blast of an OLDER date has no
+    record to refuse from -- the un-warned dialog says so
+    ("repeat sends of an older day are not tracked").
 32. Pipeline-failure watchdog (optional; `PipelineWatch.gs`, dashboard).
     Defaults OFF. PUSHES the explicit Pipeline Health FAILURE signal that the
     System Health page ("Recent pipeline step failures") + the Overview
