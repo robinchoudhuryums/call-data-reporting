@@ -2871,3 +2871,18 @@ commit/push/deploy direction.
   (CSR rows + AGENT_ROLE_ENABLED=true + agent emails). Open owner
   decisions: rank-line reveal (AGENT_RANK_SHOW_); feedback box still
   shelved.
+
+## Increment 116 (2026-08-14) — /sync-docs after the agent rollout
+
+  Drift found + fixed: the role-model bullet's "Three roles" (stale
+  since Phase A) -> "Four roles" with a pointer to the agent bullet,
+  byte-compensated inside the same grandfathered bullet by trimming the
+  F13 narrative aside (F13 still resolves in fix-history); the ci:ui
+  Key-commands block (FOUR drivers -> SIX stages incl. the agent pair;
+  re-run list + suite roll updated); docs/invariants.md INV-30 gained
+  agentHome:v1/agentHist:v1. Verified resolved: README scriptId
+  placeholder drift (no stale string exists). Weight: 173.6KB /
+  ~26KB headroom -- watch it. 725/725; split+cache-sync tests green.
+
+  **WHERE I LEFT OFF:** committing; then PR (Phase C + doc sync) +
+  merge on the owner's standing instruction.

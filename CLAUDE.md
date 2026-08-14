@@ -138,8 +138,11 @@ bash scripts/check-duplicated-files.sh
 # the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
 # versa -- fails the build, plus a size cap on CLAUDE.md itself), setup (the
-# INV-12 idempotency/ten-sheets/partial-run-recovery pins), and
-# alert-recipients (B-5: ALL-sentinel managers receive every dept's alert).
+# INV-12 idempotency/ten-sheets/partial-run-recovery pins),
+# alert-recipients (B-5: ALL-sentinel managers receive every dept's alert),
+# and agent-role / agent-home (the fourth role: the Phase A deny wall +
+# resolution, and the agent app's endpoints incl. the wait join, history
+# rollups, and the no-teammate-identity payload pin).
 # HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
 # getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a test
 # needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
@@ -195,7 +198,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# FOUR ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
+# SIX ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
@@ -212,7 +215,10 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
 # this repo, asserted by stubbing URL.createObjectURL and reading the real Blob
 # bytes, S43 -- and the header DEPARTMENT SWITCH, which threw a ReferenceError
-# in production until a driver first tried it). The other drivers (drive.js /
+# in production until a driver first tried it), plus the AGENT-APP pair
+# build-agent.js + drive-agent.js (the fourth role's separate page: boot,
+# hidden rank line, rendered teammate-name PRIVACY, the History tab, no
+# errors/unmocked RPCs/self-beacons). The other drivers (drive.js /
 # drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
 # and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job, and is
 # BLOCKING since 2026-07: it has now caught two bugs that reached production and
@@ -221,7 +227,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # departments. Neither is reachable from `node --test` (one is markup structure,
 # the other needs a real click). Re-run it after touching
 # script.html or any script-*.html fragment, styles.html, dashboard.html,
-# or any payload shape.
+# agent.html / agentApp.html, or any payload shape.
 ```
 
 ## Common Gotchas
@@ -1122,8 +1128,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   constant was dead code and was REMOVED (F-30). **Never read a
   constant for membership checks**; always go through
   `getAdminEmails_()`.
-- **Role model + the all-departments manager (`allDepts`).** Three roles
-  (`admin` | `manager` | `none`; `Auth.gs::resolveUser_`). A manager is
+- **Role model + the all-departments manager (`allDepts`).** Four roles
+  (`admin`|`manager`|`agent`|`none`; `Auth.gs::resolveUser_` -- `agent`
+  has its OWN bullet below). A manager is
   looked up in the `Access Control` sheet and pinned to ONE department --
   **EXCEPT** when the Department cell is the sentinel `ALL` (or `*`,
   case-insensitive, `isAllDeptsSentinel_`): that grants an
@@ -1160,8 +1167,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   BREADTH (use `isAllDeptViewer_()` / `user.allDepts`)?**
   **MULTI-DEPARTMENT manager (Tier C).** A manager may hold MORE THAN ONE
   `Access Control` row (same email, different dept). `resolveUser_` now
-  UNIONS them into `departments` (was: only the first honored, F13 --
-  now removed); `department` is the first (default landing), `allDepts`
+  UNIONS them into `departments` (F13); `department` is the first
+  (default landing), `allDepts`
   stays FALSE (they see only their assigned depts, not every dept). The
   security gates accept a list: `assertDeptAccess_` + `escAssertRowAccess_`
   + the (latent, admin-only) `inbound`/`direct`/`getCallJourney` pins check
