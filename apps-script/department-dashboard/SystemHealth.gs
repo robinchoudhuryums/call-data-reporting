@@ -22,14 +22,27 @@
  * and unreadable from here (their rows say so rather than guessing).
  */
 
-function getSystemHealth() {
+function getSystemHealth(req) {
   assertAdmin_();
+  // R21 (owner: "the full report takes a long time to load"): the two Neon
+  // mirror probes are the only rows that open a LIVE Neon connection, and a
+  // free-tier cold start (outside the keep-warm window) makes them the whole
+  // wait. `part` lets the client fetch in two passes -- 'fast' (everything
+  // else: property reads + bounded sheet tails) paints immediately, 'neon'
+  // (the shared-conn mirror block) streams in when the probe lands. Omitted
+  // (or 'all') = the full payload, byte-identical to before, so editor runs
+  // and the existing tests are unchanged.
+  var part = String((req && req.part) || 'all');
   var rows = [];
   var add = function (section, key, label, status, value, hint) {
     rows.push({ section: section, key: key, label: label, status: status,
                 value: String(value == null ? '' : value), hint: hint || '' });
   };
+  var neonConfigured = false;
+  try { neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'); }
+  catch (eNc) { neonConfigured = false; }
 
+  if (part !== 'neon') {
   // ── Pipeline freshness ──────────────────────────────────────────────
   try {
     var fresh = computeOverviewPipelineFreshness_();
@@ -116,11 +129,16 @@ function getSystemHealth() {
         'Neon DQE reads are silently falling back to the sheet — sustained outage serves aging data (Operator State #19).');
     }
   } catch (e) { add('neon', 'read-health', 'Neon read-back health', 'warn', 'probe failed', String(e && e.message || e)); }
+  }   // end part !== 'neon' (first fast range)
+
+  if (part !== 'fast') {
   // Both mirror-health probes (DQE + QCD) share ONE Neon connection so the
   // page pays at most a single free-tier cold-start, not one handshake per
   // probe. Opened here, threaded into both compute*MirrorHealth_(conn), closed
   // in the finally. An explicit null (Neon configured but unreachable) tells
   // each helper to report 'error' WITHOUT re-attempting its own connection.
+  // R21: this block is the ONLY live-Neon payer on the page -- it is what
+  // part='neon' isolates so the rest can paint without waiting for a cold start.
   var sharedNeonConn = null;
   if (neonConfigured && typeof getDashboardNeonConn_ === 'function') {
     try { sharedNeonConn = getDashboardNeonConn_(); } catch (e) { sharedNeonConn = null; }
@@ -162,7 +180,9 @@ function getSystemHealth() {
   } finally {
     if (sharedNeonConn) { try { sharedNeonConn.close(); } catch (ce) {} }
   }
+  }   // end part !== 'fast'
 
+  if (part !== 'neon') {
   // ── Trigger-driven services (THIS project) ──────────────────────────
   try {
     var installed = {};
@@ -360,9 +380,10 @@ function getSystemHealth() {
       });
     }
   } catch (e) { add('usage', 'usage-none', 'Report usage', 'warn', 'probe failed', String(e && e.message || e)); }
+  }   // end part !== 'neon' (second fast range)
 
   var warnCount = rows.filter(function (r) { return r.status === 'warn'; }).length;
-  return { generatedAt: new Date().toISOString(), rows: rows, warnCount: warnCount };
+  return { generatedAt: new Date().toISOString(), rows: rows, warnCount: warnCount, part: part };
 }
 
 // -- UI surface toggles (R7 / G-3) ---------------------------------------------

@@ -2886,3 +2886,22 @@ commit/push/deploy direction.
 
   **WHERE I LEFT OFF:** committing; then PR (Phase C + doc sync) +
   merge on the owner's standing instruction.
+
+## Increment 117 (2026-08-14) — R21: System Health load split
+
+  Owner (testing the redeploy): the full Health report loads slowly.
+  Diagnosis: the two Neon mirror probes are the page's ONLY live-Neon
+  rows, and outside the keep-warm window they pay the free-tier cold
+  start (~15s) INLINE in the single getSystemHealth call. Fix:
+  getSystemHealth({part:'fast'|'neon'|'all'}) -- fast (property reads +
+  bounded sheet tails) paints immediately with a muted "checking…"
+  placeholder in the neon section; the neon part (the shared-conn
+  mirror block, verbatim) streams in and replaces it (stale-token
+  guarded; warn row on probe failure; summary line notes the pending
+  check). Default 'all' byte-identical (editor runs + old tests
+  untouched). Pins: fast opens NO conn; neon opens exactly one and
+  returns only the two mirror rows; fast+neon == all by key set (the
+  third-bucket drift tripwire). 728/728.
+
+  **WHERE I LEFT OFF:** ci:ui running; commit+push after green. UnPR'd
+  on the branch; owner merges on word.
