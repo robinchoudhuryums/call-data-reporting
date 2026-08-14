@@ -1042,3 +1042,53 @@ When something looks wrong, before assuming a code bug, check:
     "Recent pipeline step failures" and via the PipelineWatch push; a long
     silence on that step means the trigger is NOT installed. Proof-of-life:
     the most recent `retentionPrune` row's timestamp.
+
+44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
+    cross-check born from the Field Ops Power blind spot. Enable it.**
+    Defaults OFF like every flag-gated engine: editor-run
+    `installDqeSilenceWatchTrigger()` (admin) sets
+    `DQE_SILENCE_WATCH_ENABLED` + installs a daily ~11 AM Central trigger;
+    `uninstallDqeSilenceWatchTrigger()` reverses both. Each weekday run
+    assesses the PREVIOUS business day (holiday-aware): a department whose
+    mapped queues (`getDeptQcdQueues_`, INV-54) show QCD 'Total Calls'
+    volume while ZERO DQE rows match its roster (exact names, INV-04 — the
+    same predicate the My Department table lives by) grows a silence
+    STREAK; one email per episode to `getAdminEmails_()` once BOTH
+    thresholds pass — `DQE_SILENCE_MIN_DAYS` (default 2) consecutive silent
+    days AND `DQE_SILENCE_MIN_CALLS` (default 5) CUMULATIVE queue calls, so
+    a 1-2-call/day dept (Denials) still alerts within a few days instead of
+    never crossing a per-day bar. Recovery (any DQE row) ends the episode
+    and re-arms. Why it exists: on 2026-06-17 the phone system dropped the
+    `A_Q_FieldOps_Power` token from the caller-ID column the DQE build keys
+    queue recognition on; per-agent data for Field Ops Power + Denials
+    vanished silently for TWO MONTHS while QCD kept flowing, and nothing
+    cross-checked the two. The DQE read goes through the DAL
+    (`getDqeReadSource_`-aware), the QCD read through `readQcdGrid_`;
+    an unreadable source is INCONCLUSIVE (state untouched, never a false
+    alarm). Health page: the `trg-dqesilence` readiness row + the
+    `out-dqesilence` outcome row (`DQE_SILENCE_WATCH_LAST_RESULT`,
+    prefix-coded `ok` / `SILENT n dept(s)` / `ERROR`). Spot-check any time
+    with `runDqeSilenceCheckNow()` (admin; assesses now, no email). State
+    lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
+    open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
+    Overview tile's companion surface is the per-dept `dqeSilence`
+    queue-lens badge (`companyOverview:v21`) — the PULL view to this
+    engine's PUSH, same detector shape over the trailing 7 chart days.
+
+45. **Sign-in notifications (`notifyLoginEvent_`, Auth.gs/doGet) — ON by
+    default; set `LOGIN_NOTIFY_ENABLED=false` to silence.** Emails
+    `getAdminEmails_()` on the FIRST sighting of any address at doGet —
+    granted or DENIED — and again when that address's outcome class changes
+    (denied → manager after an Access Control grant; a dept reassignment; a
+    revocation; the key is `admin` / `manager:<depts>` / `denied`). Repeat
+    visits with an unchanged outcome are silent — it is a who-showed-up
+    signal, not a page-view log. Expect a burst on rollout day: every
+    existing user's first post-deploy visit is a first sighting. State:
+    `LOGIN_NOTIFY_SEEN` Script Property (JSON, engine-written; capped at
+    ~300 addresses — past the cap new addresses still notify every visit
+    rather than silently dropping, and known addresses keep
+    change-detection; clearing the property just re-arms first-sighting
+    mails). Best-effort inside doGet's try/catch — can never block a render.
+    A denied-attempt mail includes the grant runbook (Access Control row, or
+    `EMAIL_ALIASES` for an alias address, #36). Pinned by
+    `tests/unit/login-notify.test.js`.

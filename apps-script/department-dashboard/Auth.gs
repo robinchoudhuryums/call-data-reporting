@@ -413,3 +413,88 @@ function removeAccessControlRow(req) {
   }
   return { removed: removed };
 }
+
+// ── R18d: sign-in notifications (first sighting + outcome change) ──────────
+//
+// Emails the admins when an email address reaches doGet for the FIRST time,
+// and again if that address's OUTCOME CLASS later changes (denied -> manager
+// after an Access Control row is added; manager -> denied after removal; a
+// role change). Repeat visits with an unchanged outcome are silent -- the
+// point is "who showed up / who was turned away", not a page-view log.
+//
+// State: the LOGIN_NOTIFY_SEEN Script Property, JSON { emailLower: outcomeKey }.
+// Outcome keys are COARSE on purpose ('admin' | 'manager' | 'denied' --
+// manager keys carry the dept list so a dept reassignment notifies too).
+// Capped so a scanner hammering the URL with junk identities cannot grow the
+// property unboundedly: past LOGIN_NOTIFY_MAX_KEYS the store stops ADDING
+// (existing users keep change-detection; brand-new addresses still email
+// every visit rather than silently dropping -- the failure mode is extra
+// signal, not lost signal).
+//
+// Gate: ON by default (the owner asked for it); set the LOGIN_NOTIFY_ENABLED
+// Script Property to 'false' to silence it without a redeploy. Best-effort
+// end to end: called inside doGet's try/catch, never blocks a render.
+// INV-01 note: writes a Script Property only -- no spreadsheet write.
+
+var LOGIN_NOTIFY_MAX_KEYS = 300;
+
+/** Pure decision core (tests/unit/login-notify.test.js). */
+function loginNotifyDecide_(storeJson, emailLower, outcomeKey, maxKeys) {
+  var store = {};
+  try { store = JSON.parse(storeJson || '{}') || {}; } catch (e) { store = {}; }
+  var prev = store[emailLower];
+  if (prev === outcomeKey) return { notify: false, reason: null, store: store };
+  var reason = (prev === undefined) ? 'first' : 'changed';
+  if (prev === undefined && Object.keys(store).length >= (maxKeys || LOGIN_NOTIFY_MAX_KEYS)) {
+    // Store full: still notify (extra emails beat silent blindness), just
+    // don't grow the property.
+    return { notify: true, reason: reason, prev: prev, store: store };
+  }
+  store[emailLower] = outcomeKey;
+  return { notify: true, reason: reason, prev: prev, store: store };
+}
+
+/** Maps a resolved user to the coarse outcome key the store compares. */
+function loginNotifyOutcomeKey_(user) {
+  if (!user || user.role === 'none') return 'denied';
+  if (user.role === 'admin') return 'admin';
+  var depts = (user.departments && user.departments.length)
+    ? user.departments.slice().sort().join('+')
+    : (user.department || '?');
+  return 'manager:' + (user.allDepts ? 'ALL' : depts);
+}
+
+function notifyLoginEvent_(email, user) {
+  var props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty('LOGIN_NOTIFY_ENABLED') || 'true') === 'false') return;
+  var emailLower = String(email || '').trim().toLowerCase();
+  if (!emailLower) return;   // no identity resolved -- nothing meaningful to report
+
+  var outcomeKey = loginNotifyOutcomeKey_(user);
+  var d = loginNotifyDecide_(props.getProperty('LOGIN_NOTIFY_SEEN'), emailLower, outcomeKey);
+  if (!d.notify) return;
+  props.setProperty('LOGIN_NOTIFY_SEEN', JSON.stringify(d.store));
+
+  var to = getAdminEmails_().join(',');
+  if (!to) return;
+  var denied = outcomeKey === 'denied';
+  var subject = denied
+    ? '[Dashboard] DENIED sign-in attempt: ' + emailLower
+    : '[Dashboard] ' + (d.reason === 'first' ? 'First sign-in' : 'Access changed') + ': ' + emailLower;
+  var lines = [
+    'Address:  ' + emailLower,
+    'Outcome:  ' + outcomeKey + (d.prev !== undefined ? '  (was: ' + d.prev + ')' : '  (first sighting)'),
+    'Time:     ' + new Date(),
+  ];
+  if (denied) {
+    lines.push('', 'To grant access: add an Access Control row for this address '
+      + '(Admin ▸ Access) — the email match is case-insensitive here but the '
+      + 'stored row is what resolveUser_ reads. If this address is an alias of an '
+      + 'existing user, map it in the EMAIL_ALIASES Script Property instead '
+      + '(Operator State #36).');
+    lines.push('', 'Unrecognized addresses hitting this URL repeatedly without a grant '
+      + 'may just be a crawler — the store notifies once per address, not per hit.');
+  }
+  MailApp.sendEmail({ to: to, subject: subject, body: lines.join('\n') });
+  Logger.log('notifyLoginEvent_: %s (%s, %s)', emailLower, outcomeKey, d.reason);
+}

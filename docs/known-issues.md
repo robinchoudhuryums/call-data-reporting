@@ -633,7 +633,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v20` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v21` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v8` |
 | `InsightsReport.gs` | `insights:vN:` | `v22` |
@@ -1434,7 +1434,7 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v20`) on success. Per-(dept,
+constant -- currently `companyOverview:v21`) on success. Per-(dept,
 range) caches (`summary:v19`, `individual:v11`,
 etc.) are left to TTL out within 30 minutes
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
@@ -1446,3 +1446,52 @@ cache TTL.
 OrphanFix surface that same message -- slightly misleading but
 correctly rejects the call. Worth noting if you ever see it in a
 log entry that has nothing to do with alerts.
+
+## The Field Ops Power caller-ID blind spot (R18e, 2026-06-17 → 2026-08-14)
+
+**What happened.** On 2026-06-17 the provider-side configuration for the
+`A_Q_FieldOps_Power` (and, by the same symptom window, `A_Q_Denials`) call
+queue stopped prepending the queue's NAME to the Caller-ID column (Raw Data
+col W) on agent-ring legs. Working queues stamp
+`A_Q_Manual_Mobility,<origin>` there; the broken ones stamped only the
+originating extension (`354`). The DQE build's queue recognizer keys on
+exactly that column (`callerIdRaw.match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup
+CSR)/)`), so every agent leg for those queues failed recognition and was
+dropped BEFORE aggregation — no DQE rows, no orphans (the agent names were
+fine, the legs never entered the build), nothing red anywhere. QCD is built
+from a different source and kept flowing, so queue totals looked healthy for
+two months. Diagnosed from two side-by-side sample calls the owner pulled;
+the smoking gun was the CSR leg of the SAME broken call carrying
+`A_Q_CSR,...` in col W while the FOP leg carried a bare ext — a per-queue
+provider setting, not a feed-format change.
+
+**The fix (R18e), and its shape.** The queue identity survives twice in the
+same file even when col W is broken: the agent leg's CALLER field still
+reads `CallQueue (344)`, and the same day's queue-callee legs map
+`344 → A_Q_FieldOps_Power` (CALLEE ext + CALLEE_NAME). The build now makes
+one pre-pass building that ext→name map, and falls back to it ONLY when the
+col-W regex fails AND the caller is `CallQueue (<ext>)` AND the ext named a
+queue elsewhere in the file — so a leg the old code was right to skip is
+still skipped, and recognized queues are byte-identical to before (col W
+wins when it matches). Both INV-16 copies; pinned with the incident's real
+sample-row shapes incl. the unresolvable-ext guard
+(`tests/unit/pipeline-build.test.js`, R18e test).
+
+**Repair semantics worth knowing.** Because the fallback reads the RAW data
+as it already exists, the surviving `Call_Legs_*` window heals by plain
+force re-import — no col-W hand-editing. History older than the ~14-day
+retention (#43) is permanently unrecoverable at the per-agent level; QCD
+queue-level history for the gap is intact. After a Neon-read cutover,
+finish with `backfillDQEHistoryUpsert()`.
+
+**Detection if it recurs.** The DQE-silence watchdog (Operator State #44)
+and the Overview queue-lens badge (companyOverview:v21) both exist because
+of this incident — the watchdog would have emailed on day 2. The INBOUND
+capture's recognizer (`icIsQueueName_`) reads leg NAMES, not col W, and was
+unaffected — the two recognizers diverge on purpose (see the CLAUDE.md
+bullet); this incident adds a third reason not to "harmonize" them.
+
+**Upstream.** The real fix is the provider portal: the per-queue caller-ID /
+display-name setting on FOP + Denials should be compared against a working
+queue (Manual Mobility) and restored. With it restored, the fallback goes
+dormant as insurance.

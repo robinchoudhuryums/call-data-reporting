@@ -229,6 +229,11 @@ function getSystemHealth() {
     svc('trg-queuereport', 'Daily Call Queue Report email', ['runDailyQueueReport_'], false,
       'Optional: emails the all-dept queue report to subscribers each weekday morning (Operator State #31).',
       'QUEUE_REPORT_ENABLED');
+    // R18d: the DQE-silence cross-check born from the Field Ops Power blind
+    // spot -- queue taking calls, zero agent rows, nothing anywhere to notice.
+    svc('trg-dqesilence', 'DQE-silence watchdog (queue active, agents dark)', ['runDqeSilenceWatch_'], false,
+      'Optional but recommended: emails admins when a mapped queue shows QCD volume while ZERO DQE rows match the dept roster — the silent failure shape that cost Field Ops Power two months of agent history (Operator State #44). Enable via installDqeSilenceWatchTrigger().',
+      'DQE_SILENCE_WATCH_ENABLED');
     // Batch 3: ONE verdict line so the answer to "is this install armed?" is a
     // row, not an exercise in reading fifteen. Counts the engine rows above --
     // `attention` is any row this section flagged warn (missing-but-required,
@@ -259,6 +264,8 @@ function getSystemHealth() {
       // R7 (G-2): Neon coverage check (NeonCoverage.gs, editor-run):
       // 'ok clean ...' / 'GAPS n finding(s) ...' / 'FAILED...' / 'skipped...'.
       ['out-coverage', 'Neon coverage — last check', 'NEON_COVERAGE_LAST', 'NEON_COVERAGE_LAST_RESULT'],
+      // R18d: 'ok ...' / 'SILENT n dept(s) ...' / 'ERROR: ...'.
+      ['out-dqesilence', 'DQE silence — last check', 'DQE_SILENCE_WATCH_LAST', 'DQE_SILENCE_WATCH_LAST_RESULT'],
     ];
     for (var o = 0; o < outcomes.length; o++) {
       var at = props.getProperty(outcomes[o][2]);
@@ -277,10 +284,11 @@ function getSystemHealth() {
       // O-9: and "NO-SUBSCRIBERS <iso> ..." -- the queue report ran with an
       // empty recipient list. It reads like a clean run and is the exact state
       // an admin lands in by installing the trigger without subscribing.
+      // R18d: and the silence watchdog's found-something outcome ('SILENT n ...').
       var bad = !/^ok\b/i.test(res || '')
         && (/fail|error|unreachable|skipped/i.test(res || '')
             || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || '')
-            || /^NO-SUBSCRIBERS\b/.test(res || ''));
+            || /^NO-SUBSCRIBERS\b/.test(res || '') || /^SILENT\b/.test(res || ''));
       add('triggers', outcomes[o][0], outcomes[o][1], bad ? 'warn' : 'ok',
         (res || '') + (at ? (' @ ' + at) : ''));
     }

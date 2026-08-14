@@ -899,6 +899,25 @@
   // hero block (for parent-viewers' nested child sub-queues).
   // Set `isChild=true` for sub-queues -- they pick up the
   // accent-tinted background + tree-line connector via CSS.
+  // R18d: LOUD queue-lens fallback for a dept whose agent data has gone dark
+  // while its queue keeps taking calls (server `dqeSilence`, the Field Ops
+  // Power blind-spot detector). Design rule: these are QCD numbers -- CALLS
+  // with an abandon-threshold semantic -- and DQE tiles count RINGS, so they
+  // must NEVER be fed into the normal tile stats as if they were the same
+  // species. The fallback is an explicitly-labeled different lens; the
+  // regular stat rows keep their honest zeros/dashes beneath it.
+  function ovBuildDqeSilenceNote_(dept) {
+    var ds = dept && dept.dqeSilence;
+    if (!ds) return '';
+    return '<div class="ov-dqe-silence" role="note" title="No per-agent (DQE) rows matched this department\u2019s roster for the trailing ' + ds.days + ' chart days while its mapped queues kept reporting QCD volume. The usual cause is upstream: a phone-system queue or caller-ID rename starving the pipeline\u2019s A_Q_* recognizer \u2014 check Raw Data col W for the queue token, then the roster. Queue-level numbers below are the working lens meanwhile.">'
+      +   '<span class="ov-dqe-silence-head">\u26a0 Agent data dark \u00b7 last ' + ds.days + 'd \u2014 queue lens:</span>'
+      +   '<span class="ov-dqe-silence-stats">'
+      +     fmtNumber(ds.qcdCalls) + ' queue calls \u00b7 '
+      +     fmtNumber(ds.qcdAbandoned) + ' abandoned (' + ds.qcdPct + '%)'
+      +   '</span>'
+      + '</div>';
+  }
+
   function ovBuildGridTile_(dept, color, isChild, routable, isViewer) {
     const st = ovPeriodStats_(dept);
     // Round-16 (owner, Option 3): the grid tiles' trend corner is a GOAL-GAP
@@ -938,6 +957,7 @@
          +   '</div>'
          +   parentTag
          +   ovBuildAlertPill_(dept)
+         +   ovBuildDqeSilenceNote_(dept)
          +   '<div class="ov-dept-tile-pct">'
          +     '<span data-flash-key="ov:' + escapeHtml(dept.name) + '">' + escapeHtml(st.pctFormatted) + '</span>'
          +     ' <span class="ov-dept-pct-cap">' + escapeHtml(ovPeriodCap_()) + '</span>'
@@ -1006,11 +1026,13 @@
          +       '<span class="ov-subq-metric"><span class="ov-subq-metric-lbl">Ans</span> '
          +         escapeHtml(st.pctFormatted) + ovSubqArrow_(dept.wow) + '</span>'
          +       abd + viol + alert
+         +       (dept.dqeSilence ? '<span class="ov-subq-strip-alert" aria-hidden="true" title="Agent data dark \u2014 expand for the queue lens">\u26a0</span>' : '')
          +     '</span>'
          +     '<span class="ov-subq-strip-chev" aria-hidden="true">›</span>'
          +   '</button>'
          +   '<div class="ov-subq-detail">'
          +     '<div class="ov-subq-detail-inner">'
+         +       ovBuildDqeSilenceNote_(dept)
          +       '<div class="ov-dept-tile-row">'
          +         '<span><span class="ov-dept-stat-label">Rung</span> ' + fmtNumber(st.rung) + '</span>'
          +         '<span><span class="ov-dept-stat-label">Ans</span> ' + fmtNumber(st.answered) + '</span>'

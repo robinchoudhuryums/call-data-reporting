@@ -2705,3 +2705,43 @@ commit/push/deploy direction.
   pending. Owner deploying to managers today. Open: EMAIL_ALIASES /
   Team-Avg-Excludes population are operator steps; Spanish/CSR crossover
   stays a messaging caveat until QUEUE_SPLIT_SCOPE phases finish.
+
+## Increment 110 — R18d: the Field Ops Power incident's three safeguards (2026-08-14)
+
+  Owner found FOP + Denials agent-dark since 6/17 mid-rollout; diagnosis
+  walked dashboard -> Outlier Fix (no orphans) -> Diagnostics (roster
+  no-data) -> DQE sheet (no rows at all) -> Raw Data (legs present!) ->
+  the build code: the phone system dropped the A_Q_* token from col W
+  (Caller ID), starving the DQE build's queue recognizer. QCD flows from
+  a different source, so nothing noticed for two months. Three safeguards
+  shipped: (1) DqeSilenceWatch.gs -- flag-gated daily engine, per-dept
+  silent-streak (QCD volume + zero roster DQE rows), one email per
+  episode at days>=2 && cumulative calls>=5 (cumulative so Denials-sized
+  depts alert too); DAL-read; inconclusive-on-flaky-reads; svc + OPS-8
+  Health rows; operator-state #44. (2) Overview tile queue-lens badge
+  (companyOverview:v21, `dqeSilence` per dept, 7-day window) -- a LABELED
+  different lens (QCD calls != DQE rings), on grid tiles AND sub-queue
+  cards; fixture's Billing turned out to be a live specimen, so smoke
+  asserts the positive case permanently. (3) Login notify (Auth.gs,
+  doGet) -- first-sighting + outcome-change emails incl. DENIED attempts,
+  ON by default, capped store, operator-state #45. 693/693 (+18), smoke
+  84/84.
+
+  **R18e (same day):** owner pulled two side-by-side sample calls; the
+  broken queues stamp only the originating EXT in col W where working
+  queues stamp "A_Q_Name,<origin>" -- a per-queue PROVIDER setting, not
+  a feed change (the CSR leg of the same call was fine). Fix shipped in
+  the build (both INV-16 copies): pre-pass ext->queue-name map from the
+  file's own queue-callee legs; fallback fires only when col W fails AND
+  caller is CallQueue(<ext>) AND the ext named a queue today. Col W wins
+  when it matches (byte-identical normal path); unresolvable ext stays
+  dropped. Pinned with the incident's sample-row shapes. Repair is now
+  PLAIN FORCE RE-IMPORT of the surviving window -- no col-W editing.
+  known-issues gained the full incident entry.
+
+  **WHERE I LEFT OFF:** PR #239 (safeguards) open unmerged; R18e commit
+  going into the same PR. OPEN OPERATOR WORK: ask the provider to restore
+  the per-queue caller-ID setting (FOP + Denials vs Manual Mobility);
+  after deploy: force re-import the surviving ~14-day window,
+  backfillDQEHistoryUpsert() if on neon, install the watchdog trigger.
+  6/17->retention-floor agent history is unrecoverable.

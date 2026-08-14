@@ -554,6 +554,30 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   let unparsedStartCount = 0;
   const queueLegs = [];
 
+  // R18e (the Field Ops Power incident, 2026-06-17): EXTENSION -> QUEUE-NAME
+  // map, built from the same day's queue-callee legs (CALLEE is the queue's
+  // digit extension, CALLEE_NAME its A_Q_* name -- e.g. 344 ->
+  // A_Q_FieldOps_Power). Normally unused: agent-ring legs carry the queue
+  // name in the Caller-ID column (col W, "A_Q_Manual_Mobility,304") and the
+  // regex below matches it. But a queue whose provider-side config stops
+  // prepending its name stamps only the originating extension there ("354"),
+  // and every one of its agent legs then failed recognition SILENTLY -- two
+  // departments lost two months of per-agent history while QCD (different
+  // source) kept flowing. The queue identity survives in the leg itself:
+  // CALLER still reads "CallQueue (344)", and this map resolves 344 back to
+  // the name. Col W still WINS when it matches, so recognized queues are
+  // byte-identical to before; the fallback fires only where the old code
+  // dropped the leg. Pinned (incl. the incident's real sample rows) by
+  // tests/unit/pipeline-build.test.js.
+  const queueNameByExt = {};
+  for (let i = 0; i < data.length; i++) {
+    const calleeExt  = String(data[i][DQE_C.CALLEE]).trim();
+    const calleeName = String(data[i][DQE_C.CALLEE_NAME]).trim();
+    if (!/^\d+$/.test(calleeExt)) continue;
+    if (!/^(A_Q_[\w&]+|Backup CSR)$/.test(calleeName)) continue;
+    queueNameByExt[calleeExt] = calleeName;
+  }
+
   for (let i = 0; i < data.length; i++) {
     const row         = data[i];
     const callerIdRaw = String(row[DQE_C.CALLER_ID]).trim();
@@ -564,8 +588,17 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     // consumers require names STARTING with A_Q_, so capturing the full
     // prefixed token would break INV-23 sentinel detection downstream).
     const qnMatch     = callerIdRaw.match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)/);
-    if (!qnMatch) continue;
-    const queueName = qnMatch[1];
+    // R18e: when col W carries no queue token, fall back to the CALLER field's
+    // own queue extension -- "CallQueue (344)" -- resolved through the map
+    // above. Both conditions must hold (a CallQueue caller AND an ext that
+    // named a queue elsewhere today), so a leg the old code was RIGHT to skip
+    // is still skipped; only the mislabeled-queue shape is recovered.
+    let queueName = qnMatch ? qnMatch[1] : null;
+    if (!queueName) {
+      const cqMatch = String(row[DQE_C.CALLER]).trim().match(/^CallQueue\s*\((\d+)\)$/i);
+      if (cqMatch) queueName = queueNameByExt[cqMatch[1]] || null;
+    }
+    if (!queueName) continue;
 
     const calleeK = String(row[DQE_C.CALLEE]).trim();
     if (/^CallForking/i.test(calleeK)) continue;

@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v20` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v21` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -89,7 +89,8 @@
 // `periods` block (yesterday/last30/ytd) for the card period slider (the DQE
 // read is widened to Jan 1 to source YTD). The v19 30-day `trendAbandoned` /
 // `trendAbandonedPct` are removed (superseded by the 90-day chart series).
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v20';
+// v21 (R18d): per-dept `dqeSilence` (the queue-lens fallback flag) joined the blob.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v21';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -167,6 +168,34 @@ function ovDeptChartSeries_(labels, dqeDaily, qcdDaily) {
       var q = qcdDaily[iso];
       return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
     }),
+  };
+}
+
+/**
+ * R18d: per-dept DQE-silence detector for the tile's queue-lens fallback.
+ * Over the trailing `days` ISO labels: DQE rings sum 0 while QCD calls > 0
+ * means the dept's AGENT view is blind while its QUEUE keeps working -- the
+ * Field Ops Power failure shape (a phone-system caller-ID rename starved the
+ * pipeline's queue recognizer for two months with nothing red anywhere).
+ * Returns null when healthy, else { days, qcdCalls, qcdAbandoned, qcdPct }.
+ * Pure; pinned by tests/unit/overview-dqe-silence.test.js.
+ */
+function ovDqeSilence_(labels, dqeDaily, qcdDaily, days) {
+  dqeDaily = dqeDaily || {}; qcdDaily = qcdDaily || {};
+  var win = labels.slice(-Math.max(1, days || 7));
+  var rung = 0, calls = 0, abandoned = 0;
+  win.forEach(function (iso) {
+    var d = dqeDaily[iso];
+    if (d) rung += Number(d.rung) || 0;
+    var q = qcdDaily[iso];
+    if (q) { calls += Number(q.totalCalls) || 0; abandoned += Number(q.abandoned) || 0; }
+  });
+  if (rung > 0 || calls === 0) return null;
+  return {
+    days: win.length,
+    qcdCalls: calls,
+    qcdAbandoned: abandoned,
+    qcdPct: round1_(calls > 0 ? (abandoned / calls) * 100 : 0),
   };
 }
 
@@ -623,6 +652,13 @@ function getCompanyOverview(req) {
     const snap = qcdSnapshotsByDept[d] || null;
     const qcdDaily = (snap && snap.daily) || {};
     const chartSeries = ovDeptChartSeries_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily);
+    // R18d: DQE-silence flag for the tile's LABELED queue-lens fallback --
+    // computed while snap.daily is still here. Visible to every viewer (it is
+    // queue-level data the tile's QCD chips already show); the client must
+    // render it as an explicitly DIFFERENT lens, never feed these numbers
+    // into the DQE tiles -- QCD counts CALLS with an abandon-threshold
+    // semantic, DQE counts RINGS, and the two are not the same species.
+    const dqeSilence = ovDqeSilence_(chartTrendIsoLabels, deptChartDaily[d], qcdDaily, 7);
     if (snap) delete snap.daily;   // don't ship the raw per-day map on the tile chip
     return {
       name: d,
@@ -645,6 +681,10 @@ function getCompanyOverview(req) {
         attFormatted:   formatSecondsHms_(att),
       },
       wow: computeWowDelta_(stats, latestDate),
+      // R18d: null when healthy; { days, qcdCalls, qcdAbandoned, qcdPct }
+      // when the agent view has been dark for the trailing window while the
+      // queue kept taking calls.
+      dqeSilence: dqeSilence,
       // QCD snapshot from the most recent date in the trend window.
       // Visible to everyone (no admin gate) -- managers see the same
       // QCD numbers their own dept's full report shows.

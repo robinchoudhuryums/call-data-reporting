@@ -276,6 +276,44 @@ async function horizontalOverflow(page) {
         'months="' + cal.months + '" note="' + cal.note.trim() + '"');
     }
 
+    // R18d: the DQE-silence queue-lens badge. The fixture turns out to ship a
+    // LIVE specimen of the incident shape -- Billing has QCD rows but no DQE
+    // agents at all -- so the REAL server code computes dqeSilence for it and
+    // the positive case is asserted permanently, no planted payload needed.
+    // Both directions matter: the silent dept gets the labeled queue-lens
+    // block, and every dept WITH ring activity gets none (a badge on a
+    // healthy tile means ovBuildDqeSilenceNote_'s gate broke). Data-driven
+    // off each tile's own Rung stat so fixture count drift can't break it.
+    {
+      await page.click('#overview-btn');
+      await page.waitForTimeout(2000);
+      const silence = await page.evaluate(() => {
+        const tiles = Array.from(document.querySelectorAll('.ov-dept-tile'));
+        return tiles.map((t) => {
+          const rungLbl = Array.from(t.querySelectorAll('.ov-dept-stat-label'))
+            .find((l) => l.textContent.trim() === 'Rung');
+          const rung = rungLbl
+            ? Number((rungLbl.parentElement.textContent.replace(/[^0-9]/g, '')) || 0) : null;
+          const badge = t.querySelector('.ov-dqe-silence');
+          return { dept: t.getAttribute('data-dept'), rung: rung,
+                   badge: !!badge,
+                   badgeText: badge ? badge.textContent.replace(/\s+/g, ' ').trim() : '' };
+        });
+      });
+      const silent = silence.filter((t) => t.badge);
+      const wrong = silence.filter((t) => t.badge && t.rung > 0);
+      record(role + ': the queue-only fixture dept gets the DQE-silence queue-lens badge',
+        silent.length >= 1 && /queue calls/.test(silent[0].badgeText)
+          && /Agent data dark/.test(silent[0].badgeText),
+        JSON.stringify(silent));
+      record(role + ': no silence badge on any dept WITH ring activity',
+        wrong.length === 0, JSON.stringify(wrong));
+      // Return to the dept page -- the blocks below assume it (the queue
+      // calendar's metric select lives in the Insights region there).
+      await page.click('#my-dept-btn');
+      await page.waitForTimeout(3500);
+    }
+
     // R18b (owner): the all-departments report shares ONE tally scale, the
     // same fix the email got in R18 -- a per-section unit made bar length
     // incomparable between departments, which is the same misread whether the
