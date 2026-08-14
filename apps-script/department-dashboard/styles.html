@@ -1543,6 +1543,19 @@
   }
   .missed-agents-fold > .agent-grid { margin-top: 10px; }
 
+  /* R18d: the Overview tile's queue-lens fallback when agent (DQE) data has
+     gone dark while the queue keeps taking calls. Warn-toned and impossible
+     to read as the normal stats -- that is the point. */
+  .ov-dqe-silence {
+    margin: 6px 0 2px; padding: 6px 8px;
+    background: var(--warn-soft); border-left: 3px solid var(--warn);
+    border-radius: var(--r);
+    font: 10.5px var(--mono); color: var(--ink);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .ov-dqe-silence-head { font-weight: 600; color: var(--warn); letter-spacing: 0; }
+  .ov-dqe-silence-stats { font-variant-numeric: tabular-nums; }
+
   /* R18b: the clip marker on a shared-scale tally, and the report-wide
      block-size legend under the company row. */
   .tly-clip {

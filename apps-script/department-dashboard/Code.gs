@@ -15,6 +15,14 @@ function doGet(e) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
 
+  // R18d (owner): first-sighting / outcome-change notification. Best-effort
+  // and BEFORE the branch so denied attempts notify too -- "who tried and
+  // failed" is half the point on a rollout day. Never allowed to break a
+  // page render.
+  try { notifyLoginEvent_(email, user); } catch (err) {
+    Logger.log('notifyLoginEvent_ failed (best-effort): %s', err);
+  }
+
   if (user.role === 'none') {
     return renderAccessDenied_(user);
   }

@@ -826,6 +826,23 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   current position: the scroll being computed is the one that pins it),
   scrolls the minimum distance that clears it, and never pushes the top back
   under the strip when the element is taller than the space.
+- **The Overview DQE-silence badge is a LABELED different lens, never a
+  substitution (R18d).** When the server ships `dqeSilence` on a dept
+  (`companyOverview:v21` — zero DQE rings over the trailing 7 chart days while
+  the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
+  `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
+  inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
+  strip — a child dept can go dark too, and Spanish/PAK only render as strips).
+  The design rule that must survive any restyle: these are QCD numbers —
+  CALLS with an abandon-threshold semantic — and the tile's normal stats count
+  RINGS, so the fallback must stay visibly a different lens with its own
+  labels ("queue calls", "abandoned %"). Feeding the QCD figures into the
+  Rung/Ans/Miss/answer-% slots to make the tile "look alive" would show a
+  number that silently changed species — the exact misread the R12-4 no-data
+  dash exists to prevent, one level worse. The quiet R12-4 note still covers
+  "no data in this window yet"; the silence badge is its loud upgrade for
+  "queue working, agents dark". The PUSH twin is the DQE-silence watchdog
+  (Operator State #44) — same detector shape, emailed.
 - **A light/dark flip must REBUILD every chart that is on screen
   (`repaintLiveCharts_`, script-1-core).** Chart.js bakes `THEME.*` into a
   chart at CONSTRUCTION, so `refreshChartTheme()` alone changes nothing
