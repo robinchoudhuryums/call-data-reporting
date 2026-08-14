@@ -644,8 +644,10 @@
       if (kicker) kicker.textContent = 'Operations · Escalations';
       if (title)  title.textContent  = 'Escalations';
       // Lazy-init the controls + load on first entry (idempotent thereafter).
-      if (typeof escEnsureInit_ === 'function') escEnsureInit_(function () { escLoad_(); });
-      else if (typeof escLoad_ === 'function') escLoad_();
+      // R19: pageView=true — this is the page-entry path, so the server logs
+      // an 'escalations' visit row (reloads elsewhere pass nothing).
+      if (typeof escEnsureInit_ === 'function') escEnsureInit_(function () { escLoad_(true); });
+      else if (typeof escLoad_ === 'function') escLoad_(true);
     } else {
       if (kicker) kicker.textContent = 'Department Dashboard';
       if (title)  title.textContent  = getRequestedDept() || '(no department)';

@@ -226,6 +226,15 @@ function getEscalations(req) {
     else if (mine.length === 1) { department = mine[0]; }
     else { deptList = mine; }   // all of the manager's assigned depts
   }
+  // R19: page-view telemetry. The client passes pageView:true only on page
+  // ENTRY (setPage / the Overview strip link) -- filter changes, refreshes
+  // and the post-mutation reloads pass nothing, so 'escalations' rows in
+  // Report Usage count visits, not list re-fetches.
+  if (req.pageView) {
+    logReportUsage_('escalations',
+      department || (deptList ? deptList.join('+') : '(all)'), user, false);
+  }
+
   // Dept predicate shared by the list + aggregate queries.
   var escDeptWhere_ = function () {
     if (scopeAll) return { clause: '', params: [] };

@@ -307,3 +307,97 @@ test('uiflags: save is admin-gated; writes the property, clears it when empty', 
   assert.deepEqual(Array.from(cleared.flags), []);
   assert.equal(h.state.props.UI_FLAGS, undefined, 'empty set deletes the property');
 });
+
+// ── R19: per-user activity + the client-error beacon ─────────────────────
+
+test('R19 usage: computeReportUsageSummary_ returns per-user rollup, busiest-first, with top-report digest + last-seen role', function () {
+  installHealth({});
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'Report Usage': [
+    ['Timestamp', 'Report', 'Department', 'Role', 'Email', 'Cache Hit'],
+    [daysAgo(3), 'summary',  'CSR', 'manager', 'm1@x.com', 'FALSE'],
+    [daysAgo(2), 'summary',  'CSR', 'manager', 'm1@x.com', 'TRUE'],
+    [daysAgo(1), 'insights', 'CSR', 'manager', 'm1@x.com', 'FALSE'],
+    [daysAgo(1), 'overview', '(all)', 'admin', 'a@x.com',  'FALSE'],
+    [daysAgo(45), 'summary', 'CSR', 'manager', 'ghost@x.com', 'FALSE'],  // outside window
+  ] } });
+  const ru = h.call('computeReportUsageSummary_');
+  assert.equal(ru.users.length, 2, 'out-of-window user does not appear');
+  const m1 = ru.users[0];
+  assert.equal(m1.email, 'm1@x.com', 'busiest first');
+  assert.equal(m1.runs, 3);
+  assert.equal(m1.role, 'manager');
+  assert.match(m1.top, /summary 2/);
+  assert.match(m1.top, /insights 1/);
+  assert.match(String(m1.lastUsed), /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(ru.users[1].email, 'a@x.com');
+});
+
+test('R19 usage: getSystemHealth renders muted per-user rows under the users section', function () {
+  installHealth({});
+  h.state.spreadsheet.getSheetByName('Report Usage')
+    .appendRow([daysAgo(1), 'overview', '(all)', 'manager', 'm9@x.com', 'FALSE']);
+  const data = h.call('getSystemHealth');
+  const row = rowByKey(data, 'user-m9@x.com');
+  assert.ok(row, 'per-user row present');
+  assert.equal(row.section, 'users');
+  assert.equal(row.status, 'muted', 'usage evidence never warns');
+  assert.match(row.value, /1 open\(s\) · manager · last \d{4}-\d{2}-\d{2} · overview 1/);
+});
+
+test('R19 beacon: first report emails the admins with user/route/message; repeat of the same signature is throttled', function () {
+  installHealth({});
+  h.state.sentEmails.length = 0;
+  const out = h.call('reportClientIssue', {
+    kind: 'uncaught', message: 'prLastRoster is not defined',
+    stack: 'ReferenceError: prLastRoster is not defined\n  at initDeptSelector_',
+    route: 'dept', ua: 'TestBrowser/1.0',
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.emailed, true);
+  assert.equal(h.state.sentEmails.length, 1);
+  const mail = h.state.sentEmails[0];
+  assert.equal(mail.to, 'admin@x.com');
+  assert.match(mail.subject, /Client issue — uncaught \(admin@x\.com\)/);
+  assert.match(mail.body, /prLastRoster is not defined/);
+  assert.match(mail.body, /Page: {2}dept/);
+  assert.match(mail.body, /TestBrowser/);
+
+  // Same signature again -> throttled (no second email), still ok.
+  const again = h.call('reportClientIssue', {
+    kind: 'uncaught', message: 'prLastRoster is not defined', route: 'dept',
+  });
+  assert.equal(again.ok, true);
+  assert.equal(again.emailed, false);
+  assert.equal(h.state.sentEmails.length, 1);
+
+  // A DIFFERENT signature still emails.
+  const other = h.call('reportClientIssue', { kind: 'load-failure', message: 'Overview load failed: quota' });
+  assert.equal(other.emailed, true);
+  assert.equal(h.state.sentEmails.length, 2);
+});
+
+test('R19 beacon: rolling-window cap stops emails but keeps accepting reports; empty message rejected; role-none rejected', function () {
+  installHealth({});
+  h.state.sentEmails.length = 0;
+  h.state.cache.set('cissue:count', '15');   // window cap reached
+  const out = h.call('reportClientIssue', { kind: 'uncaught', message: 'some new error' });
+  assert.equal(out.ok, true);
+  assert.equal(out.emailed, false, 'cap reached -> no email');
+  assert.equal(h.state.sentEmails.length, 0);
+
+  assert.equal(h.call('reportClientIssue', { kind: 'uncaught', message: '' }).ok, false, 'empty message is a no-op');
+
+  installHealth({ email: 'stranger@x.com' });
+  assert.throws(function () { h.call('reportClientIssue', { kind: 'x', message: 'y' }); }, /authorized/i);
+});
+
+test('R19 beacon: oversized fields are capped, not rejected', function () {
+  installHealth({});
+  h.state.sentEmails.length = 0;
+  h.state.cache = new Map();   // fresh throttle state
+  const big = new Array(5000).join('x');
+  const out = h.call('reportClientIssue', { kind: 'uncaught', message: big, stack: big, route: big, ua: big });
+  assert.equal(out.emailed, true);
+  const body = h.state.sentEmails[0].body;
+  assert.ok(body.length < 6000, 'email body stays bounded (got ' + body.length + ')');
+});

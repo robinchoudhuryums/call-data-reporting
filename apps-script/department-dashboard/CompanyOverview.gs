@@ -291,6 +291,12 @@ function getCompanyOverview(req) {
   // SAME suffixed key via overviewCacheKey_().
   const ovCacheKey = overviewCacheKey_();
   const cached = cache.get(ovCacheKey);
+  // R19: landing telemetry. The client's 5-min auto-refresh + banner Retry
+  // pass auto:true and are NOT logged, so 'overview' rows in Report Usage
+  // mean deliberate visits (Overview is the default landing, so this is the
+  // per-session "who showed up" row). One log site covers every return path
+  // below; cache-warm traffic is already suppressed via REPORT_USAGE_SUPPRESS_.
+  if (!(req && req.auto)) logReportUsage_('overview', user.department || '(all)', user, !!cached);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);

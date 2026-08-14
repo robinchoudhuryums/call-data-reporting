@@ -1477,6 +1477,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `trg-readiness` verdict row ("N armed, K need attention"). A new
   flag-gated engine must pass its `flagProp` to `svc()` or it inherits the
   old blind spot.
+- **Client-error beacon + usage-telemetry scope (R19).** Uncaught client
+  errors (`window` error/unhandledrejection listeners in script-1-core,
+  installed for EVERY signed-in user — the dev overlay's capture is
+  admin-only and page-local) and the four top-level load failures
+  (Overview / My Department / Insights / Escalations) report to
+  `SystemHealth.gs::reportClientIssue`, which emails the admins
+  immediately. Bounded at BOTH ends — client: once per error signature per
+  session, max 6/session, and `reportClientIssue_` must never throw;
+  server: one email per signature per 30 min + `CLIENT_ISSUE_WINDOW_CAP_`
+  (=15) emails per rolling 6h CacheService window, with throttled reports
+  still Logger.logged. Public but INV-01-clean (email + cache only, no
+  sheet write). **A new top-level page loader's failure handler should call
+  `reportClientIssue_('load-failure', ...)`** — drill/panel fetches with
+  their own visible error states should not (noise). Usage-telemetry scope
+  rules: `overview` rows mean DELIBERATE landings (the 5-min auto-refresh
+  and the banner Retry pass `auto:true` and are not logged); `escalations`
+  rows mean page ENTRY (only setPage's `escLoad_(true)` passes the
+  `pageView` flag — filter/refresh/post-mutation reloads don't). The Health
+  page's usage section carries a collapsed "User activity (last 30 days)"
+  per-user rollup (`REPORT_USAGE_USER_CAP_`=40, busiest-first, top-3 report
+  digest, role as of last-seen row). Pinned by system-health.test.js.
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script

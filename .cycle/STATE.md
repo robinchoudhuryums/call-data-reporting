@@ -2745,3 +2745,30 @@ commit/push/deploy direction.
   after deploy: force re-import the surviving ~14-day window,
   backfillDQEHistoryUpsert() if on neon, install the watchdog trigger.
   6/17->retention-floor agent history is unrecoverable.
+
+## Increment 111 (2026-08-14) — R19: error beacon + usage telemetry (post-#239)
+
+  PR #239 MERGED (squash f43b9c8) + branch reset onto main. Then two
+  owner asks in one round: (a) editor-run trigger/status RPCs now
+  Logger.log their status JSON via Util.gs::logStatusReturn_ (23
+  callables, 9 engines) -- the Apps Script editor discards return
+  values, so "started/completed and nothing else" read as a no-op.
+  (b) R19 rollout observability: reportClientIssue beacon (client
+  listeners for EVERY user + 4 top-level load-failure handlers ->
+  immediate admin email, sig-throttled 30min + 15/6h window cap);
+  'overview' landing rows (auto-refresh/Retry pass auto:true, not
+  logged); 'escalations' page-entry rows (pageView flag only from
+  setPage); Health usage section gained a collapsed per-user
+  "User activity (last 30d)" rollup (cap 40, top-3 digest). 699/699
+  (+5), one new CLAUDE.md bullet, block 111.
+
+  **WHERE I LEFT OFF:** ci:ui was finishing at write time (client
+  fragments touched -- must be green before PR). UNANSWERED to owner:
+  the feedback-box question (recommendation drafted: yes, email-only +
+  html2canvas screenshot + optional anonymity, reuse beacon throttle;
+  do NOT build a sheet-backed inbox). Not yet PR'd -- owner merges on
+  explicit word. Operator work outstanding from #239 unchanged
+  (provider ticket, force re-import, watchdog install,
+  NOTIFY_ON_NEW_ESCALATION property now set by owner? -- they said
+  "Set NOTIFY_ON_NEW_ESCALATION=true" but only they can do it in
+  Script Properties; instructions given).

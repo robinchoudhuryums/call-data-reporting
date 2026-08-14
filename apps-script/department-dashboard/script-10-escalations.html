@@ -155,7 +155,10 @@
   // Refresh) while a load is in flight must not let the OLDER response
   // repaint the list over the newer filter's result when it lands late.
   var escLoadSeq_ = 0;
-  function escLoad_() {
+  // R19: pageView is passed ONLY by the page-entry call sites (setPage /
+  // the Overview strip link) so the server's telemetry counts visits, not
+  // the filter-change / refresh / post-mutation reloads below.
+  function escLoad_(pageView) {
     escSetError_('');
     const listEl = $('esc-list');
     const status = $('esc-status') ? $('esc-status').value : 'pending';
@@ -194,8 +197,11 @@
         if (__tok !== escLoadSeq_) return;   // a newer load owns the list
         if ($('esc-loading')) $('esc-loading').style.display = 'none';
         escSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+        if (typeof reportClientIssue_ === 'function') {
+          reportClientIssue_('load-failure', 'Escalations load failed: ' + (err && err.message ? err.message : String(err)));
+        }
       })
-      .getEscalations({ department: dept, status: status });
+      .getEscalations({ department: dept, status: status, pageView: !!pageView });
   }
 
   function escRenderList_(resp) {

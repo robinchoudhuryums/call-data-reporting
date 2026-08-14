@@ -1321,6 +1321,11 @@
       .withFailureHandler(function (err) {
         gen.disabled = false; gen.textContent = prev;
         if (__rtok !== reportReqSeq_.ins) return;
+        // R19: Insights auto-generates with the dept page, so a failure here
+        // is a page-level breakage worth an admin email.
+        if (typeof reportClientIssue_ === 'function') {
+          reportClientIssue_('load-failure', 'Insights load failed: ' + (err && err.message ? err.message : String(err)));
+        }
         if (__insFrostHost) dsFrostHide_(__insFrostHost);   // R7 (I-3)
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ins', __sig, __insRepaint, 'ins-results-status')) return;
