@@ -176,6 +176,54 @@
     try { DEV_.on = localStorage.getItem(DEV_.KEY) === 'on'; } catch (e) {}
   }
 
+  // ══ CLIENT-ERROR BEACON (R19) ═══════════════════════════════════════════
+  //
+  // The dev overlay above RECORDS errors, but only for admins and only into
+  // an in-page buffer -- a manager hitting a broken page still tells nobody.
+  // This beacon reports to the server (SystemHealth.gs::reportClientIssue),
+  // which emails the admins immediately, throttled server-side. Installed for
+  // EVERY signed-in user. Client-side bounds: each distinct error signature
+  // is sent once per session, max BEACON_MAX_PER_SESSION_ total, and the
+  // reporter itself may never throw (a broken beacon must not add errors).
+  var BEACON_SEEN_ = {};
+  var BEACON_SENT_ = 0;
+  var BEACON_MAX_PER_SESSION_ = 6;
+
+  function reportClientIssue_(kind, message, stack) {
+    try {
+      var msg = String(message || '').slice(0, 600);
+      if (!msg) return;
+      var sig = kind + '|' + msg.slice(0, 120);
+      if (BEACON_SEEN_[sig] || BEACON_SENT_ >= BEACON_MAX_PER_SESSION_) return;
+      BEACON_SEEN_[sig] = true;
+      BEACON_SENT_++;
+      if (!(window.google && google.script && google.script.run)) return;
+      google.script.run
+        .withSuccessHandler(function () {})
+        .withFailureHandler(function () {})   // never surface the beacon's own failure
+        .reportClientIssue({
+          kind: String(kind || 'error').slice(0, 40),
+          message: msg,
+          stack: String(stack || '').slice(0, 1800),
+          route: (document.body && document.body.getAttribute('data-page')) || '',
+          ua: (navigator.userAgent || '').slice(0, 220),
+        });
+    } catch (e) { /* the reporter must never throw */ }
+  }
+
+  window.addEventListener('error', function (e) {
+    reportClientIssue_('uncaught',
+      (e && e.message) || 'Script error',
+      (e && e.error && e.error.stack)
+        || (((e && e.filename) || '') + (e && e.lineno ? (':' + e.lineno) : '')));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    reportClientIssue_('unhandled-rejection',
+      (r && r.message) ? r.message : String(r),
+      (r && r.stack) || '');
+  });
+
   // -- Dark mode toggle (Step 1 of the Call-Analyzer visual parity work).
   // Reads persisted preference and wires the header button. Runs before
   // any other UI setup so the page paints in the right mode immediately.

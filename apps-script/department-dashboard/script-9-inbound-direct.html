@@ -1719,7 +1719,13 @@
     pipeline: 'Pipeline', neon: 'Neon', triggers: 'Trigger-driven services',
     config: 'Script Properties', sheets: 'Sheets',
     usage: 'Report usage (last 30 days)',   // the consolidation/un-gating evidence
+    users: 'User activity (last 30 days)',  // R19: per-user rollup, collapsed by default
   };
+  // R19: sections rendered COLLAPSED behind a clickable header (currently just
+  // 'users' -- one row per user gets long with real adoption). State is
+  // per-render (a refresh re-collapses), which is the right default for a
+  // drill-in section.
+  const HEALTH_FOLDED_SECTIONS_ = { users: true };
 
   function healthRender_(data) {
     const tbody = $('health-tbody');
@@ -1732,12 +1738,21 @@
     };
     let html = '', lastSection = null;
     rows.forEach(function (r) {
+      const folded = !!HEALTH_FOLDED_SECTIONS_[r.section];
       if (r.section !== lastSection) {
         lastSection = r.section;
-        html += '<tr class="sh-section"><td colspan="3">'
-          + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section) + '</td></tr>';
+        if (folded) {
+          const n = rows.filter(function (x) { return x.section === r.section; }).length;
+          html += '<tr class="sh-section sh-fold-head" data-fold="' + escapeHtml(r.section) + '" tabindex="0" role="button" aria-expanded="false">'
+            + '<td colspan="3"><span class="sh-fold-arrow">▸</span> '
+            + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section)
+            + ' <span class="sh-fold-count">(' + n + ' — click to expand)</span></td></tr>';
+        } else {
+          html += '<tr class="sh-section"><td colspan="3">'
+            + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section) + '</td></tr>';
+        }
       }
-      html += '<tr>'
+      html += '<tr' + (folded ? ' class="sh-fold-row" data-fold-of="' + escapeHtml(r.section) + '" style="display:none"' : '') + '>'
         + '<td>' + escapeHtml(r.label) + '</td>'
         + '<td>' + chip(r.status) + '</td>'
         + '<td>' + escapeHtml(r.value || '')
@@ -1745,6 +1760,23 @@
         + '</td></tr>';
     });
     tbody.innerHTML = html || '<tr><td colspan="3" class="al-empty">No checks returned.</td></tr>';
+    // Fold toggles (delegated per render; innerHTML replaced the old rows).
+    Array.prototype.forEach.call(tbody.querySelectorAll('.sh-fold-head'), function (head) {
+      const toggle = function () {
+        const key = head.getAttribute('data-fold');
+        const open = head.getAttribute('aria-expanded') === 'true';
+        head.setAttribute('aria-expanded', open ? 'false' : 'true');
+        const arrow = head.querySelector('.sh-fold-arrow');
+        if (arrow) arrow.textContent = open ? '▸' : '▾';
+        Array.prototype.forEach.call(
+          tbody.querySelectorAll('.sh-fold-row[data-fold-of="' + key + '"]'),
+          function (tr) { tr.style.display = open ? 'none' : ''; });
+      };
+      head.addEventListener('click', toggle);
+      head.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+      });
+    });
     if ($('health-table')) $('health-table').style.display = '';
     const sum = $('health-summary');
     if (sum) {

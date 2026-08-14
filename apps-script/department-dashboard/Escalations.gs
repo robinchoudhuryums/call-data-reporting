@@ -132,7 +132,7 @@ var ESC_OVERDUE_SQL_ = "(CURRENT_DATE - occurred_at::date) >= " + ESC_OVERDUE_DA
  */
 function getEscalationsInit() {
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: escalations are a manager/admin worklist
   var isAdmin = user.role === 'admin';
   // #1: an all-departments manager sees every dept's escalations (like admin
   // for data breadth), but createEscalation stays assertAdmin_-gated.
@@ -167,7 +167,7 @@ function getEscalationsInit() {
  */
 function getEscalationsBadge() {
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: escalations are a manager/admin worklist
   var conn = null;
   try {
     conn = getDashboardNeonConn_();
@@ -180,22 +180,32 @@ function getEscalationsBadge() {
       clause = ' WHERE department IN (' + mine.map(function () { return '?'; }).join(',') + ')';
       params = mine;
     }
-    var sql = 'SELECT '
+    // R20 (owner): grouped by department so the Overview strip + Company
+    // snapshot line can name WHICH depts carry the open count, not just the
+    // total. Totals are summed from the groups, so the two can never disagree.
+    var sql = 'SELECT department, '
       + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
       + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
       + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
         + ESC_OVERDUE_SQL_ + ') AS n_overdue '
-      + 'FROM escalations' + clause;
+      + 'FROM escalations' + clause + ' GROUP BY department';
     var stmt = conn.prepareStatement(sql);
     for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
     var rs = stmt.executeQuery();
-    var out = { available: true, open: 0, review: 0, overdue: 0 };
-    if (rs.next()) {
-      out.open    = Number(rs.getString('n_open'))    || 0;
-      out.review  = Number(rs.getString('n_review'))  || 0;
-      out.overdue = Number(rs.getString('n_overdue')) || 0;
+    var out = { available: true, open: 0, review: 0, overdue: 0, byDept: [] };
+    while (rs.next()) {
+      var dOpen    = Number(rs.getString('n_open'))    || 0;
+      var dReview  = Number(rs.getString('n_review'))  || 0;
+      var dOverdue = Number(rs.getString('n_overdue')) || 0;
+      out.open    += dOpen;
+      out.review  += dReview;
+      out.overdue += dOverdue;
+      if (dOpen > 0) {
+        out.byDept.push({ dept: String(rs.getString('department') || ''), open: dOpen, overdue: dOverdue });
+      }
     }
     rs.close(); stmt.close();
+    out.byDept.sort(function (a, b) { return b.open - a.open || (a.dept < b.dept ? -1 : 1); });
     return out;
   } catch (e) {
     return { available: false };
@@ -226,6 +236,15 @@ function getEscalations(req) {
     else if (mine.length === 1) { department = mine[0]; }
     else { deptList = mine; }   // all of the manager's assigned depts
   }
+  // R19: page-view telemetry. The client passes pageView:true only on page
+  // ENTRY (setPage / the Overview strip link) -- filter changes, refreshes
+  // and the post-mutation reloads pass nothing, so 'escalations' rows in
+  // Report Usage count visits, not list re-fetches.
+  if (req.pageView) {
+    logReportUsage_('escalations',
+      department || (deptList ? deptList.join('+') : '(all)'), user, false);
+  }
+
   // Dept predicate shared by the list + aggregate queries.
   var escDeptWhere_ = function () {
     if (scopeAll) return { clause: '', params: [] };
@@ -987,7 +1006,12 @@ function backfillEscalationActivity() {
  * pass. Throws on rejection.
  */
 function escAssertRowAccess_(user, rowDept) {
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  // Phase A (agent role): allowlist, mirroring assertDeptAccess_ -- the
+  // manager-pinning branch below only fires for role==='manager', so an
+  // unrecognized role would otherwise pass this row gate UNPINNED.
+  if (!user || (user.role !== 'admin' && user.role !== 'manager')) {
+    throw new Error('Not authorized.');
+  }
   // R8-4 (the R-3 class): an ALL-departments manager (allDepts:true,
   // department:null) is a DATA-BREADTH role and passes like an admin --
   // this row gate is data breadth, not an admin surface. Without the

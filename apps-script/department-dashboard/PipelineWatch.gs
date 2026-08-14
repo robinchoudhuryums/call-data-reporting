@@ -55,7 +55,7 @@ var PIPELINE_WATCH_READBACK_MIN_STREAK = 3;
 /** Admin-only status read. */
 function getPipelineWatchStatus() {
   assertAdmin_();
-  return getPipelineWatchStatus_();
+  return logStatusReturn_(getPipelineWatchStatus_());
 }
 
 /** Admin-only: enable + install the watchdog trigger. Returns status. */
@@ -63,7 +63,7 @@ function installPipelineWatchTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('PIPELINE_WATCH_ENABLED', 'true');
   installPipelineWatchTrigger_();
-  return getPipelineWatchStatus_();
+  return logStatusReturn_(getPipelineWatchStatus_());
 }
 
 /** Admin-only: uninstall the trigger + clear the enabled flag. Returns status. */
@@ -72,7 +72,7 @@ function uninstallPipelineWatchTrigger() {
   uninstallPipelineWatchTrigger_();
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('PIPELINE_WATCH_ENABLED');
-  return getPipelineWatchStatus_();
+  return logStatusReturn_(getPipelineWatchStatus_());
 }
 
 // ── Trigger entry point ───────────────────────────────────────────────

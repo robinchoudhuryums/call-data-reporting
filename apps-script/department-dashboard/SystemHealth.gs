@@ -350,6 +350,14 @@ function getSystemHealth() {
           'scan capped at the newest ' + REPORT_USAGE_SCAN_CAP_ + ' rows — counts above understate the full '
           + REPORT_USAGE_SUMMARY_DAYS_ + '-day window');
       }
+      // R19: per-user rows under their own section; the client renders the
+      // section COLLAPSED behind its header (still just {key,section,...} rows,
+      // so a stale client renders them flat rather than breaking).
+      (ru.users || []).forEach(function (u) {
+        add('users', 'user-' + u.email, u.email, 'muted',
+          u.runs + ' open(s) · ' + (u.role || '?') + ' · last ' + (u.lastUsed || '?')
+          + (u.top ? ' · ' + u.top : ''));
+      });
     }
   } catch (e) { add('usage', 'usage-none', 'Report usage', 'warn', 'probe failed', String(e && e.message || e)); }
 
@@ -418,6 +426,10 @@ var REPORT_USAGE_SUMMARY_DAYS_ = 30;   // aggregation window
 // eventually blow the Health page's budget. 5000 rows comfortably covers 30
 // days at current traffic; if it ever clips the window, the summary says so.
 var REPORT_USAGE_SCAN_CAP_ = 5000;
+// R19: per-user rows returned to the Health page's expandable "User activity"
+// section, busiest-first. ~20 real users today; 40 leaves headroom without
+// letting the payload grow unbounded.
+var REPORT_USAGE_USER_CAP_ = 40;
 
 /**
  * Aggregates the Report Usage telemetry sheet (Util.gs::logReportUsage_,
@@ -448,6 +460,7 @@ function computeReportUsageSummary_() {
 
   var tz = Session.getScriptTimeZone();
   var byReport = {};
+  var byUser = {};   // R19: per-user rollup for the Health page's expandable section
   var rowsInWindow = 0;
   for (var i = 0; i < vals.length; i++) {
     var ts = vals[i][0];
@@ -463,6 +476,16 @@ function computeReportUsageSummary_() {
     var email = String(vals[i][4] || '').toLowerCase();
     if (email) b.userSet[email] = true;
     if (!b.last || ts > b.last) b.last = ts;
+    if (email) {
+      var u = byUser[email];
+      if (!u) u = byUser[email] = { email: email, role: '', runs: 0, byReport: {}, last: null };
+      u.runs++;
+      u.byReport[rep] = (u.byReport[rep] || 0) + 1;
+      if (!u.last || ts > u.last) {   // role as of the LAST-seen row (grants change)
+        u.last = ts;
+        u.role = String(vals[i][3] || '');
+      }
+    }
   }
 
   // Clipped = the cap dropped older rows AND the oldest row we DID scan is
@@ -486,5 +509,89 @@ function computeReportUsageSummary_() {
     };
   }).sort(function (a, b) { return b.runs - a.runs || (a.report < b.report ? -1 : 1); });
 
-  return { available: true, reports: reports, rowsInWindow: rowsInWindow, clipped: clipped };
+  // R19: per-user activity, busiest-first, each with a "top reports" digest
+  // (top 3 by count). Capped so a big org can't bloat the payload.
+  var users = Object.keys(byUser).map(function (k) {
+    var u = byUser[k];
+    var top = Object.keys(u.byReport)
+      .sort(function (a, b) { return u.byReport[b] - u.byReport[a] || (a < b ? -1 : 1); })
+      .slice(0, 3)
+      .map(function (rep) { return rep + ' ' + u.byReport[rep]; })
+      .join(', ');
+    return {
+      email: u.email,
+      role: u.role,
+      runs: u.runs,
+      top: top,
+      lastUsed: u.last ? Utilities.formatDate(u.last, tz, 'yyyy-MM-dd') : null,
+    };
+  }).sort(function (a, b) { return b.runs - a.runs || (a.email < b.email ? -1 : 1); })
+    .slice(0, REPORT_USAGE_USER_CAP_);
+
+  return { available: true, reports: reports, users: users, rowsInWindow: rowsInWindow, clipped: clipped };
+}
+
+// -- Client-error beacon (R19) -------------------------------------------------
+// The push complement to the read-only rows above: when a signed-in user's
+// browser hits an uncaught error or a top-level load failure, the client
+// calls reportClientIssue and the admins get an email IMMEDIATELY -- the
+// owner should not learn about a broken page from a manager's hallway
+// report. INV-01: public but writes NO spreadsheet state (email + CacheService
+// throttle counters + Logger only). Abuse/looping is bounded three ways:
+// the client sends each error signature once per session (max 6 total), the
+// server emails each signature at most once per CLIENT_ISSUE_SIG_TTL_SEC,
+// and a rolling CacheService window caps total emails so a rendering loop
+// on 14 managers' machines costs at most CLIENT_ISSUE_WINDOW_CAP_ emails.
+// Throttled reports still Logger.log, so the Executions panel has the tail.
+
+var CLIENT_ISSUE_MSG_CAP_ = 600;
+var CLIENT_ISSUE_STACK_CAP_ = 1800;
+var CLIENT_ISSUE_SIG_TTL_SEC = 1800;    // one email per distinct error / 30 min
+var CLIENT_ISSUE_WINDOW_CAP_ = 15;      // max emails per rolling 6h CacheService window
+
+function reportClientIssue(payload) {
+  var user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  var p = payload || {};
+  var kind = String(p.kind || 'error').slice(0, 40);
+  var msg = String(p.message || '').slice(0, CLIENT_ISSUE_MSG_CAP_);
+  if (!msg) return { ok: false };
+  var stack = String(p.stack || '').slice(0, CLIENT_ISSUE_STACK_CAP_);
+  var route = String(p.route || '').slice(0, 120);
+  var ua = String(p.ua || '').slice(0, 220);
+
+  var sig = kind + '|' + msg.slice(0, 120);
+  var sigKey = 'cissue:sig:' + Utilities.base64Encode(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, sig)).slice(0, 24);
+  var cache = CacheService.getScriptCache();
+  var emailed = false;
+  try {
+    var seen = cache.get(sigKey);
+    var count = parseInt(cache.get('cissue:count') || '0', 10) || 0;
+    if (!seen && count < CLIENT_ISSUE_WINDOW_CAP_) {
+      var to = getAdminEmails_().join(',');
+      if (to) {
+        MailApp.sendEmail({
+          to: to,
+          subject: '[Dashboard] Client issue — ' + kind + ' (' + user.email + ')',
+          body: 'A user\'s browser reported a client-side issue.\n\n'
+            + 'User:  ' + user.email + ' (' + user.role + ')\n'
+            + 'Page:  ' + (route || '(unknown)') + '\n'
+            + 'Kind:  ' + kind + '\n'
+            + 'Time:  ' + new Date().toISOString() + '\n\n'
+            + 'Message:\n' + msg + '\n\n'
+            + (stack ? 'Stack:\n' + stack + '\n\n' : '')
+            + (ua ? 'Browser: ' + ua + '\n\n' : '')
+            + 'Repeats of this error are throttled for 30 minutes; the full tail '
+            + 'is in the Apps Script Executions log (reportClientIssue).',
+        });
+        emailed = true;
+        cache.put(sigKey, '1', CLIENT_ISSUE_SIG_TTL_SEC);
+        cache.put('cissue:count', String(count + 1), 21600);
+      }
+    }
+  } catch (e) { /* best-effort -- the beacon must never error back into the client */ }
+  Logger.log('reportClientIssue [%s] %s %s: %s%s', kind, user.email, route, msg,
+    emailed ? '' : ' (throttled/not emailed)');
+  return { ok: true, emailed: emailed };
 }

@@ -217,13 +217,13 @@ function sendAlerts(req) {
 function installAlertTrigger() {
   assertAdmin_();
   installAlertTrigger_();
-  return getAlertTriggerStatus_();
+  return logStatusReturn_(getAlertTriggerStatus_());
 }
 
 function uninstallAlertTrigger() {
   assertAdmin_();
   uninstallAlertTrigger_();
-  return getAlertTriggerStatus_();
+  return logStatusReturn_(getAlertTriggerStatus_());
 }
 
 /**

@@ -2578,6 +2578,11 @@
 
   function onError(err, hadSwrPaint) {
     $('refresh-btn').disabled = false;
+    // R19: the My Department table failing to load is exactly what the admin
+    // wants to hear about before a manager has to report it.
+    if (typeof reportClientIssue_ === 'function') {
+      reportClientIssue_('load-failure', 'My Department load failed: ' + (err && err.message ? err.message : String(err)));
+    }
     // M3: clear the frost overlay on failure (the stale table stays visible).
     var __fh = document.querySelector('.agents-table-wrap');
     if (__fh) dsFrostHide_(__fh);

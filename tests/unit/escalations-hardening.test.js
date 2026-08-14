@@ -7,7 +7,9 @@ const { loadGas } = require('../harness/loadGas');
 // Batch-5 Escalations hardening: the F-44 occurred_at validator and the
 // F-45 row-level access gate. Both are pure -- no Neon / sheet doubles.
 
-const h = loadGas({ files: ['Escalations.gs'] });
+// Util.gs supplies assertManagerOrAdmin_ (the Phase A agent-role allowlist
+// the escalation entry points now call).
+const h = loadGas({ files: ['Util.gs', 'Escalations.gs'] });
 
 test('F-44: escCleanDateTime_ accepts the documented shapes only', function () {
   const f = h.fn('escCleanDateTime_');
@@ -421,4 +423,80 @@ test('Gap #3: a mail failure leaves the watermark un-advanced (OPS-1 retry)', fu
   h.call('escPendingReviewPing_');
   assert.equal(h.state.props.ESC_REVIEW_PING_WATERMARK, '2026-07-01 10:00:00',
     'same batch retries on the next hourly run');
+});
+
+// -- R20: per-dept badge counts ----------------------------------------------
+
+// Fake conn for the grouped badge query: one rs row per department.
+function badgeConn(rows) {
+  return {
+    prepareStatement: function () {
+      let i = -1;
+      return {
+        setString: function () {},
+        executeQuery: function () {
+          return {
+            next: function () { i++; return i < rows.length; },
+            getString: function (col) {
+              const r = rows[i];
+              const map = { department: r.dept, n_open: String(r.open),
+                n_review: String(r.review), n_overdue: String(r.overdue) };
+              return map[col] == null ? null : map[col];
+            },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+test('R20: getEscalationsBadge sums totals from per-dept groups; byDept lists open depts busiest-first, review-only depts excluded', function () {
+  h.state.userEmail = 'a@x.com';
+  h.ctx.resolveUser_ = function () { return { role: 'admin', email: 'a@x.com' }; };
+  h.ctx.getDashboardNeonConn_ = function () {
+    return badgeConn([
+      { dept: 'CSR',     open: 1, review: 0, overdue: 0 },
+      { dept: 'Sales',   open: 3, review: 1, overdue: 2 },
+      { dept: 'Billing', open: 0, review: 2, overdue: 0 },   // review-only: totals yes, byDept no
+    ]);
+  };
+  const b = h.call('getEscalationsBadge');
+  assert.equal(b.available, true);
+  assert.equal(b.open, 4);
+  assert.equal(b.review, 3);
+  assert.equal(b.overdue, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(b.byDept)), [
+    { dept: 'Sales', open: 3, overdue: 2 },
+    { dept: 'CSR',   open: 1, overdue: 0 },
+  ]);
+});
+
+// -- Phase A (agent role): deny sweep -----------------------------------------
+// The fail-closed agent user shape (departments []) plus the new allowlists
+// must refuse an agent at EVERY escalation surface. If a future verb accepts
+// one, this sweep is the tripwire.
+
+const AGENT_FIXTURE_ = {
+  email: 'agent1@x.com', role: 'agent', department: null, departments: [],
+  assignedDepartments: [], allDepts: false, agentDept: 'CSR', agentName: 'Maria Lopez',
+};
+
+test('Phase A sweep: escalation entry points + row gate + verbs all refuse the agent role', function () {
+  const log = { writes: [] };
+  installReview(AGENT_FIXTURE_,
+    { status: 'pending', department: 'CSR', caller: 'c', patientName: 'p',
+      trx: 't', area: '', reason: 'r', source: 'manual' }, log);
+
+  assert.throws(function () { h.call('getEscalationsInit'); }, /Not authorized/);
+  assert.throws(function () { h.call('getEscalationsBadge'); }, /Not authorized/);
+  assert.throws(function () { h.call('getEscalations', {}); }, /Not authorized/);
+  assert.throws(function () { h.fn('escAssertRowAccess_')(AGENT_FIXTURE_, 'CSR'); }, /Not authorized/);
+  // Worklist verbs ride escAssertRowAccess_ -- exercise two directly to pin
+  // the wiring, not just the helper.
+  assert.throws(function () { h.call('resolveEscalation', { id: 'e1', resolution: 'x' }); }, /Not authorized/);
+  assert.throws(function () { h.call('approveEscalation', { id: 'e1' }); }, /Not authorized/);
+  assert.equal(log.writes.length, 0, 'nothing was written on any refused call');
 });

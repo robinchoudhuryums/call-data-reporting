@@ -2745,3 +2745,85 @@ commit/push/deploy direction.
   after deploy: force re-import the surviving ~14-day window,
   backfillDQEHistoryUpsert() if on neon, install the watchdog trigger.
   6/17->retention-floor agent history is unrecoverable.
+
+## Increment 111 (2026-08-14) — R19: error beacon + usage telemetry (post-#239)
+
+  PR #239 MERGED (squash f43b9c8) + branch reset onto main. Then two
+  owner asks in one round: (a) editor-run trigger/status RPCs now
+  Logger.log their status JSON via Util.gs::logStatusReturn_ (23
+  callables, 9 engines) -- the Apps Script editor discards return
+  values, so "started/completed and nothing else" read as a no-op.
+  (b) R19 rollout observability: reportClientIssue beacon (client
+  listeners for EVERY user + 4 top-level load-failure handlers ->
+  immediate admin email, sig-throttled 30min + 15/6h window cap);
+  'overview' landing rows (auto-refresh/Retry pass auto:true, not
+  logged); 'escalations' page-entry rows (pageView flag only from
+  setPage); Health usage section gained a collapsed per-user
+  "User activity (last 30d)" rollup (cap 40, top-3 digest). 699/699
+  (+5), one new CLAUDE.md bullet, block 111.
+
+  **WHERE I LEFT OFF:** ci:ui was finishing at write time (client
+  fragments touched -- must be green before PR). UNANSWERED to owner:
+  the feedback-box question (recommendation drafted: yes, email-only +
+  html2canvas screenshot + optional anonymity, reuse beacon throttle;
+  do NOT build a sheet-backed inbox). Not yet PR'd -- owner merges on
+  explicit word. Operator work outstanding from #239 unchanged
+  (provider ticket, force re-import, watchdog install,
+  NOTIFY_ON_NEW_ESCALATION property now set by owner? -- they said
+  "Set NOTIFY_ON_NEW_ESCALATION=true" but only they can do it in
+  Script Properties; instructions given).
+
+## Increment 112 (2026-08-14) — R20: per-dept escalation counts + Spanish threshold
+
+  (a) getEscalationsBadge now GROUPs by department; totals summed from
+  the groups (can never disagree); byDept lists open-carrying depts
+  busiest-first ({dept, open, overdue}). Strip + Company-snapshot line
+  render "(Sales 2 · CSR 1)" suffix, capped at 4 named + "+N more"
+  (escDeptCountsHtml_, script-2-chrome; reused by ovAggEscRender_).
+  Badge is viewer-scoped as before. Pinned in escalations-hardening.
+  (b) Spanish abandoned threshold: AbandonedFilter.js 0:00:01 -> 0:00:59
+  + CDR Tools menu label. NOTE: that's the MANUAL filter tool; the QCD
+  Historical engine (calcQcdReport) keys per-queue rules to QCDR Output
+  sheet rows -- row 40's dynamic block counts abandons waitDec > 0 into
+  its TOTAL (the only >0s rule in the engine). Whether row 40 IS Spanish
+  is sheet data (A40) we can't see from the repo -- owner asked to check;
+  if yes and they want QCD parity, it's a 2-line change (r40_tot2/tot4
+  -> time1Min) that shifts Spanish's reported totals going forward.
+  (c) Agent-role question: thoughts delivered, NO changes (owner said
+  don't build yet). Recommended start = own data + team AGGREGATES only
+  (no per-teammate rows, anonymized or not -- small cohorts make
+  anonymity cosmetic); per-dept configurability if managers differ;
+  key build precondition = email->roster-name mapping (Access Control
+  has no agent-name column today).
+
+  **WHERE I LEFT OFF:** ci:ui running at write time; commit after green.
+  700/700 unit. R19+R20 commits unPR'd on the branch (owner merges on
+  explicit word).
+
+## Increment 113 (2026-08-14) — Agent role Phase A (broad-implement)
+
+  Owner approved the agent-role plan with three decisions (rank line
+  build-hidden; CSR pilots; missed list + wait time where derivable) and
+  commissioned Phase A. SHIPPED DARK behind AGENT_ROLE_ENABLED (unset =
+  byte-identical pre-agent behavior): Access Control grew Role + Agent
+  Name (blank Role = manager; acEnsureSchema_ heals old headers on next
+  editor save; agent rows validate one-real-dept + exact roster name);
+  resolveUser_ resolves agents to the FAIL-CLOSED shape (departments [],
+  identity only in agentDept/agentName; manager rows win; unknown roles
+  drop); assertDeptAccess_ + escAssertRowAccess_ became explicit
+  admin/manager ALLOWLISTS (the audit found the old role-none denylist
+  passed unrecognized roles UNPINNED -- the role model's recurring
+  defect, 5th sighting); assertManagerOrAdmin_ gates the un-pinned
+  all-dept surfaces (Overview, YTD trend, qcdAllDept, sendQcdAllDeptEmail,
+  esc init/badge, getCallJourney); doGet allowlists the dashboard render.
+  Agents CAN reach latestDate + the error beacon (deliberate). 715/715
+  (+15), block 112, operator-state #46.
+
+  **WHERE I LEFT OFF:** ci:ui finishing at write time; commit gated on
+  it. Everything since PR #239 is unPR'd on the branch: R19 (beacon +
+  telemetry), R20 (esc dept counts + Spanish 59s), agent plan + mocks,
+  Phase A. Owner merges on explicit word. OPEN QUESTIONS to owner:
+  QCDR Output cell A40 (is row 40 Spanish? 2-line QCD-parity change on
+  confirm); feedback-box build (recommended email-only + screenshot,
+  awaiting go). Phase B next on owner word (My Performance page +
+  getAgentHome + harness agent build + modal UI for agent rows).

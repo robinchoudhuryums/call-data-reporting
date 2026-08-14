@@ -42,7 +42,15 @@ function assertAdmin_() {
  * own gates and intentionally do NOT route through this helper.
  */
 function assertDeptAccess_(user, dept) {
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  // Phase A (agent role): EXPLICIT ALLOWLIST, not a role-none denylist. The
+  // old `role === 'none'` check let any UNRECOGNIZED role fall through both
+  // pinning branches below and pass unpinned -- exactly how a naive
+  // role:'agent' would have inherited manager-grade access to every report
+  // endpoint. Any role that isn't admin or manager is refused here; new
+  // roles opt IN to dept access deliberately, never by omission.
+  if (!user || (user.role !== 'admin' && user.role !== 'manager')) {
+    throw new Error('Not authorized.');
+  }
   // Managers are pinned to their ASSIGNED dept(s); all-dept managers (Access
   // Control dept = "ALL") + admins may request any department that exists.
   // Tier C: a manager may hold MORE THAN ONE dept -- accept any in the list.
@@ -54,6 +62,19 @@ function assertDeptAccess_(user, dept) {
   }
   if ((user.role === 'admin' || user.allDepts) && getAllDepartments_().indexOf(dept) === -1) {
     throw new Error('Unknown department: ' + dept);
+  }
+}
+
+/**
+ * Phase A (agent role) deny wall for surfaces WITHOUT a dept argument --
+ * company-wide reads (Overview, YTD trend, all-dept QCD) and the escalation
+ * entry points, which predate the agent role and must not silently include
+ * it. Same allowlist discipline as assertDeptAccess_; Phase B grants the
+ * agent role its OWN endpoints rather than widening these.
+ */
+function assertManagerOrAdmin_(user) {
+  if (!user || (user.role !== 'admin' && user.role !== 'manager')) {
+    throw new Error('Not authorized.');
   }
 }
 
@@ -101,6 +122,19 @@ function logReportUsage_(report, dept, user, cacheHit) {
       cacheHit ? 'TRUE' : 'FALSE',
     ]);
   } catch (e) { /* best-effort -- never block a report */ }
+}
+
+/**
+ * Editor-run visibility shim (R19): the Apps Script editor DISCARDS a
+ * function's return value — running an install/uninstall/status admin RPC
+ * from the Run picker shows only "started / completed", which reads as
+ * "did nothing". Route the status object through this before returning so
+ * the Execution log prints the actual state; RPC callers are unaffected
+ * (the value passes through untouched).
+ */
+function logStatusReturn_(out) {
+  try { Logger.log(JSON.stringify(out)); } catch (e) { /* best-effort */ }
+  return out;
 }
 
 // -- Formatting (was IndividualReport.gs) ----------------------------------

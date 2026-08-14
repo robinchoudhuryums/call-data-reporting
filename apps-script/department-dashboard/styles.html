@@ -6362,6 +6362,7 @@
     border-left: 3px solid var(--warn); border-radius: var(--r);
   }
   .ov-esc-strip .ov-esc-overdue { color: var(--warn); font-weight: 600; }
+  .ov-esc-depts { color: var(--muted); }   /* R20: per-dept open-count suffix */
   /* R12-19/#3: zero-ring card note (the R12-4 dash case, explained). */
   .ov-dept-nodata-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
   /* R12-16 (#4): compact row density -- tighter cells so Sales-sized rosters
@@ -7367,6 +7368,11 @@
   .sh-muted { background: var(--paper-2);    color: var(--ink-muted); }
   .sh-section td { background: var(--paper-2); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.18em; }
   .sh-hint { display: block; font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
+  /* R19: collapsible Health sections (currently User activity) */
+  .sh-fold-head { cursor: pointer; user-select: none; }
+  .sh-fold-head:hover td { background: var(--paper-card); }
+  .sh-fold-arrow { display: inline-block; width: 1em; color: var(--muted); }
+  .sh-fold-count { font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--muted); }
   .esc-review-chip {
     display: none; align-items: center; gap: 6px; cursor: pointer;
     border: 1px solid var(--accent); border-radius: 999px; padding: 3px 12px;

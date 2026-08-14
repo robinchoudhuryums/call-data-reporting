@@ -240,6 +240,9 @@
       })
       .withFailureHandler(function (err) {
         if (__otok !== ovLoadSeq_) return;   // a newer request owns the UI
+        if (typeof reportClientIssue_ === 'function') {
+          reportClientIssue_('load-failure', 'Overview load failed: ' + (err && err.message ? err.message : String(err)));
+        }
         if (!silent && !paintedFromCache) {
           // No cached content to fall back on -- show the hard error.
           $('ov-loading').textContent = 'Error loading overview: '
@@ -252,7 +255,9 @@
         }
         ovScheduleAutoRefresh_();
       })
-      .getCompanyOverview({ viewAsDept: viewAsDept_ || '' });
+      // R19: auto:true on the silent paths (5-min auto-refresh, banner Retry)
+      // so server-side landing telemetry counts deliberate visits only.
+      .getCompanyOverview({ viewAsDept: viewAsDept_ || '', auto: !!silent });
   }
 
   // Muted "auto-refresh failing" badge at the top of the Overview body.
@@ -531,6 +536,7 @@
       return;
     }
     host.innerHTML = '⚑ <strong>Escalations:</strong> ' + b.open + ' open'
+      + (typeof escDeptCountsHtml_ === 'function' ? escDeptCountsHtml_(b.byDept) : '')
       + (b.overdue ? ' · <span class="ov-esc-overdue">' + b.overdue + ' overdue</span>' : '')
       + (b.review ? ' · ' + b.review + ' awaiting review' : '')
       + ' <button type="button" class="link-btn" id="ov-agg-esc-open">Open worklist →</button>';

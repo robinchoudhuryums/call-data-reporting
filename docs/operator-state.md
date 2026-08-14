@@ -1092,3 +1092,21 @@ When something looks wrong, before assuming a code bug, check:
     A denied-attempt mail includes the grant runbook (Access Control row, or
     `EMAIL_ALIASES` for an alias address, #36). Pinned by
     `tests/unit/login-notify.test.js`.
+
+46. **`AGENT_ROLE_ENABLED` — the agent-role resolution switch (Phase A of
+    docs/agent-role-plan.md; default OFF).** Unset (or anything but `true`),
+    an Access Control row whose Role is `agent` resolves to role `none` —
+    exactly the pre-agent behavior, so the deployed code is dark until you
+    flip it. Set to `true` and `resolveUser_` resolves agent rows to the
+    fail-closed agent identity (`agentDept`/`agentName` only; every
+    pre-agent gate refuses the role by allowlist). **Phase A note: even with
+    the flag on, an agent landing on the web app gets the access-denied page
+    — the agent pages ship in Phase B**, so leave the flag off until then
+    unless you're testing resolution. Prereqs for a working agent row: the
+    Access Control row needs Department + Role=`agent` + Agent Name matching
+    that dept's `DO NOT EDIT!` roster entry EXACTLY (the editor validates
+    this; hand-edited sheet rows are not validated until touched by the
+    editor). Manager rows on the same email win over agent rows. Sign-in
+    notifications (#45) key agents as `agent:<dept>`, so grants/moves email
+    the admins like any other outcome change. Pilot team: CSR (owner,
+    2026-08-14). Pinned by `tests/unit/agent-role.test.js`.

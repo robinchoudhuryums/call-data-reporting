@@ -39,26 +39,26 @@ var CACHE_WARM_DEFAULT_HOUR = 9;   // Central; after the morning ingest window
 
 function getCacheWarmStatus() {
   assertAdmin_();
-  return getCacheWarmStatus_();
+  return logStatusReturn_(getCacheWarmStatus_());
 }
 
 function installCacheWarmTrigger() {
   assertAdmin_();
   installCacheWarmTrigger_();
-  return getCacheWarmStatus_();
+  return logStatusReturn_(getCacheWarmStatus_());
 }
 
 function uninstallCacheWarmTrigger() {
   assertAdmin_();
   uninstallCacheWarmTrigger_();
-  return getCacheWarmStatus_();
+  return logStatusReturn_(getCacheWarmStatus_());
 }
 
 // Manual one-shot warm (admin) -- handy to prime caches on demand.
 function warmReportCachesNow() {
   assertAdmin_();
   warmReportCaches_();
-  return getCacheWarmStatus_();
+  return logStatusReturn_(getCacheWarmStatus_());
 }
 
 // ── Trigger entry point ───────────────────────────────────────────────

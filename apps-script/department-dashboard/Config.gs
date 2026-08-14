@@ -53,7 +53,11 @@ const SHEETS = Object.freeze({
   QUEUE_REPORT_SUBSCRIBERS: 'Queue Report Subscribers',
 });
 
-const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes']);
+// Phase A (agent role, docs/agent-role-plan.md): Role + Agent Name are
+// APPENDED so pre-existing 3-column rows keep meaning what they meant --
+// a blank Role reads as 'manager'. Agent rows require Agent Name (exact
+// roster match, INV-04 semantics).
+const ACCESS_CONTROL_HEADERS = Object.freeze(['Email', 'Department', 'Notes', 'Role', 'Agent Name']);
 const ALERT_CONFIG_HEADERS   = Object.freeze(['Department', 'Threshold %', 'Extra Recipients', 'Active', 'Notes', 'Skip Dates']);
 const ALERT_LOG_HEADERS      = Object.freeze([
   'Timestamp', 'Department', 'Date Checked', 'Threshold %', 'Answer Rate %',

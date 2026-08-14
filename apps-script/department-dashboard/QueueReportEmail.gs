@@ -1106,7 +1106,7 @@ function installQueueReportTrigger() {
   ScriptApp.newTrigger('runDailyQueueReport_')
     .timeBased().everyMinutes(QUEUE_REPORT_EVERY_MINUTES).create();
   PropertiesService.getScriptProperties().setProperty(QUEUE_REPORT_ENABLED_PROP, 'true');
-  return { installed: true, enabled: true };
+  return logStatusReturn_({ installed: true, enabled: true });
 }
 
 function uninstallQueueReportTrigger() {
@@ -1114,7 +1114,7 @@ function uninstallQueueReportTrigger() {
   uninstallQueueReportTrigger_();
   const props = PropertiesService.getScriptProperties();
   props.deleteProperty(QUEUE_REPORT_ENABLED_PROP);
-  return { installed: false, enabled: false };
+  return logStatusReturn_({ installed: false, enabled: false });
 }
 
 /**
@@ -1270,7 +1270,7 @@ function sendQueueReportPreview() {
  */
 function sendQcdAllDeptEmail(req) {
   const user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: all-dept payload, no dept pin
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');

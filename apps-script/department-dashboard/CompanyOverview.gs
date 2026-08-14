@@ -267,7 +267,9 @@ const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup']);
 function getCompanyOverview(req) {
   const email = Session.getActiveUser().getEmail();
   const realUser = resolveUser_(email);
-  if (realUser.role === 'none') throw new Error('Not authorized.');
+  // Phase A (agent role): allowlist -- the Overview is an all-dept surface
+  // with no dept pin, so the shared assertDeptAccess_ wall never runs here.
+  assertManagerOrAdmin_(realUser);
 
   // View-as (admin-only preview): an admin may request the MANAGER-personalized
   // Overview for a department to see exactly what that manager sees. SAFE --
@@ -291,6 +293,12 @@ function getCompanyOverview(req) {
   // SAME suffixed key via overviewCacheKey_().
   const ovCacheKey = overviewCacheKey_();
   const cached = cache.get(ovCacheKey);
+  // R19: landing telemetry. The client's 5-min auto-refresh + banner Retry
+  // pass auto:true and are NOT logged, so 'overview' rows in Report Usage
+  // mean deliberate visits (Overview is the default landing, so this is the
+  // per-session "who showed up" row). One log site covers every return path
+  // below; cache-warm traffic is already suppressed via REPORT_USAGE_SUPPRESS_.
+  if (!(req && req.auto)) logReportUsage_('overview', user.department || '(all)', user, !!cached);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
@@ -856,7 +864,7 @@ function getCompanyOverview(req) {
  */
 function getOverviewChartTrend(req) {
   const user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: all-dept surface, no dept pin below
 
   const latestDate = getLatestDataDate();
   if (!latestDate) return { available: false };
