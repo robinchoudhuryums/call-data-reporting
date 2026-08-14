@@ -25,6 +25,7 @@ function rawRow(o) {
   r[6]  = o.talk || '';                             // TALK_TIME (timeVals col 7)
   r[7]  = o.callTime || '';                         // CALL_TIME (timeVals col 8)
   r[8]  = o.caller || '';                           // CALLER e.g. "CallQueue(103)"
+  r[10] = o.callee || '';                           // CALLEE (ext / number)
   r[11] = o.calleeName || '';                       // CALLEE_NAME (agent)
   r[14] = o.parentCall || '';                       // PARENT_CALL ('N/A' on parent legs)
   r[22] = o.callerId || '';                         // CALLER_ID (queue match)
@@ -312,6 +313,55 @@ test('REP-3: a NO-RING abandon on a CSR queue counts toward CSR Avg Abd Wait (AH
     .filter(function (r) { return r[2] === 'Anna'; })[0];
   assert.equal(anna[32], '0:02:00');   // AG (already included the no-ring abandon)
   assert.equal(anna[33], '0:02:00');   // AH now includes it too (was '0:00:00')
+});
+
+test('R18e: a queue that stops stamping its name in col W is recovered via the CallQueue ext', function () {
+  // The Field Ops Power incident (2026-06-17 -> 2026-08-13), pinned with the
+  // shape of the owner's real sample rows. The provider-side queue config
+  // stopped prepending the queue name to the Caller-ID column on agent-ring
+  // legs (col W read "354" instead of "A_Q_FieldOps_Power,..."), so every
+  // such leg failed the regex and two departments lost per-agent history
+  // SILENTLY for two months. The queue identity survives twice in the same
+  // file: the agent leg's CALLER is "CallQueue (344)", and the queue-callee
+  // leg maps 344 -> A_Q_FieldOps_Power. The fallback joins the two.
+  const rawGrid = [new Array(26).fill('')].concat([
+    // Queue-callee leg (the transfer INTO the queue): callee ext 344 named
+    // A_Q_FieldOps_Power -- this is what seeds the ext->name map.
+    rawRow({ callId: 'F1', legId: 1, start: IN, caller: '354',
+             callee: '344', calleeName: 'A_Q_FieldOps_Power',
+             callerId: 'Anne Garcia,354', parentCall: 'N/A', answered: true }),
+    // Parent talk leg for the answering agent.
+    rawRow({ callId: 'F1', legId: 2, start: IN, talk: '0:09:47',
+             calleeName: 'Smith (Sachet) Kumar', parentCall: 'N/A' }),
+    // The BROKEN agent-ring leg: caller "CallQueue (344)" (real data has the
+    // space), col W just "354" -- NO queue token. The old code dropped this
+    // leg here and the agent vanished from DQE.
+    rawRow({ callId: 'F2', legId: 1, start: IN, caller: 'CallQueue (344)',
+             callee: '276', calleeName: 'Smith (Sachet) Kumar',
+             callerId: '354', parentCall: 'F1', answered: true }),
+    // GUARD: same broken col W but an ext NO queue-callee leg named today --
+    // exactly what the old code was RIGHT to skip, and must still skip.
+    rawRow({ callId: 'G1', legId: 1, start: IN, caller: 'CallQueue (999)',
+             callee: '277', calleeName: 'Ghost Agent',
+             callerId: '354', parentCall: 'N/A', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const rows = ss._sheet('DQE Historical Data')._data.slice(1);
+  const kumar = rows.filter(function (r) { return r[2] === 'Smith (Sachet) Kumar'; })[0];
+  assert.ok(kumar, 'the mislabeled-queue agent leg must be recovered into a DQE row');
+  assert.equal(Number(kumar[7]), 1, 'answered=1 from the recovered leg (col H)');
+  assert.equal(Number(kumar[5]), 1, 'rung=1 (col F)');
+  assert.ok(String(kumar[3]).indexOf('344') !== -1, 'queue ext 344 attributed');
+  const ghost = rows.filter(function (r) { return r[2] === 'Ghost Agent'; })[0];
+  assert.ok(!ghost, 'an unresolvable CallQueue ext stays dropped -- the fallback must not widen recognition beyond queues the file itself names');
 });
 
 test('IMP-8: queue regex keeps &-names whole and ignores embedded A_Q_ tokens', function () {
