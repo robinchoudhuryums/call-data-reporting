@@ -62,16 +62,44 @@
     .agent-loading, .agent-error { padding: 40px 20px; text-align: center; color: var(--muted); }
     .agent-error { color: var(--warn); }
     body.agent-app { background: var(--paper); }
+    /* Phase C: tabs, history, glossary, preview banner */
+    .agent-tabs { margin-left: auto; display: flex; gap: 6px; }
+    .agent-tab { font-size: 12px; color: var(--muted); border: 1px solid transparent; border-radius: 999px;
+      padding: 3px 12px; cursor: pointer; background: none; font-family: inherit; }
+    .agent-tab.on { background: var(--paper-2); color: var(--ink); font-weight: 600; }
+    .agent-preview-banner { display: none; background: var(--warn-soft); color: var(--warn);
+      border-bottom: 1px solid var(--line); padding: 6px 28px; font-size: 12px; font-weight: 600; }
+    .agent-months { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+    @media (max-width: 700px) { .agent-months { grid-template-columns: 1fr; } }
+    .agent-m { background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--r, 2px); padding: 13px 15px; }
+    .agent-m.best { border-color: var(--good); background: linear-gradient(var(--good-soft), var(--paper-card)); }
+    .agent-m .nm { font: 600 12px var(--ui); display: flex; justify-content: space-between; align-items: baseline; }
+    .agent-m .best-tag { font: 600 9px var(--ui); letter-spacing: .1em; text-transform: uppercase; color: var(--good); }
+    .agent-m .big { font: 700 21px var(--mono); margin: 4px 0 2px; }
+    .agent-m .sub { font-size: 11px; color: var(--muted); }
+    .agent-m .sub b { font: 600 11px var(--mono); color: var(--ink); }
+    .agent-gloss { margin-top: 16px; background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--r, 2px); }
+    .agent-gloss summary { cursor: pointer; padding: 10px 16px; font: 600 11px var(--ui);
+      letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .agent-gloss dl { margin: 0; padding: 0 16px 12px; font-size: 12px; }
+    .agent-gloss dt { font-weight: 600; margin-top: 8px; }
+    .agent-gloss dd { margin: 2px 0 0; color: var(--muted); }
   </style>
 </head>
 <body class="agent-app">
+  <div class="agent-preview-banner" id="agent-preview-banner"></div>
   <div class="agent-hdr">
-    <span class="kicker">My Performance</span>
+    <span class="kicker" id="agent-kicker">My Performance</span>
     <h1 id="agent-name">&nbsp;</h1>
     <span class="agent-dept-tag" id="agent-dept"></span>
     <span class="agent-fresh" id="agent-fresh"></span>
+    <div class="agent-tabs">
+      <button type="button" class="agent-tab on" id="agent-tab-home">My Performance</button>
+      <button type="button" class="agent-tab" id="agent-tab-history">My History</button>
+    </div>
   </div>
   <div class="agent-wrap">
+    <div id="agent-home-page">
     <div class="agent-controls">
       <button type="button" class="agent-chip" data-preset="mtd">This month</button>
       <button type="button" class="agent-chip" data-preset="7d">Last 7 days</button>
@@ -104,6 +132,42 @@
         department roster — individual teammates aren't shown. Data updates once daily after the
         morning import.</div>
     </div>
+    </div><!-- /agent-home-page -->
+    <!-- Phase C: My History -->
+    <div id="agent-history-page" style="display:none;">
+      <div class="agent-loading" id="agent-hist-loading">Loading your history…</div>
+      <div class="agent-error" id="agent-hist-error" style="display:none;"></div>
+      <div id="agent-hist-body" style="display:none;">
+        <div class="agent-card">
+          <h2 id="agent-hist-trend-title">Answer rate by month — you vs team average</h2>
+          <div id="agent-hist-trend"></div>
+        </div>
+        <div class="agent-months" id="agent-hist-months"></div>
+        <div class="agent-foot">Monthly avg talk time here is <strong>weighted by answered calls</strong>
+          (days you answered more count more), so it can differ slightly from the My Performance
+          card, which uses the same simple average your manager's table shows. Delta chips compare
+          each month to the one before it.</div>
+      </div>
+    </div>
+    <!-- Phase C: glossary -->
+    <details class="agent-gloss" id="agent-gloss">
+      <summary>What do these numbers mean?</summary>
+      <dl>
+        <dt>Answered / Missed</dt>
+        <dd>Calls that rang <em>you</em> during the work window and were answered or missed by you.
+          A missed ring may still have been answered by a teammate afterward.</dd>
+        <dt>Answer rate</dt>
+        <dd>Answered ÷ (Answered + Missed). The company display standard is 92%.</dd>
+        <dt>Avg talk time</dt>
+        <dd>The average length of your answered calls — the same figure your manager's table shows.</dd>
+        <dt>"Waited"</dt>
+        <dd>How long the caller had been on the line (from phone-system pickup, including the
+          menu) when that ring reached you. Shown only for calls the call-capture system has;
+          older rings show the time alone.</dd>
+        <dt>Team average</dt>
+        <dd>Your whole department's roster, averaged. Individual teammates are never shown here.</dd>
+      </dl>
+    </details>
   </div>
   <script>
     window.__USER__ = <?!= userJson ?>;

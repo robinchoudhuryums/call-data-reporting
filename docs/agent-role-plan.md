@@ -179,8 +179,32 @@ computed server-side as ordinals only.
   Unit: `tests/unit/agent-home.test.js`. NOT in B (deferred): missed-ring
   WAIT TIME (needs the inbound_calls journey join — Phase C candidate), the
   My History page, view-as-agent.
-- **Phase C — My History + polish.** Second page, Help topics, view-as-agent
-  admin preview if wanted, then remaining teams by adding rows.
+- **Phase C — My History + polish. ✅ SHIPPED 2026-08-14. The rollout is
+  code-complete.** (1) `getAgentHistory` — 12-month window via the INV-29
+  shared `computeTrendStartDate_`; monthly own answered/missed/rate +
+  **INV-25 weighted ATT** (the labeled exception to Phase B's INV-05
+  reconciliation rule — the history footer explains the difference); team
+  monthly average from roster rows only; best-month highlight gated on a
+  10-call floor; cached per dept (`agentHist:v1`), own view extracted
+  post-cache, teammate identities never in the payload (pinned). Client: a
+  My History tab with the dual-line you-vs-team SVG + month cards.
+  (2) **Missed-ring wait time — DERIVABLE and shipped**: `ahWaitJoin_`
+  matches the agent's DQE slot timestamps (CST) to their missed ring legs in
+  `inbound_calls.journey` (raw PST `t` + 2h; INV-04 exact name), attaching
+  ring seconds + caller wait (elapsed-from-IVR-pickup — the `wait_seconds`
+  semantics, labeled "waited", never "queue wait"). Capture-bounded and
+  best-effort: unmatched or pre-capture rings show the bare timestamp
+  (glossary explains); conflicting duplicate matches are dropped, never
+  guessed; Neon-unreachable serves timestamps-only. (3) **View-as-agent**:
+  `?agentPreview=<dept>||<name>` on the web-app URL (admin-only branch in
+  doGet; the Access modal's agent rows carry a Preview link) renders the
+  agent app with a warn banner; requests ride getAgentHome/History's
+  existing admin-preview path, so no new authorization surface. (4) The
+  glossary fold ("What do these numbers mean?"). (5) CLAUDE.md gained the
+  agent-role bullet (the grandfathered role-model bullet is ratchet-frozen,
+  so the agent role documents itself in its own bullet, as the split test
+  intends). drive-agent grew to 20 checks (history tab, dual-line SVG,
+  month cards, best-month, weighted-ATT disclosure, glossary).
 
 Decisions the owner still owns: (1) keep or drop the rank line; (2) which
 team pilots; (3) whether managers get told when their agents' access is

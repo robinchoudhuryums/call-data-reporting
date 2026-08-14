@@ -67,6 +67,30 @@ function record(name, pass, detail) {
   record('presets: switching to Last 7 days re-renders without error',
     await page.locator('#agent-body').isVisible());
 
+  // ---- Phase C: My History tab -------------------------------------------
+  await page.locator('#agent-tab-history').click();
+  await page.waitForTimeout(700);
+  record('history: tab switch shows the history page and hides home',
+    (await page.locator('#agent-hist-body').isVisible())
+    && !(await page.locator('#agent-home-page').isVisible()));
+  record('history: dual-line monthly SVG drawn',
+    (await page.locator('#agent-hist-trend svg polyline').count()) >= 2,
+    String(await page.locator('#agent-hist-trend svg polyline').count()) + ' polylines');
+  const monthCards = await page.locator('#agent-hist-months .agent-m').count();
+  record('history: month cards render', monthCards >= 6, monthCards + ' cards');
+  record('history: a best-month card is highlighted',
+    (await page.locator('#agent-hist-months .agent-m.best').count()) === 1);
+  const histText = await page.locator('#agent-history-page').textContent();
+  record('history: weighted-ATT disclosure present', /weighted by answered calls/.test(histText));
+  await page.locator('#agent-tab-home').click();
+  await page.waitForTimeout(300);
+  record('history: tab switch back restores My Performance',
+    await page.locator('#agent-home-page').isVisible());
+
+  // ---- Phase C: glossary --------------------------------------------------
+  record('glossary: fold present with the wait-coverage explanation',
+    /before call-capture coverage|call-capture system has/.test(await page.locator('#agent-gloss').textContent()));
+
   // ---- cleanliness --------------------------------------------------------
   const unmocked = await page.evaluate(() => window.__MOCK_UNMOCKED__ || []);
   record('rpc: no unmocked server calls', unmocked.length === 0, unmocked.join(','));

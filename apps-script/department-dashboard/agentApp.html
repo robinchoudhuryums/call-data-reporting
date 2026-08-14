@@ -7,6 +7,18 @@
   // renders from ONE getAgentHome payload.
 
   var USER = window.__USER__ || {};
+  // Phase C: admin view-as-agent. The server authorized the REAL admin and
+  // injected the target identity; every request then names it explicitly
+  // (getAgentHome/History's admin path requires that -- agents themselves
+  // never send these fields and the server ignores them if they try).
+  var PREVIEW_ = !!USER.preview;
+  function reqParams_(base) {
+    if (USER.role === 'admin') {
+      base.department = USER.agentDept || '';
+      base.agentName = USER.agentName || '';
+    }
+    return base;
+  }
   // Owner (2026-08-14): the rank line is BUILT but ships HIDDEN while its
   // deployment is decided. The server computes + returns it; flip this to
   // true (one line) to show it.
@@ -29,6 +41,11 @@
     var h = Math.floor(m / 60); m = m % 60;
     var pad = function (x) { return x < 10 ? '0' + x : String(x); };
     return h > 0 ? (h + ':' + pad(m) + ':' + pad(s)) : (m + ':' + pad(s));
+  }
+  function fmtMSS(sec) {
+    sec = Math.round(Number(sec) || 0);
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + (s < 10 ? '0' + s : s);
   }
   function fmtTime12(hms) {
     var m = String(hms || '').match(/^(\d{1,2}):(\d{2}):\d{2}$/);
@@ -196,7 +213,14 @@
     }
     var shown = days.slice(0, MISSED_DAYS_SHOWN_);
     var html = shown.map(function (day) {
-      var chips = day.times.map(function (t) { return '<span class="agent-tchip">' + fmtTime12(t) + '</span>'; }).join('');
+      // Phase C: entries carry ring/wait seconds where the call-capture holds
+      // the ring; a null wait renders the bare timestamp (coverage-labeled in
+      // the glossary), never a guessed number.
+      var chips = (day.entries || []).map(function (e) {
+        var label = fmtTime12(e.t) + (e.wait != null ? ' · waited ' + fmtMSS(e.wait) : '');
+        var title = e.ring != null ? ('rang you for ' + e.ring + 's') : 'wait unknown (before call-capture coverage)';
+        return '<span class="agent-tchip" title="' + esc(title) + '">' + label + '</span>';
+      }).join('');
       return '<div class="agent-mday"><span class="dt">' + isoToLabel(day.date, true) + '</span><span>' + chips + '</span></div>';
     }).join('');
     if (days.length > shown.length) {
@@ -234,7 +258,106 @@
         reportIssue_('load-failure', 'Agent home load failed: ' + msg);
         showError('Error loading your numbers: ' + msg);
       })
-      .getAgentHome({ from: win.from, to: win.to });
+      .getAgentHome(reqParams_({ from: win.from, to: win.to }));
+  }
+
+  // ── Phase C: My History ───────────────────────────────────────────────
+  var histLoaded_ = false;
+  function setTab_(name) {
+    var home = name === 'home';
+    $('agent-home-page').style.display = home ? '' : 'none';
+    $('agent-history-page').style.display = home ? 'none' : '';
+    $('agent-tab-home').classList.toggle('on', home);
+    $('agent-tab-history').classList.toggle('on', !home);
+    $('agent-kicker').textContent = home ? 'My Performance' : 'My History';
+    if (!home && !histLoaded_) loadHistory_();
+  }
+
+  function loadHistory_() {
+    $('agent-hist-error').style.display = 'none';
+    $('agent-hist-loading').style.display = '';
+    $('agent-hist-body').style.display = 'none';
+    google.script.run
+      .withSuccessHandler(function (d) {
+        histLoaded_ = true;
+        try { renderHistory_(d); } catch (e) {
+          reportIssue_('render-failure', 'Agent history render failed: ' + (e && e.message ? e.message : String(e)), e && e.stack);
+          showHistError_('Something went wrong rendering your history. The admin has been notified.');
+        }
+      })
+      .withFailureHandler(function (err) {
+        var msg = err && err.message ? err.message : String(err);
+        reportIssue_('load-failure', 'Agent history load failed: ' + msg);
+        showHistError_('Error loading your history: ' + msg);
+      })
+      .getAgentHistory(reqParams_({}));
+  }
+  function showHistError_(msg) {
+    $('agent-hist-loading').style.display = 'none';
+    $('agent-hist-body').style.display = 'none';
+    var el = $('agent-hist-error');
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function monthLabel_(mk) {
+    var m = String(mk || '').match(/^(\d{4})-(\d{2})$/);
+    if (!m) return esc(mk);
+    var names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return names[Number(m[2]) - 1] + ' ' + m[1];
+  }
+
+  function renderHistory_(d) {
+    $('agent-hist-loading').style.display = 'none';
+    $('agent-hist-body').style.display = '';
+    var months = d.months || [];
+    var pts = months.filter(function (m) { return m.me.ratePct != null; });
+    // Dual-line SVG: you (solid) vs team average (dashed).
+    if (pts.length >= 2) {
+      var W = 760, H = 190, L = 40, R = 750, T = 18, B = 150;
+      var min = 100, max = 0;
+      pts.forEach(function (m) {
+        [m.me.ratePct, m.team.ratePct].forEach(function (v) {
+          if (v == null) return;
+          if (v < min) min = v; if (v > max) max = v;
+        });
+      });
+      min = Math.min(min, ANSWER_STANDARD_) - 4; max = Math.max(max, ANSWER_STANDARD_) + 4;
+      if (max > 100) max = 100.5; if (min < 0) min = 0;
+      var x = function (i) { return L + (R - L) * (pts.length === 1 ? 0.5 : i / (pts.length - 1)); };
+      var y = function (v) { return B - (B - T) * ((v - min) / (max - min)); };
+      var meLine = pts.map(function (m, i) { return x(i) + ',' + y(m.me.ratePct); }).join(' ');
+      var teamPts = pts.filter(function (m) { return m.team.ratePct != null; });
+      var teamLine = teamPts.map(function (m) { return x(pts.indexOf(m)) + ',' + y(m.team.ratePct); }).join(' ');
+      var stdY = y(ANSWER_STANDARD_);
+      $('agent-hist-trend').innerHTML = '<svg class="agent-svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%">'
+        + '<line x1="' + L + '" y1="' + stdY + '" x2="' + R + '" y2="' + stdY + '" stroke="var(--warn)" stroke-dasharray="3 4" opacity=".5"/>'
+        + (teamLine ? '<polyline fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="5 4" points="' + teamLine + '"/>' : '')
+        + '<polyline fill="none" stroke="var(--good)" stroke-width="2.4" points="' + meLine + '"/>'
+        + '<circle cx="' + x(pts.length - 1) + '" cy="' + y(pts[pts.length - 1].me.ratePct) + '" r="3.6" fill="var(--good)"/>'
+        + '<text x="' + L + '" y="' + (H - 8) + '">' + monthLabel_(pts[0].month) + '</text>'
+        + '<text x="' + (R - 60) + '" y="' + (H - 8) + '">' + monthLabel_(pts[pts.length - 1].month) + '</text>'
+        + '<text x="' + (R - 30) + '" y="' + (y(pts[pts.length - 1].me.ratePct) - 8) + '" fill="var(--good)">you</text>'
+        + '</svg>';
+    } else {
+      $('agent-hist-trend').innerHTML = '<div class="agent-zero">Not enough months with activity to draw a trend yet.</div>';
+    }
+    // Month cards, newest first.
+    var cards = months.slice().reverse().map(function (m) {
+      var head = m.best
+        ? '<span class="best-tag">Best month</span>'
+        : (m.prevDeltaPts != null ? deltaChip(m.prevDeltaPts, true) : '');
+      var vsTeam = (m.me.ratePct != null && m.team.ratePct != null)
+        ? ('Team avg ' + m.team.ratePct + '% — ' + (m.me.ratePct >= m.team.ratePct ? 'you’re above' : 'below that month'))
+        : 'No activity this month';
+      return '<div class="agent-m' + (m.best ? ' best' : '') + '">'
+        + '<div class="nm">' + monthLabel_(m.month) + ' ' + head + '</div>'
+        + '<div class="big">' + (m.me.ratePct == null ? '–' : m.me.ratePct + '%') + '</div>'
+        + '<div class="sub">Answered <b>' + fmtInt(m.me.answered) + '</b> · Missed <b>' + fmtInt(m.me.missed)
+        + '</b> · ATT <b>' + esc(fmtHms(m.me.attWeightedSeconds)) + '</b></div>'
+        + '<div class="sub">' + vsTeam + '</div>'
+        + '</div>';
+    }).join('');
+    $('agent-hist-months').innerHTML = cards || '<div class="agent-zero">No months to show yet.</div>';
   }
   function showError(msg) {
     $('agent-loading').style.display = 'none';
@@ -250,6 +373,14 @@
   if (window.__WORK_WINDOW__) {
     $('agent-ww').textContent = '';   // window text already in the sentence; keep terse
   }
+  if (PREVIEW_) {
+    var pb = $('agent-preview-banner');
+    pb.textContent = '👁 Admin preview — viewing this page as ' + (USER.agentName || '?')
+      + ' (' + (USER.agentDept || '?') + '). Close the tab to exit.';
+    pb.style.display = 'block';
+  }
+  $('agent-tab-home').addEventListener('click', function () { setTab_('home'); });
+  $('agent-tab-history').addEventListener('click', function () { setTab_('history'); });
 
   Array.prototype.forEach.call(document.querySelectorAll('.agent-chip[data-preset]'), function (c) {
     c.addEventListener('click', function () {

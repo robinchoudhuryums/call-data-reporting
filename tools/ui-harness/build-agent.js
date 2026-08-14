@@ -53,13 +53,30 @@ h.ctx.ahFetchDalRows_ = function () {
     const pad = (x) => (x < 10 ? '0' + x : String(x));
     const iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
     rows.push({ dateIso: iso, agent: 'Maria Lopez',
-      totalAnswered: 12 + (i % 5), totalMissed: i % 3,
+      totalAnswered: 12 + (i % 5), totalMissed: i % 3, attSec: 170 + (i % 40),
       slots: (i % 3) ? ['10:23:33,10:08:41', '', '14:41:00'].slice(0, (i % 3)) : [] });
   }
   return rows;
 };
 const payload = h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' });
 const latestIso = '2026-08-13';
+
+// Phase C: the history payload from the REAL getAgentHistory (12-month DAL
+// fixture; team = Maria + a teammate so the you-vs-team line has separation).
+h.ctx.getLatestDataDate = function () { return latestIso; };
+h.ctx.getRosterForDepartment_ = function () { return { names: ['Maria Lopez', 'Devon Park'] }; };
+const histRows = [];
+for (let mo = 0; mo < 12; mo++) {
+  const d = new Date(2026, 7 - mo, 10, 12);
+  const pad = (x) => (x < 10 ? '0' + x : String(x));
+  const iso = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  histRows.push({ dateIso: iso, agent: 'Maria Lopez',
+    totalAnswered: 260 + mo * 3, totalMissed: 14 + (mo % 6), attSec: 180 + (mo % 30) });
+  histRows.push({ dateIso: iso, agent: 'Devon Park',
+    totalAnswered: 220, totalMissed: 26, attSec: 200 });
+}
+h.ctx.ahFetchDalRows_ = function () { return histRows; };
+const historyPayload = h.call('getAgentHistory', {});
 
 // ── 2. Assemble the page ──────────────────────────────────────────────────
 const read = (f) => fs.readFileSync(path.join(DASH, f), 'utf8');
@@ -81,6 +98,7 @@ if (html.indexOf('<?!=') !== -1) {
 const mock = `<script>
 (function () {
   var PAYLOAD = ${JSON.stringify(payload)};
+  var HISTORY = ${JSON.stringify(historyPayload)};
   var LATEST = ${JSON.stringify(latestIso)};
   window.__MOCK_UNMOCKED__ = [];
   window.__MOCK_BEACONS__ = [];
@@ -92,6 +110,7 @@ const mock = `<script>
       withUserObject: function () { return api; },
       getLatestDataDate: function () { setTimeout(function () { onOk(LATEST); }, 10); },
       getAgentHome: function (req) { setTimeout(function () { onOk(PAYLOAD); }, 20); },
+      getAgentHistory: function (req) { setTimeout(function () { onOk(HISTORY); }, 20); },
       reportClientIssue: function (p) { window.__MOCK_BEACONS__.push(p); setTimeout(function () { onOk({ok:true}); }, 5); },
     };
     return new Proxy(api, {

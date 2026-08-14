@@ -2847,3 +2847,27 @@ commit/push/deploy direction.
   merges on explicit word). Next: owner word to PR/merge; then Phase C
   when commissioned (My History, wait-time join, view-as-agent,
   CLAUDE.md role bullet). Go-live runbook in operator-state #46.
+
+## Increment 115 (2026-08-14) — Agent role Phase C (broad-implement): CODE-COMPLETE
+
+  PR #241 (Phase B) MERGED first. Phase C then shipped the rollout's
+  remainder: (1) WAIT TIME on missed rings -- derivable and built
+  (ahWaitJoin_: journey missed-ring events by exact name, PST t +2h ->
+  CST slot axis; ring secs + elapsed-from-pickup wait, "waited" label,
+  capture-bounded, drop-on-ambiguity, bare timestamp when unknown);
+  (2) MY HISTORY (getAgentHistory: INV-29 window, monthly INV-25
+  weighted ATT with the in-page disclosure, team-avg from roster rows,
+  10-call best-month floor, agentHist:v1 dept cache, privacy pinned;
+  dual-line SVG + month cards tab); (3) VIEW-AS-AGENT
+  (?agentPreview=dept||name, Access modal Preview link, warn banner,
+  rides the existing admin path); (4) glossary fold; (5) CLAUDE.md
+  agent-role bullet (role-model bullet is ratchet-frozen -- new bullet
+  instead) + subsystem list + plan closeout. drive-agent now 20 checks.
+  725/725. Block 114.
+
+  **WHERE I LEFT OFF:** ci:ui full run finishing at write time; commit
+  gated on it. Phase C unPR'd on the branch -- owner merges on explicit
+  word. The agent role is CODE-COMPLETE; go-live = operator-state #46
+  (CSR rows + AGENT_ROLE_ENABLED=true + agent emails). Open owner
+  decisions: rank-line reveal (AGENT_RANK_SHOW_); feedback box still
+  shelved.
