@@ -60,21 +60,21 @@ var DQE_SILENCE_DEFAULT_MIN_CALLS = 5;
 
 function getDqeSilenceWatchStatus() {
   assertAdmin_();
-  return getDqeSilenceWatchStatus_();
+  return logStatusReturn_(getDqeSilenceWatchStatus_());
 }
 
 function installDqeSilenceWatchTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('DQE_SILENCE_WATCH_ENABLED', 'true');
   installDqeSilenceWatchTrigger_();
-  return getDqeSilenceWatchStatus_();
+  return logStatusReturn_(getDqeSilenceWatchStatus_());
 }
 
 function uninstallDqeSilenceWatchTrigger() {
   assertAdmin_();
   uninstallDqeSilenceWatchTrigger_();
   PropertiesService.getScriptProperties().deleteProperty('DQE_SILENCE_WATCH_ENABLED');
-  return getDqeSilenceWatchStatus_();
+  return logStatusReturn_(getDqeSilenceWatchStatus_());
 }
 
 /**
@@ -85,7 +85,7 @@ function uninstallDqeSilenceWatchTrigger() {
 function runDqeSilenceCheckNow() {
   assertAdmin_();
   var read = dqeSilenceReadDay_(prevBusinessDayIso_(new Date()));
-  return { date: read.date, inconclusive: !!read.inconclusive, depts: read.perDept };
+  return logStatusReturn_({ date: read.date, inconclusive: !!read.inconclusive, depts: read.perDept });
 }
 
 // ── Trigger entry point ───────────────────────────────────────────────

@@ -46,7 +46,7 @@ var NEON_KEEPWARM_EVERY_MINUTES = 5;
 /** Admin-only status read for the Alerts modal. */
 function getNeonKeepWarmStatus() {
   assertAdmin_();
-  return getNeonKeepWarmStatus_();
+  return logStatusReturn_(getNeonKeepWarmStatus_());
 }
 
 /** Admin-only: enable + install the keep-warm trigger. Returns status. */
@@ -54,7 +54,7 @@ function installNeonKeepWarmTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('NEON_KEEPWARM_ENABLED', 'true');
   installNeonKeepWarmTrigger_();
-  return getNeonKeepWarmStatus_();
+  return logStatusReturn_(getNeonKeepWarmStatus_());
 }
 
 /** Admin-only: uninstall the trigger + clear the enabled flag. Returns status. */
@@ -63,7 +63,7 @@ function uninstallNeonKeepWarmTrigger() {
   uninstallNeonKeepWarmTrigger_();
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('NEON_KEEPWARM_ENABLED');
-  return getNeonKeepWarmStatus_();
+  return logStatusReturn_(getNeonKeepWarmStatus_());
 }
 
 // ── Trigger entry point ───────────────────────────────────────────────

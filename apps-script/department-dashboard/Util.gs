@@ -103,6 +103,19 @@ function logReportUsage_(report, dept, user, cacheHit) {
   } catch (e) { /* best-effort -- never block a report */ }
 }
 
+/**
+ * Editor-run visibility shim (R19): the Apps Script editor DISCARDS a
+ * function's return value — running an install/uninstall/status admin RPC
+ * from the Run picker shows only "started / completed", which reads as
+ * "did nothing". Route the status object through this before returning so
+ * the Execution log prints the actual state; RPC callers are unaffected
+ * (the value passes through untouched).
+ */
+function logStatusReturn_(out) {
+  try { Logger.log(JSON.stringify(out)); } catch (e) { /* best-effort */ }
+  return out;
+}
+
 // -- Formatting (was IndividualReport.gs) ----------------------------------
 
 function formatSecondsHms_(totalSeconds) {

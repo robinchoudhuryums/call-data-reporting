@@ -114,13 +114,13 @@ function installDigestTriggers() {
     .timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(DIGEST_WEEKLY_TRIGGER_HOUR).create();
   ScriptApp.newTrigger('runMonthlyDigests_')
     .timeBased().onMonthDay(1).atHour(DIGEST_MONTHLY_TRIGGER_HOUR).create();
-  return getDigestTriggerStatus_();
+  return logStatusReturn_(getDigestTriggerStatus_());
 }
 
 function uninstallDigestTriggers() {
   assertAdmin_();
   uninstallDigestTriggers_();
-  return getDigestTriggerStatus_();
+  return logStatusReturn_(getDigestTriggerStatus_());
 }
 
 // -- Trigger entry points (underscore = not RPC-callable) ----------

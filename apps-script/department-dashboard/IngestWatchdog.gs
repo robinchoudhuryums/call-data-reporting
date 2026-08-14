@@ -41,7 +41,7 @@ var INGEST_WATCHDOG_DEFAULT_HOUR = 10;   // 10:00 Central, after the morning ing
 /** Admin-only status read. */
 function getIngestWatchdogStatus() {
   assertAdmin_();
-  return getIngestWatchdogStatus_();
+  return logStatusReturn_(getIngestWatchdogStatus_());
 }
 
 /** Admin-only: enable + install the watchdog trigger. Returns status. */
@@ -49,7 +49,7 @@ function installIngestWatchdogTrigger() {
   assertAdmin_();
   PropertiesService.getScriptProperties().setProperty('INGEST_WATCHDOG_ENABLED', 'true');
   installIngestWatchdogTrigger_();
-  return getIngestWatchdogStatus_();
+  return logStatusReturn_(getIngestWatchdogStatus_());
 }
 
 /** Admin-only: uninstall the trigger + clear the enabled flag. Returns status. */
@@ -58,7 +58,7 @@ function uninstallIngestWatchdogTrigger() {
   uninstallIngestWatchdogTrigger_();
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('INGEST_WATCHDOG_ENABLED');
-  return getIngestWatchdogStatus_();
+  return logStatusReturn_(getIngestWatchdogStatus_());
 }
 
 // ── Trigger entry point ───────────────────────────────────────────────

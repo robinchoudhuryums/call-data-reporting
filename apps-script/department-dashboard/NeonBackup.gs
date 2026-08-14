@@ -48,7 +48,7 @@ var NEON_BACKUP_HOUR_DEFAULT = 6;    // Saturday, quiet hours (Central)
 
 function getNeonBackupStatus() {
   assertAdmin_();
-  return getNeonBackupStatus_();
+  return logStatusReturn_(getNeonBackupStatus_());
 }
 
 function installNeonBackupTrigger() {
@@ -57,20 +57,20 @@ function installNeonBackupTrigger() {
   var hour = nbHour_();
   ScriptApp.newTrigger('runNeonBackup_').timeBased()
     .everyWeeks(1).onWeekDay(ScriptApp.WeekDay.SATURDAY).atHour(hour).create();
-  return getNeonBackupStatus_();
+  return logStatusReturn_(getNeonBackupStatus_());
 }
 
 function uninstallNeonBackupTrigger() {
   assertAdmin_();
   uninstallNeonBackupTrigger_();
-  return getNeonBackupStatus_();
+  return logStatusReturn_(getNeonBackupStatus_());
 }
 
 /** Manual one-shot backup (admin) — run after deploying to seed the folder. */
 function runNeonBackupNow() {
   assertAdmin_();
   runNeonBackup_();
-  return getNeonBackupStatus_();
+  return logStatusReturn_(getNeonBackupStatus_());
 }
 
 // ── Trigger entry point ───────────────────────────────────────────────
