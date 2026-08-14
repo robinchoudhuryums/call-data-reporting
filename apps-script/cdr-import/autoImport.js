@@ -2961,14 +2961,20 @@ function calcQcdReport(cleanData, targetSS) {
       }
 
       if (queueName === q40_name) {
+        // Owner 2026-08-14: row 40 (A_Q_Spanish per QCDR Output A40) used a
+        // >0s abandon rule in its TOTAL while every other queue uses >1min
+        // (~59s) or >20s -- the last 1-second holdout. Now the 1-minute rule,
+        // so tot2/tot4 (total) match tot5/tot6 (abandoned) in threshold.
+        // FORWARD-ONLY: historical QCD rows keep their old totals; expect a
+        // small step down in Spanish's daily totals from the deploy date.
         if (status === "1" && type === "internal") {
           if (transfer === "transfer") r40_tot1++;
-          if (abandoned === "abandoned" && waitDec > 0) r40_tot2++;
+          if (abandoned === "abandoned" && waitDec > time1Min) r40_tot2++;
           if (abandoned === "abandoned" && waitDec > time1Min) r40_tot5++;
         }
         if (status !== "1" && type === "incoming") {
           if (transfer === "transfer") r40_tot3++;
-          if (abandoned === "abandoned" && waitDec > 0) r40_tot4++;
+          if (abandoned === "abandoned" && waitDec > time1Min) r40_tot4++;
           if (abandoned === "abandoned" && waitDec > time1Min) r40_tot6++;
         }
       }
