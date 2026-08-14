@@ -138,8 +138,11 @@ bash scripts/check-duplicated-files.sh
 # the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
 # operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
 # versa -- fails the build, plus a size cap on CLAUDE.md itself), setup (the
-# INV-12 idempotency/ten-sheets/partial-run-recovery pins), and
-# alert-recipients (B-5: ALL-sentinel managers receive every dept's alert).
+# INV-12 idempotency/ten-sheets/partial-run-recovery pins),
+# alert-recipients (B-5: ALL-sentinel managers receive every dept's alert),
+# and agent-role / agent-home (the fourth role: the Phase A deny wall +
+# resolution, and the agent app's endpoints incl. the wait join, history
+# rollups, and the no-teammate-identity payload pin).
 # HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
 # getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a test
 # needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
@@ -195,7 +198,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# FOUR ASSERTING drivers gate it -- drive-smoke.js (page/console errors,
+# SIX ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
@@ -212,7 +215,10 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
 # this repo, asserted by stubbing URL.createObjectURL and reading the real Blob
 # bytes, S43 -- and the header DEPARTMENT SWITCH, which threw a ReferenceError
-# in production until a driver first tried it). The other drivers (drive.js /
+# in production until a driver first tried it), plus the AGENT-APP pair
+# build-agent.js + drive-agent.js (the fourth role's separate page: boot,
+# hidden rank line, rendered teammate-name PRIVACY, the History tab, no
+# errors/unmocked RPCs/self-beacons). The other drivers (drive.js /
 # drive-insights.js / drive-phase3.js) emit screenshots + reports for a human
 # and are deliberately NOT in the gate. Runs in CI as the `ui-harness` job, and is
 # BLOCKING since 2026-07: it has now caught two bugs that reached production and
@@ -221,7 +227,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # departments. Neither is reachable from `node --test` (one is markup structure,
 # the other needs a real click). Re-run it after touching
 # script.html or any script-*.html fragment, styles.html, dashboard.html,
-# or any payload shape.
+# agent.html / agentApp.html, or any payload shape.
 ```
 
 ## Common Gotchas
@@ -1122,8 +1128,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   constant was dead code and was REMOVED (F-30). **Never read a
   constant for membership checks**; always go through
   `getAdminEmails_()`.
-- **Role model + the all-departments manager (`allDepts`).** Three roles
-  (`admin` | `manager` | `none`; `Auth.gs::resolveUser_`). A manager is
+- **Role model + the all-departments manager (`allDepts`).** Four roles
+  (`admin`|`manager`|`agent`|`none`; `Auth.gs::resolveUser_` -- `agent`
+  has its OWN bullet below). A manager is
   looked up in the `Access Control` sheet and pinned to ONE department --
   **EXCEPT** when the Department cell is the sentinel `ALL` (or `*`,
   case-insensitive, `isAllDeptsSentinel_`): that grants an
@@ -1160,8 +1167,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   BREADTH (use `isAllDeptViewer_()` / `user.allDepts`)?**
   **MULTI-DEPARTMENT manager (Tier C).** A manager may hold MORE THAN ONE
   `Access Control` row (same email, different dept). `resolveUser_` now
-  UNIONS them into `departments` (was: only the first honored, F13 --
-  now removed); `department` is the first (default landing), `allDepts`
+  UNIONS them into `departments` (F13); `department` is the first
+  (default landing), `allDepts`
   stays FALSE (they see only their assigned depts, not every dept). The
   security gates accept a list: `assertDeptAccess_` + `escAssertRowAccess_`
   + the (latent, admin-only) `inbound`/`direct`/`getCallJourney` pins check
@@ -1209,6 +1216,33 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   canonical identity. Unset = pre-Tier-C behavior. Note Gmail dot-normalization
   does NOT cover `john.doe`→`john` (different local parts), so the map is
   explicit + admin-curated (Operator State #36).
+- **AGENT role (the FOURTH role) — own numbers + team aggregates, in a
+  SEPARATE app.** An `Access Control` row with Role=`agent` + Agent Name
+  (exact roster spelling, INV-04; the modal's picker enforces it) resolves —
+  ONLY when `AGENT_ROLE_ENABLED='true'`, Operator State #46 — to a
+  FAIL-CLOSED shape: `department:null`, `departments:[]`, identity solely in
+  `agentDept`/`agentName`, which no pre-agent gate reads. The deny wall is
+  ALLOWLISTS, not role-none denylists: `assertDeptAccess_` +
+  `escAssertRowAccess_` admit exactly admin|manager (the old checks passed
+  unrecognized roles UNPINNED), and `assertManagerOrAdmin_` (Util.gs) guards
+  the no-dept-argument surfaces (Overview, YTD trend, all-dept QCD + its
+  email, escalations init/badge, getCallJourney). **A new public endpoint
+  must pick its gate from that set — never a bare `role === 'none'` check.**
+  Agents deliberately CAN reach `getLatestDataDate(s)` + `reportClientIssue`.
+  `doGet` routes agents to `agent.html`/`agentApp.html` (small separate
+  template sharing styles.html — NOT the manager client with surfaces
+  hidden; `agentApp.html` is named to stay OUT of the `script-*.html`
+  fragment glob). Server: `AgentHome.gs` — `getAgentHome` (window KPIs
+  reconcile with the manager table via the SAME computeSummary_, INV-05 ATT;
+  ordinal-only rank, client-hidden via `AGENT_RANK_SHOW_`; missed
+  timestamps + capture-bounded ring/wait via the inbound_calls journey join,
+  never guessed) and `getAgentHistory` (12-month INV-29 window, monthly
+  INV-25 WEIGHTED ATT — the labeled exception to the reconciliation rule).
+  Payloads NEVER carry a teammate identity — pinned in agent-home.test.js
+  AND at the rendered page by drive-agent.js (with build-agent.js, blocking
+  ci:ui stages). Admin view-as: `?agentPreview=<dept>||<name>` (the Access
+  modal's Preview link). Full design + phase history:
+  [`docs/agent-role-plan.md`](docs/agent-role-plan.md).
 - **Alert Log captures every outcome of every run** -- `sent`,
   `would-send`, `above-threshold`, `no-data`, `no-recipients`,
   `skipped`, `error`. Preview rows (from the modal's **Preview**
@@ -2254,7 +2288,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json

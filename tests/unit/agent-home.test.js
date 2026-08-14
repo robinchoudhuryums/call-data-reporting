@@ -127,11 +127,114 @@ test('trend covers the 30-day window; missed detail covers the selected window; 
   assert.equal(d.trend[0].ratePct, 90.9);
   // Missed detail: own rows in [from..to]; coerced "12/30/1899 14:41:00"
   // recovers its trailing time; 'junk' drops; times sort chronologically.
+  // Phase C shape: entries carry {t, ring, wait} -- with no Neon conn in
+  // this install the join is unavailable, so ring/wait are null and
+  // meta.waitsAvailable is false (bare timestamps, never guessed).
   assert.equal(d.missedDays.length, 1);
   assert.equal(d.missedDays[0].date, '2026-08-12');
-  assert.deepEqual(JSON.parse(JSON.stringify(d.missedDays[0].times)),
-    ['10:08:41', '10:23:33', '14:41:00']);
+  assert.deepEqual(JSON.parse(JSON.stringify(d.missedDays[0].entries)), [
+    { t: '10:08:41', ring: null, wait: null },
+    { t: '10:23:33', ring: null, wait: null },
+    { t: '14:41:00', ring: null, wait: null },
+  ]);
   assert.equal(d.missedTotal, 3);
+  assert.equal(d.meta.waitsAvailable, false);
+});
+
+test('Phase C: wait join decorates matching rings (PST journey +2h -> CST slots); unmatched stay bare', function () {
+  install('agent');
+  // Fake Neon conn: two calls. Call A's journey holds Maria's missed ring at
+  // 08:08:41 PST (= 10:08:41 CST, matching the first slot time), ring 12s,
+  // call started 08:07:11 PST -> wait 90s. Call B's ring at 12:41:00 PST
+  // matches the coercion-recovered 14:41:00 slot.
+  const recs = [
+    { d: '2026-08-12', call_start: '08:07:11',
+      journey: JSON.stringify([
+        { t: '08:08:41', name: 'Maria Lopez', kind: 'leg', missed: true, secs: 12 },
+        { t: '08:09:00', name: 'Someone Else', kind: 'leg', missed: true, secs: 5 },
+      ]) },
+    { d: '2026-08-12', call_start: '08:20:00',
+      journey: JSON.stringify([
+        { t: '12:41:00', name: 'Maria Lopez', kind: 'leg', missed: true, secs: 8 },
+      ]) },
+  ];
+  h.ctx.getDashboardNeonConn_ = function () {
+    return {
+      prepareStatement: function () {
+        return {
+          setString: function () {},
+          executeQuery: function () {
+            let done = false;
+            return {
+              next: function () { if (done) return false; done = true; return true; },
+              getString: function () { return JSON.stringify(recs); },
+              close: function () {},
+            };
+          },
+          close: function () {},
+        };
+      },
+      close: function () {},
+    };
+  };
+  const d = h.call('getAgentHome', { from: '2026-08-10', to: '2026-08-13' });
+  assert.equal(d.meta.waitsAvailable, true);
+  const entries = JSON.parse(JSON.stringify(d.missedDays[0].entries));
+  assert.deepEqual(entries[0], { t: '10:08:41', ring: 12, wait: 90 }, 'matched ring decorated');
+  assert.deepEqual(entries[1], { t: '10:23:33', ring: null, wait: null }, 'no matching journey -> bare timestamp');
+  assert.deepEqual(entries[2], { t: '14:41:00', ring: 8, wait: 15660 }, 'second call ring matched (elapsed-from-pickup semantics)');
+});
+
+// -- Phase C: My History ------------------------------------------------------
+
+function histDal() {
+  return [
+    { dateIso: '2026-07-03', agent: 'Maria Lopez', totalAnswered: 10, totalMissed: 2, attSec: 180 },
+    { dateIso: '2026-07-10', agent: 'Maria Lopez', totalAnswered: 30, totalMissed: 0, attSec: 120 },
+    { dateIso: '2026-07-10', agent: 'Devon Park', totalAnswered: 8, totalMissed: 8, attSec: 200 },
+    { dateIso: '2026-08-01', agent: 'Maria Lopez', totalAnswered: 4, totalMissed: 1, attSec: 100 },
+    { dateIso: '2026-08-01', agent: 'A_Q_CSR', totalAnswered: 0, totalMissed: 9, attSec: 0 },   // sentinel: not on roster
+  ];
+}
+
+test('Phase C: agentHistoryBlob_/OwnView_ — monthly rollup, INV-25 weighted ATT, team from roster only, best-month floor', function () {
+  install('agent');
+  const months = h.call('agentHistoryBlob_', histDal(), ['Maria Lopez', 'Devon Park']);
+  const view = JSON.parse(JSON.stringify(h.call('agentHistoryOwnView_', months, 'Maria Lopez')));
+  assert.equal(view.length, 2);
+  const jul = view[0], aug = view[1];
+  assert.equal(jul.month, '2026-07');
+  assert.equal(jul.me.answered, 40);
+  assert.equal(jul.me.ratePct, 95.2);
+  // INV-25 weighted: (180*10 + 120*30) / 40 = 135 — NOT the simple mean 150.
+  assert.equal(jul.me.attWeightedSeconds, 135);
+  // Team July includes Devon (roster), excludes the sentinel: (40+8)/(48+10).
+  assert.equal(jul.team.ratePct, 82.8);
+  assert.equal(jul.best, true, 'July clears the 10-call floor and has the best rate');
+  assert.equal(aug.me.answered, 4);
+  assert.ok(!aug.best, 'August (5 calls) is under the best-month floor');
+  assert.equal(aug.prevDeltaPts, Math.round((80 - 95.2) * 10) / 10);
+});
+
+test('Phase C: getAgentHistory — INV-29 window, cached per dept, no teammate identities in the payload', function () {
+  install('agent');
+  h.ctx.getLatestDataDate = function () { return '2026-08-13'; };
+  h.ctx.getRosterForDepartment_ = function () { return { names: ['Maria Lopez', 'Devon Park'] }; };
+  h.state.histCalls = 0;
+  h.ctx.ahFetchDalRows_ = function (from, to, opts) {
+    h.state.histCalls++;
+    assert.equal(opts, null, 'history fetch carries no missed detail');
+    assert.equal(from, '2025-08-01', 'INV-29: 12 months back, snapped to the 1st');
+    assert.equal(to, '2026-08-13');
+    return histDal();
+  };
+  const d = h.call('getAgentHistory', {});
+  assert.equal(d.meta.department, 'CSR');
+  assert.equal(d.meta.from, '2025-08-01');
+  assert.equal(d.months.length, 2);
+  assert.ok(JSON.stringify(d).indexOf('Devon Park') === -1, 'no teammate identity in the payload');
+  h.call('getAgentHistory', {});
+  assert.equal(h.state.histCalls, 1, 'second call served from the dept cache');
 });
 
 test('zero-activity agent: hasData false, null rate, unranked — never an error', function () {

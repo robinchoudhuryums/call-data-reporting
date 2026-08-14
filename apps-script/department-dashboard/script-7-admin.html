@@ -2088,7 +2088,15 @@
     if ($('ac-agent-save-btn')) $('ac-agent-save-btn').addEventListener('click', acAgentSave_);
     if ($('ac-agent-tbody')) $('ac-agent-tbody').addEventListener('click', function (e) {
       const rem = e.target.closest && e.target.closest('.ac-agent-remove');
-      if (rem) acAgentRemove_(Number(rem.getAttribute('data-idx')));
+      if (rem) { acAgentRemove_(Number(rem.getAttribute('data-idx'))); return; }
+      const prev = e.target.closest && e.target.closest('.ac-agent-preview');
+      if (prev) {
+        const a = (acLastInit.agents || [])[Number(prev.getAttribute('data-idx'))];
+        if (a && window.__DASHBOARD_URL__) {
+          window.open(window.__DASHBOARD_URL__ + '?agentPreview='
+            + encodeURIComponent(a.department + '||' + a.agentName), '_blank');
+        }
+      }
     });
   }
 
@@ -2200,12 +2208,18 @@
       tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No agent rows yet.</td></tr>';
       return;
     }
+    // Phase C: the Preview link opens the agent app AS this agent (admin
+    // view-as -- doGet's ?agentPreview route; needs DASHBOARD_URL, the same
+    // dependency every Open-in-new-tab button has).
+    var canPreview = !!(window.__DASHBOARD_URL__);
     tbody.innerHTML = agents.map(function (a, idx) {
       return '<tr>'
         + '<td>' + escapeHtml(a.email) + '</td>'
         + '<td>' + escapeHtml(a.department) + '</td>'
         + '<td>' + escapeHtml(a.agentName) + '</td>'
-        + '<td><button type="button" class="link-btn ac-agent-remove" data-idx="' + idx + '">Remove</button></td>'
+        + '<td>'
+        + (canPreview ? '<button type="button" class="link-btn ac-agent-preview" data-idx="' + idx + '">Preview</button> ' : '')
+        + '<button type="button" class="link-btn ac-agent-remove" data-idx="' + idx + '">Remove</button></td>'
         + '</tr>';
     }).join('');
   }

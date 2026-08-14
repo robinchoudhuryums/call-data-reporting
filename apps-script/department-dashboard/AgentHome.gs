@@ -29,9 +29,10 @@
  * blob (trend + missed detail) is per agent, keyed through hashAgents_
  * (INV-36 — never a raw name in a cache key).
  *
- * Wait time on missed rings (owner decision 3) is NOT here yet: per-ring
- * wait exists only where the inbound capture holds the call, and the join
- * is a Phase B follow-on — the list ships timestamps-only, honestly.
+ * Wait time on missed rings (owner decision 3, Phase C): ahWaitJoin_ below
+ * decorates the timestamps with ring/wait seconds where the inbound capture
+ * holds the call — capture-bounded and best-effort; a ring with no match
+ * ships the bare timestamp, never a guessed number.
  */
 
 var AGENT_HOME_CACHE_PREFIX_ = 'agentHome:v1';
@@ -244,6 +245,18 @@ function getAgentHome(req) {
   if (!detail) {
     var dalRows = ahFetchDalRows_(fetchFrom, to, { includeMissedDetail: true });
     detail = agentHomeOwnDetail_(dalRows, who.agentName, from, to, trendFrom);
+    // Phase C: attach ring/wait seconds where the inbound capture holds the
+    // ring (ahWaitJoin_, best-effort). Entries replace the bare time list;
+    // a ring the capture doesn't hold keeps nulls and the client shows the
+    // timestamp alone -- labeled coverage, never a guessed wait.
+    var join = ahWaitJoin_(who.agentName, from, to);
+    detail.waitsAvailable = join.available;
+    detail.missedDays = detail.missedDays.map(function (day) {
+      return { date: day.date, entries: day.times.map(function (t) {
+        var m = join.map[day.date + '|' + ahTimeSec_(t)] || {};
+        return { t: t, ring: (m.ring != null ? m.ring : null), wait: (m.wait != null ? m.wait : null) };
+      }) };
+    });
     try { cache.put(meKey, JSON.stringify(detail), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { /* serve uncached */ }
   }
@@ -258,6 +271,7 @@ function getAgentHome(req) {
       to: to,
       trendFrom: trendFrom,
       workWindow: (typeof DASHBOARD_WORK_WINDOW !== 'undefined') ? DASHBOARD_WORK_WINDOW : '',
+      waitsAvailable: !!detail.waitsAvailable,   // Phase C: capture reachability, not coverage
     },
     me: ownView.me,
     meAttFormatted: formatSecondsHms_(ownView.me.attSeconds),
@@ -267,5 +281,172 @@ function getAgentHome(req) {
     trend: detail.trend,
     missedDays: detail.missedDays,
     missedTotal: detail.missedTotal,
+  };
+}
+
+// ── Phase C: missed-ring wait time (owner decision 3) ────────────────────
+// DERIVABLE, with bounds: inbound_calls.journey events carry the ring leg's
+// start (`t`, raw PST -- +2h aligns to the CST slot timestamps, INV-18/20),
+// the agent's name, and `secs` (how long it rang). Caller wait at that ring
+// = event start − call_start (both raw PST, so the difference is TZ-free --
+// but NOTE the F2-class caveat: this is elapsed-from-IVR-pickup, the same
+// semantics as wait_seconds; labeled "waited" in the UI, never "queue wait").
+// Coverage is capture-bounded: rings before the inbound capture began, or on
+// calls it missed, get no wait -- the client shows the bare timestamp then.
+// NO work-window clause on purpose: this is a lookup keyed by the DQE slot
+// timestamps, which are already work-window-bounded -- an out-of-window ring
+// has no slot entry to attach to (the inbound-window-scope rule governs dept
+// METRICS in InboundReport.gs; this is not one).
+
+/**
+ * Best-effort Neon join: {'<dateIso>|<cstSecOfDay>': {ring, wait}} for the
+ * agent's missed ring legs in range. Conflicting duplicates are DROPPED
+ * (never guess). Unreachable/missing table -> { map: {}, available: false }.
+ */
+function ahWaitJoin_(agentName, fromIso, toIso) {
+  var out = { map: {}, available: false };
+  if (typeof getDashboardNeonConn_ !== 'function') return out;
+  var conn = null;
+  try {
+    conn = getDashboardNeonConn_();
+    if (!conn) return out;
+    var stmt = conn.prepareStatement(
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + 'SELECT call_date::text AS d, call_start, journey FROM inbound_calls '
+      + 'WHERE call_date BETWEEN ?::date AND ?::date AND journey LIKE ?) t');
+    stmt.setString(1, fromIso);
+    stmt.setString(2, toIso);
+    stmt.setString(3, '%' + agentName + '%');
+    var rs = stmt.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    rs.close(); stmt.close();
+    var recs = JSON.parse(json || '[]');
+    for (var i = 0; i < recs.length; i++) {
+      var startSec = ahTimeSec_(recs[i].call_start);
+      var journey;
+      try { journey = JSON.parse(recs[i].journey || '[]'); } catch (e) { continue; }
+      if (!journey || !journey.length) continue;
+      for (var j = 0; j < journey.length; j++) {
+        var ev = journey[j];
+        if (!ev || ev.name !== agentName || !ev.missed) continue;   // INV-04 exact
+        var evSec = ahTimeSec_(ev.t);
+        if (evSec < 0) continue;
+        var key = recs[i].d + '|' + (evSec + 7200);   // PST journey -> CST slot axis
+        var val = {
+          ring: (typeof ev.secs === 'number') ? ev.secs : null,
+          wait: (startSec >= 0) ? Math.max(0, evSec - startSec) : null,
+        };
+        if (out.map[key] && (out.map[key].ring !== val.ring || out.map[key].wait !== val.wait)) {
+          out.map[key] = { ring: null, wait: null };   // ambiguous -- drop, never guess
+        } else {
+          out.map[key] = val;
+        }
+      }
+    }
+    out.available = true;
+  } catch (e) {
+    Logger.log('ahWaitJoin_ best-effort miss: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (conn) { try { conn.close(); } catch (e2) {} }
+  }
+  return out;
+}
+
+// ── Phase C: My History (12-month own trajectory) ────────────────────────
+
+/**
+ * Pure (unit-tested): monthly rollup from DAL rows. Team = roster names only
+ * (INV-04 exact; INV-23 sentinels are not roster names, so they fall out).
+ * Own monthly ATT is WEIGHTED (INV-25 -- sum(att*answered)/sum(answered)):
+ * this page is reports-family like the IR monthly trend, unlike the Phase B
+ * KPI which stays INV-05 to reconcile with the manager table; the client
+ * labels the difference.
+ */
+function agentHistoryBlob_(dalRows, rosterNames) {
+  var rosterSet = {};
+  (rosterNames || []).forEach(function (n) { rosterSet[n] = true; });
+  var months = {};   // 'YYYY-MM' -> { team: {...}, byAgent: {name: {...}} }
+  (dalRows || []).forEach(function (r) {
+    if (!rosterSet[r.agent]) return;
+    var mk = String(r.dateIso || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(mk)) return;
+    var m = months[mk] || (months[mk] = { team: { answered: 0, missed: 0 }, byAgent: {} });
+    m.team.answered += r.totalAnswered;
+    m.team.missed += r.totalMissed;
+    var a = m.byAgent[r.agent] || (m.byAgent[r.agent] = {
+      answered: 0, missed: 0, attWSum: 0, attWN: 0, days: 0 });
+    a.answered += r.totalAnswered;
+    a.missed += r.totalMissed;
+    if (r.totalAnswered > 0 && r.attSec > 0) {
+      a.attWSum += r.attSec * r.totalAnswered;
+      a.attWN += r.totalAnswered;
+    }
+    a.days++;
+  });
+  return months;
+}
+
+/** Pure: the caller's own monthly view (deltas + best-month) from the blob. */
+var AGENT_HIST_BEST_MIN_TOTAL_ = 10;   // a 1-call 100% month is never "best"
+function agentHistoryOwnView_(months, agentName) {
+  var keys = Object.keys(months).sort();
+  var out = [];
+  var bestIdx = -1, bestRate = -1;
+  keys.forEach(function (mk) {
+    var m = months[mk];
+    var a = m.byAgent[agentName];
+    var teamDen = m.team.answered + m.team.missed;
+    var me = a ? {
+      answered: a.answered,
+      missed: a.missed,
+      ratePct: (a.answered + a.missed) ? Math.round((a.answered / (a.answered + a.missed)) * 1000) / 10 : null,
+      attWeightedSeconds: a.attWN ? Math.round(a.attWSum / a.attWN) : 0,
+      daysActive: a.days,
+    } : { answered: 0, missed: 0, ratePct: null, attWeightedSeconds: 0, daysActive: 0 };
+    out.push({
+      month: mk,
+      me: me,
+      team: { ratePct: teamDen ? Math.round((m.team.answered / teamDen) * 1000) / 10 : null },
+    });
+  });
+  out.forEach(function (row, i) {
+    var prev = i > 0 ? out[i - 1].me.ratePct : null;
+    row.prevDeltaPts = (row.me.ratePct != null && prev != null)
+      ? Math.round((row.me.ratePct - prev) * 10) / 10 : null;
+    if (row.me.ratePct != null && (row.me.answered + row.me.missed) >= AGENT_HIST_BEST_MIN_TOTAL_
+        && row.me.ratePct > bestRate) { bestRate = row.me.ratePct; bestIdx = i; }
+  });
+  if (bestIdx >= 0) out[bestIdx].best = true;
+  return out;
+}
+
+function getAgentHistory(req) {
+  req = req || {};
+  var who = agentHomeResolve_(req);
+  var latest = getLatestDataDate();
+  if (!latest) return { meta: { department: who.dept, agentName: who.agentName }, months: [] };
+  var endDate = parseIsoNoon_(latest);
+  // INV-29: the shared trend-window rule -- same helper the IR / Insights /
+  // QCD trends use, so "12 months" means the same thing everywhere.
+  var startDate = computeTrendStartDate_(endDate, endDate);
+  var fromIso = Utilities.formatDate(startDate, TZ, 'yyyy-MM-dd');
+
+  var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
+  var cache = CacheService.getScriptCache();
+  var key = 'agentHist:v1:' + who.dept + ':' + latest + ':' + tag;
+  var months = null, hit = false;
+  var cached = cache.get(key);
+  if (cached) { try { months = JSON.parse(cached); hit = true; } catch (e) { months = null; } }
+  if (!months) {
+    var roster = getRosterForDepartment_(who.dept);
+    var dalRows = ahFetchDalRows_(fromIso, latest, null);
+    months = agentHistoryBlob_(dalRows, roster.names);
+    try { cache.put(key, JSON.stringify(months), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { /* oversized/unavailable -- serve uncached */ }
+  }
+  logReportUsage_('agentHistory', who.dept, who.user, hit);
+  return {
+    meta: { department: who.dept, agentName: who.agentName, from: fromIso, to: latest },
+    months: agentHistoryOwnView_(months, who.agentName),
   };
 }

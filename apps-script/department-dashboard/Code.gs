@@ -30,6 +30,23 @@ function doGet(e) {
   if (user.role === 'agent') {
     return renderAgentApp_(user);
   }
+  // Phase C: view-as-agent -- an ADMIN opening ?agentPreview=<dept>||<name>
+  // (the Access modal's Preview link) gets the agent app rendered for that
+  // identity. SAFE: admins are entitled to all data; getAgentHome/History
+  // authorize the REAL admin and take the dept/name from the request (their
+  // existing admin-preview path). Non-admins never reach this branch.
+  if (user.role === 'admin' && e && e.parameter && e.parameter.agentPreview) {
+    var apTok = String(e.parameter.agentPreview).split('||');
+    var apDept = String(apTok[0] || '').trim();
+    var apName = String(apTok[1] || '').trim();
+    if (apDept && apName && getAllDepartments_().indexOf(apDept) !== -1) {
+      return renderAgentApp_({
+        email: user.email, role: 'admin',
+        agentDept: apDept, agentName: apName,
+      }, /* preview= */ true);
+    }
+    // Malformed/unknown preview target: fall through to the normal dashboard.
+  }
   if (user.role !== 'admin' && user.role !== 'manager') {
     return renderAccessDenied_(user);
   }
@@ -44,13 +61,14 @@ function doGet(e) {
  * and the design tokens. Same userJson escape discipline as
  * renderDashboard_ (the `<` -> < pattern; see that function's comment).
  */
-function renderAgentApp_(user) {
+function renderAgentApp_(user, preview) {
   const tmpl = HtmlService.createTemplateFromFile('agent');
   const userObj = {
     email: user.email,
     role: user.role,
     agentDept: user.agentDept || '',
     agentName: user.agentName || '',
+    preview: !!preview,   // Phase C: admin view-as-agent (banner + explicit req params)
   };
   tmpl.userJson = JSON.stringify(userObj).replace(/</g, '\\u003c');
   tmpl.workWindowJson = JSON.stringify(
