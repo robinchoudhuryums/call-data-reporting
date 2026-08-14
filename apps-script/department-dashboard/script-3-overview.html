@@ -536,6 +536,7 @@
       return;
     }
     host.innerHTML = '⚑ <strong>Escalations:</strong> ' + b.open + ' open'
+      + (typeof escDeptCountsHtml_ === 'function' ? escDeptCountsHtml_(b.byDept) : '')
       + (b.overdue ? ' · <span class="ov-esc-overdue">' + b.overdue + ' overdue</span>' : '')
       + (b.review ? ' · ' + b.review + ' awaiting review' : '')
       + ' <button type="button" class="link-btn" id="ov-agg-esc-open">Open worklist →</button>';

@@ -2772,3 +2772,30 @@ commit/push/deploy direction.
   NOTIFY_ON_NEW_ESCALATION property now set by owner? -- they said
   "Set NOTIFY_ON_NEW_ESCALATION=true" but only they can do it in
   Script Properties; instructions given).
+
+## Increment 112 (2026-08-14) — R20: per-dept escalation counts + Spanish threshold
+
+  (a) getEscalationsBadge now GROUPs by department; totals summed from
+  the groups (can never disagree); byDept lists open-carrying depts
+  busiest-first ({dept, open, overdue}). Strip + Company-snapshot line
+  render "(Sales 2 · CSR 1)" suffix, capped at 4 named + "+N more"
+  (escDeptCountsHtml_, script-2-chrome; reused by ovAggEscRender_).
+  Badge is viewer-scoped as before. Pinned in escalations-hardening.
+  (b) Spanish abandoned threshold: AbandonedFilter.js 0:00:01 -> 0:00:59
+  + CDR Tools menu label. NOTE: that's the MANUAL filter tool; the QCD
+  Historical engine (calcQcdReport) keys per-queue rules to QCDR Output
+  sheet rows -- row 40's dynamic block counts abandons waitDec > 0 into
+  its TOTAL (the only >0s rule in the engine). Whether row 40 IS Spanish
+  is sheet data (A40) we can't see from the repo -- owner asked to check;
+  if yes and they want QCD parity, it's a 2-line change (r40_tot2/tot4
+  -> time1Min) that shifts Spanish's reported totals going forward.
+  (c) Agent-role question: thoughts delivered, NO changes (owner said
+  don't build yet). Recommended start = own data + team AGGREGATES only
+  (no per-teammate rows, anonymized or not -- small cohorts make
+  anonymity cosmetic); per-dept configurability if managers differ;
+  key build precondition = email->roster-name mapping (Access Control
+  has no agent-name column today).
+
+  **WHERE I LEFT OFF:** ci:ui running at write time; commit after green.
+  700/700 unit. R19+R20 commits unPR'd on the branch (owner merges on
+  explicit word).

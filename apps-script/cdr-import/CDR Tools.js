@@ -25,7 +25,7 @@ function onOpen() {
     .addItem('A_Q_Sales (19s)', 'filterSalesAbandoned')
     .addItem('A_Q_Eligibility_MM&R (59s)', 'filterEligibilityMMRAbandoned')
     .addItem('A_Q_Denials (59s)', 'filterDenialsAbandoned')
-    .addItem('A_Q_Spanish (1s)', 'filterSpanishAbandoned')
+    .addItem('A_Q_Spanish (59s)', 'filterSpanishAbandoned')
     .addItem('A_Q_PAK (59s)', 'filterPAKAbandoned')
     .addItem('A_Q_PAP (19s)', 'filterPAPAbandoned')
     .addSeparator()

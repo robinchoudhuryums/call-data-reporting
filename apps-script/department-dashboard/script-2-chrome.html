@@ -715,16 +715,29 @@
   // Last-known viewer-scope escalation counts, shared with the Company
   // snapshot card's pending-escalations line (script-3-overview).
   var escBadgeLast_ = null;
+  // R20 (owner): per-dept open-count suffix for the strip + snapshot line,
+  // e.g. " (Sales 2 · CSR 1)". Escaped here; capped at 4 named depts with a
+  // "+N more" tail so a bad week can't turn the banner into a paragraph.
+  function escDeptCountsHtml_(byDept) {
+    if (!byDept || !byDept.length) return '';
+    var shown = byDept.slice(0, 4).map(function (d) {
+      return escapeHtml(d.dept) + ' ' + d.open;
+    });
+    var more = byDept.length - 4;
+    return ' <span class="ov-esc-depts">(' + shown.join(' · ')
+      + (more > 0 ? ' · +' + more + ' more' : '') + ')</span>';
+  }
   function escApplyBadge_(counts) {
     var open = Number(counts && counts.open) || 0;
     var review = Number(counts && counts.review) || 0;
     var over = Number(counts && counts.overdue) || 0;
+    var byDept = (counts && counts.byDept && counts.byDept.length) ? counts.byDept : [];
     var total = open + review;
     // Round-16 (owner): the Company snapshot card carries a pending-
     // escalations line too. Stash the counts (the card can render before or
     // after this badge fetch) and repaint its line in place -- ovAggEscRender_
     // lives in script-3-overview (function hoisting spans fragments).
-    escBadgeLast_ = { open: open, review: review, overdue: over };
+    escBadgeLast_ = { open: open, review: review, overdue: over, byDept: byDept };
     try { ovAggEscRender_(); } catch (e) { /* card not rendered yet */ }
 
     var tab = $('escalations-btn');
@@ -752,6 +765,7 @@
         strip.innerHTML = '';
       } else {
         strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
+          + escDeptCountsHtml_(byDept)
           + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
           + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
           + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';

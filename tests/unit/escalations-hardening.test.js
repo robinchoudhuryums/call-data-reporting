@@ -422,3 +422,52 @@ test('Gap #3: a mail failure leaves the watermark un-advanced (OPS-1 retry)', fu
   assert.equal(h.state.props.ESC_REVIEW_PING_WATERMARK, '2026-07-01 10:00:00',
     'same batch retries on the next hourly run');
 });
+
+// -- R20: per-dept badge counts ----------------------------------------------
+
+// Fake conn for the grouped badge query: one rs row per department.
+function badgeConn(rows) {
+  return {
+    prepareStatement: function () {
+      let i = -1;
+      return {
+        setString: function () {},
+        executeQuery: function () {
+          return {
+            next: function () { i++; return i < rows.length; },
+            getString: function (col) {
+              const r = rows[i];
+              const map = { department: r.dept, n_open: String(r.open),
+                n_review: String(r.review), n_overdue: String(r.overdue) };
+              return map[col] == null ? null : map[col];
+            },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+test('R20: getEscalationsBadge sums totals from per-dept groups; byDept lists open depts busiest-first, review-only depts excluded', function () {
+  h.state.userEmail = 'a@x.com';
+  h.ctx.resolveUser_ = function () { return { role: 'admin', email: 'a@x.com' }; };
+  h.ctx.getDashboardNeonConn_ = function () {
+    return badgeConn([
+      { dept: 'CSR',     open: 1, review: 0, overdue: 0 },
+      { dept: 'Sales',   open: 3, review: 1, overdue: 2 },
+      { dept: 'Billing', open: 0, review: 2, overdue: 0 },   // review-only: totals yes, byDept no
+    ]);
+  };
+  const b = h.call('getEscalationsBadge');
+  assert.equal(b.available, true);
+  assert.equal(b.open, 4);
+  assert.equal(b.review, 3);
+  assert.equal(b.overdue, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(b.byDept)), [
+    { dept: 'Sales', open: 3, overdue: 2 },
+    { dept: 'CSR',   open: 1, overdue: 0 },
+  ]);
+});

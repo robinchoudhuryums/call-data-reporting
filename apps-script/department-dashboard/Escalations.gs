@@ -180,22 +180,32 @@ function getEscalationsBadge() {
       clause = ' WHERE department IN (' + mine.map(function () { return '?'; }).join(',') + ')';
       params = mine;
     }
-    var sql = 'SELECT '
+    // R20 (owner): grouped by department so the Overview strip + Company
+    // snapshot line can name WHICH depts carry the open count, not just the
+    // total. Totals are summed from the groups, so the two can never disagree.
+    var sql = 'SELECT department, '
       + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
       + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
       + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
         + ESC_OVERDUE_SQL_ + ') AS n_overdue '
-      + 'FROM escalations' + clause;
+      + 'FROM escalations' + clause + ' GROUP BY department';
     var stmt = conn.prepareStatement(sql);
     for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
     var rs = stmt.executeQuery();
-    var out = { available: true, open: 0, review: 0, overdue: 0 };
-    if (rs.next()) {
-      out.open    = Number(rs.getString('n_open'))    || 0;
-      out.review  = Number(rs.getString('n_review'))  || 0;
-      out.overdue = Number(rs.getString('n_overdue')) || 0;
+    var out = { available: true, open: 0, review: 0, overdue: 0, byDept: [] };
+    while (rs.next()) {
+      var dOpen    = Number(rs.getString('n_open'))    || 0;
+      var dReview  = Number(rs.getString('n_review'))  || 0;
+      var dOverdue = Number(rs.getString('n_overdue')) || 0;
+      out.open    += dOpen;
+      out.review  += dReview;
+      out.overdue += dOverdue;
+      if (dOpen > 0) {
+        out.byDept.push({ dept: String(rs.getString('department') || ''), open: dOpen, overdue: dOverdue });
+      }
     }
     rs.close(); stmt.close();
+    out.byDept.sort(function (a, b) { return b.open - a.open || (a.dept < b.dept ? -1 : 1); });
     return out;
   } catch (e) {
     return { available: false };

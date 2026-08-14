@@ -58,7 +58,7 @@ function filterFOPAbandoned() { applyAbandonedFilter(["A_Q_FieldOps_Power"], "0:
 function filterSalesAbandoned() { applyAbandonedFilter(["A_Q_Sales"], "0:00:19"); }
 function filterEligibilityMMRAbandoned() { applyAbandonedFilter(["A_Q_Eligibility_MM&R"], "0:00:59"); }
 function filterDenialsAbandoned() { applyAbandonedFilter(["A_Q_Denials"], "0:00:59"); }
-function filterSpanishAbandoned() { applyAbandonedFilter(["A_Q_Spanish"], "0:00:01"); }
+function filterSpanishAbandoned() { applyAbandonedFilter(["A_Q_Spanish"], "0:00:59"); }
 function filterPAKAbandoned() { applyAbandonedFilter(["A_Q_PAK"], "0:00:59"); }
 function filterPAPAbandoned() { applyAbandonedFilter(["A_Q_PAP"], "0:00:19"); }
 
