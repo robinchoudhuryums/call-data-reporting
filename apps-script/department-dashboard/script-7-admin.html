@@ -2084,6 +2084,12 @@
     if ($('ac-save-btn'))  $('ac-save-btn').addEventListener('click', acSave_);
     if ($('ac-clear-btn')) $('ac-clear-btn').addEventListener('click', acClearForm_);
     if ($('ac-tbody'))     $('ac-tbody').addEventListener('click', acOnTableClick_);
+    // Agent role Phase B: the agent-rows section.
+    if ($('ac-agent-save-btn')) $('ac-agent-save-btn').addEventListener('click', acAgentSave_);
+    if ($('ac-agent-tbody')) $('ac-agent-tbody').addEventListener('click', function (e) {
+      const rem = e.target.closest && e.target.closest('.ac-agent-remove');
+      if (rem) acAgentRemove_(Number(rem.getAttribute('data-idx')));
+    });
   }
 
   function acSetStatus_(kind, msg) {
@@ -2106,6 +2112,7 @@
         acLastInit = data || { rows: [], managers: [], departments: [], adminEmails: [] };
         acRenderDeptOptions_(acLastInit.departments || []);
         acRenderRows_(acLastInit.managers || []);
+        acRenderAgents_();   // agent role Phase B
         acClearForm_();
       })
       .withFailureHandler(function (err) {
@@ -2160,6 +2167,106 @@
     if (editBtn) { acEditRow_(Number(editBtn.getAttribute('data-idx'))); return; }
     const remBtn = e.target.closest && e.target.closest('.ac-row-remove');
     if (remBtn) { acRemoveRow_(Number(remBtn.getAttribute('data-idx'))); return; }
+  }
+
+  // ── Agent role Phase B: the agent-rows section ─────────────────────────
+  // One dept + one exact roster name per row (the server validates again --
+  // this UI just makes the exact-spelling requirement unmistypable via a
+  // picker fed by rosterNamesByDept).
+  function acRenderAgents_() {
+    const agents = acLastInit.agents || [];
+    const count = $('ac-agent-count');
+    if (count) count.textContent = agents.length;
+    const hint = $('ac-agent-hint');
+    if (hint) {
+      hint.innerHTML = 'An <strong>agent</strong> sees their own numbers plus team averages only — no teammates, '
+        + 'no other departments. The email maps to ONE roster identity (exact spelling, picked below). '
+        + (acLastInit.agentRoleEnabled
+            ? '<strong>Agent sign-in is ENABLED</strong> (AGENT_ROLE_ENABLED).'
+            : '<strong>Agent sign-in is currently DISABLED</strong> — rows can be staged now; agents can\'t '
+              + 'sign in until the AGENT_ROLE_ENABLED Script Property is set to true (Operator State #46).');
+    }
+    const deptSel = $('ac-agent-dept');
+    if (deptSel && !deptSel.options.length) {
+      deptSel.innerHTML = (acLastInit.departments || []).map(function (d) {
+        return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+      }).join('');
+      deptSel.addEventListener('change', acFillAgentNames_);
+    }
+    acFillAgentNames_();
+    const tbody = $('ac-agent-tbody');
+    if (!tbody) return;
+    if (!agents.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="al-empty">No agent rows yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = agents.map(function (a, idx) {
+      return '<tr>'
+        + '<td>' + escapeHtml(a.email) + '</td>'
+        + '<td>' + escapeHtml(a.department) + '</td>'
+        + '<td>' + escapeHtml(a.agentName) + '</td>'
+        + '<td><button type="button" class="link-btn ac-agent-remove" data-idx="' + idx + '">Remove</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function acFillAgentNames_() {
+    const deptSel = $('ac-agent-dept');
+    const nameSel = $('ac-agent-name');
+    if (!deptSel || !nameSel) return;
+    const names = ((acLastInit.rosterNamesByDept || {})[deptSel.value]) || [];
+    nameSel.innerHTML = names.length
+      ? names.map(function (n) { return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>'; }).join('')
+      : '<option value="">(no roster names found)</option>';
+  }
+
+  function acAgentSave_() {
+    const email = ($('ac-agent-email') ? $('ac-agent-email').value : '').trim();
+    const dept = $('ac-agent-dept') ? $('ac-agent-dept').value : '';
+    const agentName = $('ac-agent-name') ? $('ac-agent-name').value : '';
+    if (!email) { acSetStatus_('error', 'Enter the agent\'s email.'); return; }
+    if (!dept || !agentName) { acSetStatus_('error', 'Pick the department and the roster name.'); return; }
+    const btn = $('ac-agent-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Add agent'; } };
+    acSetStatus_('loading', 'Saving agent ' + email + '…');
+    google.script.run
+      .withSuccessHandler(function () {
+        restore();
+        acSetStatus_('success', 'Saved agent ' + email + ' → ' + agentName + ' (' + dept + '). Takes effect within ~60 s.');
+        showToast('Saved agent access for ' + email, 'success');
+        if ($('ac-agent-email')) $('ac-agent-email').value = '';
+        acLoadInit_();
+      })
+      .withFailureHandler(function (err) {
+        restore();
+        acSetStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err)));
+      })
+      .saveAccessControlRow({ email: email, department: dept, role: 'agent', agentName: agentName });
+  }
+
+  function acAgentRemove_(idx) {
+    const a = (acLastInit.agents || [])[idx];
+    if (!a) return;
+    dsConfirm_({
+      title: 'Remove agent access',
+      tone: 'danger',
+      message: 'Remove agent access for "' + a.email + '" (' + a.agentName + ', ' + a.department + ')?',
+      confirmLabel: 'Remove access', cancelLabel: 'Cancel',
+    }).then(function (ok) {
+      if (!ok) return;
+      acSetStatus_('loading', 'Removing ' + a.email + '…');
+      google.script.run
+        .withSuccessHandler(function () {
+          acSetStatus_('success', 'Removed ' + a.email + '.');
+          showToast('Removed agent access for ' + a.email, 'success');
+          acLoadInit_();
+        })
+        .withFailureHandler(function (err) {
+          acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
+        })
+        .removeAccessControlRow({ email: a.email });
+    });
   }
 
   // Tier C: preselect the manager's assigned depts in the multi-select.

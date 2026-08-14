@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <?!= include_('styles') ?>
+  <style>
+    /* Agent app (Phase B) — layout-only additions; all colors/typography come
+       from the shared styles.html tokens so theming stays one system. */
+    .agent-hdr { background: var(--paper-card); border-bottom: 1px solid var(--line);
+      padding: 14px 28px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    .agent-hdr .kicker { font: 600 10px var(--ui); letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+    .agent-hdr h1 { font: 700 19px var(--ui); margin: 0; }
+    .agent-dept-tag { font: 600 10px var(--mono); letter-spacing: .06em; color: var(--muted);
+      border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+    .agent-fresh { margin-left: auto; font-size: 11px; color: var(--muted); }
+    .agent-wrap { max-width: 880px; margin: 22px auto; padding: 0 20px; }
+    .agent-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+    .agent-chip { border: 1px solid var(--line); background: var(--paper-card); border-radius: 999px;
+      padding: 4px 13px; font-size: 12px; color: var(--muted); cursor: pointer; font-family: inherit; }
+    .agent-chip.on { background: var(--ink); color: var(--paper-card); border-color: var(--ink); }
+    .agent-dates { margin-left: auto; font: 12px var(--mono); color: var(--muted); }
+    .agent-custom { display: none; gap: 6px; align-items: center; }
+    .agent-custom.show { display: inline-flex; }
+    .agent-custom input { font: 12px var(--mono); border: 1px solid var(--line); border-radius: var(--r, 2px);
+      padding: 3px 6px; background: var(--paper-card); color: var(--ink); }
+    .agent-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+    @media (max-width: 700px) { .agent-kpis { grid-template-columns: repeat(2, 1fr); } }
+    .agent-kpi { background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--r, 2px); padding: 16px 18px 14px; }
+    .agent-kpi .lbl { font: 600 10px var(--ui); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+    .agent-kpi .val { font: 700 30px/1.15 var(--mono); margin: 6px 0 4px; }
+    .agent-kpi.good .val { color: var(--good); }
+    .agent-kpi.warn .val { color: var(--warn); }
+    .agent-kpi .vs { font-size: 11px; color: var(--muted); }
+    .agent-d { font: 600 11px var(--mono); border-radius: 999px; padding: 1px 7px; }
+    .agent-d.up { background: var(--good-soft); color: var(--good); }
+    .agent-d.dn { background: var(--warn-soft); color: var(--warn); }
+    .agent-d.mut { background: var(--paper-2); color: var(--muted); }
+    .agent-rank { display: none; align-items: center; gap: 12px; background: var(--good-soft);
+      border: 1px solid var(--line); border-radius: var(--r, 2px); padding: 10px 16px; margin-bottom: 14px; font-size: 13px; }
+    .agent-rank.show { display: flex; }
+    .agent-rank b { font: 700 15px var(--mono); color: var(--good); }
+    .agent-team { background: var(--paper-card); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+      border-radius: var(--r, 2px); padding: 12px 18px; display: flex; gap: 26px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+    .agent-team .t-lbl { font: 600 10px var(--ui); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+    .agent-team .stat { font-size: 12px; color: var(--muted); }
+    .agent-team .stat b { font: 600 13px var(--mono); color: var(--ink); }
+    .agent-team .note { flex-basis: 100%; font-size: 11px; color: var(--muted); margin-top: -2px; }
+    .agent-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 700px) { .agent-cols { grid-template-columns: 1fr; } }
+    .agent-card { background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--r, 2px); padding: 16px 18px; }
+    .agent-card h2 { font: 600 10px var(--ui); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+    .agent-mday { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--paper-2); }
+    .agent-mday:first-of-type { border-top: none; }
+    .agent-mday .dt { font: 600 11px var(--mono); color: var(--muted); width: 72px; flex: none; }
+    .agent-tchip { font: 500 11px var(--mono); background: var(--warn-soft); color: var(--warn);
+      border-radius: 999px; padding: 1px 8px; margin: 0 3px 3px 0; display: inline-block; }
+    .agent-zero { font-size: 12px; color: var(--muted); font-style: italic; }
+    .agent-svg text { font: 10px var(--mono); fill: var(--muted); }
+    .agent-foot { font-size: 11px; color: var(--muted); margin-top: 16px; }
+    .agent-loading, .agent-error { padding: 40px 20px; text-align: center; color: var(--muted); }
+    .agent-error { color: var(--warn); }
+    body.agent-app { background: var(--paper); }
+  </style>
+</head>
+<body class="agent-app">
+  <div class="agent-hdr">
+    <span class="kicker">My Performance</span>
+    <h1 id="agent-name">&nbsp;</h1>
+    <span class="agent-dept-tag" id="agent-dept"></span>
+    <span class="agent-fresh" id="agent-fresh"></span>
+  </div>
+  <div class="agent-wrap">
+    <div class="agent-controls">
+      <button type="button" class="agent-chip" data-preset="mtd">This month</button>
+      <button type="button" class="agent-chip" data-preset="7d">Last 7 days</button>
+      <button type="button" class="agent-chip" data-preset="yday">Yesterday</button>
+      <button type="button" class="agent-chip" data-preset="custom">Custom…</button>
+      <span class="agent-custom" id="agent-custom">
+        <input type="date" id="agent-from"> – <input type="date" id="agent-to">
+        <button type="button" class="agent-chip" id="agent-apply">Apply</button>
+      </span>
+      <span class="agent-dates" id="agent-dates"></span>
+    </div>
+    <div class="agent-loading" id="agent-loading">Loading your numbers…</div>
+    <div class="agent-error" id="agent-error" style="display:none;"></div>
+    <div id="agent-body" style="display:none;">
+      <div class="agent-kpis" id="agent-kpis"></div>
+      <div class="agent-rank" id="agent-rank"></div>
+      <div class="agent-team" id="agent-team"></div>
+      <div class="agent-cols">
+        <div class="agent-card">
+          <h2 id="agent-trend-title">My answer rate — last 30 days</h2>
+          <div id="agent-trend"></div>
+        </div>
+        <div class="agent-card">
+          <h2 id="agent-missed-title">My missed calls</h2>
+          <div id="agent-missed"></div>
+        </div>
+      </div>
+      <div class="agent-foot">Times shown are your own missed rings during the 8:30 AM – 5:00 PM CST
+        work window<span id="agent-ww"></span>. Team figures are totals and averages for your whole
+        department roster — individual teammates aren't shown. Data updates once daily after the
+        morning import.</div>
+    </div>
+  </div>
+  <script>
+    window.__USER__ = <?!= userJson ?>;
+    window.__WORK_WINDOW__ = <?!= workWindowJson ?>;
+  </script>
+  <?!= include_('agentApp') ?>
+</body>
+</html>

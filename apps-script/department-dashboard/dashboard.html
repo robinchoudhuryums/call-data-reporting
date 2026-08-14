@@ -2835,6 +2835,34 @@
               <tbody id="ac-tbody"></tbody>
             </table>
           </div>
+          <!-- Agent role Phase B: agent rows (one dept + exact roster name).
+               The section explains the flag state so an admin adding rows
+               before AGENT_ROLE_ENABLED is on isn't surprised by no-ops. -->
+          <div class="al-section">
+            <div class="al-section-title">Agent access (<span id="ac-agent-count">0</span>)</div>
+            <p class="al-hint" id="ac-agent-hint"></p>
+            <div class="ir-form-grid">
+              <div class="ir-col" style="flex:1 1 260px;">
+                <label for="ac-agent-email">Agent email</label>
+                <input type="email" id="ac-agent-email" autocomplete="off" placeholder="name@universalmedsupply.com">
+              </div>
+              <div class="ir-col" style="flex:0 1 180px;">
+                <label for="ac-agent-dept">Department</label>
+                <select id="ac-agent-dept"></select>
+              </div>
+              <div class="ir-col" style="flex:1 1 220px;">
+                <label for="ac-agent-name">Agent (roster name)</label>
+                <select id="ac-agent-name"></select>
+              </div>
+            </div>
+            <div class="esc-form-actions">
+              <button class="btn" id="ac-agent-save-btn" type="button">Add agent</button>
+            </div>
+            <table class="al-config-table" style="margin-top:10px;">
+              <thead><tr><th>Email</th><th>Department</th><th>Agent</th><th>Actions</th></tr></thead>
+              <tbody id="ac-agent-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

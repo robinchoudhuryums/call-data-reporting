@@ -1099,10 +1099,14 @@ When something looks wrong, before assuming a code bug, check:
     exactly the pre-agent behavior, so the deployed code is dark until you
     flip it. Set to `true` and `resolveUser_` resolves agent rows to the
     fail-closed agent identity (`agentDept`/`agentName` only; every
-    pre-agent gate refuses the role by allowlist). **Phase A note: even with
-    the flag on, an agent landing on the web app gets the access-denied page
-    — the agent pages ship in Phase B**, so leave the flag off until then
-    unless you're testing resolution. Prereqs for a working agent row: the
+    pre-agent gate refuses the role by allowlist). **Since Phase B an agent
+    with the flag on lands on the "My Performance" app** (agent.html — own
+    numbers + team aggregates; rank line ships hidden). **Go-live for the
+    CSR pilot:** deploy → add the CSR agent rows in the Access modal's
+    Agents section (email + dept + roster-name picker) → set
+    `AGENT_ROLE_ENABLED=true`. Sign-in notifications (#45) will confirm each
+    agent's first visit; `agentHome` rows land in Report Usage.
+    Prereqs for a working agent row: the
     Access Control row needs Department + Role=`agent` + Agent Name matching
     that dept's `DO NOT EDIT!` roster entry EXACTLY (the editor validates
     this; hand-edited sheet rows are not validated until touched by the

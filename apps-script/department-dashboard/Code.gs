@@ -23,14 +23,42 @@ function doGet(e) {
     Logger.log('notifyLoginEvent_ failed (best-effort): %s', err);
   }
 
-  // Phase A (agent role): ALLOWLIST, not a none-denylist -- the dashboard
-  // client is built for admins + managers, so an agent (or any future role)
-  // lands on access-denied until its own surface ships (Phase B routes
-  // agents to the agent pages here).
+  // Phase B (agent role): agents get their OWN app -- a separate, small
+  // template (agent.html), NOT the manager dashboard with surfaces hidden.
+  // The allowlist discipline stays: any OTHER unrecognized role still lands
+  // on access-denied.
+  if (user.role === 'agent') {
+    return renderAgentApp_(user);
+  }
   if (user.role !== 'admin' && user.role !== 'manager') {
     return renderAccessDenied_(user);
   }
   return renderDashboard_(user);
+}
+
+/**
+ * Agent role Phase B: the "My Performance" app (agent.html + script-agent).
+ * A deliberately SEPARATE template from dashboard.html -- the manager client
+ * is ~20K lines of role assumptions, and guarding every init path for a
+ * third role is riskier than a second small page that shares styles.html
+ * and the design tokens. Same userJson escape discipline as
+ * renderDashboard_ (the `<` -> < pattern; see that function's comment).
+ */
+function renderAgentApp_(user) {
+  const tmpl = HtmlService.createTemplateFromFile('agent');
+  const userObj = {
+    email: user.email,
+    role: user.role,
+    agentDept: user.agentDept || '',
+    agentName: user.agentName || '',
+  };
+  tmpl.userJson = JSON.stringify(userObj).replace(/</g, '\\u003c');
+  tmpl.workWindowJson = JSON.stringify(
+    (typeof DASHBOARD_WORK_WINDOW !== 'undefined') ? DASHBOARD_WORK_WINDOW : ''
+  ).replace(/</g, '\\u003c');
+  return tmpl.evaluate()
+    .setTitle('My Performance — Call Data')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
 /**

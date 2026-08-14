@@ -1,0 +1,293 @@
+<script>
+(function () {
+  'use strict';
+
+  // Agent app (Phase B, docs/agent-role-plan.md). Small on purpose: no
+  // Chart.js (the trend is inline SVG), no router, no modals. Everything
+  // renders from ONE getAgentHome payload.
+
+  var USER = window.__USER__ || {};
+  // Owner (2026-08-14): the rank line is BUILT but ships HIDDEN while its
+  // deployment is decided. The server computes + returns it; flip this to
+  // true (one line) to show it.
+  var AGENT_RANK_SHOW_ = false;
+  // Display standard for the answer-rate tint. Mirrors the dashboard's 92%
+  // seed (ANSWER_TARGETS is admin-tunable there; the agent app follows in a
+  // later phase if the owner tunes it per dept).
+  var ANSWER_STANDARD_ = 92;
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmtInt(n) { return Number(n || 0).toLocaleString('en-US'); }
+  function fmtHms(sec) {
+    sec = Math.round(Number(sec) || 0);
+    var m = Math.floor(sec / 60), s = sec % 60;
+    var h = Math.floor(m / 60); m = m % 60;
+    var pad = function (x) { return x < 10 ? '0' + x : String(x); };
+    return h > 0 ? (h + ':' + pad(m) + ':' + pad(s)) : (m + ':' + pad(s));
+  }
+  function fmtTime12(hms) {
+    var m = String(hms || '').match(/^(\d{1,2}):(\d{2}):\d{2}$/);
+    if (!m) return esc(hms);
+    var h = Number(m[1]);
+    var ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + m[2] + ' ' + ap;
+  }
+  function isoToLabel(iso, withDow) {
+    var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return esc(iso);
+    var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+    var dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+    var lbl = (d.getMonth() + 1) + '/' + d.getDate();
+    return withDow ? (dow + ' ' + lbl) : lbl;
+  }
+
+  // ── Error beacon (the R19 discipline, agent-app copy) ─────────────────
+  var BEACON_SEEN_ = {}, BEACON_SENT_ = 0;
+  function reportIssue_(kind, message, stack) {
+    try {
+      var msg = String(message || '').slice(0, 600);
+      if (!msg) return;
+      var sig = kind + '|' + msg.slice(0, 120);
+      if (BEACON_SEEN_[sig] || BEACON_SENT_ >= 6) return;
+      BEACON_SEEN_[sig] = true; BEACON_SENT_++;
+      if (!(window.google && google.script && google.script.run)) return;
+      google.script.run.withSuccessHandler(function () {}).withFailureHandler(function () {})
+        .reportClientIssue({ kind: kind, message: msg, stack: String(stack || '').slice(0, 1800),
+          route: 'agent', ua: (navigator.userAgent || '').slice(0, 220) });
+    } catch (e) { /* never throw from the reporter */ }
+  }
+  window.addEventListener('error', function (e) {
+    reportIssue_('uncaught', (e && e.message) || 'Script error',
+      (e && e.error && e.error.stack) || (((e && e.filename) || '') + (e && e.lineno ? (':' + e.lineno) : '')));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    reportIssue_('unhandled-rejection', (r && r.message) ? r.message : String(r), (r && r.stack) || '');
+  });
+
+  // ── Window state ──────────────────────────────────────────────────────
+  var latestIso = null;   // most recent DQE date; presets anchor to it
+  var win = { from: null, to: null, preset: 'mtd' };
+  var loadSeq = 0;
+
+  function isoShift(iso, days) {
+    var m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+    d.setDate(d.getDate() + days);
+    var pad = function (x) { return x < 10 ? '0' + x : String(x); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+  function applyPreset(preset) {
+    var anchor = latestIso || (function () {
+      var t = new Date(); var pad = function (x) { return x < 10 ? '0' + x : String(x); };
+      return t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate());
+    })();
+    win.preset = preset;
+    if (preset === 'mtd') { win.from = anchor.slice(0, 8) + '01'; win.to = anchor; }
+    else if (preset === '7d') { win.from = isoShift(anchor, -6); win.to = anchor; }
+    else if (preset === 'yday') { win.from = anchor; win.to = anchor; }
+    // 'custom' keeps whatever the inputs hold (Apply sets win directly).
+  }
+
+  function paintControls() {
+    var chips = document.querySelectorAll('.agent-chip[data-preset]');
+    Array.prototype.forEach.call(chips, function (c) {
+      c.classList.toggle('on', c.getAttribute('data-preset') === win.preset);
+    });
+    $('agent-custom').classList.toggle('show', win.preset === 'custom');
+    $('agent-dates').textContent = win.from === win.to ? win.from
+      : (win.from + ' – ' + win.to);
+  }
+
+  // ── Rendering ─────────────────────────────────────────────────────────
+  function deltaChip(delta, goodWhenUp, suffix) {
+    if (delta == null || isNaN(delta)) return '';
+    var up = delta > 0;
+    // goodWhenUp === null => valence-free metric (ATT): always muted.
+    var cls = (delta === 0 || goodWhenUp == null) ? 'mut' : ((up === goodWhenUp) ? 'up' : 'dn');
+    var txt = (up ? '+' : '') + (Math.round(delta * 10) / 10) + (suffix || '');
+    return '<span class="agent-d ' + cls + '">' + esc(txt) + '</span>';
+  }
+
+  function renderKpis(d) {
+    var me = d.me, team = d.team;
+    var n = Math.max(1, team.rosterAgentCount || 1);
+    var avgAns = team.answered / n, avgMiss = team.missed / n;
+    var attDelta = (me.attSeconds && team.attSeconds) ? (me.attSeconds - team.attSeconds) : null;
+    var rateCls = me.answerRatePct == null ? '' : (me.answerRatePct >= ANSWER_STANDARD_ ? 'good' : 'warn');
+    $('agent-kpis').innerHTML =
+      '<div class="agent-kpi"><div class="lbl">Answered</div><div class="val">' + fmtInt(me.answered) + '</div>'
+      + '<div class="vs">' + deltaChip(me.answered - avgAns, true) + ' vs team avg (' + fmtInt(Math.round(avgAns)) + ')</div></div>'
+      + '<div class="agent-kpi"><div class="lbl">Missed</div><div class="val">' + fmtInt(me.missed) + '</div>'
+      + '<div class="vs">' + deltaChip(me.missed - avgMiss, false) + ' vs team avg (' + fmtInt(Math.round(avgMiss)) + ')</div></div>'
+      + '<div class="agent-kpi ' + rateCls + '"><div class="lbl">Answer rate</div><div class="val">'
+      + (me.answerRatePct == null ? '–' : me.answerRatePct + '%') + '</div>'
+      + '<div class="vs">' + (me.answerRatePct != null && team.answerRatePct != null
+          ? deltaChip(me.answerRatePct - team.answerRatePct, true, ' pts') + ' vs team · standard ' + ANSWER_STANDARD_ + '%'
+          : 'standard ' + ANSWER_STANDARD_ + '%') + '</div></div>'
+      + '<div class="agent-kpi"><div class="lbl">Avg talk time</div><div class="val">' + esc(fmtHms(me.attSeconds)) + '</div>'
+      + '<div class="vs">' + (attDelta == null ? '' : deltaChip(Math.round(attDelta), null, 's')) + ' vs team avg ('
+      + esc(fmtHms(team.attSeconds)) + ')</div></div>';
+  }
+
+  function renderRank(d) {
+    var el = $('agent-rank');
+    if (!AGENT_RANK_SHOW_ || !d.rank) { el.classList.remove('show'); el.innerHTML = ''; return; }
+    el.innerHTML = '🏅 You rank <b>' + d.rank.rank + ' of ' + d.rank.of + '</b> on answer rate this window. '
+      + '<span style="color:var(--muted);font-size:11px">Rank compares you to your team without showing teammates’ numbers.</span>';
+    el.classList.add('show');
+  }
+
+  function renderTeam(d) {
+    var t = d.team;
+    $('agent-team').innerHTML =
+      '<span class="t-lbl">Team · ' + esc(d.meta.department) + '</span>'
+      + '<span class="stat">Answered <b>' + fmtInt(t.answered) + '</b></span>'
+      + '<span class="stat">Missed <b>' + fmtInt(t.missed) + '</b></span>'
+      + '<span class="stat">Answer rate <b>' + (t.answerRatePct == null ? '–' : t.answerRatePct + '%') + '</b></span>'
+      + '<span class="stat">Avg talk time <b>' + esc(fmtHms(t.attSeconds)) + '</b></span>'
+      + '<span class="stat">Active agents <b>' + fmtInt(t.activeAgents) + '</b></span>'
+      + '<span class="note">Team figures are totals and averages for the whole ' + esc(d.meta.department)
+      + ' roster in this window — individual teammates aren’t shown.</span>';
+  }
+
+  function renderTrend(d) {
+    var pts = (d.trend || []).filter(function (p) { return p.ratePct != null; });
+    $('agent-trend-title').textContent = 'My answer rate — ' + isoToLabel(d.meta.trendFrom) + ' to ' + isoToLabel(d.meta.to);
+    if (pts.length < 2) {
+      $('agent-trend').innerHTML = '<div class="agent-zero">Not enough days with activity to draw a trend yet.</div>';
+      return;
+    }
+    var W = 380, H = 150, L = 34, R = 372, T = 14, B = 122;
+    var min = 100, max = 0;
+    pts.forEach(function (p) { if (p.ratePct < min) min = p.ratePct; if (p.ratePct > max) max = p.ratePct; });
+    min = Math.min(min, ANSWER_STANDARD_) - 4; max = Math.max(max, ANSWER_STANDARD_) + 4;
+    if (max > 100) max = 100.5; if (min < 0) min = 0;
+    var x = function (i) { return L + (R - L) * (pts.length === 1 ? 0.5 : i / (pts.length - 1)); };
+    var y = function (v) { return B - (B - T) * ((v - min) / (max - min)); };
+    var line = pts.map(function (p, i) { return (Math.round(x(i) * 10) / 10) + ',' + (Math.round(y(p.ratePct) * 10) / 10); }).join(' ');
+    var stdY = Math.round(y(ANSWER_STANDARD_) * 10) / 10;
+    var last = pts[pts.length - 1];
+    var html = '<svg class="agent-svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%">'
+      + '<line x1="' + L + '" y1="' + stdY + '" x2="' + R + '" y2="' + stdY + '" stroke="var(--warn)" stroke-dasharray="3 4" opacity=".5"/>'
+      + '<text x="' + (R - 74) + '" y="' + (stdY - 4) + '" fill="var(--warn)">standard ' + ANSWER_STANDARD_ + '%</text>'
+      + '<polyline fill="none" stroke="var(--good)" stroke-width="2" points="' + line + '"/>'
+      + '<circle cx="' + x(pts.length - 1) + '" cy="' + y(last.ratePct) + '" r="3.4" fill="var(--good)"/>'
+      + '<text x="' + L + '" y="' + (H - 8) + '">' + isoToLabel(pts[0].date) + '</text>'
+      + '<text x="' + (R - 34) + '" y="' + (H - 8) + '">' + isoToLabel(last.date) + '</text>'
+      + '<text x="' + (L + 4) + '" y="' + (T + 6) + '">' + (last.ratePct) + '% latest</text>'
+      + '</svg>';
+    $('agent-trend').innerHTML = html;
+  }
+
+  var MISSED_DAYS_SHOWN_ = 10;
+  function renderMissed(d) {
+    $('agent-missed-title').textContent = 'My missed calls — this window · ' + fmtInt(d.missedTotal);
+    var days = d.missedDays || [];
+    if (!days.length) {
+      $('agent-missed').innerHTML = '<div class="agent-zero">No missed calls in this window 🎉</div>';
+      return;
+    }
+    var shown = days.slice(0, MISSED_DAYS_SHOWN_);
+    var html = shown.map(function (day) {
+      var chips = day.times.map(function (t) { return '<span class="agent-tchip">' + fmtTime12(t) + '</span>'; }).join('');
+      return '<div class="agent-mday"><span class="dt">' + isoToLabel(day.date, true) + '</span><span>' + chips + '</span></div>';
+    }).join('');
+    if (days.length > shown.length) {
+      var rest = days.length - shown.length;
+      html += '<div class="agent-mday"><span class="dt"></span><span class="agent-zero">+ ' + rest + ' earlier day(s) in this window</span></div>';
+    }
+    $('agent-missed').innerHTML = html;
+  }
+
+  function render(d) {
+    $('agent-loading').style.display = 'none';
+    $('agent-error').style.display = 'none';
+    $('agent-body').style.display = '';
+    renderKpis(d); renderRank(d); renderTeam(d); renderTrend(d); renderMissed(d);
+  }
+
+  // ── Loading ───────────────────────────────────────────────────────────
+  function load() {
+    var tok = ++loadSeq;
+    paintControls();
+    $('agent-error').style.display = 'none';
+    $('agent-loading').style.display = '';
+    $('agent-body').style.display = 'none';
+    google.script.run
+      .withSuccessHandler(function (d) {
+        if (tok !== loadSeq) return;
+        try { render(d); } catch (e) {
+          reportIssue_('render-failure', 'Agent render failed: ' + (e && e.message ? e.message : String(e)), e && e.stack);
+          showError('Something went wrong rendering your numbers. The admin has been notified.');
+        }
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== loadSeq) return;
+        var msg = err && err.message ? err.message : String(err);
+        reportIssue_('load-failure', 'Agent home load failed: ' + msg);
+        showError('Error loading your numbers: ' + msg);
+      })
+      .getAgentHome({ from: win.from, to: win.to });
+  }
+  function showError(msg) {
+    $('agent-loading').style.display = 'none';
+    $('agent-body').style.display = 'none';
+    var el = $('agent-error');
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────────────
+  $('agent-name').textContent = USER.agentName || USER.email || '';
+  $('agent-dept').textContent = USER.agentDept || '';
+  if (window.__WORK_WINDOW__) {
+    $('agent-ww').textContent = '';   // window text already in the sentence; keep terse
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.agent-chip[data-preset]'), function (c) {
+    c.addEventListener('click', function () {
+      var preset = c.getAttribute('data-preset');
+      if (preset === 'custom') {
+        win.preset = 'custom';
+        $('agent-from').value = win.from || '';
+        $('agent-to').value = win.to || '';
+        paintControls();
+        return;   // custom loads on Apply
+      }
+      applyPreset(preset);
+      load();
+    });
+  });
+  $('agent-apply').addEventListener('click', function () {
+    var f = $('agent-from').value, t = $('agent-to').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f > t) {
+      showError('Pick a valid date range (from on or before to).');
+      return;
+    }
+    win.preset = 'custom'; win.from = f; win.to = t;
+    load();
+  });
+
+  // Snap presets to the latest DQE date (agents may read freshness metadata
+  // by design — Phase A). Falls back to today if the call fails.
+  google.script.run
+    .withSuccessHandler(function (iso) {
+      latestIso = (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)) ? iso : null;
+      if (latestIso) $('agent-fresh').textContent = 'Data through ' + isoToLabel(latestIso, true);
+      applyPreset('mtd');
+      load();
+    })
+    .withFailureHandler(function () {
+      applyPreset('mtd');
+      load();
+    })
+    .getLatestDataDate();
+})();
+</script>

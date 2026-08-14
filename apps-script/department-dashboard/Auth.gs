@@ -373,6 +373,34 @@ function acRosterNamesForDept_(dept) {
 }
 
 /**
+ * Phase B: every dept's roster names in ONE sheet read (the modal's agent
+ * picker source). {dept: [names]} -- INV-03 name-before-comma per cell.
+ */
+function acRosterNamesByDept_() {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ROSTER);
+  const out = {};
+  if (!sheet) return out;
+  const depts = getAllDepartments_();
+  if (!depts.length) return out;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < ROSTER.DATA_START_ROW) { depts.forEach(function (d) { out[d] = []; }); return out; }
+  const grid = sheet.getRange(ROSTER.DATA_START_ROW, ROSTER.DEPT_FIRST_COL,
+    lastRow - ROSTER.DATA_START_ROW + 1, depts.length).getValues();
+  depts.forEach(function (d, c) {
+    const names = [];
+    for (let r = 0; r < grid.length; r++) {
+      const cell = String(grid[r][c] || '').trim();
+      if (!cell) continue;
+      const name = cell.split(',')[0].trim();
+      if (name && names.indexOf(name) === -1) names.push(name);
+    }
+    out[d] = names;
+  });
+  return out;
+}
+
+/**
  * Phase A: heal a pre-agent Access Control sheet's header row in place --
  * installs created before the Role/Agent Name columns have a 3-header row,
  * and setup() only writes headers on CREATE. Widens the grid first (REP-10:
@@ -442,7 +470,9 @@ function getAccessControlInit() {
   });
   return { rows: rows, managers: managers, agents: agents,
            departments: getAllDepartments_(), adminEmails: getAdminEmails_(),
-           agentRoleEnabled: agentRoleEnabled_() };
+           agentRoleEnabled: agentRoleEnabled_(),
+           // Phase B: the modal's agent-name picker source (one roster read).
+           rosterNamesByDept: acRosterNamesByDept_() };
 }
 
 /**
