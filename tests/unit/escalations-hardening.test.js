@@ -7,7 +7,9 @@ const { loadGas } = require('../harness/loadGas');
 // Batch-5 Escalations hardening: the F-44 occurred_at validator and the
 // F-45 row-level access gate. Both are pure -- no Neon / sheet doubles.
 
-const h = loadGas({ files: ['Escalations.gs'] });
+// Util.gs supplies assertManagerOrAdmin_ (the Phase A agent-role allowlist
+// the escalation entry points now call).
+const h = loadGas({ files: ['Util.gs', 'Escalations.gs'] });
 
 test('F-44: escCleanDateTime_ accepts the documented shapes only', function () {
   const f = h.fn('escCleanDateTime_');
@@ -470,4 +472,31 @@ test('R20: getEscalationsBadge sums totals from per-dept groups; byDept lists op
     { dept: 'Sales', open: 3, overdue: 2 },
     { dept: 'CSR',   open: 1, overdue: 0 },
   ]);
+});
+
+// -- Phase A (agent role): deny sweep -----------------------------------------
+// The fail-closed agent user shape (departments []) plus the new allowlists
+// must refuse an agent at EVERY escalation surface. If a future verb accepts
+// one, this sweep is the tripwire.
+
+const AGENT_FIXTURE_ = {
+  email: 'agent1@x.com', role: 'agent', department: null, departments: [],
+  assignedDepartments: [], allDepts: false, agentDept: 'CSR', agentName: 'Maria Lopez',
+};
+
+test('Phase A sweep: escalation entry points + row gate + verbs all refuse the agent role', function () {
+  const log = { writes: [] };
+  installReview(AGENT_FIXTURE_,
+    { status: 'pending', department: 'CSR', caller: 'c', patientName: 'p',
+      trx: 't', area: '', reason: 'r', source: 'manual' }, log);
+
+  assert.throws(function () { h.call('getEscalationsInit'); }, /Not authorized/);
+  assert.throws(function () { h.call('getEscalationsBadge'); }, /Not authorized/);
+  assert.throws(function () { h.call('getEscalations', {}); }, /Not authorized/);
+  assert.throws(function () { h.fn('escAssertRowAccess_')(AGENT_FIXTURE_, 'CSR'); }, /Not authorized/);
+  // Worklist verbs ride escAssertRowAccess_ -- exercise two directly to pin
+  // the wiring, not just the helper.
+  assert.throws(function () { h.call('resolveEscalation', { id: 'e1', resolution: 'x' }); }, /Not authorized/);
+  assert.throws(function () { h.call('approveEscalation', { id: 'e1' }); }, /Not authorized/);
+  assert.equal(log.writes.length, 0, 'nothing was written on any refused call');
 });

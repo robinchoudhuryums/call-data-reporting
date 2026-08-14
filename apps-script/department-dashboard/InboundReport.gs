@@ -321,7 +321,9 @@ function callJourneyDeptPredicate_(dept, deptQueues) {
 function getCallJourney(req) {
   req = req || {};
   const user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  // Phase A (agent role): allowlist -- the dept pinning below only fires for
+  // single-dept MANAGERS, so an unrecognized role would pass unpinned.
+  assertManagerOrAdmin_(user);
   const callId = String(req.callId || '').trim();
   const date = String(req.date || '').trim();
   if (!callId) throw new Error('Missing call id.');

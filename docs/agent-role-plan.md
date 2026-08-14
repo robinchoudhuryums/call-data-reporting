@@ -1,8 +1,19 @@
 # Agent Role Plan — "My Performance" for individual reps
 
-Status: **PLANNED — no code yet** (owner-commissioned 2026-08-14; owner ruling:
-agents see their OWN numbers in full + the team's AGGREGATE numbers only — no
-per-teammate rows, named or anonymized).
+Status: **Phase A SHIPPED (dark, flag off); Phases B/C planned**
+(owner-commissioned 2026-08-14; owner ruling: agents see their OWN numbers in
+full + the team's AGGREGATE numbers only — no per-teammate rows, named or
+anonymized).
+
+**Owner decisions (2026-08-14):**
+1. **Rank line: build it, ship it HIDDEN** (render gated off) while the owner
+   decides how it should deploy — the server computes it, the client doesn't
+   show it until the gate flips.
+2. **Pilot team: CSR.**
+3. Mocks approved as-is; **My Performance's missed-call list adds WAIT TIME
+   where derivable** — the per-call wait exists only where the inbound capture
+   has the call (`inbound_calls` journey / ring legs); older or uncaptured
+   rings show the timestamp alone, labeled, never a guessed wait.
 
 ## The product shape
 
@@ -123,11 +134,25 @@ computed server-side as ordinals only.
 
 ## Rollout phases
 
-- **Phase A — identity + deny wall (ships dark).** Access Control schema +
-  editor, resolveUser_ agent resolution behind `AGENT_ROLE_ENABLED` Script
-  Property (unset ⇒ agent rows resolve to `none`, exactly today's behavior),
-  assertDeptAccess_ allowlist, deny-sweep test. Deployable with zero
-  user-visible change.
+- **Phase A — identity + deny wall (ships dark). ✅ SHIPPED 2026-08-14.**
+  Access Control schema (Role + Agent Name appended; blank Role = manager;
+  `acEnsureSchema_` heals a pre-agent header row on the next editor save) +
+  save-time agent validation (one real dept, exact roster name via
+  `acRosterNamesForDept_`); `resolveUser_` agent resolution behind the
+  `AGENT_ROLE_ENABLED` Script Property (unset ⇒ agent rows resolve to `none`,
+  exactly the pre-agent behavior; manager rows win over agent rows; unknown
+  Role values grant nothing); the fail-closed agent shape (`department:null`,
+  `departments:[]`, identity only in `agentDept`/`agentName`);
+  `assertDeptAccess_` + `escAssertRowAccess_` flipped to explicit
+  admin/manager ALLOWLISTS; `assertManagerOrAdmin_` (Util.gs) added to the
+  un-pinned all-dept surfaces (getCompanyOverview, getOverviewChartTrend,
+  getQcdAllDeptReport, sendQcdAllDeptEmail, getEscalationsInit/Badge,
+  getCallJourney); `doGet` renders access-denied for any non-admin/manager
+  role until Phase B; login-notify outcome key `agent:<dept>`. Deliberately
+  still agent-reachable: `getLatestDataDate(s)` (freshness metadata the agent
+  pages will need) and `reportClientIssue` (the error beacon). Pinned by
+  `tests/unit/agent-role.test.js` (14) + the deny sweep in
+  `escalations-hardening.test.js`.
 - **Phase B — My Performance.** `getAgentHome` + the page + chrome + harness
   agent build. Pilot with ONE team (flag on, rows added for that team only);
   the R19 usage telemetry + beacon are the pilot's instrumentation.

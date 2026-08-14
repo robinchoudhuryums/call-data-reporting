@@ -1270,7 +1270,7 @@ function sendQueueReportPreview() {
  */
 function sendQcdAllDeptEmail(req) {
   const user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: all-dept payload, no dept pin
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');

@@ -2799,3 +2799,31 @@ commit/push/deploy direction.
   **WHERE I LEFT OFF:** ci:ui running at write time; commit after green.
   700/700 unit. R19+R20 commits unPR'd on the branch (owner merges on
   explicit word).
+
+## Increment 113 (2026-08-14) — Agent role Phase A (broad-implement)
+
+  Owner approved the agent-role plan with three decisions (rank line
+  build-hidden; CSR pilots; missed list + wait time where derivable) and
+  commissioned Phase A. SHIPPED DARK behind AGENT_ROLE_ENABLED (unset =
+  byte-identical pre-agent behavior): Access Control grew Role + Agent
+  Name (blank Role = manager; acEnsureSchema_ heals old headers on next
+  editor save; agent rows validate one-real-dept + exact roster name);
+  resolveUser_ resolves agents to the FAIL-CLOSED shape (departments [],
+  identity only in agentDept/agentName; manager rows win; unknown roles
+  drop); assertDeptAccess_ + escAssertRowAccess_ became explicit
+  admin/manager ALLOWLISTS (the audit found the old role-none denylist
+  passed unrecognized roles UNPINNED -- the role model's recurring
+  defect, 5th sighting); assertManagerOrAdmin_ gates the un-pinned
+  all-dept surfaces (Overview, YTD trend, qcdAllDept, sendQcdAllDeptEmail,
+  esc init/badge, getCallJourney); doGet allowlists the dashboard render.
+  Agents CAN reach latestDate + the error beacon (deliberate). 715/715
+  (+15), block 112, operator-state #46.
+
+  **WHERE I LEFT OFF:** ci:ui finishing at write time; commit gated on
+  it. Everything since PR #239 is unPR'd on the branch: R19 (beacon +
+  telemetry), R20 (esc dept counts + Spanish 59s), agent plan + mocks,
+  Phase A. Owner merges on explicit word. OPEN QUESTIONS to owner:
+  QCDR Output cell A40 (is row 40 Spanish? 2-line QCD-parity change on
+  confirm); feedback-box build (recommended email-only + screenshot,
+  awaiting go). Phase B next on owner word (My Performance page +
+  getAgentHome + harness agent build + modal UI for agent rows).

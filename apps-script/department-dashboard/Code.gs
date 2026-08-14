@@ -23,7 +23,11 @@ function doGet(e) {
     Logger.log('notifyLoginEvent_ failed (best-effort): %s', err);
   }
 
-  if (user.role === 'none') {
+  // Phase A (agent role): ALLOWLIST, not a none-denylist -- the dashboard
+  // client is built for admins + managers, so an agent (or any future role)
+  // lands on access-denied until its own surface ships (Phase B routes
+  // agents to the agent pages here).
+  if (user.role !== 'admin' && user.role !== 'manager') {
     return renderAccessDenied_(user);
   }
   return renderDashboard_(user);

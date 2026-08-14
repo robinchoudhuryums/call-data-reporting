@@ -267,7 +267,9 @@ const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup']);
 function getCompanyOverview(req) {
   const email = Session.getActiveUser().getEmail();
   const realUser = resolveUser_(email);
-  if (realUser.role === 'none') throw new Error('Not authorized.');
+  // Phase A (agent role): allowlist -- the Overview is an all-dept surface
+  // with no dept pin, so the shared assertDeptAccess_ wall never runs here.
+  assertManagerOrAdmin_(realUser);
 
   // View-as (admin-only preview): an admin may request the MANAGER-personalized
   // Overview for a department to see exactly what that manager sees. SAFE --
@@ -862,7 +864,7 @@ function getCompanyOverview(req) {
  */
 function getOverviewChartTrend(req) {
   const user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: all-dept surface, no dept pin below
 
   const latestDate = getLatestDataDate();
   if (!latestDate) return { available: false };

@@ -159,6 +159,29 @@ function resolveUser_(email) {
     };
   }
 
+  // Phase A (agent role, docs/agent-role-plan.md): an agent row resolves only
+  // when AGENT_ROLE_ENABLED='true' (unset = denied, exactly the pre-agent
+  // behavior -- the phase ships dark). MANAGER ROWS WIN: the branches above
+  // returned already, so an email holding both manager and agent rows is a
+  // manager. FAIL-CLOSED SHAPE: department stays null and departments stays
+  // [] -- the agent's identity travels ONLY in agentDept/agentName, which no
+  // pre-agent gate reads, so even a missed allowlist edit grants nothing.
+  if (agentRoleEnabled_()) {
+    const ag = getAgentAccessEntry_(canonical);
+    if (ag) {
+      return {
+        email: canonical,
+        role: 'agent',
+        department: null,
+        departments: [],
+        assignedDepartments: [],
+        allDepts: false,
+        agentDept: ag.dept,
+        agentName: ag.agentName,
+      };
+    }
+  }
+
   return { email: canonical, role: 'none', department: null, departments: [],
            assignedDepartments: [], allDepts: false };
 }
@@ -170,24 +193,27 @@ function isAdmin_(normalizedEmail) {
 }
 
 /**
- * Reads the Access Control sheet for ALL of a manager's departments. Returns
- * a distinct, sheet-order list of dept strings (empty if the email isn't a
- * manager). Tier C: multiple rows for one email are UNIONED (was: only the
- * first honored). Cached per email (JSON-encoded list; '__none__' sentinel
- * for no-match, matching the prior cache contract).
+ * Reads ALL of an email's Access Control entries: [{dept, role, agentName}].
+ * Phase A (agent role): the sheet now carries Role (col 4; blank = 'manager',
+ * so every pre-existing 3-column row keeps meaning what it meant) and Agent
+ * Name (col 5). An entry whose Role is neither manager nor agent is DROPPED
+ * (fail closed -- a typo'd role grants nothing, never something unexpected).
+ * Cached per email under the same 'access:' key as before; the value is now
+ * a JSON list of entry objects -- a pre-deploy cached list of STRINGS fails
+ * the shape check below and falls through to a fresh read (self-heals within
+ * the 60s TTL, no key bump needed).
  */
-function getManagerDepartments_(normalizedEmail) {
+function getAccessEntries_(normalizedEmail) {
   const cache = CacheService.getScriptCache();
   const cacheKey = 'access:' + normalizedEmail;
   const cached = cache.get(cacheKey);
   if (cached !== null) {
     if (cached === '__none__') return [];
-    // JSON list (Tier C). A pre-deploy bare-string value (old format) fails
-    // Array.isArray / JSON.parse and falls through to a fresh sheet read --
-    // self-heals within the 60s TTL, no cache-key bump needed.
     try {
       const arr = JSON.parse(cached);
-      if (Array.isArray(arr)) return arr;
+      if (Array.isArray(arr) && arr.every(function (e) { return e && typeof e === 'object' && 'dept' in e; })) {
+        return arr;
+      }
     } catch (e) { /* fall through to re-read */ }
   }
 
@@ -198,23 +224,66 @@ function getManagerDepartments_(normalizedEmail) {
     return [];
   }
 
-  // Read just the Email + Department columns.
-  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
-  const matches = [];
+  // Read Email..Agent Name, bounded by the sheet's real width so a
+  // pre-migration 3-column sheet reads cleanly (missing cols = '').
+  const width = Math.min(Math.max(sheet.getLastColumn(), 2), ACCESS_CONTROL_HEADERS.length);
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  const entries = [];
   for (let i = 0; i < rows.length; i++) {
     const rowEmail = String(rows[i][0] || '').toLowerCase().trim();
     const rowDept = String(rows[i][1] || '').trim();
-    if (rowEmail === normalizedEmail && rowDept && matches.indexOf(rowDept) === -1) {
-      matches.push(rowDept);
-    }
+    if (rowEmail !== normalizedEmail || !rowDept) continue;
+    const rawRole = String(rows[i][3] || '').toLowerCase().trim() || 'manager';
+    if (rawRole !== 'manager' && rawRole !== 'agent') continue;   // unknown role: fail closed
+    entries.push({
+      dept: rowDept,
+      role: rawRole,
+      agentName: String(rows[i][4] || '').trim(),
+    });
   }
-  if (matches.length) {
-    cache.put(cacheKey, JSON.stringify(matches), AUTH_CACHE_TTL_SECONDS);
-    return matches;
+  if (entries.length) {
+    cache.put(cacheKey, JSON.stringify(entries), AUTH_CACHE_TTL_SECONDS);
+    return entries;
   }
 
   cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
   return [];
+}
+
+/**
+ * Distinct, sheet-order list of an email's MANAGER-role departments (empty
+ * if none). Tier C union semantics unchanged -- now a filter over
+ * getAccessEntries_ so manager and agent rows share one cached read.
+ */
+function getManagerDepartments_(normalizedEmail) {
+  const matches = [];
+  getAccessEntries_(normalizedEmail).forEach(function (e) {
+    if (e.role === 'manager' && matches.indexOf(e.dept) === -1) matches.push(e.dept);
+  });
+  return matches;
+}
+
+/**
+ * First VALID agent entry for an email (role 'agent' + non-empty Agent Name),
+ * or null. One agent identity per email by design -- an agent belongs to one
+ * roster row; a second agent row is ignored, not merged.
+ */
+function getAgentAccessEntry_(normalizedEmail) {
+  const entries = getAccessEntries_(normalizedEmail);
+  for (let i = 0; i < entries.length; i++) {
+    if (entries[i].role === 'agent' && entries[i].agentName
+        && !isAllDeptsSentinel_(entries[i].dept)) {
+      return entries[i];
+    }
+  }
+  return null;
+}
+
+/** Phase A rollout gate: agents resolve only when this property is 'true'. */
+function agentRoleEnabled_() {
+  try {
+    return String(PropertiesService.getScriptProperties().getProperty('AGENT_ROLE_ENABLED') || '') === 'true';
+  } catch (e) { return false; }
 }
 
 /**
@@ -276,26 +345,91 @@ function acIsValidEmail_(s) {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s || '').trim());
 }
 
+/**
+ * Roster names for one department (INV-03: everything before the first comma
+ * of each cell in that dept's DO NOT EDIT! column). Used to validate an agent
+ * row's Agent Name at save time -- the name must match a roster entry EXACTLY
+ * (INV-04), or the agent's own row lookup would silently never match.
+ */
+function acRosterNamesForDept_(dept) {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.ROSTER);
+  if (!sheet) return [];
+  const depts = getAllDepartments_();
+  const idx = depts.indexOf(dept);
+  if (idx === -1) return [];
+  const col = ROSTER.DEPT_FIRST_COL + idx;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < ROSTER.DATA_START_ROW) return [];
+  const vals = sheet.getRange(ROSTER.DATA_START_ROW, col, lastRow - ROSTER.DATA_START_ROW + 1, 1).getValues();
+  const names = [];
+  for (let i = 0; i < vals.length; i++) {
+    const cell = String(vals[i][0] || '').trim();
+    if (!cell) continue;
+    const name = cell.split(',')[0].trim();
+    if (name && names.indexOf(name) === -1) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Phase A: heal a pre-agent Access Control sheet's header row in place --
+ * installs created before the Role/Agent Name columns have a 3-header row,
+ * and setup() only writes headers on CREATE. Widens the grid first (REP-10:
+ * a getRange past getMaxColumns throws). Idempotent; called from the
+ * admin-gated editor writes only.
+ */
+function acEnsureSchema_(sheet) {
+  const want = ACCESS_CONTROL_HEADERS.length;
+  if (sheet.getMaxColumns() < want) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), want - sheet.getMaxColumns());
+  }
+  const have = sheet.getRange(1, 1, 1, want).getValues()[0];
+  for (let i = 0; i < want; i++) {
+    if (String(have[i] || '').trim() !== ACCESS_CONTROL_HEADERS[i]) {
+      sheet.getRange(1, 1, 1, want).setValues([ACCESS_CONTROL_HEADERS.slice()]);
+      return;
+    }
+  }
+}
+
 function getAccessControlInit() {
   assertAdmin_();
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
   const rows = [];
   if (sheet && sheet.getLastRow() >= 2) {
-    const vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, ACCESS_CONTROL_HEADERS.length).getValues();
+    // Width-bounded read: a pre-agent 3-column sheet reads cleanly (Role /
+    // Agent Name come back '' -> role defaults to 'manager').
+    const width = Math.min(Math.max(sheet.getLastColumn(), 2), ACCESS_CONTROL_HEADERS.length);
+    const vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
     for (let i = 0; i < vals.length; i++) {
       const email = String(vals[i][0] || '').trim();
       if (!email) continue;
-      rows.push({ email: email, department: String(vals[i][1] || '').trim(), notes: String(vals[i][2] || '').trim() });
+      rows.push({
+        email: email,
+        department: String(vals[i][1] || '').trim(),
+        notes: String(vals[i][2] || '').trim(),
+        role: String(vals[i][3] || '').toLowerCase().trim() || 'manager',
+        agentName: String(vals[i][4] || '').trim(),
+      });
     }
     rows.sort(function (a, b) { return a.email.toLowerCase().localeCompare(b.email.toLowerCase()); });
   }
   // Tier C: also return a GROUPED view (one entry per email with its full
   // dept list) so the editor can render + edit multi-department managers.
-  // `rows` (raw, one per row) is kept unchanged for back-compat.
+  // `rows` (raw, one per row) is kept unchanged for back-compat. Agent rows
+  // (Phase A) are listed separately -- they are one-dept identities, not
+  // dept-list managers, and the modal renders them as their own section.
   const byEmail = {};
   const managers = [];
+  const agents = [];
   rows.forEach(function (r) {
+    if (r.role === 'agent') {
+      agents.push({ email: r.email, department: r.department, agentName: r.agentName, notes: r.notes });
+      return;
+    }
+    if (r.role !== 'manager') return;   // unknown role: surfaced nowhere, grants nothing
     const key = r.email.toLowerCase();
     if (!byEmail[key]) {
       byEmail[key] = { email: r.email, departments: [], notes: r.notes || '' };
@@ -306,7 +440,9 @@ function getAccessControlInit() {
     }
     if (!byEmail[key].notes && r.notes) byEmail[key].notes = r.notes;
   });
-  return { rows: rows, managers: managers, departments: getAllDepartments_(), adminEmails: getAdminEmails_() };
+  return { rows: rows, managers: managers, agents: agents,
+           departments: getAllDepartments_(), adminEmails: getAdminEmails_(),
+           agentRoleEnabled: agentRoleEnabled_() };
 }
 
 /**
@@ -322,6 +458,13 @@ function saveAccessControlRow(req) {
   assertAdmin_();
   const email = String((req && req.email) || '').trim();
   const notes = String((req && req.notes) || '').trim().slice(0, 500);
+  // Phase A: role defaults to 'manager' (every existing caller / row keeps
+  // meaning what it meant); 'agent' rows carry an Agent Name.
+  const role = String((req && req.role) || 'manager').toLowerCase().trim();
+  if (role !== 'manager' && role !== 'agent') {
+    throw new Error('Role must be "manager" or "agent".');
+  }
+  const agentName = String((req && req.agentName) || '').trim();
   // Accept an array (departments) or the legacy single department.
   let requested = [];
   if (req && Array.isArray(req.departments)) requested = req.departments;
@@ -349,6 +492,20 @@ function saveAccessControlRow(req) {
       if (toStore.indexOf(d) === -1) toStore.push(d);
     });
   }
+
+  // Agent rows: ONE real dept (an agent is one roster identity, never ALL),
+  // and the Agent Name must exist on that dept's roster EXACTLY (INV-04) --
+  // a near-miss name would silently never match a data row.
+  if (role === 'agent') {
+    if (hasAll) throw new Error('An agent row needs a specific department, not ALL.');
+    if (toStore.length !== 1) throw new Error('An agent row needs exactly one department.');
+    if (!agentName) throw new Error('An agent row needs the Agent Name (exact roster spelling).');
+    const rosterNames = acRosterNamesForDept_(toStore[0]);
+    if (rosterNames.indexOf(agentName) === -1) {
+      throw new Error('"' + agentName + '" is not on the ' + toStore[0] + ' roster. '
+        + 'The Agent Name must match the DO NOT EDIT! entry exactly (the part before the first comma).');
+    }
+  }
   const normalized = email.toLowerCase();
 
   const lock = LockService.getScriptLock();
@@ -357,6 +514,7 @@ function saveAccessControlRow(req) {
     const ss = openSpreadsheet_();
     let sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
     if (!sheet) throw new Error('Access Control sheet missing -- run setup().');
+    acEnsureSchema_(sheet);   // Phase A: heal a pre-agent 3-column header row
     // Replace-all: delete every existing row for this email (bottom-up so
     // indices don't shift), then append one row per resolved dept.
     const lastRow = sheet.getLastRow();
@@ -375,14 +533,16 @@ function saveAccessControlRow(req) {
     // which under "Execute as: Me" would evaluate as a live cell in a sheet read
     // on every request. A normal email passes through unchanged.
     toStore.forEach(function (d) {
-      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(d), sheetSafeCell_(notes)]);
+      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(d), sheetSafeCell_(notes),
+                       sheetSafeCell_(role), sheetSafeCell_(role === 'agent' ? agentName : '')]);
     });
     CacheService.getScriptCache().remove('access:' + normalized);
-    Logger.log('saveAccessControlRow: %s -> [%s] by %s', normalized, toStore.join(', '), Session.getActiveUser().getEmail());
+    Logger.log('saveAccessControlRow: %s -> [%s] role=%s%s by %s', normalized, toStore.join(', '),
+      role, role === 'agent' ? (' agent=' + agentName) : '', Session.getActiveUser().getEmail());
   } finally {
     lock.releaseLock();
   }
-  return { saved: true, departments: toStore };
+  return { saved: true, departments: toStore, role: role };
 }
 
 /** Remove ALL Access Control rows for an email (revokes manager access). */
@@ -458,6 +618,7 @@ function loginNotifyDecide_(storeJson, emailLower, outcomeKey, maxKeys) {
 function loginNotifyOutcomeKey_(user) {
   if (!user || user.role === 'none') return 'denied';
   if (user.role === 'admin') return 'admin';
+  if (user.role === 'agent') return 'agent:' + (user.agentDept || '?');
   var depts = (user.departments && user.departments.length)
     ? user.departments.slice().sort().join('+')
     : (user.department || '?');

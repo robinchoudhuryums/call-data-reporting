@@ -2223,6 +2223,7 @@ items for anything it flags or doesn't cover.)
 43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` (CDR Tools menu; logs `retentionPrune` Pipeline Health rows) and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window everything assumes rests on it
 44. DQE-silence watchdog -- the queue-active-agents-dark cross-check born from the Field Ops Power blind spot; enable it (`installDqeSilenceWatchTrigger()`), thresholds + episode semantics in the item
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
+46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; Phase A ships dark -- agents get access-denied until Phase B's pages exist)
 
 ## Cycle Workflow Config
 

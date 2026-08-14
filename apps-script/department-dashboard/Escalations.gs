@@ -132,7 +132,7 @@ var ESC_OVERDUE_SQL_ = "(CURRENT_DATE - occurred_at::date) >= " + ESC_OVERDUE_DA
  */
 function getEscalationsInit() {
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: escalations are a manager/admin worklist
   var isAdmin = user.role === 'admin';
   // #1: an all-departments manager sees every dept's escalations (like admin
   // for data breadth), but createEscalation stays assertAdmin_-gated.
@@ -167,7 +167,7 @@ function getEscalationsInit() {
  */
 function getEscalationsBadge() {
   var user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // Phase A: escalations are a manager/admin worklist
   var conn = null;
   try {
     conn = getDashboardNeonConn_();
@@ -1006,7 +1006,12 @@ function backfillEscalationActivity() {
  * pass. Throws on rejection.
  */
 function escAssertRowAccess_(user, rowDept) {
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  // Phase A (agent role): allowlist, mirroring assertDeptAccess_ -- the
+  // manager-pinning branch below only fires for role==='manager', so an
+  // unrecognized role would otherwise pass this row gate UNPINNED.
+  if (!user || (user.role !== 'admin' && user.role !== 'manager')) {
+    throw new Error('Not authorized.');
+  }
   // R8-4 (the R-3 class): an ALL-departments manager (allDepts:true,
   // department:null) is a DATA-BREADTH role and passes like an admin --
   // this row gate is data breadth, not an admin surface. Without the

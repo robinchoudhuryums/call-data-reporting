@@ -54,12 +54,14 @@ test('getAccessControlInit returns rows + departments (admin-only)', function ()
   deepEqual(JSON.parse(JSON.stringify(init.departments)), ['CSR', 'Sales', 'Power']);
 });
 
-test('saveAccessControlRow appends a new manager', function () {
+test('saveAccessControlRow appends a new manager (5-col row, role defaulted)', function () {
   install([]);
   h.call('saveAccessControlRow', { email: 'New@X.com', department: 'Sales', notes: 'hi' });
   const rows = acSheetRows();
   assert.equal(rows.length, 1);
-  deepEqual(JSON.parse(JSON.stringify(rows[0])), ['New@X.com', 'Sales', 'hi']);
+  // Phase A: rows carry Role + Agent Name; a role-less save stores 'manager'
+  // with a blank agent cell.
+  deepEqual(JSON.parse(JSON.stringify(rows[0])), ['New@X.com', 'Sales', 'hi', 'manager', '']);
 });
 
 test('saveAccessControlRow upserts by email (case-insensitive), no duplicate row', function () {

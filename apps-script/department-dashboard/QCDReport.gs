@@ -184,7 +184,7 @@ function getQcdAllDepartments(req) {
   // per-dept scoping (every manager sees every dept), so the only gate is
   // "not an unmapped visitor". (Was assertAdmin_.)
   const _user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!_user || _user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(_user);   // Phase A: every-dept snapshot, no dept pin
 
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
