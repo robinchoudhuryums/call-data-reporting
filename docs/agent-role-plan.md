@@ -153,9 +153,32 @@ computed server-side as ordinals only.
   pages will need) and `reportClientIssue` (the error beacon). Pinned by
   `tests/unit/agent-role.test.js` (14) + the deny sweep in
   `escalations-hardening.test.js`.
-- **Phase B — My Performance.** `getAgentHome` + the page + chrome + harness
-  agent build. Pilot with ONE team (flag on, rows added for that team only);
-  the R19 usage telemetry + beacon are the pilot's instrumentation.
+- **Phase B — My Performance. ✅ SHIPPED 2026-08-14.** `AgentHome.gs::
+  getAgentHome({from,to})` — identity always server-derived for agents
+  (admins pass `{department, agentName}` to preview; managers refused); own
+  KPIs off the SAME computeSummary_ the My Department table serves (INV-05
+  ATT on purpose — an agent's number always reconciles with their manager's
+  view of them), roster-only team aggregates (INV-53), ordinal-only rank
+  (computed + shipped; the client's `AGENT_RANK_SHOW_` renders it HIDDEN per
+  the owner decision), own 30-day trend + own missed timestamps via the DQE
+  DAL (B-2 cutover honored; coerced slot cells recover-or-drop). Two caches:
+  a per-(dept,window) TEAM blob every teammate shares + a per-agent ME blob
+  (hashAgents_, INV-36); own-row extraction is post-cache (the
+  personalizeOverview_ pattern) and the payload NEVER carries teammate
+  identities (pinned). Client: `agent.html` + `agentApp.html` — a SEPARATE
+  small template (implementation deviation from the original single-doc
+  sketch, deliberately: guarding every init path of the ~20K-line manager
+  client for a third role was judged riskier than a second page that shares
+  styles.html); inline-SVG trend (no Chart.js), the R19 beacon installed,
+  presets anchored to the latest DQE date. `doGet` routes agents there.
+  Access modal grew the agent-rows section (dept + roster-name PICKERS fed
+  by `rosterNamesByDept`, so the exact-spelling rule is unmistypable; the
+  hint states the flag's live state). Rendered gate: `build-agent.js` +
+  `drive-agent.js` joined `npm run ci:ui` (boot, KPIs, hidden rank,
+  teammate-name privacy, no errors/unmocked RPCs/self-beacons, overflow).
+  Unit: `tests/unit/agent-home.test.js`. NOT in B (deferred): missed-ring
+  WAIT TIME (needs the inbound_calls journey join — Phase C candidate), the
+  My History page, view-as-agent.
 - **Phase C — My History + polish.** Second page, Help topics, view-as-agent
   admin preview if wanted, then remaining teams by adding rows.
 

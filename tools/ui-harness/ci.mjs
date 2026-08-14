@@ -53,6 +53,13 @@ const STAGES = [
   // stage asserts the app still works WITH the probe installed before it
   // asserts anything about the overlay.
   ['node', ['drive-devoverlay.js'], 'dev overlay + the google.script.run probe (O-11)'],
+  // Agent role Phase B. The agent app (agent.html + agentApp.html) is a
+  // SEPARATE page no other stage boots -- this pair is its only rendered
+  // check: real client + real styles against a payload from the REAL
+  // getAgentHome, asserting render, the hidden rank line, teammate-name
+  // privacy, and cleanliness (errors / unmocked RPCs / self-beacons).
+  ['node', ['build-agent.js'], 'build agent site (payload from real getAgentHome)'],
+  ['node', ['drive-agent.js'], 'agent app boot / privacy / hidden rank'],
 ];
 
 for (const [cmd, args, label] of STAGES) {

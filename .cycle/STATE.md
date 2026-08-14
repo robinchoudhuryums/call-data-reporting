@@ -2827,3 +2827,23 @@ commit/push/deploy direction.
   confirm); feedback-box build (recommended email-only + screenshot,
   awaiting go). Phase B next on owner word (My Performance page +
   getAgentHome + harness agent build + modal UI for agent rows).
+
+## Increment 114 (2026-08-14) — Agent role Phase B (broad-implement)
+
+  PR #240 MERGED first (R19+R20+plan+Phase A+Spanish row-40 -- A40
+  confirmed A_Q_Spanish, both >0s clauses -> time1Min, forward-only).
+  Then Phase B SHIPPED: AgentHome.gs (getAgentHome -- self-only identity,
+  INV-05 reconciliation choice, roster-only team aggregates, ordinal
+  rank shipped hidden, DAL trend + missed timestamps, TEAM/ME two-tier
+  cache, teammate-privacy pinned), agent.html+agentApp.html (SEPARATE
+  small template -- recorded deviation from the plan's single-doc
+  sketch; SVG trend, beacon, presets off getLatestDataDate), doGet
+  routing, Access modal Agents section (roster-name picker), and the
+  harness grew build-agent+drive-agent as BLOCKING ci:ui stages
+  (13 checks incl. rendered teammate-name privacy). 722/722; ci:ui all
+  stages; block 113. Feedback box SHELVED by owner.
+
+  **WHERE I LEFT OFF:** Phase B complete on the branch, unPR'd (owner
+  merges on explicit word). Next: owner word to PR/merge; then Phase C
+  when commissioned (My History, wait-time join, view-as-agent,
+  CLAUDE.md role bullet). Go-live runbook in operator-state #46.
