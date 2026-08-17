@@ -2939,3 +2939,45 @@ commit/push/deploy direction.
   **WHERE I LEFT OFF:** committing; PR + merge per the owner's standing
   instruction. All follow-ons from block 115 now closed except the
   cosmetic narrowed-surface client chips (on demand).
+
+## SESSION CLOSEOUT (2026-08-15) — everything merged, branch clean
+
+  All work through increment 119 is MERGED to main (PRs #233-#244) and
+  the branch is reset onto main. 736/736 unit tests, INV-16, ci:ui all
+  stages green on the merged state. The rollout arcs completed this
+  session: R18 tally/report polish, the Field Ops Power incident
+  (root-cause fix + watchdog + queue-lens + login notify), R19
+  observability (beacon + telemetry + Health per-user), R20 esc dept
+  counts + Spanish threshold (both spots), the AGENT ROLE (A/B/C,
+  code-complete, dark), R21 two-pass Health load, the QUEUE-SPLIT
+  ADOPTION ROUND (ship list complete), and the Overview e2e suite.
+
+  **OPEN OPERATOR ACTIONS (owner-side, not code):**
+  1. DEPLOY the dashboard (last owner deploy predates PRs #243/#244).
+  2. Queue-split FLIP when ready: operator-state #42 checklist
+     (auditQueueSplitAttribution -> QUEUE_SPLIT_SCOPE=dept ->
+     CSR/Spanish crossover spot-check).
+  3. Agent pilot go-live when ready: #46 (CSR agent rows + emails ->
+     AGENT_ROLE_ENABLED=true).
+  4. VERIFY from the R18e incident: was the force re-import of the
+     surviving Call_Legs window run before retention pruned it? And
+     the provider ticket (per-queue caller-ID on FOP + Denials vs
+     Manual Mobility) -- the fallback covers recurrence either way.
+  5. Routine: COMPANY_HOLIDAYS yearly (#27); optional Neon backup
+     trigger if not installed (#28).
+
+  **OPEN CODE FOLLOW-ONS (all small, none blocking):**
+  - "Narrowed" indicator chips on IR/Insights/Overview when scope=dept
+    (the dept table already explains itself) -- cosmetic, on demand.
+  - Rank-line reveal: AGENT_RANK_SHOW_ (one client constant), owner's
+    call. Per-dept agent visibility (self|team Dept Config column)
+    only if a manager asks. Feedback box SHELVED by owner.
+  - The heatmap cell drill's "wait/hold" label still reads as queue
+    wait while wait_seconds is elapsed-from-IVR-pickup (the OLD open
+    follow-on in the QCD-vs-inbound gotcha) -- one label fix.
+  - Doc weight: CLAUDE.md ~174KB of the 200KB cliff (~26KB headroom).
+    The next /sync-docs should hunt trims, not just staleness.
+
+  **WHERE I LEFT OFF:** nothing in flight. A fresh session can run
+  /cycle-resume for continuity or /broad-scan for a new audit cycle
+  directly; this entry is the baseline.
