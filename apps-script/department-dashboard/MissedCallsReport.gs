@@ -90,7 +90,10 @@ function getMissedCallsReport(req) {
   // CORE-3: suffix the key with the active DQE read source so a
   // DQE_READ_SOURCE flip can't serve a cross-source payload for the TTL.
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v17:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc;
+  // Adoption round: + the queue-split scope (S2-0 -- the figures MEAN something
+  // different in each mode, so a flip must not serve the other mode's payload).
+  const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
+  const cacheKey = 'missed:v17:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -230,7 +233,8 @@ function missedSliceFilter_(reportData, filter) {
 function missedReportDataCached_(dept, from, to) {
   const cache = CacheService.getScriptCache();
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
-  const cacheKey = 'missed:v17:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc;
+  const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
+  const cacheKey = 'missed:v17:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey;
   const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
@@ -449,25 +453,34 @@ function computeMissedCallsReport_(dept, from, to, scope) {
   // cutover uses). Fallback: any error or an empty result falls through
   // to the sheet read -- the default path is byte-identical to
   // pre-cutover behavior. Parity is pinned by tests/unit/dal-cutover.test.js.
+  // Queue-split adoption (Phase 3): BOTH paths now produce normalized DAL
+  // rows -- neon via neonFetchDqeRows_, sheet via sheetFetchDqeRows_ (the
+  // symmetric primitive whose adapted-grid parity with the old raw range
+  // read is what dal-cutover.test.js pins) -- so the narrowing has ONE hook.
+  // applyQueueSplitToRows_ narrows the counts AND (narrowSlots) rebuilds the
+  // K..AC timeline from the split's per-queue `mt`, so the hour-of-day chart
+  // and the per-agent cards agree with the narrowed numbers. Off = the empty
+  // shape, rows untouched, payload byte-identical (S2-0). Sentinel rows carry
+  // no split, so the queue-only abandoned section is never narrowed.
   let values = null, displays = null, deptQueueExts = null;
+  let qsInfo = null;
+  let dalRows = null;
   if (neonCapable) {
     try {
       const _t0 = Date.now();
-      const dalRows = neonFetchDqeRows_(from, to, { includeMissedDetail: true });
-      if (neonDqeRowsUsable_(dalRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
-        const grids = missedGridsFromDal_(dalRows);
-        values = grids.values;
-        displays = grids.displays;
+      const neonRows = neonFetchDqeRows_(from, to, { includeMissedDetail: true });
+      if (neonDqeRowsUsable_(neonRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
+        dalRows = neonRows;
         deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
-        if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('missedCalls', 'neon', _t0, dalRows.length);
+        if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('missedCalls', 'neon', _t0, neonRows.length);
       }
     } catch (e) {
       Logger.log('computeMissedCallsReport_: neon read failed, falling back to sheet: '
         + (e && e.message ? e.message : e));
-      values = null; displays = null; deptQueueExts = null;
+      dalRows = null; deptQueueExts = null;
     }
   }
-  if (!values) {
+  if (!dalRows) {
     if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
       // R8-C1: this corner is only reachable on the neon path (the
       // !neonCapable branch above throws / returns for a missing or empty
@@ -478,15 +491,18 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       e.meta.sourceUnavailable = true;
       return e;
     }
-    // Read cols 1..AH. Need date (col 2) and agent (col 3) for filtering,
-    // K-AC for missed times, AF for abandoned cross-reference.
-    const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
-    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
-    values = range.getValues();
-    displays = range.getDisplayValues();
-
+    dalRows = sheetFetchDqeRows_(from, to, { includeMissedDetail: true });
+  }
+  qsInfo = applyQueueSplitToRows_(dalRows, dept, { narrowSlots: true });
+  {
+    const grids = missedGridsFromDal_(dalRows);
+    values = grids.values;
+    displays = grids.displays;
+  }
+  if (!deptQueueExts) {
     // Shared with Data.gs queue-scope matching: override if set, else
-    // derived from this dept's roster agents' col D values.
+    // derived from this dept's roster agents' col D values (the adapted
+    // grid reproduces the sheet's column positions).
     deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
   }
 
@@ -846,6 +862,12 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       // client surfaces a note so a lost row isn't mistaken for "0 abandoned".
       abandonedDetailLost: Object.keys(abandonedDetailLostDates).length > 0,
       abandonedDetailLostDates: Object.keys(abandonedDetailLostDates).sort(),
+      // Adoption round: which mode produced these figures, and whether the
+      // B-1 mapping fault rolled the window back to the all-queue rollup.
+      queueSplitScope: qsInfo ? qsInfo.scope : 'off',
+      queueSplitApplied: qsInfo ? qsInfo.applied : 0,
+      queueSplitFellOpen: !!(qsInfo && qsInfo.fellOpenUnmatched),
+      queueSplitUnmatched: (qsInfo && qsInfo.unmatchedQueues) || [],
       generatedAt: new Date().toISOString(),
     },
     agents: agents,

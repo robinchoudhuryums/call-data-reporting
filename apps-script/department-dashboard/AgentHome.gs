@@ -214,6 +214,11 @@ function getAgentHome(req) {
   if (from > to) throw new Error('from must be on or before to.');
 
   var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
+  // Adoption round: the scope joins BOTH keys -- the team blob's figures come
+  // from computeSummary_ (which narrows internally) and the me blob narrows
+  // below, so a QUEUE_SPLIT_SCOPE flip must not serve either mode's blob to
+  // the other for the TTL (S2-0).
+  tag = tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off');
   var cache = CacheService.getScriptCache();
 
   // TEAM blob: one compute per (dept, window), shared by the whole team.
@@ -244,6 +249,12 @@ function getAgentHome(req) {
   }
   if (!detail) {
     var dalRows = ahFetchDalRows_(fetchFrom, to, { includeMissedDetail: true });
+    // Queue-split adoption: narrow (counts AND the slot timeline via the
+    // per-queue `mt`) so the agent's own trend + missed list agree with
+    // their computeSummary_-derived KPIs. Off = rows untouched.
+    if (typeof applyQueueSplitToRows_ === 'function') {
+      applyQueueSplitToRows_(dalRows, who.dept, { narrowSlots: true });
+    }
     detail = agentHomeOwnDetail_(dalRows, who.agentName, from, to, trendFrom);
     // Phase C: attach ring/wait seconds where the inbound capture holds the
     // ring (ahWaitJoin_, best-effort). Entries replace the bare time list;
@@ -433,13 +444,18 @@ function getAgentHistory(req) {
 
   var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   var cache = CacheService.getScriptCache();
-  var key = 'agentHist:v1:' + who.dept + ':' + latest + ':' + tag;
+  var key = 'agentHist:v1:' + who.dept + ':' + latest + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off');
   var months = null, hit = false;
   var cached = cache.get(key);
   if (cached) { try { months = JSON.parse(cached); hit = true; } catch (e) { months = null; } }
   if (!months) {
     var roster = getRosterForDepartment_(who.dept);
     var dalRows = ahFetchDalRows_(fromIso, latest, null);
+    // Queue-split adoption: narrow before the monthly rollup so the history
+    // (own AND team monthly averages) shares the one definition.
+    if (typeof applyQueueSplitToRows_ === 'function') {
+      applyQueueSplitToRows_(dalRows, who.dept);
+    }
     months = agentHistoryBlob_(dalRows, roster.names);
     try { cache.put(key, JSON.stringify(months), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { /* oversized/unavailable -- serve uncached */ }

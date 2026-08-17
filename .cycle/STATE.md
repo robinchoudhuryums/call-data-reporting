@@ -2905,3 +2905,21 @@ commit/push/deploy direction.
 
   **WHERE I LEFT OFF:** ci:ui running; commit+push after green. UnPR'd
   on the branch; owner merges on word.
+
+## Increment 118 (2026-08-15) — Queue-split adoption round: ship list COMPLETE
+
+  All remaining DQE readers adopted the ONE narrowing helper: Missed
+  (both paths unified onto the DAL fetchers, counts + K..AC timeline
+  via per-queue mt with narrowSlots), IR + Insights (sheet reads
+  widened to col AI, REP-10-bounded), Overview (company pass split
+  from per-dept attribution; hero stays all-queue by design; 90d+YTD
+  trends; clone-per-dept via NEW queueSplitNarrowedCopy_), Alerts
+  (threshold now evaluates the displayed number; clones of the shared
+  memo), agent app (detail+history). Scope suffix on EVERY narrowed
+  surface's cache key. 732/732 (+4 helper pins incl. rollback-restores-
+  slots + shared-original-pristine); all reader suites + ci:ui green.
+  #42 rewritten: ship list COMPLETE + the 3-step flip checklist.
+
+  **WHERE I LEFT OFF:** committing; PR + merge on the owner's standing
+  instruction. THE FLIP is now operator-side: audit -> property ->
+  crossover spot-check (CSR/Spanish).

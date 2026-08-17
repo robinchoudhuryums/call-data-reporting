@@ -1005,10 +1005,27 @@ When something looks wrong, before assuming a code bug, check:
     consistent definition beats a more accurate definition applied to a
     minority of surfaces.
 
-    **What must ship before setting it to `dept`:** Phase 3 (the Missed Calls
-    report), Phase 4 (the Individual Report + Insights), and — neither of which
-    was in the original phase plan — the Company Overview and the Alerts
-    engine. Until all four narrow, flipping this re-opens the disagreement.
+    **The ship list is COMPLETE (adoption round, 2026-08-15).** Every DQE
+    reader now routes through the shared narrowing: the Missed Calls report
+    (counts AND the K..AC timeline, rebuilt from the split's per-queue `mt`),
+    the Individual Report, Insights, the Company Overview (tiles, 90-day and
+    YTD trends — the company HERO stays all-queue on purpose: company-wide,
+    every call counts exactly once), the low-answer-rate Alerts engine (the
+    threshold now fires on the number the dashboard displays), the manager
+    digests (via computeSummary_), and the agent app (KPIs, trend, missed
+    list, history). Deliberately NOT narrowed: `computeActiveAgentsInRange_`
+    (the IR/Insights agent-picker grouping — inclusion, not figures) and the
+    DQE-silence watchdog's day read (#44 — with narrowing on, "my roster
+    rang zero times on MY OWN queues while they took calls" is exactly the
+    blind-spot signal it exists to catch).
+
+    **Flip checklist:** (1) run `auditQueueSplitAttribution()` (#41) and fix
+    any unmapped raw queue names it reports (Dept Config → "Inbound queue
+    aliases", #14); (2) set `QUEUE_SPLIT_SCOPE=dept` (Script Property, no
+    redeploy); (3) spot-check a crossover agent's dept — CSR vs Spanish is
+    the canonical pair: the agent's calls should PARTITION between the two
+    views instead of appearing in full in both, and the Overview tile, the
+    My Department table, Insights, and the agent's own app should all agree.
 
     **What changes when you flip it.** ON: each department sees only its own
     queues' calls, so a crossover agent (one on two departments' rosters, e.g.
@@ -1016,7 +1033,10 @@ When something looks wrong, before assuming a code bug, check:
     both. OFF: that over-count returns on the three parent depts (Sales / CSR /
     Power) and the My Department chip says so in as many words. Reversible
     either way with no redeploy — the scope is part of the `summary:v19` cache
-    key, so a flip cannot serve the other mode's table for the 30-minute TTL.
+    key — and since the adoption round, of EVERY narrowed surface's cache key
+    (missed / individual / insights / companyOverview / overviewChartYtd /
+    agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a
+    flip cannot serve the other mode's payload anywhere for the TTL.
 
     **Prerequisite for it to do anything at all:** the Phase 1 pipeline must
     have populated DQE col AI (`Queue Split`) for the dates being read, and the

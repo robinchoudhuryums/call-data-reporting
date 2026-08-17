@@ -531,12 +531,17 @@ function alertRowsForDate_(dateIso) {
   const rows = [];
   // Shared classifier so the two sources produce byte-identical output: same
   // INV-23 sentinel skip, same numeric coercion.
-  const accept = function (agent, rung, missed, answered) {
+  const accept = function (agent, rung, missed, answered, queueSplit) {
     const a = String(agent || '').trim();
     if (!a) return;
     if (/^A_Q_/.test(a) || a === 'Backup CSR') return;   // INV-23 sentinels
     rows.push({ agent: a, rung: Number(rung) || 0,
-                missed: Number(missed) || 0, answered: Number(answered) || 0 });
+                missed: Number(missed) || 0, answered: Number(answered) || 0,
+                // Adoption round: carried so computeDeptAnswerRateForDate_ can
+                // narrow per dept (the memo is SHARED across depts -- narrowing
+                // happens on clones there, never here).
+                queueSplit: String(queueSplit == null ? '' : queueSplit).trim(),
+                dateIso: dateIso });
   };
 
   // B-2 DAL cutover. This reader was left on the sheet when the other DQE
@@ -558,7 +563,7 @@ function alertRowsForDate_(dateIso) {
         for (let i = 0; i < dalRows.length; i++) {
           const row = dalRows[i];
           if (row.dateIso !== dateIso) continue;   // belt-and-braces; the query is date-bounded
-          accept(row.agent, row.totalRung, row.totalMissed, row.totalAnswered);
+          accept(row.agent, row.totalRung, row.totalMissed, row.totalAnswered, row.queueSplit);
         }
         usedNeon = true;
         if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('alertRows', 'neon', _t0, dalRows.length);
@@ -585,7 +590,11 @@ function alertRowsForDate_(dateIso) {
       const lastRow = sheet.getLastRow();
       if (lastRow >= 2) {
         const ssTZ = ss.getSpreadsheetTimeZone();
-        const values = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.TOTAL_ANSWERED).getValues();
+        // Adoption round: read through col AI (REP-10-bounded) so the sheet
+        // path carries queue_split like the DAL does. Display read for the
+        // split cell is unnecessary here -- the cell is plain-texted JSON.
+        const alertNumCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
+        const values = sheet.getRange(2, 1, lastRow - 1, alertNumCols).getValues();
         for (let i = 0; i < values.length; i++) {
           const r = values[i];
           const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
@@ -593,7 +602,8 @@ function alertRowsForDate_(dateIso) {
           accept(r[HISTORICAL_COLS.AGENT - 1],
                  r[HISTORICAL_COLS.TOTAL_RUNG - 1],
                  r[HISTORICAL_COLS.TOTAL_MISSED - 1],
-                 r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]);
+                 r[HISTORICAL_COLS.TOTAL_ANSWERED - 1],
+                 alertNumCols >= HISTORICAL_COLS.QUEUE_SPLIT ? r[HISTORICAL_COLS.QUEUE_SPLIT - 1] : '');
         }
       }
     }
@@ -606,7 +616,26 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
   const rosterSet = {};
   for (let i = 0; i < roster.names.length; i++) rosterSet[roster.names[i]] = true;
 
-  const dateRows = alertRowsForDate_(dateIso);
+  // Queue-split adoption: the alert threshold must be evaluated on the SAME
+  // number the dashboard displays for this dept. The memoized row array is
+  // shared across every dept's pass, so narrowing runs on clones
+  // (queueSplitNarrowedCopy_); off = the shared rows untouched. The rows
+  // synthesize the DAL field names the shared helper reads (totalRung etc.).
+  let dateRows = alertRowsForDate_(dateIso);
+  if (typeof getQueueSplitScope_ === 'function' && getQueueSplitScope_() === 'dept'
+      && typeof queueSplitNarrowedCopy_ === 'function') {
+    const deptRows = [];
+    for (let i = 0; i < dateRows.length; i++) {
+      const r = dateRows[i];
+      if (!rosterSet[r.agent]) continue;
+      deptRows.push({ agent: r.agent, dateIso: r.dateIso, queueSplit: r.queueSplit,
+                      totalRung: r.rung, totalMissed: r.missed, totalAnswered: r.answered,
+                      totalUnique: 0, tttSec: 0, attSec: 0 });
+    }
+    dateRows = queueSplitNarrowedCopy_(deptRows, dept).rows.map(function (r) {
+      return { agent: r.agent, rung: r.totalRung, missed: r.totalMissed, answered: r.totalAnswered };
+    });
+  }
 
   let rung = 0, answered = 0, missed = 0;
   const lowAgents = [];

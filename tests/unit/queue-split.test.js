@@ -513,3 +513,62 @@ test('P2 + P0: a SCOPED crossover row is never de-duplicated in the combined tot
   assert.equal(r.totals.crossoverAgentCount, 0,
     'and no caption is rendered, because nothing was double-counted');
 });
+
+// -- Adoption round: slot narrowing + the non-mutating copy variant -----------
+
+test('ADOPT: narrowSlots rebuilds the K..AC timeline from the dept queues\' mt', function () {
+  withQueues({ CSR: ['A_Q_CSR'], Spanish: ['A_Q_Spanish'] });
+  const rows = [srcRow({ r: 10, m: 3, a: 7, split: ANNA_SPLIT })];
+  // 19 slots, 8:00 CST start: 9:00:00 -> idx 2, 9:30:00 -> idx 3, 10:00:00 -> idx 4.
+  rows[0].slots = new Array(19).fill('');
+  rows[0].slots[2] = '9:00:00';
+  rows[0].slots[3] = '9:30:00';
+  rows[0].slots[4] = '10:00:00';
+  hData.call('applyQueueSplitToRows_', rows, 'CSR', { narrowSlots: true });
+  assert.equal(rows[0].slots[2], '9:00:00', 'CSR keeps its own missed times');
+  assert.equal(rows[0].slots[3], '9:30:00');
+  assert.equal(rows[0].slots[4], '', 'Spanish\'s 10:00 ring is no longer CSR\'s');
+  assert.equal(rows[0].totalMissed, 2, 'timeline agrees with the narrowed count');
+});
+
+test('ADOPT: without narrowSlots the slots are untouched (Phase 2 callers unchanged)', function () {
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [srcRow({ r: 10, split: ANNA_SPLIT })];
+  rows[0].slots = new Array(19).fill('');
+  rows[0].slots[4] = '10:00:00';
+  hData.call('applyQueueSplitToRows_', rows, 'CSR');
+  assert.equal(rows[0].slots[4], '10:00:00');
+});
+
+test('ADOPT: the B-1 full rollback restores the ORIGINAL slots, not the narrowed ones', function () {
+  // Dept claims a queue name that matches NOTHING in the window's splits ->
+  // whole-window rollback. The slots must come back too.
+  withQueues({ CSR: ['A_Q_TotallyDifferent'] });
+  const rows = [srcRow({ r: 10, m: 3, split: ANNA_SPLIT })];
+  const originalSlots = new Array(19).fill('');
+  originalSlots[2] = '9:00:00'; originalSlots[4] = '10:00:00';
+  rows[0].slots = originalSlots;
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR', { narrowSlots: true });
+  assert.equal(info.fellOpenUnmatched, true);
+  assert.equal(rows[0].totalRung, 10, 'counts rolled back');
+  assert.equal(rows[0].slots, originalSlots, 'slots rolled back to the same reference');
+});
+
+test('ADOPT: queueSplitNarrowedCopy_ -- off returns the SAME array untouched; dept narrows CLONES only', function () {
+  // Off: zero-copy.
+  hData.ctx.PropertiesService.getScriptProperties().setProperty('QUEUE_SPLIT_SCOPE', 'off');
+  const rows = [srcRow({ r: 10, split: ANNA_SPLIT })];
+  const off = hData.call('queueSplitNarrowedCopy_', rows, 'CSR');
+  assert.equal(off.rows, rows, 'same reference, no clones');
+  assert.equal(off.info.scope, 'off');
+  assert.equal(rows[0].totalRung, 10);
+
+  // Dept: the shared originals stay pristine -- the Overview/Alerts rule.
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const shared = [srcRow({ r: 10, m: 3, a: 7, t: 700, split: ANNA_SPLIT })];
+  const narrowed = hData.call('queueSplitNarrowedCopy_', shared, 'CSR');
+  assert.notEqual(narrowed.rows, shared);
+  assert.equal(narrowed.rows[0].totalRung, 6, 'clone narrowed');
+  assert.equal(shared[0].totalRung, 10, 'the SHARED original is untouched -- dept A must not leak into dept B');
+  assert.ok(!shared[0].queueScoped);
+});
