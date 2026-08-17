@@ -429,6 +429,92 @@ test('R21 split: part=neon returns ONLY the two mirror rows, one shared connecti
   assert.ok(rowByKey(data, 'qcd-mirror-health'));
 });
 
+// ── Live presence (the "Active now" section) ─────────────────────────────
+
+test('presence: a heartbeat stores the user; the fast part renders the Active-now summary + per-user muted row', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  assert.equal(h.call('recordPresence', { page: 'dept' }).ok, true);
+  const data = h.call('getSystemHealth', { part: 'fast' });
+  const summary = rowByKey(data, 'presence-now');
+  assert.ok(summary, 'summary row present');
+  assert.equal(summary.section, 'presence');
+  assert.equal(summary.status, 'muted', 'presence is information, not a health state');
+  assert.match(summary.value, /1 user\(s\)/);
+  const row = rowByKey(data, 'presence-admin@x.com');
+  assert.ok(row, 'per-user row present');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /admin · dept · just now/);
+});
+
+test('presence: empty map renders the muted nobody-active row', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  const row = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'presence-now');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /nobody active/);
+});
+
+test('presence: role-none rejected; the agent role is accepted (the rollout-timing glance covers the agent app)', function () {
+  installHealth({ email: 'stranger@x.com' });
+  h.state.cache = new Map();
+  assert.throws(function () { h.call('recordPresence', { page: 'dept' }); }, /authorized/i);
+  const realResolve = h.ctx.resolveUser_;
+  h.ctx.resolveUser_ = function () {
+    return { email: 'ag@x.com', role: 'agent', department: null, departments: [],
+             agentDept: 'CSR', agentName: 'Anna' };
+  };
+  try {
+    assert.equal(h.call('recordPresence', { page: 'agent' }).ok, true);
+    const live = h.call('readPresence_');
+    assert.equal(live.length, 1);
+    assert.equal(live[0].email, 'ag@x.com');
+    assert.equal(live[0].role, 'agent');
+  } finally {
+    h.ctx.resolveUser_ = realResolve;
+  }
+});
+
+test('presence: a beat prunes entries past PRESENCE_PRUNE_SEC_; active reads stop at PRESENCE_ACTIVE_SEC_', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  const now = Math.floor(Date.now() / 1000);
+  h.state.cache.set('presence:v1', JSON.stringify({
+    'old@x.com':  { t: now - 1000, role: 'manager', page: 'dept' },  // past the 900s prune
+    'idle@x.com': { t: now - 600,  role: 'manager', page: 'dept' },  // stored, but not "active" (>360s)
+  }));
+  h.call('recordPresence', { page: 'overview' });
+  const stored = JSON.parse(h.state.cache.get('presence:v1'));
+  assert.ok(!stored['old@x.com'], 'stale entry pruned on write');
+  assert.ok(stored['idle@x.com'], 'inside the prune window it stays stored');
+  const live = h.call('readPresence_');
+  assert.deepEqual(Array.from(live.map(function (u) { return u.email; })), ['admin@x.com'],
+    'only the fresh beat counts as ACTIVE -- the idle entry waits out its prune silently');
+});
+
+test('presence: the user cap drops the stalest entry, never the fresh beat', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  const now = Math.floor(Date.now() / 1000);
+  const big = {};
+  for (let i = 0; i < 100; i++) big['u' + i + '@x.com'] = { t: now - i, role: 'manager', page: 'dept' };
+  h.state.cache.set('presence:v1', JSON.stringify(big));
+  h.call('recordPresence', { page: 'dept' });
+  const stored = JSON.parse(h.state.cache.get('presence:v1'));
+  assert.equal(Object.keys(stored).length, 100, 'bounded at PRESENCE_MAX_USERS_');
+  assert.ok(stored['admin@x.com'], 'the fresh beat survives');
+  assert.ok(!stored['u99@x.com'], 'the stalest entry is the one dropped');
+});
+
+test('presence: corrupt cache JSON self-heals (beat succeeds, map rebuilt)', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  h.state.cache.set('presence:v1', '{not json');
+  assert.equal(h.call('recordPresence', { page: 'dept' }).ok, true);
+  const stored = JSON.parse(h.state.cache.get('presence:v1'));
+  assert.ok(stored['admin@x.com']);
+});
+
 test('R21 split: fast + neon together cover exactly the full default payload', function () {
   installHealth({ props: { NEON_HOST: 'h' } });
   h.ctx.getDashboardNeonConn_ = function () { return { close: function () {} }; };

@@ -224,6 +224,32 @@
       (r && r.stack) || '');
   });
 
+  // -- Live-presence heartbeat -----------------------------------------------
+  // Feeds the Health page's "Active now" section (SystemHealth.gs::
+  // recordPresence) so the admin can time a redeploy around live sessions.
+  // Beats on load and every PRESENCE_BEAT_MS_ while the tab is VISIBLE; a
+  // hidden tab is not "using the app", so it stops beating and its server
+  // entry ages out on its own. Fire-and-forget like the beacon above: the
+  // failure handler swallows, and the sender itself may never throw.
+  var PRESENCE_BEAT_MS_ = 150 * 1000;
+  function presenceBeat_() {
+    try {
+      if (document.visibilityState !== 'visible') return;
+      if (!(window.google && google.script && google.script.run)) return;
+      google.script.run
+        .withSuccessHandler(function () {})
+        .withFailureHandler(function () {})
+        .recordPresence({
+          page: (document.body && document.body.getAttribute('data-page')) || '',
+        });
+    } catch (e) { /* presence must never throw */ }
+  }
+  setInterval(presenceBeat_, PRESENCE_BEAT_MS_);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') presenceBeat_();
+  });
+  presenceBeat_();
+
   // -- Dark mode toggle (Step 1 of the Call-Analyzer visual parity work).
   // Reads persisted preference and wires the header button. Runs before
   // any other UI setup so the page paints in the right mode immediately.

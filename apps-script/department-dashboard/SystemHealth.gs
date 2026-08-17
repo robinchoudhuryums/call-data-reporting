@@ -43,6 +43,28 @@ function getSystemHealth(req) {
   catch (eNc) { neonConfigured = false; }
 
   if (part !== 'neon') {
+  // ── Live presence (who is using the app right now) ──────────────────
+  // Owner request: a pre-deploy glance -- "is anyone mid-session before I
+  // roll a new version?". Fed by the recordPresence heartbeat below; every
+  // row is muted (presence is information, not a health state). First
+  // section on purpose: it's the row the owner opens this page for.
+  try {
+    var live = readPresence_();
+    if (!live.length) {
+      add('presence', 'presence-now', 'Active now (last ~' + Math.round(PRESENCE_ACTIVE_SEC_ / 60) + ' min)',
+        'muted', 'nobody active', 'Heartbeats arrive only from open, visible tabs on the current deploy.');
+    } else {
+      add('presence', 'presence-now', 'Active now (last ~' + Math.round(PRESENCE_ACTIVE_SEC_ / 60) + ' min)',
+        'muted', live.length + ' user(s) with an open tab',
+        'A mid-session redeploy can strand these users on a stale client until they reload.');
+      live.forEach(function (u) {
+        add('presence', 'presence-' + u.email, u.email, 'muted',
+          u.role + ' · ' + (u.page || '?') + ' · '
+          + (u.ageSec < 60 ? 'just now' : Math.round(u.ageSec / 60) + 'm ago'));
+      });
+    }
+  } catch (e) { add('presence', 'presence-now', 'Active now', 'warn', 'probe failed', String(e && e.message || e)); }
+
   // ── Pipeline freshness ──────────────────────────────────────────────
   try {
     var fresh = computeOverviewPipelineFreshness_();
@@ -615,4 +637,61 @@ function reportClientIssue(payload) {
   Logger.log('reportClientIssue [%s] %s %s: %s%s', kind, user.email, route, msg,
     emailed ? '' : ' (throttled/not emailed)');
   return { ok: true, emailed: emailed };
+}
+
+// -- Live presence -------------------------------------------------------------
+// Owner request: "see who is using the app live -- could allow timing of
+// rollouts easier/less jarring." Both clients (the dashboard and the agent
+// app) send a heartbeat on load and every ~2.5 min while their tab is
+// VISIBLE; the Health page's "Active now" section reads the map back.
+// INV-01-clean: CacheService only -- no sheet, no Neon, nothing durable.
+// The map is read-modify-write WITHOUT a lock: two concurrent beats can
+// lose one entry for a cycle, which the next heartbeat heals -- presence
+// is a live glance, not a record, so lossy-but-cheap is the right trade.
+// Gate: any signed-in role (agents included -- the rollout-timing question
+// covers the agent app too), mirroring reportClientIssue's signed-in gate;
+// role 'none' is rejected.
+
+var PRESENCE_CACHE_KEY_ = 'presence:v1';
+var PRESENCE_CACHE_TTL_SEC_ = 1800;   // the map itself survives 30 min of total silence
+var PRESENCE_PRUNE_SEC_ = 900;        // entries older than 15 min are dropped on every beat
+var PRESENCE_ACTIVE_SEC_ = 360;       // "active now" = a beat within ~6 min (2 heartbeats + slack)
+var PRESENCE_MAX_USERS_ = 100;        // hard cap keeps the cache value bounded (~60B/entry)
+
+function recordPresence(req) {
+  var user = resolveUser_(Session.getActiveUser().getEmail());
+  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  try {
+    var cache = CacheService.getScriptCache();
+    var map = {};
+    try { map = JSON.parse(cache.get(PRESENCE_CACHE_KEY_) || '{}') || {}; } catch (eJ) { map = {}; }
+    var now = Math.floor(Date.now() / 1000);
+    map[user.email] = { t: now, role: user.role, page: String((req && req.page) || '').slice(0, 40) };
+    var emails = Object.keys(map).filter(function (em) {
+      var e = map[em];
+      return e && typeof e.t === 'number' && (now - e.t) <= PRESENCE_PRUNE_SEC_;
+    });
+    emails.sort(function (a, b) { return map[b].t - map[a].t; });   // newest-first, cap drops the stalest
+    var kept = {};
+    emails.slice(0, PRESENCE_MAX_USERS_).forEach(function (em) { kept[em] = map[em]; });
+    cache.put(PRESENCE_CACHE_KEY_, JSON.stringify(kept), PRESENCE_CACHE_TTL_SEC_);
+  } catch (e) { /* best-effort -- a presence hiccup must never surface to a client */ }
+  return { ok: true };
+}
+
+/** Read side (Health page). Active entries only, freshest-first. Never throws to empty. */
+function readPresence_() {
+  var out = [];
+  try {
+    var map = JSON.parse(CacheService.getScriptCache().get(PRESENCE_CACHE_KEY_) || '{}') || {};
+    var now = Math.floor(Date.now() / 1000);
+    Object.keys(map).forEach(function (em) {
+      var e = map[em];
+      if (e && typeof e.t === 'number' && (now - e.t) <= PRESENCE_ACTIVE_SEC_) {
+        out.push({ email: em, role: String(e.role || '?'), page: String(e.page || ''), ageSec: now - e.t });
+      }
+    });
+    out.sort(function (a, b) { return a.ageSec - b.ageSec; });
+  } catch (e) { /* best-effort */ }
+  return out;
 }
