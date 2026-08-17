@@ -140,9 +140,12 @@ bash scripts/check-duplicated-files.sh
 # versa -- fails the build, plus a size cap on CLAUDE.md itself), setup (the
 # INV-12 idempotency/ten-sheets/partial-run-recovery pins),
 # alert-recipients (B-5: ALL-sentinel managers receive every dept's alert),
-# and agent-role / agent-home (the fourth role: the Phase A deny wall +
+# agent-role / agent-home (the fourth role: the Phase A deny wall +
 # resolution, and the agent app's endpoints incl. the wait join, history
-# rollups, and the no-teammate-identity payload pin).
+# rollups, and the no-teammate-identity payload pin), and company-overview
+# (getCompanyOverview END-TO-END: the off-mode Phase 0 double-count parity,
+# the dept-mode crossover partition, no cross-dept leak on the shared row
+# array, and the all-queue company hero invariance).
 # HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
 # getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a test
 # needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
