@@ -101,7 +101,11 @@ const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v21';
  */
 function overviewCacheKey_() {
   var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
-  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag;
+  // Adoption round: + the queue-split scope. Same CORE-3 reasoning as the
+  // read-source tag, and in the SAME single helper so every bust site
+  // (OrphanFix x2, DeptConfig) inherits the suffix with no edit of its own.
+  var qs = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
+  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs;
 }
 
 // Chart-range slider (hybrid). The multi-dept chart ships a 90-day series
@@ -484,6 +488,11 @@ function getCompanyOverview(req) {
       ? sheetFetchDqeRows_(readFromIso, latestDate) : [];
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('getCompanyOverview', effectiveSource, _tRead, dqeRows.length);
+  // Queue-split adoption: the COMPANY aggregate stays un-narrowed by design --
+  // company-wide, every call belongs to exactly one company and each row is
+  // counted once, so the all-queue rollup IS the correct company number. Only
+  // the PER-DEPT attribution below narrows (that is where a crossover agent's
+  // other-dept calls double-counted). The two passes therefore split.
   for (let i = 0; i < dqeRows.length; i++) {
     const row = dqeRows[i];
     const dateIso = row.dateIso;
@@ -524,12 +533,34 @@ function getCompanyOverview(req) {
       }
       if (hadActivity) companyRecentlyActive[agent] = true;
     }
+  }
 
-    const ownerDepts = deptsForAgent[agent];
-    if (!ownerDepts || !ownerDepts.length) continue;
+  // Per-dept attribution. Each dept accumulates from ITS OWN (possibly
+  // narrowed) view of the rows: queueSplitNarrowedCopy_ clones before
+  // narrowing because this array is shared across the 14 depts -- dept A's
+  // narrowing must not leak into dept B's pass. Off = the same row objects,
+  // no clones, byte-identical accumulation to the old single loop.
+  allDepts.forEach(function (d) {
+    let deptRows = [];
+    for (let i = 0; i < dqeRows.length; i++) {
+      const r = dqeRows[i];
+      if (!r.agent || !r.dateIso || r.dateIso < trendStartIso) continue;
+      const od = deptsForAgent[r.agent];
+      if (!od || od.indexOf(d) === -1) continue;
+      deptRows.push(r);
+    }
+    deptRows = queueSplitNarrowedCopy_(deptRows, d).rows;
+    const stats = deptStats[d];
+    deptRows.forEach(function (row) {
+      const dateIso = row.dateIso;
+      const agent = row.agent;
+      const rung     = Number(row.totalRung)     || 0;
+      const missed   = Number(row.totalMissed)   || 0;
+      const answered = Number(row.totalAnswered) || 0;
+      const attAvg   = Number(row.attSec)        || 0;
+      const attTotal = answered > 0 ? attAvg * answered : 0;
+      const hadActivity = rung > 0 || answered > 0 || missed > 0;
 
-    ownerDepts.forEach(function (d) {
-      const stats = deptStats[d];
       let trendDay = stats.trendByDate[dateIso];
       if (!trendDay) {
         trendDay = { rung: 0, answered: 0 };
@@ -565,7 +596,7 @@ function getCompanyOverview(req) {
         if (hadActivity) ld.activeAgents[agent] = true;
       }
     });
-  }
+  });
 
   // ── Card period aggregates + 90-day chart series ────────────────────
   // Isolated pass over the SAME dqeRows (already read back to readFromIso).
@@ -871,7 +902,7 @@ function getOverviewChartTrend(req) {
 
   const cache = CacheService.getScriptCache();
   const tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
-  const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag;
+  const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off');
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -910,23 +941,29 @@ function getOverviewChartTrend(req) {
     dqeRows = (typeof sheetFetchDqeRows_ === 'function') ? sheetFetchDqeRows_(ytdStartIso, latestDate) : [];
   }
   const deptDaily = {};
-  allDepts.forEach(function (d) { deptDaily[d] = {}; });
-  for (let i = 0; i < dqeRows.length; i++) {
-    const r = dqeRows[i];
-    const iso = r.dateIso;
-    if (!iso || iso < ytdStartIso) continue;
-    const agent = r.agent;
-    if (!agent || /^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
-    const owners = deptsForAgent[agent];
-    if (!owners || !owners.length) continue;
-    const rung = Number(r.totalRung) || 0, answered = Number(r.totalAnswered) || 0;
-    owners.forEach(function (d) {
-      const cd = deptDaily[d];
+  // Queue-split adoption: per-dept narrowing over the SHARED row array, so
+  // the YTD chart agrees with the tiles and the dept table (clone-per-dept
+  // via queueSplitNarrowedCopy_; off = same rows, no clones).
+  allDepts.forEach(function (d) {
+    deptDaily[d] = {};
+    let deptRows = [];
+    for (let i = 0; i < dqeRows.length; i++) {
+      const r = dqeRows[i];
+      if (!r.dateIso || r.dateIso < ytdStartIso || !r.agent) continue;
+      const owners = deptsForAgent[r.agent];
+      if (!owners || owners.indexOf(d) === -1) continue;
+      deptRows.push(r);
+    }
+    deptRows = queueSplitNarrowedCopy_(deptRows, d).rows;
+    const cd = deptDaily[d];
+    deptRows.forEach(function (r) {
+      const iso = r.dateIso;
       let day = cd[iso];
       if (!day) { day = { rung: 0, answered: 0 }; cd[iso] = day; }
-      day.rung += rung; day.answered += answered;
+      day.rung += Number(r.totalRung) || 0;
+      day.answered += Number(r.totalAnswered) || 0;
     });
-  }
+  });
 
   // QCD per-day (abandoned) over the YTD window (reuses the snapshot's `daily`).
   const qcdSnaps = computeQcdSnapshots_(allDepts, ytdStartIso, ssTZ);

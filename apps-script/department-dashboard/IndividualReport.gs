@@ -204,9 +204,11 @@ function getIndividualReport(req) {
   // for the TTL (the summary:/latestDate: pattern -- IR was previously
   // unsuffixed, an undocumented gap).
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+  // Adoption round: + the queue-split scope (S2-0 cross-mode cache rule).
+  const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
                  + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey
-                 + ':' + dqeReadSrc;
+                 + ':' + dqeReadSrc + ':' + qsScopeKey;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -302,7 +304,11 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // guards it). deptQueueExts (floater match set) needs ALL history on its
   // derived path, so the Neon path reads a cheap cols-A..D slice for the
   // unchanged getDeptQueueExts_ while the windowed rows come from Neon.
-  const numCols = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  // Adoption round (Phase 4): read through col AI so the sheet path carries
+  // queue_split like the DAL does -- bounded by the real grid width, since a
+  // pre-Phase-1 34-col sheet must not throw (REP-10).
+  const numCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT,
+    sheet ? sheet.getMaxColumns() : HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
   let fetchFrom = trendStartIso;                       // trend start <= from <= to
   if (hasPrior && priorFrom < fetchFrom) fetchFrom = priorFrom;
   let fetchTo = to;
@@ -354,10 +360,17 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
         totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
         tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
         attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
+        queueSplit:    String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
       });
     }
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeIndividualReport_:' + dept, effectiveSource, _tRead, srcRows.length);
+
+  // Queue-split adoption (Phase 4): narrow BEFORE the aggregation loops so the
+  // per-agent cards, the monthly trend, the prior window and the team average
+  // all inherit one definition (the S2-0/B-1 fail-open rules live in the
+  // shared helper; off = rows untouched, payload byte-identical).
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept);
 
   // Aggregators.
   // aggregatedStats[agent][monthKey] = { rung, missed, answered, ttt, attTotal }

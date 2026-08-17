@@ -1770,14 +1770,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   diagnostics and the totals all inherit it unchanged.
   **Read the gate before reasoning about any dept's numbers:** the narrowing
   runs only when the `QUEUE_SPLIT_SCOPE` Script Property is `dept` (unset /
-  anything else = `off`, the default). It is off because `computeSummary_` is
-  its ONLY call site, so narrowing there gave the app two live definitions of
-  "a department's calls" -- worse than one imperfect one (S2-0). Flip to `dept`
-  only once Phase 3 (Missed), Phase 4 (IR/Insights), the Overview and Alerts
-  all narrow too -- see Operator State #42. The gate lives INSIDE the function
-  so those phases inherit it by adopting it rather than each re-deciding, and
-  the scope joins the `summary:v19` cache key as a suffix (the CORE-3
-  read-source pattern) so a flip can't serve the other mode's table for the TTL.
+  anything else = `off`, the default). Since the ADOPTION ROUND every DQE
+  reader narrows through this one helper -- Missed (counts + the K..AC
+  timeline via per-queue `mt`), IR, Insights, Overview (tiles/trends; the
+  company HERO stays all-queue on purpose), Alerts, digests, the agent app
+  -- so the flip is one property per Operator State #42's checklist (audit
+  first). The gate lives INSIDE the function so adopters inherit it rather
+  than each re-deciding, and the scope joins EVERY narrowed surface's cache
+  key as a suffix (the CORE-3 read-source pattern) so a flip can't serve
+  the other mode's payload anywhere for the TTL.
   It **FAILS OPEN four ways** -- a dept with no mapped queues, a row with no
   split, and unparseable JSON all keep the rollup; and (B-1) so does a whole
   window in which the dept's mapped queues match NONE of the queue names the
@@ -2253,7 +2254,7 @@ items for anything it flags or doesn't cover.)
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
 41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
-42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`); what must ship before it can be `dept`, and what each mode makes the numbers mean
+42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`); the ship list is COMPLETE -- the flip checklist, and what each mode makes the numbers mean
 43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` (CDR Tools menu; logs `retentionPrune` Pipeline Health rows) and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window everything assumes rests on it
 44. DQE-silence watchdog -- the queue-active-agents-dark cross-check born from the Field Ops Power blind spot; enable it (`installDqeSilenceWatchTrigger()`), thresholds + episode semantics in the item
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences

@@ -368,7 +368,7 @@ function getQueueSplitScope_() {
  * split-awareness is a property of the DATE, not the row (a sentinel row never
  * carries one), so this is what the "split from <date>" note is built from.
  */
-function applyQueueSplitToRows_(srcRows, dept) {
+function applyQueueSplitToRows_(srcRows, dept, opts) {
   const out = { dates: {}, queues: [], applied: 0, unsplitRows: 0,
                 // B-1 reporting. `unmatchedQueues` lists queue names seen in the
                 // window's splits that this dept claims none of (bounded);
@@ -445,6 +445,7 @@ function applyQueueSplitToRows_(srcRows, dept) {
       totalUnique: row.totalUnique, totalRung: row.totalRung,
       totalMissed: row.totalMissed, totalAnswered: row.totalAnswered,
       tttSec: row.tttSec, attSec: row.attSec,
+      slots: row.slots,   // adoption round: restored on full rollback (same ref)
     });
 
     row.totalUnique   = u;
@@ -463,6 +464,29 @@ function applyQueueSplitToRows_(srcRows, dept) {
     // were never per-agent -- and there is nothing per-queue to slice.
     row.queueScoped   = true;
     out.applied++;
+
+    // Adoption round (Phase 3 / agent app): narrow the missed-TIMELINE too.
+    // The slot cells (K..AC) are ALL-QUEUE times, but each split entry carries
+    // `mt` -- that queue's own missed times, written by the SAME pipeline pass
+    // in the SAME CST convention (dqeQueueSplitForAgent_). Rebuild the row's
+    // 19-slot array from the dept-matched queues' mt so the timeline agrees
+    // with the narrowed counts; only when the caller opts in (opts.narrowSlots)
+    // and the row actually carries slots. A new array is ASSIGNED, never
+    // mutated in place, so queueSplitNarrowedCopy_'s shallow clones stay safe.
+    if (opts && opts.narrowSlots && row.slots && row.slots.length) {
+      const bucketed = row.slots.map(function () { return []; });
+      Object.keys(split).forEach(function (qName) {
+        if (!want[String(qName).trim().toLowerCase()]) return;
+        String((split[qName] || {}).mt || '').split(',').forEach(function (tok) {
+          const tm = String(tok).trim().match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+          if (!tm) return;
+          const sec = Number(tm[1]) * 3600 + Number(tm[2]) * 60 + Number(tm[3]);
+          const idx = Math.floor((sec - 8 * 3600) / 1800);   // slots start 8:00 CST (INV-18/20)
+          if (idx >= 0 && idx < bucketed.length) bucketed[idx].push(tm[0]);
+        });
+      });
+      row.slots = bucketed.map(function (list) { return list.join(','); });
+    }
   }
 
   // Fail-open #4 (B-1). Queue names WERE observed this window and the dept
@@ -480,6 +504,7 @@ function applyQueueSplitToRows_(srcRows, dept) {
       r.totalAnswered = snap.totalAnswered;
       r.tttSec        = snap.tttSec;
       r.attSec        = snap.attSec;
+      if (snap.slots !== undefined) r.slots = snap.slots;
       delete r.queueScoped;
     });
     out.applied = 0;
@@ -502,6 +527,29 @@ function applyQueueSplitToRows_(srcRows, dept) {
     .sort()
     .slice(0, 10);
   return out;
+}
+
+/**
+ * Adoption round: the NON-MUTATING per-dept variant for readers whose row
+ * array is SHARED across departments (the Company Overview's one-fetch loop,
+ * the alert engine's per-date memo). applyQueueSplitToRows_ rewrites rows in
+ * place -- correct for the per-dept readers that own their fetch, corrupting
+ * for a shared array, where narrowing for dept A must not leak into dept B's
+ * pass. Off is ZERO-COST (the original array is returned untouched); on
+ * shallow-clones first. Slot narrowing ASSIGNS a fresh array (never mutates),
+ * so shallow clones are sufficient.
+ */
+function queueSplitNarrowedCopy_(rows, dept, opts) {
+  if (getQueueSplitScope_() !== 'dept' || !rows || !rows.length) {
+    return { rows: rows || [], info: { scope: 'off', applied: 0, dates: {}, fellOpenUnmatched: false } };
+  }
+  const clones = rows.map(function (r) {
+    const c = {};
+    for (const k in r) if (Object.prototype.hasOwnProperty.call(r, k)) c[k] = r[k];
+    return c;
+  });
+  const info = applyQueueSplitToRows_(clones, dept, opts);
+  return { rows: clones, info: info };
 }
 
 /**

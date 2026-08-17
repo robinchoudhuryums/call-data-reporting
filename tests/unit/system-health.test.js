@@ -401,3 +401,41 @@ test('R19 beacon: oversized fields are capped, not rejected', function () {
   const body = h.state.sentEmails[0].body;
   assert.ok(body.length < 6000, 'email body stays bounded (got ' + body.length + ')');
 });
+
+// ── R21: the fast/neon split ─────────────────────────────────────────────
+
+test('R21 split: part=fast skips the live-Neon mirror block entirely (no connection opened)', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  let connCalls = 0;
+  h.ctx.getDashboardNeonConn_ = function () { connCalls++; return { close: function () {} }; };
+  const data = h.call('getSystemHealth', { part: 'fast' });
+  assert.equal(connCalls, 0, 'fast part must never pay a Neon cold start');
+  assert.ok(!rowByKey(data, 'mirror-health'), 'no DQE mirror row in the fast part');
+  assert.ok(!rowByKey(data, 'qcd-mirror-health'), 'no QCD mirror row in the fast part');
+  assert.ok(rowByKey(data, 'dqe-fresh'), 'pipeline rows present');
+  assert.ok(rowByKey(data, 'neon-conf'), 'the property-read neon rows stay in the fast part');
+  assert.ok(rowByKey(data, 'setup-sheets'), 'sheet rows present');
+  assert.equal(data.part, 'fast');
+});
+
+test('R21 split: part=neon returns ONLY the two mirror rows, one shared connection', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  let connCalls = 0;
+  h.ctx.getDashboardNeonConn_ = function () { connCalls++; return { close: function () {} }; };
+  const data = h.call('getSystemHealth', { part: 'neon' });
+  assert.equal(connCalls, 1, 'exactly one shared connection');
+  assert.equal(data.rows.length, 2);
+  assert.ok(rowByKey(data, 'mirror-health'));
+  assert.ok(rowByKey(data, 'qcd-mirror-health'));
+});
+
+test('R21 split: fast + neon together cover exactly the full default payload', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.getDashboardNeonConn_ = function () { return { close: function () {} }; };
+  const all = h.call('getSystemHealth').rows.map(function (r) { return r.key; }).sort();
+  const split = h.call('getSystemHealth', { part: 'fast' }).rows
+    .concat(h.call('getSystemHealth', { part: 'neon' }).rows)
+    .map(function (r) { return r.key; }).sort();
+  assert.deepEqual(JSON.parse(JSON.stringify(split)), JSON.parse(JSON.stringify(all)),
+    'a row added to getSystemHealth must land in exactly one part -- this pin catches a third-bucket drift');
+});

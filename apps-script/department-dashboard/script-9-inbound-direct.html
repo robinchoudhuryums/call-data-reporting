@@ -1696,19 +1696,74 @@
       .getUiFlags();
   }
 
+  // R21: two-pass load. The fast part (property reads + bounded sheet tails)
+  // paints immediately; the Neon part -- the ONLY rows that open a live Neon
+  // connection, which pays a free-tier cold start of up to ~15s outside the
+  // keep-warm window -- streams in and replaces a "checking…" placeholder.
+  // A stale-token guard keeps a slow Neon response from a PREVIOUS refresh
+  // from painting over a newer one.
+  var healthLoadSeq_ = 0;
+  var healthFastData_ = null;
+  var healthNeonData_ = null;
+
+  function healthMergedRows_() {
+    var fast = (healthFastData_ && healthFastData_.rows) || [];
+    var neon = healthNeonData_ ? (healthNeonData_.rows || []) : [{
+      section: 'neon', key: 'mirror-pending', label: 'Neon mirror health',
+      status: 'muted', value: 'checking… (can take ~15 s if Neon is waking from idle)', hint: '',
+    }];
+    // Insert the mirror rows right after the last fast 'neon'-section row so
+    // the section renders as one group (the renderer keys headers on section
+    // transitions).
+    var idx = -1;
+    for (var i = 0; i < fast.length; i++) if (fast[i].section === 'neon') idx = i;
+    if (idx === -1) return fast.concat(neon);
+    return fast.slice(0, idx + 1).concat(neon, fast.slice(idx + 1));
+  }
+
+  function healthPaint_() {
+    if (!healthFastData_) return;
+    var warns = (Number(healthFastData_.warnCount) || 0)
+      + (healthNeonData_ ? (Number(healthNeonData_.warnCount) || 0) : 0);
+    healthRender_({ rows: healthMergedRows_(), warnCount: warns });
+    if (!healthNeonData_) {
+      var sum = $('health-summary');
+      if (sum) sum.textContent += ' · Neon check still running…';
+    }
+  }
+
   function healthLoad_() {
+    var tok = ++healthLoadSeq_;
+    healthFastData_ = null;
+    healthNeonData_ = null;
     reportSetStatus_('health-status', 'loading', 'Checking…');
     if ($('health-table')) $('health-table').style.display = 'none';
     healthLoadUiFlags_();   // R7 (G-3): the toggle editor loads alongside
     google.script.run
       .withSuccessHandler(function (data) {
+        if (tok !== healthLoadSeq_) return;
         reportSetStatus_('health-status', '');
-        healthRender_(data || { rows: [] });
+        healthFastData_ = data || { rows: [] };
+        healthPaint_();
       })
       .withFailureHandler(function (err) {
+        if (tok !== healthLoadSeq_) return;
         reportSetStatus_('health-status', 'error', 'Error: ' + (err && err.message ? err.message : String(err)));
       })
-      .getSystemHealth();
+      .getSystemHealth({ part: 'fast' });
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (tok !== healthLoadSeq_) return;
+        healthNeonData_ = data || { rows: [] };
+        healthPaint_();
+      })
+      .withFailureHandler(function (err) {
+        if (tok !== healthLoadSeq_) return;
+        healthNeonData_ = { rows: [{ section: 'neon', key: 'mirror-health', label: 'Neon mirror health',
+          status: 'warn', value: 'probe failed', hint: (err && err.message ? err.message : String(err)) }], warnCount: 1 };
+        healthPaint_();
+      })
+      .getSystemHealth({ part: 'neon' });
     google.script.run
       .withSuccessHandler(healthRenderBackup_)
       .withFailureHandler(function () { /* section stays hidden for non-admins/errors */ })

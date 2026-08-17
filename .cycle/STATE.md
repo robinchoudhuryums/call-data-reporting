@@ -2886,3 +2886,40 @@ commit/push/deploy direction.
 
   **WHERE I LEFT OFF:** committing; then PR (Phase C + doc sync) +
   merge on the owner's standing instruction.
+
+## Increment 117 (2026-08-14) — R21: System Health load split
+
+  Owner (testing the redeploy): the full Health report loads slowly.
+  Diagnosis: the two Neon mirror probes are the page's ONLY live-Neon
+  rows, and outside the keep-warm window they pay the free-tier cold
+  start (~15s) INLINE in the single getSystemHealth call. Fix:
+  getSystemHealth({part:'fast'|'neon'|'all'}) -- fast (property reads +
+  bounded sheet tails) paints immediately with a muted "checking…"
+  placeholder in the neon section; the neon part (the shared-conn
+  mirror block, verbatim) streams in and replaces it (stale-token
+  guarded; warn row on probe failure; summary line notes the pending
+  check). Default 'all' byte-identical (editor runs + old tests
+  untouched). Pins: fast opens NO conn; neon opens exactly one and
+  returns only the two mirror rows; fast+neon == all by key set (the
+  third-bucket drift tripwire). 728/728.
+
+  **WHERE I LEFT OFF:** ci:ui running; commit+push after green. UnPR'd
+  on the branch; owner merges on word.
+
+## Increment 118 (2026-08-15) — Queue-split adoption round: ship list COMPLETE
+
+  All remaining DQE readers adopted the ONE narrowing helper: Missed
+  (both paths unified onto the DAL fetchers, counts + K..AC timeline
+  via per-queue mt with narrowSlots), IR + Insights (sheet reads
+  widened to col AI, REP-10-bounded), Overview (company pass split
+  from per-dept attribution; hero stays all-queue by design; 90d+YTD
+  trends; clone-per-dept via NEW queueSplitNarrowedCopy_), Alerts
+  (threshold now evaluates the displayed number; clones of the shared
+  memo), agent app (detail+history). Scope suffix on EVERY narrowed
+  surface's cache key. 732/732 (+4 helper pins incl. rollback-restores-
+  slots + shared-original-pristine); all reader suites + ci:ui green.
+  #42 rewritten: ship list COMPLETE + the 3-step flip checklist.
+
+  **WHERE I LEFT OFF:** committing; PR + merge on the owner's standing
+  instruction. THE FLIP is now operator-side: audit -> property ->
+  crossover spot-check (CSR/Spanish).

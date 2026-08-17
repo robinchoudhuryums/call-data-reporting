@@ -181,8 +181,10 @@ function getInsightsReport(req) {
   // of EITHER DQE_READ_SOURCE or QCD_READ_SOURCE can't serve a cross-source
   // payload for the TTL.
   const dqeReadSrc = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
+  // Adoption round: + the queue-split scope (S2-0 cross-mode cache rule).
+  const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc;
+                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc + ':' + qsScopeKey;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -325,7 +327,10 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // relative to current once custom priors exist), and the 12-mo trend
   // [trendFrom,trendTo]. Mirrors the Performance Report read; default
   // 'sheet' is unchanged.
-  const numCols  = HISTORICAL_COLS.CSR_AVG_ABD_WAIT;
+  // Adoption round (Phase 4): read through col AI so the sheet path carries
+  // queue_split like the DAL does (REP-10-bounded for a pre-Phase-1 sheet).
+  const numCols  = Math.min(HISTORICAL_COLS.QUEUE_SPLIT,
+    sheet ? sheet.getMaxColumns() : HISTORICAL_COLS.CSR_AVG_ABD_WAIT);
   let fetchFrom = from;
   if (trendFrom < fetchFrom) fetchFrom = trendFrom;
   if (priorFrom < fetchFrom) fetchFrom = priorFrom;
@@ -379,9 +384,14 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
         tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
         attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
+        queueSplit:    String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
       });
     }
   }
+  // Queue-split adoption (Phase 4): narrow BEFORE every aggregation this
+  // report runs -- current window, prior window, 12-mo trend, team stats,
+  // gap-vs-team -- so all of it inherits one definition. Off = untouched.
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept);
   if (typeof logDqeReadTiming_ === 'function') {
     logDqeReadTiming_('computeInsights_:' + dept, effectiveSource, _tRead, srcRows.length);
   }
