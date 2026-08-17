@@ -1534,7 +1534,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `pageView` flag — filter/refresh/post-mutation reloads don't). The Health
   page's usage section carries a collapsed "User activity (last 30 days)"
   per-user rollup (`REPORT_USAGE_USER_CAP_`=40, busiest-first, top-3 report
-  digest, role as of last-seen row). Pinned by system-health.test.js.
+  digest, role as of last-seen row). **Live presence (rollout timing):**
+  both clients (script-1-core + agentApp) heartbeat
+  `SystemHealth.gs::recordPresence` on load and every ~2.5 min while the
+  tab is VISIBLE; the map lives ONLY in CacheService (`presence:v1`, prune
+  15 min, "active" ≤ ~6 min, cap 100 -- lossy no-lock read-modify-write,
+  next beat heals) and renders as the Health page's FIRST section, "Active
+  now", so the admin can time a redeploy around live sessions. Any
+  signed-in role beats (agents included; role `none` rejected -- the
+  reportClientIssue gate class). A new client surface needs no wiring --
+  the beat reads `data-page`; harness mocks live in build-harness.js AND
+  build-agent.js. Pinned by system-health.test.js.
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script

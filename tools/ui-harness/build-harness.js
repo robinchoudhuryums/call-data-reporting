@@ -144,6 +144,9 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     // in-panel error rather than the silent hide being audited above.
     getInboundHeatmapCell: function () { return P['heatmap-cell']; },
     getDeptDayAbandons: function () { return P['dept-day-abandons']; },
+    // Live-presence heartbeat: fires at load from script-1-core for every
+    // role; fire-and-forget on the client, so the ack shape is all it needs.
+    recordPresence: function () { return { ok: true }; },
   };
   function makeRunner() {
     var ok = null, fail = null;

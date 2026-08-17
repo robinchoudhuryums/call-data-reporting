@@ -88,6 +88,23 @@
     reportIssue_('unhandled-rejection', (r && r.message) ? r.message : String(r), (r && r.stack) || '');
   });
 
+  // Live-presence heartbeat (the dashboard client's twin, see script-1-core):
+  // feeds the admin Health page's "Active now" section so a redeploy can be
+  // timed around live agent sessions. Visible-tab-only, fire-and-forget.
+  function presenceBeat_() {
+    try {
+      if (document.visibilityState !== 'visible') return;
+      if (!(window.google && google.script && google.script.run)) return;
+      google.script.run.withSuccessHandler(function () {}).withFailureHandler(function () {})
+        .recordPresence({ page: 'agent' });
+    } catch (e) { /* presence must never throw */ }
+  }
+  setInterval(presenceBeat_, 150 * 1000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') presenceBeat_();
+  });
+  presenceBeat_();
+
   // ── Window state ──────────────────────────────────────────────────────
   var latestIso = null;   // most recent DQE date; presets anchor to it
   var win = { from: null, to: null, preset: 'mtd' };

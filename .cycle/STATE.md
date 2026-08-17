@@ -2981,3 +2981,32 @@ commit/push/deploy direction.
   **WHERE I LEFT OFF:** nothing in flight. A fresh session can run
   /cycle-resume for continuity or /broad-scan for a new audit cycle
   directly; this entry is the baseline.
+
+## Increment 120 (2026-08-17) — Live presence: "Active now" on the Health page
+
+Owner request: "see who is using the app live — could allow timing of
+rollouts easier/less jarring." Built end-to-end:
+
+- `SystemHealth.gs::recordPresence` (public; any signed-in role incl.
+  agents, role `none` rejected — the reportClientIssue gate class).
+  INV-01-clean: CacheService only (`presence:v1`), lossy no-lock
+  read-modify-write (next beat heals), prune 900s, active window 360s,
+  cap 100 entries (stalest dropped). `readPresence_` is the read side.
+- getSystemHealth FAST part gains a `presence` section rendered FIRST:
+  "Active now (last ~6 min)" summary + one muted row per user
+  (email · role · page · age). Muted like usage — information, not a
+  health state. The R21 fast/neon key-set pin holds (presence is fast).
+- Heartbeats: script-1-core (dashboard, `data-page` as page) +
+  agentApp.html ('agent') — on load, every 150s while
+  `document.visibilityState === 'visible'`, re-beat on
+  visibilitychange→visible; fire-and-forget, never throws.
+- Harness: `recordPresence` mocked in build-harness.js handlers AND
+  build-agent.js runner api (both drives assert no unmocked RPCs).
+- Tests: +6 in system-health.test.js (store+render, nobody-active,
+  role-none/agent gate, prune-vs-active windows, cap keeps fresh beat,
+  corrupt-JSON self-heal). 742/742. CLAUDE.md R19 bullet extended.
+
+NOT merged — on the branch awaiting the owner's word (the SESSION
+CLOSEOUT commit f9c8442 is also still unmerged; one merge carries both).
+Operator note: the section self-populates only after the NEXT deploy
+(clients must ship the heartbeat before anyone shows as active).

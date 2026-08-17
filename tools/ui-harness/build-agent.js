@@ -112,6 +112,8 @@ const mock = `<script>
       getAgentHome: function (req) { setTimeout(function () { onOk(PAYLOAD); }, 20); },
       getAgentHistory: function (req) { setTimeout(function () { onOk(HISTORY); }, 20); },
       reportClientIssue: function (p) { window.__MOCK_BEACONS__.push(p); setTimeout(function () { onOk({ok:true}); }, 5); },
+      // Live-presence heartbeat: fires at load; fire-and-forget ack.
+      recordPresence: function () { setTimeout(function () { onOk({ok:true}); }, 5); },
     };
     return new Proxy(api, {
       get: function (t, k) {
