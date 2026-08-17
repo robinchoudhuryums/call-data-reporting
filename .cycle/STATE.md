@@ -2923,3 +2923,19 @@ commit/push/deploy direction.
   **WHERE I LEFT OFF:** committing; PR + merge on the owner's standing
   instruction. THE FLIP is now operator-side: audit -> property ->
   crossover spot-check (CSR/Spanish).
+
+## Increment 119 (2026-08-15) — Overview e2e suite + doc sync
+
+  The adoption round's follow-on closed: tests/unit/company-overview.test.js
+  (4) runs the REAL getCompanyOverview against a DQE fixture with stubbed
+  sub-probes -- pins the off-mode Phase 0 double-count (crossover agent
+  all-queue in both tiles; company aggregate counts each row once; sentinel
+  reaches nothing), the dept-mode PARTITION (11+4=15 with the no-split row
+  failing open), the no-cross-dept-leak shape on the shared row array, and
+  the all-queue hero invariance under the flip. 736/736. /sync-docs: the
+  CLAUDE.md test-suite roll gains the new suite; no other drift (the
+  adoption round's docs landed with it).
+
+  **WHERE I LEFT OFF:** committing; PR + merge per the owner's standing
+  instruction. All follow-ons from block 115 now closed except the
+  cosmetic narrowed-surface client chips (on demand).
