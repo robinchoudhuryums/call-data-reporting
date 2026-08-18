@@ -1043,7 +1043,7 @@ When something looks wrong, before assuming a code bug, check:
     CSR + Spanish) no longer contributes their other department's calls to
     both. OFF: that over-count returns on the three parent depts (Sales / CSR /
     Power) and the My Department chip says so in as many words. Reversible
-    either way with no redeploy — the scope is part of the `summary:v19` cache
+    either way with no redeploy — the scope is part of the `summary:v20` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a

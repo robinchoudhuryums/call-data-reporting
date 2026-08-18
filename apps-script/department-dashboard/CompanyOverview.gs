@@ -105,7 +105,10 @@ function overviewCacheKey_() {
   // read-source tag, and in the SAME single helper so every bust site
   // (OrphanFix x2, DeptConfig) inherits the suffix with no edit of its own.
   var qs = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs;
+  // R24 (6h TTL): + the latest-data date, so the morning ingest mints a new
+  // key within getLatestDataDate's 5-min tier instead of waiting out the TTL.
+  var fresh = (typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na';
+  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh;
 }
 
 // Chart-range slider (hybrid). The multi-dept chart ships a 90-day series

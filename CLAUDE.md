@@ -492,8 +492,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (Data.gs).
 - **The Performance Report is RETIRED (PR->Insights consolidation).**
   Its semantics live on in Insights: the INV-28 comparison window is the
-  immediately-preceding same-length window (NOT "previous calendar
-  month") -- since R17b carried by the agent-card delta badges + the
+  immediately-preceding same-workday-count window (R24; NOT "previous
+  calendar month") -- since R17b carried by the agent-card delta badges + the
   emails (the rollup KPI tile row is hidden); the share-of-answered
   breakdown sits in Team detail; the **Absolute** chart basis
   (`insRenderCardsChartAbs_`) is HIDDEN since R16g (the agent table on
@@ -509,8 +509,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Per-row prior-period chips (E5, commit bb77168).** The My
   Department agent table renders an inline delta chip after the
   Rung / Missed / Answered values comparing the selected window
-  to a same-length window immediately preceding it (mirrors PR's
-  INV-28 semantics). Three pieces of behavior worth knowing:
+  to the INV-28 prior window immediately preceding it (R24:
+  same working-day count). Three pieces of behavior worth knowing:
   (1) **Valence map** lives in `script.html::WOW_PRIOR_KEYS`:
   rung↑ / answered↑ render `wow-chip-good` (sage); missed↑
   renders `wow-chip-warn` (orange); decreases flip the color so
@@ -777,7 +777,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **Out-of-window calls are RESEARCH data, never a dept metric (owner
   ruling)** -- report them separately, never in a dept total. Scoped surfaces:
   `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-  (`inbound:v8`), and `getInboundInsurerDaily` (so the drill reconciles with
+  (`inbound:v9`), and `getInboundInsurerDaily` (so the drill reconciles with
   the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
   (answers "when did capture begin", not a dept metric) and **the abandon
   HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -938,8 +938,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
   (ONE json_build_object Neon round-trip; per-agent answer rate EXCLUDING the
   busy carve-out, inbound ATT, outbound activity + ATT, int/ext split; cached
-  `directCall:v3`). **R11-M: the SAME query also computes `kpisPrior` (scope-level,
-  over the INV-28 immediately-preceding same-length window) + `deptsPrior`
+  `directCall:v4`). **R11-M: the SAME query also computes `kpisPrior` (scope-level,
+  over the INV-28 immediately-preceding prior window) + `deptsPrior`
   (per-dept prior aggregates); the client renders delta chips (`inboundDelta_`)
   on the IB Answered / IB Answer Rate / OB Calls KPI cards and on each company-view
   dept header row (answered/OB up=good, missed up=bad, answer% up=good), plus a
@@ -1613,9 +1613,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a whole-sheet cols-A..D scan, falling back to the sheet read if Neon pairs
   are unavailable. The two `call_date` indexes below are
   now created in prod. NOTE: `latestDate:`/`latestDates:` stay on the 5-min
-  `CACHE_TTL_SECONDS`; the heavy report aggregations cache 30 min
-  (`REPORT_CACHE_TTL_SECONDS`) -- both levers reduce how often a cutover
-  reader hits a cold free-tier Neon (see the Neon keep-warm bullet).
+  `CACHE_TTL_SECONDS`; the heavy report aggregations cache 6 h
+  (`REPORT_CACHE_TTL_SECONDS`, freshness-tagged, R24) -- both cut how
+  often a cutover reader hits a cold free-tier Neon (see keep-warm).
   **Index prerequisite (F1):** before cutting over the date/agent-filtered
   readers, make sure `dqe_history` is indexed for those queries --
   `CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);`
@@ -1719,21 +1719,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Per-project gitignored `.clasp.json`**. Each developer keeps their own
   `scriptId` locally; pulls never conflict on it. Template at
   `.clasp.example.json`.
-- **CacheService tiers**: 30 min (`REPORT_CACHE_TTL_SECONDS`) on the heavy
-  per-(dept,range) aggregations (My Department `summary`, `companyOverview`,
-  `individual`, `individual_active`, `performance`, `compareRanges`,
-  `insights`, `missed`); **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+- **CacheService tiers**: 6 h (`REPORT_CACHE_TTL_SECONDS` -- R24: raised
+  from 30 min when the Neon monthly TRANSFER cap blew; every cached serve is
+  a Neon fetch avoided) on the heavy per-(dept,range) aggregations (My
+  Department `summary`, `companyOverview`, `individual`, `individual_active`,
+  `insights`, `missed`, `direct`, `inbound`). Safe at 6 h because every one
+  of those keys now carries `reportFreshnessTag_()` (Util.gs -- the latest
+  DQE date, itself on the 5-min tier), so the morning ingest MINTS NEW KEYS
+  within minutes instead of waiting out the TTL; a new heavy report key MUST
+  join that tag or it inherits the stale-morning bug the tag exists to
+  prevent. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
   serve all day; trade-off: a rare mid-day force re-import's corrections
   can lag there up to 6h (paired with the CacheWarm qcdAll warm, which is
   freshness-guarded); 5 min (`CACHE_TTL_SECONDS`) on the freshness-sensitive
   `latestDate` / `latestDates` lookups so the morning ingest surfaces
-  promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The 30-min
-  tier is safe because DQE data updates once daily; the tradeoff is that
-  ad-hoc admin corrections (orphan renames, DQE rebuilds) can lag up to
-  30 min in cached views not explicitly busted on write (Orphan Fix +
-  Dept Config save bust theirs). Each report file owns its own versioned
+  promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The tradeoff
+  of the 6 h tier: ad-hoc admin corrections (orphan renames, DQE rebuilds,
+  a mid-day force re-import) can lag up to 6 h in cached views not
+  explicitly busted on write (Orphan Fix + Dept Config save bust theirs;
+  the freshness tag busts only when the LATEST date moves). Each report file owns its own versioned
   cache prefix (`summary:`, `latestDate:`, `individual:`,
   `individual_active:`, `performance:`, `compareRanges:`, `missed:`,
   `companyOverview:`); bump the relevant version on any aggregation-rule
@@ -1755,7 +1761,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   default -- so this is a client retirement, not a capability removal; don't
   "restore" the parameter thinking it was dropped, and don't hardcode that
   default in a second place. `subScope` is a cache-key dimension
-  (`summary:v19`); `cdr.dept.subscope` is now an orphan key.
+  (`summary:v20`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -2230,7 +2236,7 @@ items for anything it flags or doesn't cover.)
 1. Did the daily ingest run? (+ `probeOverviewChartDates()` when a date gap shows despite parity-clean data)
 2. Does the deployed VERSION include the latest push? (Manage deployments -> timestamp)
 3. Did the user actually have access? (`Access Control` rows are case-sensitive on email)
-4. Is the cache stale? (per-report prefix, INV-30; 30 min reports / 5 min freshness)
+4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
 6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, ten sheets)
 7. Is `DASHBOARD_URL` set? (alert-email links + every report's "Open in new tab")
@@ -2351,7 +2357,7 @@ INV-24 | The pipeline canonicalizes agent names against the roster under TWO par
 INV-25 | IR + Insights compute ATT WEIGHTED by answered; the main dashboard table does not (INV-05) | Subsystem: Department Dashboard
 INV-26 | `TEAM_AVG_EXCLUDES` removes named agents from BOTH sides of the IR team average; composes with the INV-53 floater gate | Subsystem: Department Dashboard
 INV-27 | The IR team-avg denominator counts only roster members with ANY activity in range | Subsystem: Department Dashboard
-INV-28 | The auto-adjacent prior period is the immediately-preceding SAME-LENGTH window, NOT the previous calendar month; one shared `computePriorWindow_` / `resolveComparisonWindow_` | Subsystem: Department Dashboard
+INV-28 | The auto-adjacent prior period is the immediately-preceding window of the same WORKING-DAY count (R24; a Monday compares to Friday, never Sunday), NOT the previous calendar month; one shared `computePriorWindow_` / `resolveComparisonWindow_` | Subsystem: Department Dashboard
 INV-29 | The 12-month trend window rule, with one shared `computeTrendStartDate_` so IR / Insights / QCD trends align | Subsystem: Department Dashboard
 INV-30 | Every report owns a VERSIONED cache prefix -- bump on any aggregation-rule change. Current versions, their bump history, and the read-source key suffixes are all in the entry | Subsystem: Department Dashboard
 INV-31 | The `script.send_mail` scope backs every export / alert / digest / queue-report / failure-notify path | Subsystem: Department Dashboard (+ CDR Import / CDR DQE Pipeline for the notify-failure paths)

@@ -208,7 +208,7 @@ function getIndividualReport(req) {
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
                  + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey
-                 + ':' + dqeReadSrc + ':' + qsScopeKey;
+                 + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -318,7 +318,14 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
   if (neonCapable) {
-    srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
+    // R24 (perf): the aggregation below only ever reads rows for the SELECTED
+    // agents (cards/trend) and the dept ROSTER (team average, INV-27) -- a
+    // selected floater is in the selection by definition -- so filter the
+    // 12-month fetch to that union instead of pulling every dept's year.
+    const wantAgents = {};
+    roster.names.forEach(function (n) { wantAgents[n] = true; });
+    selectedAgents.forEach(function (n) { wantAgents[n] = true; });
+    srcRows = neonFetchDqeRows_(fetchFrom, fetchTo, { agents: Object.keys(wantAgents) });
     if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       deptQueueExts = deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow).exts;
       effectiveSource = 'neon';

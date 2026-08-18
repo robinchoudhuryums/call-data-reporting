@@ -184,7 +184,8 @@ function getInsightsReport(req) {
   // Adoption round: + the queue-split scope (S2-0 cross-mode cache rule).
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc + ':' + qsScopeKey;
+                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc + ':' + qsScopeKey
+                 + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -341,7 +342,14 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   let effectiveSource = 'sheet';
   const _tRead = Date.now();
   if (neonCapable) {
-    srcRows = neonFetchDqeRows_(fetchFrom, fetchTo);
+    // R24 (perf, the IR pattern): the aggregation only reads rows for the
+    // ROSTER (team stats/trends, INV-27) + the SELECTION (covers floaters,
+    // INV-53), so filter the union-window fetch to those agents instead of
+    // pulling every dept's year.
+    const wantAgents = {};
+    roster.names.forEach(function (n) { wantAgents[n] = true; });
+    selectedAgents.forEach(function (n) { wantAgents[n] = true; });
+    srcRows = neonFetchDqeRows_(fetchFrom, fetchTo, { agents: Object.keys(wantAgents) });
     if (neonDqeRowsUsable_(srcRows)) {   // LM2: reachable-empty is trusted; only unreachable falls back
       // RPT-4: the Neon path derives the dept ext set via the shared Neon
       // helper (its own sheet fallback covers F-35), like IR and Missed --

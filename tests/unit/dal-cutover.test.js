@@ -51,18 +51,24 @@ const DATASET = [
     slots: ['8:01:00 AM'] },
 ];
 
-function neonRowsFor(fromIso, toIso) {
+// R24 egress: the DAL fetch ships POSITIONAL json_build_array rows (base
+// cols 0..12, queue_split fixed at slot 12, detail cols 13..33 when the SQL
+// selects them) -- this fixture mirrors that protocol, keyed off the SQL the
+// reader actually issued, so a position drift between SQL and parse loop
+// fails HERE.
+function neonRowsFor(fromIso, toIso, sql) {
+  const withDetail = String(sql || '').indexOf('slot_0800_0830') !== -1;
   return DATASET
     .filter(function (r) { return r.date >= fromIso && r.date <= toIso; })
     .map(function (r) {
-      const row = {
-        month_year: '', d: r.date, agent_name: r.agent, queue_extensions: r.ext || '',
-        total_unique: 0, total_rung: r.rung || 0, total_missed: r.missed || 0,
-        total_answered: r.answered || 0, ttt: r.ttt || '', att: r.att || '',
-        avg_abd_wait: '', csr_avg_abd_wait: '',
-        abandoned_parent_ids: r.abdIds || '', abandoned_missed_times: r.abdTimes || '',
-      };
-      SLOT_COLS.forEach(function (c, i) { row[c] = (r.slots && r.slots[i]) || ''; });
+      const row = ['', r.date, r.agent, r.ext || '',
+        0, r.rung || 0, r.missed || 0, r.answered || 0,
+        r.ttt || '', r.att || '', '', '',
+        '' /* queue_split (none in this dataset; '' when skipped, slot fixed) */];
+      if (withDetail) {
+        SLOT_COLS.forEach(function (c, i) { row.push((r.slots && r.slots[i]) || ''); });
+        row.push(r.abdIds || '', r.abdTimes || '');
+      }
       return row;
     });
 }
@@ -86,7 +92,7 @@ function fakeNeonConn() {
         setString: function (i, v) { params[i] = v; },
         executeQuery: function () {
           if (sql.indexOf('FROM dqe_history WHERE call_date BETWEEN') !== -1) {
-            return rsFor(JSON.stringify(neonRowsFor(params[1], params[2])));
+            return rsFor(JSON.stringify(neonRowsFor(params[1], params[2], sql)));
           }
           throw new Error('Unexpected prepared SQL: ' + sql);
         },

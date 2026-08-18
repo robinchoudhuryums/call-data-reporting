@@ -3104,3 +3104,86 @@ R23 three-tier / per-dept semantics; CLAUDE.md Direct bullet tint wording
 (byte-compensated). Weight: CLAUDE.md 175 KB / 200 KB budget (~25 KB
 headroom) — trim hunt still an open follow-on. 758/758, ratchet + INV-16
 green. Docs-only (no ci:ui needed).
+
+## Increment 124 (2026-08-18) — Coaching: ratio gate replaces the absolute floor
+
+First live `runCoachingPreview` (window 2026-08-03..08-14, 15 depts) returned
+20 flags and showed the absolute gate was inert: this is RING-level data, so
+every dept's team aggregate sits at 17-49% and a fixed 50% floor is above
+every agent everywhere. The only gate filtering was "5 pts behind team",
+which off a 39% average is ring-distribution noise.
+
+Owner ruling: replace the floor with a RATIO — flag when an agent answers
+less than half as often as their teammates.
+
+- `COACHING_ANSWER_BELOW_PCT_` (50) -> `COACHING_MAX_TEAM_RATIO_` (0.5);
+  gate is now `rate < teamRate * ratio`. `COACHING_BEHIND_TEAM_PTS_` (5)
+  stays as an absolute FLOOR beneath it, so a tiny team rate can't
+  manufacture flags (half of 3.5% is a 2.5-pt gap = noise). Volume gate
+  unchanged. New guard: teamRate <= 0 yields no flags.
+- Flags carry `teamRatioPct` ("answers N% as often as the team") and sort by
+  it (worst relative standing first, gap as tiebreak); the editor log line
+  and `thresholds.maxTeamRatio` follow.
+- Expected effect on the owner's live data: 20 -> ~10 flags; Rosie Sarkar
+  (0.503) and Monica Jeremiah (0.502) sit ON the line and may land either
+  side once computed from unrounded rates.
+
+NOT changed, per owner: cross-dept de-duplication (Shamir Alam is flagged
+under both Manual Mobility and Eligibility MM&R with identical whole-day
+figures — owner investigating) and the 0%-answered cases (owner confirms
+those are genuinely being rung and not answering, so they are real flags,
+not roster artifacts).
+
+Tests: coaching 11 (was 8) — ratio spare/flag pair, the ring-level
+whole-team-under-50% case, the points floor still holding, the zero-team
+guard. 761/761. Engine-only; still dark (no delivery).
+
+## Increment 125 (2026-08-18) — R24: workday prior windows, region header removed, scoped esc banner, IR perf
+
+Four owner items in one round:
+
+1. **INV-28 REDEFINED to working days (owner: "0% vs Sunday").** The shared
+   `computePriorWindow_` (Data.gs) + the client `resolveComparisonWindow_`
+   (script-6) now produce the immediately-preceding window with the SAME
+   WORKING-DAY count (Mon-Fri minus COMPANY_HOLIDAYS), ending on the last
+   working day before `from` -- a Monday compares to Friday. Zero-workday
+   (weekend-only) windows keep the legacy calendar math. Every consumer
+   inherits (E5 chips, Insights auto-prior, IR prevPeriod, Direct
+   kpisPrior, Inbound priors). INV-30 bumps for the keys that don't encode
+   the prior window: summary v19->v20, directCall v3->v4, inbound v8->v9
+   (IR/Insights keys carry the prior window, no bump). invariants.md
+   INV-28 + INV-30 rewritten; cache-version-sync tables updated.
+2. **Insights region headline REMOVED (redundant).** The #ins-region-head
+   live stats (answered · missed rings · abandoned % · window) on the
+   region <summary> retired -- the report's own sticky results header
+   carries the same facts. Summary stays as the collapse toggle with the
+   static sub line; insRegionHeadSync_ is a stub.
+3. **Overview escalations banner scoped.** The top-of-Overview strip now
+   shows managers only their own depts' OPEN escalations (server counts
+   were already dept-scoped; the show condition dropped 'review'-only
+   triggers); admins / ALL-sentinel viewers keep the company-wide banner.
+   View-as-Manager now narrows the strip client-side to the previewed
+   dept via byDept (was showing the admin's company-wide counts). Nav-tab
+   badge unchanged (worklist affordance).
+4. **IR (and Insights) load perf.** neonFetchDqeRows_ gained opts.agents
+   (prepared-statement IN filter, skip on empty/>300): IR + Insights now
+   fetch the 12-month union window for roster ∪ selection ONLY (~1 dept
+   instead of all 14 -- the whole-window json_agg was the dominant cost).
+   Aggregations only ever read roster/selected rows (team totals are
+   rosterSet-gated), so payloads are identical -- pinned by the existing
+   parity suites.
+
+Tests: prior-window pins recomputed (compute-summary E5, IR R8-D3,
+insights x2 -- fixtures moved off the weekend dates). 761/761; INV-16 +
+ratchet green. Pushed to branch; NOT merged (no owner word this round).
+
+## Increment 126 (2026-08-18) — Neon egress round (transfer cap incident)
+
+Owner hit Neon's monthly public-transfer cap mid-month (managers live).
+/broad-implement: ship R24 + three egress cuts. See
+.cycle/blocks/126-egress-broad-implement.md for the full summary block.
+Key design point: the 6 h report TTL required the reportFreshnessTag_ key
+suffix (latest DQE date) -- overviewCacheKey_ had no date anchor, so a long
+TTL alone would have hidden each morning's ingest for hours. dal-cutover's
+fake conn now mirrors the positional array protocol keyed off the real SQL.
+761/761; merged per the owner's "R24 deploy" instruction.

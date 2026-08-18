@@ -625,7 +625,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v19` |
+| `Data.gs` (main table) | `summary:vN:` | `v20` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
@@ -635,11 +635,11 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v21` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v8` |
+| `InboundReport.gs` | `inbound:vN:` | `v9` |
 | `InsightsReport.gs` | `insights:vN:` | `v22` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
-| `DirectCallReport.gs` | `directCall:vN:` | `v3` |
+| `DirectCallReport.gs` | `directCall:vN:` | `v4` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
 DQE Historical Data for the chosen date.
@@ -1435,8 +1435,8 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v21`) on success. Per-(dept,
-range) caches (`summary:v19`, `individual:v11`,
-etc.) are left to TTL out within 30 minutes
+range) caches (`summary:v20`, `individual:v11`,
+etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the
 cache TTL.

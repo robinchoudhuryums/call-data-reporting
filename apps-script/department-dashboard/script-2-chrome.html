@@ -775,16 +775,36 @@
       }
     }
 
+    // R24 (owner): the top-of-Overview banner is scoped to the viewer's OWN
+    // depts' OPEN escalations. The server already scopes a manager's counts
+    // to their departments, so for them this only swaps the show condition
+    // from open+review to open-only; all-dept viewers (admin / ALL-sentinel)
+    // keep the company-wide banner as-is. In View-as-Manager the admin's
+    // counts are still company-wide, so the strip additionally narrows
+    // CLIENT-side to the previewed dept via byDept -- otherwise the preview
+    // shows a banner the real manager would never see. The nav-tab badge
+    // above keeps the full viewer-scoped total (it is the worklist
+    // affordance, not an alert).
     var strip = $('ov-esc-strip');
     if (strip) {
-      if (total <= 0) {
+      var sOpen = open, sOver = over, sReview = review, sByDept = byDept;
+      var previewDept = (typeof viewAsDept_ !== 'undefined' && viewAsDept_) ? viewAsDept_ : null;
+      if (previewDept) {
+        sByDept = byDept.filter(function (d) { return d.dept === previewDept; });
+        sOpen = sByDept.reduce(function (n, d) { return n + (Number(d.open) || 0); }, 0);
+        sOver = sByDept.reduce(function (n, d) { return n + (Number(d.overdue) || 0); }, 0);
+        sReview = 0;   // review counts aren't per-dept in the payload; the preview stays quiet
+      }
+      var allViewer = (typeof isAllDeptViewer_ === 'function') && isAllDeptViewer_() && !previewDept;
+      var showStrip = allViewer ? total > 0 : sOpen > 0;
+      if (!showStrip) {
         strip.style.display = 'none';
         strip.innerHTML = '';
       } else {
-        strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + open + ' open'
-          + escDeptCountsHtml_(byDept)
-          + (over ? ' \u00b7 <span class="ov-esc-overdue">' + over + ' overdue</span>' : '')
-          + (review ? ' \u00b7 ' + review + ' awaiting review' : '')
+        strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + sOpen + ' open'
+          + escDeptCountsHtml_(sByDept)
+          + (sOver ? ' \u00b7 <span class="ov-esc-overdue">' + sOver + ' overdue</span>' : '')
+          + (sReview ? ' \u00b7 ' + sReview + ' awaiting review' : '')
           + ' <button type="button" class="link-btn" id="ov-esc-strip-open">Open worklist \u2192</button>';
         strip.style.display = '';
         var btn = $('ov-esc-strip-open');

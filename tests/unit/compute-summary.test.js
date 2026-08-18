@@ -166,17 +166,18 @@ test('S35 parity: roster scope totals == both scope totals (floater-exclusion in
 });
 
 test('E5/INV-30 v8: per-row prior-period deltas + meta.priorFrom/priorTo', function () {
-  // User window: single day 2026-03-09. Prior window = 2026-03-08.
+  // User window: single day Mon 2026-03-09. R24 working-day prior -> the
+  // last working day before it, Fri 2026-03-06 (never the Sunday).
   install([
     dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8 }),
-    dqeRow({ date: '2026-03-08', agent: 'Anna', ext: '501', rung: 6,  missed: 1, answered: 5 }), // prior
+    dqeRow({ date: '2026-03-06', agent: 'Anna', ext: '501', rung: 6,  missed: 1, answered: 5 }), // prior
     // Dan only has prior-window activity -> must be silently dropped.
-    dqeRow({ date: '2026-03-08', agent: 'Ben',  ext: '501', rung: 4,  missed: 0, answered: 4 }),
+    dqeRow({ date: '2026-03-06', agent: 'Ben',  ext: '501', rung: 4,  missed: 0, answered: 4 }),
   ]);
   const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-09', 'both');
 
-  assert.equal(data.meta.priorFrom, '2026-03-08');
-  assert.equal(data.meta.priorTo, '2026-03-08');
+  assert.equal(data.meta.priorFrom, '2026-03-06');
+  assert.equal(data.meta.priorTo, '2026-03-06');
 
   const anna = rowFor(data, 'Anna');
   assert.equal(anna.priorHasData, true);

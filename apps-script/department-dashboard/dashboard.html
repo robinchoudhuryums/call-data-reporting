@@ -569,14 +569,13 @@
            setPage('insights') maps here (script-2), so deep links + the
            quick-start chips land on it. -->
       <details id="dept-insights-region" class="ins-region" open>
+        <!-- R24 (owner): the M2 live headline (#ins-region-head -- answer rate ·
+             missed rings · abandoned % · window) is REMOVED as redundant: the
+             report's own sticky results header directly below carries the same
+             facts. The summary stays as the region's collapse toggle. -->
         <summary class="ins-region-summary">
           <span class="ins-region-title">Insights</span>
-          <!-- M2: once a report has rendered, insRegionHeadSync_ fills
-               #ins-region-head with the live headline (answer rate, missed,
-               abandoned %, window) and hides the static sub line, so the
-               COLLAPSED region still states where the team stands. -->
           <span class="ins-region-sub" id="ins-region-sub">Agent comparisons &middot; queue health &middot; 12-month trends</span>
-          <span class="ins-region-head" id="ins-region-head"></span>
         </summary>
         <div id="insights-page" class="page-insights">
     <!-- R9-1/Phase 2: the results header (title + toolbar + the From/To

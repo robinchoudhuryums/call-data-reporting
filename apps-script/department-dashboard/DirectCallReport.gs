@@ -45,7 +45,7 @@
 // the client renders delta/trend chips on the KPI cards + dept header rows.
 // v3: B-1 -- the company-view agents sub-select groups per (agent, dept)
 // instead of collapsing a crossover agent under max(department).
-const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v3';
+const DIRECT_CALL_CACHE_KEY_PREFIX = 'directCall:v4';   // v4: R24 working-day prior windows
 const DIRECT_CALL_MAX_RANGE_DAYS = 366;
 
 /**
@@ -152,7 +152,7 @@ function getDirectCallReport(req) {
 
   const cache = CacheService.getScriptCache();
   const cacheKey = DIRECT_CALL_CACHE_KEY_PREFIX + ':' + (scope.dept || '__all__')
-                 + ':' + scope.from + ':' + scope.to;
+                 + ':' + scope.from + ':' + scope.to + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
