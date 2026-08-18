@@ -357,7 +357,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a **Line ⇄ Calendar** renderer toggle (`insTrendRender` in prefs):
   Calendar is a Mon–Fri day-grid second
   RENDERER of the same `trendDaily` series (no server change), cells
-  colored by the existing benchmarks (Answer % vs the 92% target;
+  colored by the existing benchmarks (Answer % vs the dept answer standard, R23;
   Missed / Call volume / Answered as intensity ramps) with the number
   in-cell, per-day
   click-drill via the shared `insDrillToRange_` (extracted from the
@@ -597,8 +597,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a STATUS-TONED banner (redesign): a composer may return
   `{sentences, tone}` instead of a bare array, where `tone` comes from
   `headlineTone_` using ONLY the two company standards -- the ANSWER TARGET
-  (seed 92%, admin-tunable via ANSWER_TARGETS, Op State #37) and the fixed
-  5% abandon threshold (answer >= target -> green "On track"; answer <
+  (R23: seed 80% + a 10-pt amber band, CSR 92/2; admin-tunable via the
+  Op State #37 properties, resolved per dept) and the fixed
+  4% abandon threshold (answer >= target -> green "On track"; answer <
   target OR abandon >=5% -> orange "Watch");
   absent metric / bare-array return -> neutral "At a glance". Wired for
   Insights (team answer rate) + Inbound (abandon/answer);
@@ -651,13 +652,15 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   so per-callsite titles would shadow the dict). (4)
   **Benchmark tints** -- `benchValueCls_(label, formatted, symmetric,
   surface?)` applies the ONLY two company-wide standards: the answer-rate
-  TARGET (-> `.bm-target` sage; seed 92%, ADMIN-TUNABLE via the
+  TARGET (-> `.bm-target` sage at/above; `.bm-watch` amber within the band
+  below; `.bm-bad` red past it -- R23 three-tier, resolved per dept via
+  `answerStdFor_`; ADMIN-TUNABLE via the
   `ANSWER_TARGETS` Script Property -- Alerts modal "Answer-rate
   standards", Op State #37 -- with per-surface overrides `direct` /
   `inbound` for the two reports whose answer rates are different call
   populations; read through `answerTarget_(surface)` client-side /
   `getAnswerTargets_()` server-side, NEVER a literal 92) and the FIXED
-  5% abandon threshold (-> `.bm-over` warn; baked into the QCD
+  4% abandon threshold (-> `.bm-over` warn; baked into the QCD
   Violations history written at import, INV-50 -- never tunable) on KPI tile
   values (IR/Insights/Inbound) + inbound abandon-% cells. Default
   is BINARY (highlight only the notable direction -- tables, IR tiles).
@@ -1540,7 +1543,7 @@ behind the removed button.
   day rows absorb the slack and the hour-label row doesn't. (4) Daily
   breakdown motion: sub-rows fade+settle through `ins-daily-row-in` on their
   CELLS (a `<tr>` can't animate a display flip) and the `<details>` body gets
-  the shared `ins-fold-in`, both reduced-motion-gated; an at/over-5% abandoned
+  the shared `ins-fold-in`, both reduced-motion-gated; an at/over-standard abandoned
   rate reads bold + `--bad` — the weight has to be restated locally because
   the global `.qcd-rate-over` loses on specificity to `.ans-nums .ans-rate`.
   R16f: the COLLAPSE animates too — closing rows hold `.is-open` through a

@@ -1009,7 +1009,7 @@ the wait threshold above is still the dominant mechanism.** In-window inbound
 abandons are 102 against QCD's 29, so scoping alone does not close the gap.
 
 Two things worth carrying forward. First, the in-window abandon rate of 4.1%
-sits UNDER the 5% company standard, as does QCD's 1.06% -- the two lenses
+sits UNDER the (then-)5% company standard (4% since 2026-08), as does QCD's 1.06% -- the two lenses
 disagree on magnitude but agree on the verdict, which further de-escalates
 this. Second, the **47% after-hours abandon rate on 19 calls** is the useful
 finding here: roughly half of out-of-hours callers give up, which is exactly

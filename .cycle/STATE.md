@@ -3093,3 +3093,14 @@ overhaul + the ratified turnover-suggestion Phase 0.
   build-agent. Docs: operator-state #37 rewritten; CLAUDE.md tint mentions.
 
 Deploy: dashboard only (this increment). NOT merged — awaiting owner word.
+
+## Increment 123 (2026-08-18) — /sync-docs after R22/R23
+
+Drift fixes only: Coaching.gs added to the Subsystems list; INV-50's
+violation gate + queue-mapping wording (4% / getDeptQcdQueues_);
+regression S-232 tint standard; known-issues then-5% annotation;
+client-ui-conventions + README benchmark-tint paragraphs rewritten to the
+R23 three-tier / per-dept semantics; CLAUDE.md Direct bullet tint wording
+(byte-compensated). Weight: CLAUDE.md 175 KB / 200 KB budget (~25 KB
+headroom) — trim hunt still an open follow-on. 758/758, ratchet + INV-16
+green. Docs-only (no ci:ui needed).

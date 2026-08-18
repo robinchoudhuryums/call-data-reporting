@@ -316,7 +316,7 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
   up Spanish). Each child dept still has its own
   `DEPT_QCD_QUEUES` entry so the child's own modal works.
 - After QCD data flows, the Overview page's per-dept tiles gain
-  an "Aban N (P%)" chip (warn-tinted when ≥ 5%) and a
+  an "Aban N (P%)" chip (warn-tinted at/over the 4% standard) and a
   "X viol MTD" badge when month-to-date violations are > 0. The
   My Department page shows a "Yesterday's QCD" tile row below
   the agent table.
@@ -581,10 +581,12 @@ the reports intimidating; none add server endpoints or cache bumps:
   attributes, so definitions stay consistent across reports.
 - **Benchmark tints** — the two real company-wide standards tint KPI
   values and abandon-% cells consistently across reports
-  (`script.html::benchValueCls_`): the answer-rate target (seed 92%,
-  admin-tunable via the `ANSWER_TARGETS` Script Property — Alerts modal
-  → "Answer-rate standards" — with per-surface overrides for the Direct
-  / Inbound reports) and the FIXED 5% abandoned-% violation threshold
+  (`script.html::benchValueCls_`): the answer-rate target (R23: seed 80%
+  with a 10-pt amber band, CSR 92/2 -- green at/above, amber within the
+  band, red past it; per-dept overrides,
+  admin-tunable via the Op State #37 Script Properties — Alerts modal
+  → "Display standards" — with per-surface overrides for the Direct
+  / Inbound reports) and the FIXED 4% abandoned-% violation threshold
   from the QCD rule. Dept-specific alert thresholds intentionally stay
   with the Alerts engine.
 
