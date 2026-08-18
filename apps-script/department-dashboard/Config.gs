@@ -241,8 +241,18 @@ const QCD_HISTORICAL_COLS = Object.freeze({
   LONGEST_WAIT:   9,     // I - H:MM:SS
   AVG_ANSWER:    10,     // J - H:MM:SS
   ABANDONED_PCT: 11,     // K - 0..1 (decimal, NOT percent)
-  VIOLATIONS:    12,     // L - count of days/sources where abandonedPct > 5%
+  VIOLATIONS:    12,     // L - count of days/sources where abandonedPct exceeded the
+                         //     pipeline gate (QCD_VIOLATION_ABANDON_RATE in cdr-import
+                         //     autoImport.js -- 4% since 2026-08, 5% before; rows keep
+                         //     the flag they were written with)
 });
+
+// The company abandoned-% DISPLAY standard, in percent points. Every tint /
+// headline / email tier that judges an abandon rate reads this (the client
+// copy is ABANDON_STANDARD_ in script-1-core.html -- keep the two in sync,
+// cross-file-pins.test.js pins them equal). Owner 2026-08: lowered 5 -> 4,
+// matching the pipeline's QCD_VIOLATION_ABANDON_RATE gate above (col L doc).
+const ABANDON_STANDARD_PCT = 4;
 
 // Fallback timezone for formatting Date objects from spreadsheet
 // cells when the spreadsheet's own TZ isn't passed explicitly.
@@ -448,8 +458,9 @@ const UI_FLAG_SURFACES = Object.freeze({
  * busy carve-out; share-of-inbound-calls) than the queue-call rate the
  * 92% standard was set for.
  *
- * Deliberately NOT covered: the 5% abandon threshold (baked into the QCD
- * Violations history written at import time, INV-50 -- making it tunable
+ * Deliberately NOT covered: the abandon threshold (ABANDON_STANDARD_PCT
+ * above -- a code constant, not a property, because the QCD Violations
+ * history is written at import time, INV-50; making it tunable
  * would desync tints from recorded violation counts) and the per-dept
  * ALERT thresholds (Alert Config rows, INV-34 -- already admin-editable).
  */

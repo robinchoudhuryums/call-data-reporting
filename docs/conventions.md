@@ -437,7 +437,7 @@ From/To default (which must snap to DQE specifically).
   itself when > 366 days OR a full calendar year, else
   first-of-month(end - 12 months) → end).
 - **Overview tile chips**: when QCD data exists for a dept, an
-  "Aban N (P%)" chip always renders; warn-tinted when P >= 5%
+  "Aban N (P%)" chip always renders; warn-tinted when P >= the 4% abandon standard
   (the pipeline's violation threshold). A "X viol MTD" chip
   renders only when month-to-date violations > 0. Visible to
   everyone -- managers see all depts' chips on Overview, same as

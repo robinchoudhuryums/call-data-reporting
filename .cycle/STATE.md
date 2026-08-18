@@ -3010,3 +3010,45 @@ NOT merged — on the branch awaiting the owner's word (the SESSION
 CLOSEOUT commit f9c8442 is also still unmerged; one merge carries both).
 Operator note: the section self-populates only after the NEXT deploy
 (clients must ship the heartbeat before anyone shows as active).
+
+## Increment 121 (2026-08-18) — R22: clamp-note fade, 4% abandon standard, tiered Viol MTD
+
+Three owner requests in one round:
+
+1. **Clamp-note auto-fade** (script-2-chrome + styles): the R18 To-date
+   "Adjusted to ..." note fades out ~6s after rendering (0.6s opacity
+   transition; re-clamp resets timer + opacity). The To field itself still
+   shows the corrected date.
+2. **Abandon standard 5% -> 4%** across all three layers:
+   - PIPELINE: `QCD_VIOLATION_ABANDON_RATE = 0.04` (cdr-import
+     autoImport.js — one constant, both the daily and bulk QCD writers).
+     Col L flags are written at import time, so HISTORY keeps its 5%-era
+     flags; current-month MTD counts mix eras until (optionally) rebuilt.
+   - SERVER display: `Config.gs::ABANDON_STANDARD_PCT = 4`, consumed by
+     QueueReportEmail.gs (tiers, preheader, offenders, tally/bar tints)
+     and InboundReport.gs (insurer daily tint).
+   - CLIENT: `ABANDON_STANDARD_ = 4` (script-1-core), read by
+     benchValueCls_, Overview chips + trend baseline (OV_BASELINE_LABELS_),
+     Insights QCD chart (QCD_THRESH_LABEL_ centralizes the reference-line
+     label sentinel), heatmap ramp + legend, QCD all-dept boot (hero tone,
+     tick now positioned inline at standard*10% of the 0-10% bar),
+     E9 forecast gate, dept/escalations table tints, glossary/help prose
+     (dashboard.html), headline composers.
+   - PINNED: cross-file-pins.test.js "R22" test — client == server == 
+     pipeline*100. queue-report.test.js pins updated to the 4% strings.
+3. **Tiered Viol MTD chip on Overview** (script-3-overview + styles):
+   the "N viol MTD" chip now ALWAYS renders — 0 green (.ov-qcd-viol-none),
+   1-2 amber (.ov-qcd-viol-low), 3+ red (.ov-qcd-viol-high). Day-level
+   per-queue chips keep the binary warn treatment.
+
+Docs synced: CLAUDE.md (heatmap C2 + E9 mentions, byte-neutral),
+invariants.md INV-51 live claims, conventions/known-issues/client-ui/
+regression-scenarios 5%->4% mentions, neonbackfill.js gate comment.
+743/743 unit; ci:ui re-run for the client changes.
+
+OPERATOR NOTE (era mix): QCD col L history keeps 5%-era flags. A day at
+4.5% before the redeploy is NOT a violation in history but would be one
+now. If a clean current month matters, force re-import (or rebuild) the
+current month's dates after deploying cdr-import so col L re-evaluates
+at 4%; then the Neon mirror re-upserts. Otherwise the mix ages out at
+the month boundary.

@@ -297,3 +297,22 @@ test('F-7: every tmpl.*Json assignment in Code.gs carries the \\u003c escape', f
     + 'containing an end-of-script tag would break out of the inline script '
     + 'block (see the CLAUDE.md scriptlet gotcha)');
 });
+
+// R22 (owner: abandon standard 5% -> 4%): the display standard lives in TWO
+// copies -- Config.gs::ABANDON_STANDARD_PCT (server renderers: QueueReportEmail,
+// InboundReport) and script-1-core.html::ABANDON_STANDARD_ (every client tint /
+// legend / chart baseline) -- plus the PIPELINE's violation gate
+// (cdr-import autoImport.js::QCD_VIOLATION_ABANDON_RATE, a 0..1 rate). A drift
+// between them makes tints disagree with the violation counts they sit beside.
+test('R22: the abandon standard is identical across server, client, and the pipeline gate', function () {
+  const cfg = /const ABANDON_STANDARD_PCT = (\d+(?:\.\d+)?);/.exec(read('Config.gs', DASH));
+  assert.ok(cfg, 'Config.gs::ABANDON_STANDARD_PCT missing');
+  const core = /var ABANDON_STANDARD_ = (\d+(?:\.\d+)?);/.exec(read('script-1-core.html', DASH));
+  assert.ok(core, 'script-1-core.html::ABANDON_STANDARD_ missing');
+  const pipe = /const QCD_VIOLATION_ABANDON_RATE = (0\.\d+);/.exec(
+    read('apps-script/cdr-import/autoImport.js'));
+  assert.ok(pipe, 'autoImport.js::QCD_VIOLATION_ABANDON_RATE missing');
+  assert.equal(Number(core[1]), Number(cfg[1]), 'client copy != server copy');
+  assert.equal(Number(pipe[1]) * 100, Number(cfg[1]),
+    'pipeline violation gate != the display standard');
+});

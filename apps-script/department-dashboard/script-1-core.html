@@ -1,5 +1,12 @@
 <script>
 
+  // The company abandoned-% display standard (percent points): every client
+  // tint / legend / headline that judges an abandon rate reads this. Server
+  // copy: Config.gs::ABANDON_STANDARD_PCT (cross-file-pins.test.js keeps the
+  // two equal). Owner 2026-08: lowered 5 -> 4, matching the pipeline's
+  // QCD violation gate (cdr-import autoImport.js).
+  var ABANDON_STANDARD_ = 4;
+
   // ══ DEV OVERLAY (O-11) ══════════════════════════════════════════════════
   //
   // An admin-only, off-by-default diagnostics panel. Toggle: Ctrl/Cmd+Alt+D,

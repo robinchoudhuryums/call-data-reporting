@@ -1334,7 +1334,7 @@ existing per-dept dropdown):
   tab + metric sub-selector are retired; violation-day warn markers +
   legend spotlight unchanged).
 - **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
-  data exists (warn-tinted when P >= 5%), and a "X viol MTD" chip
+  data exists (warn-tinted when P >= the 4% abandon standard), and a "X viol MTD" chip
   when month-to-date violations > 0. Powered by
   `CompanyOverview.gs::computeQcdSnapshots_`.
 - **My Department "Yesterday's QCD"**: tile row below the agent

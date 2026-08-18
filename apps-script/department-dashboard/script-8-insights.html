@@ -67,8 +67,12 @@
   // (the share-of-answered pie's insShareChartInstance is GONE -- Round-16
   // replaced the doughnut with HTML share-tally rows, no chart instance)
   let insActiveTrendMetric = 'answered';
+  // The QCD trend's reference-line dataset label -- ONE string, because five
+  // sites (builder, spotlight skip, datalabel/legend/tooltip filters) match
+  // on it by identity.
+  const QCD_THRESH_LABEL_ = ABANDON_STANDARD_ + '% threshold';
   // gap 1: when the trend chart's "By Queue" tab is active, which per-queue
-  // metric to plot -- 'abandonedPct' (default, the 5%-standard view) |
+  // metric to plot -- 'abandonedPct' (default, the abandon-standard view) |
   // 'totalCalls' | 'violations'. Persisted in prefs.
   let insQueueMetric = 'abandonedPct';
   // Round-16 (sub-queue drill fix): Daily-breakdown scope state. '' renders
@@ -1677,9 +1681,9 @@
           ins.push({ type: up ? 'negative' : 'positive',
             text: 'Abandoned % ' + (up ? 'rose' : 'fell') + ' ' + Math.abs(cur - prv).toFixed(1)
               + ' pts vs prior (' + qh.totals.abandonedPctStr + ' vs ' + prvStr + ').' });
-        } else if (cur >= 5) {
+        } else if (cur >= ABANDON_STANDARD_) {
           ins.push({ type: 'negative',
-            text: 'Abandoned % is ' + qh.totals.abandonedPctStr + ' — over the 5% threshold.' });
+            text: 'Abandoned % is ' + qh.totals.abandonedPctStr + ' — over the ' + ABANDON_STANDARD_ + '% threshold.' });
         }
       }
       host.innerHTML = ins.length
@@ -1895,7 +1899,7 @@
    * Queue health section (QCD-into-Insights consolidation). Renders
    * queue-level KPI tiles (with deltas vs the same prior window the
    * rest of the report compares against) + a per-queue table with the
-   * 5%-threshold benchmark tint and expandable violation dates.
+   * abandon-standard benchmark tint and expandable violation dates.
    * Hidden when the server sent null (unmapped dept / missing sheet,
    * or a pre-v4 cached payload).
    */
@@ -2130,9 +2134,9 @@
 
     const t = qh.totals, p = qh.priorTotals;
     // I8: tint the Abandoned % + Violations tile VALUES (were plain black).
-    // Abandoned % uses the 5% company standard (benchValueCls_ symmetric --
+    // Abandoned % uses the company abandon standard (benchValueCls_ symmetric --
     // green under 5, warn at/over); Violations MTD is green at 0, warn once
-    // any day this month crossed 5% (the per-queue rows carry the finer
+    // any day this month crossed the standard (the per-queue rows carry the finer
     // light/strong gradient).
     const violMtd = Number(qh.violationsMtd) || 0;
     const violValCls = violMtd > 0 ? ' bm-over' : ' bm-target';
@@ -2178,7 +2182,7 @@
       inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
         p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : '',
         benchValueCls_('abandoned %', t.abandonedPctStr, true)),
-      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the 5% threshold this month', '',
+      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the ' + ABANDON_STANDARD_ + '% threshold this month', '',
         violValCls),
     ];
     // R16e (owner): Avg answer + Longest wait are PROMOTED from the muted
@@ -2742,7 +2746,7 @@
    * instance on `ins-trend-chart`, driven by the sub-tab strip
    * (insActiveTrendMetric: answered / pct / att / queues) and a
    * Monthly/Daily toggle (insTrendView). The "Abandoned % by Queue" tab
-   * renders the per-queue abandoned-% lines + own-only dept total + 5%
+   * renders the per-queue abandoned-% lines + own-only dept total + the
    * line from data.queueHealth.trend (replacing the old standalone
    * ins-qh-chart). Colors route through THEME / IR_* per INV-42;
    * datalabels off (boolean form, INV-41).
@@ -2790,7 +2794,7 @@
     const hits = chartObj.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
     if (!hits || !hits.length) return;
     const ds = chartObj.data.datasets[hits[0].datasetIndex];
-    if (ds && ds.label === '5% threshold') return;   // reference line, not data
+    if (ds && ds.label === QCD_THRESH_LABEL_) return;   // reference line, not data
     const range = insTrendLabelToRange_((chartObj.data.labels || [])[hits[0].index], daily);
     // R16h (owner): a point that resolves to ONE DAY behaves like the calendar
     // day-click -- jump to that date in the Daily breakdown instead of
@@ -3039,7 +3043,7 @@
     if (isQueues) {
       // By Queue (gap 1): one line per queue + own-only dept total, for the
       // metric the sub-selector picks (insQueueMetric). Abandoned % is the
-      // default and adds the 5% threshold line + % formatting (the QCD
+      // default and adds the abandon-threshold line + % formatting (the QCD
       // violation rule); Total Calls / Violations are integer counts with no
       // threshold line. Hidden gracefully if there's no queue trend (unmapped
       // dept / QCD unavailable).
@@ -3082,21 +3086,21 @@
           borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false });
       }
       if (qNames.length > 1) {
-        spotlightOpts = isPct ? { skipLabel: '5% threshold' } : {};
+        spotlightOpts = isPct ? { skipLabel: QCD_THRESH_LABEL_ } : {};
       }
       if (isPct) {
         // Violation-day markers (ported from the retired QCD chart, #6):
-        // points at/over 5% render warn-colored + enlarged on every %
+        // points at/over the standard render warn-colored + enlarged on every %
         // series so "which days/months breached" reads at a glance.
         const warnC = THEME.warn || '#c66b4b';
         datasets.forEach(function (ds) {
           const base = ds.borderColor;
           const baseR = ds.pointRadius || 1.5;
-          ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= 5 ? warnC : base; });
+          ds.pointBackgroundColor = ds.data.map(function (v) { return Number(v) >= ABANDON_STANDARD_ ? warnC : base; });
           ds.pointBorderColor     = ds.pointBackgroundColor;
-          ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= 5 ? 4.5 : baseR; });
+          ds.pointRadius          = ds.data.map(function (v) { return Number(v) >= ABANDON_STANDARD_ ? 4.5 : baseR; });
         });
-        datasets.push({ label: '5% threshold', data: labels.map(function () { return 5; }),
+        datasets.push({ label: QCD_THRESH_LABEL_, data: labels.map(function () { return ABANDON_STANDARD_; }),
           borderColor: THEME.muted, borderDash: [3, 4], borderWidth: 1,
           pointRadius: 0, fill: false, order: 99 });
       }
@@ -3117,22 +3121,22 @@
               borderWidth: 1, borderRadius: 2,
               font: { family: "'IBM Plex Mono', monospace", size: 10, weight: '500' },
               formatter: function (value, c) {
-                if (c.dataset.label === '5% threshold' || value == null) return '';
+                if (c.dataset.label === QCD_THRESH_LABEL_ || value == null) return '';
                 return fmtVal(value);
               },
             },
             // Multi-queue legend gets the shared spotlight (hover-dim +
             // click-to-pin, ported from the retired QCD chart) so one queue's
-            // line can be isolated; the 5% threshold stays out of the dimming.
+            // line can be isolated; the threshold line stays out of the dimming.
             // Round 4: a single-queue view hides the one-item legend (the
             // team tabs are legendless too); multi-queue keeps the
             // spotlight legend.
             legend: Object.assign({ display: qNames.length > 1, position: 'bottom',
               labels: { boxWidth: 18,
-              filter: function (item) { return item.text !== '5% threshold'; } } },
+              filter: function (item) { return item.text !== QCD_THRESH_LABEL_; } } },
               (qNames.length > 1 ? chartSpotlightLegend_() : {})),
             tooltip: {
-              filter: function (ctx) { return ctx.dataset.label !== '5% threshold' && chartTooltipPinFilter_(ctx); },
+              filter: function (ctx) { return ctx.dataset.label !== QCD_THRESH_LABEL_ && chartTooltipPinFilter_(ctx); },
               callbacks: {
                 label: function (ctx) {
                   return ctx.dataset.label + ': ' + (ctx.parsed.y == null ? '-' : fmtVal(ctx.parsed.y));
@@ -3344,7 +3348,7 @@
     const legend = isMissed
       ? 'Darker = more missed rings that day.'
       : (isAbd
-        ? 'Sage = under the 5% abandon threshold · warmer = at/above it.'
+        ? 'Sage = under the ' + ABANDON_STANDARD_ + '% abandon threshold · warmer = at/above it.'
         : (isVol ? 'Darker = more ring events (answered + missed) that day.'
         : (isAns ? 'Darker sage = more answered calls that day.'
         : 'Sage = at/above the ' + answerTarget_('global') + '% answer target · warmer = further below it.')));
@@ -3420,7 +3424,7 @@
               : 'background: color-mix(in srgb, var(--warn) ' + Math.round(14 + Math.min(46, (abd - 5) * 6)) + '%, var(--paper-card));';
             valHtml = abd + '%';
             title = iso + ' — ' + calls + ' queue call' + (calls === 1 ? '' : 's') + ' · '
-              + (Number(s.abandoned) || 0) + ' abandoned · ' + abd + '% abandoned (5% threshold). Click to open this day in the Daily breakdown.';
+              + (Number(s.abandoned) || 0) + ' abandoned · ' + abd + '% abandoned (' + ABANDON_STANDARD_ + '% threshold). Click to open this day in the Daily breakdown.';
           } else {
             const pct = Math.round(Number(s.pct) || 0);
             const missed = Number(s.missed) || 0;

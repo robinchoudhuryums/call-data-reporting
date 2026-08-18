@@ -196,7 +196,7 @@
     return (((Number(r.abandoned) || 0) / calls) * 100).toFixed(1) + '%';
   }
 
-  // Abandon-% table cell with the shared 5%-threshold benchmark tint.
+  // Abandon-% table cell with the shared abandon-standard benchmark tint.
   function inboundAbandonPctCell_(r) {
     const txt = inboundAbandonPct_(r);
     return '<td class="num' + benchValueCls_('abandoned %', txt) + '">' + txt + '</td>';
@@ -591,8 +591,8 @@
   // Sourced from inbound_calls via getInboundHeatmap. Admin-only at the server
   // boundary (inherits the inbound report's vetting gate), so the loader hides
   // the panel quietly on an auth/error/empty result -- it's a companion, never
-  // core. Color pivots on the 5% company abandon standard (C2): <=5% reads as
-  // calm sage, >5% ramps warm so the problem hours pop.
+  // core. Color pivots on the company abandon standard (C2, ABANDON_STANDARD_):
+  // at/under reads as calm sage, over ramps warm so the problem hours pop.
   var HEAT_MIN_VOLUME_ = 3;   // cells below this are "low signal" -> muted, not colored by rate
 
   // Per-container stale-response tokens: a re-generate with a new window
@@ -663,15 +663,16 @@
   // Cell background via CSS color-mix() -- the browser resolves + mixes the
   // theme tokens (incl. OKLCH ones) itself, so there's no JS color parsing to
   // get wrong (the earlier canvas-resolve path returned black on some themes).
-  // Pivots on the 5% standard: <=5% sage (deeper = lower abandon), >5% warm
-  // (deeper = higher), saturating ~20%.
+  // Pivots on the company abandon standard (ABANDON_STANDARD_): at/under it
+  // sage (deeper = lower abandon), over it warm (deeper = higher), saturating
+  // ~15 points past the standard.
   function heatCellBg_(rate, calls) {
     if (calls < HEAT_MIN_VOLUME_) return 'var(--paper-2)';       // not enough signal
-    if (rate <= 5) {
-      var p = Math.round((0.20 + 0.45 * (1 - rate / 5)) * 100);  // 20%..65% good over paper
+    if (rate <= ABANDON_STANDARD_) {
+      var p = Math.round((0.20 + 0.45 * (1 - rate / ABANDON_STANDARD_)) * 100);  // 20%..65% good over paper
       return 'color-mix(in srgb, var(--good) ' + p + '%, var(--paper-card))';
     }
-    var p2 = Math.round(Math.min(1, (rate - 5) / 15) * 100);     // 0%..100% warn over warn-soft
+    var p2 = Math.round(Math.min(1, (rate - ABANDON_STANDARD_) / 15) * 100);     // 0%..100% warn over warn-soft
     return 'color-mix(in srgb, var(--warn) ' + p2 + '%, var(--warn-soft))';
   }
   function heatHourLabel_(h) {
@@ -782,15 +783,15 @@
     });
     html += '</div></div>';
 
-    // Legend: discrete swatches anchored on the 5% standard (clearer than a
-    // continuous ramp for a non-technical audience).
+    // Legend: discrete swatches anchored on the abandon standard (clearer
+    // than a continuous ramp for a non-technical audience).
     var sw = function (bg, lbl) {
       return '<span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background:'
         + bg + ';"></span>' + escapeHtml(lbl) + '</span>';
     };
     html += '<div class="ds-heatmap-legend">'
-      + sw(heatCellBg_(2.5, 99), '0–5% (on target)')
-      + sw(heatCellBg_(7.5, 99), '5–10%')
+      + sw(heatCellBg_(ABANDON_STANDARD_ / 2, 99), '0–' + ABANDON_STANDARD_ + '% (on target)')
+      + sw(heatCellBg_((ABANDON_STANDARD_ + 10) / 2, 99), ABANDON_STANDARD_ + '–10%')
       + sw(heatCellBg_(15, 99), '15%+')
       + sw('var(--paper-2)', 'low volume (<' + HEAT_MIN_VOLUME_ + ' calls)')
       + '</div>';

@@ -620,7 +620,7 @@ function inboundEmailBreakdownTable_(title, rows) {
       + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">' + fmtNum_(calls) + '</td>'
       + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">' + fmtNum_(r.answered) + '</td>'
       + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">' + fmtNum_(ab) + '</td>'
-      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;color:' + (calls > 0 && (ab / calls) >= 0.05 ? '#c66b4b' : '#6b7280') + ';">' + abPct + '</td>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;color:' + (calls > 0 && (ab / calls) * 100 >= ABANDON_STANDARD_PCT ? '#c66b4b' : '#6b7280') + ';">' + abPct + '</td>'
       + '</tr>';
   }).join('');
   return '<h3 style="margin:18px 0 6px;font-size:14px;color:#374151;">' + escapeHtmlServer_(title) + '</h3>'

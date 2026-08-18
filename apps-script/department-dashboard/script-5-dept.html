@@ -2337,7 +2337,7 @@
     // unchanged).
     const tileRow = function (q, kind) {
       const violCls = (Number(q.violations) || 0) > 0 ? 'dept-qcd-warn' : '';
-      const pctCls  = (Number(q.abandonedPct) || 0) >= 5 ? 'dept-qcd-warn' : '';
+      const pctCls  = (Number(q.abandonedPct) || 0) >= ABANDON_STANDARD_ ? 'dept-qcd-warn' : '';
       const subs = mtdSubs(q, mtdPriorOf(q, kind));
       // Owner note -> Round-16 refinement: Total Calls and Ans/Abd merged
       // into ONE tile reading "<total> (<answered> / <abandoned>)" -- the
@@ -3191,7 +3191,7 @@
       var qCalls = Number(qr.totalCalls) || 0;
       var qAbd   = Number(qr.abandoned) || 0;
       var abStr  = qr.abandonedPctStr || ((Number(qr.abandonedPct) || 0).toFixed(2) + '%');
-      var abCls  = benchValueCls_('abandoned %', abStr, true);   // 5% company standard
+      var abCls  = benchValueCls_('abandoned %', abStr, true);   // company abandon standard
       var qFrom = (state.meta && state.meta.from) || ($('from-date') && $('from-date').value) || '';
       var qTo   = (state.meta && state.meta.to)   || ($('to-date')   && $('to-date').value)   || '';
       var wd = workingDaysBetween_(qFrom, qTo);

@@ -25,6 +25,12 @@ const DEPT_COLORS = {
   8: "#d9d2e9", 9: "#BDBDBD", 10: "#fff2cc"
 };
 
+// QCD violation gate: a queue-day whose abandoned rate EXCEEDS this writes 1
+// to QCD Historical Data col L (the count every dashboard Viol figure sums).
+// Owner 2026-08: lowered 0.05 -> 0.04. Historical rows keep the flag they
+// were written with -- rebuilding a date re-evaluates it at the current rate.
+const QCD_VIOLATION_ABANDON_RATE = 0.04;
+
 const SALES_QUEUE_NUMBER = "18883645897";
 const SALES_PATH_VM      = "192";                
 const SALES_PATH_EXCLUDE = "1017";               
@@ -1106,7 +1112,7 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
       const ans     = Number(dispRow[7]) || 0;
       const abnd    = Number(dispRow[8]) || 0;
       const abndPct = total > 0 ? (abnd / total) : 0;
-      const viol    = abndPct > 0.05 ? 1 : 0;
+      const viol    = abndPct > QCD_VIOLATION_ABANDON_RATE ? 1 : 0;
       qcdBatch.push([
         row[3], row[4], parsePendingDate(row[0]), row[2], row[5],
         total, ans, abnd,
@@ -1898,7 +1904,7 @@ if (!skipCDR && obcHD) {
       const total = Number(r[0]) || 0;
       const abnd  = Number(r[2]) || 0;
       const abndPct = total > 0 ? (abnd / total) : 0;
-      const viol    = abndPct > 0.05 ? 1 : 0;
+      const viol    = abndPct > QCD_VIOLATION_ABANDON_RATE ? 1 : 0;
       qcdBatch.push([
         monthStr, weekStr, dateObj, results.qcdData.labels[i][0], results.qcdData.labels[i][1],
         r[0], r[1], r[2], r[3], r[4], abndPct, viol

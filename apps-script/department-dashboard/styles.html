@@ -360,7 +360,7 @@
 
   /* Days-to-violation forecast banner (E9, Phase E). Compact
      warn-soft block above the QCD KPI tiles when a linear regression
-     on the last 7 days of abandonedPct projects a 5% threshold
+     on the last 7 days of abandonedPct projects an abandon-threshold
      crossing within 7 days. Hidden in healthy states. */
   .qcd-forecast {
     margin: 0 0 12px;
@@ -851,7 +851,7 @@
   .ans-seg.miss { background: var(--warn); }
   .ans-seg.none { background: var(--paper-2); }
   /* R10-4: threshold-aware red on the split bars (both builders --
-     answeredBarHtml_'s 92% standard, qcdDailyBarCell_'s 5% standard).
+     answeredBarHtml_'s 92% standard, qcdDailyBarCell_'s abandon standard).
      Passing rows soften the red segment so it recedes; failing rows keep
      the full red and bold their value. */
   .ans-bar--pass .ans-seg.miss { opacity: 0.35; }
@@ -3769,7 +3769,7 @@
      (the anti-intimidation layer): plain sentences before any chart. */
   /* Answer-first headline — restyled to the toned ds-banner aesthetic
      (decision: status-toned banner). Neutral = accent; is-good / is-warn tint
-     the background, rail, and badge from the 92% / 5% company standards ONLY.
+     the background, rail, and badge from the answer-target / abandon company standards ONLY.
      Shared by reportHeadline_ (7 reports) + the My-Department missed glance, so
      the tone class is opt-in: no class = neutral (untoned surfaces unchanged). */
   .report-headline {
@@ -3938,7 +3938,7 @@
   @keyframes ds-tip-in { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .ds-tooltip { animation: none; } }
   /* Rich glossary tooltip: a titled definition + an optional benchmark chip
-     (the 92% / 5% company standards). Plain-text tooltips are unaffected. */
+     (the answer-target / abandon company standards). Plain-text tooltips are unaffected. */
   .ds-tooltip--rich { padding: 9px 12px; }
   .ds-tooltip .ds-tip-title {
     display: block;
@@ -4187,7 +4187,7 @@
     margin-top: 10px;
   }
 
-  /* Universal benchmark tints: the 92% answer-rate target and the 5%
+  /* Universal benchmark tints: the 92% answer-rate target and the
      abandoned-% violation threshold, applied to KPI values / cells by
      script.html::benchValueCls_. */
   .bm-target { color: var(--good); }
@@ -4947,7 +4947,7 @@
     from { opacity: 1; transform: none; }
     to   { opacity: 0; transform: translateY(-4px); }
   }
-  /* R16e (owner): an abandoned rate at/over the 5% company standard reads BOLD
+  /* R16e (owner): an abandoned rate at/over the company abandon standard reads BOLD
      + RED here, matching the Daily Call Queue Report's treatment -- the softer
      warn tint didn't pop against the split bar. NB the weight has to be
      restated: the global `.qcd-rate-over { font-weight: 700 }` loses to
@@ -5128,7 +5128,7 @@
   @media (max-width: 720px) { .qcd-verdict-band { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
   /* QV-3: hero layout -- the company abandon% leads at ~2x weight, the three
-     secondary tiles stack beside it. Tones stay the binary 5%-standard pair. */
+     secondary tiles stack beside it. Tones stay the binary abandon-standard pair. */
   .qcd-verdict-band--hero { grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr); align-items: stretch; }
   .qcd-verdict-rest { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .qcd-hero { border: 1px solid var(--line); border-left: 4px solid var(--good);
@@ -5147,6 +5147,8 @@
     background: currentColor; border-radius: var(--r-pill); }
   .qcd-hero--warn .qcd-hero-fill { background: var(--warn); }
   .qcd-hero--good .qcd-hero-fill { background: var(--good); }
+  /* left is a fallback -- script-11 positions the tick inline at
+     ABANDON_STANDARD_ * 10% of the 0-10% scale. */
   .qcd-hero-tick { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px;
     background: var(--ink); opacity: 0.45; }
   .qcd-hero-tick-lbl { position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
@@ -5169,15 +5171,15 @@
     .qcd-verdict-rest { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
 
-  /* QV-1: the 5%-threshold tick on the all-dept split bars. Positioned by
+  /* QV-1: the abandon-threshold tick on the all-dept split bars. Positioned by
      inline left:(answered% + 5%); the red segment crossing it == over the
-     5% line. Screen-only (stripped from the print clone). */
+     standard line. Screen-only (stripped from the print clone). */
   .qcd-daily-bar-cell .ans-track { position: relative; }
   .qcd-thresh-tick { position: absolute; top: -2px; bottom: -2px; width: 2px;
     background: var(--ink); opacity: 0.4; pointer-events: none; }
 
   /* QV-2: dept banner rows -- health rail + bigger name + tinted row + a
-     right-aligned mini-summary. Binary tones only (warn >= 5% or any queue
+     right-aligned mini-summary. Binary tones only (warn >= the abandon standard or any queue
      in violation / sage otherwise / muted when no calls). Tint stays light
      so the queue rows beneath keep reading. */
   .qcd-alldept-deptrow td { padding-top: 10px; padding-bottom: 8px; }
@@ -5221,10 +5223,10 @@
     margin: 6px 0 8px; }
   .cj-related-btn { font: inherit; color: var(--accent); background: none;
     border: none; padding: 0; cursor: pointer; text-decoration: underline; }
-  /* #3d: abandon % over the 5% threshold reads bold (color comes from the
+  /* #3d: abandon % over the threshold reads bold (color comes from the
      bm-over / qcd-warn-light warn tint). */
   .qcd-rate-over { font-weight: 700; }
-  /* Daily Call Queue Report: an abandoned rate at/over the 5% company
+  /* Daily Call Queue Report: an abandoned rate at/over the company abandon
      threshold reads BOLD + RED (not the softer warn tint) on the split bar,
      so an over-threshold queue pops. Scoped to this report; other surfaces
      that share qcdDailyBarCell_ (Insights daily breakdown) keep the warn tint. */
@@ -6100,6 +6102,24 @@
     background: var(--warn-soft);
     border-color: var(--warn);
   }
+  /* R22 (owner): the "N viol MTD" chip is TIERED -- 0 green (a clean month
+     is information), 1-2 amber, 3+ red. The day-level chips above keep the
+     binary .ov-qcd-violation treatment. */
+  .ov-qcd-viol-none {
+    color: var(--good);
+    background: var(--good-soft);
+    border-color: var(--good);
+  }
+  .ov-qcd-viol-low {
+    color: var(--warn);
+    background: var(--warn-soft);
+    border-color: var(--warn);
+  }
+  .ov-qcd-viol-high {
+    color: var(--bad);
+    background: var(--bad-soft);
+    border-color: var(--bad);
+  }
   .ov-qcd-elevated {
     color: var(--muted);
     background: var(--paper-2);
@@ -6599,7 +6619,9 @@
     background: color-mix(in srgb, var(--warn) 8%, transparent);
     border-left: 2px solid color-mix(in srgb, var(--warn) 50%, transparent);
     border-radius: var(--r); padding: 4px 8px; margin-top: 6px;
+    transition: opacity 0.6s ease;   /* R22: auto-fade (script-2 timer adds .is-fading) */
   }
+  .dept-clamp-note.is-fading { opacity: 0; }
   /* R17g: the sticky-strip workday count (see #dept-workdays-wrap). Aligns
      with the input row via the control's spacer label. */
   .dept-workdays-pill {
@@ -6662,7 +6684,7 @@
        - Status color: a card sets .is-good/.is-warn/.is-bad and
          children read var(--status)/var(--status-soft). The JS that
          ASSIGNS those classes must use the existing binary
-         benchValueCls_ semantics (92% / 5%) -- do NOT introduce the
+         benchValueCls_ semantics (the answer-target / abandon standards) -- do NOT introduce the
          design's invented 85%/8% bands (decision C2).
        - Components are static here; the Phase 2 motion layer adds
          transitions keyed off --ease/--dur-* + a reduced-motion guard.
@@ -6717,7 +6739,7 @@
   .ds-kpi__spark { display: block; width: 100%; height: 22px; margin-top: 6px; line-height: 0; }
   .ds-kpi__foot  { font: 400 10px/1.4 var(--mono); color: var(--muted); margin-top: 4px; }
   /* Preserve the binary benchmark tint (benchValueCls_ -> bm-target/bm-over,
-     the 92% / 5% company standards). The ds-* layer lands at the END of this
+     the answer-target / abandon company standards). The ds-* layer lands at the END of this
      file, AFTER .bm-target/.bm-over, so the bench classes (single-class, equal
      specificity) would otherwise lose the cascade to the explicit color on
      .ds-kpi__value / .ds-kpi__foot. These two-class overrides keep the tint

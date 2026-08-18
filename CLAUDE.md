@@ -864,8 +864,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`#ins-heatmap`, a Queue-health companion gated by the SAME
   `USER.role==='admin'` check in `insRenderReport_` -- part of the
   QCD->Insights consolidation parity; managers get the else-branch hide).
-  Cell color pivots on the 5%
-  company standard (C2): ≤5% calm sage, >5% ramps warm; cells under
+  Cell color pivots on the 4%
+  company standard (C2, ABANDON_STANDARD_): ≤4% sage, >4% ramps warm; cells under
   `HEAT_MIN_VOLUME_`=3 calls render muted ("low signal"), colors resolve
   through `colorToCanvasRgb_` so they're OKLCH/theme-safe (INV-42).
   **TZ (the one thing to verify live):** `inbound_calls.call_start` is
@@ -2138,8 +2138,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   IR agent cards, from the `excludedFromTeamAvg` field on each `summaryData`
   row (INV-26). (**E9**) the **QCD days-to-violation forecast**
   (`#qcd-forecast`): a 7-day linear regression on `dailySeries.abandonedPct`
-  (INV-51) projecting when the 5% threshold crosses, hidden in three healthy
-  states -- currentY >= 5 (already over), slope <= 0.01 (flat / improving), or
+  (INV-51) projecting when the 4% threshold crosses, hidden in three healthy
+  states -- currentY >= 4 (already over), slope <= 0.01 (flat / improving), or
   a projected crossing more than 7 days out. The three later Phase E items
   each have their own home: **E5** per-row WoW chips (the "Per-row
   prior-period chips" gotcha), **E8** alert Skip Dates (INV-33 / INV-34),

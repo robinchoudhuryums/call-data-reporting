@@ -1411,10 +1411,10 @@
 
   // Days-to-violation forecast (E9, Phase E). Linear regression on
   // the last 7 entries of dailySeries.abandonedPct; if slope > 0 and
-  // the regression projects a crossing of the 5% violation threshold
+  // the regression projects a crossing of the abandon-violation threshold
   // within QCD_FORECAST_HORIZON_DAYS (=7), surface a warn-tinted
   // banner above the KPI tiles. Hidden in healthy states (negative
-  // slope, projected crossing too far out, or already above 5%).
+  // slope, projected crossing too far out, or already above the standard).
   //
   // Math (avoids any library dep):
   //   slope = (n*Σxy - Σx*Σy) / (n*Σx² - (Σx)²)
@@ -1426,7 +1426,7 @@
   /**
    * SHARED days-to-violation forecast (INV-51 / E9 semantics): 7-day
    * linear regression on a daily abandoned-% series, projecting when
-   * the 5% threshold will cross. Returns inner HTML, or '' in the
+   * the abandon threshold will cross. Returns inner HTML, or '' in the
    * three healthy states (already over / flat-or-improving / crossing
    * beyond the horizon). Consumed by the QCD Report AND the Insights
    * Queue health section, so the two can't disagree.
@@ -1438,7 +1438,7 @@
     const currentY = ys[ys.length - 1];
     // Already above threshold? No forecast -- the operator is past
     // the projection horizon; existing chrome already flags it.
-    if (currentY >= 5) return '';
+    if (currentY >= ABANDON_STANDARD_) return '';
     const n = ys.length;
     let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
     for (let i = 0; i < n; i++) {
@@ -1460,7 +1460,7 @@
       + 'Abandoned % is trending up '
       + '<strong>+' + escapeHtml(slopeDay) + '%/day</strong>'
       + ' over the last ' + QCD_FORECAST_WINDOW_DAYS + ' days. '
-      + 'At this rate, it crosses the 5% violation threshold in '
+      + 'At this rate, it crosses the ' + ABANDON_STANDARD_ + '% violation threshold in '
       + '<strong>~' + wholeDays + ' day' + (wholeDays === 1 ? '' : 's') + '</strong>.';
   }
 
@@ -1489,7 +1489,7 @@
 
   // Answered-vs-abandoned split bar for the Insights Daily breakdown, mirroring
   // the My Department agent table's answeredBarHtml_ (green answered + red
-  // abandoned over total calls; the rate cell shows abandoned % with the 5%
+  // abandoned over total calls; the rate cell shows abandoned % with the
   // benchmark tint). Reuses the .ans-bar / .ans-seg component.
   function qcdDailyBarCell_(r, opts) {
     var total = Number(r.totalCalls)    || 0;
@@ -1499,30 +1499,30 @@
     var pctAb = total ? (ab / total * 100) : 0;
     var rest  = Math.max(0, 100 - pctA - pctAb);
     var abStr = r.abandonedPctStr || ((Number(r.abandonedPct) || 0).toFixed(2) + '%');
-    // #3d: over the 5% threshold reads BOLD (+ the warn tint from benchValueCls_)
+    // #3d: over the abandon threshold reads BOLD (+ the warn tint from benchValueCls_)
     // so it pops on the split bar and the granular source lines.
-    var over = (Number(r.abandonedPct) || 0) >= 5;
+    var over = (Number(r.abandonedPct) || 0) >= ABANDON_STANDARD_;
     var rateCls = benchValueCls_('abandoned %', abStr, true) + (over ? ' qcd-rate-over' : '');
     var title = fmtNumber(a) + ' answered · ' + fmtNumber(ab) + ' abandoned · '
               + fmtNumber(total) + ' calls · ' + abStr + ' abandoned';
-    // QV-1 (opt-in, all-dept report only): a 5%-threshold tick on the split
+    // QV-1 (opt-in, all-dept report only): an abandon-threshold tick on the split
     // bar. The bar is share-of-total (green answered, then red abandoned),
-    // so the tick sits at (answered% + 5%) -- the red segment ENDING past it
-    // is exactly "abandoned > 5% of offered". Hidden when answered > 95%
-    // (the tick would overflow, and abandon can't exceed 5% there anyway)
+    // so the tick sits at (answered% + the standard) -- the red segment ENDING past it
+    // is exactly "abandoned > standard% of offered". Hidden when answered is so high
+    // the tick would overflow (abandon can't exceed the standard there anyway)
     // and on zero-volume rows. Screen-only decoration (`qcd-screen-only` is
     // stripped by the print path; the CSV builds from data, never the DOM) --
     // exported cell text is unchanged.
     var tick = '';
-    if (opts && opts.tick && total > 0 && (pctA + 5) < 100) {
-      tick = '<span class="qcd-thresh-tick qcd-screen-only" style="left:' + (pctA + 5) + '%"></span>';
+    if (opts && opts.tick && total > 0 && (pctA + ABANDON_STANDARD_) < 100) {
+      tick = '<span class="qcd-thresh-tick qcd-screen-only" style="left:' + (pctA + ABANDON_STANDARD_) + '%"></span>';
     }
     var segs = total
       ? '<span class="ans-seg ans" style="width:' + pctA + '%"></span>'
         + '<span class="ans-seg miss" style="width:' + pctAb + '%"></span>'
         + (rest > 0.1 ? '<span class="ans-seg none" style="width:' + rest + '%"></span>' : '')
       : '<span class="ans-seg none" style="width:100%"></span>';
-    // R10-4: passing the 5% standard renders the abandoned segment
+    // R10-4: passing the abandon standard renders the abandoned segment
     // light/translucent; failing keeps the full red (value bolding already
     // rides .qcd-rate-over above).
     var passCls = total ? (over ? ' ans-bar--fail' : ' ans-bar--pass') : '';
@@ -1534,7 +1534,7 @@
     // Insights daily breakdown tallies too (owner follow-up) -- its unit is
     // computed per render from the DISPLAYED rows (insQhDailyRender_), so a
     // re-scope to a quiet sub-queue re-normalizes instead of shrinking to
-    // dots. The 5%-standard soft-red treatment rides the same ans-bar--pass
+    // dots. The abandon-standard soft-red treatment rides the same ans-bar--pass
     // class.
     var useTally = opts && opts.tallyUnit > 0 && total > 0;
     if (useTally && opts.tallyUnit > 1) title += ' · each block ≈ ' + opts.tallyUnit + ' calls';
@@ -1585,7 +1585,7 @@
     var bar = !!(opts && opts.bar);
     return (rows || []).map(function (r) {
       var pct = Number(r.abandonedPct) || 0;
-      var pctCls = pct >= 5 ? 'num qcd-warn-light' : 'num';
+      var pctCls = pct >= ABANDON_STANDARD_ ? 'num qcd-warn-light' : 'num';
       var viol = Number(r.violations) || 0;
       var violCls = viol > 0 ? 'num qcd-warn-light' : 'num';
       // data-date keys the violation-date -> daily-row jump (insJumpToDailyRow_).
@@ -1630,7 +1630,7 @@
                 +  '<td class="num">' + fmtNumber(s.totalCalls)    + '</td>'
                 +  '<td class="num">' + fmtNumber(s.totalAnswered) + '</td>'
                 +  '<td class="num">' + fmtNumber(s.abandoned)     + '</td>'
-                +  '<td class="num' + (sPct >= 5 ? ' qcd-warn-light qcd-rate-over' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
+                +  '<td class="num' + (sPct >= ABANDON_STANDARD_ ? ' qcd-warn-light qcd-rate-over' : '') + '">' + escapeHtml(s.abandonedPctStr) + '</td>'
                 +  '<td class="num">' + escapeHtml(s.longestWait)  + '</td>'
                 +  '<td class="num">' + escapeHtml(s.avgAnswer)    + '</td>'
                 +  '<td class="num' + (sViol > 0 ? ' qcd-warn-light' : '') + '">' + fmtNumber(s.violations) + '</td>'

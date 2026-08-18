@@ -370,7 +370,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   past month 1 inside the fixed-height chart wrap, which calendar mode
   now also releases via `.ir-chart-wrap--cal`); an **'Abandoned %'**
   cell rendering (dept-total daily abandoned % from
-  `queueHealth.dailySeries`, colored on the 5% standard) makes the
+  `queueHealth.dailySeries`, colored on the abandon standard (4%)) makes the
   Queue: Abandoned % metric calendar-eligible too; and the
   Line⇄Calendar toggle stays VISIBLE but disabled with a reason
   tooltip (`insCalendarIneligibleReason_`) on ineligible metrics/windows
