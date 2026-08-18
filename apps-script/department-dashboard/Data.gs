@@ -794,7 +794,8 @@ function getDepartmentSummary(req) {
   // (INV-30) and both modes are the same rule under a different scope.
   const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = 'summary:v20:' + dept + ':' + scope + ':' + subScope
-                 + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope;
+                 + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
+                 + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

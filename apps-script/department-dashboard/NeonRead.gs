@@ -234,21 +234,40 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     // rs.getString, instead of ~12 getXXX calls per row. Turns ~150k JDBC
     // round-trips into 1. Order is irrelevant -- downstream maps by
     // (date, agent). COALESCE so an empty range returns '[]' not null.
+    // R24 egress (owner: Neon monthly transfer cap): POSITIONAL arrays, not
+    // keyed objects -- json_agg(t) repeated every column NAME on every row
+    // (~120B/row of pure key overhead, ~half the payload on the metric
+    // columns). The array position protocol is fixed: base cols 0..12 in the
+    // SELECT order below (queue_split ALWAYS occupies slot 12 -- when skipped
+    // it selects '' so positions never shift), detail cols 13..33 when
+    // requested. The parse loop below and the dal-cutover test fixture are
+    // the two mirrors of this order.
     var detailCols = includeMissedDetail
       ? ', ' + NEON_DQE_SLOT_COLS.join(', ') + ', abandoned_parent_ids, abandoned_missed_times'
       : '';
-    var sql = "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
-            + "SELECT month_year, call_date::text AS d, agent_name, queue_extensions, "
+    // R24 egress: the per-row queue_split JSON is dead weight while
+    // QUEUE_SPLIT_SCOPE is off (applyQueueSplitToRows_ no-ops and every
+    // consumer's cache key carries the scope suffix), so select '' instead
+    // of the stored JSON unless the scope is 'dept' or the caller forces it
+    // (compareDqeSources_ passes withQueueSplit so the parity gate always
+    // certifies the real column). COALESCE so a pre-Phase-1 NULL reads as ''
+    // and takes the fail-open path either way.
+    var wantSplit = !!(opts && opts.withQueueSplit);
+    try {
+      if (!wantSplit && typeof getQueueSplitScope_ === 'function') {
+        wantSplit = getQueueSplitScope_() === 'dept';
+      }
+    } catch (eQs) { wantSplit = true; }   // unreadable scope -> fetch it (never lose data)
+    var splitExpr = wantSplit ? "COALESCE(queue_split, '')" : "''";
+    var sql = "SELECT COALESCE(json_agg(json_build_array("
+            + "month_year, call_date::text, agent_name, queue_extensions, "
             + "total_unique, total_rung, total_missed, total_answered, "
             + "ttt, att, avg_abd_wait, csr_avg_abd_wait, "
-            // Sub-queue Phase 2. COALESCE so a pre-Phase-1 row reads as '' and
-            // takes applyQueueSplitToRows_'s fail-open path rather than null.
-            + "COALESCE(queue_split, '') AS queue_split" + detailCols + " "
+            + splitExpr + detailCols + ")), '[]')::text AS j "
             + "FROM dqe_history WHERE call_date BETWEEN ?::date AND ?::date"
             + (agentFilter
                ? ' AND agent_name IN (' + agentFilter.map(function () { return '?'; }).join(',') + ')'
-               : '')
-            + ") t";
+               : '');
     var stmt = conn.prepareStatement(sql);
     stmt.setString(1, fromIso);
     stmt.setString(2, toIso);
@@ -262,30 +281,31 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     rs.close(); stmt.close();
     var arr = JSON.parse(json || '[]');
     for (var i = 0; i < arr.length; i++) {
-      var r = arr[i];
-      var agent = String(r.agent_name || '').trim();
+      var r = arr[i];   // positional array -- see the protocol comment above
+      var agent = String(r[2] == null ? '' : r[2]).trim();
       if (!agent) continue;
       var row = {
-        dateIso:          String(r.d || '').trim(),
+        dateIso:          String(r[1] == null ? '' : r[1]).trim(),
         agent:            agent,
-        monthYear:        String(r.month_year || '').trim(),
-        queueExt:         String(r.queue_extensions || '').trim(),
-        totalUnique:      Number(r.total_unique)   || 0,
-        totalRung:        Number(r.total_rung)     || 0,
-        totalMissed:      Number(r.total_missed)   || 0,
-        totalAnswered:    Number(r.total_answered) || 0,
-        tttSec:           parseHmsDisplay_(r.ttt),
-        attSec:           parseHmsDisplay_(r.att),
-        avgAbdWaitSec:    parseHmsDisplay_(r.avg_abd_wait),
-        csrAvgAbdWaitSec: parseHmsDisplay_(r.csr_avg_abd_wait),
-        queueSplit:       String(r.queue_split == null ? '' : r.queue_split).trim(),
+        monthYear:        String(r[0] == null ? '' : r[0]).trim(),
+        queueExt:         String(r[3] == null ? '' : r[3]).trim(),
+        totalUnique:      Number(r[4]) || 0,
+        totalRung:        Number(r[5]) || 0,
+        totalMissed:      Number(r[6]) || 0,
+        totalAnswered:    Number(r[7]) || 0,
+        tttSec:           parseHmsDisplay_(r[8]),
+        attSec:           parseHmsDisplay_(r[9]),
+        avgAbdWaitSec:    parseHmsDisplay_(r[10]),
+        csrAvgAbdWaitSec: parseHmsDisplay_(r[11]),
+        queueSplit:       String(r[12] == null ? '' : r[12]).trim(),
       };
       if (includeMissedDetail) {
-        row.slots = NEON_DQE_SLOT_COLS.map(function (c) {
-          return String(r[c] == null ? '' : r[c]).trim();
+        row.slots = NEON_DQE_SLOT_COLS.map(function (c, si) {
+          var v = r[13 + si];
+          return String(v == null ? '' : v).trim();
         });
-        row.abandonedParentIds   = String(r.abandoned_parent_ids   == null ? '' : r.abandoned_parent_ids).trim();
-        row.abandonedMissedTimes = String(r.abandoned_missed_times == null ? '' : r.abandoned_missed_times).trim();
+        row.abandonedParentIds   = String(r[13 + NEON_DQE_SLOT_COLS.length]     == null ? '' : r[13 + NEON_DQE_SLOT_COLS.length]).trim();
+        row.abandonedMissedTimes = String(r[13 + NEON_DQE_SLOT_COLS.length + 1] == null ? '' : r[13 + NEON_DQE_SLOT_COLS.length + 1]).trim();
       }
       out.push(row);
     }
@@ -441,7 +461,9 @@ function compareDqeSources_() {
     return v;
   };
 
-  var detailOpts = { includeMissedDetail: true };
+  // withQueueSplit: the parity gate certifies the REAL stored column even
+  // while QUEUE_SPLIT_SCOPE=off skips it on the egress-lean read path (R24).
+  var detailOpts = { includeMissedDetail: true, withQueueSplit: true };
   var sheetRows = sheetFetchDqeRows_(COMPARE_FROM, COMPARE_TO, detailOpts);
   var neonRows  = neonFetchDqeRows_(COMPARE_FROM, COMPARE_TO, detailOpts);
   Logger.log('sheet rows: %s | neon rows: %s', sheetRows.length, neonRows.length);

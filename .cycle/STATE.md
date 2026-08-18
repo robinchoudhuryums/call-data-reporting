@@ -3176,3 +3176,14 @@ Four owner items in one round:
 Tests: prior-window pins recomputed (compute-summary E5, IR R8-D3,
 insights x2 -- fixtures moved off the weekend dates). 761/761; INV-16 +
 ratchet green. Pushed to branch; NOT merged (no owner word this round).
+
+## Increment 126 (2026-08-18) — Neon egress round (transfer cap incident)
+
+Owner hit Neon's monthly public-transfer cap mid-month (managers live).
+/broad-implement: ship R24 + three egress cuts. See
+.cycle/blocks/126-egress-broad-implement.md for the full summary block.
+Key design point: the 6 h report TTL required the reportFreshnessTag_ key
+suffix (latest DQE date) -- overviewCacheKey_ had no date anchor, so a long
+TTL alone would have hidden each morning's ingest for hours. dal-cutover's
+fake conn now mirrors the positional array protocol keyed off the real SQL.
+761/761; merged per the owner's "R24 deploy" instruction.

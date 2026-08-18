@@ -267,16 +267,18 @@ const TZ = 'America/Chicago';
 const CACHE_TTL_SECONDS = 5 * 60;
 
 // Longer TTL for the heavy per-(dept,range) report aggregations
-// (My Department summary, Overview, Individual / Performance / Compare /
-// QCD / Missed, active-agents picker). DQE data updates once daily, so a
-// 30-min cache is safe for historical windows and cuts how often a reader
-// does a fresh read -- which in turn reduces how often the Neon read-back
-// (when DQE_READ_SOURCE=neon) hits a cold free-tier instance. Tradeoff:
-// ad-hoc admin corrections (orphan renames, DQE rebuilds) can take up to
-// this long to appear in cached views that aren't explicitly busted on
-// write. Orphan Fix already busts the relevant caches; a Dept Config save
-// busts COMPANY_OVERVIEW_CACHE_KEY.
-const REPORT_CACHE_TTL_SECONDS = 30 * 60;
+// (My Department summary, Overview, Individual / Insights / Missed,
+// active-agents picker). DQE data updates once daily, so a long cache is
+// safe for historical windows: a NEW data day moves the default To date,
+// which is a NEW cache key, so fresh mornings never serve yesterday's blob.
+// R24 (owner: Neon monthly TRANSFER cap exhausted): raised 30 min -> 6 h
+// (CacheService's max, the qcdAll precedent) -- each cached serve is a Neon
+// fetch that never happens, multiplying the egress cuts in the read path.
+// Tradeoff: ad-hoc admin corrections (orphan renames, DQE rebuilds, a
+// mid-day force re-import) can take up to this long to appear in cached
+// views that aren't explicitly busted on write. Orphan Fix already busts
+// the relevant caches; a Dept Config save busts COMPANY_OVERVIEW_CACHE_KEY.
+const REPORT_CACHE_TTL_SECONDS = 6 * 3600;
 
 // Shorter TTL for identity/access lookups so new managers don't have to
 // wait 5 minutes after being added to the Access Control sheet.

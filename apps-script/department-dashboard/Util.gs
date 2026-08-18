@@ -330,6 +330,19 @@ function isDateInSkipRanges_(dateIso, ranges) {
 function round1_(n) { return Math.round((Number(n) || 0) * 10) / 10; }
 
 /**
+ * R24 (6h report TTL): the latest-DQE-date tag every heavy report cache key
+ * carries, so the morning ingest MINTS NEW KEYS within getLatestDataDate's
+ * 5-min tier instead of waiting out a long TTL. 'na' on any failure -- the
+ * key still works, it just loses the auto-bust for that request.
+ */
+function reportFreshnessTag_() {
+  try {
+    var d = (typeof getLatestDataDate === 'function') ? getLatestDataDate() : null;
+    return d ? String(d) : 'na';
+  } catch (e) { return 'na'; }
+}
+
+/**
  * Combined DQE+QCD read-source cache-key suffix (CORE-3, extended for the #3
  * QCD read-back). Returns e.g. 'sheet-sheet' | 'neon-sheet' | 'neon-neon'.
  *
@@ -501,7 +514,7 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
   // mid-backfill, and vice versa right after a rebuild).
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to + ':' + dqeSource;
+  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to + ':' + dqeSource + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try { return JSON.parse(cached); } catch (e) { /* recompute */ }

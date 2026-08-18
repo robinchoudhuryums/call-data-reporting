@@ -208,7 +208,7 @@ function getIndividualReport(req) {
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
                  + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey
-                 + ':' + dqeReadSrc + ':' + qsScopeKey;
+                 + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

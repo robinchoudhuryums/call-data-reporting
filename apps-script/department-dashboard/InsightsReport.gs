@@ -184,7 +184,8 @@ function getInsightsReport(req) {
   // Adoption round: + the queue-split scope (S2-0 cross-mode cache rule).
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
-                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc + ':' + qsScopeKey;
+                 + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc + ':' + qsScopeKey
+                 + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

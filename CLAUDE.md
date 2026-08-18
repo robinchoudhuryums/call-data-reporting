@@ -1613,9 +1613,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a whole-sheet cols-A..D scan, falling back to the sheet read if Neon pairs
   are unavailable. The two `call_date` indexes below are
   now created in prod. NOTE: `latestDate:`/`latestDates:` stay on the 5-min
-  `CACHE_TTL_SECONDS`; the heavy report aggregations cache 30 min
-  (`REPORT_CACHE_TTL_SECONDS`) -- both levers reduce how often a cutover
-  reader hits a cold free-tier Neon (see the Neon keep-warm bullet).
+  `CACHE_TTL_SECONDS`; the heavy report aggregations cache 6 h
+  (`REPORT_CACHE_TTL_SECONDS`, freshness-tagged, R24) -- both cut how
+  often a cutover reader hits a cold free-tier Neon (see keep-warm).
   **Index prerequisite (F1):** before cutting over the date/agent-filtered
   readers, make sure `dqe_history` is indexed for those queries --
   `CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);`
@@ -1719,21 +1719,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Per-project gitignored `.clasp.json`**. Each developer keeps their own
   `scriptId` locally; pulls never conflict on it. Template at
   `.clasp.example.json`.
-- **CacheService tiers**: 30 min (`REPORT_CACHE_TTL_SECONDS`) on the heavy
-  per-(dept,range) aggregations (My Department `summary`, `companyOverview`,
-  `individual`, `individual_active`, `performance`, `compareRanges`,
-  `insights`, `missed`); **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+- **CacheService tiers**: 6 h (`REPORT_CACHE_TTL_SECONDS` -- R24: raised
+  from 30 min when the Neon monthly TRANSFER cap blew; every cached serve is
+  a Neon fetch avoided) on the heavy per-(dept,range) aggregations (My
+  Department `summary`, `companyOverview`, `individual`, `individual_active`,
+  `insights`, `missed`, `direct`, `inbound`). Safe at 6 h because every one
+  of those keys now carries `reportFreshnessTag_()` (Util.gs -- the latest
+  DQE date, itself on the 5-min tier), so the morning ingest MINTS NEW KEYS
+  within minutes instead of waiting out the TTL; a new heavy report key MUST
+  join that tag or it inherits the stale-morning bug the tag exists to
+  prevent. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
   serve all day; trade-off: a rare mid-day force re-import's corrections
   can lag there up to 6h (paired with the CacheWarm qcdAll warm, which is
   freshness-guarded); 5 min (`CACHE_TTL_SECONDS`) on the freshness-sensitive
   `latestDate` / `latestDates` lookups so the morning ingest surfaces
-  promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The 30-min
-  tier is safe because DQE data updates once daily; the tradeoff is that
-  ad-hoc admin corrections (orphan renames, DQE rebuilds) can lag up to
-  30 min in cached views not explicitly busted on write (Orphan Fix +
-  Dept Config save bust theirs). Each report file owns its own versioned
+  promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The tradeoff
+  of the 6 h tier: ad-hoc admin corrections (orphan renames, DQE rebuilds,
+  a mid-day force re-import) can lag up to 6 h in cached views not
+  explicitly busted on write (Orphan Fix + Dept Config save bust theirs;
+  the freshness tag busts only when the LATEST date moves). Each report file owns its own versioned
   cache prefix (`summary:`, `latestDate:`, `individual:`,
   `individual_active:`, `performance:`, `compareRanges:`, `missed:`,
   `companyOverview:`); bump the relevant version on any aggregation-rule
@@ -2230,7 +2236,7 @@ items for anything it flags or doesn't cover.)
 1. Did the daily ingest run? (+ `probeOverviewChartDates()` when a date gap shows despite parity-clean data)
 2. Does the deployed VERSION include the latest push? (Manage deployments -> timestamp)
 3. Did the user actually have access? (`Access Control` rows are case-sensitive on email)
-4. Is the cache stale? (per-report prefix, INV-30; 30 min reports / 5 min freshness)
+4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
 6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, ten sheets)
 7. Is `DASHBOARD_URL` set? (alert-email links + every report's "Open in new tab")

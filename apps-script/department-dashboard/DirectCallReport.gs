@@ -152,7 +152,7 @@ function getDirectCallReport(req) {
 
   const cache = CacheService.getScriptCache();
   const cacheKey = DIRECT_CALL_CACHE_KEY_PREFIX + ':' + (scope.dept || '__all__')
-                 + ':' + scope.from + ':' + scope.to;
+                 + ':' + scope.from + ':' + scope.to + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {

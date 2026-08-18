@@ -1436,7 +1436,7 @@ behavior byte-identical to pre-OrphanFix.
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v21`) on success. Per-(dept,
 range) caches (`summary:v20`, `individual:v11`,
-etc.) are left to TTL out within 30 minutes
+etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the
 cache TTL.
