@@ -938,7 +938,7 @@
     // the dept's chart palette color, tying tile to trend line.
     const spark = irSparklineGoal_(dept.trend || [], color, {
       label: '% answered (30-day)',
-      goal: answerTarget_('global'),
+      goal: answerStdFor_(dept.name).target,   // R23: this dept's own standard
     });
     const parentTag = isChild
       ? '<span class="ov-dept-parent-tag">sub-queue &middot; ' + escapeHtml(dept.parent) + '</span>'
@@ -1021,7 +1021,7 @@
       : '';
     // Round-16: goal-gap treatment (see ovBuildGridTile_), same honest band.
     const spark = irSparklineGoal_(dept.trend || [], color,
-      { label: '% answered (30-day)', goal: answerTarget_('global') });
+      { label: '% answered (30-day)', goal: answerStdFor_(dept.name).target });
     const routable = isAllDeptViewer_();
     const routeBtn = routable
       ? '<button type="button" class="ov-subq-route" data-dept="' + escapeHtml(dept.name) + '">Open ' + escapeHtml(dept.name) + ' &rarr;</button>'

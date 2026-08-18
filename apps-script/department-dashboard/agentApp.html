@@ -23,10 +23,21 @@
   // deployment is decided. The server computes + returns it; flip this to
   // true (one line) to show it.
   var AGENT_RANK_SHOW_ = false;
-  // Display standard for the answer-rate tint. Mirrors the dashboard's 92%
-  // seed (ANSWER_TARGETS is admin-tunable there; the agent app follows in a
-  // later phase if the owner tunes it per dept).
-  var ANSWER_STANDARD_ = 92;
+  // R23: the answer standard is SERVER-RESOLVED for this agent's dept
+  // (window.__ANSWER_STD__ = {target, band} -- CSR 92/2 seed, company
+  // default 80/10) so the app always agrees with the manager dashboard's
+  // per-dept judgment. The literals are only the injection-failure fallback.
+  var ANSWER_STD_OBJ_ = (typeof window !== 'undefined' && window.__ANSWER_STD__) || {};
+  var ANSWER_STANDARD_ = (isFinite(Number(ANSWER_STD_OBJ_.target)) && Number(ANSWER_STD_OBJ_.target) > 0)
+    ? Number(ANSWER_STD_OBJ_.target) : 80;
+  var ANSWER_BAND_ = (ANSWER_STD_OBJ_.band != null && isFinite(Number(ANSWER_STD_OBJ_.band)))
+    ? Number(ANSWER_STD_OBJ_.band) : 10;
+  // Three-tier class for an answer rate (good / warn=amber / bad=red).
+  function answerRateCls_(pct) {
+    if (pct == null || !isFinite(Number(pct))) return '';
+    var n = Number(pct);
+    return n >= ANSWER_STANDARD_ ? 'good' : (n >= ANSWER_STANDARD_ - ANSWER_BAND_ ? 'warn' : 'bad');
+  }
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -105,6 +116,13 @@
   });
   presenceBeat_();
 
+  // R23: fill the glossary's dept-standard placeholder(s).
+  try {
+    document.querySelectorAll('[data-agent-std]').forEach(function (el) {
+      el.textContent = String(ANSWER_STANDARD_);
+    });
+  } catch (e) { /* cosmetic */ }
+
   // ── Window state ──────────────────────────────────────────────────────
   var latestIso = null;   // most recent DQE date; presets anchor to it
   var win = { from: null, to: null, preset: 'mtd' };
@@ -154,7 +172,7 @@
     var n = Math.max(1, team.rosterAgentCount || 1);
     var avgAns = team.answered / n, avgMiss = team.missed / n;
     var attDelta = (me.attSeconds && team.attSeconds) ? (me.attSeconds - team.attSeconds) : null;
-    var rateCls = me.answerRatePct == null ? '' : (me.answerRatePct >= ANSWER_STANDARD_ ? 'good' : 'warn');
+    var rateCls = answerRateCls_(me.answerRatePct);   // R23: three-tier (green/amber/red)
     $('agent-kpis').innerHTML =
       '<div class="agent-kpi"><div class="lbl">Answered</div><div class="val">' + fmtInt(me.answered) + '</div>'
       + '<div class="vs">' + deltaChip(me.answered - avgAns, true) + ' vs team avg (' + fmtInt(Math.round(avgAns)) + ')</div></div>'

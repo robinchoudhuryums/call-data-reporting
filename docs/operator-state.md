@@ -791,24 +791,35 @@ When something looks wrong, before assuming a code bug, check:
     assigned subset; see the "Role model" gotcha. If a manager who should
     see several depts sees only one, check for a stale 60s auth cache or
     that all their rows share the exact same email.
-37. `ANSWER_TARGETS` Script Property (dashboard; optional, R12-25) -- the
-    admin-tunable answer-rate DISPLAY standards. Tolerant `key=value` pairs
-    (`global=92, direct=80`; keys from `Config.gs::ANSWER_TARGET_SURFACES`:
-    `global` / `direct` / `inbound`; unknown keys + out-of-range values
-    silently dropped by `parseAnswerTargets_`). Unset = the seed 92%
-    everywhere. Drives the benchmark tints (`benchValueCls_` via
-    `answerTarget_(surface)`), the "On track / Watch" headline tones, the
-    Overview chart baseline + team-strip target tick, the Insights calendar
-    coloring, the Direct dept-card tone rail, the metric-glossary text, and
-    the digest verdict pill -- display/tone layer ONLY, so no cache bump;
-    injected as `window.__ANSWER_TARGETS__` at render, so viewers pick a
-    change up on their NEXT page load (emails at their next send). Edit
-    from the Alerts modal's **"Answer-rate standards"** section
-    (`saveAnswerTargets` -- assertAdmin_ + loud validation + LockService +
-    Logger audit; property-only, no sheet write). Deliberately NOT covered:
-    the 5% abandon threshold (baked into written QCD Violations history,
-    INV-50) and the per-dept ALERT thresholds (Alert Config, INV-34).
-    Pinned by `tests/unit/answer-targets.test.js`.
+37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` Script
+    Properties (dashboard; optional, R12-25 + R23) -- the admin-tunable
+    DISPLAY standards. `ANSWER_TARGETS`: tolerant `key=value` pairs
+    (`global=80, band=10, direct=75`; keys from
+    `Config.gs::ANSWER_TARGET_SURFACES` plus `band` = the amber width in
+    points below the target, 0-50; unknown keys + out-of-range values
+    silently dropped by `parseAnswerTargets_`). Unset = the seeds: global
+    80% (owner 2026-08, was 92) with a 10-pt amber band.
+    `DEPT_ANSWER_TARGETS`: per-dept overrides as `Dept=target/band` pairs
+    (`CSR=92/2`), layered over the `DEPT_ANSWER_TARGET_SEED` (CSR 92/2) --
+    read via `getAnswerStandardFor_(dept)`, which every dept-context
+    answer judgment resolves through. `TRANSFER_TIERS`: the CSR Transfer-%
+    tile's cut points (`deep=25, light=30, amber=35`; <=deep deeper-green,
+    <light light-green, <amber amber, >=amber red). Answer tints are
+    THREE-tier (green at/above target, amber within the band, red past it)
+    across the dashboard, agent app, emails, and digest verdicts --
+    display/tone layer ONLY, so no cache bump; injected as
+    `window.__ANSWER_TARGETS__` + `window.__STANDARDS__` (agent app:
+    `window.__ANSWER_STD__`, server-resolved for the agent's dept) at
+    render, so viewers pick a change up on their NEXT page load (emails at
+    their next send). Edit from the Alerts modal's **"Display standards"**
+    section (`saveAnswerTargets` -- assertAdmin_ + loud validation +
+    LockService + Logger audit; property-only, no sheet write); the Help
+    modal's "The color-coding standards" topic renders the LIVE values for
+    every user. Deliberately NOT covered: the 4% abandon threshold (baked
+    into written QCD Violations history, INV-50; shown read-only in the
+    reference) and the per-dept ALERT thresholds (Alert Config, INV-34).
+    Pinned by `tests/unit/answer-targets.test.js` + the R23 fallback pin in
+    `cross-file-pins.test.js`.
 38. **Diagnosing "a queue's inbound calls are missing" (F1/F1b runbook).**
     A queue whose raw name `icIsQueueName_` doesn't recognize gets
     `entry_queue = NULL` and attributes to NO dept. **Do NOT probe with

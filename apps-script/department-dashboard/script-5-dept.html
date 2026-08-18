@@ -2677,11 +2677,12 @@
     if (col.type === 'pct') {
       // #8 Answer % = answered / (answered + missed), matching the bar + the
       // answerRate sort. Idle rows (no rung) show a muted dash; the rest carry
-      // the 92% benchmark tint (symmetric), like the bar's inline rate.
+      // the dept-standard three-tier tint (R23), like the bar's inline rate.
       const pa = Number(row.totalAnswered) || 0, pm = Number(row.totalMissed) || 0, pt = pa + pm;
       if (!pt) return zeroCell_('–');
       const prate = Math.round(pa / pt * 100);
-      return '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true) + '">' + prate + '%</span>';
+      return '<span class="ans-rate' + benchValueCls_('% answered', prate + '%', true, null,
+        row.dept || getRequestedDept()) + '">' + prate + '%</span>';
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
@@ -3155,16 +3156,18 @@
       ansDeltaHtml  = deptStripDelta_(a - prior.answered, 'good', WOW_NOISE_THRESHOLD, '', priorTip + ': ' + prior.answered);
     }
 
-    var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
-    var under92 = total && rate < answerTarget_('global');
+    // R23: the strip judges against THIS dept's standard (CSR 92/2 seed).
+    var stripStd = answerStdFor_(getRequestedDept());
+    var rateCls = total ? benchValueCls_('% answered', rate + '%', true, null, getRequestedDept()) : '';
+    var underTarget = total && rate < stripStd.target;
     var fillPct = total ? Math.max(0, Math.min(100, rate)) : 0;
 
     var heroTile = '<div class="dts-tile dts-tile--hero">'
       + '<div class="dts-label">% Answered (rings) <span class="dts-scope">this range</span></div>'
       + '<div class="dts-value' + rateCls + '" data-flash-key="dts:rate">' + (total ? rate + '%' : '–') + '</div>'
-      + '<div class="dts-track" title="' + answerTarget_('global') + '% company target">'
-      +   '<span class="dts-track-fill' + (under92 ? ' is-under' : '') + '" style="width:' + fillPct + '%"></span>'
-      +   '<span class="dts-track-tick" style="left:' + answerTarget_('global') + '%"></span>'
+      + '<div class="dts-track" title="' + stripStd.target + '% target for this department">'
+      +   '<span class="dts-track-fill' + (underTarget ? ' is-under' : '') + '" style="width:' + fillPct + '%"></span>'
+      +   '<span class="dts-track-tick" style="left:' + stripStd.target + '%"></span>'
       + '</div>'
       + (rateDeltaHtml ? '<div class="dts-sub">' + rateDeltaHtml + ' vs prior</div>' : '')
       + '</div>';
@@ -3270,10 +3273,19 @@
         trChip = deptStripDelta_(Math.round((tr.pct - tr.prior.pct) * 10) / 10, 'bad', 1, ' pts',
           priorTip + ': ' + tr.prior.pctStr);
       }
+      // R23 (owner): tiered tint -- <=deep deeper-green, <light light-green,
+      // <amber amber, >=amber red (tunable via the Standards editor).
+      var trCls = '';
+      if (tr.pct != null && isFinite(Number(tr.pct))) {
+        var tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
+        var trPct = Number(tr.pct);
+        trCls = trPct <= tt.deep ? ' tf-deep' : (trPct < tt.light ? ' tf-light'
+              : (trPct < tt.amber ? ' tf-amber' : ' tf-red'));
+      }
       trTile =
           '<div class="dts-tile dts-tile--queue" title="Transferred &divide; total calls across CSR agents, this range (CSR Transfer Historical Data).">'
         +   '<div class="dts-label">Transfer % <span class="dts-scope">this range</span></div>'
-        +   '<div class="dts-value" data-flash-key="dts:transfer">' + escapeHtml(tr.pctStr) + '</div>'
+        +   '<div class="dts-value' + trCls + '" data-flash-key="dts:transfer">' + escapeHtml(tr.pctStr) + '</div>'
         +   '<div class="dts-sub">' + fmtNumber(tr.transferred) + ' of ' + fmtNumber(tr.totalCalls) + ' calls'
         +     (trChip ? ' &middot; ' + trChip + ' vs prior' : '') + '</div>'
         + '</div>';

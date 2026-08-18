@@ -732,8 +732,14 @@ function parseAnswerTargets_(raw) {
     const eq = tok.indexOf('=');
     if (eq <= 0) return;
     const key = tok.slice(0, eq).trim().toLowerCase();
-    if (!Object.prototype.hasOwnProperty.call(ANSWER_TARGET_SURFACES, key)) return;
     const val = Number(tok.slice(eq + 1).trim().replace(/%$/, ''));
+    // R23: `band` = the amber width in points below the target (0-50; 0 =
+    // no amber tier, straight green->red). A surface key is a target (1-100).
+    if (key === 'band') {
+      if (isFinite(val) && val >= 0 && val <= 50) out.band = Math.round(val * 10) / 10;
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(ANSWER_TARGET_SURFACES, key)) return;
     if (!isFinite(val) || val < 1 || val > 100) return;
     out[key] = Math.round(val * 10) / 10;
   });
@@ -756,8 +762,170 @@ function getAnswerTargets_() {
       PropertiesService.getScriptProperties().getProperty('ANSWER_TARGETS'));
   } catch (e) { parsed = {}; }
   if (parsed.global == null) parsed.global = ANSWER_TARGET_DEFAULT;
+  if (parsed.band == null) parsed.band = ANSWER_AMBER_BAND_DEFAULT;
   ANSWER_TARGETS_MEMO_ = parsed;
   return parsed;
+}
+
+// -- R23: per-dept answer standards + CSR transfer tiers -----------------------
+
+/**
+ * PURE. Parses the DEPT_ANSWER_TARGETS Script Property -- tolerant
+ * comma/newline-separated `Dept=target[/band]` pairs (`CSR=92/2`). Dept
+ * names are kept verbatim (trimmed; matched exactly against dashboard dept
+ * headers at read time, the DIAL_IN_LABELS discipline). Invalid targets
+ * (outside 1-100) drop the pair; an invalid band drops just the band.
+ */
+function parseDeptAnswerTargets_(raw) {
+  const out = {};
+  String(raw == null ? '' : raw).split(/[,\n]/).forEach(function (tok) {
+    const eq = tok.indexOf('=');
+    if (eq <= 0) return;
+    const dept = tok.slice(0, eq).trim();
+    if (!dept) return;
+    const parts = tok.slice(eq + 1).split('/');
+    const target = Number(String(parts[0] || '').trim().replace(/%$/, ''));
+    if (!isFinite(target) || target < 1 || target > 100) return;
+    const entry = { target: Math.round(target * 10) / 10 };
+    if (parts.length > 1) {
+      const band = Number(String(parts[1] || '').trim());
+      if (isFinite(band) && band >= 0 && band <= 50) entry.band = Math.round(band * 10) / 10;
+    }
+    out[dept] = entry;
+  });
+  return out;
+}
+
+/**
+ * PURE. Canonical DEPT_ANSWER_TARGETS property string from the editor's raw
+ * text. THROWS on any non-empty token that does not parse (the save path
+ * validates loudly; only the property PARSER above is silently tolerant).
+ * Returns '' when nothing is set (caller deletes the property).
+ */
+function deptAnswerTargetsPropertyString_(raw) {
+  const parts = [];
+  String(raw == null ? '' : raw).split(/[,\n]/).forEach(function (tok) {
+    if (!String(tok).trim()) return;
+    const parsed = parseDeptAnswerTargets_(tok);
+    const depts = Object.keys(parsed);
+    if (!depts.length) {
+      throw new Error('Could not read "' + String(tok).trim()
+        + '" — use Dept=target or Dept=target/band (e.g. CSR=92/2).');
+    }
+    const d = depts[0];
+    parts.push(d + '=' + parsed[d].target + (parsed[d].band != null ? '/' + parsed[d].band : ''));
+  });
+  return parts.join(', ');
+}
+
+var DEPT_ANSWER_TARGETS_MEMO_ = null;
+
+/** Effective per-dept overrides: property entries layered over the seed. */
+function getDeptAnswerTargets_() {
+  if (DEPT_ANSWER_TARGETS_MEMO_) return DEPT_ANSWER_TARGETS_MEMO_;
+  const out = {};
+  Object.keys(DEPT_ANSWER_TARGET_SEED).forEach(function (d) {
+    out[d] = { target: DEPT_ANSWER_TARGET_SEED[d].target, band: DEPT_ANSWER_TARGET_SEED[d].band };
+  });
+  try {
+    const parsed = parseDeptAnswerTargets_(
+      PropertiesService.getScriptProperties().getProperty('DEPT_ANSWER_TARGETS'));
+    Object.keys(parsed).forEach(function (d) { out[d] = parsed[d]; });
+  } catch (e) { /* seed only */ }
+  DEPT_ANSWER_TARGETS_MEMO_ = out;
+  return out;
+}
+
+/**
+ * The answer standard a given dept is judged against: `{ target, band }` --
+ * the dept's override when one exists (seed: CSR 92/2), else the global
+ * target + band. EVERY dept-context answer-% tint / tone / verdict should
+ * resolve through this rather than reading `.global` directly.
+ */
+function getAnswerStandardFor_(dept) {
+  const at = getAnswerTargets_();
+  const o = dept ? getDeptAnswerTargets_()[dept] : null;
+  return {
+    target: o ? o.target : at.global,
+    band:   (o && o.band != null) ? o.band : at.band,
+  };
+}
+
+/** PURE. Tolerant TRANSFER_TIERS parser (`deep=25, light=30, amber=35`). */
+function parseTransferTiers_(raw) {
+  const out = {};
+  String(raw == null ? '' : raw).split(/[,\n]/).forEach(function (tok) {
+    const eq = tok.indexOf('=');
+    if (eq <= 0) return;
+    const key = tok.slice(0, eq).trim().toLowerCase();
+    if (key !== 'deep' && key !== 'light' && key !== 'amber') return;
+    const val = Number(tok.slice(eq + 1).trim().replace(/%$/, ''));
+    if (!isFinite(val) || val < 0 || val > 100) return;
+    out[key] = Math.round(val * 10) / 10;
+  });
+  return out;
+}
+
+/**
+ * PURE. Canonical TRANSFER_TIERS property string from {deep, light, amber}.
+ * THROWS on non-numeric/out-of-range values or a non-ascending ladder
+ * (deep <= light <= amber -- the tiers are cut points on one scale).
+ * Returns '' when all three are blank.
+ */
+function transferTiersPropertyString_(req) {
+  const vals = {};
+  ['deep', 'light', 'amber'].forEach(function (key) {
+    const raw = req ? req[key] : null;
+    if (raw == null || String(raw).trim() === '') return;
+    const val = Number(String(raw).trim().replace(/%$/, ''));
+    if (!isFinite(val) || val < 0 || val > 100) {
+      throw new Error('Transfer "' + key + '" must be a number between 0 and 100 (got "' + raw + '").');
+    }
+    vals[key] = Math.round(val * 10) / 10;
+  });
+  const keys = Object.keys(vals);
+  if (!keys.length) return '';
+  if (keys.length !== 3) throw new Error('Set all three transfer tiers (deep / light / amber) or none.');
+  if (!(vals.deep <= vals.light && vals.light <= vals.amber)) {
+    throw new Error('Transfer tiers must ascend: deep <= light <= amber.');
+  }
+  return 'deep=' + vals.deep + ', light=' + vals.light + ', amber=' + vals.amber;
+}
+
+var TRANSFER_TIERS_MEMO_ = null;
+
+/** Effective transfer tiers: property overrides layered over the seed. */
+function getTransferTiers_() {
+  if (TRANSFER_TIERS_MEMO_) return TRANSFER_TIERS_MEMO_;
+  const out = { deep: TRANSFER_TIERS_DEFAULT.deep, light: TRANSFER_TIERS_DEFAULT.light, amber: TRANSFER_TIERS_DEFAULT.amber };
+  try {
+    const parsed = parseTransferTiers_(
+      PropertiesService.getScriptProperties().getProperty('TRANSFER_TIERS'));
+    ['deep', 'light', 'amber'].forEach(function (k) { if (parsed[k] != null) out[k] = parsed[k]; });
+  } catch (e) { /* seed only */ }
+  TRANSFER_TIERS_MEMO_ = out;
+  return out;
+}
+
+/**
+ * The full display-standards bundle -- what renderDashboard_ injects as
+ * `window.__STANDARDS__` and the Alerts modal's Standards editor round-trips.
+ * `abandon` rides along read-only (ABANDON_STANDARD_PCT is a code constant;
+ * the QCD violation history is baked at import time, so it is shown in the
+ * reference but not editable here).
+ */
+function getStandardsBundle_() {
+  const at = getAnswerTargets_();
+  return {
+    answer: {
+      global: at.global, band: at.band,
+      direct: at.direct != null ? at.direct : null,
+      inbound: at.inbound != null ? at.inbound : null,
+      depts: getDeptAnswerTargets_(),
+    },
+    transfer: getTransferTiers_(),
+    abandon: ABANDON_STANDARD_PCT,
+  };
 }
 
 /**
@@ -778,5 +946,14 @@ function answerTargetsPropertyString_(req) {
     }
     parts.push(key + '=' + (Math.round(val * 10) / 10));
   });
+  // R23: the global amber band rides in the same property (`band=10`).
+  const rawBand = req ? req.band : null;
+  if (rawBand != null && String(rawBand).trim() !== '') {
+    const band = Number(String(rawBand).trim());
+    if (!isFinite(band) || band < 0 || band > 50) {
+      throw new Error('"band" must be a number between 0 and 50 (got "' + rawBand + '").');
+    }
+    parts.push('band=' + (Math.round(band * 10) / 10));
+  }
   return parts.join(', ');
 }

@@ -118,7 +118,8 @@ bash scripts/check-duplicated-files.sh
 # pins), sheet-repairs-merge, dept-config-neon
 # / config-neon-c3, escalations-hardening, caller-lookup,
 # answer-targets (the R12-25 tunable display-standards parser + save
-# canonicalizer), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
+# canonicalizer, + the R23 amber band / per-dept overrides / transfer tiers),
+# coaching (the R23 turnover-suggestion gates -- dark, admin preview only), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
 # drift), html-include-structure (styles.html / script.html are Apps Script
 # INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
@@ -942,7 +943,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (per-dept prior aggregates); the client renders delta chips (`inboundDelta_`)
   on the IB Answered / IB Answer Rate / OB Calls KPI cards and on each company-view
   dept header row (answered/OB up=good, missed up=bad, answer% up=good), plus a
-  92%-standard tone rail on the dept card.** **TEMPORARILY admin-only while the carve-out numbers are
+  answer-std tone rail on the dept card.** **TEMPORARILY admin-only while the carve-out numbers are
   vetted** (the Inbound-report model: the per-dept manager path is written +
   kept intact, so release is a one-line gate removal in
   `directCallResolveRequest_` + un-hiding the `data-admin-only` Direct tab).
@@ -2068,11 +2069,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   classic proportional bar; there is no separate Rung / Missed / Answered /
   **Total calls** column; built by
   `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
-  counts and the rung total as a muted "(N)", answer-rate gets the 92%
-  benchmark tint, sorts by computed `answerRate` via a special case in
-  `sortRows`. **The CSV still emits a numeric Total calls column** spliced
+  counts and the rung total as a muted "(N)", answer-rate gets the R23
+  three-tier dept-standard tint, sorts by computed `answerRate` via a special
+  case in `sortRows`. **The CSV still emits a numeric Total calls column** spliced
   after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
-  cell = answered/(answered+missed), 92% benchmark tint, always visible so the
+  cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; shares the bar's
   `answerRate` sort key) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The five `hideable:true`
@@ -2262,7 +2263,7 @@ items for anything it flags or doesn't cover.)
 34. `UI_FLAGS` -- admin toggles that HIDE a UI surface for all viewers
 35. Neon coverage check -- per-date sheet-vs-Neon reconciliation + zero-row weekday gaps
 36. `EMAIL_ALIASES` -- alias sign-in addresses resolving to one identity (+ the multi-dept manager note)
-37. `ANSWER_TARGETS` -- the admin-tunable answer-rate DISPLAY standards (seed 92%)
+37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` -- the admin-tunable DISPLAY standards (R23: global answer target seed 80 + 10-pt amber band; CSR seed 92/2; CSR transfer tiers 25/30/35)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split

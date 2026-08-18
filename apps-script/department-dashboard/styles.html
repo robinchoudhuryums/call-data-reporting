@@ -4187,11 +4187,23 @@
     margin-top: 10px;
   }
 
-  /* Universal benchmark tints: the 92% answer-rate target and the
-     abandoned-% violation threshold, applied to KPI values / cells by
-     script.html::benchValueCls_. */
+  /* Universal benchmark tints: the answer-rate target and the abandoned-%
+     violation threshold, applied to KPI values / cells by
+     script.html::benchValueCls_. R23: answer rates are THREE-tier --
+     bm-target (green, at/above target) / bm-watch (amber, within the band
+     below) / bm-bad (red, past the band). Abandon keeps the binary
+     bm-target/bm-over pair (--warn per the token convention). */
   .bm-target { color: var(--good); }
   .bm-over   { color: var(--warn); }
+  .bm-watch  { color: var(--warn); }
+  .bm-bad    { color: var(--bad); font-weight: 600; }
+
+  /* R23: CSR Transfer-% tile tiers (script-5-dept::transferTierCls_):
+     <=deep deeper-green, <light light-green, <amber amber, >=amber red. */
+  .tf-deep  { color: var(--good); font-weight: 600; }
+  .tf-light { color: color-mix(in srgb, var(--good) 62%, var(--ink)); }
+  .tf-amber { color: var(--warn); }
+  .tf-red   { color: var(--bad); font-weight: 600; }
 
   /* Caller Lookup: one timeline card per inbound call. */
   /* R11-E (item 1): per-day collapsible grouping of the call cards. */

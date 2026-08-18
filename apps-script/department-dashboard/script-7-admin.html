@@ -390,19 +390,39 @@
     if (targetsSaveBtn) targetsSaveBtn.addEventListener('click', alSaveAnswerTargets_);
   }
 
-  // -- Answer-rate standards (admin-tunable display thresholds) -----------
+  // -- Display standards (admin-tunable thresholds, R23) ------------------
   function alRenderAnswerTargets_(at) {
     const eff = (at && at.effective) || {};
-    const seed = (at && at.seedDefault) || 92;
+    const seed = (at && at.seedDefault) || 80;
+    const std = (at && at.standards) || {};
     const g = $('al-target-global'), d = $('al-target-direct'), i = $('al-target-inbound');
+    const b = $('al-target-band');
     if (g) { g.value = eff.global != null ? eff.global : ''; g.placeholder = String(seed); }
+    if (b) { b.value = eff.band != null ? eff.band : ''; b.placeholder = String((at && at.seedBand) || 10); }
     if (d) d.value = eff.direct != null ? eff.direct : '';
     if (i) i.value = eff.inbound != null ? eff.inbound : '';
+    // Per-dept overrides: the stored raw string when set, else the seed
+    // rendered as a placeholder so the admin sees what's in effect.
+    const dt = $('al-dept-targets');
+    if (dt) {
+      dt.value = (at && at.deptTargetsRaw) || '';
+      const seedMap = (at && at.deptSeed) || {};
+      dt.placeholder = Object.keys(seedMap).map(function (k) {
+        return k + '=' + seedMap[k].target + (seedMap[k].band != null ? '/' + seedMap[k].band : '');
+      }).join(', ') || 'CSR=92/2';
+    }
+    const tf = std.transfer || {};
+    if ($('al-tf-deep'))  $('al-tf-deep').value  = tf.deep  != null ? tf.deep  : '';
+    if ($('al-tf-light')) $('al-tf-light').value = tf.light != null ? tf.light : '';
+    if ($('al-tf-amber')) $('al-tf-amber').value = tf.amber != null ? tf.amber : '';
     const st = $('al-targets-status');
     if (st) {
+      const band = eff.band != null ? eff.band : ((at && at.seedBand) || 10);
       st.textContent = 'Current: Global ' + (eff.global != null ? eff.global : seed) + '%'
+        + ' (amber within ' + band + ' pts)'
         + ' · Direct ' + (eff.direct != null ? eff.direct + '%' : 'inherits')
-        + ' · Inbound ' + (eff.inbound != null ? eff.inbound + '%' : 'inherits') + '.';
+        + ' · Inbound ' + (eff.inbound != null ? eff.inbound + '%' : 'inherits')
+        + ' · Transfer ' + (tf.deep != null ? (tf.deep + '/' + tf.light + '/' + tf.amber) : '25/30/35') + '.';
     }
   }
 
@@ -411,18 +431,29 @@
     if (!btn) return;
     const req = {
       global:  ($('al-target-global')  && $('al-target-global').value)  || '',
+      band:    ($('al-target-band')    && $('al-target-band').value)    || '',
       direct:  ($('al-target-direct')  && $('al-target-direct').value)  || '',
       inbound: ($('al-target-inbound') && $('al-target-inbound').value) || '',
+      deptTargets: ($('al-dept-targets') && $('al-dept-targets').value) || '',
+      transfer: {
+        deep:  ($('al-tf-deep')  && $('al-tf-deep').value)  || '',
+        light: ($('al-tf-light') && $('al-tf-light').value) || '',
+        amber: ($('al-tf-amber') && $('al-tf-amber').value) || '',
+      },
     };
     btn.disabled = true;
     const prev = btn.textContent; btn.textContent = 'Saving…';
     google.script.run
       .withSuccessHandler(function (res) {
         btn.disabled = false; btn.textContent = prev;
-        alRenderAnswerTargets_({ effective: (res && res.effective) || {}, seedDefault: 92 });
+        alRenderAnswerTargets_({
+          effective: (res && res.effective) || {}, seedDefault: 80, seedBand: 10,
+          standards: (res && res.standards) || null,
+          deptTargetsRaw: ($('al-dept-targets') && $('al-dept-targets').value) || '',
+        });
         const st = $('al-targets-status');
         if (st) st.textContent += ' Saved — applies on each viewer’s next page load; emails at their next send.';
-        showToast('Answer-rate standards saved', 'success');
+        showToast('Display standards saved', 'success');
       })
       .withFailureHandler(function (err) {
         btn.disabled = false; btn.textContent = prev;

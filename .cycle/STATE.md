@@ -3052,3 +3052,44 @@ now. If a clean current month matters, force re-import (or rebuild) the
 current month's dates after deploying cdr-import so col L re-evaluates
 at 4%; then the Neon mirror re-upserts. Otherwise the mix ages out at
 the month boundary.
+
+## Increment 122 (2026-08-18) — R23: display-standards registry + coaching engine Phase 1
+
+Owner round (same message as increment 121's items): threshold/color-coding
+overhaul + the ratified turnover-suggestion Phase 0.
+
+- **Standards registry.** `ANSWER_TARGET_DEFAULT` 92 -> 80;
+  `ANSWER_AMBER_BAND_DEFAULT`=10; `DEPT_ANSWER_TARGET_SEED` CSR=92/2;
+  `TRANSFER_TIERS_DEFAULT` 25/30/35. Three Script Properties layer over the
+  seeds (`ANSWER_TARGETS` gains `band=`; new `DEPT_ANSWER_TARGETS`
+  `Dept=target/band`; new `TRANSFER_TIERS`), read via
+  `getAnswerStandardFor_(dept)` / `getTransferTiers_` /
+  `getStandardsBundle_` (Util.gs). One save RPC (`saveAnswerTargets`,
+  extended req) writes all three, all-or-nothing validation before the lock.
+- **Three-tier answer tints everywhere.** benchValueCls_ gained a `dept`
+  param -> green/amber(bm-watch)/red(bm-bad); wired: agent table bar + pct
+  cell (row.dept-aware for combined views), dept team-strip hero (target
+  tick now per-dept), Overview tile goal-gap sparklines (per-dept goal),
+  IR cards (irLastDept_), Insights KPI tiles + headline tones (dept-aware
+  headlineTone_/irHeadlineTone_), Direct/Inbound surface targets (three-tier
+  with the global band), Digest verdict + DeptSummaryEmail + Insights email
+  (getAnswerStandardFor_(dept)), agent app (server-resolved __ANSWER_STD__,
+  new answerRateCls_ + .bad tier).
+- **CSR Transfer % tile tiers** (tf-deep/light/amber/red) per owner cuts.
+- **Reference + editor.** Help topic "The color-coding standards" renders
+  LIVE values from __STANDARDS__ (fillStandardsHelp_); Alerts modal section
+  renamed "Display standards" with band / per-dept / transfer fields.
+- **Coaching engine (dark).** New Coaching.gs: coachingWindowFromLatest_
+  (10 working days, holiday-aware), computeCoachingFlags_ (rate<50 AND
+  >=5pts behind team AND >=20 missed; TEAM_AVG_EXCLUDES out of both team
+  aggregate and candidacy; roster-only rows), previewCoachingFlags (admin,
+  read-only, per-dept best-effort) + runCoachingPreview editor wrapper.
+  Owner rulings recorded: delivery later = email + escalation card but a
+  SEPARATE worklist from customer escalations; no pilot dept — all depts,
+  admin-only notifications until released.
+- Tests: answer-targets 11 (band/dept/transfer/bundle), coaching 8 (new),
+  cross-file R23 fallback pin, dept-summary-email pin 92->80. 758/758.
+  Harness: __STANDARDS__ + __ANSWER_STD__ injections in build-harness /
+  build-agent. Docs: operator-state #37 rewritten; CLAUDE.md tint mentions.
+
+Deploy: dashboard only (this increment). NOT merged — awaiting owner word.

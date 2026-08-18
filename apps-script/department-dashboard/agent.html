@@ -32,6 +32,7 @@
     .agent-kpi .val { font: 700 30px/1.15 var(--mono); margin: 6px 0 4px; }
     .agent-kpi.good .val { color: var(--good); }
     .agent-kpi.warn .val { color: var(--warn); }
+    .agent-kpi.bad  .val { color: var(--bad); font-weight: 700; }   /* R23: red tier past the amber band */
     .agent-kpi .vs { font-size: 11px; color: var(--muted); }
     .agent-d { font: 600 11px var(--mono); border-radius: 999px; padding: 1px 7px; }
     .agent-d.up { background: var(--good-soft); color: var(--good); }
@@ -157,7 +158,7 @@
         <dd>Calls that rang <em>you</em> during the work window and were answered or missed by you.
           A missed ring may still have been answered by a teammate afterward.</dd>
         <dt>Answer rate</dt>
-        <dd>Answered ÷ (Answered + Missed). The company display standard is 92%.</dd>
+        <dd>Answered ÷ (Answered + Missed). Judged against your department&rsquo;s display standard — the dashed line on the chart (<span data-agent-std>—</span>%).</dd>
         <dt>Avg talk time</dt>
         <dd>The average length of your answered calls — the same figure your manager's table shows.</dd>
         <dt>"Waited"</dt>
@@ -172,6 +173,7 @@
   <script>
     window.__USER__ = <?!= userJson ?>;
     window.__WORK_WINDOW__ = <?!= workWindowJson ?>;
+    window.__ANSWER_STD__ = <?!= answerStdJson ?>;
   </script>
   <?!= include_('agentApp') ?>
 </body>

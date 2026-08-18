@@ -49,8 +49,8 @@ function deptSummaryEmailHtml_(data, dept, rangeLabel) {
   const m = Number(totals.totalMissed) || 0;
   const total = a + m;
   const rate = total ? (a / total * 100) : 0;
-  let target = 92;
-  try { target = Number(getAnswerTargets_().global) || 92; } catch (e) { /* seed */ }
+  let target = ANSWER_TARGET_DEFAULT;
+  try { target = Number(getAnswerStandardFor_(dept).target) || ANSWER_TARGET_DEFAULT; } catch (e) { /* seed */ }
   const under = total > 0 && rate < target;
 
   const kpiRow = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'

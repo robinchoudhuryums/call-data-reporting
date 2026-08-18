@@ -1375,7 +1375,9 @@
          +     '<span class="ds-kpi__label">' + label + '</span>'
          +     badge
          +   '</div>'
-         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted, true) + '">' + escapeHtml(String(s.formatted)) + '</div>'
+         +   '<div class="ds-kpi__value' + benchValueCls_(label, s.formatted, true, null,
+               (typeof insLastData !== 'undefined' && insLastData && insLastData.meta) ? insLastData.meta.department : null)
+             + '">' + escapeHtml(String(s.formatted)) + '</div>'
          +   '<div class="ds-kpi__spark">' + spark + '</div>'
          +   '<div class="ds-kpi__foot">vs prior</div>'
          + '</div>';

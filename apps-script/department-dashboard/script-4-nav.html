@@ -1040,7 +1040,30 @@
     var t = Number(at[surface]);
     if (isFinite(t) && t > 0) return t;
     var g = Number(at.global);
-    return (isFinite(g) && g > 0) ? g : 92;
+    return (isFinite(g) && g > 0) ? g : 80;
+  }
+  // R23: the answer standard a DEPT is judged against ({target, band}) --
+  // the per-dept override from window.__STANDARDS__ (seed: CSR 92/2) else
+  // the global target + amber band. Every dept-context answer tint should
+  // resolve here; the plain answerTarget_ above stays for the per-SURFACE
+  // targets (direct / inbound -- different call populations).
+  function answerStdFor_(dept) {
+    var s = (typeof window !== 'undefined' && window.__STANDARDS__) || {};
+    var a = s.answer || {};
+    var o = (dept && a.depts) ? a.depts[dept] : null;
+    var target = (o && isFinite(Number(o.target)) && Number(o.target) > 0)
+      ? Number(o.target) : answerTarget_('global');
+    var band = (o && o.band != null && isFinite(Number(o.band))) ? Number(o.band)
+      : ((a.band != null && isFinite(Number(a.band))) ? Number(a.band) : 10);
+    return { target: target, band: band };
+  }
+  // Three-tier class for an answer rate: green at/above the target, AMBER
+  // within `band` points below it, red past that (owner R23).
+  function answerTierCls_(num, dept) {
+    var std = answerStdFor_(dept);
+    if (num >= std.target) return ' bm-target';
+    if (num >= std.target - std.band) return ' bm-watch';
+    return ' bm-bad';
   }
   // Keep a From/To (Start/End) date pair valid: picking a Start past the End
   // (or an End before the Start) nudges the OTHER input so From <= To. ISO
@@ -1068,20 +1091,26 @@
     ].forEach(function (p) { linkDateRange_(p[0], p[1]); });
   }
 
-  function benchValueCls_(label, formatted, symmetric, surface) {
+  function benchValueCls_(label, formatted, symmetric, surface, dept) {
     const text = String(label).replace(/<[^>]*>/g, '').toLowerCase();
     const str = String(formatted);
     if (str.indexOf('%') === -1) return '';
     const num = parseFloat(str);
     if (!isFinite(num)) return '';
-    // Binary by default (highlight only the notable direction -- the documented
-    // table behavior). `symmetric` (KPI tiles) tints BOTH sides of the SAME
-    // answer-target / abandon standard, so a below-target answer rate reads "watch"
-    // (orange) and a healthy abandon rate reads "good" (green) instead of
-    // plain black. Still no invented thresholds (decision C2); `surface`
-    // ('direct' / 'inbound') picks that report's admin-set override, absent
-    // = the global target.
-    if (/answer/.test(text)) return num >= answerTarget_(surface || 'global') ? ' bm-target' : (symmetric ? ' bm-over' : '');
+    // R23: answer rates are THREE-tier everywhere (green at/above target,
+    // amber within the band below it, red past that) -- `symmetric` no longer
+    // gates the below-target tint for answers. `surface` ('direct'/'inbound')
+    // picks that report's admin-set target (different call populations) with
+    // the global band; `dept` resolves the per-dept standard (CSR 92/2 seed).
+    // Abandon stays binary against the company standard (decision C2).
+    if (/answer/.test(text)) {
+      if (surface && surface !== 'global') {
+        var t = answerTarget_(surface);
+        var band = answerStdFor_(null).band;
+        return num >= t ? ' bm-target' : (num >= t - band ? ' bm-watch' : ' bm-bad');
+      }
+      return answerTierCls_(num, dept || null);
+    }
     if (/aband/.test(text))  return num >= ABANDON_STANDARD_ ? ' bm-over' : (symmetric ? ' bm-target' : '');
     return '';
   }
@@ -1171,7 +1200,10 @@
     const hasA = a != null && isFinite(Number(a));
     const hasB = b != null && isFinite(Number(b));
     if (!hasA && !hasB) return null;
-    const warn = (hasA && Number(a) < answerTarget_('global')) || (hasB && Number(b) >= ABANDON_STANDARD_);
+    // R23: judged against the DEPT's standard when the caller passes one
+    // (opts.dept -- CSR keeps 92 while the company default is 80).
+    const warn = (hasA && Number(a) < answerStdFor_(opts.dept || null).target)
+              || (hasB && Number(b) >= ABANDON_STANDARD_);
     return warn ? { cls: 'is-warn', badge: 'Watch' } : { cls: 'is-good', badge: 'On track' };
   }
 
@@ -1182,10 +1214,10 @@
   //   - below 92% but AT/ABOVE the team average      -> NEUTRAL (no tint; owner
   //     ruling: beating a struggling team isn't "Watch", but isn't "On track")
   //   - below the team average                       -> "Watch" (warn)
-  function irHeadlineTone_(agentPct, teamPct) {
+  function irHeadlineTone_(agentPct, teamPct, dept) {
     if (agentPct == null || !isFinite(Number(agentPct))) return null;
     const a = Number(agentPct);
-    if (a >= answerTarget_('global')) return { cls: 'is-good', badge: 'On track' };
+    if (a >= answerStdFor_(dept || null).target) return { cls: 'is-good', badge: 'On track' };
     const tp = Number(teamPct);
     if (teamPct != null && isFinite(tp) && tp > 0 && a >= tp) return null;   // neutral
     return { cls: 'is-warn', badge: 'Watch' };
@@ -1246,6 +1278,7 @@
     return { sentences: s.slice(0, 3), tone: bigMismatch ? null : headlineTone_({
       answerPct: (t.pct || {}).val,
       abandonPct: (qh && qh.totals) ? qh.totals.abandonedPct : null,
+      dept: meta.department || null,   // R23: judged against the dept's standard
     }) };
   }
 
@@ -1271,8 +1304,10 @@
         + escapeHtml(String(a.stats.pct)) + '</strong>' + vsTeam + ').'];
       const ins = a.insights || [];
       if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
-      // IR1: peer-aware tone (below 92% but at/above team reads neutral, not red).
-      return { sentences: s, tone: irHeadlineTone_((a.raw || {}).pct, teamPct) };
+      // IR1: peer-aware tone (below the dept standard but at/above team reads
+      // neutral, not red).
+      return { sentences: s, tone: irHeadlineTone_((a.raw || {}).pct, teamPct,
+        (data.meta && data.meta.department) || null) };
     }
     let top = cards[0];
     cards.forEach(function (c) { if ((c.raw || {}).answered > (top.raw || {}).answered) top = c; });
@@ -1311,6 +1346,45 @@
     if (lostNote) s.push(lostNote);
     return s;
   }
+
+  // R23: fill the Help "standards" topic from the live __STANDARDS__ bundle
+  // so the user-facing reference always states the thresholds actually in
+  // effect (the static markup is only the injection-failure fallback).
+  (function fillStandardsHelp_() {
+    try {
+      var s = window.__STANDARDS__ || {};
+      var a = s.answer || {};
+      var set = function (key, text) {
+        document.querySelectorAll('[data-std="' + key + '"]').forEach(function (el) {
+          el.textContent = text;
+        });
+      };
+      var g = a.global != null ? a.global : 80;
+      var band = a.band != null ? a.band : 10;
+      set('answer-summary', g + '% company-wide, with an amber band of ' + band
+        + ' points (' + (Math.round((g - band) * 10) / 10) + '–' + g + '%).');
+      var depts = a.depts || {};
+      var deptTxt = Object.keys(depts).map(function (d) {
+        var o = depts[d] || {};
+        return d + ' ' + o.target + '%' + (o.band != null ? ' (amber within ' + o.band + ' pts)' : '');
+      }).join(' · ');
+      set('answer-depts', deptTxt || 'none — every department uses the global target.');
+      var surf = [];
+      if (a.direct != null) surf.push('Direct ' + a.direct + '%');
+      if (a.inbound != null) surf.push('Inbound ' + a.inbound + '%');
+      if (surf.length) {
+        set('answer-surfaces', surf.join(' · '));
+        var li = document.getElementById('help-std-surfaces');
+        if (li) li.style.display = '';
+      }
+      if (s.abandon != null) set('abandon', String(s.abandon));
+      var t = s.transfer || {};
+      if (t.deep != null && t.light != null && t.amber != null) {
+        set('transfer', 'deeper green at ' + t.deep + '% or lower, light green under ' + t.light
+          + '%, amber ' + t.light + '–' + t.amber + '%, red at ' + t.amber + '% or higher.');
+      }
+    } catch (e) { /* the static fallback text stands */ }
+  })();
 
   function inboundHeadline_(data) {
     const k = data.kpis || {}, p = data.kpisPrior || {};

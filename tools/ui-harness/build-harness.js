@@ -197,7 +197,16 @@ html = html.replace('<?!= dashboardUrlJson ?>', JSON.stringify('https://example.
 html = html.replace('<?!= workWindowJson ?>', JSON.stringify({ pst: '6:30 AM - 3:00 PM PST', cst: '8:30 AM - 5:00 PM CST' }));
 html = html.replace('<?!= companyHolidaysJson ?>', JSON.stringify([]));
 html = html.replace('<?!= uiFlagsJson ?>', JSON.stringify([]));
-html = html.replace('<?!= answerTargetsJson ?>', JSON.stringify({ global: 92 }));
+html = html.replace('<?!= answerTargetsJson ?>', JSON.stringify({ global: 80, band: 10 }));
+// R23: the display-standards bundle (per-dept answer targets + amber bands,
+// CSR transfer tiers, the abandon standard) -- mirrors getStandardsBundle_'s
+// seed defaults so the three-tier tints render like production.
+html = html.replace('<?!= standardsJson ?>', JSON.stringify({
+  answer: { global: 80, band: 10, direct: null, inbound: null,
+            depts: { CSR: { target: 92, band: 2 } } },
+  transfer: { deep: 25, light: 30, amber: 35 },
+  abandon: 4,
+}));
 
 // Local vendor copies (downloaded by the runner beforehand). Strip SRI (local).
 html = html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/chart\.js[^"]*"[^>]*>/, '<script src="vendor/chart.umd.js">');

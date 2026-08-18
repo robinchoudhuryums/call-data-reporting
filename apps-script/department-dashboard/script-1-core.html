@@ -1348,11 +1348,14 @@
     var title = a + ' answered · ' + m + ' missed · ' + rung + ' total calls (rung)'
               + (total ? ' · ' + rate + '% answered' : '')
               + (useTally && tallyUnit > 1 ? ' · each block ≈ ' + tallyUnit + ' calls' : '');
-    var rateCls = total ? benchValueCls_('% answered', rate + '%', true) : '';
-    // R10-4: threshold-aware red -- passing the 92% standard renders the
-    // missed segment light/translucent so healthy rows recede; failing keeps
-    // the full red + a bold value (styles.html .ans-bar--pass/--fail).
-    var passCls = total ? (rate >= answerTarget_('global') ? ' ans-bar--pass' : ' ans-bar--fail') : '';
+    // R23: judged against the row's own dept standard (combined-view rows
+    // carry `dept`; otherwise the page's current dept).
+    var deptCtx = row.dept || (typeof getRequestedDept === 'function' ? getRequestedDept() : null);
+    var rateCls = total ? benchValueCls_('% answered', rate + '%', true, null, deptCtx) : '';
+    // R10-4: threshold-aware red -- passing the dept's answer standard renders
+    // the missed segment light/translucent so healthy rows recede; failing
+    // keeps the full red + a bold value (styles.html .ans-bar--pass/--fail).
+    var passCls = total ? (rate >= answerStdFor_(deptCtx).target ? ' ans-bar--pass' : ' ans-bar--fail') : '';
     var track;
     if (useTally) {
       track = '<div class="ans-tally" aria-hidden="true">'
