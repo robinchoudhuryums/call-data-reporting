@@ -3104,3 +3104,36 @@ R23 three-tier / per-dept semantics; CLAUDE.md Direct bullet tint wording
 (byte-compensated). Weight: CLAUDE.md 175 KB / 200 KB budget (~25 KB
 headroom) — trim hunt still an open follow-on. 758/758, ratchet + INV-16
 green. Docs-only (no ci:ui needed).
+
+## Increment 124 (2026-08-18) — Coaching: ratio gate replaces the absolute floor
+
+First live `runCoachingPreview` (window 2026-08-03..08-14, 15 depts) returned
+20 flags and showed the absolute gate was inert: this is RING-level data, so
+every dept's team aggregate sits at 17-49% and a fixed 50% floor is above
+every agent everywhere. The only gate filtering was "5 pts behind team",
+which off a 39% average is ring-distribution noise.
+
+Owner ruling: replace the floor with a RATIO — flag when an agent answers
+less than half as often as their teammates.
+
+- `COACHING_ANSWER_BELOW_PCT_` (50) -> `COACHING_MAX_TEAM_RATIO_` (0.5);
+  gate is now `rate < teamRate * ratio`. `COACHING_BEHIND_TEAM_PTS_` (5)
+  stays as an absolute FLOOR beneath it, so a tiny team rate can't
+  manufacture flags (half of 3.5% is a 2.5-pt gap = noise). Volume gate
+  unchanged. New guard: teamRate <= 0 yields no flags.
+- Flags carry `teamRatioPct` ("answers N% as often as the team") and sort by
+  it (worst relative standing first, gap as tiebreak); the editor log line
+  and `thresholds.maxTeamRatio` follow.
+- Expected effect on the owner's live data: 20 -> ~10 flags; Rosie Sarkar
+  (0.503) and Monica Jeremiah (0.502) sit ON the line and may land either
+  side once computed from unrounded rates.
+
+NOT changed, per owner: cross-dept de-duplication (Shamir Alam is flagged
+under both Manual Mobility and Eligibility MM&R with identical whole-day
+figures — owner investigating) and the 0%-answered cases (owner confirms
+those are genuinely being rung and not answering, so they are real flags,
+not roster artifacts).
+
+Tests: coaching 11 (was 8) — ratio spare/flag pair, the ring-level
+whole-team-under-50% case, the points floor still holding, the zero-team
+guard. 761/761. Engine-only; still dark (no delivery).

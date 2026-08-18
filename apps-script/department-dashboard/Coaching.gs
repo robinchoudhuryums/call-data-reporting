@@ -4,12 +4,25 @@
  * Owner-ratified rules (2026-08): flag an agent for a manager conversation
  * ("meet with them or adjust the queue assignment") when, over the trailing
  * COACHING_WINDOW_WORKDAYS_ working days (holiday-aware):
- *   1. their answer rate is below COACHING_ANSWER_BELOW_PCT_  (absolute), AND
+ *   1. they answer less than COACHING_MAX_TEAM_RATIO_ AS OFTEN as their
+ *      teammates (agentRate < ratio × teamRate), AND
  *   2. they are at least COACHING_BEHIND_TEAM_PTS_ points behind the team's
  *      aggregate answer rate (relative — an agent matching a struggling team
  *      is a team problem, not a person problem), AND
  *   3. they missed at least COACHING_MIN_MISSED_ rings in the window (volume
  *      gate — a 3-of-5 day means nothing).
+ *
+ * WHY THE HEADLINE GATE IS A RATIO, NOT AN ABSOLUTE FLOOR (owner ruling after
+ * the first live preview): this is RING-level data — one queue call rings
+ * several agents and only one can answer — so an individual's answer rate is
+ * bounded by ring density, not effort. Measured team aggregates here run
+ * 17-49%, so ANY fixed floor near 50% is above every agent in every dept and
+ * filters nothing, while a 5-point gap off a 39% team average is ordinary
+ * ring-distribution luck. The ratio self-adjusts per dept and states plainly
+ * what a manager needs to hear: "answering less than half as often as the
+ * rest of the team." COACHING_BEHIND_TEAM_PTS_ stays as an absolute FLOOR
+ * beneath it, so a very low team rate (where half of small is still small)
+ * can't manufacture flags out of noise.
  *
  * Population/fairness rules inherited from computeSummary_(dept, …, 'roster'):
  * roster agents only (no floaters, INV-53), INV-23 sentinels excluded, and —
@@ -26,10 +39,10 @@
  * Escalations) is Phase 3.
  */
 
-var COACHING_WINDOW_WORKDAYS_  = 10;   // "2 weeks" = 10 working days
-var COACHING_ANSWER_BELOW_PCT_ = 50;   // absolute floor
-var COACHING_BEHIND_TEAM_PTS_  = 5;    // relative gate vs the team aggregate
-var COACHING_MIN_MISSED_       = 20;   // volume gate (missed rings in window)
+var COACHING_WINDOW_WORKDAYS_  = 10;    // "2 weeks" = 10 working days
+var COACHING_MAX_TEAM_RATIO_   = 0.5;   // headline gate: < half the team's answer rate
+var COACHING_BEHIND_TEAM_PTS_  = 5;     // absolute floor beneath the ratio
+var COACHING_MIN_MISSED_       = 20;    // volume gate (missed rings in window)
 
 /**
  * PURE. The trailing N-working-day window ending at `latestIso` (stepping
@@ -66,9 +79,9 @@ function coachingWindowFromLatest_(latestIso, workdays, isHolidayFn) {
  */
 function computeCoachingFlags_(rows, excludes, opts) {
   var o = opts || {};
-  var answerBelow = o.answerBelow != null ? o.answerBelow : COACHING_ANSWER_BELOW_PCT_;
-  var behindPts   = o.behindPts   != null ? o.behindPts   : COACHING_BEHIND_TEAM_PTS_;
-  var minMissed   = o.minMissed   != null ? o.minMissed   : COACHING_MIN_MISSED_;
+  var maxRatio  = o.maxTeamRatio != null ? o.maxTeamRatio : COACHING_MAX_TEAM_RATIO_;
+  var behindPts = o.behindPts    != null ? o.behindPts    : COACHING_BEHIND_TEAM_PTS_;
+  var minMissed = o.minMissed    != null ? o.minMissed    : COACHING_MIN_MISSED_;
   var exSet = {};
   (excludes || []).forEach(function (n) { exSet[String(n)] = true; });
 
@@ -89,8 +102,11 @@ function computeCoachingFlags_(rows, excludes, opts) {
     if (a + m === 0) return;
     var rate = a / (a + m) * 100;
     if (m < minMissed) return;                              // volume gate
-    if (rate >= answerBelow) return;                        // absolute gate
-    if (teamRate == null || (teamRate - rate) < behindPts) return;   // relative gate
+    // A team that answers nothing gives no baseline to be "half of" -- no
+    // flags rather than flagging everyone against a zero.
+    if (teamRate == null || teamRate <= 0) return;
+    if (rate >= teamRate * maxRatio) return;                // headline ratio gate
+    if ((teamRate - rate) < behindPts) return;              // absolute floor beneath it
     flags.push({
       agent: r.agent,
       rung: Number(r.totalRung) || (a + m),
@@ -99,9 +115,14 @@ function computeCoachingFlags_(rows, excludes, opts) {
       ratePct: Math.round(rate * 10) / 10,
       teamRatePct: Math.round(teamRate * 10) / 10,
       gapPts: Math.round((teamRate - rate) * 10) / 10,
+      // "answers N% as often as the team" -- the sentence a manager reads.
+      teamRatioPct: Math.round(rate / teamRate * 1000) / 10,
     });
   });
-  flags.sort(function (x, y) { return y.gapPts - x.gapPts; });
+  // Worst RELATIVE standing first (the gate's own metric), gap as tiebreak.
+  flags.sort(function (x, y) {
+    return (x.teamRatioPct - y.teamRatioPct) || (y.gapPts - x.gapPts);
+  });
   return flags;
 }
 
@@ -130,13 +151,15 @@ function previewCoachingFlags() {
       errors.push({ dept: dept, error: String(e && e.message || e) });
     }
   });
-  flags.sort(function (x, y) { return y.gapPts - x.gapPts; });
+  flags.sort(function (x, y) {
+    return (x.teamRatioPct - y.teamRatioPct) || (y.gapPts - x.gapPts);
+  });
   return {
     available: true,
     window: win,
     thresholds: {
       windowWorkdays: COACHING_WINDOW_WORKDAYS_,
-      answerBelowPct: COACHING_ANSWER_BELOW_PCT_,
+      maxTeamRatio: COACHING_MAX_TEAM_RATIO_,
       behindTeamPts: COACHING_BEHIND_TEAM_PTS_,
       minMissed: COACHING_MIN_MISSED_,
     },
@@ -155,8 +178,8 @@ function runCoachingPreview() {
   Logger.log('%s dept(s) scanned, %s flag(s), %s error(s)',
     out.deptsScanned, out.flags.length, (out.errors || []).length);
   out.flags.forEach(function (f) {
-    Logger.log('  %s | %s: %s%% answered (team %s%%, %s pts behind) — %s missed of %s rung',
-      f.dept, f.agent, f.ratePct, f.teamRatePct, f.gapPts, f.missed, f.rung);
+    Logger.log('  %s | %s: answers %s%% as often as the team (%s%% vs %s%%, %s pts behind) — %s missed of %s rung',
+      f.dept, f.agent, f.teamRatioPct, f.ratePct, f.teamRatePct, f.gapPts, f.missed, f.rung);
   });
   (out.errors || []).forEach(function (e) { Logger.log('  ERROR %s: %s', e.dept, e.error); });
   return out;
