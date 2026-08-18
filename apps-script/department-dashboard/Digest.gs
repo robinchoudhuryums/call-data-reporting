@@ -553,7 +553,7 @@ function digestSummaryHtml_(dept, fromIso, toIso) {
   const ansStr     = ekFmtInt_(Number(totals.totalAnswered) || 0);
   const missedStr  = ekFmtInt_(Number(totals.totalMissed)   || 0);
   const attStr     = digestFormatHms_(Number(totals.attSeconds) || 0);
-  const target     = digestAnswerTarget_();
+  const target     = digestAnswerTarget_(dept);
 
   const kpis = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
     + ekKpiTd_('% answered', rung > 0 ? pctStr : '—', {
@@ -756,8 +756,9 @@ function digestWowNarrative_(wow) {
 // global target (ANSWER_TARGETS Script Property, Config.gs registry) with
 // the seed default as fallback -- read at send time, so a change applies to
 // the next digest without a redeploy.
-function digestAnswerTarget_() {
-  try { return getAnswerTargets_().global; } catch (e) { return 92; }
+function digestAnswerTarget_(dept) {
+  // R23: dept-aware -- CSR keeps its 92 override while the global seed is 80.
+  try { return getAnswerStandardFor_(dept || null).target; } catch (e) { return ANSWER_TARGET_DEFAULT; }
 }
 function digestFormatHms_(totalSeconds) {
   totalSeconds = Math.max(0, Math.round(Number(totalSeconds) || 0));

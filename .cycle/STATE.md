@@ -3010,3 +3010,97 @@ NOT merged — on the branch awaiting the owner's word (the SESSION
 CLOSEOUT commit f9c8442 is also still unmerged; one merge carries both).
 Operator note: the section self-populates only after the NEXT deploy
 (clients must ship the heartbeat before anyone shows as active).
+
+## Increment 121 (2026-08-18) — R22: clamp-note fade, 4% abandon standard, tiered Viol MTD
+
+Three owner requests in one round:
+
+1. **Clamp-note auto-fade** (script-2-chrome + styles): the R18 To-date
+   "Adjusted to ..." note fades out ~6s after rendering (0.6s opacity
+   transition; re-clamp resets timer + opacity). The To field itself still
+   shows the corrected date.
+2. **Abandon standard 5% -> 4%** across all three layers:
+   - PIPELINE: `QCD_VIOLATION_ABANDON_RATE = 0.04` (cdr-import
+     autoImport.js — one constant, both the daily and bulk QCD writers).
+     Col L flags are written at import time, so HISTORY keeps its 5%-era
+     flags; current-month MTD counts mix eras until (optionally) rebuilt.
+   - SERVER display: `Config.gs::ABANDON_STANDARD_PCT = 4`, consumed by
+     QueueReportEmail.gs (tiers, preheader, offenders, tally/bar tints)
+     and InboundReport.gs (insurer daily tint).
+   - CLIENT: `ABANDON_STANDARD_ = 4` (script-1-core), read by
+     benchValueCls_, Overview chips + trend baseline (OV_BASELINE_LABELS_),
+     Insights QCD chart (QCD_THRESH_LABEL_ centralizes the reference-line
+     label sentinel), heatmap ramp + legend, QCD all-dept boot (hero tone,
+     tick now positioned inline at standard*10% of the 0-10% bar),
+     E9 forecast gate, dept/escalations table tints, glossary/help prose
+     (dashboard.html), headline composers.
+   - PINNED: cross-file-pins.test.js "R22" test — client == server == 
+     pipeline*100. queue-report.test.js pins updated to the 4% strings.
+3. **Tiered Viol MTD chip on Overview** (script-3-overview + styles):
+   the "N viol MTD" chip now ALWAYS renders — 0 green (.ov-qcd-viol-none),
+   1-2 amber (.ov-qcd-viol-low), 3+ red (.ov-qcd-viol-high). Day-level
+   per-queue chips keep the binary warn treatment.
+
+Docs synced: CLAUDE.md (heatmap C2 + E9 mentions, byte-neutral),
+invariants.md INV-51 live claims, conventions/known-issues/client-ui/
+regression-scenarios 5%->4% mentions, neonbackfill.js gate comment.
+743/743 unit; ci:ui re-run for the client changes.
+
+OPERATOR NOTE (era mix): QCD col L history keeps 5%-era flags. A day at
+4.5% before the redeploy is NOT a violation in history but would be one
+now. If a clean current month matters, force re-import (or rebuild) the
+current month's dates after deploying cdr-import so col L re-evaluates
+at 4%; then the Neon mirror re-upserts. Otherwise the mix ages out at
+the month boundary.
+
+## Increment 122 (2026-08-18) — R23: display-standards registry + coaching engine Phase 1
+
+Owner round (same message as increment 121's items): threshold/color-coding
+overhaul + the ratified turnover-suggestion Phase 0.
+
+- **Standards registry.** `ANSWER_TARGET_DEFAULT` 92 -> 80;
+  `ANSWER_AMBER_BAND_DEFAULT`=10; `DEPT_ANSWER_TARGET_SEED` CSR=92/2;
+  `TRANSFER_TIERS_DEFAULT` 25/30/35. Three Script Properties layer over the
+  seeds (`ANSWER_TARGETS` gains `band=`; new `DEPT_ANSWER_TARGETS`
+  `Dept=target/band`; new `TRANSFER_TIERS`), read via
+  `getAnswerStandardFor_(dept)` / `getTransferTiers_` /
+  `getStandardsBundle_` (Util.gs). One save RPC (`saveAnswerTargets`,
+  extended req) writes all three, all-or-nothing validation before the lock.
+- **Three-tier answer tints everywhere.** benchValueCls_ gained a `dept`
+  param -> green/amber(bm-watch)/red(bm-bad); wired: agent table bar + pct
+  cell (row.dept-aware for combined views), dept team-strip hero (target
+  tick now per-dept), Overview tile goal-gap sparklines (per-dept goal),
+  IR cards (irLastDept_), Insights KPI tiles + headline tones (dept-aware
+  headlineTone_/irHeadlineTone_), Direct/Inbound surface targets (three-tier
+  with the global band), Digest verdict + DeptSummaryEmail + Insights email
+  (getAnswerStandardFor_(dept)), agent app (server-resolved __ANSWER_STD__,
+  new answerRateCls_ + .bad tier).
+- **CSR Transfer % tile tiers** (tf-deep/light/amber/red) per owner cuts.
+- **Reference + editor.** Help topic "The color-coding standards" renders
+  LIVE values from __STANDARDS__ (fillStandardsHelp_); Alerts modal section
+  renamed "Display standards" with band / per-dept / transfer fields.
+- **Coaching engine (dark).** New Coaching.gs: coachingWindowFromLatest_
+  (10 working days, holiday-aware), computeCoachingFlags_ (rate<50 AND
+  >=5pts behind team AND >=20 missed; TEAM_AVG_EXCLUDES out of both team
+  aggregate and candidacy; roster-only rows), previewCoachingFlags (admin,
+  read-only, per-dept best-effort) + runCoachingPreview editor wrapper.
+  Owner rulings recorded: delivery later = email + escalation card but a
+  SEPARATE worklist from customer escalations; no pilot dept — all depts,
+  admin-only notifications until released.
+- Tests: answer-targets 11 (band/dept/transfer/bundle), coaching 8 (new),
+  cross-file R23 fallback pin, dept-summary-email pin 92->80. 758/758.
+  Harness: __STANDARDS__ + __ANSWER_STD__ injections in build-harness /
+  build-agent. Docs: operator-state #37 rewritten; CLAUDE.md tint mentions.
+
+Deploy: dashboard only (this increment). NOT merged — awaiting owner word.
+
+## Increment 123 (2026-08-18) — /sync-docs after R22/R23
+
+Drift fixes only: Coaching.gs added to the Subsystems list; INV-50's
+violation gate + queue-mapping wording (4% / getDeptQcdQueues_);
+regression S-232 tint standard; known-issues then-5% annotation;
+client-ui-conventions + README benchmark-tint paragraphs rewritten to the
+R23 three-tier / per-dept semantics; CLAUDE.md Direct bullet tint wording
+(byte-compensated). Weight: CLAUDE.md 175 KB / 200 KB budget (~25 KB
+headroom) — trim hunt still an open follow-on. 758/758, ratchet + INV-16
+green. Docs-only (no ci:ui needed).

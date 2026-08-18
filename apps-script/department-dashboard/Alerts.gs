@@ -119,6 +119,12 @@ function getAlertsInit() {
       effective: getAnswerTargets_(),
       surfaces: ANSWER_TARGET_SURFACES,
       seedDefault: ANSWER_TARGET_DEFAULT,
+      // R23: the full standards bundle (per-dept answer overrides + transfer
+      // tiers + the read-only abandon standard) for the Standards editor.
+      standards: getStandardsBundle_(),
+      seedBand: ANSWER_AMBER_BAND_DEFAULT,
+      deptTargetsRaw: PropertiesService.getScriptProperties().getProperty('DEPT_ANSWER_TARGETS') || '',
+      deptSeed: DEPT_ANSWER_TARGET_SEED,
     };
   } catch (e) {
     Logger.log('getAlertsInit answerTargets failed: %s', e);
@@ -153,20 +159,42 @@ function getAlertsInit() {
  */
 function saveAnswerTargets(req) {
   assertAdmin_();
-  const propStr = answerTargetsPropertyString_(req || {});
+  req = req || {};
+  // Canonicalize (loud) BEFORE taking the lock: nothing is written if any
+  // section fails validation, so a save is all-or-nothing.
+  const propStr = answerTargetsPropertyString_(req);
+  // R23: `deptTargets` (raw `Dept=target/band` text) + `transfer` ride in the
+  // same save. `undefined` = the caller didn't include the section (leave the
+  // stored property untouched); '' / all-blank = clear it to seed defaults.
+  const deptStr = req.deptTargets === undefined ? undefined
+    : deptAnswerTargetsPropertyString_(req.deptTargets);
+  const transferStr = req.transfer === undefined ? undefined
+    : transferTiersPropertyString_(req.transfer);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Busy — please retry.');
   try {
     const props = PropertiesService.getScriptProperties();
     if (propStr) props.setProperty('ANSWER_TARGETS', propStr);
     else props.deleteProperty('ANSWER_TARGETS');
-    ANSWER_TARGETS_MEMO_ = null;   // this execution serves the fresh values
-    Logger.log('AnswerTargets saved by %s: %s',
-      Session.getActiveUser().getEmail(), propStr || '(cleared — seed defaults)');
+    if (deptStr !== undefined) {
+      if (deptStr) props.setProperty('DEPT_ANSWER_TARGETS', deptStr);
+      else props.deleteProperty('DEPT_ANSWER_TARGETS');
+    }
+    if (transferStr !== undefined) {
+      if (transferStr) props.setProperty('TRANSFER_TIERS', transferStr);
+      else props.deleteProperty('TRANSFER_TIERS');
+    }
+    ANSWER_TARGETS_MEMO_ = null;        // this execution serves the fresh values
+    DEPT_ANSWER_TARGETS_MEMO_ = null;
+    TRANSFER_TIERS_MEMO_ = null;
+    Logger.log('Standards saved by %s: ANSWER_TARGETS=%s DEPT_ANSWER_TARGETS=%s TRANSFER_TIERS=%s',
+      Session.getActiveUser().getEmail(), propStr || '(cleared)',
+      deptStr === undefined ? '(untouched)' : (deptStr || '(cleared)'),
+      transferStr === undefined ? '(untouched)' : (transferStr || '(cleared)'));
   } finally {
     lock.releaseLock();
   }
-  return { effective: getAnswerTargets_(), raw: propStr };
+  return { effective: getAnswerTargets_(), raw: propStr, standards: getStandardsBundle_() };
 }
 
 /**

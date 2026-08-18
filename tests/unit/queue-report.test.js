@@ -169,7 +169,7 @@ test('email HTML: KPI row + worst-first table, bound to server figures (banner r
   assert.match(html, /example\.com\/exec#\/overview/);      // bulletproof CTA
   // R11-B4: the verdict alert BANNER is retired (KPI tiles + row color carry
   // it); the hidden preheader still names the offender for inbox previews.
-  assert.match(html, /over the 5% line/);                   // preheader only
+  assert.match(html, /over the 4% line/);                   // preheader only (R22: the abandon standard)
   assert.doesNotMatch(html, /&#9873;/);                     // the banner's flag glyph is gone
   assert.match(html, /A_Q_CSR/);
   // WATCH offender carries the watch color; the HEALTHY row the green.
@@ -199,9 +199,9 @@ test('email HTML: clean day -- no banner either way; split bar shows share-of-to
     abandoned: 0, abandonedPct: 0, abandonedPctStr: '0.00%', violations: 0 });
   clean.grandTotals.abandonedPct = 2.8; clean.grandTotals.abandonedPctStr = '2.80%'; clean.grandTotals.violations = 0;
   const html = h.call('buildQueueReportEmailHtml_', clean, '2026-07-10', false);
-  assert.doesNotMatch(html, /All queues held under the 5% line/);   // green banner retired too
+  assert.doesNotMatch(html, /All queues held under the 4% line/);   // green banner retired too
   // Preheader keeps the all-clear line; no offender wording anywhere.
-  assert.match(html, /All queues under the 5% line/);
+  assert.match(html, /All queues under the 4% line/);
   // R11-B4 split bar: the abandoned segment is the SHARE of calls (3% wide
   // for a 3%-abandon row), not the old 0-20%-scaled fill (which rendered
   // 3% as a 15%-wide bar). Passing rows carry the softened red.

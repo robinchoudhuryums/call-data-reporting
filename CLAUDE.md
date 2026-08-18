@@ -118,7 +118,8 @@ bash scripts/check-duplicated-files.sh
 # pins), sheet-repairs-merge, dept-config-neon
 # / config-neon-c3, escalations-hardening, caller-lookup,
 # answer-targets (the R12-25 tunable display-standards parser + save
-# canonicalizer), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
+# canonicalizer, + the R23 amber band / per-dept overrides / transfer tiers),
+# coaching (the R23 turnover-suggestion gates -- dark, admin preview only), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
 # drift), html-include-structure (styles.html / script.html are Apps Script
 # INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
@@ -864,8 +865,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`#ins-heatmap`, a Queue-health companion gated by the SAME
   `USER.role==='admin'` check in `insRenderReport_` -- part of the
   QCD->Insights consolidation parity; managers get the else-branch hide).
-  Cell color pivots on the 5%
-  company standard (C2): ≤5% calm sage, >5% ramps warm; cells under
+  Cell color pivots on the 4%
+  company standard (C2, ABANDON_STANDARD_): ≤4% sage, >4% ramps warm; cells under
   `HEAT_MIN_VOLUME_`=3 calls render muted ("low signal"), colors resolve
   through `colorToCanvasRgb_` so they're OKLCH/theme-safe (INV-42).
   **TZ (the one thing to verify live):** `inbound_calls.call_start` is
@@ -942,7 +943,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (per-dept prior aggregates); the client renders delta chips (`inboundDelta_`)
   on the IB Answered / IB Answer Rate / OB Calls KPI cards and on each company-view
   dept header row (answered/OB up=good, missed up=bad, answer% up=good), plus a
-  92%-standard tone rail on the dept card.** **TEMPORARILY admin-only while the carve-out numbers are
+  answer-std tone rail on the dept card.** **TEMPORARILY admin-only while the carve-out numbers are
   vetted** (the Inbound-report model: the per-dept manager path is written +
   kept intact, so release is a one-line gate removal in
   `directCallResolveRequest_` + un-hiding the `data-admin-only` Direct tab).
@@ -950,7 +951,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   when an admin runs "All departments", the flat all-agents table is
   replaced by `<details>` cards grouped client-side from the same per-agent
   rows via `r.dept` -- aggregate headline stats on the summary (agents / IB
-  answered / missed free+busy / busy-excluded answer % with the 92% tint /
+  answered / missed free+busy / busy-excluded answer % (std-tinted) /
   answered-weighted IB ATT / OB calls), each expanding into that dept's own
   sortable agent table (shared `directAgentRowHtml_` / `directImpact_`;
   dynamic `direct-dept-tbody-*` sort wiring is dropped + re-armed per
@@ -2068,11 +2069,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   classic proportional bar; there is no separate Rung / Missed / Answered /
   **Total calls** column; built by
   `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
-  counts and the rung total as a muted "(N)", answer-rate gets the 92%
-  benchmark tint, sorts by computed `answerRate` via a special case in
-  `sortRows`. **The CSV still emits a numeric Total calls column** spliced
+  counts and the rung total as a muted "(N)", answer-rate gets the R23
+  three-tier dept-standard tint, sorts by computed `answerRate` via a special
+  case in `sortRows`. **The CSV still emits a numeric Total calls column** spliced
   after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
-  cell = answered/(answered+missed), 92% benchmark tint, always visible so the
+  cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; shares the bar's
   `answerRate` sort key) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The five `hideable:true`
@@ -2138,8 +2139,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   IR agent cards, from the `excludedFromTeamAvg` field on each `summaryData`
   row (INV-26). (**E9**) the **QCD days-to-violation forecast**
   (`#qcd-forecast`): a 7-day linear regression on `dailySeries.abandonedPct`
-  (INV-51) projecting when the 5% threshold crosses, hidden in three healthy
-  states -- currentY >= 5 (already over), slope <= 0.01 (flat / improving), or
+  (INV-51) projecting when the 4% threshold crosses, hidden in three healthy
+  states -- currentY >= 4 (already over), slope <= 0.01 (flat / improving), or
   a projected crossing more than 7 days out. The three later Phase E items
   each have their own home: **E5** per-row WoW chips (the "Per-row
   prior-period chips" gotcha), **E8** alert Skip Dates (INV-33 / INV-34),
@@ -2262,7 +2263,7 @@ items for anything it flags or doesn't cover.)
 34. `UI_FLAGS` -- admin toggles that HIDE a UI surface for all viewers
 35. Neon coverage check -- per-date sheet-vs-Neon reconciliation + zero-row weekday gaps
 36. `EMAIL_ALIASES` -- alias sign-in addresses resolving to one identity (+ the multi-dept manager note)
-37. `ANSWER_TARGETS` -- the admin-tunable answer-rate DISPLAY standards (seed 92%)
+37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` -- the admin-tunable DISPLAY standards (R23: global answer target seed 80 + 10-pt amber band; CSR seed 92/2; CSR transfer tiers 25/30/35)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
@@ -2302,7 +2303,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json

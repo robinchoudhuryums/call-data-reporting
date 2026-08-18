@@ -705,10 +705,10 @@
     'answer rate': 'Answered calls as a share of calls offered. The company-wide target is ' + answerTarget_('global') + '%.',
     'answer rate %': 'Answered calls as a share of calls offered. The company-wide target is ' + answerTarget_('global') + '%.',
     'abandoned': 'Callers who hung up while waiting in the queue, before any agent answered.',
-    'abandoned %': 'Share of queue calls where the caller hung up before being answered. 5% or more on a day counts as a violation.',
-    'aband. %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
-    'abandon rate %': 'Share of calls where the caller hung up before being answered. 5% or more is over the abandon threshold.',
-    'violations': 'Days where a queue’s abandoned % exceeded the 5% threshold. Month-to-date in the totals row.',
+    'abandoned %': 'Share of queue calls where the caller hung up before being answered. ' + ABANDON_STANDARD_ + '% or more on a day counts as a violation.',
+    'aband. %': 'Share of calls where the caller hung up before being answered. ' + ABANDON_STANDARD_ + '% or more is over the abandon threshold.',
+    'abandon rate %': 'Share of calls where the caller hung up before being answered. ' + ABANDON_STANDARD_ + '% or more is over the abandon threshold.',
+    'violations': 'Days where a queue’s abandoned % exceeded the ' + ABANDON_STANDARD_ + '% threshold. Month-to-date in the totals row.',
     'longest wait': 'The single longest time any caller waited in the queue that day.',
     'avg answer': 'Average time callers waited before an agent answered.',
     'avg wait': 'Average time callers waited in the queue before being answered or giving up.',
@@ -738,7 +738,7 @@
   })();
 
   // Rich tooltip variants for high-value terms: a titled definition + an
-  // optional benchmark chip surfacing the 92% / 5% company standards. Keys
+  // optional benchmark chip surfacing the answer-target / abandon company standards. Keys
   // match glossaryKeyFor_ output. Rendered via innerHTML (developer-authored
   // constants only -- never user data); terms without a rich entry fall back
   // to the plain-text METRIC_GLOSSARY_ definition. The plain title is still
@@ -750,7 +750,7 @@
            + (bench ? '<span class="ds-tip-bench ' + bench.cls + '">' + bench.text + '</span>' : '');
     }
     const target92 = { cls: 'is-good', text: 'Company target ≥ ' + answerTarget_('global') + '%' };
-    const thresh5  = { cls: 'is-warn', text: '5% or more in a day = violation' };
+    const thresh5  = { cls: 'is-warn', text: ABANDON_STANDARD_ + '% or more in a day = violation' };
     const attNote  = { cls: '', text: 'Longer isn’t automatically worse — read with % answered' };
     const m = {};
     ['% answered', 'answer rate', 'answer rate %'].forEach(function (k) {
@@ -1025,7 +1025,7 @@
   // TARGET (seed 92%; admin-tunable via the ANSWER_TARGETS Script Property
   // -- Alerts modal -> "Answer-rate standards" -- with per-surface
   // overrides for the Direct / Inbound reports, whose answer rates are
-  // different populations) and the FIXED 5% abandoned-% violation
+  // different populations) and the FIXED abandoned-% violation
   // threshold (the QCD pipeline rule, baked into written Violations
   // history -- never tunable). This helper applies them consistently to
   // KPI tile values so a manager reading ANY report sees the same
@@ -1040,7 +1040,30 @@
     var t = Number(at[surface]);
     if (isFinite(t) && t > 0) return t;
     var g = Number(at.global);
-    return (isFinite(g) && g > 0) ? g : 92;
+    return (isFinite(g) && g > 0) ? g : 80;
+  }
+  // R23: the answer standard a DEPT is judged against ({target, band}) --
+  // the per-dept override from window.__STANDARDS__ (seed: CSR 92/2) else
+  // the global target + amber band. Every dept-context answer tint should
+  // resolve here; the plain answerTarget_ above stays for the per-SURFACE
+  // targets (direct / inbound -- different call populations).
+  function answerStdFor_(dept) {
+    var s = (typeof window !== 'undefined' && window.__STANDARDS__) || {};
+    var a = s.answer || {};
+    var o = (dept && a.depts) ? a.depts[dept] : null;
+    var target = (o && isFinite(Number(o.target)) && Number(o.target) > 0)
+      ? Number(o.target) : answerTarget_('global');
+    var band = (o && o.band != null && isFinite(Number(o.band))) ? Number(o.band)
+      : ((a.band != null && isFinite(Number(a.band))) ? Number(a.band) : 10);
+    return { target: target, band: band };
+  }
+  // Three-tier class for an answer rate: green at/above the target, AMBER
+  // within `band` points below it, red past that (owner R23).
+  function answerTierCls_(num, dept) {
+    var std = answerStdFor_(dept);
+    if (num >= std.target) return ' bm-target';
+    if (num >= std.target - std.band) return ' bm-watch';
+    return ' bm-bad';
   }
   // Keep a From/To (Start/End) date pair valid: picking a Start past the End
   // (or an End before the Start) nudges the OTHER input so From <= To. ISO
@@ -1068,21 +1091,27 @@
     ].forEach(function (p) { linkDateRange_(p[0], p[1]); });
   }
 
-  function benchValueCls_(label, formatted, symmetric, surface) {
+  function benchValueCls_(label, formatted, symmetric, surface, dept) {
     const text = String(label).replace(/<[^>]*>/g, '').toLowerCase();
     const str = String(formatted);
     if (str.indexOf('%') === -1) return '';
     const num = parseFloat(str);
     if (!isFinite(num)) return '';
-    // Binary by default (highlight only the notable direction -- the documented
-    // table behavior). `symmetric` (KPI tiles) tints BOTH sides of the SAME
-    // answer-target / 5% standard, so a below-target answer rate reads "watch"
-    // (orange) and a healthy abandon rate reads "good" (green) instead of
-    // plain black. Still no invented thresholds (decision C2); `surface`
-    // ('direct' / 'inbound') picks that report's admin-set override, absent
-    // = the global target.
-    if (/answer/.test(text)) return num >= answerTarget_(surface || 'global') ? ' bm-target' : (symmetric ? ' bm-over' : '');
-    if (/aband/.test(text))  return num >= 5  ? ' bm-over'   : (symmetric ? ' bm-target' : '');
+    // R23: answer rates are THREE-tier everywhere (green at/above target,
+    // amber within the band below it, red past that) -- `symmetric` no longer
+    // gates the below-target tint for answers. `surface` ('direct'/'inbound')
+    // picks that report's admin-set target (different call populations) with
+    // the global band; `dept` resolves the per-dept standard (CSR 92/2 seed).
+    // Abandon stays binary against the company standard (decision C2).
+    if (/answer/.test(text)) {
+      if (surface && surface !== 'global') {
+        var t = answerTarget_(surface);
+        var band = answerStdFor_(null).band;
+        return num >= t ? ' bm-target' : (num >= t - band ? ' bm-watch' : ' bm-bad');
+      }
+      return answerTierCls_(num, dept || null);
+    }
+    if (/aband/.test(text))  return num >= ABANDON_STANDARD_ ? ' bm-over' : (symmetric ? ' bm-target' : '');
     return '';
   }
 
@@ -1134,7 +1163,7 @@
     }
     // Composers return either a bare sentences array (neutral) OR
     // { sentences, tone } where tone = { cls:'is-good'|'is-warn', badge } from
-    // headlineTone_ (the 92% / 5% standards only). Arrays stay neutral.
+    // headlineTone_ (the answer-target / abandon standards only). Arrays stay neutral.
     const sentences = Array.isArray(headline) ? headline : ((headline && headline.sentences) || []);
     const tone = (!Array.isArray(headline) && headline && headline.tone) || null;
     const lines = (sentences || []).filter(function (s) { return !!s; });
@@ -1162,7 +1191,7 @@
   function headlineName_(n) { return '<strong>' + escapeHtml(n) + '</strong>'; }
 
   // Status tone for the answer-first headline, from the ONLY two company-wide
-  // standards (answer rate >= 92% = "On track"; answer < 92% OR abandon >= 5%
+  // standards (answer rate >= 92% = "On track"; answer < 92% OR abandon >= the standard
   // = "Watch"). Returns null when neither metric is available -> neutral
   // "At a glance". No invented thresholds (decision C2 + the headline decision).
   function headlineTone_(opts) {
@@ -1171,7 +1200,10 @@
     const hasA = a != null && isFinite(Number(a));
     const hasB = b != null && isFinite(Number(b));
     if (!hasA && !hasB) return null;
-    const warn = (hasA && Number(a) < answerTarget_('global')) || (hasB && Number(b) >= 5);
+    // R23: judged against the DEPT's standard when the caller passes one
+    // (opts.dept -- CSR keeps 92 while the company default is 80).
+    const warn = (hasA && Number(a) < answerStdFor_(opts.dept || null).target)
+              || (hasB && Number(b) >= ABANDON_STANDARD_);
     return warn ? { cls: 'is-warn', badge: 'Watch' } : { cls: 'is-good', badge: 'On track' };
   }
 
@@ -1182,10 +1214,10 @@
   //   - below 92% but AT/ABOVE the team average      -> NEUTRAL (no tint; owner
   //     ruling: beating a struggling team isn't "Watch", but isn't "On track")
   //   - below the team average                       -> "Watch" (warn)
-  function irHeadlineTone_(agentPct, teamPct) {
+  function irHeadlineTone_(agentPct, teamPct, dept) {
     if (agentPct == null || !isFinite(Number(agentPct))) return null;
     const a = Number(agentPct);
-    if (a >= answerTarget_('global')) return { cls: 'is-good', badge: 'On track' };
+    if (a >= answerStdFor_(dept || null).target) return { cls: 'is-good', badge: 'On track' };
     const tp = Number(teamPct);
     if (teamPct != null && isFinite(tp) && tp > 0 && a >= tp) return null;   // neutral
     return { cls: 'is-warn', badge: 'Watch' };
@@ -1229,23 +1261,24 @@
           + ' ' + (behind === 1 ? 'is' : 'are') + ' behind the team average — their cards carry the orange edge below.');
       }
     }
-    // Queue health: one sentence when the abandon rate crosses the 5%
+    // Queue health: one sentence when the abandon rate crosses the
     // threshold (the only company-wide queue standard).
     const qh = data.queueHealth;
-    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && Number(qh.totals.abandonedPct) >= 5) {
+    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && Number(qh.totals.abandonedPct) >= ABANDON_STANDARD_) {
       s.push('Heads up: callers abandoned <strong>'
-        + escapeHtml(String(qh.totals.abandonedPctStr)) + '</strong> of queue calls — over the 5% threshold (see Queue health below).');
+        + escapeHtml(String(qh.totals.abandonedPctStr)) + '</strong> of queue calls — over the ' + ABANDON_STANDARD_ + '% threshold (see Queue health below).');
     }
     // When the comparison windows differ a lot (> 7 days), the deltas in the
     // headline are apples-to-oranges, so neutralize the status tone (drop the
     // green/orange "On track"/"Watch" banner) to avoid a false alarm. The
-    // sentences -- including any real >=5% abandon heads-up -- still render.
+    // sentences -- including any real over-standard abandon heads-up -- still render.
     const meta = data.meta || {};
     const bigMismatch = !!meta.lengthMismatch
       && Math.abs((meta.currentDays || 0) - (meta.priorDays || 0)) > 7;
     return { sentences: s.slice(0, 3), tone: bigMismatch ? null : headlineTone_({
       answerPct: (t.pct || {}).val,
       abandonPct: (qh && qh.totals) ? qh.totals.abandonedPct : null,
+      dept: meta.department || null,   // R23: judged against the dept's standard
     }) };
   }
 
@@ -1271,8 +1304,10 @@
         + escapeHtml(String(a.stats.pct)) + '</strong>' + vsTeam + ').'];
       const ins = a.insights || [];
       if (ins.length && ins[0].text) s.push(escapeHtml(ins[0].text));
-      // IR1: peer-aware tone (below 92% but at/above team reads neutral, not red).
-      return { sentences: s, tone: irHeadlineTone_((a.raw || {}).pct, teamPct) };
+      // IR1: peer-aware tone (below the dept standard but at/above team reads
+      // neutral, not red).
+      return { sentences: s, tone: irHeadlineTone_((a.raw || {}).pct, teamPct,
+        (data.meta && data.meta.department) || null) };
     }
     let top = cards[0];
     cards.forEach(function (c) { if ((c.raw || {}).answered > (top.raw || {}).answered) top = c; });
@@ -1311,6 +1346,45 @@
     if (lostNote) s.push(lostNote);
     return s;
   }
+
+  // R23: fill the Help "standards" topic from the live __STANDARDS__ bundle
+  // so the user-facing reference always states the thresholds actually in
+  // effect (the static markup is only the injection-failure fallback).
+  (function fillStandardsHelp_() {
+    try {
+      var s = window.__STANDARDS__ || {};
+      var a = s.answer || {};
+      var set = function (key, text) {
+        document.querySelectorAll('[data-std="' + key + '"]').forEach(function (el) {
+          el.textContent = text;
+        });
+      };
+      var g = a.global != null ? a.global : 80;
+      var band = a.band != null ? a.band : 10;
+      set('answer-summary', g + '% company-wide, with an amber band of ' + band
+        + ' points (' + (Math.round((g - band) * 10) / 10) + '–' + g + '%).');
+      var depts = a.depts || {};
+      var deptTxt = Object.keys(depts).map(function (d) {
+        var o = depts[d] || {};
+        return d + ' ' + o.target + '%' + (o.band != null ? ' (amber within ' + o.band + ' pts)' : '');
+      }).join(' · ');
+      set('answer-depts', deptTxt || 'none — every department uses the global target.');
+      var surf = [];
+      if (a.direct != null) surf.push('Direct ' + a.direct + '%');
+      if (a.inbound != null) surf.push('Inbound ' + a.inbound + '%');
+      if (surf.length) {
+        set('answer-surfaces', surf.join(' · '));
+        var li = document.getElementById('help-std-surfaces');
+        if (li) li.style.display = '';
+      }
+      if (s.abandon != null) set('abandon', String(s.abandon));
+      var t = s.transfer || {};
+      if (t.deep != null && t.light != null && t.amber != null) {
+        set('transfer', 'deeper green at ' + t.deep + '% or lower, light green under ' + t.light
+          + '%, amber ' + t.light + '–' + t.amber + '%, red at ' + t.amber + '% or higher.');
+      }
+    } catch (e) { /* the static fallback text stands */ }
+  })();
 
   function inboundHeadline_(data) {
     const k = data.kpis || {}, p = data.kpisPrior || {};

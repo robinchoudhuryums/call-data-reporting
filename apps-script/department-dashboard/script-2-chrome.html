@@ -543,11 +543,28 @@
       + asked + ' requested).');
     return true;
   }
+  // R22 (owner): the clamp note is a heads-up, not persistent state -- the To
+  // field itself shows the corrected date -- so it fades out after a few
+  // seconds. A re-clamp before the fade resets the timer and the opacity.
+  var deptClampNoteTimer_ = null;
   function deptClampNoteSet_(msg) {
     const el = $('dept-clamp-note');
     if (!el) return;
+    if (deptClampNoteTimer_) { clearTimeout(deptClampNoteTimer_); deptClampNoteTimer_ = null; }
+    el.classList.remove('is-fading');
     el.textContent = msg || '';
     el.style.display = msg ? '' : 'none';
+    if (msg) {
+      deptClampNoteTimer_ = setTimeout(function () {
+        el.classList.add('is-fading');
+        deptClampNoteTimer_ = setTimeout(function () {
+          deptClampNoteTimer_ = null;
+          el.classList.remove('is-fading');
+          el.textContent = '';
+          el.style.display = 'none';
+        }, 700);   // matches the CSS opacity transition
+      }, 6000);
+    }
   }
   function initDatePresets_() {
     buildDatePresetChips_($('date-presets'), function (r) {

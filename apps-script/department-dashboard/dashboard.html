@@ -1317,7 +1317,7 @@
           </details>
           <details class="help-cat">
             <summary>Metrics &amp; standards</summary>
-            <button type="button" class="help-link" data-topic="standards">The 92% / 5% standards</button>
+            <button type="button" class="help-link" data-topic="standards">The color-coding standards</button>
             <button type="button" class="help-link" data-topic="glossary">Metric glossary</button>
             <button type="button" class="help-link" data-topic="attlens">Why ATT can differ</button>
           </details>
@@ -1365,7 +1365,7 @@
             <ul>
               <li><strong>&#9680; Dark mode</strong> toggles light/dark; your choice is remembered on this device.</li>
               <li><strong>&#9881; Settings</strong> picks a light-mode background theme (Warm Paper / Cool Blue / Clinical White) and toggles the floating Help button.</li>
-              <li>Hovering a <strong>metric label</strong> (with a small &#9432;) shows its definition; key metrics show a richer tooltip with the 92% / 5% benchmark.</li>
+              <li>Hovering a <strong>metric label</strong> (with a small &#9432;) shows its definition; key metrics show a richer tooltip with the answer / abandon benchmark.</li>
             </ul>
           </section>
           <section class="help-topic" id="help-topic-columns" hidden>
@@ -1436,7 +1436,7 @@
           </section>
           <section class="help-topic" id="help-topic-qcd" hidden>
             <h3>QCD (Queue Call Data)</h3>
-            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 5%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the trend chart&rsquo;s &ldquo;by queue&rdquo; tab shows one line per queue plus a dept total, and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 5% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
+            <p>Per-queue call volume, answered, abandoned, abandoned %, longest/avg wait, and <strong>violations</strong> (days a queue&rsquo;s abandoned % went over 4%). Lives in the <strong>Insights report&rsquo;s Queue health section</strong> (the standalone QCD report was consolidated into it): per-queue rows expand into per-call-source detail and violation dates, the trend chart&rsquo;s &ldquo;by queue&rdquo; tab shows one line per queue plus a dept total, and a short <strong>days-to-violation forecast</strong> appears when a queue is trending toward the 4% line. Everyone also gets the all-departments <strong>Daily Call Queue Report</strong> from the Overview page.</p>
           </section>
           <section class="help-topic" id="help-topic-inbound" hidden>
             <h3>Inbound Calls <span class="help-admin-tag">admin</span></h3>
@@ -1444,11 +1444,11 @@
           </section>
           <section class="help-topic" id="help-topic-heatmap" hidden>
             <h3>Abandon heatmap</h3>
-            <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 5% abandoned, warming as it rises past the 5% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion in the Insights report&rsquo;s Queue health (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
+            <p>A <strong>weekday &times; hour</strong> grid showing where callers abandon &mdash; the &ldquo;when are we short-staffed?&rdquo; view. Calm sage &le; 4% abandoned, warming as it rises past the 4% standard; cells with very few calls are muted (&ldquo;low signal&rdquo;). Hover any cell for the exact rate and counts. It appears on the Inbound report and as a companion in the Insights report&rsquo;s Queue health (admin-only for now, sharing the Inbound vetting gate). Times are shown in CST.</p>
             <div class="help-figure">
               <div class="ds-heatmap-legend">
-                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--good) 50%, var(--paper-card));"></span>0&ndash;5% (on target)</span>
-                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 17%, var(--warn-soft));"></span>5&ndash;10%</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--good) 50%, var(--paper-card));"></span>0&ndash;4% (on target)</span>
+                <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 17%, var(--warn-soft));"></span>4&ndash;10%</span>
                 <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: color-mix(in srgb, var(--warn) 67%, var(--warn-soft));"></span>15%+</span>
                 <span class="ds-heatmap-legend__item"><span class="ds-heatmap-legend__sw" style="background: var(--paper-2);"></span>low volume</span>
               </div>
@@ -1456,30 +1456,30 @@
             </div>
           </section>
           <section class="help-topic" id="help-topic-standards" hidden>
-            <h3>The answer-target / 5% standards</h3>
-            <p>Two company-wide benchmarks drive the color-coding everywhere:</p>
+            <h3>The color-coding standards</h3>
+            <p>Every tint in the app comes from the thresholds below (filled in live
+            from the current admin settings; admins adjust them in
+            Alerts&nbsp;&rarr;&nbsp;Display standards):</p>
             <ul>
-              <li><strong>The answer-rate target</strong> (92% unless an admin has tuned it) &mdash; values at/above read green &ldquo;on track&rdquo;; below read orange &ldquo;watch&rdquo;. Admins can adjust it &mdash; and set separate targets for the Direct and Inbound reports, whose answer rates measure different call populations &mdash; in Alerts &rarr; Answer-rate standards.</li>
-              <li><strong>5% abandonment</strong> &mdash; the ceiling, fixed. A queue over 5% on a day is a <strong>violation</strong>.</li>
+              <li><strong>Answer-rate target</strong> &mdash; <span data-std="answer-summary">&hellip;</span>
+                Values at/above the target read <span class="bm-target" style="font-weight:600;">green</span>;
+                within the amber band below it, <span class="bm-watch" style="font-weight:600;">amber</span>;
+                past the band, <span class="bm-bad">red</span>.</li>
+              <li id="help-std-depts"><strong>Department overrides</strong> &mdash; <span data-std="answer-depts">&hellip;</span></li>
+              <li id="help-std-surfaces" style="display:none;"><strong>Report-specific targets</strong> &mdash; <span data-std="answer-surfaces"></span> (the Direct and Inbound reports measure different call populations).</li>
+              <li><strong><span data-std="abandon">4</span>% abandonment</strong> &mdash; the queue ceiling, fixed. A queue over it on a day is a <strong>violation</strong>; Overview&rsquo;s month-to-date chip reads green at 0, amber at 1&ndash;2, red at 3+.</li>
+              <li><strong>CSR Transfer&nbsp;%</strong> &mdash; <span data-std="transfer">&hellip;</span> Lower is better.</li>
             </ul>
-            <div class="help-figure">
-              <div class="help-figure-row">
-                <span class="bm-target" style="font-weight:600;">94% answered</span>
-                <span style="color: var(--muted);">vs</span>
-                <span class="bm-over" style="font-weight:600;">6.2% abandoned</span>
-              </div>
-              <div class="help-figure-cap">Green = at/above the answer target; orange = at/over the 5% abandon ceiling. These are the tints you&rsquo;ll see on KPI tiles and cells across the app.</div>
-            </div>
-            <p>These are the <em>only</em> two thresholds used for tinting &mdash; counts and durations stay neutral. Department-specific alert thresholds are separate (see Alerts).</p>
+            <p>Counts and durations stay neutral. Department-specific <em>alert</em> thresholds are separate (see Alerts).</p>
           </section>
           <section class="help-topic" id="help-topic-glossary" hidden>
             <h3>Metric glossary</h3>
             <ul>
-              <li><strong>% Answered</strong> &mdash; answered &divide; calls that rang. Target 92%.</li>
-              <li><strong>Abandoned %</strong> &mdash; queue calls where the caller hung up before being answered. 5%+ in a day = violation.</li>
+              <li><strong>% Answered</strong> &mdash; answered &divide; calls that rang. Judged against the answer-rate target (see &ldquo;The color-coding standards&rdquo;).</li>
+              <li><strong>Abandoned %</strong> &mdash; queue calls where the caller hung up before being answered. 4%+ in a day = violation.</li>
               <li><strong>ATT</strong> &mdash; Average Talk Time per answered call. Longer isn&rsquo;t automatically worse.</li>
               <li><strong>TTT</strong> &mdash; Total Talk Time (sum of an agent&rsquo;s own talk on answered calls).</li>
-              <li><strong>Violations</strong> &mdash; days a queue went over the 5% abandon line (month-to-date in totals).</li>
+              <li><strong>Violations</strong> &mdash; days a queue went over the 4% abandon line (month-to-date in totals).</li>
               <li><strong>Avg / longest wait</strong> &mdash; time callers waited before being answered or giving up.</li>
             </ul>
             <p>Hovering most labels in the app shows these definitions inline.</p>
@@ -2325,21 +2325,28 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Answer-rate standards</div>
+          <div class="al-section-title">Display standards</div>
           <p class="al-hint">
-            The company-wide answer-% target that drives the benchmark tints, the
-            &ldquo;On track / Watch&rdquo; headlines, the Overview chart baseline, and the
-            digest verdict &mdash; plus per-report overrides for the two reports whose
-            answer rate is a different population. An empty override inherits Global.
-            Applies on each viewer&rsquo;s next page load; emails pick it up at their next
-            send. (The 5% abandon threshold is fixed &mdash; it&rsquo;s baked into the QCD
-            Violations history &mdash; and the per-dept <em>alert</em> thresholds stay in
-            the config table above.)
+            The answer-% target + amber band that drive the benchmark tints, the
+            &ldquo;On track / Watch&rdquo; headlines, the Overview goal lines, and the
+            digest verdict. Values at/above the target read <strong>green</strong>; within
+            the band below it, <strong>amber</strong>; past the band, <strong>red</strong>.
+            Per-dept overrides (e.g. <code>CSR=92/2</code>) win over the global pair;
+            the Direct / Inbound overrides cover the two reports whose answer rate is a
+            different population (empty inherits Global). Applies on each viewer&rsquo;s
+            next page load; emails pick it up at their next send. (The 4% abandon
+            threshold is fixed &mdash; it&rsquo;s baked into the QCD Violations history
+            &mdash; and the per-dept <em>alert</em> thresholds stay in the config table
+            above.)
           </p>
           <div class="al-trigger-actions" style="align-items:flex-end; flex-wrap:wrap; gap:10px;">
             <div class="ir-col">
               <label for="al-target-global">Global target %</label>
               <input type="number" id="al-target-global" min="1" max="100" step="0.5" style="width:110px;">
+            </div>
+            <div class="ir-col">
+              <label for="al-target-band">Amber band (pts)</label>
+              <input type="number" id="al-target-band" min="0" max="50" step="0.5" style="width:110px;">
             </div>
             <div class="ir-col">
               <label for="al-target-direct">Direct report %</label>
@@ -2348,6 +2355,26 @@
             <div class="ir-col">
               <label for="al-target-inbound">Inbound report %</label>
               <input type="number" id="al-target-inbound" min="1" max="100" step="0.5" style="width:110px;" placeholder="inherits">
+            </div>
+          </div>
+          <div class="al-trigger-actions" style="align-items:flex-end; flex-wrap:wrap; gap:10px; margin-top:8px;">
+            <div class="ir-col" style="flex:1 1 260px;">
+              <label for="al-dept-targets">Per-dept overrides (<code>Dept=target/band</code>, comma-separated)</label>
+              <input type="text" id="al-dept-targets" style="width:100%;" placeholder="CSR=92/2">
+            </div>
+          </div>
+          <div class="al-trigger-actions" style="align-items:flex-end; flex-wrap:wrap; gap:10px; margin-top:8px;">
+            <div class="ir-col">
+              <label for="al-tf-deep" title="Transfer % at/below this reads deeper green">Transfer deep-green &le;</label>
+              <input type="number" id="al-tf-deep" min="0" max="100" step="0.5" style="width:110px;">
+            </div>
+            <div class="ir-col">
+              <label for="al-tf-light" title="Below this reads light green">Transfer light-green &lt;</label>
+              <input type="number" id="al-tf-light" min="0" max="100" step="0.5" style="width:110px;">
+            </div>
+            <div class="ir-col">
+              <label for="al-tf-amber" title="Below this reads amber; at/above reads red">Transfer amber &lt;</label>
+              <input type="number" id="al-tf-amber" min="0" max="100" step="0.5" style="width:110px;">
             </div>
             <button class="btn btn-secondary" id="al-targets-save-btn" type="button">Save standards</button>
           </div>
@@ -3039,6 +3066,7 @@
     // the Config.gs UI_FLAG_SURFACES registry). Applied as body[data-ui-flags].
     window.__UI_FLAGS__ = <?!= uiFlagsJson ?>;
     window.__ANSWER_TARGETS__ = <?!= answerTargetsJson ?>;
+    window.__STANDARDS__ = <?!= standardsJson ?>;
   </script>
   <?!= include_('script') ?>
 </body>

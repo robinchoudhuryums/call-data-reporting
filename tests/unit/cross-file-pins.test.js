@@ -297,3 +297,43 @@ test('F-7: every tmpl.*Json assignment in Code.gs carries the \\u003c escape', f
     + 'containing an end-of-script tag would break out of the inline script '
     + 'block (see the CLAUDE.md scriptlet gotcha)');
 });
+
+// R22 (owner: abandon standard 5% -> 4%): the display standard lives in TWO
+// copies -- Config.gs::ABANDON_STANDARD_PCT (server renderers: QueueReportEmail,
+// InboundReport) and script-1-core.html::ABANDON_STANDARD_ (every client tint /
+// legend / chart baseline) -- plus the PIPELINE's violation gate
+// (cdr-import autoImport.js::QCD_VIOLATION_ABANDON_RATE, a 0..1 rate). A drift
+// between them makes tints disagree with the violation counts they sit beside.
+test('R22: the abandon standard is identical across server, client, and the pipeline gate', function () {
+  const cfg = /const ABANDON_STANDARD_PCT = (\d+(?:\.\d+)?);/.exec(read('Config.gs', DASH));
+  assert.ok(cfg, 'Config.gs::ABANDON_STANDARD_PCT missing');
+  const core = /var ABANDON_STANDARD_ = (\d+(?:\.\d+)?);/.exec(read('script-1-core.html', DASH));
+  assert.ok(core, 'script-1-core.html::ABANDON_STANDARD_ missing');
+  const pipe = /const QCD_VIOLATION_ABANDON_RATE = (0\.\d+);/.exec(
+    read('apps-script/cdr-import/autoImport.js'));
+  assert.ok(pipe, 'autoImport.js::QCD_VIOLATION_ABANDON_RATE missing');
+  assert.equal(Number(core[1]), Number(cfg[1]), 'client copy != server copy');
+  assert.equal(Number(pipe[1]) * 100, Number(cfg[1]),
+    'pipeline violation gate != the display standard');
+});
+
+// R23 (owner: answer target 92 -> 80, CSR stays 92): the injection-failure
+// FALLBACK literals must match the Config.gs seeds -- a client running with a
+// failed __ANSWER_TARGETS__/__STANDARDS__ injection (or the agent app with a
+// failed __ANSWER_STD__) silently judges against its fallback, so a drifted
+// fallback shows different colors than every healthy session.
+test('R23: the answer-target seed matches the client + agent-app fallback literals', function () {
+  const cfg = /const ANSWER_TARGET_DEFAULT = (\d+(?:\.\d+)?);/.exec(read('Config.gs', DASH));
+  assert.ok(cfg, 'Config.gs::ANSWER_TARGET_DEFAULT missing');
+  const nav = /return \(isFinite\(g\) && g > 0\) \? g : (\d+);/.exec(read('script-4-nav.html', DASH));
+  assert.ok(nav, 'script-4-nav.html::answerTarget_ fallback missing');
+  assert.equal(Number(nav[1]), Number(cfg[1]), 'answerTarget_ fallback != seed');
+  const agent = /Number\(ANSWER_STD_OBJ_\.target\) : (\d+);/.exec(read('agentApp.html', DASH));
+  assert.ok(agent, 'agentApp.html answer-standard fallback missing');
+  assert.equal(Number(agent[1]), Number(cfg[1]), 'agent-app fallback != seed');
+  const band = /const ANSWER_AMBER_BAND_DEFAULT = (\d+(?:\.\d+)?);/.exec(read('Config.gs', DASH));
+  assert.ok(band, 'Config.gs::ANSWER_AMBER_BAND_DEFAULT missing');
+  const agentBand = /Number\(ANSWER_STD_OBJ_\.band\) : (\d+);/.exec(read('agentApp.html', DASH));
+  assert.ok(agentBand, 'agent-app band fallback missing');
+  assert.equal(Number(agentBand[1]), Number(band[1]), 'agent-app band fallback != seed');
+});

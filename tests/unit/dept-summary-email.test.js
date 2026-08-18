@@ -56,9 +56,9 @@ test('dept email: sends the EmailKit-styled summary to the caller only', functio
   assert.match(html, /width="600"/);
   assert.match(html, /not a subscription/);
   // KPI row binds the real totals: 13 answered / 7 missed = 65% (under the
-  // 92% seed goal -> bad tile red value).
+  // 80% seed goal (R23; a non-CSR dept) -> bad tile red value).
   assert.match(html, /65\.0%/);
-  assert.match(html, /92% goal/);
+  assert.match(html, /80% goal/);
   // The agent table carries the volume tally (green answered block cells).
   assert.match(html, /width="5" style="background:#3d9476/);
   // Worst answer rate first: Ben (40%) before Anna (90%).

@@ -301,7 +301,7 @@
 
   // Renders the flat company-wide table: a section per department (its
   // subtotal as a heading row), one row per queue, and a grand-total
-  // footer. Abandoned % >= 5% and any violation count are warn-tinted
+  // footer. Abandoned % >= the standard and any violation count are warn-tinted
   // (same thresholds as the per-dept QCD report).
   // Seconds -> H:MM:SS (client-side; server uses formatSecondsHms_).
   function qcdSecToHms_(sec) {
@@ -348,9 +348,9 @@
   // table, derived from data.grandTotals (F-36-deduped, correct total-abandoned/
   // total-offered basis -- NOT a client re-sum of the sections, which would
   // double-count a queue mapped to two depts). "Queues in violation" = count of
-  // UNIQUE queues with abandoned % >= 5% (owner ruling; distinct from the
+  // UNIQUE queues with abandoned % >= the standard (owner ruling; distinct from the
   // Violations column). No new server call; the table/CSV/print are unchanged.
-  // The 5%-overage callout uses .is-warn (not .is-bad) per the CSS-token
+  // The overage callout uses .is-warn (not .is-bad) per the CSS-token
   // convention: --bad is hard errors, --warn is warnings (a threshold overage).
   function qcdAllDeptVerdictHtml_(data) {
     const g = (data && data.grandTotals) || {};
@@ -364,7 +364,7 @@
     depts.forEach(function (d) {
       (d.queues || []).forEach(function (q) {
         if (seen[q.queue]) return; seen[q.queue] = true;
-        if (Number(q.abandonedPct) >= 5) {
+        if (Number(q.abandonedPct) >= ABANDON_STANDARD_) {
           offenders.push({ queue: q.queue, pct: Number(q.abandonedPct) || 0,
             pctStr: q.abandonedPctStr || (Number(q.abandonedPct) || 0).toFixed(1) + '%',
             viol: Number(q.violations) || 0 });
@@ -441,21 +441,21 @@
       }
     }
     // QV-3: the company abandon% leads as a HERO tile -- big number, a 0-10%
-    // target bar with the 5% tick at midpoint, and "N of M calls lost" --
+    // target bar with the standard tick, and "N of M calls lost" --
     // so "is today bad?" answers before the table. Company pct comes from
     // grandTotals (total abandoned / total offered -- already the correct
     // aggregate, never an average of per-queue rates). Tone stays BINARY on
-    // the 5% standard (the benchValueCls_ convention). The verdict container
+    // the abandon standard (the benchValueCls_ convention). The verdict container
     // is outside #qcd-alldept-body, so it never enters the print clone.
     const abandoned = Number(g.abandoned) || Math.max(0, total - ans);
     const heroFill = Math.max(0, Math.min(100, companyPct * 10));   // 0-10% scale
-    const heroTone = companyPct >= 5 ? 'warn' : 'good';
+    const heroTone = companyPct >= ABANDON_STANDARD_ ? 'warn' : 'good';
     const hero = '<div class="qcd-hero qcd-hero--' + heroTone + '">'
       + '<div class="qcd-verdict-label">Company abandoned %</div>'
       + '<div class="qcd-hero-value">' + escapeHtml(companyPctStr) + '</div>'
-      + '<div class="qcd-hero-bar" title="0–10% scale · tick = the 5% company standard">'
+      + '<div class="qcd-hero-bar" title="0–10% scale · tick = the ' + ABANDON_STANDARD_ + '% company standard">'
       +   '<span class="qcd-hero-fill" style="width:' + heroFill + '%"></span>'
-      +   '<span class="qcd-hero-tick"><span class="qcd-hero-tick-lbl">5%</span></span>'
+      +   '<span class="qcd-hero-tick" style="left:' + (ABANDON_STANDARD_ * 10) + '%"><span class="qcd-hero-tick-lbl">' + ABANDON_STANDARD_ + '%</span></span>'
       + '</div>'
       + '<div class="qcd-hero-sub">' + fmtNumber(abandoned) + ' of ' + fmtNumber(total)
       +   ' calls lost</div>'
@@ -542,7 +542,7 @@
     const NCOLS = 6;
     let html = '<table class="qcd-alldept-table agents"><thead><tr>'
       + '<th>Queue</th><th class="num">Total</th><th>Answered vs Abandoned</th>'
-      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num" title="Month-to-date 5%-violation days through this report\u2019s end date (not just this range)">Viol (MTD)</th>'
+      + '<th class="num">Longest</th><th class="num">Avg ans</th><th class="num" title="Month-to-date abandon-violation days through this report\u2019s end date (not just this range)">Viol (MTD)</th>'
       + '</tr></thead>';
     // Round-16 per-queue MTD pace (Option 1): a muted mono sub-line under the
     // queue name -- "MTD Ø <avg>/day · <prior month> <avg> <▲/▼ %>", averages
@@ -675,18 +675,18 @@
       // QV-2: the dept banner row leads with a health-toned rail + a bigger
       // name + a right-aligned mini-summary. Tone is BINARY per the
       // benchmark convention (no invented bands): warn when the section's
-      // abandon% >= 5 OR any of its queues is in violation; muted for a
+      // abandon% >= the standard OR any of its queues is in violation; muted for a
       // zero-call section; sage otherwise. The mini-summary is screen-only
       // (stripped from the print clone; CSV builds from data).
       const st = qcdAllDeptSectionTotal_(secItems.map(function (i) { return i.q; }));
       const secTotal = Number(st.totalCalls) || 0;
       const secPct = Number(st.abandonedPct) || 0;
       // R11-B2 (owner ruling): the dept banner's tone reads the department
-      // AS A WHOLE -- section abandon% vs the 5% standard ONLY. A sub-queue
+      // AS A WHOLE -- section abandon% vs the abandon standard ONLY. A sub-queue
       // in violation keeps its own red row/violation cell, but no longer
       // flips a healthy dept's banner to warn (CSR at 0.82% was reading red
       // because A_Q_Spanish sat at 6.25%).
-      const tone = secTotal === 0 ? 'muted' : (secPct >= 5 ? 'warn' : 'good');
+      const tone = secTotal === 0 ? 'muted' : (secPct >= ABANDON_STANDARD_ ? 'warn' : 'good');
       const secPctStr = st.abandonedPctStr || (secPct.toFixed(2) + '%');
       // R10-8: the abandon% leads the mini-summary at full weight (it was an
       // 11px muted afterthought); tone color rides the row's qcd-deptrow--*

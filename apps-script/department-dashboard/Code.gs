@@ -74,6 +74,12 @@ function renderAgentApp_(user, preview) {
   tmpl.workWindowJson = JSON.stringify(
     (typeof DASHBOARD_WORK_WINDOW !== 'undefined') ? DASHBOARD_WORK_WINDOW : ''
   ).replace(/</g, '\\u003c');
+  // R23: the RESOLVED answer standard for this agent's dept ({target, band}
+  // -- CSR seed 92/2, company default 80/10), so the app's tint + chart line
+  // agree with the manager dashboard's per-dept judgment.
+  let agentStd = { target: ANSWER_TARGET_DEFAULT, band: ANSWER_AMBER_BAND_DEFAULT };
+  try { agentStd = getAnswerStandardFor_(user.agentDept || null); } catch (e) { /* seed */ }
+  tmpl.answerStdJson = JSON.stringify(agentStd).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('My Performance — Call Data')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
@@ -180,6 +186,12 @@ function renderDashboard_(user) {
   let answerTargets = { global: ANSWER_TARGET_DEFAULT };
   try { answerTargets = getAnswerTargets_(); } catch (e) { /* seed default */ }
   tmpl.answerTargetsJson = JSON.stringify(answerTargets).replace(/</g, '\\u003c');
+  // R23: the full display-standards bundle (per-dept answer targets + amber
+  // bands, CSR transfer tiers, the abandon standard) -- the three-tier tints
+  // and the Help standards reference read window.__STANDARDS__.
+  let standards = null;
+  try { standards = getStandardsBundle_(); } catch (e) { standards = null; }
+  tmpl.standardsJson = JSON.stringify(standards).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

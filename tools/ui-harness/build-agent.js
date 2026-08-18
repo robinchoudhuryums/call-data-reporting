@@ -87,6 +87,8 @@ html = html.replace('<?!= userJson ?>', JSON.stringify({
   email: 'agent1@x.com', role: 'agent', agentDept: 'CSR', agentName: 'Maria Lopez',
 }));
 html = html.replace('<?!= workWindowJson ?>', JSON.stringify('8:30 AM – 5:00 PM CST'));
+// R23: the server-resolved dept answer standard (CSR pilot -> the 92/2 seed).
+html = html.replace('<?!= answerStdJson ?>', JSON.stringify({ target: 92, band: 2 }));
 if (html.indexOf('<?!=') !== -1) {
   console.error('build-agent: unresolved scriptlet remains in the assembled page.');
   process.exit(1);

@@ -241,8 +241,18 @@ const QCD_HISTORICAL_COLS = Object.freeze({
   LONGEST_WAIT:   9,     // I - H:MM:SS
   AVG_ANSWER:    10,     // J - H:MM:SS
   ABANDONED_PCT: 11,     // K - 0..1 (decimal, NOT percent)
-  VIOLATIONS:    12,     // L - count of days/sources where abandonedPct > 5%
+  VIOLATIONS:    12,     // L - count of days/sources where abandonedPct exceeded the
+                         //     pipeline gate (QCD_VIOLATION_ABANDON_RATE in cdr-import
+                         //     autoImport.js -- 4% since 2026-08, 5% before; rows keep
+                         //     the flag they were written with)
 });
+
+// The company abandoned-% DISPLAY standard, in percent points. Every tint /
+// headline / email tier that judges an abandon rate reads this (the client
+// copy is ABANDON_STANDARD_ in script-1-core.html -- keep the two in sync,
+// cross-file-pins.test.js pins them equal). Owner 2026-08: lowered 5 -> 4,
+// matching the pipeline's QCD_VIOLATION_ABANDON_RATE gate above (col L doc).
+const ABANDON_STANDARD_PCT = 4;
 
 // Fallback timezone for formatting Date objects from spreadsheet
 // cells when the spreadsheet's own TZ isn't passed explicitly.
@@ -446,16 +456,38 @@ const UI_FLAG_SURFACES = Object.freeze({
  * silently dropped. `direct` / `inbound` exist because those reports'
  * answer rates are DIFFERENT POPULATIONS (direct-extension calls with the
  * busy carve-out; share-of-inbound-calls) than the queue-call rate the
- * 92% standard was set for.
+ * company standard was set for.
  *
- * Deliberately NOT covered: the 5% abandon threshold (baked into the QCD
- * Violations history written at import time, INV-50 -- making it tunable
+ * Deliberately NOT covered: the abandon threshold (ABANDON_STANDARD_PCT
+ * above -- a code constant, not a property, because the QCD Violations
+ * history is written at import time, INV-50; making it tunable
  * would desync tints from recorded violation counts) and the per-dept
  * ALERT thresholds (Alert Config rows, INV-34 -- already admin-editable).
  */
-const ANSWER_TARGET_DEFAULT = 92;
+const ANSWER_TARGET_DEFAULT = 80;   // owner 2026-08: 92 -> 80 company-wide; CSR keeps 92 via the per-dept seed below
 const ANSWER_TARGET_SURFACES = Object.freeze({
   global:  'All answer-% surfaces (tints, headlines, chart baseline, digest verdict)',
   direct:  'Direct Call report — direct-extension answer rate (busy-excluded)',
   inbound: 'Inbound report — share of inbound calls answered',
 });
+
+// R23 (owner): the answer-% tint is THREE-tier -- green at/above the target,
+// AMBER within `band` points below it, red past that. Band is tunable like
+// the target (`band=10` in ANSWER_TARGETS; per-dept via DEPT_ANSWER_TARGETS).
+const ANSWER_AMBER_BAND_DEFAULT = 10;
+
+// Per-dept answer-standard overrides, layered over the global target/band.
+// Seed: CSR keeps the historical 92% with a tight 2-pt amber band (owner
+// 2026-08). Admin-tunable without a redeploy via the DEPT_ANSWER_TARGETS
+// Script Property -- tolerant `Dept=target/band` pairs (`CSR=92/2`; band
+// optional, falls back to the global band). Read via getAnswerStandardFor_.
+const DEPT_ANSWER_TARGET_SEED = Object.freeze({
+  'CSR': Object.freeze({ target: 92, band: 2 }),
+});
+
+// CSR Transfer-% display tiers (the My Department team-strip tile): pct <=
+// deep reads deeper-green, < light reads light-green, < amber reads amber,
+// >= amber reads red. Admin-tunable via the TRANSFER_TIERS Script Property
+// (`deep=25, light=30, amber=35`); read via getTransferTiers_. LOWER is
+// better -- a transfer is a hand-off the caller had to sit through.
+const TRANSFER_TIERS_DEFAULT = Object.freeze({ deep: 25, light: 30, amber: 35 });

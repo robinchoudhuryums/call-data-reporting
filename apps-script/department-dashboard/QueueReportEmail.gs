@@ -356,15 +356,15 @@ function queueReportFlagMissedDay_(props, now, targetIso) {
 /**
  * Email-safe HTML for the all-departments report -- the "verdict layer" design
  * (docs: the Daily Call Queue Report design update). Leads with the answer:
- * a verdict alert naming any queues over the 5% line, a KPI row, then a
+ * a verdict alert naming any queues over the abandon-standard line, a KPI row, then a
  * WORST-FIRST dept table whose abandoned-% cells are filled <td> bars (NOT
  * Chart.js -- images/canvas are blocked in mail). Inline styles only,
  * nested role="presentation" tables, system fonts, hidden preheader, bulletproof
  * CTA. Bound entirely to the SAME server figures the web report uses
- * (`computeQcdAllDepartments_`); compute / the 5% rule / the exported data are
+ * (`computeQcdAllDepartments_`); compute / the abandon-standard rule / the exported data are
  * unchanged. Worst-first ordering is EMAIL-ONLY (the web report keeps its
  * viewer-float + parent-grouping order; owner ruling). "Queues in violation" =
- * count of unique queues with abandoned % >= 5% (owner ruling), distinct from
+ * count of unique queues with abandoned % >= ABANDON_STANDARD_PCT (owner ruling), distinct from
  * the Violations column. Company figures come from `grandTotals` (F-36-deduped,
  * total-abandoned/total-offered basis) -- NOT a client-style re-sum of the
  * sections, which would double-count a queue mapped to two depts.
@@ -386,21 +386,21 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     neuTile: '#f2f6fa', neuTileB: '#dde6ee',
     badTile: '#fbeae2', badTileB: '#eccbbb', goodTile: '#e6f0ea', goodTileB: '#cfe3d7',
   };
-  // Tier from the ONLY company standard (5% aban) + the existing violation
+  // Tier from the ONLY company standard (ABANDON_STANDARD_PCT aban) + the existing violation
   // tiering (viol>3 strong / >0 light) -- no invented thresholds.
   const tierOf = function (pct, viol) {
     if (Number(viol) > 3) return { label: 'IN VIOLATION', color: C.bad };
-    if (Number(viol) > 0 || Number(pct) >= 5) return { label: 'WATCH', color: C.watch };
+    if (Number(viol) > 0 || Number(pct) >= ABANDON_STANDARD_PCT) return { label: 'WATCH', color: C.watch };
     return { label: 'HEALTHY', color: C.good };
   };
   // R11-B4 (owner-confirmed): share-of-total SPLIT bar (green answered /
   // red abandoned), replacing the old 0-20%-scaled fill where a 50%-abandon
   // day clamped to a full orange bar that contradicted its own number.
   // Mirrors the web report's qcdDailyBarCell_; the red softens when the row
-  // passes the 5% standard (the R10-4 convention).
+  // passes the abandon standard (the R10-4 convention).
   // Round-16 (owner): queue rows mirror the web report's volume TALLY --
   // fixed-width block cells (answered green, abandoned red; soft red under
-  // the 5% standard) at a cohort-shared unit, so a busy queue visibly
+  // the abandon standard) at a cohort-shared unit, so a busy queue visibly
   // dwarfs a quiet one in the email too. Section/company rows keep the
   // proportional split bar (aggregates dwarf queue-scale blocks). Email-safe:
   // table cells with inline styles, no flex/inline-block.
@@ -409,7 +409,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     const ab = Number(row.abandoned != null ? row.abandoned
       : Math.round((Number(row.abandonedPct) || 0) / 100 * (Number(row.totalCalls) || 0))) || 0;
     const abPct = Number(row.abandonedPct) || 0;
-    const redC = abPct >= 5 ? C.bad : '#e8c4b2';
+    const redC = abPct >= ABANDON_STANDARD_PCT ? C.bad : '#e8c4b2';
     // R17e (owner): slimmer cells than the original 5px+2px buy the higher
     // block ceiling (TALLY_MAX_BLOCKS below), which lets the unit ladder
     // land on 20 calls/block for a ~350-500-call queue day where the old
@@ -468,7 +468,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     if (abPct > 0 && abW < 2) abW = 2;   // a real abandon stays visible
     let ansW = Math.min(100 - abW, Math.round(ansPct));
     const restW = Math.max(0, 100 - ansW - abW);
-    const redC = abPct >= 5 ? C.bad : '#e8c4b2';   // full red only past the 5% standard
+    const redC = abPct >= ABANDON_STANDARD_PCT ? C.bad : '#e8c4b2';   // full red only past the abandon standard
     let cells = '';
     if (ansW > 0)  cells += '<td width="' + ansW + '%" style="background:' + C.good + ';height:8px;line-height:8px;font-size:0;">&nbsp;</td>';
     if (abW > 0)   cells += '<td width="' + abW + '%" style="background:' + redC + ';height:8px;line-height:8px;font-size:0;">&nbsp;</td>';
@@ -495,12 +495,12 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       : Number((o || {}).violations) || 0;
   };
 
-  // Offenders (unique queues >= 5%) for the alert + preheader, worst-first.
+  // Offenders (unique queues >= the abandon standard) for the alert + preheader, worst-first.
   const seen = {}, offenders = [];
   depts.forEach(function (d) {
     deptQueues(d).forEach(function (q) {
       if (seen[q.queue]) return; seen[q.queue] = true;
-      if (Number(q.abandonedPct) >= 5) {
+      if (Number(q.abandonedPct) >= ABANDON_STANDARD_PCT) {
         offenders.push({ queue: q.queue, pct: Number(q.abandonedPct) || 0,
           pctStr: q.abandonedPctStr || (Number(q.abandonedPct) || 0).toFixed(2) + '%',
           viol: Number(q.violations) || 0 });
@@ -621,10 +621,10 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
 
   // ---- preheader ----
   const preheadTxt = overCount
-    ? (overCount + ' queue' + (overCount === 1 ? '' : 's') + ' over the 5% line — '
+    ? (overCount + ' queue' + (overCount === 1 ? '' : 's') + ' over the ' + ABANDON_STANDARD_PCT + '% line — '
         + offenders.slice(0, 2).map(function (o) { return o.queue + ' ' + o.pctStr; }).join(', ')
         + '. Company aban ' + (gt.abandonedPctStr || gPct.toFixed(1) + '%') + '.')
-    : ('All queues under the 5% line. Company aban ' + (gt.abandonedPctStr || gPct.toFixed(1) + '%') + '.');
+    : ('All queues under the ' + ABANDON_STANDARD_PCT + '% line. Company aban ' + (gt.abandonedPctStr || gPct.toFixed(1) + '%') + '.');
   const preheader = '<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;'
     + 'font-size:1px;line-height:1px;color:' + C.page + ';">' + esc(preheadTxt) + '</div>';
 
@@ -718,7 +718,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       + 'MTD &Oslash; ' + mAvg + '/day &middot; ' + tail + '</div>';
   };
   // R16c/R16d (owner): the daily company aban VALUE color-codes on its own
-  // tier ladder -- green <=3%, amber 3-4%, red >4% (tighter than the 5%
+  // tier ladder -- green <=3%, amber 3-4%, red >4% (tighter than the company
   // queue violation line: the company-wide blend should sit well under it).
   // R16d: when the value goes RED the CARD tints light red too (the same
   // badTile treatment as the Queues-in-viol card); green/amber keep the
@@ -864,7 +864,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       // now -- the banner-only collapse that parked it here is retired.)
       +   '<td style="padding:8px 12px;font:bold 13px Arial,sans-serif;color:' + C.ink + ';">' + bannerName + '</td>'
       +   '<td align="right" style="padding:8px 12px;font:12px ' + sans + ';color:' + C.mut + ';white-space:nowrap;">'
-      +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= 5 ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
+      +     esc(dCalls) + ' calls &middot; <span style="' + (dPct >= ABANDON_STANDARD_PCT ? 'font-weight:bold;color:' + C.bad : 'color:' + C.ink) + ';">' + esc(dAbnd) + ' abandoned (' + esc(dPctStr) + ')</span>'
       +   '</td>'
       + '</tr></table></td>'
       + '<td align="right" style="background:' + stripBg + ';border-top:1px solid ' + C.rowline
@@ -885,7 +885,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       tbl += '<tr>'
         + '<td style="padding:6px 12px' + (rd.sub ? ' 6px 22px' : '') + ';font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + rowLbl + qMtdSubEmail(q) + '</td>'
         + '<td align="right" style="padding:6px 8px;font:12px ' + sans + ';color:' + C.ink + ';border-top:1px solid ' + C.rowline + ';">' + esc(q.totalCalls) + '</td>'
-        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (tallyUnit > 0 ? tallyHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5, tallyUnit) : barHtml(q, pctStr, pct >= 5 ? t.color : C.mut, pct >= 5)) + '</td>'
+        + '<td style="padding:6px 8px;border-top:1px solid ' + C.rowline + ';">' + (tallyUnit > 0 ? tallyHtml(q, pctStr, pct >= ABANDON_STANDARD_PCT ? t.color : C.mut, pct >= ABANDON_STANDARD_PCT, tallyUnit) : barHtml(q, pctStr, pct >= ABANDON_STANDARD_PCT ? t.color : C.mut, pct >= ABANDON_STANDARD_PCT)) + '</td>'
         + '<td align="right" style="padding:6px 12px;font:' + (viol > 0 ? 'bold ' : '') + '12px ' + sans + ';color:' + (viol > 0 ? t.color : C.mut) + ';border-top:1px solid ' + C.rowline + ';">' + esc(String(viol)) + '</td>'
         + '</tr>';
     });
@@ -899,7 +899,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
   tbl += '<tr>'
     + '<td style="padding:9px 12px;font:bold 12px Arial,sans-serif;color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">Company total</td>'
     + '<td align="right" style="padding:9px 8px;font:bold 12px ' + sans + ';color:' + C.ink + ';border-top:2px solid ' + C.ink + ';">' + esc(gTotal) + '</td>'
-    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= 5 ? gTier.color : C.mut, true)
+    + '<td style="padding:9px 8px;border-top:2px solid ' + C.ink + ';">' + barHtml({ totalCalls: gTotal, totalAnswered: gAns, abandonedPct: gPct }, (gt.abandonedPctStr || gPct.toFixed(1) + '%'), gPct >= ABANDON_STANDARD_PCT ? gTier.color : C.mut, true)
     // (R16d: the "each block ≈ N" note moved to each section's banner --
     // the unit is per-section now, so a single company-row note would lie.)
     + '</td>'
@@ -915,7 +915,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       + '<div style="font:10px ' + sans + ';color:#9aa6b2;padding:8px 2px 0;">Depts sorted worst-first &middot; bars show answered (green) vs abandoned (red) share of calls'
       +   (tallyUnit > 1 ? ' &middot; one block &asymp; ' + tallyUnit + ' calls, the same across every queue below' : '')
       +   (tallyClipped > 0 ? ' &middot; &raquo; marks a queue past the end of that scale \u2014 read its count' : '')
-      +   ' &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol = each queue\u2019s 5%-violation days month-to-date (through this report\u2019s end date).</div>'
+      +   ' &middot; full columns (Ans/Longest/Avg) live in the dashboard &middot; Viol = each queue\u2019s abandon-violation days month-to-date (through this report\u2019s end date).</div>'
       + '</td></tr>')
     : '<tr><td style="padding:18px 26px 6px;font:400 14px Arial,sans-serif;color:' + C.mut + ';">No queue activity recorded for this day.</td></tr>';
 

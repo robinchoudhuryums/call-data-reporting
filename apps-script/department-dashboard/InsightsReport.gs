@@ -1165,8 +1165,11 @@ function insEmailHeadRows_(data) {
   const takeaway = digestTakeaway_(t);
   const dp = Number((t.pct && t.pct.deltaPct) || 0);
   const tone = !takeaway || Math.abs(dp) < 0.05 ? 'neutral' : (dp > 0 ? 'good' : 'warn');
-  let target = 92;
-  try { target = Number(getAnswerTargets_().global) || 92; } catch (e) { /* seed */ }
+  let target = ANSWER_TARGET_DEFAULT;
+  try {
+    target = Number(getAnswerStandardFor_(((data || {}).meta || {}).department || null).target)
+      || ANSWER_TARGET_DEFAULT;
+  } catch (e) { /* seed */ }
   const pctVal = Number((t.pct && t.pct.val) || 0);
   const hasCalls = Number((t.rung && t.rung.val) || 0) > 0;
   const sub = function (stat, valence) {
