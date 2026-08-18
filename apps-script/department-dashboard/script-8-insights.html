@@ -2005,40 +2005,11 @@
       .getMissedCallsSlice({ department: meta.department, from: meta.from, to: meta.to });
   }
 
-  // M2: reflect the rendered report on the REGION's collapsed summary (the
-  // insQhFoldSync_ pattern one level up) -- a closed region still states
-  // where the team stands + which window it covers, so staleness after a
-  // dept-window change is visible rather than silent. The static "what's in
-  // here" sub line yields to the live headline once one exists.
-  function insRegionHeadSync_(data) {
-    const el = $('ins-region-head');
-    if (!el) return;
-    const t = (data && data.teamStats) || {};
-    const meta = (data && data.meta) || {};
-    const qh = data && data.queueHealth;
-    const bits = [];
-    // teamStats fields are STAT OBJECTS ({formatted, deltaPct, ...} -- what
-    // dsKpiTile_ consumes); .formatted is the display string.
-    // M3: the dept leads the headline -- a PARENT dept's page shows the
-    // combined table, so the collapsed region must say which dept its
-    // report covers.
-    if (meta.department) bits.push(escapeHtml(String(meta.department)));
-    const pctStr = t.pct && t.pct.formatted;
-    const missStr = t.missed && t.missed.formatted;
-    if (pctStr && pctStr !== '-')  bits.push(escapeHtml(String(pctStr)) + ' answered');
-    if (missStr && missStr !== '-') bits.push(escapeHtml(String(missStr)) + ' missed rings');
-    if (qh && qh.totals && Number(qh.totals.totalCalls) > 0 && qh.totals.abandonedPctStr) {
-      bits.push(escapeHtml(String(qh.totals.abandonedPctStr)) + ' abandoned');
-    }
-    if (!bits.length) { el.innerHTML = ''; return; }
-    const win = (meta.from && meta.to)
-      ? '<span class="ins-region-win">' + escapeHtml(meta.from + ' → ' + meta.to) + '</span>' : '';
-    el.innerHTML = bits.map(function (b) {
-      return '<span class="ins-region-stat">' + b + '</span>';
-    }).join('<span class="ins-region-dot">&middot;</span>') + win;
-    const sub = $('ins-region-sub');
-    if (sub) sub.style.display = 'none';
-  }
+  // (R24, owner: the M2 live headline on the region summary -- answer rate ·
+  // missed rings · abandoned % · window -- is RETIRED as redundant with the
+  // report's own sticky results header. The #ins-region-head span left the
+  // markup; this stub keeps the render-path call site harmless.)
+  function insRegionHeadSync_(data) { /* retired -- R24 */ }
 
   // Round-16: sync the Queue-health FOLD around the section -- visibility +
   // the collapsed summary's headline, so the fold answers its question even

@@ -3137,3 +3137,42 @@ not roster artifacts).
 Tests: coaching 11 (was 8) — ratio spare/flag pair, the ring-level
 whole-team-under-50% case, the points floor still holding, the zero-team
 guard. 761/761. Engine-only; still dark (no delivery).
+
+## Increment 125 (2026-08-18) — R24: workday prior windows, region header removed, scoped esc banner, IR perf
+
+Four owner items in one round:
+
+1. **INV-28 REDEFINED to working days (owner: "0% vs Sunday").** The shared
+   `computePriorWindow_` (Data.gs) + the client `resolveComparisonWindow_`
+   (script-6) now produce the immediately-preceding window with the SAME
+   WORKING-DAY count (Mon-Fri minus COMPANY_HOLIDAYS), ending on the last
+   working day before `from` -- a Monday compares to Friday. Zero-workday
+   (weekend-only) windows keep the legacy calendar math. Every consumer
+   inherits (E5 chips, Insights auto-prior, IR prevPeriod, Direct
+   kpisPrior, Inbound priors). INV-30 bumps for the keys that don't encode
+   the prior window: summary v19->v20, directCall v3->v4, inbound v8->v9
+   (IR/Insights keys carry the prior window, no bump). invariants.md
+   INV-28 + INV-30 rewritten; cache-version-sync tables updated.
+2. **Insights region headline REMOVED (redundant).** The #ins-region-head
+   live stats (answered · missed rings · abandoned % · window) on the
+   region <summary> retired -- the report's own sticky results header
+   carries the same facts. Summary stays as the collapse toggle with the
+   static sub line; insRegionHeadSync_ is a stub.
+3. **Overview escalations banner scoped.** The top-of-Overview strip now
+   shows managers only their own depts' OPEN escalations (server counts
+   were already dept-scoped; the show condition dropped 'review'-only
+   triggers); admins / ALL-sentinel viewers keep the company-wide banner.
+   View-as-Manager now narrows the strip client-side to the previewed
+   dept via byDept (was showing the admin's company-wide counts). Nav-tab
+   badge unchanged (worklist affordance).
+4. **IR (and Insights) load perf.** neonFetchDqeRows_ gained opts.agents
+   (prepared-statement IN filter, skip on empty/>300): IR + Insights now
+   fetch the 12-month union window for roster ∪ selection ONLY (~1 dept
+   instead of all 14 -- the whole-window json_agg was the dominant cost).
+   Aggregations only ever read roster/selected rows (team totals are
+   rosterSet-gated), so payloads are identical -- pinned by the existing
+   parity suites.
+
+Tests: prior-window pins recomputed (compute-summary E5, IR R8-D3,
+insights x2 -- fixtures moved off the weekend dates). 761/761; INV-16 +
+ratchet green. Pushed to branch; NOT merged (no owner word this round).

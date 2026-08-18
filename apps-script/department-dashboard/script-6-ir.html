@@ -1081,17 +1081,44 @@
       return { from: isoOf(ps), to: isoOf(pe) };
     }
     if (mode === 'prevPeriod') {
+      // R24 (owner): WORKING-day equivalence, mirroring the server's
+      // computePriorWindow_ (INV-28): the prior window holds the same count
+      // of working days (Mon-Fri minus __COMPANY_HOLIDAYS__) and ends on the
+      // last working day before `from` -- a Monday compares to Friday, never
+      // Sunday. A no-working-day (weekend-only) window falls back to the
+      // legacy same-calendar-length math, like the server. The R8-5 lesson
+      // (Math.round across DST) carries into the fallback.
       const ms = 86400000;
-      // R8-5: Math.ROUND, not floor. The noon-local Dates protect the DATE
-      // formatting from DST, but the DIFFERENCE across spring-forward is
-      // N*24h - 1h, which floor truncates to N-1 -- the resolved prior
-      // window came out one day short for any DST-spanning range,
-      // violating INV-28 (the server's computePriorWindow_ uses
-      // Date.UTC + Math.round and was immune; this client copy resolves
-      // the IR prevPeriod + the form hints, so it must match).
-      const durationDays = Math.round((end - start) / ms);
-      const pe = new Date(start.getTime() - ms);
-      const ps = new Date(pe.getTime() - durationDays * ms);
+      const holidays = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
+      const isHol = function (iso) {
+        for (let i = 0; i < holidays.length; i++) {
+          const r = holidays[i];
+          if (r && r.from && r.to && iso >= r.from && iso <= r.to) return true;
+        }
+        return false;
+      };
+      const isBiz = function (d) {
+        const dow = d.getDay();
+        return dow !== 0 && dow !== 6 && !isHol(isoOf(d));
+      };
+      let workdays = 0;
+      for (let d = new Date(start.getTime()); d <= end; d = new Date(d.getTime() + ms)) {
+        if (isBiz(d)) workdays++;
+      }
+      if (workdays === 0) {
+        const durationDays = Math.round((end - start) / ms);
+        const pe0 = new Date(start.getTime() - ms);
+        const ps0 = new Date(pe0.getTime() - durationDays * ms);
+        return { from: isoOf(ps0), to: isoOf(pe0) };
+      }
+      let pe = new Date(start.getTime() - ms);
+      while (!isBiz(pe)) pe = new Date(pe.getTime() - ms);
+      let ps = new Date(pe.getTime());
+      let counted = 1;
+      while (counted < workdays) {
+        ps = new Date(ps.getTime() - ms);
+        if (isBiz(ps)) counted++;
+      }
       return { from: isoOf(ps), to: isoOf(pe) };
     }
     return null;

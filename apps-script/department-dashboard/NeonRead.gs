@@ -208,9 +208,20 @@ var NEON_DQE_SLOT_COLS = [
  * `abandonedParentIds`, and `abandonedMissedTimes`. With opts absent the
  * SQL and row shape are byte-identical to the pre-DAL-cutover behavior,
  * so the existing cut-over readers are untouched.
+ *
+ * R24 (owner: "the IR takes a long time to load"): `opts.agents` (string[])
+ * adds `AND agent_name IN (?...)` so a single-dept reader over the 12-month
+ * trend window fetches ONE dept's agents instead of every dept's rows
+ * (~14x less JSON to build, ship, and parse -- the whole-window fetch was
+ * the IR's dominant cost). Names bind as prepared-statement params (INV-04
+ * exact-match semantics; the caller supplies roster + selection names).
+ * An empty/oversized (>300) list skips the filter -- never a wrong result,
+ * just the old full fetch.
  */
 function neonFetchDqeRows_(fromIso, toIso, opts) {
   var includeMissedDetail = !!(opts && opts.includeMissedDetail);
+  var agentFilter = (opts && Array.isArray(opts.agents) && opts.agents.length > 0
+                     && opts.agents.length <= 300) ? opts.agents : null;
   var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
   if (!conn) return [];
   var out = [];
@@ -233,10 +244,19 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
             // Sub-queue Phase 2. COALESCE so a pre-Phase-1 row reads as '' and
             // takes applyQueueSplitToRows_'s fail-open path rather than null.
             + "COALESCE(queue_split, '') AS queue_split" + detailCols + " "
-            + "FROM dqe_history WHERE call_date BETWEEN ?::date AND ?::date) t";
+            + "FROM dqe_history WHERE call_date BETWEEN ?::date AND ?::date"
+            + (agentFilter
+               ? ' AND agent_name IN (' + agentFilter.map(function () { return '?'; }).join(',') + ')'
+               : '')
+            + ") t";
     var stmt = conn.prepareStatement(sql);
     stmt.setString(1, fromIso);
     stmt.setString(2, toIso);
+    if (agentFilter) {
+      for (var ai = 0; ai < agentFilter.length; ai++) {
+        stmt.setString(3 + ai, String(agentFilter[ai]));
+      }
+    }
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();

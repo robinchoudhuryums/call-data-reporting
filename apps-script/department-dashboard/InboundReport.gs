@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v8';
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v9';   // v9: R24 working-day prior windows
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -1318,7 +1318,7 @@ function runInboundQcdParityCheck() {
 // spot-check shows the columns are off, this single constant is the knob.
 // Pre-extension rows (null/empty call_start) carry no time-of-day and are
 // excluded (documented gap -- they predate the journey extension).
-// v3: bumped with inbound:v8 (shares inboundDeptPredicate_, B-4).
+// v3: bumped with the B-4 inbound bump (shares inboundDeptPredicate_).
 const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v3';
 const INBOUND_HEATMAP_CST_SHIFT_HOURS = 2;    // PST(stored) -> CST(dashboard)
 const INBOUND_HEATMAP_WINDOW_START_HOUR = 8;  // 8 AM CST (matches INV-18)

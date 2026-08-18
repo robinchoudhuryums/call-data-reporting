@@ -165,9 +165,9 @@ test('R8-D3: priorMode=prevPeriod resolves the INV-28 window server-side (byte-e
   const rows = [
     dqeRow({ date: '2026-03-09', agent: 'Anna', rung: 6, missed: 1, answered: 5,
              ttt: '0:20:00', att: '0:04:00' }),
-    // Activity inside the expected prior window (Mar 5-6 for a Mar 7-8 range... 
-    // range below is Mar 9-10, so prior = Mar 7-8).
-    dqeRow({ date: '2026-03-08', agent: 'Anna', rung: 4, missed: 2, answered: 2,
+    // Activity inside the expected prior window: the range below is Mon-Tue
+    // Mar 9-10, so the R24 working-day prior is Thu-Fri Mar 5-6.
+    dqeRow({ date: '2026-03-06', agent: 'Anna', rung: 4, missed: 2, answered: 2,
              ttt: '0:08:00', att: '0:04:00' }),
   ];
   install(rows);
@@ -175,8 +175,8 @@ test('R8-D3: priorMode=prevPeriod resolves the INV-28 window server-side (byte-e
     { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'], priorMode: 'prevPeriod' });
   h.state.cache.clear();
   const pw = h.call('computePriorWindow_', '2026-03-09', '2026-03-10');
-  assert.equal(pw.from, '2026-03-07');
-  assert.equal(pw.to, '2026-03-08');
+  assert.equal(pw.from, '2026-03-05');
+  assert.equal(pw.to, '2026-03-06');
   const viaDates = h.call('getIndividualReport',
     { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'],
       priorFrom: pw.from, priorTo: pw.to });

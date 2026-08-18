@@ -793,7 +793,7 @@ function getDepartmentSummary(req) {
   // rather than a version bump: the version tracks aggregation-RULE changes
   // (INV-30) and both modes are the same rule under a different scope.
   const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'summary:v19:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v20:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope;
   const cached = cache.get(cacheKey);
   if (cached) {
@@ -2048,26 +2048,35 @@ function avgNonzero_(arr, key) {
 }
 
 /**
- * THE shared INV-28 prior-window implementation: same duration as
- * [from, to], ending one day before `from`. Parsed at noon UTC to
- * dodge DST edges, then re-formatted as `YYYY-MM-DD` for the
- * caller's date-string comparisons.
+ * THE shared INV-28 prior-window implementation.
  *
- * Consumers: computeSummary_ (E5 per-row delta chips) and
- * computeInsights_ (auto prior; the retired Performance Report was the
- * third consumer). Any future "compare against the preceding window"
- * feature should call this rather than re-deriving the math --
- * the call sites used to carry near-identical copies.
+ * R24 (owner): measured in WORKING days, not calendar days -- the prior
+ * window contains the SAME NUMBER of working days (Mon-Fri minus
+ * COMPANY_HOLIDAYS) as [from, to] and ENDS on the last working day before
+ * `from`. So a single-Monday window compares to Friday, never Sunday, and a
+ * Mon-Fri week compares to the previous Mon-Fri. (Before R24 this was the
+ * same-CALENDAR-length window ending one day before `from`, which made
+ * "0% vs Sunday" comparisons.) A window with NO working days at all (a
+ * weekend-only selection) keeps the legacy calendar behavior -- degenerate,
+ * but defined. Window BOUNDS can still span an interior weekend (e.g. a
+ * Tue-Wed window's prior is Fri-Mon); any weekend rows inside contribute as
+ * they always did -- equivalence is in working-day count, not row filtering.
+ *
+ * Parsed at noon UTC to dodge DST edges, then re-formatted as `YYYY-MM-DD`
+ * for the caller's date-string comparisons.
+ *
+ * Consumers: computeSummary_ (E5 per-row delta chips), computeInsights_
+ * (auto prior), IR priorMode 'prevPeriod' (INV-49), the Direct report's
+ * kpisPrior/deptsPrior (R11-M), and the Inbound report's prior KPIs. Any
+ * future "compare against the preceding window" feature should call this
+ * rather than re-deriving the math.
  */
 function computePriorWindow_(from, to) {
-  const fParts = from.split('-');
-  const tParts = to.split('-');
-  const fMs = Date.UTC(Number(fParts[0]), Number(fParts[1]) - 1, Number(fParts[2]), 12);
-  const tMs = Date.UTC(Number(tParts[0]), Number(tParts[1]) - 1, Number(tParts[2]), 12);
   const dayMs = 24 * 3600 * 1000;
-  const durationDays = Math.round((tMs - fMs) / dayMs) + 1;  // inclusive
-  const priorToMs   = fMs - dayMs;
-  const priorFromMs = priorToMs - (durationDays - 1) * dayMs;
+  const toMs = function (iso) {
+    const p = iso.split('-');
+    return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12);
+  };
   const fmt = function (ms) {
     const d = new Date(ms);
     const yyyy = d.getUTCFullYear();
@@ -2075,7 +2084,37 @@ function computePriorWindow_(from, to) {
     const dd = String(d.getUTCDate()).padStart(2, '0');
     return yyyy + '-' + mm + '-' + dd;
   };
-  return { from: fmt(priorFromMs), to: fmt(priorToMs) };
+  const isBiz = function (ms) {
+    const dow = new Date(ms).getUTCDay();
+    if (dow === 0 || dow === 6) return false;
+    try {
+      if (typeof isCompanyHoliday_ === 'function' && isCompanyHoliday_(fmt(ms))) return false;
+    } catch (e) { /* unreadable holiday config -> weekends-only */ }
+    return true;
+  };
+  const fMs = toMs(from);
+  const tMs = toMs(to);
+  // Working days in the current window.
+  let workdays = 0;
+  for (let ms = fMs; ms <= tMs; ms += dayMs) { if (isBiz(ms)) workdays++; }
+  if (workdays === 0) {
+    // Legacy calendar-length fallback for a window with no working days.
+    const durationDays = Math.round((tMs - fMs) / dayMs) + 1;
+    const priorToMs = fMs - dayMs;
+    return { from: fmt(priorToMs - (durationDays - 1) * dayMs), to: fmt(priorToMs) };
+  }
+  // End at the last working day before `from`, then walk back until the
+  // prior window holds the same working-day count. Bounded walk: worst case
+  // ~(workdays * 7/5 + holidays), trivial even for a year-long window.
+  let endMs = fMs - dayMs;
+  while (!isBiz(endMs)) endMs -= dayMs;
+  let startMs = endMs;
+  let counted = 1;
+  while (counted < workdays) {
+    startMs -= dayMs;
+    if (isBiz(startMs)) counted++;
+  }
+  return { from: fmt(startMs), to: fmt(endMs) };
 }
 
 /**

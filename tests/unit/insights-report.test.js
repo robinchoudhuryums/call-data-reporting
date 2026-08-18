@@ -52,7 +52,8 @@ function agent(data, name) {
 }
 
 test('Insights: prior window + team rollup + per-agent current-vs-prior deltas', function () {
-  // Selected 2026-03-09..2026-03-15 (7 days) -> prior 2026-03-02..2026-03-08.
+  // Selected 2026-03-09..2026-03-15 (Mon-Sun, 5 workdays) -> R24 prior =
+  // Mon 2026-03-02..Fri 2026-03-06 (same working-day count, weekend end skipped).
   install([
     dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 10, missed: 1, answered: 8, att: '0:03:00' }), // current
     dqeRow({ date: '2026-03-05', agent: 'Anna', ext: '501', rung: 4,  missed: 2, answered: 3, att: '0:04:00' }), // prior
@@ -62,7 +63,7 @@ test('Insights: prior window + team rollup + per-agent current-vs-prior deltas',
   // Mode + auto-adjacent prior window (INV-28).
   assert.equal(data.meta.comparisonMode, 'prior');
   assert.equal(data.meta.priorFrom, '2026-03-02');
-  assert.equal(data.meta.priorTo, '2026-03-08');
+  assert.equal(data.meta.priorTo, '2026-03-06');
 
   // Team rollup carries current (val) + prior (prev) + delta.
   assert.equal(data.teamStats.rung.val, 10);
@@ -169,7 +170,7 @@ test('Insights pins the retired Performance Report semantics (consolidation free
 
   // INV-28: auto-adjacent same-length prior window.
   assert.equal(ins.meta.priorFrom, '2026-03-02');
-  assert.equal(ins.meta.priorTo,   '2026-03-08');
+  assert.equal(ins.meta.priorTo,   '2026-03-06');
 
   // Roster-gated team rollup (Anna + Ben only; Cara's 50/9/30 must not leak).
   assert.equal(ins.teamStats.rung.val, 16);
