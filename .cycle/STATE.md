@@ -3322,3 +3322,62 @@ action above. `/sync-docs` is warranted — six documentation updates are
 enumerated at the end of the block, including one where CLAUDE.md asserts as
 fact ("every heavy report key carries reportFreshnessTag_") something F3 shows
 is not true of four keys.
+
+## Increment 128 (2026-08-19) — Batch A (operator) + Batch B (silent-failure closers)
+
+PR #249 (broad-scan top 5 + doc sync) MERGED to main first. Owner then
+completed **Batch A**: cdr-import + cdr-report + dashboard all DEPLOYED,
+`runLiveSmoke` all passed, `NEON_EGRESS_BUDGET_MB` set to 5000. That closes
+the deploy gap that had been the audit's #1 finding twice running — the 4%
+violation gate and the Neon egress cuts are now actually running.
+
+**Batch B shipped (779/779, +6):** the remaining silent failures.
+
+1. **B1/F10 — the deferred mirror could wedge forever.** `runNeonMirror_` had
+   no clock check, so a multi-day Neon outage grew the queue until one pass
+   exceeded the ~6-min ceiling; then it died at the same point every run.
+   Silent twice over: the queue rewrite is at the BOTTOM (timeout preserved
+   the queue, emitted no summary) and the IMP-6 counter increments only on a
+   THROW (a timeout never counted an attempt, never hit the retry cap, never
+   emailed). Now `NEON_MIRROR_BUDGET_MS` (4 min default), untried dates keep
+   their attempt count, and a `neonMirror:budget` row says what was left.
+2. **B2/B5 — four 6 h keys joined `reportFreshnessTag_`.** The inbound insurer
+   drill was the real one: it hangs off a byInsurer ROW whose key DOES carry
+   the tag, so a same-day re-import refreshed the row and left the drill
+   disagreeing for 6 h. No INV-30 bump (suffix, not an aggregation change —
+   the CORE-3/S2-0 precedent).
+3. **B5/F3b — `agentHome`/`agentHist` were in the INV-30 docs but not in
+   cache-version-sync's SPECS.** Documented and unenforced: the one
+   combination that suite exists to prevent.
+4. **B3/F4 — login-notify emailed on EVERY visit past the 300-key cap.** The
+   old branch notified WITHOUT recording, so each visit was a fresh "first
+   sighting". Now evicts oldest + records: one email per address. The
+   trade-off it was defending (extra signal beats blindness) was being paid
+   for out of the MailApp quota that carries alerts and digests.
+5. **B4 — Health row for `MailApp.getRemainingDailyQuota()`.** Same shape as
+   the F5 Neon gauge: one shared exhaustible resource, silent when dry.
+   Absolute floor (50), not a percentage — the quota is plan-dependent.
+
+**Harness:** `fakeSheet` gained `Range.clearContent` (a real method that was
+missing; a no-op stub would have made the B1 tests pass vacuously) and the
+MailApp shim gained `getRemainingDailyQuota`.
+
+**Found but NOT fixed (out of the named scope):** `neonAgentExts:v1`
+(NeonRead.gs) is a 6 h cache with no freshness anchor. Low impact — it backs
+the derived `getDeptQueueExts_` path and scope is locked to `roster` on the
+main surfaces, so floaters don't render there anyway.
+
+**WHERE I LEFT OFF:** Batch B committed + pushed to
+`claude/broad-scan-8dgd6m` (re-branched from merged main per the
+already-merged-PR rule). PR not yet opened. Full block:
+`.cycle/blocks/128-batch-a-b-broad-implement.md`.
+
+**Doc sync IS warranted before/with the PR** — six items in the block, and
+one is newly stale in the GOOD direction: the "Not yet true of every 6 h key"
+clause the last /sync-docs added is now false, because Batch B fixed all four
+keys it named.
+
+**Still open from Batch A (human):** walk S36; confirm the two new Health rows
+render. **Dated:** Sep 1 backfills before `runNeonCoverageCheck`.
+**Note on the budget value:** 5000 MB = 5.24 GB decimal, so an exact 5 GB
+plan wants 4768; the gauge is a floor either way.
