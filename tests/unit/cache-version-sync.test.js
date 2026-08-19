@@ -57,6 +57,12 @@ const SPECS = [
   ['inboundHeatmap',    'InboundReport.gs',       /'inboundHeatmap:v(\d+)'/],
   ['insights',          'InsightsReport.gs',      /'insights:v(\d+)'/],
   ['directCall',        'DirectCallReport.gs',    /'directCall:v(\d+)'/],
+  // B5 (broad-scan F3b): the agent-role prefixes were added to
+  // docs/invariants.md's INV-30 list but never to THIS list, so they were
+  // documented and unenforced -- the one combination the suite exists to
+  // prevent. `agentHome` is a named constant; `agentHist` is inline.
+  ['agentHome',         'AgentHome.gs',           /AGENT_HOME_CACHE_PREFIX_ = 'agentHome:v(\d+)'/],
+  ['agentHist',         'AgentHome.gs',           /'agentHist:v(\d+):'/],
 ];
 
 // Build the canonical map from code at load time so every test sees it.

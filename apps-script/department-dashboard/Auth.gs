@@ -635,13 +635,32 @@ function loginNotifyDecide_(storeJson, emailLower, outcomeKey, maxKeys) {
   var prev = store[emailLower];
   if (prev === outcomeKey) return { notify: false, reason: null, store: store };
   var reason = (prev === undefined) ? 'first' : 'changed';
-  if (prev === undefined && Object.keys(store).length >= (maxKeys || LOGIN_NOTIFY_MAX_KEYS)) {
-    // Store full: still notify (extra emails beat silent blindness), just
-    // don't grow the property.
-    return { notify: true, reason: reason, prev: prev, store: store };
+  var cap = maxKeys || LOGIN_NOTIFY_MAX_KEYS;
+  var evicted = null;
+  if (prev === undefined && Object.keys(store).length >= cap) {
+    // Store full. This used to notify WITHOUT recording, on the reasoning that
+    // extra emails beat silent blindness -- but "don't record" means the same
+    // address is a first sighting again on its very next visit, so the branch
+    // emailed on EVERY page view, forever, for every address past the cap. The
+    // MailApp daily quota is shared with alerts, digests and the queue report,
+    // so the extra signal is paid for by the channel that carries the real
+    // signal -- the failure mode it was trying to avoid, one level down.
+    //
+    // Evict the OLDEST entry instead (JS preserves string-key insertion order,
+    // so the first key is the earliest recorded) and record the new address.
+    // The store stays bounded, a new address still notifies exactly ONCE, and
+    // known users keep change-detection.
+    //
+    // Trade-off, accepted: a long-dormant address evicted by churn re-notifies
+    // as a "first sighting" on its next visit. That is one duplicate email per
+    // eviction cycle, not one per page view, and the cap is 300 against a <20
+    // user install -- reaching it at all means something unusual is happening,
+    // which is itself worth an email.
+    var oldest = Object.keys(store)[0];
+    if (oldest !== undefined) { delete store[oldest]; evicted = oldest; }
   }
   store[emailLower] = outcomeKey;
-  return { notify: true, reason: reason, prev: prev, store: store };
+  return { notify: true, reason: reason, prev: prev, store: store, evicted: evicted };
 }
 
 /** Maps a resolved user to the coarse outcome key the store compares. */

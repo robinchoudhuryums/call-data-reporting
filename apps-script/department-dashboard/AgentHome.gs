@@ -219,6 +219,11 @@ function getAgentHome(req) {
   // below, so a QUEUE_SPLIT_SCOPE flip must not serve either mode's blob to
   // the other for the TTL (S2-0).
   tag = tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off');
+  // B5: + the latest-DQE-date tag every other 6 h report key carries. The
+  // presets anchor to that date, so from/to usually move with the ingest and
+  // self-bust -- but a CUSTOM window, or a re-import that rebuilds a date
+  // already in history, moves neither and left both blobs stale for the TTL.
+  tag = tag + ':' + ((typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na');
   var cache = CacheService.getScriptCache();
 
   // TEAM blob: one compute per (dept, window), shared by the whole team.

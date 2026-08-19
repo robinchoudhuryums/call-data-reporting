@@ -39,6 +39,12 @@
 // barely an hour of history. Do NOT shrink this.
 var HEALTH_PIPELINE_SCAN_ROWS = 250;
 
+// B4: warn when fewer than this many emails remain for the day. Absolute, not
+// a percentage, because the quota is plan-dependent (~100/day consumer, ~1500
+// Workspace) and the app cannot read which plan it is on -- below ~50 the
+// alert channel is at risk on either.
+var MAIL_QUOTA_WARN_FLOOR_ = 50;
+
 function getSystemHealth(req) {
   assertAdmin_();
   // R21 (owner: "the full report takes a long time to load"): the two Neon
@@ -179,6 +185,29 @@ function getSystemHealth(req) {
         + 'reportFreshnessTag_ key suffix (every cached serve is a read avoided).');
     }
   } catch (e) { add('neon', 'neon-egress', 'Neon read volume (month to date)', 'warn', 'probe failed', String(e && e.message || e)); }
+  // B4: the OTHER shared, exhaustible resource. Alerts, digests, the Daily
+  // Call Queue Report, DQE-build failure notices, sign-in notifications and
+  // the client-error beacon all draw on ONE MailApp daily quota, and running
+  // it dry is silent in the same way the Neon cap was: sends just stop. Quota
+  // is per-account and plan-dependent (~100/day consumer, ~1500 Workspace), so
+  // the floor below is deliberately absolute rather than a percentage -- under
+  // ~50 remaining the alert channel is at risk on any plan.
+  try {
+    if (typeof MailApp !== 'undefined' && MailApp && typeof MailApp.getRemainingDailyQuota === 'function') {
+      var quota = Number(MailApp.getRemainingDailyQuota());
+      if (isFinite(quota)) {
+        add('neon', 'mail-quota', 'Email quota remaining today',
+          quota < MAIL_QUOTA_WARN_FLOOR_ ? 'warn' : 'ok', String(quota) + ' message(s)',
+          quota < MAIL_QUOTA_WARN_FLOOR_
+            ? 'Low. Alerts / digests / the queue report share this quota, and it '
+              + 'resets on a rolling 24 h -- a run that exhausts it fails SILENTLY '
+              + '(no send, no error surfaced to a manager). Check the Alert Log for '
+              + 'a burst of preview sends and the client-error beacon for a report storm.'
+            : 'Shared by alerts, digests, the Daily Call Queue Report, pipeline '
+              + 'failure notices, sign-in notifications and the client-error beacon.');
+      }
+    }
+  } catch (e) { add('neon', 'mail-quota', 'Email quota remaining today', 'warn', 'probe failed', String(e && e.message || e)); }
   try {
     var src = getDqeReadSource_();
     add('neon', 'dqe-source', 'DQE read source (DQE_READ_SOURCE)',
