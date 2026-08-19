@@ -509,7 +509,17 @@ When something looks wrong, before assuming a code bug, check:
     order-independent, unlike a sheet tail-scan). Reversible with no redeploy
     (set back to `sheet`); every path falls back to the sheet on any Neon
     error/unreachable. Independent of `DQE_READ_SOURCE` (QCD is a separate
-    mirror). SET `QCD_PARITY_FROM`/`QCD_PARITY_TO` before running the gate --
+    mirror). **Flipping the flag does NOT let you retire the QCD sheet.**
+    `QueueReportEmail.gs::queueReportQcdLatestIso_` reads it DELIBERATELY and
+    directly (no `getQcdReadSource_` path): it answers "did the import
+    finish?", not "what data exists?", and the sheet is what the import
+    writes. Trim or delete the sheet and the automated Daily Call Queue
+    Report (#31) silently stops sending -- its readiness gate just never
+    sees the target date. `DeptConfig.gs::scanQcdQueueNames_` reads it
+    directly too (admin queue discovery); that one fails OPEN, saving with a
+    warning rather than rejecting every queue name. Both are recorded in
+    `cross-file-pins.test.js`'s `QCD_SHEET_ONLY_ALLOWED`, which fails the
+    build if a THIRD blind reader appears. SET `QCD_PARITY_FROM`/`QCD_PARITY_TO` before running the gate --
     the in-source default is a fixed week that ages out, and an empty range is
     now reported as INCONCLUSIVE rather than clean (see #19's gate contract).
     **Only flip to `neon` after `runQcdParityCheck` (editor-run
@@ -1078,8 +1088,10 @@ When something looks wrong, before assuming a code bug, check:
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
     `installDqeSilenceWatchTrigger()` (admin) sets
-    `DQE_SILENCE_WATCH_ENABLED` + installs a daily ~11 AM Central trigger;
-    `uninstallDqeSilenceWatchTrigger()` reverses both. Each weekday run
+    `DQE_SILENCE_WATCH_ENABLED` + installs a daily trigger at the hour named
+    by `DQE_SILENCE_HOUR` (0-23, default 11 Central -- after the ingest AND
+    the DQE build, so moving it EARLIER makes every run assess an
+    incomplete day); `uninstallDqeSilenceWatchTrigger()` reverses both. Each weekday run
     assesses the PREVIOUS business day (holiday-aware): a department whose
     mapped queues (`getDeptQcdQueues_`, INV-54) show QCD 'Total Calls'
     volume while ZERO DQE rows match its roster (exact names, INV-04 — the
@@ -1145,3 +1157,26 @@ When something looks wrong, before assuming a code bug, check:
     notifications (#45) key agents as `agent:<dept>`, so grants/moves email
     the admins like any other outcome change. Pilot team: CSR (owner,
     2026-08-14). Pinned by `tests/unit/agent-role.test.js`.
+
+47. **`NEON_EGRESS_BUDGET_MB` (dashboard) -- arms the Health page's Neon
+    read-volume gauge.** OPTIONAL, and the gauge works without it: the
+    "Neon read volume (month to date)" row always reports MB + read count
+    for the current UTC month, but stays MUTED until you declare a budget,
+    then reads ok/warn at 80%. Set it to your Neon plan's monthly
+    public-transfer allowance. **Why it exists:** the allowance was
+    exhausted mid-month with managers live (2026-08-18) and the Neon-only
+    surfaces -- Escalations, Inbound + heatmap, Direct, Caller Lookup,
+    journey drills, agent wait chips -- fell to their "unavailable" states
+    until the month rolled over, with no warning: every probe on the Health
+    page reported Neon as REACHABLE throughout, because a Neon that has
+    spent its allowance IS reachable. **Read it as a FLOOR, not a meter.**
+    `neonNoteEgress_` (NeonRead.gs) counts the payload bytes this project
+    pulls at all 14 bulk `json_agg` fetch sites; wire framing, TLS overhead
+    and any uninstrumented query are not in it, and the counter is a
+    deliberately lock-free read-modify-write (the presence-map discipline)
+    so concurrent executions can lose an increment. Over budget is proof of
+    a problem; under budget is NOT proof of headroom. The counters live in
+    the `NEON_EGRESS_MTD` Script Property, reset themselves on the 1st
+    (UTC), and are code-written -- you never set that one. Biggest lever if
+    it climbs: the 6 h report TTL plus the `reportFreshnessTag_` key suffix
+    (#19), since every cached serve is a Neon fetch avoided.
