@@ -3175,7 +3175,7 @@ Four owner items in one round:
 
 Tests: prior-window pins recomputed (compute-summary E5, IR R8-D3,
 insights x2 -- fixtures moved off the weekend dates). 761/761; INV-16 +
-ratchet green. Pushed to branch; NOT merged (no owner word this round).
+ratchet green. MERGED in PR #247 together with increment 126.
 
 ## Increment 126 (2026-08-18) — Neon egress round (transfer cap incident)
 
@@ -3187,3 +3187,64 @@ suffix (latest DQE date) -- overviewCacheKey_ had no date anchor, so a long
 TTL alone would have hidden each morning's ingest for hours. dal-cutover's
 fake conn now mirrors the positional array protocol keyed off the real SQL.
 761/761; merged per the owner's "R24 deploy" instruction.
+
+## SESSION CLOSEOUT (2026-08-18) — all merged, deploy pending
+
+**Baseline:** everything through increment 126 is MERGED to main (PRs
+#245–#247); branch `claude/broad-scan-l9ojgm` == `origin/main` == 3fd04a8,
+working tree clean. 761/761 unit tests, INV-16, CLAUDE.md ratchet,
+cache-version-sync, and ci:ui (164 checks) all green on the merged state.
+
+**THE ONE BLOCKING THING: nothing since the manager rollout is DEPLOYED.**
+The dashboard's last owner deploy predates PRs #243–#247. Undeployed and
+waiting: live presence, R22 (clamp fade / 4% abandon standard / tiered Viol
+MTD), R23 (display-standards registry + dark coaching engine), R24 (workday
+prior windows / region-header removal / scoped esc banner / IR agent
+filter), and the Neon egress round. cdr-import is ALSO undeployed (the 4%
+violation gate lives there).
+  1. `clasp push -f` from repo root -> Manage deployments -> New version
+  2. `cd apps-script/cdr-import && clasp push -f`
+
+**NEON TRANSFER-CAP INCIDENT (live):** the owner exhausted Neon's monthly
+public-transfer allowance ~Aug 18. Reads fall back to the sheet
+automatically; the Neon-ONLY surfaces (Escalations, Inbound + heatmap,
+Direct, Caller Lookup, journey drills, agent wait chips) render their
+"unavailable" states until the Sep 1 reset. The egress round above is the
+fix (est. 20-50x cut on the dominant read path) but only once DEPLOYED.
+  - Optional stopgap: `DQE_READ_SOURCE=sheet` (property, reversible) to
+    conserve remaining transfer for the no-fallback surfaces.
+  - **SEP 1 (dated, do not miss):** run `backfillInboundCalls` +
+    `backfillOutboundCalls` (cdr-import editor) FIRST, then
+    `runNeonCoverageCheck`. `inbound_calls`/`outbound_calls` have no sheet
+    primary and rebuild only from `Call_Legs_*`, which prunes at ~14 days --
+    gap days that age out are permanently lost.
+  - Owner ruling recorded: NO sheet twins for Escalations / Inbound /
+    Direct (dual-source drift cost > outage-window benefit). Paid Neon tier
+    suggested as the structural fix; owner has not ruled.
+
+**OTHER OPEN OPERATOR ACTIONS:** queue-split flip checklist (#42); agent
+pilot go-live (#46); COMPANY_HOLIDAYS yearly (#27); optional Neon backup
+trigger (#28).
+
+**NEXT PLANNED WORK (owner-directed, not started):**
+  - **Outbound report**, parked until Neon is stable. Reads the UNUSED
+    Neon `outbound_calls` per-call table (NOT the Direct report, whose
+    outbound slice is a different, narrower population). Phases: 1 server
+    `OutboundReport.gs` + tests, 2 client page, 3 owner vetting, 4 manager
+    un-gate, **5 callbacks cross-reference (owner explicitly wants this in
+    the plan)** -- outbound calls to a hash that recently abandoned inbound,
+    i.e. "did we call back the ones we missed?". Caveats to caption: the
+    CDR cannot distinguish no-answer/voicemail/busy, so `connected` means
+    "something picked up"; attribute by the dialing agent's ROSTER dept,
+    not the raw CDR org label.
+  - **Coaching Phase 3** (delivery) once the owner has vetted a few
+    `runCoachingPreview` runs against the new ratio gate. Owner rulings:
+    email + card in a SEPARATE coaching worklist (never mixed into
+    customer-account Escalations), all depts, admin-only until released.
+    Owner is separately investigating the crossover double-count (Shamir
+    Alam appears under two depts) and confirmed 0%-answered agents are
+    genuine flags, not roster artifacts.
+
+**WHERE I LEFT OFF:** nothing in flight, nothing uncommitted. A fresh
+session can `/cycle-resume` for continuity or start directly on the
+outbound report once Neon is settled.
