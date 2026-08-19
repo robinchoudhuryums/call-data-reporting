@@ -1527,7 +1527,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   error, so deploying the dashboard ahead of the capture reads as such). All three store
   an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, which is
   what the page's classifier reads. Pinned by `system-health.test.js` /
-  `smoke-check.test.js` / `neon-coverage.test.js`.
+  `smoke-check.test.js` / `neon-coverage.test.js`. **Two CAPACITY rows sit
+  alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47) and
+  email quota remaining -- because the resources they meter fail SILENTLY and
+  look healthy to every other probe on this page: a Neon that has spent its
+  monthly transfer is still reachable, and an exhausted MailApp quota just
+  stops sending. Read the Neon figure as a FLOOR (it counts our payloads, not
+  the wire).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Four engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -1752,11 +1758,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   DQE date, itself on the 5-min tier), so the morning ingest MINTS NEW KEYS
   within minutes instead of waiting out the TTL; a new heavy report key MUST
   join that tag or it inherits the stale-morning bug the tag exists to
-  prevent. **Not yet true of every 6 h key** -- `agentHome:v1` and the two
-  sibling inbound keys (`inbound:v9:daily:` insurer drill, `inboundHeatmap:v3`)
-  carry only their window, so a same-day re-import can leave the drill
-  disagreeing with the freshness-tagged row it expands; `agentHist:v1` is fine
-  (it embeds the latest date directly). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  prevent -- `agentHome:v1` and the two sibling inbound keys
+  (`inbound:v9:daily:` insurer drill, `inboundHeatmap:v3`) joined it in B1-B5
+  after a same-day re-import could leave the drill disagreeing with the
+  freshness-tagged row it expands; `agentHist:v1` embeds the latest date
+  directly. **One 6 h key is still unanchored on purpose-ish:**
+  `neonAgentExts:v1` (NeonRead.gs), the derived all-history agent/ext pairs --
+  a new agent's extensions can take up to 6 h to reach the IR floater group +
+  Diagnostics, which is low-impact only because scope is locked to `roster`
+  on every other surface (INV-53). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
   serve all day; trade-off: a rare mid-day force re-import's corrections

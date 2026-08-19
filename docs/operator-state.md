@@ -334,7 +334,18 @@ When something looks wrong, before assuming a code bug, check:
     ever logs oddly-slow, the `NEON_MIRROR_TAIL_ROWS` Script Property
     (cdr-import, default 3000) is the window knob. A date that HARD-errors
     (throws -- not Neon-unreachable, which retries forever) is retried at
-    most `NEON_MIRROR_MAX_ATTEMPTS` times (Script Property, default 8),
+    bounded per run by `NEON_MIRROR_BUDGET_MS` (Script Property, default
+    4 min of Apps Script's ~6-min ceiling): the drain stops cleanly at the
+    budget, leaves the untried dates queued with their attempt counts
+    UNCHANGED, and logs a `neonMirror:budget` row naming what was left.
+    Without it a multi-day outage grew the queue until one pass exceeded the
+    ceiling, after which the run was KILLED at the same point every time and
+    the drain could never complete — silently, because a timeout is not a
+    throw and so never counted an attempt, never tripped the retry cap and
+    never emailed. ONE budget row is normal catch-up; the SAME row run after
+    run with the date count not falling means the queue is growing faster
+    than it drains (check Neon reachability first, then raise the budget).
+    A date is retried at most `NEON_MIRROR_MAX_ATTEMPTS` times (Script Property, default 8),
     then DROPPED with a `neonMirror:gave-up` Pipeline Health failure row +
     one final email -- re-enqueue it (append a row to the Neon Mirror Queue
     tab) after fixing the cause, or run the per-type backfills (IMP-6;
@@ -1128,10 +1139,15 @@ When something looks wrong, before assuming a code bug, check:
     signal, not a page-view log. Expect a burst on rollout day: every
     existing user's first post-deploy visit is a first sighting. State:
     `LOGIN_NOTIFY_SEEN` Script Property (JSON, engine-written; capped at
-    ~300 addresses — past the cap new addresses still notify every visit
-    rather than silently dropping, and known addresses keep
-    change-detection; clearing the property just re-arms first-sighting
-    mails). Best-effort inside doGet's try/catch — can never block a render.
+    ~300 addresses. At the cap the OLDEST entry is evicted and the new
+    address is RECORDED, so a new address costs exactly ONE mail and known
+    addresses keep change-detection. It previously notified WITHOUT
+    recording, which made every visit a fresh "first sighting" and emailed
+    without limit — and MailApp's daily quota is shared with alerts,
+    digests and the queue report, so that "extra signal" was paid for by
+    the channel carrying the real signal. Accepted trade-off of eviction: a
+    long-dormant address pushed out by churn re-notifies once as a first
+    sighting. Clearing the property just re-arms first-sighting mails). Best-effort inside doGet's try/catch — can never block a render.
     A denied-attempt mail includes the grant runbook (Access Control row, or
     `EMAIL_ALIASES` for an alias address, #36). Pinned by
     `tests/unit/login-notify.test.js`.
