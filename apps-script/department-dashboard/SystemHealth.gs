@@ -22,6 +22,23 @@
  * and unreadable from here (their rows say so rather than guessing).
  */
 
+// How many Pipeline Health rows the "Recent pipeline step failures" classifier
+// reads. MUST stay at least as wide as the Overview banner's
+// OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS (CompanyOverview.gs) -- this row is the
+// page CLAUDE.md calls the single trustworthy pipeline signal, so its window
+// must not be the narrower of the two.
+//
+// LM1 taught this at 40 rows on the Overview banner: a deferred-mirror retry
+// storm evicted the DQE row and the banner false-WARNED, so it was widened to
+// 250. This classifier was left at 80, where the same eviction produces the
+// OPPOSITE and worse outcome -- a step whose failure has scrolled out of the
+// window disappears from latestByStep entirely and the row renders `ok`, a
+// false ALL-CLEAR on the surface an admin consults to decide whether anything
+// is broken. Arithmetic: in deferred mode each drain writes up to 5 rows per
+// queued date every 15 min, so 3 queued dates is ~15 rows/run and 80 rows is
+// barely an hour of history. Do NOT shrink this.
+var HEALTH_PIPELINE_SCAN_ROWS = 250;
+
 function getSystemHealth(req) {
   assertAdmin_();
   // R21 (owner: "the full report takes a long time to load"): the two Neon
@@ -90,7 +107,8 @@ function getSystemHealth(req) {
   // rows, and the deferred `neonMirror:*` drains -- so the admin doesn't have
   // to scan Pipeline Health by eye to know something is currently broken.
   try {
-    var phRows = (typeof readPipelineHealth_ === 'function') ? readPipelineHealth_(80) : [];
+    var phScan = HEALTH_PIPELINE_SCAN_ROWS;
+    var phRows = (typeof readPipelineHealth_ === 'function') ? readPipelineHealth_(phScan) : [];
     if (!phRows || !phRows.length) {
       add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'muted', 'no Pipeline Health rows');
     } else {
@@ -100,7 +118,15 @@ function getSystemHealth(req) {
         return String(latestByStep[s].status || '').toLowerCase() === 'failure';
       });
       if (!failingSteps.length) {
-        add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'ok', 'no step currently failing');
+        // Say what was MEASURED, not what is true. This row can only see the
+        // scanned window, and "no step currently failing" overstated that into
+        // an unqualified all-clear -- a step whose last row has scrolled out is
+        // indistinguishable from one that never failed.
+        add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'ok',
+          'no step failing in the last ' + phScan + ' entries',
+          'Scope: the newest ' + phScan + ' Pipeline Health rows (' + phRows.length
+          + ' present). A step whose most recent row is older than that window is '
+          + 'not assessed here — see Alerts modal → Pipeline Health for the full log.');
       } else {
         var latestFail = latestByStep[failingSteps[0]];
         add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn',
@@ -121,6 +147,38 @@ function getSystemHealth(req) {
       neonConfigured ? 'ok' : 'warn', neonConfigured ? 'configured' : 'not configured',
       neonConfigured ? '' : 'Escalations, Inbound, Caller Lookup, and the F1 read-back need the NEON_* Script Properties (Operator State #18).');
   } catch (e) { add('neon', 'neon-conf', 'Neon connection', 'warn', 'probe failed', String(e && e.message || e)); }
+  // F5: read VOLUME, not just reachability. The owner exhausted Neon's monthly
+  // transfer allowance with managers live and the Neon-only surfaces went dark
+  // for the rest of the month; every probe on this page said "reachable" right
+  // up to the cliff, because a Neon that has spent its allowance is reachable.
+  // Counted from OUR side (the json_agg payload lengths), so it is a FLOOR --
+  // wire framing and any uninstrumented query are not in it. The hint says so:
+  // over budget is proof of a problem, under budget is not proof of headroom.
+  try {
+    var eg = (typeof readNeonEgress_ === 'function') ? readNeonEgress_() : null;
+    if (eg) {
+      var mb = Math.round((eg.bytes / (1024 * 1024)) * 10) / 10;
+      var val = mb + ' MB in ' + eg.reads + ' read(s), ' + eg.month + ' MTD';
+      // No declared budget -> informational only. The plan's real allowance is
+      // a billing fact this code cannot discover, and inventing a threshold
+      // would either cry wolf or reassure wrongly.
+      var st = 'muted';
+      if (eg.budgetMb > 0) {
+        val += ' — ' + eg.pctOfBudget + '% of the ' + eg.budgetMb + ' MB budget';
+        st = eg.pctOfBudget >= 80 ? 'warn' : 'ok';
+      }
+      add('neon', 'neon-egress', 'Neon read volume (month to date)', st, val,
+        (eg.budgetMb > 0
+          ? 'Warns at 80% of NEON_EGRESS_BUDGET_MB. '
+          : 'Set the NEON_EGRESS_BUDGET_MB Script Property to your plan\'s monthly '
+            + 'transfer allowance to turn this into a threshold. ')
+        + 'Measured from the payloads this project pulls, so treat it as a FLOOR, '
+        + 'not an exact meter — under budget is not proof of headroom. Counters '
+        + 'reset on the 1st (UTC) and are lossy under concurrency by design. '
+        + 'If this climbs fast, the biggest lever is the report cache TTL + the '
+        + 'reportFreshnessTag_ key suffix (every cached serve is a read avoided).');
+    }
+  } catch (e) { add('neon', 'neon-egress', 'Neon read volume (month to date)', 'warn', 'probe failed', String(e && e.message || e)); }
   try {
     var src = getDqeReadSource_();
     add('neon', 'dqe-source', 'DQE read source (DQE_READ_SOURCE)',

@@ -253,6 +253,9 @@ function computeDirectCallReport_(scope) {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : null;
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     if (!json) { empty.meta.available = false; return empty; }
 

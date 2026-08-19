@@ -83,13 +83,72 @@ check_fn_pair() {
   fi
 }
 
+# Variant of extract_fn for a function that is NOT at column 1 and whose two
+# copies differ only in alignment whitespace. dataFilters.js declares its
+# copies INSIDE the extraction closure (indented), while cdr-import's are
+# top-level, so the column-1 anchor above cannot see them and a byte compare
+# would fail on indentation alone. Emits each line with leading/trailing
+# whitespace stripped, internal whitespace runs squeezed to one space, and
+# blank lines dropped -- so the two copies compare on CODE, not on layout.
+# (Squeezing is naive about multi-space runs inside string literals; for these
+# two flat numeric helpers that is fine, the same trade-off extract_fn already
+# makes for brace counting. If a copy ever grows such a literal, move it to
+# check_fn_pair and reconcile the formatting instead.)
+extract_fn_normalized() {
+  local file="$1" name="$2"
+  awk -v fn="$name" '
+    $0 ~ ("^[ \t]*function " fn "\\(") { f = 1 }
+    f {
+      line = $0
+      gsub(/[ \t]+/, " ", line)
+      sub(/^ /, "", line); sub(/ $/, "", line)
+      if (line != "") print line
+      n = gsub(/{/, "{"); m = gsub(/}/, "}")
+      depth += n - m
+      if (started && depth <= 0) exit
+      if (n > 0) started = 1
+    }
+  ' "$file"
+}
+
+check_fn_pair_normalized() {
+  local a="$1" b="$2" name="$3"
+  if [ ! -f "$a" ] || [ ! -f "$b" ]; then
+    echo "⚠️  INV-16 FAILURE: missing file ('$a' or '$b') for the $name check."
+    status=1
+    return
+  fi
+  local fa fb
+  fa="$(extract_fn_normalized "$a" "$name")"
+  fb="$(extract_fn_normalized "$b" "$name")"
+  if [ -z "$fa" ] || [ -z "$fb" ]; then
+    echo "⚠️  INV-16 FAILURE: could not extract function $name from '$a' or '$b'"
+    echo "    (renamed or re-indented? update scripts/check-duplicated-files.sh)."
+    status=1
+    return
+  fi
+  if [ "$fa" != "$fb" ]; then
+    echo "⚠️  INV-16 DRIFT: $name differs between '$a' and '$b' (comparing code,"
+    echo "    ignoring indentation/blank lines) — these copies decode the SAME raw"
+    echo "    CDR time fields, so a one-sided edit silently diverges the Extraction"
+    echo "    Sidebar from the pipeline. Reconcile before editing either."
+    status=1
+  fi
+}
+
 check_pair apps-script/cdr-report/neonWrite.js            apps-script/cdr-import/neonWrite.js
 check_pair apps-script/cdr-report/buildDQEHistoricalData.js apps-script/cdr-import/buildDQEHistoricalData.js
 check_fn_pair apps-script/cdr-report/neonbackfill.js apps-script/cdr-import/NeonMirror.js sanitizeAbandonedCellForNeon_
 check_fn_pair apps-script/cdr-report/neonbackfill.js apps-script/cdr-import/NeonMirror.js sanitizeSlotCellForNeon_
+# The THIRD duplication pair (previously unguarded, and it had already
+# drifted): the Extraction Sidebar mirrors the pipeline's raw-CSV time
+# decoding. dataFilters.js says so in its own header note; nothing enforced
+# it until now.
+check_fn_pair_normalized apps-script/cdr-report/dataFilters.js apps-script/cdr-import/autoImport.js simulateSplitCol2
+check_fn_pair_normalized apps-script/cdr-report/dataFilters.js apps-script/cdr-import/autoImport.js parseDurationDecimal
 
 if [ "$status" -eq 0 ]; then
-  echo "INV-16 check: duplicated files (neonWrite.js, buildDQEHistoricalData.js) and the sanitize*ForNeon_ function copies are in sync."
+  echo "INV-16 check: duplicated files (neonWrite.js, buildDQEHistoricalData.js), the sanitize*ForNeon_ copies, and the dataFilters/autoImport time-decode copies are in sync."
 fi
 
 exit "$status"

@@ -2632,10 +2632,22 @@
         restoreSaveBtn();
         const warns = (res && res.warnings) || [];
         if (warns.length) {
+          // F11: `warnings` used to carry ONE kind of message (the M2
+          // double-mapping heads-up), so the explanation below was appended
+          // unconditionally. saveDeptConfig can now also warn that it saved
+          // WITHOUT validating the queue names (an unreadable/empty QCD
+          // universe), and telling that operator to "remove the queue from one
+          // dept" would send them after a problem they don't have. Append the
+          // double-mapping guidance only when a double-mapping warning is
+          // actually present; the warning text itself carries the rest.
+          const doubleMapped = warns.some(function (w) { return /also mapped to/.test(w); });
           dcSetStatus_('success', 'Saved ' + dcEditDept + '. ⚠ ' + warns.join(' ')
-            + ' Double-mapped queues are tolerated but usually a config mistake — '
-            + 'remove the queue from one dept if unintended.');
-          showToast('Saved ' + dcEditDept + ' — queue mapped to 2+ depts', 'success');
+            + (doubleMapped
+                ? ' Double-mapped queues are tolerated but usually a config mistake — '
+                  + 'remove the queue from one dept if unintended.'
+                : ''));
+          showToast('Saved ' + dcEditDept + (doubleMapped
+            ? ' — queue mapped to 2+ depts' : ' — with a warning'), 'success');
         } else {
           dcSetStatus_('success', 'Saved ' + dcEditDept
             + '. Changes take effect on the next request (Overview refreshes immediately; report caches within ~30 min).');

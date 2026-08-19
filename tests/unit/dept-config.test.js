@@ -385,6 +385,10 @@ test('A-2: getDeptConfigInit does not cache a degraded init (config-read error /
   h.state.userEmail = 'admin@x.com';
   h.state.props.ADMIN_EMAILS = 'admin@x.com';
   h.ctx.assertAdmin_ = function () {};
+  // sheetSafeCell_ lives in Util.gs, which this suite does not load. Stubbed
+  // as the identity it is for non-formula values; its real CORE-7 behavior is
+  // pinned in util.test.js and is not what these two tests are about.
+  h.ctx.sheetSafeCell_ = function (v) { return v; };
   h.ctx.getAllDepartments_ = function () { return ['CSR']; };
   h.ctx.getRosterForDepartment_ = function () { return { names: ['Anna'] }; };
   h.ctx.discoverQueues_ = function () { return []; };
@@ -417,4 +421,50 @@ test('A-2: getDeptConfigInit does not cache a degraded init (config-read error /
   delete h.state.props.NEON_HOST;
   h.call('getDeptConfigInit');
   assert.ok(h.state.cache.has('deptConfig:init:v1'), 'unconfigured Neon is stable and may cache');
+});
+
+// ---- F11: saveDeptConfig must FAIL OPEN on an unreadable queue universe ----
+//
+// scanQcdQueueNames_ reads QCD Historical Data DIRECTLY (no getQcdReadSource_
+// path), so it returns {} against a missing / emptied / trimmed sheet -- which
+// is exactly the end state Operator State #30's QCD-to-Neon cutover describes.
+// The unknown-name filter then matched EVERY queue name and the save threw
+// "Unknown QCD queue name(s): ..." with the message "No QCD queues found in
+// recent data" -- i.e. the validator knew it had nothing to validate against
+// and rejected anyway, leaving the admin unable to save a correct config.
+//
+// Rule: a NON-empty universe still rejects genuine typos (that is what the
+// check is for); an EMPTY universe saves with a non-blocking warning.
+function installSaveHarness(knownQueues) {
+  setConfig([]);                                  // empty Dept Config sheet
+  h.ctx.assertAdmin_ = function () {};
+  // sheetSafeCell_ lives in Util.gs, which this suite does not load. Stubbed
+  // as the identity it is for non-formula values; its real CORE-7 behavior is
+  // pinned in util.test.js and is not what these two tests are about.
+  h.ctx.sheetSafeCell_ = function (v) { return v; };
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales']; };
+  h.ctx.scanQcdQueueNames_ = function () {
+    const out = {};
+    (knownQueues || []).forEach(function (q) { out[q] = { rows: 5, lastSeen: '2026-08-18' }; });
+    return out;
+  };
+}
+
+test('F11: saveDeptConfig rejects a typo when the queue universe IS readable', function () {
+  installSaveHarness(['A_Q_CustomerSuccess']);
+  assert.throws(
+    function () { h.call('saveDeptConfig', { dept: 'CSR', qcdQueues: 'A_Q_CustomerSucess' }); },
+    /Unknown QCD queue name/,
+    'a real typo must still be caught while the scan can see the queue names');
+});
+
+test('F11: saveDeptConfig saves with a WARNING when the queue universe is empty', function () {
+  installSaveHarness([]);                         // trimmed / missing / pre-ingest sheet
+  const out = h.call('saveDeptConfig', { dept: 'CSR', qcdQueues: 'A_Q_CustomerSuccess' });
+  assert.equal(out.saved, true,
+    'an unreadable queue universe must not block the save -- there is nothing to '
+    + 'validate against, so rejecting is wrong, not strict');
+  assert.ok((out.warnings || []).some(function (w) { return /WITHOUT validation/.test(w); }),
+    'the save must SAY it skipped validation rather than passing silently; got: '
+    + JSON.stringify(out.warnings));
 });

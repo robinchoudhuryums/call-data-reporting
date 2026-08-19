@@ -372,6 +372,9 @@ function getCallJourney(req) {
       stmt.setString(2, callId);
       const rs = stmt.executeQuery();
       const j = rs.next() ? rs.getString('j') : '';
+      // F5: meter the bytes this read actually pulled (NeonRead.gs;
+      // typeof-guarded like every other cross-file call here).
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0);
       rs.close(); stmt.close();
       return j;
     };
@@ -789,6 +792,9 @@ function computeInboundReport_(scope) {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : null;
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     if (!json) { empty.meta.available = false; return empty; }
 
@@ -996,6 +1002,9 @@ function getInboundInsurerDaily(req) {
     stmt.setString(2, insurer);
     const rs = stmt.executeQuery();
     const json = rs.next() ? rs.getString('j') : '[]';
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     const arr = JSON.parse(json || '[]');
     out.daily = Array.isArray(arr) ? arr : [];
@@ -1050,6 +1059,9 @@ function scanInboundQueueNames_(lookbackDays) {
     stmt.setInt(2, days);
     const rs = stmt.executeQuery();
     const json = rs.next() ? rs.getString('j') : '[]';
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     const arr = JSON.parse(json || '[]');
     return Array.isArray(arr) ? arr : [];
@@ -1143,6 +1155,9 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   stmt.setString(2, toIso);
   const rs = stmt.executeQuery();
   const json = rs.next() ? rs.getString('j') : '[]';
+  // F5: meter the bytes this read actually pulled (NeonRead.gs;
+  // typeof-guarded like every other cross-file call here).
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
   rs.close(); stmt.close();
   JSON.parse(json || '[]').forEach(function (r) {
     inbByDay[String(r.d)] = { ab: Number(r.ab) || 0, hold: Number(r.hold) || 0 };
@@ -1377,6 +1392,9 @@ function getInboundHeatmap(req) {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : null;
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     if (json == null) { out.meta.available = false; return out; }
 
@@ -1529,6 +1547,9 @@ function inboundAbandonList_(scope, bucket) {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : null;
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     if (json == null) { out.meta.available = false; return out; }
 

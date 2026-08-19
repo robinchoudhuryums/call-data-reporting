@@ -525,3 +525,125 @@ test('R21 split: fast + neon together cover exactly the full default payload', f
   assert.deepEqual(JSON.parse(JSON.stringify(split)), JSON.parse(JSON.stringify(all)),
     'a row added to getSystemHealth must land in exactly one part -- this pin catches a third-bucket drift');
 });
+
+// broad-scan F12: the classifier can only see the rows it scans, and it was
+// reading 80 while the Overview banner (post-LM1) reads 250. In deferred-mirror
+// mode a retry storm writes ~5 rows per queued date per 15-min run, so 80 rows
+// is about an hour of history -- a step that failed this morning scrolls out,
+// vanishes from latestByStep, and the row renders a false ALL-CLEAR. Pin both
+// the window and the honest wording.
+test('F12: pipe-failures scans at least as wide as the Overview banner, and says so', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  let askedFor = null;
+  h.ctx.readPipelineHealth_ = function (n) {
+    askedFor = n;
+    return [{ timestamp: '2026-08-19 07:05', step: 'processIntegratedHistory:DQE',
+              status: 'success', notes: '' }];
+  };
+  const row = rowByKey(h.call('getSystemHealth'), 'pipe-failures');
+
+  // The Overview banner's window is the floor -- this row must never be the
+  // narrower of the two (it is the one CLAUDE.md calls the trustworthy signal).
+  const ovSrc = require('fs').readFileSync(
+    require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard',
+                         'CompanyOverview.gs'), 'utf8');
+  const ovM = /OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS = (\d+)/.exec(ovSrc);
+  assert.ok(ovM, 'OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS not found -- update this suite');
+  assert.ok(askedFor >= Number(ovM[1]),
+    'pipe-failures scans ' + askedFor + ' rows but the Overview banner scans '
+    + ovM[1] + ' -- the health page must not have the narrower window (F12/LM1)');
+
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /last \d+ entries/,
+    'the OK text must disclose the scanned window, not claim an unqualified all-clear');
+});
+
+// ── F5: the Neon read-volume gauge ────────────────────────────────────────
+//
+// The owner exhausted Neon's monthly transfer allowance with managers live and
+// the Neon-only surfaces (Escalations, Inbound, Direct, Caller Lookup) went to
+// their "unavailable" states for the rest of the month. Every existing probe
+// reported Neon as REACHABLE throughout -- because a Neon that has spent its
+// allowance is reachable. This row measures consumption instead.
+
+// The accumulator itself lives in NeonRead.gs (not loaded by the suite above,
+// which is why the Health row typeof-guards the call).
+const hNeon = loadGas({ files: ['Config.gs', 'NeonRead.gs'] });
+
+test('F5: neonNoteEgress_ accumulates bytes + reads within a month', function () {
+  hNeon.state.props = {};
+  hNeon.call('neonNoteEgress_', 1000);
+  hNeon.call('neonNoteEgress_', 2500);
+  const out = hNeon.call('readNeonEgress_');
+  assert.equal(out.bytes, 3500);
+  assert.equal(out.reads, 2);
+  assert.equal(out.budgetMb, 0, 'no budget declared -> informational only');
+  assert.equal(out.pctOfBudget, null);
+});
+
+test('F5: a stale month reads as zero, not as last month\'s total', function () {
+  hNeon.state.props = {
+    NEON_EGRESS_MTD: JSON.stringify({ m: '1999-01', bytes: 999999, reads: 42 }),
+  };
+  const out = hNeon.call('readNeonEgress_');
+  assert.equal(out.bytes, 0, 'a carried-over month must not report as this month');
+  assert.equal(out.reads, 0);
+  // ...and the next write starts the new month cleanly rather than adding to it.
+  hNeon.call('neonNoteEgress_', 100);
+  assert.equal(hNeon.call('readNeonEgress_').bytes, 100);
+});
+
+test('F5: a declared budget turns the gauge into a percentage', function () {
+  hNeon.state.props = { NEON_EGRESS_BUDGET_MB: '10' };
+  hNeon.call('neonNoteEgress_', 5 * 1024 * 1024);
+  const out = hNeon.call('readNeonEgress_');
+  assert.equal(out.budgetMb, 10);
+  assert.equal(out.pctOfBudget, 50);
+});
+
+test('F5: zero/garbage byte counts are ignored, and the gauge never throws', function () {
+  hNeon.state.props = {};
+  hNeon.call('neonNoteEgress_', 0);
+  hNeon.call('neonNoteEgress_', null);
+  hNeon.call('neonNoteEgress_', 'junk');
+  assert.equal(hNeon.call('readNeonEgress_').reads, 0,
+    'a non-read must not inflate the read count');
+  // Corrupt stored JSON self-heals rather than poisoning every later read.
+  hNeon.state.props.NEON_EGRESS_MTD = '{not json';
+  assert.equal(hNeon.call('readNeonEgress_').bytes, 0);
+  hNeon.call('neonNoteEgress_', 50);
+  assert.equal(hNeon.call('readNeonEgress_').bytes, 50);
+});
+
+test('F5: the Health row is muted without a budget, ok under it, warn near it', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.readNeonEgress_ = function () {
+    return { month: '2026-08', bytes: 5 * 1024 * 1024, reads: 12, budgetMb: 0, pctOfBudget: null };
+  };
+  let row = rowByKey(h.call('getSystemHealth'), 'neon-egress');
+  assert.equal(row.status, 'muted', 'no declared budget -> no invented threshold');
+  assert.match(row.value, /5 MB in 12 read\(s\)/);
+  assert.match(row.hint, /NEON_EGRESS_BUDGET_MB/, 'tells the operator how to arm it');
+  assert.match(row.hint, /FLOOR/, 'is honest that under-budget is not proof of headroom');
+
+  h.ctx.readNeonEgress_ = function () {
+    return { month: '2026-08', bytes: 1024 * 1024, reads: 3, budgetMb: 100, pctOfBudget: 1 };
+  };
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'neon-egress').status, 'ok');
+
+  h.ctx.readNeonEgress_ = function () {
+    return { month: '2026-08', bytes: 85 * 1024 * 1024, reads: 900, budgetMb: 100, pctOfBudget: 85 };
+  };
+  row = rowByKey(h.call('getSystemHealth'), 'neon-egress');
+  assert.equal(row.status, 'warn', '85% of a declared budget must warn BEFORE the cliff');
+  assert.match(row.value, /85% of the 100 MB budget/);
+});
+
+test('F5: the gauge degrades to an absent row when NeonRead.gs is unavailable', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.readNeonEgress_ = undefined;   // the suite's default load state
+  const data = h.call('getSystemHealth');
+  assert.equal(rowByKey(data, 'neon-egress'), undefined,
+    'a missing accumulator drops the row; it must never throw the page');
+  assert.ok(data.rows.length > 10, 'the rest of the page still renders');
+});

@@ -337,3 +337,139 @@ test('R23: the answer-target seed matches the client + agent-app fallback litera
   assert.ok(agentBand, 'agent-app band fallback missing');
   assert.equal(Number(agentBand[1]), Number(band[1]), 'agent-app band fallback != seed');
 });
+
+// R20 row-40 (broad-scan F1/F2): the Extraction Sidebar mirrors the pipeline's
+// QCD row rules BY HAND, and that mirror had already drifted. The R20 owner
+// ruling moved row 40 (A_Q_Spanish per QCDR Output A40) off its ">0s" abandon
+// holdout onto the >1min rule every other queue uses; the fix landed in
+// autoImport.js only, so the sidebar went on listing rows the pipeline no
+// longer counts -- i.e. the tool an operator reaches for WHEN THEY ALREADY
+// SUSPECT the numbers told them the pipeline was under-counting.
+//
+// check-duplicated-files.sh now guards the two shared time-decode helpers, but
+// the ROW RULES are structurally different code in the two files and cannot be
+// diffed. This pin instead extracts every abandon-wait threshold token from
+// each file's row-40 block and asserts the two agree -- narrow, but aimed
+// exactly at the drift that actually happened.
+function q40Block_(src, startMarker, label) {
+  const i = src.indexOf(startMarker);
+  assert.ok(i !== -1, label + ': row-40 block marker "' + startMarker
+    + '" not found -- the block moved or was renamed; update this suite.');
+  // Brace-match from the marker's opening `{` to its close.
+  let depth = 0, started = false, end = -1;
+  for (let j = i; j < src.length; j++) {
+    if (src[j] === '{') { depth++; started = true; }
+    else if (src[j] === '}') { depth--; if (started && depth === 0) { end = j; break; } }
+  }
+  assert.ok(end !== -1, label + ': row-40 block never closes -- update this suite.');
+  return src.slice(i, end + 1);
+}
+
+// Every `abandoned === "abandoned" && waitDec > <token>` in a block. The col-7
+// `abandoned !== "abandoned" && waitDec >= 0` clauses do not match (different
+// operator on both halves), which is correct -- they are not abandon rules.
+function abandonWaitTokens_(block) {
+  const out = new Set();
+  const re = /abandoned === "abandoned" && waitDec > ([A-Za-z0-9_]+)/g;
+  let m;
+  while ((m = re.exec(block)) !== null) out.add(m[1]);
+  return out;
+}
+
+test('R20 row-40: the Extraction Sidebar and the pipeline use the SAME abandon threshold', function () {
+  const pipeBlock = q40Block_(
+    read('apps-script/cdr-import/autoImport.js'),
+    'if (queueName === q40_name) {', 'autoImport.js');
+  const sideBlock = q40Block_(
+    read('apps-script/cdr-report/dataFilters.js'),
+    'if (targetRow === 40 && is630to1500 && queueName === q40_name) {', 'dataFilters.js');
+
+  const pipeTokens = abandonWaitTokens_(pipeBlock);
+  const sideTokens = abandonWaitTokens_(sideBlock);
+
+  assert.ok(pipeTokens.size > 0, 'no abandon-wait rule found in autoImport row-40 block');
+  assert.ok(sideTokens.size > 0, 'no abandon-wait rule found in dataFilters row-40 block');
+
+  // R20: ONE threshold on each side, and the same one. A second token on
+  // either side means a partial edit (exactly how this drifted the first time).
+  assert.deepEqual([...pipeTokens].sort(), ['time1Min'],
+    'autoImport row-40 abandon rules should all use time1Min (R20 owner ruling)');
+  assert.deepEqual([...sideTokens].sort(), ['time1Min'],
+    'dataFilters (Extraction Sidebar) row-40 abandon rules drifted from the '
+    + 'pipeline: the sidebar would list rows the pipeline does not count, so a '
+    + 'reconciliation reads as "the pipeline is under-counting". Mirror the '
+    + 'autoImport q40_name block.');
+});
+
+// ---- F11: the B-2 tripwire, in the QCD dimension ---------------------------
+//
+// B-2 (elsewhere in this suite) pins that no dashboard file reads the DQE
+// sheet without a Neon path -- the lesson being that an uncut reader is
+// INVISIBLE until the sheet ages out from under it, and the Alerts reader
+// silently stopped every low-answer-rate alert the day that happened.
+//
+// QCD has the same shape: QCD_READ_SOURCE + a parity gate + a documented
+// cutover (Operator State #30), and readers that reach the sheet directly.
+// It had no tripwire, and two readers were found reaching for the sheet by
+// STRING LITERAL (not the SHEETS.* constant), so even a constant-based check
+// would have missed them.
+//
+// Detection is the OPEN CALL (getSheetByName), not a mention of the sheet's
+// name: half a dozen files discuss "QCD Historical Data" in prose while
+// reading it through the source-aware readQcdGrid_, and a prose-matching
+// tripwire flags those forever and gets muted.
+//
+// Each entry below is a DECISION someone made and has to defend, not a
+// blanket exemption -- that is the whole value of the list.
+const QCD_SHEET_ONLY_ALLOWED = {
+  // The QCD DAL itself: readQcdSheetData_ / readQcdGrid_ ARE the sheet arm
+  // that getQcdReadSource_ dispatches to, and the parity gate must be able to
+  // read both sides.
+  'QCDReport.gs': 'the QCD DAL / the sheet arm it dispatches to',
+  // DELIBERATE (see queueReportQcdLatestIso_'s docstring): this answers "did
+  // the import finish?", not "what data exists?", and the sheet is what the
+  // import writes. CONSEQUENCE, undocumented until F11: the QCD sheet cannot
+  // be retired while this reads it, or the Daily Call Queue Report trigger
+  // silently stops sending with no failure anywhere.
+  'QueueReportEmail.gs': 'import-finished signal is deliberately the sheet '
+    + '(queueReportQcdLatestIso_) -- NOTE: this BLOCKS retiring the QCD sheet',
+  // Admin queue DISCOVERY for the Dept Config modal, not a metric read. It
+  // goes blind against a trimmed sheet, so its consumer (saveDeptConfig) now
+  // fails OPEN on an empty universe with a warning instead of rejecting every
+  // queue name as unknown (F11).
+  'DeptConfig.gs': 'admin queue discovery; saveDeptConfig fails open when the scan is empty',
+};
+
+// Any getSheetByName pointing at QCD Historical Data, by literal or constant.
+const QCD_SHEET_OPEN_RE =
+  /getSheetByName\(\s*(?:['"]QCD Historical Data['"]|SHEETS\.QCD[A-Z_]*)\s*\)/;
+
+test('F11: no dashboard file OPENS the QCD sheet without a Neon path or a recorded reason', function () {
+  const files = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); });
+  const uncut = [];
+  files.forEach(function (f) {
+    const src = read(f, DASH);
+    if (!QCD_SHEET_OPEN_RE.test(src)) return;                 // not a QCD sheet reader
+    if (QCD_SHEET_ONLY_ALLOWED[f]) return;                    // documented exemption
+    if (src.indexOf('getQcdReadSource_') !== -1) return;      // source-aware
+    uncut.push(f);
+  });
+  assert.deepEqual(uncut, [],
+    'these files open QCD Historical Data with no Neon path, so they go blind the '
+    + 'day QCD_READ_SOURCE=neon and the sheet is trimmed: ' + uncut.join(', ')
+    + '. Route the read through getQcdReadSource_, or add an entry to '
+    + 'QCD_SHEET_ONLY_ALLOWED with a reason AND its consequence.');
+});
+
+// The allowlist is only worth having if it stays honest: an entry for a file
+// that no longer opens the sheet is stale documentation that will mislead the
+// next reader into thinking a blind spot exists where it does not.
+test('F11: every QCD_SHEET_ONLY_ALLOWED entry still describes a real sheet reader', function () {
+  Object.keys(QCD_SHEET_ONLY_ALLOWED).forEach(function (f) {
+    const p = path.join(DASH, f);
+    assert.ok(fs.existsSync(p), 'QCD_SHEET_ONLY_ALLOWED names a missing file: ' + f);
+    assert.ok(QCD_SHEET_OPEN_RE.test(read(f, DASH)),
+      f + ' is exempted from the QCD sheet tripwire but no longer opens the sheet '
+      + '-- drop the entry.');
+  });
+});

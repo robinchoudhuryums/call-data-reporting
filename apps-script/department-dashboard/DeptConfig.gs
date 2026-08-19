@@ -741,6 +741,7 @@ function saveDeptConfig(req) {
   // --- QCD queue validation: every token must exist in the data
   // (or already be in this dept's constant, so a seeded queue with no
   // recent rows stays valid). ---
+  let queueValidationSkipped = '';   // F11: set when there was nothing to validate against
   if (qcdQueues.length) {
     const known = scanQcdQueueNames_();
     const constSet = {};
@@ -752,9 +753,26 @@ function saveDeptConfig(req) {
     // un-editable: any Save of that dept (even to change Notes) re-validated
     // the whole list and rejected the stale-but-legitimate queue.
     getDeptQcdQueues_(dept).forEach(function (q) { constSet[q] = true; });
-    const unknown = qcdQueues.filter(function (q) {
-      return !known[q] && !constSet[q];
-    });
+    // F11: an EMPTY discovery universe means we could not read the queue
+    // names at all -- a missing/emptied/trimmed QCD Historical Data sheet, or
+    // a fresh install before first ingest. There is nothing to validate
+    // AGAINST, so rejecting is not "strict", it is wrong: every queue name
+    // looks unknown and the admin cannot save a correct config. (This matters
+    // because scanQcdQueueNames_ reads the SHEET directly and has no Neon
+    // path, so it goes blind the day QCD_READ_SOURCE=neon and the sheet is
+    // retired -- the B-2 class, in the QCD dimension.) Fail OPEN with a
+    // non-blocking warning; a NON-empty universe still rejects genuine typos,
+    // which is the case this check exists for.
+    const knownNames = Object.keys(known);
+    const unknown = knownNames.length
+      ? qcdQueues.filter(function (q) { return !known[q] && !constSet[q]; })
+      : [];
+    if (!knownNames.length) {
+      queueValidationSkipped = 'Could not read any queue names from QCD Historical Data, '
+        + 'so the queue list was saved WITHOUT validation. If the sheet is present and '
+        + 'populated this is a real problem worth checking (Operator State #14); on a '
+        + 'fresh install it just means the first ingest has not run yet.';
+    }
     if (unknown.length) {
       const sample = Object.keys(known).sort().slice(0, 25);
       throw new Error('Unknown QCD queue name(s): ' + unknown.join(', ')
@@ -774,6 +792,7 @@ function saveDeptConfig(req) {
   // QCD numbers from the same queue. Computed against the OTHER depts'
   // current effective lists (this dept's new row isn't written yet). ---
   const queueWarnings = [];
+  if (queueValidationSkipped) queueWarnings.push(queueValidationSkipped);   // F11
   if (qcdQueues.length) {
     const otherDepts = allDepts.filter(function (d) { return d !== dept; });
     qcdQueues.forEach(function (q) {

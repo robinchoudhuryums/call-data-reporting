@@ -172,6 +172,7 @@ function neonGetAgentExtPairs_() {
     var stmt = conn.createStatement();
     var rs = stmt.executeQuery(sql);
     var json = rs.next() ? rs.getString('j') : '[]';
+    neonNoteEgress_(json ? json.length : 0);   // F5: meter the read
     rs.close(); stmt.close();
     var arr = JSON.parse(json || '[]');
     try { cache.put(KEY, json, REPORT_CACHE_TTL_SECONDS); } catch (ce) { /* harmless */ }
@@ -279,6 +280,11 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();
+    // F5: this single json_agg string IS the dominant DQE read cost (the whole
+    // point of the R24 egress round), so metering it here covers most of what
+    // the transfer cap actually counts. Best-effort, post-fetch, never gates
+    // the parse below.
+    neonNoteEgress_(json ? json.length : 0);
     var arr = JSON.parse(json || '[]');
     for (var i = 0; i < arr.length; i++) {
       var r = arr[i];   // positional array -- see the protocol comment above
@@ -575,6 +581,84 @@ function logDqeReadTiming_(label, source, startMs, rowCount) {
       (rowCount === null || rowCount === undefined) ? '?' : rowCount,
       (Date.now() - startMs));
   } catch (e) { /* best-effort */ }
+}
+
+// ── Neon read-volume gauge (broad-scan F5) ─────────────────────────────────
+//
+// The owner exhausted Neon's monthly public-transfer allowance mid-month with
+// managers live, and the Neon-only surfaces (Escalations, Inbound + heatmap,
+// Direct, Caller Lookup, journey drills) went to their "unavailable" states
+// until the month rolled over. Nothing in the app measured consumption, so the
+// cliff arrived with no warning: System Health reported Neon REACHABILITY, and
+// a reachable Neon that has spent its allowance looks perfectly healthy right
+// up to the moment it stops.
+//
+// This accumulates the bytes we actually pull, month to date. It measures OUR
+// SIDE of the wire, not Neon's billing meter -- the json_agg payloads are the
+// dominant term (that is what the R24 egress round cut) but wire framing, TLS
+// overhead and non-instrumented queries are not counted, so the number is a
+// FLOOR. That matters for how it is read: a gauge under the budget is not
+// proof of headroom, while a gauge over it is proof of a problem.
+//
+// Storage is one Script Property holding {m, bytes, reads}, reset on month
+// rollover. Read-modify-write with no lock, deliberately: two concurrent
+// executions can lose an increment, which is acceptable for a gauge and much
+// cheaper than serializing every read (the presence-map discipline). It is
+// INV-01-clean -- Script Property only, no spreadsheet write -- and every path
+// is best-effort: instrumentation must never be able to fail a report.
+var NEON_EGRESS_PROP_ = 'NEON_EGRESS_MTD';
+
+/** Current UTC month key, 'YYYY-MM'. */
+function neonEgressMonthKey_() {
+  var d = new Date();
+  var m = d.getUTCMonth() + 1;
+  return d.getUTCFullYear() + '-' + (m < 10 ? '0' : '') + m;
+}
+
+/**
+ * Adds one instrumented read to the month-to-date counters. `bytes` is the
+ * length of the payload string we pulled. Never throws.
+ */
+function neonNoteEgress_(bytes) {
+  try {
+    var n = Number(bytes) || 0;
+    if (n <= 0) return;
+    var props = PropertiesService.getScriptProperties();
+    var key = neonEgressMonthKey_();
+    var cur = null;
+    try { cur = JSON.parse(props.getProperty(NEON_EGRESS_PROP_) || 'null'); } catch (e) { cur = null; }
+    if (!cur || cur.m !== key) cur = { m: key, bytes: 0, reads: 0 };
+    cur.bytes += n;
+    cur.reads += 1;
+    props.setProperty(NEON_EGRESS_PROP_, JSON.stringify(cur));
+  } catch (e) { /* best-effort -- a gauge must never break a read */ }
+}
+
+/**
+ * { month, bytes, reads, budgetMb, pctOfBudget } for the Health page.
+ * `budgetMb` comes from the NEON_EGRESS_BUDGET_MB Script Property and is 0
+ * when unset -- the plan's real allowance is a billing fact this code cannot
+ * discover, so the operator declares it and only then does the row acquire a
+ * threshold. Unset = the row is informational, never a false alarm.
+ */
+function readNeonEgress_() {
+  var out = { month: neonEgressMonthKey_(), bytes: 0, reads: 0, budgetMb: 0, pctOfBudget: null };
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var cur = null;
+    try { cur = JSON.parse(props.getProperty(NEON_EGRESS_PROP_) || 'null'); } catch (e) { cur = null; }
+    // A stale month reads as zero rather than as last month's total.
+    if (cur && cur.m === out.month) {
+      out.bytes = Number(cur.bytes) || 0;
+      out.reads = Number(cur.reads) || 0;
+    }
+    var b = Number(props.getProperty('NEON_EGRESS_BUDGET_MB') || 0) || 0;
+    if (b > 0) {
+      out.budgetMb = b;
+      out.pctOfBudget = Math.round((out.bytes / (b * 1024 * 1024)) * 1000) / 10;
+    }
+  } catch (e) { /* best-effort */ }
+  return out;
 }
 
 /**
