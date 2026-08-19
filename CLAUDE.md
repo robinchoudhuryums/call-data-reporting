@@ -86,7 +86,10 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # that the sanitizeAbandonedCellForNeon_ AND sanitizeSlotCellForNeon_
 # functions are each identical across neonbackfill.js / NeonMirror.js
 # (F-24 / F-51 -- the guard checks BOTH; earlier doc text understated
-# it as abandoned-only, R8-E6). Non-zero exit on drift.
+# it as abandoned-only, R8-E6), plus simulateSplitCol2 /
+# parseDurationDecimal across dataFilters.js / autoImport.js (compared
+# on CODE -- one copy is nested, so indentation/blank lines are
+# normalized away). Non-zero exit on drift.
 # Also runs automatically as a non-blocking SessionStart hook
 # (.claude/settings.json).
 bash scripts/check-duplicated-files.sh
@@ -363,7 +366,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (TTT/ATT/AvgAbdWait), counts, and the Date are TZ-independent and untouched.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
-  the web editor.
+  the web editor -- `scripts/check-remote-orphans.mjs` (wired into
+  `deploy.sh`, Operator State #29) DETECTS the leftovers but cannot remove
+  them.
 - **Public write paths are admin-only — INV-01 carries the AUTHORITATIVE
   carve-out list** (OrphanFix.gs incl. the `addOrphanToRoster` New-hire flow /
   `setup()` / DeptConfig.gs / the Access Control editor in Auth.gs / the
@@ -624,6 +629,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   State #42). So keep deploying and backfilling the split on its own urgency
   (the 14-day window closes regardless); the reader gate does not slow that
   down, and turning the gate on later costs nothing extra.
+- **The Extraction Sidebar mirrors the pipeline's QCD rules BY HAND -- a THIRD
+  duplication, and it has already drifted.** `cdr-report/dataFilters.js`
+  (CDR Tools -> Open Extraction Sidebar: "which raw CDR rows produced this
+  cell?") re-implements `cdr-import/autoImport.js`'s raw-CSV time decoding
+  (`simulateSplitCol2` / `parseDurationDecimal`, now guarded by
+  `check-duplicated-files.sh` -- compared on CODE, since dataFilters' copies are
+  nested) AND ~50 of its per-row QCD rules, which are structurally different
+  code and cannot be diffed. **A pipeline rule change is a TWO-file edit here
+  too.** The R20 row-40 threshold landed in the pipeline only, so the sidebar
+  listed rows the pipeline no longer counts -- the tool an operator reaches for
+  when they already suspect the numbers told them the pipeline was
+  under-counting. That specific threshold is pinned by
+  `cross-file-pins.test.js` ("R20 row-40"); the rest of the row rules are not,
+  so diff both files when you touch either.
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
@@ -1476,8 +1495,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a clean no-op. New force-path writers must keep source validation ahead of
   any delete. Pinned by `csr-transfer.test.js` (the helper) + `pipeline-build.test.js` (M2).
 - **System Health "Recent pipeline step failures" is the single trustworthy
-  pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last 80
-  Pipeline Health rows and flags a step ONLY when its MOST RECENT outcome is
+  pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
+  `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- it must never be
+  NARROWER than the Overview banner's window (LM1), because the same eviction
+  that made the banner false-WARN at 40 makes THIS row a false ALL-CLEAR: an
+  evicted step drops out of the scan entirely and reads as healthy. Its OK text
+  therefore states the window it measured, not an unqualified all-clear. It
+  flags a step ONLY when its MOST RECENT outcome is
   `failure` (a step that failed then RECOVERED -- latest row `success` -- is
   NOT flagged, so it never cries wolf about a fixed blip, the OPS-8/M1 lesson).
   Catches every step in one place: the CDR/QCD/DQE/Inbound sheet writes, the
@@ -1728,7 +1752,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   DQE date, itself on the 5-min tier), so the morning ingest MINTS NEW KEYS
   within minutes instead of waiting out the TTL; a new heavy report key MUST
   join that tag or it inherits the stale-morning bug the tag exists to
-  prevent. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  prevent. **Not yet true of every 6 h key** -- `agentHome:v1` and the two
+  sibling inbound keys (`inbound:v9:daily:` insurer drill, `inboundHeatmap:v3`)
+  carry only their window, so a same-day re-import can leave the drill
+  disagreeing with the freshness-tagged row it expands; `agentHist:v1` is fine
+  (it embeds the latest date directly). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
   serve all day; trade-off: a rare mid-day force re-import's corrections
@@ -2279,6 +2307,7 @@ items for anything it flags or doesn't cover.)
 44. DQE-silence watchdog -- the queue-active-agents-dark cross-check born from the Field Ops Power blind spot; enable it (`installDqeSilenceWatchTrigger()`), thresholds + episode semantics in the item
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; Phase A ships dark -- agents get access-denied until Phase B's pages exist)
+47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; unset leaves it informational (and the figure is a FLOOR, so under-budget is not proof of headroom)
 
 ## Cycle Workflow Config
 

@@ -286,6 +286,9 @@ function getEscalations(req) {
     for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     var rows = JSON.parse(json || '[]');
     var escTruncated = rows.length > ESC_MAX_ROWS;   // A-4
@@ -379,6 +382,9 @@ function getEscalationActivity(req) {
     stmt.setString(1, id);
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
+    // F5: meter the bytes this read actually pulled (NeonRead.gs;
+    // typeof-guarded like every other cross-file call here).
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
     return { available: true, rows: JSON.parse(json || '[]') };
   } catch (e) {

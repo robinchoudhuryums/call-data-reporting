@@ -633,12 +633,22 @@ function getExtractionDataJSON() {
       if (targetCol === 7 && startDec > time600AM && startDec < time300PM && endDec < time300PM && queueName === "a_q_csr" && type === "internal" && abandoned !== "abandoned" && waitDec >= 0) includeRow = true;
     }
 
+    // Row 40 (A_Q_Spanish per QCDR Output A40). The TOTAL predicates t2/t4
+    // used a >0s abandon rule while the pipeline's r40_tot2/r40_tot4 were
+    // moved to >1min by the R20 owner ruling (autoImport.js, the q40_name
+    // block) -- so this sidebar listed rows the pipeline no longer counts and
+    // a reconciliation read as "the pipeline is under-counting". Both files
+    // now use time1Min, which makes t2 === t5 and t4 === t6 by design (the
+    // pipeline's tot2/tot5 and tot4/tot6 pairs are likewise identical since
+    // R20). Kept as separate consts so the six predicates stay positionally
+    // aligned with the pipeline's six counters; do NOT collapse them.
+    // Pinned by tests/unit/cross-file-pins.test.js ("R20 row-40").
     if (targetRow === 40 && is630to1500 && queueName === q40_name) {
       const isRow39Match = (status === "1" && type === "internal" && isCSR);
       const t1 = (status === "1" && type === "internal"  && transfer === "transfer");
-      const t2 = (status === "1" && type === "internal"  && abandoned === "abandoned" && waitDec > 0);
+      const t2 = (status === "1" && type === "internal"  && abandoned === "abandoned" && waitDec > time1Min);
       const t3 = (status !== "1" && type === "incoming"  && transfer === "transfer");
-      const t4 = (status !== "1" && type === "incoming"  && abandoned === "abandoned" && waitDec > 0);
+      const t4 = (status !== "1" && type === "incoming"  && abandoned === "abandoned" && waitDec > time1Min);
       const t5 = (status === "1" && type === "internal"  && abandoned === "abandoned" && waitDec > time1Min);
       const t6 = (status !== "1" && type === "incoming"  && abandoned === "abandoned" && waitDec > time1Min);
 

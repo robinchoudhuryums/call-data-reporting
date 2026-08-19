@@ -3248,3 +3248,77 @@ trigger (#28).
 **WHERE I LEFT OFF:** nothing in flight, nothing uncommitted. A fresh
 session can `/cycle-resume` for continuity or start directly on the
 outbound report once Neon is settled.
+
+## Increment 127 (2026-08-19) — /broad-scan + /broad-implement: the audit's top 5
+
+Fresh /broad-scan (3 stages) then /broad-implement of its final top 5. Full
+summary block: `.cycle/blocks/127-broad-scan-top5-broad-implement.md`.
+
+**The audit's shape.** Security came out clean — all 119 public RPC endpoints
+gated, checked mechanically then by hand; SQL parameterized; escaping and
+failure-handler coverage (a literal 1:1 withSuccess/withFailure ratio across
+all 12 client fragments) exemplary. The findings clustered instead in
+CROSS-PROJECT CONSISTENCY (6/10, the weakest dimension) and DEPLOYMENT HYGIENE
+(5/10) — i.e. not "is the code right" but "do the copies agree" and "is it
+running".
+
+**Implemented (773/773 tests, +12; INV-16 green; ci:ui pending in CI):**
+1. **F1** — `dataFilters.js` (Extraction Sidebar) row-40 still used the >0s
+   abandon rule that R20 moved to >1min in `autoImport.js`. The sidebar listed
+   rows the pipeline doesn't count, so a Spanish reconciliation read as "the
+   pipeline is under-counting" — from the tool built to prevent exactly that.
+2. **F2** — that duplication was unguarded. `check-duplicated-files.sh` gained
+   a normalized (indentation-agnostic) function-pair check for
+   `simulateSplitCol2`/`parseDurationDecimal`, AND a `cross-file-pins` "R20
+   row-40" pin, because the primitives guard alone would NOT have caught F1 —
+   the row RULES are structurally different code and can't be diffed.
+3. **F12** — System Health's failure classifier read 80 Pipeline Health rows
+   while the Overview banner (post-LM1) reads 250. Same eviction, opposite and
+   worse outcome: LM1 was a false WARN, this was a false ALL-CLEAR on the page
+   CLAUDE.md calls the single trustworthy pipeline signal. Now 250 + the OK
+   text states its measured scope.
+4. **F11** — the B-2 blindness in the QCD dimension. Two readers open the QCD
+   sheet with no `getQcdReadSource_` path; there was no tripwire (and both use
+   a string literal, so a constant-based one would have missed them). Added the
+   tripwire keyed on the getSheetByName CALL (prose-matching flags six
+   innocent files and gets muted), with a 3-entry allowlist carrying reasons
+   AND consequences — notably that QueueReportEmail's deliberate sheet read
+   BLOCKS retiring the QCD sheet, which #30's cutover framing implies is
+   possible. Also made `saveDeptConfig` fail OPEN on an empty queue universe:
+   it was rejecting every queue name while itself reporting "No QCD queues
+   found in recent data".
+5. **F5** — Neon transfer exhaustion was unmonitored; every probe said
+   "reachable" right up to the cliff, because a Neon that has spent its
+   allowance IS reachable. Added a month-to-date read-volume gauge (Script
+   Property, INV-01-clean, lossy by design) metering ALL 14 bulk json_agg
+   fetch sites — metering only DQE would under-report exactly the Neon-only
+   surfaces that go dark — plus a Health row that stays muted until the
+   operator declares `NEON_EGRESS_BUDGET_MB`, and is explicit that it is a
+   FLOOR (over budget proves a problem; under budget does not prove headroom).
+
+**F6 (undeployed rounds) was in the top 5 and is OPERATOR-ONLY — no code.**
+
+**⚠ DEPLOY ORDER (new, blocking).** cdr-import is undeployed, so the LIVE
+pipeline still runs the old >0s row-40 rule and the live sidebar currently
+AGREES with it. Deploying cdr-report alone would make the sidebar LEAD the
+pipeline — the same mismatch, inverted. Deploy cdr-import and cdr-report
+together (cdr-import also carries the 4% violation gate).
+
+**NOT walked:** the manual Regression Scenarios — headless session, no
+deployed build. S36 (Dept Config validation round-trip) directly covers a
+behavior change here and needs a human.
+
+**Open follow-ons from the audit, not implemented** (full detail + effort
+batches in the block): F10 `runNeonMirror_` has no runtime budget and wedges
+silently past the ~6-min ceiling; F3/F3b four 6h cache keys missing
+`reportFreshnessTag_` + two prefixes missing from the version-sync SPECS; F4
+unbounded login-notify emails past 300 keys; F7 ~1,700 lines of live,
+menu-reachable, zero-test cdr-report code (where F1 hid); F8 `time1Min` is
+">60s" not "~59s". Docs needing sync are listed in the block.
+
+**WHERE I LEFT OFF:** all five code findings implemented and green on the
+branch; nothing in flight. Next: commit + PR, then the blocking deploy-order
+action above. `/sync-docs` is warranted — six documentation updates are
+enumerated at the end of the block, including one where CLAUDE.md asserts as
+fact ("every heavy report key carries reportFreshnessTag_") something F3 shows
+is not true of four keys.
