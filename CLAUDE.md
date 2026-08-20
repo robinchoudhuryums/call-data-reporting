@@ -265,7 +265,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > 3. **A rule enforced by a test needs one line, not three paragraphs** —
 >    name the test and let it carry the detail. A rule that CAN be enforced
 >    by a test usually should be: prose could not keep the "all DQE readers
->    are cut over" claim true (B-2), and a tripwire could.
+>    are cut over" claim true (B-2), and a tripwire could. **Corollary (C2):
+>    when a new convention is WRITTEN, answer "what enforces this?" in the
+>    same commit and name the enforcement in the bullet.** Three holes found
+>    in one audit were each a convention missing exactly that step: a third
+>    duplication pair outside the INV-16 guard (F2), two cache prefixes in
+>    the INV-30 docs but not in cache-version-sync's SPECS (F3b), and a
+>    second read-source dimension with no B-2-style tripwire (F11). "None —
+>    prose only" is an acceptable answer; an unanswered question is not.
 >
 > `tests/unit/claude-md-split.test.js` enforces this with a per-bullet
 > ratchet: new bullets stay under 4 KB, and the five already over it may only

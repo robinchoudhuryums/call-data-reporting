@@ -2969,8 +2969,14 @@ function calcQcdReport(cleanData, targetSS) {
       if (queueName === q40_name) {
         // Owner 2026-08-14: row 40 (A_Q_Spanish per QCDR Output A40) used a
         // >0s abandon rule in its TOTAL while every other queue uses >1min
-        // (~59s) or >20s -- the last 1-second holdout. Now the 1-minute rule,
-        // so tot2/tot4 (total) match tot5/tot6 (abandoned) in threshold.
+        // or >20s -- the last 1-second holdout. Now the 1-minute rule, so
+        // tot2/tot4 (total) match tot5/tot6 (abandoned) in threshold.
+        // NB (F8): time1Min is EXACTLY 60s (1/1440 day) and the comparison is
+        // strict >, so the rule is "MORE than 60s" -- an earlier version of
+        // this comment called it "~59s", which is backwards (a 60.0s wait is
+        // excluded, not included). The editor-run AbandonedFilter.js is a
+        // SEPARATE tool with its own deliberate >0:00:59 threshold; do not
+        // "sync" the two, they differ by the 1-second class on purpose.
         // FORWARD-ONLY: historical QCD rows keep their old totals; expect a
         // small step down in Spanish's daily totals from the deploy date.
         if (status === "1" && type === "internal") {

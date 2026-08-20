@@ -3381,3 +3381,44 @@ keys it named.
 render. **Dated:** Sep 1 backfills before `runNeonCoverageCheck`.
 **Note on the budget value:** 5000 MB = 5.24 GB decimal, so an exact 5 GB
 plan wants 4768; the gauge is a floor either way.
+
+## Increment 129 (2026-08-20) — Batch C: the drift-guard sweep
+
+PR #250 (Batch B + doc sync) MERGED first (ui-harness red on its first CI run
+was an environment blip — logs rotated before they could be read, base was
+green, the exact head passed the full 164-check gate locally; single re-run
+went green and auto-merge landed it). Batch C then shipped (783/783, +4):
+
+1. **C1 — the behavioral parity suite** (`qcd-sidebar-parity.test.js`), the
+   guard that would have caught F1 as BEHAVIOR rather than as a threshold
+   token. One shared 21-row Raw Data fixture drives `calcQcdReport` end to
+   end, then drives `getExtractionDataJSON` per cell against the pipeline's
+   OWN output grid; parity = sidebar row count === cell value across rows
+   3,4,5,6,13,35,36,37,39,40,43 × cols C/D/E, zero cells must refuse. No
+   expected numbers in the parity test, so an unmirrored edit to EITHER
+   file's ~50 row rules fails it. Negative-tested from both sides (sidebar
+   F1-reversion → "(40,3) wrote 4, extracted 5"; pipeline perturbation →
+   "(6,3)/(6,5)"). Also the first test coverage dataFilters.js has ever had.
+2. **C3** — the R20 comment's "(~59s)" corrected: time1Min is exactly 60s
+   with strict >, so the rule is "MORE than 60s". Comment now also records
+   that AbandonedFilter.js's >0:00:59 is a SEPARATE deliberate threshold.
+3. **C2** — CLAUDE.md habit 3 gains the corollary: a new convention must
+   answer "what enforces this?" in the same commit (F2/F3b/F11 were each
+   that question unasked).
+
+**FOUND while building C1, reported not fixed (block 129 has full detail):**
+- **Row 34 is incoherent across three surfaces** — the pipeline's
+  r34_abnd1m/2m counters are DEAD (totalRowMap overwrites row 34 as
+  sum(35..37)), the sidebar has its own live row-34 predicate matching a
+  DIFFERENT population (a status-3 internal abandon >1m double-counts in the
+  35+37 sum but extracts once), and the sidebar's total-row refusal list
+  omits 34. Needs an owner ruling on what row 34 MEANS.
+- **Window-edge divergence, row 35 col D**: sidebar dp2/dp3 lack the
+  pipeline's start<3PM clause — the F1 class, at the window edge.
+- dashboardCDR.js remains the zero-test half of F7.
+
+**WHERE I LEFT OFF:** Batch C committed to `claude/broad-scan-8dgd6m`
+(re-branched from merged main), about to push + PR per the session's standing
+flow. Doc updates queued for /sync-docs: the test-suite roll + the Extraction
+Sidebar bullet's "the rest of the row rules are not [pinned]" clause, now
+partly stale in the good direction.
