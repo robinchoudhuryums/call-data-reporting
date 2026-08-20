@@ -22,6 +22,11 @@ When something looks wrong, before assuming a code bug, check:
 1. Did the daily ingest run? Verify the latest date in `DQE Historical Data` (CDR Report sheet). If a DATE-RANGE gap shows on the Overview chart while the sheet AND Neon verifiably hold the rows (parity clean), run the editor diagnostic `probeOverviewChartDates()` (CompanyOverview.gs; admin, read-only; optional `OV_PROBE_FROM`/`OV_PROBE_TO` Script Properties set the range) -- it replays the chart pipeline's per-row filters and logs which one eats the rows (roster-unmatched sample names usually mean an agent-name-variant era; fix via Outlier Fix renames/aliases, R11-C0).
 2. Did the dashboard's deployed version include the latest code? Apps
    Script editor → Deploy → Manage deployments → check the timestamp.
+    Since Batch E the Health page answers this at a glance: the `build-stamp`
+    row renders what scripts/deploy.sh stamped into BuildStamp.gs at push time
+    (UTC + git short SHA + branch); "unstamped" means the last push bypassed
+    the deploy helper, so no CI gate ran against exactly what went live.
+
 3. Did the user actually have access? `Access Control` sheet rows are
    case-sensitive on email.
 4. Is the cache stale? Bump the relevant per-report prefix (see INV-30)
@@ -404,6 +409,17 @@ When something looks wrong, before assuming a code bug, check:
     `backfillEscalationActivity()` ONCE to seed `created`/`resolved` rows for
     escalations logged before the trail existed (idempotent, safe to re-run);
     otherwise their Activity timelines render only events that happen post-deploy.
+    (c) **Outage snapshot (Batch E, code-side -- nothing to set).** After each
+    successful list read, getEscalations stores the OPEN rows in chunked
+    `ESC_SNAPSHOT_*` Script Properties (engine-written outcome state -- the
+    scope-note class, never set by hand; age-gated refresh, ~30 min). When
+    Neon is unreachable the list serves that snapshot READ-ONLY, viewer-
+    scoped, with a banner dating it; closed statuses are not in it, and
+    every write verb still hard-fails (INV-55 unchanged). It has nothing to
+    serve until the FIRST successful read after deploy -- it protects the
+    NEXT outage, not the one already in progress. Clearing the properties
+    just forfeits the current snapshot until the next read.
+
 25. `CONFIG_SOURCE` Script Property (dashboard) -- the C2 Dept Config
     read+write source switch read by `getConfigSource_()`. Unset / `sheet`
     (default) = Dept Config is read+written on the `Dept Config` SHEET as
@@ -1094,6 +1110,15 @@ When something looks wrong, before assuming a code bug, check:
     "Recent pipeline step failures" and via the PipelineWatch push; a long
     silence on that step means the trigger is NOT installed. Proof-of-life:
     the most recent `retentionPrune` row's timestamp.
+    **Batch E:** the dashboard surfaces this window on the Health page --
+    `legs-horizon` (which day-sheets survive, read from the workbook) and
+    `retention-risk` (which surviving dates `inbound_calls`/`outbound_calls`
+    are missing, each with its ~last recoverable day). The deadline phrasing
+    uses `NC_RETENTION_DAYS_` (NeonCoverage.gs), a dashboard-side MIRROR of
+    this file's `RETENTION_CUTOFF_DAYS` -- an INV-06-style sync obligation:
+    change the prune window and change the mirror in the same commit. A
+    drifted mirror only mis-dates the warning; recoverability itself is
+    derived from which sheets actually survive.
 
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
@@ -1196,3 +1221,27 @@ When something looks wrong, before assuming a code bug, check:
     (UTC), and are code-written -- you never set that one. Biggest lever if
     it climbs: the 6 h report TTL plus the `reportFreshnessTag_` key suffix
     (#19), since every cached serve is a Neon fetch avoided.
+
+48. **`COACHING_DELIVERY_ENABLED` — the weekly coaching delivery engine
+    (F-e).** Install/arm from Admin ▾ → Coaching → "Install weekly trigger"
+    (sets the flag + a Monday 8 AM Central trigger for `runCoachingDelivery_`;
+    Uninstall removes both). Each armed run recomputes the coaching flags,
+    upserts them into Neon `coaching_flags` (one OPEN card per (dept, agent);
+    a continuing flag refreshes metrics + times_flagged, never duplicates;
+    recovered agents are reported but NEVER auto-closed — the coach decides),
+    and emails **admins only** (owner ruling — managers are not copied until
+    release) and only when there are NEW flags (MailApp quota is shared, B3).
+    **First armed run emails one larger batch** — every currently-qualifying
+    agent lands as NEW; consider "Run now" (dsConfirm-gated, full run) to see
+    it land before trusting the schedule. Outcomes in
+    `COACHING_DELIVERY_LAST`/`_LAST_RESULT` (OPS-8 prefix-coded: `ok …` /
+    `skipped (…)` / `ERROR: …`); the Health page's trg-coaching/out-coaching
+    rows track install-vs-flag mismatches like every flag-gated engine. A
+    `skipped (Neon unreachable)` run persisted nothing and sent nothing —
+    flags are re-derived from DQE history on the next run, so nothing is
+    lost. The worklist itself (Admin ▾ → Coaching) works without the engine
+    armed; it just stays empty until a delivery or "Run now" populates it.
+    Release path (owner-gated): swap the `assertAdmin_` gates in
+    `getCoachingWorklist`/`updateCoachingFlagStatus`, un-hide the menu item,
+    widen the email recipients — all surfaces were built so release is
+    gate-swapping, not rebuilding. Pinned by `tests/unit/coaching.test.js`.

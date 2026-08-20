@@ -73,7 +73,7 @@
         <div class="header-menu" data-admin-only style="display:none;">
           <button class="header-menu-btn" id="reports-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="reports-menu-list"
-                  title="Reports: Individual, plus the admin-vetted Inbound and Direct.">
+                  title="Reports: Individual, plus the admin-vetted Inbound, Direct, and Outbound.">
             Reports <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
           </button>
           <div class="header-menu-list" id="reports-menu-list" role="menu" style="display:none;">
@@ -86,6 +86,9 @@
             <button class="header-menu-item" id="direct-call-report-btn" type="button"
                     data-route="/report/direct" data-admin-only role="menuitem" style="display:none;"
                     title="Direct-extension call metrics (admin-only while being vetted): per-agent inbound answer rate (a miss while on another call is excused), inbound ATT, and outbound activity.">Direct</button>
+            <button class="header-menu-item" id="outbound-report-btn" type="button"
+                    data-route="/report/outbound" data-admin-only role="menuitem" style="display:none;"
+                    title="Outbound call analytics (admin-only while being vetted): did we call back the callers who abandoned, plus per-agent outbound activity attributed by roster department.">Outbound</button>
           </div>
         </div>
         <button class="header-menu-btn" id="caller-lookup-btn" type="button" data-route="/admin/caller-lookup" data-admin-only style="display:none;"
@@ -105,7 +108,7 @@
         <div class="header-menu" data-admin-only style="display:none;">
           <button class="header-menu-btn" id="admin-menu-btn" type="button"
                   aria-haspopup="true" aria-expanded="false" aria-controls="admin-menu-list"
-                  title="Admin tools: alerts, outlier fix, dept config, manager access, and system health.">
+                  title="Admin tools: alerts, outlier fix, dept config, manager access, system health, and the coaching worklist.">
             Admin <span class="header-menu-caret" aria-hidden="true">&#9662;</span>
           </button>
           <div class="header-menu-list" id="admin-menu-list" role="menu" style="display:none;">
@@ -124,6 +127,9 @@
             <button class="header-menu-item" id="system-health-btn" type="button"
                     data-route="/admin/health" data-admin-only role="menuitem"
                     title="One-glance operational status: pipeline freshness, Neon health, trigger-driven services, config properties, and setup sheets — with a remediation hint on every amber row. Admin-only.">Health</button>
+            <button class="header-menu-item" id="coaching-btn" type="button"
+                    data-route="/admin/coaching" data-admin-only role="menuitem"
+                    title="Coaching worklist: agents flagged by the weekly answer-rate check (behind team + high missed volume). Separate from customer-account Escalations. Admin-only until released.">Coaching</button>
           </div>
         </div>
       </nav>
@@ -2090,6 +2096,129 @@
     </div>
   </div>
 
+  <!-- Outbound report (Batch G, admin-only while vetted): "did we call back
+       the ones who abandoned?" + per-agent outbound activity, from Neon
+       outbound_calls (OutboundReport.gs). The two caveat captions in the
+       results body are part of the contract -- see the .gs header. -->
+  <div id="outbound-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="outbound-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/outbound"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="outbound-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Report &middot; Admin</div>
+        <h2 id="outbound-modal-title">Outbound Calls</h2>
+      </div>
+      <div class="modal-panel-body">
+      <div id="outbound-form" class="ir-form">
+        <div class="ir-section-title">Date Range</div>
+        <div class="ir-row">
+          <div class="ir-col">
+            <label for="outbound-preset">Quick select</label>
+            <select id="outbound-preset">
+              <option value="custom">Custom range</option>
+              <option value="last7">Last 7 days</option>
+              <option value="last30" selected>Last 30 days</option>
+              <option value="thisMonth">This month</option>
+              <option value="lastMonth">Last month</option>
+              <option value="last3Months">Last 3 months</option>
+            </select>
+          </div>
+          <div class="ir-col">
+            <label for="outbound-from">Start date</label>
+            <input type="date" id="outbound-from">
+          </div>
+          <div class="ir-col">
+            <label for="outbound-to">End date</label>
+            <input type="date" id="outbound-to">
+          </div>
+          <div class="ir-col">
+            <label for="outbound-dept">Department</label>
+            <select id="outbound-dept"></select>
+          </div>
+        </div>
+        <div class="ir-hint">
+          Outbound calls from <strong>Neon</strong> (<code>outbound_calls</code>):
+          whether abandoned callers were <strong>called back</strong>, plus per-agent
+          outbound activity. Agents are attributed by <strong>roster</strong>
+          department (never the phone system&rsquo;s org label). Admin-only while
+          the numbers are vetted.
+        </div>
+        <div id="outbound-form-error" class="status status-error" style="display:none;"></div>
+        <button class="btn" id="outbound-generate-btn" type="button">Generate report</button>
+      </div>
+
+      <div id="outbound-results" class="ir-results" style="display:none;">
+        <div class="ds-toolbar">
+          <div>
+            <span class="ir-results-title">Outbound Calls</span>
+            <span class="ir-results-date" id="outbound-results-date"></span>
+          </div>
+          <div>
+            <button class="btn btn-secondary" id="outbound-csv-btn" type="button">Download CSV</button>
+            <button class="btn btn-secondary" id="outbound-back-btn" type="button">&laquo; Back</button>
+          </div>
+        </div>
+        <div id="outbound-unavailable" class="empty-state" style="display:none;">
+          Outbound data (Neon) is unavailable right now &mdash; the report has no
+          sheet fallback. Try again in a minute; if it persists, check the
+          <code>NEON_*</code> Script Properties and Neon status.
+        </div>
+        <div id="outbound-empty" class="empty-state" style="display:none;">
+          No outbound calls captured in this range.
+        </div>
+        <div id="outbound-body">
+          <div id="outbound-kpi-row" class="pr-kpi-row"></div>
+          <div class="al-section" id="outbound-callback-section">
+            <div class="al-section-title">Abandoned-caller callbacks</div>
+            <div id="outbound-callback-kpis" class="pr-kpi-row"></div>
+            <!-- The two contract caveats (see OutboundReport.gs header). -->
+            <p class="al-hint" id="outbound-callback-caption">
+              &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
+              <span id="outbound-cb-window">3</span> days &mdash; the CDR cannot
+              distinguish no-answer / voicemail / busy on the unconnected side, so
+              &ldquo;connected&rdquo; is the stricter subset. Callbacks count no matter which
+              agent or department dialed. Anonymous abandons (no caller ID) cannot be
+              tracked and are excluded from the callback rate.
+            </p>
+            <!-- v2: daily callback-rate trend (safeChart_; hidden under 2 days). -->
+            <div id="outbound-cb-chart-wrap" style="display:none; max-width:100%;">
+              <canvas id="outbound-cb-chart" height="110"></canvas>
+            </div>
+            <!-- v2: the not-called-back drill (rows reuse the heatmap cell
+                 drill renderer incl. the "↳ path" journey chips). -->
+            <div class="esc-resolve-actions">
+              <button class="btn btn-secondary" id="outbound-uncalled-btn" type="button">List not-called-back calls</button>
+              <span id="outbound-uncalled-status" class="al-hint"></span>
+            </div>
+            <div id="outbound-uncalled-list" style="display:none;"></div>
+          </div>
+          <div class="al-section" id="outbound-agent-section">
+            <div class="al-section-title">Per-agent outbound activity</div>
+            <p class="al-hint" id="outbound-attribution-note"></p>
+            <div style="overflow-x:auto;">
+              <table class="al-config-table" id="outbound-agent-table">
+                <thead><tr>
+                  <th data-sort="agent">Agent</th>
+                  <th data-sort="dept">Roster dept</th>
+                  <th class="num" data-sort="obTotal">Calls</th>
+                  <th class="num" data-sort="obConnected">Connected</th>
+                  <th class="num" data-sort="obConnectRate">Connect %</th>
+                  <th class="num" data-sort="obTalkSec">Talk</th>
+                  <th class="num" data-sort="obAttSec">ATT</th>
+                  <th class="num" data-sort="attempts">Attempts</th>
+                </tr></thead>
+                <tbody id="outbound-agent-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
   <!-- System Health (admin-only): the Operator State Checklist as a live
        status table. Read-only assembly of existing signals (SystemHealth.gs)
        + the Neon-backup service controls (NeonBackup.gs). -->
@@ -2139,6 +2268,60 @@
             <button class="btn btn-ghost" id="health-backup-uninstall" type="button">Uninstall</button>
             <button class="btn btn-secondary" id="health-backup-now" type="button">Back up now</button>
             <span id="health-backup-status" class="al-hint"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Coaching worklist (admin-only until released, owner ruling): the
+       weekly answer-rate flags as an open/closed card list. A SEPARATE
+       worklist from the customer-account Escalations page on purpose —
+       coaching an agent and chasing a customer account are different jobs.
+       Server: Coaching.gs (Neon coaching_flags; no sheet twin). -->
+  <div id="coaching-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="coaching-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-close" id="coaching-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Admin</div>
+        <h2 id="coaching-modal-title">Coaching worklist</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div class="ds-toolbar">
+          <label class="al-hint" for="coaching-status-filter">Show</label>
+          <select id="coaching-status-filter">
+            <option value="open" selected>Open</option>
+            <option value="closed">Closed</option>
+            <option value="all">All</option>
+          </select>
+          <button class="btn btn-secondary" id="coaching-refresh-btn" type="button">Refresh</button>
+          <span id="coaching-summary" class="al-hint"></span>
+        </div>
+        <div id="coaching-status" class="status" style="display:none;"></div>
+        <table class="al-config-table" id="coaching-table" style="display:none;">
+          <thead><tr>
+            <th>Dept</th><th>Agent</th><th class="num">Rate vs team</th>
+            <th class="num">Missed / Rung</th><th class="num">Flagged</th>
+            <th>Window</th><th>Status</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="coaching-tbody"></tbody>
+        </table>
+        <!-- Delivery engine controls (the Neon-backup section shape). -->
+        <div class="al-section" id="coaching-delivery-section">
+          <div class="al-section-title">Weekly delivery</div>
+          <p class="al-hint">
+            Monday-morning check: recomputes the flags, refreshes this worklist, and
+            emails <strong>admins only</strong> when NEW flags appear (owner ruling —
+            managers are not copied until release). A flag that stops meeting the
+            gates stays open for you to close: the math doesn't know whether the
+            conversation happened.
+          </p>
+          <div class="esc-resolve-actions">
+            <button class="btn" id="coaching-install-btn" type="button">Install weekly trigger</button>
+            <button class="btn btn-ghost" id="coaching-uninstall-btn" type="button">Uninstall</button>
+            <button class="btn btn-secondary" id="coaching-run-now-btn" type="button">Run now</button>
+            <span id="coaching-delivery-status" class="al-hint"></span>
           </div>
         </div>
       </div>

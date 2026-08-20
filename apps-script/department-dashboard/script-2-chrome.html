@@ -414,6 +414,7 @@
     initInsightsReport();
     initInboundReport();
     initDirectCallReport();
+    initOutboundReport();   // Batch G: outbound / callback report (admin-vetted)
     initAlerts();
     initOrphanFix();
     initDeptConfig();
@@ -423,6 +424,7 @@
     initTour_();
     initQcdAllDept_();
     initSystemHealth_();
+    initCoaching_();   // F-e: coaching worklist (admin-only until released)
     // Router last so its modal-close listeners attach after each
     // per-modal init has wired up its own close-button handlers.
     initRouter();

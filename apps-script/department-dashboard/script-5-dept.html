@@ -1292,7 +1292,7 @@
   // Insights" restored STALE data under a permanent loading note. IR and
   // Insights render into separate containers, so cross-report responses
   // never actually conflict.
-  var reportReqSeq_ = { ir: 0, ins: 0, inb: 0, dir: 0 };   // C-8: inbound/direct join the guard family
+  var reportReqSeq_ = { ir: 0, ins: 0, inb: 0, dir: 0, out: 0 };   // C-8: inbound/direct/outbound join the guard family
 
   // D1b: per-report last-good payload cache (localStorage). On a FAILED fetch
   // the report repaints the last good payload for the SAME request (if any)
@@ -1444,6 +1444,7 @@
     qcdAll:   { fromId: 'qcd-alldept-from', rerun: function () { const b = $('qcd-alldept-refresh-btn'); if (b) b.click(); } },
     inbound:  { fromId: 'inbound-from',      rerun: function () { const b = $('inbound-generate-btn'); if (b && !b.disabled) b.click(); } },
     direct:   { fromId: 'direct-call-from',  rerun: function () { const b = $('direct-call-generate-btn'); if (b && !b.disabled) b.click(); } },
+    outbound: { fromId: 'outbound-from',     rerun: function () { const b = $('outbound-generate-btn'); if (b && !b.disabled) b.click(); } },
   };
   function coverageStartFor_(source) {
     if (!dataCoverage_) return null;

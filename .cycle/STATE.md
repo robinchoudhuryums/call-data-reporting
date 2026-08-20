@@ -3381,3 +3381,244 @@ keys it named.
 render. **Dated:** Sep 1 backfills before `runNeonCoverageCheck`.
 **Note on the budget value:** 5000 MB = 5.24 GB decimal, so an exact 5 GB
 plan wants 4768; the gauge is a floor either way.
+
+## Increment 129 (2026-08-20) — Batch C: the drift-guard sweep
+
+PR #250 (Batch B + doc sync) MERGED first (ui-harness red on its first CI run
+was an environment blip — logs rotated before they could be read, base was
+green, the exact head passed the full 164-check gate locally; single re-run
+went green and auto-merge landed it). Batch C then shipped (783/783, +4):
+
+1. **C1 — the behavioral parity suite** (`qcd-sidebar-parity.test.js`), the
+   guard that would have caught F1 as BEHAVIOR rather than as a threshold
+   token. One shared 21-row Raw Data fixture drives `calcQcdReport` end to
+   end, then drives `getExtractionDataJSON` per cell against the pipeline's
+   OWN output grid; parity = sidebar row count === cell value across rows
+   3,4,5,6,13,35,36,37,39,40,43 × cols C/D/E, zero cells must refuse. No
+   expected numbers in the parity test, so an unmirrored edit to EITHER
+   file's ~50 row rules fails it. Negative-tested from both sides (sidebar
+   F1-reversion → "(40,3) wrote 4, extracted 5"; pipeline perturbation →
+   "(6,3)/(6,5)"). Also the first test coverage dataFilters.js has ever had.
+2. **C3** — the R20 comment's "(~59s)" corrected: time1Min is exactly 60s
+   with strict >, so the rule is "MORE than 60s". Comment now also records
+   that AbandonedFilter.js's >0:00:59 is a SEPARATE deliberate threshold.
+3. **C2** — CLAUDE.md habit 3 gains the corollary: a new convention must
+   answer "what enforces this?" in the same commit (F2/F3b/F11 were each
+   that question unasked).
+
+**FOUND while building C1, reported not fixed (block 129 has full detail):**
+- **Row 34 is incoherent across three surfaces** — the pipeline's
+  r34_abnd1m/2m counters are DEAD (totalRowMap overwrites row 34 as
+  sum(35..37)), the sidebar has its own live row-34 predicate matching a
+  DIFFERENT population (a status-3 internal abandon >1m double-counts in the
+  35+37 sum but extracts once), and the sidebar's total-row refusal list
+  omits 34. Needs an owner ruling on what row 34 MEANS.
+- **Window-edge divergence, row 35 col D**: sidebar dp2/dp3 lack the
+  pipeline's start<3PM clause — the F1 class, at the window edge.
+- dashboardCDR.js remains the zero-test half of F7.
+
+**WHERE I LEFT OFF:** Batch C committed to `claude/broad-scan-8dgd6m`
+(re-branched from merged main), about to push + PR per the session's standing
+flow. Doc updates queued for /sync-docs: the test-suite roll + the Extraction
+Sidebar bullet's "the rest of the row rules are not [pinned]" clause, now
+partly stale in the good direction.
+
+## Increment 130 (2026-08-20) — Follow-ons + Batch E (resilience & capacity)
+
+Shipped on the batch-C branch (810/810, +27; INV-16 green; the FULL rendered-UI
+gate run locally with playwright — 164+ checks, all stages passed — against the
+script-10 change). Full block: `.cycle/blocks/130-follow-ons-batch-e-broad-implement.md`.
+
+1. **FO-1** — `neonAgentExts:v1` (the LAST unanchored 6 h key) joined
+   reportFreshnessTag_ + the version-sync SPECS; the CLAUDE.md clause naming
+   it as the exception now says "every 6 h key carries an anchor" — true for
+   the first time.
+2. **FO-2** — the row-35 window-edge divergence FIXED (sidebar dp2/dp3 gained
+   the pipeline's start<3PM clause; rows 36/37 verified clause-for-clause
+   clean at the same time) + pinned by an edge-time parity fixture row.
+3. **FO-3** — dashboardCDR.js has its first tests ever: 6 on the pure
+   aggregation helpers incl. the totals row's recompute-not-sum Rate/ATT.
+   The 480-line core stays a follow-on (needs the C1 fixture treatment).
+4. **E1 — retention-horizon monitor.** `ncSurvivingCallLegsDates_` +
+   `ncRetentionRisk_` (NeonCoverage.gs) + two Health rows: 'legs-horizon'
+   (FAST, sheet-only — renders mid-outage, when it matters) and
+   'retention-risk' (neon part, shared conn) listing the SURVIVING dates the
+   per-call tables are missing, each with its ~last recoverable day. Neon
+   unreachable → the row IS the Sep 1 runbook, naming the oldest surviving
+   sheet. NC_RETENTION_DAYS_ mirrors cdr-import's RETENTION_CUTOFF_DAYS
+   (sync obligation — recoverability itself is derived from real sheets).
+5. **E2 — escalations outage snapshot.** getEscalations stores open rows in
+   chunked Script Properties (age-gated refresh, torn-write-safe) and serves
+   them viewer-scoped with meta.snapshotAsOf when Neon is unreachable (both
+   the no-conn path and mid-query death); client renders a read-only banner.
+   WRITES UNTOUCHED (INV-55) — a snapshot can't drift while the only writer
+   is down, which is why this doesn't contradict the no-sheet-twins ruling.
+   Note: protects the NEXT outage — nothing to serve until Neon returns once.
+6. **E3 — build stamp.** deploy.sh stamps BuildStamp.gs (UTC+sha+branch) at
+   push, trap-restores the committed placeholder; a bare clasp push ships
+   "unstamped", which is itself the finding. Health 'build-stamp' row, always
+   muted.
+
+**NOT implemented, deliberately:** the row-34 three-way incoherence — still
+awaiting the OWNER'S RULING on what row 34 means (block 129 has the full
+write-up). AbandonedFilter's >0:00:59 stays documented-deliberate.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries Batch C increment 129 + this). NO PR opened yet — batches C + this
+one go in a single PR when the owner says. /sync-docs queued: six items in
+block 130 (System Health bullet's 3 new rows, test-suite roll ×3, the
+Extraction Sidebar bullet's now-stale "not pinned" clause, op-state #43
+sync obligation + escalations snapshot, README deploy stamp, INV-55 note).
+
+## Increment 131 (2026-08-20) — F-e: coaching delivery (email + separate worklist)
+
+**Block:** `.cycle/blocks/131-f-e-coaching-delivery-broad-implement.md`
+
+Phase 3 of the turnover-suggestion engine: the Phase-1 flags (increment 124's
+dark preview) now DELIVER. All owner rulings honored: SEPARATE worklist (never
+mixed into customer-account Escalations), all depts, ADMIN-ONLY email until
+released, no cross-dept de-dup, 0%-answered flags are genuine.
+
+1. **Server (Coaching.gs).** Neon `coaching_flags` (auto-DDL + partial unique
+   open index — one open card per (dept, agent); closed history never blocks a
+   re-flag; no sheet twin, flags re-derive from DQE). Weekly run:
+   preview → pure diff (NEW insert+email / CONTINUING metrics-refresh, no
+   email / RECOVERED-OPEN reported, NEVER auto-closed — the coach decides).
+   One txn; email only on NEW (B3 quota lesson), admins only, plain-text
+   watchdog family, deep link #/admin/coaching. Flag-gated engine:
+   COACHING_DELIVERY_ENABLED (default OFF — ships dark), OPS-8 outcome props,
+   Monday-8AM install/uninstall, run-now manual fire. Worklist RPCs:
+   getCoachingWorklist (admin, open/closed/all, uncached, LIMIT 300) +
+   updateCoachingFlagStatus (full INV-01 data-mutation set; open-only UPDATE
+   → race-safe "not open any more" error).
+2. **Health.** trg-coaching svc row WITH its flagProp (the install-readiness
+   rule, same commit) + out-coaching outcomes row.
+3. **Client.** Admin ▾ → Coaching (route /admin/coaching — the email's deep
+   link). Health-modal shape; F10-idempotent render; dsConfirm_-gated
+   Resolve/Dismiss with optional ≤500-char note; delivery controls (Run now
+   confirm-gated — it persists AND emails). Zero styles.html changes.
+4. **Rider: row-34 RULED.** Owner: row 34 = "CSR Total Calls" — the SUM
+   (direction (a)). known-issues entry retitled RULED; parity-suite scope
+   note points there; the CODE fix (sidebar refuses 34 + dead counters
+   deleted) is a named follow-on, not smuggled into this scope.
+
+Tests 819/819 (+9 delivery tests; fake conn models txn + executeUpdate).
+ci:ui full gate run after the client changes. Engine ships DARK — deploy is
+safe anytime; arming is an explicit admin action with a documented
+one-larger-first-email expectation.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129 + 130 + this). NO PR — not requested this round.
+/sync-docs queued: CLAUDE.md coaching parenthetical, Operator State #48
+(COACHING_DELIVERY_ENABLED), tests/README coverage map.
+
+## Increment 132 (2026-08-20) — Batch G: the Outbound report
+
+**Block:** `.cycle/blocks/132-batch-g-outbound-report-broad-implement.md`
+
+The scan's one new-capability item: `outbound_calls` gains its first
+analytical surface (route `#/report/outbound`, Reports ▾ → Outbound,
+admin-only while vetted — the Inbound/Direct model with the latent manager
+path). Headline: "did we call back the ones who abandoned?"
+
+1. **Callback linkage.** Abandon denominator = EXACTLY the Inbound report's
+   Abandoned population (reuses inboundDeptPredicate_ + inboundWindowClause_
+   verbatim — work-window owner ruling honored, pinned in the new suite since
+   the inbound-window-scope count guard is InboundReport.gs-scoped). Each
+   abandon LATERALs to the EARLIEST outbound with callee_hash = caller_hash
+   within 3 days; match deliberately unscoped by dept/agent and uncapped by
+   the report's `to`. Anonymous abandons excluded from the rate denominator.
+   Median time-to-callback via percentile_cont.
+2. **Both mandated caveats are structural, not just captions:** "connected"
+   is the disclosed stricter subset (CDR can't tell no-answer/voicemail/
+   busy), and attribution is by ROSTER dept — the SQL never reads
+   outbound_calls.department (test-pinned); buildDeptsByAgent_ maps dialers,
+   dept view discloses off-roster exclusions, company view labels crossover
+   agents with all homes and no-roster dialers as "Unrostered".
+3. **Plumbing:** one json_build_object round trip, egress-metered,
+   `outboundReport:v1` + freshness tag (SPECS row added same commit — C2),
+   uncached unavailable, csvSafeCell_ CSV, C-8 stale token, coverage note.
+
+Tests 829/829 (+10). ci:ui full gate after the client changes. v1 scope:
+KPIs + callback block + sortable agent table + CSV; deferred (in block):
+daily series/chart, not-called-back drill list, kpisPrior chips, per-dept
+company cards.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129–132). NO PR — not requested. /sync-docs queued (see
+block 132): the outbound bullet's "sole consumer: Caller Lookup" clause is
+now stale, INV-30 gains outboundReport:v1, test-suite rolls.
+
+## Increment 133 (2026-08-20) — Follow-ons: row-34 code fix + Outbound v2
+
+**Block:** `.cycle/blocks/133-follow-ons-outbound-row34-broad-implement.md`
+
+1. **Row-34 fix landed** (the ruling's direction (a), both files together):
+   dataFilters.js refuses row 34 as a total row (predicate removed, 34 out of
+   isGlobalExcRow); autoImport.js's dead r34 counters deleted (totalRowMap's
+   sum — the ruled meaning — untouched, sheet output byte-identical);
+   qcd-sidebar-parity pins the refusal; known-issues entry marked APPLIED.
+2. **Outbound report v2** (prefix bump v1→v2, INV-30):
+   - CORRECTNESS: the abandon denominator now excludes is_internal rows —
+     v1 missed the clause every inbound metric query carries, so internal
+     test calls inflated the callback denominators. Factored into
+     outboundAbandonWhere_, used by report + daily + prior + drill alike.
+   - pendingTail (tracked abandons still inside the 3-day window) as a real
+     count on the Called-back tile; per-day callback series + safeChart_
+     line chart (THEME, datalabels off, <2 days hidden); INV-28
+     kpisPrior/callbackPrior via computePriorWindow_ with the prior agents
+     routed through the SAME roster filter; getOutboundUncalled — the
+     not-called-back drill (same lateral so it can't disagree with the KPI,
+     cap 200, no caller identity, rows reuse heatCellDetailHtml_ + the
+     "↳ path" journey chips).
+   - The window-clause pin upgraded to the count-based every-FROM pattern
+     in the new file (the inbound-window-scope guard is file-scoped).
+
+Tests 836/836 (+7); INV-16 green; full ci:ui gate green. Per-dept company
+cards for Outbound STILL deferred — now with the stated design blocker
+(crossover agents have multiple roster homes; grouping needs an owner
+ruling; the flat multi-home-label table dodges it honestly).
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129–133). NO PR — not requested. /sync-docs queue
+updated in block 133 (row-34 sidebar clause now RESOLVED wording; INV-30
+outboundReport is v2; plus the earlier queued items from 131/132).
+
+## Increment 134 (2026-08-20) — Three owner rulings: Option C, row-34 probe, dashboardCDR core coverage
+
+**Block:** `.cycle/blocks/134-owner-rulings-probe-cdr-core-broad-implement.md`
+
+1. **Option C RULED** — Outbound company view stays the flat table (per-dept
+   cards rejected: crossover agents force double-count or misattribution).
+   Ruling comment at the render site; the block-133 follow-on is CLOSED.
+2. **Row-34 probe** — `previewRow34Overlap` (cdr-import, CDR Tools menu,
+   READ-ONLY) counts the internal+status-3 double-count shape per surviving
+   Call_Legs date with a plain verdict line. Pure core
+   `countRow34OverlapRows_` is pinned BEHAVIORALLY: its r35/r37 counters must
+   equal calcQcdReport's own written row 35/37 E cells on a shared fixture.
+   OPERATOR: run it once after the cdr-import deploy; zero ⇒ close the
+   known-issues double-count note as latent-only.
+3. **dashboardCDR core coverage RESOLVED** — new dashboard-cdr-core.test.js
+   (9 tests, local recording fake — deliberately not a loosening of the
+   shared strict harness) drives generateCustomReportCore_ end to end:
+   header shapes both modes, list-multiplier aggregation, F-11 display-read
+   TTT (junk values grid + display strings), exact-dept match, D-3 contacts
+   neutralization, D-6 alerts, diagnostics panel, chart counts.
+   **The suite immediately EXPOSED A REAL BUG and it is FIXED**: the T-7
+   full-height panel clear wiped fresh report columns whenever a report was
+   WIDER than the previous run's remembered panel column (narrow run →
+   comparison run lost TTT(P)/ATT(C)/ATT(P) — the REP-1 clipping class
+   reintroduced). Fix splits the clear (strip above the report always;
+   full height only for old-panel columns beyond the render clear's reach);
+   both directions pinned (wide-report survival + the original T-7
+   stale-panel wipe).
+
+Tests 847/847 (+11). INV-16 green. New follow-on noted: agent NAMES bypass
+crSheetSafeCell_ in the table col A + diagnostics subtotals (contacts-only
+D-3 coverage) — 3-site one-liner when taken.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(increments 129–134). NO PR — not requested. Deploys owed: cdr-import
+(probe), cdr-report (clipping fix). /sync-docs queue grows: probe as the
+row-34 resolution instrument; dashboard-cdr-core in the rolls; block-130's
+"480-line core stays a follow-on" clause resolved.

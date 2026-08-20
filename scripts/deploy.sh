@@ -64,6 +64,35 @@ fi
 echo "==> remote-orphan check   (STRICT_ORPHANS=1 to make it fatal)"
 node "$(dirname "$0")/check-remote-orphans.mjs" "$DIR" || exit 1
 
+# E3: stamp the DASHBOARD build before pushing. BuildStamp.gs is committed
+# with a placeholder ("unstamped -- last push bypassed scripts/deploy.sh");
+# this overwrites it with the real stamp for the push and the trap restores
+# the placeholder afterwards -- success OR failure -- so the working tree
+# never stays dirty and the stamp exists only in the pushed project. The
+# Health page's 'build-stamp' row renders whatever got pushed, which makes a
+# bare `clasp push -f` self-reporting: it ships the placeholder.
+STAMP_FILE="$(cd "$(dirname "$0")/.." && pwd)/apps-script/department-dashboard/BuildStamp.gs"
+if [ "$DIR" = "." ] && [ -f "$STAMP_FILE" ]; then
+  GIT_DESC="$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')"
+  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    GIT_DESC="${GIT_DESC}+dirty"
+  fi
+  GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  STAMP="deploy.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) | git ${GIT_DESC} | ${GIT_BRANCH}"
+  # Restore the committed placeholder no matter how this script exits. The
+  # restore can only no-op if the file is somehow UNTRACKED (caught in the
+  # simulation that validated this block) -- say so instead of staying
+  # silently stamped, since a stamped working tree is exactly the churn this
+  # design exists to avoid.
+  trap 'git checkout --quiet -- "$STAMP_FILE" 2>/dev/null         || echo "warn: could not restore BuildStamp.gs placeholder -- check git status" >&2' EXIT
+  {
+    echo "// Written by scripts/deploy.sh for THIS push only -- the committed file"
+    echo "// holds a placeholder; see its header. Do not commit a real stamp."
+    echo "var BUILD_STAMP_ = '${STAMP}';"
+  } > "$STAMP_FILE"
+  echo "==> build stamp: ${STAMP}"
+fi
+
 cd "$DIR"
 echo "==> clasp push -f   ($DIR)"
 clasp push -f

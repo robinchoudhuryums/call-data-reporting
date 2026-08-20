@@ -104,3 +104,82 @@ test('coverage: missing-table probe errors classify as clean skips, real failure
   assert.equal(h.ctx.ncMissingTableError_(''), false);
   assert.equal(h.ctx.ncMissingTableError_(null), false);
 });
+
+// ── E1: the Call_Legs retention horizon ─────────────────────────────────
+
+const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+
+test('E1: ncSurvivingCallLegsDates_ enumerates and sorts the day-sheets, ignoring everything else', function () {
+  const ss = makeFakeSpreadsheet({ sheets: {
+    'Call_Legs_2026-08-12': [['h']],
+    'Call_Legs_2026-08-10': [['h']],
+    'Raw Data': [['h']],
+    'Call_Legs_junk': [['h']],          // no date suffix -> ignored
+    'DQE Historical Data': [['h']],
+  } });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.ctx.ncSurvivingCallLegsDates_(ss))),
+    ['2026-08-10', '2026-08-12']);
+  assert.deepEqual(JSON.parse(JSON.stringify(
+    h.ctx.ncSurvivingCallLegsDates_(makeFakeSpreadsheet({ sheets: {} })))), []);
+});
+
+// Fake conn serving ncNeonDateCounts_'s json_agg protocol per table.
+function rrConn_(countsByTable, throwFor) {
+  return {
+    prepareStatement: function (sql) {
+      const table = /FROM (\w+) WHERE/.exec(sql)[1];
+      return {
+        setString: function () {},
+        executeQuery: function () {
+          if (throwFor && throwFor[table]) throw new Error(throwFor[table]);
+          const rows = Object.keys(countsByTable[table] || {}).map(function (d) {
+            return { d: d, n: countsByTable[table][d] };
+          });
+          return {
+            next: function () { return true; },
+            getString: function () { return JSON.stringify(rows); },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+  };
+}
+
+test('E1: ncRetentionRisk_ flags surviving weekdays a table is missing, with the ~last recoverable day', function () {
+  // Surviving: Mon 08-10 .. Wed 08-12 (2026-08-10 is a Monday).
+  const surviving = ['2026-08-10', '2026-08-11', '2026-08-12'];
+  const conn = rrConn_({
+    inbound_calls:  { '2026-08-10': 5, '2026-08-12': 7 },   // missing the 11th
+    outbound_calls: { '2026-08-10': 2, '2026-08-11': 3, '2026-08-12': 1 },
+  });
+  const out = JSON.parse(JSON.stringify(h.ctx.ncRetentionRisk_(conn, surviving, null)));
+  const ib = out.tables.find(function (t) { return t.table === 'inbound_calls'; });
+  const ob = out.tables.find(function (t) { return t.table === 'outbound_calls'; });
+  assert.deepEqual(ib.atRisk, [{ date: '2026-08-11', lastDay: '2026-08-25' }],
+    'the unmirrored surviving date, with date + NC_RETENTION_DAYS_ as the deadline');
+  assert.deepEqual(ob.atRisk, [], 'a fully-mirrored table has nothing at risk');
+});
+
+test('E1: a weekend hole and a PRUNED date are not "at risk" -- only surviving weekdays are', function () {
+  // Surviving skips the weekend (08-15/16) AND Friday 08-14 already pruned.
+  const surviving = ['2026-08-13', '2026-08-17'];   // Thu, then Mon
+  const conn = rrConn_({ inbound_calls: {}, outbound_calls: {} });
+  const out = JSON.parse(JSON.stringify(h.ctx.ncRetentionRisk_(conn, surviving, null)));
+  const ib = out.tables.find(function (t) { return t.table === 'inbound_calls'; });
+  assert.deepEqual(ib.atRisk.map(function (a) { return a.date; }),
+    ['2026-08-13', '2026-08-17'],
+    'Fri 08-14 has NO surviving sheet -- it is already lost, not at risk; the '
+    + 'weekend is not an expected capture day');
+});
+
+test('E1: a missing table reads as missingTable (deploy-ahead-of-capture), never a throw', function () {
+  const conn = rrConn_({ inbound_calls: {} },
+    { outbound_calls: 'ERROR: relation "outbound_calls" does not exist' });
+  const out = JSON.parse(JSON.stringify(
+    h.ctx.ncRetentionRisk_(conn, ['2026-08-11'], null)));
+  const ob = out.tables.find(function (t) { return t.table === 'outbound_calls'; });
+  assert.equal(ob.missingTable, true);
+  assert.deepEqual(ob.atRisk, []);
+});

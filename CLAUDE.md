@@ -122,7 +122,14 @@ bash scripts/check-duplicated-files.sh
 # / config-neon-c3, escalations-hardening, caller-lookup,
 # answer-targets (the R12-25 tunable display-standards parser + save
 # canonicalizer, + the R23 amber band / per-dept overrides / transfer tiers),
-# coaching (the R23 turnover-suggestion gates -- dark, admin preview only), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
+# coaching (the R23 turnover-suggestion gates + the F-e weekly delivery:
+# Neon worklist upsert diff, admin-only email on NEW flags, race-safe close
+# -- dark until COACHING_DELIVERY_ENABLED, Op State #48),
+# outbound-report (the Batch G callback-linkage report: vetting gate, the
+# abandon-denominator/work-window/hash-join SQL pins, roster attribution,
+# getOutboundUncalled), dashboard-cdr-core (generateCustomReportCore_
+# end-to-end via a local recording fake -- incl. the T-7 panel-clear clip
+# regression it caught), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
 # reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
 # drift), html-include-structure (styles.html / script.html are Apps Script
 # INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
@@ -146,7 +153,13 @@ bash scripts/check-duplicated-files.sh
 # alert-recipients (B-5: ALL-sentinel managers receive every dept's alert),
 # agent-role / agent-home (the fourth role: the Phase A deny wall +
 # resolution, and the agent app's endpoints incl. the wait join, history
-# rollups, and the no-teammate-identity payload pin), and company-overview
+# rollups, and the no-teammate-identity payload pin), qcd-sidebar-parity (the
+# Extraction Sidebar and calcQcdReport driven from ONE fixture -- sidebar
+# row count === pipeline cell value, the behavioral F1 guard),
+# escalations-snapshot (the E2 outage cache: chunked store, torn-write
+# safety, viewer-scoped serve), dashboard-cdr-helpers (dashboardCDR's pure
+# aggregation helpers incl. the totals row's recompute-not-sum Rate/ATT),
+# and company-overview
 # (getCompanyOverview END-TO-END: the off-mode Phase 0 double-count parity,
 # the dept-mode crossover partition, no cross-dept leak on the shared row
 # array, and the all-queue company hero invariance).
@@ -176,7 +189,11 @@ node --test          # from repo root (or: npm test)
 # callable until deleted by hand in the web editor. The check pulls the project
 # into a temp dir and lists remote files with no local counterpart. It WARNS by
 # default (an orphan is no reason to block an urgent fix) and skips cleanly when
-# clasp can't authenticate; STRICT_ORPHANS=1 makes it fatal. Standalone:
+# clasp can't authenticate; STRICT_ORPHANS=1 makes it fatal. E3: a dashboard
+# push also STAMPS BuildStamp.gs (UTC + git sha + branch; the committed
+# placeholder is trap-restored after) -- the Health page's build-stamp row
+# renders it, and a bare `clasp push -f` ships "unstamped", which is itself
+# the finding. Standalone:
 #   node scripts/check-remote-orphans.mjs <project-dir>
 scripts/deploy.sh .                      <dashboard-deployment-id>
 scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
@@ -265,7 +282,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > 3. **A rule enforced by a test needs one line, not three paragraphs** —
 >    name the test and let it carry the detail. A rule that CAN be enforced
 >    by a test usually should be: prose could not keep the "all DQE readers
->    are cut over" claim true (B-2), and a tripwire could.
+>    are cut over" claim true (B-2), and a tripwire could. **Corollary (C2):
+>    when a new convention is WRITTEN, answer "what enforces this?" in the
+>    same commit and name the enforcement in the bullet.** Three holes found
+>    in one audit were each a convention missing exactly that step: a third
+>    duplication pair outside the INV-16 guard (F2), two cache prefixes in
+>    the INV-30 docs but not in cache-version-sync's SPECS (F3b), and a
+>    second read-source dimension with no B-2-style tripwire (F11). "None —
+>    prose only" is an acceptable answer; an unanswered question is not.
 >
 > `tests/unit/claude-md-split.test.js` enforces this with a per-bullet
 > ratchet: new bullets stay under 4 KB, and the five already over it may only
@@ -400,9 +424,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `LockService` + an Updated By/At stamp on the row. **Do not add
   new public write functions without `assertAdmin_()` at minimum;
   data-mutation paths need all four mitigations; config/creation
-  paths need at least the admin gate.** Separately, `applyOrphanRename`
-  also best-effort mirrors the rename into Neon's `dqe_history`
-  (`renameAgentInNeon_`) -- the dashboard's ONLY non-spreadsheet write.
+  paths need at least the admin gate.** The dashboard's NON-spreadsheet
+  (Neon) write paths are: Escalations (INV-55, per-dept-gated), the
+  admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
+  `updateCoachingFlagStatus`, the full data-mutation set), and
+  `applyOrphanRename`'s best-effort `dqe_history` rename mirror
+  (`renameAgentInNeon_`).
   It's admin-gated (rides inside `applyOrphanRename`), conflict-safe
   (skips `(call_date, toName)` collisions rather than violating
   `uq_dqe_history`), and never throws (a Neon failure leaves the
@@ -640,9 +667,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   too.** The R20 row-40 threshold landed in the pipeline only, so the sidebar
   listed rows the pipeline no longer counts -- the tool an operator reaches for
   when they already suspect the numbers told them the pipeline was
-  under-counting. That specific threshold is pinned by
-  `cross-file-pins.test.js` ("R20 row-40"); the rest of the row rules are not,
-  so diff both files when you touch either.
+  under-counting. That threshold is pinned by
+  `cross-file-pins.test.js` ("R20 row-40"), and since Batch C the row rules
+  are pinned BEHAVIORALLY by `qcd-sidebar-parity.test.js` (one shared fixture
+  drives both implementations; sidebar row count must equal the pipeline's
+  cell value) -- with one honest exclusion: window-edge shapes beyond the
+  fixed row-35 one. Row 34 was RULED (2026-08-20) the "CSR Total Calls" SUM
+  row: the sidebar now refuses it like every total row (parity-pinned), and
+  the read-only `previewRow34Overlap` (cdr-import, CDR Tools menu) measures
+  the latent 35+37 double-count -- see docs/known-issues.md "QCDR Output
+  row 34". Still diff
+  both files when you touch either; the suite tells you WHICH cell drifted.
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
@@ -863,9 +898,34 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   right after deploying this capture** to grab the ~14-day retention
   window; earlier dates are covered only by the day-level
   `call_history_phones` aggregates. Without `HMAC_SECRET`, rows write
-  with NULL `callee_hash` and heal on re-import. Sole consumer: the
-  Caller Lookup communication history (above). Pinned by
-  `tests/unit/outbound-calls.test.js`.
+  with NULL `callee_hash` and heal on re-import. Consumers: the
+  Caller Lookup communication history (above) and the Outbound report
+  (next bullet). Pinned by `tests/unit/outbound-calls.test.js`.
+- **Outbound report (`OutboundReport.gs`, route `#/report/outbound`) --
+  "did we call back the ones who abandoned?" + per-agent outbound activity.**
+  TEMPORARILY admin-only while vetted (the Inbound/Direct resolver model --
+  latent per-dept manager path, release = one-line gate removal + un-hiding
+  the menu item). Two CONTRACT rules, both test-enforced
+  (`tests/unit/outbound-report.test.js`): (1) the callback DENOMINATOR is
+  exactly the Inbound report's Abandoned population for the same scope --
+  it reuses `inboundDeptPredicate_` + `inboundWindowClause_` + the
+  is_internal exclusion verbatim (`outboundAbandonWhere_`), so the two
+  reports can never disagree on what an abandon is; (2) agents attribute by
+  ROSTER dept (exact INV-04 match via `buildDeptsByAgent_`), NEVER the raw
+  CDR org label in `outbound_calls.department` -- the SQL never reads that
+  column. A callback = the EARLIEST outbound with `callee_hash =
+  caller_hash` within `OUTBOUND_CALLBACK_WINDOW_DAYS` (=3), matched from
+  ANY dept/agent and uncapped by the report's `to`; anonymous abandons are
+  excluded from the rate denominator (a dept is never punished for its
+  caller-ID mix); `pendingTail` counts tracked abandons still inside the
+  window. "Connected" is the disclosed stricter subset -- the CDR cannot
+  distinguish no-answer/voicemail/busy. **Company view is the FLAT table by
+  owner ruling (Option C, 2026-08-20)**: crossover agents have multiple
+  roster homes, so per-dept cards would double-count or misattribute --
+  don't "upgrade" without a new ruling. `getOutboundUncalled` is the
+  not-called-back drill (same lateral as the KPI, cap 200, no caller
+  identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
+  `outboundReport:v2` + the freshness tag; unavailable payloads uncached.
 - **Temporal abandon heatmap (weekday × hour), sourced from
   `inbound_calls`.** **NOT work-window-scoped, deliberately** -- it is already
   bounded by its own `INBOUND_HEATMAP_WINDOW_START_HOUR`/`_END_HOUR` band
@@ -1497,10 +1557,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **System Health "Recent pipeline step failures" is the single trustworthy
   pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
   `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- it must never be
-  NARROWER than the Overview banner's window (LM1), because the same eviction
-  that made the banner false-WARN at 40 makes THIS row a false ALL-CLEAR: an
-  evicted step drops out of the scan entirely and reads as healthy. Its OK text
-  therefore states the window it measured, not an unqualified all-clear. It
+  NARROWER than the Overview banner's window (LM1): the same eviction that
+  made the banner false-WARN at 40 makes THIS row a false ALL-CLEAR (an
+  evicted step reads as healthy), so its OK text states the window measured. It
   flags a step ONLY when its MOST RECENT outcome is
   `failure` (a step that failed then RECOVERED -- latest row `success` -- is
   NOT flagged, so it never cries wolf about a fixed blip, the OPS-8/M1 lesson).
@@ -1533,11 +1592,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   look healthy to every other probe on this page: a Neon that has spent its
   monthly transfer is still reachable, and an exhausted MailApp quota just
   stops sending. Read the Neon figure as a FLOOR (it counts our payloads, not
-  the wire).
+  the wire). Batch E added `build-stamp` (deploy.sh stamps
+  BuildStamp.gs at push; "unstamped" = the push bypassed the deploy helper's
+  CI gates, #2), `legs-horizon` (surviving Call_Legs_* dates; sheet-only, so
+  it renders mid-outage) and `retention-risk` (surviving dates the per-call
+  tables are missing, each with its ~last recoverable day; warns with the
+  backfill playbook when Neon is unreachable, #40/#43).
   **Install readiness: a trigger being
-  installed does NOT mean its engine runs.** Four engines gate their handler
+  installed does NOT mean its engine runs.** Six engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
-  `PIPELINE_WATCH`, `QUEUE_REPORT`), so a trigger installed with the flag off
+  `PIPELINE_WATCH`, `QUEUE_REPORT`, `DQE_SILENCE_WATCH`,
+  `COACHING_DELIVERY`), so a trigger installed with the flag off
   fires on schedule and returns immediately -- and the page used to report it
   as simply "installed". `svc()` takes an optional `flagProp` and now flags
   BOTH mismatch directions ("installed but DISABLED -- every run is a no-op" /
@@ -1762,11 +1827,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`inbound:v9:daily:` insurer drill, `inboundHeatmap:v3`) joined it in B1-B5
   after a same-day re-import could leave the drill disagreeing with the
   freshness-tagged row it expands; `agentHist:v1` embeds the latest date
-  directly. **One 6 h key is still unanchored on purpose-ish:**
-  `neonAgentExts:v1` (NeonRead.gs), the derived all-history agent/ext pairs --
-  a new agent's extensions can take up to 6 h to reach the IR floater group +
-  Diagnostics, which is low-impact only because scope is locked to `roster`
-  on every other surface (INV-53). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  directly; `neonAgentExts:v1` (the derived
+  agent/ext pairs, NeonRead.gs) was the last holdout and joined in the
+  Batch-E round -- every 6 h key now carries an anchor, and
+  cache-version-sync's SPECS tracks them all. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
   serve all day; trade-off: a rare mid-day force re-import's corrections
@@ -2057,7 +2121,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   stripped by `personalizeOverview_` (`companyOverview:v21`).
 - **Top-tab router (Phase C).** The header nav is a row of tab buttons plus two
   `.header-menu` dropdown groups — **Reports** (Individual + the admin-vetted
-  Inbound / Direct) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
+  Inbound / Direct / Outbound) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
   Config, Access, Health; Caller Lookup stays a top-level admin tab).
   **Every tab AND every menu item carries a `data-route` plus a stable button
   `id`** — that pair is what the per-modal init functions, the deep links, the
@@ -2318,6 +2382,7 @@ items for anything it flags or doesn't cover.)
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; Phase A ships dark -- agents get access-denied until Phase B's pages exist)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; unset leaves it informational (and the figure is a FLOOR, so under-budget is not proof of headroom)
+48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install/arm from Admin ▾ → Coaching, first armed run emails one larger NEW-flag batch
 
 ## Cycle Workflow Config
 
@@ -2348,7 +2413,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
@@ -2369,7 +2434,7 @@ below is a finding aid.** Several invariants carry exceptions and version
 history that a one-line summary cannot hold, so open the entry before relying
 on one (INV-30's cache-version table above all).
 
-INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
+INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / the Coaching worklist close, a Neon write) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDisplayValues()`, never `getValue()` -- spreadsheet-vs-script TZ | Subsystem: Department Dashboard
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard

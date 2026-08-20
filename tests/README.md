@@ -61,11 +61,28 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 29 more — dal-cutover parity, escalations
+    ...                       + 65 more — dal-cutover parity, escalations
                               hardening, neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync, heatmap drill,
-                              system-health, neon-mirror tail/IMP-11, etc.
+                              system-health, neon-mirror tail/IMP-11,
+                              qcd-sidebar-parity (the Extraction Sidebar and
+                              calcQcdReport driven from ONE fixture — the
+                              behavioral F1 guard; loads BOTH sibling
+                              projects in separate harnesses; + the row-34
+                              total-row refusal and the previewRow34Overlap
+                              probe pinned against the pipeline's own cells),
+                              escalations-snapshot (the E2 outage cache),
+                              coaching (gates + the F-e delivery: diff/txn/
+                              email gating/race-safe close),
+                              outbound-report (the Batch G callback report:
+                              vetting gate, SQL property pins, roster
+                              attribution, getOutboundUncalled),
+                              dashboard-cdr-helpers + dashboard-cdr-core
+                              (generateCustomReportCore_ end-to-end via a
+                              LOCAL recording fake — deliberately not a
+                              loosening of the shared strict harness; caught
+                              the T-7 panel-clear clipping bug), etc.
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

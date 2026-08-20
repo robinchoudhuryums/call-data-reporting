@@ -1284,6 +1284,50 @@ only if name-pair curation proves burdensome.
 
 ---
 
+## QCDR Output row 34: three surfaces, three meanings (found 2026-08-20, RULED 2026-08-20 — total row)
+
+Found while building the sidebar/pipeline parity suite (`qcd-sidebar-parity.test.js`,
+Batch C). Row 34 of the **QCDR Output** sheet (CDR Report ss) — the parent row of
+the global-exception block (rows 35–37) — means a different thing to each of the
+three surfaces that touch it:
+
+1. **The pipeline computes `r34_abnd1m` / `r34_abnd2m`** (autoImport.js:
+   abandons >1min/>2min on `A_Q_CSR`/`A_Q_Intake`, non-steering, 6AM–3PM
+   start) — **and writes them nowhere**. Dead counters.
+2. **The sheet's row 34 C/D/E** = the `totalRowMap` SUM of rows 35+36+37 —
+   which can **double-count**: an internal, status-3 abandon >1min lands in
+   both row 35's E (`r35_E_1m`: status 3, any type) and row 37's E
+   (`r37_E_1m`: internal, any status), so the sum counts that call twice.
+3. **The Extraction Sidebar's row-34 rule** (dataFilters.js) extracts the
+   *dead counters'* population — distinct abandons, each once — which matches
+   neither the sum nor a refusal (row 34 is absent from the sidebar's
+   total-row refusal list, unlike 2, 7, 10, …), so drilling it returns rows
+   that do not reconcile with the cell.
+
+The shape suggests row 34 once displayed the `r34` number directly and was later
+converted to a total row without retiring the counters or the sidebar rule.
+
+**Owner ruling (2026-08-20): direction (a) — row 34 is the "CSR Total Calls"
+row, the SUM of its block (total calls, answered calls, avg ans time, etc.).**
+The `totalRowMap` sum is the intended meaning. **Code fix APPLIED
+(2026-08-20, same day):** row 34 joined the sidebar's total-row refusal list
+and its extraction rule was removed (dataFilters.js); the dead
+`r34_abnd1m`/`r34_abnd2m` counters were deleted from the pipeline
+(autoImport.js). `qcd-sidebar-parity.test.js` pins the refusal. The known
+double-count in the 35+37 sum (an internal, status-3 abandon >1min lands in
+both children) is now a property of the RULED definition — surface it to the
+owner separately if the total is ever used for a decision; do not "fix" it
+unilaterally. **Resolution instrument (owner-requested, 2026-08-20):** the
+read-only `previewRow34Overlap` (cdr-import, CDR Tools menu → "Preview QCD
+row-34 overlap") scans every surviving `Call_Legs_*` sheet and counts the
+internal+status-3 overlap shape per date, ending with a plain verdict
+("provably CLEAN" / "OVERSTATES by N"). Its pure core is behaviorally pinned
+to `calcQcdReport`'s own row 35/37 counters (`qcd-sidebar-parity.test.js`).
+Run it once after a cdr-import deploy: zero over the ~14-day window ⇒ close
+this note as latent-only; non-zero ⇒ the owner rules on adding
+`type !== "internal"` to row 35's E predicate (a two-file pipeline+sidebar
+edit).
+
 ## QCD Report engine
 
 **Sheet:** `QCD Historical Data` (12 cols), written daily by the

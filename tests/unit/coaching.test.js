@@ -151,3 +151,240 @@ test('coaching: previewCoachingFlags is admin-gated, scans every dept best-effor
   h.state.userEmail = 'stranger@x.com';
   assert.throws(function () { h.call('previewCoachingFlags'); }, /admin/i);
 });
+
+// ── F-e: the delivery layer (weekly email + Neon worklist) ─────────────────
+//
+// Owner rulings pinned here: a SEPARATE worklist (no Escalations write
+// anywhere), admin-only email until released, email ONLY on NEW flags,
+// recovered open rows reported but never auto-closed.
+
+function makeConn_(openRowsJson, opts) {
+  opts = opts || {};
+  const conn = {
+    sql: [], params: [], committed: 0, rolledBack: 0, closed: false,
+    createStatement: function () {
+      return {
+        execute: function (s) { conn.sql.push(s); },
+        executeQuery: function (s) { conn.sql.push(s); return makeRs_(); },
+        close: function () {},
+      };
+    },
+    prepareStatement: function (s) {
+      conn.sql.push(s);
+      const ps = {
+        _p: {},
+        setString: function (i, v) { ps._p[i] = v; },
+        executeQuery: function () { return makeRs_(); },
+        execute: function () { conn.params.push({ sql: s, p: ps._p }); },
+        executeUpdate: function () {
+          conn.params.push({ sql: s, p: ps._p });
+          return opts.updateResult === undefined ? 1 : opts.updateResult;
+        },
+        close: function () {},
+      };
+      return ps;
+    },
+    setAutoCommit: function () {},
+    commit: function () { conn.committed++; },
+    rollback: function () { conn.rolledBack++; },
+    close: function () { conn.closed = true; },
+  };
+  function makeRs_() {
+    let n = 0;
+    return {
+      next: function () { return n++ === 0; },
+      getString: function () { return openRowsJson || '[]'; },
+      close: function () {},
+    };
+  }
+  return conn;
+}
+
+function flag_(dept, agent) {
+  return { dept: dept, agent: agent, ratePct: 21.4, teamRatePct: 77.7,
+           teamRatioPct: 27.6, gapPts: 56.2, missed: 55, rung: 70, answered: 15 };
+}
+
+function installDeliveryStubs_(previewFlags, openRowsJson, connOpts) {
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com', DASHBOARD_URL: 'https://app/exec' };
+  h.state.sentEmails.length = 0;
+  h.ctx.computeCoachingPreview_ = function () {
+    return { available: true, window: { from: '2026-07-07', to: '2026-07-20' },
+             flags: previewFlags, errors: [], thresholds: {} };
+  };
+  const conn = makeConn_(openRowsJson, connOpts);
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  return conn;
+}
+
+test('coaching delivery: diff splits new / continuing / recovered — recovered rows are NEVER auto-closed', function () {
+  const open = [
+    { id: 'id-1', department: 'CSR', agent_name: 'Still Bad' },
+    { id: 'id-2', department: 'Sales', agent_name: 'Recovered' },
+  ];
+  const flags = [flag_('CSR', 'Still Bad'), flag_('CSR', 'Brand New')];
+  const d = JSON.parse(JSON.stringify(h.call('coachingDeliveryDiff_', flags, open)));
+  assert.deepEqual(d.newFlags.map(function (f) { return f.agent; }), ['Brand New']);
+  assert.deepEqual(d.continuing.map(function (c) { return c.id; }), ['id-1']);
+  assert.deepEqual(d.recoveredOpenRows.map(function (r) { return r.id; }), ['id-2'],
+    'reported for the email, and nothing in the run closes it');
+  // Same agent name in a DIFFERENT dept is a different key (no cross-dept
+  // de-dup — owner ruling, Shamir Alam under investigation).
+  const d2 = h.call('coachingDeliveryDiff_', [flag_('Sales', 'Still Bad')], open);
+  assert.equal(d2.newFlags.length, 1);
+});
+
+test('coaching delivery: a run with a NEW flag inserts, updates the continuing row, commits once, and emails admins', function () {
+  const conn = installDeliveryStubs_(
+    [flag_('CSR', 'Still Bad'), flag_('CSR', 'Brand New')],
+    JSON.stringify([{ id: 'id-1', department: 'CSR', agent_name: 'Still Bad' }]));
+  const out = JSON.parse(JSON.stringify(h.call('coachingDeliveryRun_')));
+  assert.match(out.result, /^ok 1 new, 1 continuing, 0 recovered-open/);
+  assert.match(out.result, /emailed admins/);
+  assert.equal(conn.committed, 1, 'one transaction');
+  assert.equal(conn.closed, true);
+  const inserts = conn.params.filter(function (x) { return /INSERT INTO coaching_flags/.test(x.sql); });
+  const updates = conn.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); });
+  assert.equal(inserts.length, 1);
+  assert.equal(inserts[0].p[2], 'CSR');
+  assert.equal(inserts[0].p[3], 'Brand New');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].p[10], 'id-1', 'continuing update targets the open row id');
+  assert.match(updates[0].sql, /times_flagged = times_flagged \+ 1/);
+  assert.equal(h.state.sentEmails.length, 1);
+  const mail = h.state.sentEmails[0];
+  assert.equal(mail.to, 'admin@x.com', 'admin-only until released (owner ruling)');
+  assert.match(mail.body, /Brand New/);
+  assert.match(mail.body, /#\/admin\/coaching/, 'deep link to the worklist route');
+  assert.match(mail.body, /Admin-only until released/);
+});
+
+test('coaching delivery: nothing NEW → no email (continuing flags are not news; quota is shared — B3)', function () {
+  installDeliveryStubs_(
+    [flag_('CSR', 'Still Bad')],
+    JSON.stringify([
+      { id: 'id-1', department: 'CSR', agent_name: 'Still Bad' },
+      { id: 'id-2', department: 'Sales', agent_name: 'Recovered' },
+    ]));
+  const out = h.call('coachingDeliveryRun_');
+  assert.match(out.result, /^ok 0 new, 1 continuing, 1 recovered-open/);
+  assert.match(out.result, /no email \(nothing new\)/);
+  assert.equal(h.state.sentEmails.length, 0);
+});
+
+test('coaching delivery: Neon down / flags unavailable each skip LOUDLY (OPS-8 bad-word result), never throw', function () {
+  installDeliveryStubs_([flag_('CSR', 'X')], '[]');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  const down = h.call('coachingDeliveryRun_');
+  assert.match(down.result, /^skipped \(Neon unreachable/);
+  assert.equal(h.state.sentEmails.length, 0, 'no email without a worklist to land cards in');
+
+  h.ctx.computeCoachingPreview_ = function () { return { available: false, reason: 'no DQE data' }; };
+  assert.match(h.call('coachingDeliveryRun_').result, /^skipped \(no DQE data\)/);
+});
+
+test('coaching delivery: a mid-txn failure rolls back and rethrows into the handler\'s ERROR result', function () {
+  const conn = installDeliveryStubs_([flag_('CSR', 'Brand New')], '[]');
+  const realPrepare = conn.prepareStatement;
+  conn.prepareStatement = function (s) {
+    if (/INSERT INTO coaching_flags/.test(s)) throw new Error('disk full');
+    return realPrepare(s);
+  };
+  assert.throws(function () { h.call('coachingDeliveryRun_'); }, /disk full/);
+  assert.equal(conn.rolledBack, 1);
+  assert.equal(conn.committed, 0);
+  assert.equal(conn.closed, true, 'connection closed on the failure path too');
+});
+
+test('coaching delivery: runCoachingDelivery_ is FLAG-GATED and records OPS-8 outcome props', function () {
+  let ran = 0;
+  h.ctx.coachingDeliveryRun_ = function () { ran++; return { result: 'ok 0 new, 0 continuing, 0 recovered-open (a..b) — no email (nothing new)' }; };
+  h.state.props = {};   // flag unset → no-op, no outcome stamped
+  h.call('runCoachingDelivery_');
+  assert.equal(ran, 0);
+  assert.equal(h.state.props.COACHING_DELIVERY_LAST_RESULT, undefined);
+
+  h.state.props = { COACHING_DELIVERY_ENABLED: 'true' };
+  h.call('runCoachingDelivery_');
+  assert.equal(ran, 1);
+  assert.ok(h.state.props.COACHING_DELIVERY_LAST, 'timestamp stamped');
+  assert.match(h.state.props.COACHING_DELIVERY_LAST_RESULT, /^ok /);
+
+  // A throw inside the run lands as ERROR: (the classifier's bad-word match).
+  h.ctx.coachingDeliveryRun_ = function () { throw new Error('boom'); };
+  h.call('runCoachingDelivery_');
+  assert.match(h.state.props.COACHING_DELIVERY_LAST_RESULT, /^ERROR: boom/);
+  delete h.ctx.coachingDeliveryRun_;
+});
+
+function installAdmin_() {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com' };
+  h.ctx.resolveUser_ = function () {
+    return { email: h.state.userEmail, role: h.state.userEmail === 'admin@x.com' ? 'admin' : 'none' };
+  };
+}
+
+test('coaching worklist: admin-gated; status filter maps to the WHERE clause; no conn → available:false', function () {
+  installAdmin_();
+  const conn = makeConn_('[]');
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  const out = JSON.parse(JSON.stringify(h.call('getCoachingWorklist', { status: 'closed' })));
+  assert.equal(out.available, true);
+  assert.equal(out.meta.status, 'closed');
+  assert.ok(conn.sql.some(function (s) { return /status <> 'open'/.test(s); }),
+    'closed = everything not open (resolved + dismissed)');
+  // Unknown filter falls back to open; open filters on = 'open'.
+  const conn2 = makeConn_('[]');
+  h.ctx.getDashboardNeonConn_ = function () { return conn2; };
+  assert.equal(h.call('getCoachingWorklist', { status: 'sneaky' }).meta.status, 'open');
+  assert.ok(conn2.sql.some(function (s) { return /WHERE status = 'open'/.test(s); }));
+
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.equal(h.call('getCoachingWorklist', {}).available, false);
+
+  h.state.userEmail = 'stranger@x.com';
+  assert.throws(function () { h.call('getCoachingWorklist', {}); }, /admin/i);
+});
+
+test('coaching close: open-only UPDATE — a stale id / already-closed row is a clear error, never a silent overwrite', function () {
+  installAdmin_();
+  const conn = makeConn_('[]');
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  const before = h.state.locks;
+  const out = h.call('updateCoachingFlagStatus', { id: 'id-9', action: 'Resolved', note: '  talked on Friday  ' });
+  assert.equal(out.status, 'resolved', 'action is case-normalized');
+  assert.equal(h.state.locks, before + 1, 'LockService serialization (INV-01 data-mutation set)');
+  const upd = conn.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); })[0];
+  assert.match(upd.sql, /AND status = 'open'/);
+  assert.equal(upd.p[1], 'resolved');
+  assert.equal(upd.p[2], 'talked on Friday', 'note trimmed');
+  assert.equal(upd.p[3], 'admin@x.com', 'closed_by audit');
+  assert.equal(upd.p[4], 'id-9');
+
+  // 0 rows updated → the race error.
+  h.ctx.getDashboardNeonConn_ = function () { return makeConn_('[]', { updateResult: 0 }); };
+  assert.throws(function () { h.call('updateCoachingFlagStatus', { id: 'id-9', action: 'resolved' }); },
+    /not open any more/);
+
+  // Validation: bad action, missing id, oversize note capped not rejected.
+  assert.throws(function () { h.call('updateCoachingFlagStatus', { id: 'x', action: 'deleted' }); },
+    /resolved.*dismissed/i);
+  assert.throws(function () { h.call('updateCoachingFlagStatus', { action: 'resolved' }); }, /Missing flag id/);
+  const conn3 = makeConn_('[]');
+  h.ctx.getDashboardNeonConn_ = function () { return conn3; };
+  h.call('updateCoachingFlagStatus', { id: 'x', action: 'dismissed', note: new Array(700).join('n') });
+  const upd3 = conn3.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); })[0];
+  assert.equal(upd3.p[2].length, 500, 'note capped at COACHING_NOTE_MAX_');
+
+  h.state.userEmail = 'stranger@x.com';
+  assert.throws(function () { h.call('updateCoachingFlagStatus', { id: 'x', action: 'resolved' }); }, /admin/i);
+});
+
+test('coaching triggers: install sets the enabled flag, uninstall clears it (the flag-gated-engine pattern)', function () {
+  installAdmin_();
+  h.call('installCoachingDeliveryTrigger');
+  assert.equal(h.state.props.COACHING_DELIVERY_ENABLED, 'true');
+  h.call('uninstallCoachingDeliveryTrigger');
+  assert.equal(h.state.props.COACHING_DELIVERY_ENABLED, undefined);
+});

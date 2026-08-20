@@ -63,6 +63,10 @@ const SPECS = [
   // prevent. `agentHome` is a named constant; `agentHist` is inline.
   ['agentHome',         'AgentHome.gs',           /AGENT_HOME_CACHE_PREFIX_ = 'agentHome:v(\d+)'/],
   ['agentHist',         'AgentHome.gs',           /'agentHist:v(\d+):'/],
+  // Follow-on to B2/B5: the derived agent/ext pairs cache, anchored last.
+  ['neonAgentExts',     'NeonRead.gs',            /'neonAgentExts:v(\d+):'/],
+  // Batch G: the Outbound report (callback linkage + per-agent activity).
+  ['outboundReport',    'OutboundReport.gs',      /'outboundReport:v(\d+)'/],
 ];
 
 // Build the canonical map from code at load time so every test sees it.

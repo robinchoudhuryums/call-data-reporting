@@ -2827,6 +2827,82 @@ function parseDurationDecimal(val) {
 }
 
 // Memory Calculator for the Dashboard Engine (QCD Report)
+/**
+ * PURE core of the row-34 overlap probe (owner request, 2026-08-20 —
+ * unit-tested in tests/unit/qcd-sidebar-parity.test.js). Row 34 is the RULED
+ * total of rows 35+36+37, but row 35's E predicate lacks the
+ * `type !== "internal"` clause row 36 carries, so a call that is
+ * simultaneously INTERNAL-type AND STATUS-3 (abandoned > 1 min on an A_Q_
+ * queue, in window) is counted by BOTH r35_E_1m and r37_E_1m — row 34's E
+ * would count it twice. This measures whether that call shape exists in the
+ * data at all. Predicates are copied VERBATIM from calcQcdReport's counters
+ * (incl. its global start/end guard); `cOverlapMax` is the analogous col-C
+ * overlap WITHOUT the r37_C_p1 `!isCSR` team check (which needs the
+ * csr_team named range) — a SUPERSET, so 0 here proves col C clean too.
+ */
+function countRow34OverlapRows_(cleanData) {
+  const rawDisplay = cleanData.slice(1);
+  const time600AM = 6 / 24, time300PM = 15 / 24, time1Min = 1 / 1440;
+  const out = { rows: rawDisplay.length, r35E1m: 0, r37E1m: 0, overlapE: 0, cOverlapMax: 0 };
+  rawDisplay.forEach(row => {
+    const status    = String(row[1]).trim();
+    const type      = String(row[5]).trim().toLowerCase();
+    const queueName = String(row[11]).trim().toLowerCase();
+    const abandoned = String(row[24]).trim().toLowerCase();
+    const startDec  = simulateSplitCol2(row[2]);
+    const endDec    = simulateSplitCol2(row[4]);
+    const waitDec   = parseDurationDecimal(row[7]);
+    if (startDec <= time600AM || startDec === -1 || endDec === -1) return;
+    const isAQ = (queueName === "a_q_csr" || queueName === "a_q_intake");
+    const inStart = startDec > time600AM && startDec < time300PM;
+    const e35 = isAQ && status === "3" && abandoned === "abandoned" && waitDec > time1Min && inStart;
+    const e37 = type === "internal" && inStart && endDec < time300PM && isAQ
+      && abandoned === "abandoned" && waitDec > time1Min;
+    if (e35) out.r35E1m++;
+    if (e37) out.r37E1m++;
+    if (e35 && e37) out.overlapE++;
+    // Col C analogue: r35_C_p1 needs end<3PM; r37_C_p1 needs end<3PM + !isCSR.
+    if (e35 && e37 && endDec < time300PM) out.cOverlapMax++;
+  });
+  return out;
+}
+
+/**
+ * EDITOR-RUN, READ-ONLY: scans every surviving Call_Legs_* sheet and reports
+ * (execution log) how many rows would be double-counted in QCDR Output row
+ * 34's sum. Zero across the retention window = row 34 is provably clean for
+ * those dates and the known-issues item can be closed as "latent only".
+ * Writes nothing; sets no properties. Also on the CDR Tools menu.
+ */
+function previewRow34Overlap() {
+  const sourceSS = SpreadsheetApp.getActiveSpreadsheet();
+  const dates = [];
+  sourceSS.getSheets().forEach(sh => {
+    const m = /^Call_Legs_(\d{4}-\d{2}-\d{2})$/i.exec(sh.getName());
+    if (m) dates.push({ iso: m[1], sheet: sh });
+  });
+  dates.sort((a, b) => (a.iso < b.iso ? -1 : 1));
+  if (!dates.length) {
+    Logger.log('previewRow34Overlap: no Call_Legs_* sheets survive — nothing to measure.');
+    return { dates: 0, overlapE: 0, cOverlapMax: 0 };
+  }
+  let totE = 0, totC = 0, tot35 = 0, tot37 = 0;
+  dates.forEach(d => {
+    const grid = d.sheet.getDataRange().getDisplayValues();
+    if (grid.length < 2) { Logger.log('%s: empty sheet, skipped', d.iso); return; }
+    const c = countRow34OverlapRows_(grid.map(r => r.slice(0, MAX_COLS)));
+    totE += c.overlapE; totC += c.cOverlapMax; tot35 += c.r35E1m; tot37 += c.r37E1m;
+    Logger.log('%s: r35 E=%s, r37 E=%s, E-overlap=%s, colC-overlap(max)=%s (%s rows)',
+      d.iso, c.r35E1m, c.r37E1m, c.overlapE, c.cOverlapMax, c.rows);
+  });
+  Logger.log('TOTAL over %s surviving date(s): row-34 E double-counts=%s, col-C double-counts(at most)=%s'
+    + ' — %s', dates.length, totE, totC,
+    (totE === 0 && totC === 0)
+      ? 'row 34 is provably CLEAN for these dates (the internal+status-3 overlap shape does not occur).'
+      : 'row 34 OVERSTATES by these amounts on the affected dates — surface to the owner before using it for a decision.');
+  return { dates: dates.length, overlapE: totE, cOverlapMax: totC, r35E1m: tot35, r37E1m: tot37 };
+}
+
 function calcQcdReport(cleanData, targetSS) {
   const rawDisplay = cleanData.slice(1);
   const testerSheet = targetSS.getSheetByName("QCDR Output");
@@ -2884,7 +2960,10 @@ function calcQcdReport(cleanData, targetSS) {
   const time600AM = 6 / 24, time630AM = 6.5 / 24, time300PM = 15 / 24, time330PM = 15.5 / 24;
   const time1Min = 1 / 1440, time2Min = 2 / 1440, time20Sec = 20 / 86400;  
 
-  let r34_abnd1m = 0, r34_abnd2m = 0;
+  // (The old r34_abnd1m/r34_abnd2m counters were DELETED per the 2026-08-20
+  // owner ruling: row 34 is the "CSR Total Calls" total row, written by the
+  // totalRowMap sum of rows 35-37 below -- the counters were computed and
+  // written nowhere. See docs/known-issues.md "QCDR Output row 34".)
   let r35_C_p1 = 0, r35_C_p2 = 0, r35_C_p3 = 0, r35_D_p2 = 0, r35_D_p3 = 0, r35_E_1m = 0, r35_E_2m = 0, r35_F_max = -1, r35_F_orig = null, r35_G_sum = 0, r35_G_count = 0;
   let r36_C_p1 = 0, r36_C_p2 = 0, r36_C_p3 = 0, r36_D_p2 = 0, r36_D_p3 = 0, r36_E_2m = 0, r36_F_max = -1, r36_F_orig = null, r36_G_sum = 0, r36_G_count = 0;
   let r37_C_p1 = 0, r37_C_p3 = 0, r37_E_1m = 0, r37_E_2m = 0, r37_F_max = -1, r37_F_orig = null, r37_G_sum = 0, r37_G_count = 0;
@@ -2969,8 +3048,14 @@ function calcQcdReport(cleanData, targetSS) {
       if (queueName === q40_name) {
         // Owner 2026-08-14: row 40 (A_Q_Spanish per QCDR Output A40) used a
         // >0s abandon rule in its TOTAL while every other queue uses >1min
-        // (~59s) or >20s -- the last 1-second holdout. Now the 1-minute rule,
-        // so tot2/tot4 (total) match tot5/tot6 (abandoned) in threshold.
+        // or >20s -- the last 1-second holdout. Now the 1-minute rule, so
+        // tot2/tot4 (total) match tot5/tot6 (abandoned) in threshold.
+        // NB (F8): time1Min is EXACTLY 60s (1/1440 day) and the comparison is
+        // strict >, so the rule is "MORE than 60s" -- an earlier version of
+        // this comment called it "~59s", which is backwards (a 60.0s wait is
+        // excluded, not included). The editor-run AbandonedFilter.js is a
+        // SEPARATE tool with its own deliberate >0:00:59 threshold; do not
+        // "sync" the two, they differ by the 1-second class on purpose.
         // FORWARD-ONLY: historical QCD rows keep their old totals; expect a
         // small step down in Spanish's daily totals from the deploy date.
         if (status === "1" && type === "internal") {
@@ -2983,13 +3068,6 @@ function calcQcdReport(cleanData, targetSS) {
           if (abandoned === "abandoned" && waitDec > time1Min) r40_tot4++;
           if (abandoned === "abandoned" && waitDec > time1Min) r40_tot6++;
         }
-      }
-    }
-
-    if (startDec > time600AM && startDec < time300PM) {
-      if (abandoned === "abandoned" && !steeringSet.has(team) && isAQ) {
-        if (waitDec > time1Min) r34_abnd1m++;
-        if (waitDec > time2Min) r34_abnd2m++;
       }
     }
 

@@ -2696,4 +2696,214 @@
     el.style.display = '';
   }
 
+  // -- Coaching worklist (F-e; admin-only until released) ----------------
+  // The weekly answer-rate flags as an open/closed worklist — a SEPARATE
+  // surface from the customer-account Escalations page (owner ruling).
+  // Server: Coaching.gs. Rendering is idempotent (innerHTML replace, the
+  // F10 discipline); Resolve/Dismiss are dsConfirm_-gated with an optional
+  // per-row note input (server caps at 500 chars).
+
+  var coachingRows_ = [];
+
+  function initCoaching_() {
+    const btn = $('coaching-btn');
+    const modal = $('coaching-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      coachingLoad_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+    if ($('coaching-refresh-btn')) $('coaching-refresh-btn').addEventListener('click', coachingLoad_);
+    if ($('coaching-status-filter')) $('coaching-status-filter').addEventListener('change', coachingLoad_);
+
+    // Row actions: ONE delegated listener (rows re-render on every load).
+    const tbody = $('coaching-tbody');
+    if (tbody) tbody.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest ? e.target.closest('button[data-coaching-action]') : null;
+      if (b) coachingCloseFlag_(b.getAttribute('data-id'), b.getAttribute('data-coaching-action'));
+    });
+
+    // Delivery engine controls. Install/uninstall are reversible → direct;
+    // "Run now" persists flags AND emails admins → dsConfirm_-gated.
+    coachingWireDelivery_('coaching-install-btn', 'installCoachingDeliveryTrigger', 'Installing…', null);
+    coachingWireDelivery_('coaching-uninstall-btn', 'uninstallCoachingDeliveryTrigger', 'Uninstalling…', null);
+    coachingWireDelivery_('coaching-run-now-btn', 'runCoachingDeliveryNow', 'Running…', {
+      title: 'Run coaching delivery now?',
+      message: 'This is the full weekly run: it recomputes the flags, updates the worklist, '
+        + 'and emails the admins if any NEW flags appear. It is not a dry preview.',
+      confirmLabel: 'Run now',
+    });
+  }
+
+  function coachingWireDelivery_(id, fnName, busyLabel, confirmOpts) {
+    const b = $(id);
+    if (!b) return;
+    b.addEventListener('click', function () {
+      const go = function () {
+        const prev = b.textContent;
+        b.disabled = true; b.textContent = busyLabel;
+        google.script.run
+          .withSuccessHandler(function (st) {
+            b.disabled = false; b.textContent = prev;
+            const el = $('coaching-delivery-status');
+            if (el) el.textContent = st && st.result ? st.result
+              : (st && st.installed !== undefined
+                ? ('trigger ' + (st.installed ? 'installed' : 'not installed')
+                  + (st.enabled ? ' + enabled' : '')) : 'done');
+            coachingLoad_();   // worklist and/or meta changed
+          })
+          .withFailureHandler(function (err) {
+            b.disabled = false; b.textContent = prev;
+            const el = $('coaching-delivery-status');
+            if (el) el.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+          })[fnName]();
+      };
+      if (confirmOpts) dsConfirm_(confirmOpts).then(function (ok) { if (ok) go(); });
+      else go();
+    });
+  }
+
+  function coachingLoad_() {
+    const statusEl = $('coaching-status');
+    const table = $('coaching-table');
+    if (statusEl) { statusEl.className = 'status status-loading'; statusEl.textContent = 'Loading worklist…'; statusEl.style.display = ''; }
+    const filter = $('coaching-status-filter') ? $('coaching-status-filter').value : 'open';
+    google.script.run
+      .withSuccessHandler(function (resp) { coachingRender_(resp); })
+      .withFailureHandler(function (err) {
+        if (table) table.style.display = 'none';
+        if (statusEl) {
+          statusEl.className = 'status status-error';
+          statusEl.textContent = 'Could not load the worklist: ' + (err && err.message ? err.message : String(err));
+        }
+      })
+      .getCoachingWorklist({ status: filter });
+  }
+
+  function coachingRender_(resp) {
+    const statusEl = $('coaching-status');
+    const table = $('coaching-table');
+    const tbody = $('coaching-tbody');
+    const summary = $('coaching-summary');
+    const delivery = $('coaching-delivery-status');
+    const meta = (resp && resp.meta) || {};
+    if (delivery) {
+      delivery.textContent = (meta.enabled ? 'Enabled' : 'Not enabled')
+        + (meta.lastResult ? (' · last: ' + meta.lastResult) : ' · never run');
+    }
+    if (!resp || !resp.available) {
+      if (table) table.style.display = 'none';
+      if (summary) summary.textContent = '';
+      if (statusEl) {
+        statusEl.className = 'status status-error';
+        statusEl.textContent = 'Coaching storage (Neon) is unavailable — the worklist cannot be shown right now. '
+          + 'Flags are re-derivable: the next delivery run rebuilds them from DQE history.';
+        statusEl.style.display = '';
+      }
+      return;
+    }
+    coachingRows_ = resp.rows || [];
+    const openCount = coachingRows_.filter(function (r) { return r.status === 'open'; }).length;
+    if (summary) {
+      summary.textContent = coachingRows_.length + ' flag(s) shown'
+        + (meta.status === 'open' ? '' : (' · ' + openCount + ' open'))
+        + (coachingRows_.length >= 300 ? ' · capped at 300' : '');
+    }
+    if (!coachingRows_.length) {
+      if (table) table.style.display = 'none';
+      if (statusEl) {
+        statusEl.className = 'status status-success';
+        statusEl.textContent = meta.status === 'open'
+          ? 'No open coaching flags — nothing needs a conversation right now.'
+          : 'No flags match this filter.';
+        statusEl.style.display = '';
+      }
+      return;
+    }
+    if (statusEl) statusEl.style.display = 'none';
+    if (tbody) tbody.innerHTML = coachingRows_.map(coachingRowHtml_).join('');
+    if (table) table.style.display = '';
+  }
+
+  function coachingRowHtml_(r) {
+    const open = r.status === 'open';
+    const ratio = r.team_ratio_pct != null ? Math.round(r.team_ratio_pct) : null;
+    const rateCell = (r.rate_pct != null ? r.rate_pct : '—') + '% vs '
+      + (r.team_rate_pct != null ? r.team_rate_pct : '—') + '%'
+      + (ratio != null ? ' <span class="al-hint">(' + ratio + '% of team, '
+        + (r.gap_pts != null ? r.gap_pts : '—') + ' pts behind)</span>' : '');
+    const statusCell = open ? 'open'
+      : escapeHtml(r.status) + (r.closed_by ? ' <span class="al-hint" title="'
+        + escapeHtml((r.closed_at || '') + (r.note ? (' — ' + r.note) : ''))
+        + '">by ' + escapeHtml(r.closed_by) + '</span>' : '');
+    const actions = open
+      ? '<input type="text" class="coaching-note-input" data-note-for="' + escapeHtml(r.id)
+        + '" maxlength="500" placeholder="note (optional)" style="width:110px;"> '
+        + '<button class="btn btn-secondary" type="button" data-coaching-action="resolved" data-id="'
+        + escapeHtml(r.id) + '">Resolve</button> '
+        + '<button class="btn btn-ghost" type="button" data-coaching-action="dismissed" data-id="'
+        + escapeHtml(r.id) + '">Dismiss</button>'
+      : '';
+    return '<tr>'
+      + '<td>' + escapeHtml(r.department || '') + '</td>'
+      + '<td>' + escapeHtml(r.agent_name || '') + '</td>'
+      + '<td class="num">' + rateCell + '</td>'
+      + '<td class="num">' + (r.missed != null ? r.missed : '—') + ' / ' + (r.rung != null ? r.rung : '—')
+        + ' <span class="al-hint">(' + (r.answered != null ? r.answered : '—') + ' ans)</span></td>'
+      + '<td class="num">' + (r.times_flagged || 1) + '×</td>'
+      + '<td>' + escapeHtml((r.window_from || '') + ' .. ' + (r.window_to || '')) + '</td>'
+      + '<td>' + statusCell + '</td>'
+      + '<td>' + actions + '</td>'
+      + '</tr>';
+  }
+
+  function coachingCloseFlag_(id, action) {
+    const row = coachingRows_.filter(function (r) { return r.id === id; })[0];
+    const noteInput = document.querySelector('input[data-note-for="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+    const note = noteInput ? noteInput.value.trim() : '';
+    const verb = action === 'resolved' ? 'Resolve' : 'Dismiss';
+    dsConfirm_({
+      title: verb + ' this coaching flag?',
+      messageHtml: '<strong>' + escapeHtml(row ? (row.department + ' — ' + row.agent_name) : id) + '</strong><br>'
+        + (action === 'resolved'
+          ? 'Mark resolved: the conversation happened (or the queue/roster was adjusted).'
+          : 'Dismiss: judged not a real issue for this agent.')
+        + (note ? '<br><span class="al-hint">Note: ' + escapeHtml(note) + '</span>' : ''),
+      confirmLabel: verb,
+      tone: action === 'dismissed' ? 'danger' : undefined,
+    }).then(function (ok) {
+      if (!ok) return;
+      google.script.run
+        .withSuccessHandler(function () {
+          showToast('Flag ' + action, 'success');
+          coachingLoad_();
+        })
+        .withFailureHandler(function (err) {
+          showToast(err && err.message ? err.message : 'Could not update the flag', 'error');
+          coachingLoad_();   // stale-view race → refresh shows the truth
+        })
+        .updateCoachingFlagStatus({ id: id, action: action, note: note });
+    });
+  }
+
 </script>

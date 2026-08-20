@@ -678,3 +678,102 @@ test('B4: the quota row degrades to absent rather than throwing the page', funct
   assert.ok(data.rows.length > 10, 'the rest of the page still renders');
   h.ctx.MailApp = realMail;
 });
+
+// ── E3: the deployed-build stamp row ──────────────────────────────────────
+//
+// deploy.sh stamps BuildStamp.gs at push time; a bare `clasp push -f` ships
+// the committed placeholder. Either way the row is MUTED — a manual push is
+// legitimate; the hint, not the color, carries the meaning.
+test('E3: a real stamp renders with the compare-against-git hint', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.BUILD_STAMP_ = 'deploy.sh 2026-08-20T16:00:00Z | git abc1234 | main';
+  const row = rowByKey(h.call('getSystemHealth'), 'build-stamp');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /git abc1234/);
+  assert.match(row.hint, /Operator State #2/);
+  h.ctx.BUILD_STAMP_ = undefined;
+});
+
+test('E3: the placeholder (bypassed deploy.sh) and a pre-E3 deployment both say so', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.BUILD_STAMP_ = 'unstamped — last push bypassed scripts/deploy.sh';
+  let row = rowByKey(h.call('getSystemHealth'), 'build-stamp');
+  assert.equal(row.status, 'muted', 'a manual push is legitimate — never warn');
+  assert.match(row.hint, /OUTSIDE scripts\/deploy\.sh/,
+    'the hint must say what "unstamped" means: no CI gate ran on exactly what went live');
+
+  h.ctx.BUILD_STAMP_ = undefined;   // BuildStamp.gs not in the deployment at all
+  row = rowByKey(h.call('getSystemHealth'), 'build-stamp');
+  assert.match(row.value, /pre-E3 push/);
+  assert.match(row.hint, /OUTSIDE scripts\/deploy\.sh/);
+});
+
+// ── E1: the retention-horizon rows ─────────────────────────────────────────
+//
+// The fast half (legs-horizon) reads only the workbook, so it renders even
+// mid-outage — exactly when the deadline matters. The neon half
+// (retention-risk) rides the shared connection and cross-references which
+// surviving dates the per-call tables are missing. Helpers live in
+// NeonCoverage.gs (not loaded by this suite), so both rows are typeof-gated:
+// stub them to drive the branches.
+test('E1: legs-horizon renders the surviving span in the FAST part, sheet-only', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.ncSurvivingCallLegsDates_ = function () { return ['2026-08-10', '2026-08-19']; };
+  let connCalls = 0;
+  h.ctx.getDashboardNeonConn_ = function () { connCalls++; return { close: function () {} }; };
+  const data = h.call('getSystemHealth', { part: 'fast' });
+  const row = rowByKey(data, 'legs-horizon');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /2 day-sheet\(s\) alive: 2026-08-10 … 2026-08-19/);
+  assert.match(row.hint, /#40/, 'names the queue-split deadline that shares the window');
+  assert.equal(connCalls, 0, 'the fast half must stay sheet-only (R21)');
+  h.ctx.ncSurvivingCallLegsDates_ = undefined;
+});
+
+test('E1: retention-risk warns with the outage playbook when Neon is unreachable', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.ncSurvivingCallLegsDates_ = function () { return ['2026-08-10', '2026-08-19']; };
+  h.ctx.ncRetentionRisk_ = function () { throw new Error('must not be called with no conn'); };
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // unreachable
+  const row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'retention-risk');
+  assert.equal(row.status, 'warn');
+  assert.match(row.hint, /backfillInboundCalls \+ backfillOutboundCalls/);
+  assert.match(row.hint, /2026-08-10/, 'names the oldest surviving sheet — the first date to die');
+  h.ctx.ncSurvivingCallLegsDates_ = undefined; h.ctx.ncRetentionRisk_ = undefined;
+});
+
+test('E1: retention-risk lists unmirrored surviving dates with their deadlines, ok when clean', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.ncSurvivingCallLegsDates_ = function () { return ['2026-08-10', '2026-08-11']; };
+  h.ctx.getDashboardNeonConn_ = function () { return { close: function () {} }; };
+  h.ctx.ncRetentionRisk_ = function () {
+    return { tables: [
+      { table: 'inbound_calls', atRisk: [{ date: '2026-08-11', lastDay: '2026-08-25' }] },
+      { table: 'outbound_calls', atRisk: [], missingTable: true },
+    ] };
+  };
+  let row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'retention-risk');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /inbound_calls 2026-08-11 \(until ~2026-08-25\)/);
+  assert.match(row.hint, /BEFORE the listed last day/);
+  assert.match(row.hint, /outbound_calls: table not created yet/);
+
+  h.ctx.ncRetentionRisk_ = function () {
+    return { tables: [
+      { table: 'inbound_calls', atRisk: [] },
+      { table: 'outbound_calls', atRisk: [] },
+    ] };
+  };
+  row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'retention-risk');
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /every surviving Call_Legs date is mirrored/);
+  h.ctx.ncSurvivingCallLegsDates_ = undefined; h.ctx.ncRetentionRisk_ = undefined;
+});
+
+test('E1: with the helpers absent (suite default) both rows degrade to absent, and the R21 pins hold', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.getDashboardNeonConn_ = function () { return { close: function () {} }; };
+  const data = h.call('getSystemHealth');
+  assert.equal(rowByKey(data, 'legs-horizon'), undefined);
+  assert.equal(rowByKey(data, 'retention-risk'), undefined);
+});

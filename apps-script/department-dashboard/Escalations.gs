@@ -63,6 +63,159 @@ var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
 // INBOUND_TOP_N / CALLER_LOOKUP_MAX_CALLS cap elsewhere). meta.truncated
 // tells the client when the cap was hit.
 var ESC_MAX_ROWS = 500;
+
+// ── E2 (broad-scan Batch E): the OUTAGE SNAPSHOT ────────────────────────────
+//
+// Escalations is 100% Neon-backed with no sheet twin (owner ruling: dual-
+// source drift cost > outage-window benefit -- for WRITES, which this does
+// not touch). During the 2026-08 transfer-cap outage the entire worklist was
+// invisible for two weeks, including READ-ONLY viewing of items managers were
+// mid-way through working. This snapshot closes that: after a successful
+// list read, the OPEN rows (pending / in_progress / pending_review) are
+// stored -- chunked -- in Script Properties (max ~9KB per value, hence the
+// chunks), and when Neon is unreachable getEscalations serves them back,
+// scoped to the SAME viewer rules as the live path, with meta.snapshotAsOf
+// set so the client shows a read-only banner. Writes still hard-fail (INV-55
+// untouched); a snapshot cannot drift because nothing can change while the
+// only writer is down. Properties are engine-written outcome state (the
+// *_LAST class) -- deliberately NOT an Operator State item.
+var ESC_SNAPSHOT_MAX_ROWS = 150;      // open rows kept (newest first)
+var ESC_SNAPSHOT_CHUNK_CHARS = 8000;  // under the ~9KB per-property cap
+var ESC_SNAPSHOT_MAX_CHUNKS = 6;      // hard ceiling ~48KB of the 500KB store
+var ESC_SNAPSHOT_REFRESH_MIN = 30;    // at most one refresh query per this
+
+/**
+ * Pure: rows -> { chunks, count, truncated }. Drops TAIL rows (the list is
+ * newest-first) until the serialized form fits the chunk ceiling, so the
+ * store can never overflow the property quota however escalation volume
+ * grows. tests/unit/escalations-snapshot.test.js pins the boundary.
+ */
+function escSnapshotChunk_(rows) {
+  rows = (rows || []).slice(0, ESC_SNAPSHOT_MAX_ROWS);
+  var truncated = false;
+  var json = JSON.stringify(rows);
+  while (json.length > ESC_SNAPSHOT_CHUNK_CHARS * ESC_SNAPSHOT_MAX_CHUNKS && rows.length) {
+    rows = rows.slice(0, rows.length - 1);
+    truncated = true;
+    json = JSON.stringify(rows);
+  }
+  var chunks = [];
+  for (var i = 0; i < json.length; i += ESC_SNAPSHOT_CHUNK_CHARS) {
+    chunks.push(json.slice(i, i + ESC_SNAPSHOT_CHUNK_CHARS));
+  }
+  return { chunks: chunks, count: rows.length,
+           truncated: truncated || (rows.length >= ESC_SNAPSHOT_MAX_ROWS) };
+}
+
+/** Stores rows + META (written LAST, so a half-write reads as absent). */
+function escSnapshotStore_(rows) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var packed = escSnapshotChunk_(rows);
+    for (var i = 0; i < packed.chunks.length; i++) {
+      props.setProperty('ESC_SNAPSHOT_' + (i + 1), packed.chunks[i]);
+    }
+    // Drop stale higher chunks from a previously-larger snapshot BEFORE the
+    // meta write points readers at the new count.
+    for (var j = packed.chunks.length + 1; j <= ESC_SNAPSHOT_MAX_CHUNKS; j++) {
+      props.deleteProperty('ESC_SNAPSHOT_' + j);
+    }
+    props.setProperty('ESC_SNAPSHOT_META', JSON.stringify({
+      at: new Date().toISOString(), chunks: packed.chunks.length,
+      count: packed.count, truncated: packed.truncated,
+    }));
+  } catch (e) { /* best-effort -- a failed snapshot must never cost the live read */ }
+}
+
+/** { rows, at, truncated } or null (absent / torn / unparseable). */
+function escSnapshotLoad_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var meta = JSON.parse(props.getProperty('ESC_SNAPSHOT_META') || 'null');
+    if (!meta || !meta.chunks) return null;
+    var json = '';
+    for (var i = 1; i <= meta.chunks; i++) {
+      var c = props.getProperty('ESC_SNAPSHOT_' + i);
+      if (c == null) return null;   // torn write -> treat as no snapshot
+      json += c;
+    }
+    var rows = JSON.parse(json);
+    if (!Array.isArray(rows)) return null;
+    return { rows: rows, at: meta.at || null, truncated: !!meta.truncated };
+  } catch (e) { return null; }
+}
+
+/**
+ * Refreshes the snapshot from a LIVE connection, at most once per
+ * ESC_SNAPSHOT_REFRESH_MIN (age-gated on the stored meta). One bounded query
+ * for the open statuses, UNSCOPED -- the snapshot must serve every viewer, so
+ * it stores the full open set and the SERVE path re-applies the viewer's
+ * dept scope. Best-effort throughout.
+ */
+function escSnapshotMaybeRefresh_(conn) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var meta = null;
+    try { meta = JSON.parse(props.getProperty('ESC_SNAPSHOT_META') || 'null'); } catch (e) { meta = null; }
+    if (meta && meta.at) {
+      var ageMin = (Date.now() - new Date(meta.at).getTime()) / 60000;
+      if (isFinite(ageMin) && ageMin >= 0 && ageMin < ESC_SNAPSHOT_REFRESH_MIN) return;
+    }
+    var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
+            + 'SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, '
+            + 'status, resolution, comments, created_by, created_at::text AS created_at, '
+            + 'resolved_by, resolved_at::text AS resolved_at, source FROM escalations '
+            + "WHERE status IN ('pending','in_progress','pending_review') "
+            + 'ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + ESC_SNAPSHOT_MAX_ROWS
+            + ') t';
+    var stmt = conn.prepareStatement(sql);
+    var rs = stmt.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    rs.close(); stmt.close();
+    escSnapshotStore_(JSON.parse(json || '[]'));
+  } catch (e) { /* best-effort */ }
+}
+
+/**
+ * Serves the snapshot under the SAME viewer scope the live path computed
+ * (scopeAll / deptList / department -- already authorization-checked by the
+ * caller before Neon was ever touched). Returns null when no snapshot exists
+ * -- the caller falls back to the plain unavailable shape. The payload is
+ * shaped exactly like the live one so every client renderer works unchanged;
+ * meta.snapshotAsOf is the one addition (the client banner keys on it).
+ * Closed statuses (resolved / rejected) are NOT in the snapshot -- requesting
+ * them serves an empty list with the banner explaining why. The C1 band
+ * counts come from the snapshot's open rows in scope; resolved / rejected /
+ * MTD / overdue are unknowable from a snapshot and stay 0.
+ */
+function escSnapshotServe_(scopeAll, deptList, department, status, metaDept) {
+  var snap = escSnapshotLoad_();
+  if (!snap) return null;
+  var inScope = snap.rows.filter(function (r) {
+    if (scopeAll) return true;
+    var d = String((r && r.department) || '');
+    if (deptList) return deptList.indexOf(d) !== -1;
+    return d === department;
+  });
+  var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0 };
+  var oldestOpen = null;
+  inScope.forEach(function (r) {
+    var st = String((r && r.status) || '');
+    if (counts.hasOwnProperty(st)) counts[st]++;
+    var occ = (r && (r.occurred_at || r.created_at)) || null;
+    if (occ && (!oldestOpen || occ < oldestOpen)) oldestOpen = occ;
+  });
+  var rows = (status === 'all') ? inScope
+    : inScope.filter(function (r) { return String((r && r.status) || '') === status; });
+  return { available: true, rows: rows,
+           meta: { department: metaDept, status: status, count: rows.length,
+                   pendingReviewCount: counts.pending_review,
+                   statusCounts: counts,
+                   resolvedMTD: 0, overdueCount: 0, oldestOpenAt: oldestOpen,
+                   truncated: false,
+                   snapshotAsOf: snap.at, snapshotTruncated: snap.truncated } };
+}
 var ESC_STATUS_PENDING  = 'pending';
 var ESC_STATUS_RESOLVED = 'resolved';
 // Phase 2: externally-submitted rows awaiting a manager/admin review before
@@ -260,7 +413,13 @@ function getEscalations(req) {
   if (['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'].indexOf(status) === -1) status = 'pending';
 
   var conn = getDashboardNeonConn_();
-  if (!conn) return { available: false, rows: [], meta: { department: metaDept, status: status } };
+  if (!conn) {
+    // E2: Neon down/unconfigured -- serve the read-only snapshot if one
+    // exists (scoped identically; the client banners on meta.snapshotAsOf).
+    var snapServe = escSnapshotServe_(scopeAll, deptList, department, status, metaDept);
+    if (snapServe) return snapServe;
+    return { available: false, rows: [], meta: { department: metaDept, status: status } };
+  }
   try {
     escEnsureTable_(conn);
     var where = [];
@@ -332,6 +491,9 @@ function getEscalations(req) {
       }
       ars.close(); astmt.close();
     } catch (ce2) { /* best-effort: band + chip just hide */ }
+    // E2: keep the outage snapshot warm (age-gated to one bounded query per
+    // ESC_SNAPSHOT_REFRESH_MIN; same connection; best-effort).
+    try { escSnapshotMaybeRefresh_(conn); } catch (eSnap) { /* never costs the read */ }
     return { available: true, rows: rows,
              meta: { department: metaDept, status: status,
                      count: rows.length,
@@ -343,6 +505,10 @@ function getEscalations(req) {
                      truncated: escTruncated } };   // F-46 / A-4
   } catch (e) {
     Logger.log('getEscalations failed: ' + (e && e.message ? e.message : e));
+    // E2: a mid-query failure (conn opened, then Neon died) serves the
+    // snapshot too -- same fallback as the no-conn path.
+    var snapServe2 = escSnapshotServe_(scopeAll, deptList, department, status, metaDept);
+    if (snapServe2) return snapServe2;
     return { available: false, rows: [], meta: { department: metaDept, status: status } };
   } finally {
     try { conn.close(); } catch (ce) {}

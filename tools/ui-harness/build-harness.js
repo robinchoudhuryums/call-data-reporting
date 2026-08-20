@@ -137,6 +137,74 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getAccessControlInit: function () { return P['access-init']; },
     getSystemHealth: function () { return P['health']; },
     getUiFlags: function () { return P['ui-flags']; },
+    // Batch G: outbound report. Inline fixture; the payload shape is pinned
+    // server-side by tests/unit/outbound-report.test.js.
+    getOutboundReport: function (req) {
+      return {
+        meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || '', companyView: !(req && req.department),
+          available: true, vetting: true, callbackWindowDays: 3,
+          coverageStart: '2026-08-15', unrosteredAgents: 1, offRosterAgents: 0,
+          cacheHit: false, computeMs: 12 },
+        kpis: { agents: 2, obTotal: 61, obConnected: 44, obConnectRate: 72.1,
+          obTalkSec: 9120, obAttSec: 207, attempts: 70 },
+        kpisPrior: { agents: 2, obTotal: 50, obConnected: 35, obConnectRate: 70,
+          obTalkSec: 8000, obAttSec: 229, attempts: 60 },
+        callback: { abandonedTotal: 25, abandonedAnonymous: 5, abandonedTracked: 20,
+          calledBack: 14, calledBackConnected: 9, calledBackPct: 70,
+          medianCallbackSec: 1980, pendingTail: 2 },
+        callbackPrior: { abandonedTracked: 18, calledBack: 11, calledBackPct: 61.1 },
+        daily: [
+          { date: '2026-08-17', tracked: 8, calledBack: 6, ratePct: 75 },
+          { date: '2026-08-18', tracked: 7, calledBack: 5, ratePct: 71.4 },
+          { date: '2026-08-19', tracked: 5, calledBack: 3, ratePct: 60 },
+        ],
+        agents: [
+          { agent: 'Test Agent', dept: 'CSR', obTotal: 40, obConnected: 30,
+            obConnectRate: 75, obTalkSec: 6000, obAttSec: 200, attempts: 45 },
+          { agent: 'Ghost Dialer', dept: 'Unrostered', obTotal: 21, obConnected: 14,
+            obConnectRate: 66.7, obTalkSec: 3120, obAttSec: 223, attempts: 25 },
+        ],
+      };
+    },
+    // F-e: coaching worklist (admin-only until released). Inline fixture --
+    // small and stable; the payload shape itself is pinned server-side by
+    // tests/unit/coaching.test.js.
+    getCoachingWorklist: function (req) {
+      return { available: true, rows: [
+        { id: 'cf-1', department: 'CSR', agent_name: 'Test Agent',
+          window_from: '2026-08-03', window_to: '2026-08-14',
+          rate_pct: 21.4, team_rate_pct: 78.9, team_ratio_pct: 27.1, gap_pts: 57.5,
+          missed: 44, rung: 56, answered: 12, times_flagged: 2, status: 'open',
+          created_at: '2026-08-10 13:00:00', updated_at: '2026-08-17 13:00:00',
+          closed_by: null, closed_at: null, note: null },
+      ], meta: { status: (req && req.status) || 'open',
+        lastRunAt: '2026-08-17T13:00:00.000Z',
+        lastResult: 'ok 1 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — emailed admins',
+        enabled: true,
+        thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 } } };
+    },
+    getOutboundUncalled: function (req) {
+      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          available: true, truncated: false, scope: 'range', tzLabel: 'CST', callbackWindowDays: 3 },
+        calls: [
+          { callDate: '2026-08-19', callId: 'oc-1', cstStart: '10:41:00',
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
+            abandonedOnHold: false, waitSeconds: 95, holdSeconds: null },
+        ] };
+    },
+    updateCoachingFlagStatus: function (req) { return { id: req && req.id, status: req && req.action }; },
+    getCoachingDeliveryStatus: function () {
+      return { installed: true, enabled: true, lastRunAt: '2026-08-17T13:00:00.000Z',
+        lastResult: 'ok 1 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — emailed admins' };
+    },
+    installCoachingDeliveryTrigger: function () { return { installed: true, enabled: true, lastRunAt: null, lastResult: null }; },
+    uninstallCoachingDeliveryTrigger: function () { return { installed: false, enabled: false, lastRunAt: null, lastResult: null }; },
+    runCoachingDeliveryNow: function () {
+      return { result: 'ok 0 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — no email (nothing new) [manual]',
+        newCount: 0, continuingCount: 1, recoveredCount: 0 };
+    },
     // getInboundHeatmap intentionally UNMOCKED: Neon-backed; the panel must
     // hide silently on failure (that IS part of the audit).
     // Its CELL drill is mocked (R16h) -- it backs the heatmap cell list AND
