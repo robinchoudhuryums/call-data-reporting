@@ -175,6 +175,11 @@ function makeFakeSpreadsheet(opts) {
   const ss = {
     getSpreadsheetTimeZone: function () { return tz; },
     getSheetByName: function (name) { return sheetMap[name] || null; },
+    // E1: real Spreadsheet method, modelled not stubbed (the clearContent
+    // discipline) -- ncSurvivingCallLegsDates_ enumerates Call_Legs_* tabs.
+    getSheets: function () {
+      return Object.keys(sheetMap).map(function (n) { return sheetMap[n]; });
+    },
     insertSheet: function (name) {
       const s = makeFakeSheet(name, []);
       s._parent = this;

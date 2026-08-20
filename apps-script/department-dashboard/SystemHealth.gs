@@ -113,6 +113,50 @@ function getSystemHealth(req) {
   // rows, and the deferred `neonMirror:*` drains -- so the admin doesn't have
   // to scan Pipeline Health by eye to know something is currently broken.
   try {
+    // E3: which build is actually serving. deploy.sh stamps BuildStamp.gs at
+    // push time (UTC + git SHA + branch); a bare `clasp push -f` ships the
+    // committed placeholder instead, so "unstamped" is itself information --
+    // the last push bypassed the deploy helper and its CI gates. Always
+    // muted: a manual push is legitimate (the hint says what it means), and
+    // an out-of-date SHA is for the OPERATOR to compare against git -- this
+    // code cannot know what main's head is.
+    try {
+      var stamp = (typeof BUILD_STAMP_ === 'string' && BUILD_STAMP_)
+        ? BUILD_STAMP_ : 'unknown (BuildStamp.gs not in this deployment — pre-E3 push)';
+      add('pipeline', 'build-stamp', 'Deployed build (BuildStamp.gs)', 'muted', stamp,
+        /unstamped|unknown/.test(stamp)
+          ? 'The serving code was last pushed OUTSIDE scripts/deploy.sh, so no CI '
+            + 'gate ran against exactly what went live (TST-7/F-10). Compare '
+            + 'Manage deployments\' timestamp against git before trusting freshness.'
+          : 'Compare the SHA against origin/main to check the deployed version is '
+            + 'current (Operator State #2).');
+    } catch (eStamp) { /* best-effort -- never costs the page */ }
+
+    // E1 (fast half): the Call_Legs retention HORIZON -- which per-day leg
+    // sheets still exist, read from the workbook itself. Everything the
+    // ~14-day prune bounds (the inbound/outbound backfills, the queue-split
+    // backfill #40) is recoverable only for these dates; the neon-part
+    // 'retention-risk' row below cross-references which of them the per-call
+    // tables are actually missing. Sheet-only, so it renders even mid-outage
+    // -- which is precisely when the deadline matters.
+    try {
+      if (typeof ncSurvivingCallLegsDates_ === 'function') {
+        var legs = ncSurvivingCallLegsDates_(openSpreadsheet_());
+        add('pipeline', 'legs-horizon', 'Call_Legs retention horizon', 'muted',
+          legs.length
+            ? legs.length + ' day-sheet(s) alive: ' + legs[0] + ' … ' + legs[legs.length - 1]
+            : 'no Call_Legs_* sheets found',
+          legs.length
+            ? 'These are the ONLY dates the per-call tables (inbound/outbound), '
+              + 'journeys and the queue split (#40) can still be rebuilt from; the '
+              + 'daily prune (#43) removes each ~' + ((typeof NC_RETENTION_DAYS_ !== 'undefined') ? NC_RETENTION_DAYS_ : 14)
+              + ' days after its date. See the retention-risk row for which of them '
+              + 'Neon is missing.'
+            : 'Either a brand-new install (no import yet) or the prune removed '
+              + 'everything -- if an import ran today a sheet should exist; check #43.');
+      }
+    } catch (eLegs) { add('pipeline', 'legs-horizon', 'Call_Legs retention horizon', 'warn', 'probe failed', String(eLegs && eLegs.message || eLegs)); }
+
     var phScan = HEALTH_PIPELINE_SCAN_ROWS;
     var phRows = (typeof readPipelineHealth_ === 'function') ? readPipelineHealth_(phScan) : [];
     if (!phRows || !phRows.length) {
@@ -286,6 +330,53 @@ function getSystemHealth(req) {
         add('neon', 'qcd-mirror-health', 'QCD→Neon mirror', 'muted', 'n/a (Neon unconfigured)');
       }
     } catch (e) { add('neon', 'qcd-mirror-health', 'QCD→Neon mirror', 'warn', 'probe failed', String(e && e.message || e)); }
+    // E1 (neon half): which SURVIVING Call_Legs dates the two no-sheet-primary
+    // tables are missing. Every date listed here becomes PERMANENTLY
+    // unrecoverable on its lastDay -- there is no other source once the sheet
+    // prunes. Rides the shared connection (R21: this block is the page's only
+    // live-Neon payer). An unreachable Neon cannot answer "which dates", so it
+    // warns with the outage playbook instead of guessing.
+    try {
+      if (neonConfigured && typeof ncRetentionRisk_ === 'function'
+          && typeof ncSurvivingCallLegsDates_ === 'function') {
+        var rrLegs = ncSurvivingCallLegsDates_(openSpreadsheet_());
+        if (!rrLegs.length) {
+          add('neon', 'retention-risk', 'Per-call tables vs retention window', 'muted',
+            'no surviving Call_Legs sheets to check');
+        } else if (!sharedNeonConn) {
+          add('neon', 'retention-risk', 'Per-call tables vs retention window', 'warn',
+            'Neon unreachable — cannot tell which surviving dates are unmirrored',
+            'If the outage outlasts the horizon (oldest surviving sheet: ' + rrLegs[0]
+            + '), run backfillInboundCalls + backfillOutboundCalls (cdr-import editor) '
+            + 'the moment Neon returns — dates whose sheet prunes first are gone for good.');
+        } else {
+          var risk = ncRetentionRisk_(sharedNeonConn, rrLegs, function (iso) {
+            try { return (typeof isCompanyHoliday_ === 'function') && isCompanyHoliday_(iso); }
+            catch (e) { return false; }
+          });
+          var atRisk = [];
+          var notes = [];
+          (risk.tables || []).forEach(function (t) {
+            if (t.missingTable) { notes.push(t.table + ': table not created yet'); return; }
+            if (t.error) { notes.push(t.table + ': ' + t.error); return; }
+            t.atRisk.forEach(function (a) { atRisk.push(t.table + ' ' + a.date + ' (until ~' + a.lastDay + ')'); });
+          });
+          if (atRisk.length) {
+            add('neon', 'retention-risk', 'Per-call tables vs retention window', 'warn',
+              atRisk.length + ' surviving date(s) unmirrored: '
+              + atRisk.slice(0, 6).join(', ') + (atRisk.length > 6 ? ' …' : ''),
+              'Run backfillInboundCalls / backfillOutboundCalls (cdr-import editor) '
+              + 'BEFORE the listed last day — when the date\'s Call_Legs sheet prunes '
+              + 'there is no other source (Operator State #40/#43).'
+              + (notes.length ? ' Also: ' + notes.join('; ') + '.' : ''));
+          } else {
+            add('neon', 'retention-risk', 'Per-call tables vs retention window', 'ok',
+              'every surviving Call_Legs date is mirrored'
+              + (notes.length ? ' (' + notes.join('; ') + ')' : ''));
+          }
+        }
+      }
+    } catch (e) { add('neon', 'retention-risk', 'Per-call tables vs retention window', 'warn', 'probe failed', String(e && e.message || e)); }
   } finally {
     if (sharedNeonConn) { try { sharedNeonConn.close(); } catch (ce) {} }
   }

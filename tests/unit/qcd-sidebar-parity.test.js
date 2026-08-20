@@ -28,10 +28,12 @@
 //     the sidebar has its own row-34 predicate, so parity does not hold there
 //     by construction. Pre-existing production discrepancy, recorded as a
 //     follow-on in .cycle/blocks/129-*, deliberately not "fixed" here.
-//   - Fixture rows all sit mid-window (10:00 AM). The two files also disagree
-//     at window EDGES (e.g. the sidebar's row-35 dp2 lacks the pipeline's
-//     start<3PM clause), which this fixture deliberately does not exercise --
-//     same follow-on.
+//   - Most fixture rows sit mid-window (10:00 AM). The Batch-E round fixed
+//     the one confirmed window-EDGE divergence (row 35's dp2/dp3 lacked the
+//     pipeline's start<3PM clause) and Family E's 3:10 PM row now pins it;
+//     rows 36/37 were verified clause-for-clause against the pipeline at the
+//     same time. Other edge shapes remain unexercised -- extend Family E
+//     before assuming one.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -93,6 +95,13 @@ const ROWS = [
   // counters; the pipeline nets row 39 out of row 40 and the sidebar excludes
   // isRow39Match rows -- parity holds only if BOTH do their half.
   raw({ queue: 'a_q_spanish', status: '1', type: 'internal', team: CSR, transfer: true }),
+  // Family E -- a queue whose NAME is on the csr_team range (isCsrQ), feeding
+  // row 35's p2/dp2. The second row is the WINDOW-EDGE case: it STARTS after
+  // 3PM, so the pipeline counts it in neither 35C nor 35D -- but before the
+  // Batch-E dp2 fix the sidebar extracted it for 35D (dp2 lacked start<3PM).
+  raw({ queue: 'a_q_weird', status: '4', type: 'incoming' }),
+  raw({ queue: 'a_q_weird', status: '4', type: 'incoming',
+        start: '12/30/2024 3:10:00 PM', end: '12/30/2024 3:20:00 PM' }),
 ];
 const CLEAN_DATA = [HEADER].concat(ROWS);
 
@@ -122,7 +131,7 @@ function pipelineTargetSS_() {
       return null;   // Steering Number absent -> empty steering set (both sides)
     },
     getRangeByName: function (name) {
-      if (name === 'csr_team') return { getValues: function () { return [['Casey Csr, 201']]; } };
+      if (name === 'csr_team') return { getValues: function () { return [['Casey Csr, 201'], ['A_Q_Weird, 999']]; } };
       return null;   // csr_exceptions absent -> empty set (both sides)
     },
   };
@@ -179,7 +188,7 @@ function sidebarCellJSON_(row, col) {
       return null;
     },
     getRangeByName: function (name) {
-      if (name === 'csr_team') return { getValues: function () { return [['Casey Csr, 201']]; } };
+      if (name === 'csr_team') return { getValues: function () { return [['Casey Csr, 201'], ['A_Q_Weird, 999']]; } };
       return null;
     },
   };
@@ -202,6 +211,8 @@ test('C1: the fixture actually exercises the rules (sanity, not parity)', functi
   assert.ok(cellValue_(4, 3) > 0 && cellValue_(43, 3) > 0, 'DNIS families are dark');
   assert.ok(cellValue_(35, 3) > 0 && cellValue_(36, 3) > 0 && cellValue_(37, 3) > 0,
     'global-exception families are dark');
+  assert.ok(cellValue_(35, 4) > 0,
+    'row 35 col D (the window-edge dp2 family) is dark -- the edge fixture rows are inert');
   assert.ok(cellValue_(39, 3) > 0, 'row-39 netting side is dark');
   assert.ok(cellValue_(40, 3) > 0, 'row-40 family is dark');
 });

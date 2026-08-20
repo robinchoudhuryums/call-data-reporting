@@ -1769,11 +1769,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`inbound:v9:daily:` insurer drill, `inboundHeatmap:v3`) joined it in B1-B5
   after a same-day re-import could leave the drill disagreeing with the
   freshness-tagged row it expands; `agentHist:v1` embeds the latest date
-  directly. **One 6 h key is still unanchored on purpose-ish:**
-  `neonAgentExts:v1` (NeonRead.gs), the derived all-history agent/ext pairs --
-  a new agent's extensions can take up to 6 h to reach the IR floater group +
-  Diagnostics, which is low-impact only because scope is locked to `roster`
-  on every other surface (INV-53). **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  directly; `neonAgentExts:v1` (the derived
+  agent/ext pairs, NeonRead.gs) was the last holdout and joined in the
+  Batch-E round -- every 6 h key now carries an anchor, and
+  cache-version-sync's SPECS tracks them all. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
   serve all day; trade-off: a rare mid-day force re-import's corrections

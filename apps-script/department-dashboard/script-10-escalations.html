@@ -226,6 +226,29 @@
     escRenderSummaryBand_(resp);
     // R11-D1: sidebar status category list (counts from meta.statusCounts).
     escRenderCatMenu_(resp);
+    // E2: read-only outage snapshot. The server sets meta.snapshotAsOf when
+    // it served the stored open-rows snapshot because Neon was unreachable.
+    // Idempotent in-place update (the F10 badge discipline: update or REMOVE
+    // every load, never append-only). textContent only -- no HTML from data.
+    (function () {
+      var note = document.getElementById('esc-snapshot-note');
+      var asOf = resp && resp.meta && resp.meta.snapshotAsOf;
+      if (!asOf) { if (note) note.remove(); return; }
+      if (!note) {
+        note = document.createElement('div');
+        note.id = 'esc-snapshot-note';
+        note.className = 'ds-note';
+        note.setAttribute('role', 'status');
+        listEl.parentNode.insertBefore(note, listEl);
+      }
+      var when = '';
+      try { when = new Date(asOf).toLocaleString(); } catch (e) { when = String(asOf); }
+      note.textContent = '⏸ Read-only snapshot from ' + when
+        + ' — live storage (Neon) is unreachable, so this shows the OPEN items as of then. '
+        + 'Resolved/rejected history is not in the snapshot, and actions '
+        + '(start / resolve / reopen / review) will fail until Neon returns.'
+        + (resp.meta.snapshotTruncated ? ' (Snapshot capped — oldest open items may be missing.)' : '');
+    })();
     if (resp.available === false) {
       escSetFilterCount_('');
       escShowEmpty_('Escalations are temporarily unavailable — the storage (Neon) could not be reached. Try Refresh in a moment.');

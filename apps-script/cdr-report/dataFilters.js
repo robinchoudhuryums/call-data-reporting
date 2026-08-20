@@ -599,8 +599,16 @@ function getExtractionDataJSON() {
       const p1  = startDec > time600AM && startDec < time300PM && endDec < time300PM && isAQ && status === "3" && abandoned === "abandoned" && waitDec > time1Min;
       const p2  = startDec > time600AM && startDec < time300PM && endDec < time330PM && type === "incoming" && status === "4" && isCsrQ;
       const p3  = startDec > time600AM && startDec < time300PM && endDec < time330PM && type === "incoming" && status === "5" && isExcQ;
-      const dp2 = startDec > time600AM && endDec < time330PM   && type === "incoming" && status === "4" && isCsrQ;
-      const dp3 = startDec > time600AM && endDec < time330PM   && type === "incoming" && status === "5" && isExcQ;
+      // Batch-E follow-on (the F1 drift class, at the window EDGE): the
+      // pipeline increments r35_D_p2/D_p3 inside ONE guard block --
+      // `start>6AM && start<3PM && end<3:30PM` -- so its col-D population is
+      // identical to its col-C p2/p3. These dp variants lacked the start<3PM
+      // clause, so a status-4/5 row STARTING after 3PM was extracted here but
+      // never counted in the cell. Pinned by qcd-sidebar-parity.test.js's
+      // edge-time fixture row; keep dp2===p2 and dp3===p3 unless the pipeline
+      // splits its guard again.
+      const dp2 = startDec > time600AM && startDec < time300PM && endDec < time330PM && type === "incoming" && status === "4" && isCsrQ;
+      const dp3 = startDec > time600AM && startDec < time300PM && endDec < time330PM && type === "incoming" && status === "5" && isExcQ;
       const e1  = startDec > time600AM && startDec < time300PM && isAQ && status === "3" && abandoned === "abandoned" && waitDec > time1Min;
 
       if (targetCol === 3 && (p1 || p2 || p3))  includeRow = true;

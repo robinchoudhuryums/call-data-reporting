@@ -320,6 +320,77 @@ function ncNeonMinDate_(conn, table) {
   return d ? String(d).trim() : null;
 }
 
+// ── E1: the Call_Legs retention horizon ─────────────────────────────────
+//
+// Three operator deadlines all hang off the same ~14-day Call_Legs_* prune
+// (Operator State #40 queue-split backfill, #43 the prune itself, and the
+// inbound/outbound backfills after any Neon outage), and each lived only as
+// a note an operator had to remember. These helpers turn them into Health
+// rows: which day-sheets still EXIST (recoverability ground truth -- derived
+// from the workbook, never assumed from a constant) and which of those dates
+// the two no-sheet-primary tables are missing (the dates that become
+// PERMANENTLY unrecoverable when their sheet prunes).
+
+// Mirror of cdr-import's DeleteOldSheets.js::RETENTION_CUTOFF_DAYS -- the
+// INV-06-style cross-project sync obligation. Used ONLY to phrase the
+// deadline ("~last day"); whether a date is recoverable NOW is read from
+// which sheets actually survive, so a drifted copy mis-dates the warning by
+// a few days but can never call a pruned date recoverable.
+var NC_RETENTION_DAYS_ = 14;
+
+/** Sorted ISO dates of the surviving Call_Legs_YYYY-MM-DD sheets. */
+function ncSurvivingCallLegsDates_(ss) {
+  var out = [];
+  try {
+    var sheets = ss.getSheets();
+    for (var i = 0; i < sheets.length; i++) {
+      var m = /^Call_Legs_(\d{4}-\d{2}-\d{2})/.exec(sheets[i].getName());
+      if (m) out.push(m[1]);
+    }
+  } catch (e) { /* best-effort -- an unreadable workbook reports no horizon */ }
+  out.sort();
+  return out;
+}
+
+/**
+ * Which SURVIVING dates each per-call table is missing. For every weekday in
+ * the surviving span with zero rows (holiday-aware, NO capture-start floor --
+ * a pre-capture surviving date is exactly the "backfill it while you still
+ * can" case, Operator State #40's deploy-day step), the date is at risk with
+ * an approximate last-recoverable day of date + NC_RETENTION_DAYS_. A missing
+ * table reports {missingTable:true} (deploy-ahead-of-capture reads as such,
+ * the ncMissingTableError_ discipline), never a throw.
+ */
+function ncRetentionRisk_(conn, survivingDates, holidayFn) {
+  var out = { tables: [] };
+  if (!survivingDates || !survivingDates.length) return out;
+  var fromIso = survivingDates[0];
+  var toIso = survivingDates[survivingDates.length - 1];
+  var survive = {};
+  survivingDates.forEach(function (d) { survive[d] = true; });
+  ['inbound_calls', 'outbound_calls'].forEach(function (table) {
+    var entry = { table: table, atRisk: [] };
+    try {
+      var counts = ncNeonDateCounts_(conn, table, fromIso, toIso);
+      var gaps = ncExpectedWeekdayGaps_(fromIso, toIso, counts, null, holidayFn);
+      gaps.forEach(function (iso) {
+        if (!survive[iso]) return;   // no sheet left -> not "at risk", already gone
+        var p = iso.split('-');
+        var last = new Date(+p[0], +p[1] - 1, +p[2], 12);
+        last.setDate(last.getDate() + NC_RETENTION_DAYS_);
+        entry.atRisk.push({ date: iso,
+          lastDay: last.getFullYear() + '-' + ('0' + (last.getMonth() + 1)).slice(-2)
+                 + '-' + ('0' + last.getDate()).slice(-2) });
+      });
+    } catch (e) {
+      entry.missingTable = ncMissingTableError_(e && e.message ? e.message : String(e));
+      entry.error = entry.missingTable ? null : String(e && e.message || e);
+    }
+    out.tables.push(entry);
+  });
+  return out;
+}
+
 // ── Outcome recording + email ───────────────────────────────────────────
 
 function ncRecord_(result) {

@@ -160,7 +160,13 @@ function neonGetMinDqeDate_() {
  */
 function neonGetAgentExtPairs_() {
   var cache = CacheService.getScriptCache();
-  var KEY = 'neonAgentExts:v1';
+  // Follow-on to B2/B5: the LAST 6 h key without the freshness anchor. A new
+  // agent's first ingest changes this derived set, and an unanchored key made
+  // their extensions take up to 6 h to reach the IR floater group +
+  // Diagnostics. typeof-guarded like every cross-file call in this file; the
+  // 'na' fallback is reportFreshnessTag_'s own documented failure value.
+  var KEY = 'neonAgentExts:v1:'
+    + ((typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na');
   var hit = cache.get(KEY);
   if (hit) { try { return JSON.parse(hit); } catch (e) { /* recompute */ } }
   var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader

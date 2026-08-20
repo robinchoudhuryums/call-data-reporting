@@ -3422,3 +3422,50 @@ went green and auto-merge landed it). Batch C then shipped (783/783, +4):
 flow. Doc updates queued for /sync-docs: the test-suite roll + the Extraction
 Sidebar bullet's "the rest of the row rules are not [pinned]" clause, now
 partly stale in the good direction.
+
+## Increment 130 (2026-08-20) — Follow-ons + Batch E (resilience & capacity)
+
+Shipped on the batch-C branch (810/810, +27; INV-16 green; the FULL rendered-UI
+gate run locally with playwright — 164+ checks, all stages passed — against the
+script-10 change). Full block: `.cycle/blocks/130-follow-ons-batch-e-broad-implement.md`.
+
+1. **FO-1** — `neonAgentExts:v1` (the LAST unanchored 6 h key) joined
+   reportFreshnessTag_ + the version-sync SPECS; the CLAUDE.md clause naming
+   it as the exception now says "every 6 h key carries an anchor" — true for
+   the first time.
+2. **FO-2** — the row-35 window-edge divergence FIXED (sidebar dp2/dp3 gained
+   the pipeline's start<3PM clause; rows 36/37 verified clause-for-clause
+   clean at the same time) + pinned by an edge-time parity fixture row.
+3. **FO-3** — dashboardCDR.js has its first tests ever: 6 on the pure
+   aggregation helpers incl. the totals row's recompute-not-sum Rate/ATT.
+   The 480-line core stays a follow-on (needs the C1 fixture treatment).
+4. **E1 — retention-horizon monitor.** `ncSurvivingCallLegsDates_` +
+   `ncRetentionRisk_` (NeonCoverage.gs) + two Health rows: 'legs-horizon'
+   (FAST, sheet-only — renders mid-outage, when it matters) and
+   'retention-risk' (neon part, shared conn) listing the SURVIVING dates the
+   per-call tables are missing, each with its ~last recoverable day. Neon
+   unreachable → the row IS the Sep 1 runbook, naming the oldest surviving
+   sheet. NC_RETENTION_DAYS_ mirrors cdr-import's RETENTION_CUTOFF_DAYS
+   (sync obligation — recoverability itself is derived from real sheets).
+5. **E2 — escalations outage snapshot.** getEscalations stores open rows in
+   chunked Script Properties (age-gated refresh, torn-write-safe) and serves
+   them viewer-scoped with meta.snapshotAsOf when Neon is unreachable (both
+   the no-conn path and mid-query death); client renders a read-only banner.
+   WRITES UNTOUCHED (INV-55) — a snapshot can't drift while the only writer
+   is down, which is why this doesn't contradict the no-sheet-twins ruling.
+   Note: protects the NEXT outage — nothing to serve until Neon returns once.
+6. **E3 — build stamp.** deploy.sh stamps BuildStamp.gs (UTC+sha+branch) at
+   push, trap-restores the committed placeholder; a bare clasp push ships
+   "unstamped", which is itself the finding. Health 'build-stamp' row, always
+   muted.
+
+**NOT implemented, deliberately:** the row-34 three-way incoherence — still
+awaiting the OWNER'S RULING on what row 34 means (block 129 has the full
+write-up). AbandonedFilter's >0:00:59 stays documented-deliberate.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries Batch C increment 129 + this). NO PR opened yet — batches C + this
+one go in a single PR when the owner says. /sync-docs queued: six items in
+block 130 (System Health bullet's 3 new rows, test-suite roll ×3, the
+Extraction Sidebar bullet's now-stale "not pinned" clause, op-state #43
+sync obligation + escalations snapshot, README deploy stamp, INV-55 note).
