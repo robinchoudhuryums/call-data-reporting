@@ -202,6 +202,67 @@ function sidebarCellJSON_(row, col) {
 const PARITY_ROWS = [3, 4, 5, 6, 13, 35, 36, 37, 39, 40, 43];
 const COUNT_COLS = [3, 4, 5];
 
+// ── The row-34 overlap PROBE (owner request 2026-08-20) ─────────────────────
+// countRow34OverlapRows_ measures whether the internal+status-3 abandon shape
+// — the one call shape rows 35 AND 37 both claim, which row 34's ruled sum
+// would count twice — occurs in real data. The probe's predicates are copies;
+// the second test pins them BEHAVIORALLY to calcQcdReport's own counters so
+// a pipeline rule edit that isn't mirrored into the probe fails here.
+
+function probeRow_(o) {
+  const r = new Array(30).fill('');
+  r[1] = o.status; r[2] = o.start; r[4] = o.end; r[5] = o.type;
+  r[7] = o.wait; r[11] = o.queue; r[24] = o.abandoned || '';
+  return r;
+}
+const PROBE_HEADER_ = new Array(30).fill('h');
+const PROBE_ROWS_ = [
+  // THE overlap shape: internal + status 3, abandoned > 1m, A_Q_, in window.
+  probeRow_({ status: '3', type: 'internal', queue: 'A_Q_CSR', abandoned: 'Abandoned',
+              wait: '0:02:00', start: '6/1/2026 10:00:00 AM', end: '6/1/2026 10:05:00 AM' }),
+  // Row-35-only (status 3 but not internal).
+  probeRow_({ status: '3', type: 'incoming', queue: 'A_Q_CSR', abandoned: 'Abandoned',
+              wait: '0:02:00', start: '6/1/2026 10:00:00 AM', end: '6/1/2026 10:05:00 AM' }),
+  // Row-37-only (internal but not status 3).
+  probeRow_({ status: '1', type: 'internal', queue: 'A_Q_Intake', abandoned: 'Abandoned',
+              wait: '0:02:00', start: '6/1/2026 11:00:00 AM', end: '6/1/2026 11:04:00 AM' }),
+  // Overlap shape but END past 3 PM: row 35's E still counts it (no end
+  // clause), row 37's does not — so it is NOT a double count.
+  probeRow_({ status: '3', type: 'internal', queue: 'A_Q_CSR', abandoned: 'Abandoned',
+              wait: '0:02:00', start: '6/1/2026 2:50:00 PM', end: '6/1/2026 3:10:00 PM' }),
+  // Under the 1-minute wait floor — counted by neither.
+  probeRow_({ status: '3', type: 'internal', queue: 'A_Q_CSR', abandoned: 'Abandoned',
+              wait: '0:00:30', start: '6/1/2026 10:00:00 AM', end: '6/1/2026 10:01:00 AM' }),
+  // Out of window — counted by neither.
+  probeRow_({ status: '3', type: 'internal', queue: 'A_Q_CSR', abandoned: 'Abandoned',
+              wait: '0:02:00', start: '6/1/2026 4:00:00 PM', end: '6/1/2026 4:05:00 PM' }),
+];
+
+test('probe: countRow34OverlapRows_ counts exactly the shape both rows claim', function () {
+  const c = JSON.parse(JSON.stringify(
+    hPipe.fn('countRow34OverlapRows_')([PROBE_HEADER_].concat(PROBE_ROWS_))));
+  assert.equal(c.r35E1m, 3, 'overlap + status3-incoming + late-end');
+  assert.equal(c.r37E1m, 2, 'overlap + internal-status1');
+  assert.equal(c.overlapE, 1, 'ONLY the internal+status-3 in-window shape double-counts');
+  assert.equal(c.cOverlapMax, 1);
+});
+
+test('probe: its per-row counters agree with calcQcdReport\'s OWN row 35/37 E cells on the same fixture', function () {
+  const data = [PROBE_HEADER_].concat(PROBE_ROWS_);
+  const c = JSON.parse(JSON.stringify(hPipe.fn('countRow34OverlapRows_')(data)));
+  const po = hPipe.fn('calcQcdReport')(data, pipelineTargetSS_());
+  assert.equal(c.r35E1m, Number(po.output[35 - 2][5 - 3]) || 0,
+    'probe r35E1m must equal the pipeline\'s written row-35 E cell');
+  assert.equal(c.r37E1m, Number(po.output[37 - 2][5 - 3]) || 0,
+    'probe r37E1m must equal the pipeline\'s written row-37 E cell');
+  // And the ruled row-34 sum overstates by exactly overlapE on this fixture:
+  const r34E = Number(po.output[34 - 2][5 - 3]) || 0;
+  const r36E = Number(po.output[36 - 2][5 - 3]) || 0;
+  assert.equal(r34E, c.r35E1m + r36E + c.r37E1m);
+  assert.equal(r34E - (c.r35E1m + r36E + c.r37E1m - c.overlapE), c.overlapE,
+    'the double count IS the overlap — what previewRow34Overlap reports');
+});
+
 test('C1: row 34 REFUSES as a total row (owner ruling 2026-08-20 — sum of 35-37, like 2/7/10)', function () {
   const res = sidebarCellJSON_(34, 5);
   assert.ok(res.error && /total row/i.test(res.error),

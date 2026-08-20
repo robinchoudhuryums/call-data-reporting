@@ -3583,3 +3583,42 @@ ruling; the flat multi-home-label table dodges it honestly).
 (carries increments 129–133). NO PR — not requested. /sync-docs queue
 updated in block 133 (row-34 sidebar clause now RESOLVED wording; INV-30
 outboundReport is v2; plus the earlier queued items from 131/132).
+
+## Increment 134 (2026-08-20) — Three owner rulings: Option C, row-34 probe, dashboardCDR core coverage
+
+**Block:** `.cycle/blocks/134-owner-rulings-probe-cdr-core-broad-implement.md`
+
+1. **Option C RULED** — Outbound company view stays the flat table (per-dept
+   cards rejected: crossover agents force double-count or misattribution).
+   Ruling comment at the render site; the block-133 follow-on is CLOSED.
+2. **Row-34 probe** — `previewRow34Overlap` (cdr-import, CDR Tools menu,
+   READ-ONLY) counts the internal+status-3 double-count shape per surviving
+   Call_Legs date with a plain verdict line. Pure core
+   `countRow34OverlapRows_` is pinned BEHAVIORALLY: its r35/r37 counters must
+   equal calcQcdReport's own written row 35/37 E cells on a shared fixture.
+   OPERATOR: run it once after the cdr-import deploy; zero ⇒ close the
+   known-issues double-count note as latent-only.
+3. **dashboardCDR core coverage RESOLVED** — new dashboard-cdr-core.test.js
+   (9 tests, local recording fake — deliberately not a loosening of the
+   shared strict harness) drives generateCustomReportCore_ end to end:
+   header shapes both modes, list-multiplier aggregation, F-11 display-read
+   TTT (junk values grid + display strings), exact-dept match, D-3 contacts
+   neutralization, D-6 alerts, diagnostics panel, chart counts.
+   **The suite immediately EXPOSED A REAL BUG and it is FIXED**: the T-7
+   full-height panel clear wiped fresh report columns whenever a report was
+   WIDER than the previous run's remembered panel column (narrow run →
+   comparison run lost TTT(P)/ATT(C)/ATT(P) — the REP-1 clipping class
+   reintroduced). Fix splits the clear (strip above the report always;
+   full height only for old-panel columns beyond the render clear's reach);
+   both directions pinned (wide-report survival + the original T-7
+   stale-panel wipe).
+
+Tests 847/847 (+11). INV-16 green. New follow-on noted: agent NAMES bypass
+crSheetSafeCell_ in the table col A + diagnostics subtotals (contacts-only
+D-3 coverage) — 3-site one-liner when taken.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(increments 129–134). NO PR — not requested. Deploys owed: cdr-import
+(probe), cdr-report (clipping fix). /sync-docs queue grows: probe as the
+row-34 resolution instrument; dashboard-cdr-core in the rolls; block-130's
+"480-line core stays a follow-on" clause resolved.

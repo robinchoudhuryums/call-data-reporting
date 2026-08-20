@@ -713,7 +713,7 @@ function generateCustomReportCore_() {
   buildPieCharts(dashSheet, headerRow, tableRows, tableHeaders, cats, chartAnchorRow, useComp);
 
   // ── 12. Diagnostics Panel ───────────────────────────────────
-  writeDiagnostics(dashSheet, diag, cats, agents, start1, end1);
+  writeDiagnostics(dashSheet, diag, cats, agents, start1, end1, tableHeaders.length);
 
   // ── Done ─────────────────────────────────────────────────────
   dashSheet.getRange('B8').setValue('▶  GENERATE REPORT').setFontColor(THEME.primary);
@@ -844,7 +844,7 @@ function buildPieCharts(sheet, headerRow, tableRows, tableHeaders, cats, anchorR
    DIAGNOSTICS
    ═══════════════════════════════════════════ */
 
-function writeDiagnostics(dashSheet, diag, cats, agents, start1, end1) {
+function writeDiagnostics(dashSheet, diag, cats, agents, start1, end1, reportWidth) {
   // REP-1: the panel FLOATS to the right of the rendered report instead of
   // sitting at a fixed col L -- comparison-mode / 3+-category reports are
   // >= 15 columns wide, so the fixed L-N clear+write wiped report cells
@@ -858,13 +858,32 @@ function writeDiagnostics(dashSheet, diag, cats, agents, start1, end1) {
   const props = PropertiesService.getScriptProperties();
   const prevCol = parseInt(props.getProperty('CRB_DIAG_COL') || String(DIAG_COL), 10);
   if (prevCol >= 1) {
-    // T-7: clear the previous panel's FULL height, not just rows 1..11. The
-    // render step's 40-col clear was assumed to wipe rows >= REPORT_ANCHOR_ROW,
-    // but a wide (4-category, ~45-col) report parks the panel past col 47 --
-    // a later, narrower run's 40-col clear never reaches it, stranding a
-    // stale detail/agent-subtotal panel to the right of the fresh report.
-    const prevRows = Math.max(REPORT_ANCHOR_ROW - 1, dashSheet.getLastRow());
-    dashSheet.getRange(1, prevCol, prevRows, 3).clearContent().clearFormat();
+    // T-7: clear the previous panel's FULL height, not just rows 1..11 -- a
+    // wide (4-category, ~45-col) report parks the panel past col 47, where a
+    // later narrower run's render clear never reaches, stranding a stale
+    // panel. BUT (found by dashboard-cdr-core.test.js, 2026-08-20): the
+    // full-height clear runs AFTER step 7 renders the fresh table, so when
+    // the new report is WIDER than the remembered panel column (a narrow run
+    // followed by a comparison run), it wiped the fresh report's cells at
+    // prevCol..prevCol+2 -- the exact REP-1 clipping class, reintroduced.
+    // Split the clear: the strip ABOVE the report (rows 1..11) is always
+    // ours to clear; below that, the render step's own clear
+    // (max(45, width+1) cols from REPORT_ANCHOR_ROW down) already wiped the
+    // old panel wherever it can reach, so only the old-panel COLUMNS BEYOND
+    // that clear still need the full-height wipe -- and since the render
+    // clear is always at least width+1 wide, those columns are provably
+    // outside the fresh report (a panel straddling the boundary gets only
+    // its beyond-the-edge columns cleared).
+    const renderClearCols = Math.max(45, (reportWidth || 0) + 1);   // mirrors step 7
+    const stripRows = REPORT_ANCHOR_ROW - 1;
+    dashSheet.getRange(1, prevCol, stripRows, 3).clearContent().clearFormat();
+    const belowStart = Math.max(prevCol, renderClearCols + 1);
+    if (belowStart <= prevCol + 2) {
+      const lastR = Math.max(REPORT_ANCHOR_ROW, dashSheet.getLastRow());
+      dashSheet.getRange(REPORT_ANCHOR_ROW, belowStart,
+        lastR - REPORT_ANCHOR_ROW + 1, prevCol + 3 - belowStart)
+        .clearContent().clearFormat();
+    }
   }
   const col = Math.max(DIAG_COL, dashSheet.getLastColumn() + 2);
   crEnsureCols_(dashSheet, col + 2);   // D-1: the panel writes 3 cols at `col`

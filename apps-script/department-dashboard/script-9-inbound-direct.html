@@ -1800,6 +1800,13 @@
       note.textContent = bits.join(' ');
     }
 
+    // OWNER RULING (2026-08-20, Option C): the company view stays this FLAT
+    // table — deliberately NOT the Direct report's per-dept cards (R11-C5).
+    // Outbound has no queue/dept dimension, so a crossover agent (two roster
+    // homes) would force cards to either double-count them (one card per
+    // home) or misattribute (pick a primary); the flat table's multi-home
+    // "Roster dept" label dodges both honestly. Don't "upgrade" this to
+    // cards without a new ruling.
     const tb = $('outbound-agent-tbody');
     if (tb) {
       srtApply_('outbound-agent-tbody', agents, function (sorted) {
