@@ -1284,6 +1284,38 @@ only if name-pair curation proves burdensome.
 
 ---
 
+## QCDR Output row 34: three surfaces, three meanings (found 2026-08-20, AWAITING OWNER RULING)
+
+Found while building the sidebar/pipeline parity suite (`qcd-sidebar-parity.test.js`,
+Batch C). Row 34 of the **QCDR Output** sheet (CDR Report ss) — the parent row of
+the global-exception block (rows 35–37) — means a different thing to each of the
+three surfaces that touch it:
+
+1. **The pipeline computes `r34_abnd1m` / `r34_abnd2m`** (autoImport.js:
+   abandons >1min/>2min on `A_Q_CSR`/`A_Q_Intake`, non-steering, 6AM–3PM
+   start) — **and writes them nowhere**. Dead counters.
+2. **The sheet's row 34 C/D/E** = the `totalRowMap` SUM of rows 35+36+37 —
+   which can **double-count**: an internal, status-3 abandon >1min lands in
+   both row 35's E (`r35_E_1m`: status 3, any type) and row 37's E
+   (`r37_E_1m`: internal, any status), so the sum counts that call twice.
+3. **The Extraction Sidebar's row-34 rule** (dataFilters.js) extracts the
+   *dead counters'* population — distinct abandons, each once — which matches
+   neither the sum nor a refusal (row 34 is absent from the sidebar's
+   total-row refusal list, unlike 2, 7, 10, …), so drilling it returns rows
+   that do not reconcile with the cell.
+
+The shape suggests row 34 once displayed the `r34` number directly and was later
+converted to a total row without retiring the counters or the sidebar rule.
+
+**Pending decision (owner):** should A34 mean (a) the sum of its three child
+rows — then the sidebar should refuse it as a total row and the dead counters
+get deleted — or (b) distinct qualifying abandons (the dead counters' / the
+sidebar's definition) — then the pipeline's row-34 write changes and the
+sidebar rule is already right? The live sheet's A34/B34 label likely says which
+was intended. Until ruled, the parity suite EXCLUDES row 34 (its scope note
+says so) and nothing should "fix" either side speculatively — the R20 lesson
+is that a one-sided change here is worse than the standing discrepancy.
+
 ## QCD Report engine
 
 **Sheet:** `QCD Historical Data` (12 cols), written daily by the

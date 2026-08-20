@@ -146,7 +146,13 @@ bash scripts/check-duplicated-files.sh
 # alert-recipients (B-5: ALL-sentinel managers receive every dept's alert),
 # agent-role / agent-home (the fourth role: the Phase A deny wall +
 # resolution, and the agent app's endpoints incl. the wait join, history
-# rollups, and the no-teammate-identity payload pin), and company-overview
+# rollups, and the no-teammate-identity payload pin), qcd-sidebar-parity (the
+# Extraction Sidebar and calcQcdReport driven from ONE fixture -- sidebar
+# row count === pipeline cell value, the behavioral F1 guard),
+# escalations-snapshot (the E2 outage cache: chunked store, torn-write
+# safety, viewer-scoped serve), dashboard-cdr-helpers (dashboardCDR's pure
+# aggregation helpers incl. the totals row's recompute-not-sum Rate/ATT),
+# and company-overview
 # (getCompanyOverview END-TO-END: the off-mode Phase 0 double-count parity,
 # the dept-mode crossover partition, no cross-dept leak on the shared row
 # array, and the all-queue company hero invariance).
@@ -176,7 +182,11 @@ node --test          # from repo root (or: npm test)
 # callable until deleted by hand in the web editor. The check pulls the project
 # into a temp dir and lists remote files with no local counterpart. It WARNS by
 # default (an orphan is no reason to block an urgent fix) and skips cleanly when
-# clasp can't authenticate; STRICT_ORPHANS=1 makes it fatal. Standalone:
+# clasp can't authenticate; STRICT_ORPHANS=1 makes it fatal. E3: a dashboard
+# push also STAMPS BuildStamp.gs (UTC + git sha + branch; the committed
+# placeholder is trap-restored after) -- the Health page's build-stamp row
+# renders it, and a bare `clasp push -f` ships "unstamped", which is itself
+# the finding. Standalone:
 #   node scripts/check-remote-orphans.mjs <project-dir>
 scripts/deploy.sh .                      <dashboard-deployment-id>
 scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
@@ -647,9 +657,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   too.** The R20 row-40 threshold landed in the pipeline only, so the sidebar
   listed rows the pipeline no longer counts -- the tool an operator reaches for
   when they already suspect the numbers told them the pipeline was
-  under-counting. That specific threshold is pinned by
-  `cross-file-pins.test.js` ("R20 row-40"); the rest of the row rules are not,
-  so diff both files when you touch either.
+  under-counting. That threshold is pinned by
+  `cross-file-pins.test.js` ("R20 row-40"), and since Batch C the row rules
+  are pinned BEHAVIORALLY by `qcd-sidebar-parity.test.js` (one shared fixture
+  drives both implementations; sidebar row count must equal the pipeline's
+  cell value) -- with two honest exclusions: row 34 (a pre-existing three-way
+  incoherence awaiting an owner ruling, see docs/known-issues.md "QCDR Output
+  row 34") and window-edge shapes beyond the fixed row-35 one. Still diff
+  both files when you touch either; the suite tells you WHICH cell drifted.
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
@@ -1504,10 +1519,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **System Health "Recent pipeline step failures" is the single trustworthy
   pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
   `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- it must never be
-  NARROWER than the Overview banner's window (LM1), because the same eviction
-  that made the banner false-WARN at 40 makes THIS row a false ALL-CLEAR: an
-  evicted step drops out of the scan entirely and reads as healthy. Its OK text
-  therefore states the window it measured, not an unqualified all-clear. It
+  NARROWER than the Overview banner's window (LM1): the same eviction that
+  made the banner false-WARN at 40 makes THIS row a false ALL-CLEAR (an
+  evicted step reads as healthy), so its OK text states the window measured. It
   flags a step ONLY when its MOST RECENT outcome is
   `failure` (a step that failed then RECOVERED -- latest row `success` -- is
   NOT flagged, so it never cries wolf about a fixed blip, the OPS-8/M1 lesson).
@@ -1540,7 +1554,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   look healthy to every other probe on this page: a Neon that has spent its
   monthly transfer is still reachable, and an exhausted MailApp quota just
   stops sending. Read the Neon figure as a FLOOR (it counts our payloads, not
-  the wire).
+  the wire). Batch E added `build-stamp` (deploy.sh stamps
+  BuildStamp.gs at push; "unstamped" = the push bypassed the deploy helper's
+  CI gates, #2), `legs-horizon` (surviving Call_Legs_* dates; sheet-only, so
+  it renders mid-outage) and `retention-risk` (surviving dates the per-call
+  tables are missing, each with its ~last recoverable day; warns with the
+  backfill playbook when Neon is unreachable, #40/#43).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Four engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -2354,7 +2373,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
