@@ -148,9 +148,17 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
           cacheHit: false, computeMs: 12 },
         kpis: { agents: 2, obTotal: 61, obConnected: 44, obConnectRate: 72.1,
           obTalkSec: 9120, obAttSec: 207, attempts: 70 },
+        kpisPrior: { agents: 2, obTotal: 50, obConnected: 35, obConnectRate: 70,
+          obTalkSec: 8000, obAttSec: 229, attempts: 60 },
         callback: { abandonedTotal: 25, abandonedAnonymous: 5, abandonedTracked: 20,
           calledBack: 14, calledBackConnected: 9, calledBackPct: 70,
-          medianCallbackSec: 1980 },
+          medianCallbackSec: 1980, pendingTail: 2 },
+        callbackPrior: { abandonedTracked: 18, calledBack: 11, calledBackPct: 61.1 },
+        daily: [
+          { date: '2026-08-17', tracked: 8, calledBack: 6, ratePct: 75 },
+          { date: '2026-08-18', tracked: 7, calledBack: 5, ratePct: 71.4 },
+          { date: '2026-08-19', tracked: 5, calledBack: 3, ratePct: 60 },
+        ],
         agents: [
           { agent: 'Test Agent', dept: 'CSR', obTotal: 40, obConnected: 30,
             obConnectRate: 75, obTalkSec: 6000, obAttSec: 200, attempts: 45 },
@@ -175,6 +183,16 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
         lastResult: 'ok 1 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — emailed admins',
         enabled: true,
         thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 } } };
+    },
+    getOutboundUncalled: function (req) {
+      return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || null, companyView: !(req && req.department),
+          available: true, truncated: false, scope: 'range', tzLabel: 'CST', callbackWindowDays: 3 },
+        calls: [
+          { callDate: '2026-08-19', callId: 'oc-1', cstStart: '10:41:00',
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', abandonStage: 'queue',
+            abandonedOnHold: false, waitSeconds: 95, holdSeconds: null },
+        ] };
     },
     updateCoachingFlagStatus: function (req) { return { id: req && req.id, status: req && req.action }; },
     getCoachingDeliveryStatus: function () {

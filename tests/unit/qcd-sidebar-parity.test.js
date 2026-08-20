@@ -23,14 +23,11 @@
 //     (global exception), 39/40 (the R20 pair, incl. the row-39 netting), over
 //     count cols C/D/E. Col G (avg wait) is a MEAN, not a count, and col F
 //     (max) is not drillable -- neither can equal a row count.
-//   - Row 34 is EXCLUDED: the pipeline's r34_abnd1m/2m counters are written
-//     NOWHERE (totalRowMap overwrites row 34 as the SUM of rows 35-37) while
-//     the sidebar has its own row-34 predicate, so parity does not hold there
-//     by construction. RULED 2026-08-20 (owner): row 34 IS the total row —
-//     sum semantics. Follow-on code fix (sidebar refuses 34 as a total row +
-//     dead counters deleted) is recorded in docs/known-issues.md "QCDR Output
-//     row 34"; once it lands, this exclusion becomes "34 is a total row like
-//     2/7/10" rather than a discrepancy.
+//   - Row 34 is a TOTAL row (owner ruling 2026-08-20: the "CSR Total Calls"
+//     sum of rows 35-37) -- the fix landed: the sidebar refuses it like
+//     2/7/10 (pinned below) and the pipeline's dead r34_abnd1m/2m counters
+//     were deleted. History of the three-way incoherence:
+//     docs/known-issues.md "QCDR Output row 34".
 //   - Most fixture rows sit mid-window (10:00 AM). The Batch-E round fixed
 //     the one confirmed window-EDGE divergence (row 35's dp2/dp3 lacked the
 //     pipeline's start<3PM clause) and Family E's 3:10 PM row now pins it;
@@ -201,9 +198,16 @@ function sidebarCellJSON_(row, col) {
 // ── The parity property ─────────────────────────────────────────────────────
 
 // Every directly-written, drillable count cell. See the scope note up top for
-// why row 34 and cols F/G are absent.
+// why row 34 (a total row) and cols F/G are absent.
 const PARITY_ROWS = [3, 4, 5, 6, 13, 35, 36, 37, 39, 40, 43];
 const COUNT_COLS = [3, 4, 5];
+
+test('C1: row 34 REFUSES as a total row (owner ruling 2026-08-20 — sum of 35-37, like 2/7/10)', function () {
+  const res = sidebarCellJSON_(34, 5);
+  assert.ok(res.error && /total row/i.test(res.error),
+    'row 34 must refuse with the total-row message, got: '
+    + (res.rows ? (res.rows.length + ' extracted row(s)') : res.error));
+});
 
 test('C1: the fixture actually exercises the rules (sanity, not parity)', function () {
   // If a refactor of either file made everything zero, 33 vacuous 0===0

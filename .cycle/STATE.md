@@ -3548,3 +3548,38 @@ company cards.
 (carries increments 129–132). NO PR — not requested. /sync-docs queued (see
 block 132): the outbound bullet's "sole consumer: Caller Lookup" clause is
 now stale, INV-30 gains outboundReport:v1, test-suite rolls.
+
+## Increment 133 (2026-08-20) — Follow-ons: row-34 code fix + Outbound v2
+
+**Block:** `.cycle/blocks/133-follow-ons-outbound-row34-broad-implement.md`
+
+1. **Row-34 fix landed** (the ruling's direction (a), both files together):
+   dataFilters.js refuses row 34 as a total row (predicate removed, 34 out of
+   isGlobalExcRow); autoImport.js's dead r34 counters deleted (totalRowMap's
+   sum — the ruled meaning — untouched, sheet output byte-identical);
+   qcd-sidebar-parity pins the refusal; known-issues entry marked APPLIED.
+2. **Outbound report v2** (prefix bump v1→v2, INV-30):
+   - CORRECTNESS: the abandon denominator now excludes is_internal rows —
+     v1 missed the clause every inbound metric query carries, so internal
+     test calls inflated the callback denominators. Factored into
+     outboundAbandonWhere_, used by report + daily + prior + drill alike.
+   - pendingTail (tracked abandons still inside the 3-day window) as a real
+     count on the Called-back tile; per-day callback series + safeChart_
+     line chart (THEME, datalabels off, <2 days hidden); INV-28
+     kpisPrior/callbackPrior via computePriorWindow_ with the prior agents
+     routed through the SAME roster filter; getOutboundUncalled — the
+     not-called-back drill (same lateral so it can't disagree with the KPI,
+     cap 200, no caller identity, rows reuse heatCellDetailHtml_ + the
+     "↳ path" journey chips).
+   - The window-clause pin upgraded to the count-based every-FROM pattern
+     in the new file (the inbound-window-scope guard is file-scoped).
+
+Tests 836/836 (+7); INV-16 green; full ci:ui gate green. Per-dept company
+cards for Outbound STILL deferred — now with the stated design blocker
+(crossover agents have multiple roster homes; grouping needs an owner
+ruling; the flat multi-home-label table dodges it honestly).
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129–133). NO PR — not requested. /sync-docs queue
+updated in block 133 (row-34 sidebar clause now RESOLVED wording; INV-30
+outboundReport is v2; plus the earlier queued items from 131/132).

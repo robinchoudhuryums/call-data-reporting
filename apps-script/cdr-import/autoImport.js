@@ -2884,7 +2884,10 @@ function calcQcdReport(cleanData, targetSS) {
   const time600AM = 6 / 24, time630AM = 6.5 / 24, time300PM = 15 / 24, time330PM = 15.5 / 24;
   const time1Min = 1 / 1440, time2Min = 2 / 1440, time20Sec = 20 / 86400;  
 
-  let r34_abnd1m = 0, r34_abnd2m = 0;
+  // (The old r34_abnd1m/r34_abnd2m counters were DELETED per the 2026-08-20
+  // owner ruling: row 34 is the "CSR Total Calls" total row, written by the
+  // totalRowMap sum of rows 35-37 below -- the counters were computed and
+  // written nowhere. See docs/known-issues.md "QCDR Output row 34".)
   let r35_C_p1 = 0, r35_C_p2 = 0, r35_C_p3 = 0, r35_D_p2 = 0, r35_D_p3 = 0, r35_E_1m = 0, r35_E_2m = 0, r35_F_max = -1, r35_F_orig = null, r35_G_sum = 0, r35_G_count = 0;
   let r36_C_p1 = 0, r36_C_p2 = 0, r36_C_p3 = 0, r36_D_p2 = 0, r36_D_p3 = 0, r36_E_2m = 0, r36_F_max = -1, r36_F_orig = null, r36_G_sum = 0, r36_G_count = 0;
   let r37_C_p1 = 0, r37_C_p3 = 0, r37_E_1m = 0, r37_E_2m = 0, r37_F_max = -1, r37_F_orig = null, r37_G_sum = 0, r37_G_count = 0;
@@ -2989,13 +2992,6 @@ function calcQcdReport(cleanData, targetSS) {
           if (abandoned === "abandoned" && waitDec > time1Min) r40_tot4++;
           if (abandoned === "abandoned" && waitDec > time1Min) r40_tot6++;
         }
-      }
-    }
-
-    if (startDec > time600AM && startDec < time300PM) {
-      if (abandoned === "abandoned" && !steeringSet.has(team) && isAQ) {
-        if (waitDec > time1Min) r34_abnd1m++;
-        if (waitDec > time2Min) r34_abnd2m++;
       }
     }
 

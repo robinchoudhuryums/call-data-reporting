@@ -1639,6 +1639,8 @@
     if (back) back.addEventListener('click', outboundShowForm);
     const csv = $('outbound-csv-btn');
     if (csv) csv.addEventListener('click', outboundDownloadCsv_);
+    const unc = $('outbound-uncalled-btn');
+    if (unc) unc.addEventListener('click', outboundLoadUncalled_);
   }
 
   function outboundShowForm()    { $('outbound-form').style.display = ''; $('outbound-results').style.display = 'none'; outboundSetError(''); }
@@ -1738,31 +1740,50 @@
       return;
     }
 
+    // v2 (R11-M): delta chips vs the INV-28 prior window. More outbound
+    // activity = good; a higher callback rate = good.
     const k = (data && data.kpis) || {};
+    const kp = (data && data.kpisPrior) || null;
+    const cbp = (data && data.callbackPrior) || null;
     const kpiRow = $('outbound-kpi-row');
     if (kpiRow) kpiRow.innerHTML = [
       inboundKpiTile_('Agents', fmtNumber(k.agents), 'with outbound calls', ''),
-      inboundKpiTile_('OB calls', fmtNumber(k.obTotal), fmtNumber(k.attempts) + ' dial attempts', ''),
+      inboundKpiTile_('OB calls', fmtNumber(k.obTotal), fmtNumber(k.attempts) + ' dial attempts',
+        kp ? inboundDelta_(k.obTotal, kp.obTotal, 'pos', false) : ''),
       inboundKpiTile_('Connected', fmtNumber(k.obConnected),
-        k.obConnectRate != null ? (k.obConnectRate + '% of calls') : '', ''),
+        k.obConnectRate != null ? (k.obConnectRate + '% of calls') : '',
+        (kp && k.obConnectRate != null && kp.obConnectRate != null)
+          ? inboundDelta_(k.obConnectRate, kp.obConnectRate, 'pos', true) : ''),
       inboundKpiTile_('Talk time', fmtDuration(k.obTalkSec), 'ATT ' + fmtDuration(k.obAttSec) + ' per connected', ''),
     ].join('');
 
-    // Callback block ("did we call back the ones who abandoned?").
+    // Callback block ("did we call back the ones who abandoned?"). The
+    // pending tail is a COUNT, not a caption guess: tracked abandons still
+    // inside the callback window that could yet be called back.
     const cbRow = $('outbound-callback-kpis');
     if (cbRow) cbRow.innerHTML = [
       inboundKpiTile_('Abandoned', fmtNumber(cb.abandonedTotal),
         fmtNumber(cb.abandonedAnonymous) + ' anonymous (untrackable)', ''),
       inboundKpiTile_('Called back', fmtNumber(cb.calledBack),
-        'of ' + fmtNumber(cb.abandonedTracked) + ' trackable', ''),
+        'of ' + fmtNumber(cb.abandonedTracked) + ' trackable'
+        + (cb.pendingTail ? ' · ' + fmtNumber(cb.pendingTail) + ' still in window' : ''), ''),
       inboundKpiTile_('Callback rate', cb.calledBackPct != null ? cb.calledBackPct + '%' : '—',
-        fmtNumber(cb.calledBackConnected) + ' actually connected', ''),
+        fmtNumber(cb.calledBackConnected) + ' actually connected',
+        (cbp && cb.calledBackPct != null && cbp.calledBackPct != null)
+          ? inboundDelta_(cb.calledBackPct, cbp.calledBackPct, 'pos', true) : ''),
       inboundKpiTile_('Median time to callback',
         cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
         'first dial after the abandon', ''),
     ].join('');
     const winEl = $('outbound-cb-window');
     if (winEl) winEl.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
+
+    outboundRenderCbChart_((data && data.daily) || []);
+    // Reset the drill panel on every fresh render (scope may have changed).
+    const uncList = $('outbound-uncalled-list');
+    if (uncList) { uncList.style.display = 'none'; uncList.innerHTML = ''; }
+    const uncStatus = $('outbound-uncalled-status');
+    if (uncStatus) uncStatus.textContent = '';
 
     // Attribution disclosure (the roster-dept caveat, quantified).
     const note = $('outbound-attribution-note');
@@ -1802,6 +1823,101 @@
       + '</tr>';
   }
 
+  // v2: daily callback-rate line (safeChart_ per the chart-callsite rule;
+  // THEME colors per INV-42; per-chart datalabels OFF -- a dense daily line
+  // makes labels unreadable, the Overview-trend precedent).
+  var outboundCbChart_ = null;
+  function outboundRenderCbChart_(daily) {
+    const wrap = $('outbound-cb-chart-wrap');
+    const canvas = $('outbound-cb-chart');
+    if (!wrap || !canvas) return;
+    if (outboundCbChart_) { try { outboundCbChart_.destroy(); } catch (e) {} outboundCbChart_ = null; }
+    const pts = (daily || []).filter(function (d) { return d.ratePct != null; });
+    if (pts.length < 2) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    outboundCbChart_ = safeChart_(canvas, {
+      type: 'line',
+      data: {
+        labels: pts.map(function (d) { return d.date; }),
+        datasets: [{
+          label: 'Callback rate %',
+          data: pts.map(function (d) { return d.ratePct; }),
+          borderColor: THEME.accent,
+          backgroundColor: THEME.accent,
+          tension: 0.25,
+          pointRadius: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          datalabels: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) {
+                const d = pts[ctx.dataIndex] || {};
+                return d.calledBack + ' of ' + d.tracked + ' tracked abandons called back ('
+                  + (d.ratePct != null ? d.ratePct : '—') + '%)';
+              },
+            },
+          },
+        },
+        scales: {
+          y: { min: 0, max: 100, ticks: { color: THEME.muted, callback: function (v) { return v + '%'; } }, grid: { color: THEME.line } },
+          x: { ticks: { color: THEME.muted, maxTicksLimit: 10 }, grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  // v2: the not-called-back drill. Reuses the heatmap cell drill's renderer
+  // (heatCellDetailHtml_) so rows carry the same stage tick + facts + "↳
+  // path" journey chip; initClipboardOnce arms the delegated handler.
+  function outboundLoadUncalled_() {
+    const btn = $('outbound-uncalled-btn');
+    const list = $('outbound-uncalled-list');
+    const status = $('outbound-uncalled-status');
+    if (!btn || !list) return;
+    const meta = (outboundLastData && outboundLastData.meta) || {};
+    if (!meta.from) return;
+    // Second click toggles the open list closed.
+    if (list.style.display !== 'none' && list.innerHTML) {
+      list.style.display = 'none'; list.innerHTML = '';
+      if (status) status.textContent = '';
+      return;
+    }
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Loading…';
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        btn.disabled = false; btn.textContent = prev;
+        initClipboardOnce();
+        // Empty here is GOOD news — heatCellDetailHtml_'s generic empty
+        // message ("no abandoned calls recorded") would misread it.
+        const isEmpty = resp && (resp.calls || []).length === 0
+          && (!resp.meta || resp.meta.available !== false);
+        list.innerHTML = isEmpty
+          ? '<div class="ds-note">Every trackable abandoned caller in this range was called back within '
+            + escapeHtml(String((resp.meta && resp.meta.callbackWindowDays) || 3)) + ' days.</div>'
+          : heatCellDetailHtml_(resp, 'Not called back');
+        list.style.display = '';
+        if (status) {
+          const m = (resp && resp.meta) || {};
+          status.textContent = m.available === false ? ''
+            : ((resp.calls || []).length + ' call(s)'
+              + (m.truncated ? ' (newest ' + (resp.calls || []).length + ' shown)' : ''));
+        }
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      })
+      .getOutboundUncalled({ from: meta.from, to: meta.to,
+        department: meta.companyView ? '' : (meta.department || '') });
+  }
+
   function outboundDownloadCsv_() {
     if (!outboundLastData || (outboundLastData.meta || {}).available === false) return;
     const d = outboundLastData;
@@ -1819,7 +1935,8 @@
     lines.push(row(['Abandoned', cb.abandonedTotal, 'Anonymous', cb.abandonedAnonymous,
       'Called back', cb.calledBack, 'Connected', cb.calledBackConnected,
       'Callback %', cb.calledBackPct != null ? cb.calledBackPct : '',
-      'Median callback sec', cb.medianCallbackSec != null ? cb.medianCallbackSec : '']));
+      'Median callback sec', cb.medianCallbackSec != null ? cb.medianCallbackSec : '',
+      'Still in window', cb.pendingTail != null ? cb.pendingTail : '']));
     lines.push('');
     lines.push(row(['Agent', 'Roster dept', 'OB calls', 'Connected', 'Connect %',
       'Talk sec', 'ATT sec', 'Attempts']));

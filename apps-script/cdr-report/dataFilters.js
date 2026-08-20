@@ -387,7 +387,12 @@ function getExtractionDataJSON() {
   const targetCol   = activeCell.getColumn();
   const targetValue = String(activeCell.getValue()).trim();
 
-  const totalRows = [2, 7, 10, 14, 17, 20, 23, 27, 31, 38, 41, 44, 47];
+  // Row 34 joined this list per the 2026-08-20 owner ruling: it is the "CSR
+  // Total Calls" row -- the totalRowMap SUM of rows 35-37 -- so drilling it
+  // must refuse like every other total row. Its old extraction predicate
+  // (distinct qualifying abandons) matched a DIFFERENT population than the
+  // sum and was removed; see docs/known-issues.md "QCDR Output row 34".
+  const totalRows = [2, 7, 10, 14, 17, 20, 23, 27, 31, 34, 38, 41, 44, 47];
   if (totalRows.includes(targetRow)) {
     return JSON.stringify({ error: "This is a total row. Select a child metric row to drill into." });
   }
@@ -457,7 +462,7 @@ function getExtractionDataJSON() {
   const isChildRow     = Object.keys(parentMap).map(Number).includes(targetRow);
   const isStat3Row     = [13, 26, 30].includes(targetRow);
   const isDnisRow      = [4, 43].includes(targetRow);
-  const isGlobalExcRow = [34, 35, 36, 37, 40].includes(targetRow);
+  const isGlobalExcRow = [35, 36, 37, 40].includes(targetRow);   // 34 refuses as a total row (owner ruling)
 
   // --- Parsing helpers (must stay in sync with CDR Pipeline v31) ---
   function simulateSplitCol2(val) {
@@ -589,12 +594,9 @@ function getExtractionDataJSON() {
       }
     }
 
-    // Global exception rows
-    if (targetRow === 34 && startDec > time600AM && startDec < time300PM &&
-        abandoned === "abandoned" && !steeringSet.has(team) && isAQ) {
-      if (targetCol === 5 && waitDec > time1Min) includeRow = true;
-    }
-
+    // Global exception rows. (Row 34 has NO rule here on purpose: it is the
+    // total row over 35-37 -- owner ruling 2026-08-20 -- and is refused at
+    // the top with the other totalRows.)
     if (targetRow === 35) {
       const p1  = startDec > time600AM && startDec < time300PM && endDec < time300PM && isAQ && status === "3" && abandoned === "abandoned" && waitDec > time1Min;
       const p2  = startDec > time600AM && startDec < time300PM && endDec < time330PM && type === "incoming" && status === "4" && isCsrQ;

@@ -2180,9 +2180,19 @@
               distinguish no-answer / voicemail / busy on the unconnected side, so
               &ldquo;connected&rdquo; is the stricter subset. Callbacks count no matter which
               agent or department dialed. Anonymous abandons (no caller ID) cannot be
-              tracked and are excluded from the callback rate. The newest abandons in
-              the range may legitimately still be awaiting their callback.
+              tracked and are excluded from the callback rate.
             </p>
+            <!-- v2: daily callback-rate trend (safeChart_; hidden under 2 days). -->
+            <div id="outbound-cb-chart-wrap" style="display:none; max-width:100%;">
+              <canvas id="outbound-cb-chart" height="110"></canvas>
+            </div>
+            <!-- v2: the not-called-back drill (rows reuse the heatmap cell
+                 drill renderer incl. the "↳ path" journey chips). -->
+            <div class="esc-resolve-actions">
+              <button class="btn btn-secondary" id="outbound-uncalled-btn" type="button">List not-called-back calls</button>
+              <span id="outbound-uncalled-status" class="al-hint"></span>
+            </div>
+            <div id="outbound-uncalled-list" style="display:none;"></div>
           </div>
           <div class="al-section" id="outbound-agent-section">
             <div class="al-section-title">Per-agent outbound activity</div>

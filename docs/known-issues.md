@@ -1309,16 +1309,15 @@ converted to a total row without retiring the counters or the sidebar rule.
 
 **Owner ruling (2026-08-20): direction (a) — row 34 is the "CSR Total Calls"
 row, the SUM of its block (total calls, answered calls, avg ans time, etc.).**
-The `totalRowMap` sum is the intended meaning. Follow-on code fix (not yet
-applied): add row 34 to the sidebar's total-row refusal list and remove its
-row-34 extraction rule; delete the dead `r34_abnd1m`/`r34_abnd2m` counters
-from the pipeline (autoImport.js — INV-16-adjacent: the sidebar copy of the
-rules lives in dataFilters.js, so it's a two-file edit). The known
+The `totalRowMap` sum is the intended meaning. **Code fix APPLIED
+(2026-08-20, same day):** row 34 joined the sidebar's total-row refusal list
+and its extraction rule was removed (dataFilters.js); the dead
+`r34_abnd1m`/`r34_abnd2m` counters were deleted from the pipeline
+(autoImport.js). `qcd-sidebar-parity.test.js` pins the refusal. The known
 double-count in the 35+37 sum (an internal, status-3 abandon >1min lands in
 both children) is now a property of the RULED definition — surface it to the
 owner separately if the total is ever used for a decision; do not "fix" it
-unilaterally. Until the code fix lands, the parity suite still EXCLUDES row
-34 (its scope note points here).
+unilaterally.
 
 ## QCD Report engine
 

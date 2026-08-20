@@ -54,13 +54,21 @@
  */
 
 // v1: initial -- callback KPIs + per-agent activity + roster attribution.
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v1';
+// v2 (follow-ons): abandon denominator EXCLUDES is_internal rows (v1 missed
+// the clause every inbound metric query carries, so its "exactly the Inbound
+// report's Abandoned population" claim was slightly off); adds
+// callback.pendingTail (tracked, un-called-back abandons still inside the
+// callback window as of today), the per-day `daily` series, and the INV-28
+// prior-window blocks kpisPrior / callbackPrior (R11-M delta chips).
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v2';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
 // abandon answered on Monday). Also the reason the report's newest abandons
 // can legitimately still be pending -- the client captions that.
 const OUTBOUND_CALLBACK_WINDOW_DAYS = 3;
+// Cap on the not-called-back drill list (the heatmap cell drill's cap class).
+const OUTBOUND_UNCALLED_MAX = 200;
 
 /**
  * Shared request gate -- mirrors directCallResolveRequest_ /
@@ -121,11 +129,14 @@ function emptyOutboundReport_(scope) {
       agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null,
       obTalkSec: 0, obAttSec: 0, attempts: 0,
     },
+    kpisPrior: null,      // v2 (R11-M): prior-window activity, roster-filtered like kpis
     callback: {
       abandonedTotal: 0, abandonedAnonymous: 0, abandonedTracked: 0,
       calledBack: 0, calledBackConnected: 0, calledBackPct: null,
-      medianCallbackSec: null,
+      medianCallbackSec: null, pendingTail: 0,
     },
+    callbackPrior: null,  // v2: prior-window callback rate for the delta chip
+    daily: [],            // v2: per-day {date, tracked, calledBack, ratePct}
     agents: [],
   };
 }
@@ -158,6 +169,19 @@ function getOutboundReport(req) {
   return data;
 }
 
+/**
+ * The abandon-denominator WHERE for a date range: disposition + range +
+ * work-window (owner ruling) + is_internal exclusion (every inbound metric
+ * query carries it) + the shared dept predicate.
+ */
+function outboundAbandonWhere_(scope, deptQueues, fromIso, toIso) {
+  return "c.disposition = 'abandoned'"
+    + " AND c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date"
+    + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
+    + ' AND ' + inboundWindowClause_(true)
+    + inboundDeptPredicate_(scope.dept, deptQueues);
+}
+
 function computeOutboundReport_(scope) {
   const from = scope.from, to = scope.to;
   const empty = emptyOutboundReport_(scope);
@@ -167,15 +191,17 @@ function computeOutboundReport_(scope) {
     if (!conn) { empty.meta.available = false; return empty; }
 
     // from/to are validated ISO. The abandon side reuses the Inbound report's
-    // dept-attribution predicate + work-window clause verbatim, so the
+    // dept-attribution predicate + work-window clause verbatim -- AND (v2)
+    // the is_internal exclusion every inbound METRIC query carries -- so the
     // callback denominator is EXACTLY the Inbound report's Abandoned
-    // population for the same scope -- the two reports must never disagree on
+    // population for the same scope: the two reports must never disagree on
     // what an abandon is.
     const deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
-    const abandonWhere = "c.disposition = 'abandoned'"
-      + " AND c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date"
-      + ' AND ' + inboundWindowClause_(true)
-      + inboundDeptPredicate_(scope.dept, deptQueues);
+    const abandonWhere = outboundAbandonWhere_(scope, deptQueues, from, to);
+    // v2: INV-28 prior window (working-day count) for the delta chips.
+    // typeof-guarded: computePriorWindow_ lives in Data.gs.
+    const pw = (typeof computePriorWindow_ === 'function') ? computePriorWindow_(from, to) : null;
+    const priorAbandonWhere = pw ? outboundAbandonWhere_(scope, deptQueues, pw.from, pw.to) : null;
 
     // Timestamps: call_start is raw-PST 'HH:MM:SS' text on BOTH tables (the
     // shared INV-18 storage convention), so cross-table ordering needs no TZ
@@ -198,28 +224,53 @@ function computeOutboundReport_(scope) {
       +   "ORDER BY o.call_date, COALESCE(o.call_start,'00:00:00') LIMIT 1"
       + ') cb ON true';
 
-    // NOTE: the agents sub-select groups by agent_name ONLY and never touches
+    // NOTE: the agents sub-selects group by agent_name ONLY and never touch
     // outbound_calls.department (the raw CDR org label) -- roster attribution
     // happens below, dashboard-side. The callback match is likewise
     // deliberately NOT limited to the report window's `to` (a last-day
     // abandon's callback may land after it) nor to the scoped dept's agents.
+    const agentsSel = function (f, t) {
+      return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
+        + 'SELECT agent_name AS agent, count(*) AS ob_total, '
+        +   'count(*) FILTER (WHERE connected) AS ob_connected, '
+        +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
+        +   'COALESCE(sum(attempts),0) AS attempts '
+        + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
+        + 'GROUP BY agent_name) t)';
+    };
+    const callbackSel = function (where, withDetail) {
+      return "(SELECT json_build_object("
+        + "'abandonedTotal', count(*), "
+        + "'abandonedAnonymous', count(*) FILTER (WHERE c.caller_hash IS NULL), "
+        + "'calledBack', count(*) FILTER (WHERE cb.delay_sec IS NOT NULL), "
+        + "'calledBackConnected', count(*) FILTER (WHERE cb.connected)"
+        + (withDetail
+          ? (", 'medianCallbackSec', percentile_cont(0.5) WITHIN GROUP (ORDER BY cb.delay_sec) "
+            + 'FILTER (WHERE cb.delay_sec IS NOT NULL AND cb.delay_sec >= 0)'
+            // pendingTail: tracked, un-called-back abandons still INSIDE the
+            // callback window as of today -- "not called back YET", not a
+            // verdict. Client renders it as a count, not a caption guess.
+            + ", 'pendingTail', count(*) FILTER (WHERE c.caller_hash IS NOT NULL "
+            +   'AND cb.delay_sec IS NULL '
+            +   'AND c.call_date > current_date - ' + OUTBOUND_CALLBACK_WINDOW_DAYS + ')')
+          : '')
+        + ') FROM inbound_calls c ' + cbLateral + ' WHERE ' + where + ')';
+    };
     const sql =
       'SELECT json_build_object('
-      +   "'agents', (SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
-      +       'SELECT agent_name AS agent, count(*) AS ob_total, '
-      +         'count(*) FILTER (WHERE connected) AS ob_connected, '
-      +         'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
-      +         'COALESCE(sum(attempts),0) AS attempts '
-      +       "FROM outbound_calls o WHERE o.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date "
-      +       'GROUP BY agent_name) t), '
-      +   "'callback', (SELECT json_build_object("
-      +       "'abandonedTotal', count(*), "
-      +       "'abandonedAnonymous', count(*) FILTER (WHERE c.caller_hash IS NULL), "
-      +       "'calledBack', count(*) FILTER (WHERE cb.delay_sec IS NOT NULL), "
-      +       "'calledBackConnected', count(*) FILTER (WHERE cb.connected), "
-      +       "'medianCallbackSec', percentile_cont(0.5) WITHIN GROUP (ORDER BY cb.delay_sec) "
-      +         'FILTER (WHERE cb.delay_sec IS NOT NULL AND cb.delay_sec >= 0)'
-      +     ') FROM inbound_calls c ' + cbLateral + ' WHERE ' + abandonWhere + '), '
+      +   "'agents', " + agentsSel(from, to) + ', '
+      +   "'callback', " + callbackSel(abandonWhere, true) + ', '
+      // v2: per-day callback series (tracked vs called back), same join.
+      +   "'callbackDaily', (SELECT COALESCE(json_agg(t3 ORDER BY t3.d), '[]') FROM ("
+      +       'SELECT c.call_date::text AS d, '
+      +         'count(*) FILTER (WHERE c.caller_hash IS NOT NULL) AS tracked, '
+      +         'count(*) FILTER (WHERE cb.delay_sec IS NOT NULL) AS called_back '
+      +       'FROM inbound_calls c ' + cbLateral + ' WHERE ' + abandonWhere
+      +       ' GROUP BY c.call_date) t3), '
+      + (pw
+        ? ("'agentsPrior', " + agentsSel(pw.from, pw.to) + ', '
+          + "'callbackPrior', " + callbackSel(priorAbandonWhere, false) + ', ')
+        : '')
       +   "'coverageStart', (SELECT MIN(call_date)::text FROM outbound_calls)"
       + ')::text AS j';
 
@@ -250,46 +301,81 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
   const out = emptyOutboundReport_(scope);
   out.meta.coverageStart = obj.coverageStart || null;
 
-  let unrostered = 0, offRoster = 0;
-  const agents = [];
-  (obj.agents || []).forEach(function (r) {
-    const name = String(r.agent || '');
-    const homes = deptsByAgent[name] || [];
-    if (!homes.length) unrostered++;
-    if (!scope.companyView) {
-      // Dept view: ONLY agents on THIS dept's roster (the caveat: never the
-      // raw CDR org label). Off-roster/unrostered dialers are counted for
-      // the disclosure caption, not silently dropped.
-      if (homes.indexOf(scope.dept) === -1) { offRoster++; return; }
-    }
-    const obTotal = Number(r.ob_total) || 0;
-    const obConnected = Number(r.ob_connected) || 0;
-    const obTalkSec = Number(r.ob_talk_sec) || 0;
-    agents.push({
-      agent: name,
-      dept: homes.length ? homes.join(', ') : 'Unrostered',
-      obTotal: obTotal,
-      obConnected: obConnected,
-      obConnectRate: obTotal ? Math.round(obConnected / obTotal * 1000) / 10 : null,
-      obTalkSec: obTalkSec,
-      obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
-      attempts: Number(r.attempts) || 0,
+  // Roster-filter + shape one raw agent list (the same rules serve the
+  // current AND the prior window, so the delta chips compare like with
+  // like). `counts` receives the disclosure tallies for the CURRENT list.
+  const shapeAgents = function (raw, counts) {
+    const list = [];
+    (raw || []).forEach(function (r) {
+      const name = String(r.agent || '');
+      const homes = deptsByAgent[name] || [];
+      if (counts && !homes.length) counts.unrostered++;
+      if (!scope.companyView) {
+        // Dept view: ONLY agents on THIS dept's roster (the caveat: never
+        // the raw CDR org label). Off-roster/unrostered dialers are counted
+        // for the disclosure caption, not silently dropped.
+        if (homes.indexOf(scope.dept) === -1) { if (counts) counts.offRoster++; return; }
+      }
+      const obTotal = Number(r.ob_total) || 0;
+      const obConnected = Number(r.ob_connected) || 0;
+      const obTalkSec = Number(r.ob_talk_sec) || 0;
+      list.push({
+        agent: name,
+        dept: homes.length ? homes.join(', ') : 'Unrostered',
+        obTotal: obTotal,
+        obConnected: obConnected,
+        obConnectRate: obTotal ? Math.round(obConnected / obTotal * 1000) / 10 : null,
+        obTalkSec: obTalkSec,
+        obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
+        attempts: Number(r.attempts) || 0,
+      });
     });
-  });
-  out.agents = agents;
-  out.meta.unrosteredAgents = unrostered;
-  out.meta.offRosterAgents = offRoster;
+    return list;
+  };
+  const sumKpis = function (list) {
+    const k = { agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null,
+                obTalkSec: 0, obAttSec: 0, attempts: 0 };
+    list.forEach(function (a) {
+      k.agents++;
+      k.obTotal += a.obTotal; k.obConnected += a.obConnected;
+      k.obTalkSec += a.obTalkSec; k.attempts += a.attempts;
+    });
+    k.obConnectRate = k.obTotal ? Math.round(k.obConnected / k.obTotal * 1000) / 10 : null;
+    k.obAttSec = k.obConnected ? Math.round(k.obTalkSec / k.obConnected) : 0;
+    return k;
+  };
 
+  const counts = { unrostered: 0, offRoster: 0 };
+  const agents = shapeAgents(obj.agents, counts);
+  out.agents = agents;
+  out.meta.unrosteredAgents = counts.unrostered;
+  out.meta.offRosterAgents = counts.offRoster;
   // Scope KPIs sum EXACTLY the rows shown (dept view = roster-filtered), so
   // every number reconciles against the table beneath it.
-  const k = out.kpis;
-  agents.forEach(function (a) {
-    k.agents++;
-    k.obTotal += a.obTotal; k.obConnected += a.obConnected;
-    k.obTalkSec += a.obTalkSec; k.attempts += a.attempts;
+  out.kpis = sumKpis(agents);
+
+  // v2 (R11-M): prior-window activity through the SAME roster filter.
+  if (obj.agentsPrior) out.kpisPrior = sumKpis(shapeAgents(obj.agentsPrior, null));
+
+  // v2: per-day callback series (chart + anything else that wants the trend).
+  out.daily = (obj.callbackDaily || []).map(function (d) {
+    const tracked = Number(d.tracked) || 0;
+    const calledBack = Number(d.called_back) || 0;
+    return { date: String(d.d || ''), tracked: tracked, calledBack: calledBack,
+             ratePct: tracked ? Math.round(calledBack / tracked * 1000) / 10 : null };
   });
-  k.obConnectRate = k.obTotal ? Math.round(k.obConnected / k.obTotal * 1000) / 10 : null;
-  k.obAttSec = k.obConnected ? Math.round(k.obTalkSec / k.obConnected) : 0;
+
+  // v2: prior-window callback rate for the delta chip (tracked denominator,
+  // same rule as the current window).
+  if (obj.callbackPrior) {
+    const p = obj.callbackPrior;
+    const pTracked = (Number(p.abandonedTotal) || 0) - (Number(p.abandonedAnonymous) || 0);
+    out.callbackPrior = {
+      abandonedTracked: pTracked,
+      calledBack: Number(p.calledBack) || 0,
+      calledBackPct: pTracked ? Math.round((Number(p.calledBack) || 0) / pTracked * 1000) / 10 : null,
+    };
+  }
 
   const cbRaw = obj.callback || {};
   const cb = out.callback;
@@ -305,5 +391,107 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
     ? Math.round(cb.calledBack / cb.abandonedTracked * 1000) / 10 : null;
   cb.medianCallbackSec = (cbRaw.medianCallbackSec == null)
     ? null : Math.round(Number(cbRaw.medianCallbackSec));
+  cb.pendingTail = Number(cbRaw.pendingTail) || 0;   // v2
   return out;
+}
+
+/**
+ * v2 (follow-on #2): the NOT-called-back drill list -- the per-call rows
+ * behind the callback KPIs. Tracked abandons (caller hash present) in the
+ * scope with NO matching outbound inside the callback window, newest first,
+ * capped at OUTBOUND_UNCALLED_MAX (meta.truncated). Row shape matches
+ * getInboundHeatmapCell's `calls` (the client reuses heatCellDetailHtml_,
+ * incl. the "↳ path" journey chip -> getCallJourney). NO caller identity in
+ * the response (no hash, no number). Uncached -- per-list, cheap, and an
+ * unavailable payload must not pin. Same admin-only vetting gate as the
+ * report (outboundResolveRequest_).
+ */
+function getOutboundUncalled(req) {
+  const scope = outboundResolveRequest_(req);
+  const out = {
+    meta: {
+      from: scope.from, to: scope.to, available: true,
+      department: scope.dept || null, companyView: scope.companyView,
+      truncated: false, scope: 'range', tzLabel: 'CST',
+      callbackWindowDays: OUTBOUND_CALLBACK_WINDOW_DAYS,
+    },
+    calls: [],
+  };
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) { out.meta.available = false; return out; }
+
+    const deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
+    const where = outboundAbandonWhere_(scope, deptQueues, scope.from, scope.to)
+      + ' AND c.caller_hash IS NOT NULL AND cb.delay_sec IS NULL';
+    // Same lateral as the report so "not called back" here can never disagree
+    // with the KPI above it.
+    const cbLateral =
+      'LEFT JOIN LATERAL ('
+      +   'SELECT EXTRACT(EPOCH FROM ('
+      +     "(o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval)"
+      +     " - (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval)"
+      +   ')) AS delay_sec '
+      +   'FROM outbound_calls o '
+      +   'WHERE o.callee_hash = c.caller_hash '
+      +     'AND o.call_date >= c.call_date '
+      +     'AND o.call_date <= c.call_date + ' + OUTBOUND_CALLBACK_WINDOW_DAYS + ' '
+      +     "AND (o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval)"
+      +       " >= (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval) "
+      +   "ORDER BY o.call_date, COALESCE(o.call_start,'00:00:00') LIMIT 1"
+      + ') cb ON true';
+    // CST display time: the heatmap cell drill's shift convention (INV-18;
+    // call_start is stored raw PST). Rows with no parseable call_start keep
+    // a blank cst_start rather than being dropped -- they are still
+    // un-called-back abandons.
+    const cstStart = "(CASE WHEN c.call_start ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' "
+      + "THEN to_char((c.call_start)::time + interval '" + INBOUND_HEATMAP_CST_SHIFT_HOURS
+      + " hours', 'HH24:MI:SS') ELSE '' END)";
+    const sql =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + 'SELECT c.call_date::text AS call_date, c.call_id, '
+      +   cstStart + ' AS cst_start, '
+      +   'c.entry_queue, c.final_queue, c.abandon_stage, c.abandoned_on_hold, '
+      +   'c.wait_seconds, c.hold_seconds '
+      + 'FROM inbound_calls c ' + cbLateral + ' '
+      + 'WHERE ' + where + ' '
+      + "ORDER BY c.call_date DESC, c.call_start DESC NULLS LAST "
+      + 'LIMIT ' + (OUTBOUND_UNCALLED_MAX + 1)
+      + ') t';
+
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : null;
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    rs.close(); stmt.close();
+    if (json == null) { out.meta.available = false; return out; }
+
+    let arr = JSON.parse(json);
+    if (!Array.isArray(arr)) arr = [];
+    if (arr.length > OUTBOUND_UNCALLED_MAX) {
+      out.meta.truncated = true;
+      arr = arr.slice(0, OUTBOUND_UNCALLED_MAX);
+    }
+    out.calls = arr.map(function (c) {
+      return {
+        callDate: String(c.call_date || ''),
+        callId: String(c.call_id || ''),
+        cstStart: String(c.cst_start || ''),
+        entryQueue: c.entry_queue || null,
+        finalQueue: c.final_queue || null,
+        abandonStage: c.abandon_stage || null,
+        abandonedOnHold: !!c.abandoned_on_hold,
+        waitSeconds: c.wait_seconds == null ? null : Number(c.wait_seconds),
+        holdSeconds: c.hold_seconds == null ? null : Number(c.hold_seconds),
+      };
+    });
+    return out;
+  } catch (e) {
+    Logger.log('getOutboundUncalled failed (best-effort): ' + (e && e.message ? e.message : e));
+    out.meta.available = false;
+    return out;
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
 }

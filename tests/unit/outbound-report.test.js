@@ -117,10 +117,15 @@ function runCompute_(dept, blob) {
 
 test('outbound SQL: the abandon side reuses the Inbound dept predicate AND the work-window clause', function () {
   const r = runCompute_('CSR');
-  // Work-window scope (owner ruling): the one `FROM inbound_calls c` carries it.
-  assert.equal(r.sql.split('FROM inbound_calls c').length - 1, 1);
-  assert.match(r.sql, /c\.call_start IS NULL OR \(c\.call_start >= '06:30:00' AND c\.call_start < '15:00:00'\)/,
-    'the abandon denominator is work-window-scoped like every dept-facing inbound figure');
+  // Work-window scope (owner ruling), the inbound-window-scope pattern:
+  // EVERY `FROM inbound_calls c` sub-select (callback + the v2 daily series)
+  // must carry the clause — a new sub-select without it silently widens.
+  const froms = r.sql.split('FROM inbound_calls c').length - 1;
+  const windowed = r.sql.split(
+    "c.call_start IS NULL OR (c.call_start >= '06:30:00' AND c.call_start < '15:00:00')").length - 1;
+  assert.ok(froms >= 2, 'callback + daily both scan inbound_calls');
+  assert.equal(windowed, froms,
+    'every dept-facing FROM inbound_calls c must be window-scoped — found ' + windowed + '/' + froms);
   // Dept attribution via the shared predicate: RAW alias (a_q_csr) included,
   // lower-cased — so the callback denominator is EXACTLY the Inbound
   // report's Abandoned population for the same scope.
@@ -200,6 +205,118 @@ test('outbound shaping: zero tracked abandons → null rate (never NaN/Infinity)
 });
 
 // ── Failure modes ───────────────────────────────────────────────────────────
+
+// ── v2 follow-ons ───────────────────────────────────────────────────────────
+
+test('outbound v2: the abandon denominator EXCLUDES is_internal rows (the inbound metric-query rule v1 missed)', function () {
+  const r = runCompute_('CSR');
+  assert.match(r.sql, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
+});
+
+test('outbound v2: pendingTail counts tracked, un-called-back abandons still inside the window', function () {
+  const r = runCompute_('CSR');
+  assert.match(r.sql,
+    /'pendingTail', count\(\*\) FILTER \(WHERE c\.caller_hash IS NOT NULL AND cb\.delay_sec IS NULL AND c\.call_date > current_date - 3\)/);
+});
+
+test('outbound v2: the daily series groups the SAME join by call_date (chart can never disagree with the KPI)', function () {
+  const r = runCompute_('CSR');
+  assert.match(r.sql, /'callbackDaily',[\s\S]*GROUP BY c\.call_date/);
+  const shaped = runCompute_('CSR', Object.assign({}, BLOB_, {
+    callbackDaily: [
+      { d: '2026-08-18', tracked: 8, called_back: 6 },
+      { d: '2026-08-19', tracked: 0, called_back: 0 },
+    ],
+  })).out;
+  assert.deepEqual(shaped.daily, [
+    { date: '2026-08-18', tracked: 8, calledBack: 6, ratePct: 75 },
+    { date: '2026-08-19', tracked: 0, calledBack: 0, ratePct: null },
+  ], 'a zero-tracked day carries null, never NaN');
+});
+
+test('outbound v2: prior-window blocks appear when computePriorWindow_ exists, and route through the SAME roster filter', function () {
+  h.ctx.computePriorWindow_ = function () { return { from: '2026-07-14', to: '2026-08-01' }; };
+  try {
+    const blob = Object.assign({}, BLOB_, {
+      agentsPrior: [
+        { agent: 'Ann',   ob_total: 20, ob_connected: 10, ob_talk_sec: 2000, attempts: 22 },
+        { agent: 'Bob',   ob_total: 99, ob_connected: 99, ob_talk_sec: 9999, attempts: 99 },
+        { agent: 'Ghost', ob_total: 50, ob_connected: 50, ob_talk_sec: 5000, attempts: 50 },
+      ],
+      callbackPrior: { abandonedTotal: 20, abandonedAnonymous: 2, calledBack: 9 },
+    });
+    const r = runCompute_('CSR', blob);
+    assert.match(r.sql, /'agentsPrior'/);
+    assert.match(r.sql, /'callbackPrior'/);
+    assert.match(r.sql, /2026-07-14/);
+    // Prior KPIs exclude Bob (Sales roster) and Ghost (unrostered) exactly
+    // like the current window — the delta chips compare like with like.
+    assert.equal(r.out.kpisPrior.obTotal, 20);
+    assert.equal(r.out.kpisPrior.agents, 1);
+    assert.equal(r.out.callbackPrior.abandonedTracked, 18);
+    assert.equal(r.out.callbackPrior.calledBackPct, 50);
+  } finally {
+    delete h.ctx.computePriorWindow_;
+  }
+});
+
+test('outbound v2: without computePriorWindow_ (or prior data) the prior blocks are null — no chip, no crash', function () {
+  const r = runCompute_('CSR');
+  assert.ok(!/agentsPrior/.test(r.sql));
+  assert.equal(r.out.kpisPrior, null);
+  assert.equal(r.out.callbackPrior, null);
+});
+
+function uncalledRow_(id, date) {
+  return { call_date: date || '2026-08-19', call_id: id, cst_start: '10:41:00',
+           entry_queue: 'A_Q_CSR', final_queue: 'A_Q_CSR', abandon_stage: 'queue',
+           abandoned_on_hold: false, wait_seconds: 95, hold_seconds: null };
+}
+
+test('outbound v2: getOutboundUncalled lists tracked, un-called-back abandons — same predicates, no caller identity', function () {
+  h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+  const conn = makeConn_(JSON.stringify([uncalledRow_('c1'), uncalledRow_('c2', '2026-08-18')]));
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  const out = JSON.parse(JSON.stringify(h.call('getOutboundUncalled',
+    { from: '2026-08-01', to: '2026-08-19', department: 'CSR' })));
+  const sql = conn.sql.join('\n');
+  assert.match(sql, /c\.caller_hash IS NOT NULL AND cb\.delay_sec IS NULL/,
+    'tracked + not called back — the KPI\'s own definition');
+  assert.match(sql, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
+  assert.match(sql, /c\.call_start IS NULL OR \(c\.call_start >= '06:30:00'/,
+    'work-window scoped like the report');
+  assert.match(sql, /'a_q_csr'/, 'dept predicate applied');
+  assert.match(sql, /o\.callee_hash = c\.caller_hash/);
+  assert.match(sql, /LIMIT 201/, 'cap + 1 for the truncation probe');
+  assert.ok(!/caller_hash/.test(JSON.stringify(out)), 'no hash in the response');
+  assert.equal(out.calls.length, 2);
+  assert.equal(out.calls[0].callId, 'c1');
+  assert.equal(out.calls[0].cstStart, '10:41:00');
+  assert.equal(out.meta.truncated, false);
+  assert.equal(conn.closed, true);
+
+  // Truncation: 201 rows back → newest 200 kept + flagged.
+  const many = [];
+  for (let i = 0; i < 201; i++) many.push(uncalledRow_('id' + i));
+  const conn2 = makeConn_(JSON.stringify(many));
+  h.ctx.getDashboardNeonConn_ = function () { return conn2; };
+  const big = JSON.parse(JSON.stringify(h.call('getOutboundUncalled',
+    { from: '2026-08-01', to: '2026-08-19', department: 'CSR' })));
+  assert.equal(big.calls.length, 200);
+  assert.equal(big.meta.truncated, true);
+
+  // Gate: rides the same resolver (manager refused while vetted).
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  assert.throws(function () {
+    h.call('getOutboundUncalled', { from: '2026-08-01', to: '2026-08-19' });
+  }, /admin-only while it is being vetted/);
+  h.state.testUser = null;
+
+  // No conn → clean unavailable.
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.equal(h.call('getOutboundUncalled',
+    { from: '2026-08-01', to: '2026-08-19', department: 'CSR' }).meta.available, false);
+});
 
 test('outbound: no conn → unavailable; a mid-query death → unavailable with the conn closed', function () {
   h.ctx.buildDeptsByAgent_ = function () { return ROSTER_; };
