@@ -454,6 +454,11 @@ function getSystemHealth(req) {
     svc('trg-dqesilence', 'DQE-silence watchdog (queue active, agents dark)', ['runDqeSilenceWatch_'], false,
       'Optional but recommended: emails admins when a mapped queue shows QCD volume while ZERO DQE rows match the dept roster — the silent failure shape that cost Field Ops Power two months of agent history (Operator State #44). Enable via installDqeSilenceWatchTrigger().',
       'DQE_SILENCE_WATCH_ENABLED');
+    // F-e: the coaching delivery engine (weekly email + worklist upsert).
+    // Admin-only while dark (owner ruling): emails go to getAdminEmails_().
+    svc('trg-coaching', 'Coaching delivery (weekly flags → email + worklist)', ['runCoachingDelivery_'], false,
+      'Optional; dark until released. Emails admins when NEW coaching flags appear and maintains the coaching worklist (Admin ▾ → Coaching). Enable via installCoachingDeliveryTrigger().',
+      'COACHING_DELIVERY_ENABLED');
     // Batch 3: ONE verdict line so the answer to "is this install armed?" is a
     // row, not an exercise in reading fifteen. Counts the engine rows above --
     // `attention` is any row this section flagged warn (missing-but-required,
@@ -486,6 +491,10 @@ function getSystemHealth(req) {
       ['out-coverage', 'Neon coverage — last check', 'NEON_COVERAGE_LAST', 'NEON_COVERAGE_LAST_RESULT'],
       // R18d: 'ok ...' / 'SILENT n dept(s) ...' / 'ERROR: ...'.
       ['out-dqesilence', 'DQE silence — last check', 'DQE_SILENCE_WATCH_LAST', 'DQE_SILENCE_WATCH_LAST_RESULT'],
+      // F-e: 'ok N new, M continuing ...' / 'skipped (...)' / 'ERROR: ...'.
+      // A skip here is a genuine attention state (flags unavailable or Neon
+      // down = no worklist upkeep), so the bad-word match is correct for it.
+      ['out-coaching', 'Coaching delivery — last run', 'COACHING_DELIVERY_LAST', 'COACHING_DELIVERY_LAST_RESULT'],
     ];
     for (var o = 0; o < outcomes.length; o++) {
       var at = props.getProperty(outcomes[o][2]);

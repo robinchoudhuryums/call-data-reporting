@@ -3469,3 +3469,45 @@ one go in a single PR when the owner says. /sync-docs queued: six items in
 block 130 (System Health bullet's 3 new rows, test-suite roll ×3, the
 Extraction Sidebar bullet's now-stale "not pinned" clause, op-state #43
 sync obligation + escalations snapshot, README deploy stamp, INV-55 note).
+
+## Increment 131 (2026-08-20) — F-e: coaching delivery (email + separate worklist)
+
+**Block:** `.cycle/blocks/131-f-e-coaching-delivery-broad-implement.md`
+
+Phase 3 of the turnover-suggestion engine: the Phase-1 flags (increment 124's
+dark preview) now DELIVER. All owner rulings honored: SEPARATE worklist (never
+mixed into customer-account Escalations), all depts, ADMIN-ONLY email until
+released, no cross-dept de-dup, 0%-answered flags are genuine.
+
+1. **Server (Coaching.gs).** Neon `coaching_flags` (auto-DDL + partial unique
+   open index — one open card per (dept, agent); closed history never blocks a
+   re-flag; no sheet twin, flags re-derive from DQE). Weekly run:
+   preview → pure diff (NEW insert+email / CONTINUING metrics-refresh, no
+   email / RECOVERED-OPEN reported, NEVER auto-closed — the coach decides).
+   One txn; email only on NEW (B3 quota lesson), admins only, plain-text
+   watchdog family, deep link #/admin/coaching. Flag-gated engine:
+   COACHING_DELIVERY_ENABLED (default OFF — ships dark), OPS-8 outcome props,
+   Monday-8AM install/uninstall, run-now manual fire. Worklist RPCs:
+   getCoachingWorklist (admin, open/closed/all, uncached, LIMIT 300) +
+   updateCoachingFlagStatus (full INV-01 data-mutation set; open-only UPDATE
+   → race-safe "not open any more" error).
+2. **Health.** trg-coaching svc row WITH its flagProp (the install-readiness
+   rule, same commit) + out-coaching outcomes row.
+3. **Client.** Admin ▾ → Coaching (route /admin/coaching — the email's deep
+   link). Health-modal shape; F10-idempotent render; dsConfirm_-gated
+   Resolve/Dismiss with optional ≤500-char note; delivery controls (Run now
+   confirm-gated — it persists AND emails). Zero styles.html changes.
+4. **Rider: row-34 RULED.** Owner: row 34 = "CSR Total Calls" — the SUM
+   (direction (a)). known-issues entry retitled RULED; parity-suite scope
+   note points there; the CODE fix (sidebar refuses 34 + dead counters
+   deleted) is a named follow-on, not smuggled into this scope.
+
+Tests 819/819 (+9 delivery tests; fake conn models txn + executeUpdate).
+ci:ui full gate run after the client changes. Engine ships DARK — deploy is
+safe anytime; arming is an explicit admin action with a documented
+one-larger-first-email expectation.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129 + 130 + this). NO PR — not requested this round.
+/sync-docs queued: CLAUDE.md coaching parenthetical, Operator State #48
+(COACHING_DELIVERY_ENABLED), tests/README coverage map.

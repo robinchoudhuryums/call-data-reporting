@@ -137,6 +137,34 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getAccessControlInit: function () { return P['access-init']; },
     getSystemHealth: function () { return P['health']; },
     getUiFlags: function () { return P['ui-flags']; },
+    // F-e: coaching worklist (admin-only until released). Inline fixture --
+    // small and stable; the payload shape itself is pinned server-side by
+    // tests/unit/coaching.test.js.
+    getCoachingWorklist: function (req) {
+      return { available: true, rows: [
+        { id: 'cf-1', department: 'CSR', agent_name: 'Test Agent',
+          window_from: '2026-08-03', window_to: '2026-08-14',
+          rate_pct: 21.4, team_rate_pct: 78.9, team_ratio_pct: 27.1, gap_pts: 57.5,
+          missed: 44, rung: 56, answered: 12, times_flagged: 2, status: 'open',
+          created_at: '2026-08-10 13:00:00', updated_at: '2026-08-17 13:00:00',
+          closed_by: null, closed_at: null, note: null },
+      ], meta: { status: (req && req.status) || 'open',
+        lastRunAt: '2026-08-17T13:00:00.000Z',
+        lastResult: 'ok 1 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — emailed admins',
+        enabled: true,
+        thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 } } };
+    },
+    updateCoachingFlagStatus: function (req) { return { id: req && req.id, status: req && req.action }; },
+    getCoachingDeliveryStatus: function () {
+      return { installed: true, enabled: true, lastRunAt: '2026-08-17T13:00:00.000Z',
+        lastResult: 'ok 1 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — emailed admins' };
+    },
+    installCoachingDeliveryTrigger: function () { return { installed: true, enabled: true, lastRunAt: null, lastResult: null }; },
+    uninstallCoachingDeliveryTrigger: function () { return { installed: false, enabled: false, lastRunAt: null, lastResult: null }; },
+    runCoachingDeliveryNow: function () {
+      return { result: 'ok 0 new, 1 continuing, 0 recovered-open (2026-08-03..2026-08-14) — no email (nothing new) [manual]',
+        newCount: 0, continuingCount: 1, recoveredCount: 0 };
+    },
     // getInboundHeatmap intentionally UNMOCKED: Neon-backed; the panel must
     // hide silently on failure (that IS part of the audit).
     // Its CELL drill is mocked (R16h) -- it backs the heatmap cell list AND

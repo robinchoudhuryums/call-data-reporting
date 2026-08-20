@@ -134,6 +134,16 @@ function computeCoachingFlags_(rows, excludes, opts) {
  */
 function previewCoachingFlags() {
   assertAdmin_();
+  return computeCoachingPreview_();
+}
+
+/**
+ * Gate-free core shared by the admin preview RPC above and the Phase-3
+ * delivery trigger (runCoachingDelivery_ -- a time trigger has no meaningful
+ * Session user to assert against; its callers gate themselves). Underscore =
+ * RPC-unreachable.
+ */
+function computeCoachingPreview_() {
   var latest = getLatestDataDate();
   if (!latest) return { available: false, reason: 'no DQE data' };
   var win = coachingWindowFromLatest_(latest, COACHING_WINDOW_WORKDAYS_, function (isoDay) {
@@ -183,4 +193,378 @@ function runCoachingPreview() {
   });
   (out.errors || []).forEach(function (e) { Logger.log('  ERROR %s: %s', e.dept, e.error); });
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3 — DELIVERY (Batch F-e): the separate coaching worklist + admin email
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Owner rulings (increments 122/124, unchanged here): delivery is an email
+// plus a card in a SEPARATE coaching worklist — NEVER mixed into the
+// customer-account Escalations; all depts, no pilot; ADMIN-ONLY until the
+// owner releases it to managers (every surface below is assertAdmin_-gated,
+// so release = swapping gates, not rebuilding). Cross-dept de-dup is
+// deliberately NOT done (owner investigating the Shamir Alam double-flag);
+// 0%-answered agents are genuine flags.
+//
+// Shape: a weekly trigger (runCoachingDelivery_, gated on
+// COACHING_DELIVERY_ENABLED — the flag-gated-engine pattern, and it MUST
+// stay in SystemHealth's svc() list per the install-readiness rule)
+// recomputes the flags, upserts them into the Neon `coaching_flags` table
+// (one OPEN row per (dept, agent) via a partial unique index; a continuing
+// flag refreshes its metrics instead of duplicating; a closed row does not
+// block a later re-flag), and emails the admins ONLY when there are NEW
+// flags — a continuing flag is not news, and MailApp quota is shared with
+// alerts/digests (the B3 lesson). An open row whose agent stops flagging is
+// deliberately NOT auto-closed: the coach decides when the conversation
+// happened, not the math; the worklist shows lastSeen so staleness is
+// visible.
+//
+// INV-01: updateCoachingFlagStatus is an ADMIN-gated Neon write (the
+// applyOrphanRename class — assertAdmin_ + validation + LockService + a
+// Logger.log audit line + closed_by/at on the row). No sheet is touched
+// anywhere. INV-55 is NOT extended: nothing here is per-dept-manager
+// writable until release.
+
+var COACHING_DELIVERY_HOUR_ = 8;        // Monday morning, Central (trigger)
+var COACHING_NOTE_MAX_ = 500;
+
+function coachingEnsureTable_(conn) {
+  var ddl = conn.createStatement();
+  ddl.execute('CREATE TABLE IF NOT EXISTS coaching_flags ('
+    + 'id text PRIMARY KEY, '
+    + 'department text NOT NULL, '
+    + 'agent_name text NOT NULL, '
+    + 'window_from date, window_to date, '
+    + 'rate_pct double precision, team_rate_pct double precision, '
+    + 'team_ratio_pct double precision, gap_pts double precision, '
+    + 'missed int, rung int, answered int, '
+    + 'times_flagged int DEFAULT 1, '
+    + "status text NOT NULL DEFAULT 'open', "
+    + 'created_at timestamptz DEFAULT now(), '
+    + 'updated_at timestamptz DEFAULT now(), '
+    + 'closed_by text, closed_at timestamptz, note text)');
+  ddl.close();
+  // ONE open row per (dept, agent); closed history never blocks a re-flag.
+  var idx = conn.createStatement();
+  idx.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_coaching_open '
+    + "ON coaching_flags (department, agent_name) WHERE status = 'open'");
+  idx.close();
+}
+
+/**
+ * PURE (tests/unit/coaching.test.js): splits a fresh flag run against the
+ * currently-OPEN rows. `newFlags` have no open row (insert + email);
+ * `continuing` pair each flag with its open row id (metrics refresh, no
+ * email); `recoveredOpenRows` are open rows whose agent no longer flags —
+ * reported, never auto-closed (see the header note).
+ */
+function coachingDeliveryDiff_(flags, openRows) {
+  var openByKey = {};
+  (openRows || []).forEach(function (r) {
+    openByKey[r.department + '||' + r.agent_name] = r;
+  });
+  var seen = {};
+  var out = { newFlags: [], continuing: [], recoveredOpenRows: [] };
+  (flags || []).forEach(function (f) {
+    var key = f.dept + '||' + f.agent;
+    seen[key] = true;
+    var open = openByKey[key];
+    if (open) out.continuing.push({ flag: f, id: open.id });
+    else out.newFlags.push(f);
+  });
+  (openRows || []).forEach(function (r) {
+    if (!seen[r.department + '||' + r.agent_name]) out.recoveredOpenRows.push(r);
+  });
+  return out;
+}
+
+/** Plain-text admin email for a run that produced NEW flags (the watchdog
+ *  email family, not the EmailKit report family — this is a notification). */
+function coachingEmailBody_(newFlags, continuingCount, recoveredCount, win, dashUrl) {
+  var lines = [
+    'The weekly coaching check flagged ' + newFlags.length + ' NEW agent(s) over '
+      + win.from + ' .. ' + win.to + ' (10 working days).',
+    '',
+  ];
+  newFlags.forEach(function (f) {
+    lines.push('  ' + f.dept + ' | ' + f.agent + ': answers ' + f.teamRatioPct
+      + '% as often as the team (' + f.ratePct + '% vs ' + f.teamRatePct
+      + '%, ' + f.gapPts + ' pts behind) — ' + f.missed + ' missed of ' + f.rung + ' rung');
+  });
+  lines.push('');
+  if (continuingCount) {
+    lines.push(continuingCount + ' earlier flag(s) are still open in the worklist (metrics refreshed; not re-notified).');
+  }
+  if (recoveredCount) {
+    lines.push(recoveredCount + ' open flag(s) no longer meet the gates this window — left open for you to close '
+      + '(the math does not know whether the conversation happened).');
+  }
+  lines.push('', 'Worklist: ' + (dashUrl ? (dashUrl + '#/admin/coaching') : '(set DASHBOARD_URL for a link)'),
+    '', 'Gates: rate < ' + (COACHING_MAX_TEAM_RATIO_ * 100) + '% of team rate, >= '
+      + COACHING_BEHIND_TEAM_PTS_ + ' pts behind, >= ' + COACHING_MIN_MISSED_
+      + ' missed — over roster rows only (INV-53), TEAM_AVG_EXCLUDES out of both sides.',
+    'Admin-only until released (owner ruling); managers are not copied.');
+  return lines.join('\n');
+}
+
+/** Trigger handler. Weekly; gated on COACHING_DELIVERY_ENABLED. */
+function runCoachingDelivery_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (String(props.getProperty('COACHING_DELIVERY_ENABLED') || '') !== 'true') return;
+    var out = coachingDeliveryRun_();
+    props.setProperty('COACHING_DELIVERY_LAST', new Date().toISOString());
+    props.setProperty('COACHING_DELIVERY_LAST_RESULT', out.result);
+  } catch (e) {
+    try {
+      PropertiesService.getScriptProperties().setProperty('COACHING_DELIVERY_LAST_RESULT',
+        'ERROR: ' + String(e && e.message || e).slice(0, 500));
+    } catch (pe) { /* best-effort */ }
+    Logger.log('runCoachingDelivery_ failed: ' + (e && e.message ? e.message : e));
+  }
+}
+
+/**
+ * The run itself (shared by the trigger and the admin "run now" RPC).
+ * Returns { result, newCount, continuingCount, recoveredCount } where
+ * `result` is the OPS-8 prefix-coded outcome string the Health page's
+ * classifier reads ('ok ...' healthy / anything else trips the bad-word
+ * match, as intended for ERROR/SKIPPED).
+ */
+function coachingDeliveryRun_() {
+  var preview = computeCoachingPreview_();
+  if (!preview.available) {
+    return { result: 'skipped (' + preview.reason + ')', newCount: 0, continuingCount: 0, recoveredCount: 0 };
+  }
+  var conn = getDashboardNeonConn_();
+  if (!conn) {
+    // Neon down: no worklist to reconcile against, and emailing flags that
+    // cannot land as cards would notify without a workflow. Skip loudly.
+    return { result: 'skipped (Neon unreachable — flags not persisted, no email)',
+             newCount: 0, continuingCount: 0, recoveredCount: 0 };
+  }
+  var txn = false;
+  try {
+    coachingEnsureTable_(conn);
+    var stmt = conn.prepareStatement(
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + "SELECT id, department, agent_name FROM coaching_flags WHERE status = 'open') t");
+    var rs = stmt.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    rs.close(); stmt.close();
+    var diff = coachingDeliveryDiff_(preview.flags, JSON.parse(json || '[]'));
+
+    conn.setAutoCommit(false); txn = true;
+    diff.continuing.forEach(function (c) {
+      var u = conn.prepareStatement('UPDATE coaching_flags SET '
+        + 'window_from = ?::date, window_to = ?::date, rate_pct = ?, team_rate_pct = ?, '
+        + 'team_ratio_pct = ?, gap_pts = ?, missed = ?, rung = ?, answered = ?, '
+        + 'times_flagged = times_flagged + 1, updated_at = now() WHERE id = ?');
+      u.setString(1, preview.window.from); u.setString(2, preview.window.to);
+      u.setString(3, String(c.flag.ratePct)); u.setString(4, String(c.flag.teamRatePct));
+      u.setString(5, String(c.flag.teamRatioPct)); u.setString(6, String(c.flag.gapPts));
+      u.setString(7, String(c.flag.missed)); u.setString(8, String(c.flag.rung));
+      u.setString(9, String(c.flag.answered)); u.setString(10, c.id);
+      u.execute(); u.close();
+    });
+    diff.newFlags.forEach(function (f) {
+      var i = conn.prepareStatement('INSERT INTO coaching_flags '
+        + '(id, department, agent_name, window_from, window_to, rate_pct, team_rate_pct, '
+        + 'team_ratio_pct, gap_pts, missed, rung, answered) '
+        + "VALUES (?, ?, ?, ?::date, ?::date, ?, ?, ?, ?, ?, ?, ?)");
+      i.setString(1, Utilities.getUuid());
+      i.setString(2, f.dept); i.setString(3, f.agent);
+      i.setString(4, preview.window.from); i.setString(5, preview.window.to);
+      i.setString(6, String(f.ratePct)); i.setString(7, String(f.teamRatePct));
+      i.setString(8, String(f.teamRatioPct)); i.setString(9, String(f.gapPts));
+      i.setString(10, String(f.missed)); i.setString(11, String(f.rung));
+      i.setString(12, String(f.answered));
+      i.execute(); i.close();
+    });
+    conn.commit();
+
+    if (diff.newFlags.length) {
+      var to = getAdminEmails_().join(',');   // admin-only until released (owner)
+      if (to) {
+        var dashUrl = '';
+        try { dashUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || ''; } catch (e2) {}
+        MailApp.sendEmail({
+          to: to,
+          subject: '[Dashboard] Coaching: ' + diff.newFlags.length + ' new flag(s) — '
+            + preview.window.from + '..' + preview.window.to,
+          body: coachingEmailBody_(diff.newFlags, diff.continuing.length,
+            diff.recoveredOpenRows.length, preview.window, dashUrl),
+        });
+      }
+    }
+    return {
+      result: 'ok ' + diff.newFlags.length + ' new, ' + diff.continuing.length
+        + ' continuing, ' + diff.recoveredOpenRows.length + ' recovered-open ('
+        + preview.window.from + '..' + preview.window.to + ')'
+        + (diff.newFlags.length ? ' — emailed admins' : ' — no email (nothing new)'),
+      newCount: diff.newFlags.length,
+      continuingCount: diff.continuing.length,
+      recoveredCount: diff.recoveredOpenRows.length,
+    };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    throw e;
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+// ── Worklist RPCs (admin-only until released) ─────────────────────────────
+
+/**
+ * The coaching worklist. `req.status` = 'open' (default) | 'closed' | 'all'.
+ * Uncached — small, admin-only, and a fresh view after a status change
+ * matters more than a saved read.
+ */
+function getCoachingWorklist(req) {
+  assertAdmin_();
+  req = req || {};
+  var status = String(req.status || 'open').toLowerCase();
+  if (['open', 'closed', 'all'].indexOf(status) === -1) status = 'open';
+  var props = PropertiesService.getScriptProperties();
+  var meta = {
+    status: status,
+    lastRunAt: props.getProperty('COACHING_DELIVERY_LAST') || null,
+    lastResult: props.getProperty('COACHING_DELIVERY_LAST_RESULT') || null,
+    enabled: String(props.getProperty('COACHING_DELIVERY_ENABLED') || '') === 'true',
+    thresholds: { windowWorkdays: COACHING_WINDOW_WORKDAYS_,
+                  maxTeamRatio: COACHING_MAX_TEAM_RATIO_,
+                  behindTeamPts: COACHING_BEHIND_TEAM_PTS_,
+                  minMissed: COACHING_MIN_MISSED_ },
+  };
+  var conn = getDashboardNeonConn_();
+  if (!conn) return { available: false, rows: [], meta: meta };
+  try {
+    coachingEnsureTable_(conn);
+    var where = status === 'open' ? "WHERE status = 'open'"
+      : status === 'closed' ? "WHERE status <> 'open'" : '';
+    var sql = "SELECT COALESCE(json_agg(t ORDER BY (t.status = 'open') DESC, t.team_ratio_pct ASC), '[]')::text AS j FROM ("
+      + 'SELECT id, department, agent_name, window_from::text AS window_from, '
+      + 'window_to::text AS window_to, rate_pct, team_rate_pct, team_ratio_pct, '
+      + 'gap_pts, missed, rung, answered, times_flagged, status, '
+      + 'created_at::text AS created_at, updated_at::text AS updated_at, '
+      + 'closed_by, closed_at::text AS closed_at, note '
+      + 'FROM coaching_flags ' + where + ' ORDER BY created_at DESC LIMIT 300) t';
+    var stmt = conn.createStatement();
+    var rs = stmt.executeQuery(sql);
+    var json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    rs.close(); stmt.close();
+    return { available: true, rows: JSON.parse(json || '[]'), meta: meta };
+  } catch (e) {
+    Logger.log('getCoachingWorklist failed: ' + (e && e.message ? e.message : e));
+    return { available: false, rows: [], meta: meta };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
+ * Closes one OPEN flag as 'resolved' (conversation happened / queue
+ * adjusted) or 'dismissed' (judged not a real issue). Open-only: two admins
+ * racing from stale views get a clear error, never a silent overwrite.
+ * INV-01 data-mutation set: assertAdmin_ + validation + LockService + audit
+ * (closed_by/at on the row + a Logger.log line).
+ */
+function updateCoachingFlagStatus(req) {
+  assertAdmin_();
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing flag id.');
+  var action = String(req.action || '').toLowerCase().trim();
+  if (action !== 'resolved' && action !== 'dismissed') {
+    throw new Error('Action must be "resolved" or "dismissed".');
+  }
+  var note = String(req.note || '').trim().slice(0, COACHING_NOTE_MAX_);
+  var admin = (Session.getActiveUser().getEmail() || '').toLowerCase();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another coaching write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Coaching storage (Neon) is not configured/reachable.'); }
+  try {
+    coachingEnsureTable_(conn);
+    var stmt = conn.prepareStatement('UPDATE coaching_flags SET status = ?, '
+      + "note = NULLIF(?, ''), closed_by = ?, closed_at = now(), updated_at = now() "
+      + "WHERE id = ? AND status = 'open'");
+    stmt.setString(1, action);
+    stmt.setString(2, note);
+    stmt.setString(3, admin);
+    stmt.setString(4, id);
+    var updated = stmt.executeUpdate();
+    stmt.close();
+    if (updated !== 1) {
+      throw new Error('That flag is not open any more (someone else closed it, or the id is stale) — refresh the worklist.');
+    }
+    Logger.log('updateCoachingFlagStatus: %s -> %s by %s%s', id, action, admin, note ? ' (note)' : '');
+    return { id: id, status: action };
+  } catch (e) {
+    throw new Error(e && e.message ? e.message : 'Could not update the flag.');
+  } finally {
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+}
+
+// ── Trigger management (the DqeSilenceWatch template) ─────────────────────
+
+function getCoachingDeliveryStatus() {
+  assertAdmin_();
+  return logStatusReturn_(getCoachingDeliveryStatus_());
+}
+
+function getCoachingDeliveryStatus_() {
+  var props = PropertiesService.getScriptProperties();
+  var installed = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'runCoachingDelivery_';
+  });
+  return {
+    installed: installed,
+    enabled: String(props.getProperty('COACHING_DELIVERY_ENABLED') || '') === 'true',
+    lastRunAt: props.getProperty('COACHING_DELIVERY_LAST') || null,
+    lastResult: props.getProperty('COACHING_DELIVERY_LAST_RESULT') || null,
+  };
+}
+
+function installCoachingDeliveryTrigger() {
+  assertAdmin_();
+  uninstallCoachingDeliveryTrigger_();   // idempotent re-install
+  ScriptApp.newTrigger('runCoachingDelivery_')
+    .timeBased().everyWeeks(1).onWeekDay(ScriptApp.WeekDay.MONDAY)
+    .atHour(COACHING_DELIVERY_HOUR_).create();
+  PropertiesService.getScriptProperties().setProperty('COACHING_DELIVERY_ENABLED', 'true');
+  return logStatusReturn_(getCoachingDeliveryStatus_());
+}
+
+function uninstallCoachingDeliveryTrigger() {
+  assertAdmin_();
+  uninstallCoachingDeliveryTrigger_();
+  PropertiesService.getScriptProperties().deleteProperty('COACHING_DELIVERY_ENABLED');
+  return logStatusReturn_(getCoachingDeliveryStatus_());
+}
+
+function uninstallCoachingDeliveryTrigger_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'runCoachingDelivery_') ScriptApp.deleteTrigger(t);
+  });
+}
+
+/** Admin "run now": the FULL run (persist + email), ignoring the enabled
+ *  flag — the sendAlerts manual-fire semantics, not a dry preview (that is
+ *  previewCoachingFlags). */
+function runCoachingDeliveryNow() {
+  assertAdmin_();
+  var out = coachingDeliveryRun_();
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('COACHING_DELIVERY_LAST', new Date().toISOString());
+  props.setProperty('COACHING_DELIVERY_LAST_RESULT', out.result + ' [manual]');
+  return logStatusReturn_(out);
 }

@@ -1284,7 +1284,7 @@ only if name-pair curation proves burdensome.
 
 ---
 
-## QCDR Output row 34: three surfaces, three meanings (found 2026-08-20, AWAITING OWNER RULING)
+## QCDR Output row 34: three surfaces, three meanings (found 2026-08-20, RULED 2026-08-20 — total row)
 
 Found while building the sidebar/pipeline parity suite (`qcd-sidebar-parity.test.js`,
 Batch C). Row 34 of the **QCDR Output** sheet (CDR Report ss) — the parent row of
@@ -1307,14 +1307,18 @@ three surfaces that touch it:
 The shape suggests row 34 once displayed the `r34` number directly and was later
 converted to a total row without retiring the counters or the sidebar rule.
 
-**Pending decision (owner):** should A34 mean (a) the sum of its three child
-rows — then the sidebar should refuse it as a total row and the dead counters
-get deleted — or (b) distinct qualifying abandons (the dead counters' / the
-sidebar's definition) — then the pipeline's row-34 write changes and the
-sidebar rule is already right? The live sheet's A34/B34 label likely says which
-was intended. Until ruled, the parity suite EXCLUDES row 34 (its scope note
-says so) and nothing should "fix" either side speculatively — the R20 lesson
-is that a one-sided change here is worse than the standing discrepancy.
+**Owner ruling (2026-08-20): direction (a) — row 34 is the "CSR Total Calls"
+row, the SUM of its block (total calls, answered calls, avg ans time, etc.).**
+The `totalRowMap` sum is the intended meaning. Follow-on code fix (not yet
+applied): add row 34 to the sidebar's total-row refusal list and remove its
+row-34 extraction rule; delete the dead `r34_abnd1m`/`r34_abnd2m` counters
+from the pipeline (autoImport.js — INV-16-adjacent: the sidebar copy of the
+rules lives in dataFilters.js, so it's a two-file edit). The known
+double-count in the 35+37 sum (an internal, status-3 abandon >1min lands in
+both children) is now a property of the RULED definition — surface it to the
+owner separately if the total is ever used for a decision; do not "fix" it
+unilaterally. Until the code fix lands, the parity suite still EXCLUDES row
+34 (its scope note points here).
 
 ## QCD Report engine
 

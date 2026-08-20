@@ -26,8 +26,11 @@
 //   - Row 34 is EXCLUDED: the pipeline's r34_abnd1m/2m counters are written
 //     NOWHERE (totalRowMap overwrites row 34 as the SUM of rows 35-37) while
 //     the sidebar has its own row-34 predicate, so parity does not hold there
-//     by construction. Pre-existing production discrepancy, recorded as a
-//     follow-on in .cycle/blocks/129-*, deliberately not "fixed" here.
+//     by construction. RULED 2026-08-20 (owner): row 34 IS the total row —
+//     sum semantics. Follow-on code fix (sidebar refuses 34 as a total row +
+//     dead counters deleted) is recorded in docs/known-issues.md "QCDR Output
+//     row 34"; once it lands, this exclusion becomes "34 is a total row like
+//     2/7/10" rather than a discrepancy.
 //   - Most fixture rows sit mid-window (10:00 AM). The Batch-E round fixed
 //     the one confirmed window-EDGE divergence (row 35's dp2/dp3 lacked the
 //     pipeline's start<3PM clause) and Family E's 3:10 PM row now pins it;
