@@ -258,7 +258,7 @@
         else {
           cur.key = key;
           // Text columns start ascending; numerics start descending.
-          cur.dir = /^(label|agent|insurer|dial_in)$/.test(key) ? 'asc' : 'desc';
+          cur.dir = /^(label|agent|insurer|dial_in|dept)$/.test(key) ? 'asc' : 'desc';
         }
         var reg = srtRegistry_[tbodyId];
         if (reg) srtApply_(tbodyId, reg.rows, reg.paint, reg.impact);
@@ -1581,6 +1581,256 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'direct-calls_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+  }
+
+  // -- Outbound report (Batch G, admin-only while vetted) ------------------
+  // "Did we call back the ones who abandoned?" + per-agent outbound activity
+  // from getOutboundReport (OutboundReport.gs). Mirrors the Direct report's
+  // client shape (form -> results, stale-response token, csvSafeCell_ CSV).
+  // The two caveat captions in the markup are part of the report's contract.
+
+  var outboundLastData = null;
+
+  function initOutboundReport() {
+    const btn = $('outbound-report-btn');
+    const modal = $('outbound-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      outboundShowForm();
+      outboundSetDefaultDates();
+      outboundEnsureDeptOptions_();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const preset = $('outbound-preset');
+    if (preset) preset.addEventListener('change', outboundApplyPreset);
+    const fromEl = $('outbound-from'), toEl = $('outbound-to');
+    if (fromEl) fromEl.addEventListener('change', function () { if ($('outbound-preset')) $('outbound-preset').value = 'custom'; });
+    if (toEl)   toEl.addEventListener('change',   function () { if ($('outbound-preset')) $('outbound-preset').value = 'custom'; });
+    const gen = $('outbound-generate-btn');
+    if (gen) gen.addEventListener('click', runOutboundReport);
+    const back = $('outbound-back-btn');
+    if (back) back.addEventListener('click', outboundShowForm);
+    const csv = $('outbound-csv-btn');
+    if (csv) csv.addEventListener('click', outboundDownloadCsv_);
+  }
+
+  function outboundShowForm()    { $('outbound-form').style.display = ''; $('outbound-results').style.display = 'none'; outboundSetError(''); }
+  function outboundShowResults() { $('outbound-form').style.display = 'none'; $('outbound-results').style.display = ''; }
+  function outboundSetError(msg) {
+    const el = $('outbound-form-error'); if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+  function outboundSetDefaultDates() {
+    if ($('outbound-from') && $('outbound-from').value) return;
+    const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
+    if ($('outbound-from')) $('outbound-from').value = directCallIsoOf_(s);
+    if ($('outbound-to'))   $('outbound-to').value   = directCallIsoOf_(today);
+  }
+  function outboundApplyPreset() {
+    const v = $('outbound-preset').value;
+    if (v === 'custom') return;
+    const today = new Date(); let s, e = new Date(today);
+    if (v === 'last7')        { s = new Date(today); s.setDate(today.getDate() - 7); }
+    else if (v === 'last30')  { e = new Date(today); e.setDate(today.getDate() - 1);
+                                s = new Date(today); s.setDate(today.getDate() - 30); }
+    else if (v === 'thisMonth') { s = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (v === 'lastMonth') { s = new Date(today.getFullYear(), today.getMonth() - 1, 1); e = new Date(today.getFullYear(), today.getMonth(), 0); }
+    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
+    if (!s) return;
+    $('outbound-from').value = directCallIsoOf_(s);
+    $('outbound-to').value   = directCallIsoOf_(e);
+  }
+  function outboundEnsureDeptOptions_() {
+    const sel = $('outbound-dept');
+    if (!sel || sel.options.length) return;
+    if (USER.role === 'admin') {
+      const opts = ['<option value="">All departments</option>'];
+      (USER.departments || []).forEach(function (d) {
+        opts.push('<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>');
+      });
+      sel.innerHTML = opts.join('');
+    } else {
+      const d = USER.department || '';
+      sel.innerHTML = '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+      sel.disabled = true;
+    }
+  }
+
+  function runOutboundReport() {
+    const from = $('outbound-from').value, to = $('outbound-to').value;
+    if (!from || !to) { outboundSetError('Pick a start and end date.'); return; }
+    if (from > to) { outboundSetError('Start date must be on or before end date.'); return; }
+    outboundSetError('');
+    const dept = $('outbound-dept') ? $('outbound-dept').value : '';
+    const gen = $('outbound-generate-btn'); const prev = gen.textContent;
+    gen.disabled = true; gen.innerHTML = DS_EQ_HTML_ + 'Generating…';
+    const __rtok = ++reportReqSeq_.out;   // C-8: stale-response guard
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (__rtok !== reportReqSeq_.out) return;
+        gen.disabled = false; gen.textContent = prev;
+        outboundRenderReport_(data);
+        outboundShowResults();
+      })
+      .withFailureHandler(function (err) {
+        if (__rtok !== reportReqSeq_.out) return;
+        gen.disabled = false; gen.textContent = prev;
+        outboundSetError('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getOutboundReport({ from: from, to: to, department: dept });
+  }
+
+  function outboundRenderReport_(data) {
+    outboundLastData = data;
+    const meta = (data && data.meta) || {};
+    coverageNoteUpsert_('outbound-body', 'outbound',
+      meta.from || null, null, meta.coverageStart || null);
+    const unavail = $('outbound-unavailable');
+    const empty = $('outbound-empty');
+    const body = $('outbound-body');
+    if (unavail) unavail.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    if (body) body.style.display = '';
+
+    const dateEl = $('outbound-results-date');
+    if (dateEl) {
+      dateEl.textContent = (meta.from || '') + ' to ' + (meta.to || '')
+        + (meta.companyView ? ' · All departments' : (meta.department ? ' · ' + meta.department : ''));
+    }
+    if (meta.available === false) {
+      if (body) body.style.display = 'none';
+      if (unavail) unavail.style.display = '';
+      return;
+    }
+    const agents = (data && data.agents) || [];
+    const cb = (data && data.callback) || {};
+    if (!agents.length && !cb.abandonedTotal) {
+      if (body) body.style.display = 'none';
+      if (empty) empty.style.display = '';
+      return;
+    }
+
+    const k = (data && data.kpis) || {};
+    const kpiRow = $('outbound-kpi-row');
+    if (kpiRow) kpiRow.innerHTML = [
+      inboundKpiTile_('Agents', fmtNumber(k.agents), 'with outbound calls', ''),
+      inboundKpiTile_('OB calls', fmtNumber(k.obTotal), fmtNumber(k.attempts) + ' dial attempts', ''),
+      inboundKpiTile_('Connected', fmtNumber(k.obConnected),
+        k.obConnectRate != null ? (k.obConnectRate + '% of calls') : '', ''),
+      inboundKpiTile_('Talk time', fmtDuration(k.obTalkSec), 'ATT ' + fmtDuration(k.obAttSec) + ' per connected', ''),
+    ].join('');
+
+    // Callback block ("did we call back the ones who abandoned?").
+    const cbRow = $('outbound-callback-kpis');
+    if (cbRow) cbRow.innerHTML = [
+      inboundKpiTile_('Abandoned', fmtNumber(cb.abandonedTotal),
+        fmtNumber(cb.abandonedAnonymous) + ' anonymous (untrackable)', ''),
+      inboundKpiTile_('Called back', fmtNumber(cb.calledBack),
+        'of ' + fmtNumber(cb.abandonedTracked) + ' trackable', ''),
+      inboundKpiTile_('Callback rate', cb.calledBackPct != null ? cb.calledBackPct + '%' : '—',
+        fmtNumber(cb.calledBackConnected) + ' actually connected', ''),
+      inboundKpiTile_('Median time to callback',
+        cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
+        'first dial after the abandon', ''),
+    ].join('');
+    const winEl = $('outbound-cb-window');
+    if (winEl) winEl.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
+
+    // Attribution disclosure (the roster-dept caveat, quantified).
+    const note = $('outbound-attribution-note');
+    if (note) {
+      const bits = [];
+      if (!meta.companyView && meta.offRosterAgents) {
+        bits.push(fmtNumber(meta.offRosterAgents) + ' dialing agent(s) not on the '
+          + (meta.department || '') + ' roster are excluded from this dept view (see All departments).');
+      }
+      if (meta.companyView && meta.unrosteredAgents) {
+        bits.push(fmtNumber(meta.unrosteredAgents) + ' agent(s) on no roster are shown as "Unrostered".');
+      }
+      bits.push('Attribution is by roster department (exact-name match), never the phone system’s org label.');
+      note.textContent = bits.join(' ');
+    }
+
+    const tb = $('outbound-agent-tbody');
+    if (tb) {
+      srtApply_('outbound-agent-tbody', agents, function (sorted) {
+        tb.innerHTML = sorted.map(outboundAgentRowHtml_).join('');
+      }, function (r) { return Number(r.obTotal) || 0; });
+    }
+    const agentSection = $('outbound-agent-section');
+    if (agentSection) agentSection.style.display = agents.length ? '' : 'none';
+  }
+
+  function outboundAgentRowHtml_(r) {
+    return '<tr>'
+      + '<td>' + escapeHtml(r.agent) + '</td>'
+      + '<td>' + escapeHtml(r.dept || '') + '</td>'
+      + '<td class="num">' + fmtNumber(r.obTotal) + '</td>'
+      + '<td class="num">' + fmtNumber(r.obConnected) + '</td>'
+      + '<td class="num">' + (r.obConnectRate != null ? r.obConnectRate + '%' : '—') + '</td>'
+      + '<td class="num">' + fmtDuration(r.obTalkSec) + '</td>'
+      + '<td class="num">' + fmtDuration(r.obAttSec) + '</td>'
+      + '<td class="num">' + fmtNumber(r.attempts) + '</td>'
+      + '</tr>';
+  }
+
+  function outboundDownloadCsv_() {
+    if (!outboundLastData || (outboundLastData.meta || {}).available === false) return;
+    const d = outboundLastData;
+    const meta = d.meta || {};
+    const cb = d.callback || {};
+    const esc = function (v) {
+      const s = csvSafeCell_(v == null ? '' : v);
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const row = function (cells) { return cells.map(esc).join(','); };
+    const lines = [];
+    lines.push(row(['Outbound report', meta.from + ' to ' + meta.to]));
+    lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
+    lines.push(row(['Abandoned', cb.abandonedTotal, 'Anonymous', cb.abandonedAnonymous,
+      'Called back', cb.calledBack, 'Connected', cb.calledBackConnected,
+      'Callback %', cb.calledBackPct != null ? cb.calledBackPct : '',
+      'Median callback sec', cb.medianCallbackSec != null ? cb.medianCallbackSec : '']));
+    lines.push('');
+    lines.push(row(['Agent', 'Roster dept', 'OB calls', 'Connected', 'Connect %',
+      'Talk sec', 'ATT sec', 'Attempts']));
+    (d.agents || []).forEach(function (r) {
+      lines.push(row([r.agent, r.dept, r.obTotal, r.obConnected,
+        r.obConnectRate != null ? r.obConnectRate : '', r.obTalkSec, r.obAttSec, r.attempts]));
+    });
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'outbound_' + (meta.from || '') + '_' + (meta.to || '') + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

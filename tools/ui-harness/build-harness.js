@@ -137,6 +137,28 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getAccessControlInit: function () { return P['access-init']; },
     getSystemHealth: function () { return P['health']; },
     getUiFlags: function () { return P['ui-flags']; },
+    // Batch G: outbound report. Inline fixture; the payload shape is pinned
+    // server-side by tests/unit/outbound-report.test.js.
+    getOutboundReport: function (req) {
+      return {
+        meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
+          department: (req && req.department) || '', companyView: !(req && req.department),
+          available: true, vetting: true, callbackWindowDays: 3,
+          coverageStart: '2026-08-15', unrosteredAgents: 1, offRosterAgents: 0,
+          cacheHit: false, computeMs: 12 },
+        kpis: { agents: 2, obTotal: 61, obConnected: 44, obConnectRate: 72.1,
+          obTalkSec: 9120, obAttSec: 207, attempts: 70 },
+        callback: { abandonedTotal: 25, abandonedAnonymous: 5, abandonedTracked: 20,
+          calledBack: 14, calledBackConnected: 9, calledBackPct: 70,
+          medianCallbackSec: 1980 },
+        agents: [
+          { agent: 'Test Agent', dept: 'CSR', obTotal: 40, obConnected: 30,
+            obConnectRate: 75, obTalkSec: 6000, obAttSec: 200, attempts: 45 },
+          { agent: 'Ghost Dialer', dept: 'Unrostered', obTotal: 21, obConnected: 14,
+            obConnectRate: 66.7, obTalkSec: 3120, obAttSec: 223, attempts: 25 },
+        ],
+      };
+    },
     // F-e: coaching worklist (admin-only until released). Inline fixture --
     // small and stable; the payload shape itself is pinned server-side by
     // tests/unit/coaching.test.js.

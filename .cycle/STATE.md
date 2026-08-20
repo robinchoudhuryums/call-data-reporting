@@ -3511,3 +3511,40 @@ one-larger-first-email expectation.
 (carries increments 129 + 130 + this). NO PR — not requested this round.
 /sync-docs queued: CLAUDE.md coaching parenthetical, Operator State #48
 (COACHING_DELIVERY_ENABLED), tests/README coverage map.
+
+## Increment 132 (2026-08-20) — Batch G: the Outbound report
+
+**Block:** `.cycle/blocks/132-batch-g-outbound-report-broad-implement.md`
+
+The scan's one new-capability item: `outbound_calls` gains its first
+analytical surface (route `#/report/outbound`, Reports ▾ → Outbound,
+admin-only while vetted — the Inbound/Direct model with the latent manager
+path). Headline: "did we call back the ones who abandoned?"
+
+1. **Callback linkage.** Abandon denominator = EXACTLY the Inbound report's
+   Abandoned population (reuses inboundDeptPredicate_ + inboundWindowClause_
+   verbatim — work-window owner ruling honored, pinned in the new suite since
+   the inbound-window-scope count guard is InboundReport.gs-scoped). Each
+   abandon LATERALs to the EARLIEST outbound with callee_hash = caller_hash
+   within 3 days; match deliberately unscoped by dept/agent and uncapped by
+   the report's `to`. Anonymous abandons excluded from the rate denominator.
+   Median time-to-callback via percentile_cont.
+2. **Both mandated caveats are structural, not just captions:** "connected"
+   is the disclosed stricter subset (CDR can't tell no-answer/voicemail/
+   busy), and attribution is by ROSTER dept — the SQL never reads
+   outbound_calls.department (test-pinned); buildDeptsByAgent_ maps dialers,
+   dept view discloses off-roster exclusions, company view labels crossover
+   agents with all homes and no-roster dialers as "Unrostered".
+3. **Plumbing:** one json_build_object round trip, egress-metered,
+   `outboundReport:v1` + freshness tag (SPECS row added same commit — C2),
+   uncached unavailable, csvSafeCell_ CSV, C-8 stale token, coverage note.
+
+Tests 829/829 (+10). ci:ui full gate after the client changes. v1 scope:
+KPIs + callback block + sortable agent table + CSV; deferred (in block):
+daily series/chart, not-called-back drill list, kpisPrior chips, per-dept
+company cards.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129–132). NO PR — not requested. /sync-docs queued (see
+block 132): the outbound bullet's "sole consumer: Caller Lookup" clause is
+now stale, INV-30 gains outboundReport:v1, test-suite rolls.
