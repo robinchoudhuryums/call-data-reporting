@@ -254,6 +254,8 @@ is canonical and reflects current code.
 | Insights Report (period comparison: team rollup + per-agent cards) | `InsightsReport.gs` | `getInsightsReportInit`, `getInsightsReport`, `sendInsightsReportEmail` | `insights:v22:` | no (per-dept gate like IR/PR/CR) |
 | Inbound Report (per-call inbound view from Neon `inbound_calls`) | `InboundReport.gs` | `getInboundReport`, `getInboundInsurerDaily`, `getInboundHeatmap` (weekday×hour abandon heatmap), `getCallJourney` (per-call path drill; manager fallback entitlement-gated via the dept's own Missed report, F-4) | `inbound:v9:`, `inboundHeatmap:v3:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact); `getCallJourney` is manager-reachable for own dept |
 | Direct Call Report (per-agent direct-extension metrics from Neon `direct_call_history`) | `DirectCallReport.gs` | `getDirectCallReport` | `directCall:v4:` | TEMPORARILY admin-only while the busy carve-out is vetted (per-dept manager path kept intact) |
+| Outbound Report ("did we call back the ones who abandoned?" + per-agent outbound activity from Neon `outbound_calls`; abandon denominator = the Inbound report's Abandoned population verbatim) | `OutboundReport.gs` | `getOutboundReport`, `getOutboundUncalled` (not-called-back drill, uncached) | `outboundReport:v2:` | TEMPORARILY admin-only while vetted (per-dept manager path kept intact) |
+| Coaching worklist (weekly answer-rate flags from Neon `coaching_flags`; SEPARATE from Escalations by owner ruling) | `Coaching.gs` | `getCoachingWorklist`, `updateCoachingFlagStatus` (admin Neon write), `previewCoachingFlags`, trigger RPCs (+ `runCoachingDelivery_` weekly trigger, `COACHING_DELIVERY_ENABLED`-gated) | (uncached) | admin-only until released |
 | Caller Lookup (per-number communication history: inbound per-call from `inbound_calls`, outbound per-call from `outbound_calls`, day-level outbound history from `call_history_phones` -- all the same hash space) | `CallerLookup.gs` | `getCallerLookup` | (intentionally uncached) | yes |
 | Escalations worklist (Neon `escalations` + `escalation_activity`) | `Escalations.gs` | `getEscalationsInit`, `getEscalationsBadge` (R12-20 nav-badge aggregate), `getEscalations`, `getEscalationActivity` (read), `createEscalation`, `updateEscalation` (admin write), `resolveEscalation`, `startEscalation` (C6), `approveEscalation`/`rejectEscalation` (Phase-2 review), `updateEscalationComment`, `reopenEscalation` (per-dept write, INV-55) | (no cache) | no (per-dept; create/edit admin-only) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger`, `saveAlertConfigRow`/`removeAlertConfigRow` (C3 config editor), `saveAnswerTargets` (R12-25 display standards), `backfillAlertConfigToNeon`/`compareAlertConfigSources` (editor-run C3 gates) (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
@@ -329,9 +331,11 @@ Neon Postgres is the long-term archive and the future query backend.
   PHI-masked journey. NO sheet primary — failures surface as
   `processIntegratedHistory:Outbound` Pipeline Health rows + email;
   deferred mode drains it as `neonMirror:Outbound`. History: editor-run
-  `backfillOutboundCalls` (surviving `Call_Legs_*` sheets only). Sole
-  consumer: the Caller Lookup communication history, which also reads
-  `call_history_phones` day-level aggregates for pre-capture dates.
+  `backfillOutboundCalls` (surviving `Call_Legs_*` sheets only).
+  Consumers: the Caller Lookup communication history (which also reads
+  `call_history_phones` day-level aggregates for pre-capture dates)
+  and the Outbound report (`OutboundReport.gs` -- callback linkage +
+  per-agent activity, admin-only while vetted).
 - **Insurer labeling** (`cdr-report/insuranceNumbers.js`): the
   insurance block in `DO NOT EDIT!` (cols X–AG: header = insurer name,
   rows = that insurer's published numbers) is hashed with the same

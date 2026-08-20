@@ -9,9 +9,9 @@ const { loadGas } = require('../harness/loadGas');
 // aggregation helpers that feed its four setValues sites (the per-agent
 // contact lists, the diagnostics counts, and the TOTALS row's recomputed
 // Rate/ATT columns — the v9 changelog's headline fix). The 480-line
-// generateCustomReportCore_ end-to-end (sheet inputs + charts + diagnostics)
-// remains uncovered and is recorded as a follow-on: it needs the C1-style
-// fixture treatment, not a smoke assert.
+// generateCustomReportCore_ end-to-end is covered SEPARATELY by
+// dashboard-cdr-core.test.js (the C1 fixture treatment, added 2026-08-20 —
+// it caught the T-7 panel-clear clipping bug on its first run).
 
 const h = loadGas({ project: 'cdr-report', files: ['dashboardCDR.js'] });
 

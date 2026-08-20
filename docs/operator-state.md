@@ -1221,3 +1221,27 @@ When something looks wrong, before assuming a code bug, check:
     (UTC), and are code-written -- you never set that one. Biggest lever if
     it climbs: the 6 h report TTL plus the `reportFreshnessTag_` key suffix
     (#19), since every cached serve is a Neon fetch avoided.
+
+48. **`COACHING_DELIVERY_ENABLED` — the weekly coaching delivery engine
+    (F-e).** Install/arm from Admin ▾ → Coaching → "Install weekly trigger"
+    (sets the flag + a Monday 8 AM Central trigger for `runCoachingDelivery_`;
+    Uninstall removes both). Each armed run recomputes the coaching flags,
+    upserts them into Neon `coaching_flags` (one OPEN card per (dept, agent);
+    a continuing flag refreshes metrics + times_flagged, never duplicates;
+    recovered agents are reported but NEVER auto-closed — the coach decides),
+    and emails **admins only** (owner ruling — managers are not copied until
+    release) and only when there are NEW flags (MailApp quota is shared, B3).
+    **First armed run emails one larger batch** — every currently-qualifying
+    agent lands as NEW; consider "Run now" (dsConfirm-gated, full run) to see
+    it land before trusting the schedule. Outcomes in
+    `COACHING_DELIVERY_LAST`/`_LAST_RESULT` (OPS-8 prefix-coded: `ok …` /
+    `skipped (…)` / `ERROR: …`); the Health page's trg-coaching/out-coaching
+    rows track install-vs-flag mismatches like every flag-gated engine. A
+    `skipped (Neon unreachable)` run persisted nothing and sent nothing —
+    flags are re-derived from DQE history on the next run, so nothing is
+    lost. The worklist itself (Admin ▾ → Coaching) works without the engine
+    armed; it just stays empty until a delivery or "Run now" populates it.
+    Release path (owner-gated): swap the `assertAdmin_` gates in
+    `getCoachingWorklist`/`updateCoachingFlagStatus`, un-hide the menu item,
+    widen the email recipients — all surfaces were built so release is
+    gate-swapping, not rebuilding. Pinned by `tests/unit/coaching.test.js`.

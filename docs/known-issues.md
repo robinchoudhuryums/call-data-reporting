@@ -1317,7 +1317,16 @@ and its extraction rule was removed (dataFilters.js); the dead
 double-count in the 35+37 sum (an internal, status-3 abandon >1min lands in
 both children) is now a property of the RULED definition — surface it to the
 owner separately if the total is ever used for a decision; do not "fix" it
-unilaterally.
+unilaterally. **Resolution instrument (owner-requested, 2026-08-20):** the
+read-only `previewRow34Overlap` (cdr-import, CDR Tools menu → "Preview QCD
+row-34 overlap") scans every surviving `Call_Legs_*` sheet and counts the
+internal+status-3 overlap shape per date, ending with a plain verdict
+("provably CLEAN" / "OVERSTATES by N"). Its pure core is behaviorally pinned
+to `calcQcdReport`'s own row 35/37 counters (`qcd-sidebar-parity.test.js`).
+Run it once after a cdr-import deploy: zero over the ~14-day window ⇒ close
+this note as latent-only; non-zero ⇒ the owner rules on adding
+`type !== "internal"` to row 35's E predicate (a two-file pipeline+sidebar
+edit).
 
 ## QCD Report engine
 
