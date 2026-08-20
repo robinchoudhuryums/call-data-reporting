@@ -258,3 +258,100 @@ test('F12: an unreachable step still returns false (date stays queued) without t
   assert.equal(ok, false, 'incomplete -> caller keeps the date queued');
   assert.equal(calls.length, 5, 'unreachable never short-circuited (unchanged behavior)');
 });
+
+// ── B1 (broad-scan F10): the drain's RUNTIME BUDGET ────────────────────────
+//
+// runNeonMirror_ used to iterate every queued date with no clock check. Dates
+// stay queued by design while Neon is unreachable, so a multi-day outage grows
+// the queue -- and once one full pass exceeded Apps Script's ~6-min ceiling the
+// run was killed at the same point every time and the drain could never
+// complete. Silently: the queue rewrite is at the BOTTOM of the loop (so a
+// timeout preserved the queue but emitted no summary), and the IMP-6 attempt
+// counter increments only on a THROW, so a timeout never counted an attempt,
+// never tripped the retry cap, and never sent the gave-up email.
+// (makeFakeSpreadsheet is already imported above.)
+
+function installQueue_(isoDates, attempts) {
+  const rows = isoDates.map(function (iso) {
+    return ['2026-08-19T00:00:00Z', iso, 'daily', attempts === undefined ? '' : attempts];
+  });
+  const ss = makeFakeSpreadsheet({
+    sheets: { 'Neon Mirror Queue': [['Enqueued At', 'Call Date', 'Source', 'Attempts']].concat(rows) },
+  });
+  h.state.spreadsheet = ss;
+  // getTargetSsId_ lives in autoImport.js, which this suite does not load.
+  h.ctx.getTargetSsId_ = function () { return 'fake'; };
+  return ss.getSheetByName('Neon Mirror Queue');
+}
+
+/** Remaining queued dates, reading the sheet the way the code rewrote it. */
+function queuedDates_(sheet) {
+  return sheet._data.slice(1)
+    .filter(function (r) { return r && r[1]; })
+    .map(function (r) { return { iso: String(r[1]), attempts: r[3] }; });
+}
+
+test('B1: the drain stops at its budget, leaves the rest QUEUED, and says so', function () {
+  const sheet = installQueue_(['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13']);
+  h.state.props.NEON_MIRROR_BUDGET_MS = '1';        // trip after the first date
+  const logged = [];
+  h.ctx.neonMirrorLog_ = function (ss, step, status, rows, t0, notes) {
+    logged.push({ step: step, status: status, notes: notes });
+  };
+  const drained = [];
+  h.ctx.neonMirrorDate_ = function (ss, iso) {
+    drained.push(iso);
+    const until = Date.now() + 3;                   // burn past the 1 ms budget
+    while (Date.now() < until) { /* spin */ }
+    return true;
+  };
+
+  h.call('runNeonMirror_');
+
+  assert.equal(drained.length, 1, 'the budget stopped the loop after one date');
+  assert.deepEqual(drained, ['2026-08-10'], 'and it started at the head of the queue');
+
+  const left = queuedDates_(sheet);
+  assert.deepEqual(left.map(function (r) { return r.iso; }),
+    ['2026-08-11', '2026-08-12', '2026-08-13'],
+    'every untried date stays queued -- the drained one is gone');
+
+  const budgetRow = logged.filter(function (l) { return l.step === 'neonMirror:budget'; });
+  assert.equal(budgetRow.length, 1, 'a durable row explains the stop (this was the silence)');
+  assert.match(budgetRow[0].notes, /3 date\(s\) left/);
+  assert.equal(budgetRow[0].status, 'success',
+    'nothing FAILED -- nothing was tried; a backlog draining a few per run is working');
+});
+
+test('B1: budget-skipped dates keep their attempt count (they were never tried)', function () {
+  const sheet = installQueue_(['2026-08-10', '2026-08-11'], 3);
+  h.state.props.NEON_MIRROR_BUDGET_MS = '1';
+  h.ctx.neonMirrorLog_ = function () {};
+  h.ctx.neonMirrorDate_ = function () {
+    const until = Date.now() + 3;
+    while (Date.now() < until) { /* spin */ }
+    return true;
+  };
+
+  h.call('runNeonMirror_');
+
+  const left = queuedDates_(sheet);
+  assert.equal(left.length, 1);
+  assert.equal(left[0].attempts, 3,
+    'a timeout must not penalize an untried date -- incrementing here would walk '
+    + 'it toward the IMP-6 gave-up drop without ever having failed');
+});
+
+test('B1: a generous budget drains everything (default path unchanged)', function () {
+  const sheet = installQueue_(['2026-08-10', '2026-08-11', '2026-08-12']);
+  delete h.state.props.NEON_MIRROR_BUDGET_MS;       // fall back to the 4-min default
+  const logged = [];
+  h.ctx.neonMirrorLog_ = function (ss, step) { logged.push(step); };
+  h.ctx.neonMirrorDate_ = function () { return true; };
+
+  h.call('runNeonMirror_');
+
+  assert.deepEqual(queuedDates_(sheet), [], 'the whole queue drained');
+  assert.equal(logged.indexOf('neonMirror:budget'), -1,
+    'no budget row when the budget was never hit');
+});

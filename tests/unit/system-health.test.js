@@ -647,3 +647,34 @@ test('F5: the gauge degrades to an absent row when NeonRead.gs is unavailable', 
     'a missing accumulator drops the row; it must never throw the page');
   assert.ok(data.rows.length > 10, 'the rest of the page still renders');
 });
+
+// ── B4: the email-quota row ────────────────────────────────────────────────
+//
+// Alerts, digests, the Daily Call Queue Report, pipeline-failure notices,
+// sign-in notifications and the client-error beacon all draw on ONE MailApp
+// daily quota. Exhausting it is silent in exactly the way the Neon transfer
+// cap was: sends stop, nothing surfaces, and the first sign is a manager
+// asking why they stopped getting alerts.
+test('B4: the mail-quota row is ok with headroom and WARNS when it runs low', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.state.mailQuota = 1400;
+  let row = rowByKey(h.call('getSystemHealth'), 'mail-quota');
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /1400 message\(s\)/);
+
+  h.state.mailQuota = 12;
+  row = rowByKey(h.call('getSystemHealth'), 'mail-quota');
+  assert.equal(row.status, 'warn', 'below the floor the alert channel is at risk');
+  assert.match(row.hint, /SILENTLY/, 'the hint names the failure mode, not just the number');
+  h.state.mailQuota = undefined;
+});
+
+test('B4: the quota row degrades to absent rather than throwing the page', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const realMail = h.ctx.MailApp;
+  h.ctx.MailApp = { sendEmail: function () {} };   // no getRemainingDailyQuota
+  const data = h.call('getSystemHealth');
+  assert.equal(rowByKey(data, 'mail-quota'), undefined);
+  assert.ok(data.rows.length > 10, 'the rest of the page still renders');
+  h.ctx.MailApp = realMail;
+});

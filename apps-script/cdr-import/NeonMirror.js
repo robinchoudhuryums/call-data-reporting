@@ -54,6 +54,33 @@ var NEON_MIRROR_QUEUE_HEADERS = ['Enqueued At', 'Call Date', 'Source', 'Attempts
 // Script-Property-tunable like NEON_MIRROR_TAIL_ROWS.
 var NEON_MIRROR_MAX_ATTEMPTS_DEFAULT = 8;
 
+// RUNTIME BUDGET. The drain used to iterate EVERY queued date with no clock
+// check, and each date runs five mirrors (Inbound, Outbound, CDR, QCD, DQE),
+// each a bounded tail scan plus a JDBC connect carrying a 5s probe timeout.
+// Dates stay queued by design while Neon is unreachable, so a multi-day outage
+// grows the queue -- and once one full pass exceeds Apps Script's ~6-minute
+// execution ceiling the run is KILLED at the same point every time and the
+// drain can never complete again.
+//
+// The kill is silent in two ways worth knowing: the queue rewrite sits at the
+// BOTTOM of the loop, so a timeout preserves the queue (fail-safe) but emits no
+// summary; and the IMP-6 attempt counter increments only on a THROW, so a
+// timeout never counts an attempt, never trips the retry cap, and never sends
+// the gave-up email. Nothing anywhere says "I ran out of time".
+//
+// So: stop cleanly before the ceiling, leave the untried dates queued with
+// their attempts UNCHANGED (they were not tried, so they must not be penalized),
+// and log a `neonMirror:budget` row naming what was left. The next run resumes
+// at the head of the queue. Same shape as CacheWarm.gs's INSIGHTS_WARM_BUDGET_MS.
+var NEON_MIRROR_BUDGET_MS_DEFAULT = 4 * 60 * 1000;   // 4 min of the ~6 min ceiling
+
+function nmBudgetMs_() {
+  var raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty('NEON_MIRROR_BUDGET_MS'); } catch (e) {}
+  var n = parseInt(raw, 10);
+  return (isFinite(n) && n > 0) ? n : NEON_MIRROR_BUDGET_MS_DEFAULT;
+}
+
 function nmMaxAttempts_() {
   var raw = null;
   try { raw = PropertiesService.getScriptProperties().getProperty('NEON_MIRROR_MAX_ATTEMPTS'); } catch (e) {}
@@ -130,7 +157,13 @@ function runNeonMirror_() {
 
     var done = {};
     var hardFailed = {};   // iso -> error message (a THROW, not Neon-unreachable)
-    dates.forEach(function (iso) {
+    // Indexed loop, not forEach, so the budget can STOP it (see nmBudgetMs_).
+    var t0 = Date.now();
+    var budgetMs = nmBudgetMs_();
+    var unbudgeted = [];
+    for (var di = 0; di < dates.length; di++) {
+      var iso = dates[di];
+      if (Date.now() - t0 > budgetMs) { unbudgeted = dates.slice(di); break; }
       try {
         if (neonMirrorDate_(ss, iso)) done[iso] = true;
         else Logger.log('runNeonMirror_: %s incomplete (Neon unreachable?), leaving queued.', iso);
@@ -140,7 +173,22 @@ function runNeonMirror_() {
         try { notifyNeonWriteFailure('runNeonMirror_ (' + iso + ')', hardFailed[iso]); }
         catch (ne) { /* best-effort */ }
       }
-    });
+    }
+    if (unbudgeted.length) {
+      // A durable row, because the alternative is the silence this exists to
+      // end. NOT a failure of any mirror -- nothing was tried -- so it does not
+      // touch the attempt counters and does not email; a backlog draining a few
+      // dates per run is working as intended. It becomes actionable when the
+      // same row appears run after run with the count not falling.
+      neonMirrorLog_(ss, 'neonMirror:budget', 'success', done ? Object.keys(done).length : 0,
+        t0, unbudgeted.length + ' date(s) left for the next run after the '
+        + Math.round(budgetMs / 1000) + 's budget: ' + unbudgeted.slice(0, 10).join(', ')
+        + (unbudgeted.length > 10 ? ' …' : '')
+        + '. Attempts NOT incremented (untried). If this repeats with the count '
+        + 'not falling, the queue is growing faster than it drains -- check Neon '
+        + 'reachability first, then raise NEON_MIRROR_BUDGET_MS (ceiling is ~6 min).');
+      Logger.log('runNeonMirror_: budget hit -- %s date(s) left queued.', unbudgeted.length);
+    }
 
     // Rewrite the queue with only the rows whose date didn't fully process.
     // IMP-6 retry cap: a HARD-error date increments its Attempts; at

@@ -504,7 +504,7 @@ function getInboundReport(req) {
 
   const cache = CacheService.getScriptCache();
   const cacheKey = INBOUND_CACHE_KEY_PREFIX + ':' + (scope.dept || '__all__')
-                 + ':' + scope.from + ':' + scope.to + ':' + reportFreshnessTag_();
+                 + ':' + scope.from + ':' + scope.to + ':' + ((typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na');
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -951,8 +951,12 @@ function getInboundInsurerDaily(req) {
 
   const cache = CacheService.getScriptCache();
   // hashAgents_ (MD5, INV-36) keeps free-text labels out of the cache key.
+  // B2: + the freshness tag. This drill hangs off a byInsurer ROW in the
+  // parent report, whose key carries it -- so without it a same-day re-import
+  // refreshed the row and left the drill behind it disagreeing for the 6 h TTL.
   const cacheKey = INBOUND_CACHE_KEY_PREFIX + ':daily:' + (scope.dept || '__all__')
-                 + ':' + scope.from + ':' + scope.to + ':' + hashAgents_([insurer]);
+                 + ':' + scope.from + ':' + scope.to + ':' + hashAgents_([insurer])
+                 + ':' + ((typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na');
   const cached = cache.get(cacheKey);
   if (cached) {
     try { const p = JSON.parse(cached); p.meta.cacheHit = true; return p; }
@@ -1345,7 +1349,7 @@ function getInboundHeatmap(req) {
 
   const cache = CacheService.getScriptCache();
   const cacheKey = INBOUND_HEATMAP_CACHE_KEY_PREFIX + ':' + (scope.dept || '__all__')
-                 + ':' + scope.from + ':' + scope.to;
+                 + ':' + scope.from + ':' + scope.to + ':' + ((typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na');   // B2
   const cached = cache.get(cacheKey);
   if (cached) {
     try { const p = JSON.parse(cached); p.meta.cacheHit = true; return p; }

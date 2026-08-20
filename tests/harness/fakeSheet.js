@@ -78,6 +78,19 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       return this;
     },
     sort: function () { return this; },
+    // Blanks the range's cells, leaving the rows in place -- the real
+    // Range.clearContent. NOT a no-op: the deferred Neon mirror's queue
+    // rewrite is clearContent-then-setValues, so a no-op here would leave
+    // drained dates in the fixture and make a shrinking queue untestable
+    // (the F-6 discipline -- model the method, never stub it away).
+    clearContent: function () {
+      for (let r = 0; r < numRows; r++) {
+        const tgt = startRow - 1 + r;
+        if (!sheet._data[tgt]) continue;
+        for (let c = 0; c < numCols; c++) sheet._data[tgt][startCol - 1 + c] = '';
+      }
+      return this;
+    },
     // Cosmetic no-ops (Setup.gs header styling).
     setFontWeight: function () { return this; },
     setBackground: function () { return this; },

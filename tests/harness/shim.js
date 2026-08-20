@@ -22,6 +22,7 @@ function createShim() {
     spreadsheet: null,                // current fake spreadsheet (set per test)
     sentEmails: [],                   // MailApp.sendEmail captures
     locks: 0,                         // LockService.tryLock call count
+    mailQuota: undefined,             // MailApp.getRemainingDailyQuota (B4)
   };
 
   function computeDigest(_algorithm, str) {
@@ -108,6 +109,11 @@ function createShim() {
 
     MailApp: {
       sendEmail: function (arg) { state.sentEmails.push(arg); },
+      // Real method, modelled rather than omitted: the Health page reads it
+      // (B4). Tests override state.mailQuota to drive the low-quota branch.
+      getRemainingDailyQuota: function () {
+        return state.mailQuota === undefined ? 1500 : state.mailQuota;
+      },
     },
 
     ScriptApp: {
