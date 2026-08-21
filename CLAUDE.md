@@ -872,6 +872,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   not-called-back drill (same lateral as the KPI, cap 200, no caller
   identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
   `outboundReport:v2` + the freshness tag; unavailable payloads uncached.
+  **Vetting tool: `runOutboundVettingCheck`** (editor-run, admin-gated,
+  read-only; `OUTBOUND_VETTING_FROM/_TO/_DEPT/_SAMPLE` props) -- LIVE
+  two-code-path parity (rule 1 above, vs `computeInboundReport_`'s own
+  `kpis.abandoned`) + per-sample verdict re-verification with the call ids
+  logged for Caller Lookup eyeballing. OPS-8 verdict prefixes; a
+  zero-abandon window reports INCONCLUSIVE (the Batch-6 gate contract) --
+  **never un-gate on an INCONCLUSIVE / FAILED / MISMATCH run.**
 - **Temporal abandon heatmap (weekday × hour), sourced from
   `inbound_calls`.** **NOT work-window-scoped, deliberately** -- it is already
   bounded by its own `INBOUND_HEATMAP_WINDOW_START_HOUR`/`_END_HOUR` band

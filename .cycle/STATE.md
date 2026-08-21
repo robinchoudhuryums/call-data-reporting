@@ -3690,3 +3690,30 @@ owner-gated releases (Inbound/Direct/Outbound un-gating, queue-split flip
 `claude/broad-scan-8dgd6m` (restarted from merged main / PR #252). NO PR —
 not requested; it's a two-file doc/state commit, fine to fold into
 whatever goes next.
+
+## Increment 138 (2026-08-21) — Outbound vetting instrument (release-enablement)
+
+**Block:** `.cycle/blocks/138-outbound-vetting-probe-broad-implement.md`
+
+`runOutboundVettingCheck` (OutboundReport.gs — editor-run, admin-gated,
+read-only; OUTBOUND_VETTING_FROM/_TO/_DEPT/_SAMPLE props, defaults = last
+14 days company-wide). Leg A: LIVE two-code-path parity — the outbound
+callback.abandonedTotal vs computeInboundReport_'s own kpis.abandoned
+(verified identical population: range + dept pred + work window +
+is_internal). Leg B: up to N called-back pairs + N not-called-back
+abandons each re-verified by a separately-written bound-param query
+(hash equality + timestamp ordering), call ids logged for Caller Lookup
+eyeballing. OPS-8 verdicts; zero abandons ⇒ INCONCLUSIVE (Batch-6 gate
+contract) — never un-gate on INCONCLUSIVE/FAILED/MISMATCH. +6 tests
+(854/854; harness gained Util.gs + capture/restore of the stubbed
+compute globals). CLAUDE.md Outbound bullet names the tool (the
+Inbound-bullet pattern).
+
+**Outbound release runbook now:** deploy dashboard → (recommended)
+backfillOutboundCalls → runOutboundVettingCheck → on 'ok', the one-line
+gate removal + menu un-hide, adding the ci:ui driver visit + S44 in the
+same change.
+
+**WHERE I LEFT OFF:** committed + pushed to `claude/broad-scan-8dgd6m`
+(branch carries the row-34 closure doc commit + this). NO PR — not
+requested.

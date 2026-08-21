@@ -495,3 +495,190 @@ function getOutboundUncalled(req) {
     if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
   }
 }
+
+// ── Vetting instrument (the runInboundQcdParityCheck class) ────────────────
+//
+// The report is TEMPORARILY admin-only until its numbers are trusted; this
+// is the tool that makes "vet it" one execution-log read instead of an
+// open-ended chore. EDITOR-RUN, admin-gated, READ-ONLY (no writes, no
+// caches, no properties written). Two legs:
+//
+//   A. PARITY across two independent code paths: the outbound report's
+//      callback.abandonedTotal (computeOutboundReport_) must equal the
+//      Inbound report's kpis.abandoned (computeInboundReport_) for the same
+//      scope -- the contract "the callback denominator IS the Inbound
+//      report's Abandoned population", certified against LIVE Neon rather
+//      than only by the unit suite's shared-predicate pins.
+//   B. SAMPLE VERDICT RE-VERIFICATION: up to OUTBOUND_VETTING_SAMPLE
+//      called-back pairs and the same number of not-called-back abandons,
+//      each re-checked by a separately-written per-call query (explicit
+//      hash-equality + timestamp-ordering EXISTS, bound parameters). Semi-
+//      independent by construction (same tables), so its real value is (1)
+//      differently-written predicates agreeing and (2) the call ids logged
+//      per sample, ready to eyeball in Caller Lookup. No hashes and no
+//      numbers are logged -- call ids + dates + raw times only.
+//
+// Config (Script Properties, all optional): OUTBOUND_VETTING_FROM /
+// OUTBOUND_VETTING_TO (default: the 14 days ending yesterday),
+// OUTBOUND_VETTING_DEPT ('' = company view), OUTBOUND_VETTING_SAMPLE (=8).
+//
+// Verdict prefixes are OPS-8 style: 'ok ...' / 'INCONCLUSIVE ...' /
+// 'MISMATCH ...' / 'FAILED ...'. **The Batch-6 gate contract applies: a
+// window with ZERO abandons proves nothing -- it reports INCONCLUSIVE, and
+// the un-gating decision must never be made on an INCONCLUSIVE or FAILED
+// run** (the "never flip on error/compared:0" rule, Operator State #19).
+
+function runOutboundVettingCheck() {
+  assertAdmin_();
+  const props = PropertiesService.getScriptProperties();
+  const msDay = 24 * 3600 * 1000;
+  const iso = function (d) {
+    return Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd');
+  };
+  const yesterday = new Date(Date.now() - msDay);
+  const to = String(props.getProperty('OUTBOUND_VETTING_TO') || iso(yesterday)).trim();
+  const from = String(props.getProperty('OUTBOUND_VETTING_FROM')
+    || iso(new Date(new Date(to + 'T12:00:00Z').getTime() - 13 * msDay))).trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) {
+    throw new Error('OUTBOUND_VETTING_FROM/_TO must be YYYY-MM-DD with from <= to (got '
+      + from + ' .. ' + to + ').');
+  }
+  const dept = String(props.getProperty('OUTBOUND_VETTING_DEPT') || '').trim();
+  const sampleN = Math.max(1, Math.min(25, Number(props.getProperty('OUTBOUND_VETTING_SAMPLE')) || 8));
+  const scope = { from: from, to: to, dept: dept, companyView: !dept, user: { role: 'admin' } };
+  const deptQueues = scope.companyView ? [] : inboundQueuesForDept_(dept);
+  const label = from + '..' + to + (dept ? (' dept=' + dept) : ' (all departments)');
+
+  // ── Leg A: two-code-path parity ──────────────────────────────────────────
+  const ob = computeOutboundReport_(scope);
+  if (!ob.meta.available) {
+    return logStatusReturn_({ result: 'FAILED (outbound compute unavailable — Neon unreachable?) ' + label });
+  }
+  const ib = computeInboundReport_({ from: from, to: to, dept: dept,
+    deptQueues: deptQueues, companyView: scope.companyView });
+  if (!ib || ib.meta.available === false) {
+    return logStatusReturn_({ result: 'FAILED (inbound compute unavailable — Neon unreachable?) ' + label });
+  }
+  if (ib.meta.unmapped) {
+    return logStatusReturn_({ result: 'FAILED (dept has no mapped queues — fix Dept Config before vetting) ' + label });
+  }
+  const obAbandoned = Number(ob.callback.abandonedTotal) || 0;
+  const ibAbandoned = Number(ib.kpis.abandoned) || 0;
+  Logger.log('parity: outbound callback.abandonedTotal=%s vs inbound kpis.abandoned=%s (%s)',
+    obAbandoned, ibAbandoned, label);
+  if (obAbandoned !== ibAbandoned) {
+    return logStatusReturn_({
+      result: 'MISMATCH parity: outbound=' + obAbandoned + ' vs inbound=' + ibAbandoned
+        + ' (' + label + ') — the two reports disagree on the Abandoned population; do NOT un-gate.',
+      outbound: obAbandoned, inbound: ibAbandoned,
+    });
+  }
+  if (obAbandoned === 0) {
+    // The Batch-6 gate contract: parity over nothing certifies nothing.
+    return logStatusReturn_({
+      result: 'INCONCLUSIVE (0 abandons in range — widen OUTBOUND_VETTING_FROM/_TO; never un-gate on this) ' + label,
+      outbound: 0, inbound: 0,
+    });
+  }
+
+  // ── Leg B: per-sample verdict re-verification ────────────────────────────
+  let conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable for the sample leg) ' + label });
+
+    const where = outboundAbandonWhere_(scope, deptQueues, from, to)
+      + ' AND c.caller_hash IS NOT NULL';
+    const sql =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + 'SELECT c.call_id AS a_id, c.call_date::text AS a_date, c.call_start AS a_start, '
+      +   'cb.o_id, cb.o_date, cb.o_start '
+      + 'FROM inbound_calls c '
+      + 'LEFT JOIN LATERAL ('
+      +   'SELECT o.call_id AS o_id, o.call_date::text AS o_date, o.call_start AS o_start '
+      +   'FROM outbound_calls o '
+      +   'WHERE o.callee_hash = c.caller_hash '
+      +     'AND o.call_date >= c.call_date '
+      +     'AND o.call_date <= c.call_date + ' + OUTBOUND_CALLBACK_WINDOW_DAYS + ' '
+      +     "AND (o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval)"
+      +       " >= (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval) "
+      +   "ORDER BY o.call_date, COALESCE(o.call_start,'00:00:00') LIMIT 1"
+      + ') cb ON true '
+      + 'WHERE ' + where + ' '
+      + 'ORDER BY c.call_date DESC, c.call_start DESC NULLS LAST LIMIT 200) t';
+    const stmt = conn.createStatement();
+    const rs = stmt.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    rs.close(); stmt.close();
+    const rows = JSON.parse(json || '[]');
+    const calledBack = [], uncalled = [];
+    rows.forEach(function (r) {
+      if (r.o_id != null && calledBack.length < sampleN) calledBack.push(r);
+      else if (r.o_id == null && uncalled.length < sampleN) uncalled.push(r);
+    });
+
+    const failures = [];
+    // Called-back pairs: the specific outbound row must exist, share the
+    // caller's hash, and not precede the abandon. Bound params throughout.
+    calledBack.forEach(function (p) {
+      const v = conn.prepareStatement(
+        'SELECT count(*) AS n FROM outbound_calls o, inbound_calls c '
+        + 'WHERE c.call_id = ? AND c.call_date = ?::date '
+        +   'AND o.call_id = ? AND o.call_date = ?::date '
+        +   'AND o.callee_hash = c.caller_hash '
+        +   "AND (o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval)"
+        +     " >= (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval)");
+      v.setString(1, String(p.a_id)); v.setString(2, String(p.a_date));
+      v.setString(3, String(p.o_id)); v.setString(4, String(p.o_date));
+      const vr = v.executeQuery();
+      const n = vr.next() ? Number(vr.getString('n')) : 0;
+      vr.close(); v.close();
+      const ok = n === 1;
+      if (!ok) failures.push('called-back ' + p.a_id + '@' + p.a_date + ' -> ' + p.o_id + '@' + p.o_date);
+      Logger.log('sample called-back: abandon %s @ %s %s -> outbound %s @ %s %s : %s',
+        p.a_id, p.a_date, p.a_start || '(no time)', p.o_id, p.o_date, p.o_start || '(no time)',
+        ok ? 'VERIFIED' : 'FAILED');
+    });
+    // Not-called-back abandons: NO qualifying outbound may exist in-window.
+    uncalled.forEach(function (p) {
+      const v = conn.prepareStatement(
+        'SELECT count(*) AS n FROM outbound_calls o '
+        + 'WHERE o.callee_hash = (SELECT caller_hash FROM inbound_calls '
+        +   'WHERE call_id = ? AND call_date = ?::date) '
+        +   'AND o.call_date >= ?::date '
+        +   'AND o.call_date <= ?::date + ' + OUTBOUND_CALLBACK_WINDOW_DAYS + ' '
+        +   "AND (o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval)"
+        +     " >= (SELECT c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval "
+        +       'FROM inbound_calls c WHERE c.call_id = ? AND c.call_date = ?::date)');
+      v.setString(1, String(p.a_id)); v.setString(2, String(p.a_date));
+      v.setString(3, String(p.a_date)); v.setString(4, String(p.a_date));
+      v.setString(5, String(p.a_id)); v.setString(6, String(p.a_date));
+      const vr = v.executeQuery();
+      const n = vr.next() ? Number(vr.getString('n')) : 0;
+      vr.close(); v.close();
+      const ok = n === 0;
+      if (!ok) failures.push('not-called-back ' + p.a_id + '@' + p.a_date + ' has ' + n + ' match(es)');
+      Logger.log('sample not-called-back: abandon %s @ %s %s : %s',
+        p.a_id, p.a_date, p.a_start || '(no time)', ok ? 'VERIFIED (0 matches)' : 'FAILED');
+    });
+
+    if (failures.length) {
+      return logStatusReturn_({
+        result: 'MISMATCH samples: ' + failures.length + '/' + (calledBack.length + uncalled.length)
+          + ' re-verifications failed (' + label + ') — do NOT un-gate. ' + failures.join('; '),
+        parityAbandoned: obAbandoned, failures: failures,
+      });
+    }
+    return logStatusReturn_({
+      result: 'ok parity ' + obAbandoned + ' abandons match across both reports; '
+        + calledBack.length + ' called-back + ' + uncalled.length
+        + ' not-called-back samples re-verified (' + label + '). '
+        + 'Spot-check any logged call id in Caller Lookup, then release is a one-line gate removal.',
+      parityAbandoned: obAbandoned,
+      sampledCalledBack: calledBack.length, sampledUncalled: uncalled.length,
+    });
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
