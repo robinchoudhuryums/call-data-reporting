@@ -3669,3 +3669,51 @@ flips, operator deploys/backfills/probe run, and the block-135
 requested. Deploys owed: dashboard (nothing new since #251), cdr-report
 (row-34 refusal + T-7 clip fix + this), cdr-import (probe + dead-counter
 removal).
+
+## Increment 137 (2026-08-21) — Row-34 CLOSED (probe measured zero); deploys confirmed
+
+Owner deployed all three projects and ran `previewRow34Overlap` over all 10
+surviving Call_Legs dates (2026-08-07..08-20, ~139K rows): **E-overlap = 0
+and colC-overlap(max) = 0 on every date** — the internal+status-3 shape
+does not occur in this install, so row 34's ruled sum has been exactly
+right all along and column C is proven clean by the superset check.
+known-issues entry retitled CLOSED (latent only) with the measurement and
+the re-open rule (non-zero on a future probe run). No code change — a zero
+measurement warrants no predicate edit.
+
+Operator ledger after this: Sep-1 backfills (backfillInbound/OutboundCalls
+before runNeonCoverageCheck), arm coaching delivery when ready, and the
+owner-gated releases (Inbound/Direct/Outbound un-gating, queue-split flip
+#42, agent role #46). All code follow-ons drained.
+
+**WHERE I LEFT OFF:** doc-close committed + pushed to
+`claude/broad-scan-8dgd6m` (restarted from merged main / PR #252). NO PR —
+not requested; it's a two-file doc/state commit, fine to fold into
+whatever goes next.
+
+## Increment 138 (2026-08-21) — Outbound vetting instrument (release-enablement)
+
+**Block:** `.cycle/blocks/138-outbound-vetting-probe-broad-implement.md`
+
+`runOutboundVettingCheck` (OutboundReport.gs — editor-run, admin-gated,
+read-only; OUTBOUND_VETTING_FROM/_TO/_DEPT/_SAMPLE props, defaults = last
+14 days company-wide). Leg A: LIVE two-code-path parity — the outbound
+callback.abandonedTotal vs computeInboundReport_'s own kpis.abandoned
+(verified identical population: range + dept pred + work window +
+is_internal). Leg B: up to N called-back pairs + N not-called-back
+abandons each re-verified by a separately-written bound-param query
+(hash equality + timestamp ordering), call ids logged for Caller Lookup
+eyeballing. OPS-8 verdicts; zero abandons ⇒ INCONCLUSIVE (Batch-6 gate
+contract) — never un-gate on INCONCLUSIVE/FAILED/MISMATCH. +6 tests
+(854/854; harness gained Util.gs + capture/restore of the stubbed
+compute globals). CLAUDE.md Outbound bullet names the tool (the
+Inbound-bullet pattern).
+
+**Outbound release runbook now:** deploy dashboard → (recommended)
+backfillOutboundCalls → runOutboundVettingCheck → on 'ok', the one-line
+gate removal + menu un-hide, adding the ci:ui driver visit + S44 in the
+same change.
+
+**WHERE I LEFT OFF:** committed + pushed to `claude/broad-scan-8dgd6m`
+(branch carries the row-34 closure doc commit + this). NO PR — not
+requested.

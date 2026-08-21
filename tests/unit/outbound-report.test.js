@@ -12,7 +12,9 @@ const { loadGas } = require('../harness/loadGas');
 // ruling: out-of-window calls are never a dept metric), and the callback
 // linkage's hash join + window.
 
-const h = loadGas({ files: ['Config.gs', 'InboundReport.gs', 'OutboundReport.gs'] });
+// Util.gs joins the load for the vetting probe (assertAdmin_ /
+// logStatusReturn_); the pre-existing tests are unaffected by it.
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'InboundReport.gs', 'OutboundReport.gs'] });
 
 // Cross-file stubs (Data.gs / QCDReport.gs / DeptConfig.gs not loaded — each
 // stub mirrors the real signature; the real implementations are pinned by
@@ -316,6 +318,152 @@ test('outbound v2: getOutboundUncalled lists tracked, un-called-back abandons �
   h.ctx.getDashboardNeonConn_ = function () { return null; };
   assert.equal(h.call('getOutboundUncalled',
     { from: '2026-08-01', to: '2026-08-19', department: 'CSR' }).meta.available, false);
+});
+
+// ── The vetting instrument (runOutboundVettingCheck) ────────────────────────
+
+// The vetting tests stub the two compute globals; capture the REAL vm
+// functions here so the last vetting test can restore them (assignment
+// over a vm global loses the original -- delete would remove it entirely).
+const REAL_COMPUTE_OUTBOUND_ = h.ctx.computeOutboundReport_;
+const REAL_COMPUTE_INBOUND_ = h.ctx.computeInboundReport_;
+function restoreVetStubs_() {
+  h.ctx.computeOutboundReport_ = REAL_COMPUTE_OUTBOUND_;
+  h.ctx.computeInboundReport_ = REAL_COMPUTE_INBOUND_;
+}
+
+function makeVetConn_(pairsJson, opts) {
+  opts = opts || {};
+  const conn = {
+    sql: [], prepared: [], closed: false,
+    createStatement: function () {
+      return {
+        executeQuery: function (s) {
+          conn.sql.push(s);
+          let n = 0;
+          return { next: function () { return n++ === 0; },
+                   getString: function () { return pairsJson; }, close: function () {} };
+        },
+        close: function () {},
+      };
+    },
+    prepareStatement: function (s) {
+      const ps = { _p: {}, setString: function (i, v) { ps._p[i] = v; } };
+      ps.executeQuery = function () {
+        conn.prepared.push({ sql: s, p: ps._p });
+        // Called-back verification (binds the outbound id) expects 1;
+        // not-called-back verification expects 0 -- opts flip them to
+        // simulate a wrong verdict.
+        const isPair = /o\.call_id = \?/.test(s);
+        const n = isPair ? (opts.pairVerifyCount !== undefined ? opts.pairVerifyCount : 1)
+                         : (opts.uncalledVerifyCount !== undefined ? opts.uncalledVerifyCount : 0);
+        let done = 0;
+        return { next: function () { return done++ === 0; },
+                 getString: function () { return String(n); }, close: function () {} };
+      };
+      ps.close = function () {};
+      return ps;
+    },
+    close: function () { conn.closed = true; },
+  };
+  return conn;
+}
+
+const VET_PAIRS_ = JSON.stringify([
+  { a_id: 'ab1', a_date: '2026-08-19', a_start: '10:00:00',
+    o_id: 'ob1', o_date: '2026-08-19', o_start: '11:00:00' },
+  { a_id: 'ab2', a_date: '2026-08-18', a_start: '09:00:00',
+    o_id: null, o_date: null, o_start: null },
+]);
+
+function installVetStubs_(obAbandoned, ibAbandoned, conn) {
+  h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+  h.state.props = { OUTBOUND_VETTING_FROM: '2026-08-06', OUTBOUND_VETTING_TO: '2026-08-19' };
+  h.ctx.computeOutboundReport_ = function () {
+    return { meta: { available: true }, callback: { abandonedTotal: obAbandoned } };
+  };
+  h.ctx.computeInboundReport_ = function () {
+    return { meta: { available: true }, kpis: { abandoned: ibAbandoned } };
+  };
+  h.ctx.getDashboardNeonConn_ = function () { return conn || makeVetConn_(VET_PAIRS_); };
+}
+
+test('vetting: clean run — parity across both code paths + both sample verdicts re-verified → ok', function () {
+  const conn = makeVetConn_(VET_PAIRS_);
+  installVetStubs_(25, 25, conn);
+  const out = JSON.parse(JSON.stringify(h.call('runOutboundVettingCheck')));
+  assert.match(out.result, /^ok parity 25 abandons/);
+  assert.match(out.result, /1 called-back \+ 1 not-called-back/);
+  assert.equal(conn.closed, true);
+  // The pairs sweep carries the report's own denominator predicates.
+  const pairs = conn.sql.join('\n');
+  assert.match(pairs, /COALESCE\(c\.is_internal, FALSE\) = FALSE/);
+  assert.match(pairs, /c\.call_start IS NULL OR \(c\.call_start >= '06:30:00'/);
+  assert.match(pairs, /c\.caller_hash IS NOT NULL/);
+  assert.match(pairs, /o\.callee_hash = c\.caller_hash/);
+  assert.match(pairs, /LIMIT 200\)/);
+  // Per-sample re-verification: bound params, never inlined ids; explicit
+  // hash-equality + timestamp-ordering in a separately-written query.
+  assert.equal(conn.prepared.length, 2);
+  const pairV = conn.prepared.filter(function (q) { return /o\.call_id = \?/.test(q.sql); })[0];
+  assert.ok(pairV, 'called-back verification ran');
+  assert.equal(pairV.p[1], 'ab1');
+  assert.equal(pairV.p[3], 'ob1');
+  assert.match(pairV.sql, /o\.callee_hash = c\.caller_hash/);
+  assert.match(pairV.sql, />= \(c\.call_date::timestamp/);
+  const uncV = conn.prepared.filter(function (q) { return /SELECT caller_hash FROM inbound_calls/.test(q.sql); })[0];
+  assert.ok(uncV, 'not-called-back verification ran');
+  assert.equal(uncV.p[1], 'ab2');
+});
+
+test('vetting: the two reports disagreeing is a MISMATCH, never ok', function () {
+  installVetStubs_(25, 24);
+  assert.match(h.call('runOutboundVettingCheck').result, /^MISMATCH parity: outbound=25 vs inbound=24/);
+});
+
+test('vetting: zero abandons is INCONCLUSIVE (the Batch-6 gate contract) — parity over nothing certifies nothing', function () {
+  installVetStubs_(0, 0);
+  const out = h.call('runOutboundVettingCheck');
+  assert.match(out.result, /^INCONCLUSIVE \(0 abandons/);
+  assert.ok(!/^ok/.test(out.result));
+});
+
+test('vetting: a failed sample re-verification is a MISMATCH naming the call', function () {
+  const conn = makeVetConn_(VET_PAIRS_, { pairVerifyCount: 0 });   // pair no longer verifies
+  installVetStubs_(25, 25, conn);
+  const out = h.call('runOutboundVettingCheck');
+  assert.match(out.result, /^MISMATCH samples: 1\/2/);
+  assert.match(out.result, /ab1/);
+});
+
+test('vetting: unavailable computes and bad props FAIL loudly; the gate is admin-only', function () {
+  installVetStubs_(25, 25);
+  h.ctx.computeOutboundReport_ = function () { return { meta: { available: false }, callback: {} }; };
+  assert.match(h.call('runOutboundVettingCheck').result, /^FAILED \(outbound compute unavailable/);
+
+  installVetStubs_(25, 25);
+  h.ctx.computeInboundReport_ = function () { return { meta: { available: true, unmapped: true }, kpis: {} }; };
+  h.state.props.OUTBOUND_VETTING_DEPT = 'CSR';
+  assert.match(h.call('runOutboundVettingCheck').result, /^FAILED \(dept has no mapped queues/);
+
+  installVetStubs_(25, 25);
+  h.state.props.OUTBOUND_VETTING_FROM = 'last week';
+  assert.throws(function () { h.call('runOutboundVettingCheck'); }, /YYYY-MM-DD/);
+
+  installVetStubs_(25, 25);
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  assert.throws(function () { h.call('runOutboundVettingCheck'); }, /admin/i);
+  h.state.testUser = null;
+});
+
+test('vetting: unset date props default to a ~14-day window and still run', function () {
+  installVetStubs_(25, 25);
+  delete h.state.props.OUTBOUND_VETTING_FROM;
+  delete h.state.props.OUTBOUND_VETTING_TO;
+  const out = h.call('runOutboundVettingCheck');
+  assert.match(out.result, /^ok parity 25/);
+  assert.match(out.result, /\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}/);
+  restoreVetStubs_();   // last vetting test: hand the real computes back
 });
 
 test('outbound: no conn → unavailable; a mid-query death → unavailable with the conn closed', function () {

@@ -1284,7 +1284,7 @@ only if name-pair curation proves burdensome.
 
 ---
 
-## QCDR Output row 34: three surfaces, three meanings (found 2026-08-20, RULED 2026-08-20 — total row)
+## QCDR Output row 34: three surfaces, three meanings (found + ruled 2026-08-20; CLOSED 2026-08-21 — latent only)
 
 Found while building the sidebar/pipeline parity suite (`qcd-sidebar-parity.test.js`,
 Batch C). Row 34 of the **QCDR Output** sheet (CDR Report ss) — the parent row of
@@ -1327,6 +1327,19 @@ Run it once after a cdr-import deploy: zero over the ~14-day window ⇒ close
 this note as latent-only; non-zero ⇒ the owner rules on adding
 `type !== "internal"` to row 35's E predicate (a two-file pipeline+sidebar
 edit).
+
+**CLOSED (2026-08-21): the owner ran the probe over all 10 surviving dates
+(2026-08-07..08-20, ~139K rows) — E-overlap = 0 and colC-overlap(max) = 0 on
+every date.** The internal+status-3 overlap shape does not occur in this
+install's traffic (r35/r37 E counts run 0–3/day and never intersect), so row
+34's sum has been exactly right all along — matching the owner's
+observation that the counts were accurate. Because `cOverlapMax` is a
+SUPERSET of the col-C condition, column C is proven clean by the same run.
+The double-count remains a LATENT property of the ruled definition: no
+predicate change is warranted on a zero measurement. If the phone system
+ever starts emitting internal-type status-3 abandons, the probe (still on
+the CDR Tools menu) re-measures in one run — re-open this note only on a
+non-zero result.
 
 ## QCD Report engine
 
