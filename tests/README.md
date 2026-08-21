@@ -61,11 +61,38 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 65 more — dal-cutover parity, escalations
+    ...                       + 65 more (this file is the coverage map —
+                              CLAUDE.md's Key-commands block deliberately
+                              stopped enumerating suites in the 2026-08-20
+                              trim pass): dal-cutover parity, escalations
                               hardening, neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
-                              freezes, cache-version-sync, heatmap drill,
-                              system-health, neon-mirror tail/IMP-11,
+                              freezes, cache-version-sync (doc↔code
+                              cache-pin drift), heatmap drill,
+                              system-health + smoke-check, queue-report,
+                              pipeline-watch, missed-slice,
+                              inbound-qcd-parity, inbound-calls /
+                              outbound-calls (the two per-call captures:
+                              builder gates + authoritative/P-1/hash pins),
+                              sheet-repairs-merge, dept-config-neon /
+                              config-neon-c3, caller-lookup, answer-targets
+                              (R12-25/R23 display standards),
+                              access-control-editor, neon-coverage,
+                              html-include-structure (the whole-file
+                              tag-wrap trap + the assembled-client pins),
+                              queue-split (cols A..AH byte-identical +
+                              the Phase-2 reader's four fail-open paths +
+                              the S2-0 gate + the Phase-0 de-dup
+                              inversion), subqueue-access, claude-md-split
+                              (index↔file sync + the size/bullet ratchets),
+                              setup (INV-12), alert-recipients (B-5),
+                              agent-role / agent-home (the deny wall +
+                              the no-teammate-identity payload pin),
+                              company-overview (getCompanyOverview
+                              end-to-end: crossover partition, no
+                              cross-dept leak, all-queue hero invariance),
+                              trend-window, qcd-report (F-15/F-36),
+                              neon-mirror tail/IMP-11,
                               qcd-sidebar-parity (the Extraction Sidebar and
                               calcQcdReport driven from ONE fixture — the
                               behavioral F1 guard; loads BOTH sibling

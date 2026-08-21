@@ -219,18 +219,21 @@ const SECTIONS = [
       // told at length (shave it) or SEVERAL rules fused (split it). Adding a
       // grandfathered entry is the last resort, not the first move -- an entry
       // here freezes a bullet nobody can then edit without special-casing.
-      'Role model + the all-departments manager (`allDepts`).': 6156,
-      'Neon read-back (F1) is flag-gated and defaults OFF.': 5554,
-      "Neon write discipline (don't regress this — it caused a daily-import\n  timeout).": 4881,
-      'Direct-extension call metrics are a separate population from the\n  DQE/QCD queue metrics, with a "busy" carve-out.': 4848,
+      //
+      // 2026-08-20 trim pass: this map is now EMPTY, and that is the outcome
+      // to protect. The last five seeds ('Role model…' 6156 B split into four
+      // bullets; 'Neon read-back…' 5554→~3.0 KB; 'Neon write discipline…'
+      // 4881→~3.8 KB; 'Direct-extension…' 4848→~3.0 KB; and KDD's 'Sub-queue
+      // combined view…' 7547 B split in two) all came under MAX_BULLET_BYTES
+      // by extracting incident narrative to docs/fix-history.md and splitting
+      // fused subjects. Every bullet now answers to the flat budget above --
+      // do not re-seed this map to make room for new prose.
     },
   },
   {
     heading: '\n## Key Design Decisions',
     endHeading: '\n## Operator State Checklist',
-    grandfathered: {
-      'Sub-queue combined view on My Department (Phase 1).': 7547,
-    },
+    grandfathered: {},
   },
 ];
 

@@ -258,7 +258,13 @@ When something looks wrong, before assuming a code bug, check:
     readers also fall back to the sheet on any Neon error. After a bulk
     rebuild (which defers the DQE->Neon mirror via `skipNeon`), run
     `backfillDQEHistoryUpsert()` (cdr-report) to populate/refresh
-    `dqe_history` before relying on the read-back. It is resumable via
+    `dqe_history` before relying on the read-back. **Index prerequisite
+    (F1; already created in prod — a FRESH Neon would need it again):**
+    `CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);`
+    and
+    `CREATE INDEX IF NOT EXISTS idx_dqe_history_date_agent ON dqe_history (call_date, agent_name);`
+    — Postgres has no stored row order; `ORDER BY call_date` at query time
+    and the indexes keep the date/agent-filtered readers fast. It is resumable via
     the code-written `DQE_UPSERT_RESUME` cursor (clear it to restart from
     the top), and takes an optional **`DQE_UPSERT_SINCE`** Script Property
     -- a `YYYY-MM-DD` floor that upserts only rows on/after that date, so

@@ -3622,3 +3622,28 @@ D-3 coverage) — 3-site one-liner when taken.
 (probe), cdr-report (clipping fix). /sync-docs queue grows: probe as the
 row-34 resolution instrument; dashboard-cdr-core in the rolls; block-130's
 "480-line core stays a follow-on" clause resolved.
+
+## Increment 135 (2026-08-20) — The CLAUDE.md trim/extraction pass
+
+**Block:** `.cycle/blocks/135-claude-md-trim-broad-implement.md`
+
+The overdue doc-maintenance task (headroom had fallen to 12.8 KB):
+187,222 → 175,480 bytes (−11.7 KB; 28.6 KB headroom). **Both grandfathered
+ratchet maps are now EMPTY** — the five seeds retired by extraction or
+split (Role model → four bullets; Sub-queue combined view → two, incl. a
+standalone "Queue-split narrowing (Phase 2)" bullet; Neon read-back
+5.5→3.0 KB; Neon write discipline 4.9→3.8 KB; Direct-extension
+4.8→3.0 KB), so every prose bullet answers to the flat 4,096 B budget and
+the map comment forbids re-seeding. The Key-commands suite enumeration
+moved to tests/README.md (its designated home, enriched); the third copy
+in Cycle Workflow Config compressed to a pointer; the dqe_history index
+DDL relocated to Operator State #19. Reference-resolution audit in the
+block: no rule deleted, every dropped fix code/identifier still resolves
+(fix-history carries the extracted stories verbatim).
+
+Tests 847/847 (incl. the now-stricter flat ratchet). No production code
+touched; no deploy needed.
+
+**WHERE I LEFT OFF:** branch restarted from merged main (PR #251), trim
+committed + pushed to `claude/broad-scan-8dgd6m`. NO PR — not requested.
+Next size lever when needed: an F8-style SECTION split, not more shaving.
