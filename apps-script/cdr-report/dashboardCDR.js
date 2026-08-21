@@ -533,7 +533,9 @@ function generateCustomReportCore_() {
       s.prev.obExt.t + s.prev.ibExt.t + s.prev.obInt.t + s.prev.ibInt.t;
     if (anyActivity === 0) continue;
 
-    const row = [name];
+    // D-3 (completed 2026-08-20): agent NAMES are feed-derived too -- the
+    // contacts cells were neutralized first, these three name sites later.
+    const row = [crSheetSafeCell_(name)];
 
     const pushData = (c, p, hasDur, contactMap) => {
       const cRate = c.t > 0 ? c.a / c.t : 0;
@@ -815,7 +817,7 @@ function buildPieCharts(sheet, headerRow, tableRows, tableHeaders, cats, anchorR
     // Write temporary data block for the chart (Sheets charts need cell ranges)
     const tmpRow = anchorRow;
     const tmpCol = chartCol;
-    const labels = chartData.map(d => [d.name, d.val]);
+    const labels = chartData.map(d => [crSheetSafeCell_(d.name), d.val]);   // D-3: feed-derived names
 
     sheet.getRange(tmpRow, tmpCol).setValue(def.label + ' Agent').setFontWeight('bold').setFontSize(8);
     sheet.getRange(tmpRow, tmpCol + 1).setValue('Calls').setFontWeight('bold').setFontSize(8);
@@ -950,7 +952,7 @@ function writeDiagnostics(dashSheet, diag, cats, agents, start1, end1, reportWid
     const capped  = entries.slice(0, maxEntries);
 
     capped.forEach(([name, count]) => {
-      dashSheet.getRange(r, col).setValue(name).setFontSize(8);
+      dashSheet.getRange(r, col).setValue(crSheetSafeCell_(name)).setFontSize(8);   // D-3
       dashSheet.getRange(r, col + 1).setValue(count).setFontSize(8);
       dashSheet.getRange(r, col + 2).setValue(total > 0 ? count / total : 0)
         .setNumberFormat('0.0%').setFontSize(8);
@@ -991,7 +993,7 @@ function writeDiagnostics(dashSheet, diag, cats, agents, start1, end1, reportWid
   Object.entries(agents)
     .sort((a, b) => b[1].cur.obExt.t - a[1].cur.obExt.t)
     .forEach(([name, s]) => {
-      dashSheet.getRange(r, col).setValue(name).setFontSize(8);
+      dashSheet.getRange(r, col).setValue(crSheetSafeCell_(name)).setFontSize(8);   // D-3
       dashSheet.getRange(r, col + 1).setValue(s.cur.obExt.a + ' / ' + s.cur.ibExt.a).setFontSize(8);
       dashSheet.getRange(r, col + 2).setValue(s.cur.obInt.t + ' / ' + s.cur.ibInt.a).setFontSize(8);
       r += 1;
@@ -1080,7 +1082,8 @@ function mergeContactMaps(map1, map2) {
 }
 
 function writeTop5(sheet, row, col, map) {
-  const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([name, count]) => [crSheetSafeCell_(name), count]);   // D-3: feed-derived names
   if (sorted.length === 0) return;
 
   const range = sheet.getRange(row, col, sorted.length, 2);

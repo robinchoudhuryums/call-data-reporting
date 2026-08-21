@@ -385,6 +385,32 @@ test('core: the T-7 case still holds — a stale panel BEYOND the render clear i
   }
 });
 
+test('core: D-3 completed — a formula-shaped AGENT NAME is neutralized at every sheet write site', function () {
+  // Follow-on from block 134: only the CONTACTS cells went through
+  // crSheetSafeCell_; the agent-name writes (table col A, the pie-chart temp
+  // block, the diagnostics agent subtotals) and the top-5 / diagnostics
+  // contact-name cells wrote feed-derived strings raw.
+  const rows = [
+    histRow_(D(2026, 6, 2), 'Sales', '=DROP()', { obTot: 9, obAns: '=EVIL(7), Safe C' }),
+  ];
+  const r = runCore_(rows, [], {
+    dept: 'Sales', start: D(2026, 6, 1), end: D(2026, 6, 30), cats: { OB_EXT: true },
+  });
+  // 1. Report table col A.
+  assert.equal(r.dash.get(HEADER_ROW + 1, 1), "'=DROP()");
+  // 2 + 3. Every other write of the name/contact across the grid (pie-chart
+  // temp block, top-5 list, diagnostics detail + agent subtotals): NO cell
+  // anywhere may hold a bare formula-leading string.
+  const bare = Object.entries(r.dash._cells).filter(function (e) {
+    return typeof e[1] === 'string' && /^[=+@\t\r]/.test(e[1]);
+  });
+  assert.deepEqual(bare, [], 'no cell may carry a bare formula-leading feed string');
+  // And the neutralized forms actually made it out (not just dropped).
+  const vals = Object.values(r.dash._cells).map(String);
+  assert.ok(vals.some(function (v) { return v.indexOf("'=EVIL(7)") === 0 || v.indexOf("'=EVIL") === 0; }),
+    'the contact name survives, apostrophe-prefixed');
+});
+
 test('core: diagnostics panel summary counts reconcile with the parsed lists', function () {
   const f = standardRows_();
   const r = runCore_(f.rows, f.durDisplays, {
