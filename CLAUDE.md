@@ -94,83 +94,29 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # (.claude/settings.json).
 bash scripts/check-duplicated-files.sh
 
-# Unit tests (regression harness, Phases 1-4). Zero deps -- Node's
-# built-in test runner loads the real .gs/.js files into a vm with
-# mocked Apps Script globals (dashboard + the sibling cdr-report /
-# cdr-import projects). Non-zero exit on failure. Covers: pure logic
-# (date/duration parsing INV-02/03, hashAgents_ INV-36, Util, the
-# INV-54 Dept Config accessors); the aggregator computeSummary_
-# (INV-02/04/05/23/53, S35, E5); the report builders (IR weighted ATT
-# INV-25, the Insights consolidation freeze INV-25/28/29, CR
-# length-mismatch INV-35, INV-53);
-# pipeline canonicalization (loadRosterCanonicalNames_ INV-24/46,
-# INV-16 cross-project); the INV-29 trend window
-# (computeTrendStartDate_, trend-window.test.js); the end-to-end
-# buildDQEHistoricalData build (INV-07/08/20/21 + the Pass-4 INV-23
-# queue-sentinel producer); the QCD report's F-15 daily axis /
-# F-36 all-dept grand-total dedup (qcd-report.test.js); the Missed
-# report's RPT-1/2 abandoned-count + pairing pins
-# (missed-report.test.js); and the ingest watchdog's OPS-1/OPS-7
-# episode/holiday logic (ingest-watchdog.test.js). The ops/report
-# surfaces added since each pin under a same-named suite:
-# system-health + smoke-check, queue-report, pipeline-watch,
-# missed-slice, dal-cutover (sheet-vs-neon parity), heatmap-cell-drill,
-# inbound-qcd-parity, inbound-calls (capture incl. the R5
-# direct-stage/first_agent pins), outbound-calls (the Option B per-call
-# outbound capture: builder gates + writer authoritative/P-1/hash
-# pins), sheet-repairs-merge, dept-config-neon
-# / config-neon-c3, escalations-hardening, caller-lookup,
-# answer-targets (the R12-25 tunable display-standards parser + save
-# canonicalizer, + the R23 amber band / per-dept overrides / transfer tiers),
-# coaching (the R23 turnover-suggestion gates + the F-e weekly delivery:
-# Neon worklist upsert diff, admin-only email on NEW flags, race-safe close
-# -- dark until COACHING_DELIVERY_ENABLED, Op State #48),
-# outbound-report (the Batch G callback-linkage report: vetting gate, the
-# abandon-denominator/work-window/hash-join SQL pins, roster attribution,
-# getOutboundUncalled), dashboard-cdr-core (generateCustomReportCore_
-# end-to-end via a local recording fake -- incl. the T-7 panel-clear clip
-# regression it caught), access-control-editor, neon-coverage (the R7 sheet-vs-Neon
-# reconciliation's pure pieces), cache-version-sync (doc↔code cache-pin
-# drift), html-include-structure (styles.html / script.html are Apps Script
-# INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
-# content appended to the END lands OUTSIDE the tag and renders as visible text
-# on the page. That shipped once, and the rendered-UI gate structurally cannot
-# see it: no console error, no blank canvas, no overflow. Since #4/Round-16 it
-# ALSO pins the assembled client: script.html is an ASSEMBLER whose
-# script-N-*.html fragments are raw JS spliced into ONE IIFE by the
-# template-evaluating include_ -- per-fragment purity, include-list<->disk
-# parity, and a node --check of the assembled body; see
-# docs/client-ui-conventions.md "The assembled client"), queue-split (the
-# sub-queue Phase 1 pipeline column -- pins cols A..AH byte-identical so the
-# append stays provably additive -- plus the Phase 2 reader's FOUR fail-open
-# paths, its S2-0 QUEUE_SPLIT_SCOPE gate (default off) and its INVERSION of the
-# Phase 0 crossover de-dup),
-# subqueue-access (Phase 0 access widening + the Phase 1 merge layer +
-# the Phase 2 picker groups), claude-md-split (the F8 index↔file guard: an invariant / scenario /
-# operator item that exists in docs/ but not in CLAUDE.md's index -- or vice
-# versa -- fails the build, plus a size cap on CLAUDE.md itself), setup (the
-# INV-12 idempotency/ten-sheets/partial-run-recovery pins),
-# alert-recipients (B-5: ALL-sentinel managers receive every dept's alert),
-# agent-role / agent-home (the fourth role: the Phase A deny wall +
-# resolution, and the agent app's endpoints incl. the wait join, history
-# rollups, and the no-teammate-identity payload pin), qcd-sidebar-parity (the
-# Extraction Sidebar and calcQcdReport driven from ONE fixture -- sidebar
-# row count === pipeline cell value, the behavioral F1 guard),
-# escalations-snapshot (the E2 outage cache: chunked store, torn-write
-# safety, viewer-scoped serve), dashboard-cdr-helpers (dashboardCDR's pure
-# aggregation helpers incl. the totals row's recompute-not-sum Rate/ATT),
-# and company-overview
-# (getCompanyOverview END-TO-END: the off-mode Phase 0 double-count parity,
-# the dept-mode crossover partition, no cross-dept leak on the shared row
-# array, and the all-queue company hero invariance).
-# HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
-# getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a test
-# needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
-# (sheet._numberFormats), so the widen-before-write and plain-text coercion
-# protections are test-enforceable; never loosen the fake to make a fixture fit.
-# See tests/README.md for design + how to add tests. The neonWrite JDBC
-# writers are pinned end-to-end (chunking/commit discipline +
-# field mappings, neon-write-mapping.test.js).
+# Unit tests (regression harness). Zero deps -- Node's built-in test
+# runner loads the real .gs/.js files into a vm with mocked Apps Script
+# globals (dashboard + the sibling cdr-report / cdr-import projects).
+# Non-zero exit on failure. ~70 suites pin the invariants, the report
+# builders, the pipeline build, the Neon writers/readers, and every
+# flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
+# tests/README.md (its designated home; this block stopped enumerating
+# suites in the 2026-08-20 trim pass -- keep it that way).
+# Two rules that bite here:
+# - HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
+#   getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a
+#   test needs a narrow sheet on purpose) and RECORDS setNumberFormat calls
+#   (sheet._numberFormats), so the widen-before-write and plain-text
+#   coercion protections are test-enforceable; never loosen the fake to
+#   make a fixture fit.
+# - html-include-structure: styles.html / script.html are Apps Script
+#   INCLUDES whose wrapping <style>/<script> must enclose the WHOLE file --
+#   content appended to the END lands OUTSIDE the tag and renders as
+#   visible page text (shipped once; the rendered-UI gate structurally
+#   cannot see it). The suite also pins the ASSEMBLED client (script.html
+#   splices the script-N-*.html fragments into ONE IIFE): per-fragment
+#   purity, include-list<->disk parity, node --check of the assembled
+#   body -- see docs/client-ui-conventions.md "The assembled client".
 node --test          # from repo root (or: npm test)
 
 # CI: .github/workflows/ci.yml runs TWO jobs on push-to-main + every PR --
@@ -990,53 +936,33 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Persistence: the `Direct Call History` sheet (CDR Report ss, refresh-in-window
   -> idempotent) + the Neon `direct_call_history` mirror (PK
   `(call_date, department, agent_name)`, `ON CONFLICT DO UPDATE`), both lazily
-  created -- **no setup() change.** Build paths share one core
-  `buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts)` (`opts.skipNeon`
-  defers the Neon mirror; **`opts.expectedDate` (P-4, the F2 class)** makes the
-  build REFUSE -- throw into the caller's Pipeline-Health-logging catch --
-  when the grid's first-row-derived date disagrees, since a stray carry-over
-  first row would otherwise stamp the whole day as D-1 and the
-  delete-then-rewrite writers would wipe D-1's correct sheet + Neon rows;
-  both the daily and bulk callers pass the importer's `dateObj`; the
-  editor-run Phase-1a build self-derives and passes nothing, unchanged.
-  **P-5:** `writeDirectCallRowsToNeon_` runs its authoritative date-DELETE
-  even for an EMPTY row set -- `dcWriteSheet_` clears the sheet's rows for
-  the date regardless, so a force re-import of a date whose direct activity
-  drops to zero no longer leaves the stale row set in `direct_call_history`;
-  it skips only when there's no date at all): the editor-run `runDirectCallBuild()` (Phase 1a,
-  spot-checking), the daily `processIntegratedHistory` 6th block (Phase 1b,
-  inline Neon mirror, best-effort -- a failure never affects the import), and
-  the bulk-backfill path (Phase 3, builds the sheet per date with `skipNeon`,
-  gated on its OWN `willBuildDirect`; NOTE the bulk path runs FORCE-mode (`processBulkQueue` passes force=true), so `willBuildDQE`/`willBuildDirect` are always true in practice -- the gates matter only for a hypothetical non-force bulk caller). The deferred bulk mirror is flushed by
-  the editor-run **`backfillDirectCallToNeon()`** (cdr-import; one connection,
-  batched `ON CONFLICT DO UPDATE`, resumable via `DIRECT_UPSERT_RESUME`, optional
-  `DIRECT_UPSERT_SINCE` date floor) -- the DQE `skipNeon` +
-  `backfillDQEHistoryUpsert` pattern, but cdr-import-local (the writer + table
-  DDL live here). The shared `dcUpsertRows_(conn, rows)` holds the upsert SQL
-  for BOTH the single-date writer and the multi-date backfill. Dashboard read
+  created -- **no setup() change.** Three build paths (editor-run
+  `runDirectCallBuild()`; the daily `processIntegratedHistory` 6th block,
+  best-effort; the bulk backfill with `skipNeon`) share one core
+  `buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts)`. Two guards on
+  it: **`opts.expectedDate` (P-4, the F2 class)** makes the build REFUSE
+  (throw into the caller's Pipeline-Health catch) when the grid's
+  first-row-derived date disagrees -- a stray carry-over first row would
+  stamp the whole day as D-1 and the delete-then-rewrite writers would wipe
+  D-1's correct rows (daily + bulk pass the importer's `dateObj`; the
+  editor-run build self-derives); **P-5:** `writeDirectCallRowsToNeon_`
+  runs its authoritative date-DELETE even for an EMPTY row set (matching
+  `dcWriteSheet_`'s unconditional clear), skipping only when there is no
+  date at all. The deferred bulk mirror is flushed by the editor-run
+  **`backfillDirectCallToNeon()`** (cdr-import-local; resumable via
+  `DIRECT_UPSERT_RESUME`, optional `DIRECT_UPSERT_SINCE` floor); the shared
+  `dcUpsertRows_` holds the upsert SQL for both writers. Dashboard read
   surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
-  (ONE json_build_object Neon round-trip; per-agent answer rate EXCLUDING the
-  busy carve-out, inbound ATT, outbound activity + ATT, int/ext split; cached
-  `directCall:v4`). **R11-M: the SAME query also computes `kpisPrior` (scope-level,
-  over the INV-28 immediately-preceding prior window) + `deptsPrior`
-  (per-dept prior aggregates); the client renders delta chips (`inboundDelta_`)
-  on the IB Answered / IB Answer Rate / OB Calls KPI cards and on each company-view
-  dept header row (answered/OB up=good, missed up=bad, answer% up=good), plus a
-  answer-std tone rail on the dept card.** **TEMPORARILY admin-only while the carve-out numbers are
-  vetted** (the Inbound-report model: the per-dept manager path is written +
-  kept intact, so release is a one-line gate removal in
-  `directCallResolveRequest_` + un-hiding the `data-admin-only` Direct tab).
-  Route `#/report/direct`. **Company view renders per-DEPT cards (R11-C5):**
-  when an admin runs "All departments", the flat all-agents table is
-  replaced by `<details>` cards grouped client-side from the same per-agent
-  rows via `r.dept` -- aggregate headline stats on the summary (agents / IB
-  answered / missed free+busy / busy-excluded answer % (std-tinted) /
-  answered-weighted IB ATT / OB calls), each expanding into that dept's own
-  sortable agent table (shared `directAgentRowHtml_` / `directImpact_`;
-  dynamic `direct-dept-tbody-*` sort wiring is dropped + re-armed per
-  render). Card order = the R11-B11 impact score on the dept aggregate.
-  Single-dept view keeps the flat table; the CSV stays flat with its Dept
-  column. See `docs/direct-extension-metrics-design.md`.
+  (ONE json_build_object round-trip; answer rate EXCLUDES the busy
+  carve-out; cached `directCall:v4`; R11-M `kpisPrior`/`deptsPrior` feed
+  the client delta chips). **TEMPORARILY admin-only while the carve-out
+  numbers are vetted** (the Inbound-report model: latent per-dept manager
+  path; release = a one-line gate removal in `directCallResolveRequest_` +
+  un-hiding the `data-admin-only` tab). Route `#/report/direct`. Company
+  view renders per-DEPT `<details>` cards (R11-C5; card order = the
+  R11-B11 impact score); single-dept view keeps the flat table; the CSV
+  stays flat with its Dept column. See
+  `docs/direct-extension-metrics-design.md`.
 - **Client / presentation-layer conventions live in
   [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) — READ IT
   before touching `script.html`, `styles.html`, or `dashboard.html`**, and
@@ -1238,9 +1164,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   for admin (true) and a normal manager (false), so existing roles have
   ZERO behavior change and a missed widening degrades the new role to a
   single-dept manager (least privilege). **A missed widening is the recurring
-  defect here** -- four found and closed (R-3: `getCallJourney`
-  incl. its F-4 fallback entitlement, `inboundResolveRequest_`,
-  `directCallResolveRequest_`; R8-4: `escAssertRowAccess_`). Pinned by
+  defect here** (four found and closed -- R-3 / R8-4, fix-history). Pinned by
   `tests/unit/escalations-hardening.test.js`. **Grant it** by setting an Access
   Control row's Department cell to `ALL` (Access Control admin modal or the
   sheet; `saveAccessControlRow` accepts + canonicalizes the sentinel) --
@@ -1248,7 +1172,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `tests/unit/access-control-editor.test.js`. **If you add a new
   `role==='admin'` check, decide: is it an admin SURFACE (keep it) or DATA
   BREADTH (use `isAllDeptViewer_()` / `user.allDepts`)?**
-  **MULTI-DEPARTMENT manager (Tier C).** A manager may hold MORE THAN ONE
+- **MULTI-DEPARTMENT manager (Tier C).** A manager may hold MORE THAN ONE
   `Access Control` row (same email, different dept). `resolveUser_` now
   UNIONS them into `departments` (F13); `department` is the first
   (default landing), `allDepts`
@@ -1273,7 +1197,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (different emails, one row each). Pinned by
   `tests/unit/access-control-editor.test.js` +
   `escalations-hardening.test.js`.
-  **Multi-row rows vs. an `Overview Parent` edge -- pick by whether the two
+- **Multi-row access vs. an `Overview Parent` edge -- pick by whether the two
   depts are actually related (owner ruling 2026-07).** Both give a manager a
   second dept's data, and they are NOT interchangeable. **Multiple Access
   Control rows** confer per-dept data access and nothing else: the depts stay
@@ -1289,7 +1213,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   both. NB Alerts + Digests follow neither mechanism (their own per-dept
   config rows), so shared-manager email needs a row per dept there too --
   though an ALL-sentinel row IS an alert recipient for every dept (B-5).
-  **ALIAS EMAILS (Tier C).** The optional `EMAIL_ALIASES` Script Property
+- **ALIAS EMAILS (Tier C).** The optional `EMAIL_ALIASES` Script Property
   (comma/newline-separated `alias@x = canonical@x` pairs, tolerant grammar
   like `DIAL_IN_LABELS`) lets several sign-in addresses resolve to ONE
   identity: `resolveUser_` canonicalizes the address (via
@@ -1472,54 +1396,45 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   on a mid-loop timeout. The DQE/QCD writers already do
   one multi-row insert + one commit. (3) **One probed connection per
   writer** via `getReachableNeonConn_()` (above), not a separate probe +
-  write connection. (4) **Authoritative per-date replace (IMP-5)** -- the
-  mirrors were upsert-only, so a force re-import whose rebuilt set is a
-  SUBSET (agent consolidated under an alias, a corrected row removed) left
-  PHANTOM rows in Neon forever; with `DQE_READ_SOURCE=neon` that shows a
-  split agent + double-counted totals. Callers whose payload is provably
-  the COMPLETE set for its date(s) pass `{ authoritative: true }` to
-  `writeDQERowsToNeon`/`writeQCDRowsToNeon` (DELETEs those dates inside
-  the same transaction before inserting): the daily DQE build + dup-guard
+  write connection. (4) **Authoritative per-date replace (IMP-5)** --
+  upsert-only mirrors leave PHANTOM rows when a force re-import's rebuilt
+  set SHRINKS (with `DQE_READ_SOURCE=neon` that shows a split agent +
+  double-counted totals). Callers whose payload is provably the COMPLETE
+  set for its date(s) pass `{ authoritative: true }` (an in-transaction
+  DELETE of those dates before the insert): the daily DQE build + dup-guard
   re-mirror (both INV-16 copies), the daily QCD mirror, the deferred
-  per-date mirrors (NeonMirror.js); the daily Direct writer deletes its
-  date likewise; **`writeCDRRowsToNeon({authoritative:true})` (P-6)** --
-  the daily inline CDR mirror + the deferred `mirrorCdrForDate_` each pass
-  the COMPLETE per-date CDR set, and the writer deletes the dates'
-  `call_history_phones` CHILDREN first (via the parent-id subselect --
-  deleted parents would otherwise strand their children, or an FK would
-  refuse the delete), then the `call_history_dept` parents, in the same
-  txn as the insert (the bulk post-`dedupeAlreadyArchived_` CDR mirror is
-  a partial set and stays NON-authoritative, like its QCD sibling; pinned
-  by neon-write-mapping.test.js); and **`writeInboundCallsToNeon({authoritative:true,
-  expectedDateIso})` (L2 + P-1)** -- the daily import + the per-date
-  backfill/deferred path each pass
-  the COMPLETE inbound set for their date(s), so a shrinking re-import that
-  DROPS a call_id no longer leaves a phantom in the dashboard-read
-  `inbound_calls` (which has NO sheet primary). **P-1 -- every caller MUST pass
-  `expectedDateIso`** (the importer's / sheet's own date): records are dated
-  from their OWN first leg, so without it a stray carry-over leg from D-1 put
-  D-1 into the payload's date set and the authoritative DELETE wiped ALL of
-  D-1's rows. Stray-dated records are DROPPED with a log line, and the in-txn
-  DELETE can only ever touch the expected date. **F2 -- an empty record set
-  still runs a delete-only pass** (`icDeleteDateOnly_`), so a date whose
-  legitimate count is zero can shed its phantoms; **GATED on the source grid
-  being NON-EMPTY**, because an empty/unreadable `Call_Legs` grid is the one
-  case where deleting would destroy good data (the P-3 discipline: validate
-  the source before you delete), **AND on ZERO stray-dated / date-less
-  records (C-1 all-stray = wrong-day grid; C-6 all-unparsed = format
-  drift; refused with `allStray`/`allUnparsed`, the
-  import logs a failure row + email)**.
-  It reports `unreachable` when Neon is down so
-  a deferred-mirror date stays queued. Pinned by inbound-/outbound-calls
-  test suites.
-  **PHI healing note (P-2):** `ib_list_*` JSONB rows written before the P-2
-  masking fix heal on a force re-import of their date; past the Call_Legs
-  retention, `backfillCDRHistory` re-hashes phone-shaped entries but raw NAME
-  strings heal only via re-import or a one-off SQL cleanup.
-  Partial-set callers -- the bulk archive after
-  `dedupeAlreadyArchived_`, the row-batched backfills
-  (`backfillDQEHistory*`, `backfillDirectCallToNeon`) -- must NOT pass it.
-  Duplicate conflict-key rows are deduped last-write-wins first (IMP-6). The `call_history_phones` children are per-parent DELETE-then-insert (IMP-4: each payload row carries its parent's COMPLETE entry set, so per-parent replace is safe on every caller incl. partial-date bulk batches; the old `DO NOTHING` never propagated corrected durations/occurrences and kept removed entries as phantoms -- it survives only as an intra-payload dup guard; `neonbackfill.js::backfillCDRHistory`'s child path deliberately stays fill-only per its docstring).
+  per-date mirrors (NeonMirror.js), the daily Direct writer;
+  **`writeCDRRowsToNeon({authoritative:true})` (P-6)** deletes the dates'
+  `call_history_phones` CHILDREN first (parent-id subselect; deleted
+  parents would strand their children), then the `call_history_dept`
+  parents, same txn; and **`writeInboundCallsToNeon({authoritative:true,
+  expectedDateIso})` (L2 + P-1)** so a shrinking re-import can't leave a
+  phantom in `inbound_calls` (NO sheet primary). **P-1 -- every caller MUST
+  pass `expectedDateIso`**: records are dated from their OWN first leg, so
+  a stray D-1 carry-over leg would otherwise put D-1 in the payload's date
+  set and the authoritative DELETE would wipe ALL of D-1 (stray-dated
+  records are dropped with a log line; the DELETE can only touch the
+  expected date). **F2 -- an empty record set still runs a delete-only
+  pass** (`icDeleteDateOnly_`) so a legitimately-zero date sheds its
+  phantoms -- GATED on a NON-EMPTY source grid (the P-3 validate-before-
+  delete discipline) AND on zero stray-dated/date-less records (C-1
+  all-stray = wrong-day grid; C-6 all-unparsed = format drift; refused with
+  `allStray`/`allUnparsed` + a failure row + email). It reports
+  `unreachable` when Neon is down so a deferred-mirror date stays queued.
+  Pinned by the inbound-/outbound-calls suites.
+  **PHI healing note (P-2):** pre-P-2 `ib_list_*` JSONB rows heal on a
+  force re-import; past the Call_Legs retention, `backfillCDRHistory`
+  re-hashes phone-shaped entries but raw NAME strings need a re-import or
+  one-off SQL cleanup.
+  Partial-set callers -- the bulk archive after `dedupeAlreadyArchived_`,
+  the row-batched backfills (`backfillDQEHistory*`,
+  `backfillDirectCallToNeon`) -- must NOT pass authoritative. Duplicate
+  conflict-key rows are deduped last-write-wins first (IMP-6). The
+  `call_history_phones` children are per-parent DELETE-then-insert (IMP-4:
+  each payload row carries its parent's COMPLETE entry set, so per-parent
+  replace is safe even on partial-date bulk batches; `DO NOTHING` survives
+  only as an intra-payload dup guard; `backfillCDRHistory`'s child path
+  deliberately stays fill-only per its docstring).
 - **Force-path data-loss guard convention (M2 generalized).** A FORCE
   re-import DELETES a date's rows for EVERY historical sheet (CDR / QPath /
   QCD / CSR / DQE) before rebuilding (`processNewImport`'s `if (force)`
@@ -1556,13 +1471,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   any delete. Pinned by `csr-transfer.test.js` (the helper) + `pipeline-build.test.js` (M2).
 - **System Health "Recent pipeline step failures" is the single trustworthy
   pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
-  `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- it must never be
-  NARROWER than the Overview banner's window (LM1): the same eviction that
-  made the banner false-WARN at 40 makes THIS row a false ALL-CLEAR (an
-  evicted step reads as healthy), so its OK text states the window measured. It
-  flags a step ONLY when its MOST RECENT outcome is
-  `failure` (a step that failed then RECOVERED -- latest row `success` -- is
-  NOT flagged, so it never cries wolf about a fixed blip, the OPS-8/M1 lesson).
+  `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- never NARROWER
+  than the Overview banner's window (LM1: eviction at 40 made a false
+  ALL-CLEAR), and its OK text states the window measured. It flags a step
+  ONLY when its MOST RECENT outcome is `failure` (failed-then-recovered is
+  not flagged -- the OPS-8/M1 no-crying-wolf rule).
   Catches every step in one place: the CDR/QCD/DQE/Inbound sheet writes, the
   `:CDR:neon`/`:QCD:neon` inline-mirror failures (L7), `buildDQE:neon` (F4) /
   `:Inbound` (F9), the deferred `neonMirror:*` drains, and the
@@ -1591,13 +1504,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   email quota remaining -- because the resources they meter fail SILENTLY and
   look healthy to every other probe on this page: a Neon that has spent its
   monthly transfer is still reachable, and an exhausted MailApp quota just
-  stops sending. Read the Neon figure as a FLOOR (it counts our payloads, not
-  the wire). Batch E added `build-stamp` (deploy.sh stamps
-  BuildStamp.gs at push; "unstamped" = the push bypassed the deploy helper's
-  CI gates, #2), `legs-horizon` (surviving Call_Legs_* dates; sheet-only, so
-  it renders mid-outage) and `retention-risk` (surviving dates the per-call
-  tables are missing, each with its ~last recoverable day; warns with the
-  backfill playbook when Neon is unreachable, #40/#43).
+  stops sending. Read the Neon figure as a FLOOR (it counts our payloads,
+  not the wire). Also on the page: `build-stamp` ("unstamped" = the push
+  bypassed deploy.sh's CI gates, #2), `legs-horizon` (surviving
+  Call_Legs_* dates; sheet-only, so it renders mid-outage) and
+  `retention-risk` (surviving dates the per-call tables are missing;
+  #40/#43).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Six engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -1649,75 +1561,43 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   pre-read-back. Pieces: `neonFetchDqeRows_` / `sheetFetchDqeRows_`
   (symmetric DAL primitives returning the same normalized per-(date,agent)
   shape -- durations parsed to seconds, so the Neon path sidesteps the
-  INV-02 TZ gotcha). **`neonFetchDqeRows_` aggregates the whole result set
-  into a SINGLE json string server-side (`json_agg`) and fetches it with
-  one `rs.getString` (commit 0403b2c) -- do NOT regress to per-row
-  `rs.getXXX` iteration: Apps Script JDBC is ~0.5s/row, so the IR/PR
-  12-month trend window (and CR's year-over-year window) took 20+ minutes
-  the old way.** `neonGetMaxDqeDate_` (`SELECT MAX(call_date)`); and
-  `compareDqeSources_` -- the **parity GATE** (editor-run; reports
-  missing-in-Neon / value mismatches over a date range). **Cut over a
-  reader only after `compareDqeSources_` is parity-clean over a
-  representative range** (and `dqe_history` is fully backfilled). Cutover
-  so far: **#1 `getLatestDataDate`** (`MAX(call_date)`), **#2
-  `getCompanyOverview`**, **#3 `computeSummary_`** (My Department table),
-  and **#4 the IR / Insights builders** (the retired PR / CR builders were the others). Each reads the windowed rows from
-  Neon when flagged and STILL reads a cheap cols-A..D slice for
-  `getDeptQueueExts_`'s all-history derivation. Each cutover is
-  `getDqeReadSource_()`-gated and falls back to the sheet on any
-  error/unreachable read, so flipping the flag is reversible with no redeploy.
-  **LM2 refined "null/empty":** `neonFetchDqeRows_` now marks a REACHABLE
-  result (`out._neonReachable`), and consumers gate on the shared
-  `neonDqeRowsUsable_(rows)` -- a reachable-but-EMPTY read is TRUSTED (serve
-  empty, skip the redundant whole-sheet scan) while only an unreachable/errored
-  `[]` (no marker) falls back. Aligns with the cutover contract (trust a
-  reachable Neon; the sheet is the ERROR fallback, not a second guess of an
-  empty window). Applies to all 6 cutover readers; pinned by `dal-cutover.test.js`.
-  every cutover reader emits a `[dqe-read] <label> source=<neon|sheet>
-  rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`, NeonRead.gs) so
-  sheet-vs-neon read cost is directly comparable in the Executions panel.
-  Reuses the dashboard `NEON_*` props + `script.external_request`
-  scope (Operator State #18-19). ALL DQE readers are cut over. **A NEW DQE
-  reader must be cut over in the SAME commit** -- an uncut one is invisible
-  until the sheet ages out from under it, and this bullet asserted "all cut
-  over" for a while before it was true (B-2: Alerts, the digest WoW driver and
-  Orphan Fix were still on the sheet; the alert one silently stopped every
-  low-answer-rate alert the day the sheet aged). That claim is now enforced
-  rather than asserted -- `tests/unit/cross-file-pins.test.js` fails CI if a
-  dashboard `.gs` references `SHEETS.HISTORICAL` without `neonFetchDqeRows_`,
-  unless it is on the documented `DQE_SHEET_ONLY_ALLOWED` list. The report readers were
-  **Missed Calls** (via `neonFetchDqeRows_(from, to,
-  { includeMissedDetail: true })`, which adds the 19 slot_* columns +
-  abandoned_parent_ids/_missed_times; a grid adapter
-  (`missedGridsFromDal_`) feeds the UNCHANGED compute loop) and
-  **`computeActiveAgentsInRange_`** (the IR/Insights agent-picker
-  subset in Util.gs). Both fall back
-  to the legacy sheet scan on any Neon error/empty result, and their
-  sheet-vs-neon payload parity is pinned byte-identical by
-  `tests/unit/dal-cutover.test.js` (fake JDBC conn serving the same
-  fixture rows, date-param filtering honored). NOTE: the editor-run
-  `compareDqeSources_` gate now ALSO compares the slot/abandoned detail
-  columns (via the `includeMissedDetail` opt on `sheetFetchDqeRows_` /
-  `neonFetchDqeRows_`), so a parity-CLEAN result certifies the Missed Calls
-  reader's inputs too; its range reads the `DQE_PARITY_FROM` / `DQE_PARITY_TO`
-  Script Properties (falling back to in-source defaults) so it can run
-  unattended. The `getDeptQueueExts_` DERIVED all-history scan
-  is now ALSO off the sheet on the Neon path -- `deptQueueExtsForNeonReader_`
-  (Data.gs) builds the dept ext set from `neonGetAgentExtPairs_` (a cached
-  `SELECT DISTINCT agent_name, queue_extensions` json_agg fetch) instead of
-  a whole-sheet cols-A..D scan, falling back to the sheet read if Neon pairs
-  are unavailable. The two `call_date` indexes below are
-  now created in prod. NOTE: `latestDate:`/`latestDates:` stay on the 5-min
-  `CACHE_TTL_SECONDS`; the heavy report aggregations cache 6 h
-  (`REPORT_CACHE_TTL_SECONDS`, freshness-tagged, R24) -- both cut how
-  often a cutover reader hits a cold free-tier Neon (see keep-warm).
-  **Index prerequisite (F1):** before cutting over the date/agent-filtered
-  readers, make sure `dqe_history` is indexed for those queries --
-  `CREATE INDEX IF NOT EXISTS idx_dqe_history_call_date ON dqe_history (call_date);`
-  and `CREATE INDEX IF NOT EXISTS idx_dqe_history_date_agent ON dqe_history (call_date, agent_name);`.
-  Postgres has no stored row order (unlike the sheet), so there's nothing to
-  "re-sort" routinely -- you `ORDER BY call_date` at query time and the index
-  keeps it fast; the index is maintained automatically on insert/update.
+  INV-02 TZ gotcha); `neonGetMaxDqeDate_`; and `compareDqeSources_` -- the
+  **parity GATE** (editor-run wrapper `runDqeParityCheck`; range from the
+  `DQE_PARITY_FROM`/`DQE_PARITY_TO` Script Properties; it ALSO compares the
+  slot/abandoned detail columns via `includeMissedDetail`, so a
+  parity-CLEAN result certifies the Missed Calls reader's inputs too).
+  **Cut over a reader only after the gate is parity-clean over a
+  representative range.** Rules that hold for every reader:
+  (1) **`neonFetchDqeRows_` aggregates the whole result set into ONE json
+  string server-side (`json_agg`) fetched with one `rs.getString` -- do NOT
+  regress to per-row `rs.getXXX` iteration: Apps Script JDBC is ~0.5s/row,
+  which turned a 12-month trend read into 20+ minutes.**
+  (2) Every reader is `getDqeReadSource_()`-gated and falls back to the
+  sheet on ERROR only -- LM2: a REACHABLE-but-empty read (the
+  `out._neonReachable` marker, gated via the shared `neonDqeRowsUsable_`)
+  is TRUSTED and served empty; pinned by `dal-cutover.test.js`, which also
+  pins sheet-vs-neon payload parity byte-identical (incl. Missed Calls'
+  `includeMissedDetail` grid adapter `missedGridsFromDal_` and
+  `computeActiveAgentsInRange_`). Flipping the flag is reversible with no
+  redeploy.
+  (3) **ALL DQE readers are cut over, and a NEW DQE reader must be cut over
+  in the SAME commit** -- an uncut one is invisible until the sheet ages
+  out from under it, and prose could not keep this claim true (B-2, the
+  silently-dead alerts -- fix-history): `tests/unit/cross-file-pins.test.js`
+  fails CI if a dashboard `.gs` references `SHEETS.HISTORICAL` without
+  `neonFetchDqeRows_`, unless it is on the documented
+  `DQE_SHEET_ONLY_ALLOWED` list.
+  (4) Even on the Neon path, `getDeptQueueExts_`'s all-history ext
+  derivation comes from `deptQueueExtsForNeonReader_` /
+  `neonGetAgentExtPairs_` (cached DISTINCT pairs fetch), sheet-scan
+  fallback.
+  Every cutover reader emits a `[dqe-read] <label> source=<neon|sheet>
+  rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`) for cost comparison.
+  Reuses the dashboard `NEON_*` props + `script.external_request` scope
+  (Operator State #18-19). **Index prerequisite (F1), created in prod:**
+  `idx_dqe_history_call_date` + `idx_dqe_history_date_agent` on
+  `dqe_history` -- Postgres has no stored row order; `ORDER BY call_date`
+  at query time and the indexes keep it fast.
 - **Neon keep-warm is an optional, admin-toggled trigger (`NeonKeepWarm.gs`).**
   Neon's free tier scale-to-zero suspends the compute after ~5 min idle, so
   the FIRST DQE read of a lull (when `DQE_READ_SOURCE=neon`) pays a
@@ -1855,15 +1735,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
   (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
   with each group's heading row as its collapse toggle; the three-way scope
-  switcher this replaced is retired (the control, the collapse state and the
-  per-sub-queue missed-calls button are all documented in
-  `docs/client-ui-conventions.md`). Depts with no sub-queues get no control and
-  no behavior change. **The client no longer sends `subScope`, but the SERVER
+  switcher it replaced is retired (control, collapse state and per-sub-queue
+  missed-calls button: `docs/client-ui-conventions.md`). Depts with no
+  sub-queues get no control and no behavior change. **The client no longer sends `subScope`, but the SERVER
   still honors it** -- it drives the CSV's Department column and the combined
-  default -- so this is a client retirement, not a capability removal; don't
-  "restore" the parameter thinking it was dropped, and don't hardcode that
-  default in a second place. `subScope` is a cache-key dimension
-  (`summary:v20`); `cdr.dept.subscope` is now an orphan key.
+  default -- so don't "restore" the parameter thinking it was dropped, and
+  don't hardcode that default in a second place. `subScope` is a cache-key
+  dimension (`summary:v20`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -1885,76 +1763,62 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   deduped: a doubled sum is arithmetically wrong, while a mean weighting one
   agent in two depts stays in range, and recomputing it would move the number
   for EVERY combined view.
-  **Phase 2 closes it at the source -- but is GATED OFF by default (S2-0).**
-  `applyQueueSplitToRows_` (Data.gs) narrows each source row to the dept's OWN
-  queues -- matched case-insensitively against `inboundQueuesForDept_`, the
-  raw-name union -- BEFORE `computeSummary_`'s aggregation loop, so E5, INV-53,
-  diagnostics and the totals all inherit it unchanged.
-  **Read the gate before reasoning about any dept's numbers:** the narrowing
-  runs only when the `QUEUE_SPLIT_SCOPE` Script Property is `dept` (unset /
-  anything else = `off`, the default). Since the ADOPTION ROUND every DQE
-  reader narrows through this one helper -- Missed (counts + the K..AC
-  timeline via per-queue `mt`), IR, Insights, Overview (tiles/trends; the
-  company HERO stays all-queue on purpose), Alerts, digests, the agent app
-  -- so the flip is one property per Operator State #42's checklist (audit
-  first). The gate lives INSIDE the function so adopters inherit it rather
-  than each re-deciding, and the scope joins EVERY narrowed surface's cache
-  key as a suffix (the CORE-3 read-source pattern) so a flip can't serve
-  the other mode's payload anywhere for the TTL.
-  It **FAILS OPEN four ways** -- a dept with no mapped queues, a row with no
-  split, and unparseable JSON all keep the rollup; and (B-1) so does a whole
-  window in which the dept's mapped queues match NONE of the queue names the
-  splits actually carry. That fourth one is a CONFIGURATION fault, not a quiet
-  day: `queuesForDept_` returns QCD-canonical names (`A_Q_CustomerSuccess`)
-  while a split's keys are the RAW pipeline names (`A_Q_CSR`), bridged only by
-  the admin-populated Dept Config "Inbound queue aliases" column, and nothing
-  verifies that bridge is complete. It is assessed per WINDOW, never per row:
-  one row matching nothing is legitimate (a crossover agent whose whole day was
-  on the other dept's queues) and failing open there would re-introduce the very
-  bug Phase 2 exists to fix. An `{}` split contributes no queue names, so a
-  genuinely idle window still narrows to zero. A PARTIAL mismatch keeps its
-  narrowing but reports the dropped queue (`meta.queueSplitUnmatched` -> a
-  "missing a queue" chip). All four exist because showing a dept ZERO calls is
-  far worse than too many; each row carries `queueScoped` so the client can say
-  which numbers were narrowed.
-  `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed -- the pipeline stamps one
-  per-DAY value on every row, so they were never per-agent. **Phase 2 INVERTS
-  the Phase 0 rule:** a `queueScoped` row is never de-duplicated, because two
-  narrowed rows PARTITION the agent's day and summing them is now correct --
-  subtracting would under-count. The relationship bar + the `subqSplitChip_`
-  "all queues" chip are HIDDEN (Round-16 owner; `SUBQ_BAR_HIDDEN_`,
-  script-5-dept); the B-1 mismatch signal is now only
-  `auditQueueSplitAttribution()` (Operator State #41).
-  **The CLIENT side of all of this -- the relationship bar, the grouped rows and
-  subtotals, the IR/Insights picker groups, the combined CSV and the missed
-  section's scope -- is in
+  Server side is `combineSummaries_` calling `computeSummary_` once per
+  dept: every INV-02/04/05/23/53 + S35 + E5 rule inside that function is
+  untouched, and its duration means are agent-count-WEIGHTED (never a mean
+  of means). **`qcd` is the PRIMARY dept's only** -- `queuesForDept_`
+  already rolls sub-queue queues into a parent's QCD snapshot, so merging
+  it would double-count. **Phase 3 (Missed + Escalations):** the missed
+  section shows ONE dept at a time and deliberately does NOT merge -- the
+  queue-only abandoned section already covers a parent's sub-queue queues,
+  so merging would double-count every queue abandon (the QCD-snapshot
+  trap); Escalations needed no code change (`getEscalations` already scopes
+  by `user.departments`, which Phase 0 widened).
+  **The CLIENT side -- the relationship bar, grouped rows and subtotals,
+  the IR/Insights picker groups, the combined CSV, the missed section's
+  scope -- is in
   [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md); read it
-  before touching `script.html`.** Three rules from there are load-bearing
-  server-side too: a CHILD dept gets an upward pointer only (one level, matching
-  the server); **one report run is ONE department** (`subqPickerScope_` REFUSES
-  a selection spanning depts -- the team average is per-dept, INV-25/27) fed by
-  `computeSubQueuePickerGroups_` (Util.gs), deliberately SEPARATE from
-  `computeActiveAgentsInRange_` so that helper's pinned `{agents, floaters}`
-  shape and INV-53 gate stay untouched and no `individual_active` bump is
-  needed; and
-  the combined CSV's leading `Department` column appears ONLY when more than one
-  dept is shown, so a single-dept export stays byte-identical. Insights' report
-  body is NOT scope-switched -- see the follow-on note in `.cycle/blocks/61-*`.
-  See also [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
-  **Phase 3 (Missed + Escalations), server side:** the missed section shows ONE
-  dept at a time and deliberately does **NOT merge** -- the queue-only abandoned
-  section already covers a parent's sub-queue queues (`queuesForDept_` rolls
-  them up), so summing a child's report into the parent's would double-count
-  every queue abandon and every abandoned-ring bucket in the hour-of-day chart,
-  the same trap as the QCD snapshot. **Escalations needed NO code change** --
-  `getEscalations` already scopes by `user.departments`, so Phase 0's widening
-  gave a parent manager their sub-queue's escalations automatically, and
-  `metaDept` already reports the joined list. Server side is
-  `combineSummaries_` calling `computeSummary_` once per dept: it leaves every
-  INV-02/04/05/23/53 + S35 + E5 rule inside that function untouched, and its
-  duration means are agent-count-WEIGHTED (never a mean of means). **`qcd` is
-  the PRIMARY dept's only** -- `queuesForDept_` already rolls sub-queue queues
-  into a parent's QCD snapshot, so merging it would double-count.
+  before touching `script.html`.** Three of its rules are load-bearing
+  server-side: a CHILD dept gets an upward pointer only (one level);
+  **one report run is ONE department** (`subqPickerScope_` REFUSES a
+  selection spanning depts -- the team average is per-dept, INV-25/27; fed
+  by `computeSubQueuePickerGroups_`, deliberately separate from
+  `computeActiveAgentsInRange_` so its pinned `{agents, floaters}` shape
+  and INV-53 gate stay untouched); and the combined CSV's leading
+  `Department` column appears ONLY when more than one dept is shown, so a
+  single-dept export stays byte-identical. Insights' report body is NOT
+  scope-switched (`.cycle/blocks/61-*`). See also
+  [`docs/sub-queue-split-plan.md`](docs/sub-queue-split-plan.md).
+- **Queue-split narrowing (Phase 2) is GATED OFF by default (S2-0).**
+  `applyQueueSplitToRows_` (Data.gs) narrows each source row to the dept's
+  OWN queues -- matched case-insensitively against `inboundQueuesForDept_`,
+  the raw-name union -- BEFORE `computeSummary_`'s aggregation loop, so E5,
+  INV-53, diagnostics and the totals inherit it unchanged. **Read the gate
+  before reasoning about any dept's numbers:** the narrowing runs only when
+  the `QUEUE_SPLIT_SCOPE` Script Property is `dept` (unset/anything else =
+  `off`, the default). Every DQE reader narrows through this ONE helper --
+  Missed (counts + the K..AC timeline via per-queue `mt`), IR, Insights,
+  Overview (tiles/trends; the company HERO stays all-queue on purpose),
+  Alerts, digests, the agent app -- so the flip is one property per
+  Operator State #42's checklist (audit first); the gate lives INSIDE the
+  function so adopters inherit it, and the scope joins every narrowed
+  surface's cache key as a suffix (the CORE-3 pattern) so a flip can't
+  serve the other mode's payload for the TTL. It **FAILS OPEN four ways**
+  (showing a dept ZERO calls is worse than too many): no mapped queues, a
+  row with no split, unparseable JSON -- and (B-1, assessed per WINDOW,
+  never per row) a whole window whose mapped queues match NONE of the
+  splits' RAW queue names, which is a CONFIGURATION fault (the
+  canonical-vs-raw name bridge is the admin-populated "Inbound queue
+  aliases" column, and nothing verifies it is complete -- fix-history B-1
+  has the mechanism). A PARTIAL mismatch keeps its narrowing and reports
+  the dropped queue (`meta.queueSplitUnmatched`); each row carries
+  `queueScoped`. `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed (the
+  pipeline stamps one per-DAY value on every row). **Phase 2 INVERTS the
+  Phase 0 rule:** a `queueScoped` row is never de-duplicated -- two
+  narrowed rows PARTITION the agent's day, so summing is correct and
+  subtracting would under-count. The relationship bar + `subqSplitChip_`
+  are HIDDEN (Round-16 owner; `SUBQ_BAR_HIDDEN_`); the B-1 mismatch signal
+  is `auditQueueSplitAttribution()` (Operator State #41).
 - **Scope is locked to `roster` (Phase 14/15 roster-only flip).** Both public
   RPCs hardcode `scope = 'roster'` -- `Data.gs::getDepartmentSummary` (the My
   Department agent table) and `MissedCallsReport.gs::getMissedCallsReport` (the
@@ -2389,23 +2253,12 @@ items for anything it flags or doesn't cover.)
 ### Test Command
 node --test
 
-(Regression harness, Phases 1-4 -- zero-dep Node `node:test` suites
-under `tests/unit/`, run from the repo root; see `tests/README.md`.
-Covers pure logic (parsing, `hashAgents_`, Util, the INV-54 Dept
-Config accessors), the `computeSummary_` aggregator
-(INV-02/04/05/23/53, S35, E5), the IR report builder + the Insights consolidation freeze (INV-25
-weighted ATT, INV-28 prior-period, INV-35 length-mismatch, INV-53),
-pipeline canonicalization (INV-24/46 + INV-16 cross-project), the
-INV-29 trend window (`computeTrendStartDate_`, trend-window.test.js),
-the end-to-end `buildDQEHistoricalData` build (INV-07/08/20/21 +
-dup guard + the Pass-4 INV-23 queue-sentinel producer), and the QCD
-report's F-15 daily axis / F-36 all-dept grand-total dedup
-(qcd-report.test.js). The neonWrite JDBC writers are pinned end-to-end
-(chunking/commit discipline by neon-write-chunking.test.js; field
-mappings by neon-write-mapping.test.js). NOT yet covered: the deferred
-mirror's sheet-derived payload re-derivation (NeonMirror.js) -- the
-manual Regression Scenarios remain the verification of record there,
-so walk the scenarios that overlap a change in addition to running
+(Zero-dep Node `node:test` suites under `tests/unit/`, run from the
+repo root -- `tests/README.md` is the suite-by-suite coverage map.
+NOT yet covered: the deferred mirror's sheet-derived payload
+re-derivation (NeonMirror.js) and anything UI/live -- the manual
+Regression Scenarios remain the verification of record there, so walk
+the scenarios that overlap a change in addition to running
 `node --test`.)
 
 ### Health Dimensions

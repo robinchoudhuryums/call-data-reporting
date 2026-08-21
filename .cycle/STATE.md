@@ -3622,3 +3622,50 @@ D-3 coverage) — 3-site one-liner when taken.
 (probe), cdr-report (clipping fix). /sync-docs queue grows: probe as the
 row-34 resolution instrument; dashboard-cdr-core in the rolls; block-130's
 "480-line core stays a follow-on" clause resolved.
+
+## Increment 135 (2026-08-20) — The CLAUDE.md trim/extraction pass
+
+**Block:** `.cycle/blocks/135-claude-md-trim-broad-implement.md`
+
+The overdue doc-maintenance task (headroom had fallen to 12.8 KB):
+187,222 → 175,480 bytes (−11.7 KB; 28.6 KB headroom). **Both grandfathered
+ratchet maps are now EMPTY** — the five seeds retired by extraction or
+split (Role model → four bullets; Sub-queue combined view → two, incl. a
+standalone "Queue-split narrowing (Phase 2)" bullet; Neon read-back
+5.5→3.0 KB; Neon write discipline 4.9→3.8 KB; Direct-extension
+4.8→3.0 KB), so every prose bullet answers to the flat 4,096 B budget and
+the map comment forbids re-seeding. The Key-commands suite enumeration
+moved to tests/README.md (its designated home, enriched); the third copy
+in Cycle Workflow Config compressed to a pointer; the dqe_history index
+DDL relocated to Operator State #19. Reference-resolution audit in the
+block: no rule deleted, every dropped fix code/identifier still resolves
+(fix-history carries the extracted stories verbatim).
+
+Tests 847/847 (incl. the now-stricter flat ratchet). No production code
+touched; no deploy needed.
+
+**WHERE I LEFT OFF:** branch restarted from merged main (PR #251), trim
+committed + pushed to `claude/broad-scan-8dgd6m`. NO PR — not requested.
+Next size lever when needed: an F8-style SECTION split, not more shaving.
+
+## Increment 136 (2026-08-20) — Follow-on: D-3 completed for names (dashboardCDR)
+
+**Block:** `.cycle/blocks/136-d3-name-neutralization-broad-implement.md`
+
+The one actionable code follow-on on the ledger (block 134): dashboardCDR
+wrote feed-derived NAMES raw — only contacts cells were D-3-neutralized.
+All five sites now route through `crSheetSafeCell_`: table col-A agent
+name, pie-chart temp labels, writeTop5 contact names, diagnostics detail
+contact names, diagnostics agent subtotals. Pinned by one structural test
+(no cell in the written grid may hold a bare formula-leading string;
+`'=DROP()` / `'=EVIL(7)` survive prefixed). 848/848.
+
+Remaining ledger is deliberately non-code now: owner-gated un-gatings +
+flips, operator deploys/backfills/probe run, and the block-135
+"when needed" doc levers (headroom healthy).
+
+**WHERE I LEFT OFF:** committed + pushed to `claude/broad-scan-8dgd6m`
+(carries increment 135 + this since PR #251 merged). NO PR — not
+requested. Deploys owed: dashboard (nothing new since #251), cdr-report
+(row-34 refusal + T-7 clip fix + this), cdr-import (probe + dead-counter
+removal).
