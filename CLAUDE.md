@@ -180,7 +180,11 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # installed before asserting anything about the panel, and its handler-isolation
 # check is BEHAVIOURAL because comparing two reads for identity does not catch a
 # shared runner -- plus that a manager gets no overlay even with the localStorage
-# flag hand-set), and drive-subqueue.js (the collapsible
+# flag hand-set), drive-journey.js (the "↳ path" call-path
+# drill -- the origin line, the OUTBOUND call reached through the related-call
+# link, and the not-entitled refusal; all three were unit-pinned but had never
+# RENDERED until this driver clicked one, the dept-selector class of bug),
+# and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
 # this repo, asserted by stubbing URL.createObjectURL and reading the real Blob

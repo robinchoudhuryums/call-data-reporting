@@ -3923,3 +3923,26 @@ so the outbound render + not-entitled copy are unit-pinned but never rendered un
 
 **WHERE I LEFT OFF:** increment 146 committed + pushed to `claude/broad-scan-8dgd6m`
 (10 commits ahead of merged main, un-PR'd). Owner to run the preview on a date or two.
+
+## Increment 147 — the journey drill enters the ci:ui gate (2026-08-24)
+
+`/broad-implement follow-on items` — the one actionable follow-on from 146.
+
+- **IT-6**: three client renderers from Steps 3/4 (origin line, `outboundJourneyHtml_`, the
+  not-entitled copy) were unit-pinned but had NEVER rendered in a browser. They were
+  unreachable by any driver because `getCallJourney` was unmocked (drive-smoke would flag the
+  call), so nothing clicked a "↳ path" button. Added a request-keyed mock + `drive-journey.js`
+  (14 checks) and wired it as a BLOCKING ci:ui stage.
+- Two mistakes the first run caught that reading would not have: the cards render into
+  `#dept-missed-detail` (a separate lazy fetch, not `#dept-missed-section`), and it settles
+  ~6 s — so the driver waits on the DOM condition, not the clock.
+- All three renderers worked on the first real click, so this found no defect. Pure coverage
+  against the next regression — the dept-selector class the .gs harness cannot see.
+- Harness-only: NO apps-script file changed, nothing to deploy for this increment.
+- Unit 904/904 unchanged; ci:ui full gate passed with the new stage (14/14).
+- Block: `.cycle/blocks/147-journey-drill-ui-gate-broad-implement.md`.
+
+Remaining follow-on: sub-60s internal abandons have no entry point (owner ruling).
+
+**WHERE I LEFT OFF:** increment 147 committed + pushed to `claude/broad-scan-8dgd6m`
+(11 commits ahead of merged main, un-PR'd). Owner still to run `previewOutboundAssistLinks`.
