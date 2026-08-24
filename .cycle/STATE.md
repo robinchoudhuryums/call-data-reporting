@@ -3825,3 +3825,27 @@ owner-gated or measurement-blocked; one item was genuinely actionable.
 
 **WHERE I LEFT OFF:** increment 142 committed + pushed to `claude/broad-scan-8dgd6m`
 (3 commits ahead of merged main, un-PR'd — PR only when the owner asks).
+
+## Increment 143 — chain diagnostic: temporal guard (2026-08-24)
+
+Owner ran `previewInternalTransferChains(2026-08-21)`: 1 chained case, reported
+"1-HOP RESOLVABLE (unique)". Reading the evidence lines DISPROVED that verdict — the leg
+the resolver used (ext 363 ringing ext 279) starts at 07:30:43, **946s AFTER** the abandon
+it supposedly caused (07:14:57, ended 07:20:06). Cause: `overlapRootsFor(Y)` constrains the
+UPSTREAM agent to be on a captured call at T, but nothing constrained the Y→X hand-off leg,
+so "Y rang X at some point that day" counted as evidence of a transfer before the abandon.
+
+- Fixed the DIAGNOSTIC only (read-only, editor-run, not wired into any pipeline): `deliveredAtT`
+  requires X to have been on an answered call spanning T (±5s — the same overlap rule the real
+  R11-N matcher applies to the answering agent), feeding both the 1-hop and 2-hop traces.
+- New SELF-ORIGINATED bucket + tally entry for the shape this case actually is: nobody handed
+  X a caller, so X dialed the queue themselves — no upstream journey exists and hop-following
+  cannot fix it at any depth.
+- Tests 889/889 unchanged (the diagnostic is log-only and not unit-covered — honest answer to
+  "what enforces this?": nothing automated; it is a read-only scoping tool).
+- NOT built: hop-following. The one observed case now looks unresolvable-by-design rather than
+  a missing feature; re-run the tightened diagnostic before spending anything on a resolver.
+
+**WHERE I LEFT OFF:** increment 143 committed + pushed to `claude/broad-scan-8dgd6m`
+(4 commits ahead of merged main, un-PR'd). Owner to re-run
+`previewInternalTransferChains` AFTER deploying cdr-import.

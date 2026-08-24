@@ -1431,7 +1431,7 @@ function previewInternalTransferChains(dateIso) {
     if (a.captured && a.answered && a.talk > 0 && a.calleeExt) extAnsweredCaptured[a.calleeExt] = true;
   });
 
-  var nCase = 0, nOneHop = 0, nTwoHop = 0, nInternalOrigin = 0, nViaQueue = 0, nNoSource = 0;
+  var nCase = 0, nOneHop = 0, nTwoHop = 0, nInternalOrigin = 0, nViaQueue = 0, nNoSource = 0, nSelfOriginated = 0;
   Object.keys(groups).forEach(function (root) {
     if (captured[root]) return;
     var g = groups[root];
@@ -1465,8 +1465,26 @@ function previewInternalTransferChains(dateIso) {
 
     // (b) Bounded 1-HOP trace: did a single upstream AGENT (an ext, not a queue)
     //     who rang X also answer a captured inbound overlapping the abandon?
+    //
+    // TEMPORAL GUARD (2026-08-24): the hand-off to X must PRECEDE the abandon
+    // it supposedly caused -- for the chain to be real, X has to be HOLDING the
+    // caller at T. The rule below used to accept ANY leg on which Y rang X,
+    // with no time constraint, while checking only that Y was on a captured
+    // call at T. Measured on the owner's 2026-08-21 run: the lone chained case
+    // reported "1-HOP RESOLVABLE (unique)" off a leg where Y rang X 946s AFTER
+    // the abandon -- a temporally impossible chain scored as a clean unique
+    // match. Same overlap rule the real R11-N matcher applies to the answering
+    // agent, now applied to X's own delivered leg.
+    var deliveredAtT = delivered.filter(function (a) {
+      return a.answered && a.talk > 0 && !isNaN(a.connMs) && !isNaN(a.stopMs)
+        && T >= a.connMs - 5000 && T <= a.stopMs + 5000;
+    });
+    if (delivered.length && !deliveredAtT.length) {
+      Logger.log('   (no delivered leg had ext ' + X + ' on a call AT the abandon time -- '
+        + 'the nearest is ' + Math.round((delivered[0].startMs - T) / 1000) + 's away)');
+    }
     var upstreamAgents = {};
-    delivered.forEach(function (a) { if (a.caller.kind === 'ext' && a.caller.ext) upstreamAgents[a.caller.ext] = true; });
+    deliveredAtT.forEach(function (a) { if (a.caller.kind === 'ext' && a.caller.ext) upstreamAgents[a.caller.ext] = true; });
     var overlapRootsFor = function (Y) {
       var hr = {};
       allLegs.forEach(function (a) {
@@ -1488,7 +1506,7 @@ function previewInternalTransferChains(dateIso) {
     // same group), not an unknown queue membership. So the SAME captured-
     // overlap check runs on each internal source group's originators too.
     var hop2Agents = {};
-    delivered.forEach(function (a) {
+    deliveredAtT.forEach(function (a) {
       if (a.captured) return;
       (groups[a.root] || []).forEach(function (l) {
         var ci = callerInfo(l[IC_COL.CALLER]);
@@ -1537,6 +1555,12 @@ function previewInternalTransferChains(dateIso) {
         + (continuedSec != null && continuedSec > 60
             ? (' Corroboration: the source call continued ' + continuedSec + 's PAST the abandon -- it was not holding a departing caller.')
             : ''));
+    } else if (delivered.length && !deliveredAtT.length) {
+      nSelfOriginated++;
+      Logger.log('   => SELF-ORIGINATED (not a transfer): ext ' + X + ' was on NO delivered call at '
+        + 'the abandon time, so nobody handed a caller to them -- ext ' + X + ' dialed ' + queue
+        + ' themselves. There is no upstream caller journey to enrich, and hop-following cannot '
+        + 'fix this shape at any depth.');
     } else if (delivered.some(function (a) { return a.caller.kind === 'queue'; })) {
       nViaQueue++;
       Logger.log('   => reached ext ' + X + ' via a QUEUE ring (not an agent transfer) -- upstream is whoever entered that queue; needs queue-membership tracing, not a 1-hop agent trace.');
@@ -1551,6 +1575,7 @@ function previewInternalTransferChains(dateIso) {
     + nOneHop + ' resolvable via a UNIQUE 1-hop agent trace, ' + nTwoHop + ' via a unique 2-hop trace, '
     + nInternalOrigin + ' INTERNAL-ORIGIN (no external caller; nothing to enrich), '
     + nViaQueue + ' reached via a queue ring, '
+    + nSelfOriginated + ' SELF-ORIGINATED (nobody handed them a caller -- not a transfer), '
     + nNoSource + ' with no source leg in the sheet.');
   Logger.log('  (Paste this whole log back: the "<- rung by" lines show the real link structure so the '
     + 'accurate join for these can be designed against the same 0-ambiguity bar.)');
