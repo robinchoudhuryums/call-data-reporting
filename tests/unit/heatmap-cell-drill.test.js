@@ -284,22 +284,27 @@ function installOutbound(role, opts) {
     return !!opts.gateAllows;
   };
   installOutbound.queries = [];
+  // The gate mirrors getCallJourney's TWO arms, so the fake must tell them
+  // apart: `scopedLinkers` answers the dept-predicate query, `linkers` the
+  // unscoped one that feeds the F-4 fallback.
+  const scopedLinkers = opts.scopedLinkers || [];
   const linkers = opts.linkers || [];
-  let linkIdx = 0;
   const conn = {
     prepareStatement: function (sql) {
       installOutbound.queries.push(sql);
       const isLink = /FROM inbound_calls/.test(sql);
+      const isScoped = /entry_queue/.test(sql);
       const params = [];
       return {
         setString: function (i, v) { params[i] = v; },
         executeQuery: function () {
           installOutbound.lastParams = params.slice();
           if (isLink) {
-            linkIdx = 0;
+            const set = isScoped ? scopedLinkers : linkers;
+            let li = 0;
             return {
-              next: function () { return linkIdx++ < linkers.length; },
-              getString: function () { return linkers[linkIdx - 1]; },
+              next: function () { return li++ < set.length; },
+              getString: function () { return set[li - 1]; },
               close: function () {},
             };
           }
@@ -326,7 +331,9 @@ const OB_ROW = { call_date: '2026-08-21', call_id: 'OB1', agent_name: 'Marie (Mu
 const OB_REQ = { callId: 'OB1', date: '2026-08-21', kind: 'outbound', department: 'CSR' };
 
 test('Step 4: a manager whose dept owns a linking assist CAN drill the outbound call', function () {
-  installOutbound('manager', { linkers: ['IN9'], gateAllows: true, outboundRow: OB_ROW });
+  // Arm 2: the linking record is not matched by the dept predicate, but IS an
+  // abandoned parent in this dept's Missed report (the F-4 fallback).
+  installOutbound('manager', { scopedLinkers: [], linkers: ['IN9'], gateAllows: true, outboundRow: OB_ROW });
   const out = h.call('getCallJourney', OB_REQ);
   assert.equal(out.found, true);
   assert.equal(out.kind, 'outbound');
@@ -339,8 +346,20 @@ test('Step 4: a manager whose dept owns a linking assist CAN drill the outbound 
   assert.ok(JSON.stringify(out).indexOf('SHOULD-NOT-LEAK') === -1);
 });
 
+test('Step 4: the dept-predicate arm alone entitles (no false refusal on a sub-60s assist)', function () {
+  // REGRESSION PIN: the gate originally checked ONLY the F-4 fallback, so a
+  // manager who reached the assist record through the PREDICATE arm -- and
+  // whose id is not an abandoned parent in their Missed report (a sub-60s
+  // abandon emits no DQE sentinel) -- was falsely refused a call they had
+  // just been shown the link for.
+  installOutbound('manager', { scopedLinkers: ['IN9'], linkers: [], gateAllows: false, outboundRow: OB_ROW });
+  const out = h.call('getCallJourney', OB_REQ);
+  assert.equal(out.found, true, 'the predicate arm must entitle on its own');
+  assert.equal(installOutbound.gateCalls.length, 0, 'the F-4 fallback is not consulted when arm 1 succeeds');
+});
+
 test('Step 4: a manager with NO drillable link is refused (the client claim is not trusted)', function () {
-  installOutbound('manager', { linkers: ['IN9'], gateAllows: false, outboundRow: OB_ROW });
+  installOutbound('manager', { scopedLinkers: [], linkers: ['IN9'], gateAllows: false, outboundRow: OB_ROW });
   const out = h.call('getCallJourney', OB_REQ);
   assert.equal(out.found, false);
   assert.equal(out.reason, 'not-entitled');
@@ -348,7 +367,7 @@ test('Step 4: a manager with NO drillable link is refused (the client claim is n
 });
 
 test('Step 4: an outbound call NOTHING links to is refused even with a permissive gate', function () {
-  installOutbound('manager', { linkers: [], gateAllows: true, outboundRow: OB_ROW });
+  installOutbound('manager', { scopedLinkers: [], linkers: [], gateAllows: true, outboundRow: OB_ROW });
   const out = h.call('getCallJourney', OB_REQ);
   assert.equal(out.reason, 'not-entitled',
     'the link is the capability -- no link, no access, however permissive the dept gate');
@@ -356,7 +375,7 @@ test('Step 4: an outbound call NOTHING links to is refused even with a permissiv
 });
 
 test('Step 4: the link lookup is dept-agnostic in SQL but bound + kind-filtered', function () {
-  installOutbound('manager', { linkers: ['IN9'], gateAllows: true, outboundRow: OB_ROW });
+  installOutbound('manager', { scopedLinkers: [], linkers: ['IN9'], gateAllows: true, outboundRow: OB_ROW });
   h.call('getCallJourney', OB_REQ);
   const linkSql = installOutbound.queries.filter(function (s) { return /FROM inbound_calls/.test(s); })[0];
   assert.ok(/related_call_id = \?/.test(linkSql), 'ids are bound, never inlined');
@@ -367,14 +386,14 @@ test('Step 4: the link lookup is dept-agnostic in SQL but bound + kind-filtered'
 });
 
 test('Step 4: an admin skips the derivation (already entitled to every dept)', function () {
-  installOutbound('admin', { linkers: [], gateAllows: false, outboundRow: OB_ROW });
+  installOutbound('admin', { scopedLinkers: [], linkers: [], gateAllows: false, outboundRow: OB_ROW });
   const out = h.call('getCallJourney', { callId: 'OB1', date: '2026-08-21', kind: 'outbound' });
   assert.equal(out.found, true);
   assert.equal(installOutbound.gateCalls.length, 0);
 });
 
 test('Step 4: an unknown kind throws, and inbound stays the default', function () {
-  installOutbound('admin', { linkers: [], gateAllows: false, outboundRow: OB_ROW });
+  installOutbound('admin', { scopedLinkers: [], linkers: [], gateAllows: false, outboundRow: OB_ROW });
   assert.throws(function () {
     h.call('getCallJourney', { callId: 'X', date: '2026-08-21', kind: 'direct' });
   }, /Unknown journey kind/);

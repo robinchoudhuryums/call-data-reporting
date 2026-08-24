@@ -955,3 +955,44 @@ test('Step 4: a non-overlapping outbound call is not linked', function () {
   assert.ok(rec(recs, '840903').relatedCallId == null,
     'the requester must have been on the call AT the assist time');
 });
+
+// The Step 4 validation instrument. Its whole value is that it CANNOT drift
+// from production, because it runs the real record builder rather than a
+// parallel implementation (the chain diagnostic's hand-written rule is what
+// produced a temporally impossible "resolution").
+test('previewOutboundAssistLinks: reports what capture WOULD store, via the real builder', function () {
+  const rows = [new Array(44).fill('HEADER')].concat(
+    outboundPatientCallBy279('850001', '08/21/2026 07:14:29', '08/21/2026 07:20:09').concat([
+      assistAbandon279('850900', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+      // A second assist with no concurrent call at all -> the honest residue.
+      assistAbandon279('850901', '08/21/2026 15:00:00', '08/21/2026 15:02:00'),
+    ]));
+  const sheet = {
+    getName: function () { return 'Call_Legs_2026-08-21'; },
+    getDataRange: function () { return { getDisplayValues: function () { return rows; } }; },
+  };
+  h.state.spreadsheet = {
+    getSheetByName: function (n) { return n === 'Call_Legs_2026-08-21' ? sheet : null; },
+    getSheets: function () { return [sheet]; },
+  };
+  const logged = [];
+  const realLogger = h.ctx.Logger;
+  // Apps Script's Logger.log does %s substitution; a stub that merely joins
+  // arguments would let a malformed format string pass unnoticed.
+  h.ctx.Logger = { log: function (fmt) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    let i = 0;
+    logged.push(String(fmt).replace(/%s/g, function () { return String(args[i++]); }));
+  } };
+  try {
+    h.call('previewOutboundAssistLinks', '2026-08-21');
+  } finally {
+    h.ctx.Logger = realLogger;
+  }
+  const all = logged.join('\n');
+  assert.match(all, /LINKED to OUTBOUND call 850001/, 'the linked assist is named with its outbound call');
+  assert.match(all, /Marie \(Muskaan\) Jindal/, 'the requester is named so a spot-check is possible');
+  assert.match(all, /NOT LINKED/, 'the unlinked assist is reported, not hidden');
+  assert.match(all, /2 internal assist record\(s\) -- 1 linked to an OUTBOUND call, 0 to an inbound call, 1 unlinked/);
+  assert.match(all, /Nothing was written/, 'says plainly that it is read-only');
+});

@@ -1771,3 +1771,84 @@ function previewInternalTransferPathsForDate() {
   if (arg.cancelled) return;
   previewInternalTransferPaths(arg.dateIso);
 }
+
+/**
+ * READ-ONLY diagnostic for the Step 4 outbound assist link -- the validation
+ * run R11-N got before IT shipped, and that the outbound match did not.
+ *
+ * It does NOT re-implement the matching rule. It runs the REAL
+ * `buildInboundCallRecords_` over a Call_Legs_<iso> sheet and reports what
+ * capture WOULD store, so the preview cannot drift from production the way a
+ * parallel implementation would (the lesson from the chain diagnostic, whose
+ * hand-written 1-hop rule "resolved" a temporally impossible chain).
+ *
+ * Writes nothing. Reads only the sheet -- no Neon -- so it runs during an
+ * outage. CDR Import editor: previewOutboundAssistLinks('2026-08-21')
+ * (no arg -> the most recent Call_Legs_* sheet).
+ *
+ * What to look for: every OUTBOUND-linked line names the assist and the call
+ * it was linked to. Spot-check a few against the raw legs -- the requester
+ * must have been ON that outbound call at the assist time. UNLINKED lines are
+ * the honest residue (0 or >1 candidates); they are not failures, they are the
+ * unique-match rule declining to guess.
+ */
+function previewOutboundAssistLinks(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = null, iso = dateIso || '';
+  if (dateIso) {
+    sheet = ss.getSheetByName('Call_Legs_' + dateIso);
+  } else {
+    ss.getSheets().forEach(function (s) {
+      var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+      if (m && m[1] > iso) { iso = m[1]; sheet = s; }
+    });
+  }
+  if (!sheet) {
+    Logger.log('previewOutboundAssistLinks: no Call_Legs sheet for %s.', dateIso || '(latest)');
+    return;
+  }
+
+  var rows = sheet.getDataRange().getDisplayValues();
+  rows.shift();
+  var records = buildInboundCallRecords_(rows) || [];
+  var internal = records.filter(function (r) { return r.isInternal; });
+
+  var nOut = 0, nIn = 0, nNone = 0;
+  internal.forEach(function (r) {
+    var kind = r.relatedCallKind || null;
+    var who = (r.originAgent || '(unknown requester)')
+      + (r.originDept ? ' [' + r.originDept + ']' : '');
+    var head = 'ASSIST ' + r.callId + ' @ ' + (r.callStart || '--:--:--')
+      + ' -> ' + (r.entryQueue || '(no queue)')
+      + ' (' + (r.disposition || '?') + ', wait ' + (r.waitSeconds == null ? '?' : r.waitSeconds) + 's)'
+      + ' | by ' + who;
+    if (kind === 'outbound') {
+      nOut++;
+      Logger.log(head + '\n   => LINKED to OUTBOUND call ' + r.relatedCallId
+        + ' -- the requester was on that call at the assist time. '
+        + 'Spot-check: the outbound group must show them Answered with talk>0 spanning '
+        + (r.callStart || 'the assist') + '.');
+    } else if (kind === 'inbound') {
+      nIn++;
+      Logger.log(head + '\n   => linked to INBOUND call ' + r.relatedCallId
+        + ' (a handed-over customer -- the stronger relationship, which always wins).');
+    } else {
+      nNone++;
+      Logger.log(head + '\n   => NOT LINKED (0 or >1 concurrent candidates -- the unique-match '
+        + 'rule declining to guess; the receiving queue still gets its own path drill).');
+    }
+  });
+
+  Logger.log('previewOutboundAssistLinks(%s): %s internal assist record(s) -- '
+    + '%s linked to an OUTBOUND call, %s to an inbound call, %s unlinked.',
+    iso, internal.length, nOut, nIn, nNone);
+  Logger.log('  Nothing was written. Every figure above is what the next import '
+    + 'WOULD store for this date (it runs the real record builder).');
+}
+
+/** Menu/editor wrapper with the shared date prompt. */
+function previewOutboundAssistLinksForDate() {
+  var arg = icPreviewDateArg_();
+  if (arg.cancelled) return;
+  previewOutboundAssistLinks(arg.dateIso);
+}

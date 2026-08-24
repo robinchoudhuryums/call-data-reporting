@@ -620,6 +620,24 @@ capture. A Spanish manager learns "Marie from Field Ops had a live patient call
 running when she asked for translation" -- which is the operational point of
 the drill.
 
+**The gate mirrors BOTH of getCallJourney's arms.** It originally checked only
+the F-4 missed-report fallback, which FALSELY REFUSED a manager who reached the
+assist record through the dept-predicate arm and whose id is not an abandoned
+parent in their Missed report -- a sub-60s abandon, for instance, emits no DQE
+sentinel. The refusal was therefore reachable from the UI as a false negative
+on a link the viewer had just been shown. It now runs the predicate query
+first and falls back to F-4, in the same order as the inbound drill, so the
+outbound call is reachable exactly when the record linking to it is. Pinned
+both ways (the predicate arm entitles ALONE, and no link means no access).
+
+**Validation instrument:** `previewOutboundAssistLinks(dateIso)` (cdr-import
+editor / CDR Tools, read-only, no Neon so it runs during an outage). It runs
+the REAL `buildInboundCallRecords_` over a Call_Legs sheet and reports what
+capture would store -- deliberately not a parallel implementation, since the
+chain diagnostic's hand-written rule is exactly what produced a temporally
+impossible "resolution". Run it on a couple of dates before trusting the link
+at volume.
+
 **If this is ever revisited,** the narrower option remains available and cheap:
 keep the capture-time link, drop the `kind='outbound'` branch from
 `getCallJourney`, and render the metadata inline instead. Pinned by

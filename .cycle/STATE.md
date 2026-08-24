@@ -3898,3 +3898,28 @@ trusting the link at volume.
 
 **WHERE I LEFT OFF:** increment 145 committed + pushed to `claude/broad-scan-8dgd6m`
 (9 commits ahead of merged main, un-PR'd).
+
+## Increment 146 — outbound-link preview + the gate's missing arm (2026-08-24)
+
+`/broad-implement read-only preview for outbound match, not-entitled path from UI`.
+
+- **IT-5 (real defect)**: the Step 4 gate implemented only ONE of getCallJourney's two
+  authorization arms (F-4 fallback), not the dept-predicate arm. So a manager who reached the
+  assist record BY PREDICATE — and whose id is not an abandoned parent in their Missed report
+  (a sub-60s abandon emits no DQE sentinel) — was falsely refused a link they had just been
+  shown. THAT is what made the not-entitled path reachable from the UI; increment 145's
+  follow-on note had the reasoning backwards. Gate now mirrors both arms in the same order.
+  Pinned both ways.
+- **IT-4**: `previewOutboundAssistLinks(dateIso)` (CDR Tools menu, read-only, no Neon). Runs
+  the REAL buildInboundCallRecords_ and reports what capture would store — deliberately not a
+  parallel implementation, since the chain diagnostic's hand-written rule is what produced the
+  temporally impossible "resolution".
+- Tests 902 → 904; ci:ui passed. Harness: the Logger stub now does %s substitution (joining
+  args had let a malformed format string pass).
+- Block: `.cycle/blocks/146-outbound-preview-and-gate-arms-broad-implement.md`.
+
+Open: the journey drill is still unexercised by ci:ui (getCallJourney unmocked in the harness),
+so the outbound render + not-entitled copy are unit-pinned but never rendered under the gate.
+
+**WHERE I LEFT OFF:** increment 146 committed + pushed to `claude/broad-scan-8dgd6m`
+(10 commits ahead of merged main, un-PR'd). Owner to run the preview on a date or two.

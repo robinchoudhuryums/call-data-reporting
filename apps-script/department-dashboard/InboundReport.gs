@@ -352,25 +352,39 @@ function getOutboundCallJourney_(callId, date, dept, user) {
     if (user.role !== 'admin') {
       // Re-derive the capability. Managers only: admins are entitled to all
       // depts, so an ungated read for them changes nothing.
-      const linkSql = 'SELECT c.call_id AS linker FROM inbound_calls c '
+      const linkBase = 'SELECT c.call_id AS linker FROM inbound_calls c '
         + 'WHERE c.related_call_id = ? AND c.call_date = ?::date '
         + "AND lower(coalesce(c.related_call_kind, 'inbound')) = 'outbound' "
         + 'AND COALESCE(c.is_internal, FALSE) = TRUE';
-      const lst = conn.prepareStatement(linkSql);
-      lst.setString(1, callId);
-      lst.setString(2, date);
-      const lrs = lst.executeQuery();
-      const linkers = [];
-      while (lrs.next()) linkers.push(String(lrs.getString('linker') || ''));
-      lrs.close(); lst.close();
-      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(linkers.join(',').length, 'journey-outbound');
+      const runLink = function (pred) {
+        const st = conn.prepareStatement(linkBase + pred);
+        st.setString(1, callId);
+        st.setString(2, date);
+        const rs2 = st.executeQuery();
+        const out = [];
+        while (rs2.next()) out.push(String(rs2.getString('linker') || ''));
+        rs2.close(); st.close();
+        if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(out.join(',').length, 'journey-outbound');
+        return out;
+      };
 
-      // At least ONE linking internal record must be drillable by this
-      // manager under the unchanged F-4 gate.
-      let entitled = false;
-      for (let i = 0; i < linkers.length && !entitled; i++) {
-        if (!linkers[i]) continue;
-        if (callIdInDeptMissedReport_(dept, date, linkers[i])) entitled = true;
+      // The linking record must be one this manager COULD ALREADY DRILL, and
+      // "could drill" has TWO arms in getCallJourney -- the dept-scoped
+      // predicate, then the F-4 missed-report fallback. Checking only the
+      // fallback (as this did originally) FALSELY REFUSED a manager who
+      // reached the assist record through the predicate arm and whose id is
+      // not an abandoned parent in their Missed report (e.g. a sub-60s
+      // abandon, which DQE emits no sentinel for). Mirror both arms, in the
+      // same order, so the outbound drill is reachable exactly when the
+      // record that links to it is.
+      const deptQueues2 = dept ? inboundQueuesForDept_(dept) : [];
+      let entitled = runLink(callJourneyDeptPredicate_(dept, deptQueues2)).length > 0;
+      if (!entitled) {
+        const linkers = runLink('');
+        for (let i = 0; i < linkers.length && !entitled; i++) {
+          if (!linkers[i]) continue;
+          if (callIdInDeptMissedReport_(dept, date, linkers[i])) entitled = true;
+        }
       }
       if (!entitled) {
         Logger.log('getOutboundCallJourney_: refused (no drillable link) call_id=%s date=%s dept=%s',
