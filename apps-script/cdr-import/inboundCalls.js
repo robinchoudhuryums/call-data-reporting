@@ -60,6 +60,26 @@ function icIsAnonymous_(s) {
 
 function icIsTrue_(s) { return String(s == null ? '' : s).trim().toUpperCase() === 'TRUE'; }
 
+// The employee who PLACED an internal-origin call, from the leg's CALLER
+// columns. Mirrors firstAgent's guards: blank/N-A, queue names and
+// phone-shaped values are all rejected (a raw number must never be stored).
+function icOriginAgentName_(leg) {
+  var n = String((leg && leg[IC_COL.CALLER_NAME]) == null ? '' : leg[IC_COL.CALLER_NAME]).trim();
+  if (!n || n.toUpperCase() === 'N/A') return null;
+  if (icIsQueueName_(n)) return null;
+  if (/^\+?[\d\s\-().]{7,}$/.test(n)) return null;
+  return n.slice(0, IC_JOURNEY_NAME_MAX);
+}
+
+// The raw CDR org-chart label on that same leg ("Field Operations (Market
+// Activity)"). Context only -- it is NOT a dashboard dept header (the
+// final_dept name-space caveat), so no attribution ever keys on it.
+function icOriginDeptLabel_(leg) {
+  var d = String((leg && leg[IC_COL.DEPARTMENTS]) == null ? '' : leg[IC_COL.DEPARTMENTS]).trim();
+  if (!d || d.toUpperCase() === 'N/A') return null;
+  return d.slice(0, IC_JOURNEY_NAME_MAX);
+}
+
 // IMP-1: must match every live queue identity, not just the A_Q_* family.
 // "Backup CSR" is a first-class queue in this install (the DQE pipeline's
 // queue regex is (A_Q_\w+|Backup CSR) -- buildDQEHistoricalData.js). With
@@ -465,6 +485,19 @@ function buildInboundCallRecords_(rawRows) {
       finalQueue:      queues.length ? queues[queues.length - 1] : null,
       finalDept:       finalDept,
       firstAgent:      firstAgent,
+      // ORIGINATOR (internal-origin records only). `firstAgent` derives from
+      // the CALLEE name across the group's legs, and an internal-origin group's
+      // only callee IS the queue -- which icIsQueueName_ skips -- so these
+      // records carried NO indication of who placed the call. The receiving
+      // dept's path drill then read "an internal call abandoned in your queue"
+      // with no actionable content. The originating agent sits in the CALLER
+      // columns of the group's first leg (validated against the owner's
+      // 2026-08-21 sample: "Marie (Muskaan) Jindal" / "Field Operations
+      // (Market Activity)"). Employee name + the raw CDR org label, same PHI
+      // class as firstAgent; a phone-shaped caller name is never stored.
+      // NULL on every externally-originated record, so nothing else moves.
+      originAgent:     isInternalOrigin ? icOriginAgentName_(legs[0]) : null,
+      originDept:      isInternalOrigin ? icOriginDeptLabel_(legs[0]) : null,
       numQueues:       queues.length,
       numTransfers:    Math.max(0, queues.length - 1),
       journey:         icBuildJourney_(legs)
@@ -899,6 +932,11 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // metric query excludes is_internal=TRUE rows).
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS is_internal boolean');
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_id text');
+      // Who PLACED an internal-origin call (employee name + raw CDR org label).
+      // NULL on every externally-originated row and on pre-extension rows until
+      // re-imported / backfilled.
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS origin_agent text');
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS origin_dept text');
       ddl.close();
 
       // L2: authoritative per-date replace. Delete the payload's distinct dates
@@ -920,7 +958,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -929,7 +967,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
         'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
-        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, updated_at=now()';
+        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -950,7 +988,8 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers)
           + ',' + icSqlStr_(r.callStart)
           + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
-          + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId) + ')';
+          + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId)
+          + ',' + icSqlStr_(r.originAgent) + ',' + icSqlStr_(r.originDept) + ')';
       });
       var buildMs = Date.now() - tBuild;
 

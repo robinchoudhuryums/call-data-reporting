@@ -802,3 +802,79 @@ test('ambiguous nesting (two concurrent calls) or no concurrent call: no link', 
     ]));
   assert.equal(rec(recs, '850900').relatedCallId, undefined, 'ambiguous -> never guesses');
 });
+
+// ── Round-17b: WHO placed an internal-origin call ───────────────────────────
+// `firstAgent` derives from the CALLEE name across the group's legs, and an
+// internal-origin group's only callee IS the queue (which icIsQueueName_
+// skips), so these records carried no indication of who placed the call --
+// the receiving dept's path drill read "an internal call abandoned in your
+// queue" with nothing actionable. The originator lives in the CALLER columns.
+// Fixture mirrors the owner's real 2026-08-21 legs (Field Ops rep on an
+// OUTBOUND patient call dials A_Q_Spanish for translation; nobody answers).
+
+test('internal-origin: captures the originating agent + raw org label from the caller side', function () {
+  const recs = build([
+    leg({ callId: '830001', legId: 1, start: '08/21/2026 07:14:57',
+          connected: '08/21/2026 07:14:57', stop: '08/21/2026 07:20:07',
+          direction: 'Internal', callTime: '0:05:09',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned',
+          dept: 'Field Operations (Market Activity)' }),
+  ]);
+  const r = rec(recs, '830001');
+  assert.ok(r, 'the internal-origin abandon is captured (the receiving queue drills it)');
+  assert.equal(r.isInternal, true);
+  assert.equal(r.originAgent, 'Marie (Muskaan) Jindal');
+  assert.equal(r.originDept, 'Field Operations (Market Activity)');
+  // firstAgent stays null -- the only callee is the queue. That is exactly the
+  // hole originAgent fills; it must not be papered over by reusing firstAgent.
+  assert.equal(r.firstAgent, null);
+  // Metric fields untouched by the addition.
+  assert.equal(r.disposition, 'abandoned');
+  assert.equal(r.entryQueue, 'A_Q_Spanish');
+});
+
+test('internal-origin: a phone-shaped or queue caller name is never stored as the originator', function () {
+  const phoneNamed = build([
+    leg({ callId: '830002', legId: 1, start: '08/21/2026 08:00:00', stop: '08/21/2026 08:02:00',
+          direction: 'Internal', callTime: '0:02:00',
+          caller: '12145559999', callerName: '+1 214 555 9999',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'CSR' }),
+  ]);
+  assert.equal(rec(phoneNamed, '830002').originAgent, null,
+    'a raw number must never land in origin_agent (the firstAgent PHI guard)');
+
+  const queueNamed = build([
+    leg({ callId: '830003', legId: 1, start: '08/21/2026 08:10:00', stop: '08/21/2026 08:12:00',
+          direction: 'Internal', callTime: '0:02:00',
+          caller: '144', callerName: 'A_Q_FieldOps',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'CSR' }),
+  ]);
+  assert.equal(rec(queueNamed, '830003').originAgent, null, 'a queue is not an originator');
+  // A blank/N-A org label yields null rather than the literal string.
+  const noDept = build([
+    leg({ callId: '830004', legId: 1, start: '08/21/2026 08:20:00', stop: '08/21/2026 08:22:00',
+          direction: 'Internal', callTime: '0:02:00',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'N/A' }),
+  ]);
+  assert.equal(rec(noDept, '830004').originDept, null);
+  assert.equal(rec(noDept, '830004').originAgent, 'Marie (Muskaan) Jindal');
+});
+
+test('externally-originated calls carry NO originator (the field is internal-only)', function () {
+  const recs = build([
+    leg({ callId: '830010', legId: 1, start: '08/21/2026 09:00:00', stop: '08/21/2026 09:00:20',
+          direction: 'Incoming', caller: '12145550000', callerName: 'WIRELESS CALLER',
+          callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820',
+          missed: 'Missed', abandoned: 'Abandoned' }),
+  ]);
+  const r = rec(recs, '830010');
+  assert.ok(!r.isInternal, 'an externally-originated call is never flagged internal');
+  assert.equal(r.originAgent, null, 'nothing changes for the externally-originated population');
+  assert.equal(r.originDept, null);
+});

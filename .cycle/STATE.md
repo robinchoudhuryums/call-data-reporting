@@ -3849,3 +3849,25 @@ so "Y rang X at some point that day" counted as evidence of a transfer before th
 **WHERE I LEFT OFF:** increment 143 committed + pushed to `claude/broad-scan-8dgd6m`
 (4 commits ahead of merged main, un-PR'd). Owner to re-run
 `previewInternalTransferChains` AFTER deploying cdr-import.
+
+## Increment 144 — internal-origin records name the requester (2026-08-24)
+
+`/broad-implement Step 3` (+ Step 4 investigated, not built).
+
+- **IT-2**: `origin_agent` / `origin_dept` on internal-origin records, read from the leg's
+  CALLER columns. Root cause of the hole: `firstAgent` scans CALLEE names and an
+  internal-origin group's only callee is the queue, so first_agent is structurally always
+  null for this population. The drill now renders "Internal request from <name> · <org
+  label>" — the line that reclassifies the abandon from "lost customer" to "colleague needed
+  help". Guards + PHI rules copied from firstAgent, not reinvented; NULL on every
+  externally-originated row.
+- Tests 889 → 892 (incl. an explicit assertion that firstAgent STAYS null, so a future
+  "fix" that papers over the hole by reusing it fails); ci:ui full gate passed.
+- **Step 4 investigated**: the data exists (outbound_calls captures the requester's patient
+  call) but the full drill link crosses the F-4 per-dept entitlement boundary — the receiving
+  dept would drill the origin dept's customer call. Recommended a metadata-only variant
+  instead. Owner deciding; pros/cons delivered in chat.
+- Block: `.cycle/blocks/144-internal-origin-agent-broad-implement.md`.
+
+**WHERE I LEFT OFF:** increment 144 committed + pushed to `claude/broad-scan-8dgd6m`
+(8 commits ahead of merged main, un-PR'd). Awaiting the owner's Step 4 ruling.

@@ -691,6 +691,17 @@
         + escapeHtml(c.relatedCallId) + '" data-cj-date="' + escapeHtml(c.callDate) + '">'
         + 'view that call’s path</button></div>';
     }
+    // Round-17b: WHO placed an internal call. Without it the receiving dept's
+    // drill said only "an internal call abandoned in your queue" -- true and
+    // useless. With it the manager learns this abandon was a colleague asking
+    // for assistance, NOT a lost customer, and who to follow up with.
+    var origin = '';
+    if (c.isInternal && c.originAgent) {
+      origin = '<div class="cj-origin">Internal request from <strong>'
+        + escapeHtml(c.originAgent) + '</strong>'
+        + (c.originDept ? ' · ' + escapeHtml(c.originDept) : '')
+        + '</div>';
+    }
     var head = '<div class="cj-head">'
       + (c.callStart ? escapeHtml(clCstTime_(c.callStart)) + ' · ' : '')
       + (c.isInternal ? '<span class="cj-internal-tag">internal call</span> · ' : '')
@@ -700,12 +711,12 @@
       + (c.dialIn ? ' · dial-in ' + escapeHtml(c.dialIn) : '')
       + '</div>';
     if (c.journey && c.journey.length) {
-      return head + related + clChainHtml_(c.journey)
+      return head + origin + related + clChainHtml_(c.journey)
         + '<div class="cl-journey">' + c.journey.map(clJourneyRowHtml_).join('')
         + clJourneyEndRowHtml_(c.journey) + '</div>';
     }
     var path = [c.entryQueue, c.finalQueue].filter(Boolean).map(escapeHtml).join(' → ');
-    return head + related + '<div class="cl-journey-summary">' + (path || '(no queue path recorded)')
+    return head + origin + related + '<div class="cl-journey-summary">' + (path || '(no queue path recorded)')
       + ' <span class="cl-journey-note">— leg-by-leg detail not captured for this call (recorded before the journey extension)</span></div>';
   }
 

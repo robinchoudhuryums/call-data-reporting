@@ -705,7 +705,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   distinction) -- dropping the record made that button resolve
   `not-captured`, so the better the matcher worked the more reliably that
   dept's drill failed. Still metric-safe (every metric query excludes
-  is_internal). Editor diagnostics
+  is_internal). **Round-17b: an internal-origin record also carries
+  `origin_agent` / `origin_dept`** (the employee who PLACED it + the raw CDR
+  org label, read from the leg's CALLER columns -- `firstAgent` derives from
+  the CALLEE name, and these groups' only callee is the queue, so it is
+  always null here). Without it the receiving dept's drill said only "an
+  internal call abandoned in your queue"; with it the manager sees the
+  abandon was a colleague's assist request, not a lost customer. NULL on
+  every externally-originated row; phone-shaped caller names are never
+  stored (the firstAgent PHI guard). Editor diagnostics
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
   (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
   `tests/unit/inbound-calls.test.js`.
