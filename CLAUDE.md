@@ -910,6 +910,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   spot-check shows the columns are off, that single constant is the knob.
   Pre-extension rows (null `call_start`) carry no time-of-day and are
   excluded; the panel hides itself silently on unavailable/unmapped/empty.
+  **Neon-down degrades to a SHEET FALLBACK, not a blank panel:** the
+  `Inbound Calls` tab (cols 16-17, Op State #49) is rebucketed with mirrored
+  SQL semantics incl. the two-arm dept attribution
+  (`inboundHeatmapSheetFallback_`; pinned by heatmap-fallback.test.js), NEVER
+  cached, disclosed via `meta.fallbackSource`/`fallbackThrough` + a panel
+  caption; the cell drill stays Neon-only (fallback cells non-drillable).
   **Cell drill:** any cell with at least one abandon is click-to-drill --
   `getInboundHeatmapCell({department, from, to, dow, slot})` (InboundReport.gs)
   lists that cell's individual abandoned calls (date, CST time, entry->final
@@ -965,7 +971,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the client delta chips). **TEMPORARILY admin-only while the carve-out
   numbers are vetted** (the Inbound-report model: latent per-dept manager
   path; release = a one-line gate removal in `directCallResolveRequest_` +
-  un-hiding the `data-admin-only` tab). Route `#/report/direct`. Company
+  un-hiding the `data-admin-only` tab). **Neon-down degrades to the SHEET
+  (DC-1)** -- `Direct Call History` is the PRIMARY (Neon is the mirror), so
+  `directCallSheetFallback_` re-derives the SAME payload from it via the
+  shared `directCallShapePayload_` shaper (source parity pinned by
+  direct-fallback.test.js), uncached, disclosed via `meta.fallbackSource` +
+  a complete-figures note. Route `#/report/direct`. Company
   view renders per-DEPT `<details>` cards (R11-C5; card order = the
   R11-B11 impact score); single-dept view keeps the flat table; the CSV
   stays flat with its Dept column. See
@@ -1387,6 +1398,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   run; see "Neon write discipline" below.) `NEON_HOST`, `NEON_DB`,
   `NEON_USER`, `NEON_PASS` must be set in BOTH the CDR Report AND CDR
   Import project's Script Properties for Neon mirroring to work.
+  **Every Neon JDBC URL carries fail-fast timeouts**
+  (`connectTimeout/socketTimeout/loginTimeout`) — a HANGING connect during
+  an outage otherwise burns the 6-min execution ceiling, whose kill SKIPS
+  catch blocks, so none of the designed "fall back on error" paths run
+  (the class that silently ate a Daily Queue Report day).
+  `cross-file-pins.test.js` pins all five builders AND sweeps for unlisted
+  `Jdbc.getConnection` callsites — a new builder must carry the params.
 - **Neon write discipline (don't regress this — it caused a daily-import
   timeout).** The Neon mirror is the dominant cost of the daily import,
   and three rules in `neonWrite.js` (duplicated, INV-16) keep it from
@@ -1512,7 +1530,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   look healthy to every other probe on this page: a Neon that has spent its
   monthly transfer is still reachable, and an exhausted MailApp quota just
   stops sending. Read the Neon figure as a FLOOR (it counts our payloads,
-  not the wire). Also on the page: `build-stamp` ("unstamped" = the push
+  not the wire). The row also RANKS the top consumers -- every
+  `neonNoteEgress_` callsite passes a surface label (unlabeled folds into
+  `other`; system-health.test.js EA-1 pins it), so egress reduction starts
+  from the ranking, not guesswork. Also on the page: `build-stamp` ("unstamped" = the push
   bypassed deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only, so it renders mid-outage) and
   `retention-risk` (surviving dates the per-call tables are missing;
@@ -2254,6 +2275,7 @@ items for anything it flags or doesn't cover.)
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; Phase A ships dark -- agents get access-denied until Phase B's pages exist)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; unset leaves it informational (and the figure is a FLOOR, so under-budget is not proof of headroom)
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install/arm from Admin ▾ → Coaching, first armed run emails one larger NEW-flag batch
+49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
 
 ## Cycle Workflow Config
 

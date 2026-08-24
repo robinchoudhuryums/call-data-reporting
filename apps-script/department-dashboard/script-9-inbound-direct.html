@@ -693,6 +693,11 @@
     if (!el) return;
     var meta = (data && data.meta) || {};
     var cells = (data && data.cells) || [];
+    // Neon-outage degradation: the server served the 'Inbound Calls' sheet
+    // copy instead of Neon. Cells render but are NOT drillable (the cell
+    // drill + its "↳ path" journey are Neon-only) and a caption below the
+    // legend says what's being shown and through when.
+    var heatFallback = !!meta.fallbackSource;
     // R16e: an EXTERNAL drill panel lives outside this element, so the
     // innerHTML swap below can't clear it -- a stale cell list would otherwise
     // survive a dept/window change and read as current. Reset it on every
@@ -772,7 +777,8 @@
         var title = label + ' · ' + rate + '% abandoned (' + c.abandoned + ' of ' + c.calls + ' calls)' + note;
         // Drill affordance: any cell with at least one abandon lists its
         // calls on click (getInboundHeatmapCell -> the detail panel below).
-        var drill = c.abandoned > 0;
+        // Suppressed on a sheet-fallback payload (drill is Neon-only).
+        var drill = c.abandoned > 0 && !heatFallback;
         html += '<span class="ds-heatmap__cell' + (drill ? ' ds-heatmap__cell--drill' : '')
           + '" style="background:' + bg + ';" title="'
           + escapeHtml(title + (drill ? ' · click to list the calls' : '')) + '"'
@@ -795,6 +801,11 @@
       + sw(heatCellBg_(15, 99), '15%+')
       + sw('var(--paper-2)', 'low volume (<' + HEAT_MIN_VOLUME_ + ' calls)')
       + '</div>';
+    if (heatFallback) {
+      html += '<div class="ds-note">Served from the sheet fallback copy (live data unavailable)'
+        + (meta.fallbackThrough ? ' · data through ' + escapeHtml(isoDateShort_(meta.fallbackThrough)) : '')
+        + ' · cell drill unavailable</div>';
+    }
     // Cell-drill detail panel (hidden until a cell with abandons is clicked).
     // R16e: a host that declares `data-heat-detail` renders its drill into an
     // EXTERNAL panel instead (Insights puts it below the heatmap/share row), so
@@ -1365,6 +1376,25 @@
       if (body) body.style.display = 'none';
       if (unavail) unavail.style.display = '';
       return;
+    }
+    // DC-1: sheet-fallback disclosure (Neon-outage degradation). Unlike the
+    // heatmap's copy, the Direct Call History SHEET is the PRIMARY for this
+    // data, so the figures are complete -- the note says where they came from.
+    let fbNote = $('direct-call-fallback-note');
+    if (meta.fallbackSource) {
+      if (!fbNote && body) {
+        fbNote = document.createElement('div');
+        fbNote.id = 'direct-call-fallback-note';
+        fbNote.className = 'ds-note';
+        body.insertBefore(fbNote, body.firstChild);
+      }
+      if (fbNote) {
+        fbNote.textContent = 'Served from the Direct Call History sheet (live database unavailable). '
+          + 'The sheet is the primary store for this data, so these figures are complete.';
+        fbNote.style.display = '';
+      }
+    } else if (fbNote) {
+      fbNote.style.display = 'none';
     }
     const agents = (data && data.agents) || [];
     if (!agents.length) {

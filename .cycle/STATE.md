@@ -3717,3 +3717,60 @@ same change.
 **WHERE I LEFT OFF:** committed + pushed to `claude/broad-scan-8dgd6m`
 (branch carries the row-34 closure doc commit + this). NO PR — not
 requested.
+
+## Increment 139 — heatmap sheet fallback (+ JDBC fail-fast) (2026-08-24)
+
+`/broad-implement heatmap sheet fallback` — the full Phase-0-through-4 plan the owner
+approved after the Insights heatmap went dark in the Neon usage-ceiling outage.
+
+- **HF-0 JDBC fail-fast timeouts** (`connectTimeout=10&socketTimeout=120&loginTimeout=10`)
+  on ALL Neon connection builders — the plan named 3; the new cross-file-pins sweep found 2
+  more (neonbackfill.js, OrphanFix.gs). Fixes the hanging-connect class that silently ate
+  the 2026-08-21 Daily Queue Report day.
+- **HF-1/2 export extension + schedule**: 'Inbound Calls' tab cols 16-17 (Call Start /
+  Is Internal, '@'-formatted, REP-10 widen, spill-safe), daily 9 AM trigger + 400-day prune,
+  `inboundExport` Pipeline Health rows (log-only on Neon-down).
+- **HF-3/4 the fallback**: getInboundHeatmap degrades to the tab on any Neon failure —
+  mirrored bucketing + two-arm dept attribution (heatmap-fallback.test.js pins with boundary
+  fixtures), never cached, meta.fallbackSource/fallbackThrough + client caption, drill
+  suppressed (Neon-only).
+- Tests 854 → 870; ci:ui full gate passed; INV-16 re-synced; CLAUDE.md guards green.
+- Docs: Operator State #49 (trigger install + one-time historical re-export), INV-44
+  `inboundExport` vocab, known-issues "Heatmap sheet fallback: honest limits", two CLAUDE.md
+  bullet updates.
+- Block: `.cycle/blocks/139-heatmap-sheet-fallback-broad-implement.md`.
+
+Open (owner): deploy all THREE projects; install the export trigger; one-time
+`exportInboundCalls('<capture-start>','<today>')` after Neon recovers; the unchanged ledger
+(Outbound release runbook, 08/20 backfills before ~Sep 3, coaching arming).
+
+**WHERE I LEFT OFF:** increment 139 committed to `claude/broad-scan-8dgd6m` (on top of
+a675451's vetting probe); branch is 3 commits ahead of main, un-PR'd — PR only when the
+owner asks.
+
+## Increment 140 — egress attribution + Direct report sheet fallback (2026-08-24)
+
+`/broad-implement` continuation of the fallback/egress thread ("Yes go ahead" on the two
+recommended items).
+
+- **EA-1 per-surface egress attribution**: neonNoteEgress_(bytes, surface) with a capped
+  by-label map (24, overflow→'other'); readNeonEgress_ returns `top`; the Health page's
+  read-volume row appends "top: dqe N MB, ..." — the egress-reduction levers now get picked
+  from evidence. All 19 callsites labeled.
+- **DC-1 Direct Call report sheet fallback**: `Direct Call History` is the PRIMARY (Neon the
+  mirror), yet the report went dark on Neon failure. All three failure branches now re-derive
+  the payload from the sheet through the SHARED directCallShapePayload_ shaper; aggregation
+  mirror pinned by direct-fallback.test.js's independent-aggregation SOURCE PARITY fixture;
+  uncached; client note discloses completeness (unlike the heatmap's "data through" ceiling).
+- Tests 870 → 880; ci:ui full gate passed (script-9 touched); INV-16 green; CLAUDE.md
+  guards green. Docs: #47 guidance, CLAUDE.md two bullets, known-issues DC-1 note.
+- Block: `.cycle/blocks/140-egress-attribution-direct-fallback-broad-implement.md`.
+
+Open (owner): deploy the DASHBOARD (this increment) + the increment-139 three-project deploy
+if not yet done; read the egress "top:" ranking after ~a week, then pick the lever (payload
+slimming / rollups — the deferred follow-ons). Unchanged ledger: Outbound release runbook,
+08/20 backfills before ~Sep 3, coaching arming, #49 export-trigger install + one-time
+re-export.
+
+**WHERE I LEFT OFF:** increment 140 committed + pushed to `claude/broad-scan-8dgd6m`
+(4 commits ahead of main, un-PR'd — PR only when the owner asks).

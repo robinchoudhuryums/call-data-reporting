@@ -683,7 +683,10 @@ function renameAgentInNeon_(fromName, toName) {
   }
   var conn;
   try {
-    var url = 'jdbc:postgresql://' + host + '/' + props.getProperty('NEON_DB');
+    // Fail-fast timeouts (seconds) -- a hanging connect must error into this
+    // path's best-effort catch, not burn the 6-min execution ceiling.
+    var url = 'jdbc:postgresql://' + host + '/' + props.getProperty('NEON_DB')
+            + '?connectTimeout=10&socketTimeout=120&loginTimeout=10';
     conn = Jdbc.getConnection(url, props.getProperty('NEON_USER'), props.getProperty('NEON_PASS'));
     if (!conn) return null;
 

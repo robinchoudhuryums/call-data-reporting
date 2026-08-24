@@ -124,7 +124,7 @@ function getCallerLookup(req) {
     const json = rs.next() ? rs.getString('j') : '[]';
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'caller-lookup');
     rs.close(); stmt.close();
 
     let rows = JSON.parse(json || '[]');

@@ -473,3 +473,48 @@ test('F11: every QCD_SHEET_ONLY_ALLOWED entry still describes a real sheet reade
       + '-- drop the entry.');
   });
 });
+
+// ── JDBC fail-fast timeouts (heatmap-sheet-fallback Phase 0) ─────────────────
+// A hanging Neon connect during an outage burns the 6-min execution ceiling
+// -- and the kill SKIPS catch blocks, so none of the designed "fall back on
+// error" paths (incl. the heatmap sheet fallback) ever runs. Every JDBC URL
+// builder must carry connect/socket/login timeouts so an outage degrades
+// into a fast error instead of a silent hang. The four builders live in
+// three shapes (dashboard read, INV-16 writer pair, cdr-report read); a new
+// `Jdbc.getConnection` callsite must join this list.
+test('every Neon JDBC URL carries fail-fast timeouts', function () {
+  const JDBC_FILES = [
+    ['apps-script/department-dashboard/NeonRead.gs', null],
+    ['apps-script/cdr-report/neonWrite.js', null],
+    ['apps-script/cdr-import/neonWrite.js', null],
+    ['apps-script/cdr-report/dbHistorical.js', null],
+    ['apps-script/cdr-report/neonbackfill.js', null],
+    ['apps-script/department-dashboard/OrphanFix.gs', null],
+  ];
+  JDBC_FILES.forEach(function (pair) {
+    const src = read(pair[0]);
+    assert.ok(/jdbc:postgresql/.test(src), pair[0] + ' no longer builds a JDBC URL -- drop it from this pin.');
+    assert.ok(/connectTimeout=\d+&socketTimeout=\d+&loginTimeout=\d+/.test(src),
+      pair[0] + ' builds a Neon JDBC URL without the fail-fast timeout params '
+      + '(connectTimeout/socketTimeout/loginTimeout) -- a hanging connect there '
+      + 'burns the 6-min ceiling and skips every catch-based fallback.');
+  });
+  // Completeness: no OTHER file opens a JDBC connection without being listed.
+  const globSync = function (dir) {
+    let out = [];
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(function (e) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) out = out.concat(globSync(p));
+      else if (/\.(gs|js)$/.test(e.name)) out.push(p);
+    });
+    return out;
+  };
+  const listed = JDBC_FILES.map(function (pair) { return path.join(ROOT, pair[0]); });
+  globSync(path.join(ROOT, 'apps-script')).forEach(function (p) {
+    const src = fs.readFileSync(p, 'utf8');
+    if (/Jdbc\.getConnection/.test(src) && listed.indexOf(p) === -1) {
+      assert.fail(p + ' calls Jdbc.getConnection but is not in the fail-fast timeout pin list -- '
+        + 'add the timeout params and list it here.');
+    }
+  });
+});
