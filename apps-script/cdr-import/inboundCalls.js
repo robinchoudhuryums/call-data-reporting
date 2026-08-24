@@ -543,6 +543,32 @@ function buildInboundCallRecords_(rawRows) {
     });
   });
 
+  // Step 4 (owner ruling 2026-08-24): the SAME index for OUTBOUND calls. An
+  // assisting agent's concurrent call is often outbound -- a rep with a patient
+  // on the line dials a queue for translation (validated: the 2026-08-21 legs).
+  // agentBusy keys on the CALLEE ext, so those agents are invisible to it.
+  // Group shape mirrors outboundCalls.js exactly (no Incoming leg + an
+  // Answered Outgoing leg to an external number) so the two captures agree on
+  // what an outbound call IS.
+  var outboundBusy = [];
+  Object.keys(groups).forEach(function (root) {
+    var g = groups[root];
+    var hasIncoming = g.some(function (l) {
+      return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
+    });
+    if (hasIncoming) return;
+    g.forEach(function (l) {
+      if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Outgoing') return;
+      if (!icExternalNumber_(l[IC_COL.CALLEE])) return;
+      if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered') return;
+      if (icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
+      var oext = icDigits_(l[IC_COL.CALLER]);
+      var os = icParseTs_(l[IC_COL.CONNECTED]), oe = icParseTs_(l[IC_COL.STOP]);
+      if (!oext || isNaN(os) || isNaN(oe)) return;
+      outboundBusy.push({ root: root, ext: oext, startMs: os, endMs: oe });
+    });
+  });
+
   Object.keys(groups).forEach(function (root) {
     if (recordByRoot[root]) return;    // captured inbound -> not a transfer-abandon source
     var g = groups[root];
@@ -614,6 +640,7 @@ function buildInboundCallRecords_(rawRows) {
       // cross-referenced, not legs of THIS call group. Same synthesis the
       // R11-N append already does in the other direction.
       ir.relatedCallId = xfer.callerRoot;
+      ir.relatedCallKind = 'inbound';
       var head = [];
       if (xfer.originQueue) {
         head.push({ t: xfer.originStart, name: xfer.originQueue.slice(0, IC_JOURNEY_NAME_MAX),
@@ -634,7 +661,25 @@ function buildInboundCallRecords_(rawRows) {
         return a.ext === ir._originExt && a.root !== ir.callId
           && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
       });
-      if (ctxMatches.length === 1) ir.relatedCallId = ctxMatches[0].root;
+      if (ctxMatches.length === 1) {
+        ir.relatedCallId = ctxMatches[0].root;
+        ir.relatedCallKind = 'inbound';
+      } else if (!ctxMatches.length) {
+        // Step 4: no concurrent captured INBOUND -> try the requester's
+        // concurrent OUTBOUND call (the assist-during-outbound shape). Same
+        // unique-match-only discipline: 0 or >1 leaves the record unlinked
+        // rather than guessing. An inbound match always WINS -- it is the
+        // stronger relationship (the customer was handed over, not merely
+        // co-present).
+        var obMatches = outboundBusy.filter(function (a) {
+          return a.ext === ir._originExt && a.root !== ir.callId
+            && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
+        });
+        if (obMatches.length === 1) {
+          ir.relatedCallId = obMatches[0].root;
+          ir.relatedCallKind = 'outbound';
+        }
+      }
     }
     records.push(ir);
   });
@@ -937,6 +982,10 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // re-imported / backfilled.
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS origin_agent text');
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS origin_dept text');
+      // Which TABLE related_call_id points at. NULL means 'inbound' -- every
+      // row written before Step 4 linked an inbound call, so the read side
+      // must COALESCE rather than treat NULL as unknown.
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_kind text');
       ddl.close();
 
       // L2: authoritative per-date replace. Delete the payload's distinct dates
@@ -958,7 +1007,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept, related_call_kind';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -967,7 +1016,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
         'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
-        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, updated_at=now()';
+        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, related_call_kind=EXCLUDED.related_call_kind, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -989,7 +1038,8 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlStr_(r.callStart)
           + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
           + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId)
-          + ',' + icSqlStr_(r.originAgent) + ',' + icSqlStr_(r.originDept) + ')';
+          + ',' + icSqlStr_(r.originAgent) + ',' + icSqlStr_(r.originDept)
+          + ',' + icSqlStr_(r.relatedCallKind) + ')';
       });
       var buildMs = Date.now() - tBuild;
 

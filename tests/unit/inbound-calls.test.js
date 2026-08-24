@@ -878,3 +878,80 @@ test('externally-originated calls carry NO originator (the field is internal-onl
   assert.equal(r.originAgent, null, 'nothing changes for the externally-originated population');
   assert.equal(r.originDept, null);
 });
+
+// ── Step 4: link the assist to the requester's concurrent OUTBOUND call ─────
+// Validated shape (owner's 2026-08-21 legs): a Field Ops rep on an OUTGOING
+// patient call dials A_Q_Spanish for translation and nobody answers. agentBusy
+// keys on the CALLEE ext, so that rep is invisible to the inbound matcher --
+// the outbound index is what makes the link findable. Unique-match only, and
+// an INBOUND match always wins.
+
+function outboundPatientCallBy279(callId, connected, stop) {
+  return [
+    leg({ callId: callId, legId: 1, start: connected, connected: connected, stop: stop,
+          direction: 'Outgoing', talk: '0:05:39', caller: '279',
+          callerName: 'Marie (Muskaan) Jindal', callee: '19722224444',
+          answered: 'Answered', dept: 'Field Operations (Market Activity)' }),
+    // The recording artifact that rides along -- talk=0, must never be treated
+    // as evidence of anything.
+    leg({ callId: callId, legId: 2, start: connected, stop: stop, direction: 'Internal',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: 'CallRecording',
+          dept: 'Field Operations (Market Activity)' }),
+  ];
+}
+function assistAbandon279(callId, start, stop) {
+  return leg({ callId: callId, legId: 1, start: start, connected: start, stop: stop,
+               direction: 'Internal', callTime: '0:05:09', caller: '279',
+               callerName: 'Marie (Muskaan) Jindal', callee: '138', calleeName: 'A_Q_Spanish',
+               missed: 'Missed', abandoned: 'Abandoned',
+               dept: 'Field Operations (Market Activity)' });
+}
+
+test('Step 4: an assist placed during an OUTBOUND call links to that call', function () {
+  const recs = build(
+    outboundPatientCallBy279('840001', '08/21/2026 07:14:29', '08/21/2026 07:20:09').concat([
+      assistAbandon279('840900', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+    ]));
+  const ir = rec(recs, '840900');
+  assert.ok(ir, 'the assist abandon is still captured for the receiving queue');
+  assert.equal(ir.isInternal, true);
+  assert.equal(ir.relatedCallId, '840001');
+  assert.equal(ir.relatedCallKind, 'outbound', 'the drill must query outbound_calls, not inbound');
+  assert.equal(ir.originAgent, 'Marie (Muskaan) Jindal');
+});
+
+test('Step 4: an INBOUND match wins over a concurrent outbound one', function () {
+  // Same agent on BOTH a captured inbound and an outbound call across the
+  // abandon. The handed-over customer is the stronger relationship.
+  const recs = build(
+    capturedInboundAnsweredBy215('840010').concat(
+    outboundPatientCallBy279('840011', '06/04/2026 10:02:00', '06/04/2026 10:06:00')).concat([
+      leg({ callId: '840901', legId: 1, start: '06/04/2026 10:03:00', connected: '06/04/2026 10:03:00',
+            stop: '06/04/2026 10:03:40', direction: 'Internal', callTime: '0:00:40',
+            caller: '215', callerName: 'Raymond (Ray) Mathews', callee: '260',
+            calleeName: 'A_Q_Spanish', missed: 'Missed', abandoned: 'Abandoned', dept: 'CSR' }),
+    ]));
+  const ir = rec(recs, '840901');
+  assert.equal(ir.relatedCallKind, 'inbound');
+  assert.equal(ir.relatedCallId, '840010');
+});
+
+test('Step 4: never guesses -- two concurrent outbound calls leave it unlinked', function () {
+  const recs = build(
+    outboundPatientCallBy279('840020', '08/21/2026 07:14:00', '08/21/2026 07:21:00').concat(
+    outboundPatientCallBy279('840021', '08/21/2026 07:14:10', '08/21/2026 07:21:10')).concat([
+      assistAbandon279('840902', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+    ]));
+  const ir = rec(recs, '840902');
+  assert.ok(ir.relatedCallId == null, 'ambiguous -> no link, no guess');
+  assert.ok(ir.relatedCallKind == null);
+});
+
+test('Step 4: a non-overlapping outbound call is not linked', function () {
+  const recs = build(
+    outboundPatientCallBy279('840030', '08/21/2026 09:00:00', '08/21/2026 09:05:00').concat([
+      assistAbandon279('840903', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+    ]));
+  assert.ok(rec(recs, '840903').relatedCallId == null,
+    'the requester must have been on the call AT the assist time');
+});

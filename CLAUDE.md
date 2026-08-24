@@ -713,7 +713,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   internal call abandoned in your queue"; with it the manager sees the
   abandon was a colleague's assist request, not a lost customer. NULL on
   every externally-originated row; phone-shaped caller names are never
-  stored (the firstAgent PHI guard). Editor diagnostics
+  stored (the firstAgent PHI guard). **Step 4 (owner ruling) links the assist
+  to the requester's concurrent OUTBOUND call** -- `related_call_kind`
+  ('inbound' | 'outbound'; NULL reads as inbound) says which table
+  `related_call_id` points at, and `getCallJourney({kind:'outbound'})` serves
+  it. That is the first surface where one dept sees another dept's customer
+  call, so access is a SERVER-RE-DERIVED capability, never the client's claim:
+  a manager reaches outbound call O only if an internal record links to it AND
+  that record passes the unchanged F-4 gate on their own dept. Full ruling +
+  what is disclosed: docs/known-issues.md. Editor diagnostics
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
   (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
   `tests/unit/inbound-calls.test.js`.

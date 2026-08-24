@@ -17,7 +17,9 @@ const { loadGas } = require('../harness/loadGas');
 // (4) Neon-down degrades to meta.available=false, never a throw.
 
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'InboundReport.gs'],
+  // CallerLookup.gs supplies callerLookupShapeCall_ / _shapeOutbound_, which
+  // getCallJourney calls across Apps Script's shared global scope.
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CallerLookup.gs', 'InboundReport.gs'],
 });
 
 function install(role, queuesByDept) {
@@ -263,4 +265,117 @@ test('R16i: signed-out / unmapped users get nothing', function () {
   assert.throws(function () {
     h.call('getDeptDayAbandons', { department: 'CSR', date: '2026-06-23' });
   }, /Not authorized/);
+});
+
+// ── Step 4: the OUTBOUND journey drill and its capability gate ──────────────
+// getCallJourney({kind:'outbound'}) is the FIRST surface where one dept can
+// see another dept's customer call, so the authorization is re-derived
+// server-side: a manager may drill outbound call O only if some internal
+// inbound_calls row links to O *and* that linking row passes the unchanged
+// F-4 gate (callIdInDeptMissedReport_) on the manager's OWN dept. The
+// client's claim is never trusted.
+
+function installOutbound(role, opts) {
+  opts = opts || {};
+  install(role, { CSR: ['A_Q_CSR'] });
+  installOutbound.gateCalls = [];
+  h.ctx.callIdInDeptMissedReport_ = function (dept, date, callId) {
+    installOutbound.gateCalls.push([dept, date, callId]);
+    return !!opts.gateAllows;
+  };
+  installOutbound.queries = [];
+  const linkers = opts.linkers || [];
+  let linkIdx = 0;
+  const conn = {
+    prepareStatement: function (sql) {
+      installOutbound.queries.push(sql);
+      const isLink = /FROM inbound_calls/.test(sql);
+      const params = [];
+      return {
+        setString: function (i, v) { params[i] = v; },
+        executeQuery: function () {
+          installOutbound.lastParams = params.slice();
+          if (isLink) {
+            linkIdx = 0;
+            return {
+              next: function () { return linkIdx++ < linkers.length; },
+              getString: function () { return linkers[linkIdx - 1]; },
+              close: function () {},
+            };
+          }
+          let done = false;
+          return {
+            next: function () { if (done || !opts.outboundRow) return false; done = true; return true; },
+            getString: function () { return JSON.stringify(opts.outboundRow); },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    createStatement: function () { throw new Error('outbound drill must use bound parameters'); },
+    close: function () {},
+  };
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+}
+
+const OB_ROW = { call_date: '2026-08-21', call_id: 'OB1', agent_name: 'Marie (Muskaan) Jindal',
+                 agent_ext: '279', department: 'Field Operations (Market Activity)',
+                 connected: true, talk_seconds: 339, ring_seconds: 10, attempts: 1,
+                 journey: '[]', callee_hash: 'SHOULD-NOT-LEAK' };
+const OB_REQ = { callId: 'OB1', date: '2026-08-21', kind: 'outbound', department: 'CSR' };
+
+test('Step 4: a manager whose dept owns a linking assist CAN drill the outbound call', function () {
+  installOutbound('manager', { linkers: ['IN9'], gateAllows: true, outboundRow: OB_ROW });
+  const out = h.call('getCallJourney', OB_REQ);
+  assert.equal(out.found, true);
+  assert.equal(out.kind, 'outbound');
+  assert.equal(out.call.agentName, 'Marie (Muskaan) Jindal');
+  // The gate ran on the LINKING record, scoped to the manager's own dept.
+  assert.deepEqual(JSON.parse(JSON.stringify(installOutbound.gateCalls)),
+    [['CSR', '2026-08-21', 'IN9']]);
+  // No caller identity escapes.
+  assert.equal(out.call.calleeHash, undefined);
+  assert.ok(JSON.stringify(out).indexOf('SHOULD-NOT-LEAK') === -1);
+});
+
+test('Step 4: a manager with NO drillable link is refused (the client claim is not trusted)', function () {
+  installOutbound('manager', { linkers: ['IN9'], gateAllows: false, outboundRow: OB_ROW });
+  const out = h.call('getCallJourney', OB_REQ);
+  assert.equal(out.found, false);
+  assert.equal(out.reason, 'not-entitled');
+  assert.ok(!out.call, 'no outbound payload may be returned on refusal');
+});
+
+test('Step 4: an outbound call NOTHING links to is refused even with a permissive gate', function () {
+  installOutbound('manager', { linkers: [], gateAllows: true, outboundRow: OB_ROW });
+  const out = h.call('getCallJourney', OB_REQ);
+  assert.equal(out.reason, 'not-entitled',
+    'the link is the capability -- no link, no access, however permissive the dept gate');
+  assert.equal(installOutbound.gateCalls.length, 0, 'nothing to check against');
+});
+
+test('Step 4: the link lookup is dept-agnostic in SQL but bound + kind-filtered', function () {
+  installOutbound('manager', { linkers: ['IN9'], gateAllows: true, outboundRow: OB_ROW });
+  h.call('getCallJourney', OB_REQ);
+  const linkSql = installOutbound.queries.filter(function (s) { return /FROM inbound_calls/.test(s); })[0];
+  assert.ok(/related_call_id = \?/.test(linkSql), 'ids are bound, never inlined');
+  assert.ok(/related_call_kind/.test(linkSql) && /'outbound'/.test(linkSql),
+    'only rows that actually point at an OUTBOUND call may confer access');
+  assert.ok(/is_internal, FALSE\) = TRUE/.test(linkSql),
+    'only INTERNAL assist records confer access');
+});
+
+test('Step 4: an admin skips the derivation (already entitled to every dept)', function () {
+  installOutbound('admin', { linkers: [], gateAllows: false, outboundRow: OB_ROW });
+  const out = h.call('getCallJourney', { callId: 'OB1', date: '2026-08-21', kind: 'outbound' });
+  assert.equal(out.found, true);
+  assert.equal(installOutbound.gateCalls.length, 0);
+});
+
+test('Step 4: an unknown kind throws, and inbound stays the default', function () {
+  installOutbound('admin', { linkers: [], gateAllows: false, outboundRow: OB_ROW });
+  assert.throws(function () {
+    h.call('getCallJourney', { callId: 'X', date: '2026-08-21', kind: 'direct' });
+  }, /Unknown journey kind/);
 });

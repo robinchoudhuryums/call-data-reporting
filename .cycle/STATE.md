@@ -3871,3 +3871,30 @@ so "Y rang X at some point that day" counted as evidence of a transfer before th
 
 **WHERE I LEFT OFF:** increment 144 committed + pushed to `claude/broad-scan-8dgd6m`
 (8 commits ahead of merged main, un-PR'd). Awaiting the owner's Step 4 ruling.
+
+## Increment 145 — Step 4: cross-dept outbound journey link (2026-08-24)
+
+`/broad-implement Step 4` — owner chose **Option A** (full drill link) over the metadata-only
+variant I recommended. Ruling recorded in docs/known-issues.md.
+
+- **Capture**: `outboundBusy` index (same group shape as outboundCalls.js); an internal assist
+  with no concurrent captured INBOUND links to the requester's concurrent OUTBOUND call.
+  Unique-match only; an inbound match always wins. `related_call_kind` says which table
+  `related_call_id` points at (NULL = inbound, for pre-Step-4 rows).
+- **Read**: `getCallJourney({kind:'outbound'})` → `getOutboundCallJourney_`. The gate is a
+  server-re-derived CAPABILITY: a manager reaches outbound call O only if an internal record
+  links to it AND that record passes the unchanged F-4 gate on their OWN dept. No link = no
+  access, however permissive the dept gate. Admins skip it. Fails closed, no payload on refusal.
+- **Client**: kind plumbed through the related button; `outboundJourneyHtml_` reuses the shared
+  journey renderers; wording switches to OUTBOUND; dedicated not-entitled copy.
+- Disclosure bounded: no caller identity crosses (hash + timestamp dropped, names masked at
+  capture) — only the other dept's agent, org label, outcome, masked journey.
+- Tests 892 → 902 (4 capture + 6 entitlement, incl. the no-link-no-access pin); ci:ui passed.
+- Block: `.cycle/blocks/145-outbound-journey-link-broad-implement.md`.
+
+Open follow-on: no read-only preview exists for the OUTBOUND match specifically (the chain
+diagnostic reports the shape but not whether the match is unique) — worth adding before
+trusting the link at volume.
+
+**WHERE I LEFT OFF:** increment 145 committed + pushed to `claude/broad-scan-8dgd6m`
+(9 commits ahead of merged main, un-PR'd).
