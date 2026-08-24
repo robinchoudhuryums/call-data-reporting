@@ -1455,6 +1455,27 @@ function previewInternalTransferChains(dateIso) {
     if (!delivered.length) {
       Logger.log('   (nothing in this sheet rang ext ' + X + ' -- source call is outside the day / uncaptured)');
     }
+    // OWNER NOTE 2026-08-24: on TRANSFERS the raw feed often puts the agent who
+    // RECEIVES the call in the CALLER column, with Callee=CallRecording (620)
+    // and Callee Name=N/A. Both this scan and the real matcher's agentBusy
+    // index key on the CALLEE ext, so that leg shape is invisible to them --
+    // which would make "nothing handed X a caller" a statement about evidence
+    // never examined rather than about the call. List the CALLER-side legs too,
+    // OBSERVATION ONLY: no verdict below reads them until the shape is
+    // understood from a real sample.
+    var xAsCaller = allLegs.filter(function (a) {
+      return a.caller.kind === 'ext' && a.caller.ext === X && !isNaN(a.startMs) && a.root !== root;
+    }).sort(function (p2, q2) { return Math.abs(p2.startMs - T) - Math.abs(q2.startMs - T); }).slice(0, 6);
+    xAsCaller.forEach(function (a) {
+      var spansT = (!isNaN(a.connMs) && !isNaN(a.stopMs) && T >= a.connMs - 5000 && T <= a.stopMs + 5000);
+      Logger.log('   -- ext ' + X + ' AS CALLER -> ' + (a.calleeExt || '(no ext)')
+        + ' | group ' + a.root + (a.captured ? ' [CAPTURED inbound]' : ' [internal]')
+        + ' | ' + a.dir
+        + ' | ' + (a.answered ? 'Answered talk=' + a.talk + 's' : (a.missed ? 'Missed' : (a.abandoned ? 'Abandoned' : '-')))
+        + ' | ' + (isNaN(a.connMs) ? '--:--:--' : icIsoTime_(a.connMs)) + '..' + (isNaN(a.stopMs) ? '--:--:--' : icIsoTime_(a.stopMs))
+        + ' | dT ' + Math.round((a.startMs - T) / 1000) + 's'
+        + (spansT ? '  <<< SPANS THE ABANDON' : ''));
+    });
     delivered.forEach(function (a) {
       Logger.log('   <- rung by ' + a.caller.show + ' | group ' + a.root
         + (a.captured ? ' [CAPTURED inbound]' : ' [internal]') + ' | ' + a.dir
@@ -1557,10 +1578,12 @@ function previewInternalTransferChains(dateIso) {
             : ''));
     } else if (delivered.length && !deliveredAtT.length) {
       nSelfOriginated++;
-      Logger.log('   => SELF-ORIGINATED (not a transfer): ext ' + X + ' was on NO delivered call at '
-        + 'the abandon time, so nobody handed a caller to them -- ext ' + X + ' dialed ' + queue
-        + ' themselves. There is no upstream caller journey to enrich, and hop-following cannot '
-        + 'fix this shape at any depth.');
+      Logger.log('   => NO INBOUND HAND-OFF AT THE ABANDON TIME: no leg RINGING ext ' + X
+        + ' had them on a call at T. That points to a self-originated queue call (nothing '
+        + 'upstream to enrich, unfixable by hop-following at any depth) -- BUT read the '
+        + '"AS CALLER" lines above before concluding it: on transfers the feed can put the '
+        + 'receiving agent in the caller column (Callee=CallRecording), and this scan keys on '
+        + 'the callee ext, so a hand-off can be real and simply unseen here.');
     } else if (delivered.some(function (a) { return a.caller.kind === 'queue'; })) {
       nViaQueue++;
       Logger.log('   => reached ext ' + X + ' via a QUEUE ring (not an agent transfer) -- upstream is whoever entered that queue; needs queue-membership tracing, not a 1-hop agent trace.');
@@ -1575,7 +1598,7 @@ function previewInternalTransferChains(dateIso) {
     + nOneHop + ' resolvable via a UNIQUE 1-hop agent trace, ' + nTwoHop + ' via a unique 2-hop trace, '
     + nInternalOrigin + ' INTERNAL-ORIGIN (no external caller; nothing to enrich), '
     + nViaQueue + ' reached via a queue ring, '
-    + nSelfOriginated + ' SELF-ORIGINATED (nobody handed them a caller -- not a transfer), '
+    + nSelfOriginated + ' with NO inbound hand-off at the abandon time (see the AS CALLER lines), '
     + nNoSource + ' with no source leg in the sheet.');
   Logger.log('  (Paste this whole log back: the "<- rung by" lines show the real link structure so the '
     + 'accurate join for these can be designed against the same 0-ambiguity bar.)');
