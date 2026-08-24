@@ -1283,7 +1283,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   stays fresh during periods where one source updates without
   the other (e.g. integrated import refreshes QCD before the
   cdr-report safety-net trigger refreshes DQE, or vice versa).
-  Past 36h adds the `.is-stale` class and tints warm orange.
+  Past 36h adds the `.is-stale` class and tints warm orange -- measured
+  with a **WEEKEND/HOLIDAY CREDIT** (24h per non-business day in the gap,
+  `freshnessNonBusinessCredit_`), or Friday's data reads as stale every
+  Monday morning at ~57h while being the most recent WORKDAY. The Overview
+  pipeline banner applies the same credit to the same threshold (it reuses
+  `ingestWatchdogNonBusinessCredit_`, which had this from the start --
+  OPS-7; the two display surfaces never adopted it). Change one, change
+  both: freshness-weekend.test.js pins the banner behaviorally and the
+  pill by source tripwire (its staleness lives in the assembled-client
+  IIFE, where the rendered gate cannot tell right from wrong-on-Mondays).
   Tunable in `setFreshnessPill_` if 36h becomes too noisy. Pill
   is hidden until the server returns the latest date so the
   header doesn't show a stale fallback. **Role-tiered prominence

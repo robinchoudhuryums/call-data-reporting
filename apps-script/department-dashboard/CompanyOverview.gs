@@ -1058,10 +1058,18 @@ function computeOverviewPipelineFreshness_() {
       };
     }
     const hoursSinceFresh = (Date.now() - latestTs.getTime()) / 3600000;
+    // Weekend/holiday credit (OPS-7 parity): 24h allowance per non-business
+    // day in the gap, so Friday's build does not read as stale on Monday
+    // morning. IngestWatchdog.gs has always applied this to the SAME
+    // threshold; this banner and the header pill did not, so both false-warned
+    // every Monday on current data. Reuses the watchdog's helper (one Apps
+    // Script global scope); typeof-guarded like every other cross-file call.
+    const nonBusinessCredit = (typeof ingestWatchdogNonBusinessCredit_ === 'function')
+      ? ingestWatchdogNonBusinessCredit_(hoursSinceFresh) : 0;
     return {
       latestTimestamp: Utilities.formatDate(latestTs, TZ, 'yyyy-MM-dd HH:mm'),
       hoursSinceFresh: Math.round(hoursSinceFresh * 10) / 10,
-      isStale:         hoursSinceFresh > OVERVIEW_PIPELINE_STALE_HOURS,
+      isStale:         (hoursSinceFresh - nonBusinessCredit) > OVERVIEW_PIPELINE_STALE_HOURS,
     };
   } catch (e) {
     Logger.log('computeOverviewPipelineFreshness_ failed: %s', e);

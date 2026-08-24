@@ -1067,6 +1067,51 @@
    * day, which is the empirical threshold above which the operator
    * usually wants to investigate.
    */
+  /**
+   * Company-holiday test against the server-injected ranges
+   * (window.__COMPANY_HOLIDAYS__, renderDashboard_ -- the same ranges the
+   * server's countWorkingDays_ excludes). NB three older inline copies of
+   * this loop still live in script-2-chrome / -6-ir / -11-qcd-boot; this is
+   * the shared one for new code.
+   */
+  function isCompanyHolidayIso_(iso) {
+    var ranges = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
+    for (var i = 0; i < ranges.length; i++) {
+      if (iso >= ranges[i].from && iso <= ranges[i].to) return true;
+    }
+    return false;
+  }
+
+  /** 'YYYY-MM-DD' for a Date in the viewer's LOCAL zone (the pill's frame). */
+  function freshnessLocalIso_(d) {
+    var m = d.getMonth() + 1, day = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+  }
+
+  /**
+   * NON-BUSINESS-DAY CREDIT: 24h of staleness allowance per weekend /
+   * company-holiday day inside the gap since the latest data date.
+   *
+   * Without it the pill went stale every Monday morning on perfectly current
+   * data: Friday's data is ~57h old by Monday 9am, past the 36h threshold,
+   * even though Friday IS the most recent workday and nothing is missing.
+   * This is the SAME correction IngestWatchdog.gs has always applied
+   * (ingestWatchdogNonBusinessCredit_, OPS-7) -- the pill and the Overview
+   * banner never got it. Walks back at most 14 days, like the server copy:
+   * past that a real outage should warn regardless of what days it spans.
+   */
+  function freshnessNonBusinessCredit_(ageHours) {
+    if (!isFinite(ageHours) || ageHours <= 0) return 0;
+    var days = Math.min(14, Math.ceil(ageHours / 24));
+    var credit = 0;
+    for (var d = 1; d <= days; d++) {
+      var dt = new Date(Date.now() - d * 86400000);
+      var dow = dt.getDay();   // 0 = Sun, 6 = Sat
+      if (dow === 0 || dow === 6 || isCompanyHolidayIso_(freshnessLocalIso_(dt))) credit += 24;
+    }
+    return credit;
+  }
+
   function setFreshnessPill_(dates) {
     const pill = $('freshness-pill');
     if (!pill) return;
@@ -1125,8 +1170,18 @@
         + 'Overview QCD chips read from QCD. Pill shows whichever is '
         + 'newest so a recent refresh on either path is visible.');
     }
+    // Weekend/holiday-adjusted staleness (see freshnessNonBusinessCredit_).
+    // The LABEL stays literal wall-clock hours -- "57h ago" on a Monday is
+    // true and useful; only the warn TINT is business-day aware.
+    const nonBusinessCredit = freshnessNonBusinessCredit_(ageHours);
+    const businessAgeHours = Math.max(0, ageHours - nonBusinessCredit);
+    if (nonBusinessCredit > 0) {
+      tipParts.push('Staleness ignores ' + (nonBusinessCredit / 24) + ' non-business day(s) '
+        + 'in this gap (weekend / company holiday), so the most recent WORKDAY\'s data '
+        + 'does not read as stale on a Monday.');
+    }
     pill.setAttribute('title', tipParts.join('\n'));
-    pill.classList.toggle('is-stale', ageHours >= 36);
+    pill.classList.toggle('is-stale', businessAgeHours >= 36);
     // Non-admins get the SUBTLE variant (owner note): freshness is an
     // operational signal admins act on; for managers the loud boxed chip
     // read as an alarm. The stale (36h+) warn tint still applies to both
