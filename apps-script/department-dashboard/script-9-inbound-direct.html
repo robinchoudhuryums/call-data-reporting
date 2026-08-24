@@ -1377,6 +1377,25 @@
       if (unavail) unavail.style.display = '';
       return;
     }
+    // DC-1: sheet-fallback disclosure (Neon-outage degradation). Unlike the
+    // heatmap's copy, the Direct Call History SHEET is the PRIMARY for this
+    // data, so the figures are complete -- the note says where they came from.
+    let fbNote = $('direct-call-fallback-note');
+    if (meta.fallbackSource) {
+      if (!fbNote && body) {
+        fbNote = document.createElement('div');
+        fbNote.id = 'direct-call-fallback-note';
+        fbNote.className = 'ds-note';
+        body.insertBefore(fbNote, body.firstChild);
+      }
+      if (fbNote) {
+        fbNote.textContent = 'Served from the Direct Call History sheet (live database unavailable). '
+          + 'The sheet is the primary store for this data, so these figures are complete.';
+        fbNote.style.display = '';
+      }
+    } else if (fbNote) {
+      fbNote.style.display = 'none';
+    }
     const agents = (data && data.agents) || [];
     if (!agents.length) {
       if (body) body.style.display = 'none';

@@ -167,7 +167,10 @@ function getDirectCallReport(req) {
   const data = computeDirectCallReport_(scope);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
-  if (data.meta.available) {
+  // Fallback payloads are NEVER cached -- a recovered Neon must not be
+  // masked for the TTL (the unavailable-uncached rule extended to degraded
+  // payloads, same as the heatmap fallback).
+  if (data.meta.available && !data.meta.fallbackSource) {
     try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('DirectCallReport cache put failed: %s', e); }
   }
@@ -181,7 +184,7 @@ function computeDirectCallReport_(scope) {
   let conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
-    if (!conn) { empty.meta.available = false; return empty; }
+    if (!conn) return directCallSheetFallback_(scope, empty);
 
     // from/to are validated ISO; the dept literal is escaped (and is itself a
     // roster-derived dept header, not free user text). ONE query, ONE getString.
@@ -255,59 +258,69 @@ function computeDirectCallReport_(scope) {
     const json = rs.next() ? rs.getString('j') : null;
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'direct');
     rs.close(); stmt.close();
-    if (!json) { empty.meta.available = false; return empty; }
+    if (!json) return directCallSheetFallback_(scope, empty);
 
-    const obj = JSON.parse(json);
-    const k = obj.kpis || {};
-    const agents = (obj.agents || []).map(directCallShapeAgent_);
-    const ibAnswered = Number(k.ibAnswered) || 0;
-    const ibMissedFree = Number(k.ibMissedFree) || 0;
-    const ibTalkSec = Number(k.ibTalkSec) || 0;
-    const obConnected = Number(k.obConnected) || 0;
-    const obTalkSec = Number(k.obTalkSec) || 0;
-    return {
-      meta: {
-        from: from, to: to, department: scope.dept || '',
-        companyView: scope.companyView, available: true, vetting: true,
-        coverageStart: obj.coverageStart || null,   // R12-26b
-        cacheHit: false, computeMs: 0,
-      },
-      kpis: {
-        agents: Number(k.agents) || 0,
-        ibAnswered: ibAnswered,
-        ibMissedFree: ibMissedFree,
-        ibMissedBusy: Number(k.ibMissedBusy) || 0,
-        ibTalkSec: ibTalkSec,
-        ibAnswerRate: directCallAnswerRate_(ibAnswered, ibMissedFree),
-        ibAttSec: ibAnswered ? Math.round(ibTalkSec / ibAnswered) : 0,
-        obTotal: Number(k.obTotal) || 0,
-        obConnected: obConnected,
-        obTalkSec: obTalkSec,
-        obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
-      },
-      kpisPrior: directCallPriorKpis_(obj.kpisPrior || null),
-      deptsPrior: (obj.deptsPrior || []).map(function (d) {
-        const a = Number(d.ib_answered) || 0, mf = Number(d.ib_missed_free) || 0;
-        return {
-          dept: String(d.dept || ''),
-          ibAnswered: a,
-          ibMissedFree: mf,
-          ibMissedBusy: Number(d.ib_missed_busy) || 0,
-          obTotal: Number(d.ob_total) || 0,
-          ibAnswerRate: directCallAnswerRate_(a, mf),
-        };
-      }),
-      agents: agents,
-    };
+    return directCallShapePayload_(scope, JSON.parse(json));
   } catch (e) {
     Logger.log('computeDirectCallReport_ failed: ' + (e && e.message ? e.message : e));
-    empty.meta.available = false;
-    return empty;
+    return directCallSheetFallback_(scope, empty);
   } finally {
     try { if (conn) conn.close(); } catch (ce) {}
   }
+}
+
+/**
+ * Shapes the parsed aggregate object (the Neon query's json_build_object
+ * shape: camelCase kpis/kpisPrior, snake_case agents/deptsPrior rows,
+ * coverageStart) into the client payload. SHARED by the Neon path and the
+ * sheet fallback -- the fallback builds the same intermediate shape from
+ * sheet rows and calls this, so the two sources structurally cannot shape
+ * a payload differently.
+ */
+function directCallShapePayload_(scope, obj) {
+  const k = obj.kpis || {};
+  const agents = (obj.agents || []).map(directCallShapeAgent_);
+  const ibAnswered = Number(k.ibAnswered) || 0;
+  const ibMissedFree = Number(k.ibMissedFree) || 0;
+  const ibTalkSec = Number(k.ibTalkSec) || 0;
+  const obConnected = Number(k.obConnected) || 0;
+  const obTalkSec = Number(k.obTalkSec) || 0;
+  return {
+    meta: {
+      from: scope.from, to: scope.to, department: scope.dept || '',
+      companyView: scope.companyView, available: true, vetting: true,
+      coverageStart: obj.coverageStart || null,   // R12-26b
+      cacheHit: false, computeMs: 0,
+    },
+    kpis: {
+      agents: Number(k.agents) || 0,
+      ibAnswered: ibAnswered,
+      ibMissedFree: ibMissedFree,
+      ibMissedBusy: Number(k.ibMissedBusy) || 0,
+      ibTalkSec: ibTalkSec,
+      ibAnswerRate: directCallAnswerRate_(ibAnswered, ibMissedFree),
+      ibAttSec: ibAnswered ? Math.round(ibTalkSec / ibAnswered) : 0,
+      obTotal: Number(k.obTotal) || 0,
+      obConnected: obConnected,
+      obTalkSec: obTalkSec,
+      obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
+    },
+    kpisPrior: directCallPriorKpis_(obj.kpisPrior || null),
+    deptsPrior: (obj.deptsPrior || []).map(function (d) {
+      const a = Number(d.ib_answered) || 0, mf = Number(d.ib_missed_free) || 0;
+      return {
+        dept: String(d.dept || ''),
+        ibAnswered: a,
+        ibMissedFree: mf,
+        ibMissedBusy: Number(d.ib_missed_busy) || 0,
+        obTotal: Number(d.ob_total) || 0,
+        ibAnswerRate: directCallAnswerRate_(a, mf),
+      };
+    }),
+    agents: agents,
+  };
 }
 
 /** Inbound answer rate as a 0-100 percent, EXCLUDING the busy carve-out. */
@@ -341,4 +354,174 @@ function directCallShapeAgent_(r) {
     obIntTotal: Number(r.ob_int_total) || 0,
     obExtTotal: Number(r.ob_ext_total) || 0,
   };
+}
+
+// ── SHEET FALLBACK (Neon-outage degradation) ─────────────────────────────────
+// Unlike the inbound tables, `Direct Call History` (CDR Report ss) is the
+// PRIMARY for this data -- Neon `direct_call_history` is the mirror -- yet
+// the report used to go dark on a Neon failure while the authoritative rows
+// sat reachable in the workbook. On any Neon failure the compute now
+// re-derives the SAME payload from the sheet: the raw sums are aggregated in
+// JS with the SQL's exact grouping rules (per-(agent, dept) rows, B-1;
+// distinct-agent kpi count; the INV-28/R24 prior window via the same
+// computePriorWindow_), then shaped by the SHARED directCallShapePayload_ so
+// the two sources structurally cannot diverge in shaping --
+// tests/unit/direct-fallback.test.js pins source parity on one fixture.
+// Disclosed via meta.fallbackSource='sheet'; NEVER cached; a missing/empty
+// sheet keeps the old behavior (available=false). Sheet columns are read BY
+// POSITION per DIRECT_CALL_HISTORY_HEADERS (directCallMetrics.js): 2=Date,
+// 3=Department, 4=Agent, 5-8 IB Int (ans/free/busy/talk), 9-12 IB Ext,
+// 13-15 OB Int (total/conn/talk), 16-18 OB Ext.
+
+/** Display-cell -> number ('1,234' safe); blanks/garbage -> 0. */
+function dcSheetNum_(v) {
+  var n = Number(String(v == null ? '' : v).replace(/,/g, '').trim());
+  return isFinite(n) ? n : 0;
+}
+
+/**
+ * Reads `Direct Call History` rows for [fromIso, toIso] as normalized
+ * per-row objects, plus coverageStart (unscoped MIN date, mirroring the
+ * SQL's unscoped sub-select). Returns null when the sheet is missing/empty.
+ */
+function directCallSheetRows_(fromIso, toIso) {
+  var ss = openSpreadsheet_();
+  var sheet = ss.getSheetByName('Direct Call History');
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var dates = sheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();
+  var coverageStart = null;
+  var first = -1, last = -1;
+  for (var i = 0; i < dates.length; i++) {
+    var d = ncCellDateIso_(dates[i][0]);
+    if (!d) continue;
+    if (coverageStart === null || d < coverageStart) coverageStart = d;
+    if (d >= fromIso && d <= toIso) { if (first < 0) first = i; last = i; }
+  }
+  if (first < 0) return { rows: [], coverageStart: coverageStart };
+  var grid = sheet.getRange(2 + first, 1, last - first + 1, 18).getDisplayValues();
+  var rows = [];
+  for (var r = 0; r < grid.length; r++) {
+    var g = grid[r];
+    var iso = ncCellDateIso_(g[1]);
+    if (!iso || iso < fromIso || iso > toIso) continue;
+    rows.push({
+      date: iso,
+      dept: String(g[2] == null ? '' : g[2]).trim(),
+      agent: String(g[3] == null ? '' : g[3]).trim(),
+      ibIntAnswered: dcSheetNum_(g[4]), ibIntMissedFree: dcSheetNum_(g[5]),
+      ibIntMissedBusy: dcSheetNum_(g[6]), ibIntTalkSec: dcSheetNum_(g[7]),
+      ibExtAnswered: dcSheetNum_(g[8]), ibExtMissedFree: dcSheetNum_(g[9]),
+      ibExtMissedBusy: dcSheetNum_(g[10]), ibExtTalkSec: dcSheetNum_(g[11]),
+      obIntTotal: dcSheetNum_(g[12]), obIntConnected: dcSheetNum_(g[13]),
+      obIntTalkSec: dcSheetNum_(g[14]),
+      obExtTotal: dcSheetNum_(g[15]), obExtConnected: dcSheetNum_(g[16]),
+      obExtTalkSec: dcSheetNum_(g[17]),
+    });
+  }
+  return { rows: rows, coverageStart: coverageStart };
+}
+
+/** Scope/prior kpi sums over normalized rows (the priorKpiSel shape). */
+function dcSumKpis_(rows) {
+  var k = { ibAnswered: 0, ibMissedFree: 0, ibMissedBusy: 0, ibTalkSec: 0,
+            obTotal: 0, obConnected: 0, obTalkSec: 0 };
+  rows.forEach(function (r) {
+    k.ibAnswered += r.ibIntAnswered + r.ibExtAnswered;
+    k.ibMissedFree += r.ibIntMissedFree + r.ibExtMissedFree;
+    k.ibMissedBusy += r.ibIntMissedBusy + r.ibExtMissedBusy;
+    k.ibTalkSec += r.ibIntTalkSec + r.ibExtTalkSec;
+    k.obTotal += r.obIntTotal + r.obExtTotal;
+    k.obConnected += r.obIntConnected + r.obExtConnected;
+    k.obTalkSec += r.obIntTalkSec + r.obExtTalkSec;
+  });
+  return k;
+}
+
+/**
+ * Best-effort sheet fallback: builds the SAME intermediate aggregate object
+ * the Neon query returns and shapes it through directCallShapePayload_.
+ * On any failure degrades to the pre-fallback behavior (available=false).
+ */
+function directCallSheetFallback_(scope, empty) {
+  try {
+    var pw = computePriorWindow_(scope.from, scope.to);
+    var res = directCallSheetRows_(pw.from, scope.to);   // one read covers both windows
+    if (!res) { empty.meta.available = false; return empty; }
+    var deptF = scope.companyView ? null : scope.dept;
+    var cur = [], prior = [];
+    res.rows.forEach(function (r) {
+      if (deptF && r.dept !== deptF) return;
+      if (r.date >= scope.from && r.date <= scope.to) cur.push(r);
+      else if (r.date >= pw.from && r.date <= pw.to) prior.push(r);
+    });
+
+    // kpis: scope sums + DISTINCT agent_name count (the SQL counts names,
+    // not (agent, dept) pairs -- a crossover agent is one person).
+    var kpis = dcSumKpis_(cur);
+    var names = {};
+    cur.forEach(function (r) { names[r.agent] = true; });
+    kpis.agents = Object.keys(names).length;
+
+    // agents: per-(agent, dept) rows (B-1), snake_case keys matching the
+    // SQL aliases so directCallShapeAgent_ consumes them unchanged; ordered
+    // ib_answered DESC then agent ASC like the SQL's ORDER BY.
+    var byAgent = {};
+    cur.forEach(function (r) {
+      var key = r.agent + ' ' + r.dept;
+      var a = byAgent[key] || (byAgent[key] = {
+        agent: r.agent, dept: r.dept,
+        ib_answered: 0, ib_missed_free: 0, ib_missed_busy: 0, ib_talk_sec: 0,
+        ib_int_answered: 0, ib_ext_answered: 0,
+        ob_total: 0, ob_connected: 0, ob_talk_sec: 0,
+        ob_int_total: 0, ob_ext_total: 0,
+      });
+      a.ib_answered += r.ibIntAnswered + r.ibExtAnswered;
+      a.ib_missed_free += r.ibIntMissedFree + r.ibExtMissedFree;
+      a.ib_missed_busy += r.ibIntMissedBusy + r.ibExtMissedBusy;
+      a.ib_talk_sec += r.ibIntTalkSec + r.ibExtTalkSec;
+      a.ib_int_answered += r.ibIntAnswered;
+      a.ib_ext_answered += r.ibExtAnswered;
+      a.ob_total += r.obIntTotal + r.obExtTotal;
+      a.ob_connected += r.obIntConnected + r.obExtConnected;
+      a.ob_talk_sec += r.obIntTalkSec + r.obExtTalkSec;
+      a.ob_int_total += r.obIntTotal;
+      a.ob_ext_total += r.obExtTotal;
+    });
+    var agents = Object.keys(byAgent).map(function (k2) { return byAgent[k2]; })
+      .sort(function (a, b) {
+        return (b.ib_answered - a.ib_answered)
+            || (a.agent < b.agent ? -1 : (a.agent > b.agent ? 1 : 0));
+      });
+
+    // deptsPrior: per-dept prior aggregates (snake_case, the t2 shape).
+    var byDept = {};
+    prior.forEach(function (r) {
+      var d = byDept[r.dept] || (byDept[r.dept] = {
+        dept: r.dept, ib_answered: 0, ib_missed_free: 0, ib_missed_busy: 0, ob_total: 0,
+      });
+      d.ib_answered += r.ibIntAnswered + r.ibExtAnswered;
+      d.ib_missed_free += r.ibIntMissedFree + r.ibExtMissedFree;
+      d.ib_missed_busy += r.ibIntMissedBusy + r.ibExtMissedBusy;
+      d.ob_total += r.obIntTotal + r.obExtTotal;
+    });
+
+    var out = directCallShapePayload_(scope, {
+      kpis: kpis,
+      agents: agents,
+      // The SQL's kpisPrior sub-select always returns the object (zero sums
+      // over an empty window), never null -- mirror that.
+      kpisPrior: dcSumKpis_(prior),
+      deptsPrior: Object.keys(byDept).map(function (k3) { return byDept[k3]; }),
+      coverageStart: res.coverageStart,
+    });
+    out.meta.fallbackSource = 'sheet';
+    return out;
+  } catch (e) {
+    Logger.log('directCallSheetFallback_ failed (best-effort): '
+               + (e && e.message ? e.message : e));
+    empty.meta.available = false;
+    return empty;
+  }
 }

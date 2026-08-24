@@ -971,7 +971,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the client delta chips). **TEMPORARILY admin-only while the carve-out
   numbers are vetted** (the Inbound-report model: latent per-dept manager
   path; release = a one-line gate removal in `directCallResolveRequest_` +
-  un-hiding the `data-admin-only` tab). Route `#/report/direct`. Company
+  un-hiding the `data-admin-only` tab). **Neon-down degrades to the SHEET
+  (DC-1)** -- `Direct Call History` is the PRIMARY (Neon is the mirror), so
+  `directCallSheetFallback_` re-derives the SAME payload from it via the
+  shared `directCallShapePayload_` shaper (source parity pinned by
+  direct-fallback.test.js), uncached, disclosed via `meta.fallbackSource` +
+  a complete-figures note. Route `#/report/direct`. Company
   view renders per-DEPT `<details>` cards (R11-C5; card order = the
   R11-B11 impact score); single-dept view keeps the flat table; the CSV
   stays flat with its Dept column. See
@@ -1525,7 +1530,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   look healthy to every other probe on this page: a Neon that has spent its
   monthly transfer is still reachable, and an exhausted MailApp quota just
   stops sending. Read the Neon figure as a FLOOR (it counts our payloads,
-  not the wire). Also on the page: `build-stamp` ("unstamped" = the push
+  not the wire). The row also RANKS the top consumers -- every
+  `neonNoteEgress_` callsite passes a surface label (unlabeled folds into
+  `other`; system-health.test.js EA-1 pins it), so egress reduction starts
+  from the ranking, not guesswork. Also on the page: `build-stamp` ("unstamped" = the push
   bypassed deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only, so it renders mid-outage) and
   `retention-risk` (surviving dates the per-call tables are missing;

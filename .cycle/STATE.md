@@ -3747,3 +3747,30 @@ Open (owner): deploy all THREE projects; install the export trigger; one-time
 **WHERE I LEFT OFF:** increment 139 committed to `claude/broad-scan-8dgd6m` (on top of
 a675451's vetting probe); branch is 3 commits ahead of main, un-PR'd — PR only when the
 owner asks.
+
+## Increment 140 — egress attribution + Direct report sheet fallback (2026-08-24)
+
+`/broad-implement` continuation of the fallback/egress thread ("Yes go ahead" on the two
+recommended items).
+
+- **EA-1 per-surface egress attribution**: neonNoteEgress_(bytes, surface) with a capped
+  by-label map (24, overflow→'other'); readNeonEgress_ returns `top`; the Health page's
+  read-volume row appends "top: dqe N MB, ..." — the egress-reduction levers now get picked
+  from evidence. All 19 callsites labeled.
+- **DC-1 Direct Call report sheet fallback**: `Direct Call History` is the PRIMARY (Neon the
+  mirror), yet the report went dark on Neon failure. All three failure branches now re-derive
+  the payload from the sheet through the SHARED directCallShapePayload_ shaper; aggregation
+  mirror pinned by direct-fallback.test.js's independent-aggregation SOURCE PARITY fixture;
+  uncached; client note discloses completeness (unlike the heatmap's "data through" ceiling).
+- Tests 870 → 880; ci:ui full gate passed (script-9 touched); INV-16 green; CLAUDE.md
+  guards green. Docs: #47 guidance, CLAUDE.md two bullets, known-issues DC-1 note.
+- Block: `.cycle/blocks/140-egress-attribution-direct-fallback-broad-implement.md`.
+
+Open (owner): deploy the DASHBOARD (this increment) + the increment-139 three-project deploy
+if not yet done; read the egress "top:" ranking after ~a week, then pick the lever (payload
+slimming / rollups — the deferred follow-ons). Unchanged ledger: Outbound release runbook,
+08/20 backfills before ~Sep 3, coaching arming, #49 export-trigger install + one-time
+re-export.
+
+**WHERE I LEFT OFF:** increment 140 committed + pushed to `claude/broad-scan-8dgd6m`
+(4 commits ahead of main, un-PR'd — PR only when the owner asks).

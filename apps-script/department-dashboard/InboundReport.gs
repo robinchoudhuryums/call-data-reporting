@@ -794,7 +794,7 @@ function computeInboundReport_(scope) {
     const json = rs.next() ? rs.getString('j') : null;
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound');
     rs.close(); stmt.close();
     if (!json) { empty.meta.available = false; return empty; }
 
@@ -1008,7 +1008,7 @@ function getInboundInsurerDaily(req) {
     const json = rs.next() ? rs.getString('j') : '[]';
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound-insurer');
     rs.close(); stmt.close();
     const arr = JSON.parse(json || '[]');
     out.daily = Array.isArray(arr) ? arr : [];
@@ -1065,7 +1065,7 @@ function scanInboundQueueNames_(lookbackDays) {
     const json = rs.next() ? rs.getString('j') : '[]';
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound-scan');
     rs.close(); stmt.close();
     const arr = JSON.parse(json || '[]');
     return Array.isArray(arr) ? arr : [];
@@ -1161,7 +1161,7 @@ function compareInboundVsQcdAbandons_(dept, fromIso, toIso, conn) {
   const json = rs.next() ? rs.getString('j') : '[]';
   // F5: meter the bytes this read actually pulled (NeonRead.gs;
   // typeof-guarded like every other cross-file call here).
-  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound-parity');
   rs.close(); stmt.close();
   JSON.parse(json || '[]').forEach(function (r) {
     inbByDay[String(r.d)] = { ab: Number(r.ab) || 0, hold: Number(r.hold) || 0 };
@@ -1398,7 +1398,7 @@ function getInboundHeatmap(req) {
     const json = rs.next() ? rs.getString('j') : null;
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'heatmap');
     rs.close(); stmt.close();
     if (json == null) return inboundHeatmapSheetFallback_(scope, out);
 
@@ -1699,7 +1699,7 @@ function inboundAbandonList_(scope, bucket) {
     const json = rs.next() ? rs.getString('j') : null;
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound-drill');
     rs.close(); stmt.close();
     if (json == null) { out.meta.available = false; return out; }
 

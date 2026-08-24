@@ -352,7 +352,7 @@ function coachingDeliveryRun_() {
       + "SELECT id, department, agent_name FROM coaching_flags WHERE status = 'open') t");
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'coaching');
     rs.close(); stmt.close();
     var diff = coachingDeliveryDiff_(preview.flags, JSON.parse(json || '[]'));
 
@@ -456,7 +456,7 @@ function getCoachingWorklist(req) {
     var stmt = conn.createStatement();
     var rs = stmt.executeQuery(sql);
     var json = rs.next() ? rs.getString('j') : '[]';
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'coaching');
     rs.close(); stmt.close();
     return { available: true, rows: JSON.parse(json || '[]'), meta: meta };
   } catch (e) {

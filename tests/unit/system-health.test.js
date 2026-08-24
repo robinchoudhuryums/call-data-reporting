@@ -777,3 +777,66 @@ test('E1: with the helpers absent (suite default) both rows degrade to absent, a
   assert.equal(rowByKey(data, 'legs-horizon'), undefined);
   assert.equal(rowByKey(data, 'retention-risk'), undefined);
 });
+
+// ── EA-1: per-surface egress attribution ─────────────────────────────────────
+// The single monthly total left egress reduction blind: the biggest lever
+// depends on WHICH reader is spending. Every neonNoteEgress_ callsite now
+// passes a short surface label; the gauge stores a per-label sub-count and
+// the Health row renders the top consumers.
+
+test('EA-1: neonNoteEgress_ attributes bytes per surface; readNeonEgress_ ranks top consumers', function () {
+  hNeon.state.props = {};
+  hNeon.call('neonNoteEgress_', 1000, 'dqe');
+  hNeon.call('neonNoteEgress_', 4000, 'inbound');
+  hNeon.call('neonNoteEgress_', 500, 'dqe');
+  const out = hNeon.call('readNeonEgress_');
+  assert.equal(out.bytes, 5500, 'the total still accumulates unchanged');
+  assert.equal(out.reads, 3);
+  const top = JSON.parse(JSON.stringify(out.top));
+  assert.deepEqual(top, [
+    { surface: 'inbound', bytes: 4000, reads: 1 },
+    { surface: 'dqe', bytes: 1500, reads: 2 },
+  ]);
+});
+
+test('EA-1: unlabeled reads land in "other"; label overflow folds into "other"', function () {
+  hNeon.state.props = {};
+  hNeon.call('neonNoteEgress_', 100);   // legacy no-label call
+  for (let i = 0; i < 30; i++) hNeon.call('neonNoteEgress_', 10, 'surface-' + i);
+  const out = hNeon.call('readNeonEgress_');
+  const stored = JSON.parse(hNeon.state.props.NEON_EGRESS_MTD);
+  const labels = Object.keys(stored.by);
+  assert.ok(labels.length <= 24, 'distinct labels capped so the property stays small (got ' + labels.length + ')');
+  assert.ok(stored.by.other, 'the unlabeled read and the overflow both land in other');
+  assert.equal(out.bytes, 100 + 300, 'totals never lose overflow bytes');
+});
+
+test('EA-1: a pre-attribution stored value upgrades in place (earlier reads stay unattributed)', function () {
+  const mk = hNeon.call('neonEgressMonthKey_');
+  hNeon.state.props = {
+    NEON_EGRESS_MTD: JSON.stringify({ m: mk, bytes: 7000, reads: 4 }),
+  };
+  hNeon.call('neonNoteEgress_', 1000, 'qcd');
+  const out = hNeon.call('readNeonEgress_');
+  assert.equal(out.bytes, 8000);
+  assert.equal(out.reads, 5);
+  assert.deepEqual(JSON.parse(JSON.stringify(out.top)),
+    [{ surface: 'qcd', bytes: 1000, reads: 1 }]);
+});
+
+test('EA-1: the Health row appends the top-consumer ranking when attribution exists', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.readNeonEgress_ = function () {
+    return { month: '2026-08', bytes: 6 * 1024 * 1024, reads: 20, budgetMb: 0, pctOfBudget: null,
+             top: [{ surface: 'dqe', bytes: 4 * 1024 * 1024, reads: 12 },
+                   { surface: 'heatmap', bytes: 2 * 1024 * 1024, reads: 8 }] };
+  };
+  const row = rowByKey(h.call('getSystemHealth'), 'neon-egress');
+  assert.match(row.value, /top: dqe 4 MB, heatmap 2 MB/);
+  // ...and a pre-attribution payload (no top) renders exactly as before.
+  h.ctx.readNeonEgress_ = function () {
+    return { month: '2026-08', bytes: 5 * 1024 * 1024, reads: 12, budgetMb: 0, pctOfBudget: null };
+  };
+  const row2 = rowByKey(h.call('getSystemHealth'), 'neon-egress');
+  assert.ok(row2.value.indexOf('top:') === -1);
+});

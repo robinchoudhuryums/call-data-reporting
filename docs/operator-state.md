@@ -1224,9 +1224,18 @@ When something looks wrong, before assuming a code bug, check:
     so concurrent executions can lose an increment. Over budget is proof of
     a problem; under budget is NOT proof of headroom. The counters live in
     the `NEON_EGRESS_MTD` Script Property, reset themselves on the 1st
-    (UTC), and are code-written -- you never set that one. Biggest lever if
-    it climbs: the 6 h report TTL plus the `reportFreshnessTag_` key suffix
-    (#19), since every cached serve is a Neon fetch avoided.
+    (UTC), and are code-written -- you never set that one. **Per-surface
+    attribution (EA-1):** every `neonNoteEgress_` callsite passes a surface
+    label ('dqe', 'inbound', 'heatmap', 'qcd', ...), so the Health row now
+    appends "top: <surface> N MB, ..." -- read THAT ranking before picking
+    an egress-reduction lever; the biggest lever depends on which reader is
+    spending. Distinct labels cap at 24 (overflow folds into `other`); a
+    counter stored before this shipped upgrades in place, with earlier
+    reads that month left unattributed. General levers if it climbs: the
+    6 h report TTL plus the `reportFreshnessTag_` key suffix (#19) --
+    every cached serve is a Neon fetch avoided -- then payload-shape
+    slimming (json_build_object -> array) and SQL-side rollups on whatever
+    the ranking names.
 
 48. **`COACHING_DELIVERY_ENABLED` — the weekly coaching delivery engine
     (F-e).** Install/arm from Admin ▾ → Coaching → "Install weekly trigger"

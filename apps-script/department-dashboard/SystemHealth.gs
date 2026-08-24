@@ -217,6 +217,13 @@ function getSystemHealth(req) {
         val += ' — ' + eg.pctOfBudget + '% of the ' + eg.budgetMb + ' MB budget';
         st = eg.pctOfBudget >= 80 ? 'warn' : 'ok';
       }
+      // Per-surface ranking (EA-1): egress reduction was blind with only the
+      // total -- the biggest lever depends on WHICH reader is spending.
+      if (eg.top && eg.top.length) {
+        val += ' · top: ' + eg.top.map(function (t) {
+          return t.surface + ' ' + (Math.round((t.bytes / (1024 * 1024)) * 10) / 10) + ' MB';
+        }).join(', ');
+      }
       add('neon', 'neon-egress', 'Neon read volume (month to date)', st, val,
         (eg.budgetMb > 0
           ? 'Warns at 80% of NEON_EGRESS_BUDGET_MB. '

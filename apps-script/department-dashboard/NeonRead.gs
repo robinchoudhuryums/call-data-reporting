@@ -183,7 +183,7 @@ function neonGetAgentExtPairs_() {
     var stmt = conn.createStatement();
     var rs = stmt.executeQuery(sql);
     var json = rs.next() ? rs.getString('j') : '[]';
-    neonNoteEgress_(json ? json.length : 0);   // F5: meter the read
+    neonNoteEgress_(json ? json.length : 0, 'dqe-exts');   // F5: meter the read
     rs.close(); stmt.close();
     var arr = JSON.parse(json || '[]');
     try { cache.put(KEY, json, REPORT_CACHE_TTL_SECONDS); } catch (ce) { /* harmless */ }
@@ -295,7 +295,7 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     // point of the R24 egress round), so metering it here covers most of what
     // the transfer cap actually counts. Best-effort, post-fetch, never gates
     // the parse below.
-    neonNoteEgress_(json ? json.length : 0);
+    neonNoteEgress_(json ? json.length : 0, 'dqe');
     var arr = JSON.parse(json || '[]');
     for (var i = 0; i < arr.length; i++) {
       var r = arr[i];   // positional array -- see the protocol comment above
@@ -626,11 +626,21 @@ function neonEgressMonthKey_() {
   return d.getUTCFullYear() + '-' + (m < 10 ? '0' : '') + m;
 }
 
+// Per-surface attribution cap: distinct labels beyond this fold into
+// 'other' so the Script Property stays small (values cap at 9 KB) and a
+// typo'd label can't grow the map without bound.
+var NEON_EGRESS_MAX_SURFACES_ = 24;
+
 /**
  * Adds one instrumented read to the month-to-date counters. `bytes` is the
- * length of the payload string we pulled. Never throws.
+ * length of the payload string we pulled; `surface` is a short caller label
+ * ('dqe', 'inbound', 'heatmap', ...) so the Health gauge can rank consumers
+ * -- egress reduction was flying blind with only the single total. Omitted /
+ * unknown labels land in 'other'. Never throws. A pre-attribution stored
+ * value (no `by` map) upgrades in place -- earlier reads that month simply
+ * stay unattributed.
  */
-function neonNoteEgress_(bytes) {
+function neonNoteEgress_(bytes, surface) {
   try {
     var n = Number(bytes) || 0;
     if (n <= 0) return;
@@ -641,6 +651,12 @@ function neonNoteEgress_(bytes) {
     if (!cur || cur.m !== key) cur = { m: key, bytes: 0, reads: 0 };
     cur.bytes += n;
     cur.reads += 1;
+    if (!cur.by || typeof cur.by !== 'object') cur.by = {};
+    var label = String(surface || 'other').trim().slice(0, 24) || 'other';
+    if (!cur.by[label] && Object.keys(cur.by).length >= NEON_EGRESS_MAX_SURFACES_) label = 'other';
+    var s = cur.by[label] || (cur.by[label] = { b: 0, r: 0 });
+    s.b += n;
+    s.r += 1;
     props.setProperty(NEON_EGRESS_PROP_, JSON.stringify(cur));
   } catch (e) { /* best-effort -- a gauge must never break a read */ }
 }
@@ -653,7 +669,7 @@ function neonNoteEgress_(bytes) {
  * threshold. Unset = the row is informational, never a false alarm.
  */
 function readNeonEgress_() {
-  var out = { month: neonEgressMonthKey_(), bytes: 0, reads: 0, budgetMb: 0, pctOfBudget: null };
+  var out = { month: neonEgressMonthKey_(), bytes: 0, reads: 0, budgetMb: 0, pctOfBudget: null, top: [] };
   try {
     var props = PropertiesService.getScriptProperties();
     var cur = null;
@@ -662,6 +678,12 @@ function readNeonEgress_() {
     if (cur && cur.m === out.month) {
       out.bytes = Number(cur.bytes) || 0;
       out.reads = Number(cur.reads) || 0;
+      // Ranked per-surface attribution (top 5 by bytes) for the Health row.
+      if (cur.by && typeof cur.by === 'object') {
+        out.top = Object.keys(cur.by).map(function (k) {
+          return { surface: k, bytes: Number(cur.by[k].b) || 0, reads: Number(cur.by[k].r) || 0 };
+        }).sort(function (a, b) { return b.bytes - a.bytes; }).slice(0, 5);
+      }
     }
     var b = Number(props.getProperty('NEON_EGRESS_BUDGET_MB') || 0) || 0;
     if (b > 0) {

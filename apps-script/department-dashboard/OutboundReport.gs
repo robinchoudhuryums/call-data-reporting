@@ -277,7 +277,7 @@ function computeOutboundReport_(scope) {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : null;
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound');
     rs.close(); stmt.close();
     if (!json) { empty.meta.available = false; return empty; }
 
@@ -463,7 +463,7 @@ function getOutboundUncalled(req) {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : null;
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-drill');
     rs.close(); stmt.close();
     if (json == null) { out.meta.available = false; return out; }
 
@@ -609,7 +609,7 @@ function runOutboundVettingCheck() {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : '[]';
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-vetting');
     rs.close(); stmt.close();
     const rows = JSON.parse(json || '[]');
     const calledBack = [], uncalled = [];

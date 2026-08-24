@@ -171,7 +171,7 @@ function escSnapshotMaybeRefresh_(conn) {
     var stmt = conn.prepareStatement(sql);
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
     rs.close(); stmt.close();
     escSnapshotStore_(JSON.parse(json || '[]'));
   } catch (e) { /* best-effort */ }
@@ -447,7 +447,7 @@ function getEscalations(req) {
     var json = rs.next() ? rs.getString('j') : '[]';
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
     rs.close(); stmt.close();
     var rows = JSON.parse(json || '[]');
     var escTruncated = rows.length > ESC_MAX_ROWS;   // A-4
@@ -550,7 +550,7 @@ function getEscalationActivity(req) {
     var json = rs.next() ? rs.getString('j') : '[]';
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
     rs.close(); stmt.close();
     return { available: true, rows: JSON.parse(json || '[]') };
   } catch (e) {

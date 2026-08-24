@@ -1576,3 +1576,11 @@ Rows exported before the cols 16–17 schema extension have blank Call Start
 and fall out of the fallback (same rule as Neon's pre-extension null
 `call_start` rows); the one-time historical re-export in Operator State #49
 heals them.
+
+**The Direct Call report's fallback (DC-1) is a different animal:** its
+`Direct Call History` sheet is the PRIMARY (Neon is the mirror), so a
+fallback serve is complete and current — no "data through" ceiling, and the
+client note says so. Both routes shape through the shared
+`directCallShapePayload_`, with aggregation parity pinned by
+`tests/unit/direct-fallback.test.js` (source-parity fixture). Same
+never-cache rule as the heatmap fallback.
