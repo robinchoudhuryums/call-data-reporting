@@ -3774,3 +3774,175 @@ re-export.
 
 **WHERE I LEFT OFF:** increment 140 committed + pushed to `claude/broad-scan-8dgd6m`
 (4 commits ahead of main, un-PR'd — PR only when the owner asks).
+
+## Increment 141 — internal transfer paths reach the receiving dept (2026-08-24)
+
+Owner-approved reversal of the Round-16 drop, plus (increment 140b) the freshness
+weekend/holiday credit.
+
+- **Freshness credit**: the header pill AND the Overview pipeline banner now discount
+  weekend/company-holiday days (24h each) before the 36h staleness verdict, reusing the
+  watchdog's OPS-7 helper server-side and a mirrored client one. Friday's data no longer
+  reads red on Monday. Pinned by freshness-weekend.test.js (banner behaviorally, pill by
+  source tripwire — its staleness lives in the assembled-client IIFE).
+- **IT-1 internal transfer paths**: a uniquely-matched internal transfer-abandon group is
+  now WRITTEN (was dropped), linked via related_call_id, and prefixed with the reconstructed
+  origin hop (origin queue → answering agent, flagged origin/transfer, rendered "before
+  transfer"). Fixes the receiving dept's "↳ path" button resolving to not-captured — the DQE
+  queue-only sentinel renders that button for any abandon with wait > 60s, internal included.
+  Owner's preview on 08/21: 11 candidates, 10 unique, 0 ambiguous, 6 past the 60s threshold.
+- Tests 886 → 888; ci:ui gate passed twice; INV-16 green.
+- Blocks: `.cycle/blocks/141-internal-transfer-path-broad-implement.md`.
+
+Open (owner): deploy cdr-import + dashboard; verify a receiving-dept path drill once Neon is
+back; run backfillInboundCalls to give already-imported dates their records. Follow-on:
+CHAINED transfers (~9%, needs hop-following, previewInternalTransferChains scopes it).
+
+**WHERE I LEFT OFF:** increments 140b + 141 committed + pushed to `claude/broad-scan-8dgd6m`
+(2 commits ahead of merged main, un-PR'd — PR only when the owner asks).
+
+## Increment 142 — follow-on: client holiday-check consolidation (2026-08-24)
+
+`/broad-implement follow-on items`. Most of the standing follow-on list turned out to be
+owner-gated or measurement-blocked; one item was genuinely actionable.
+
+- **FO-1 (done)**: the company-holiday range test had FOUR inline client copies and had
+  already drifted (script-6-ir guarded malformed entries, the other three did not). All now
+  call `isCompanyHolidayIso_` (script-1-core), which adopted the guard. A cross-file-pins
+  tripwire fails if a fifth copy appears — nothing behavioral can see this class, since every
+  copy renders fine and is only wrong on a holiday.
+- **FO-2 (blocked, not built)**: chained internal transfers. `previewInternalTransferChains`
+  is a neighborhood-scan CLASSIFIER (one-hop / two-hop / internal-origin / via-queue /
+  no-source), not a resolver — and a `no-source` case cannot be fixed by hop-following at any
+  depth. One unclassified sample + Neon down = guessing. UNBLOCK: run that diagnostic (no Neon
+  needed) and bring the tally.
+- Everything else on the list is an owner ruling (sub-60s entry point, inbound-lite fallback,
+  Direct dal-cutover, more fallbacks) or needs data that does not exist yet (egress levers —
+  EA-1 shipped yesterday and Neon is down, so the ranking is empty).
+- Tests 888 → 889; ci:ui full gate passed (load-bearing: the unit suite proves the assembled
+  IIFE parses, only the gate proves a cross-fragment identifier resolves).
+- Block: `.cycle/blocks/142-follow-on-holiday-dedup-broad-implement.md`.
+
+**WHERE I LEFT OFF:** increment 142 committed + pushed to `claude/broad-scan-8dgd6m`
+(3 commits ahead of merged main, un-PR'd — PR only when the owner asks).
+
+## Increment 143 — chain diagnostic: temporal guard (2026-08-24)
+
+Owner ran `previewInternalTransferChains(2026-08-21)`: 1 chained case, reported
+"1-HOP RESOLVABLE (unique)". Reading the evidence lines DISPROVED that verdict — the leg
+the resolver used (ext 363 ringing ext 279) starts at 07:30:43, **946s AFTER** the abandon
+it supposedly caused (07:14:57, ended 07:20:06). Cause: `overlapRootsFor(Y)` constrains the
+UPSTREAM agent to be on a captured call at T, but nothing constrained the Y→X hand-off leg,
+so "Y rang X at some point that day" counted as evidence of a transfer before the abandon.
+
+- Fixed the DIAGNOSTIC only (read-only, editor-run, not wired into any pipeline): `deliveredAtT`
+  requires X to have been on an answered call spanning T (±5s — the same overlap rule the real
+  R11-N matcher applies to the answering agent), feeding both the 1-hop and 2-hop traces.
+- New SELF-ORIGINATED bucket + tally entry for the shape this case actually is: nobody handed
+  X a caller, so X dialed the queue themselves — no upstream journey exists and hop-following
+  cannot fix it at any depth.
+- Tests 889/889 unchanged (the diagnostic is log-only and not unit-covered — honest answer to
+  "what enforces this?": nothing automated; it is a read-only scoping tool).
+- NOT built: hop-following. The one observed case now looks unresolvable-by-design rather than
+  a missing feature; re-run the tightened diagnostic before spending anything on a resolver.
+
+**WHERE I LEFT OFF:** increment 143 committed + pushed to `claude/broad-scan-8dgd6m`
+(4 commits ahead of merged main, un-PR'd). Owner to re-run
+`previewInternalTransferChains` AFTER deploying cdr-import.
+
+## Increment 144 — internal-origin records name the requester (2026-08-24)
+
+`/broad-implement Step 3` (+ Step 4 investigated, not built).
+
+- **IT-2**: `origin_agent` / `origin_dept` on internal-origin records, read from the leg's
+  CALLER columns. Root cause of the hole: `firstAgent` scans CALLEE names and an
+  internal-origin group's only callee is the queue, so first_agent is structurally always
+  null for this population. The drill now renders "Internal request from <name> · <org
+  label>" — the line that reclassifies the abandon from "lost customer" to "colleague needed
+  help". Guards + PHI rules copied from firstAgent, not reinvented; NULL on every
+  externally-originated row.
+- Tests 889 → 892 (incl. an explicit assertion that firstAgent STAYS null, so a future
+  "fix" that papers over the hole by reusing it fails); ci:ui full gate passed.
+- **Step 4 investigated**: the data exists (outbound_calls captures the requester's patient
+  call) but the full drill link crosses the F-4 per-dept entitlement boundary — the receiving
+  dept would drill the origin dept's customer call. Recommended a metadata-only variant
+  instead. Owner deciding; pros/cons delivered in chat.
+- Block: `.cycle/blocks/144-internal-origin-agent-broad-implement.md`.
+
+**WHERE I LEFT OFF:** increment 144 committed + pushed to `claude/broad-scan-8dgd6m`
+(8 commits ahead of merged main, un-PR'd). Awaiting the owner's Step 4 ruling.
+
+## Increment 145 — Step 4: cross-dept outbound journey link (2026-08-24)
+
+`/broad-implement Step 4` — owner chose **Option A** (full drill link) over the metadata-only
+variant I recommended. Ruling recorded in docs/known-issues.md.
+
+- **Capture**: `outboundBusy` index (same group shape as outboundCalls.js); an internal assist
+  with no concurrent captured INBOUND links to the requester's concurrent OUTBOUND call.
+  Unique-match only; an inbound match always wins. `related_call_kind` says which table
+  `related_call_id` points at (NULL = inbound, for pre-Step-4 rows).
+- **Read**: `getCallJourney({kind:'outbound'})` → `getOutboundCallJourney_`. The gate is a
+  server-re-derived CAPABILITY: a manager reaches outbound call O only if an internal record
+  links to it AND that record passes the unchanged F-4 gate on their OWN dept. No link = no
+  access, however permissive the dept gate. Admins skip it. Fails closed, no payload on refusal.
+- **Client**: kind plumbed through the related button; `outboundJourneyHtml_` reuses the shared
+  journey renderers; wording switches to OUTBOUND; dedicated not-entitled copy.
+- Disclosure bounded: no caller identity crosses (hash + timestamp dropped, names masked at
+  capture) — only the other dept's agent, org label, outcome, masked journey.
+- Tests 892 → 902 (4 capture + 6 entitlement, incl. the no-link-no-access pin); ci:ui passed.
+- Block: `.cycle/blocks/145-outbound-journey-link-broad-implement.md`.
+
+Open follow-on: no read-only preview exists for the OUTBOUND match specifically (the chain
+diagnostic reports the shape but not whether the match is unique) — worth adding before
+trusting the link at volume.
+
+**WHERE I LEFT OFF:** increment 145 committed + pushed to `claude/broad-scan-8dgd6m`
+(9 commits ahead of merged main, un-PR'd).
+
+## Increment 146 — outbound-link preview + the gate's missing arm (2026-08-24)
+
+`/broad-implement read-only preview for outbound match, not-entitled path from UI`.
+
+- **IT-5 (real defect)**: the Step 4 gate implemented only ONE of getCallJourney's two
+  authorization arms (F-4 fallback), not the dept-predicate arm. So a manager who reached the
+  assist record BY PREDICATE — and whose id is not an abandoned parent in their Missed report
+  (a sub-60s abandon emits no DQE sentinel) — was falsely refused a link they had just been
+  shown. THAT is what made the not-entitled path reachable from the UI; increment 145's
+  follow-on note had the reasoning backwards. Gate now mirrors both arms in the same order.
+  Pinned both ways.
+- **IT-4**: `previewOutboundAssistLinks(dateIso)` (CDR Tools menu, read-only, no Neon). Runs
+  the REAL buildInboundCallRecords_ and reports what capture would store — deliberately not a
+  parallel implementation, since the chain diagnostic's hand-written rule is what produced the
+  temporally impossible "resolution".
+- Tests 902 → 904; ci:ui passed. Harness: the Logger stub now does %s substitution (joining
+  args had let a malformed format string pass).
+- Block: `.cycle/blocks/146-outbound-preview-and-gate-arms-broad-implement.md`.
+
+Open: the journey drill is still unexercised by ci:ui (getCallJourney unmocked in the harness),
+so the outbound render + not-entitled copy are unit-pinned but never rendered under the gate.
+
+**WHERE I LEFT OFF:** increment 146 committed + pushed to `claude/broad-scan-8dgd6m`
+(10 commits ahead of merged main, un-PR'd). Owner to run the preview on a date or two.
+
+## Increment 147 — the journey drill enters the ci:ui gate (2026-08-24)
+
+`/broad-implement follow-on items` — the one actionable follow-on from 146.
+
+- **IT-6**: three client renderers from Steps 3/4 (origin line, `outboundJourneyHtml_`, the
+  not-entitled copy) were unit-pinned but had NEVER rendered in a browser. They were
+  unreachable by any driver because `getCallJourney` was unmocked (drive-smoke would flag the
+  call), so nothing clicked a "↳ path" button. Added a request-keyed mock + `drive-journey.js`
+  (14 checks) and wired it as a BLOCKING ci:ui stage.
+- Two mistakes the first run caught that reading would not have: the cards render into
+  `#dept-missed-detail` (a separate lazy fetch, not `#dept-missed-section`), and it settles
+  ~6 s — so the driver waits on the DOM condition, not the clock.
+- All three renderers worked on the first real click, so this found no defect. Pure coverage
+  against the next regression — the dept-selector class the .gs harness cannot see.
+- Harness-only: NO apps-script file changed, nothing to deploy for this increment.
+- Unit 904/904 unchanged; ci:ui full gate passed with the new stage (14/14).
+- Block: `.cycle/blocks/147-journey-drill-ui-gate-broad-implement.md`.
+
+Remaining follow-on: sub-60s internal abandons have no entry point (owner ruling).
+
+**WHERE I LEFT OFF:** increment 147 committed + pushed to `claude/broad-scan-8dgd6m`
+(11 commits ahead of merged main, un-PR'd). Owner still to run `previewOutboundAssistLinks`.

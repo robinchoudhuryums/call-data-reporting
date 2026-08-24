@@ -97,7 +97,7 @@ bash scripts/check-duplicated-files.sh
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~70 suites pin the invariants, the report
+# Non-zero exit on failure. ~77 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -168,7 +168,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# SIX ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# SEVEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
@@ -180,7 +180,13 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # installed before asserting anything about the panel, and its handler-isolation
 # check is BEHAVIOURAL because comparing two reads for identity does not catch a
 # shared runner -- plus that a manager gets no overlay even with the localStorage
-# flag hand-set), and drive-subqueue.js (the collapsible
+# flag hand-set), drive-journey.js (the "↳ path" call-path
+# drill -- the origin line, the OUTBOUND call reached through the related-call
+# link, and the not-entitled refusal; all three were unit-pinned but had never
+# RENDERED until this driver clicked one, the dept-selector class of bug; the
+# drill was unreachable by any driver until getCallJourney was mocked, since
+# drive-smoke's unmocked-RPC check would have flagged the call),
+# and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
 # this repo, asserted by stubbing URL.createObjectURL and reading the real Blob
@@ -695,9 +701,39 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   synthetic `{kind:queue, abandoned:true, transfer:true}` event to that call's
   journey. Strictly JOURNEY-ONLY (disposition/counts/queues NEVER touched);
   an ambiguous match is left as-is -- it never guesses. Idempotent on
-  re-import; no widening is warranted (R11-N5). Editor diagnostics
+  re-import; no widening is warranted (R11-N5). **Round-17 (owner) REVERSED
+  the Round-16 drop: a matched internal group is ALSO written as its own
+  record**, linked by `related_call_id` and PREFIXED with the reconstructed
+  origin hop (origin queue -> answering agent, events flagged
+  `origin:true`/`transfer:true`, rendered "before transfer"). The abandon
+  belongs to the RECEIVING dept, whose Missed report renders a path button
+  off the DQE queue-only sentinel (wait > 60s, no internal/external
+  distinction) -- dropping the record made that button resolve
+  `not-captured`, so the better the matcher worked the more reliably that
+  dept's drill failed. Still metric-safe (every metric query excludes
+  is_internal). **Round-17b: an internal-origin record also carries
+  `origin_agent` / `origin_dept`** (the employee who PLACED it + the raw CDR
+  org label, read from the leg's CALLER columns -- `firstAgent` derives from
+  the CALLEE name, and these groups' only callee is the queue, so it is
+  always null here). Without it the receiving dept's drill said only "an
+  internal call abandoned in your queue"; with it the manager sees the
+  abandon was a colleague's assist request, not a lost customer. NULL on
+  every externally-originated row; phone-shaped caller names are never
+  stored (the firstAgent PHI guard). **Step 4 (owner ruling) links the assist
+  to the requester's concurrent OUTBOUND call** -- `related_call_kind`
+  ('inbound' | 'outbound'; NULL reads as inbound) says which table
+  `related_call_id` points at, and `getCallJourney({kind:'outbound'})` serves
+  it. That is the first surface where one dept sees another dept's customer
+  call, so access is a SERVER-RE-DERIVED capability, never the client's claim:
+  a manager reaches outbound call O only if an internal record links to it AND
+  that record passes the unchanged F-4 gate on their own dept. Full ruling +
+  what is disclosed: docs/known-issues.md. Editor diagnostics
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
-  (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
+  (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4), and
+  `previewOutboundAssistLinks` validates the Step-4 link by running the REAL
+  record builder over a Call_Legs sheet (never a parallel implementation --
+  the chain diagnostic's hand-written rule is what once "resolved" a
+  temporally impossible chain). Pinned by
   `tests/unit/inbound-calls.test.js`.
 - **Caller Lookup** (`CallerLookup.gs`, route `#/admin/caller-lookup`,
   admin-only) is the FULL communication history: the entered number is
@@ -717,8 +753,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   views. **INTERNAL-ORIGIN queue calls (an
   employee dials another dept's queue; no Incoming leg) are captured as
   `is_internal` rows for THIS drill only** -- every metric query excludes
-  them (pinned both ways); a uniquely-matched R11-N transfer group stays
-  enrichment-only, and a standalone internal record carries
+  them (pinned both ways); since Round-17 a uniquely-matched R11-N transfer
+  group is BOTH enriched onto the caller's journey AND written as its own
+  origin-prefixed record, and a standalone internal record carries
   `related_call_id` when uniquely nested in the originator's concurrent
   answered inbound call (the path drill links the two). Unlike the full Inbound report it is
   manager-reachable for the manager's OWN dept: managers are pinned to their
@@ -1283,7 +1320,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   stays fresh during periods where one source updates without
   the other (e.g. integrated import refreshes QCD before the
   cdr-report safety-net trigger refreshes DQE, or vice versa).
-  Past 36h adds the `.is-stale` class and tints warm orange.
+  Past 36h adds the `.is-stale` class and tints warm orange -- measured
+  with a **WEEKEND/HOLIDAY CREDIT** (24h per non-business day in the gap,
+  `freshnessNonBusinessCredit_`), or Friday's data reads as stale every
+  Monday morning at ~57h while being the most recent WORKDAY. The Overview
+  pipeline banner applies the same credit to the same threshold (it reuses
+  `ingestWatchdogNonBusinessCredit_`, which had this from the start --
+  OPS-7; the two display surfaces never adopted it). Change one, change
+  both: freshness-weekend.test.js pins the banner behaviorally and the
+  pill by source tripwire (its staleness lives in the assembled-client
+  IIFE, where the rendered gate cannot tell right from wrong-on-Mondays).
   Tunable in `setFreshnessPill_` if 36h becomes too noisy. Pill
   is hidden until the server returns the latest date so the
   header doesn't show a stale fallback. **Role-tiered prominence

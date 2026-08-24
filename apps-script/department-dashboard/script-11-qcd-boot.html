@@ -197,18 +197,11 @@
   // company holidays (server-injected __COMPANY_HOLIDAYS__, the INV-35
   // ranges). Client mirror of Util.gs::prevBusinessDayIso_'s semantics.
   function prevWorkdayIso_() {
-    const holidays = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
-    const isHoliday = function (iso) {
-      for (let i = 0; i < holidays.length; i++) {
-        if (iso >= holidays[i].from && iso <= holidays[i].to) return true;
-      }
-      return false;
-    };
     const now = new Date();
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
     for (let guard = 0; guard < 30; guard++) {
       const dow = d.getDay();
-      if (dow !== 0 && dow !== 6 && !isHoliday(qcdAllDeptIsoOf_(d))) break;
+      if (dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(qcdAllDeptIsoOf_(d))) break;
       d.setDate(d.getDate() - 1);
     }
     return qcdAllDeptIsoOf_(d);

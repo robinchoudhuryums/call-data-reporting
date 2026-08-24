@@ -61,7 +61,7 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 65 more (this file is the coverage map —
+    ...                       + 58 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
                               trim pass): dal-cutover parity, escalations
@@ -83,7 +83,17 @@ tests/
                               queue-split (cols A..AH byte-identical +
                               the Phase-2 reader's four fail-open paths +
                               the S2-0 gate + the Phase-0 de-dup
-                              inversion), subqueue-access, claude-md-split
+                              inversion), subqueue-access, claude-md-split,
+                              the two NEON-DOWN SHEET FALLBACKS
+                              (heatmap-fallback: the mirrored bucketing +
+                              two-arm dept attribution; direct-fallback:
+                              source parity between the Neon path and the
+                              sheet, which is the PRIMARY there),
+                              inbound-export (the "Inbound Calls" tab's
+                              cols 16-17 + coercion guards feeding that
+                              fallback), freshness-weekend (the OPS-7
+                              weekend/holiday staleness credit the header
+                              pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
                               setup (INV-12), alert-recipients (B-5),
                               agent-role / agent-home (the deny wall +

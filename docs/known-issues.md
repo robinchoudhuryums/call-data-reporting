@@ -585,6 +585,104 @@ If you see similar attribution issues on other days, suspect either:
 
 ---
 
+### OWNER RULING: the cross-dept outbound journey drill (Step 4, 2026-08-24)
+
+**Decision.** A manager MAY drill the OUTBOUND call that an internal assist
+request was placed from, even though that call belongs to ANOTHER department.
+Presented with the alternative (metadata only -- "the requester was on a live
+call, 5:39 talk" -- with no clickable link and no new entitlement surface), the
+owner chose the full drill. Recorded here because it is the FIRST surface where
+one dept sees another dept's customer call, and because a future reader will
+otherwise reasonably assume it was an oversight.
+
+**Why it is not a hole.** The authorization is a capability the SERVER
+re-derives; the client's claim is never trusted (`getOutboundCallJourney_`,
+InboundReport.gs). A manager reaches outbound call O only when BOTH hold:
+
+1. some `inbound_calls` row R has `related_call_id = O` with
+   `related_call_kind = 'outbound'` AND `is_internal = TRUE` -- i.e. R is an
+   internal assist request that the capture layer uniquely matched to O; and
+2. R itself passes the UNCHANGED F-4 gate on the manager's own dept
+   (`callIdInDeptMissedReport_`): R appears as an abandoned parent in THAT
+   dept's Missed report.
+
+So the reachable set is exactly "outbound calls a queue in my dept was asked to
+help with" -- never an arbitrary outbound call, never another dept's outbound
+activity at large. Admins skip the derivation (already entitled to every dept).
+Fails CLOSED on any error, and a refusal returns `reason:'not-entitled'` with
+no payload.
+
+**What is disclosed.** The other dept's agent name, their raw CDR org label,
+connected/talk outcome, and the masked leg journey. NO caller identity:
+`callee_hash` and the write timestamp are dropped by
+`callerLookupShapeOutbound_`, and phone-shaped callee names were masked at
+capture. A Spanish manager learns "Marie from Field Ops had a live patient call
+running when she asked for translation" -- which is the operational point of
+the drill.
+
+**The gate mirrors BOTH of getCallJourney's arms.** It originally checked only
+the F-4 missed-report fallback, which FALSELY REFUSED a manager who reached the
+assist record through the dept-predicate arm and whose id is not an abandoned
+parent in their Missed report -- a sub-60s abandon, for instance, emits no DQE
+sentinel. The refusal was therefore reachable from the UI as a false negative
+on a link the viewer had just been shown. It now runs the predicate query
+first and falls back to F-4, in the same order as the inbound drill, so the
+outbound call is reachable exactly when the record linking to it is. Pinned
+both ways (the predicate arm entitles ALONE, and no link means no access).
+
+**Validation instrument:** `previewOutboundAssistLinks(dateIso)` (cdr-import
+editor / CDR Tools, read-only, no Neon so it runs during an outage). It runs
+the REAL `buildInboundCallRecords_` over a Call_Legs sheet and reports what
+capture would store -- deliberately not a parallel implementation, since the
+chain diagnostic's hand-written rule is exactly what produced a temporally
+impossible "resolution". Run it on a couple of dates before trusting the link
+at volume.
+
+**If this is ever revisited,** the narrower option remains available and cheap:
+keep the capture-time link, drop the `kind='outbound'` branch from
+`getCallJourney`, and render the metadata inline instead. Pinned by
+`tests/unit/heatmap-cell-drill.test.js` (Step 4 block) -- including that no
+link means no access however permissive the dept gate is.
+
+### CallRecording legs, and "the agent was on a call" is not a callee-side question (2026-08-24)
+
+Two raw-feed shapes that made a transfer-abandon look like an unexplained
+chain. Both confirmed from an owner leg sample (2026-08-21, exts 279/363).
+
+**1. CallRecording legs.** A recorded call carries an extra Internal leg whose
+CALLER is the agent and whose CALLEE is `CallRecording` / `CallRecording (620)`
+/ `CallRecording (363)`, Callee Name `N/A`, **Talk = 0**. It is a recording
+artifact, not a conversation. Nothing in the codebase references the string,
+and nothing should start matching on it: the `talk > 0` conditions already
+exclude it everywhere. Do NOT treat its presence as evidence an agent was on a
+call, and do NOT treat the agent appearing in the CALLER column as a direction
+signal -- on these legs it means nothing.
+
+**2. An agent's concurrent call can be OUTBOUND.** `agentBusy` in
+`buildInboundCallRecords_` (and the chain diagnostic's neighborhood scan) index
+the CALLEE extension, because a normal inbound ring delivers to the agent as
+callee. An agent on an OUTGOING call is therefore invisible to both. The
+measured case: Marie (ext 279) was on an Outgoing leg to a patient
+(07:14:29-07:20:09) and dialed `A_Q_Spanish` for translation at 07:14:57; the
+Spanish agent never answered, so the queue leg abandoned. With only callee-side
+evidence this reads as "a transfer whose source we cannot find" -- and the
+chain diagnostic's 1-hop rule duly "resolved" it to an unrelated captured
+inbound that a DIFFERENT agent was on, purely because that agent rang 279
+sixteen minutes LATER (see the temporal guard in
+`previewInternalTransferChains`).
+
+**Consequence, and why it is NOT a gap to close:** an assist-during-outbound
+abandon has no inbound caller journey to enrich -- nobody handed the agent a
+caller. Hop-following cannot fix it at any depth; it is a different population,
+not a missing link. The abandon is still captured as an internal-origin record
+(Round-17), so the RECEIVING queue keeps its own "path" drill; only the
+upstream link is absent, correctly. The diagnostic now reports this shape as
+ASSIST-DURING-OUTBOUND rather than as an unresolved chain.
+
+**If you later want the upstream link for these:** it lives in `outbound_calls`
+(the agent's outgoing call), not `inbound_calls`. That is a cross-table join
+the path drill does not do today -- a design question, not a bug.
+
 ## Dashboard design rules to preserve
 
 ### No write paths exposed via `google.script.run`

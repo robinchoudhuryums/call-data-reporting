@@ -211,6 +211,41 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     // the Insights day drill's wait-time lens, whose failure mode is an
     // in-panel error rather than the silent hide being audited above.
     getInboundHeatmapCell: function () { return P['heatmap-cell']; },
+    // The per-call journey drill. Mocked so a driver can actually CLICK a
+    // "↳ path" button: Step 3/4 added three client renderers (the origin
+    // line, outboundJourneyHtml_, the not-entitled copy) that were unit-pinned
+    // but had never executed in a browser -- the class that let the header
+    // dept selector throw in production until a driver first clicked it.
+    // Keyed off the request so ONE walk covers all three:
+    //   kind='outbound'      -> the linked outbound call (outboundJourneyHtml_)
+    //   callId ending '000'  -> a refusal (the not-entitled branch)
+    //   otherwise            -> an INTERNAL record carrying an origin agent
+    //                           and an OUTBOUND-kind related link
+    getCallJourney: function (req) {
+      req = req || {};
+      if (String(req.kind || '') === 'outbound') {
+        return { available: true, found: true, kind: 'outbound', call: {
+          callDate: '2026-08-21', callStart: '07:14:29', callId: 'OB-777',
+          agentName: 'Marie (Muskaan) Jindal', agentExt: '279',
+          department: 'Field Operations (Market Activity)',
+          connected: true, talkSeconds: 339, ringSeconds: 10, attempts: 1,
+          journey: [{ t: '07:14:29', name: '(external number)', kind: 'answer', talk: 339 }],
+        } };
+      }
+      if (/000$/.test(String(req.callId || ''))) {
+        return { available: true, found: false, reason: 'not-entitled' };
+      }
+      return { available: true, found: true, call: {
+        callDate: '2026-08-21', callStart: '07:14:57', callId: String(req.callId || 'IN-1'),
+        disposition: 'abandoned', abandonStage: 'queue', abandonedOnHold: false,
+        holdSeconds: 0, waitSeconds: 309, entryQueue: 'A_Q_Spanish', finalQueue: 'A_Q_Spanish',
+        isInternal: true, relatedCallId: 'OB-777', relatedCallKind: 'outbound',
+        originAgent: 'Marie (Muskaan) Jindal',
+        originDept: 'Field Operations (Market Activity)',
+        numQueues: 1, numTransfers: 0, dialIn: null, insurer: null,
+        journey: [{ t: '07:14:57', name: 'A_Q_Spanish', kind: 'queue', abandoned: true, secs: 309 }],
+      } };
+    },
     getDeptDayAbandons: function () { return P['dept-day-abandons']; },
     // Live-presence heartbeat: fires at load from script-1-core for every
     // role; fire-and-forget on the client, so the ack shape is all it needs.

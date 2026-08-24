@@ -329,8 +329,10 @@ test('transfer-path: unique concurrent inbound -> synthetic abandon appended to 
   const recs = build(capturedInboundAnsweredBy215('820001').concat([
     transferAbandonBy215('820900', '06/04/2026 10:03:00'),
   ]));
-  // The internal-only group never becomes its own record.
-  assert.equal(recs.length, 1);
+  // Round-17: the internal group is ALSO written as its own record (it is the
+  // receiving dept's abandon, and their Missed report's path button keys on
+  // it). The caller's enrichment below is unchanged.
+  assert.equal(recs.length, 2);
   const r = rec(recs, '820001');
   assert.ok(r, 'the captured inbound record exists');
   // Metric fields are untouched -- the caller was still ANSWERED; queues from
@@ -349,6 +351,47 @@ test('transfer-path: unique concurrent inbound -> synthetic abandon appended to 
   assert.equal(t.transfer, true, 'flagged as a cross-referenced enrichment');
   assert.equal(t.t, '10:03:00');
   assert.equal(t.secs, 40);
+});
+
+test('transfer-path (Round-17): the matched internal group is written, linked, and origin-prefixed', function () {
+  const recs = build(capturedInboundAnsweredBy215('820001').concat([
+    transferAbandonBy215('820900', '06/04/2026 10:03:00'),
+  ]));
+  const ir = rec(recs, '820900');
+  assert.ok(ir, 'the receiving dept needs a record to hang its "path" drill on');
+  assert.equal(ir.isInternal, true, 'journey-only: every metric query excludes is_internal');
+  assert.equal(ir.relatedCallId, '820001', 'links back to the caller\'s call');
+  // Its OWN metric fields describe the internal leg, untouched by the prefix.
+  assert.equal(ir.entryQueue, 'A_Q_Spanish');
+  assert.equal(ir.disposition, 'abandoned');
+
+  // The journey reads as ONE story: origin queue -> answering agent -> the
+  // abandon in the receiving queue.
+  const kinds = ir.journey.map(function (e) { return e.kind + ':' + e.name; });
+  assert.deepEqual(JSON.parse(JSON.stringify(kinds)),
+    ['queue:A_Q_CSR', 'answer:Raymond (Ray) Mathews', 'queue:A_Q_Spanish']);
+  // The two reconstructed events are flagged as cross-referenced, the call's
+  // own leg is not -- provenance stays legible.
+  assert.equal(ir.journey[0].origin, true);
+  assert.equal(ir.journey[0].transfer, true);
+  assert.equal(ir.journey[1].origin, true);
+  assert.equal(ir.journey[1].talk, 295, 'the agent\'s real talk seconds (10:00:05 -> 10:05:00)');
+  assert.ok(!ir.journey[2].origin, 'the abandon is this call\'s own leg, not reconstructed');
+  assert.equal(ir.journey[2].abandoned, true);
+});
+
+test('transfer-path (Round-17): an AMBIGUOUS group is still written, but WITHOUT a fabricated origin', function () {
+  const recs = build(
+    capturedInboundAnsweredBy215('820010').concat(
+    capturedInboundAnsweredBy215('820011')).concat([
+      transferAbandonBy215('820910', '06/04/2026 10:03:00'),
+  ]));
+  const ir = rec(recs, '820910');
+  assert.ok(ir, 'still captured -- the receiving dept sees the abandon either way');
+  // Unset is written as SQL NULL (icSqlStr_ treats null/undefined alike).
+  assert.ok(ir.relatedCallId == null, 'never guesses which of two concurrent calls owns it');
+  assert.deepEqual(JSON.parse(JSON.stringify(ir.journey.map(function (e) { return e.name; }))),
+    ['A_Q_Spanish'], 'no origin hop invented when the match is not unique');
 });
 
 test('transfer-path: AMBIGUOUS (agent on two concurrent inbound calls) -> no enrichment', function () {
@@ -758,4 +801,198 @@ test('ambiguous nesting (two concurrent calls) or no concurrent call: no link', 
       leg({ callId: '850900', legId: 1, start: '06/04/2026 10:02:00', stop: '06/04/2026 10:02:30', direction: 'Internal', callTime: '0:00:30', caller: '215', callee: '260', calleeName: 'A_Q_Spanish', missed: 'Missed' }),
     ]));
   assert.equal(rec(recs, '850900').relatedCallId, undefined, 'ambiguous -> never guesses');
+});
+
+// ── Round-17b: WHO placed an internal-origin call ───────────────────────────
+// `firstAgent` derives from the CALLEE name across the group's legs, and an
+// internal-origin group's only callee IS the queue (which icIsQueueName_
+// skips), so these records carried no indication of who placed the call --
+// the receiving dept's path drill read "an internal call abandoned in your
+// queue" with nothing actionable. The originator lives in the CALLER columns.
+// Fixture mirrors the owner's real 2026-08-21 legs (Field Ops rep on an
+// OUTBOUND patient call dials A_Q_Spanish for translation; nobody answers).
+
+test('internal-origin: captures the originating agent + raw org label from the caller side', function () {
+  const recs = build([
+    leg({ callId: '830001', legId: 1, start: '08/21/2026 07:14:57',
+          connected: '08/21/2026 07:14:57', stop: '08/21/2026 07:20:07',
+          direction: 'Internal', callTime: '0:05:09',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned',
+          dept: 'Field Operations (Market Activity)' }),
+  ]);
+  const r = rec(recs, '830001');
+  assert.ok(r, 'the internal-origin abandon is captured (the receiving queue drills it)');
+  assert.equal(r.isInternal, true);
+  assert.equal(r.originAgent, 'Marie (Muskaan) Jindal');
+  assert.equal(r.originDept, 'Field Operations (Market Activity)');
+  // firstAgent stays null -- the only callee is the queue. That is exactly the
+  // hole originAgent fills; it must not be papered over by reusing firstAgent.
+  assert.equal(r.firstAgent, null);
+  // Metric fields untouched by the addition.
+  assert.equal(r.disposition, 'abandoned');
+  assert.equal(r.entryQueue, 'A_Q_Spanish');
+});
+
+test('internal-origin: a phone-shaped or queue caller name is never stored as the originator', function () {
+  const phoneNamed = build([
+    leg({ callId: '830002', legId: 1, start: '08/21/2026 08:00:00', stop: '08/21/2026 08:02:00',
+          direction: 'Internal', callTime: '0:02:00',
+          caller: '12145559999', callerName: '+1 214 555 9999',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'CSR' }),
+  ]);
+  assert.equal(rec(phoneNamed, '830002').originAgent, null,
+    'a raw number must never land in origin_agent (the firstAgent PHI guard)');
+
+  const queueNamed = build([
+    leg({ callId: '830003', legId: 1, start: '08/21/2026 08:10:00', stop: '08/21/2026 08:12:00',
+          direction: 'Internal', callTime: '0:02:00',
+          caller: '144', callerName: 'A_Q_FieldOps',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'CSR' }),
+  ]);
+  assert.equal(rec(queueNamed, '830003').originAgent, null, 'a queue is not an originator');
+  // A blank/N-A org label yields null rather than the literal string.
+  const noDept = build([
+    leg({ callId: '830004', legId: 1, start: '08/21/2026 08:20:00', stop: '08/21/2026 08:22:00',
+          direction: 'Internal', callTime: '0:02:00',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'N/A' }),
+  ]);
+  assert.equal(rec(noDept, '830004').originDept, null);
+  assert.equal(rec(noDept, '830004').originAgent, 'Marie (Muskaan) Jindal');
+});
+
+test('externally-originated calls carry NO originator (the field is internal-only)', function () {
+  const recs = build([
+    leg({ callId: '830010', legId: 1, start: '08/21/2026 09:00:00', stop: '08/21/2026 09:00:20',
+          direction: 'Incoming', caller: '12145550000', callerName: 'WIRELESS CALLER',
+          callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820',
+          missed: 'Missed', abandoned: 'Abandoned' }),
+  ]);
+  const r = rec(recs, '830010');
+  assert.ok(!r.isInternal, 'an externally-originated call is never flagged internal');
+  assert.equal(r.originAgent, null, 'nothing changes for the externally-originated population');
+  assert.equal(r.originDept, null);
+});
+
+// ── Step 4: link the assist to the requester's concurrent OUTBOUND call ─────
+// Validated shape (owner's 2026-08-21 legs): a Field Ops rep on an OUTGOING
+// patient call dials A_Q_Spanish for translation and nobody answers. agentBusy
+// keys on the CALLEE ext, so that rep is invisible to the inbound matcher --
+// the outbound index is what makes the link findable. Unique-match only, and
+// an INBOUND match always wins.
+
+function outboundPatientCallBy279(callId, connected, stop) {
+  return [
+    leg({ callId: callId, legId: 1, start: connected, connected: connected, stop: stop,
+          direction: 'Outgoing', talk: '0:05:39', caller: '279',
+          callerName: 'Marie (Muskaan) Jindal', callee: '19722224444',
+          answered: 'Answered', dept: 'Field Operations (Market Activity)' }),
+    // The recording artifact that rides along -- talk=0, must never be treated
+    // as evidence of anything.
+    leg({ callId: callId, legId: 2, start: connected, stop: stop, direction: 'Internal',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: 'CallRecording',
+          dept: 'Field Operations (Market Activity)' }),
+  ];
+}
+function assistAbandon279(callId, start, stop) {
+  return leg({ callId: callId, legId: 1, start: start, connected: start, stop: stop,
+               direction: 'Internal', callTime: '0:05:09', caller: '279',
+               callerName: 'Marie (Muskaan) Jindal', callee: '138', calleeName: 'A_Q_Spanish',
+               missed: 'Missed', abandoned: 'Abandoned',
+               dept: 'Field Operations (Market Activity)' });
+}
+
+test('Step 4: an assist placed during an OUTBOUND call links to that call', function () {
+  const recs = build(
+    outboundPatientCallBy279('840001', '08/21/2026 07:14:29', '08/21/2026 07:20:09').concat([
+      assistAbandon279('840900', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+    ]));
+  const ir = rec(recs, '840900');
+  assert.ok(ir, 'the assist abandon is still captured for the receiving queue');
+  assert.equal(ir.isInternal, true);
+  assert.equal(ir.relatedCallId, '840001');
+  assert.equal(ir.relatedCallKind, 'outbound', 'the drill must query outbound_calls, not inbound');
+  assert.equal(ir.originAgent, 'Marie (Muskaan) Jindal');
+});
+
+test('Step 4: an INBOUND match wins over a concurrent outbound one', function () {
+  // Same agent on BOTH a captured inbound and an outbound call across the
+  // abandon. The handed-over customer is the stronger relationship.
+  const recs = build(
+    capturedInboundAnsweredBy215('840010').concat(
+    outboundPatientCallBy279('840011', '06/04/2026 10:02:00', '06/04/2026 10:06:00')).concat([
+      leg({ callId: '840901', legId: 1, start: '06/04/2026 10:03:00', connected: '06/04/2026 10:03:00',
+            stop: '06/04/2026 10:03:40', direction: 'Internal', callTime: '0:00:40',
+            caller: '215', callerName: 'Raymond (Ray) Mathews', callee: '260',
+            calleeName: 'A_Q_Spanish', missed: 'Missed', abandoned: 'Abandoned', dept: 'CSR' }),
+    ]));
+  const ir = rec(recs, '840901');
+  assert.equal(ir.relatedCallKind, 'inbound');
+  assert.equal(ir.relatedCallId, '840010');
+});
+
+test('Step 4: never guesses -- two concurrent outbound calls leave it unlinked', function () {
+  const recs = build(
+    outboundPatientCallBy279('840020', '08/21/2026 07:14:00', '08/21/2026 07:21:00').concat(
+    outboundPatientCallBy279('840021', '08/21/2026 07:14:10', '08/21/2026 07:21:10')).concat([
+      assistAbandon279('840902', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+    ]));
+  const ir = rec(recs, '840902');
+  assert.ok(ir.relatedCallId == null, 'ambiguous -> no link, no guess');
+  assert.ok(ir.relatedCallKind == null);
+});
+
+test('Step 4: a non-overlapping outbound call is not linked', function () {
+  const recs = build(
+    outboundPatientCallBy279('840030', '08/21/2026 09:00:00', '08/21/2026 09:05:00').concat([
+      assistAbandon279('840903', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+    ]));
+  assert.ok(rec(recs, '840903').relatedCallId == null,
+    'the requester must have been on the call AT the assist time');
+});
+
+// The Step 4 validation instrument. Its whole value is that it CANNOT drift
+// from production, because it runs the real record builder rather than a
+// parallel implementation (the chain diagnostic's hand-written rule is what
+// produced a temporally impossible "resolution").
+test('previewOutboundAssistLinks: reports what capture WOULD store, via the real builder', function () {
+  const rows = [new Array(44).fill('HEADER')].concat(
+    outboundPatientCallBy279('850001', '08/21/2026 07:14:29', '08/21/2026 07:20:09').concat([
+      assistAbandon279('850900', '08/21/2026 07:14:57', '08/21/2026 07:20:07'),
+      // A second assist with no concurrent call at all -> the honest residue.
+      assistAbandon279('850901', '08/21/2026 15:00:00', '08/21/2026 15:02:00'),
+    ]));
+  const sheet = {
+    getName: function () { return 'Call_Legs_2026-08-21'; },
+    getDataRange: function () { return { getDisplayValues: function () { return rows; } }; },
+  };
+  h.state.spreadsheet = {
+    getSheetByName: function (n) { return n === 'Call_Legs_2026-08-21' ? sheet : null; },
+    getSheets: function () { return [sheet]; },
+  };
+  const logged = [];
+  const realLogger = h.ctx.Logger;
+  // Apps Script's Logger.log does %s substitution; a stub that merely joins
+  // arguments would let a malformed format string pass unnoticed.
+  h.ctx.Logger = { log: function (fmt) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    let i = 0;
+    logged.push(String(fmt).replace(/%s/g, function () { return String(args[i++]); }));
+  } };
+  try {
+    h.call('previewOutboundAssistLinks', '2026-08-21');
+  } finally {
+    h.ctx.Logger = realLogger;
+  }
+  const all = logged.join('\n');
+  assert.match(all, /LINKED to OUTBOUND call 850001/, 'the linked assist is named with its outbound call');
+  assert.match(all, /Marie \(Muskaan\) Jindal/, 'the requester is named so a spot-check is possible');
+  assert.match(all, /NOT LINKED/, 'the unlinked assist is reported, not hidden');
+  assert.match(all, /2 internal assist record\(s\) -- 1 linked to an OUTBOUND call, 0 to an inbound call, 1 unlinked/);
+  assert.match(all, /Nothing was written/, 'says plainly that it is read-only');
 });

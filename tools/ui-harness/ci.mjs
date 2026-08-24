@@ -8,7 +8,8 @@
 // Stages: generate payloads from the REAL server code -> build the admin +
 // manager sites from the REAL client -> run the two ASSERTING drivers
 // (drive-smoke = boot/console/blank-canvas/overflow, drive-f13 = keyboard,
-// drive-subqueue = sub-queue scope + the combined-view CSV
+// drive-subqueue = sub-queue scope + the combined-view CSV,
+// drive-journey = the "↳ path" drill's three renderers
 // access). The exploratory drivers (drive.js / drive-insights.js /
 // drive-phase3.js) are NOT run here: they emit screenshots + reports for a human
 // to read, which is not a pass/fail signal.
@@ -47,6 +48,7 @@ const STAGES = [
   // coverage of any CSV writer in this repo (S43): the exporter Blob-and-clicks,
   // so the driver stubs URL.createObjectURL and asserts the real bytes.
   ['node', ['drive-subqueue.js'], 'sub-queue scope + combined CSV (S35 addendum / S43)'],
+  ['node', ['drive-journey.js'], 'call-path drill: origin line, outbound link, refusal'],
   // O-11. The dev overlay redefines `google.script.run` for admins -- the one
   // object every server call in the app passes through -- so a wrong wrapper
   // breaks everything at once, and nothing in `node --test` can see it. This

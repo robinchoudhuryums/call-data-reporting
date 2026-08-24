@@ -249,6 +249,11 @@ function callerLookupShapeCall_(r) {
     entryQueue:      r.entry_queue || null,
     isInternal:      !!r.is_internal,
     relatedCallId:   r.related_call_id || null,
+    // NULL means 'inbound': every row written before Step 4 linked an inbound
+    // call, so the client must not read a missing value as "unknown".
+    relatedCallKind: String(r.related_call_kind || 'inbound').toLowerCase(),
+    originAgent:     r.origin_agent || null,
+    originDept:      r.origin_dept || null,
     finalQueue:      r.final_queue || null,
     finalDept:       r.final_dept || null,
     numQueues:       Number(r.num_queues) || 0,

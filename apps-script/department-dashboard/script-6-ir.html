@@ -1089,17 +1089,9 @@
       // legacy same-calendar-length math, like the server. The R8-5 lesson
       // (Math.round across DST) carries into the fallback.
       const ms = 86400000;
-      const holidays = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
-      const isHol = function (iso) {
-        for (let i = 0; i < holidays.length; i++) {
-          const r = holidays[i];
-          if (r && r.from && r.to && iso >= r.from && iso <= r.to) return true;
-        }
-        return false;
-      };
       const isBiz = function (d) {
         const dow = d.getDay();
-        return dow !== 0 && dow !== 6 && !isHol(isoOf(d));
+        return dow !== 0 && dow !== 6 && !isCompanyHolidayIso_(isoOf(d));
       };
       let workdays = 0;
       for (let d = new Date(start.getTime()); d <= end; d = new Date(d.getTime() + ms)) {

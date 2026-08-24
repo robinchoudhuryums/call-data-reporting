@@ -318,6 +318,101 @@ function callJourneyDeptPredicate_(dept, deptQueues) {
        + " OR lower(trim(coalesce(c.final_dept, ''))) = lower(" + inboundSqlLit_(dept) + '))';
 }
 
+/**
+ * Step 4 (OWNER RULING 2026-08-24): the OUTBOUND call an internal assist
+ * request was placed from -- e.g. a Field Ops rep with a patient on the line
+ * dials A_Q_Spanish for translation, nobody answers, and the Spanish manager
+ * drills the abandon and follows it back to the call the request came from.
+ *
+ * THIS IS THE FIRST SURFACE WHERE ONE DEPT SEES ANOTHER DEPT'S CUSTOMER CALL,
+ * so the authorization is deliberate rather than incidental:
+ *
+ *   THE LINK IS THE CAPABILITY, AND THE SERVER RE-DERIVES IT.
+ *   A manager may drill outbound call O only if some inbound_calls row R
+ *   (a) points at O via related_call_id with related_call_kind='outbound',
+ *   and (b) is itself a call THAT MANAGER COULD ALREADY DRILL -- proven by
+ *   the same F-4 gate the normal path uses (callIdInDeptMissedReport_: the
+ *   id appears as an abandoned parent in that dept's own Missed report).
+ *   The client's claim that "this is my linked call" is never trusted; the
+ *   link is looked up server-side, on the manager's own dept.
+ *
+ * So the reachable set is exactly "outbound calls that a queue in my dept was
+ * asked to help with" -- never an arbitrary outbound call, never another
+ * dept's outbound activity at large. Admins are entitled to everything and
+ * skip the derivation. Fails CLOSED on any error.
+ *
+ * What comes back carries NO caller identity: `callee_hash` and the write
+ * timestamp are dropped by callerLookupShapeOutbound_, and the journey's
+ * phone-shaped callee names were masked at capture.
+ */
+function getOutboundCallJourney_(callId, date, dept, user) {
+  const conn = getDashboardNeonConn_();
+  if (!conn) return { available: false, found: false };
+  try {
+    if (user.role !== 'admin') {
+      // Re-derive the capability. Managers only: admins are entitled to all
+      // depts, so an ungated read for them changes nothing.
+      const linkBase = 'SELECT c.call_id AS linker FROM inbound_calls c '
+        + 'WHERE c.related_call_id = ? AND c.call_date = ?::date '
+        + "AND lower(coalesce(c.related_call_kind, 'inbound')) = 'outbound' "
+        + 'AND COALESCE(c.is_internal, FALSE) = TRUE';
+      const runLink = function (pred) {
+        const st = conn.prepareStatement(linkBase + pred);
+        st.setString(1, callId);
+        st.setString(2, date);
+        const rs2 = st.executeQuery();
+        const out = [];
+        while (rs2.next()) out.push(String(rs2.getString('linker') || ''));
+        rs2.close(); st.close();
+        if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(out.join(',').length, 'journey-outbound');
+        return out;
+      };
+
+      // The linking record must be one this manager COULD ALREADY DRILL, and
+      // "could drill" has TWO arms in getCallJourney -- the dept-scoped
+      // predicate, then the F-4 missed-report fallback. Checking only the
+      // fallback (as this did originally) FALSELY REFUSED a manager who
+      // reached the assist record through the predicate arm and whose id is
+      // not an abandoned parent in their Missed report (e.g. a sub-60s
+      // abandon, which DQE emits no sentinel for). Mirror both arms, in the
+      // same order, so the outbound drill is reachable exactly when the
+      // record that links to it is.
+      const deptQueues2 = dept ? inboundQueuesForDept_(dept) : [];
+      let entitled = runLink(callJourneyDeptPredicate_(dept, deptQueues2)).length > 0;
+      if (!entitled) {
+        const linkers = runLink('');
+        for (let i = 0; i < linkers.length && !entitled; i++) {
+          if (!linkers[i]) continue;
+          if (callIdInDeptMissedReport_(dept, date, linkers[i])) entitled = true;
+        }
+      }
+      if (!entitled) {
+        Logger.log('getOutboundCallJourney_: refused (no drillable link) call_id=%s date=%s dept=%s',
+          callId, date, dept || '(none)');
+        return { available: true, found: false, reason: 'not-entitled' };
+      }
+    }
+
+    const sql = 'SELECT to_jsonb(o)::text AS j FROM outbound_calls o '
+              + 'WHERE o.call_date = ?::date AND o.call_id = ? LIMIT 1';
+    const stmt = conn.prepareStatement(sql);
+    stmt.setString(1, date);
+    stmt.setString(2, callId);
+    const rs = stmt.executeQuery();
+    const json = rs.next() ? rs.getString('j') : '';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'journey-outbound');
+    rs.close(); stmt.close();
+    if (!json) return { available: true, found: false, reason: 'not-captured' };
+    return { available: true, found: true, kind: 'outbound',
+             call: callerLookupShapeOutbound_(JSON.parse(json)) };
+  } catch (e) {
+    Logger.log('getOutboundCallJourney_ failed: ' + (e && e.message ? e.message : e));
+    return { available: false, found: false };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
 function getCallJourney(req) {
   req = req || {};
   const user = resolveUser_(Session.getActiveUser().getEmail());
@@ -328,6 +423,12 @@ function getCallJourney(req) {
   const date = String(req.date || '').trim();
   if (!callId) throw new Error('Missing call id.');
   if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
+  // Step 4 (owner ruling 2026-08-24): kind='outbound' drills the OUTBOUND call
+  // an internal assist request was placed from -- a different table, and the
+  // first surface where one dept can see another dept's customer call. See
+  // getOutboundCallJourney_ for the capability check that makes it safe.
+  const kind = String(req.kind || 'inbound').trim().toLowerCase();
+  if (kind !== 'inbound' && kind !== 'outbound') throw new Error('Unknown journey kind.');
 
   let dept = String(req.department || '').trim();
   // R-3: only SINGLE-dept managers are pinned. The all-departments manager
@@ -352,6 +453,8 @@ function getCallJourney(req) {
   // call whose entry/final queue is a raw name (e.g. A_Q_CSR) still scopes to
   // the dept (same bridge as the report; the exact-id fallback below also
   // covers any still-unmapped alias).
+  if (kind === 'outbound') return getOutboundCallJourney_(callId, date, dept, user);
+
   const deptQueues = dept ? inboundQueuesForDept_(dept) : [];
   const predicate = callJourneyDeptPredicate_(dept, deptQueues);   // '' for company view
 

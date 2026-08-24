@@ -60,6 +60,26 @@ function icIsAnonymous_(s) {
 
 function icIsTrue_(s) { return String(s == null ? '' : s).trim().toUpperCase() === 'TRUE'; }
 
+// The employee who PLACED an internal-origin call, from the leg's CALLER
+// columns. Mirrors firstAgent's guards: blank/N-A, queue names and
+// phone-shaped values are all rejected (a raw number must never be stored).
+function icOriginAgentName_(leg) {
+  var n = String((leg && leg[IC_COL.CALLER_NAME]) == null ? '' : leg[IC_COL.CALLER_NAME]).trim();
+  if (!n || n.toUpperCase() === 'N/A') return null;
+  if (icIsQueueName_(n)) return null;
+  if (/^\+?[\d\s\-().]{7,}$/.test(n)) return null;
+  return n.slice(0, IC_JOURNEY_NAME_MAX);
+}
+
+// The raw CDR org-chart label on that same leg ("Field Operations (Market
+// Activity)"). Context only -- it is NOT a dashboard dept header (the
+// final_dept name-space caveat), so no attribution ever keys on it.
+function icOriginDeptLabel_(leg) {
+  var d = String((leg && leg[IC_COL.DEPARTMENTS]) == null ? '' : leg[IC_COL.DEPARTMENTS]).trim();
+  if (!d || d.toUpperCase() === 'N/A') return null;
+  return d.slice(0, IC_JOURNEY_NAME_MAX);
+}
+
 // IMP-1: must match every live queue identity, not just the A_Q_* family.
 // "Backup CSR" is a first-class queue in this install (the DQE pipeline's
 // queue regex is (A_Q_\w+|Backup CSR) -- buildDQEHistoricalData.js). With
@@ -465,6 +485,19 @@ function buildInboundCallRecords_(rawRows) {
       finalQueue:      queues.length ? queues[queues.length - 1] : null,
       finalDept:       finalDept,
       firstAgent:      firstAgent,
+      // ORIGINATOR (internal-origin records only). `firstAgent` derives from
+      // the CALLEE name across the group's legs, and an internal-origin group's
+      // only callee IS the queue -- which icIsQueueName_ skips -- so these
+      // records carried NO indication of who placed the call. The receiving
+      // dept's path drill then read "an internal call abandoned in your queue"
+      // with no actionable content. The originating agent sits in the CALLER
+      // columns of the group's first leg (validated against the owner's
+      // 2026-08-21 sample: "Marie (Muskaan) Jindal" / "Field Operations
+      // (Market Activity)"). Employee name + the raw CDR org label, same PHI
+      // class as firstAgent; a phone-shaped caller name is never stored.
+      // NULL on every externally-originated record, so nothing else moves.
+      originAgent:     isInternalOrigin ? icOriginAgentName_(legs[0]) : null,
+      originDept:      isInternalOrigin ? icOriginDeptLabel_(legs[0]) : null,
       numQueues:       queues.length,
       numTransfers:    Math.max(0, queues.length - 1),
       journey:         icBuildJourney_(legs)
@@ -505,7 +538,34 @@ function buildInboundCallRecords_(rawRows) {
       var aext = icDigits_(l[IC_COL.CALLEE]);
       var as = icParseTs_(l[IC_COL.CONNECTED]), ae = icParseTs_(l[IC_COL.STOP]);
       if (!aext || isNaN(as) || isNaN(ae)) return;
-      agentBusy.push({ root: root, ext: aext, startMs: as, endMs: ae });
+      agentBusy.push({ root: root, ext: aext, startMs: as, endMs: ae,
+                       name: String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim() });
+    });
+  });
+
+  // Step 4 (owner ruling 2026-08-24): the SAME index for OUTBOUND calls. An
+  // assisting agent's concurrent call is often outbound -- a rep with a patient
+  // on the line dials a queue for translation (validated: the 2026-08-21 legs).
+  // agentBusy keys on the CALLEE ext, so those agents are invisible to it.
+  // Group shape mirrors outboundCalls.js exactly (no Incoming leg + an
+  // Answered Outgoing leg to an external number) so the two captures agree on
+  // what an outbound call IS.
+  var outboundBusy = [];
+  Object.keys(groups).forEach(function (root) {
+    var g = groups[root];
+    var hasIncoming = g.some(function (l) {
+      return String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() === 'Incoming';
+    });
+    if (hasIncoming) return;
+    g.forEach(function (l) {
+      if (String(l[IC_COL.DIRECTION] == null ? '' : l[IC_COL.DIRECTION]).trim() !== 'Outgoing') return;
+      if (!icExternalNumber_(l[IC_COL.CALLEE])) return;
+      if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered') return;
+      if (icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
+      var oext = icDigits_(l[IC_COL.CALLER]);
+      var os = icParseTs_(l[IC_COL.CONNECTED]), oe = icParseTs_(l[IC_COL.STOP]);
+      if (!oext || isNaN(os) || isNaN(oe)) return;
+      outboundBusy.push({ root: root, ext: oext, startMs: os, endMs: oe });
     });
   });
 
@@ -539,30 +599,89 @@ function buildInboundCallRecords_(rawRows) {
     };
     if (!isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - tMs) / 1000));
     rec.journey.push(ev);
-    enrichedRoots[root] = true;
+    // Round-17: remember WHAT matched, not merely THAT it did -- the standalone
+    // internal record below is now written (not dropped) and reconstructs the
+    // ORIGIN hop from exactly these fields.
+    enrichedRoots[root] = {
+      callerRoot:  matches[0].root,
+      agentExt:    xext,
+      agentName:   matches[0].name || '',
+      originQueue: String(rec.entryQueue || '').trim(),
+      originStart: rec.callStart || null,
+      answerT:     icIsoTime_(matches[0].startMs),
+      answerTalk:  Math.max(0, Math.round((matches[0].endMs - matches[0].startMs) / 1000))
+    };
   });
 
-  // Round-16: internal-origin queue records stand alone ONLY when the R11-N
-  // pass did not already represent the group as a transfer-abandon event on
-  // a captured caller's journey (a unique match means the group IS that
-  // caller's transfer -- a standalone "internal call" would double-tell it).
+  // Round-17 (owner ruling, reverses the Round-16 drop): an internal-origin
+  // queue record is ALWAYS written, including when the R11-N pass above
+  // matched it to a caller's journey.
+  //
+  // Round-16 dropped the matched ones as a "double-tell" -- correct about the
+  // duplication, wrong about the audience. The two records serve two DIFFERENT
+  // depts: the caller's journey belongs to the ORIGIN dept (CSR sees "answered
+  // -> transferred out -> abandoned"), while the abandon itself lands in the
+  // RECEIVING dept's numbers, whose Missed report renders a "path" button off
+  // the DQE queue-only sentinel (any abandon with wait > 60s, no internal/
+  // external distinction). Dropping the record made that button resolve to
+  // `not-captured` -- so the BETTER the matcher worked, the more reliably the
+  // receiving dept's drill failed. Measured 2026-08-21: 10 of 11 candidates
+  // uniquely matched, 6 of them past the DQE 60s threshold.
+  //
+  // Metric-safe by construction: every dashboard metric query excludes
+  // is_internal rows, and getCallJourney is the sole consumer that does not.
   internalPending.forEach(function (ir) {
-    if (!enrichedRoots[ir.callId]) {
+    var xfer = enrichedRoots[ir.callId];
+    if (xfer) {
+      // The matched case: link the caller's call and PREPEND the reconstructed
+      // origin hop (origin queue -> answering agent) so the receiving dept's
+      // drill reads as one continuous path instead of starting mid-story.
+      // Events carry `transfer:true` + `origin:true` as provenance -- they are
+      // cross-referenced, not legs of THIS call group. Same synthesis the
+      // R11-N append already does in the other direction.
+      ir.relatedCallId = xfer.callerRoot;
+      ir.relatedCallKind = 'inbound';
+      var head = [];
+      if (xfer.originQueue) {
+        head.push({ t: xfer.originStart, name: xfer.originQueue.slice(0, IC_JOURNEY_NAME_MAX),
+                    kind: 'queue', transfer: true, origin: true });
+      }
+      head.push({ t: xfer.answerT,
+                  name: (xfer.agentName || ('ext ' + xfer.agentExt)).slice(0, IC_JOURNEY_NAME_MAX),
+                  kind: 'answer', talk: xfer.answerTalk, transfer: true, origin: true });
+      ir.journey = head.concat(ir.journey || []).slice(0, IC_JOURNEY_MAX_EVENTS);
+    } else if (ir._originExt && ir._startMs != null && !isNaN(ir._startMs)) {
       // Round-16b (owner): when the ORIGINATING employee placed this internal
       // queue call WHILE answering a captured inbound call (the internal
       // start nested in their answered talk-leg window, same ±5s slack as
       // the R11-N matcher -- the customer parked on hold), link that call so
       // the path drill can present the full context. UNIQUE match only; an
       // ambiguous or absent match leaves the record standalone.
-      if (ir._originExt && ir._startMs != null && !isNaN(ir._startMs)) {
-        var ctxMatches = agentBusy.filter(function (a) {
+      var ctxMatches = agentBusy.filter(function (a) {
+        return a.ext === ir._originExt && a.root !== ir.callId
+          && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
+      });
+      if (ctxMatches.length === 1) {
+        ir.relatedCallId = ctxMatches[0].root;
+        ir.relatedCallKind = 'inbound';
+      } else if (!ctxMatches.length) {
+        // Step 4: no concurrent captured INBOUND -> try the requester's
+        // concurrent OUTBOUND call (the assist-during-outbound shape). Same
+        // unique-match-only discipline: 0 or >1 leaves the record unlinked
+        // rather than guessing. An inbound match always WINS -- it is the
+        // stronger relationship (the customer was handed over, not merely
+        // co-present).
+        var obMatches = outboundBusy.filter(function (a) {
           return a.ext === ir._originExt && a.root !== ir.callId
             && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
         });
-        if (ctxMatches.length === 1) ir.relatedCallId = ctxMatches[0].root;
+        if (obMatches.length === 1) {
+          ir.relatedCallId = obMatches[0].root;
+          ir.relatedCallKind = 'outbound';
+        }
       }
-      records.push(ir);
     }
+    records.push(ir);
   });
   records.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
   internalPending.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
@@ -858,6 +977,15 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // metric query excludes is_internal=TRUE rows).
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS is_internal boolean');
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_id text');
+      // Who PLACED an internal-origin call (employee name + raw CDR org label).
+      // NULL on every externally-originated row and on pre-extension rows until
+      // re-imported / backfilled.
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS origin_agent text');
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS origin_dept text');
+      // Which TABLE related_call_id points at. NULL means 'inbound' -- every
+      // row written before Step 4 linked an inbound call, so the read side
+      // must COALESCE rather than treat NULL as unknown.
+      ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_kind text');
       ddl.close();
 
       // L2: authoritative per-date replace. Delete the payload's distinct dates
@@ -879,7 +1007,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
 
       var cols = 'call_date, call_id, caller_hash, dial_in_number, disposition, ' +
         'abandon_stage, abandoned_on_hold, hold_seconds, wait_seconds, entry_queue, ' +
-        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id';
+        'final_queue, final_dept, num_queues, num_transfers, call_start, journey, first_agent, is_internal, related_call_id, origin_agent, origin_dept, related_call_kind';
       var onConflict = ' ON CONFLICT (call_date, call_id) DO UPDATE SET ' +
         'caller_hash=EXCLUDED.caller_hash, dial_in_number=EXCLUDED.dial_in_number, ' +
         'disposition=EXCLUDED.disposition, abandon_stage=EXCLUDED.abandon_stage, ' +
@@ -888,7 +1016,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
         'final_queue=EXCLUDED.final_queue, final_dept=EXCLUDED.final_dept, ' +
         'num_queues=EXCLUDED.num_queues, num_transfers=EXCLUDED.num_transfers, ' +
         'call_start=EXCLUDED.call_start, journey=EXCLUDED.journey, ' +
-        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, updated_at=now()';
+        'first_agent=EXCLUDED.first_agent, is_internal=EXCLUDED.is_internal, related_call_id=EXCLUDED.related_call_id, origin_agent=EXCLUDED.origin_agent, origin_dept=EXCLUDED.origin_dept, related_call_kind=EXCLUDED.related_call_kind, updated_at=now()';
 
       // INLINE multi-row upsert (no bound params) -- removes ~16 JDBC
       // bind-bridge calls PER ROW (the dominant cost; ~40ms each in Apps
@@ -909,7 +1037,9 @@ function writeInboundCallsToNeon(rawRows, opts) {
           + ',' + icSqlStr_(r.finalDept) + ',' + icSqlInt_(r.numQueues) + ',' + icSqlInt_(r.numTransfers)
           + ',' + icSqlStr_(r.callStart)
           + ',' + icSqlStr_(r.journey && r.journey.length ? JSON.stringify(r.journey) : null)
-          + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId) + ')';
+          + ',' + icSqlStr_(r.firstAgent) + ',' + (r.isInternal ? 'TRUE' : 'FALSE') + ',' + icSqlStr_(r.relatedCallId)
+          + ',' + icSqlStr_(r.originAgent) + ',' + icSqlStr_(r.originDept)
+          + ',' + icSqlStr_(r.relatedCallKind) + ')';
       });
       var buildMs = Date.now() - tBuild;
 
@@ -1390,7 +1520,7 @@ function previewInternalTransferChains(dateIso) {
     if (a.captured && a.answered && a.talk > 0 && a.calleeExt) extAnsweredCaptured[a.calleeExt] = true;
   });
 
-  var nCase = 0, nOneHop = 0, nTwoHop = 0, nInternalOrigin = 0, nViaQueue = 0, nNoSource = 0;
+  var nCase = 0, nOneHop = 0, nTwoHop = 0, nInternalOrigin = 0, nViaQueue = 0, nNoSource = 0, nSelfOriginated = 0, nAssistOnOutbound = 0;
   Object.keys(groups).forEach(function (root) {
     if (captured[root]) return;
     var g = groups[root];
@@ -1414,6 +1544,27 @@ function previewInternalTransferChains(dateIso) {
     if (!delivered.length) {
       Logger.log('   (nothing in this sheet rang ext ' + X + ' -- source call is outside the day / uncaptured)');
     }
+    // OWNER NOTE 2026-08-24: on TRANSFERS the raw feed often puts the agent who
+    // RECEIVES the call in the CALLER column, with Callee=CallRecording (620)
+    // and Callee Name=N/A. Both this scan and the real matcher's agentBusy
+    // index key on the CALLEE ext, so that leg shape is invisible to them --
+    // which would make "nothing handed X a caller" a statement about evidence
+    // never examined rather than about the call. List the CALLER-side legs too,
+    // OBSERVATION ONLY: no verdict below reads them until the shape is
+    // understood from a real sample.
+    var xAsCaller = allLegs.filter(function (a) {
+      return a.caller.kind === 'ext' && a.caller.ext === X && !isNaN(a.startMs) && a.root !== root;
+    }).sort(function (p2, q2) { return Math.abs(p2.startMs - T) - Math.abs(q2.startMs - T); }).slice(0, 6);
+    xAsCaller.forEach(function (a) {
+      var spansT = (!isNaN(a.connMs) && !isNaN(a.stopMs) && T >= a.connMs - 5000 && T <= a.stopMs + 5000);
+      Logger.log('   -- ext ' + X + ' AS CALLER -> ' + (a.calleeExt || '(no ext)')
+        + ' | group ' + a.root + (a.captured ? ' [CAPTURED inbound]' : ' [internal]')
+        + ' | ' + a.dir
+        + ' | ' + (a.answered ? 'Answered talk=' + a.talk + 's' : (a.missed ? 'Missed' : (a.abandoned ? 'Abandoned' : '-')))
+        + ' | ' + (isNaN(a.connMs) ? '--:--:--' : icIsoTime_(a.connMs)) + '..' + (isNaN(a.stopMs) ? '--:--:--' : icIsoTime_(a.stopMs))
+        + ' | dT ' + Math.round((a.startMs - T) / 1000) + 's'
+        + (spansT ? '  <<< SPANS THE ABANDON' : ''));
+    });
     delivered.forEach(function (a) {
       Logger.log('   <- rung by ' + a.caller.show + ' | group ' + a.root
         + (a.captured ? ' [CAPTURED inbound]' : ' [internal]') + ' | ' + a.dir
@@ -1424,8 +1575,43 @@ function previewInternalTransferChains(dateIso) {
 
     // (b) Bounded 1-HOP trace: did a single upstream AGENT (an ext, not a queue)
     //     who rang X also answer a captured inbound overlapping the abandon?
+    //
+    // TEMPORAL GUARD (2026-08-24): the hand-off to X must PRECEDE the abandon
+    // it supposedly caused -- for the chain to be real, X has to be HOLDING the
+    // caller at T. The rule below used to accept ANY leg on which Y rang X,
+    // with no time constraint, while checking only that Y was on a captured
+    // call at T. Measured on the owner's 2026-08-21 run: the lone chained case
+    // reported "1-HOP RESOLVABLE (unique)" off a leg where Y rang X 946s AFTER
+    // the abandon -- a temporally impossible chain scored as a clean unique
+    // match. Same overlap rule the real R11-N matcher applies to the answering
+    // agent, now applied to X's own delivered leg.
+    var deliveredAtT = delivered.filter(function (a) {
+      return a.answered && a.talk > 0 && !isNaN(a.connMs) && !isNaN(a.stopMs)
+        && T >= a.connMs - 5000 && T <= a.stopMs + 5000;
+    });
+    if (delivered.length && !deliveredAtT.length) {
+      Logger.log('   (no delivered leg had ext ' + X + ' on a call AT the abandon time -- '
+        + 'the nearest is ' + Math.round((delivered[0].startMs - T) / 1000) + 's away)');
+    }
+    // VALIDATED 2026-08-21 (owner leg sample): the concurrent call an assisting
+    // agent is on can be OUTBOUND -- Marie (279) was on an Outgoing leg to a
+    // patient and dialed A_Q_Spanish for translation. agentBusy (and this scan)
+    // index the CALLEE ext, so an agent on an outbound call is invisible to
+    // both, and the case looks like an unexplained chain. It is not a chain at
+    // all: nobody handed them a caller, so no inbound journey exists to enrich.
+    // Detected here so the tally names the real shape. (CallRecording legs --
+    // caller=agent, callee=CallRecording, talk=0 -- are recording artifacts and
+    // are excluded by the talk>0 condition, not evidence of anything.)
+    var outboundAtT = null;
+    allLegs.forEach(function (a) {
+      if (outboundAtT) return;
+      if (a.caller.kind !== 'ext' || a.caller.ext !== X) return;
+      if (a.dir !== 'Outgoing' || !a.answered || !(a.talk > 0)) return;
+      if (isNaN(a.connMs) || isNaN(a.stopMs)) return;
+      if (T >= a.connMs - 5000 && T <= a.stopMs + 5000) outboundAtT = a;
+    });
     var upstreamAgents = {};
-    delivered.forEach(function (a) { if (a.caller.kind === 'ext' && a.caller.ext) upstreamAgents[a.caller.ext] = true; });
+    deliveredAtT.forEach(function (a) { if (a.caller.kind === 'ext' && a.caller.ext) upstreamAgents[a.caller.ext] = true; });
     var overlapRootsFor = function (Y) {
       var hr = {};
       allLegs.forEach(function (a) {
@@ -1447,7 +1633,7 @@ function previewInternalTransferChains(dateIso) {
     // same group), not an unknown queue membership. So the SAME captured-
     // overlap check runs on each internal source group's originators too.
     var hop2Agents = {};
-    delivered.forEach(function (a) {
+    deliveredAtT.forEach(function (a) {
       if (a.captured) return;
       (groups[a.root] || []).forEach(function (l) {
         var ci = callerInfo(l[IC_COL.CALLER]);
@@ -1496,6 +1682,23 @@ function previewInternalTransferChains(dateIso) {
         + (continuedSec != null && continuedSec > 60
             ? (' Corroboration: the source call continued ' + continuedSec + 's PAST the abandon -- it was not holding a departing caller.')
             : ''));
+    } else if (outboundAtT) {
+      nAssistOnOutbound++;
+      Logger.log('   => ASSIST DURING AN OUTBOUND CALL (not a transfer): ext ' + X
+        + ' was on an OUTGOING call to ' + (outboundAtT.calleeExt ? '(external number)' : '(unknown)')
+        + ' spanning the abandon (' + icIsoTime_(outboundAtT.connMs) + '..' + icIsoTime_(outboundAtT.stopMs)
+        + ', talk ' + outboundAtT.talk + 's) and dialed ' + queue + ' for assistance. Nobody handed them '
+        + 'a caller, so there is NO inbound caller journey to enrich -- hop-following cannot fix this '
+        + 'shape at any depth. The abandon itself is still captured as an internal-origin record, so '
+        + 'the receiving queue keeps its own "path" drill.');
+    } else if (delivered.length && !deliveredAtT.length) {
+      nSelfOriginated++;
+      Logger.log('   => NO INBOUND HAND-OFF AT THE ABANDON TIME: no leg RINGING ext ' + X
+        + ' had them on a call at T. That points to a self-originated queue call (nothing '
+        + 'upstream to enrich, unfixable by hop-following at any depth) -- BUT read the '
+        + '"AS CALLER" lines above before concluding it: on transfers the feed can put the '
+        + 'receiving agent in the caller column (Callee=CallRecording), and this scan keys on '
+        + 'the callee ext, so a hand-off can be real and simply unseen here.');
     } else if (delivered.some(function (a) { return a.caller.kind === 'queue'; })) {
       nViaQueue++;
       Logger.log('   => reached ext ' + X + ' via a QUEUE ring (not an agent transfer) -- upstream is whoever entered that queue; needs queue-membership tracing, not a 1-hop agent trace.');
@@ -1510,6 +1713,8 @@ function previewInternalTransferChains(dateIso) {
     + nOneHop + ' resolvable via a UNIQUE 1-hop agent trace, ' + nTwoHop + ' via a unique 2-hop trace, '
     + nInternalOrigin + ' INTERNAL-ORIGIN (no external caller; nothing to enrich), '
     + nViaQueue + ' reached via a queue ring, '
+    + nAssistOnOutbound + ' ASSIST-DURING-OUTBOUND (agent was on an outgoing call; not a transfer), '
+    + nSelfOriginated + ' with NO inbound hand-off at the abandon time (see the AS CALLER lines), '
     + nNoSource + ' with no source leg in the sheet.');
   Logger.log('  (Paste this whole log back: the "<- rung by" lines show the real link structure so the '
     + 'accurate join for these can be designed against the same 0-ambiguity bar.)');
@@ -1565,4 +1770,85 @@ function previewInternalTransferPathsForDate() {
   var arg = icPreviewDateArg_();
   if (arg.cancelled) return;
   previewInternalTransferPaths(arg.dateIso);
+}
+
+/**
+ * READ-ONLY diagnostic for the Step 4 outbound assist link -- the validation
+ * run R11-N got before IT shipped, and that the outbound match did not.
+ *
+ * It does NOT re-implement the matching rule. It runs the REAL
+ * `buildInboundCallRecords_` over a Call_Legs_<iso> sheet and reports what
+ * capture WOULD store, so the preview cannot drift from production the way a
+ * parallel implementation would (the lesson from the chain diagnostic, whose
+ * hand-written 1-hop rule "resolved" a temporally impossible chain).
+ *
+ * Writes nothing. Reads only the sheet -- no Neon -- so it runs during an
+ * outage. CDR Import editor: previewOutboundAssistLinks('2026-08-21')
+ * (no arg -> the most recent Call_Legs_* sheet).
+ *
+ * What to look for: every OUTBOUND-linked line names the assist and the call
+ * it was linked to. Spot-check a few against the raw legs -- the requester
+ * must have been ON that outbound call at the assist time. UNLINKED lines are
+ * the honest residue (0 or >1 candidates); they are not failures, they are the
+ * unique-match rule declining to guess.
+ */
+function previewOutboundAssistLinks(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = null, iso = dateIso || '';
+  if (dateIso) {
+    sheet = ss.getSheetByName('Call_Legs_' + dateIso);
+  } else {
+    ss.getSheets().forEach(function (s) {
+      var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+      if (m && m[1] > iso) { iso = m[1]; sheet = s; }
+    });
+  }
+  if (!sheet) {
+    Logger.log('previewOutboundAssistLinks: no Call_Legs sheet for %s.', dateIso || '(latest)');
+    return;
+  }
+
+  var rows = sheet.getDataRange().getDisplayValues();
+  rows.shift();
+  var records = buildInboundCallRecords_(rows) || [];
+  var internal = records.filter(function (r) { return r.isInternal; });
+
+  var nOut = 0, nIn = 0, nNone = 0;
+  internal.forEach(function (r) {
+    var kind = r.relatedCallKind || null;
+    var who = (r.originAgent || '(unknown requester)')
+      + (r.originDept ? ' [' + r.originDept + ']' : '');
+    var head = 'ASSIST ' + r.callId + ' @ ' + (r.callStart || '--:--:--')
+      + ' -> ' + (r.entryQueue || '(no queue)')
+      + ' (' + (r.disposition || '?') + ', wait ' + (r.waitSeconds == null ? '?' : r.waitSeconds) + 's)'
+      + ' | by ' + who;
+    if (kind === 'outbound') {
+      nOut++;
+      Logger.log(head + '\n   => LINKED to OUTBOUND call ' + r.relatedCallId
+        + ' -- the requester was on that call at the assist time. '
+        + 'Spot-check: the outbound group must show them Answered with talk>0 spanning '
+        + (r.callStart || 'the assist') + '.');
+    } else if (kind === 'inbound') {
+      nIn++;
+      Logger.log(head + '\n   => linked to INBOUND call ' + r.relatedCallId
+        + ' (a handed-over customer -- the stronger relationship, which always wins).');
+    } else {
+      nNone++;
+      Logger.log(head + '\n   => NOT LINKED (0 or >1 concurrent candidates -- the unique-match '
+        + 'rule declining to guess; the receiving queue still gets its own path drill).');
+    }
+  });
+
+  Logger.log('previewOutboundAssistLinks(%s): %s internal assist record(s) -- '
+    + '%s linked to an OUTBOUND call, %s to an inbound call, %s unlinked.',
+    iso, internal.length, nOut, nIn, nNone);
+  Logger.log('  Nothing was written. Every figure above is what the next import '
+    + 'WOULD store for this date (it runs the real record builder).');
+}
+
+/** Menu/editor wrapper with the shared date prompt. */
+function previewOutboundAssistLinksForDate() {
+  var arg = icPreviewDateArg_();
+  if (arg.cancelled) return;
+  previewOutboundAssistLinks(arg.dateIso);
 }

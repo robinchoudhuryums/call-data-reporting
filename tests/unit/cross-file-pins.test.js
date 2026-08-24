@@ -518,3 +518,28 @@ test('every Neon JDBC URL carries fail-fast timeouts', function () {
     }
   });
 });
+
+// ── FO-1: ONE client-side reader of __COMPANY_HOLIDAYS__ ────────────────────
+// The holiday-range test had four inline copies across client fragments and
+// they had already drifted (script-6-ir guarded malformed range entries; the
+// others did not). They now share isCompanyHolidayIso_ in script-1-core. A
+// fifth copy would re-open the same drift, and no behavioral test can see it
+// (each copy renders fine -- it is only WRONG on a holiday), so pin it here.
+test('FO-1: only the shared helper reads __COMPANY_HOLIDAYS__ on the client', function () {
+  const FRAGMENTS = fs.readdirSync(DASH).filter(function (f) { return /^script-\d+-.*\.html$/.test(f); });
+  // Match a real property ACCESS (window./globalThis./self.), not the prose
+  // mentions the fragments legitimately keep in their comments.
+  const readers = FRAGMENTS.filter(function (f) {
+    return /\.\s*__COMPANY_HOLIDAYS__/.test(read(f, DASH));
+  });
+  assert.deepEqual(readers, ['script-1-core.html'],
+    'the company-holiday global must be read ONLY by isCompanyHolidayIso_ in '
+    + 'script-1-core.html -- a per-fragment copy of the range loop is how the '
+    + 'four originals drifted. Call the shared helper instead. Found: '
+    + readers.join(', '));
+  const core = read('script-1-core.html', DASH);
+  assert.ok(/function isCompanyHolidayIso_/.test(core), 'the shared helper is gone');
+  assert.ok(/r && r\.from && r\.to/.test(core),
+    'the shared helper must keep the malformed-entry guard it inherited from '
+    + 'the most defensive of the copies it replaced');
+});
