@@ -1431,7 +1431,7 @@ function previewInternalTransferChains(dateIso) {
     if (a.captured && a.answered && a.talk > 0 && a.calleeExt) extAnsweredCaptured[a.calleeExt] = true;
   });
 
-  var nCase = 0, nOneHop = 0, nTwoHop = 0, nInternalOrigin = 0, nViaQueue = 0, nNoSource = 0, nSelfOriginated = 0;
+  var nCase = 0, nOneHop = 0, nTwoHop = 0, nInternalOrigin = 0, nViaQueue = 0, nNoSource = 0, nSelfOriginated = 0, nAssistOnOutbound = 0;
   Object.keys(groups).forEach(function (root) {
     if (captured[root]) return;
     var g = groups[root];
@@ -1504,6 +1504,23 @@ function previewInternalTransferChains(dateIso) {
       Logger.log('   (no delivered leg had ext ' + X + ' on a call AT the abandon time -- '
         + 'the nearest is ' + Math.round((delivered[0].startMs - T) / 1000) + 's away)');
     }
+    // VALIDATED 2026-08-21 (owner leg sample): the concurrent call an assisting
+    // agent is on can be OUTBOUND -- Marie (279) was on an Outgoing leg to a
+    // patient and dialed A_Q_Spanish for translation. agentBusy (and this scan)
+    // index the CALLEE ext, so an agent on an outbound call is invisible to
+    // both, and the case looks like an unexplained chain. It is not a chain at
+    // all: nobody handed them a caller, so no inbound journey exists to enrich.
+    // Detected here so the tally names the real shape. (CallRecording legs --
+    // caller=agent, callee=CallRecording, talk=0 -- are recording artifacts and
+    // are excluded by the talk>0 condition, not evidence of anything.)
+    var outboundAtT = null;
+    allLegs.forEach(function (a) {
+      if (outboundAtT) return;
+      if (a.caller.kind !== 'ext' || a.caller.ext !== X) return;
+      if (a.dir !== 'Outgoing' || !a.answered || !(a.talk > 0)) return;
+      if (isNaN(a.connMs) || isNaN(a.stopMs)) return;
+      if (T >= a.connMs - 5000 && T <= a.stopMs + 5000) outboundAtT = a;
+    });
     var upstreamAgents = {};
     deliveredAtT.forEach(function (a) { if (a.caller.kind === 'ext' && a.caller.ext) upstreamAgents[a.caller.ext] = true; });
     var overlapRootsFor = function (Y) {
@@ -1576,6 +1593,15 @@ function previewInternalTransferChains(dateIso) {
         + (continuedSec != null && continuedSec > 60
             ? (' Corroboration: the source call continued ' + continuedSec + 's PAST the abandon -- it was not holding a departing caller.')
             : ''));
+    } else if (outboundAtT) {
+      nAssistOnOutbound++;
+      Logger.log('   => ASSIST DURING AN OUTBOUND CALL (not a transfer): ext ' + X
+        + ' was on an OUTGOING call to ' + (outboundAtT.calleeExt ? '(external number)' : '(unknown)')
+        + ' spanning the abandon (' + icIsoTime_(outboundAtT.connMs) + '..' + icIsoTime_(outboundAtT.stopMs)
+        + ', talk ' + outboundAtT.talk + 's) and dialed ' + queue + ' for assistance. Nobody handed them '
+        + 'a caller, so there is NO inbound caller journey to enrich -- hop-following cannot fix this '
+        + 'shape at any depth. The abandon itself is still captured as an internal-origin record, so '
+        + 'the receiving queue keeps its own "path" drill.');
     } else if (delivered.length && !deliveredAtT.length) {
       nSelfOriginated++;
       Logger.log('   => NO INBOUND HAND-OFF AT THE ABANDON TIME: no leg RINGING ext ' + X
@@ -1598,6 +1624,7 @@ function previewInternalTransferChains(dateIso) {
     + nOneHop + ' resolvable via a UNIQUE 1-hop agent trace, ' + nTwoHop + ' via a unique 2-hop trace, '
     + nInternalOrigin + ' INTERNAL-ORIGIN (no external caller; nothing to enrich), '
     + nViaQueue + ' reached via a queue ring, '
+    + nAssistOnOutbound + ' ASSIST-DURING-OUTBOUND (agent was on an outgoing call; not a transfer), '
     + nSelfOriginated + ' with NO inbound hand-off at the abandon time (see the AS CALLER lines), '
     + nNoSource + ' with no source leg in the sheet.');
   Logger.log('  (Paste this whole log back: the "<- rung by" lines show the real link structure so the '

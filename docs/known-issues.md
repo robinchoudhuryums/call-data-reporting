@@ -585,6 +585,45 @@ If you see similar attribution issues on other days, suspect either:
 
 ---
 
+### CallRecording legs, and "the agent was on a call" is not a callee-side question (2026-08-24)
+
+Two raw-feed shapes that made a transfer-abandon look like an unexplained
+chain. Both confirmed from an owner leg sample (2026-08-21, exts 279/363).
+
+**1. CallRecording legs.** A recorded call carries an extra Internal leg whose
+CALLER is the agent and whose CALLEE is `CallRecording` / `CallRecording (620)`
+/ `CallRecording (363)`, Callee Name `N/A`, **Talk = 0**. It is a recording
+artifact, not a conversation. Nothing in the codebase references the string,
+and nothing should start matching on it: the `talk > 0` conditions already
+exclude it everywhere. Do NOT treat its presence as evidence an agent was on a
+call, and do NOT treat the agent appearing in the CALLER column as a direction
+signal -- on these legs it means nothing.
+
+**2. An agent's concurrent call can be OUTBOUND.** `agentBusy` in
+`buildInboundCallRecords_` (and the chain diagnostic's neighborhood scan) index
+the CALLEE extension, because a normal inbound ring delivers to the agent as
+callee. An agent on an OUTGOING call is therefore invisible to both. The
+measured case: Marie (ext 279) was on an Outgoing leg to a patient
+(07:14:29-07:20:09) and dialed `A_Q_Spanish` for translation at 07:14:57; the
+Spanish agent never answered, so the queue leg abandoned. With only callee-side
+evidence this reads as "a transfer whose source we cannot find" -- and the
+chain diagnostic's 1-hop rule duly "resolved" it to an unrelated captured
+inbound that a DIFFERENT agent was on, purely because that agent rang 279
+sixteen minutes LATER (see the temporal guard in
+`previewInternalTransferChains`).
+
+**Consequence, and why it is NOT a gap to close:** an assist-during-outbound
+abandon has no inbound caller journey to enrich -- nobody handed the agent a
+caller. Hop-following cannot fix it at any depth; it is a different population,
+not a missing link. The abandon is still captured as an internal-origin record
+(Round-17), so the RECEIVING queue keeps its own "path" drill; only the
+upstream link is absent, correctly. The diagnostic now reports this shape as
+ASSIST-DURING-OUTBOUND rather than as an unresolved chain.
+
+**If you later want the upstream link for these:** it lives in `outbound_calls`
+(the agent's outgoing call), not `inbound_calls`. That is a cross-table join
+the path drill does not do today -- a design question, not a bug.
+
 ## Dashboard design rules to preserve
 
 ### No write paths exposed via `google.script.run`
