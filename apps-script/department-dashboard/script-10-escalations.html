@@ -1424,6 +1424,10 @@
     if (ev.hold)  bits.push('held ' + fmtDuration(ev.hold));
     if (ev.abandoned) bits.push('caller hung up');
     else if (ev.missed && ev.kind !== 'queue') bits.push('no answer');
+    // Round-17: events reconstructed from the TRANSFERRING call (the origin
+    // hop prefixed onto an internal transfer-abandon record) are not legs of
+    // this call group -- say so rather than letting them read as literal.
+    if (ev.origin) bits.push('before transfer');
     return '<div class="cl-ev' + kindCls + '">'
          +   '<span class="cl-ev-time">' + escapeHtml(ev.t ? clCstTime_(ev.t) : '') + '</span>'
          +   '<span class="cl-ev-icon" aria-hidden="true">' + kindIcon + '</span>'

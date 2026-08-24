@@ -695,7 +695,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   synthetic `{kind:queue, abandoned:true, transfer:true}` event to that call's
   journey. Strictly JOURNEY-ONLY (disposition/counts/queues NEVER touched);
   an ambiguous match is left as-is -- it never guesses. Idempotent on
-  re-import; no widening is warranted (R11-N5). Editor diagnostics
+  re-import; no widening is warranted (R11-N5). **Round-17 (owner) REVERSED
+  the Round-16 drop: a matched internal group is ALSO written as its own
+  record**, linked by `related_call_id` and PREFIXED with the reconstructed
+  origin hop (origin queue -> answering agent, events flagged
+  `origin:true`/`transfer:true`, rendered "before transfer"). The abandon
+  belongs to the RECEIVING dept, whose Missed report renders a path button
+  off the DQE queue-only sentinel (wait > 60s, no internal/external
+  distinction) -- dropping the record made that button resolve
+  `not-captured`, so the better the matcher worked the more reliably that
+  dept's drill failed. Still metric-safe (every metric query excludes
+  is_internal). Editor diagnostics
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
   (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
   `tests/unit/inbound-calls.test.js`.
@@ -717,8 +727,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   views. **INTERNAL-ORIGIN queue calls (an
   employee dials another dept's queue; no Incoming leg) are captured as
   `is_internal` rows for THIS drill only** -- every metric query excludes
-  them (pinned both ways); a uniquely-matched R11-N transfer group stays
-  enrichment-only, and a standalone internal record carries
+  them (pinned both ways); since Round-17 a uniquely-matched R11-N transfer
+  group is BOTH enriched onto the caller's journey AND written as its own
+  origin-prefixed record, and a standalone internal record carries
   `related_call_id` when uniquely nested in the originator's concurrent
   answered inbound call (the path drill links the two). Unlike the full Inbound report it is
   manager-reachable for the manager's OWN dept: managers are pinned to their

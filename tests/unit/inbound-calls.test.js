@@ -329,8 +329,10 @@ test('transfer-path: unique concurrent inbound -> synthetic abandon appended to 
   const recs = build(capturedInboundAnsweredBy215('820001').concat([
     transferAbandonBy215('820900', '06/04/2026 10:03:00'),
   ]));
-  // The internal-only group never becomes its own record.
-  assert.equal(recs.length, 1);
+  // Round-17: the internal group is ALSO written as its own record (it is the
+  // receiving dept's abandon, and their Missed report's path button keys on
+  // it). The caller's enrichment below is unchanged.
+  assert.equal(recs.length, 2);
   const r = rec(recs, '820001');
   assert.ok(r, 'the captured inbound record exists');
   // Metric fields are untouched -- the caller was still ANSWERED; queues from
@@ -349,6 +351,47 @@ test('transfer-path: unique concurrent inbound -> synthetic abandon appended to 
   assert.equal(t.transfer, true, 'flagged as a cross-referenced enrichment');
   assert.equal(t.t, '10:03:00');
   assert.equal(t.secs, 40);
+});
+
+test('transfer-path (Round-17): the matched internal group is written, linked, and origin-prefixed', function () {
+  const recs = build(capturedInboundAnsweredBy215('820001').concat([
+    transferAbandonBy215('820900', '06/04/2026 10:03:00'),
+  ]));
+  const ir = rec(recs, '820900');
+  assert.ok(ir, 'the receiving dept needs a record to hang its "path" drill on');
+  assert.equal(ir.isInternal, true, 'journey-only: every metric query excludes is_internal');
+  assert.equal(ir.relatedCallId, '820001', 'links back to the caller\'s call');
+  // Its OWN metric fields describe the internal leg, untouched by the prefix.
+  assert.equal(ir.entryQueue, 'A_Q_Spanish');
+  assert.equal(ir.disposition, 'abandoned');
+
+  // The journey reads as ONE story: origin queue -> answering agent -> the
+  // abandon in the receiving queue.
+  const kinds = ir.journey.map(function (e) { return e.kind + ':' + e.name; });
+  assert.deepEqual(JSON.parse(JSON.stringify(kinds)),
+    ['queue:A_Q_CSR', 'answer:Raymond (Ray) Mathews', 'queue:A_Q_Spanish']);
+  // The two reconstructed events are flagged as cross-referenced, the call's
+  // own leg is not -- provenance stays legible.
+  assert.equal(ir.journey[0].origin, true);
+  assert.equal(ir.journey[0].transfer, true);
+  assert.equal(ir.journey[1].origin, true);
+  assert.equal(ir.journey[1].talk, 295, 'the agent\'s real talk seconds (10:00:05 -> 10:05:00)');
+  assert.ok(!ir.journey[2].origin, 'the abandon is this call\'s own leg, not reconstructed');
+  assert.equal(ir.journey[2].abandoned, true);
+});
+
+test('transfer-path (Round-17): an AMBIGUOUS group is still written, but WITHOUT a fabricated origin', function () {
+  const recs = build(
+    capturedInboundAnsweredBy215('820010').concat(
+    capturedInboundAnsweredBy215('820011')).concat([
+      transferAbandonBy215('820910', '06/04/2026 10:03:00'),
+  ]));
+  const ir = rec(recs, '820910');
+  assert.ok(ir, 'still captured -- the receiving dept sees the abandon either way');
+  // Unset is written as SQL NULL (icSqlStr_ treats null/undefined alike).
+  assert.ok(ir.relatedCallId == null, 'never guesses which of two concurrent calls owns it');
+  assert.deepEqual(JSON.parse(JSON.stringify(ir.journey.map(function (e) { return e.name; }))),
+    ['A_Q_Spanish'], 'no origin hop invented when the match is not unique');
 });
 
 test('transfer-path: AMBIGUOUS (agent on two concurrent inbound calls) -> no enrichment', function () {

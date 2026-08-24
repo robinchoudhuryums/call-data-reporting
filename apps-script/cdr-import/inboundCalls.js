@@ -505,7 +505,8 @@ function buildInboundCallRecords_(rawRows) {
       var aext = icDigits_(l[IC_COL.CALLEE]);
       var as = icParseTs_(l[IC_COL.CONNECTED]), ae = icParseTs_(l[IC_COL.STOP]);
       if (!aext || isNaN(as) || isNaN(ae)) return;
-      agentBusy.push({ root: root, ext: aext, startMs: as, endMs: ae });
+      agentBusy.push({ root: root, ext: aext, startMs: as, endMs: ae,
+                       name: String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim() });
     });
   });
 
@@ -539,30 +540,70 @@ function buildInboundCallRecords_(rawRows) {
     };
     if (!isNaN(stopMs)) ev.secs = Math.max(0, Math.round((stopMs - tMs) / 1000));
     rec.journey.push(ev);
-    enrichedRoots[root] = true;
+    // Round-17: remember WHAT matched, not merely THAT it did -- the standalone
+    // internal record below is now written (not dropped) and reconstructs the
+    // ORIGIN hop from exactly these fields.
+    enrichedRoots[root] = {
+      callerRoot:  matches[0].root,
+      agentExt:    xext,
+      agentName:   matches[0].name || '',
+      originQueue: String(rec.entryQueue || '').trim(),
+      originStart: rec.callStart || null,
+      answerT:     icIsoTime_(matches[0].startMs),
+      answerTalk:  Math.max(0, Math.round((matches[0].endMs - matches[0].startMs) / 1000))
+    };
   });
 
-  // Round-16: internal-origin queue records stand alone ONLY when the R11-N
-  // pass did not already represent the group as a transfer-abandon event on
-  // a captured caller's journey (a unique match means the group IS that
-  // caller's transfer -- a standalone "internal call" would double-tell it).
+  // Round-17 (owner ruling, reverses the Round-16 drop): an internal-origin
+  // queue record is ALWAYS written, including when the R11-N pass above
+  // matched it to a caller's journey.
+  //
+  // Round-16 dropped the matched ones as a "double-tell" -- correct about the
+  // duplication, wrong about the audience. The two records serve two DIFFERENT
+  // depts: the caller's journey belongs to the ORIGIN dept (CSR sees "answered
+  // -> transferred out -> abandoned"), while the abandon itself lands in the
+  // RECEIVING dept's numbers, whose Missed report renders a "path" button off
+  // the DQE queue-only sentinel (any abandon with wait > 60s, no internal/
+  // external distinction). Dropping the record made that button resolve to
+  // `not-captured` -- so the BETTER the matcher worked, the more reliably the
+  // receiving dept's drill failed. Measured 2026-08-21: 10 of 11 candidates
+  // uniquely matched, 6 of them past the DQE 60s threshold.
+  //
+  // Metric-safe by construction: every dashboard metric query excludes
+  // is_internal rows, and getCallJourney is the sole consumer that does not.
   internalPending.forEach(function (ir) {
-    if (!enrichedRoots[ir.callId]) {
+    var xfer = enrichedRoots[ir.callId];
+    if (xfer) {
+      // The matched case: link the caller's call and PREPEND the reconstructed
+      // origin hop (origin queue -> answering agent) so the receiving dept's
+      // drill reads as one continuous path instead of starting mid-story.
+      // Events carry `transfer:true` + `origin:true` as provenance -- they are
+      // cross-referenced, not legs of THIS call group. Same synthesis the
+      // R11-N append already does in the other direction.
+      ir.relatedCallId = xfer.callerRoot;
+      var head = [];
+      if (xfer.originQueue) {
+        head.push({ t: xfer.originStart, name: xfer.originQueue.slice(0, IC_JOURNEY_NAME_MAX),
+                    kind: 'queue', transfer: true, origin: true });
+      }
+      head.push({ t: xfer.answerT,
+                  name: (xfer.agentName || ('ext ' + xfer.agentExt)).slice(0, IC_JOURNEY_NAME_MAX),
+                  kind: 'answer', talk: xfer.answerTalk, transfer: true, origin: true });
+      ir.journey = head.concat(ir.journey || []).slice(0, IC_JOURNEY_MAX_EVENTS);
+    } else if (ir._originExt && ir._startMs != null && !isNaN(ir._startMs)) {
       // Round-16b (owner): when the ORIGINATING employee placed this internal
       // queue call WHILE answering a captured inbound call (the internal
       // start nested in their answered talk-leg window, same ±5s slack as
       // the R11-N matcher -- the customer parked on hold), link that call so
       // the path drill can present the full context. UNIQUE match only; an
       // ambiguous or absent match leaves the record standalone.
-      if (ir._originExt && ir._startMs != null && !isNaN(ir._startMs)) {
-        var ctxMatches = agentBusy.filter(function (a) {
-          return a.ext === ir._originExt && a.root !== ir.callId
-            && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
-        });
-        if (ctxMatches.length === 1) ir.relatedCallId = ctxMatches[0].root;
-      }
-      records.push(ir);
+      var ctxMatches = agentBusy.filter(function (a) {
+        return a.ext === ir._originExt && a.root !== ir.callId
+          && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
+      });
+      if (ctxMatches.length === 1) ir.relatedCallId = ctxMatches[0].root;
     }
+    records.push(ir);
   });
   records.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });
   internalPending.forEach(function (rr) { delete rr._originExt; delete rr._startMs; });

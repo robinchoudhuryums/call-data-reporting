@@ -3774,3 +3774,29 @@ re-export.
 
 **WHERE I LEFT OFF:** increment 140 committed + pushed to `claude/broad-scan-8dgd6m`
 (4 commits ahead of main, un-PR'd — PR only when the owner asks).
+
+## Increment 141 — internal transfer paths reach the receiving dept (2026-08-24)
+
+Owner-approved reversal of the Round-16 drop, plus (increment 140b) the freshness
+weekend/holiday credit.
+
+- **Freshness credit**: the header pill AND the Overview pipeline banner now discount
+  weekend/company-holiday days (24h each) before the 36h staleness verdict, reusing the
+  watchdog's OPS-7 helper server-side and a mirrored client one. Friday's data no longer
+  reads red on Monday. Pinned by freshness-weekend.test.js (banner behaviorally, pill by
+  source tripwire — its staleness lives in the assembled-client IIFE).
+- **IT-1 internal transfer paths**: a uniquely-matched internal transfer-abandon group is
+  now WRITTEN (was dropped), linked via related_call_id, and prefixed with the reconstructed
+  origin hop (origin queue → answering agent, flagged origin/transfer, rendered "before
+  transfer"). Fixes the receiving dept's "↳ path" button resolving to not-captured — the DQE
+  queue-only sentinel renders that button for any abandon with wait > 60s, internal included.
+  Owner's preview on 08/21: 11 candidates, 10 unique, 0 ambiguous, 6 past the 60s threshold.
+- Tests 886 → 888; ci:ui gate passed twice; INV-16 green.
+- Blocks: `.cycle/blocks/141-internal-transfer-path-broad-implement.md`.
+
+Open (owner): deploy cdr-import + dashboard; verify a receiving-dept path drill once Neon is
+back; run backfillInboundCalls to give already-imported dates their records. Follow-on:
+CHAINED transfers (~9%, needs hop-following, previewInternalTransferChains scopes it).
+
+**WHERE I LEFT OFF:** increments 140b + 141 committed + pushed to `claude/broad-scan-8dgd6m`
+(2 commits ahead of merged main, un-PR'd — PR only when the owner asks).
