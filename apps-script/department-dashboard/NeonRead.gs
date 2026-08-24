@@ -61,7 +61,12 @@ function getDashboardNeonConn_(opts) {
   var host = p.getProperty('NEON_HOST');
   if (!host) { Logger.log('getDashboardNeonConn_: NEON_HOST not set.'); return null; }
   try {
-    var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB');
+    // Fail-fast timeouts (seconds): a HANGING connect (Neon usage-ceiling
+    // outage) otherwise burns the 6-min execution ceiling -- the kill skips
+    // catch blocks, so none of the "fall back on error" paths ever ran.
+    // Bounded failure lands in this catch and the designed fallbacks fire.
+    var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB')
+            + '?connectTimeout=10&socketTimeout=120&loginTimeout=10';
     return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
   } catch (e) {
     Logger.log('getDashboardNeonConn_ failed: ' + (e && e.message ? e.message : e));

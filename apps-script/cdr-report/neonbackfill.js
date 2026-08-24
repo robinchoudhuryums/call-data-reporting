@@ -27,7 +27,10 @@
 
 function getNeonConn_backfill() {
   var p   = PropertiesService.getScriptProperties();
-  var url = 'jdbc:postgresql://' + p.getProperty('NEON_HOST') + '/' + p.getProperty('NEON_DB');
+  // Fail-fast timeouts (seconds) -- same rationale as the other builders: a
+  // hanging connect must error quickly, not burn the 6-min ceiling.
+  var url = 'jdbc:postgresql://' + p.getProperty('NEON_HOST') + '/' + p.getProperty('NEON_DB')
+          + '?connectTimeout=10&socketTimeout=120&loginTimeout=10';
   return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
 }
 

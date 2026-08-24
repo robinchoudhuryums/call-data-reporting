@@ -1251,3 +1251,25 @@ When something looks wrong, before assuming a code bug, check:
     `getCoachingWorklist`/`updateCoachingFlagStatus`, un-hide the menu item,
     widen the email recipients — all surfaces were built so release is
     gate-swapping, not rebuilding. Pinned by `tests/unit/coaching.test.js`.
+
+49. **Inbound Calls tab export trigger — the heatmap's sheet fallback stays
+    fresh only if this runs.** The abandon heatmap degrades to the
+    `Inbound Calls` tab when Neon is unreachable
+    (`InboundReport.gs::inboundHeatmapSheetFallback_`), and that tab is a COPY
+    of Neon refreshed by `exportInboundCalls` — so an outage shows data only
+    through the last export run. Install the daily refresh from the CDR
+    Report spreadsheet: CDR Tools → "⏰ Daily Inbound Export Trigger" →
+    Install (runs `runInboundCallsExport_` at 9 AM script-TZ: incremental
+    export + retention prune, one `inboundExport` Pipeline Health row per
+    run; a Neon-down day is a LOG-ONLY failure row — expected during an
+    outage, never an email). **One-time after deploying the schema
+    extension** (cols 16–17, Call Start / Is Internal): run
+    `exportInboundCalls('<capture-start-ISO>', '<today-ISO>')` once from the
+    editor so historical rows gain the two new columns — until then old rows
+    have blank Call Start and fall out of the fallback heatmap (same rule as
+    Neon's pre-extension null `call_start` rows). Retention: the prune keeps
+    `INBOUND_EXPORT_KEEP_DAYS` days (Script Property, default 400) so the
+    tab and the fallback's tail read stay bounded. The fallback itself needs
+    no flag — it fires only when the Neon read fails, never caches, and the
+    panel caption discloses "data through <date>". Pinned by
+    `tests/unit/inbound-export.test.js` + `tests/unit/heatmap-fallback.test.js`.

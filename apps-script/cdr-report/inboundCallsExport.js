@@ -26,11 +26,19 @@
 // ============================================================================
 
 var INBOUND_EXPORT_SHEET = 'Inbound Calls';
+// Cols 16-17 (Call Start / Is Internal) were APPENDED for the dashboard's
+// heatmap sheet fallback (InboundReport.gs::inboundHeatmapSheetFallback_
+// reads them BY POSITION) -- append any future column after them, never
+// between. Call Start is a time-shaped string ("10:23:33", raw PST) and is
+// plain-text (@) formatted before every write, or Sheets coerces it to an
+// 1899-epoch time serial (the K-AC coercion class).
 var INBOUND_EXPORT_HEADERS = [
   'Call Date', 'Call ID', 'Insurer', 'Caller Hash', 'Dial-In', 'Disposition',
   'Abandon Stage', 'Abandoned On Hold', 'Hold Sec', 'Wait Sec',
-  'Entry Queue', 'Final Queue', 'Final Dept', '# Queues', '# Transfers'
+  'Entry Queue', 'Final Queue', 'Final Dept', '# Queues', '# Transfers',
+  'Call Start', 'Is Internal'
 ];
+var INBOUND_EXPORT_CALL_START_COL = 16;   // plain-texted every run (see above)
 var INBOUND_EXPORT_SEED_DAYS = 30;   // first-run lookback when the tab is empty
 
 function ic_isoToday_() {
@@ -109,6 +117,16 @@ function exportInboundCalls(fromIso, toIso) {
          .setFontWeight('bold').setBackground('#f3f4f6');
     sheet.setFrozenRows(1);
   }
+  // Schema upgrade for pre-extension tabs (15 cols): widen BEFORE any range
+  // past getMaxColumns is touched (a getRange past it THROWS, REP-10), then
+  // refresh the header row so the appended Call Start / Is Internal headers
+  // exist. Idempotent -- a current tab is untouched by the widen and the
+  // header rewrite is byte-identical.
+  if (sheet.getMaxColumns() < INBOUND_EXPORT_HEADERS.length) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(),
+                             INBOUND_EXPORT_HEADERS.length - sheet.getMaxColumns());
+  }
+  sheet.getRange(1, 1, 1, INBOUND_EXPORT_HEADERS.length).setValues([INBOUND_EXPORT_HEADERS]);
   var lastRow = sheet.getLastRow();
   var hasData = lastRow >= 2;
 
@@ -132,7 +150,7 @@ function exportInboundCalls(fromIso, toIso) {
   }
   if (startIso > endIso) {
     Logger.log('exportInboundCalls: nothing to refresh (start %s > end %s).', startIso, endIso);
-    return;
+    return { written: 0, replaced: 0 };
   }
 
   var conn = getNeonConn();
@@ -145,7 +163,8 @@ function exportInboundCalls(fromIso, toIso) {
       "COALESCE(c.caller_hash,''), COALESCE(c.dial_in_number,''), c.disposition, " +
       "COALESCE(c.abandon_stage,''), c.abandoned_on_hold, c.hold_seconds, c.wait_seconds, " +
       "COALESCE(c.entry_queue,''), COALESCE(c.final_queue,''), COALESCE(c.final_dept,''), " +
-      "c.num_queues, c.num_transfers) ORDER BY c.call_date, c.call_id), '[]')::text AS j " +
+      "c.num_queues, c.num_transfers, COALESCE(c.call_start,''), " +
+      "COALESCE(c.is_internal, FALSE)) ORDER BY c.call_date, c.call_id), '[]')::text AS j " +
       "FROM inbound_calls c " +
       "LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +
       "WHERE c.call_date BETWEEN ?::date AND ?::date";
@@ -162,7 +181,7 @@ function exportInboundCalls(fromIso, toIso) {
       // window -- an unexpectedly empty Neon result must not blank the
       // fallback copy.
       Logger.log('exportInboundCalls: no inbound_calls rows for %s..%s — sheet left untouched.', startIso, endIso);
-      return;
+      return { written: 0, replaced: 0 };
     }
     // Refresh-in-window: drop existing sheet rows for the DATES the fetch
     // actually returned (R8-E3 per-date replace) so the append below can't
@@ -176,6 +195,7 @@ function exportInboundCalls(fromIso, toIso) {
     // Normalize booleans/nulls for the sheet.
     var values = rows.map(function (r) {
       r[7] = r[7] === true ? 'TRUE' : (r[7] === false ? 'FALSE' : '');
+      r[16] = r[16] === true ? 'TRUE' : (r[16] === false ? 'FALSE' : '');   // Is Internal
       // D-3: queue/insurer/journey strings originate in the external feed --
       // neutralize a leading =/+/@ so a crafted name can't land as a live
       // formula in this tab (typeof guard: helper lives in dashboardCDR.js,
@@ -185,7 +205,20 @@ function exportInboundCalls(fromIso, toIso) {
         return (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(v) : v;
       });
     });
-    sheet.getRange(sheet.getLastRow() + 1, 1, values.length, INBOUND_EXPORT_HEADERS.length).setValues(values);
+    // Plain-text the Call Start column BEFORE the write or Sheets coerces the
+    // "10:23:33" strings to 1899-epoch time serials (the K-AC class). Two
+    // ranges: the full current height (so the post-append SORT can never move
+    // a time string onto an unformatted cell), plus -- after pre-expanding the
+    // grid so the append can't spill past getMaxRows unformatted (the
+    // buildDQE recurrence vector) -- the EXACT write range.
+    var writeStart = sheet.getLastRow() + 1;
+    sheet.getRange(2, INBOUND_EXPORT_CALL_START_COL, sheet.getMaxRows() - 1, 1)
+         .setNumberFormat('@');
+    var rowsShort = writeStart + values.length - 1 - sheet.getMaxRows();
+    if (rowsShort > 0) sheet.insertRowsAfter(sheet.getMaxRows(), rowsShort);
+    sheet.getRange(writeStart, INBOUND_EXPORT_CALL_START_COL, values.length, 1)
+         .setNumberFormat('@');
+    sheet.getRange(writeStart, 1, values.length, INBOUND_EXPORT_HEADERS.length).setValues(values);
     // Keep the tab chronological -- an explicit mid-history range would
     // otherwise leave its refreshed rows appended at the bottom. Same
     // post-write sort pattern the historical sheets use.
@@ -196,7 +229,96 @@ function exportInboundCalls(fromIso, toIso) {
     }
     Logger.log('exportInboundCalls: wrote %s rows for %s..%s (%s replaced; sheet now %s rows).',
                values.length, startIso, endIso, replaced, finalLastRow - 1);
+    return { written: values.length, replaced: replaced };
   } finally {
     try { conn.close(); } catch (ce) {}
   }
 }
+
+// ── Scheduled refresh (heatmap-sheet-fallback Phase 2) ───────────────────────
+// Keeps the fallback copy fresh without an operator run. Daily time-driven
+// trigger (menu-installed, the retention-prune pattern -- no *_ENABLED flag,
+// so it stays off the six-engine readiness matrix); each run logs ONE
+// `inboundExport` Pipeline Health row. Neon-down is the EXPECTED failure
+// here (usage ceiling / free-tier suspend): the copy just stays at its last
+// good date, so the failure path is log-only -- no email, ever. The prune
+// keeps the tab bounded (the daily append would otherwise grow it without
+// limit and slow every fallback read).
+
+var INBOUND_EXPORT_TRIGGER_HOUR = 9;          // script TZ (America/Chicago)
+var INBOUND_EXPORT_KEEP_DAYS_DEFAULT = 400;   // prune floor; INBOUND_EXPORT_KEEP_DAYS overrides
+
+/**
+ * Drops rows older than the keep window (INBOUND_EXPORT_KEEP_DAYS Script
+ * Property, default 400 days). The tab is date-sorted ascending, so the
+ * prune is a contiguous head block -- one deleteRows call. Returns the
+ * pruned count.
+ */
+function ic_pruneOldRows_(sheet) {
+  var keep = parseInt(PropertiesService.getScriptProperties()
+                        .getProperty('INBOUND_EXPORT_KEEP_DAYS'), 10);
+  if (!(keep > 0)) keep = INBOUND_EXPORT_KEEP_DAYS_DEFAULT;
+  var cutoffIso = ic_isoDaysAgo_(keep);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  var disp = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+  var n = 0;
+  while (n < disp.length) {
+    var d = ic_cellDateIso_(disp[n][0]);
+    if (d && d < cutoffIso) n++; else break;
+  }
+  if (n > 0) sheet.deleteRows(2, n);
+  return n;
+}
+
+/** Trigger handler: incremental export + prune, one Pipeline Health row. */
+function runInboundCallsExport_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var t0 = Date.now();
+  try {
+    var res = exportInboundCalls() || { written: 0, replaced: 0 };
+    var pruned = 0;
+    var sheet = ss.getSheetByName(INBOUND_EXPORT_SHEET);
+    if (sheet) pruned = ic_pruneOldRows_(sheet);
+    if (typeof logPipelineHealth_ === 'function') {
+      logPipelineHealth_(ss, {
+        step: 'inboundExport', status: 'success', rows: res.written,
+        durationMs: Date.now() - t0,
+        notes: res.replaced + ' replaced, ' + pruned + ' pruned',
+      });
+    }
+  } catch (e) {
+    if (typeof logPipelineHealth_ === 'function') {
+      logPipelineHealth_(ss, {
+        step: 'inboundExport', status: 'failure',
+        durationMs: Date.now() - t0,
+        notes: String((e && e.message) || e),
+      });
+    }
+    Logger.log('runInboundCallsExport_ failed (expected during a Neon outage): '
+               + ((e && e.message) || e));
+  }
+}
+
+function installInboundExportTrigger() {
+  uninstallInboundExportTrigger();
+  ScriptApp.newTrigger('runInboundCallsExport_')
+    .timeBased().everyDays(1).atHour(INBOUND_EXPORT_TRIGGER_HOUR).create();
+  Logger.log('Inbound export trigger installed (daily at %s:00 script-TZ).',
+             INBOUND_EXPORT_TRIGGER_HOUR);
+}
+
+function uninstallInboundExportTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var removed = 0;
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'runInboundCallsExport_') {
+      ScriptApp.deleteTrigger(triggers[i]);
+      removed++;
+    }
+  }
+  Logger.log('Inbound export trigger: removed %s existing trigger(s).', removed);
+}
+
+/** Editor/menu-callable one-shot (same body the trigger runs). */
+function runInboundCallsExportNow() { runInboundCallsExport_(); }

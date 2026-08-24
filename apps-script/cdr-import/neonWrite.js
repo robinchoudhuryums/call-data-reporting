@@ -21,7 +21,12 @@ function getNeonConn_write() {
   var p   = PropertiesService.getScriptProperties();
   var host = p.getProperty('NEON_HOST');
   if (!host) { Logger.log('Neon: NEON_HOST not configured — skipping.'); return null; }
-  var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB');
+  // Fail-fast timeouts (seconds): a hanging connect during a Neon outage
+  // otherwise burns the 6-min execution ceiling (the kill skips catch blocks,
+  // so no failure row / email / clean-skip ever ran). Bounded failure lands
+  // in getReachableNeonConn_'s catch and the writers skip cleanly.
+  var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB')
+          + '?connectTimeout=10&socketTimeout=120&loginTimeout=10';
   return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
 }
 

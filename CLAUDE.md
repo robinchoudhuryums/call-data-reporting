@@ -910,6 +910,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   spot-check shows the columns are off, that single constant is the knob.
   Pre-extension rows (null `call_start`) carry no time-of-day and are
   excluded; the panel hides itself silently on unavailable/unmapped/empty.
+  **Neon-down degrades to a SHEET FALLBACK, not a blank panel:** the
+  `Inbound Calls` tab (cols 16-17, Op State #49) is rebucketed with mirrored
+  SQL semantics incl. the two-arm dept attribution
+  (`inboundHeatmapSheetFallback_`; pinned by heatmap-fallback.test.js), NEVER
+  cached, disclosed via `meta.fallbackSource`/`fallbackThrough` + a panel
+  caption; the cell drill stays Neon-only (fallback cells non-drillable).
   **Cell drill:** any cell with at least one abandon is click-to-drill --
   `getInboundHeatmapCell({department, from, to, dow, slot})` (InboundReport.gs)
   lists that cell's individual abandoned calls (date, CST time, entry->final
@@ -1387,6 +1393,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   run; see "Neon write discipline" below.) `NEON_HOST`, `NEON_DB`,
   `NEON_USER`, `NEON_PASS` must be set in BOTH the CDR Report AND CDR
   Import project's Script Properties for Neon mirroring to work.
+  **Every Neon JDBC URL carries fail-fast timeouts**
+  (`connectTimeout/socketTimeout/loginTimeout`) — a HANGING connect during
+  an outage otherwise burns the 6-min execution ceiling, whose kill SKIPS
+  catch blocks, so none of the designed "fall back on error" paths run
+  (the class that silently ate a Daily Queue Report day).
+  `cross-file-pins.test.js` pins all five builders AND sweeps for unlisted
+  `Jdbc.getConnection` callsites — a new builder must carry the params.
 - **Neon write discipline (don't regress this — it caused a daily-import
   timeout).** The Neon mirror is the dominant cost of the daily import,
   and three rules in `neonWrite.js` (duplicated, INV-16) keep it from
@@ -2254,6 +2267,7 @@ items for anything it flags or doesn't cover.)
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; Phase A ships dark -- agents get access-denied until Phase B's pages exist)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; unset leaves it informational (and the figure is a FLOOR, so under-budget is not proof of headroom)
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install/arm from Admin ▾ → Coaching, first armed run emails one larger NEW-flag batch
+49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
 
 ## Cycle Workflow Config
 

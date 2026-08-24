@@ -10,7 +10,11 @@
 // own field-parsing helpers per INV-16.)
 function getNeonConn() {
   const p   = PropertiesService.getScriptProperties();
-  const url = `jdbc:postgresql://${p.getProperty('NEON_HOST')}/${p.getProperty('NEON_DB')}`;
+  // Fail-fast timeouts (seconds) -- a hanging connect during a Neon outage
+  // must error quickly, not burn the 6-min execution ceiling (whose kill
+  // skips the callers' catch blocks). Same params as the other builders.
+  const url = `jdbc:postgresql://${p.getProperty('NEON_HOST')}/${p.getProperty('NEON_DB')}`
+            + '?connectTimeout=10&socketTimeout=120&loginTimeout=10';
   return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
 }
 

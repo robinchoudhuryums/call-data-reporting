@@ -1367,7 +1367,7 @@ function getInboundHeatmap(req) {
   let conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
-    if (!conn) { out.meta.available = false; return out; }
+    if (!conn) return inboundHeatmapSheetFallback_(scope, out);
 
     const deptPred = inboundDeptPredicate_(scope.dept, scope.deptQueues);
     const dr = "c.call_date BETWEEN '" + scope.from + "'::date AND '" + scope.to + "'::date" + deptPred + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
@@ -1400,7 +1400,7 @@ function getInboundHeatmap(req) {
     // typeof-guarded like every other cross-file call here).
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0);
     rs.close(); stmt.close();
-    if (json == null) { out.meta.available = false; return out; }
+    if (json == null) return inboundHeatmapSheetFallback_(scope, out);
 
     const arr = JSON.parse(json);
     out.cells = Array.isArray(arr) ? arr.map(function (c) {
@@ -1413,8 +1413,7 @@ function getInboundHeatmap(req) {
     return out;
   } catch (e) {
     Logger.log('getInboundHeatmap failed (best-effort): ' + (e && e.message ? e.message : e));
-    out.meta.available = false;
-    return out;
+    return inboundHeatmapSheetFallback_(scope, out);
   } finally {
     if (conn) { try { conn.close(); } catch (ce) {} }
   }
@@ -1436,6 +1435,153 @@ function emptyInboundHeatmap_(scope) {
     },
     cells: [],
   };
+}
+
+// ── Heatmap SHEET FALLBACK (Neon-outage degradation) ─────────────────────────
+// When the Neon read fails (usage-ceiling outage, free-tier suspend,
+// unconfigured), the heatmap degrades to the 'Inbound Calls' export tab
+// (cdr-report/inboundCallsExport.js -- the fallback COPY of Neon
+// inbound_calls; cols 16-17, Call Start / Is Internal, exist for exactly this
+// reader and are read BY POSITION). The bucketing MIRRORS getInboundHeatmap's
+// SQL -- same INBOUND_HEATMAP_* constants, same call_start regex guard, same
+// weekday filter, same COALESCE(is_internal,FALSE)=FALSE exclusion, and the
+// same two-arm dept attribution as inboundDeptPredicate_ (ihRowInDept_ below;
+// tests/unit/heatmap-fallback.test.js pins the mirror with boundary
+// fixtures). Honest limits: the tab only holds dates exported BEFORE the
+// outage (meta.fallbackThrough discloses the ceiling), and the cell drill
+// stays Neon-only (its "↳ path" journey is irreducibly Neon), so the client
+// renders fallback cells non-drillable. Fallback payloads are NEVER cached --
+// a recovered Neon must not be masked for the TTL (the unavailable-uncached
+// rule extended to degraded payloads). A pre-extension tab (15 cols) or a
+// missing tab keeps the old behavior (available=false -> panel hides).
+
+var INBOUND_HEATMAP_FALLBACK_TAIL_ROWS_ = 4000;   // initial tail window (F-20 discipline)
+
+/**
+ * JS mirror of inboundDeptPredicate_'s two-arm attribution for one export-tab
+ * row (display values). Arm 1: an answered call abandoned ON HOLD attributes
+ * by final_dept against the dept's Final Dept Labels. Arm 2: everything else
+ * -- plus an on-hold call whose label is in NO dept's list (the union
+ * fallback) -- attributes by entry_queue against the dept's inbound queue
+ * union. Row positions: 6=Disposition, 8=Abandoned On Hold, 11=Entry Queue,
+ * 13=Final Dept (1-based).
+ */
+function ihRowInDept_(row, qSet, labels, allLabels) {
+  var disposition = String(row[5] == null ? '' : row[5]).trim().toLowerCase();
+  var onHold = String(row[7] == null ? '' : row[7]).trim().toUpperCase() === 'TRUE';
+  var isOHA = disposition === 'answered' && onHold;
+  var fd = String(row[12] == null ? '' : row[12]).trim().toLowerCase();
+  var eq = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
+  var labelMatch = isOHA && labels.indexOf(fd) !== -1;
+  var unmappedLabel = allLabels.length ? allLabels.indexOf(fd) === -1 : true;
+  var entryMatch = (!isOHA || unmappedLabel) && qSet[eq] === true;
+  return labelMatch || entryMatch;
+}
+
+/**
+ * Reads the export tab's rows for [scope.from, scope.to] and buckets them
+ * into heatmap cells. Returns { cells, through } or null when the tab is
+ * missing / empty / pre-extension (no Call Start column). The col-A date
+ * read is a widening TAIL scan -- the tab is date-sorted ascending, so a
+ * recent window costs O(recent), never a whole-column scan of a years-deep
+ * tab (the F9 class).
+ */
+function ihSheetHeatmapCells_(scope) {
+  var ss = openSpreadsheet_();
+  var sheet = ss.getSheetByName('Inbound Calls');
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  if (sheet.getMaxColumns() < 17 || sheet.getLastColumn() < 17) return null;
+
+  var win = INBOUND_HEATMAP_FALLBACK_TAIL_ROWS_;
+  var startRow, dates;
+  for (;;) {
+    startRow = Math.max(2, lastRow - win + 1);
+    dates = sheet.getRange(startRow, 1, lastRow - startRow + 1, 1).getDisplayValues();
+    var oldest = ncCellDateIso_(dates[0][0]);
+    if (startRow === 2 || (oldest && oldest < scope.from)) break;
+    win *= 4;
+  }
+  var first = -1, last = -1, through = null;
+  for (var i = 0; i < dates.length; i++) {
+    var d = ncCellDateIso_(dates[i][0]);
+    if (!d) continue;
+    if (through === null || d > through) through = d;
+    if (d >= scope.from && d <= scope.to) { if (first < 0) first = i; last = i; }
+  }
+  if (first < 0) return { cells: [], through: through };
+  var grid = sheet.getRange(startRow + first, 1, last - first + 1, 17).getDisplayValues();
+
+  var deptFilter = !!scope.dept;
+  var qSet = {};
+  (scope.deptQueues || []).forEach(function (q) {
+    qSet[String(q).trim().toLowerCase()] = true;
+  });
+  // Same guarded accessors (and the same defaults) as inboundDeptPredicate_;
+  // lowercasing is idempotent on the accessors' already-lowercase output.
+  var labels = deptFilter
+    ? ((typeof getFinalDeptLabels_ === 'function')
+        ? getFinalDeptLabels_(scope.dept)
+        : [String(scope.dept).trim().toLowerCase()])
+      .map(function (l) { return String(l).trim().toLowerCase(); })
+    : [];
+  var allLabels = ((typeof getAllFinalDeptLabels_ === 'function')
+    ? getAllFinalDeptLabels_() : [])
+    .map(function (l) { return String(l).trim().toLowerCase(); });
+
+  var winStartSecs = INBOUND_HEATMAP_WINDOW_START_HOUR * 3600;
+  var winEndSecs   = INBOUND_HEATMAP_WINDOW_END_HOUR * 3600;
+  var slotSecs     = INBOUND_HEATMAP_SLOT_MINUTES * 60;
+  var shiftSecs    = INBOUND_HEATMAP_CST_SHIFT_HOURS * 3600;
+  var cellMap = {};
+  for (var r = 0; r < grid.length; r++) {
+    var row = grid[r];
+    var iso = ncCellDateIso_(row[0]);
+    if (!iso || iso < scope.from || iso > scope.to) continue;
+    if (String(row[16] == null ? '' : row[16]).trim().toUpperCase() === 'TRUE') continue;
+    var cs = String(row[15] == null ? '' : row[15]).trim();
+    if (!/^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$/.test(cs)) continue;
+    // ISODOW from the ISO date (UTC parse -- date-only strings are TZ-free).
+    var wd = new Date(iso + 'T00:00:00Z').getUTCDay();
+    var dow = wd === 0 ? 7 : wd;
+    if (dow > 5) continue;
+    var p = cs.split(':');
+    // % 86400 mirrors Postgres ::time + interval wrapping past midnight.
+    var secs = (((+p[0]) * 3600 + (+p[1]) * 60 + (+p[2])) + shiftSecs) % 86400;
+    if (secs < winStartSecs || secs >= winEndSecs) continue;
+    if (deptFilter && !ihRowInDept_(row, qSet, labels, allLabels)) continue;
+    var slot = Math.floor((secs - winStartSecs) / slotSecs);
+    var key = dow + ':' + slot;
+    var c = cellMap[key] || (cellMap[key] = { dow: dow, slot: slot, calls: 0, abandoned: 0 });
+    c.calls++;
+    if (String(row[5] == null ? '' : row[5]).trim().toLowerCase() === 'abandoned') c.abandoned++;
+  }
+  var cells = Object.keys(cellMap).map(function (k) { return cellMap[k]; });
+  return { cells: cells, through: through };
+}
+
+/**
+ * Fills `out` from the sheet fallback (best-effort). On any failure --
+ * including a missing/pre-extension tab -- degrades to the pre-fallback
+ * behavior (available=false, panel hides). Never caches (see the block
+ * comment above).
+ */
+function inboundHeatmapSheetFallback_(scope, out) {
+  try {
+    var res = ihSheetHeatmapCells_(scope);
+    if (!res) { out.meta.available = false; return out; }
+    out.cells = res.cells;
+    out.meta.rows = res.cells.reduce(function (s, c) { return s + c.calls; }, 0);
+    out.meta.fallbackSource = 'sheet';
+    out.meta.fallbackThrough = res.through || null;
+    return out;
+  } catch (e) {
+    Logger.log('inboundHeatmapSheetFallback_ failed (best-effort): '
+               + (e && e.message ? e.message : e));
+    out.meta.available = false;
+    return out;
+  }
 }
 
 // ---------------------------------------------------------------------------

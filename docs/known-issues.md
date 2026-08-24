@@ -1552,3 +1552,27 @@ bullet); this incident adds a third reason not to "harmonize" them.
 display-name setting on FOP + Denials should be compared against a working
 queue (Manual Mobility) and restored. With it restored, the fallback goes
 dormant as insurance.
+
+## Heatmap sheet fallback: honest limits (2026-08-24)
+
+The abandon heatmap degrades to the `Inbound Calls` tab when its Neon read
+fails (`InboundReport.gs::inboundHeatmapSheetFallback_`, Operator State #49).
+Three limits are BY CONSTRUCTION, not bugs:
+
+- **It shows only dates exported before the outage.** The tab refreshes FROM
+  Neon (`exportInboundCalls`), so during an outage it cannot be topped up —
+  and outage days were never captured to Neon at all (`inbound_calls` has no
+  sheet primary), so no fallback can show them until the post-recovery
+  backfills run. The panel caption discloses "data through <date>".
+- **Fallback cells are not drillable.** The cell drill and its "↳ path"
+  journey are irreducibly Neon (`getCallJourney`), so the client suppresses
+  the drill affordance on `meta.fallbackSource` payloads.
+- **The attribution mirror is a hand-kept duplicate** of
+  `inboundDeptPredicate_`'s two-arm SQL (the dataFilters-sidebar drift
+  class). `tests/unit/heatmap-fallback.test.js` pins the mirror with
+  boundary fixtures — change either side only with that suite in hand.
+
+Rows exported before the cols 16–17 schema extension have blank Call Start
+and fall out of the fallback (same rule as Neon's pre-extension null
+`call_start` rows); the one-time historical re-export in Operator State #49
+heals them.
