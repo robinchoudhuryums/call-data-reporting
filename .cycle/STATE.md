@@ -3800,3 +3800,28 @@ CHAINED transfers (~9%, needs hop-following, previewInternalTransferChains scope
 
 **WHERE I LEFT OFF:** increments 140b + 141 committed + pushed to `claude/broad-scan-8dgd6m`
 (2 commits ahead of merged main, un-PR'd — PR only when the owner asks).
+
+## Increment 142 — follow-on: client holiday-check consolidation (2026-08-24)
+
+`/broad-implement follow-on items`. Most of the standing follow-on list turned out to be
+owner-gated or measurement-blocked; one item was genuinely actionable.
+
+- **FO-1 (done)**: the company-holiday range test had FOUR inline client copies and had
+  already drifted (script-6-ir guarded malformed entries, the other three did not). All now
+  call `isCompanyHolidayIso_` (script-1-core), which adopted the guard. A cross-file-pins
+  tripwire fails if a fifth copy appears — nothing behavioral can see this class, since every
+  copy renders fine and is only wrong on a holiday.
+- **FO-2 (blocked, not built)**: chained internal transfers. `previewInternalTransferChains`
+  is a neighborhood-scan CLASSIFIER (one-hop / two-hop / internal-origin / via-queue /
+  no-source), not a resolver — and a `no-source` case cannot be fixed by hop-following at any
+  depth. One unclassified sample + Neon down = guessing. UNBLOCK: run that diagnostic (no Neon
+  needed) and bring the tally.
+- Everything else on the list is an owner ruling (sub-60s entry point, inbound-lite fallback,
+  Direct dal-cutover, more fallbacks) or needs data that does not exist yet (egress levers —
+  EA-1 shipped yesterday and Neon is down, so the ranking is empty).
+- Tests 888 → 889; ci:ui full gate passed (load-bearing: the unit suite proves the assembled
+  IIFE parses, only the gate proves a cross-fragment identifier resolves).
+- Block: `.cycle/blocks/142-follow-on-holiday-dedup-broad-implement.md`.
+
+**WHERE I LEFT OFF:** increment 142 committed + pushed to `claude/broad-scan-8dgd6m`
+(3 commits ahead of merged main, un-PR'd — PR only when the owner asks).

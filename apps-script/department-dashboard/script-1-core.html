@@ -1070,14 +1070,23 @@
   /**
    * Company-holiday test against the server-injected ranges
    * (window.__COMPANY_HOLIDAYS__, renderDashboard_ -- the same ranges the
-   * server's countWorkingDays_ excludes). NB three older inline copies of
-   * this loop still live in script-2-chrome / -6-ir / -11-qcd-boot; this is
-   * the shared one for new code.
+   * server's countWorkingDays_ excludes).
+   *
+   * The SINGLE client-side reader of that global: script-2-chrome
+   * (workingDaysBetween_), script-6-ir (the INV-28 prior window) and
+   * script-11-qcd-boot (prevWorkdayIso_) each had their own inline copy of
+   * this loop, and they had already drifted -- one guarded malformed range
+   * entries, the others did not. cross-file-pins.test.js fails if a fifth
+   * copy appears.
    */
   function isCompanyHolidayIso_(iso) {
     var ranges = (typeof window !== 'undefined' && window.__COMPANY_HOLIDAYS__) || [];
     for (var i = 0; i < ranges.length; i++) {
-      if (iso >= ranges[i].from && iso <= ranges[i].to) return true;
+      var r = ranges[i];
+      // The malformed-entry guard comes from the (previously) most defensive
+      // of the four inline copies this consolidated -- a consolidation keeps
+      // the STRONGEST behavior, never the weakest.
+      if (r && r.from && r.to && iso >= r.from && iso <= r.to) return true;
     }
     return false;
   }
