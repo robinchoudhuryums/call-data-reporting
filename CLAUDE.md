@@ -97,7 +97,7 @@ bash scripts/check-duplicated-files.sh
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~70 suites pin the invariants, the report
+# Non-zero exit on failure. ~77 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -168,7 +168,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# SIX ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# SEVEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
@@ -183,7 +183,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # flag hand-set), drive-journey.js (the "↳ path" call-path
 # drill -- the origin line, the OUTBOUND call reached through the related-call
 # link, and the not-entitled refusal; all three were unit-pinned but had never
-# RENDERED until this driver clicked one, the dept-selector class of bug),
+# RENDERED until this driver clicked one, the dept-selector class of bug; the
+# drill was unreachable by any driver until getCallJourney was mocked, since
+# drive-smoke's unmocked-RPC check would have flagged the call),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
@@ -727,7 +729,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   that record passes the unchanged F-4 gate on their own dept. Full ruling +
   what is disclosed: docs/known-issues.md. Editor diagnostics
   `previewInternalTransferPaths` / `previewInternalTransferChains` scope it
-  (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4). Pinned by
+  (CDR Tools menu / `TRANSFER_PREVIEW_DATE` property; R11-N4), and
+  `previewOutboundAssistLinks` validates the Step-4 link by running the REAL
+  record builder over a Call_Legs sheet (never a parallel implementation --
+  the chain diagnostic's hand-written rule is what once "resolved" a
+  temporally impossible chain). Pinned by
   `tests/unit/inbound-calls.test.js`.
 - **Caller Lookup** (`CallerLookup.gs`, route `#/admin/caller-lookup`,
   admin-only) is the FULL communication history: the entered number is
