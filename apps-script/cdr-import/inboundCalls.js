@@ -80,6 +80,36 @@ function icOriginDeptLabel_(leg) {
   return d.slice(0, IC_JOURNEY_NAME_MAX);
 }
 
+// Does this leg belong to the ORIGINATOR of an internal-origin call?
+//
+// Why this exists: a CDR "root" is a leg TREE, not a call. A warm transfer
+// puts two people's legs under one root -- the owner's 2026-08-21 sample has
+// Margie's leg into A_Q_FieldOps and Marie's Outgoing leg to the customer
+// under root 1783983008517. `answered` for an internal-origin record used to
+// be "any talk leg in the tree said Answered", so a SIBLING agent's external
+// customer leg could mark a genuinely-abandoned internal assist as answered --
+// silently shrinking the one population the path drill serves (measured
+// 2026-08-24: 6 of 28 outbound-linked assists sat on a shared tree, and 170 of
+// 185 internal records read `answered`).
+//
+// Two arms, because the delivery leg does not always carry the originator's
+// extension in CALLER: the ext arm matches the plain agent-to-agent shape
+// (`caller 363 -> callee 279`), the NAME arm rescues the queue-fronted shape
+// (`caller "CallQueue (144)"` with CALLER_NAME still the originator). Either
+// suffices; an external Outgoing leg is excluded outright, since the party
+// answering an internal queue call is always an internal extension.
+function icLegFromOriginator_(leg, originExt, originName) {
+  if (!leg) return false;
+  if (String(leg[IC_COL.DIRECTION] == null ? '' : leg[IC_COL.DIRECTION]).trim() === 'Outgoing'
+      && icExternalNumber_(leg[IC_COL.CALLEE])) return false;
+  if (originExt && icDigits_(leg[IC_COL.CALLER]) === originExt) return true;
+  if (originName) {
+    var cn = String(leg[IC_COL.CALLER_NAME] == null ? '' : leg[IC_COL.CALLER_NAME]).trim();
+    if (cn && cn === originName) return true;
+  }
+  return false;
+}
+
 // IMP-1: must match every live queue identity, not just the A_Q_* family.
 // "Backup CSR" is a first-class queue in this install (the DQE pipeline's
 // queue regex is (A_Q_\w+|Backup CSR) -- buildDQEHistoricalData.js). With
@@ -367,16 +397,53 @@ function buildInboundCallRecords_(rawRows) {
     // Disposition. Answered = a real talk leg (Talk>0) marked Answered. The
     // zero-talk queue/IVR/recording legs (which also say "Answered") are
     // excluded by the Talk>0 gate.
+    //
+    // For an INTERNAL-ORIGIN record the talk leg must also be the
+    // ORIGINATOR'S (icLegFromOriginator_) -- one root can hold two people's
+    // calls, and a sibling's leg is not an answer to this requester's queue
+    // call. External-inbound records keep the whole-tree test unchanged: their
+    // legs all descend from the one incoming caller.
+    //
+    // WHO the originator is comes from the earliest QUEUE leg, not legs[0]:
+    // on a shared tree legs[0] can be a colleague's leg that merely started
+    // first (the 2026-08-21 sample's Outgoing leg predates the queue leg by
+    // seconds), which would scope the test to the wrong person and name the
+    // wrong requester in the drill. The leg that dialed the queue IS the one
+    // that placed this call. Timing fields (callStart/callDate/waitSeconds)
+    // deliberately still key on legs[0] -- this changes identity, not the
+    // record's clock.
+    var originLeg = legs[0];
+    if (isInternalOrigin) {
+      for (var ol = 0; ol < legs.length; ol++) {
+        if (icIsQueueName_(legs[ol][IC_COL.CALLEE_NAME])) { originLeg = legs[ol]; break; }
+      }
+    }
+    var originExtForDisp = isInternalOrigin ? icDigits_(originLeg[IC_COL.CALLER]) : '';
+    var originNameForDisp = isInternalOrigin ? icOriginAgentName_(originLeg) : null;
     var answered = legs.some(function (l) {
-      return icTimeToSec_(l[IC_COL.TALK]) > 0
-          && String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() === 'Answered';
+      if (icTimeToSec_(l[IC_COL.TALK]) <= 0
+          || String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered') {
+        return false;
+      }
+      return isInternalOrigin
+        ? icLegFromOriginator_(l, originExtForDisp, originNameForDisp)
+        : true;
     });
-    var abandonLeg = null;
+    // Same shared-tree hazard on the abandon side: PREFER the originator's own
+    // abandoned leg (its ABANDONED/Departments cells are what abandonStage
+    // reads), falling back to the unscoped search so a fan-out leg carrying the
+    // flag can never cost us an abandon. The fallback is safe because
+    // abandonLeg is only consulted when nothing answered.
+    var abandonLeg = null, abandonLegAny = null;
     for (var a = 0; a < legs.length; a++) {
-      if (String(legs[a][IC_COL.ABANDONED] == null ? '' : legs[a][IC_COL.ABANDONED]).trim() === 'Abandoned') {
+      if (String(legs[a][IC_COL.ABANDONED] == null ? '' : legs[a][IC_COL.ABANDONED]).trim() !== 'Abandoned') continue;
+      if (!abandonLegAny) abandonLegAny = legs[a];
+      if (!isInternalOrigin
+          || icLegFromOriginator_(legs[a], originExtForDisp, originNameForDisp)) {
         abandonLeg = legs[a]; break;
       }
     }
+    if (!abandonLeg) abandonLeg = abandonLegAny;
     var abandoned = !answered && !!abandonLeg;
     var disposition = answered ? 'answered' : (abandoned ? 'abandoned' : 'missed');
     var abandonStage = null;
@@ -470,7 +537,7 @@ function buildInboundCallRecords_(rawRows) {
       callId:          root,
       isInternal:      isInternalOrigin,
       // Scratch for the related-call cross-ref (deleted before return):
-      _originExt:      isInternalOrigin ? icDigits_(legs[0][IC_COL.CALLER]) : null,
+      _originExt:      isInternalOrigin ? (originExtForDisp || null) : null,
       _startMs:        isInternalOrigin ? firstStart : null,
       callDate:        callDate,
       callStart:       icIsoTime_(firstStart),
@@ -496,8 +563,8 @@ function buildInboundCallRecords_(rawRows) {
       // (Market Activity)"). Employee name + the raw CDR org label, same PHI
       // class as firstAgent; a phone-shaped caller name is never stored.
       // NULL on every externally-originated record, so nothing else moves.
-      originAgent:     isInternalOrigin ? icOriginAgentName_(legs[0]) : null,
-      originDept:      isInternalOrigin ? icOriginDeptLabel_(legs[0]) : null,
+      originAgent:     isInternalOrigin ? originNameForDisp : null,
+      originDept:      isInternalOrigin ? icOriginDeptLabel_(originLeg) : null,
       numQueues:       queues.length,
       numTransfers:    Math.max(0, queues.length - 1),
       journey:         icBuildJourney_(legs)
@@ -1813,7 +1880,18 @@ function previewOutboundAssistLinks(dateIso) {
   var records = buildInboundCallRecords_(rows) || [];
   var internal = records.filter(function (r) { return r.isInternal; });
 
-  var nOut = 0, nIn = 0, nNone = 0;
+  // A CDR root is a leg TREE, not a call: a warm transfer can put an internal
+  // assist and a colleague's external leg under ONE root, so that root is
+  // written to inbound_calls (is_internal) AND captured by outbound_calls. The
+  // link's temporal claim still holds -- outboundBusy keys on the outgoing
+  // leg's own caller ext -- but the id no longer names one thing, so COUNT the
+  // overlap on every run instead of eyeballing it (measured 6 of 28 on
+  // 2026-08-24, all in the answered population, none among the abandons the
+  // drill actually serves).
+  var internalIds = {};
+  internal.forEach(function (r) { internalIds[r.callId] = r; });
+
+  var nOut = 0, nIn = 0, nNone = 0, shared = [];
   internal.forEach(function (r) {
     var kind = r.relatedCallKind || null;
     var who = (r.originAgent || '(unknown requester)')
@@ -1824,10 +1902,20 @@ function previewOutboundAssistLinks(dateIso) {
       + ' | by ' + who;
     if (kind === 'outbound') {
       nOut++;
+      var alsoAssist = internalIds[r.relatedCallId];
+      if (alsoAssist) shared.push(r);
       Logger.log(head + '\n   => LINKED to OUTBOUND call ' + r.relatedCallId
         + ' -- the requester was on that call at the assist time. '
         + 'Spot-check: the outbound group must show them Answered with talk>0 spanning '
-        + (r.callStart || 'the assist') + '.');
+        + (r.callStart || 'the assist') + '.'
+        + (alsoAssist
+            ? '\n   ** SHARED ROOT: ' + r.relatedCallId + ' is ALSO an assist record in this run'
+              + ' (@ ' + (alsoAssist.callStart || '--:--:--')
+              + ' by ' + (alsoAssist.originAgent || '(unknown)') + ' -> '
+              + (alsoAssist.entryQueue || '(no queue)') + ').'
+              + ' One leg tree, two calls -- the link is still leg-backed, but that id'
+              + ' names a row in BOTH inbound_calls and outbound_calls.'
+            : ''));
     } else if (kind === 'inbound') {
       nIn++;
       Logger.log(head + '\n   => linked to INBOUND call ' + r.relatedCallId
@@ -1842,6 +1930,16 @@ function previewOutboundAssistLinks(dateIso) {
   Logger.log('previewOutboundAssistLinks(%s): %s internal assist record(s) -- '
     + '%s linked to an OUTBOUND call, %s to an inbound call, %s unlinked.',
     iso, internal.length, nOut, nIn, nNone);
+  var nAband = internal.filter(function (r) { return r.disposition === 'abandoned'; }).length;
+  var nAbandLinked = internal.filter(function (r) {
+    return r.disposition === 'abandoned' && r.relatedCallKind;
+  }).length;
+  Logger.log('  Drill population: %s abandoned (%s of them linked to a requester context). '
+    + 'The rest are answered/missed assists no surface drills -- the receiving dept\'s '
+    + 'path button hangs off a DQE queue-only ABANDON.', nAband, nAbandLinked);
+  Logger.log('  Shared-root overlap: %s of %s OUTBOUND links point at a root that is ALSO an '
+    + 'assist record here (one leg tree holding two people\'s calls). Above ~0 this is '
+    + 'expected on warm transfers; a rise means more trees are merging.', shared.length, nOut);
   Logger.log('  Nothing was written. Every figure above is what the next import '
     + 'WOULD store for this date (it runs the real record builder).');
 }
