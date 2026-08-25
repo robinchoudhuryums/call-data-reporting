@@ -10,11 +10,15 @@
 // own field-parsing helpers per INV-16.)
 function getNeonConn() {
   const p   = PropertiesService.getScriptProperties();
-  // Fail-fast timeouts (seconds) -- a hanging connect during a Neon outage
-  // must error quickly, not burn the 6-min execution ceiling (whose kill
-  // skips the callers' catch blocks). Same params as the other builders.
-  const url = `jdbc:postgresql://${p.getProperty('NEON_HOST')}/${p.getProperty('NEON_DB')}`
-            + '?connectTimeout=10&socketTimeout=120&loginTimeout=10';
+  // NO connect/socket/login timeout params here: Apps Script's JDBC service
+  // REJECTS them outright -- "The following connection properties are
+  // unsupported: connectTimeout,socketTimeout,loginTimeout" -- so adding them
+  // made EVERY Neon connection fail instantly across all three projects
+  // (shipped 2026-08-24, caught in production the next day). The hanging-connect
+  // problem they were meant to bound is real but NOT solvable this way; bound
+  // STATEMENTS with stmt.setQueryTimeout(seconds) instead, which the platform
+  // does support. cross-file-pins.test.js fails if the params come back.
+  const url = `jdbc:postgresql://${p.getProperty('NEON_HOST')}/${p.getProperty('NEON_DB')}`;
   return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
 }
 

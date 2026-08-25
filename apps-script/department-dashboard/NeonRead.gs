@@ -61,12 +61,15 @@ function getDashboardNeonConn_(opts) {
   var host = p.getProperty('NEON_HOST');
   if (!host) { Logger.log('getDashboardNeonConn_: NEON_HOST not set.'); return null; }
   try {
-    // Fail-fast timeouts (seconds): a HANGING connect (Neon usage-ceiling
-    // outage) otherwise burns the 6-min execution ceiling -- the kill skips
-    // catch blocks, so none of the "fall back on error" paths ever ran.
-    // Bounded failure lands in this catch and the designed fallbacks fire.
-    var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB')
-            + '?connectTimeout=10&socketTimeout=120&loginTimeout=10';
+    // NO connect/socket/login timeout params here: Apps Script's JDBC service
+    // REJECTS them outright -- "The following connection properties are
+    // unsupported: connectTimeout,socketTimeout,loginTimeout" -- so adding them
+    // made EVERY Neon connection fail instantly across all three projects
+    // (shipped 2026-08-24, caught in production the next day). The hanging-connect
+    // problem they were meant to bound is real but NOT solvable this way; bound
+    // STATEMENTS with stmt.setQueryTimeout(seconds) instead, which the platform
+    // does support. cross-file-pins.test.js fails if the params come back.
+    var url = 'jdbc:postgresql://' + host + '/' + p.getProperty('NEON_DB');
     return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
   } catch (e) {
     Logger.log('getDashboardNeonConn_ failed: ' + (e && e.message ? e.message : e));
