@@ -644,6 +644,37 @@ keep the capture-time link, drop the `kind='outbound'` branch from
 `tests/unit/heatmap-cell-drill.test.js` (Step 4 block) -- including that no
 link means no access however permissive the dept gate is.
 
+### Apps Script JDBC rejects connection-timeout properties (shipped + reverted, 2026-08-25)
+
+`?connectTimeout=10&socketTimeout=120&loginTimeout=10` was added to every Neon
+JDBC URL on 2026-08-24 to stop a hanging connect from burning the 6-minute
+execution ceiling. Apps Script's JDBC service does not accept those properties.
+It throws:
+
+> The following connection properties are unsupported:
+> connectTimeout,socketTimeout,loginTimeout
+
+so `Jdbc.getConnection` failed on EVERY call, in all three projects, from the
+moment it deployed. The symptom in production was not an outage banner but a
+**slow one**: the fallbacks all worked, so the Daily Call Queue Report still
+sent and the Direct report still rendered from its sheet — one
+`getQcdAllDepartments` execution ran 314 s while the log filled with
+`getDashboardNeonConn_ failed` every ~30 s. Reverted 2026-08-25.
+
+**Why nothing caught it.** The unit shim's `Jdbc` mock accepts any URL, and the
+`ci:ui` gate never touches Neon; the validation lives only in Google's runtime.
+The tripwire that required the params was inverted to FORBID them, which is the
+only part of this a test can hold.
+
+**The underlying problem is still open.** A connect that hangs still burns the
+ceiling, and that kill skips catch blocks, so the designed error fallbacks
+never run — the class that silently cost a Daily Queue Report day. What IS
+supported is statement-level `stmt.setQueryTimeout(seconds)` (already used by
+`getReachableNeonConn_`'s 5 s probe); there is no supported connect-level
+timeout. Any future attempt needs a platform-supported mechanism — and, given
+this, a staged rollout: one project, verified against a live connection, before
+all three.
+
 ### CallRecording legs, and "the agent was on a call" is not a callee-side question (2026-08-24)
 
 Two raw-feed shapes that made a transfer-abandon look like an unexplained

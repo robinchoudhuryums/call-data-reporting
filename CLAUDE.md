@@ -1444,13 +1444,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   run; see "Neon write discipline" below.) `NEON_HOST`, `NEON_DB`,
   `NEON_USER`, `NEON_PASS` must be set in BOTH the CDR Report AND CDR
   Import project's Script Properties for Neon mirroring to work.
-  **Every Neon JDBC URL carries fail-fast timeouts**
-  (`connectTimeout/socketTimeout/loginTimeout`) — a HANGING connect during
-  an outage otherwise burns the 6-min execution ceiling, whose kill SKIPS
-  catch blocks, so none of the designed "fall back on error" paths run
-  (the class that silently ate a Daily Queue Report day).
-  `cross-file-pins.test.js` pins all five builders AND sweeps for unlisted
-  `Jdbc.getConnection` callsites — a new builder must carry the params.
+  **NEVER put `connectTimeout` / `socketTimeout` / `loginTimeout` on a Neon
+  JDBC URL.** Apps Script's JDBC service REJECTS them ("The following
+  connection properties are unsupported: …"), so instead of bounding a hang
+  they make EVERY connection fail instantly — shipped 2026-08-24 to bound a
+  hanging connect, caught in production the next day with all three projects
+  cut off from Neon. `cross-file-pins.test.js` now pins their ABSENCE across
+  all six builders and sweeps for unlisted `Jdbc.getConnection` callsites.
+  Bound STATEMENTS with `stmt.setQueryTimeout(seconds)` (what
+  `getReachableNeonConn_`'s 5 s probe already does) — the platform supports
+  that. **The hanging-connect problem is therefore still OPEN**: a connect
+  that hangs can still burn the 6-min ceiling, whose kill SKIPS catch blocks,
+  so none of the designed "fall back on error" paths run (the class that
+  silently ate a Daily Queue Report day). Any future attempt needs a
+  platform-supported mechanism, not URL properties.
 - **Neon write discipline (don't regress this — it caused a daily-import
   timeout).** The Neon mirror is the dominant cost of the daily import,
   and three rules in `neonWrite.js` (duplicated, INV-16) keep it from

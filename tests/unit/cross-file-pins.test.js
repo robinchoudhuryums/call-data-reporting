@@ -474,32 +474,41 @@ test('F11: every QCD_SHEET_ONLY_ALLOWED entry still describes a real sheet reade
   });
 });
 
-// ── JDBC fail-fast timeouts (heatmap-sheet-fallback Phase 0) ─────────────────
-// A hanging Neon connect during an outage burns the 6-min execution ceiling
-// -- and the kill SKIPS catch blocks, so none of the designed "fall back on
-// error" paths (incl. the heatmap sheet fallback) ever runs. Every JDBC URL
-// builder must carry connect/socket/login timeouts so an outage degrades
-// into a fast error instead of a silent hang. The four builders live in
-// three shapes (dashboard read, INV-16 writer pair, cdr-report read); a new
-// `Jdbc.getConnection` callsite must join this list.
-test('every Neon JDBC URL carries fail-fast timeouts', function () {
+// ── JDBC connection properties: Apps Script REJECTS timeout params ─────────
+// This pin is INVERTED from what it originally asserted, and the inversion is
+// the finding. Adding `?connectTimeout=..&socketTimeout=..&loginTimeout=..` to
+// the Neon JDBC URLs was meant to stop a hanging connect from burning the
+// 6-min execution ceiling. Apps Script's JDBC service does not accept those
+// properties -- it throws "The following connection properties are
+// unsupported: connectTimeout,socketTimeout,loginTimeout" -- so instead of
+// bounding the hang it made EVERY Neon connection fail instantly, in all three
+// projects, until it was caught in production the next day.
+//
+// The unit suite could not have caught it: the shim's Jdbc mock accepts any
+// URL, and the real validation lives in Google's runtime. What a test CAN do
+// is stop the same idea being re-applied, so this asserts the params are
+// ABSENT and says why. Bound STATEMENTS with stmt.setQueryTimeout(seconds)
+// (which getReachableNeonConn_'s probe already does) -- that the platform
+// supports; there is no supported connect-level timeout.
+test('no Neon JDBC URL carries connect/socket/login timeout properties', function () {
   const JDBC_FILES = [
-    ['apps-script/department-dashboard/NeonRead.gs', null],
-    ['apps-script/cdr-report/neonWrite.js', null],
-    ['apps-script/cdr-import/neonWrite.js', null],
-    ['apps-script/cdr-report/dbHistorical.js', null],
-    ['apps-script/cdr-report/neonbackfill.js', null],
-    ['apps-script/department-dashboard/OrphanFix.gs', null],
+    'apps-script/department-dashboard/NeonRead.gs',
+    'apps-script/cdr-report/neonWrite.js',
+    'apps-script/cdr-import/neonWrite.js',
+    'apps-script/cdr-report/dbHistorical.js',
+    'apps-script/cdr-report/neonbackfill.js',
+    'apps-script/department-dashboard/OrphanFix.gs',
   ];
-  JDBC_FILES.forEach(function (pair) {
-    const src = read(pair[0]);
-    assert.ok(/jdbc:postgresql/.test(src), pair[0] + ' no longer builds a JDBC URL -- drop it from this pin.');
-    assert.ok(/connectTimeout=\d+&socketTimeout=\d+&loginTimeout=\d+/.test(src),
-      pair[0] + ' builds a Neon JDBC URL without the fail-fast timeout params '
-      + '(connectTimeout/socketTimeout/loginTimeout) -- a hanging connect there '
-      + 'burns the 6-min ceiling and skips every catch-based fallback.');
+  JDBC_FILES.forEach(function (rel) {
+    const src = read(rel);
+    assert.ok(/jdbc:postgresql/.test(src), rel + ' no longer builds a JDBC URL -- drop it from this pin.');
+    assert.ok(!/connectTimeout|socketTimeout|loginTimeout/.test(src.replace(/\/\/[^\n]*/g, '')),
+      rel + ' puts a timeout property on the Neon JDBC URL. Apps Script REJECTS '
+      + 'these and the connection fails outright -- this exact change took every '
+      + 'Neon read and write down across all three projects. Use '
+      + 'stmt.setQueryTimeout(seconds) on statements instead.');
   });
-  // Completeness: no OTHER file opens a JDBC connection without being listed.
+  // Completeness: no OTHER file opens a JDBC connection unlisted here.
   const globSync = function (dir) {
     let out = [];
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (e) {
@@ -509,12 +518,11 @@ test('every Neon JDBC URL carries fail-fast timeouts', function () {
     });
     return out;
   };
-  const listed = JDBC_FILES.map(function (pair) { return path.join(ROOT, pair[0]); });
+  const listed = JDBC_FILES.map(function (rel) { return path.join(ROOT, rel); });
   globSync(path.join(ROOT, 'apps-script')).forEach(function (p) {
     const src = fs.readFileSync(p, 'utf8');
     if (/Jdbc\.getConnection/.test(src) && listed.indexOf(p) === -1) {
-      assert.fail(p + ' calls Jdbc.getConnection but is not in the fail-fast timeout pin list -- '
-        + 'add the timeout params and list it here.');
+      assert.fail(p + ' calls Jdbc.getConnection but is not in this pin list -- add it.');
     }
   });
 });
