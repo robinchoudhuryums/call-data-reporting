@@ -306,11 +306,20 @@ Neon Postgres is the long-term archive and the future query backend.
   and upserts them to Neon's `inbound_calls` (PK `(call_date,
   call_id)`, `ON CONFLICT DO UPDATE`). The journey is enriched with
   internal-transfer paths (R11-N): when the answering agent transfers
-  the caller to a queue where they then abandon — a separate internal
-  leg group the builder otherwise drops — the abandon is cross-referenced
-  back to that agent's concurrent inbound and, ONLY on a unique match,
-  appended as a synthetic `transfer:true` abandon event (journey-only;
-  no disposition/count/queue field changes). Historical gaps are filled by
+  the caller to a queue where they then abandon, the abandon is
+  cross-referenced back to that agent's concurrent inbound and, ONLY on a
+  unique match, appended as a synthetic `transfer:true` abandon event
+  (journey-only; no disposition/count/queue field changes). Since
+  Round-17 that internal leg group is ALSO written as its OWN
+  `is_internal` record — the abandon belongs to the RECEIVING dept, whose
+  path drill would otherwise resolve `not-captured` — prefixed with the
+  reconstructed origin hop and carrying `origin_agent` / `origin_dept`
+  (who placed it) plus `related_call_id` / `related_call_kind`
+  ('inbound' | 'outbound') naming the call they were on. Because a CDR
+  root is a leg TREE rather than a call, every internal-origin derivation
+  is scoped to the ORIGINATOR (`icLegFromOriginator_`, and the earliest
+  QUEUE leg for identity) — a warm transfer puts two people's legs under
+  one root, and that root is captured by `outbound_calls` too. Historical gaps are filled by
   the editor-run `backfillInboundCalls` (same file; iterates surviving
   `Call_Legs_*` sheets, skips already-mirrored dates, time-budgeted).
   `cdr-report/inboundCallsExport.js::exportInboundCalls` mirrors

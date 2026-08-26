@@ -713,9 +713,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   dept's drill failed. Still metric-safe (every metric query excludes
   is_internal). **Round-17b: an internal-origin record also carries
   `origin_agent` / `origin_dept`** (the employee who PLACED it + the raw CDR
-  org label, read from the leg's CALLER columns -- `firstAgent` derives from
-  the CALLEE name, and these groups' only callee is the queue, so it is
-  always null here). Without it the receiving dept's drill said only "an
+  org label, read from the CALLER columns of the earliest QUEUE leg -- see
+  the shared-leg-tree bullet below for why that leg and not `legs[0]`;
+  `firstAgent` derives from the CALLEE name, which on these groups is the
+  queue, so it is null). Without it the receiving dept's drill said only "an
   internal call abandoned in your queue"; with it the manager sees the
   abandon was a colleague's assist request, not a lost customer. NULL on
   every externally-originated row; phone-shaped caller names are never
@@ -1476,9 +1477,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **NEVER put `connectTimeout` / `socketTimeout` / `loginTimeout` on a Neon
   JDBC URL.** Apps Script's JDBC service REJECTS them ("The following
   connection properties are unsupported: …"), so instead of bounding a hang
-  they make EVERY connection fail instantly — shipped 2026-08-24 to bound a
-  hanging connect, caught in production the next day with all three projects
-  cut off from Neon. `cross-file-pins.test.js` now pins their ABSENCE across
+  they make EVERY connection fail instantly, in every project at once
+  (incident: docs/known-issues.md). `cross-file-pins.test.js` pins their ABSENCE across
   all six builders and sweeps for unlisted `Jdbc.getConnection` callsites.
   Bound STATEMENTS with `stmt.setQueryTimeout(seconds)` (what
   `getReachableNeonConn_`'s 5 s probe already does) — the platform supports
