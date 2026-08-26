@@ -73,7 +73,10 @@ tests/
                               pipeline-watch, missed-slice,
                               inbound-qcd-parity, inbound-calls /
                               outbound-calls (the two per-call captures:
-                              builder gates + authoritative/P-1/hash pins),
+                              builder gates + authoritative/P-1/hash pins,
+                              plus the shared-leg-tree scoping: originator-
+                              scoped `answered`, the abandon-leg fallback,
+                              and the queue-leg originator identity),
                               sheet-repairs-merge, dept-config-neon /
                               config-neon-c3, caller-lookup, answer-targets
                               (R12-25/R23 display standards),

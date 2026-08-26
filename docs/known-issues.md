@@ -644,6 +644,82 @@ keep the capture-time link, drop the `kind='outbound'` branch from
 `tests/unit/heatmap-cell-drill.test.js` (Step 4 block) -- including that no
 link means no access however permissive the dept gate is.
 
+### A CDR "root" is a leg tree, not a call (found by the Step-4 validation run, 2026-08-25)
+
+The 2026-08-24 `previewOutboundAssistLinks` run — the validation the Step-4
+outbound link was explicitly gated on — produced 185 internal assist records:
+28 linked to an OUTBOUND call, 64 to an inbound call, 93 unlinked.
+
+**The link itself held.** The population the drill actually serves is the
+abandons (the receiving dept's "path" button hangs off a DQE queue-only
+sentinel, wait > 60s). There were 12 abandons; **11 got a requester link**
+(7 outbound, 4 inbound), and both halves of the wait>60s subset were covered
+3/3. Seven of the 12 abandons were `A_Q_Spanish` — the translation-assist
+shape Step 4 was built for, five of them resolved through the new outbound arm.
+No OUTBOUND-linked line failed the test the instrument exists for (a requester
+who was not on that call at the assist time): `outboundBusy` keys on the
+outgoing leg's OWN caller ext, so every temporal claim is leg-backed.
+
+**What it did find: 6 of the 28 outbound targets were themselves assist
+records in the same run**, each by a different agent. The mechanism is in the
+raw feed, not the matcher — a CDR root is a leg TREE. In the owner's
+2026-08-21 warm-transfer sample, root `1783983008517` holds Margie's leg into
+`A_Q_FieldOps` AND Marie's Outgoing leg to the customer. That root satisfies
+both capture gates at once:
+
+| capture | gate |
+|---|---|
+| `inbound_calls` (is_internal) | no Incoming leg **+ a queue-callee leg** |
+| `outbound_calls` | no Incoming leg **+ an answered external Outgoing leg** |
+
+They are not mutually exclusive, so **one id names a row in both tables**.
+
+Three consequences, all fixed on 2026-08-25 (internal-origin records only —
+external inbound is untouched, since every leg there descends from the one
+incoming caller):
+
+1. **`answered` was "any talk leg in the tree"**, so a sibling's external
+   customer leg marked a genuinely-abandoned assist `answered` — shrinking the
+   exact population the drill serves. 170 of the 185 records read `answered`;
+   at least the 6 provably-merged trees were affected, and likely more (a
+   merged tree whose external leg was *not* answered never surfaces in this
+   instrument). Now scoped by `icLegFromOriginator_`: caller EXT or caller
+   NAME must match the requester, and an external Outgoing leg never qualifies
+   (the party answering an internal queue call is always an internal
+   extension). The NAME arm is load-bearing — the queue-fronted delivery leg
+   renders CALLER as `CallQueue (144)` with CALLER_NAME still the originator,
+   so an ext-only rule would false-negative into phantom abandons.
+2. **The abandon leg** is now PREFERRED from the originator (so `abandonStage`
+   reads the right leg) with a fallback to any abandoned leg. The fallback is
+   what keeps a fan-out leg carrying the flag from downgrading a real abandon
+   to `missed`; it is safe because `abandonLeg` is only consulted when nothing
+   answered.
+3. **The originator identity came from `legs[0]`**, which on a shared tree can
+   be a colleague's leg that merely started first — naming the wrong requester
+   in the receiving dept's drill and scoping (1) to the wrong person. It now
+   comes from the earliest QUEUE leg. Timing fields (`call_start`,
+   `call_date`, `wait_seconds`) deliberately still key on `legs[0]`: this
+   changed identity, not the record's clock.
+
+`disposition` on an `is_internal` row gates nothing — `getCallJourney` looks
+the row up by `(call_date, call_id)` with no disposition filter — so these are
+descriptive corrections (what the overlay and the preview say), not metric
+ones. Every metric query still excludes `is_internal`.
+
+**Still open, deliberately not changed:** the `outbound_calls` capture also
+picks up these merged trees, so the Outbound report counts that leg as the
+answering agent's outbound activity. It is a genuine outgoing leg by that
+agent, so the count is defensible — but the Outbound report and the internal
+assist capture can both claim the same root. `previewOutboundAssistLinks` now
+counts the overlap on every run so a rise is visible rather than eyeballed.
+
+Also worth knowing before reading these numbers again: **92% of the internal
+assist population is `answered`** — assists that succeeded, which no surface
+drills. Against the live Neon transfer ceiling that is ~170 rows/day of write
+and storage with no reader. Narrowing the capture to non-answered
+internal-origin queue calls is available and reversible, but it changes what
+is captured, so it is an owner ruling rather than a fix.
+
 ### Apps Script JDBC rejects connection-timeout properties (shipped + reverted, 2026-08-25)
 
 `?connectTimeout=10&socketTimeout=120&loginTimeout=10` was added to every Neon

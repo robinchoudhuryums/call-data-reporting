@@ -735,6 +735,35 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the chain diagnostic's hand-written rule is what once "resolved" a
   temporally impossible chain). Pinned by
   `tests/unit/inbound-calls.test.js`.
+- **A CDR root is a leg TREE, not a call -- scope every internal-origin
+  derivation to the ORIGINATOR.** A warm transfer puts two people's legs under
+  one root (owner's 2026-08-21 sample: Margie's leg into `A_Q_FieldOps` and
+  Marie's Outgoing leg to the customer share root `1783983008517`). Three
+  rules in `buildInboundCallRecords_`, all internal-origin-ONLY -- external
+  inbound records are unchanged, since every leg there descends from the one
+  incoming caller: (1) **`answered` counts only talk legs that pass
+  `icLegFromOriginator_`** (caller EXT or caller NAME matches the requester --
+  the name arm is what recognizes the queue-fronted delivery leg, whose CALLER
+  renders `CallQueue (144)`; an external Outgoing leg never qualifies, since
+  the party answering an internal queue call is always an internal extension).
+  A sibling's customer leg used to mark a genuinely-abandoned assist
+  `answered`, shrinking the one population the path drill serves. (2) The
+  abandon leg **PREFERS** an originator leg but falls back to any, so a
+  fan-out leg carrying the flag can never cost an abandon (`abandonLeg` is
+  only consulted when nothing answered, which makes the fallback safe).
+  (3) The requester -- `origin_agent` / `origin_dept` and the ext the
+  related-call match keys on -- comes from the **earliest QUEUE leg, not
+  `legs[0]`**: a colleague's leg can start first. TIMING fields
+  (`call_start` / `call_date` / `wait_seconds`) still key on `legs[0]` by
+  design; this changes identity, not the record's clock. **The same root is
+  ALSO captured in `outbound_calls`** -- its gate is no-Incoming + an answered
+  external Outgoing leg, which a merged tree satisfies -- so one id can name a
+  row in both tables and the Outbound report counts that leg as the answering
+  agent's activity. `previewOutboundAssistLinks` counts the overlap and the
+  drill's abandon population on every run rather than leaving it to be
+  eyeballed (measured 2026-08-24: 6 of 28 outbound links, all in the answered
+  noise, none among the 12 abandons). Pinned by
+  `tests/unit/inbound-calls.test.js`.
 - **Caller Lookup** (`CallerLookup.gs`, route `#/admin/caller-lookup`,
   admin-only) is the FULL communication history: the entered number is
   normalized to `+<digits>`, HMAC-hashed with the dashboard's `HMAC_SECRET`

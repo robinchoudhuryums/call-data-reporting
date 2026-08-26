@@ -3946,3 +3946,50 @@ Remaining follow-on: sub-60s internal abandons have no entry point (owner ruling
 
 **WHERE I LEFT OFF:** increment 147 committed + pushed to `claude/broad-scan-8dgd6m`
 (11 commits ahead of merged main, un-PR'd). Owner still to run `previewOutboundAssistLinks`.
+
+## Increment 148 — shared leg trees: the Step-4 validation run pays off (2026-08-25)
+
+`/broad-implement 1 and 2` — the two fixes proposed after analyzing the owner's
+2026-08-24 `previewOutboundAssistLinks` output.
+
+**The validation verdict first.** 185 internal assist records: 28 outbound-linked, 64
+inbound-linked, 93 unlinked. The link HELD where it matters — the drill's population is
+the abandons (the receiving dept's path button hangs off a DQE queue-only sentinel,
+wait>60s), there were 12, and 11 got a requester link; both halves of the wait>60s subset
+were covered 3/3. Seven of the 12 were `A_Q_Spanish`, the exact translation-assist shape
+Step 4 was built for. No line failed the test the instrument exists for.
+
+**What it found: a CDR root is a leg TREE, not a call.** 6 of 28 outbound targets were
+themselves assist records, each by a different agent. A warm transfer puts two people's
+legs under one root, and that root satisfies BOTH capture gates (inbound_calls wants
+no-Incoming + a queue leg; outbound_calls wants no-Incoming + an answered external
+Outgoing leg), so one id names a row in both tables.
+
+- **IT-7**: `answered` for an internal-origin record was "any talk leg in the tree", so a
+  sibling's external customer leg marked a genuinely-abandoned assist `answered` —
+  shrinking the one population the drill serves (170 of 185 read `answered`). Now scoped
+  by the new `icLegFromOriginator_` (caller EXT or caller NAME; an external Outgoing leg
+  never qualifies). The NAME arm is load-bearing — the queue-fronted delivery leg renders
+  CALLER as `CallQueue (144)`.
+- **IT-7b** (prerequisite, found by a failing test, not by reading): the originator itself
+  came from `legs[0]`, which on a shared tree can be a colleague's leg that merely started
+  first — naming the wrong requester AND scoping IT-7 to the wrong person. Now the
+  earliest QUEUE leg. Timing fields stay on `legs[0]` deliberately.
+- **IT-8**: `previewOutboundAssistLinks` now flags each shared root inline and closes with
+  two counters — the overlap ratio and the drill's abandon population, separated from the
+  answered noise.
+- The abandon-leg PREFER-then-fall-back is the piece that keeps IT-7 from introducing a new
+  failure mode (a fan-out leg carrying the flag would otherwise downgrade a real abandon
+  to `missed`).
+- All descriptive: every metric query excludes `is_internal`, and `getCallJourney` has no
+  disposition filter. Tests 904 → 911; ci:ui full gate passed (unchanged, nothing client-side).
+- Block: `.cycle/blocks/148-shared-leg-tree-scoping-broad-implement.md`.
+
+Open follow-ons: `outbound_calls` also admits merged trees (left as-is, now measured);
+owner ruling on narrowing the capture to non-answered assists (~170 rows/day of no-reader
+Neon traffic); `call_start`/`call_date` still derive from `legs[0]`; sub-60s internal
+abandons still have no entry point.
+
+**WHERE I LEFT OFF:** increment 148 on `claude/broad-scan-8dgd6m`, un-PR'd. MOST URGENT
+operator item is unrelated to this increment: all three projects still run the rejected
+JDBC timeout params until redeployed with PR #256.

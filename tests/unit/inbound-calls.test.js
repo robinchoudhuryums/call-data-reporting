@@ -996,3 +996,165 @@ test('previewOutboundAssistLinks: reports what capture WOULD store, via the real
   assert.match(all, /2 internal assist record\(s\) -- 1 linked to an OUTBOUND call, 0 to an inbound call, 1 unlinked/);
   assert.match(all, /Nothing was written/, 'says plainly that it is read-only');
 });
+
+// ── Shared leg trees: one CDR root can hold two people's calls ───────────────
+// A CDR "root" is a leg TREE, not a call. The owner's 2026-08-21 warm-transfer
+// sample puts Margie's leg into A_Q_FieldOps and Marie's Outgoing leg to the
+// customer under ONE root (1783983008517). `answered` used to be "any talk leg
+// in the tree said Answered", so a sibling's external customer leg could mark a
+// genuinely-abandoned internal assist as answered -- shrinking the exact
+// population the path drill serves. Measured 2026-08-24: 170 of 185 internal
+// records read `answered`, and 6 of 28 outbound-linked assists sat on a shared
+// root. Fixed by scoping the talk test to the ORIGINATOR's own legs.
+
+test('shared root: a sibling external talk leg no longer marks an assist answered', function () {
+  const recs = build([
+    // Margie (363) dials A_Q_FieldOps and gives up -- nobody internal answers.
+    leg({ callId: '860001', legId: 1, start: '08/21/2026 07:30:22', connected: '08/21/2026 07:30:23',
+          stop: '08/21/2026 07:31:52', direction: 'Internal', callTime: '0:01:30',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_FieldOps',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'Customer Success' }),
+    // Under the SAME root: a different agent's answered call out to a customer.
+    leg({ callId: '860001', legId: 4, start: '08/21/2026 07:31:52', connected: '08/21/2026 07:31:52',
+          stop: '08/21/2026 07:33:48', direction: 'Outgoing', talk: '0:01:55',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: '19454445555',
+          answered: 'Answered', dept: 'Customer Success' }),
+  ]);
+  const r = rec(recs, '860001');
+  assert.equal(r.isInternal, true);
+  assert.equal(r.disposition, 'abandoned',
+    "the sibling's customer leg is not an answer to Margie's queue call");
+  assert.equal(r.abandonStage, 'queue');
+  assert.equal(r.originAgent, 'Margie Ingay');
+});
+
+test('shared root: the ORIGINATOR being answered still reads answered', function () {
+  const recs = build([
+    leg({ callId: '860010', legId: 1, start: '08/21/2026 07:30:22', connected: '08/21/2026 07:30:23',
+          stop: '08/21/2026 07:30:43', direction: 'Internal',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_FieldOps',
+          answered: 'Answered', dept: 'Customer Success' }),
+    // The queue delivered her to Marie -- caller ext IS the originator's.
+    leg({ callId: '860010', legId: 2, start: '08/21/2026 07:30:43', connected: '08/21/2026 07:30:43',
+          stop: '08/21/2026 07:33:48', direction: 'Internal', talk: '0:03:04',
+          caller: '363', callerName: 'Margie Ingay', callee: '279',
+          calleeName: 'Marie (Muskaan) Jindal', answered: 'Answered', dept: 'Customer Success' }),
+    leg({ callId: '860010', legId: 4, start: '08/21/2026 07:31:52', connected: '08/21/2026 07:31:52',
+          stop: '08/21/2026 07:33:48', direction: 'Outgoing', talk: '0:01:55',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: '19454445555',
+          answered: 'Answered', dept: 'Customer Success' }),
+  ]);
+  assert.equal(rec(recs, '860010').disposition, 'answered');
+});
+
+test('shared root: the queue-fronted delivery leg matches on the CALLER NAME arm', function () {
+  // The delivery leg renders CALLER as "CallQueue (144)" -- the ext arm cannot
+  // see the originator, so the name arm is what keeps this from false-negating
+  // into a phantom abandon.
+  const recs = build([
+    leg({ callId: '860020', legId: 1, start: '08/21/2026 07:30:22', connected: '08/21/2026 07:30:23',
+          stop: '08/21/2026 07:30:43', direction: 'Internal',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_FieldOps',
+          abandoned: 'Abandoned', dept: 'Customer Success' }),
+    leg({ callId: '860020', legId: 2, parent: '860020', start: '08/21/2026 07:30:43',
+          connected: '08/21/2026 07:30:43', stop: '08/21/2026 07:33:48', direction: 'Internal',
+          talk: '0:03:04', caller: 'CallQueue (144)', callerName: 'Margie Ingay', callee: '279',
+          calleeName: 'Marie (Muskaan) Jindal', answered: 'Answered', dept: 'Customer Success' }),
+  ]);
+  assert.equal(rec(recs, '860020').disposition, 'answered',
+    'the queue-fronted delivery leg still counts as the originator being answered');
+});
+
+test('external inbound records keep the whole-tree answered test (byte-identical)', function () {
+  // Every leg of an external inbound descends from the one incoming caller, so
+  // the scoping must not reach them -- the callee-side talk leg has a CALLER
+  // that is the customer, not the originator.
+  const recs = build(capturedInboundAnsweredBy215('860030'));
+  const r = rec(recs, '860030');
+  assert.equal(r.isInternal, false);
+  assert.equal(r.disposition, 'answered');
+});
+
+test('shared root: a fan-out leg carrying Abandoned still yields an abandon', function () {
+  // The originator's own leg is not flagged; the queue's fan-out leg is. The
+  // scoped search must fall back rather than downgrade this to `missed`.
+  const recs = build([
+    leg({ callId: '860040', legId: 1, start: '08/04/2026 14:20:15', connected: '08/04/2026 14:20:16',
+          stop: '08/04/2026 14:21:59', direction: 'Internal', callTime: '0:01:43',
+          caller: '270', callerName: 'Sonia Santos', callee: '383',
+          calleeName: 'A_Q_Eligibility_MM&R', missed: 'Missed', dept: 'Patient Intake - Supplies' }),
+    leg({ callId: '860041', legId: 1, parent: '860040', start: '08/04/2026 14:20:16',
+          stop: '08/04/2026 14:20:26', direction: 'Internal', callTime: '0:00:10',
+          caller: 'CallQueue (383)', callee: '283', calleeName: 'Felisha Casey',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'Patient Intake - Mobility/DME' }),
+  ]);
+  assert.equal(rec(recs, '860040').disposition, 'abandoned',
+    'the fallback keeps the abandon; only the PREFERENCE is originator-scoped');
+});
+
+test('previewOutboundAssistLinks: counts the shared-root overlap and the drill population', function () {
+  // Root 870001 is BOTH an assist (Margie -> A_Q_FieldOps) and an outbound call
+  // (Marie's leg to the customer), so the assist below links to a root that is
+  // itself an assist record. That is the overlap the counter exists to measure.
+  const rows = [new Array(44).fill('HEADER')].concat([
+    leg({ callId: '870001', legId: 1, start: '08/21/2026 07:30:22', connected: '08/21/2026 07:30:23',
+          stop: '08/21/2026 07:31:52', direction: 'Internal', callTime: '0:01:30',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_FieldOps',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'Customer Success' }),
+    leg({ callId: '870001', legId: 4, start: '08/21/2026 07:30:00', connected: '08/21/2026 07:30:00',
+          stop: '08/21/2026 07:40:00', direction: 'Outgoing', talk: '0:10:00',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: '19454445555',
+          answered: 'Answered', dept: 'Customer Success' }),
+    // Marie's own assist, placed while that outgoing leg was live.
+    assistAbandon279('870900', '08/21/2026 07:32:00', '08/21/2026 07:34:00'),
+  ]);
+  const sheet = {
+    getName: function () { return 'Call_Legs_2026-08-21'; },
+    getDataRange: function () { return { getDisplayValues: function () { return rows; } }; },
+  };
+  h.state.spreadsheet = {
+    getSheetByName: function (n) { return n === 'Call_Legs_2026-08-21' ? sheet : null; },
+    getSheets: function () { return [sheet]; },
+  };
+  const logged = [];
+  const realLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function (fmt) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    let i = 0;
+    logged.push(String(fmt).replace(/%s/g, function () { return String(args[i++]); }));
+  } };
+  try {
+    h.call('previewOutboundAssistLinks', '2026-08-21');
+  } finally {
+    h.ctx.Logger = realLogger;
+  }
+  const all = logged.join('\n');
+  assert.match(all, /LINKED to OUTBOUND call 870001/);
+  assert.match(all, /\*\* SHARED ROOT: 870001 is ALSO an assist record in this run/,
+    'the overlap is named inline on the offending line, not just tallied');
+  assert.match(all, /by Margie Ingay -> A_Q_FieldOps/,
+    'the shared root is described so it can be spot-checked');
+  assert.match(all, /Shared-root overlap: 1 of 1 OUTBOUND links/);
+  assert.match(all, /Drill population: 2 abandoned \(1 of them linked/,
+    'the abandon population is reported separately from the answered noise');
+});
+
+test('shared root: the originator is the earliest QUEUE leg, not the earliest leg', function () {
+  // A colleague's leg under the same root starts FIRST. legs[0] would name
+  // them as the requester (and scope the disposition test to them); the leg
+  // that dialed the queue is the one that placed this call.
+  const recs = build([
+    leg({ callId: '860050', legId: 4, start: '08/21/2026 07:30:00', connected: '08/21/2026 07:30:00',
+          stop: '08/21/2026 07:40:00', direction: 'Outgoing', talk: '0:10:00',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: '19454445555',
+          answered: 'Answered', dept: 'Field Operations (Market Activity)' }),
+    leg({ callId: '860050', legId: 1, start: '08/21/2026 07:30:22', connected: '08/21/2026 07:30:23',
+          stop: '08/21/2026 07:31:52', direction: 'Internal', callTime: '0:01:30',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_FieldOps',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'Customer Success' }),
+  ]);
+  const r = rec(recs, '860050');
+  assert.equal(r.originAgent, 'Margie Ingay', 'the queue leg names the requester');
+  assert.equal(r.originDept, 'Customer Success');
+  assert.equal(r.disposition, 'abandoned');
+});
