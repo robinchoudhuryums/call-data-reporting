@@ -298,6 +298,10 @@ test('coaching delivery: a mid-txn failure rolls back and rethrows into the hand
 
 test('coaching delivery: runCoachingDelivery_ is FLAG-GATED and records OPS-8 outcome props', function () {
   let ran = 0;
+  // Save/RESTORE the real binding: `delete h.ctx.coachingDeliveryRun_` used
+  // to remove the ORIGINAL vm global (the stub had overwritten the same own
+  // property), leaving every later test without the real function.
+  const realDeliveryRun = h.ctx.coachingDeliveryRun_;
   h.ctx.coachingDeliveryRun_ = function () { ran++; return { result: 'ok 0 new, 0 continuing, 0 recovered-open (a..b) — no email (nothing new)' }; };
   h.state.props = {};   // flag unset → no-op, no outcome stamped
   h.call('runCoachingDelivery_');
@@ -314,7 +318,7 @@ test('coaching delivery: runCoachingDelivery_ is FLAG-GATED and records OPS-8 ou
   h.ctx.coachingDeliveryRun_ = function () { throw new Error('boom'); };
   h.call('runCoachingDelivery_');
   assert.match(h.state.props.COACHING_DELIVERY_LAST_RESULT, /^ERROR: boom/);
-  delete h.ctx.coachingDeliveryRun_;
+  h.ctx.coachingDeliveryRun_ = realDeliveryRun;
 });
 
 function installAdmin_() {
@@ -387,4 +391,47 @@ test('coaching triggers: install sets the enabled flag, uninstall clears it (the
   assert.equal(h.state.props.COACHING_DELIVERY_ENABLED, 'true');
   h.call('uninstallCoachingDeliveryTrigger');
   assert.equal(h.state.props.COACHING_DELIVERY_ENABLED, undefined);
+});
+
+// P13 (broad-scan 2026-08-27, OPS-1): flags commit BEFORE the email, so a
+// failed send used to orphan the batch — next run classed them 'continuing'
+// ("not re-notified") and no path ever emailed them. Un-notified flags now
+// park in COACHING_NOTIFY_PENDING and fold into the next send; the property
+// clears only on a CONFIRMED send.
+//
+
+test('coaching delivery P13: a failed send keeps the committed flags PENDING and says so', function () {
+  const conn = installDeliveryStubs_([flag_('CSR', 'Brand New')], '[]');
+  const realMail = h.ctx.MailApp;
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('Service invoked too many times'); } };
+  let out;
+  try { out = h.call('coachingDeliveryRun_'); } finally { h.ctx.MailApp = realMail; }
+  assert.match(out.result, /EMAIL NOT SENT \(send failed\); 1 flag\(s\) kept pending/);
+  assert.equal(conn.committed, 1, 'the data work still committed — only the notification is pending');
+  const pending = JSON.parse(h.state.props.COACHING_NOTIFY_PENDING);
+  assert.deepEqual(pending.flags.map(function (f) { return f.agent; }), ['Brand New']);
+});
+
+test('coaching delivery P13: the next run folds pending flags into its email and clears the marker', function () {
+  installDeliveryStubs_([], '[]');   // nothing new this run
+  h.state.props.COACHING_NOTIFY_PENDING = JSON.stringify({
+    window: { from: '2026-07-07', to: '2026-07-20' },
+    flags: [{ dept: 'CSR', agent: 'Brand New', ratePct: 10, teamRatePct: 40,
+              teamRatioPct: 25, gapPts: 30, missed: 30, rung: 40, answered: 4 }],
+  });
+  const out = h.call('coachingDeliveryRun_');
+  assert.match(out.result, /emailed admins \(incl\. 1 retried from a previous failed send\)/);
+  assert.equal(h.state.sentEmails.length, 1);
+  assert.match(h.state.sentEmails[0].body, /Brand New/);
+  assert.equal(h.state.props.COACHING_NOTIFY_PENDING, undefined, 'cleared on the confirmed send');
+});
+
+test('coaching delivery P13: no admin recipients parks the batch instead of claiming a send', function () {
+  installDeliveryStubs_([flag_('CSR', 'Nobody Told')], '[]');
+  h.state.props.ADMIN_EMAILS = '';
+  h.ctx.getAdminEmails_ = function () { return []; };
+  let out;
+  try { out = h.call('coachingDeliveryRun_'); } finally { delete h.ctx.getAdminEmails_; }
+  assert.match(out.result, /EMAIL NOT SENT \(no admin recipients\)/);
+  assert.ok(h.state.props.COACHING_NOTIFY_PENDING, 'batch parked for retry');
 });

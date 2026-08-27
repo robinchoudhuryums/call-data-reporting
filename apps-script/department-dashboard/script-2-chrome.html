@@ -289,20 +289,25 @@
         deptExportMenu.style.display = open ? '' : 'none';
         deptExportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       };
+      // R16c: the Insights group appears once a report has rendered -- its
+      // actions read insLastData (script-8, hoisted), so an empty region
+      // offers only the table items. Shared by click AND ArrowDown open (I3).
+      var refreshDeptExportItems = function () {
+        var insItems = $('dept-export-ins-items');
+        if (insItems) {
+          insItems.style.display =
+            (typeof insLastData !== 'undefined' && insLastData) ? '' : 'none';
+        }
+      };
       deptExportBtn.addEventListener('click', function (e) {
         e.stopPropagation();
         var opening = deptExportMenu.style.display === 'none';
-        // R16c: the Insights group appears once a report has rendered --
-        // its actions read insLastData (script-8, hoisted), so an empty
-        // region offers only the table items.
-        if (opening) {
-          var insItems = $('dept-export-ins-items');
-          if (insItems) {
-            insItems.style.display =
-              (typeof insLastData !== 'undefined' && insLastData) ? '' : 'none';
-          }
-        }
+        if (opening) refreshDeptExportItems();
         setDeptExportOpen(opening);
+      });
+      wireMenuKeys_(deptExportBtn, deptExportMenu, function (open) {   // I3
+        if (open) refreshDeptExportItems();
+        setDeptExportOpen(open);
       });
       deptExportMenu.addEventListener('click', function (e) {
         var item = e.target.closest('[data-action]');
@@ -351,13 +356,16 @@
 
     var colsToggle = $('dept-cols-toggle');
     if (colsToggle) colsToggle.addEventListener('click', function () {
-      var next = (localStorage.getItem(DEPT_COLS_KEY) === 'all') ? 'compact' : 'all';
+      // P11: reads wrapped too -- a blocked-storage browser still toggles
+      // (from the default) instead of throwing out of the click handler.
+      var cur = null; try { cur = localStorage.getItem(DEPT_COLS_KEY); } catch (e) {}
+      var next = (cur === 'all') ? 'compact' : 'all';
       try { localStorage.setItem(DEPT_COLS_KEY, next); } catch (e) {}
       applyDeptColsPref_();
     });
     var rowsBtn = $('dept-rows-toggle');
     if (rowsBtn) rowsBtn.addEventListener('click', function () {
-      var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+      var dense = false; try { dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact'); } catch (e) {}
       try { localStorage.setItem(DEPT_ROWS_KEY, dense ? 'comfortable' : 'compact'); } catch (e) {}
       applyDeptColsPref_();
     });

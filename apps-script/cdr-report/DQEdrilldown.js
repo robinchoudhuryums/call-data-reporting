@@ -224,6 +224,22 @@ function getDQEDrilldownRows(params) {
     return maxTalk;
   }
 
+  // P9 (R18e mirrored from buildDQEHistoricalData): EXTENSION -> QUEUE-NAME
+  // map from the same DAY's queue-callee legs, so a leg whose col W lost its
+  // A_Q_* prefix (the Field-Ops-Power provider-config shape) is recognized
+  // here exactly like the build recognizes it. Without this the sidebar
+  // rejected legs the pipeline COUNTS -- false "Found N vs Dashboard X"
+  // mismatches during precisely the incident this tool exists to debug.
+  var queueNameByExt = {};
+  for (var qi = 0; qi < data.length; qi++) {
+    if (String(data[qi][2]).trim().split(' ')[0] !== dateStr) continue;
+    var qExt  = String(data[qi][10]).trim();
+    var qName = String(data[qi][11]).trim();
+    if (!/^\d+$/.test(qExt)) continue;
+    if (!/^(A_Q_[\w&]+|Backup CSR)$/.test(qName)) continue;
+    queueNameByExt[qExt] = qName;
+  }
+
   // Walk every row, applying filters
   var matches       = [];   // rows that count toward the metric
   var nearMisses    = [];   // rows rejected only by time window (shown dimmed by default)
@@ -248,6 +264,13 @@ function getDQEDrilldownRows(params) {
     // accepted legs the build rejects -- false "Found N vs Dashboard X ✗"
     // mismatches on exactly the tool meant to certify the numbers.
     var hasQueue = /(?:^|[^\w&])(?:A_Q_[\w&]+|Backup CSR)/.test(w);
+    // P9/R18e: col W wins when it matches; otherwise recover the
+    // mislabeled-queue shape via CALLER "CallQueue (NNN)" resolved through
+    // today's ext map -- both conditions must hold, same as the build.
+    if (!hasQueue) {
+      var cqM = String(row[8]).trim().match(/^CallQueue\s*\((\d+)\)$/i);
+      if (cqM && queueNameByExt[cqM[1]]) hasQueue = true;
+    }
     if (!hasQueue) {
       addRejected(rejected, rejectReasons, partial, 'No queue context (col W)');
       continue;
@@ -284,6 +307,16 @@ function getDQEDrilldownRows(params) {
     // Time window check (only for window-based metrics)
     if (usesWindow) {
       var startPST = displayToTimeSecLocal(partial.startTime);
+      // P20: the build EXCLUDES unparseable-start legs from windowed metrics
+      // (they land in the F9 unparsedStartCount warning, not windowLegs); the
+      // sidebar used to fall through and COUNT them, over-reporting vs the
+      // stored cell during exactly the timestamp-format drift that produces
+      // such legs at scale.
+      if (startPST === null) {
+        addRejected(rejected, rejectReasons, partial,
+          'Unparseable start time (build excludes it from windowed metrics)');
+        continue;
+      }
       if (startPST !== null && (startPST < DQE_DD_WINDOW_START || startPST >= DQE_DD_WINDOW_END)) {
         // Near-miss: passes everything except time window
         partial._outsideWindow = true;

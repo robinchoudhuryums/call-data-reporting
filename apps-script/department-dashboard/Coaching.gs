@@ -385,25 +385,69 @@ function coachingDeliveryRun_() {
     });
     conn.commit();
 
-    if (diff.newFlags.length) {
+    // P13 (OPS-1): the flags are COMMITTED above before any email, so a
+    // failed send used to orphan the batch forever -- the next run classed
+    // them 'continuing' ("not re-notified") and no path re-attempted the
+    // email, exactly on the quota-exhausted mornings the first (largest)
+    // armed batch is likeliest to hit. Un-notified flags now ride the
+    // COACHING_NOTIFY_PENDING property and fold into the next send; the
+    // property clears only on a CONFIRMED send.
+    var propsSvc = PropertiesService.getScriptProperties();
+    var carried = [];
+    try {
+      var pnRaw = propsSvc.getProperty('COACHING_NOTIFY_PENDING');
+      var pn = pnRaw ? JSON.parse(pnRaw) : null;
+      if (pn && pn.flags && pn.flags.length) {
+        var seenKey = {};
+        diff.newFlags.forEach(function (f) { seenKey[f.dept + '\u0000' + f.agent] = true; });
+        carried = pn.flags.filter(function (f) {
+          return f && f.dept && f.agent && !seenKey[f.dept + '\u0000' + f.agent];
+        });
+      }
+    } catch (pe) { carried = []; }
+    var toEmail = diff.newFlags.concat(carried);
+    var emailNote = ' — no email (nothing new)';
+    if (toEmail.length) {
       var to = getAdminEmails_().join(',');   // admin-only until released (owner)
+      var sentOk = false;
       if (to) {
         var dashUrl = '';
-        try { dashUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || ''; } catch (e2) {}
-        MailApp.sendEmail({
-          to: to,
-          subject: '[Dashboard] Coaching: ' + diff.newFlags.length + ' new flag(s) — '
-            + preview.window.from + '..' + preview.window.to,
-          body: coachingEmailBody_(diff.newFlags, diff.continuing.length,
-            diff.recoveredOpenRows.length, preview.window, dashUrl),
-        });
+        try { dashUrl = propsSvc.getProperty('DASHBOARD_URL') || ''; } catch (e2) {}
+        try {
+          MailApp.sendEmail({
+            to: to,
+            subject: '[Dashboard] Coaching: ' + toEmail.length + ' new flag(s) — '
+              + preview.window.from + '..' + preview.window.to,
+            body: coachingEmailBody_(toEmail, diff.continuing.length,
+              diff.recoveredOpenRows.length, preview.window, dashUrl),
+          });
+          sentOk = true;
+        } catch (me) {
+          Logger.log('coachingDeliveryRun_: notification send FAILED (%s) -- flags kept pending for retry.',
+            (me && me.message) || me);
+        }
+      }
+      if (sentOk) {
+        try { propsSvc.deleteProperty('COACHING_NOTIFY_PENDING'); } catch (de) {}
+        emailNote = ' — emailed admins'
+          + (carried.length ? ' (incl. ' + carried.length + ' retried from a previous failed send)' : '');
+      } else {
+        // Never claim notified on an unconfirmed send: park the batch (capped
+        // so the property stays under the 9KB value limit) and say so.
+        try {
+          propsSvc.setProperty('COACHING_NOTIFY_PENDING', JSON.stringify({
+            window: preview.window, flags: toEmail.slice(0, 40),
+          }));
+        } catch (se) { Logger.log('coachingDeliveryRun_: pending-notify save failed: %s', se); }
+        emailNote = ' — EMAIL NOT SENT (' + (to ? 'send failed' : 'no admin recipients')
+          + '); ' + toEmail.length + ' flag(s) kept pending, re-emailed on the next run';
       }
     }
     return {
       result: 'ok ' + diff.newFlags.length + ' new, ' + diff.continuing.length
         + ' continuing, ' + diff.recoveredOpenRows.length + ' recovered-open ('
         + preview.window.from + '..' + preview.window.to + ')'
-        + (diff.newFlags.length ? ' — emailed admins' : ' — no email (nothing new)'),
+        + emailNote,
       newCount: diff.newFlags.length,
       continuingCount: diff.continuing.length,
       recoveredCount: diff.recoveredOpenRows.length,

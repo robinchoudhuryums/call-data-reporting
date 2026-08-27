@@ -162,6 +162,9 @@ function getCallerLookup(req) {
       obStmt.setString(++op, to);
       const obRs = obStmt.executeQuery();
       const obJson = obRs.next() ? obRs.getString('j') : '[]';
+      // P30: the outbound + history sections were unmetered -- only the
+      // inbound section carried the caller-lookup egress label.
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(obJson ? obJson.length : 0, 'caller-lookup');
       obRs.close(); obStmt.close();
       let obRows = JSON.parse(obJson || '[]');
       if (!Array.isArray(obRows)) obRows = [];
@@ -202,6 +205,7 @@ function getCallerLookup(req) {
       hStmt.setString(++hp, to);
       const hRs = hStmt.executeQuery();
       const hJson = hRs.next() ? hRs.getString('j') : '[]';
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(hJson ? hJson.length : 0, 'caller-lookup');
       hRs.close(); hStmt.close();
       let hRows = JSON.parse(hJson || '[]');
       if (!Array.isArray(hRows)) hRows = [];

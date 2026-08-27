@@ -1,5 +1,36 @@
 <script>
 (function () {
+  // I5 (broad-scan 2026-08-27): the agent app shares styles.html, whose dark
+  // palette activates via body[data-mode="dark"] -- but nothing here ever set
+  // it, so a system-dark agent got a bright page while the manager app
+  // resolved the OS preference at boot (initModeToggle). Same resolution,
+  // same 'dash-mode' key, so the choice carries across both apps in one
+  // browser. The charts are token-styled inline SVG, so a toggle repaints
+  // them with no re-render.
+  (function initAgentMode_() {
+    var MODE_KEY = 'dash-mode';
+    var saved = null;
+    try { saved = localStorage.getItem(MODE_KEY); } catch (e) {}
+    var dark = (saved === 'dark') || (saved !== 'light'
+      && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (dark) document.body.dataset.mode = 'dark';
+    var btn = document.getElementById('agent-mode-btn');
+    if (!btn) return;
+    var render = function () {
+      var d = document.body.dataset.mode === 'dark';
+      btn.textContent = d ? '☀' : '◐';
+      btn.setAttribute('aria-label', d ? 'Switch to light mode' : 'Switch to dark mode');
+      btn.setAttribute('title', d ? 'Switch to light mode' : 'Switch to dark mode');
+    };
+    render();
+    btn.addEventListener('click', function () {
+      var d = document.body.dataset.mode === 'dark';
+      if (d) delete document.body.dataset.mode;
+      else document.body.dataset.mode = 'dark';
+      try { localStorage.setItem(MODE_KEY, d ? 'light' : 'dark'); } catch (e) {}
+      render();
+    });
+  })();
   'use strict';
 
   // Agent app (Phase B, docs/agent-role-plan.md). Small on purpose: no

@@ -94,3 +94,37 @@ test('B3: repeated new addresses at the cap each cost exactly one email', functi
   assert.equal(mails, 10, 'one email per address, not one per visit (was 30)');
   assert.equal(Object.keys(store).length, 5, 'store stayed at the cap throughout');
 });
+
+// P14 (broad-scan 2026-08-27, OPS-1): the sighting store was written BEFORE
+// the send, so a MailApp failure (or an empty admin list) permanently burned
+// the one-shot — the first-sighting / DENIED-attempt email never retried.
+test('P14/OPS-1: a failed send does not burn the sighting; the next hit retries and records', function () {
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com' };
+  h.state.sentEmails.length = 0;
+  const user = { role: 'admin' };
+  const realMail = h.ctx.MailApp;
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('Service invoked too many times'); } };
+  try {
+    h.call('notifyLoginEvent_', 'new.admin@x.com', user);
+  } finally { h.ctx.MailApp = realMail; }
+  assert.equal(h.state.props.LOGIN_NOTIFY_SEEN, undefined, 'store untouched on a failed send');
+
+  h.call('notifyLoginEvent_', 'new.admin@x.com', user);
+  assert.equal(h.state.sentEmails.length, 1, 'retried and delivered on the next hit');
+  assert.match(String(h.state.props.LOGIN_NOTIFY_SEEN), /new\.admin@x\.com/, 'recorded after the confirmed send');
+
+  h.call('notifyLoginEvent_', 'new.admin@x.com', user);
+  assert.equal(h.state.sentEmails.length, 1, 'unchanged outcome stays silent');
+});
+
+test('P14: an empty admin list leaves the sighting unburned too', function () {
+  h.state.props = { ADMIN_EMAILS: '' };
+  h.state.sentEmails.length = 0;
+  const realGet = h.ctx.getAdminEmails_;
+  h.ctx.getAdminEmails_ = function () { return []; };
+  try {
+    h.call('notifyLoginEvent_', 'lonely@x.com', { role: 'none' });
+  } finally { h.ctx.getAdminEmails_ = realGet; }
+  assert.equal(h.state.props.LOGIN_NOTIFY_SEEN, undefined);
+  assert.equal(h.state.sentEmails.length, 0);
+});

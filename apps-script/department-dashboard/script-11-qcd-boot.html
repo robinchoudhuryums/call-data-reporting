@@ -86,6 +86,7 @@
         e.stopPropagation();
         setOpen(qadExportMenu.style.display === 'none');
       });
+      wireMenuKeys_(qadExportBtn, qadExportMenu, setOpen);   // I3
       qadExportMenu.addEventListener('click', function (e) {
         const item = e.target.closest('[data-action]');
         if (!item) return;

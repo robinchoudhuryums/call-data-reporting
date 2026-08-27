@@ -208,3 +208,34 @@ test('CORE-1: getLatestDataDate(s) refuse role-none callers (the phantom F-28 ga
   assert.throws(function () { h.call('getLatestDataDate'); }, /Not authorized/);
   assert.throws(function () { h.call('getLatestDataDates'); }, /Not authorized/);
 });
+
+// L6 (broad-scan 2026-08-27): when a time-key's pending AF↔AD parent ids
+// OUTNUMBER its rendered rings (the narrowed-timeline shape under
+// QUEUE_SPLIT_SCOPE=dept -- which surviving ring maps to which id is
+// unknowable), the key's pairing is dropped: the ring renders as a plain
+// missed ring rather than drilling a possibly-WRONG call (the RPT-2 class).
+// A balanced key keeps its positional pairing byte-identically.
+test('L6: ids outnumbering rendered rings at a time-key drop the pairing, never guess', function () {
+  install([
+    // One rendered ring at 10:00:00, but AF carries TWO abandons at that
+    // second (the other ring narrowed out) -- ambiguous, no id attached.
+    { date: '2026-03-10', agent: 'Anna', ext: '501', rung: 4, missed: 2, answered: 2,
+      slots: ['', '', '', '', '10:00:00 AM'],
+      abdIds: 'P1,P2', abdTimes: '10:00:00 AM,10:00:00 AM' },
+    // Control: balanced key keeps its pairing.
+    { date: '2026-03-11', agent: 'Ben', ext: '502', rung: 3, missed: 1, answered: 2,
+      slots: ['', '', '', '', '11:00:00 AM'],
+      abdIds: 'P9', abdTimes: '11:00:00 AM' },
+  ]);
+  const data = h.call('getMissedCallsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15' });
+  const anna = data.agents.filter(function (a) { return a.name === 'Anna'; })[0];
+  assert.equal(anna.missedTimes.length, 1);
+  assert.equal(anna.missedTimes[0].abandoned, false, 'ambiguous key -> not marked abandoned');
+  assert.equal(anna.missedTimes[0].parentId, null, 'and no possibly-wrong parent id');
+  const ben = data.agents.filter(function (a) { return a.name === 'Ben'; })[0];
+  assert.equal(ben.missedTimes[0].abandoned, true, 'balanced key unchanged');
+  assert.equal(ben.missedTimes[0].parentId, 'P9');
+  // The dept-wide unique-abandoned COUNT still sees all AD ids (fail-open,
+  // ids carry no queue identity) -- only the per-ring pairing is dropped.
+  assert.equal(data.meta.abandonedCallCount, 3, 'P1+P2+P9 still counted');
+});

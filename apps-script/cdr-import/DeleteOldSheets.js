@@ -26,11 +26,20 @@ var RETENTION_CUTOFF_DAYS = 14;
 
 function deleteOldCDRSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss && typeof getTargetSsId_ === 'function') {
-    // Time triggers on an unbound context have no active spreadsheet --
-    // fall back to the configured target workbook (where the per-day
-    // Call_Legs_* sheets live).
-    ss = SpreadsheetApp.openById(getTargetSsId_());
+  if (!ss) {
+    // P18: the old fallback opened getTargetSsId_() -- the CDR REPORT
+    // workbook -- but the per-day Call_Legs_* sheets live in the IMPORT
+    // (container-bound) workbook, like every other consumer reads them
+    // (backfillInboundCalls, getLatestValidSheet, the previews). If that
+    // fallback ever fired, the prune no-op'd against the wrong workbook
+    // while runRetentionPrune_ logged a green "deleted 0, kept 0" success
+    // row -- the load-bearing ~14-day retention silently stopped being
+    // enforced. There is no property naming the source workbook, so the
+    // honest move is to FAIL LOUDLY: runRetentionPrune_'s catch turns this
+    // into a retentionPrune FAILURE Pipeline Health row.
+    throw new Error('deleteOldCDRSheets: no active spreadsheet (unbound context?) — '
+      + 'the Call_Legs_* sheets live in the CDR Import container workbook, and there '
+      + 'is no configured pointer to it. Run from the bound project.');
   }
   var sheets = ss.getSheets();
 

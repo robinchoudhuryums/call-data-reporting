@@ -304,7 +304,26 @@ function sendDigestsForCadence_(cadence) {
   const resultKey = 'DIGEST_LAST_RESULT_' + cadence;
   try {
     const propsOut = PropertiesService.getScriptProperties();
-    if (attempted > 0 && sent === 0) {
+    if (attempted === 0) {
+      // P6 (the O-9 rule, ported from QueueReportEmail): a run that attempted
+      // NOBODY -- zero matching active rows, or every row failed the O-3
+      // dept validation -- is not a send and must not claim the window.
+      // Nobody received anything, so clearing the marker cannot duplicate;
+      // it means a subscriber added after the morning trigger (or a fixed
+      // O-3 row) still gets this window on a manual re-run or a later
+      // trigger inside it -- for weekly/monthly the alternative was losing
+      // the whole week/month. The old code claimed the window and recorded
+      // "ok … sent 0 of 0", an all-green no-op even when EVERY row failed.
+      propsOut.deleteProperty(markerKey);
+      propsOut.setProperty(resultKey,
+        (failures.length
+          ? 'FAILED-ALL-VALIDATION ' + window.toIso + ': 0 attempted, ' + failures.length
+            + ' row(s) failed dept validation (see admin email) -- run marker cleared; '
+          : 'NO-SUBSCRIBERS ' + window.toIso + ': no active ' + cadence
+            + ' rows matched -- run marker NOT claimed; ')
+        + 'a manual sendDigestsForCadence_(\'' + cadence + '\') (or the next trigger '
+        + 'inside the same window) will deliver once rows exist. At ' + new Date());
+    } else if (sent === 0) {
       propsOut.deleteProperty(markerKey);
       propsOut.setProperty(resultKey,
         'FAILED-ALL ' + window.toIso + ': 0 of ' + attempted + ' digests sent -- run marker '

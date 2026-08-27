@@ -120,3 +120,84 @@ test('P-8: parseHistoryDateCell_ parses ISO-shaped TEXT as a local day, not UTC 
   // Garbage still yields an invalid date (callers already isNaN-guard).
   assert.ok(isNaN(f('garbage').getTime()));
 });
+
+// ── P8/P26 (broad-scan 2026-08-27): the BULK force path ─────────────────────
+// The guards were daily-path-only (a bulk rebuild-to-zero of dashboard-read
+// CSR slipped through silently) and keyed on the force FLAG alone (Manual
+// Export always forces -> false alarms on never-imported dates). These pin
+// the pieces the fix added: queueToPendingArchive's per-type counts, the
+// bulk-branch guard wiring, and the forceDeleted gate.
+
+test('P8: queueToPendingArchive returns per-type queued counts (zero CSR is visible)', function () {
+  const rows = { appended: [] };
+  const pending = {
+    getLastRow: function () { return 1; },
+    getRange: function () { return { setValues: function (v) { rows.appended = v; }, getValues: function () { return []; } }; },
+    deleteRow: function () {},
+  };
+  const fakeSS = {
+    getSheetByName: function (n) { return n === 'Pending Archive' ? pending : null; },
+    getSpreadsheetTimeZone: function () { return 'America/Chicago'; },
+  };
+  const results = {
+    qcdData: { output: [['5', '2', '1', '', ''], ['', '', '', '', '']],
+               labels: [['A_Q_X', 'DeptX'], ['A_Q_Y', 'DeptY']] },
+    csrData: { agents: [], totalCalls: [], queues: [] },   // rebuild-to-zero
+  };
+  const out = h.call('queueToPendingArchive', fakeSS, results, new Date(2026, 6, 14),
+    true, true, false, false);   // skipCDR, skipQPath, !skipQCD, !skipCSR
+  assert.equal(out.byType.QCD, 1, 'one non-empty QCD row queued');
+  assert.equal(out.byType.CSR_TRANSFER, 0, 'the zero-row CSR rebuild is countable');
+  assert.equal(out.queued, 1);
+});
+
+test('P8/P26 wiring: the bulk branch guards QCD+CSR at queue time, gated on forceDeleted', function () {
+  // The bulk branch lives mid-processNewImport (not separately callable), so
+  // pin the wiring by source (the FO-1 pattern): both guard calls exist, use
+  // the bulkBackfill step names, and carry the forceDeleted gate.
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /guardForceRebuildLoss_\(targetSS, 'bulkBackfill:QCD', dateObj,\s*\n?\s*force && forceDeleted\.qcd/,
+    'bulk QCD guard present + forceDeleted-gated');
+  assert.match(src, /guardForceRebuildLoss_\(targetSS, 'bulkBackfill:CSR', dateObj,\s*\n?\s*force && forceDeleted\.csr/,
+    'bulk CSR guard present + forceDeleted-gated');
+  assert.match(src, /force: !!\(force && forceDeleted\.dqe\)/,
+    'bulk DQE build opts.force carries the forceDeleted gate');
+  assert.match(src, /force: !!\(force && fdel\.dqe\)/,
+    'daily DQE build opts.force carries the forceDeleted gate');
+});
+
+test('P26: processIntegratedHistory fires the QCD/CSR guards only when that sheet was actually deleted', function () {
+  const appended = [];
+  const mkHist = function () {
+    return {
+      getLastRow: function () { return 1; },
+      getRange: function () { return { setValues: function () {} }; },
+    };
+  };
+  const sheets = {
+    'QCD Historical Data': mkHist(),
+    'CSR Transfer Historical Data': mkHist(),
+    'Pipeline Health': { appendRow: function (r) { appended.push(r); } },
+  };
+  const fakeSS = { getSheetByName: function (n) { return sheets[n] || null; } };
+  const results = {
+    qcdData: { output: [['', '', '', '', '']], labels: [['A_Q_X', 'DeptX']] },  // zero-row rebuild
+    csrData: { agents: [], totalCalls: [], queues: [] },                         // zero-row rebuild
+  };
+  const run = function (forceDeleted) {
+    appended.length = 0;
+    // skipCDR/QPath/DQE=true so only the QCD + CSR blocks execute; no
+    // outputSheet / rawDataSheet needed on those paths.
+    h.call('processIntegratedHistory', fakeSS, null, results, new Date(2026, 6, 14),
+      true, true, false, false, true, null, true, forceDeleted);
+    return appended.filter(function (r) { return r[2] === 'failure'; })
+                   .map(function (r) { return r[1]; });
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(run({ qcd: true, csr: true, dqe: false }))),
+    ['processIntegratedHistory:QCD', 'processIntegratedHistory:CSR'],
+    'force + actually-deleted + zero rebuild -> both guards fire');
+  assert.deepEqual(JSON.parse(JSON.stringify(run({ qcd: false, csr: false, dqe: false }))), [],
+    'force but nothing was deleted (first-time import) -> no false alarm');
+});

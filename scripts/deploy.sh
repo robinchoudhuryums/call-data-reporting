@@ -71,8 +71,18 @@ node "$(dirname "$0")/check-remote-orphans.mjs" "$DIR" || exit 1
 # never stays dirty and the stamp exists only in the pushed project. The
 # Health page's 'build-stamp' row renders whatever got pushed, which makes a
 # bare `clasp push -f` self-reporting: it ships the placeholder.
-STAMP_FILE="$(cd "$(dirname "$0")/.." && pwd)/apps-script/department-dashboard/BuildStamp.gs"
-if [ "$DIR" = "." ] && [ -f "$STAMP_FILE" ]; then
+# S6: the stamp now covers the SIBLING projects too -- they hold half the
+# INV-16 duplicated files and a bare `clasp push -f` from their directories
+# previously left no trace of having bypassed the CI gates. Per-project
+# stamp file + variable name (the dashboard keeps its E3 names).
+ROOT_ABS="$(cd "$(dirname "$0")/.." && pwd)"
+case "$DIR" in
+  .)                       STAMP_FILE="$ROOT_ABS/apps-script/department-dashboard/BuildStamp.gs"; STAMP_VAR="BUILD_STAMP_" ;;
+  apps-script/cdr-import|apps-script/cdr-import/)  STAMP_FILE="$ROOT_ABS/apps-script/cdr-import/buildStamp.js"; STAMP_VAR="PROJECT_BUILD_STAMP_" ;;
+  apps-script/cdr-report|apps-script/cdr-report/)  STAMP_FILE="$ROOT_ABS/apps-script/cdr-report/buildStamp.js"; STAMP_VAR="PROJECT_BUILD_STAMP_" ;;
+  *)                       STAMP_FILE=""; STAMP_VAR="" ;;
+esac
+if [ -n "$STAMP_FILE" ] && [ -f "$STAMP_FILE" ]; then
   GIT_DESC="$(git rev-parse --short HEAD 2>/dev/null || echo 'no-git')"
   if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
     GIT_DESC="${GIT_DESC}+dirty"
@@ -84,11 +94,11 @@ if [ "$DIR" = "." ] && [ -f "$STAMP_FILE" ]; then
   # simulation that validated this block) -- say so instead of staying
   # silently stamped, since a stamped working tree is exactly the churn this
   # design exists to avoid.
-  trap 'git checkout --quiet -- "$STAMP_FILE" 2>/dev/null         || echo "warn: could not restore BuildStamp.gs placeholder -- check git status" >&2' EXIT
+  trap 'git checkout --quiet -- "$STAMP_FILE" 2>/dev/null         || echo "warn: could not restore build-stamp placeholder -- check git status" >&2' EXIT
   {
     echo "// Written by scripts/deploy.sh for THIS push only -- the committed file"
     echo "// holds a placeholder; see its header. Do not commit a real stamp."
-    echo "var BUILD_STAMP_ = '${STAMP}';"
+    echo "var ${STAMP_VAR} = '${STAMP}';"
   } > "$STAMP_FILE"
   echo "==> build stamp: ${STAMP}"
 fi

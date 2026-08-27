@@ -67,6 +67,13 @@ const SPECS = [
   ['neonAgentExts',     'NeonRead.gs',            /'neonAgentExts:v(\d+):'/],
   // Batch G: the Outbound report (callback linkage + per-agent activity).
   ['outboundReport',    'OutboundReport.gs',      /'outboundReport:v(\d+)'/],
+  // S2 (broad-scan 2026-08-27): the four prefixes the completeness sweep
+  // below found untracked -- documented in current-truth docs, invisible to
+  // this suite (the third recurrence of the B5/F3b class).
+  ['overviewChartYtd',  'CompanyOverview.gs',     /'overviewChartYtd:v(\d+)/],
+  ['presence',          'SystemHealth.gs',        /'presence:v(\d+)'/],
+  ['orphanFix:init',    'OrphanFix.gs',           /'orphanFix:init:v(\d+)'/],
+  ['deptConfig:init',   'DeptConfig.gs',          /'deptConfig:init:v(\d+)'/],
 ];
 
 // Build the canonical map from code at load time so every test sees it.
@@ -148,4 +155,78 @@ test('cache-version sync: markdown version tables match the code', function () {
         + ' but the code constant is v' + canonical[prefix] + ' (INV-30).');
     });
   });
+});
+
+// ---- S2/S3 (broad-scan 2026-08-27): completeness + freshness anchors -------
+
+test('S2: every cache-prefix literal in the .gs files is tracked by SPECS', function () {
+  // The hand-maintained SPECS list had drifted three times (B5, F3b, and the
+  // four entries above); this sweep turns "add your new prefix to SPECS" from
+  // convention into a failing test. A prefix in SPECS also feeds the S3
+  // anchor table below, which is what makes registration matter.
+  const found = {};
+  GS_FILES.forEach(function (f) {
+    const src = read(f, DASH);
+    const re = /'([A-Za-z_][A-Za-z_]*(?::[A-Za-z_]+)*):v\d+[:']/g;
+    let m;
+    while ((m = re.exec(src)) !== null) found[m[1]] = f;
+  });
+  const tracked = {};
+  SPECS.forEach(function (sp) { tracked[sp[0]] = true; });
+  const untracked = Object.keys(found).filter(function (p) { return !tracked[p]; });
+  assert.deepEqual(untracked.sort(), [],
+    'cache prefixes with no SPECS entry (add them + an S3 anchor classification): '
+    + untracked.map(function (p) { return p + ' (' + found[p] + ')'; }).join(', '));
+});
+
+// S3: the stale-morning contract. Every key cached under the 6h
+// REPORT_CACHE_TTL_SECONDS tier must carry a freshness ANCHOR -- the
+// reportFreshnessTag_() suffix, or a documented equivalent/exception --
+// or it re-inherits the bug the tag exists to prevent (the B1-B5 class:
+// a morning ingest that cannot mint new keys for up to 6 hours).
+// Enforcement is file-level (the prefix's file must reference the tag),
+// which catches the realistic failure: a NEW report file shipping a 6h key
+// with no anchor. (A second un-anchored key added to an already-tagged file
+// can still slip through -- reviewers own that narrower corner.)
+const ANCHOR_SPECS = {
+  summary:             'tag',
+  latestDate:          'exception: 5-min CACHE_TTL_SECONDS freshness tier',
+  latestDates:         'exception: 5-min CACHE_TTL_SECONDS freshness tier',
+  individual:          'tag',
+  individual_active:   'tag',
+  missed:              'tag',
+  companyOverview:     'tag',
+  qcdAll:              'exception: 6h by design (QCD lands once daily); CacheWarm re-warm is freshness-guarded',
+  inbound:             'tag',
+  inboundHeatmap:      'tag',
+  insights:            'tag',
+  directCall:          'tag',
+  agentHome:           'tag',
+  agentHist:           'exception: embeds the latest DQE date directly in the key',
+  neonAgentExts:       'tag',
+  outboundReport:      'tag',
+  overviewChartYtd:    'exception: embeds latestDate in the key (equivalent anchor)',
+  presence:            'exception: CacheService presence map, ~15-min prune -- not a report cache',
+  'orphanFix:init':    'exception: busted on every write (bustOrphanFixCache_)',
+  'deptConfig:init':   'exception: busted on every write (dcBustCaches_)',
+};
+
+test('S3: every SPECS prefix has an anchor classification, and tag-anchored files reference reportFreshnessTag_', function () {
+  SPECS.forEach(function (sp) {
+    const prefix = sp[0], file = sp[1];
+    const spec = ANCHOR_SPECS[prefix];
+    assert.ok(spec,
+      'no ANCHOR_SPECS entry for "' + prefix + '" -- classify it: "tag" (the key '
+      + 'carries reportFreshnessTag_()) or "exception: <why it needs no tag>"');
+    if (spec === 'tag') {
+      assert.ok(read(file, DASH).indexOf('reportFreshnessTag_()') !== -1,
+        prefix + ' is classified tag-anchored but ' + file + ' never calls '
+        + 'reportFreshnessTag_() -- the key would pin stale mornings for the 6h TTL');
+    }
+  });
+  // And the table itself stays honest: no orphan classifications.
+  const specNames = {};
+  SPECS.forEach(function (sp) { specNames[sp[0]] = true; });
+  const orphans = Object.keys(ANCHOR_SPECS).filter(function (p) { return !specNames[p]; });
+  assert.deepEqual(orphans, [], 'ANCHOR_SPECS entries with no SPECS row: ' + orphans.join(', '));
 });

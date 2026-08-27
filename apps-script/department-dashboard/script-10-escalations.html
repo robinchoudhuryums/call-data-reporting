@@ -45,6 +45,19 @@
       if ($('esc-status')) $('esc-status').value = tile.getAttribute('data-jump');
       escLoad_();
     });
+    // I1 (the F13 class): the tiles announce role="button" tabindex="0"
+    // (escBandTile_) but only the CLICK delegation existed -- a keyboard
+    // user tabbed to a "button" where Enter did nothing and Space scrolled
+    // the page. Delegated keydown mirrors the click; the tiles re-render
+    // per load, so the persistent container owns both handlers.
+    if ($('esc-summary-band')) $('esc-summary-band').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const tile = e.target.closest('[data-jump]');
+      if (!tile) return;
+      e.preventDefault();           // Space must not scroll the page
+      if ($('esc-status')) $('esc-status').value = tile.getAttribute('data-jump');
+      escLoad_();
+    });
     // Phase 2: the review chip jumps straight to the review queue.
     if ($('esc-review-chip')) $('esc-review-chip').addEventListener('click', function () {
       if ($('esc-status')) $('esc-status').value = 'pending_review';

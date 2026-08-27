@@ -1877,7 +1877,7 @@
             + ' across ' + okRenames + ' outlier' + (okRenames === 1 ? '' : 's'));
           if (okAdds) bits.push('added ' + okAdds + ' new assignment' + (okAdds === 1 ? '' : 's'));
           ofSetStatus_('success', 'Done — ' + bits.join(' and ')
-            + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
+            + '. Overview updates immediately; other views may take up to 6 hours (cache TTL; the rename is already applied -- cached views just lag).');
         }
         showToast('Applied ' + res.ok.length + ' change' + (res.ok.length === 1 ? '' : 's'),
           res.failed.length ? 'error' : 'success');
@@ -1923,7 +1923,7 @@
         ofSetStatus_('success',
           'Added "' + orphan.name + '" to ' + dept
           + (res && res.cell ? ' (cell ' + res.cell + ')' : '')
-          + '. Overview updates immediately; other views may take up to 30 minutes (cache TTL).');
+          + '. Overview updates immediately; other views may take up to 6 hours (cache TTL; the rename is already applied -- cached views just lag).');
         showToast('Added to ' + dept + ' roster', 'success');
         // Item 5a: drop the now-rostered agent from the outlier list + refresh
         // the log / roster-name options in place (res carries rosterNames + log).
@@ -1969,7 +1969,7 @@
           ofSetStatus_('success',
             'Renamed ' + n + ' row' + (n === 1 ? '' : 's')
             + '. Alias added so future imports map correctly. '
-            + 'Overview updates immediately; other dashboard views may take up to 30 minutes (cache TTL) to reflect the change.');
+            + 'Overview updates immediately; other dashboard views may take up to 6 hours (cache TTL) to reflect the change.');
           showToast('Renamed ' + n + ' row' + (n === 1 ? '' : 's'), 'success');
           // Item 5a: drop the renamed orphan + refresh aliases/log in place.
           ofApplyLocalUpdate_(res.ok[0].res, [orphan.name]);
@@ -2650,7 +2650,7 @@
             ? ' — queue mapped to 2+ depts' : ' — with a warning'), 'success');
         } else {
           dcSetStatus_('success', 'Saved ' + dcEditDept
-            + '. Changes take effect on the next request (Overview refreshes immediately; report caches within ~30 min).');
+            + '. Changes take effect on the next request (Overview refreshes immediately; report caches within the TTL, up to ~6h).');
           showToast('Saved config for ' + dcEditDept, 'success');
         }
         dcLoadInit_();

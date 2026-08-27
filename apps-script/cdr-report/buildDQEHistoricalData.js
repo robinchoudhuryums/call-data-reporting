@@ -70,9 +70,10 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
   const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, readWidth).getDisplayValues();
   const matched = {};
   offsets.forEach(function (o) { matched[o] = true; });   // absolute data-region offsets
-  // F-16: route the coercion-prone abandoned ID/time cells (AD/AE/AF)
-  // through the SAME sanitizer every other sheet->Neon path uses (the
-  // backfills + the deferred mirror), so a non-force re-import of an old
+  // F-16: route the coercion-prone abandoned cells through the SAME
+  // sanitizers every other sheet->Neon path uses (the backfills + the
+  // deferred mirror) -- AD/AE (numeric IDs) via the abandoned-ID sanitizer,
+  // AF (H:MM:SS times) via the SLOT sanitizer per M3 -- so a non-force re-import of an old
   // date whose sheet rows still carry pre-protection coerced cells writes
   // the #REBUILD sentinel / recovered value instead of overwriting clean
   // dqe_history values with coerced garbage via ON CONFLICT DO UPDATE.
@@ -107,7 +108,13 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
       slots:           r.slice(10, 29).map(saneSlot),   // F-51
       abParentIds:     saneAb(r[29]),
       abMissedIds:     saneAb(r[30]),
-      abMissedTimes:   saneAb(r[31]),
+      // M3: AF is a comma-joined H:MM:SS TIMES column that coerces like the
+      // K-AC slots, so it routes through the SLOT sanitizer (which recovers a
+      // "12/30/1899 10:23:33" date-render to "10:23:33"), NOT the numeric-ID
+      // sanitizer -- same routing as neonbackfill.js / NeonMirror.js. The ID
+      // sanitizer here mirrored coerced date-renders verbatim into
+      // dqe_history and marked lossless single-time cells #REBUILD.
+      abMissedTimes:   saneSlot(r[31]),
       avgAbdWait:      r[32],
       csrAvgAbdWait:   r[33],
       queueSplit:      r[34] == null ? '' : r[34]   // AI -- sub-queue Phase 1
@@ -1136,9 +1143,14 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       status:     'success',
       rows:       outputRows.length,
       durationMs: Date.now() - __pipelineStartMs,
+      // S6: each project's own deployed-build stamp rides the note
+      // (buildStamp.js; typeof-guarded so both INV-16 copies stay
+      // byte-identical and a project without the stamp file logs nothing).
       notes:      'callDate=' + callDateStr + (unparsedStartCount
                     ? ' | WARN: ' + unparsedStartCount + ' leg(s) had unparseable START_TIME (dropped from in-window counts)'
-                    : ''),
+                    : '')
+                + (typeof PROJECT_BUILD_STAMP_ !== 'undefined'
+                    ? ' | build: ' + PROJECT_BUILD_STAMP_ : ''),
     });
   } catch (pipelineLogErr) {
     Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);

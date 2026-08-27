@@ -93,7 +93,7 @@
 // daily dept-total queue rows -- so the Calendar view works for Queue:
 // Abandoned % at any window length. Payload SHAPE change, so old blobs
 // would leave the calendar gated for the TTL.
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v22';
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v23';  // v23: L5 whole-roster team accumulators (selection-independent)
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -491,12 +491,18 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     if (!agent) continue;
     // Queue-sentinel rows (queue-only abandoned events) -- not real agents.
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
-    // R11-E (item 6): accumulate the dept-wide answered total BEFORE the
-    // selection gate, so the donut's denominator is the whole department.
-    if (rosterSet[agent] && dateIso >= from && dateIso <= to) {
-      deptAnsweredCurr += (row.totalAnswered || 0);
-    }
-    if (!selectedSet[agent]) continue;
+    // L5: the SELECTION gates only the per-agent card accumulators; every
+    // TEAM accumulator (teamCurr/teamPrev/dailyTeam/monthlyTeam/ytdTeam/
+    // teamAvgBase/deptAnsweredCurr/deptAnsweredExcluded) is WHOLE-ROSTER,
+    // selection-independent. The old `if (!selectedSet) continue` above the
+    // whole body made the team rollup, the gap-vs-team baseline and the
+    // behind-team classification SELECTION-scoped, so a partial "Comparison
+    // & agents" pick silently diverged from IR's whole-roster team average
+    // -- while this file's own comments (and the R18 paragraph above)
+    // claimed parity. Default full-roster runs are byte-identical.
+    const isSelected = !!selectedSet[agent];
+    const isTeamRoster = !!rosterSet[agent];   // exact INV-04 roster membership
+    if (!isSelected && !isTeamRoster) continue;
 
     const inCurrent = (dateIso >= from && dateIso <= to);
     const inPrior   = (dateIso >= priorFrom && dateIso <= priorTo);
@@ -505,13 +511,12 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
 
     // Floater detection (INV-53): a selected non-roster agent only counts
     // if their col-D extensions overlap the dept's queue set.
-    if (!rosterSet[agent] && !agentMatchedViaQueue[agent]) {
+    if (isSelected && !rosterSet[agent] && !agentMatchedViaQueue[agent]) {
       const rowExts = parseExtensions_(row.queueExt);
       for (let j = 0; j < rowExts.length; j++) {
         if (deptQueueExts[rowExts[j]]) { agentMatchedViaQueue[agent] = true; break; }
       }
     }
-    const isRoster = !!agentMatchedViaRoster[agent];
 
     const rung     = row.totalRung;
     const missed   = row.totalMissed;
@@ -522,10 +527,14 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     // Current wins when a custom prior window overlaps the current
     // range (same else-if semantics as the Performance Report).
     if (inCurrent) {
-      const ag = perAgentCurr[agent];
-      ag.rung += rung; ag.missed += missed; ag.answered += answered;
-      ag.ttt += tttSec; ag.att_sum += attTotal;
-      if (isRoster) {
+      if (isSelected) {
+        const ag = perAgentCurr[agent];
+        ag.rung += rung; ag.missed += missed; ag.answered += answered;
+        ag.ttt += tttSec; ag.att_sum += attTotal;
+      }
+      if (isTeamRoster) {
+        // R11-E (item 6): the donut denominator is the whole department.
+        deptAnsweredCurr += (answered || 0);
         teamCurr.rung += rung; teamCurr.missed += missed; teamCurr.answered += answered;
         teamCurr.ttt += tttSec; teamCurr.att_sum += attTotal;
         if (rung || missed || answered) activeRosterCurr[agent] = true;
@@ -545,32 +554,40 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
         db.ttt += tttSec; db.att_sum += attTotal;
       }
     } else if (inPrior) {
-      const ap = perAgentPrior[agent];
-      ap.rung += rung; ap.missed += missed; ap.answered += answered;
-      ap.ttt += tttSec; ap.att_sum += attTotal;
-      if (isRoster) {
+      if (isSelected) {
+        const ap = perAgentPrior[agent];
+        ap.rung += rung; ap.missed += missed; ap.answered += answered;
+        ap.ttt += tttSec; ap.att_sum += attTotal;
+      }
+      if (isTeamRoster) {
         teamPrev.rung += rung; teamPrev.missed += missed; teamPrev.answered += answered;
         teamPrev.ttt += tttSec; teamPrev.att_sum += attTotal;
       }
     }
-    if (inTrend && isRoster) {
-      // R17d: YTD daily buckets ride this pass (see ytdTeam above).
-      if (dateIso >= ytdFrom) {
-        var yb = ytdTeam[dateIso] || (ytdTeam[dateIso] = blank());
-        yb.rung += rung; yb.missed += missed; yb.answered += answered;
-        yb.ttt += tttSec; yb.att_sum += attTotal;
-      }
-      const ym = dateIso.slice(0, 7);
-      const mb = monthlyTeam[ym];
-      if (mb) {
-        mb.rung += rung; mb.missed += missed; mb.answered += answered;
-        mb.ttt += tttSec; mb.att_sum += attTotal;
+    if (inTrend) {
+      if (isTeamRoster) {
+        // R17d: YTD daily buckets ride this pass (see ytdTeam above).
+        if (dateIso >= ytdFrom) {
+          var yb = ytdTeam[dateIso] || (ytdTeam[dateIso] = blank());
+          yb.rung += rung; yb.missed += missed; yb.answered += answered;
+          yb.ttt += tttSec; yb.att_sum += attTotal;
+        }
+        const ym0 = dateIso.slice(0, 7);
+        const mb = monthlyTeam[ym0];
+        if (mb) {
+          mb.rung += rung; mb.missed += missed; mb.answered += answered;
+          mb.ttt += tttSec; mb.att_sum += attTotal;
+        }
       }
       // R11-E (item 4): per-agent monthly buckets (rung/answered/missed) for
       // the per-agent trend line chart, aligned to the same month axis.
-      const pam = perAgentMonthly[agent] || (perAgentMonthly[agent] = {});
-      const pamb = pam[ym] || (pam[ym] = { rung: 0, answered: 0, missed: 0 });
-      pamb.rung += rung; pamb.answered += answered; pamb.missed += missed;
+      // Selected ROSTER cards only, matching the pre-L5 `isRoster` gate.
+      if (isSelected && isTeamRoster) {
+        const ym = dateIso.slice(0, 7);
+        const pam = perAgentMonthly[agent] || (perAgentMonthly[agent] = {});
+        const pamb = pam[ym] || (pam[ym] = { rung: 0, answered: 0, missed: 0 });
+        pamb.rung += rung; pamb.answered += answered; pamb.missed += missed;
+      }
     }
   }
 

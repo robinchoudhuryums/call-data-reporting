@@ -26,6 +26,14 @@
     --paper-card:  #ffffff;
     --ink:         #101418;
     --muted:       #606872;
+    /* P24: two tokens that were CONSUMED but never defined -- var() with no
+       fallback computes to `inherit`, so .sh-hint/.sh-muted/.esc-pill-* text
+       rendered at full inherited ink instead of muted (both themes), and the
+       View-as <select> inherited the control's MONO face instead of the sans
+       reset it declared. Aliases resolve at use time, so the dark palette's
+       --muted override carries through automatically. */
+    --ink-muted:   var(--muted);
+    --sans:        var(--ui);
     --line:        #d6d1c2;
 
     --accent:      #4e7bc4;

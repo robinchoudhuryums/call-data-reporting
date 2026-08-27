@@ -46,6 +46,31 @@ function onChange(e) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
     console.log("onChange: Could not acquire lock — another instance is running. Skipping.");
+    // A skipped INSERT_GRID is a DROPPED DAY: the trigger is one-shot per
+    // sheet and nothing retries, so this used to be console-only -- invisible
+    // until the 36h staleness banner. Contention is likeliest exactly when
+    // the system is degraded (a deferred-mirror drain paying failed JDBC
+    // connects holds this same script lock for minutes per tick). Surface it
+    // as an `autoImport` failure row so the Health page + PipelineWatch see
+    // it; a concurrent import that WAS handling the grid finishes later and
+    // its success row supersedes this one (most-recent-outcome rule), so the
+    // benign double-fire case self-heals. Best-effort: telemetry must never
+    // make the skip path throw.
+    try {
+      logPipelineHealthWithFallback_(null, {
+        step: 'autoImport',
+        status: 'failure',
+        rows: 0,
+        durationMs: null,
+        notes: 'onChange INSERT_GRID SKIPPED: script lock not acquired within 10s '
+          + '(another run — import, bulk archive, or Neon mirror drain — held it). '
+          + 'The import for this grid did NOT run and will not re-fire on its own; '
+          + 'if no later autoImport success row appears for today, run Manual '
+          + 'Processing (CDR Tools) for the date.',
+      });
+    } catch (err) {
+      console.log('onChange: lock-skip telemetry failed: ' + (err && err.message ? err.message : err));
+    }
     return;
   }
   try {
@@ -431,7 +456,18 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     if (sourceData.length < 2) throw new Error("Source sheet empty.");
     const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
 
+    // P26: capture what the force-delete below ACTUALLY removes, per sheet.
+    // The loss guards (guardForceRebuildLoss_ / buildDQE's refuseIfForce_)
+    // used to key on the force FLAG alone, and runManualExport always passes
+    // force=true -- so a first-time manual import of a legitimately light day
+    // logged "rows were already cleared / data may be lost" failures (and the
+    // DQE email) for deletions that never happened. A guard now fires only
+    // when force AND that sheet's date rows were really deleted.
+    const forceDeleted = { qcd: false, csr: false, dqe: false };
     if (force) {
+      forceDeleted.qcd = !!existsInQCD;
+      forceDeleted.csr = !!existsInCSR;
+      forceDeleted.dqe = !!existsInDQE;
       if (existsInCDR) {
         const obcHD = targetSS.getSheetByName("CDR Historical Data");
         if (obcHD) { deleteHistoricalRowsForDate(obcHD, dateObj, 3); if (histDateCache) histDateCache.cdr.delete(dateKey); }
@@ -511,7 +547,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let historyReport = [];
     if (!isHistoricalBackfill) {
       if (!silent) sourceSS.toast("Archiving...", "Step 6/7", -1);
-      historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR, existsInDQE, rawDataSheet, force);
+      historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR, existsInDQE, rawDataSheet, force, forceDeleted);
     } else {
       // Bulk-archive path: CDR / QPath / QCD / CSR go through Pending
       // Archive for one bulk write at the end. DQE bypasses that path
@@ -519,8 +555,19 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       // and write directly to DQE Historical Data + Neon -- we already
       // wrote Raw Data for this date above (needsRawDataWrite) when
       // willBuildDQE was true, so the build has fresh data to consume.
-      queueToPendingArchive(targetSS, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR);
+      const queued = queueToPendingArchive(targetSS, results, dateObj, existsInCDR, existsInQPath, existsInQCD, existsInCSR);
       historyReport.push("- Queued for batch archive");
+      // P8 (the S2-2 rule on the BULK path): QCD + CSR are dashboard-read and
+      // were force-deleted above, but the bulk path QUEUES rows instead of
+      // writing them, so a rebuild-to-zero slipped past the daily-path guards
+      // -- the date's rows were already gone with no failure row and no
+      // email. Guard at queue time on the same log-only terms (the queued
+      // rows are what processBatchArchive will eventually write); the P26
+      // forceDeleted gate keeps the signal truthful.
+      guardForceRebuildLoss_(targetSS, 'bulkBackfill:QCD', dateObj,
+        force && forceDeleted.qcd, (queued && queued.byType && queued.byType.QCD) || 0);
+      guardForceRebuildLoss_(targetSS, 'bulkBackfill:CSR', dateObj,
+        force && forceDeleted.csr, (queued && queued.byType && queued.byType.CSR_TRANSFER) || 0);
 
       if (willBuildDQE) {
         const dqeHD = targetSS.getSheetByName("DQE Historical Data");
@@ -537,8 +584,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
             // M2: `force` gates the throw-on-empty-rebuild guard. The bulk
             // path runs force-mode (processBulkQueue passes force=true) and
             // deletes the date's rows before this build, so a zero-row rebuild
-            // is a data-loss failure, not a legitimate rows:0.
-            buildDQEHistoricalData(rawDataSheet, dqeHD, { skipNeon: true, expectedDate: dateObj, force: !!force });
+            // is a data-loss failure, not a legitimate rows:0. P26: gated on
+            // rows having ACTUALLY been deleted -- a first-time date that
+            // rebuilds to zero is a legitimate rows:0, not a loss.
+            buildDQEHistoricalData(rawDataSheet, dqeHD,
+              { skipNeon: true, expectedDate: dateObj, force: !!(force && forceDeleted.dqe) });
             const dqeEndRow = dqeHD.getLastRow();
             const dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
             if (dqeCount > 0 && histDateCache) histDateCache.dqe.add(dateKey);
@@ -681,7 +731,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         status:     'success',
         rows:       countTotal,
         durationMs: endTime - startTime,
-        notes:      latestName + (successCountLine ? ' | ' + successCountLine : ''),
+        // S6: the deployed-build stamp rides the success note (buildStamp.js;
+        // "unstamped" = the last push bypassed scripts/deploy.sh's CI gates).
+        notes:      latestName + (successCountLine ? ' | ' + successCountLine : '')
+                  + (typeof PROJECT_BUILD_STAMP_ !== 'undefined'
+                      ? ' | build: ' + PROJECT_BUILD_STAMP_ : ''),
       });
     } catch (logErr) { /* best-effort */ }
 
@@ -922,8 +976,10 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
 
   const rowsToAdd = [];
   const producedTypes = [];
+  const typeCounts = {};   // P8: per-type queued-row counts for the bulk-path loss guards
   let blockStartLen = 0;
   const markProduced = function (type) {
+    typeCounts[type] = rowsToAdd.length - blockStartLen;
     if (rowsToAdd.length > blockStartLen) producedTypes.push(type);
     blockStartLen = rowsToAdd.length;
   };
@@ -1034,6 +1090,9 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
     const nextRow = pendingSheet.getLastRow() + 1;
     pendingSheet.getRange(nextRow, 1, rowsToAdd.length, 34).setValues(rowsToAdd);
   }
+  // P8: counts by type ('CDR' / 'QPATH' / 'QCD' / 'CSR_TRANSFER') so the
+  // bulk caller's loss guards can see a rebuild-to-zero at queue time.
+  return { queued: rowsToAdd.length, byType: typeCounts };
 }
 
 // -------------------------------------------------------------------------
@@ -1492,7 +1551,7 @@ function calculateMetricsInMemory(rawDisplayData, configSheet) {
       deptQueues.forEach(dq => {
         // IMP-2: match ANY of the row's extensions (alternation), counting
         // the path at most once per row even when two of its exts appear.
-        if (dq.exts.some(ext => new RegExp(ext + "(?!\\d)").test(pathVal))) {
+        if (dq.exts.some(ext => new RegExp("(?:^|\\D)" + ext + "(?!\\d)").test(pathVal))) {
           deptPaths[dq.dept][pathVal] = (deptPaths[dq.dept][pathVal] || 0) + 1;
           claimedDepts.add(dq.dept);
         }
@@ -1670,7 +1729,11 @@ function updateOutputSheet(sheet, res, dateObj) {
   });
 }
 
-function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipCDR, skipQPath, skipQCD, skipCSR, skipDQE, rawDataSheet, force) {
+function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipCDR, skipQPath, skipQCD, skipCSR, skipDQE, rawDataSheet, force, forceDeleted) {
+  // P26: which sheets the caller's force-delete ACTUALLY cleared. Defaults to
+  // all-true so a caller that doesn't pass it keeps the old (over-eager but
+  // safe-direction) guard behavior.
+  const fdel = forceDeleted || { qcd: true, csr: true, dqe: true };
   const summaryLog = [];
   const salesHD    = targetSS.getSheetByName("Q Path Historical Data");
   const obcHD      = targetSS.getSheetByName("CDR Historical Data");
@@ -1913,7 +1976,8 @@ if (!skipCDR && obcHD) {
     // Data-loss guard convention: QCD is dashboard-read (Insights Queue health /
     // Overview / My Dept snapshot) and was force-deleted above, so a 0-row
     // rebuild silently loses the date -- surface it (no-op unless force + empty).
-    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:QCD', dateObj, force, qcdBatch.length);
+    // P26: gated on the delete having actually happened for THIS sheet.
+    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:QCD', dateObj, force && fdel.qcd, qcdBatch.length);
     if (qcdBatch.length > 0) {
       qcdHD.getRange(qcdHD.getLastRow() + 1, 1, qcdBatch.length, 12).setValues(qcdBatch);
       qcdCount = qcdBatch.length;
@@ -2007,7 +2071,7 @@ if (!skipCDR && obcHD) {
     // just rendered a slightly different weighted percentage. Guarded now, on
     // the same terms as QCD (log-only; the already-written sheets stand).
     // CDR / QPath remain unguarded and genuinely not dashboard-read.
-    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:CSR', dateObj, force, csrBatch.length);
+    guardForceRebuildLoss_(targetSS, 'processIntegratedHistory:CSR', dateObj, force && fdel.csr, csrBatch.length);
     if (csrBatch.length > 0) {
       csrHD.getRange(csrHD.getLastRow() + 1, 1, csrBatch.length, 18).setValues(csrBatch);
       csrCount = csrBatch.length;
@@ -2062,10 +2126,13 @@ if (!skipCDR && obcHD) {
       // re-import -- which already deleted this date's rows -- rebuilds to zero
       // rows (empty/unparseable Raw Data), rather than silently leaving the date
       // gone under a rows:0 success. A non-force build keeps the F5 rows:0 path.
+      // P26: gated on the DQE rows having actually been deleted -- a manual
+      // (always-force) first-time import of a zero-row day is a legitimate
+      // rows:0, not a loss, and used to throw + email a false alarm.
       buildDQEHistoricalData(rawDataSheet, dqeHD,
         neonDeferred
-          ? { skipNeon: true, expectedDate: dateObj, force: !!force }
-          : { expectedDate: dateObj, force: !!force });
+          ? { skipNeon: true, expectedDate: dateObj, force: !!(force && fdel.dqe) }
+          : { expectedDate: dateObj, force: !!(force && fdel.dqe) });
       const dqeEndRow = dqeHD.getLastRow();
       dqeCount = Math.max(0, dqeEndRow - dqeStartRow);
       if (dqeCount > 0) {

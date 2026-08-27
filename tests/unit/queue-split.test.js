@@ -572,3 +572,55 @@ test('ADOPT: queueSplitNarrowedCopy_ -- off returns the SAME array untouched; de
   assert.equal(shared[0].totalRung, 10, 'the SHARED original is untouched -- dept A must not leak into dept B');
   assert.ok(!shared[0].queueScoped);
 });
+
+// L7 (broad-scan 2026-08-27): on a range STRADDLING the split changeover,
+// an agent's row-level `queueScoped` is ANDed across days, so two
+// PARTIALLY-narrowed appearances both read un-scoped while carrying
+// DIFFERENT figures. Phase 0's subtraction premise (both appearances carry
+// the SAME whole-day figures) no longer holds -- subtracting the whole
+// second appearance under-counted the narrowed days. Figures-equality now
+// gates the dedup: unequal -> no subtraction (fail open, transient state),
+// and the grand total then simply equals the sum of the subtotals.
+test('L7: mixed-changeover crossover rows (un-scoped but UNEQUAL figures) are not subtracted', function () {
+  const part = function (dept, r) {
+    return { meta: { department: dept },
+             rows: [{ agent: 'Anna', matchedViaRoster: true, queueScoped: false,
+                      totalRung: r, totalMissed: 0, totalAnswered: r,
+                      totalUnique: r, tttSeconds: 0 }],
+             totals: { totalRung: r, totalMissed: 0, totalAnswered: r,
+                       totalUnique: r, tttSeconds: 0, rosterAgentCount: 1,
+                       queueOnlyAgentCount: 0 },
+             qcd: null, csrTransfer: null,
+             diagnostics: { rosterWithNoData: [], queueOnlyMatched: [] } };
+  };
+  // Mixed changeover: dept A saw 8 (narrowed on some days), dept B saw 6.
+  const a = part('CSR', 8), b = part('Spanish', 6);
+  const mixed = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(mixed.totals.totalRung, 14, 'unequal figures -> no subtraction');
+  assert.equal(mixed.totals.crossoverAgentCount, 0, 'no caption -- nothing was subtracted');
+
+  // The Phase-0 premise case still dedups: identical whole-day figures.
+  const c = part('CSR', 8), d = part('Spanish', 8);
+  const dup = hData.call('combineSummaries_', c, [c, d]);
+  assert.equal(dup.totals.totalRung, 8, 'identical figures -> the repeat is subtracted');
+  assert.equal(dup.totals.crossoverAgentCount, 1);
+});
+
+// L3 (broad-scan 2026-08-27): EVERY Overview accumulation pass narrows.
+// The card `periods` (Yesterday/Last30/YTD) + 30/60/90-day chart pass was
+// rebuilt per-dept through queueSplitNarrowedCopy_ like the main pass and
+// the YTD endpoint -- under QUEUE_SPLIT_SCOPE=dept the same day used to
+// show different numbers on a card's tile vs its period row vs the chart.
+// The narrowing behavior itself is pinned above at the helper level; this
+// pins the ROUTING (the FO-1 source-pin pattern): three narrowed passes.
+test('L3: CompanyOverview routes all three accumulation passes through queueSplitNarrowedCopy_', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..',
+    'apps-script', 'department-dashboard', 'CompanyOverview.gs'), 'utf8');
+  const calls = (src.match(/queueSplitNarrowedCopy_\(/g) || []).length;
+  assert.ok(calls >= 3,
+    'main per-dept pass + periods/chart pass (L3) + YTD endpoint must all narrow; found ' + calls);
+  assert.match(src, /pRows = queueSplitNarrowedCopy_\(pRows, d\)\.rows/,
+    'the periods/90-day-chart pass narrows per dept');
+});

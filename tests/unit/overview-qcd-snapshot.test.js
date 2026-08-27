@@ -252,3 +252,26 @@ test('R10-5: computeCsrTransferRange_ weights by calls, scopes to range, gates t
   h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {} });
   assert.equal(h.call('computeCsrTransferRange_', 'CSR', '2026-06-01', '2026-06-30'), null);
 });
+
+// L4 (broad-scan 2026-08-27): the Neon-path read window must cover the E5
+// PRIOR window too -- `_readFrom` considered opts.from but never
+// opts.priorFrom, so a selection reaching near/past the 180-day lookback
+// silently truncated byQueueRangePrior (the team-strip delta chips' prior
+// side) on the Neon path; a from older than the lookback truncated it
+// entirely.
+test('L4: the snapshot read window starts at priorFrom when it precedes from and the lookback', function () {
+  const captured = [];
+  const realGrid = h.ctx.readQcdGrid_;
+  h.ctx.readQcdGrid_ = function (fromIso, toIso) {
+    captured.push([fromIso, toIso]);
+    return { missing: true };   // window captured; snapshot cleanly nulls out
+  };
+  try {
+    const out = h.call('computeDeptQcdSnapshot_', 'CSR', null,
+      { from: '2025-01-10', to: '2025-01-20', priorFrom: '2024-12-27', priorTo: '2025-01-09' });
+    assert.equal(out, null, 'missing grid -> null snapshot (unchanged)');
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0][0], '2024-12-27',
+      'the read starts at priorFrom, not min(from, 180d lookback)');
+  } finally { h.ctx.readQcdGrid_ = realGrid; }
+});

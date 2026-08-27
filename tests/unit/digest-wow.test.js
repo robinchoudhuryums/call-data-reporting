@@ -138,3 +138,54 @@ test('RPT-7: a GAIN driven by a missed-call DROP narrates via missed, not "answe
   assert.equal(wow.driver.cur, 0);
   assert.equal(wow.driver.prev, 8);
 });
+
+// P6 (broad-scan 2026-08-27, the O-9 rule ported from QueueReportEmail): a
+// digest run that ATTEMPTED nobody — zero matching active rows, or every row
+// failing the O-3 dept validation — must not claim the window's run marker
+// with an all-green "sent 0 of 0". A subscriber added after the morning
+// trigger (or a fixed row) still gets the window on a re-run; for
+// weekly/monthly the alternative was losing the whole week/month.
+function installDigestMarkerFixture_(configRows) {
+  h.state.props = { SPREADSHEET_ID: 'fake' };
+  h.state.sentEmails.length = 0;
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'DO NOT EDIT!': ROSTER,
+      'Digest Config': [['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format']].concat(configRows),
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.state.cache.clear();
+}
+
+test('P6: zero matching subscribers -> marker NOT claimed, NO-SUBSCRIBERS result', function () {
+  installDigestMarkerFixture_([]);
+  let sends = 0;
+  h.ctx.sendDigestEmail_ = function () { sends++; };
+  h.call('sendDigestsForCadence_', 'daily');
+  assert.equal(sends, 0);
+  assert.equal(h.state.props.DIGEST_RUN_MARKER_daily, undefined, 'window left unclaimed');
+  assert.match(String(h.state.props.DIGEST_LAST_RESULT_daily), /^NO-SUBSCRIBERS/);
+});
+
+test('P6: every row failing dept validation -> marker cleared, FAILED-ALL-VALIDATION result', function () {
+  installDigestMarkerFixture_([['mgr@x.com', 'No Such Dept', 'daily', 'TRUE', '', '']]);
+  h.ctx.sendDigestEmail_ = function () { throw new Error('must not be called'); };
+  h.call('sendDigestsForCadence_', 'daily');
+  assert.equal(h.state.props.DIGEST_RUN_MARKER_daily, undefined, 'window left unclaimed');
+  assert.match(String(h.state.props.DIGEST_LAST_RESULT_daily), /^FAILED-ALL-VALIDATION/);
+});
+
+test('P6: a delivered run still claims the window (dedup preserved)', function () {
+  installDigestMarkerFixture_([['mgr@x.com', 'Alpha', 'daily', 'TRUE', '', '']]);
+  let sends = 0;
+  h.ctx.sendDigestEmail_ = function () { sends++; };
+  h.call('sendDigestsForCadence_', 'daily');
+  assert.equal(sends, 1);
+  assert.ok(h.state.props.DIGEST_RUN_MARKER_daily, 'window claimed on a real send');
+  assert.match(String(h.state.props.DIGEST_LAST_RESULT_daily), /^ok .*sent 1 of 1/);
+  // A second same-window run is deduped by the marker.
+  h.call('sendDigestsForCadence_', 'daily');
+  assert.equal(sends, 1, 'duplicate run skipped');
+});

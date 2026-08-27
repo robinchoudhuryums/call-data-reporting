@@ -6,11 +6,10 @@
 // cleanly with a clear message when playwright isn't installed.
 //
 // Stages: generate payloads from the REAL server code -> build the admin +
-// manager sites from the REAL client -> run the two ASSERTING drivers
-// (drive-smoke = boot/console/blank-canvas/overflow, drive-f13 = keyboard,
-// drive-subqueue = sub-queue scope + the combined-view CSV,
-// drive-journey = the "↳ path" drill's three renderers
-// access). The exploratory drivers (drive.js / drive-insights.js /
+// manager sites from the REAL client -> run the ASSERTING drivers listed in
+// STAGES below (the single source of truth for what gates -- currently the
+// seven CLAUDE.md's "Rendered-UI gate" block names, incl. the agent-app
+// pair). The exploratory drivers (drive.js / drive-insights.js /
 // drive-phase3.js) are NOT run here: they emit screenshots + reports for a human
 // to read, which is not a pass/fail signal.
 import { spawnSync } from 'node:child_process';

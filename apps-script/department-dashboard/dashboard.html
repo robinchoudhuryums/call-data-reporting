@@ -267,7 +267,7 @@
             <span id="ov-user-table-title">Department detail</span>
             <span class="ov-user-table-date" id="ov-user-table-date"></span>
           </div>
-          <div id="ov-user-table-status" class="status" style="display:none;"></div>
+          <div id="ov-user-table-status" role="status" class="status" style="display:none;"></div>
           <table class="agents ov-user-table hide-extra">
             <thead>
               <tr>
@@ -399,7 +399,7 @@
       <!-- R12-26: data-coverage warning host (upserted by coverageNoteUpsert_) -->
       <div id="dept-coverage-host"></div>
 
-      <div id="status" class="status" style="display:none;"></div>
+      <div id="status" role="status" class="status" style="display:none;"></div>
 
       <div id="dept-table-skeleton" style="display:none; padding: 16px 0;">
         <div class="skeleton-row"><div class="skeleton-line" style="width:100px;"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
@@ -665,7 +665,7 @@
           <a href="#" id="ins-select-none">Select none</a>
         </div>
 
-        <div id="ins-form-error" class="status status-error" style="display:none;"></div>
+        <div id="ins-form-error" role="status" class="status status-error" style="display:none;"></div>
         <button class="btn" id="ins-generate-btn" type="button" disabled>Generate report</button>
       </div>
 
@@ -826,7 +826,7 @@
           no setup needed.
           <button type="button" class="link-btn" id="ins-intro-dismiss">Got it</button>
         </div>
-        <div id="ins-results-status" class="status" style="display:none;"></div>
+        <div id="ins-results-status" role="status" class="status" style="display:none;"></div>
         <!-- A1: needs-attention strip. Renders directly under the injected
              #ins-headline (reportHeadline_ inserts before this element, the
              first non-skipped sibling after #ins-results-status). One chip per
@@ -1521,7 +1521,7 @@
             <h3>Common questions</h3>
             <ul>
               <li><strong>My table is empty.</strong> Check the From/To dates first. If they look right, the Diagnostics panel&rsquo;s &ldquo;Roster agents with no data in this range&rdquo; lists who was expected but absent.</li>
-              <li><strong>Numbers look stale.</strong> Check the header freshness pill &mdash; if it&rsquo;s orange (36h+), the daily import likely hasn&rsquo;t run. Reports also cache for up to 30 minutes.</li>
+              <li><strong>Numbers look stale.</strong> Check the header freshness pill &mdash; if it&rsquo;s orange (36h+), the daily import likely hasn&rsquo;t run. Reports can serve a cached copy for up to 6 hours, but new mornings&rsquo; data refreshes them within minutes of the ingest.</li>
               <li><strong>More missed timestamps than the Missed count.</strong> Rings outside the 8:30 AM&ndash;5 PM CST work window show in the timeline but don&rsquo;t count toward Missed.</li>
               <li><strong>An agent shows in two departments.</strong> That&rsquo;s expected &mdash; agents can be on multiple rosters and appear under each.</li>
               <li><strong>Inbound vs QCD abandonment differ.</strong> They use different sources and definitions; Inbound is being vetted, which is why it&rsquo;s admin-only for now.</li>
@@ -1665,7 +1665,7 @@
           <a href="#" id="ir-select-none">Select none</a>
         </div>
 
-        <div id="ir-form-error" class="status status-error" style="display:none;"></div>
+        <div id="ir-form-error" role="status" class="status status-error" style="display:none;"></div>
 
         <button class="btn" id="ir-generate-btn" type="button" disabled>Generate report</button>
       </div>
@@ -1730,7 +1730,7 @@
           </div>
         </div>
 
-        <div id="ir-results-status" class="status" style="display:none;"></div>
+        <div id="ir-results-status" role="status" class="status" style="display:none;"></div>
 
         <div class="ir-cards-toolbar" id="ir-cards-toolbar" style="display:none;">
           <label class="ir-sort-control">
@@ -1849,7 +1849,7 @@
             double-counted). Scoped to the selected range. Click a queue row to see
             its per-call-source breakdown.
           </div>
-          <div id="qcd-alldept-status" class="status" style="display:none;"></div>
+          <div id="qcd-alldept-status" role="status" class="status" style="display:none;"></div>
           <div id="qcd-alldept-empty" class="empty-state" style="display:none;"></div>
           <!-- Verdict layer (design update): a KPI band + alert callout painted
                above the table by qcdAllDeptRender_ from data.grandTotals (no new
@@ -1913,7 +1913,7 @@
           can also pick &ldquo;All departments&rdquo; for the company-wide
           view including IVR abandons.
         </div>
-        <div id="inbound-form-error" class="status status-error" style="display:none;"></div>
+        <div id="inbound-form-error" role="status" class="status status-error" style="display:none;"></div>
         <button class="btn" id="inbound-generate-btn" type="button">Generate report</button>
       </div>
 
@@ -1933,7 +1933,7 @@
           </div>
         </div>
 
-        <div id="inbound-results-status" class="status" style="display:none;"></div>
+        <div id="inbound-results-status" role="status" class="status" style="display:none;"></div>
 
         <div id="inbound-unavailable" class="empty-state" style="display:none;">
           <div class="empty-state-icon" aria-hidden="true">&#128246;</div>
@@ -2036,7 +2036,7 @@
           <em>excluded</em> from the answer rate. Admin-only while the numbers
           are being vetted.
         </div>
-        <div id="direct-call-form-error" class="status status-error" style="display:none;"></div>
+        <div id="direct-call-form-error" role="status" class="status status-error" style="display:none;"></div>
         <button class="btn" id="direct-call-generate-btn" type="button">Generate report</button>
       </div>
 
@@ -2145,7 +2145,7 @@
           department (never the phone system&rsquo;s org label). Admin-only while
           the numbers are vetted.
         </div>
-        <div id="outbound-form-error" class="status status-error" style="display:none;"></div>
+        <div id="outbound-form-error" role="status" class="status status-error" style="display:none;"></div>
         <button class="btn" id="outbound-generate-btn" type="button">Generate report</button>
       </div>
 
@@ -2235,7 +2235,7 @@
           <span id="health-summary" class="al-hint"></span>
           <button class="btn btn-secondary" id="health-refresh-btn" type="button">Refresh</button>
         </div>
-        <div id="health-status" class="status" style="display:none;"></div>
+        <div id="health-status" role="status" class="status" style="display:none;"></div>
         <table class="al-config-table" id="health-table" style="display:none;">
           <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
           <tbody id="health-tbody"></tbody>
@@ -2298,7 +2298,7 @@
           <button class="btn btn-secondary" id="coaching-refresh-btn" type="button">Refresh</button>
           <span id="coaching-summary" class="al-hint"></span>
         </div>
-        <div id="coaching-status" class="status" style="display:none;"></div>
+        <div id="coaching-status" role="status" class="status" style="display:none;"></div>
         <table class="al-config-table" id="coaching-table" style="display:none;">
           <thead><tr>
             <th>Dept</th><th>Agent</th><th class="num">Rate vs team</th>
@@ -2367,8 +2367,8 @@
           the journey extension show the full leg-by-leg path; older rows
           show a summary.
         </div>
-        <div id="cl-error" class="status status-error" style="display:none;"></div>
-        <div id="cl-status" class="status" style="display:none;"></div>
+        <div id="cl-error" role="status" class="status status-error" style="display:none;"></div>
+        <div id="cl-status" role="status" class="status" style="display:none;"></div>
         <div id="cl-loading" style="display:none;"></div>
 
         <div id="cl-unconfigured" class="empty-state" style="display:none;">
@@ -2489,7 +2489,7 @@
             <button class="btn btn-secondary" id="al-preview-btn" type="button">Preview</button>
             <button class="btn" id="al-send-btn" type="button" disabled>Send alerts</button>
           </div>
-          <div id="al-run-status" class="status" style="display:none;"></div>
+          <div id="al-run-status" role="status" class="status" style="display:none;"></div>
           <div id="al-results-wrap" style="display:none;">
             <div class="al-results-summary" id="al-results-summary"></div>
             <table class="al-results-table">
@@ -2571,8 +2571,9 @@
             <button class="btn btn-secondary" id="al-uninstall-trigger-btn" type="button" style="display:none;">Uninstall trigger</button>
           </div>
           <p class="al-hint" style="margin-top: 8px;">
-            The daily trigger runs at 8 AM and checks the previous day's answer rate per
-            active dept. Weekends (Sat / Sun) are skipped automatically.
+            The daily trigger runs at 8 AM and checks the previous business day's answer
+            rate per active dept. Weekends (Sat / Sun) and company holidays
+            (COMPANY_HOLIDAYS) are skipped automatically.
           </p>
         </div>
 
@@ -2782,7 +2783,7 @@
             an audit row goes to the Orphan Fix Log.
             <a href="#" id="of-open-sheet" target="_blank">Open audit log &rarr;</a>
           </p>
-          <div id="of-run-status" class="status" style="display:none;"></div>
+          <div id="of-run-status" role="status" class="status" style="display:none;"></div>
         </div>
 
         <div class="al-section">
@@ -2974,7 +2975,7 @@
           </div>
         </div>
 
-        <div id="esc-error" class="status status-error" style="display:none;"></div>
+        <div id="esc-error" role="status" class="status status-error" style="display:none;"></div>
         <div id="esc-loading" style="display:none;"></div>
         <div id="esc-empty" class="empty-state" style="display:none;"></div>
         <div id="esc-list"></div>
@@ -3010,7 +3011,7 @@
               (the auth cache). <strong>Admins</strong> are managed separately via the
               <code>ADMIN_EMAILS</code> Script Property and aren&rsquo;t listed here.
             </p>
-            <div id="ac-run-status" class="status" style="display:none;"></div>
+            <div id="ac-run-status" role="status" class="status" style="display:none;"></div>
           </div>
           <div class="al-section">
             <div class="al-section-title" id="ac-form-title">Add manager access</div>
@@ -3102,7 +3103,7 @@
             in QCD data, parents/excludes must be real depts/roster names.
             <a href="#" id="dc-open-sheet" target="_blank">Open the sheet &rarr;</a>
           </p>
-          <div id="dc-run-status" class="status" style="display:none;"></div>
+          <div id="dc-run-status" role="status" class="status" style="display:none;"></div>
         </div>
 
         <!-- Auto-discovery: queue names present in QCD Historical Data,
@@ -3216,7 +3217,7 @@
     </div>
   </div>
 
-  <div class="toast-container" id="toast-container"></div>
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
   <!-- Universal floating Help button: stays above modals so Help is always
        one click away. Toggle off in Settings. Opens the same #help-modal as

@@ -223,14 +223,26 @@ const DQE_SHEET_ONLY_ALLOWED = {
   // dumpCell_ / diagnoseTimes_ exist to show what the spreadsheet holds and
   // how it coerces, which is meaningless against Neon.
   'Diagnostics.gs': 'sheet-cell diagnostics; reading Neon would defeat their purpose',
+  // Admin-gated live-wiring probe: opens the sheet BY LITERAL to report
+  // whether it exists/has rows -- a reachability check, not a data read;
+  // its DQE data probes go through the DAL separately.
+  'SmokeCheck.gs': 'live-wiring probe of the sheet itself; the data reads are DAL-routed',
 };
+
+// S4 (broad-scan 2026-08-27): detect a DQE reader by the OPEN CALL too, by
+// literal or constant -- the F11 QCD twin below was hardened exactly this way
+// after two readers were found reaching for the sheet by STRING LITERAL,
+// which the SHEETS.HISTORICAL mention-check cannot see.
+const DQE_SHEET_OPEN_RE =
+  /getSheetByName\(\s*(?:['"]DQE Historical Data['"]|SHEETS\.HISTORICAL)\s*\)/;
 
 test('B-2: no dashboard file reads the DQE sheet without a Neon path', function () {
   const files = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); });
   const uncut = [];
   files.forEach(function (f) {
     const src = read(f, DASH);
-    if (src.indexOf('SHEETS.HISTORICAL') === -1) return;      // not a DQE reader
+    if (src.indexOf('SHEETS.HISTORICAL') === -1
+      && !DQE_SHEET_OPEN_RE.test(src)) return;                // not a DQE reader (S4: literal opens count)
     if (DQE_SHEET_ONLY_ALLOWED[f]) return;                    // documented exemption
     if (src.indexOf('neonFetchDqeRows_') !== -1) return;      // cut over
     uncut.push(f);
@@ -550,4 +562,38 @@ test('FO-1: only the shared helper reads __COMPANY_HOLIDAYS__ on the client', fu
   assert.ok(/r && r\.from && r\.to/.test(core),
     'the shared helper must keep the malformed-entry guard it inherited from '
     + 'the most defensive of the copies it replaced');
+});
+
+// ---- S1 (broad-scan 2026-08-27): the INV-06 work window's THREE copies -----
+//
+// The pipeline's numeric seconds (DQE_WINDOW_START/END), the dashboard's
+// display mirror (DASHBOARD_WORK_WINDOW), and the inbound query strings
+// (INBOUND_WORK_WINDOW_PST) all state the same 6:30 AM-3:00 PM PST window,
+// and CLAUDE.md calls keeping them equal a "sync obligation" -- with, until
+// now, nothing enforcing it (the C2 corollary violation the scan flagged).
+test('S1/INV-06: the three work-window copies agree (pipeline seconds, dashboard display, inbound strings)', function () {
+  const build = read('apps-script/cdr-import/buildDQEHistoricalData.js');
+  const startExpr = /const DQE_WINDOW_START = ([^;]+);/.exec(build);
+  const endExpr   = /const DQE_WINDOW_END\s*=\s*([^;]+);/.exec(build);
+  assert.ok(startExpr && endExpr, 'DQE_WINDOW_START/END not found -- update this pin');
+  // The RHS is plain arithmetic ((6 * 60 + 30) * 60); evaluate it.
+  const secs = function (expr) { return Function('return (' + expr + ');')(); };
+  const pipeStart = secs(startExpr[1]);
+  const pipeEnd   = secs(endExpr[1]);
+
+  const inbStart = /start:\s*'(\d{2}):(\d{2}):(\d{2})'/.exec(configGs);
+  const inbEnd   = /end:\s*'(\d{2}):(\d{2}):(\d{2})'/.exec(configGs);
+  assert.ok(inbStart && inbEnd, 'INBOUND_WORK_WINDOW_PST not found -- update this pin');
+  const hmsSecs = function (m) { return (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]); };
+  assert.equal(hmsSecs(inbStart), pipeStart, 'inbound window START drifted from the pipeline');
+  assert.equal(hmsSecs(inbEnd),   pipeEnd,   'inbound window END drifted from the pipeline');
+
+  const disp = /pst:\s*'(\d{1,2}):(\d{2}) (AM|PM) [^']*?(\d{1,2}):(\d{2}) (PM|AM) PST'/.exec(configGs);
+  assert.ok(disp, 'DASHBOARD_WORK_WINDOW.pst not found / reshaped -- update this pin');
+  const ampmSecs = function (h, m, ap) {
+    let hh = (+h) % 12; if (ap === 'PM') hh += 12;
+    return hh * 3600 + (+m) * 60;
+  };
+  assert.equal(ampmSecs(disp[1], disp[2], disp[3]), pipeStart, 'display window START drifted');
+  assert.equal(ampmSecs(disp[4], disp[5], disp[6]), pipeEnd,   'display window END drifted');
 });

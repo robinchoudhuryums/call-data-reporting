@@ -372,7 +372,7 @@
     } else {
       bodyHtml =
           'No recent DQE-freshness success found in Pipeline Health.'
-        + ' Either the daily import hasn\'t run, or the success rows have aged out of the 40-row scan window.'
+        + ' Either the daily import hasn\'t run, or the success rows have aged out of the scan window (the last 250 Pipeline Health rows).'
         + ' Check <strong>Alerts &rarr; Pipeline Health</strong>.';
     }
     el.innerHTML =
@@ -1537,6 +1537,24 @@
   }
 
   function ovRenderChart_(data) {
+    // P28: carry the spotlight PINS + Alt-hidden series across rebuilds.
+    // chartSpotKey_ is deliberately re-render-stable (the dept name), but
+    // every render -- including the silent 5-minute auto-refresh -- rebuilt
+    // the chart and reset both, so an admin's mid-comparison solo/hide
+    // reverted to the full 14-line view with no signal. Keys that no longer
+    // exist in the new payload simply drop out.
+    var carryPins = null, carryHidden = null;
+    if (ovChartInstance) {
+      try {
+        if (ovChartInstance._spotlightPins && Object.keys(ovChartInstance._spotlightPins).length) {
+          carryPins = ovChartInstance._spotlightPins;
+        }
+        (ovChartInstance.data.datasets || []).forEach(function (ds) {
+          var k = chartSpotKey_(ds);
+          if (ds.hidden && k) { (carryHidden = carryHidden || {})[k] = true; }
+        });
+      } catch (e) { carryPins = null; carryHidden = null; }
+    }
     if (ovChartInstance) {
       try { ovChartInstance.destroy(); } catch (e) {}
       ovChartInstance = null;
@@ -1703,6 +1721,28 @@
       // can recompute the Fit y-axis (excluding Alt-hidden lines) in place.
       ovChartInstance._mcfg = mcfg;
       ovChartInstance._skipLabels = OV_BASELINE_LABELS_;
+      // P28: re-apply the carried pins/hidden set captured above the destroy.
+      if (carryHidden) {
+        ovChartInstance.data.datasets.forEach(function (ds) {
+          var k = chartSpotKey_(ds);
+          if (k && carryHidden[k]) ds.hidden = true;
+        });
+        chartSpotlightAfterHide_(ovChartInstance);
+      }
+      if (carryPins) {
+        var pins = {};
+        ovChartInstance.data.datasets.forEach(function (ds) {
+          var k = chartSpotKey_(ds);
+          if (k && carryPins[k]) pins[k] = true;
+        });
+        if (Object.keys(pins).length) {
+          ovChartInstance._spotlightPins = pins;
+          chartSpotlightApplyPins_(ovChartInstance);
+        }
+      }
+      if ((carryPins || carryHidden) && typeof ovSyncTilePins_ === 'function') {
+        ovSyncTilePins_(ovChartInstance);
+      }
     }
     // Chart header reflects the active metric (the click-a-card hint is a
     // sibling span, left intact).
