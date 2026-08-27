@@ -1317,14 +1317,17 @@
     if (__insUseFrost) reportSetStatus_('ins-results-status', '');
     google.script.run
       .withSuccessHandler(function (data) {
-        gen.disabled = false; gen.textContent = prev;
+        // P29: token check FIRST -- a superseded response must not re-enable
+        // the button while the newer request is still in flight (its own
+        // handler restores it). Render was already guarded; the button wasn't.
         if (__rtok !== reportReqSeq_.ins) return;
+        gen.disabled = false; gen.textContent = prev;
         reportLastGoodWrite_('ins', __sig, data);
         insSavePrefs_(); __insRepaint(data);
       })
       .withFailureHandler(function (err) {
+        if (__rtok !== reportReqSeq_.ins) return;   // P29: see success handler
         gen.disabled = false; gen.textContent = prev;
-        if (__rtok !== reportReqSeq_.ins) return;
         // R19: Insights auto-generates with the dept page, so a failure here
         // is a page-level breakage worth an admin email.
         if (typeof reportClientIssue_ === 'function') {
@@ -4280,14 +4283,23 @@
     btn.classList.toggle('open', open);
   }
 
+  // P15: while an export action (email send / image capture) is pending.
+  // The busy-state button this fed (#ins-export-btn) was retired in R16c when
+  // the actions moved into the dept Export menu, silently making
+  // insBtnFeedback_ a NO-OP -- no "Sending…", nothing disabled, and a double
+  // click on "Email report" fired two sendInsightsReportEmail RPCs (two
+  // emails). The feedback now targets the LIVE trigger (#dept-export-btn),
+  // and this flag gates re-entry regardless of which button renders.
+  var insExportBusy_ = false;
   function insBtnFeedback_(label, holdMs) {
-    const btn = $('ins-export-btn');
-    if (!btn) return function () {};
+    const btn = $('dept-export-btn') || $('ins-export-btn');
+    if (!holdMs) insExportBusy_ = true;
+    if (!btn) return function () { insExportBusy_ = false; };
     if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
     btn.disabled = true;
     btn.textContent = label;
     if (holdMs) setTimeout(function () { btn.innerHTML = btn.dataset.label; btn.disabled = false; }, holdMs);
-    return function restore() { btn.innerHTML = btn.dataset.label; btn.disabled = false; };
+    return function restore() { btn.innerHTML = btn.dataset.label; btn.disabled = false; insExportBusy_ = false; };
   }
 
   /**
@@ -4346,6 +4358,7 @@
   }
 
   function insCopyImage_() {
+    if (insExportBusy_) { showToast('Still working on the previous export…', 'error'); return; }
     const restore = insBtnFeedback_('Capturing…', 0);
     insBuildCanvas_(function (canvas) {
       canvas.toBlob(function (blob) {
@@ -4492,6 +4505,7 @@
   }
 
   function insEmailReport_() {
+    if (insExportBusy_) { showToast('Still working on the previous export…', 'error'); return; }
     if (!insLastData || !insLastData.meta) {
       showToast('Generate a report first.', 'error');
       return;

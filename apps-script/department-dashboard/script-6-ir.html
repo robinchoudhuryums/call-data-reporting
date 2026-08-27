@@ -336,6 +336,7 @@
         e.stopPropagation();
         irSetExportMenuOpen_(exportMenu.style.display === 'none');
       });
+      wireMenuKeys_(exportBtn, exportMenu, irSetExportMenuOpen_);   // I3
       exportMenu.addEventListener('click', function (e) {
         const item = e.target.closest('[data-action]');
         if (!item) return;
@@ -999,16 +1000,16 @@
     reportSwrPaint_('ir', __sig, irRenderReport, 'ir-results-status');   // SWR: instant repeat-paint
     google.script.run
       .withSuccessHandler(function (data) {
+        if (__rtok !== reportReqSeq_.ir) return;   // superseded by a newer request (P29: check before restoring the button)
         btn.disabled = false;
         btn.textContent = originalLabel;
-        if (__rtok !== reportReqSeq_.ir) return;   // superseded by a newer request
         reportLastGoodWrite_('ir', __sig, data);
         irRenderReport(data);
       })
       .withFailureHandler(function (err) {
+        if (__rtok !== reportReqSeq_.ir) return;   // P29
         btn.disabled = false;
         btn.textContent = originalLabel;
-        if (__rtok !== reportReqSeq_.ir) return;
         // D1b: repaint last-good for this exact request (if any) instead of blanking.
         if (reportFailFallback_('ir', __sig, irRenderReport, 'ir-results-status')) return;
         // #1 Part B: on a drill the form is hidden behind the loader; surface it

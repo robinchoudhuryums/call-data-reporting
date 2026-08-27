@@ -372,7 +372,7 @@
     } else {
       bodyHtml =
           'No recent DQE-freshness success found in Pipeline Health.'
-        + ' Either the daily import hasn\'t run, or the success rows have aged out of the 40-row scan window.'
+        + ' Either the daily import hasn\'t run, or the success rows have aged out of the scan window (the last 250 Pipeline Health rows).'
         + ' Check <strong>Alerts &rarr; Pipeline Health</strong>.';
     }
     el.innerHTML =

@@ -62,11 +62,17 @@ jobs:
       # Vendor bundles (Chart.js, datalabels, html2canvas-pro) are COMMITTED
       # under tools/ui-harness/vendor/, so playwright is the only install --
       # and `npx playwright install` fetches the browser it needs.
+      # S7: PINNED -- this library executes the BLOCKING gate, and an unpinned
+      # `npm i playwright` took latest on every run: a breaking playwright
+      # release changed gate behavior for every PR at once with no repo change
+      # to bisect. Bump deliberately (update the version here, watch one green
+      # run). chromium-path.js globs the browser revision, so the pin does not
+      # couple to a chromium path.
       - name: Install playwright
         working-directory: tools/ui-harness
         run: |
           npm init -y >/dev/null 2>&1
-          npm i --no-audit --no-fund playwright
+          npm i --no-audit --no-fund playwright@1.62.1
           npx playwright install --with-deps chromium
       - name: Rendered-UI gate (npm run ci:ui)
         run: npm run ci:ui

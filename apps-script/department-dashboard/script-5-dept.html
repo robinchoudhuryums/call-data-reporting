@@ -573,12 +573,16 @@
           btn.classList.remove('copied');
         }, 1000);
       };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(pid).then(flashOk, function () {});
-      } else {
-        // Apps Script web app may run in a sandboxed iframe where
-        // clipboard API is unavailable; fall back to a hidden textarea
-        // + execCommand so copy still works in older paths.
+      // P23: the textarea path handles both API-ABSENT and API-REJECTED
+      // (permission denied is common in the sandboxed iframe without a
+      // clipboard-write allow) -- the rejection used to be swallowed with no
+      // feedback at all. If even execCommand fails, say so on the button.
+      const flashFail = function () {
+        const prev = btn.textContent;
+        btn.textContent = '✗';
+        setTimeout(function () { btn.textContent = prev; }, 1000);
+      };
+      const legacyCopy = function () {
         try {
           const ta = document.createElement('textarea');
           ta.value = pid;
@@ -586,10 +590,15 @@
           ta.style.opacity = '0';
           document.body.appendChild(ta);
           ta.select();
-          document.execCommand('copy');
+          const ok = document.execCommand('copy');
           document.body.removeChild(ta);
-          flashOk();
-        } catch (err) { /* swallow */ }
+          ok ? flashOk() : flashFail();
+        } catch (err) { flashFail(); }
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(pid).then(flashOk, legacyCopy);
+      } else {
+        legacyCopy();
       }
     });
   }
@@ -619,9 +628,27 @@
     });
     return ov;
   }
+  var callJourneyReturnFocus_ = null;   // I2: the element to restore on close
+  var callJourneyPrevTrap_ = null;      // I2: the modal whose trap we displaced
   function callJourneyHide_() {
     var ov = $('call-journey-overlay');
     if (ov) ov.style.display = 'none';
+    releaseFocus_();
+    // Re-arm the displaced modal's trap first (its autofocus runs on a 0ms
+    // timeout); then restore the opener on a LATER 0ms timeout (FIFO) so the
+    // F-42 focus-return wins over the trap's first-element autofocus.
+    if (callJourneyPrevTrap_ && document.contains(callJourneyPrevTrap_)
+        && callJourneyPrevTrap_.offsetParent !== null) {
+      trapFocus_(callJourneyPrevTrap_);
+    }
+    var opener = callJourneyReturnFocus_;
+    setTimeout(function () {
+      if (opener && opener.focus && document.contains(opener)) {
+        try { opener.focus(); } catch (e) {}
+      }
+    }, 0);
+    callJourneyReturnFocus_ = null;
+    callJourneyPrevTrap_ = null;
   }
   // Round-16b: delegated click for the related-call context drill (the
   // overlay body is re-rendered per call, this listener is on document).
@@ -641,7 +668,21 @@
     kind = (kind === 'outbound') ? 'outbound' : 'inbound';
     var ov = ensureCallJourneyOverlay_();
     var body = ov.querySelector('.cj-body');
+    // I2: the overlay declares aria-modal="true" but never trapped or moved
+    // focus (every real modal does, via trapFocus_) -- Tab walked the page
+    // behind a panel that told assistive tech it was modal. STACK-AWARE:
+    // the "↳ path" drill can open on top of a real modal (the Inbound
+    // heatmap rows), and trapFocus_ holds a single active trap -- so the
+    // underlying modal's trap is remembered and re-armed on close. Opener +
+    // stack captured only on a FRESH open (a related-call drill re-enters
+    // here with the overlay already up).
+    if (ov.style.display === 'none' || !callJourneyReturnFocus_) {
+      callJourneyReturnFocus_ = document.activeElement;
+      callJourneyPrevTrap_ = (typeof activeFocusTrap_ !== 'undefined' && activeFocusTrap_)
+        ? activeFocusTrap_.modal : null;
+    }
     ov.style.display = '';
+    trapFocus_(ov);
     body.innerHTML = dsRingsHtml_('Loading call path…');
     var __tok = ++callJourneySeq_;
     google.script.run

@@ -176,3 +176,58 @@ test('styles.html: the sub-queue CSS is inside the style element', function () {
   assert.ok(marker < text.indexOf('</style>'),
     'the sub-queue CSS must sit ABOVE </style> -- it shipped below it once');
 });
+
+// ---- S8 (broad-scan 2026-08-27): the two prose-only client conventions -----
+//
+// "Any new chart callsite must route through safeChart_" and "any new tabular
+// cell writer must call csvSafeCell_" were rules with no tripwire. Both are
+// currently clean; these pins keep them that way.
+
+test('S8: safeChart_ is the ONLY `new Chart(` callsite in the client', function () {
+  const fragNames = [];
+  const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');
+  let fm; const fre = /<\?!= includeJs_\('([\w-]+)'\) \?>/g;
+  while ((fm = fre.exec(text)) !== null) fragNames.push(fm[1]);
+  fragNames.forEach(function (name) {
+    const src = fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
+    const offenders = [];
+    src.split('\n').forEach(function (ln, i) {
+      if (ln.indexOf('new Chart(') === -1) return;
+      if (/^\s*(\/\/|\*)/.test(ln)) return;                    // comment lines
+      offenders.push(name + '.html:' + (i + 1));
+    });
+    if (name === 'script-1-core') {
+      // The one real callsite lives inside safeChart_ itself.
+      assert.equal(offenders.length, 1, 'script-1-core must hold exactly the safeChart_ callsite; found ' + offenders.join(', '));
+      const at = parseInt(offenders[0].split(':')[1], 10);
+      const fnStart = src.indexOf('function safeChart_');
+      const fnLine = src.slice(0, fnStart).split('\n').length;
+      assert.ok(at > fnLine && at < fnLine + 40,
+        'the `new Chart(` callsite moved outside safeChart_ -- route it back through');
+    } else {
+      assert.deepEqual(offenders, [],
+        'chart created without safeChart_ (CDN-failure fallback lost): ' + offenders.join(', '));
+    }
+  });
+});
+
+test('S8: every tabular cell writer routes through csvSafeCell_', function () {
+  // The named writers (CLAUDE.md's CSV-injection bullet). csvEscape is the
+  // shared My-Dept escaper; each body must reference csvSafeCell_ (or
+  // csvEscape, which wraps it) -- a writer that stops is a formula-injection
+  // reopening, not a refactor.
+  const WRITERS = [
+    // csvEscape is a local inside exportTableCsv_ (script-5), not a core fn.
+    ['script-5-dept',   /csvEscape = function[\s\S]{0,200}?csvSafeCell_/,     'exportTableCsv_\'s csvEscape must wrap csvSafeCell_'],
+    ['script-8-insights', /function insDownloadCsv_[\s\S]*?csvSafeCell_/,    'insDownloadCsv_'],
+    ['script-9-inbound-direct', /function inboundDownloadCsv_[\s\S]*?csvSafeCell_/, 'inboundDownloadCsv_'],
+    ['script-9-inbound-direct', /function directCallDownloadCsv_[\s\S]*?csvSafeCell_/, 'directCallDownloadCsv_'],
+    ['script-9-inbound-direct', /function outboundDownloadCsv_[\s\S]*?csvSafeCell_/, 'outboundDownloadCsv_'],
+    ['script-11-qcd-boot', /function qcdAllDeptCsv_[\s\S]*?csvSafeCell_/,    'qcdAllDeptCsv_'],
+    ['script-6-ir',     /ir-copy-tsv[\s\S]{0,2000}?csvSafeCell_/,            'the IR copy-as-TSV handler (E-3)'],
+  ];
+  WRITERS.forEach(function (w) {
+    const src = fs.readFileSync(path.join(DIR, w[0] + '.html'), 'utf8');
+    assert.ok(w[1].test(src), w[0] + ': ' + w[2] + ' -- csvSafeCell_ routing lost or renamed');
+  });
+});

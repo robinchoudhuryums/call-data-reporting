@@ -916,6 +916,38 @@
     keyActivate_(el, fn);
   }
 
+  // I3 (the E-10 rule, shared): role="menu"/"menuitem" announce arrow-key
+  // semantics, so every dropdown using the roles must deliver them -- the
+  // header menus did (initHeaderMenus_), the report Export menus did not.
+  // ArrowDown on the trigger opens + focuses item 1; arrows wrap; Home/End
+  // jump; Escape closes and returns focus. `setOpen(bool)` is the menu's
+  // own opener/closer so ARIA + any open-time refresh stay in one place.
+  function wireMenuKeys_(btn, menu, setOpen) {
+    if (!btn || !menu) return;
+    function items_() {
+      return Array.prototype.filter.call(
+        menu.querySelectorAll('button, [role="menuitem"], [data-action]'),
+        function (el) { return el.offsetParent !== null && !el.disabled; });
+    }
+    btn.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      setOpen(true);
+      var items = items_();
+      if (items.length) items[0].focus();
+    });
+    menu.addEventListener('keydown', function (e) {
+      var items = items_();
+      if (!items.length) return;
+      var idx = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown')      { e.preventDefault(); items[(idx + 1) % items.length].focus(); }
+      else if (e.key === 'ArrowUp')   { e.preventDefault(); items[(idx - 1 + items.length) % items.length].focus(); }
+      else if (e.key === 'Home')      { e.preventDefault(); items[0].focus(); }
+      else if (e.key === 'End')       { e.preventDefault(); items[items.length - 1].focus(); }
+      else if (e.key === 'Escape')    { setOpen(false); btn.focus(); }
+    });
+  }
+
   // Shared empty-state block so every "no data here" surface reads the
   // same way as the My Department page's empty state (icon + title +
   // hint) instead of ad-hoc one-liners. `icon` is a short emoji/glyph;
@@ -1265,7 +1297,16 @@
   // via .agents--compact; persisted; applied alongside the cols pref.
   const DEPT_ROWS_KEY = 'cdr.dept.rowdensity';
   function applyDeptColsPref_() {
-    var dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+    // P11: BOTH reads try/catch-wrapped like every other storage site --
+    // this ran bare inside init(), so a storage-blocked browser (Safari ITP
+    // in the sandboxed iframe) threw here and killed everything init() wires
+    // AFTER it (drills, sorting, date presets, modals, the esc badge).
+    var dense = false;
+    var compact = true;   // default compact
+    try {
+      dense = (localStorage.getItem(DEPT_ROWS_KEY) === 'compact');
+      compact = (localStorage.getItem(DEPT_COLS_KEY) !== 'all');
+    } catch (e) { /* storage blocked -> defaults (comfortable rows, compact cols) */ }
     var t2 = $('agents-table');
     if (t2) t2.classList.toggle('agents--compact', dense);
     var rbtn = $('dept-rows-toggle');
@@ -1273,7 +1314,6 @@
       rbtn.textContent = dense ? 'Comfortable rows' : 'Compact rows';
       rbtn.setAttribute('aria-pressed', dense ? 'true' : 'false');
     }
-    var compact = (localStorage.getItem(DEPT_COLS_KEY) !== 'all');   // default compact
     var table = $('agents-table');
     if (table) table.classList.toggle('hide-extra', compact);
     var btn = $('dept-cols-toggle');
