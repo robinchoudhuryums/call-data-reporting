@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
-## Latest session (broad-scan Batch F — pipeline smalls, agent dark mode, pin persistence, sibling stamping)
+## Latest session (F8b — the CLAUDE.md trim pass + final sync-docs)
+Branch `claude/broad-scan-76h2dr`, **958/958 unit tests**, all doc guards green. CLAUDE.md **184,816 → 181,254 bytes** (−3.6KB; ~19.5KB headroom under the 200KB cap).
+- **Trim (F8b)**: the Top-tab router bullet MOVED to docs/client-ui-conventions.md (the F8 surface rule) with a compact index entry; the F9 cold-cache and B1-B5 late-joiner narratives relocated to fix-history; the CSV / safeChart_ / cache-anchor rules now NAME their Batch-D enforcement (S8/S3/S2) instead of carrying prose; the sub-queue bullet absorbed the L7 figures-equality nuance and was trimmed back under the 4KB ratchet; IMP-6 notes P10. Every dropped fix code / backticked identifier verified to still resolve in the live doc set (four were restored inline after the check caught them).
+- **sync-docs**: fix-history gains the Batch-F (P9/P10/P19–P22/I5/P28/S6) + F8b entries; README documents the sibling build stamping.
+- The 2026-08-27 scan is fully closed out. Remaining work is operator/owner only: run the vetting tools → un-gate the three reports; execute the Neon cutover runbook; post-deploy visual walks (S44/S45 + the journey-drill-from-modal check).
+- Where I left off: committed + pushed; branch ready for a PR.
+
+## Prior session (broad-scan Batch F — pipeline smalls, agent dark mode, pin persistence, sibling stamping)
 Branch `claude/broad-scan-76h2dr`, **958/958 unit tests** (+1), INV-16 green. Increment 154. Block: `.cycle/blocks/154-batch-f-broad-implement.md`.
 - Implemented: **P9** drill-down mirrors the R18e ext-fallback; **P10** backfillCDRHistory intra-batch IMP-6 dedup; **P19** NUL-key recovery log; **P20** drill-down rejects unparseable-start legs like the build; **P21** Q-Path ext left boundary; **P22** internal-origin hold fields originator-scoped (pinned); **I5** agent-app dark mode (shared 'dash-mode' key + toggle); **P28** Overview spotlight pins + Alt-hidden series survive rebuilds/auto-refresh; **S6** sibling buildStamp.js + deploy.sh stamping + stamp-in-Pipeline-Health-note (INV-16-safe typeof guard).
 - **Deliberately NOT implemented** (operator/owner): un-gating the three vetted reports (run the vetting tools clean first — contract forbids otherwise), Neon cutover execution (runbook is operator work; all code blockers shipped 150–152), and the L-effort rule single-sourcing (deferred; P9 + the parity suites narrow the drift surface).

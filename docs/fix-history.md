@@ -679,3 +679,35 @@ docs/invariants.md — this is the what-and-why index.
   queue-split / insights-report / missed-report / overview-qcd-snapshot
   suites; the bulk-force guard wiring gained its harness in
   csr-transfer.test.js the same increment.
+- **Batch F** (increment 154) — the pipeline smalls + surfaces: **P9** the
+  DQE Drill-Down sidebar gained the pipeline's R18e ext→queue-name fallback
+  (its fourth hand-mirror drift, after T-6/R8-D4 — the sidebar rejected legs
+  the build counts, false mismatches during the exact incident class it
+  debugs); **P10** `backfillCDRHistory` dedupes intra-batch conflict-key
+  duplicates (IMP-6) so a duplicate sheet row can't wedge the backfill on
+  "cannot affect row a second time" forever; **P19** the interrupted-apply
+  merge-recovery summary splits its group key on the NUL separator, not the
+  agent's first space; **P20** the sidebar rejects unparseable-start legs
+  from windowed metrics exactly as the build's F9 exclusion does; **P21**
+  the Q-Path dept-ext regex gained a left boundary (ext 103 matched inside
+  2103; legacy-read, INV-52); **P22** internal-origin
+  `abandonedOnHold`/`holdSeconds` scope to the requester's own legs
+  (`icLegFromOriginator_` — the shared-leg-tree rule's fourth field pair;
+  a warm-transfer sibling's customer's hold leaked onto the assist record);
+  **I5** the agent app resolves dark mode (shared `dash-mode` key + toggle);
+  **P28** Overview spotlight pins + Alt-hidden series survive chart rebuilds
+  incl. the silent 5-min auto-refresh (`chartSpotKey_` was already
+  re-render-stable; nothing carried it); **S6** the E3 build stamp extended
+  to the sibling projects (`buildStamp.js` ×2 + deploy.sh stamping; the
+  stamp rides the `autoImport`/`buildDQE` success notes via an INV-16-safe
+  typeof guard — "unstamped" = the push bypassed the CI gates).
+- **F8b** (the CLAUDE.md trim pass, same increment family) — the Top-tab
+  router bullet moved to docs/client-ui-conventions.md (it describes how a
+  surface is built — the F8 rule); the F9 cold-cache backstory
+  (`getLatestDataDate` MAX + `dqeEarliest` MIN each ran a whole-column
+  `getValues()`, so a COLD cache read a multi-year column twice per 5-min
+  expiry) and the B1-B5 freshness-tag late-joiner story (`agentHome:v1` +
+  the `inbound:v10:daily:`/`inboundHeatmap:v3` siblings joined after a
+  same-day re-import left the drill disagreeing with its freshness-tagged
+  row; `neonAgentExts:v1` was the last holdout) now live HERE, with the
+  rules' enforcement named in place (S3/S8 tests).

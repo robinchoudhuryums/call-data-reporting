@@ -1664,3 +1664,51 @@ behind the removed button.
   average over the shown agents would mislead, so the deltas hide rather
   than guess; the legend states the baseline and each row's tooltip carries
   the exact math.
+
+- **Top-tab router (Phase C).** (Moved here from CLAUDE.md in the F8b trim
+  pass -- LIVE TRUTH, unchanged.) The header nav is a row of tab buttons plus two
+  `.header-menu` dropdown groups — **Reports** (Individual + the admin-vetted
+  Inbound / Direct / Outbound) and **Admin** (`#admin-menu-btn`: Alerts, Outlier Fix, Dept
+  Config, Access, Health; Caller Lookup stays a top-level admin tab).
+  **Every tab AND every menu item carries a `data-route` plus a stable button
+  `id`** — that pair is what the per-modal init functions, the deep links, the
+  F11 non-admin no-op guard and the Overview nags' programmatic
+  `#orphan-fix-btn` / `#dept-config-btn` clicks all bind to, so don't rename or
+  drop one when moving an item between the bar and a dropdown. `initRouter`
+  tracks `currentRoute` and paints the indicator via `updateTabActiveState_`,
+  which lights a dropdown trigger generically whenever one of its items' routes
+  is active; `initHeaderMenus_` wires open/close via `aria-controls`. The
+  dropdown WRAPPER carries `data-admin-only` so view-as-manager hides the whole
+  group. Two click handlers fire per tab (modal-open + the route tracker) and
+  don't conflict because `openModal` is idempotent. Escape-key modal close
+  doesn't revert the active-tab state — cosmetic; any tab click refreshes it.
+  **No `google.script.history.push`** (spotty browser behavior inside Apps
+  Script web apps); hashes are read at init via `google.script.url.getLocation`
+  and written only when a new tab opens.
+  **`window.__DASHBOARD_URL__` is injected by `renderDashboard_` (Code.gs)**
+  from the `DASHBOARD_URL` Script Property with the same `<` escape trick as
+  `userJson` (empty string when unset). **Never read the deployed URL from
+  `window.location`** inside the Apps Script iframe — it resolves to the
+  `n-<hash>-script.googleusercontent.com` wrapper, not the user-facing `/exec`
+  URL. The `↗ Open in new tab` button (`.modal-open-tab-btn`, `right: 54px`,
+  left of the close X) builds `__DASHBOARD_URL__ + '#' + currentRoute`;
+  `.is-disabled` hides it when the property is unset.
+  **State-in-URL:** for the agent reports (IR / Insights) that button also
+  appends form state as a `?from=...&agents=a|b` query on the hash, via the
+  `SHARE_STATE_` provider registry (script.html). The deep-link reader splits
+  the query off BEFORE the `ROUTES_` lookup and applies it AFTER the modal's
+  open-time defaults + prefs restore, with agents landing through each report's
+  pending-selection hook; generation is deliberately not auto-triggered (async
+  roster load), so the restored form is one Generate click away.
+  **Routes:** the report modals (`#/report/individual`, `#/admin/alerts`,
+  `#/admin/orphan-fix`); `kind:'page'` routes `#/overview`, `#/dept`,
+  `#/escalations`, `#/report/insights` (plus its three legacy repoints
+  `#/report/performance` / `#/report/compare` / `#/report/qcd`) and
+  `#/report/missed` (which carries `scrollTo: 'dept-missed-section'` and arms
+  the one-shot `deptMissedScrollPending_`). **The page branch ALSO applies the
+  route's `SHARE_STATE_` query after `setPage`** — that is what keeps the
+  Digest.gs email deep links (`#/report/insights?from=...&agents=...`) working
+  when no header tab carries the route. Unknown / malformed hashes quietly no-op
+  onto Overview, and so does a non-admin's deep link to a `data-admin-only`
+  route — `initRouter` skips the trigger rather than opening a modal that would
+  only surface an "admin-only" server error (F11).

@@ -132,6 +132,11 @@ scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
 # omit the id to just `clasp push -f` and finish the version bump manually
 ```
 
+The helper also stamps the pushed build (S6): the dashboard's stamp renders
+on the Health page, and the sibling projects' stamps ride the `autoImport` /
+`buildDQE` success rows in Pipeline Health — a note reading "unstamped"
+means the last push bypassed the helper and its CI gates.
+
 **One-time, in the Apps Script project:**
 
 - Project Settings -> Script Properties -> add `SPREADSHEET_ID`
