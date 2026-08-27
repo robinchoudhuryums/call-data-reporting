@@ -856,6 +856,15 @@ function getCompanyOverview(req) {
     // R8-C4: config read errored -> QCD snapshots / parent map may be
     // constant-only this request; don't pin the shared blob for the TTL.
     Logger.log('getCompanyOverview: Dept Config read errored -- skipping cache put.');
+  } else if (dqeRows.length === 0) {
+    // L2 (the B-3 argument, ported from getOverviewChartTrend): latestDate is
+    // non-null here (the null case early-returns above), so the read window
+    // contains that date's rows by construction -- an EMPTY dqeRows is the
+    // OUTAGE shape (Neon unusable AND the sheet read failed/empty/trimmed),
+    // not a legitimate quiet window. Caching it pinned an all-zero Overview
+    // (every tile 0/0, null trends) for EVERY viewer for the 6h TTL.
+    Logger.log('getCompanyOverview: empty DQE read despite a known latest date -- '
+      + 'skipping cache put (outage empty must not pin).');
   } else {
     // F6: MEASURE the blob. CacheService caps a value at ~100 KB, and when the
     // put fails this endpoint degrades to a full recompute (a 90-day DQE read +

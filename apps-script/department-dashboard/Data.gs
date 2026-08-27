@@ -824,13 +824,27 @@ function getDepartmentSummary(req) {
   data.meta.deptsShown = deptSet;           // relationship line even in 'own'
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
+  // L1: a part built during a source outage (R8-C1 marker from
+  // computeSummary_'s F-35 branch) poisons the whole payload -- propagate the
+  // flag onto the combined meta so the put below is skipped and the client
+  // can tell outage-empty from a genuinely quiet window. The outage is
+  // source-global, but check every part rather than assume parts[0] saw it.
+  if (parts.some(function (p) { return p && p.meta && p.meta.sourceUnavailable; })) {
+    data.meta.sourceUnavailable = true;
+  }
 
   if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
     // R8-C4: the Dept Config read ERRORED this execution -- the payload's
     // QCD snapshot was built with constant-only config (sheet overrides
     // silently missing). Serve it, but don't pin the wrong view for the
-    // 30-min TTL; the next request re-reads config.
+    // TTL (REPORT_CACHE_TTL_SECONDS, 6h since R24); the next request
+    // re-reads config.
     Logger.log('getDepartmentSummary: Dept Config read errored -- skipping cache put.');
+  } else if (data.meta.sourceUnavailable) {
+    // L1 (R8-C1 discipline): the payload is an OUTAGE empty, not a real
+    // quiet window -- caching it would pin an empty agent table for every
+    // viewer of this (dept, range) until the freshness tag moves.
+    Logger.log('getDepartmentSummary: source unavailable -- skipping cache put (outage empty must not pin).');
   } else {
     try {
       cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
@@ -953,7 +967,16 @@ function computeSummary_(dept, from, to, scope) {
   }
   if (srcRows === null) {
     if (!sheet || lastRow < 2) {   // F-35: neon empty AND no sheet to fall back to
-      return emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+      // R8-C1 (L1): on the neon path, reaching here means the read was
+      // UNREACHABLE (reachable-empty is trusted above, LM2) AND there is no
+      // sheet to fall back to -- the OUTAGE shape, not a real quiet window.
+      // Mark it so getDepartmentSummary skips its cache put (the discipline
+      // Missed/IR/Insights already follow); without the marker one Neon blip
+      // after the sheet is trimmed pinned an empty My Department table for
+      // every viewer of that (dept, range) for the full 6h TTL.
+      const e = emptySummary_(dept, from, to, scope, roster.names.length, 0, []);
+      if (neonCapable) e.meta.sourceUnavailable = true;
+      return e;
     }
     // Phase 2 needs col AI (QUEUE_SPLIT). Read only what the sheet HAS:
     // getRange past getMaxColumns THROWS (REP-10), and the DQE sheet is still

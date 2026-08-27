@@ -101,3 +101,27 @@ test('independent depts track independent episodes in one pass', function () {
   assert.equal(r.streaks['Denials'].days, 1);
   assert.ok(!r.streaks['CSR']);
 });
+
+// P2 (broad-scan 2026-08-27, the OPS-1 discipline): dqeSilenceSendAlert_ must
+// return true ONLY on a confirmed send -- the trigger wrapper marks episodes
+// `alerted` off this boolean, so an empty recipient list or a MailApp throw
+// (the quota-exhausted morning) returning anything truthy would permanently
+// silence the episode with zero emails sent.
+test('OPS-1: send confirms true on success, false on empty recipients, false on MailApp throw', function () {
+  const alerts = [{ dept: 'Field Ops Power', since: '2026-08-12', days: 2, calls: 45 }];
+
+  h.ctx.getAdminEmails_ = function () { return ['admin@x.com']; };
+  h.state.sentEmails.length = 0;
+  assert.equal(h.call('dqeSilenceSendAlert_', alerts, '2026-08-13'), true, 'confirmed send -> true');
+  assert.equal(h.state.sentEmails.length, 1, 'one email actually sent');
+
+  h.ctx.getAdminEmails_ = function () { return []; };
+  assert.equal(h.call('dqeSilenceSendAlert_', alerts, '2026-08-13'), false, 'no recipients -> false');
+
+  h.ctx.getAdminEmails_ = function () { return ['admin@x.com']; };
+  const realMail = h.ctx.MailApp;
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('Service invoked too many times'); } };
+  try {
+    assert.equal(h.call('dqeSilenceSendAlert_', alerts, '2026-08-13'), false, 'MailApp throw -> false, not a crash');
+  } finally { h.ctx.MailApp = realMail; }
+});

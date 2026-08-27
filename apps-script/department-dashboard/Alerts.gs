@@ -722,12 +722,25 @@ function lookupDeptManagers_(dept) {
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  const values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  // Width-bounded read (the REP-10 class: getRange past getMaxColumns
+  // THROWS, and a pre-agent-role install still has the 3-column sheet).
+  // Col 4 is Role; on a narrow sheet it reads undefined -> 'manager'.
+  const width = Math.min(4, sheet.getMaxColumns());
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
   const out = [];
   for (let i = 0; i < values.length; i++) {
     const email = String(values[i][0] || '').trim();
     const d     = String(values[i][1] || '').trim();
     if (!email || !d) continue;
+    // Alert recipients are MANAGER rows only. Since Phase A this sheet also
+    // carries Role=agent rows (same Department column), and the alert body
+    // names each under-threshold teammate with per-agent numbers -- exactly
+    // the teammate-identity disclosure the agent role's privacy contract
+    // forbids, and it fired even with AGENT_ROLE_ENABLED unset (the flag
+    // gates sign-in resolution, not this read). Blank Role = legacy manager
+    // row; unknown roles fail closed -- both matching getAccessEntries_.
+    const role = String(values[i][3] || '').toLowerCase().trim() || 'manager';
+    if (role !== 'manager') continue;
     // B-5: an ALL/'*' row (the all-departments manager, Auth.gs) manages
     // every dept, so they receive every dept's low-answer-rate alert --
     // the exact-match alone silently opted them out of ALL alert delivery

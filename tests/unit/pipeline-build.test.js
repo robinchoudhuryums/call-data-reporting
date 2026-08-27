@@ -435,3 +435,51 @@ test('F-6: coercion-prone columns are plain-texted -- whole-column AND the exact
     assert.ok(writeRangeAt(col), 'write-range @ missing for col group starting at ' + col);
   });
 });
+
+// P4 (broad-scan 2026-08-27, the M3 routing rule): the dup-guard re-mirror
+// must route AF (col 32, comma-joined H:MM:SS times) through the SLOT
+// sanitizer -- which recovers a "12/30/1899 10:23:33" date-render to
+// "10:23:33" -- and AD/AE (numeric IDs) through the abandoned-ID sanitizer.
+// It used to send AF through the ID sanitizer, which mirrored coerced
+// date-renders verbatim into dqe_history (or marked lossless single-time
+// cells #REBUILD) on every non-force re-import of a damaged old date. The
+// sanitizers live outside this INV-16 pair (neonbackfill.js / NeonMirror.js),
+// so distinguishable stubs pin the ROUTING, which is this file's contract.
+test('P4/M3: remirror routes AF through the slot sanitizer, AD/AE through the ID sanitizer', function () {
+  const row = new Array(35).fill('');
+  row[0] = 'March 2026'; row[1] = '3/10/2026'; row[2] = 'Anna'; row[3] = '501';
+  row[4] = '2'; row[5] = '6'; row[6] = '2'; row[7] = '4';
+  row[8] = '0:12:00'; row[9] = '0:03:00';
+  row[12] = '9:05:11';                    // one slot cell (K..AC)
+  row[29] = '1762242202191';              // AD parent ids
+  row[30] = '1762242165529';              // AE missed-leg ids
+  row[31] = '12/30/1899 10:23:33';        // AF coerced time render
+  const ss = makeFakeSpreadsheet({
+    sheets: { 'DQE Historical Data': [
+      ['Month-Year', 'Date', 'Agent', 'Ext'],   // header
+      row,
+    ] },
+  });
+  const dqeSheet = ss.getSheetByName('DQE Historical Data');
+
+  const seen = [];
+  h.ctx.sanitizeSlotCellForNeon_ = function (v) { seen.push(['slot', v]); return v === '12/30/1899 10:23:33' ? '10:23:33' : (v || null); };
+  h.ctx.sanitizeAbandonedCellForNeon_ = function (v) { seen.push(['ab', v]); return v || null; };
+  let captured = null;
+  h.ctx.writeDQERowsToNeon = function (rows) { captured = rows; return { skipped: 0 }; };
+  try {
+    h.call('remirrorExistingDqeDate_', dqeSheet, [0], '3/10/2026');
+  } finally {
+    delete h.ctx.sanitizeSlotCellForNeon_;
+    delete h.ctx.sanitizeAbandonedCellForNeon_;
+    h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
+  }
+  assert.ok(captured && captured.length === 1, 'one row re-mirrored');
+  const r = captured[0];
+  assert.equal(r.abMissedTimes, '10:23:33', 'AF recovered via the SLOT sanitizer');
+  assert.equal(r.abParentIds, '1762242202191', 'AD via the ID sanitizer');
+  assert.equal(r.abMissedIds, '1762242165529', 'AE via the ID sanitizer');
+  const afCalls = seen.filter(function (c) { return c[1] === '12/30/1899 10:23:33'; });
+  assert.deepEqual(afCalls.map(function (c) { return c[0]; }), ['slot'],
+    'the AF cell reached ONLY the slot sanitizer');
+});

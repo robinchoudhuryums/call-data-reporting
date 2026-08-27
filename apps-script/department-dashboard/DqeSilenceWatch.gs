@@ -120,15 +120,30 @@ function runDqeSilenceWatch_() {
       minDays:  isNaN(minDays)  ? DQE_SILENCE_DEFAULT_MIN_DAYS  : minDays,
       minCalls: isNaN(minCalls) ? DQE_SILENCE_DEFAULT_MIN_CALLS : minCalls,
     }, targetIso);
-    props.setProperty('DQE_SILENCE_STREAKS', JSON.stringify(res.streaks));
 
     if (res.alerts.length) {
-      dqeSilenceSendAlert_(res.alerts, targetIso);
+      // OPS-1 (the IngestWatchdog/PipelineWatch discipline): mark an episode
+      // `alerted` only on a CONFIRMED send. The streaks used to be persisted
+      // (alerted:true baked in) BEFORE the send, so a MailApp failure -- the
+      // quota-exhausted morning the Health page's mail-quota row exists for --
+      // or an empty admin list permanently silenced the episode with zero
+      // emails sent, while LAST_RESULT claimed "alert emailed". This engine
+      // guards the 14-day Call_Legs window, so a silently dropped alert is
+      // unrecoverable data loss.
+      var sent = dqeSilenceSendAlert_(res.alerts, targetIso);
+      if (!sent) {
+        res.alerts.forEach(function (a) {
+          if (res.streaks[a.dept]) res.streaks[a.dept].alerted = false;
+        });
+      }
+      props.setProperty('DQE_SILENCE_STREAKS', JSON.stringify(res.streaks));
       props.setProperty('DQE_SILENCE_WATCH_LAST_RESULT',
         'SILENT ' + res.alerts.length + ' dept(s) as of ' + targetIso + ' — '
         + res.alerts.map(function (a) { return a.dept + ' (' + a.days + 'd, ' + a.calls + ' queue calls)'; }).join(', ')
-        + ' — alert emailed');
+        + (sent ? ' — alert emailed'
+                : ' — ALERT EMAIL NOT SENT (no recipients or send failed); will retry next run'));
     } else {
+      props.setProperty('DQE_SILENCE_STREAKS', JSON.stringify(res.streaks));
       var watching = Object.keys(res.streaks).length;
       props.setProperty('DQE_SILENCE_WATCH_LAST_RESULT',
         'ok ' + targetIso + ' (' + read.perDept.length + ' depts checked'
@@ -246,34 +261,47 @@ function dqeSilenceReadDay_(dateIso) {
 
 // ── Alert email ───────────────────────────────────────────────────────
 
+// Returns true ONLY on a confirmed send (OPS-1): the caller marks episodes
+// `alerted` off this boolean, so an empty recipient list or a MailApp throw
+// must return false -- never claim a send that didn't happen.
 function dqeSilenceSendAlert_(alerts, dateIso) {
   var to = getAdminEmails_().join(',');
-  if (!to) return;
+  if (!to) {
+    Logger.log('dqeSilenceSendAlert_: no admin recipients -- alert NOT sent.');
+    return false;
+  }
   var lines = alerts.map(function (a) {
     return '  • ' + a.dept + ' — silent since ' + a.since + ' (' + a.days
       + ' business day(s), ' + a.calls + ' queue calls with NO agent rows)';
   });
-  MailApp.sendEmail({
-    to: to,
-    subject: '[Dashboard] Agent data went dark for ' + alerts.length + ' department(s) — queue still active',
-    body: 'As of ' + dateIso + ', these departments\' queues are taking calls '
-      + '(QCD volume) while ZERO DQE agent rows match their roster:\n\n'
-      + lines.join('\n') + '\n\n'
-      + 'This is the Field-Ops-Power failure shape (2026-06-17): the phone system '
-      + 'changed a queue\'s caller-ID label, the pipeline\'s A_Q_* recognizer '
-      + 'stopped matching those legs, and per-agent data vanished silently while '
-      + 'queue totals kept flowing.\n\n'
-      + 'Check, in order:\n'
-      + '  1. Raw Data col W (Caller ID) on an agent-ring leg for the dept\'s queue '
-      + '— does it still contain the A_Q_* token?\n'
-      + '  2. The dept\'s roster column in DO NOT EDIT! (names still exact-matching '
-      + 'DQE col C?)\n'
-      + '  3. The phone-system change log for the silent-since date.\n\n'
-      + 'Call_Legs source sheets are pruned at ~14 days — per-agent history for '
-      + 'silent days can only be rebuilt while the raw legs survive, so act today.\n\n'
-      + 'One email per episode: this will not re-send unless the department '
-      + 'recovers and goes silent again.\n\nTime: ' + new Date(),
-  });
+  try {
+    MailApp.sendEmail({
+      to: to,
+      subject: '[Dashboard] Agent data went dark for ' + alerts.length + ' department(s) — queue still active',
+      body: 'As of ' + dateIso + ', these departments\' queues are taking calls '
+        + '(QCD volume) while ZERO DQE agent rows match their roster:\n\n'
+        + lines.join('\n') + '\n\n'
+        + 'This is the Field-Ops-Power failure shape (2026-06-17): the phone system '
+        + 'changed a queue\'s caller-ID label, the pipeline\'s A_Q_* recognizer '
+        + 'stopped matching those legs, and per-agent data vanished silently while '
+        + 'queue totals kept flowing.\n\n'
+        + 'Check, in order:\n'
+        + '  1. Raw Data col W (Caller ID) on an agent-ring leg for the dept\'s queue '
+        + '— does it still contain the A_Q_* token?\n'
+        + '  2. The dept\'s roster column in DO NOT EDIT! (names still exact-matching '
+        + 'DQE col C?)\n'
+        + '  3. The phone-system change log for the silent-since date.\n\n'
+        + 'Call_Legs source sheets are pruned at ~14 days — per-agent history for '
+        + 'silent days can only be rebuilt while the raw legs survive, so act today.\n\n'
+        + 'One email per episode: this will not re-send unless the department '
+        + 'recovers and goes silent again.\n\nTime: ' + new Date(),
+    });
+    return true;
+  } catch (e) {
+    Logger.log('dqeSilenceSendAlert_: send FAILED (%s) -- episode stays un-alerted for retry.',
+      (e && e.message) || e);
+    return false;
+  }
 }
 
 // ── Status / trigger lifecycle ────────────────────────────────────────

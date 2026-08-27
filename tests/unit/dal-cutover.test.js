@@ -413,3 +413,61 @@ test('Batch 6: DQE gate — a real matching range reports clean + the compared c
   assert.equal(r.verdict.compared, 1, 'a pass is backed by a real compared count');
   delete h.ctx.sheetFetchDqeRows_; delete h.ctx.neonFetchDqeRows_;
 });
+
+// --- L1/L2 (broad-scan 2026-08-27): the outage-empty CACHE-PUT corner --------
+// computeSummary_ (the My Department table) and getCompanyOverview were the
+// two readers missing the R8-C1/B-3 discipline: on the neon path with the
+// sheet trimmed, one Neon blip produced an EMPTY payload that the RPC then
+// pinned under the 6h REPORT_CACHE_TTL_SECONDS for every viewer.
+
+test('L1: Neon unreachable + NO sheet -> computeSummary_ empty carries meta.sourceUnavailable', function () {
+  install('neon');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // outage
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },   // DQE sheet trimmed/retired
+  });
+  const r = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
+  assert.equal(r.meta.sourceUnavailable, true, 'outage empty is FLAGGED');
+  assert.equal(r.rows.length, 0);
+});
+
+test('L1: Neon REACHABLE-empty + no sheet stays a real (unflagged) empty (LM2)', function () {
+  install('neon');   // fake conn serves the dataset; ask outside its dates
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },
+  });
+  const r = h.call('computeSummary_', 'Alpha', '2030-01-01', '2030-01-07', 'roster');
+  assert.ok(!r.meta.sourceUnavailable, 'reachable-empty (trusted) is NOT flagged');
+});
+
+test('L1: getDepartmentSummary does NOT cache the outage-empty payload', function () {
+  install('neon');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },
+  });
+  const r = h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15' });
+  assert.equal(r.meta.sourceUnavailable, true, 'RPC payload carries the marker for the client');
+  const summaryKeys = Array.from(h.state.cache.keys()).filter(function (k) { return k.indexOf('summary:') === 0; });
+  assert.deepEqual(summaryKeys, [], 'no summary: key pinned by the outage payload');
+});
+
+test('L2: getCompanyOverview does NOT cache an empty-DQE-read blob when a latest date is known', function () {
+  install('neon');
+  h.ctx.getDashboardNeonConn_ = function () { return null; };   // outage
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'DO NOT EDIT!': ROSTER },   // DQE sheet trimmed/retired
+  });
+  // The outage shape needs a KNOWN latest date (a live read would return null
+  // and early-return uncached) -- exactly the production sequence: latestDate
+  // still on its 5-min tier from before the blip.
+  h.state.cache.set('latestDate:v1:neon', '2026-03-11');
+  const r = h.call('getCompanyOverview', {});
+  assert.equal(r.latestDate, '2026-03-11', 'payload still served (degraded, not thrown)');
+  const ovKeys = Array.from(h.state.cache.keys()).filter(function (k) { return k.indexOf('companyOverview') === 0; });
+  assert.deepEqual(ovKeys, [], 'no companyOverview key pinned by the outage blob');
+});

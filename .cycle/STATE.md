@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
-## Latest session (R17i — one definition of "these rings are one call")
+## Latest session (broad-scan Top-5 fixes — recipients, watchdog OPS-1, AF routing, lock-skip telemetry, outage-cache guards)
+Branch `claude/broad-scan-76h2dr`, **936/936 unit tests** (+8), INV-16 green. Increment 150. Block: `.cycle/blocks/150-top5-broad-implement.md` (the verbatim summary).
+- Full three-stage /broad-scan ran first (8 parallel subsystem audits + a Stage-2 deep-dive pass); the Top 5 by production impact were implemented in this same session: **P1** Alerts recipient lookup now role-aware (agent rows excluded — the teammate-identity privacy leak), **P2** DqeSilenceWatch persists streaks only AFTER a CONFIRMED send (OPS-1), **P4** dup-guard re-mirror routes AF via the SLOT sanitizer (M3, both INV-16 copies), **P7** onChange lock-skip logs an `autoImport` failure Pipeline Health row, **L1/L2** getDepartmentSummary + getCompanyOverview no longer cache the Neon-outage EMPTY payload (the R8-C1/B-3 discipline, closing the two readers that missed it).
+- **The rest of the scan's findings are NOT implemented** — the prioritized batch plan (batches A–F with efforts) was delivered in-session; key next-up: P3 (inbound priorDr is_internal), P5 (outbound_calls backup registry), P6 (digest marker port of O-9), P8 (bulk-force CSR guard), the enforcement-hole batch (S1–S4), and the a11y trio (I1/I2/I4).
+- Doc syncs owed (see the block): CLAUDE.md M3 sentence gains the remirror as a third AF call site; fix-history entries for the six codes.
+- Where I left off: fixes committed + pushed to `claude/broad-scan-76h2dr`; awaiting owner's pick of the next batch.
+
+## Prior session (R17i — one definition of "these rings are one call")
 Branch `claude/broad-scan-l9ojgm`, **669/669 unit tests** (+8), INV-16 green, UI gate 56/56 + 16/16 + 30/30 + 14/14. Increment 103. Block: `.cycle/blocks/103-r17i-grouping-extraction.md`.
 - **Closed the OBJECTIVE half of R17h's follow-on and deliberately left the subjective half.** The RULE (consecutive + same parentId + same date) was written twice with nothing making the copies agree — the INV-16 drift class. It is now `groupConsecutiveByCall_` (script-1-core.html), returning runs and rendering nothing. The RENDERINGS stay different on purpose: the card has no visible "rang N×" (owner R17a, hover only) and puts the siren/badge on the LAST ring; the lens shows the count on the FIRST.
 - **The two callers feed DIFFERENT sequences, which is why the helper returns runs rather than markup:** a card iterates ONE agent's rings (a run = that agent rung repeatedly), a lens iterates a slice sorted chronologically ACROSS agents (`missedSliceFilter_`), so a run there can span agents.

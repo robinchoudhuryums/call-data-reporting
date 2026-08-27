@@ -46,6 +46,31 @@ function onChange(e) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
     console.log("onChange: Could not acquire lock — another instance is running. Skipping.");
+    // A skipped INSERT_GRID is a DROPPED DAY: the trigger is one-shot per
+    // sheet and nothing retries, so this used to be console-only -- invisible
+    // until the 36h staleness banner. Contention is likeliest exactly when
+    // the system is degraded (a deferred-mirror drain paying failed JDBC
+    // connects holds this same script lock for minutes per tick). Surface it
+    // as an `autoImport` failure row so the Health page + PipelineWatch see
+    // it; a concurrent import that WAS handling the grid finishes later and
+    // its success row supersedes this one (most-recent-outcome rule), so the
+    // benign double-fire case self-heals. Best-effort: telemetry must never
+    // make the skip path throw.
+    try {
+      logPipelineHealthWithFallback_(null, {
+        step: 'autoImport',
+        status: 'failure',
+        rows: 0,
+        durationMs: null,
+        notes: 'onChange INSERT_GRID SKIPPED: script lock not acquired within 10s '
+          + '(another run — import, bulk archive, or Neon mirror drain — held it). '
+          + 'The import for this grid did NOT run and will not re-fire on its own; '
+          + 'if no later autoImport success row appears for today, run Manual '
+          + 'Processing (CDR Tools) for the date.',
+      });
+    } catch (err) {
+      console.log('onChange: lock-skip telemetry failed: ' + (err && err.message ? err.message : err));
+    }
     return;
   }
   try {
