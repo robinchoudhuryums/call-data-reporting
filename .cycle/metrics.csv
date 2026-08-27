@@ -1,0 +1,2 @@
+date,cycle,subsystem,phase,net_score,prod_fixes,new_failure_modes,category_d_ratio,axis_b_lowest,notes,defensive_count
+2026-08-26,139-149,dashboard+cdr-import+cdr-report,reflect,7,9,2,,,"CORRECTED vs implement self-reports: blocks summed +4/0 failure modes; the HF-0 JDBC Critical (increment 139, ~24h prod degradation, reverted PR #256) was absent from its own block, which scored the increment +1. 1 Critical + 1 Moderate new failure mode counted here.",4

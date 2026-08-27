@@ -1,0 +1,2 @@
+date,cycle,action,estimate,estimated_hours,actual_hours,calibration_note
+2026-08-26,149,journey-sheet-fallback+memo,M,4.5,1.5,"estimated 4-5h after Phase 0; actual ~1.5h of session work — the empty tab removed the migration half. Fallback-family estimates running ~3x actual."

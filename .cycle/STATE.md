@@ -4033,3 +4033,17 @@ internal-assist capture).
 
 **WHERE I LEFT OFF:** increment 149 committed + pushed to `claude/broad-scan-8dgd6m`,
 un-PR'd per the skill default.
+
+## Reflect (2026-08-26) — first standalone /reflect, covering increments 139-149
+
+Net 9 − 2 = +7, but the headline is the CORRECTION: the implement blocks summed +4
+with zero failure modes, while the arc actually contained 1 CRITICAL new failure
+mode (HF-0, the JDBC params — scored "+1" by its own block) and 1 Moderate (the
+single-arm Step-4 gate). Both shipped inside RESILIENCE work and both were invisible
+to the harness by construction; the cycle's best catches came from instruments
+(previewOutboundAssistLinks, the owner's validation run), not the suite. Live rule:
+when a change's correctness is outside the harness's reach, stage the rollout.
+Invariant candidates INV-56..60 proposed (block `.cycle/blocks/149-a-reflect.md`);
+metrics.csv + estimates.csv seeded (first rows).
+
+Subsystem cycles since last Seams audit: 1
