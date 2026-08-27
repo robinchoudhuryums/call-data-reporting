@@ -683,8 +683,15 @@ function notifyLoginEvent_(email, user) {
   var outcomeKey = loginNotifyOutcomeKey_(user);
   var d = loginNotifyDecide_(props.getProperty('LOGIN_NOTIFY_SEEN'), emailLower, outcomeKey);
   if (!d.notify) return;
-  props.setProperty('LOGIN_NOTIFY_SEEN', JSON.stringify(d.store));
 
+  // P14 (OPS-1): record the sighting as seen only AFTER a confirmed send.
+  // The store was written first, so an empty admin list or a MailApp throw
+  // (quota-exhausted morning) permanently burned the one-shot -- the
+  // first-sighting / outcome-change / DENIED-attempt email for that address
+  // was never retried. Leaving the store untouched means the next request
+  // from that address re-decides and re-attempts. (Two concurrent doGets can
+  // now both send -- a duplicate email is the accepted cost; the store's
+  // unlocked read-modify-write already had that race.)
   var to = getAdminEmails_().join(',');
   if (!to) return;
   var denied = outcomeKey === 'denied';
@@ -705,6 +712,13 @@ function notifyLoginEvent_(email, user) {
     lines.push('', 'Unrecognized addresses hitting this URL repeatedly without a grant '
       + 'may just be a crawler — the store notifies once per address, not per hit.');
   }
-  MailApp.sendEmail({ to: to, subject: subject, body: lines.join('\n') });
+  try {
+    MailApp.sendEmail({ to: to, subject: subject, body: lines.join('\n') });
+  } catch (e) {
+    Logger.log('notifyLoginEvent_: send FAILED (%s) -- sighting NOT recorded, will retry on the next hit.',
+      (e && e.message) || e);
+    return;
+  }
+  props.setProperty('LOGIN_NOTIFY_SEEN', JSON.stringify(d.store));
   Logger.log('notifyLoginEvent_: %s (%s, %s)', emailLower, outcomeKey, d.reason);
 }

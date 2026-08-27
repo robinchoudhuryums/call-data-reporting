@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v9';   // v9: R24 working-day prior windows
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v10';  // v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -478,8 +478,9 @@ function getCallJourney(req) {
       const rs = stmt.executeQuery();
       const j = rs.next() ? rs.getString('j') : '';
       // F5: meter the bytes this read actually pulled (NeonRead.gs;
-      // typeof-guarded like every other cross-file call here).
-      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0);
+      // typeof-guarded like every other cross-file call here). P30: labeled
+      // -- unlabeled reads fold into 'other' and defeat the ranking.
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'callJourney');
       rs.close(); stmt.close();
       return j;
     };
@@ -918,9 +919,17 @@ function computeInboundReport_(scope) {
     // parity queries; getCallJourney + the missed-report enrichment
     // deliberately KEEP them (serving those calls is the point).
     const dr = dateRange + ' AND ' + inboundWindowClause_(true) + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
-    const drOutside = dateRange + ' AND ' + inboundWindowClause_(false);
+    // P3: the prior-window and outside-window ranges carry the SAME internal
+    // exclusion as `dr` -- they feed kpisPrior (the R11-M delta chips compared
+    // against an internal-excluding current window) and the out-of-window
+    // research block, both metric surfaces. They shipped without the clause,
+    // so internal-origin queue calls (attributable entry_queue + call_start)
+    // inflated the prior side of every delta.
+    const drOutside = dateRange + ' AND ' + inboundWindowClause_(false)
+                  + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     const priorDr = "c.call_date BETWEEN '" + prior.from + "'::date AND '" + prior.to
-                  + "'::date" + deptPred + ' AND ' + inboundWindowClause_(true);
+                  + "'::date" + deptPred + ' AND ' + inboundWindowClause_(true)
+                  + ' AND COALESCE(c.is_internal, FALSE) = FALSE';
     // R5: the derived dial-in agent label reads first_agent, a column the
     // cdr-import capture adds via its idempotent DDL. Guard on its existence
     // so deploying the dashboard BEFORE the next import can't error the

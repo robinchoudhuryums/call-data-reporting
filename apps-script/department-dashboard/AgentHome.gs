@@ -335,6 +335,9 @@ function ahWaitJoin_(agentName, fromIso, toIso) {
     stmt.setString(3, '%' + agentName + '%');
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
+    // P30: this journey-bearing fetch (0.2-6KB per row) was a whole missing
+    // SURFACE in the egress ranking the Health gauge exists to provide.
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'agentHome');
     rs.close(); stmt.close();
     var recs = JSON.parse(json || '[]');
     for (var i = 0; i < recs.length; i++) {

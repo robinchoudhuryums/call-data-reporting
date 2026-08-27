@@ -532,8 +532,12 @@ function runOutboundVettingCheck() {
   assertAdmin_();
   const props = PropertiesService.getScriptProperties();
   const msDay = 24 * 3600 * 1000;
+  // P16: script TZ, like the sibling runInboundQcdParityCheck -- the UTC
+  // default meant a run after ~6-7 PM Central defaulted "yesterday" to
+  // TODAY in Central, so the vetting window (which the un-gating decision
+  // hangs on) ended on a partial, still-importing day.
   const iso = function (d) {
-    return Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd');
+    return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
   };
   const yesterday = new Date(Date.now() - msDay);
   const to = String(props.getProperty('OUTBOUND_VETTING_TO') || iso(yesterday)).trim();

@@ -853,7 +853,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **Out-of-window calls are RESEARCH data, never a dept metric (owner
   ruling)** -- report them separately, never in a dept total. Scoped surfaces:
   `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-  (`inbound:v9`), and `getInboundInsurerDaily` (so the drill reconciles with
+  (`inbound:v10`), and `getInboundInsurerDaily` (so the drill reconciles with
   the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
   (answers "when did capture begin", not a dept metric) and **the abandon
   HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -1827,7 +1827,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   within minutes instead of waiting out the TTL; a new heavy report key MUST
   join that tag or it inherits the stale-morning bug the tag exists to
   prevent -- `agentHome:v1` and the two sibling inbound keys
-  (`inbound:v9:daily:` insurer drill, `inboundHeatmap:v3`) joined it in B1-B5
+  (`inbound:v10:daily:` insurer drill, `inboundHeatmap:v3`) joined it in B1-B5
   after a same-day re-import could leave the drill disagreeing with the
   freshness-tagged row it expands; `agentHist:v1` embeds the latest date
   directly; `neonAgentExts:v1` (the derived

@@ -105,6 +105,14 @@ function runNeonBackup_() {
     var monthlies = [
       { table: 'escalation_activity', dateCol: 'at',        cast: 'timestamptz', orderBy: 'at, id' },
       { table: 'inbound_calls',       dateCol: 'call_date', cast: 'date',        orderBy: 'call_date, call_id' },
+      // P5: outbound_calls has NO sheet primary either (the Option B twin of
+      // inbound_calls -- per-call rows past the ~14-day Call_Legs window
+      // exist nowhere else, and Caller Lookup + the Outbound report read it),
+      // but the capture shipped without joining this registry, so a Neon
+      // project loss destroyed all outbound per-call history with the backup
+      // trigger armed. The table is auto-created by the capture's first run;
+      // until then the catch below reports a clean not-created-yet skip.
+      { table: 'outbound_calls',      dateCol: 'call_date', cast: 'date',        orderBy: 'call_date, call_id' },
     ];
     for (var m = 0; m < monthlies.length; m++) {
       var spec = monthlies[m];
@@ -172,7 +180,16 @@ function runNeonBackup_() {
         }
         outcomes.push(spec.table + ' ok (' + written + ' month file(s) written, ' + skipped + ' closed skipped)');
       } catch (e2) {
-        outcomes.push(spec.table + ' FAILED: ' + (e2 && e2.message ? e2.message : e2));
+        var m2 = (e2 && e2.message ? e2.message : String(e2));
+        // P5: a per-call table not created yet (outbound_calls before the
+        // capture's first run) is a clean SKIP, not a backup failure -- the
+        // ncMissingTableError_ distinction NeonCoverage draws for the same
+        // reason. Every other error stays a loud FAILED outcome.
+        if (/relation .* does not exist|does not exist/i.test(m2)) {
+          outcomes.push(spec.table + ' skipped (table not created yet — the capture creates it on first run)');
+        } else {
+          outcomes.push(spec.table + ' FAILED: ' + m2);
+        }
       }
     }
 

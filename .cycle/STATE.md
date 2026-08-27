@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
-## Latest session (broad-scan Top-5 fixes — recipients, watchdog OPS-1, AF routing, lock-skip telemetry, outage-cache guards)
+## Latest session (broad-scan Batches A+B — inbound prior clause, backup registry, digest/coaching/login OPS-1, bulk-force guards, egress labels)
+Branch `claude/broad-scan-76h2dr`, **944/944 unit tests** (+8), INV-16 green, cache-version-sync green after the inbound:v10 bump. Increment 151. Block: `.cycle/blocks/151-batch-a-b-broad-implement.md` (verbatim summary).
+- Implemented the scan's Batch A (P3 inbound priorDr/drOutside is_internal + v10 bump synced across 6 docs, P5 outbound_calls in the Neon backup, P6 digest O-9 marker port, P8 bulk-force QCD/CSR guards via a queueToPendingArchive count return, P16 vetting TZ window, P18 prune wrong-workbook fallback → loud failure) and Batch B (P13 coaching pending-notify retry via COACHING_NOTIFY_PENDING, P14 login-notify seen-after-send, P26 per-sheet forceDeleted threading so force guards fire only on real deletions, P30 egress labels for agentHome/caller-lookup/callJourney).
+- **INV-44 doc owes two new step names** (`bulkBackfill:QCD`/`bulkBackfill:CSR`) + the increment-150 lock-skip note; fix-history owes this batch's entries; CLAUDE.md M3 still owes the remirror call-site mention. Run /sync-docs.
+- Latent suite trap noted: coaching.test.js's FLAG-GATED test `delete`s the real coachingDeliveryRun_ vm binding (new tests reinstall a load-time reference; fix properly later).
+- Remaining scan work: Batches C (pre-flag data accuracy L3-L7), D (enforcement holes S1-S4/S7/S8), E (client polish + a11y), F (strategic/owner items).
+- Where I left off: A+B committed + pushed to `claude/broad-scan-76h2dr` on top of increment 150; awaiting the next batch pick.
+
+## Prior session (broad-scan Top-5 fixes — recipients, watchdog OPS-1, AF routing, lock-skip telemetry, outage-cache guards)
 Branch `claude/broad-scan-76h2dr`, **936/936 unit tests** (+8), INV-16 green. Increment 150. Block: `.cycle/blocks/150-top5-broad-implement.md` (the verbatim summary).
 - Full three-stage /broad-scan ran first (8 parallel subsystem audits + a Stage-2 deep-dive pass); the Top 5 by production impact were implemented in this same session: **P1** Alerts recipient lookup now role-aware (agent rows excluded — the teammate-identity privacy leak), **P2** DqeSilenceWatch persists streaks only AFTER a CONFIRMED send (OPS-1), **P4** dup-guard re-mirror routes AF via the SLOT sanitizer (M3, both INV-16 copies), **P7** onChange lock-skip logs an `autoImport` failure Pipeline Health row, **L1/L2** getDepartmentSummary + getCompanyOverview no longer cache the Neon-outage EMPTY payload (the R8-C1/B-3 discipline, closing the two readers that missed it).
 - **The rest of the scan's findings are NOT implemented** — the prioritized batch plan (batches A–F with efforts) was delivered in-session; key next-up: P3 (inbound priorDr is_internal), P5 (outbound_calls backup registry), P6 (digest marker port of O-9), P8 (bulk-force CSR guard), the enforcement-hole batch (S1–S4), and the a11y trio (I1/I2/I4).
