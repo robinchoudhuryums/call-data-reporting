@@ -1,5 +1,5 @@
 /**
- * Orphan Fix engine -- the dashboard's ONLY public write path.
+ * Orphan Fix engine -- the dashboard's ORIGINAL public write path.
  *
  * Background. The pipeline (`buildDQEHistoricalData`) canonicalizes
  * raw CDR agent names against the roster (INV-24) using a
@@ -19,10 +19,11 @@
  *
  * SECURITY MODEL -- read carefully before editing.
  *
- * This file holds the FIRST AND ONLY public functions in the
- * dashboard that write to a sheet. Everywhere else, INV-01 keeps
- * the surface area read-only. Two reasons we accepted the
- * exception here:
+ * This file holds the FIRST public functions in the dashboard that
+ * write to a sheet (INV-01 now carries the AUTHORITATIVE carve-out
+ * list -- the Access Control / Dept Config / Alert+Digest config
+ * editors and the Coaching close joined later; everywhere else stays
+ * read-only). Two reasons we accepted the exception here:
  *   (a) The action is genuinely useful and infrequent; there's no
  *       sensible read-only alternative.
  *   (b) The blast radius is bounded: alias adds touch ONE row in
@@ -48,8 +49,9 @@
  *
  * The downstream cache layers (companyOverview:v21, summary:v20,
  * individual:v11, etc.; see INV-30 for the canonical list) will
- * hold stale data for up to 30 minutes (REPORT_CACHE_TTL_SECONDS)
- * after a rename. We invalidate the single fixed-key
+ * hold stale data for up to 6 hours (REPORT_CACHE_TTL_SECONDS,
+ * R24) after a rename -- though the morning ingest's freshness tag
+ * usually mints new keys sooner. We invalidate the single fixed-key
  * `companyOverview:` entry on every successful write; the
  * per-(dept, range) caches are left to TTL out naturally.
  *
@@ -288,7 +290,7 @@ function applyOrphanRename(req) {
     });
     // Bust the single fixed-key Overview cache so the change shows
     // up immediately on the landing page. Per-(dept, range) caches
-    // are TTL'd out naturally within 30 min (REPORT_CACHE_TTL_SECONDS).
+    // TTL out naturally (REPORT_CACHE_TTL_SECONDS, 6h since R24).
     try { CacheService.getScriptCache().remove(overviewCacheKey_()); }
     catch (e) { /* best-effort */ }
     bustOrphanFixCache_();

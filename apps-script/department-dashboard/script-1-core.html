@@ -659,10 +659,10 @@
     diagnostics: null,
     sortKey: 'answerRate',   // default sort: the stacked Answered/Missed bar
     sortDir: 'asc',          // 'asc' | 'desc' -- asc => worst answer rate first
-    // Scope: server is locked to 'both' since the Phase D toggle
-    // removal cleanup. Internal `computeSummary_` still accepts
-    // a scope arg (Digest.gs uses 'roster') but the public RPC
-    // doesn't expose it -- the client just doesn't pass it.
+    // Scope: server is locked to 'roster' (the Phase 14/15
+    // roster-only flip). Internal `computeSummary_` still accepts
+    // a scope arg (Digest.gs also passes 'roster') but the public
+    // RPC doesn't expose it -- the client just doesn't pass it.
   };
 
   // -- Modal drag & resize --------------------------------------------------

@@ -25,11 +25,15 @@ template-EVALUATING `include_` (Code.gs). Everything a maintainer needs:
   visibility span fragment boundaries. Handlers may call anything anywhere;
   TOP-LEVEL code (IIFEs, init expressions) should only call into its own or
   EARLIER fragments — the assembled order is the include order in script.html.
-- **Fragments are RAW JS** — no script/style tags, no template scriptlets
-  (include_ evaluates templates now, so a stray scriptlet-open sequence in a
-  fragment would EXECUTE server-side at render), and never the literal
-  end-of-script-tag pattern (closes the assembled block early — the original
-  html-include-structure bug class, now reachable from any fragment).
+- **Fragments are raw JS wrapped in exactly ONE script-tag pair of their
+  own** — Apps Script's HTML loader parses every file, so BARE JS fails with
+  'Malformed HTML content' (learned in production); `includeJs_` strips the
+  wrapper at splice time so one IIFE still results. Inside the wrapper: no
+  nested script tags, no template scriptlets (include_ evaluates templates
+  now, so a stray scriptlet-open sequence in a fragment would EXECUTE
+  server-side at render), and never the literal end-of-script-tag pattern
+  (closes the assembled block early — the original html-include-structure
+  bug class, now reachable from any fragment).
   `tests/unit/html-include-structure.test.js` enforces all three per fragment,
   pins the include list == the `script-*.html` files on disk (both
   directions — a fragment on disk but not included silently DROPS its

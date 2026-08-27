@@ -1521,7 +1521,7 @@
             <h3>Common questions</h3>
             <ul>
               <li><strong>My table is empty.</strong> Check the From/To dates first. If they look right, the Diagnostics panel&rsquo;s &ldquo;Roster agents with no data in this range&rdquo; lists who was expected but absent.</li>
-              <li><strong>Numbers look stale.</strong> Check the header freshness pill &mdash; if it&rsquo;s orange (36h+), the daily import likely hasn&rsquo;t run. Reports also cache for up to 30 minutes.</li>
+              <li><strong>Numbers look stale.</strong> Check the header freshness pill &mdash; if it&rsquo;s orange (36h+), the daily import likely hasn&rsquo;t run. Reports can serve a cached copy for up to 6 hours, but new mornings&rsquo; data refreshes them within minutes of the ingest.</li>
               <li><strong>More missed timestamps than the Missed count.</strong> Rings outside the 8:30 AM&ndash;5 PM CST work window show in the timeline but don&rsquo;t count toward Missed.</li>
               <li><strong>An agent shows in two departments.</strong> That&rsquo;s expected &mdash; agents can be on multiple rosters and appear under each.</li>
               <li><strong>Inbound vs QCD abandonment differ.</strong> They use different sources and definitions; Inbound is being vetted, which is why it&rsquo;s admin-only for now.</li>
@@ -2571,8 +2571,9 @@
             <button class="btn btn-secondary" id="al-uninstall-trigger-btn" type="button" style="display:none;">Uninstall trigger</button>
           </div>
           <p class="al-hint" style="margin-top: 8px;">
-            The daily trigger runs at 8 AM and checks the previous day's answer rate per
-            active dept. Weekends (Sat / Sun) are skipped automatically.
+            The daily trigger runs at 8 AM and checks the previous business day's answer
+            rate per active dept. Weekends (Sat / Sun) and company holidays
+            (COMPANY_HOLIDAYS) are skipped automatically.
           </p>
         </div>
 

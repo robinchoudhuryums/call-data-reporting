@@ -244,8 +244,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 >    prose only" is an acceptable answer; an unanswered question is not.
 >
 > `tests/unit/claude-md-split.test.js` enforces this with a per-bullet
-> ratchet: new bullets stay under 4 KB, and the five already over it may only
-> shrink.
+> ratchet: every bullet stays under 4 KB (the once-grandfathered oversize five
+> have all been trimmed under it -- keep them there).
 
 - **Spreadsheet TZ ≠ script TZ**. The CDR Report spreadsheet is on
   `America/Mexico_City`; the script is on `America/Chicago`. Duration cells
@@ -286,7 +286,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   H:MM:SS TIMES column that coerces like the K-AC slots, so the slot sanitizer
   recovers a `"12/30/1899 10:23:33"` date-render to `"10:23:33"` where the ID
   sanitizer would mirror it verbatim; routed at the call sites in
-  `neonbackfill.js` + `NeonMirror.js` (`sanitizeSlotCellForNeon_(r[31]) || null`).
+  `neonbackfill.js` + `NeonMirror.js` (`sanitizeSlotCellForNeon_(r[31]) || null`)
+  and the dup-guard re-mirror (`remirrorExistingDqeDate_`, both INV-16 copies).
   The Missed report flags
   them via `meta.abandonedDetailLost` / `abandonedDetailLostDates` and the
   headline shows an "abandoned detail unavailable -- rebuild" note.
@@ -1571,14 +1572,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Pipeline Health row (no throw, so the already-written sheets stand), which
   the System Health **"Recent pipeline step failures"** row + the Alerts
   Pipeline Health panel both surface. **QCD and CSR Transfer are both
-  guarded**; CDR / QPath are NOT dashboard-read (INV-52 -- legacy DQE Report
-  only) so they're intentionally left unguarded. **S2-2 -- the lesson that put
-  CSR on that list:** this bullet used to exempt CSR too, which was correct
-  until R10-5 made `CSR Transfer Historical Data` dashboard-read
-  (`Data.gs::computeCsrTransferRange_`, feeding My Department's team-strip
-  Transfer % tile). The exemption was never revisited, so a force re-import
-  whose CSR rebuild produced zero rows silently deleted that date's transfer
-  history with no failure row and no email. **When a historical sheet gains its
+  guarded** (S2-2: CSR joined when R10-5 made `computeCsrTransferRange_`
+  dashboard-read -- the story is in fix-history), on BOTH paths: the daily
+  writes (`processIntegratedHistory:QCD`/`:CSR`) and, since P8, the bulk
+  queue (`bulkBackfill:QCD`/`:CSR`, counted at `queueToPendingArchive`).
+  **P26: every guard -- `refuseIfForce_`'s `opts.force` included -- fires
+  only when force AND that sheet's date rows were ACTUALLY deleted** (the
+  caller's per-sheet `forceDeleted` capture), so an always-force Manual
+  Export of a first-time light day is a legitimate rows:0, never a false
+  "data may be lost" alarm. CDR / QPath are NOT dashboard-read (INV-52 --
+  legacy DQE Report only) so they're intentionally left unguarded.
+  **When a historical sheet gains its
   first dashboard reader, add its force-path guard in the same commit** --
   the guard list is keyed on "is this dashboard-read", and that property
   changes over time. A NON-force empty rebuild is a legitimate no-op (F5) and
@@ -1832,8 +1836,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   freshness-tagged row it expands; `agentHist:v1` embeds the latest date
   directly; `neonAgentExts:v1` (the derived
   agent/ext pairs, NeonRead.gs) was the last holdout and joined in the
-  Batch-E round -- every 6 h key now carries an anchor, and
-  cache-version-sync's SPECS tracks them all. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
+  Batch-E round -- every 6 h key now carries an anchor;
+  cache-version-sync pins the VERSION numbers only -- nothing enforces tag
+  membership, so verify a new key joined the tag by hand. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
   (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
   serve all day; trade-off: a rare mid-day force re-import's corrections

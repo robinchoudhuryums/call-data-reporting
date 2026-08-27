@@ -6,9 +6,10 @@
  *     (Config.gs) -- reads the ADMIN_EMAILS Script Property if set,
  *     else falls back to ADMIN_EMAILS_FALLBACK. Adding an admin is a
  *     Script Property edit; no redeploy required.
- *   - Managers are looked up in the Access Control sheet, which has
- *     columns: Email | Department | Notes. One row per manager. Email
- *     match is case-insensitive after trim.
+ *   - Managers are looked up in the Access Control sheet, whose
+ *     columns are Email | Department | Notes | Role | Agent Name
+ *     (Role blank = manager; 'agent' = the fourth role). One row per
+ *     manager per dept. Email match is case-insensitive after trim.
  *   - Anyone else gets role 'none' and the access-denied page.
  *
  * Access-control reads are cached for AUTH_CACHE_TTL_SECONDS (60s) so a

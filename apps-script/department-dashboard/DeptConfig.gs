@@ -1169,9 +1169,9 @@ function compareDeptConfigSources() {
 /**
  * Busts the single fixed-key Overview cache so a config change shows
  * up on the landing page immediately (matches OrphanFix.gs). The
- * per-(dept, range) QCD / report caches are left to TTL out within
- * 30 minutes (REPORT_CACHE_TTL_SECONDS) -- enumerating their compound
- * keys isn't practical.
+ * per-(dept, range) QCD / report caches are left to TTL out
+ * (REPORT_CACHE_TTL_SECONDS, 6h since R24) -- enumerating their
+ * compound keys isn't practical.
  */
 function dcBustCaches_() {
   try { CacheService.getScriptCache().remove(overviewCacheKey_()); }

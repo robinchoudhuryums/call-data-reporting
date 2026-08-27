@@ -1002,7 +1002,7 @@ function getOverviewChartTrend(req) {
   // construction -- an EMPTY dqeRows here is the outage shape (Neon
   // unusable AND the sheet read failed/empty), not a legitimate quiet
   // window; caching it would serve an all-null trend to every viewer for
-  // 30 minutes with no meta flag distinguishing it from real data.
+  // the TTL (6h since R24) with no meta flag distinguishing it from real data.
   const configDegraded = (typeof deptConfigReadFailed_ === 'function') && deptConfigReadFailed_();
   const outageEmpty = dqeRows.length === 0;
   if (configDegraded || outageEmpty) {

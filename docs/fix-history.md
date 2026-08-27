@@ -609,3 +609,61 @@ phases are history, invariants are truth.
 | O-9 | **The Daily Call Queue Report email engine reported "sent" when it had sent nothing (owner-reported: enabled it, never received it).** Arming the trigger without adding a subscriber row produced a run where `sendQueueReportForDate_` returned `count:0` with no failures — which fell into `runDailyQueueReport_`'s SUCCESS branch, wrote `Sent <iso> to 0 subscribers`, and CLAIMED the dedupe marker. The modal printed that string verbatim under "Last run:" and the Health outcome classifier painted it green (it matches none of the `fail|error|unreachable|skipped` bad-words, nor the `MISSED`/`GAPS` prefixes), so the engine looked healthy every weekday while nobody received anything. Fix: the writer resolves recipients BEFORE composing (an empty list no longer pays the all-departments compute on each of ~12 polls per window) and returns `noRecipients:true`; the runner writes a distinct `NO-SUBSCRIBERS <iso> — ...` outcome and does NOT claim the marker, so a subscriber added mid-window still gets that morning's report on the next poll (the FAILED-ALL rule: nobody received it, so a retry cannot duplicate); the Health classifier gained the `^NO-SUBSCRIBERS` prefix arm; and the modal now says it BEFORE the first morning — with the trigger installed and zero active rows, the trigger-status line turns warn-tinted and reads "Installed, but NO ONE is subscribed". Same family as F5 (a `rows:0` DQE success is a NO-OP, not freshness) and O-7 (the missed-day flag): a no-op does not get to look like work | code (QueueReportEmail.gs, SystemHealth.gs, script.html, styles.html); +3 queue-report.test.js; Op State #31 triage order |
 | O-10 | **"Why hasn't it sent?" — an on-demand gate check for the Daily Call Queue Report** (`runQueueReportGateCheck`, admin-gated, READ-ONLY; button in the Alerts modal). Every non-send path in `runDailyQueueReport_` returns SILENTLY — `disabled` / `outside-window` / `weekend` / `holiday` / `already-sent` / `not-ready` write nothing anywhere (`QUEUE_REPORT_LAST_RESULT` is only set on a send, a no-subscriber run, a failure, or the post-window MISSED flag), and the trigger entry point is `_`-suffixed so the editor Run picker hides it (the `compareDqeSources_` / `runDqeParityCheck` precedent). Diagnosing a non-arriving report therefore cost a day per hypothesis. The check evaluates the real gate against the real clock/properties/sheet and reports every INPUT beside the decision — target date, how far QCD reaches, the already-sent marker, active subscriber count, installed/enabled, window — plus the next window date and which day that run will target, since "nothing today" is only half an answer. The verdict logic is a pure `queueReportGateExplain_` (the `queueReportGateDecision_` precedent): the interesting branches are exactly the ones a wall-clock test can never reach on demand. Load-bearing rule pinned there: `wouldSend` folds in the recipient count, because the gate is evaluated BEFORE the recipient list — reporting a subscriber-less "ready" as a send is the O-9 failure wearing a different hat | code (QueueReportEmail.gs, dashboard.html, script.html, styles.html); +5 queue-report.test.js; Op State #31 |
 | O-11 | **Dev overlay — an admin-only client diagnostics panel** (`#dev-overlay`, Ctrl/Cmd+Alt+D or `#/dev`, persisted in `cdr.dev.overlay`). Four panels: captured client errors, `google.script.run` timings/failures, app state (identifiers and flags only — never a payload), and a REGISTRY of admin-gated server diagnostics where a new entry costs one line instead of markup + handler + style rule. Built because the client recorded NOTHING: before this it had zero `window.onerror`/`unhandledrejection` handlers and one `console.error` in ~20K lines, which is how the dept selector's `ReferenceError: prLastRoster is not defined` (thrown on every admin click) and the CSS-after-`</style>` render both reached production and stayed. **Security shape:** the panel is presentation only and its `role === 'admin'` check is COSMETIC — a localStorage flag is not authentication — so every diagnostic keeps its own `assertAdmin_()` and the panel renders only what the server already sent that viewer; pinned by a driver assertion that a manager gets no overlay even with the flag hand-set. **The RPC probe was the risk and it bit once:** `google.script.run` is a getter returning a FRESH, STATEFUL runner per access, and the first draft captured one runner at install time, leaking chain A's handlers into chain B. Comparing two reads for identity does not catch that (a new Proxy is minted either way) — `drive-devoverlay.js` asserts it behaviourally (two concurrent chains must each invoke their OWN handler; the buggy build reports `BB`) and asserts the app still WORKS with the probe installed before asserting anything about the panel. Whole install try/caught; any doubt leaves `google.script.run` untouched | code (script.html, styles.html); new drive-devoverlay.js in the ci:ui gate (14 checks); CLAUDE.md, client-ui-conventions |
+
+---
+
+## 2026-08-27 broad-scan (increments 150–151) — the P/L family
+
+One three-stage audit, two implementation batches. Codes below are cited in
+code comments as `P1`…`P30` / `L1`/`L2`; live rules stayed in CLAUDE.md /
+docs/invariants.md — this is the what-and-why index.
+
+- **P1** — `lookupDeptManagers_` (Alerts.gs) read only cols 1–2 of Access
+  Control, so a Role=`agent` row became a To: recipient of manager alerts
+  naming teammates' per-agent numbers (fired even with `AGENT_ROLE_ENABLED`
+  unset — the flag gates sign-in, not this read). Now a width-bounded 4-col
+  read keeping manager rows only. Pinned: alert-recipients.test.js.
+- **P2** — DqeSilenceWatch persisted streaks (`alerted:true` baked in)
+  BEFORE the send and claimed "alert emailed" with no recipients — one mail
+  failure permanently silenced the episode guarding the closing 14-day
+  Call_Legs window. Now OPS-1: persist after a CONFIRMED send. Pinned:
+  dqe-silence-watch.test.js.
+- **P3** — Inbound report's `priorDr`/`drOutside` lacked the `is_internal`
+  exclusion every other metric range carries, inflating the R11-M delta
+  chips' prior side. `inbound:v9 → v10`. Pinned: inbound-window-scope.
+- **P4** — the dup-guard re-mirror routed AF (H:MM:SS times) through the
+  abandoned-ID sanitizer, mirroring coerced date-renders verbatim into
+  `dqe_history` (M3's third call site, missed when M3 landed; both INV-16
+  copies shared the bug so the guard couldn't see it). Pinned:
+  pipeline-build.test.js.
+- **P5** — `outbound_calls` (no sheet primary) was absent from the Neon
+  backup's monthly registry — a Neon loss destroyed all outbound per-call
+  history with the backup armed.
+- **P6** — digest run markers were claimed by zero-attempted runs ("ok …
+  sent 0 of 0"), losing the window (a whole month for monthly). The O-9
+  rule ported from QueueReportEmail. Pinned: digest-wow.test.js.
+- **P7** — the daily onChange import's lock-skip was console-only: a
+  dropped day with no telemetry, likeliest during deferred-mirror Neon
+  outages (the drain holds the same lock). Now an `autoImport` FAILURE row.
+- **P8 / P26** — the force-loss guards ran only on the daily path (bulk
+  rebuild-to-zero of CSR slipped through — the S2-2 class again) and keyed
+  on the force FLAG alone (Manual Export always forces → false "data may be
+  lost" alarms on first-time days). Now: bulk-path guards at queue time +
+  per-sheet `forceDeleted` gating everywhere.
+- **P13 / P14** — Coaching committed flags then emailed (a failed send
+  orphaned the batch as 'continuing' forever → `COACHING_NOTIFY_PENDING`
+  retry); login-notify wrote `LOGIN_NOTIFY_SEEN` before sending (a quota
+  failure burned the DENIED-attempt one-shot). Both now OPS-1. Pinned:
+  coaching.test.js, login-notify.test.js.
+- **P16** — `runOutboundVettingCheck` defaulted its window in UTC: an
+  evening run vetted a partial day — the tool un-gating decisions hang on.
+- **P18** — `deleteOldCDRSheets`' unbound-context fallback opened the
+  TARGET workbook, where Call_Legs never live: a silently wrong prune under
+  green `deleted 0` rows. Now fails loudly into the retentionPrune row.
+- **P30** — Neon egress metering missed whole surfaces (agentHome journey
+  scan, Caller Lookup outbound/history) and the journey drill was
+  unlabeled, defeating the Health gauge's ranking.
+- **L1 / L2** — `getDepartmentSummary` + `getCompanyOverview` cached the
+  Neon-outage EMPTY payload for the 6h TTL (the R8-C1/B-3 discipline
+  existed in every sibling reader but these two — the two most-viewed).
+  Bites post-cutover once the sheet is trimmed. Pinned: dal-cutover.test.js.
