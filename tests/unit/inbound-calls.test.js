@@ -1158,3 +1158,33 @@ test('shared root: the originator is the earliest QUEUE leg, not the earliest le
   assert.equal(r.originDept, 'Customer Success');
   assert.equal(r.disposition, 'abandoned');
 });
+
+// P22 (broad-scan 2026-08-27, the shared-leg-tree rule's fourth field pair):
+// on an internal-origin tree, abandonedOnHold read legs[0] (which can be a
+// SIBLING's leg after a warm-transfer merge) and holdSeconds took the max
+// across ALL legs -- so the assist record could inherit a colleague's
+// customer's hold/disc-on-hold state. Both now scope to the REQUESTER's own
+// legs (icLegFromOriginator_), with a fallback to the old inputs when no
+// originator leg matches so the fields can never blank out.
+test('shared root: a sibling leg\'s hold/disc-on-hold no longer leaks onto the assist record', function () {
+  const recs = build([
+    // Margie's genuinely un-held queue call (the requester).
+    leg({ callId: '870001', legId: 1, start: '08/21/2026 07:30:22', connected: '08/21/2026 07:30:23',
+          stop: '08/21/2026 07:31:52', direction: 'Internal', callTime: '0:01:30',
+          caller: '363', callerName: 'Margie Ingay', callee: '144', calleeName: 'A_Q_FieldOps',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'Customer Success' }),
+    // A sibling's customer leg under the SAME root, parked 2 min and
+    // dropped on hold -- the colleague's customer's state, not Margie's.
+    leg({ callId: '870001', legId: 4, start: '08/21/2026 07:31:52', connected: '08/21/2026 07:31:52',
+          stop: '08/21/2026 07:33:48', direction: 'Outgoing', talk: '0:01:55',
+          caller: '279', callerName: 'Marie (Muskaan) Jindal', callee: '19454445555',
+          answered: 'Answered', holdDur: '0:02:00', callerDisc: 'TRUE', dept: 'Customer Success' }),
+  ]);
+  const r = rec(recs, '870001');
+  assert.equal(r.isInternal, true);
+  assert.equal(r.abandonedOnHold, false, "the sibling's disc-on-hold is not Margie's");
+  assert.equal(r.holdSeconds, 0, "the sibling's 2-minute hold is not Margie's");
+  // External inbound records keep the old whole-tree semantics (every leg
+  // there descends from the one caller) -- pinned by the earlier
+  // 'abandoned IN QUEUE while held' test above.
+});

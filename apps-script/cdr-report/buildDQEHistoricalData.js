@@ -1143,9 +1143,14 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       status:     'success',
       rows:       outputRows.length,
       durationMs: Date.now() - __pipelineStartMs,
+      // S6: each project's own deployed-build stamp rides the note
+      // (buildStamp.js; typeof-guarded so both INV-16 copies stay
+      // byte-identical and a project without the stamp file logs nothing).
       notes:      'callDate=' + callDateStr + (unparsedStartCount
                     ? ' | WARN: ' + unparsedStartCount + ' leg(s) had unparseable START_TIME (dropped from in-window counts)'
-                    : ''),
+                    : '')
+                + (typeof PROJECT_BUILD_STAMP_ !== 'undefined'
+                    ? ' | build: ' + PROJECT_BUILD_STAMP_ : ''),
     });
   } catch (pipelineLogErr) {
     Logger.log('buildDQE: pipeline-health log failed (non-fatal): %s', pipelineLogErr);

@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
-## Latest session (broad-scan Batches D+E — enforcement tripwires + client polish/a11y)
+## Latest session (broad-scan Batch F — pipeline smalls, agent dark mode, pin persistence, sibling stamping)
+Branch `claude/broad-scan-76h2dr`, **958/958 unit tests** (+1), INV-16 green. Increment 154. Block: `.cycle/blocks/154-batch-f-broad-implement.md`.
+- Implemented: **P9** drill-down mirrors the R18e ext-fallback; **P10** backfillCDRHistory intra-batch IMP-6 dedup; **P19** NUL-key recovery log; **P20** drill-down rejects unparseable-start legs like the build; **P21** Q-Path ext left boundary; **P22** internal-origin hold fields originator-scoped (pinned); **I5** agent-app dark mode (shared 'dash-mode' key + toggle); **P28** Overview spotlight pins + Alt-hidden series survive rebuilds/auto-refresh; **S6** sibling buildStamp.js + deploy.sh stamping + stamp-in-Pipeline-Health-note (INV-16-safe typeof guard).
+- **Deliberately NOT implemented** (operator/owner): un-gating the three vetted reports (run the vetting tools clean first — contract forbids otherwise), Neon cutover execution (runbook is operator work; all code blockers shipped 150–152), and the L-effort rule single-sourcing (deferred; P9 + the parity suites narrow the drift surface).
+- **The 2026-08-27 broad-scan is now fully worked**: Batches A–F done across increments 150–154; what remains is operator/owner work + the CLAUDE.md trim pass + fix-history entries for Batch F (next /sync-docs).
+- Where I left off: committed + pushed to `claude/broad-scan-76h2dr`.
+
+## Prior session (broad-scan Batches D+E — enforcement tripwires + client polish/a11y)
 Branch `claude/broad-scan-76h2dr`, **957/957 unit tests** (+5), INV-16 green, assembled-client node --check green. Increment 153. Block: `.cycle/blocks/153-batch-d-e-broad-implement.md`.
 - **Batch D**: INV-06 three-window cross-pin (S1); cache-prefix SPECS completeness sweep + 4 missing entries (S2); per-prefix freshness-ANCHOR classification table, tag-anchored files must call reportFreshnessTag_() (S3); B-2 tripwire matches literal sheet opens, SmokeCheck allow-listed (S4); CI pins playwright@1.62.1 (S7); safeChart_-only + all-8-writers-route-csvSafeCell_ pins in html-include-structure (S8).
 - **Batch E**: P11 storage-blocked init() no longer dies; P15 Insights export busy-state retargeted to #dept-export-btn + insExportBusy_ re-entry guard (double-email fixed); I1 band-tile Enter/Space; I2 journey-overlay STACK-AWARE focus trap (re-arms a displaced modal trap; F-42 opener return); I3 shared wireMenuKeys_ for the three Export menus; I4 aria-live toast + role=status on 20 status blocks; P23 clipboard-rejection fallback; P24 --ink-muted/--sans defined as aliases; P27 250-row banner copy; P29 token-before-restore in both report runners.

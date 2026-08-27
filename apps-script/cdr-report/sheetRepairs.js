@@ -708,7 +708,7 @@ function mergeDqeDuplicateRows_(dryRun) {
     if (scMergeAlreadyApplied_(rows[0], rows.slice(1))) {
       recovered++;
       idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
-      summary.push(key.replace(' ', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
+      summary.push(key.replace('\u0000', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
         + '  -> ALREADY MERGED (interrupted apply); deleting leftover duplicate(s) only');
       return;
     }

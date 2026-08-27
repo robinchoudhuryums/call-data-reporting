@@ -465,11 +465,25 @@ function buildInboundCallRecords_(rawRows) {
     // Abandoned-on-hold: for inbound the customer is the CALLER, so the
     // signal is Caller Disconnect On Hold = TRUE on an incoming leg. This is
     // independent of `answered` (you can be answered THEN dropped on hold).
-    var abandonedOnHold = (isInternalOrigin ? [legs[0]] : incoming).some(function (l) { return icIsTrue_(l[IC_COL.CALLER_DISC_ON_HOLD]); });
+    // P22 (the shared-leg-tree rule, the R17b field family's fourth pair):
+    // on an internal-origin tree `legs[0]` can be a SIBLING's leg (a warm
+    // transfer merges two people's legs under one root) and a max over ALL
+    // legs can inherit a colleague's customer's hold -- scope both fields to
+    // the REQUESTER's own legs, like `answered` already does
+    // (icLegFromOriginator_). Falls back to the old inputs when no
+    // originator leg matches (the abandon-leg PREFER-fallback discipline),
+    // so a match failure can never blank the fields. External inbound
+    // records are untouched -- every leg there descends from the caller.
+    var ownLegs = isInternalOrigin
+      ? legs.filter(function (l) { return icLegFromOriginator_(l, originExtForDisp, originNameForDisp); })
+      : null;
+    var abandonedOnHold = (isInternalOrigin ? (ownLegs.length ? ownLegs : [legs[0]]) : incoming)
+      .some(function (l) { return icIsTrue_(l[IC_COL.CALLER_DISC_ON_HOLD]); });
 
-    // Hold time the caller was parked (max across legs).
+    // Hold time the caller was parked (max across the caller's own legs).
     var holdSeconds = 0;
-    legs.forEach(function (l) { holdSeconds = Math.max(holdSeconds, icTimeToSec_(l[IC_COL.CALLEE_HOLD_DURATION])); });
+    (isInternalOrigin ? (ownLegs.length ? ownLegs : legs) : legs)
+      .forEach(function (l) { holdSeconds = Math.max(holdSeconds, icTimeToSec_(l[IC_COL.CALLEE_HOLD_DURATION])); });
 
     // Queue journey (ordered distinct A_Q_* legs).
     var queues = [];

@@ -708,6 +708,29 @@ function backfillCDRHistory() {
       }
       if (batch.length === 0) continue;
 
+      // P10 (the IMP-6 rule, missed here): a multi-row ON CONFLICT DO UPDATE
+      // throws "cannot affect row a second time" on intra-batch conflict-key
+      // (call_date, department, agent_name) duplicates -- and because the
+      // resume pointer stays at batchStartIdx, every re-run rethrew on the
+      // same batch: one hand-pasted duplicate sheet row wedged the backfill
+      // permanently (the T-2/T-3 poison class). Last-write-wins, matching
+      // backfillDQEHistoryUpsert's IMP-6 dedup.
+      var seenCk = {};
+      var dedupedBatch = [];
+      for (var db = batch.length - 1; db >= 0; db--) {
+        var ck = String(batch[db].callDate) + '\u0000' + String(batch[db].dept)
+               + '\u0000' + String(batch[db].agentName);
+        if (seenCk[ck]) continue;
+        seenCk[ck] = true;
+        dedupedBatch.push(batch[db]);
+      }
+      if (dedupedBatch.length !== batch.length) {
+        Logger.log('CDR backfill: deduped ' + (batch.length - dedupedBatch.length)
+          + ' intra-batch conflict-key duplicate(s) (last write wins).');
+      }
+      dedupedBatch.reverse();
+      batch = dedupedBatch;
+
       var conn = getNeonConn_backfill();
       conn.setAutoCommit(false);
 

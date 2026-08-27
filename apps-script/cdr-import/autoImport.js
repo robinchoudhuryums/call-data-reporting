@@ -731,7 +731,11 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
         status:     'success',
         rows:       countTotal,
         durationMs: endTime - startTime,
-        notes:      latestName + (successCountLine ? ' | ' + successCountLine : ''),
+        // S6: the deployed-build stamp rides the success note (buildStamp.js;
+        // "unstamped" = the last push bypassed scripts/deploy.sh's CI gates).
+        notes:      latestName + (successCountLine ? ' | ' + successCountLine : '')
+                  + (typeof PROJECT_BUILD_STAMP_ !== 'undefined'
+                      ? ' | build: ' + PROJECT_BUILD_STAMP_ : ''),
       });
     } catch (logErr) { /* best-effort */ }
 
@@ -1547,7 +1551,7 @@ function calculateMetricsInMemory(rawDisplayData, configSheet) {
       deptQueues.forEach(dq => {
         // IMP-2: match ANY of the row's extensions (alternation), counting
         // the path at most once per row even when two of its exts appear.
-        if (dq.exts.some(ext => new RegExp(ext + "(?!\\d)").test(pathVal))) {
+        if (dq.exts.some(ext => new RegExp("(?:^|\\D)" + ext + "(?!\\d)").test(pathVal))) {
           deptPaths[dq.dept][pathVal] = (deptPaths[dq.dept][pathVal] || 0) + 1;
           claimedDepts.add(dq.dept);
         }
