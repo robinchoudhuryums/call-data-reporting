@@ -743,3 +743,33 @@ test('R8-C3: insightsQueueHealth_ proceeds without the QCD sheet when QCD_READ_S
     delete h.state.props.QCD_READ_SOURCE;
   }
 });
+
+// L5 (broad-scan 2026-08-27): the team accumulators are WHOLE-ROSTER,
+// selection-independent -- the old `if (!selectedSet) continue` above the
+// whole loop body made the team rollup, the gap-vs-team baseline
+// (meta.teamAvgBasis) and the behind-team classification SELECTION-scoped,
+// silently diverging from IR's whole-roster team average on any partial
+// "Comparison & agents" pick, while the in-code comments claimed parity.
+test('L5: team rollup + teamAvgBasis identical for a partial selection and the full roster', function () {
+  install([
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '201', rung: 10, missed: 1, answered: 8, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-11', agent: 'Ben',  ext: '202', rung: 6,  missed: 3, answered: 3, att: '0:02:00' }),
+    dqeRow({ date: '2026-03-05', agent: 'Anna', ext: '201', rung: 4,  missed: 2, answered: 2, att: '0:04:00' }),
+    dqeRow({ date: '2026-03-04', agent: 'Ben',  ext: '202', rung: 5,  missed: 1, answered: 4, att: '0:02:00' }),
+  ]);
+  const full = h.call('getInsightsReport',
+    { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna', 'Ben'] });
+  h.state.cache.clear();
+  const partial = h.call('getInsightsReport',
+    { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(partial.teamStats)),
+    JSON.parse(JSON.stringify(full.teamStats)),
+    'team rollup covers the whole roster regardless of selection');
+  assert.deepEqual(JSON.parse(JSON.stringify(partial.meta.teamAvgBasis)),
+    JSON.parse(JSON.stringify(full.meta.teamAvgBasis)),
+    'the gap-vs-team baseline is selection-independent');
+  assert.equal(partial.teamStats.rung.val, 16, 'Anna 10 + Ben 6 even with only Anna selected');
+  assert.equal(partial.agentData.length, 1, 'cards still follow the selection');
+  assert.equal(full.agentData.length, 2);
+});

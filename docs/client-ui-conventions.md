@@ -207,7 +207,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   a drill "back" means Insights; IR `closeModal`'s `irCameFromInsights_`
   branch restores the buttons, and ANY close (Back / X / Escape) reveals
   the intact page -- instant, no re-generate (the server cache
-  `insights:v22` already makes a fresh re-generate fast too).
+  `insights:v23` already makes a fresh re-generate fast too).
   **Insights in-results edit popover:** the Insights results header carries
   the same editing line + `change` popover IR has (`#ins-edit-popover`;
   `insOpenEditPopover_` / `insApplyEditPopover_`), so dates / comparison /
@@ -517,7 +517,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   (line-only), and genuinely having under two days of data.
   For the TEAM metrics a window that can't fill a calendar
   falls back to `trendYtd` — the server's Jan-1-to-end-date daily series
-  (`insights:v22`), roster-gated and accumulated inside the existing 12-month
+  (`insights:v23`), roster-gated and accumulated inside the existing 12-month
   trend pass, so it costs no extra read. `insCalendarUsesYtd_` is the single
   decision (window fills a calendar → use `trendDaily`; else → YTD if it has
   more than one day), and `insCalendarEligible_` / `insRenderTrendCalendar_`

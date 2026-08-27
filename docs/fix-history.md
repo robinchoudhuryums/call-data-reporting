@@ -667,3 +667,15 @@ docs/invariants.md — this is the what-and-why index.
   Neon-outage EMPTY payload for the 6h TTL (the R8-C1/B-3 discipline
   existed in every sibling reader but these two — the two most-viewed).
   Bites post-cutover once the sheet is trimmed. Pinned: dal-cutover.test.js.
+- **L3–L7** (Batch C, increment 152) — the pre-cutover data-accuracy set:
+  the Overview periods/90-day-chart pass narrowed like its sibling passes
+  (L3); the QCD snapshot's Neon read window covers `priorFrom` (L4); the
+  Insights team accumulators became whole-roster / selection-independent,
+  restoring IR parity on partial selections (`insights:v23`, L5); a
+  narrowed Missed timeline drops ambiguous AF↔AD pairings instead of
+  guessing a wrong "↳ path" parent (L6); `combineSummaries_` dedups a
+  crossover repeat only when both appearances carry IDENTICAL figures, so
+  a changeover-straddling range stops under-counting (L7). Pinned in
+  queue-split / insights-report / missed-report / overview-qcd-snapshot
+  suites; the bulk-force guard wiring gained its harness in
+  csr-transfer.test.js the same increment.

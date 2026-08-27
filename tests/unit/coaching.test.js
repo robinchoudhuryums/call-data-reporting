@@ -298,6 +298,10 @@ test('coaching delivery: a mid-txn failure rolls back and rethrows into the hand
 
 test('coaching delivery: runCoachingDelivery_ is FLAG-GATED and records OPS-8 outcome props', function () {
   let ran = 0;
+  // Save/RESTORE the real binding: `delete h.ctx.coachingDeliveryRun_` used
+  // to remove the ORIGINAL vm global (the stub had overwritten the same own
+  // property), leaving every later test without the real function.
+  const realDeliveryRun = h.ctx.coachingDeliveryRun_;
   h.ctx.coachingDeliveryRun_ = function () { ran++; return { result: 'ok 0 new, 0 continuing, 0 recovered-open (a..b) — no email (nothing new)' }; };
   h.state.props = {};   // flag unset → no-op, no outcome stamped
   h.call('runCoachingDelivery_');
@@ -314,7 +318,7 @@ test('coaching delivery: runCoachingDelivery_ is FLAG-GATED and records OPS-8 ou
   h.ctx.coachingDeliveryRun_ = function () { throw new Error('boom'); };
   h.call('runCoachingDelivery_');
   assert.match(h.state.props.COACHING_DELIVERY_LAST_RESULT, /^ERROR: boom/);
-  delete h.ctx.coachingDeliveryRun_;
+  h.ctx.coachingDeliveryRun_ = realDeliveryRun;
 });
 
 function installAdmin_() {
@@ -395,13 +399,8 @@ test('coaching triggers: install sets the enabled flag, uninstall clears it (the
 // park in COACHING_NOTIFY_PENDING and fold into the next send; the property
 // clears only on a CONFIRMED send.
 //
-// (The FLAG-GATED test above stubs coachingDeliveryRun_ and then `delete`s
-// it, which removes the REAL binding from the vm context too — capture the
-// original at load time, before any test runs, and reinstall it here.)
-const realCoachingDeliveryRun_ = h.ctx.coachingDeliveryRun_;
-function reinstallDeliveryRun_() { h.ctx.coachingDeliveryRun_ = realCoachingDeliveryRun_; }
+
 test('coaching delivery P13: a failed send keeps the committed flags PENDING and says so', function () {
-  reinstallDeliveryRun_();
   const conn = installDeliveryStubs_([flag_('CSR', 'Brand New')], '[]');
   const realMail = h.ctx.MailApp;
   h.ctx.MailApp = { sendEmail: function () { throw new Error('Service invoked too many times'); } };
@@ -414,7 +413,6 @@ test('coaching delivery P13: a failed send keeps the committed flags PENDING and
 });
 
 test('coaching delivery P13: the next run folds pending flags into its email and clears the marker', function () {
-  reinstallDeliveryRun_();
   installDeliveryStubs_([], '[]');   // nothing new this run
   h.state.props.COACHING_NOTIFY_PENDING = JSON.stringify({
     window: { from: '2026-07-07', to: '2026-07-20' },
@@ -429,7 +427,6 @@ test('coaching delivery P13: the next run folds pending flags into its email and
 });
 
 test('coaching delivery P13: no admin recipients parks the batch instead of claiming a send', function () {
-  reinstallDeliveryRun_();
   installDeliveryStubs_([flag_('CSR', 'Nobody Told')], '[]');
   h.state.props.ADMIN_EMAILS = '';
   h.ctx.getAdminEmails_ = function () { return []; };

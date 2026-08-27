@@ -1941,7 +1941,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   has the mechanism). A PARTIAL mismatch keeps its narrowing and reports
   the dropped queue (`meta.queueSplitUnmatched`); each row carries
   `queueScoped`. `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed (the
-  pipeline stamps one per-DAY value on every row). **Phase 2 INVERTS the
+  pipeline stamps one per-DAY value on every row), nor are the AD-derived
+  abandoned-call counts (ids carry no queue identity; L6 drops only the
+  ambiguous AF↔AD pairings so a narrowed ring never drills a wrong call). **Phase 2 INVERTS the
   Phase 0 rule:** a `queueScoped` row is never de-duplicated -- two
   narrowed rows PARTITION the agent's day, so summing is correct and
   subtracting would under-count. The relationship bar + `subqSplitChip_`

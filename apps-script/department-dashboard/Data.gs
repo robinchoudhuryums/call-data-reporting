@@ -634,7 +634,27 @@ function combineSummaries_(primary, parts) {
       // rows only.
       if (r.queueScoped) return;
       if (r.matchedViaRoster) {
-        if (!seenRoster[name]) { seenRoster[name] = true; return; }
+        if (!seenRoster[name]) {
+          seenRoster[name] = { u: Number(r.totalUnique) || 0, rg: Number(r.totalRung) || 0,
+                               m: Number(r.totalMissed) || 0, a: Number(r.totalAnswered) || 0,
+                               t: Number(r.tttSeconds) || 0 };
+          return;
+        }
+        // L7: the subtraction's premise is that both appearances carry the
+        // SAME whole-day figures (a DQE row has no queue dimension). On a
+        // range STRADDLING the split changeover, an agent's `queueScoped` is
+        // ANDed across days, so two partially-narrowed appearances both read
+        // un-scoped while carrying DIFFERENT figures -- subtracting the whole
+        // second one under-counted the narrowed days' contribution. When the
+        // figures differ, skip the subtraction (fail open, transient state
+        // only): the grand total then simply equals the sum of the subtotals,
+        // so no caption discrepancy is created either.
+        const first = seenRoster[name];
+        if (first.u !== (Number(r.totalUnique) || 0) || first.rg !== (Number(r.totalRung) || 0)
+          || first.m !== (Number(r.totalMissed) || 0) || first.a !== (Number(r.totalAnswered) || 0)
+          || first.t !== (Number(r.tttSeconds) || 0)) {
+          return;
+        }
         crossoverAgentCount++;
         grand.totalUnique   -= Number(r.totalUnique) || 0;
         grand.totalRung     -= Number(r.totalRung) || 0;
@@ -1479,19 +1499,27 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
     // Sheet path: whole-sheet read, byte-identical to before (and now
     // memo-shared with computeQcdReport_ via readQcdSheetData_). Neon path:
     // a windowed superset of every pass below -- the selected range, the
-    // MTD month (derived from the latest DATA date, so covered as long as
-    // the latest row is inside the lookback), and a 180-day latest-day
-    // lookback (a dept whose newest QCD row is older than that renders no
+    // E5 prior window (L4), the MTD month (derived from the latest DATA
+    // date, so covered as long as the latest row is inside the lookback),
+    // and a 180-day latest-day lookback (a dept whose newest QCD row is older than that renders no
     // panel on the Neon path -- acceptable: 6-months-quiet queue data is
     // stale, and the panel's diagnostic note story covers mapping drift).
     const _optFrom = (opts && opts.from) ? String(opts.from) : '';
     const _optTo   = (opts && opts.to)   ? String(opts.to)   : '';
+    // L4: the read window must also cover the R11-C1 PRIOR pass -- priorFrom
+    // always precedes from, and on selections reaching near/past the 180-day
+    // lookback the prior block (byQueueRangePrior, feeding the team-strip
+    // delta chips) was silently truncated on the Neon path (a from older
+    // than the lookback truncated it entirely). Sheet path (whole-sheet
+    // read) was never affected.
+    const _optPrior = (opts && opts.priorFrom) ? String(opts.priorFrom) : '';
     const _nowSnap = new Date();
     const _todayIso = Utilities.formatDate(_nowSnap, TZ, 'yyyy-MM-dd');
     const _lookbackIso = Utilities.formatDate(
       new Date(_nowSnap.getFullYear(), _nowSnap.getMonth(), _nowSnap.getDate() - 180, 12), TZ, 'yyyy-MM-dd');
     let _readFrom = _lookbackIso;
     if (_optFrom && _optFrom < _readFrom) _readFrom = _optFrom;
+    if (_optPrior && _optPrior < _readFrom) _readFrom = _optPrior;
     const _readTo = (_optTo && _optTo > _todayIso) ? _optTo : _todayIso;
     const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
     if (!grid || grid.missing || grid.empty) return null;

@@ -664,6 +664,29 @@ function computeMissedCallsReport_(dept, from, to, scope) {
       if (!abandonedTimeToParents[tk]) abandonedTimeToParents[tk] = [];
       abandonedTimeToParents[tk].push(abandonedIdList[p]);
     }
+    // L6: a NARROWED timeline (QUEUE_SPLIT_SCOPE=dept rebuilds K..AC from
+    // the dept's own queues' `mt`) can render FEWER rings at a time-key
+    // than the all-queue AF list holds -- and WHICH ring survived is
+    // unknowable (AF/AD carry no queue identity), so consuming the FIFO
+    // would hang a possibly-WRONG parent id on the surviving ring and send
+    // its "↳ path" drill to another queue's call (the RPT-2 class,
+    // reintroduced only under narrowing). When a key's pending ids
+    // outnumber its rendered rings, drop that key's pairing: the ring
+    // renders as a plain missed ring (no siren, no drill) rather than a
+    // guessed journey. Un-narrowed rows are untouched -- AF times are a
+    // subset of the slot times by pipeline construction, so ids never
+    // outnumber rings there.
+    if (pairLen) {
+      const slotKeyCounts = {};
+      slotTimes.forEach(function (it) {
+        if (it.key) slotKeyCounts[it.key] = (slotKeyCounts[it.key] || 0) + 1;
+      });
+      Object.keys(abandonedTimeToParents).forEach(function (tk) {
+        if (abandonedTimeToParents[tk].length > (slotKeyCounts[tk] || 0)) {
+          delete abandonedTimeToParents[tk];
+        }
+      });
+    }
 
     // Col AD ("Abandoned Parent Call IDs") feeds dept-wide unique-
     // abandoned-call counts. Sentinel rows additionally feed

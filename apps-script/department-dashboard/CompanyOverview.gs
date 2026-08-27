@@ -618,39 +618,50 @@ function getCompanyOverview(req) {
     };
     deptChartDaily[d] = {};
   });
-  for (let pi = 0; pi < dqeRows.length; pi++) {
-    const pr = dqeRows[pi];
-    const pDate = pr.dateIso;
-    if (!pDate || pDate < readFromIso) continue;
-    const pAgent = pr.agent;
-    if (!pAgent || /^A_Q_/.test(pAgent) || pAgent === 'Backup CSR') continue;
-    const owners = deptsForAgent[pAgent];
-    if (!owners || !owners.length) continue;
-    const pRung     = Number(pr.totalRung)     || 0;
-    const pMissed   = Number(pr.totalMissed)   || 0;
-    const pAnswered = Number(pr.totalAnswered) || 0;
-    const pAttTotal = pAnswered > 0 ? (Number(pr.attSec) || 0) * pAnswered : 0;
-    const inYtd    = (pDate >= ytdStartIso);
-    const inLast30 = (pDate >= trendStartIso);
-    const isLatest = (pDate === latestDate);
-    const inChart  = (pDate >= chartTrendStartIso);
-    owners.forEach(function (d) {
-      const pa = deptPeriodAcc[d];
+  // L3: iterate PER DEPT (like the main pass above and the YTD endpoint's
+  // B-3 pass) so each dept's slice can be narrowed to its own queues --
+  // under QUEUE_SPLIT_SCOPE=dept the periods row + the 30/60/90 chart used
+  // to stay all-queue while the tiles / sparklines / YTD narrowed, so the
+  // SAME day showed different numbers across surfaces of one card
+  // (Operator State #42 claims the whole Overview narrows). Flag off =
+  // queueSplitNarrowedCopy_ is a passthrough (same rows, no clones), and a
+  // per-(row, dept) accumulation is arithmetically identical to the old
+  // per-row owners.forEach -- byte-identical output.
+  allDepts.forEach(function (d) {
+    let pRows = [];
+    for (let pi = 0; pi < dqeRows.length; pi++) {
+      const pr = dqeRows[pi];
+      if (!pr.dateIso || pr.dateIso < readFromIso) continue;
+      const pAgent = pr.agent;
+      if (!pAgent || /^A_Q_/.test(pAgent) || pAgent === 'Backup CSR') continue;
+      const owners = deptsForAgent[pAgent];
+      if (!owners || owners.indexOf(d) === -1) continue;
+      pRows.push(pr);
+    }
+    pRows = queueSplitNarrowedCopy_(pRows, d).rows;
+    const pa = deptPeriodAcc[d];
+    const cd = deptChartDaily[d];
+    for (let ri = 0; ri < pRows.length; ri++) {
+      const pr = pRows[ri];
+      const pDate = pr.dateIso;
+      const pRung     = Number(pr.totalRung)     || 0;
+      const pMissed   = Number(pr.totalMissed)   || 0;
+      const pAnswered = Number(pr.totalAnswered) || 0;
+      const pAttTotal = pAnswered > 0 ? (Number(pr.attSec) || 0) * pAnswered : 0;
       if (pa) {
         const bump = function (b) { b.rung += pRung; b.missed += pMissed; b.answered += pAnswered; b.att_sum += pAttTotal; };
-        if (inYtd)    bump(pa.ytd);
-        if (inLast30) bump(pa.last30);
-        if (isLatest) bump(pa.yesterday);
+        if (pDate >= ytdStartIso)      bump(pa.ytd);
+        if (pDate >= trendStartIso)    bump(pa.last30);
+        if (pDate === latestDate)      bump(pa.yesterday);
       }
-      if (inChart) {
-        const cd = deptChartDaily[d];
+      if (pDate >= chartTrendStartIso) {
         let cday = cd[pDate];
         if (!cday) { cday = { rung: 0, answered: 0 }; cd[pDate] = cday; }
         cday.rung     += pRung;
         cday.answered += pAnswered;
       }
-    });
-  }
+    }
+  });
   const fmtPeriod_ = function (b) {
     const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
     const att = b.answered > 0 ? b.att_sum / b.answered : 0;
