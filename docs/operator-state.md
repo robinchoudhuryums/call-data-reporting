@@ -1280,5 +1280,21 @@ When something looks wrong, before assuming a code bug, check:
     `INBOUND_EXPORT_KEEP_DAYS` days (Script Property, default 400) so the
     tab and the fallback's tail read stay bounded. The fallback itself needs
     no flag — it fires only when the Neon read fails, never caches, and the
-    panel caption discloses "data through <date>". Pinned by
-    `tests/unit/inbound-export.test.js` + `tests/unit/heatmap-fallback.test.js`.
+    panel caption discloses "data through <date>".
+    **The tab also carries the call-path drill's fallback (cols 18–22:
+    Journey / Origin Agent / Origin Dept / Related Call Id / Related Call
+    Kind)** — `getCallJourney`'s inbound arm degrades to it through
+    `inboundCallJourneySheetFallback_`, same two-arm auth (the F-4 gate
+    reads the DQE sheet, so it survives the outage); the outbound arm has
+    NO fallback (no sheet primary). The Journey column is the tab's only
+    HEAVY one (0.2–6 KB/cell), so it is populated only within
+    `INBOUND_EXPORT_JOURNEY_DAYS` (Script Property, default 90) — older
+    rows keep a blank cell and the drill serves the entry→final summary,
+    disclosed in the overlay caption. Sized against the whole-spreadsheet
+    10M-cell ceiling; raise the window only with that number in view.
+    **Deploy order matters on a fresh/empty tab:** push the 22-col export
+    BEFORE installing the trigger or running the seed, or the first run
+    writes 17-col rows whose journey cells stay blank until a manual
+    re-export of those dates. Pinned by
+    `tests/unit/inbound-export.test.js` + `tests/unit/heatmap-fallback.test.js`
+    + `tests/unit/journey-fallback.test.js`.

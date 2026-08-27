@@ -8,8 +8,9 @@ const { loadGas } = require('../harness/loadGas');
 // fallback COPY of Neon inbound_calls, and since the heatmap-sheet-fallback
 // work ALSO the data source the dashboard's abandon heatmap degrades to
 // during a Neon outage. Pinned here:
-//   (1) the schema contract the dashboard reads BY POSITION: 17 headers with
-//       Call Start / Is Internal at cols 16-17, and the export SQL fetching
+//   (1) the schema contract the dashboard reads BY POSITION: 22 headers with
+//       Call Start / Is Internal at cols 16-17 and the journey-fallback
+//       columns at 18-22, and the export SQL fetching
 //       both fields in that order;
 //   (2) the coercion protections on Call Start (a time-shaped string, the
 //       K-AC class): '@' format over the current height AND the exact write
@@ -32,7 +33,7 @@ function fakeSheet(dataRows, opts) {
   opts = opts || {};
   const self = {
     _rows: [(opts.header || []).slice()].concat(dataRows.map(function (r) { return r.slice(); })),
-    _maxCols: opts.maxCols || 17,
+    _maxCols: opts.maxCols || 22,
     _maxRows: opts.maxRows || 200,
     _formats: [],
     _deleted: [],
@@ -101,7 +102,7 @@ function neonConnReturning(rows, capture) {
     prepareStatement: function (sql) {
       if (capture) capture.sql = sql;
       return {
-        setString: function () {},
+        setString: function (i, v) { if (capture) (capture.params = capture.params || {})[i] = v; },
         executeQuery: function () {
           let done = false;
           return {
@@ -117,20 +118,25 @@ function neonConnReturning(rows, capture) {
   };
 }
 
-// One Neon-shaped record (json_build_array order = the 17 header positions).
+// One Neon-shaped record (json_build_array order = the 22 header positions).
 function neonRow(o) {
   return [o.date, o.id || 'c1', '', '', '', o.disposition || 'abandoned',
           '', false, 0, 0, o.entryQueue || 'A_Q_CSR', '', '', 1, 0,
           o.callStart === undefined ? '10:23:33' : o.callStart,
-          o.internal === undefined ? false : o.internal];
+          o.internal === undefined ? false : o.internal,
+          o.journey === undefined ? '' : o.journey,
+          o.originAgent || '', o.originDept || '',
+          o.relatedId || '', o.relatedKind || ''];
 }
 
 const HEADERS = function () { return h.ctx.INBOUND_EXPORT_HEADERS; };
 
-test('schema contract: 17 headers, Call Start / Is Internal at cols 16-17, SQL fetches both', function () {
-  assert.equal(HEADERS().length, 17);
+test('schema contract: 22 headers, Call Start / Is Internal at 16-17, journey-fallback cols at 18-22, SQL fetches all', function () {
+  assert.equal(HEADERS().length, 22);
   assert.equal(HEADERS()[15], 'Call Start');
   assert.equal(HEADERS()[16], 'Is Internal');
+  assert.deepEqual(JSON.parse(JSON.stringify(HEADERS().slice(17))),
+    ['Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind']);
   assert.equal(h.ctx.INBOUND_EXPORT_CALL_START_COL, 16);
 
   const sheet = fakeSheet([], { header: HEADERS() });
@@ -138,7 +144,52 @@ test('schema contract: 17 headers, Call Start / Is Internal at cols 16-17, SQL f
   const cap = {};
   h.ctx.getNeonConn = function () { return neonConnReturning([neonRow({ date: '2026-08-19' })], cap); };
   h.call('exportInboundCalls', '2026-08-19', '2026-08-19');
-  assert.match(cap.sql, /c\.num_transfers, COALESCE\(c\.call_start,''\),\s*COALESCE\(c\.is_internal, FALSE\)\)/);
+  assert.match(cap.sql, /COALESCE\(c\.is_internal, FALSE\)/);
+  // Journey is WINDOWED (blank past INBOUND_EXPORT_JOURNEY_DAYS); the small
+  // origin/related columns are unconditional.
+  assert.match(cap.sql, /CASE WHEN c\.call_date >= \?::date THEN COALESCE\(c\.journey,''\) ELSE '' END/);
+  assert.match(cap.sql, /COALESCE\(c\.origin_agent,''\), COALESCE\(c\.origin_dept,''\)/);
+  assert.match(cap.sql, /COALESCE\(c\.related_call_id,''\), COALESCE\(c\.related_call_kind,''\)/);
+  // Param order: 1 = the journey cutoff, 2-3 = the BETWEEN range. A swapped
+  // order here silently exports every journey blank.
+  assert.equal(cap.params[2], '2026-08-19');
+  assert.equal(cap.params[3], '2026-08-19');
+  const cutoff = cap.params[1];
+  assert.match(cutoff, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(cutoff < '2026-08-19' || cutoff <= new Date().toISOString().slice(0, 10),
+    'cutoff is a real ISO date (default 90 days back)');
+});
+
+test('journey window: the cutoff honors INBOUND_EXPORT_JOURNEY_DAYS and defaults to 90', function () {
+  const sheet = fakeSheet([], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  const cap = {};
+  h.ctx.getNeonConn = function () { return neonConnReturning([neonRow({ date: '2026-08-19' })], cap); };
+  h.state.props.INBOUND_EXPORT_JOURNEY_DAYS = '10';
+  try {
+    h.call('exportInboundCalls', '2026-08-19', '2026-08-19');
+    assert.equal(cap.params[1], h.call('ic_isoDaysAgo_', 10));
+  } finally {
+    delete h.state.props.INBOUND_EXPORT_JOURNEY_DAYS;
+  }
+  assert.equal(h.call('ic_journeyDays_'), 90, 'unset -> the 90-day default');
+});
+
+test('journey cells write verbatim (JSON starts with [, not formula-leading -- no quote prefix)', function () {
+  const sheet = fakeSheet([], { header: HEADERS() });
+  h.state.spreadsheet = fakeSS(sheet);
+  const j = '[{"t":"10:00:00","name":"A_Q_CSR","kind":"queue"}]';
+  h.ctx.getNeonConn = function () {
+    return neonConnReturning([neonRow({ date: '2026-08-19', journey: j,
+      originAgent: 'Margie Ingay', originDept: 'Customer Success',
+      relatedId: '999', relatedKind: 'outbound' })]);
+  };
+  h.call('exportInboundCalls', '2026-08-19', '2026-08-19');
+  assert.equal(sheet._rows[1][17], j, 'journey JSON lands byte-identical');
+  assert.equal(sheet._rows[1][18], 'Margie Ingay');
+  assert.equal(sheet._rows[1][19], 'Customer Success');
+  assert.equal(sheet._rows[1][20], '999');
+  assert.equal(sheet._rows[1][21], 'outbound');
 });
 
 test('export writes the two new columns; is_internal booleans normalize to TRUE/FALSE strings', function () {
@@ -185,13 +236,13 @@ test('pre-extension tab (15 cols) is widened and reheadered before any col-16 ra
   h.state.spreadsheet = fakeSS(sheet);
   h.ctx.getNeonConn = function () { return neonConnReturning([neonRow({ date: '2026-08-19' })]); };
   h.call('exportInboundCalls', '2026-08-19', '2026-08-19');   // would throw REP-10 without the widen
-  assert.equal(sheet._maxCols, 17);
+  assert.equal(sheet._maxCols, 22);
   assert.equal(sheet._rows[0][15], 'Call Start');
   assert.equal(sheet._rows[0][16], 'Is Internal');
 });
 
 test('prune: drops only the contiguous pre-cutoff head block; INBOUND_EXPORT_KEEP_DAYS honored', function () {
-  const mk = function (iso) { const r = new Array(17).fill(''); r[0] = iso; return r; };
+  const mk = function (iso) { const r = new Array(22).fill(''); r[0] = iso; return r; };
   // ic_isoDaysAgo_(2) is the cutoff when KEEP_DAYS=2; build one clearly-old
   // pair, then recent rows.
   const today = h.call('ic_isoToday_');

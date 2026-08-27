@@ -648,7 +648,14 @@
       .withSuccessHandler(function (resp) {
         if (__tok !== callJourneySeq_) return;   // superseded by a newer drill
         if (!resp || resp.available === false) {
-          body.innerHTML = '<div class="ds-note">Call path unavailable — the inbound-calls store (Neon) could not be reached.</div>';
+          // The inbound arm degrades to the 'Inbound Calls' sheet copy
+          // server-side, so available:false here means Neon AND the copy
+          // both came up empty. The OUTBOUND arm has no sheet fallback
+          // (outbound_calls has no sheet primary) -- say that plainly
+          // rather than implying the data is missing.
+          body.innerHTML = '<div class="ds-note">' + (kind === 'outbound'
+            ? 'Call path unavailable — the outbound-calls store (Neon) could not be reached, and outbound calls have no sheet fallback. Try again once Neon is back.'
+            : 'Call path unavailable — the inbound-calls store (Neon) could not be reached, and the sheet fallback copy has no data yet (it fills from the daily Inbound Calls export).') + '</div>';
           return;
         }
         if (!resp.found || !resp.call) {
@@ -668,6 +675,12 @@
             // and refused. Say so plainly rather than implying missing data.
             cjMsg = 'That call isn’t available from here — the linked call belongs to another '
               + 'department and this drill only reaches calls your department was asked to help with.';
+          } else if (resp.reason === 'fallback-gap') {
+            // Sheet-fallback only: the copy's coverage stops before this
+            // date. Neon may well have the call -- we just can't reach it.
+            cjMsg = 'Neon is unreachable, and the sheet fallback copy only covers through '
+              + (resp.fallbackThrough ? escapeHtml(isoDateShort_(resp.fallbackThrough)) : 'an earlier date')
+              + ' — this call may exist but can’t be shown until Neon is back.';
           } else if (resp.reason === 'not-captured') {
             cjMsg = 'This call isn’t in the inbound-call records for its date — it was likely an internal or direct call rather than a captured inbound call, so no path is available.';
           } else {
@@ -676,9 +689,15 @@
           body.innerHTML = '<div class="ds-note">' + cjMsg + '</div>';
           return;
         }
-        body.innerHTML = (resp.kind === 'outbound')
+        body.innerHTML = ((resp.kind === 'outbound')
           ? outboundJourneyHtml_(resp.call)
-          : callJourneyHtml_(resp.call);
+          : callJourneyHtml_(resp.call))
+          + (resp.fallbackSource
+              ? '<div class="ds-note">Served from the sheet fallback copy — Neon is unreachable'
+                + (resp.fallbackThrough ? ' · coverage through ' + escapeHtml(isoDateShort_(resp.fallbackThrough)) : '')
+                + (resp.call && !resp.call.journey ? ' · full timeline not retained for this date (summary shown)' : '')
+                + '</div>'
+              : '');
       })
       .withFailureHandler(function (err) {
         if (__tok !== callJourneySeq_) return;   // a newer drill owns the panel

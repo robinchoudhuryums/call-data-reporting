@@ -3993,3 +3993,43 @@ abandons still have no entry point.
 **WHERE I LEFT OFF:** increment 148 on `claude/broad-scan-8dgd6m`, un-PR'd. MOST URGENT
 operator item is unrelated to this increment: all three projects still run the rejected
 JDBC timeout params until redeployed with PR #256.
+
+## Increment 149 — the path drill's sheet fallback + the Neon connect memo (2026-08-26)
+
+`/broad-implement Phases 1-5` of the plan the owner approved, + the memo.
+
+Context that shaped it: the owner reported the 'Inbound Calls' tab is EMPTY (headers
+only) — the export trigger was never installed and the seed never ran, so the heatmap
+fallback has been running on nothing. That collapsed Phase 0 (no weight to measure)
+and inverted the rollout: deploy the 22-col export FIRST, then seed once Neon
+recovers, then install the trigger. Also today's log: a 53.7s getQcdAllDepartments
+that was mostly repeated failed Neon handshakes — the error text confirmed the JDBC
+revert deployed correctly (generic connect failure, not the unsupported-params
+throw); the repetition is ~54 callsites each opening their own connection.
+
+- **IT-9 (Phases 1-2)**: `Inbound Calls` cols 18-22 (Journey windowed by
+  INBOUND_EXPORT_JOURNEY_DAYS=90; origin/related always) +
+  `inboundCallJourneySheetFallback_` — same shaper, BOTH auth arms (the F-4 gate
+  reads the DQE sheet, so it survives the outage), sheet-derived miss reasons +
+  the new `fallback-gap`, hooked at no-conn AND the mid-query catch. Outbound arm
+  deliberately not covered (no sheet primary) and now SAYS so in the overlay.
+- **IT-10 (memo)**: `NEON_CONN_DOWN_MEMO_` in getDashboardNeonConn_ — per-execution
+  (plain var, never CacheService), one failed handshake per Neon-down request
+  instead of one per callsite; memoized skips still feed NEO-3 when asked.
+- Phase 3 client disclosure (kind-aware unavailable copy, fallback-gap message,
+  served-from-fallback caption); Phase 4: +2 suites (journey-fallback 11,
+  neon-conn-memo 4) + inbound-export extended; Phase 5 docs.
+- Tests 911 -> 928; ci:ui full gate green (client changed); INV-16 clean.
+- Block: `.cycle/blocks/149-journey-sheet-fallback-broad-implement.md`.
+
+Operator sequence when Neon recovers: seed `exportInboundCalls('<capture-start>')`
+once (cdr-report editor) -> install the daily export trigger. Deploy dashboard +
+cdr-report first, in that order relative to the seed.
+
+Open: outbound-arm fallback (second export tab, separate decision); the memo for
+the import-side builders if their logs ever show the same repetition; the two
+standing owner rulings (outbound_calls shared-tree overlap; narrowing the answered
+internal-assist capture).
+
+**WHERE I LEFT OFF:** increment 149 committed + pushed to `claude/broad-scan-8dgd6m`,
+un-PR'd per the skill default.

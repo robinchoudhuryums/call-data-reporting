@@ -61,7 +61,7 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 66 more (this file is the coverage map —
+    ...                       + 68 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
                               trim pass): dal-cutover parity, escalations
@@ -71,7 +71,11 @@ tests/
                               cache-pin drift), heatmap drill,
                               system-health + smoke-check, queue-report,
                               pipeline-watch, missed-slice,
-                              inbound-qcd-parity, inbound-calls /
+                              inbound-qcd-parity, journey-fallback (the
+                              call-path drill's sheet fallback: source
+                              parity, both auth arms, miss reasons),
+                              neon-conn-memo (the per-execution
+                              unreachable memo), inbound-calls /
                               outbound-calls (the two per-call captures:
                               builder gates + authoritative/P-1/hash pins,
                               plus the shared-leg-tree scoping: originator-

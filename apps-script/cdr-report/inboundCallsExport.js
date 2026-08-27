@@ -36,10 +36,33 @@ var INBOUND_EXPORT_HEADERS = [
   'Call Date', 'Call ID', 'Insurer', 'Caller Hash', 'Dial-In', 'Disposition',
   'Abandon Stage', 'Abandoned On Hold', 'Hold Sec', 'Wait Sec',
   'Entry Queue', 'Final Queue', 'Final Dept', '# Queues', '# Transfers',
-  'Call Start', 'Is Internal'
+  'Call Start', 'Is Internal',
+  // Cols 18-22: the call-path drill's sheet fallback
+  // (InboundReport.gs::inboundCallJourneySheetFallback_ reads them BY
+  // POSITION, like the heatmap's 16-17). Journey is the masked leg-by-leg
+  // JSON (starts with '[', so it is NOT formula-leading and needs no '@'
+  // format -- unlike Call Start); it is the tab's only HEAVY column
+  // (0.2-6 KB/row), so it is populated only within
+  // INBOUND_EXPORT_JOURNEY_DAYS and blank beyond -- the 400-day row
+  // retention stays cheap while the path fallback covers what the sheet
+  // can afford. The origin/related columns are small and always exported.
+  'Journey', 'Origin Agent', 'Origin Dept', 'Related Call Id', 'Related Call Kind'
 ];
 var INBOUND_EXPORT_CALL_START_COL = 16;   // plain-texted every run (see above)
 var INBOUND_EXPORT_SEED_DAYS = 30;   // first-run lookback when the tab is empty
+// Journey-cell retention: rows whose call_date is older than this many days
+// export a BLANK Journey cell (Script Property INBOUND_EXPORT_JOURNEY_DAYS
+// overrides). The path drill's sheet fallback then serves the entry->final
+// SUMMARY for those dates instead of the full timeline -- disclosed, never
+// silently truncated. Sized against the whole-spreadsheet 10M-cell ceiling:
+// journey cells are the only ones that matter to it.
+var INBOUND_EXPORT_JOURNEY_DAYS_DEFAULT = 90;
+
+function ic_journeyDays_() {
+  var v = parseInt(PropertiesService.getScriptProperties()
+                     .getProperty('INBOUND_EXPORT_JOURNEY_DAYS'), 10);
+  return (v > 0) ? v : INBOUND_EXPORT_JOURNEY_DAYS_DEFAULT;
+}
 
 function ic_isoToday_() {
   return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
@@ -164,13 +187,20 @@ function exportInboundCalls(fromIso, toIso) {
       "COALESCE(c.abandon_stage,''), c.abandoned_on_hold, c.hold_seconds, c.wait_seconds, " +
       "COALESCE(c.entry_queue,''), COALESCE(c.final_queue,''), COALESCE(c.final_dept,''), " +
       "c.num_queues, c.num_transfers, COALESCE(c.call_start,''), " +
-      "COALESCE(c.is_internal, FALSE)) ORDER BY c.call_date, c.call_id), '[]')::text AS j " +
+      "COALESCE(c.is_internal, FALSE), " +
+      // Journey only within the retention window (see ic_journeyDays_ above);
+      // the small origin/related columns always.
+      "CASE WHEN c.call_date >= ?::date THEN COALESCE(c.journey,'') ELSE '' END, " +
+      "COALESCE(c.origin_agent,''), COALESCE(c.origin_dept,''), " +
+      "COALESCE(c.related_call_id,''), COALESCE(c.related_call_kind,'')" +
+      ") ORDER BY c.call_date, c.call_id), '[]')::text AS j " +
       "FROM inbound_calls c " +
       "LEFT JOIN insurance_numbers i ON i.phone_hash = c.caller_hash " +
       "WHERE c.call_date BETWEEN ?::date AND ?::date";
     var stmt = conn.prepareStatement(sql);
-    stmt.setString(1, startIso);
-    stmt.setString(2, endIso);
+    stmt.setString(1, ic_isoDaysAgo_(ic_journeyDays_()));
+    stmt.setString(2, startIso);
+    stmt.setString(3, endIso);
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
     rs.close(); stmt.close();

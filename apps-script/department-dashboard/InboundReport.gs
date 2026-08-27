@@ -459,7 +459,9 @@ function getCallJourney(req) {
   const predicate = callJourneyDeptPredicate_(dept, deptQueues);   // '' for company view
 
   const conn = getDashboardNeonConn_();
-  if (!conn) return { available: false, found: false };
+  // Neon unreachable -> the sheet-fallback copy (inbound arm only; see the
+  // fallback's block comment). Both auth arms are re-derived inside it.
+  if (!conn) return inboundCallJourneySheetFallback_(callId, date, dept, user);
   try {
     // Run the lookup with an optional dept predicate. For MANAGERS the real
     // entitlement boundary is the F-4 server gate below
@@ -561,8 +563,11 @@ function getCallJourney(req) {
     }
     return { available: true, found: true, call: callerLookupShapeCall_(JSON.parse(json)) };
   } catch (e) {
-    Logger.log('getCallJourney failed: ' + (e && e.message ? e.message : e));
-    return { available: false, found: false };
+    // A mid-query failure (connection died, table missing) degrades the same
+    // way as no-conn: try the sheet copy before reporting unavailable.
+    Logger.log('getCallJourney failed (trying sheet fallback): '
+      + (e && e.message ? e.message : e));
+    return inboundCallJourneySheetFallback_(callId, date, dept, user);
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -599,6 +604,139 @@ function callIdInDeptMissedReport_(dept, date, callId) {
     Logger.log('callIdInDeptMissedReport_ failed (fallback stays closed): '
       + (e && e.message ? e.message : e));
     return false;
+  }
+}
+
+// ── Call-path drill: SHEET FALLBACK (Neon-outage degradation) ───────────────
+// When getCallJourney cannot reach Neon, the INBOUND arm degrades to the
+// 'Inbound Calls' export tab (cdr-report/inboundCallsExport.js cols 18-22 --
+// Journey / Origin Agent / Origin Dept / Related Call Id / Related Call Kind
+// -- exist for this reader; read BY POSITION like the heatmap's 16-17).
+// Contracts that must hold here exactly as on the Neon path:
+//   * BOTH auth arms, in the same order: the dept-scoped match mirrors
+//     callJourneyDeptPredicate_ (entry/final queue in the dept's inbound
+//     union, OR final_dept === the dept name), then the exact-id arm gated
+//     for managers by callIdInDeptMissedReport_ -- which reads the DQE
+//     sheet via getMissedCallsReport's own fallback chain, so the F-4 gate
+//     survives the outage. A gate-closed manager gets the same reason-less
+//     miss as on the Neon path (learns nothing).
+//   * The payload is shaped by the SAME callerLookupShapeCall_, so the
+//     client renderers cannot tell the sources apart; a blank Journey cell
+//     (past INBOUND_EXPORT_JOURNEY_DAYS) shapes to journey:null and renders
+//     the entry->final summary, exactly like a pre-extension Neon row.
+//   * Discloses itself (fallbackSource / fallbackThrough) and is NEVER
+//     cached (getCallJourney is uncached by design, so this holds trivially).
+//   * kind:'outbound' has NO fallback -- outbound_calls has no sheet
+//     primary -- and the client says so rather than implying missing data.
+// Pinned by tests/unit/journey-fallback.test.js.
+var INBOUND_JOURNEY_FALLBACK_TAIL_ROWS_ = 4000;   // F-20 widening tail, heatmap discipline
+
+function inboundCallJourneySheetFallback_(callId, date, dept, user) {
+  try {
+    var ss = openSpreadsheet_();
+    var sheet = ss.getSheetByName('Inbound Calls');
+    if (!sheet) return { available: false, found: false };
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return { available: false, found: false };
+    var lastCol = sheet.getLastColumn();
+    if (lastCol < 17) return { available: false, found: false };   // pre-extension tab
+
+    // Bounded widening TAIL scan of the date column (the tab is kept
+    // date-sorted ascending by the exporter, so a recent date costs
+    // O(recent) -- the F9 class).
+    var win = INBOUND_JOURNEY_FALLBACK_TAIL_ROWS_;
+    var startRow, dates;
+    for (;;) {
+      startRow = Math.max(2, lastRow - win + 1);
+      dates = sheet.getRange(startRow, 1, lastRow - startRow + 1, 1).getDisplayValues();
+      var oldest = ncCellDateIso_(dates[0][0]);
+      if (startRow === 2 || (oldest && oldest < date)) break;
+      win *= 4;
+    }
+    var first = -1, last = -1, through = null, minSeen = null;
+    for (var i = 0; i < dates.length; i++) {
+      var d = ncCellDateIso_(dates[i][0]);
+      if (!d) continue;
+      if (through === null || d > through) through = d;
+      if (minSeen === null || d < minSeen) minSeen = d;
+      if (d === date) { if (first < 0) first = i; last = i; }
+    }
+
+    var miss = { available: true, found: false,
+                 fallbackSource: 'sheet', fallbackThrough: through };
+    if (first < 0) {
+      // Classify the miss with the sheet's own coverage (the R7 reason
+      // vocabulary, plus 'fallback-gap' for a date past the copy's ceiling
+      // -- Neon might have it, the sheet provably does not).
+      if (through && date > through) miss.reason = 'fallback-gap';
+      else if (startRow === 2 && minSeen && date < minSeen) {
+        miss.reason = 'before-capture'; miss.minDate = minSeen;
+      } else miss.reason = 'date-gap';
+      return miss;
+    }
+
+    var width = Math.min(22, lastCol);
+    var grid = sheet.getRange(startRow + first, 1, last - first + 1, width).getDisplayValues();
+    var row = null;
+    for (var r = 0; r < grid.length; r++) {
+      if (String(grid[r][1] == null ? '' : grid[r][1]).trim() === callId) { row = grid[r]; break; }
+    }
+    if (!row) { miss.reason = 'not-captured'; return miss; }
+
+    // ── Auth, both arms, Neon-path order ──
+    var entitled = !dept;   // admin / allDepts company view runs unscoped
+    if (!entitled) {
+      var qSet = {};
+      inboundQueuesForDept_(dept).forEach(function (q) {
+        qSet[String(q).trim().toLowerCase()] = true;
+      });
+      var eq = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
+      var fq = String(row[11] == null ? '' : row[11]).trim().toLowerCase();
+      var fd = String(row[12] == null ? '' : row[12]).trim().toLowerCase();
+      entitled = qSet[eq] === true || qSet[fq] === true
+              || (!!fd && fd === String(dept).trim().toLowerCase());
+      if (!entitled) {
+        entitled = (user && user.role === 'admin') || !!(user && user.allDepts)
+                || callIdInDeptMissedReport_(dept, date, callId);
+      }
+      // Reason-less miss for the gate-closed manager, as on the Neon path.
+      if (!entitled) return { available: true, found: false };
+    }
+
+    var cell = function (idx) { return String(row[idx] == null ? '' : row[idx]).trim(); };
+    var numOr = function (idx, dflt) {
+      var v = cell(idx); if (v === '') return dflt;
+      var n = Number(v); return isNaN(n) ? dflt : n;
+    };
+    var call = callerLookupShapeCall_({
+      call_date:         date,
+      call_id:           callId,
+      insurer:           cell(2) || null,
+      dial_in_number:    cell(4) || null,
+      disposition:       cell(5) || null,
+      abandon_stage:     cell(6) || null,
+      abandoned_on_hold: cell(7).toUpperCase() === 'TRUE',
+      hold_seconds:      numOr(8, 0),
+      wait_seconds:      numOr(9, null),
+      entry_queue:       cell(10) || null,
+      final_queue:       cell(11) || null,
+      final_dept:        cell(12) || null,
+      num_queues:        numOr(13, 0),
+      num_transfers:     numOr(14, 0),
+      call_start:        cell(15) || null,
+      is_internal:       cell(16).toUpperCase() === 'TRUE',
+      journey:           (width >= 22 && cell(17)) ? cell(17) : null,
+      origin_agent:      width >= 22 ? (cell(18) || null) : null,
+      origin_dept:       width >= 22 ? (cell(19) || null) : null,
+      related_call_id:   width >= 22 ? (cell(20) || null) : null,
+      related_call_kind: width >= 22 ? (cell(21) || null) : null,
+    });
+    return { available: true, found: true, call: call,
+             fallbackSource: 'sheet', fallbackThrough: through };
+  } catch (e) {
+    Logger.log('inboundCallJourneySheetFallback_ failed (best-effort): '
+      + (e && e.message ? e.message : e));
+    return { available: false, found: false };
   }
 }
 

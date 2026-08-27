@@ -56,10 +56,30 @@ function getDqeReadSource_() {
  * Returns null (logged) when unconfigured or unreachable -- callers treat
  * null as "fall back to the sheet". Caller owns closing it.
  */
+// Per-EXECUTION unreachable memo (the DQE_DATE_BOUNDS_MEMO_ discipline --
+// deliberately NOT CacheService, so one request can never mask another's
+// recovery). ~54 callsites open their own connection through this builder,
+// and a Neon-down request used to pay a 15-25s connect failure at EVERY one
+// of them (measured: a 53.7s getQcdAllDepartments that was mostly failed
+// handshakes). After the first hard connect failure in an execution, later
+// calls return null immediately; the next REQUEST starts fresh and probes
+// again. Holds the first failure's message so memoized calls can still feed
+// the NEO-3 read-health line when a DQE reader asks for it.
+var NEON_CONN_DOWN_MEMO_ = null;   // null = not tripped; else { message }
+
 function getDashboardNeonConn_(opts) {
   var p = PropertiesService.getScriptProperties();
   var host = p.getProperty('NEON_HOST');
   if (!host) { Logger.log('getDashboardNeonConn_: NEON_HOST not set.'); return null; }
+  if (NEON_CONN_DOWN_MEMO_) {
+    Logger.log('getDashboardNeonConn_: skipped (Neon unreachable earlier this execution: '
+      + NEON_CONN_DOWN_MEMO_.message + ')');
+    if (opts && opts.recordReadHealth) {
+      recordNeonReadFailure_('getDashboardNeonConn_',
+        new Error('memoized this execution: ' + NEON_CONN_DOWN_MEMO_.message));
+    }
+    return null;
+  }
   try {
     // NO connect/socket/login timeout params here: Apps Script's JDBC service
     // REJECTS them outright -- "The following connection properties are
@@ -83,6 +103,7 @@ function getDashboardNeonConn_(opts) {
     // false "read-back FAILING" line while reads were on the sheet. The
     // signal now reflects DQE reads only, as Operator State #20 documents.
     // ({skipReadHealth:true} is still accepted as a no-op for old callers.)
+    NEON_CONN_DOWN_MEMO_ = { message: String(e && e.message ? e.message : e) };
     if (opts && opts.recordReadHealth) recordNeonReadFailure_('getDashboardNeonConn_', e);
     return null;
   }
