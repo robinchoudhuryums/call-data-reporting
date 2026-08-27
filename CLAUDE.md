@@ -797,7 +797,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   OWN dept's Missed report for the date (admins ungated; fail-closed on error).
   A miss carries a `reason` (`before-capture` -- with `minDate` -- / `date-gap`
   / `not-captured`, R7/M-2) probed only when the unscoped lookup was entitled
-  to run, so a gate-closed manager learns nothing. The journey carries no
+  to run, so a gate-closed manager learns nothing. **Neon-down degrades to
+  the `Inbound Calls` tab (cols 18-22, journey/origin/related --
+  `inboundCallJourneySheetFallback_`)**: same shaper, BOTH auth arms
+  re-derived (the F-4 gate reads the DQE sheet, so it survives the outage),
+  disclosed via `fallbackSource`/`fallbackThrough` + an overlay caption, a
+  `fallback-gap` reason for dates past the copy's ceiling; journey cells
+  are only exported within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
+  #49), older dates render the summary; the OUTBOUND arm has NO fallback
+  (no sheet primary) and the client says so. Pinned by
+  journey-fallback.test.js. The journey carries no
   caller identity; the client reuses the Caller Lookup renderers
   (`clChainHtml_` / `clJourneyRowHtml_`) in a `#call-journey-overlay`.
 - **Insurer labels, and the Inbound report's TEMPORARY admin-only gate.**
@@ -1482,7 +1491,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   all six builders and sweeps for unlisted `Jdbc.getConnection` callsites.
   Bound STATEMENTS with `stmt.setQueryTimeout(seconds)` (what
   `getReachableNeonConn_`'s 5 s probe already does) — the platform supports
-  that. **The hanging-connect problem is therefore still OPEN**: a connect
+  that. Dashboard-side, `getDashboardNeonConn_` memoizes a hard connect
+  failure PER EXECUTION (`NEON_CONN_DOWN_MEMO_` -- ~54 callsites each paid
+  their own 15-25s failed handshake in one Neon-down request; a fresh
+  execution probes again, so recovery is never masked;
+  neon-conn-memo.test.js). **The hanging-connect problem is therefore still OPEN**: a connect
   that hangs can still burn the 6-min ceiling, whose kill SKIPS catch blocks,
   so none of the designed "fall back on error" paths run (the class that
   silently ate a Daily Queue Report day). Any future attempt needs a
