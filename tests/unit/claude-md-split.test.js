@@ -298,3 +298,25 @@ test('F8 split: grandfathered bullets may only SHRINK', function () {
     'A GRANDFATHERED title no longer matches any bullet -- if you renamed or '
     + 'removed it, update the map (and lower the number if it shrank).');
 });
+
+test('coverage map: tests/README.md names every unit suite (the designated map cannot rot)', function () {
+  // CLAUDE.md's Key-commands block designates tests/README.md as THE
+  // suite-by-suite coverage map. A 2026-08-28 sync-docs audit found 23 of 80
+  // suites unmentioned there — a new suite landed with tests but no map
+  // entry often enough that prose could not keep the claim true (the B-2
+  // lesson applied to docs). Match is line-wrap tolerant: the map's prose
+  // roll hyphenates and wraps names, so a hyphen may render as a space or a
+  // newline there.
+  const readme = read(path.join('tests', 'README.md'));
+  const flat = readme.replace(/\s+/g, ' ');
+  const suites = fs.readdirSync(path.join(ROOT, 'tests', 'unit'))
+    .filter(function (n) { return n.endsWith('.test.js'); })
+    .map(function (n) { return n.replace(/\.test\.js$/, ''); });
+  const missing = suites.filter(function (s) {
+    return !new RegExp(s.replace(/-/g, '[- ]'), 'i').test(flat);
+  });
+  assert.deepEqual(missing, [],
+    'tests/unit suite(s) not named in tests/README.md — add each to the '
+    + 'coverage map (a one-line entry in the unit/ roll is enough): '
+    + missing.join(', '));
+});

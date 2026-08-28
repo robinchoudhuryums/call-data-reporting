@@ -97,11 +97,12 @@ bash scripts/check-duplicated-files.sh
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~77 suites pin the invariants, the report
+# Non-zero exit on failure. ~80 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
-# suites in the 2026-08-20 trim pass -- keep it that way).
+# suites in the 2026-08-20 trim pass -- keep it that way. Map completeness
+# is ENFORCED: claude-md-split.test.js fails on an unlisted suite).
 # Two rules that bite here:
 # - HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
 #   getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a
