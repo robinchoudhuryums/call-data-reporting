@@ -1236,6 +1236,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   constant was dead code and was REMOVED (F-30). **Never read a
   constant for membership checks**; always go through
   `getAdminEmails_()`.
+- **Script Properties are REGISTERED — adding one means registering it in
+  `Config.gs::PROP_REGISTRY_` in the same commit.** The dashboard store holds
+  ~90 keys, past the settings page's 50-row display cap, so the Health page's
+  folded "All Script Properties (inventory)" section is the complete view: it
+  classifies the LIVE store against the registry (operator config / engine
+  state / diagnostic tool params) and warn-flags UNRECOGNIZED keys — retired
+  leftovers, manual one-offs, or an operator TYPO of a real key (deliberate:
+  a misspelled `DQE_READ_SOURCE` surfaces instead of silently defaulting).
+  Property VALUES never reach the payload (the store holds
+  `NEON_PASS`/`HMAC_SECRET`). The parity/vetting tools SELF-CLEAR their
+  window params (`DQE_PARITY_*`, `QCD_PARITY_*`, `INBOUND_QCD_PARITY_*`,
+  `OUTBOUND_VETTING_*`) via `clearToolParamsAfterCleanRun_` on a CLEAN
+  verdict only — MISMATCH/INCONCLUSIVE keeps them so the fix-and-re-run loop
+  re-compares the same window. ENFORCED both ways by
+  `tests/unit/prop-registry.test.js`: every code-referenced key (literal,
+  resolvable constant, or composed prefix) must be registered, every registry
+  entry must still be referenced, and the Health payload stays value-free.
 - **Role model + the all-departments manager (`allDepts`).** Four roles
   (`admin`|`manager`|`agent`|`none`; `Auth.gs::resolveUser_` -- `agent`
   has its OWN bullet below). A manager is
@@ -2274,7 +2291,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > `DIGEST_RUN_MARKER_*`, `QUEUE_REPORT_LAST_SENT`, `CRB_DIAG_COL`, …). Those are
 > deliberately NOT listed as items: you never set them, the Health page reads
 > them, and clearing one just re-arms its engine. Don't file them as
-> undocumented operator state.
+> undocumented operator state. The COMPLETE classified view of the live store
+> (the settings page caps at 50 rows) is the Health page's folded "All Script
+> Properties (inventory)" section, backed by `Config.gs::PROP_REGISTRY_` —
+> see the registry bullet in Common Gotchas.
 
 The numbered items now live in full in
 [`docs/operator-state.md`](docs/operator-state.md) (F8 split). Cited elsewhere

@@ -137,6 +137,31 @@ function logStatusReturn_(out) {
   return out;
 }
 
+/**
+ * Self-cleaning diagnostic-tool params (prop-registry batch): the parity /
+ * vetting tools read their window/dept inputs from Script Properties, which
+ * otherwise accumulate forever once a vetting round is done. Called by each
+ * tool ONLY on its CLEAN/PASS outcome — a MISMATCH / INCONCLUSIVE / FAILED
+ * run keeps the params so the documented fix-and-re-run loop (e.g. Inbound
+ * parity's "run → populate aliases → re-run") re-runs the SAME window.
+ * Deletes only keys actually present; best-effort (a property hiccup must
+ * never turn a clean verdict into a throw); logs what it cleared so the
+ * operator knows to set the range again before any future run.
+ */
+function clearToolParamsAfterCleanRun_(keys, toolLabel) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var cleared = [];
+    (keys || []).forEach(function (k) {
+      if (props.getProperty(k) !== null) { props.deleteProperty(k); cleared.push(k); }
+    });
+    if (cleared.length) {
+      Logger.log('[tool-params] %s: cleared %s after a clean run (self-cleaning; '
+        + 'set again before the next run).', toolLabel, cleared.join(', '));
+    }
+  } catch (e) { /* best-effort */ }
+}
+
 // -- Formatting (was IndividualReport.gs) ----------------------------------
 
 function formatSecondsHms_(totalSeconds) {

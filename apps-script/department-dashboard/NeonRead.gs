@@ -596,7 +596,16 @@ function compareDqeSources_() {
  */
 function runDqeParityCheck() {
   assertAdmin_();   // F-28: editor-run wrapper, but the bare name is RPC-reachable
-  return compareDqeSources_();
+  var v = compareDqeSources_();
+  // Self-cleaning tool params: a CLEAN verdict ends the gate workflow, so the
+  // window props clear (the next run needs a fresh range anyway — the
+  // in-source default ages out). MISMATCH/INCONCLUSIVE keeps them for the
+  // fix-and-re-run loop. In the WRAPPER on purpose: a hypothetical scheduled
+  // caller of compareDqeSources_ keeps its stored range untouched.
+  if (v && v.clean && typeof clearToolParamsAfterCleanRun_ === 'function') {
+    clearToolParamsAfterCleanRun_(['DQE_PARITY_FROM', 'DQE_PARITY_TO'], 'runDqeParityCheck');
+  }
+  return v;
 }
 
 /**

@@ -1564,6 +1564,17 @@ function runInboundQcdParityCheck() {
       Logger.log('Every inbound call in the window carries an entry_queue. ✓');
     }
 
+    // Self-cleaning tool params: an all-attributed run is this tool's CLEAN
+    // terminus (the documented loop is "run → populate aliases → re-run
+    // clean"), so the window/dept props clear. An unattributed residue keeps
+    // them so the re-run compares the SAME window. The noEntryQueue bucket is
+    // informational (Operator State #38 owns its diagnosis) and does not
+    // block the clear.
+    if (!uq.length && typeof clearToolParamsAfterCleanRun_ === 'function') {
+      clearToolParamsAfterCleanRun_(
+        ['INBOUND_QCD_PARITY_FROM', 'INBOUND_QCD_PARITY_TO', 'INBOUND_QCD_PARITY_DEPT'],
+        'runInboundQcdParityCheck');
+    }
     return { available: true, from: fromIso, to: toIso, depts: results,
              unattributed: uq, noEntryQueue: noQueue };
   } finally {

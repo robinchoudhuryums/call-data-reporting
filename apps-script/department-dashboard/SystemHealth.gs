@@ -548,6 +548,52 @@ function getSystemHealth(req) {
     }
   } catch (e) { add('config', 'prop-probe', 'Script Properties', 'warn', 'probe failed', String(e && e.message || e)); }
 
+  // ── All Script Properties (inventory) ───────────────────────────────
+  // The settings page renders only the FIRST 50 properties (read-only past
+  // that), and this store holds ~90 — so "what is stored, and is it still
+  // used?" was unanswerable from the UI. Classifies the LIVE store against
+  // Config.gs::PROP_REGISTRY_ (operator config / engine state / tool params);
+  // a key resolving to NO group renders as an UNRECOGNIZED warn row — a
+  // retired-feature leftover, a manual one-off, or an operator TYPO in a real
+  // key's name (surfacing typos is deliberate). VALUES are never included:
+  // the store holds NEON_PASS / HMAC_SECRET, and this payload reaches the
+  // client — prop-registry.test.js pins the payload value-free. Rendered as
+  // a FOLDED section client-side (the 'users' precedent).
+  try {
+    var invAll = PropertiesService.getScriptProperties().getProperties();
+    var invKeys = Object.keys(invAll).sort();
+    var invGroups = { operator: [], engine: [], tool: [] };
+    var invUnknown = [];
+    invKeys.forEach(function (k) {
+      var g = propRegistryGroup_(k);
+      if (g && invGroups[g]) invGroups[g].push(k); else invUnknown.push(k);
+    });
+    add('props', 'props-count', 'Stored properties', 'muted',
+      invKeys.length + ' stored — ' + invGroups.operator.length + ' operator config · '
+        + invGroups.engine.length + ' engine state · ' + invGroups.tool.length
+        + ' tool params · ' + invUnknown.length + ' unrecognized',
+      'The settings page lists only the first 50 (read-only past that); this is the complete view. '
+        + 'Values are omitted on purpose (the store holds NEON_PASS / HMAC_SECRET) — read a single '
+        + 'value in the editor via PropertiesService.getScriptProperties().getProperty(key).');
+    add('props', 'props-operator', 'Operator config (' + invGroups.operator.length + ')', 'muted',
+      invGroups.operator.join(', ') || '(none)',
+      'Config a human sets — identity, secrets, switches, engine flags and tunables. See docs/operator-state.md.');
+    add('props', 'props-engine', 'Engine state (' + invGroups.engine.length + ')', 'muted',
+      invGroups.engine.join(', ') || '(none)',
+      'Written by the code itself (outcome stamps, markers, snapshots). Never hand-set; clearing one just re-arms its engine.');
+    add('props', 'props-tool', 'Diagnostic tool params (' + invGroups.tool.length + ' set)', 'muted',
+      invGroups.tool.join(', ') || '(none — tools self-clear these after a clean run)',
+      'Parity/vetting windows. Each tool clears its own after a CLEAN run; ones listed here belong to a round still in progress.');
+    invUnknown.forEach(function (k) {
+      add('props', 'props-unknown-' + k, k, 'warn',
+        'unrecognized (' + String(invAll[k] == null ? '' : invAll[k]).length + ' chars stored)',
+        'No current dashboard code reads this key — a retired-feature leftover, a manual one-off, or a typo '
+          + 'of a real key. Verify, then delete it in the editor '
+          + '(PropertiesService.getScriptProperties().deleteProperty(...)); if it is deliberate, register it '
+          + 'in Config.gs PROP_REGISTRY_.');
+    });
+  } catch (e) { add('props', 'props-count', 'Stored properties', 'warn', 'probe failed', String(e && e.message || e)); }
+
   // ── setup()-managed sheets ──────────────────────────────────────────
   try {
     var ss = openSpreadsheet_();

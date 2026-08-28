@@ -2179,14 +2179,15 @@
     presence: 'Active now',                 // live-presence heartbeats (pre-deploy glance)
     pipeline: 'Pipeline', neon: 'Neon', triggers: 'Trigger-driven services',
     config: 'Script Properties', sheets: 'Sheets',
+    props: 'All Script Properties (inventory)',  // the >50-cap complete view (PROP_REGISTRY_)
     usage: 'Report usage (last 30 days)',   // the consolidation/un-gating evidence
     users: 'User activity (last 30 days)',  // R19: per-user rollup, collapsed by default
   };
-  // R19: sections rendered COLLAPSED behind a clickable header (currently just
-  // 'users' -- one row per user gets long with real adoption). State is
-  // per-render (a refresh re-collapses), which is the right default for a
-  // drill-in section.
-  const HEALTH_FOLDED_SECTIONS_ = { users: true };
+  // R19: sections rendered COLLAPSED behind a clickable header ('users' -- one
+  // row per user gets long with real adoption -- and 'props', the full
+  // property inventory, a drill-in view by nature). State is per-render (a
+  // refresh re-collapses), which is the right default for a drill-in section.
+  const HEALTH_FOLDED_SECTIONS_ = { users: true, props: true };
 
   function healthRender_(data) {
     const tbody = $('health-tbody');

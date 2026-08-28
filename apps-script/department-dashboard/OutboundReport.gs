@@ -674,6 +674,12 @@ function runOutboundVettingCheck() {
         parityAbandoned: obAbandoned, failures: failures,
       });
     }
+    // Self-cleaning tool params: only the PASS verdict clears them —
+    // MISMATCH / INCONCLUSIVE / FAILED keep the window for the re-run
+    // (the OPS-8 gate contract forbids un-gating on those anyway).
+    if (typeof clearToolParamsAfterCleanRun_ === 'function') clearToolParamsAfterCleanRun_(
+      ['OUTBOUND_VETTING_FROM', 'OUTBOUND_VETTING_TO', 'OUTBOUND_VETTING_DEPT', 'OUTBOUND_VETTING_SAMPLE'],
+      'runOutboundVettingCheck');
     return logStatusReturn_({
       result: 'ok parity ' + obAbandoned + ' abandons match across both reports; '
         + calledBack.length + ' called-back + ' + uncalled.length

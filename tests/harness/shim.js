@@ -71,6 +71,12 @@ function createShim() {
           getProperty: function (k) { return Object.prototype.hasOwnProperty.call(state.props, k) ? state.props[k] : null; },
           setProperty: function (k, v) { state.props[k] = String(v); return this; },
           deleteProperty: function (k) { delete state.props[k]; return this; },
+          // prop-registry batch: the Health inventory reads the whole store.
+          getProperties: function () {
+            const out = {};
+            Object.keys(state.props).forEach(function (k) { out[k] = state.props[k]; });
+            return out;
+          },
         };
       },
     },
