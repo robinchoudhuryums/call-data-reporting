@@ -11,11 +11,14 @@
 #                      .                       (repo root = Department Dashboard)
 #                      apps-script/cdr-report  (CDR Report / DQE Pipeline)
 #                      apps-script/cdr-import  (CDR Import)
-#   [deployment-id]  the web-app deployment to roll forward. Find it once
-#                    with `clasp deployments` run in that dir, and use the
-#                    versioned web-app deployment's id (NOT the @HEAD one).
-#                    Omit to only `clasp push -f` and finish the version
-#                    bump manually in the editor.
+#   [deployment-id]  the web-app deployment to roll forward — DASHBOARD ONLY.
+#                    Find it once with `clasp deployments` run in that dir,
+#                    and use the versioned web-app deployment's id (NOT the
+#                    @HEAD one). Omit to only `clasp push -f` and finish the
+#                    version bump manually in the editor. The two SIBLING
+#                    projects are not web apps (their triggers + menus always
+#                    run the pushed code), so for them the push IS the deploy
+#                    and no id exists to pass.
 #
 # Notes:
 #   - Each project keeps its own gitignored .clasp.json, so run this from the
@@ -113,7 +116,19 @@ if [ -n "$DEP_ID" ]; then
   clasp deploy -i "$DEP_ID" -d "$DESC"
   echo "==> Done. Deployment $DEP_ID now serves the pushed code."
 else
-  echo "==> Pushed. No deployment id given -- finish in the editor:"
-  echo "    Deploy -> Manage deployments -> New version -> Deploy,"
-  echo "    or re-run with the id from 'clasp deployments' to automate it."
+  case "$DIR" in
+    apps-script/cdr-import|apps-script/cdr-import/|apps-script/cdr-report|apps-script/cdr-report/)
+      # The sibling projects are NOT web apps: their triggers and menus always
+      # execute the pushed code, so there is no deployment version to roll and
+      # the old "finish in the editor" hint sent operators hunting for a step
+      # that doesn't exist.
+      echo "==> Pushed. Done -- this project is not a web app (triggers/menus"
+      echo "    run the pushed code directly), so no version bump is needed."
+      ;;
+    *)
+      echo "==> Pushed. No deployment id given -- finish in the editor:"
+      echo "    Deploy -> Manage deployments -> New version -> Deploy,"
+      echo "    or re-run with the id from 'clasp deployments' to automate it."
+      ;;
+  esac
 fi

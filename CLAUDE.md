@@ -143,9 +143,9 @@ node --test          # from repo root (or: npm test)
 # the finding. Standalone:
 #   node scripts/check-remote-orphans.mjs <project-dir>
 scripts/deploy.sh .                      <dashboard-deployment-id>
-scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
-scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
-# (omit the id to just `clasp push -f` and finish the version bump manually)
+scripts/deploy.sh apps-script/cdr-report     # no id -- not a web app; the push IS the deploy
+scripts/deploy.sh apps-script/cdr-import     # no id -- ditto (triggers/menus run pushed code)
+# (dashboard: omit the id to just `clasp push -f` + finish the version bump manually)
 
 # Still manual (NOT unit-covered): the deferred mirror's sheet-derived
 # payload re-derivation (NeonMirror.js) and anything UI/live -- verify
