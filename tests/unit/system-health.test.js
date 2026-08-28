@@ -447,6 +447,22 @@ test('presence: a heartbeat stores the user; the fast part renders the Active-no
   assert.match(row.value, /admin · dept · just now/);
 });
 
+test('presence: the beat returns the serving build stamp for the update notice ("" when absent)', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  // BuildStamp.gs is not loaded by this harness, mirroring a pre-E3
+  // deployment: the guarded read must yield '' (the client suppresses the
+  // notice on an empty side), never a throw.
+  assert.equal(h.call('recordPresence', { page: 'dept' }).stamp, '');
+  h.ctx.BUILD_STAMP_ = 'deploy.sh 2026-08-28T00:00:00Z | git abc1234 | main';
+  try {
+    assert.equal(h.call('recordPresence', { page: 'dept' }).stamp,
+      'deploy.sh 2026-08-28T00:00:00Z | git abc1234 | main');
+  } finally {
+    delete h.ctx.BUILD_STAMP_;   // never a real vm global here, safe to remove
+  }
+});
+
 test('presence: empty map renders the muted nobody-active row', function () {
   installHealth({});
   h.state.cache = new Map();

@@ -1680,7 +1680,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   signed-in role beats (agents included; role `none` rejected -- the
   reportClientIssue gate class). A new client surface needs no wiring --
   the beat reads `data-page`; harness mocks live in build-harness.js AND
-  build-agent.js. Pinned by system-health.test.js.
+  build-agent.js. Pinned by system-health.test.js. **The beat's return also
+  carries the serving deployment's E3 build stamp**: both clients compare it
+  to the load-time `window.__BUILD_STAMP__` and on mismatch show a one-time
+  dismissible `.update-notice` ("new version -- refresh when convenient") --
+  a redeploy under an open tab surfaces within one beat, never a forced
+  reload. Suppressed when either side is empty, so it detects only
+  deploy.sh-stamped deploys (consecutive bare `clasp push` deploys are
+  indistinguishable -- both ship the placeholder). ENFORCED:
+  html-include-structure.test.js pins the 4-piece wiring (both template
+  injections + both success handlers); system-health.test.js pins the stamp
+  return.
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script

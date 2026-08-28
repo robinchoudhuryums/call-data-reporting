@@ -175,6 +175,9 @@
     window.__USER__ = <?!= userJson ?>;
     window.__WORK_WINDOW__ = <?!= workWindowJson ?>;
     window.__ANSWER_STD__ = <?!= answerStdJson ?>;
+    // Build stamp of the serving deployment ('' when absent) -- the heartbeat
+    // compares recordPresence's returned stamp against this (update notice).
+    window.__BUILD_STAMP__ = <?!= buildStampJson ?>;
   </script>
   <?!= include_('agentApp') ?>
 </body>

@@ -870,7 +870,19 @@ function recordPresence(req) {
     emails.slice(0, PRESENCE_MAX_USERS_).forEach(function (em) { kept[em] = map[em]; });
     cache.put(PRESENCE_CACHE_KEY_, JSON.stringify(kept), PRESENCE_CACHE_TTL_SEC_);
   } catch (e) { /* best-effort -- a presence hiccup must never surface to a client */ }
-  return { ok: true };
+  // Update-notice piggyback: return the server's CURRENT build stamp so the
+  // client can compare it against the stamp baked into its page at load
+  // (window.__BUILD_STAMP__) and show a "new version — refresh when
+  // convenient" notice on mismatch. RPCs from an already-open page execute
+  // the deployment's CURRENT version, so after a redeploy this diverges from
+  // the load-time stamp within one heartbeat (~2.5 min). typeof-guarded like
+  // the Health page's build-stamp row: '' when BuildStamp.gs is absent, and
+  // the client suppresses on an empty side, so a pre-E3 deployment never
+  // false-fires.
+  return {
+    ok: true,
+    stamp: (typeof BUILD_STAMP_ === 'string' && BUILD_STAMP_) ? BUILD_STAMP_ : '',
+  };
 }
 
 /** Read side (Health page). Active entries only, freshest-first. Never throws to empty. */

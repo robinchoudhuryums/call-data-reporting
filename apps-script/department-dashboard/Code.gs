@@ -80,6 +80,11 @@ function renderAgentApp_(user, preview) {
   let agentStd = { target: ANSWER_TARGET_DEFAULT, band: ANSWER_AMBER_BAND_DEFAULT };
   try { agentStd = getAnswerStandardFor_(user.agentDept || null); } catch (e) { /* seed */ }
   tmpl.answerStdJson = JSON.stringify(agentStd).replace(/</g, '\\u003c');
+  // Update notice: same load-time build stamp as renderDashboard_ -- the
+  // agent app's heartbeat compares it against recordPresence's return.
+  tmpl.buildStampJson = JSON.stringify(
+    (typeof BUILD_STAMP_ === 'string' && BUILD_STAMP_) ? BUILD_STAMP_ : ''
+  ).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('My Performance — Call Data')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
@@ -192,6 +197,13 @@ function renderDashboard_(user) {
   let standards = null;
   try { standards = getStandardsBundle_(); } catch (e) { standards = null; }
   tmpl.standardsJson = JSON.stringify(standards).replace(/</g, '\\u003c');
+  // Update notice: bake the serving deployment's build stamp into the page so
+  // the presence heartbeat's returned stamp (recordPresence) can detect a
+  // redeploy while this page is open. '' when BuildStamp.gs is absent -- the
+  // client suppresses the notice on an empty side.
+  tmpl.buildStampJson = JSON.stringify(
+    (typeof BUILD_STAMP_ === 'string' && BUILD_STAMP_) ? BUILD_STAMP_ : ''
+  ).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
