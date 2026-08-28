@@ -421,6 +421,22 @@ test('vetting: the two reports disagreeing is a MISMATCH, never ok', function ()
   assert.match(h.call('runOutboundVettingCheck').result, /^MISMATCH parity: outbound=25 vs inbound=24/);
 });
 
+test('vetting: PASS self-clears OUTBOUND_VETTING_* params; MISMATCH/INCONCLUSIVE keep them for the re-run', function () {
+  // Prop-registry batch: the tool params otherwise accumulate in the store
+  // forever. Only the PASS verdict clears them — the OPS-8 gate contract's
+  // fix-and-re-run loop needs the SAME window on a non-clean outcome.
+  installVetStubs_(25, 24);
+  h.call('runOutboundVettingCheck');   // MISMATCH
+  assert.equal(h.state.props.OUTBOUND_VETTING_FROM, '2026-08-06', 'MISMATCH keeps the window');
+  installVetStubs_(0, 0);
+  h.call('runOutboundVettingCheck');   // INCONCLUSIVE
+  assert.equal(h.state.props.OUTBOUND_VETTING_TO, '2026-08-19', 'INCONCLUSIVE keeps the window');
+  installVetStubs_(25, 25, makeVetConn_(VET_PAIRS_));
+  h.call('runOutboundVettingCheck');   // ok
+  assert.ok(!('OUTBOUND_VETTING_FROM' in h.state.props), 'PASS clears FROM');
+  assert.ok(!('OUTBOUND_VETTING_TO' in h.state.props), 'PASS clears TO');
+});
+
 test('vetting: zero abandons is INCONCLUSIVE (the Batch-6 gate contract) — parity over nothing certifies nothing', function () {
   installVetStubs_(0, 0);
   const out = h.call('runOutboundVettingCheck');

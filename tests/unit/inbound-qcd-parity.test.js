@@ -173,6 +173,8 @@ test('Batch 5: the check probes calls with NO entry_queue and splits them by sta
   h.ctx.getAllDepartments_ = function () { return ['CSR']; };
   h.state.userEmail = 'admin@x.com';
   h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.INBOUND_QCD_PARITY_FROM = '2026-06-01';
+  h.state.props.INBOUND_QCD_PARITY_TO = '2026-06-03';
 
   const out = h.call('runInboundQcdParityCheck');
   assert.equal(out.available, true);
@@ -186,4 +188,50 @@ test('Batch 5: the check probes calls with NO entry_queue and splits them by sta
   assert.ok(sqls.some(function (s) { return /COALESCE\(entry_queue, ''\) = ''/.test(s); }),
     'a probe for NULL/empty entry_queue actually ran');
   assert.ok(out.unattributed.length >= 0, 'the existing unattributed scan still runs');
+  // Prop-registry batch: an UNATTRIBUTED residue is NOT a clean terminus —
+  // the window props survive so the documented "populate aliases → re-run"
+  // loop re-compares the SAME window. (Util.gs isn't loaded here; the
+  // typeof guard on clearToolParamsAfterCleanRun_ makes that a no-op, which
+  // is also what a partial push would see.)
+  assert.equal(h.state.props.INBOUND_QCD_PARITY_FROM, '2026-06-01', 'residue keeps the window');
+});
+
+test('prop-registry: an all-attributed run self-clears the INBOUND_QCD_PARITY_* params', function () {
+  const conn = {
+    prepareStatement: function () {
+      let done = false;
+      return {
+        setString: function () {}, setInt: function () {},
+        executeQuery: function () {
+          return {
+            next: function () { if (done) return false; done = true; return true; },
+            getString: function () { return JSON.stringify([]); },   // nothing unattributed, empty day joins
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+  installStubs([]);
+  h.ctx.assertAdmin_ = function () {};
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  h.ctx.getAllDepartments_ = function () { return ['CSR']; };
+  h.state.userEmail = 'admin@x.com';
+  h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.state.props.INBOUND_QCD_PARITY_FROM = '2026-06-01';
+  h.state.props.INBOUND_QCD_PARITY_TO = '2026-06-03';
+  h.state.props.INBOUND_QCD_PARITY_DEPT = 'CSR';
+  // The helper lives in Util.gs (not loaded here) — provide a real-shaped
+  // stand-in over the shim's props so the deletion is observable.
+  h.ctx.clearToolParamsAfterCleanRun_ = function (keys) {
+    keys.forEach(function (k) { delete h.state.props[k]; });
+  };
+  const out = h.call('runInboundQcdParityCheck');
+  assert.equal(out.available, true);
+  assert.equal(out.unattributed.length, 0);
+  assert.ok(!('INBOUND_QCD_PARITY_FROM' in h.state.props), 'clean run clears FROM');
+  assert.ok(!('INBOUND_QCD_PARITY_TO' in h.state.props), 'clean run clears TO');
+  assert.ok(!('INBOUND_QCD_PARITY_DEPT' in h.state.props), 'clean run clears DEPT');
 });

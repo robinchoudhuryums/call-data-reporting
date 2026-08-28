@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
-## Latest session (F8b — the CLAUDE.md trim pass + final sync-docs)
+## Latest session (prop-registry — Script Property registry + Health inventory + self-cleaning tool params)
+Branch `claude/broad-scan-76h2dr` (RESTARTED from merged main after PR #261; carries the update-notice commit 92f95d7), **969/969 unit tests** (+9), INV-16 + governance guards green. Increment 155. Block: `.cycle/blocks/155-prop-registry-broad-implement.md`.
+- Owner hit the settings page's 50-property display cap and asked for consolidation. Assessment ruled out JSON-blob merges (concurrent-writer hazard) and the LAST/LAST_RESULT pair-merge (cosmetic ROI, wide blast radius — skipped by owner decision); implemented instead: **`Config.gs::PROP_REGISTRY_`** (every dashboard key classified operator/engine/tool; prefix families; secret set), the **Health "All Script Properties (inventory)" folded section** (classified live store, warn rows for UNRECOGNIZED keys, values never shipped — secret-sentinel pinned), and **self-cleaning tool params** (`clearToolParamsAfterCleanRun_`, CLEAN-verdict-only across the four parity/vetting tools, typeof-guarded).
+- Enforcement: NEW `tests/unit/prop-registry.test.js` — two-way sweep (every code-referenced key registered; no dead registry entries) in the cache-version-sync S2 pattern. Harness shim gained `getProperties()`.
+- Earlier this session (same branch, commit 92f95d7): the redeploy update-notice — recordPresence returns the build stamp, clients compare to load-time `__BUILD_STAMP__`, one-time dismissible refresh toast.
+- Where I left off: committed + pushed; needs a NEW PR (PR #261 is merged — do not reuse). Post-deploy: expand the Health inventory once and clean/register any unrecognized keys.
+
+## Prior session (F8b — the CLAUDE.md trim pass + final sync-docs)
 Branch `claude/broad-scan-76h2dr`, **958/958 unit tests**, all doc guards green. CLAUDE.md **184,816 → 181,254 bytes** (−3.6KB; ~19.5KB headroom under the 200KB cap).
 - **Trim (F8b)**: the Top-tab router bullet MOVED to docs/client-ui-conventions.md (the F8 surface rule) with a compact index entry; the F9 cold-cache and B1-B5 late-joiner narratives relocated to fix-history; the CSV / safeChart_ / cache-anchor rules now NAME their Batch-D enforcement (S8/S3/S2) instead of carrying prose; the sub-queue bullet absorbed the L7 figures-equality nuance and was trimmed back under the 4KB ratchet; IMP-6 notes P10. Every dropped fix code / backticked identifier verified to still resolve in the live doc set (four were restored inline after the check caught them).
 - **sync-docs**: fix-history gains the Batch-F (P9/P10/P19–P22/I5/P28/S6) + F8b entries; README documents the sibling build stamping.

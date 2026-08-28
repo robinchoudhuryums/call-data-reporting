@@ -137,9 +137,42 @@
     try {
       if (document.visibilityState !== 'visible') return;
       if (!(window.google && google.script && google.script.run)) return;
-      google.script.run.withSuccessHandler(function () {}).withFailureHandler(function () {})
+      google.script.run.withSuccessHandler(presenceBeatOk_).withFailureHandler(function () {})
         .recordPresence({ page: 'agent' });
     } catch (e) { /* presence must never throw */ }
+  }
+
+  // Update notice (the manager client's twin, see script-1-core): the beat's
+  // return carries the serving deployment's build stamp; a mismatch against
+  // the load-time window.__BUILD_STAMP__ means a redeploy happened under this
+  // open tab. One-time, dismissible, suppressed when either side is empty.
+  var updateNoticeShown_ = false;
+  function presenceBeatOk_(res) {
+    try {
+      if (updateNoticeShown_) return;
+      var pageStamp = String(window.__BUILD_STAMP__ || '');
+      var srvStamp = String((res && res.stamp) || '');
+      if (!pageStamp || !srvStamp || pageStamp === srvStamp) return;
+      updateNoticeShown_ = true;
+      if (document.getElementById('update-notice')) return;
+      var el = document.createElement('div');
+      el.id = 'update-notice';
+      el.className = 'update-notice';
+      el.setAttribute('role', 'status');
+      var msg = document.createElement('span');
+      msg.textContent = 'A new version of this page is available — refresh when convenient to pick it up.';
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'update-notice-close';
+      close.setAttribute('aria-label', 'Dismiss update notice');
+      close.textContent = '✕';
+      close.addEventListener('click', function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      });
+      el.appendChild(msg);
+      el.appendChild(close);
+      document.body.appendChild(el);
+    } catch (e) { /* the notice must never break the heartbeat */ }
   }
   setInterval(presenceBeat_, 150 * 1000);
   document.addEventListener('visibilitychange', function () {

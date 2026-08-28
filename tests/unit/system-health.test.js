@@ -447,6 +447,59 @@ test('presence: a heartbeat stores the user; the fast part renders the Active-no
   assert.match(row.value, /admin · dept · just now/);
 });
 
+test('presence: the beat returns the serving build stamp for the update notice ("" when absent)', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  // BuildStamp.gs is not loaded by this harness, mirroring a pre-E3
+  // deployment: the guarded read must yield '' (the client suppresses the
+  // notice on an empty side), never a throw.
+  assert.equal(h.call('recordPresence', { page: 'dept' }).stamp, '');
+  h.ctx.BUILD_STAMP_ = 'deploy.sh 2026-08-28T00:00:00Z | git abc1234 | main';
+  try {
+    assert.equal(h.call('recordPresence', { page: 'dept' }).stamp,
+      'deploy.sh 2026-08-28T00:00:00Z | git abc1234 | main');
+  } finally {
+    delete h.ctx.BUILD_STAMP_;   // never a real vm global here, safe to remove
+  }
+});
+
+// ── All Script Properties (inventory) ────────────────────────────────────
+
+test('props inventory: classifies the live store, flags unrecognized keys, never ships values', function () {
+  installHealth({});
+  h.state.cache = new Map();
+  // installHealth seeds SPREADSHEET_ID + ADMIN_EMAILS (both operator); add one
+  // of each other group, two dynamic-family keys, a SECRET, and an orphan.
+  Object.assign(h.state.props, {
+    SMOKE_LAST: '2026-08-01T00:00:00Z',              // engine
+    DQE_PARITY_FROM: '2026-08-01',                   // tool
+    ESC_SNAPSHOT_META: '{"chunks":1}',               // engine (prefix family)
+    DIGEST_RUN_MARKER_weekly: 'claimed',             // engine (prefix family)
+    NEON_PASS: 's3cr3t-sentinel-value',              // operator + secret
+    OLD_RETIRED_FEATURE_KEY: 'leftover',             // unrecognized
+  });
+  const data = h.call('getSystemHealth', { part: 'fast' });
+  const summary = rowByKey(data, 'props-count');
+  assert.ok(summary, 'summary row present');
+  assert.equal(summary.section, 'props');
+  assert.equal(summary.status, 'muted');
+  assert.match(summary.value, /8 stored — 3 operator config · 3 engine state · 1 tool params · 1 unrecognized/);
+  // Group rows list KEY NAMES (discovery past the settings page's 50-row cap).
+  assert.match(rowByKey(data, 'props-operator').value, /ADMIN_EMAILS.*NEON_PASS.*SPREADSHEET_ID/);
+  assert.match(rowByKey(data, 'props-engine').value, /DIGEST_RUN_MARKER_weekly.*ESC_SNAPSHOT_META.*SMOKE_LAST/);
+  assert.match(rowByKey(data, 'props-tool').value, /DQE_PARITY_FROM/);
+  // The orphan gets its own actionable warn row (length only, no value).
+  const orphan = rowByKey(data, 'props-unknown-OLD_RETIRED_FEATURE_KEY');
+  assert.ok(orphan, 'unrecognized key row present');
+  assert.equal(orphan.status, 'warn');
+  assert.match(orphan.value, /unrecognized \(8 chars stored\)/);
+  assert.doesNotMatch(orphan.value, /leftover/);
+  // SECRET pin: no property VALUE — the secret's above all — reaches the
+  // payload anywhere (the store holds NEON_PASS / HMAC_SECRET, and this
+  // payload is served to the client).
+  assert.doesNotMatch(JSON.stringify(data), /s3cr3t-sentinel-value/);
+});
+
 test('presence: empty map renders the muted nobody-active row', function () {
   installHealth({});
   h.state.cache = new Map();

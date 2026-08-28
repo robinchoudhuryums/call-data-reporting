@@ -231,3 +231,21 @@ test('S8: every tabular cell writer routes through csvSafeCell_', function () {
     assert.ok(w[1].test(src), w[0] + ': ' + w[2] + ' -- csvSafeCell_ routing lost or renamed');
   });
 });
+
+test('update notice: both templates inject __BUILD_STAMP__ and both heartbeats route through presenceBeatOk_', function () {
+  // The redeploy-detection wiring (CLAUDE.md live-presence bullet): the page
+  // bakes the serving deployment's stamp in at load, and the presence beat's
+  // success handler compares it against recordPresence's returned stamp.
+  // Four pieces, each silently inert without the others -- a lost injection
+  // or a success handler reverted to a no-op turns the notice off with no
+  // error anywhere, so pin all four.
+  [
+    ['dashboard.html', /window\.__BUILD_STAMP__ = <\?!= buildStampJson \?>/, 'load-time stamp injection'],
+    ['agent.html',     /window\.__BUILD_STAMP__ = <\?!= buildStampJson \?>/, 'load-time stamp injection'],
+    ['script-1-core.html', /\.withSuccessHandler\(presenceBeatOk_\)/, 'heartbeat stamp-check handler'],
+    ['agentApp.html',      /\.withSuccessHandler\(presenceBeatOk_\)/, 'heartbeat stamp-check handler'],
+  ].forEach(function (p) {
+    const src = fs.readFileSync(path.join(DIR, p[0]), 'utf8');
+    assert.ok(p[1].test(src), p[0] + ': ' + p[2] + ' lost -- the update notice is silently dead');
+  });
+});

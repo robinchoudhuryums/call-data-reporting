@@ -310,6 +310,9 @@ html = html.replace('<?!= standardsJson ?>', JSON.stringify({
   transfer: { deep: 25, light: 30, amber: 35 },
   abandon: 4,
 }));
+// Update notice: empty stamp (like a pre-E3 deployment) so the notice stays
+// suppressed in the harness -- the recordPresence mock returns no stamp either.
+html = html.replace('<?!= buildStampJson ?>', JSON.stringify(''));
 
 // Local vendor copies (downloaded by the runner beforehand). Strip SRI (local).
 html = html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/chart\.js[^"]*"[^>]*>/, '<script src="vendor/chart.umd.js">');

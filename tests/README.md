@@ -47,9 +47,12 @@ tests/
     fixtures.js     DQE-row + DO NOT EDIT! roster grid builders
     shim.js         mock Apps Script globals + a `state` handle to drive them
     loadGas.js      loads .gs files into one vm context (shared global scope)
-  unit/                       (the directory is canonical; the
-                               rows below are representative examples, not
-                               an exhaustive index)
+  unit/                       (the directory is canonical; every suite is
+                               named somewhere in this map — ENFORCED by
+                               claude-md-split.test.js, which fails on an
+                               unlisted tests/unit/*.test.js — with full
+                               rows for the representative examples and a
+                               compact roll for the rest)
     util.test.js              Util.gs: formatting, month lists, insights, assertAdmin_
     data-parsing.test.js      Data.gs: rowDateIso_, parseExtensions_, parseHmsDisplay_, getDeptQueueExts_
     cache-key.test.js         Data.gs: hashAgents_ (INV-36)
@@ -61,7 +64,7 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 68 more (this file is the coverage map —
+    ...                       + 70 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
                               trim pass): dal-cutover parity, escalations
@@ -126,7 +129,42 @@ tests/
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a
                               loosening of the shared strict harness; caught
-                              the T-7 panel-clear clipping bug), etc.
+                              the T-7 panel-clear clipping bug),
+                              abandoned-classify (classifyAbandonedCell_,
+                              the read-side coercion guard),
+                              batch2-helpers, logger-format,
+                              call-journey-entitlement (the F-4 gate),
+                              config-editor-c3 (the C3 config editors),
+                              cross-file-pins (the cross-project literal
+                              pins: R20 row-40, JDBC timeout-param absence,
+                              the B-2/S4 DQE-reader tripwire, the S1 INV-06
+                              window cross-pin),
+                              csr-transfer (computeCsrTransferRange_ +
+                              guardForceRebuildLoss_ + the bulk-flow
+                              harness), dept-summary-email,
+                              digest-insights, dqe-silence-watch (episode
+                              streaks + the OPS-1 confirmed-send rule),
+                              direct-call-metrics / direct-call-backfill /
+                              direct-call-report (the direct-extension
+                              family: busy carve-out engine, resumable
+                              upsert, report + R11-M priors + DC-1
+                              fallback siblings),
+                              heatmap-cell-drill (the R16h dow+slot pair
+                              contract), inbound-window-scope (the
+                              INBOUND_WORK_WINDOW_PST sweep + its two
+                              deliberate exemptions),
+                              login-notify (P14 store-after-confirmed-send),
+                              orphan-rename-race (the F-22 re-verify),
+                              orphan-roster-add (the New-hire flow),
+                              overview-dqe-silence, overview-qcd-snapshot
+                              (computeQcdSnapshots_ + the L4 prior-window
+                              read), prop-registry (the two-way Script
+                              Property sweep: unregistered key / dead
+                              registry entry both fail, + the tool-param
+                              self-clear pins), report-usage (the INV-01
+                              telemetry carve-out + usage rollup),
+                              ui-harness-vendor (the committed vendor
+                              bundles' version + F-11 sha256 pins)
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

@@ -286,7 +286,11 @@ When something looks wrong, before assuming a code bug, check:
     last error + consecutive-failure count, cleared on the next
     successful read. The parity gate `compareDqeSources_` reads the
     optional `DQE_PARITY_FROM` / `DQE_PARITY_TO` Script Properties for
-    its range (in-source defaults if unset).
+    its range (in-source defaults if unset). A parity-CLEAN run
+    SELF-CLEARS those two properties (`clearToolParamsAfterCleanRun_`,
+    via the `runDqeParityCheck` wrapper; the execution log says so) --
+    set them again before any later run, or it falls back to the aged
+    in-source default and reports INCONCLUSIVE.
 20. Neon keep-warm (optional; only relevant once `DQE_READ_SOURCE=neon`).
     Toggle from the Alerts modal → **Neon keep-warm** section
     (`NeonKeepWarm.gs`). When enabled it sets `NEON_KEEPWARM_ENABLED=true`
@@ -555,6 +559,8 @@ When something looks wrong, before assuming a code bug, check:
     build if a THIRD blind reader appears. SET `QCD_PARITY_FROM`/`QCD_PARITY_TO` before running the gate --
     the in-source default is a fixed week that ages out, and an empty range is
     now reported as INCONCLUSIVE rather than clean (see #19's gate contract).
+    Like #19, a parity-CLEAN run SELF-CLEARS the two properties -- set them
+    again before any later run.
     **Only flip to `neon` after `runQcdParityCheck` (editor-run
     wrapper for `compareQcdSources_`, QCDReport.gs -- reads the optional
     `QCD_PARITY_FROM`/`QCD_PARITY_TO` Script Properties for its range) reports

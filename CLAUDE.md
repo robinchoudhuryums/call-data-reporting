@@ -97,11 +97,12 @@ bash scripts/check-duplicated-files.sh
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~77 suites pin the invariants, the report
+# Non-zero exit on failure. ~80 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
-# suites in the 2026-08-20 trim pass -- keep it that way).
+# suites in the 2026-08-20 trim pass -- keep it that way. Map completeness
+# is ENFORCED: claude-md-split.test.js fails on an unlisted suite).
 # Two rules that bite here:
 # - HARNESS STRICTNESS (F-5/F-6): the fake sheet ENFORCES getMaxColumns (a
 #   getRange past it THROWS, the REP-10 class -- set `_maxColumns` when a
@@ -1236,6 +1237,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   constant was dead code and was REMOVED (F-30). **Never read a
   constant for membership checks**; always go through
   `getAdminEmails_()`.
+- **Script Properties are REGISTERED — adding one means registering it in
+  `Config.gs::PROP_REGISTRY_` in the same commit.** The dashboard store holds
+  ~90 keys, past the settings page's 50-row display cap, so the Health page's
+  folded "All Script Properties (inventory)" section is the complete view: it
+  classifies the LIVE store against the registry (operator config / engine
+  state / diagnostic tool params) and warn-flags UNRECOGNIZED keys — retired
+  leftovers, manual one-offs, or an operator TYPO of a real key (deliberate:
+  a misspelled `DQE_READ_SOURCE` surfaces instead of silently defaulting).
+  Property VALUES never reach the payload (the store holds
+  `NEON_PASS`/`HMAC_SECRET`). The parity/vetting tools SELF-CLEAR their
+  window params (`DQE_PARITY_*`, `QCD_PARITY_*`, `INBOUND_QCD_PARITY_*`,
+  `OUTBOUND_VETTING_*`) via `clearToolParamsAfterCleanRun_` on a CLEAN
+  verdict only — MISMATCH/INCONCLUSIVE keeps them so the fix-and-re-run loop
+  re-compares the same window. ENFORCED both ways by
+  `tests/unit/prop-registry.test.js`: every code-referenced key (literal,
+  resolvable constant, or composed prefix) must be registered, every registry
+  entry must still be referenced, and the Health payload stays value-free.
 - **Role model + the all-departments manager (`allDepts`).** Four roles
   (`admin`|`manager`|`agent`|`none`; `Auth.gs::resolveUser_` -- `agent`
   has its OWN bullet below). A manager is
@@ -1680,7 +1698,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   signed-in role beats (agents included; role `none` rejected -- the
   reportClientIssue gate class). A new client surface needs no wiring --
   the beat reads `data-page`; harness mocks live in build-harness.js AND
-  build-agent.js. Pinned by system-health.test.js.
+  build-agent.js. Pinned by system-health.test.js. **The beat's return also
+  carries the serving deployment's E3 build stamp**: both clients compare it
+  to the load-time `window.__BUILD_STAMP__` and on mismatch show a one-time
+  dismissible `.update-notice` ("new version -- refresh when convenient") --
+  a redeploy under an open tab surfaces within one beat, never a forced
+  reload. Suppressed when either side is empty, so it detects only
+  deploy.sh-stamped deploys (consecutive bare `clasp push` deploys are
+  indistinguishable -- both ship the placeholder). ENFORCED:
+  html-include-structure.test.js pins the 4-piece wiring (both template
+  injections + both success handlers); system-health.test.js pins the stamp
+  return.
 - **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
   still reads DQE from the `DQE Historical Data` sheet by default; the
   read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script
@@ -2264,7 +2292,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > `DIGEST_RUN_MARKER_*`, `QUEUE_REPORT_LAST_SENT`, `CRB_DIAG_COL`, …). Those are
 > deliberately NOT listed as items: you never set them, the Health page reads
 > them, and clearing one just re-arms its engine. Don't file them as
-> undocumented operator state.
+> undocumented operator state. The COMPLETE classified view of the live store
+> (the settings page caps at 50 rows) is the Health page's folded "All Script
+> Properties (inventory)" section, backed by `Config.gs::PROP_REGISTRY_` —
+> see the registry bullet in Common Gotchas.
 
 The numbered items now live in full in
 [`docs/operator-state.md`](docs/operator-state.md) (F8 split). Cited elsewhere

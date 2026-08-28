@@ -244,12 +244,54 @@
       if (document.visibilityState !== 'visible') return;
       if (!(window.google && google.script && google.script.run)) return;
       google.script.run
-        .withSuccessHandler(function () {})
+        .withSuccessHandler(presenceBeatOk_)
         .withFailureHandler(function () {})
         .recordPresence({
           page: (document.body && document.body.getAttribute('data-page')) || '',
         });
     } catch (e) { /* presence must never throw */ }
+  }
+
+  // Update notice: the heartbeat's return carries the SERVING deployment's
+  // build stamp (RPCs from an open page execute the deployment's current
+  // version), while window.__BUILD_STAMP__ holds the stamp baked in at page
+  // load. A mismatch means a new version was deployed under this open tab --
+  // show a one-time, dismissible "refresh when convenient" notice rather
+  // than forcing anything (an open filter/selection must never be blown away
+  // by an auto-reload). Suppressed when EITHER side is empty (pre-E3
+  // deployment / harness mock) so it can never false-fire; two consecutive
+  // bare-`clasp push` deploys both ship the "unstamped" placeholder and are
+  // indistinguishable -- deploy via scripts/deploy.sh for the notice to work.
+  var updateNoticeShown_ = false;
+  function presenceBeatOk_(res) {
+    try {
+      if (updateNoticeShown_) return;
+      var pageStamp = String(window.__BUILD_STAMP__ || '');
+      var srvStamp = String((res && res.stamp) || '');
+      if (!pageStamp || !srvStamp || pageStamp === srvStamp) return;
+      updateNoticeShown_ = true;
+      showUpdateNotice_();
+    } catch (e) { /* the notice must never break the heartbeat */ }
+  }
+  function showUpdateNotice_() {
+    if (document.getElementById('update-notice')) return;
+    var el = document.createElement('div');
+    el.id = 'update-notice';
+    el.className = 'update-notice';
+    el.setAttribute('role', 'status');
+    var msg = document.createElement('span');
+    msg.textContent = 'A new version of the dashboard is available — refresh this page when convenient to pick it up.';
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'update-notice-close';
+    close.setAttribute('aria-label', 'Dismiss update notice');
+    close.textContent = '✕';
+    close.addEventListener('click', function () {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    });
+    el.appendChild(msg);
+    el.appendChild(close);
+    document.body.appendChild(el);
   }
   setInterval(presenceBeat_, PRESENCE_BEAT_MS_);
   document.addEventListener('visibilitychange', function () {

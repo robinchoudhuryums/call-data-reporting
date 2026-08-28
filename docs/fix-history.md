@@ -711,3 +711,39 @@ docs/invariants.md — this is the what-and-why index.
   same-day re-import left the drill disagreeing with its freshness-tagged
   row; `neonAgentExts:v1` was the last holdout) now live HERE, with the
   rules' enforcement named in place (S3/S8 tests).
+
+## 2026-08-28 — Script Property registry (the >50-cap consolidation ask)
+
+The owner hit the Apps Script settings page's 50-property display cap ("the
+above list shows the first 50 and is read-only") and asked whether the store
+could be consolidated. The audit found ~90 keys, all bounded (the escalation
+snapshot prunes its stale chunks; the digest markers are one per cadence) —
+so the fix was legibility + self-auditing, not shrinkage:
+
+- **`Config.gs::PROP_REGISTRY_`** — every dashboard-project key classified
+  operator / engine / tool, with a prefix map for the dynamic families
+  (`ESC_SNAPSHOT_*`, `DIGEST_RUN_MARKER_*`, `DIGEST_LAST_RESULT_*`) and a
+  secret set (`NEON_PASS`, `HMAC_SECRET`).
+- **Health inventory** — a folded "All Script Properties" section renders the
+  live store classified against the registry; unrecognized keys get warn rows
+  (the janitor signal — and an operator typo of a real key now surfaces).
+  Values are never shipped; system-health.test.js pins the payload value-free
+  with a planted secret sentinel.
+- **Self-cleaning tool params** — the four parity/vetting tools clear their
+  own window props via `clearToolParamsAfterCleanRun_` (Util.gs) on their
+  CLEAN verdict only (DQE/QCD: `clean:true`, in the WRAPPERS so a
+  hypothetical scheduled `compare*Sources_` caller keeps its range; inbound:
+  zero unattributed queues; outbound: the PASS verdict). Non-clean outcomes
+  keep the params — the documented fix-and-re-run loops re-compare the SAME
+  window. Call sites typeof-guarded (the partial-push discipline).
+- **Deliberately NOT done:** merging operator config keys into JSON blobs
+  (concurrent-writer hazard — the Alerts modal writes `ANSWER_TARGETS` while
+  an operator edits; breaks Operator State citations), and the
+  `*_LAST`+`*_LAST_RESULT` pair-merge (~11 engines + Health classifiers +
+  a dozen suites touched for a cosmetic gain — skipped by owner decision).
+
+Enforcement: `tests/unit/prop-registry.test.js` sweeps every
+`getProperty`/`setProperty`/`deleteProperty` literal, resolvable constant,
+and composed `'PREFIX' +` key in the dashboard .gs files — unregistered key
+fails CI (forward), dead registry entry fails CI (reverse). The C2 rule made
+mechanical for the property store, the cache-version-sync S2 pattern.

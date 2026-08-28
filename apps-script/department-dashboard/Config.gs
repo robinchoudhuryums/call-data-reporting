@@ -493,3 +493,108 @@ const DEPT_ANSWER_TARGET_SEED = Object.freeze({
 // (`deep=25, light=30, amber=35`); read via getTransferTiers_. LOWER is
 // better -- a transfer is a hand-off the caller had to sit through.
 const TRANSFER_TIERS_DEFAULT = Object.freeze({ deep: 25, light: 30, amber: 35 });
+
+// ── Script Property registry (the store's table of contents) ────────────────
+//
+// The dashboard project stores well past the settings page's 50-property
+// display cap, so "what is this key?" and "is this key still used?" were
+// unanswerable from the UI. This registry is the single answer: every Script
+// Property the DASHBOARD code reads or writes, keyed to one of three groups.
+// The Health page's "All Script Properties (inventory)" section classifies
+// the LIVE store against it — a stored key that resolves to no group renders
+// as an UNRECOGNIZED warn row (a retired-feature leftover, a manual one-off,
+// or an operator typo like a misspelled DQE_READ_SOURCE — the typo surfacing
+// is deliberate).
+//
+// ENFORCED both ways by tests/unit/prop-registry.test.js: every property-key
+// literal (and resolvable constant / composed prefix) in the dashboard .gs
+// files must be registered, and every registry entry must still be referenced
+// by code — so the registry can neither miss a new key nor keep a dead one.
+// ADDING A PROPERTY = registering it here in the same commit (the C2 rule).
+//
+// Groups:
+//   operator — config a human sets (identity, secrets, switches, tunables)
+//   engine   — outcome/state the code writes itself (never hand-set; see the
+//              Operator State scope note — clearing one just re-arms its engine)
+//   tool     — editor-run diagnostic inputs (parity/vetting windows); the
+//              tools self-clear these after a CLEAN run
+//
+// SECRET keys must never have their VALUES rendered on any surface — the
+// inventory shows key names only, and prop-registry.test.js pins that the
+// Health payload never contains a secret's value.
+var PROP_REGISTRY_ = Object.freeze({
+  secret: Object.freeze({ NEON_PASS: true, HMAC_SECRET: true }),
+  exact: Object.freeze({
+    // operator — identity + secrets
+    SPREADSHEET_ID: 'operator', ADMIN_EMAILS: 'operator', DASHBOARD_URL: 'operator',
+    NEON_HOST: 'operator', NEON_DB: 'operator', NEON_USER: 'operator', NEON_PASS: 'operator',
+    HMAC_SECRET: 'operator',
+    // operator — switches + config
+    DQE_READ_SOURCE: 'operator', QCD_READ_SOURCE: 'operator', CONFIG_SOURCE: 'operator',
+    QUEUE_SPLIT_SCOPE: 'operator', AGENT_ROLE_ENABLED: 'operator',
+    LOGIN_NOTIFY_ENABLED: 'operator', UI_FLAGS: 'operator',
+    COMPANY_HOLIDAYS: 'operator', EMAIL_ALIASES: 'operator', DIAL_IN_LABELS: 'operator',
+    ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
+    NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
+    NEON_EGRESS_BUDGET_MB: 'operator',
+    // operator — engine flags + tunables
+    COACHING_DELIVERY_ENABLED: 'operator',
+    DQE_SILENCE_WATCH_ENABLED: 'operator', DQE_SILENCE_HOUR: 'operator',
+    DQE_SILENCE_MIN_CALLS: 'operator', DQE_SILENCE_MIN_DAYS: 'operator',
+    INGEST_WATCHDOG_ENABLED: 'operator', INGEST_WATCHDOG_HOUR: 'operator',
+    INGEST_WATCHDOG_STALE_HOURS: 'operator',
+    PIPELINE_WATCH_ENABLED: 'operator', PIPELINE_WATCH_SCAN_ROWS: 'operator',
+    NEON_KEEPWARM_ENABLED: 'operator', NEON_KEEPWARM_START_HOUR: 'operator',
+    NEON_KEEPWARM_END_HOUR: 'operator',
+    NEON_BACKUP_HOUR: 'operator', NEON_BACKUP_KEEP: 'operator',
+    NEON_COVERAGE_DAYS: 'operator', CACHE_WARM_HOUR: 'operator',
+    QUEUE_REPORT_ENABLED: 'operator',
+    // engine — outcome/state the code writes itself
+    CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
+    COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
+    COACHING_NOTIFY_PENDING: 'engine',
+    DQE_SILENCE_WATCH_LAST: 'engine', DQE_SILENCE_WATCH_LAST_RESULT: 'engine',
+    DQE_SILENCE_STREAKS: 'engine',
+    ESC_REVIEW_PING_WATERMARK: 'engine',
+    INGEST_WATCHDOG_LAST: 'engine', INGEST_WATCHDOG_LAST_RESULT: 'engine',
+    INGEST_WATCHDOG_ALERTED: 'engine',
+    LOGIN_NOTIFY_SEEN: 'engine',
+    NEON_BACKUP_LAST: 'engine', NEON_BACKUP_LAST_RESULT: 'engine',
+    NEON_BACKUP_FOLDER_ID: 'engine',
+    NEON_COVERAGE_LAST: 'engine', NEON_COVERAGE_LAST_RESULT: 'engine',
+    NEON_EGRESS_MTD: 'engine', NEON_READ_LAST_ERROR: 'engine',
+    NEON_KEEPWARM_LAST: 'engine', NEON_KEEPWARM_LAST_RESULT: 'engine',
+    PIPELINE_WATCH_LAST: 'engine', PIPELINE_WATCH_LAST_RESULT: 'engine',
+    PIPELINE_WATCH_LAST_TS: 'engine',
+    PIPELINE_WATCH_BACKUP_MARK: 'engine', PIPELINE_WATCH_READBACK_MARK: 'engine',
+    QUEUE_REPORT_LAST_SENT: 'engine', QUEUE_REPORT_LAST_MISSED: 'engine',
+    QUEUE_REPORT_LAST_RESULT: 'engine',
+    SMOKE_LAST: 'engine', SMOKE_LAST_RESULT: 'engine',
+    // tool — editor-run diagnostic inputs (self-cleared after a clean run)
+    DQE_PARITY_FROM: 'tool', DQE_PARITY_TO: 'tool',
+    QCD_PARITY_FROM: 'tool', QCD_PARITY_TO: 'tool',
+    INBOUND_QCD_PARITY_FROM: 'tool', INBOUND_QCD_PARITY_TO: 'tool',
+    INBOUND_QCD_PARITY_DEPT: 'tool',
+    OUTBOUND_VETTING_FROM: 'tool', OUTBOUND_VETTING_TO: 'tool',
+    OUTBOUND_VETTING_DEPT: 'tool', OUTBOUND_VETTING_SAMPLE: 'tool',
+    OV_PROBE_FROM: 'tool', OV_PROBE_TO: 'tool',
+    QUEUE_SPLIT_AUDIT_DATE: 'tool',
+  }),
+  // Dynamic key families (composed at runtime): matched by prefix, after the
+  // exact map. ESC_SNAPSHOT_ covers the numbered chunks AND _META.
+  prefix: Object.freeze({
+    ESC_SNAPSHOT_: 'engine',
+    DIGEST_RUN_MARKER_: 'engine',
+    DIGEST_LAST_RESULT_: 'engine',
+  }),
+});
+
+/** Registry lookup: 'operator' | 'engine' | 'tool', or null = unrecognized. */
+function propRegistryGroup_(key) {
+  key = String(key || '');
+  if (PROP_REGISTRY_.exact[key]) return PROP_REGISTRY_.exact[key];
+  for (var p in PROP_REGISTRY_.prefix) {
+    if (key.lastIndexOf(p, 0) === 0) return PROP_REGISTRY_.prefix[p];
+  }
+  return null;
+}

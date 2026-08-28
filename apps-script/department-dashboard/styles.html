@@ -6587,6 +6587,43 @@
   .toast-success { background: var(--good); color: #fff; }
   .toast-error   { background: var(--warn); color: #fff; }
 
+  /* -------- Update notice ("new version — refresh at your convenience").
+     Persistent + dismissible, unlike the auto-expiring .toast, so it sits in
+     its own bottom-LEFT corner (transient toasts are bottom-center, the Help
+     FAB bottom-right). Below the toasts (10100) and dsConfirm; above modals.
+     Shared by the manager client (script-1-core) and the agent app. */
+  .update-notice {
+    position: fixed;
+    left: 18px;
+    bottom: 18px;
+    z-index: 10090;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(92vw, 440px);
+    padding: 10px 12px 10px 14px;
+    background: var(--paper);
+    color: var(--ink);
+    border: 1px solid var(--accent);
+    border-left-width: 3px;
+    border-radius: var(--r);
+    font-family: var(--ui);
+    font-size: 13px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  }
+  .update-notice-close {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    padding: 4px 6px;
+    cursor: pointer;
+    border-radius: var(--r);
+  }
+  .update-notice-close:hover { color: var(--ink); background: var(--accent-soft); }
+
   /* -------- App-styled confirm dialog (dsConfirm_) --------------------
      Replaces the browser-native window.confirm (which renders in the
      Sheets/browser chrome style). Layered above every modal (help = 200)

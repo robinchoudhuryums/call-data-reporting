@@ -3250,6 +3250,10 @@
     window.__UI_FLAGS__ = <?!= uiFlagsJson ?>;
     window.__ANSWER_TARGETS__ = <?!= answerTargetsJson ?>;
     window.__STANDARDS__ = <?!= standardsJson ?>;
+    // Build stamp of the deployment that SERVED this page (E3 stamp, '' when
+    // absent). The presence heartbeat compares recordPresence's returned
+    // stamp against this to detect a redeploy and offer a refresh notice.
+    window.__BUILD_STAMP__ = <?!= buildStampJson ?>;
   </script>
   <?!= include_('script') ?>
 </body>

@@ -1389,6 +1389,12 @@ function compareQcdSources_() {
  */
 function runQcdParityCheck() {
   assertAdmin_();   // editor-run wrapper, but the bare name is RPC-reachable
-  return compareQcdSources_();
+  var v = compareQcdSources_();
+  // Self-cleaning tool params (see runDqeParityCheck): CLEAN clears the
+  // window; MISMATCH/INCONCLUSIVE keeps it for the fix-and-re-run loop.
+  if (v && v.clean && typeof clearToolParamsAfterCleanRun_ === 'function') {
+    clearToolParamsAfterCleanRun_(['QCD_PARITY_FROM', 'QCD_PARITY_TO'], 'runQcdParityCheck');
+  }
+  return v;
 }
 
