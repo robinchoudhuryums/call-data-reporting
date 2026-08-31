@@ -534,6 +534,7 @@ var PROP_REGISTRY_ = Object.freeze({
     QUEUE_SPLIT_SCOPE: 'operator', AGENT_ROLE_ENABLED: 'operator',
     LOGIN_NOTIFY_ENABLED: 'operator', UI_FLAGS: 'operator',
     COMPANY_HOLIDAYS: 'operator', EMAIL_ALIASES: 'operator', DIAL_IN_LABELS: 'operator',
+    AGENT_EMAIL_DOMAINS: 'operator',
     ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
     NEON_EGRESS_BUDGET_MB: 'operator',

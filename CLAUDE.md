@@ -1077,6 +1077,39 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   R11-B11 impact score); single-dept view keeps the flat table; the CSV
   stays flat with its Dept column. See
   `docs/direct-extension-metrics-design.md`.
+- **Date-range presets NEVER include today, and the rule lives in ONE place.**
+  `datePresetRange_` (script-1-core) is the single resolver behind every
+  "Quick select" dropdown (IR, Insights, Inbound, Direct, Outbound, the
+  all-dept Queue report). Every OPEN-ENDED preset (`yesterday` / `last7` /
+  `thisWeek` / `thisMonth` / `last30` / `last3Months` / `last12Months`) ends
+  YESTERDAY: today's ingest has not landed while a manager is looking (the
+  pipeline builds the PREVIOUS day), so including today tacks an empty day
+  onto the window -- dragging every rate and average toward zero and making
+  the last chart point dive. Fixed windows (`lastWeek`/`lastMonth`/`lastYear`)
+  already excluded it. The ONE exception is the Queue report's explicit
+  `today`, which the user picked by name. Degenerate edges CLAMP rather than
+  invert (a "This month" on the 1st, "This week" on a Monday -> that single
+  day), since the server rejects from > to. The rule was hand-mirrored in SIX
+  resolvers and had already drifted (`last30` fixed everywhere, the rest not);
+  ENFORCED by `tests/unit/date-presets.test.js`, whose tripwire fails if any
+  fragment computes preset dates locally again.
+- **Emailing an Individual Report TO the agent it is about (owner ruling
+  2026-09).** The IR Export menu's "Email to agent…" sends the rendered
+  report to its subject instead of the manager mailing it to themselves and
+  forwarding. Enabled only when exactly ONE agent is on screen. **The client
+  supplies an agent NAME, never a trusted destination** -- every gate is
+  re-derived server-side in `irResolveAgentRecipient_`: (1) `assertDeptAccess_`
+  on the agent's dept PLUS exact-INV-04 roster membership, so a crafted name
+  reaches nobody; (2) the agent's REGISTERED `Access Control` address wins
+  whenever one exists (a differing typed address is refused, not ignored) --
+  `irRegisteredAgentEmail_`, also surfaced as `meta.agentEmail` so the client
+  can skip asking; (3) a typed address (only for an agent with no row) must be
+  on the SENDER's own domain or one listed in the optional
+  `AGENT_EMAIL_DOMAINS` Script Property. The client's job is CONSENT -- a
+  `dsConfirm_` naming agent and recipient before the send, which is what
+  catches a typo that the domain gate cannot. Sends are Logger-audited plus a
+  `individual:to-agent` usage row (the INV-01 append-only carve-out); the
+  agent's copy names the sender. Pinned by `tests/unit/ir-send-to-agent.test.js`.
 - **Client / presentation-layer conventions live in
   [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) — READ IT
   before touching `script.html`, `styles.html`, or `dashboard.html`**, and
@@ -2403,6 +2436,7 @@ items for anything it flags or doesn't cover.)
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install/arm from Admin ▾ → Coaching, first armed run emails one larger NEW-flag batch
 49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
 50. Outbound Calls tab export trigger -- the keystone that moved the Outbound report, the journey drill's outbound arm and Caller Lookup's per-call outbound section OUT of Neon-only (CDR Tools menu); seed it while Neon is reachable
+51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use when emailing an Individual Report to its subject; prefer adding the agent's Access Control row instead (no typing, no mis-delivery risk)
 
 ## Cycle Workflow Config
 

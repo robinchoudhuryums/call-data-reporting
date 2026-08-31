@@ -344,6 +344,7 @@
         irSetExportMenuOpen_(false);
         if (action === 'copy')  irCopyImage();
         else if (action === 'email') irEmailImage();
+        else if (action === 'email-agent') irEmailToAgent_();
         else if (action === 'print') irPrintReport_();
       });
       document.addEventListener('click', function (e) {
@@ -925,30 +926,12 @@
     const v = $('ir-preset').value;
     irSavePrefs_();
     if (v === 'custom') return;
-    const today = new Date();
-    let s, e;
-    e = new Date(today);
-    if (v === 'thisMonth')       { s = new Date(today.getFullYear(), today.getMonth(), 1); }
-    else if (v === 'lastMonth')  { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-                                    e = new Date(today.getFullYear(), today.getMonth(), 0); }
-    // "Last 30 days" = a 30-day window ENDING YESTERDAY, matching the main
-    // page's preset chip (daysAgo_(30)..daysAgo_(1)) and the Overview
-    // launcher / CacheWarm window -- today's ingest usually hasn't landed,
-    // and the old today-30..today form was 31 days ending today.
-    else if (v === 'last30')     { e = new Date(today); e.setDate(today.getDate() - 1);
-                                    s = new Date(today); s.setDate(today.getDate() - 30); }
-    else if (v === 'last3Months'){ s = new Date(today); s.setMonth(today.getMonth() - 3); }
-    else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
-    else if (v === 'lastYear')   { s = new Date(today.getFullYear() - 1, 0, 1);
-                                    e = new Date(today.getFullYear() - 1, 11, 31); }
-    if (!s) return;
-    const isoOf = function (d) {
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return d.getFullYear() + '-' + m + '-' + day;
-    };
-    $('ir-from').value = isoOf(s);
-    $('ir-to').value   = isoOf(e);
+    // Shared resolver (script-1-core): every open-ended preset ends
+    // YESTERDAY, since today's ingest has not landed yet.
+    const r = datePresetRange_(v);
+    if (!r) return;
+    $('ir-from').value = r.from;
+    $('ir-to').value   = r.to;
     irSavePrefs_();
   }
   function resetIrPreset() {
@@ -1158,6 +1141,7 @@
 
   function irRenderReport(data) {
     irLastData = data;
+    irSyncEmailAgentItem_();   // single-agent gate for "Email to agent…"
     coverageNoteUpsert_('individual-results', 'ir', ($('ir-from') && $('ir-from').value) || null, 'dqe');   // R12-26
     $('ir-results-title').textContent = data.mode === 'comparison'
       ? 'Peer Comparison Report' : 'Individual Performance Report';
@@ -2429,11 +2413,16 @@
     });
   }
 
-  function irEmailImage() {
+  function irEmailImage(extra) {
     const restore = irExportBtnFeedback_('Capturing…', 0);
     irBuildCanvas(function (canvas) {
       const dataUrl = canvas.toDataURL('image/png');
       irExportBtnFeedback_('Sending…', 0);
+      const req = {
+        imageBase64: dataUrl,
+        dateLabel: irLastData && irLastData.dateLabel ? irLastData.dateLabel : '',
+      };
+      if (extra) Object.keys(extra).forEach(function (k) { req[k] = extra[k]; });
       google.script.run
         .withSuccessHandler(function (res) {
           restore();
@@ -2445,11 +2434,63 @@
           showToast('Email failed', 'error');
           restore();
         })
-        .sendIndividualReportEmail({
-          imageBase64: dataUrl,
-          dateLabel: irLastData && irLastData.dateLabel ? irLastData.dateLabel : '',
-        });
+        .sendIndividualReportEmail(req);
     });
+  }
+
+  /**
+   * "Email to agent…" -- sends the rendered report to the agent it is about.
+   *
+   * The client's job is CONSENT, not authorization: it names the agent and
+   * the address in a confirm dialog so a mis-typed recipient is caught by a
+   * human before the send. Every actual gate (dept entitlement, roster
+   * membership, registered-address preference, domain allowlist) is
+   * re-derived server-side in irResolveAgentRecipient_ -- what is typed here
+   * is a REQUEST, never a destination the server trusts.
+   *
+   * Requires exactly one agent on screen: a report showing three agents has
+   * no single subject to send it to.
+   */
+  function irEmailToAgent_() {
+    const agents = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
+    if (agents.length !== 1) {
+      showToast('Select a single agent to email their report.', 'error');
+      return;
+    }
+    const agentName = String(agents[0]);
+    const dept = (irLastData && irLastData.meta && irLastData.meta.department)
+      || getRequestedDept();
+    const known = irLastData && irLastData.meta ? irLastData.meta.agentEmail : '';
+    // With a registered address we only confirm; without one we ask for it.
+    const typed = known ? '' : (window.prompt(
+      'Work email for ' + agentName + ':\n\n'
+      + '(No address is on file for them. It must be a company address, and '
+      + 'the report will be sent to exactly what you enter.)', '') || '').trim();
+    if (!known && !typed) return;   // cancelled
+    const dest = known || typed;
+    dsConfirm_({
+      title: 'Send this report to ' + agentName + '?',
+      messageHtml: 'The report on screen will be emailed to '
+        + '<strong>' + escapeHtml(dest) + '</strong>'
+        + (known ? ' (the address on file for them)' : '')
+        + '.<br><br>It shows their own figures and names you as the sender.',
+      confirmLabel: 'Send report',
+    }).then(function (ok) {
+      if (!ok) return;
+      irEmailImage({ sendToAgent: true, department: dept,
+                     agentName: agentName, toEmail: typed });
+    });
+  }
+
+  /** Enables "Email to agent…" only when exactly one agent is rendered. */
+  function irSyncEmailAgentItem_() {
+    const item = $('ir-email-agent-item');
+    if (!item) return;
+    const agents = (irLastData && irLastData.meta && irLastData.meta.agents) || [];
+    const one = agents.length === 1;
+    item.disabled = !one;
+    item.title = one ? ('Email this report to ' + agents[0])
+                     : 'Select a single agent to enable this';
   }
 
   // -- Shared delta/duration helpers (ex-Compare Ranges) ----------------

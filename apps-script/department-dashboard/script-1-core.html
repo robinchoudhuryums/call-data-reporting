@@ -1044,6 +1044,66 @@
     });
   }
 
+  /**
+   * SHARED date-range preset resolver -- the single source of truth for what
+   * every "Quick select" dropdown means (IR, Insights, Inbound, Direct,
+   * Outbound, the all-dept Queue report).
+   *
+   * WHY IT IS SHARED: this rule was hand-mirrored in SIX places, and they had
+   * already drifted -- `last30` was fixed to end YESTERDAY in all six, but
+   * `thisMonth` / `thisWeek` / `last3Months` / `last12Months` / `last7` still
+   * ended on TODAY in every copy. Today's ingest has not landed when a
+   * manager is looking (the pipeline builds the PREVIOUS day), so an
+   * open-ended preset that includes today always tacks an empty day onto the
+   * window -- which drags every rate and average toward zero and makes the
+   * last point of every chart dive. Every open-ended preset therefore ends
+   * YESTERDAY.
+   *
+   * The ONE exception is the explicit 'today' option on the Queue report:
+   * the user picked that single day deliberately, and a preset named "Today"
+   * that returned yesterday would be a lie.
+   *
+   * Fixed historical windows (lastWeek / lastMonth / lastYear) already
+   * exclude today by construction and are unchanged.
+   *
+   * @param {string} v      preset key ('custom' / unknown -> null)
+   * @param {Date=}  nowArg injectable clock (tests + callers pass none)
+   * @return {{from:string,to:string}|null} inclusive ISO range
+   */
+  function datePresetRange_(v, nowArg) {
+    const today = nowArg ? new Date(nowArg) : new Date();
+    const dayOf = function (d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
+    const shift = function (d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    const t0 = dayOf(today);
+    const yest = shift(t0, -1);
+    let s = null, e = yest;   // default: open-ended presets END YESTERDAY
+    if (v === 'today')            { s = t0; e = t0; }              // explicit single day
+    else if (v === 'yesterday')   { s = yest; }
+    else if (v === 'last7')       { s = shift(t0, -7); }
+    else if (v === 'thisWeek')    { s = shift(t0, -((today.getDay() + 6) % 7)); }
+    else if (v === 'lastWeek')    { e = shift(t0, -((today.getDay() + 6) % 7) - 1);
+                                    s = shift(e, -6); }
+    else if (v === 'thisMonth')   { s = new Date(t0.getFullYear(), t0.getMonth(), 1); }
+    else if (v === 'lastMonth')   { s = new Date(t0.getFullYear(), t0.getMonth() - 1, 1);
+                                    e = new Date(t0.getFullYear(), t0.getMonth(), 0); }
+    else if (v === 'last30')      { s = shift(t0, -30); }
+    else if (v === 'last3Months') { s = new Date(t0); s.setMonth(t0.getMonth() - 3); }
+    else if (v === 'last12Months'){ s = new Date(t0); s.setFullYear(t0.getFullYear() - 1); }
+    else if (v === 'lastYear')    { s = new Date(t0.getFullYear() - 1, 0, 1);
+                                    e = new Date(t0.getFullYear() - 1, 11, 31); }
+    if (!s) return null;   // 'custom' and anything unrecognized
+    // Degenerate edge: "This month" on the 1st (or "This week" on a Monday)
+    // would otherwise invert to start > end, which the server rejects. Clamp
+    // to the single day the label honestly names -- it is the only day the
+    // period contains, even though it has no data yet.
+    if (e < s) e = new Date(s);
+    const iso = function (d) {
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+           + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    return { from: iso(s), to: iso(e) };
+  }
+
   function showToast(msg, kind, durationMs) {
     var container = $('toast-container');
     if (!container) return;

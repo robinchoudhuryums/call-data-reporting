@@ -1338,3 +1338,21 @@ When something looks wrong, before assuming a code bug, check:
     manager's reach during an outage is exactly what it is on the live path —
     never widened. Pinned by `tests/unit/outbound-fallback.test.js`,
     `tests/unit/journey-fallback.test.js` and `tests/unit/caller-lookup.test.js`.
+
+51. **`AGENT_EMAIL_DOMAINS` (optional) — widens where an Individual Report may
+    be emailed.** The IR Export menu's "Email to agent…" resolves the
+    recipient server-side: an agent's registered `Access Control` address is
+    always preferred, and a TYPED address (only possible for an agent with no
+    row) must be on the SENDER's own email domain. Set this property to a
+    comma/space-separated list of extra domains (`@other.com, third.com` —
+    the `@` is optional) if staff work under more than one company domain.
+    Unset = sender's domain only, which is correct for a single-domain
+    Workspace. It never widens WHO may send (that is `assertDeptAccess_` plus
+    roster membership) — only which addresses a typed one may use.
+    **The recorded-address path is the one to prefer:** adding an
+    `Access Control` row (Role=`agent`, Agent Name = the exact roster
+    spelling) for an agent removes the typing step entirely and with it the
+    only mis-delivery risk the domain gate cannot catch. Rows are readable by
+    this feature whether or not `AGENT_ROLE_ENABLED` (#46) is on — a row is a
+    recorded address, not a grant of the agent app. Pinned by
+    `tests/unit/ir-send-to-agent.test.js`.

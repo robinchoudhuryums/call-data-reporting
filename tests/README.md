@@ -171,7 +171,16 @@ tests/
                               through the shared outboundShapeReport_, the
                               callback rule's sheet-side mirror, the
                               never-cache rule and all three failure
-                              branches)
+                              branches),
+                              date-presets (the SHARED preset resolver: no
+                              open-ended preset includes today, the
+                              degenerate month/week-start clamps, and a
+                              tripwire that fails if a resolver computes its
+                              own dates again),
+                              ir-send-to-agent (the three server-side gates
+                              on emailing an Individual Report to its
+                              subject: dept+roster, registered-address
+                              preference, domain allowlist)
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

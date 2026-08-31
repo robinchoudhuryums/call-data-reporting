@@ -229,30 +229,13 @@
   function qcdAllDeptApplyPreset_() {
     const v = $('qcd-alldept-preset').value;
     if (v === 'custom') return;
-    const now = new Date();
-    let s, e;
-    if (v === 'today') {
-      s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      e = new Date(s);
-    } else if (v === 'yesterday') {
-      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-      e = new Date(s);
-    } else if (v === 'thisMonth') {
-      s = new Date(now.getFullYear(), now.getMonth(), 1);
-      e = now;
-    } else if (v === 'lastMonth') {
-      s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      e = new Date(now.getFullYear(), now.getMonth(), 0);
-    } else if (v === 'last30') {
-      // "Last 30 days" = 30 days ending yesterday (see applyIrPreset) --
-      // also matches this report's yesterday-anchored default date.
-      e = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
-    } else {
-      return;
-    }
-    $('qcd-alldept-from').value = qcdAllDeptIsoOf_(s);
-    $('qcd-alldept-to').value   = qcdAllDeptIsoOf_(e);
+    // Shared resolver (script-1-core): open-ended presets end YESTERDAY.
+    // 'today' is the ONE preset that still means today -- the user picked
+    // that single day deliberately here.
+    const r = datePresetRange_(v);
+    if (!r) return;
+    $('qcd-alldept-from').value = r.from;
+    $('qcd-alldept-to').value   = r.to;
   }
 
   function runQcdAllDept_() {

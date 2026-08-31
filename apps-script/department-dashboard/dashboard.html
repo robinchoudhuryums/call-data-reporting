@@ -1695,7 +1695,13 @@
               </button>
               <div class="ir-export-menu" id="ir-export-menu" role="menu" style="display:none;">
                 <button type="button" role="menuitem" data-action="copy">Copy image</button>
-                <button type="button" role="menuitem" data-action="email">Email image</button>
+                <button type="button" role="menuitem" data-action="email">Email image to me</button>
+                <!-- Owner ruling 2026-09: send an agent their OWN report instead
+                     of mailing it to yourself and forwarding. Enabled only when
+                     exactly ONE agent is on screen (irSyncEmailAgentItem_); the
+                     recipient is resolved + authorized SERVER-side. -->
+                <button type="button" role="menuitem" data-action="email-agent"
+                        id="ir-email-agent-item">Email to agent…</button>
                 <button type="button" role="menuitem" data-action="print">Print</button>
               </div>
             </div>
