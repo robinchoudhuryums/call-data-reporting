@@ -1106,8 +1106,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   can skip asking; (3) a typed address (only for an agent with no row) must be
   on the SENDER's own domain or one listed in the optional
   `AGENT_EMAIL_DOMAINS` Script Property. The client's job is CONSENT -- a
-  `dsConfirm_` naming agent and recipient before the send, which is what
-  catches a typo that the domain gate cannot. Sends are Logger-audited plus a
+  `dsConfirm_` naming agent and recipient before the send (or, for an agent
+  with no row, a single `dsPrompt_` that collects AND confirms with inline
+  validation), which is what catches a typo the domain gate cannot. Sends are Logger-audited plus a
   `individual:to-agent` usage row (the INV-01 append-only carve-out); the
   agent's copy names the sender. Pinned by `tests/unit/ir-send-to-agent.test.js`.
 - **Client / presentation-layer conventions live in
@@ -1181,6 +1182,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the remaining legacy `window.confirm` callsites can adopt it incrementally.
   New confirmation
   UI should use `dsConfirm_` rather than adding another `window.confirm`.
+  **`dsPrompt_` is its sibling for dialogs that need a VALUE** (same shell,
+  same focus-return + Enter-follows-focus + Tab-trap rules, resolves the
+  trimmed string or null): it takes a `validate(v)` callback that runs on
+  submit and clears as the user types, so a bad value is corrected IN PLACE
+  -- the thing `window.prompt` structurally cannot do, since it discards what
+  was typed and leaves the caller to reject it afterwards with a toast.
+  Native `prompt()` is now ENFORCED out of the client
+  (`html-include-structure.test.js`); the ~12 legacy `window.confirm`
+  callsites remain the documented incremental backlog, which is why that pin
+  covers the prompt family only.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare

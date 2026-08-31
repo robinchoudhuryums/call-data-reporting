@@ -2461,25 +2461,44 @@
     const dept = (irLastData && irLastData.meta && irLastData.meta.department)
       || getRequestedDept();
     const known = irLastData && irLastData.meta ? irLastData.meta.agentEmail : '';
-    // With a registered address we only confirm; without one we ask for it.
-    const typed = known ? '' : (window.prompt(
-      'Work email for ' + agentName + ':\n\n'
-      + '(No address is on file for them. It must be a company address, and '
-      + 'the report will be sent to exactly what you enter.)', '') || '').trim();
-    if (!known && !typed) return;   // cancelled
-    const dest = known || typed;
-    dsConfirm_({
-      title: 'Send this report to ' + agentName + '?',
-      messageHtml: 'The report on screen will be emailed to '
-        + '<strong>' + escapeHtml(dest) + '</strong>'
-        + (known ? ' (the address on file for them)' : '')
-        + '.<br><br>It shows their own figures and names you as the sender.',
-      confirmLabel: 'Send report',
-    }).then(function (ok) {
-      if (!ok) return;
+    const send = function (typed) {
       irEmailImage({ sendToAgent: true, department: dept,
-                     agentName: agentName, toEmail: typed });
-    });
+                     agentName: agentName, toEmail: typed || '' });
+    };
+    const subtitle = 'It shows their own figures and names you as the sender.';
+
+    // WITH a registered address there is nothing to type -- just consent.
+    if (known) {
+      dsConfirm_({
+        title: 'Send this report to ' + agentName + '?',
+        messageHtml: 'The report on screen will be emailed to '
+          + '<strong>' + escapeHtml(known) + '</strong> (the address on file '
+          + 'for them).<br><br>' + subtitle,
+        confirmLabel: 'Send report',
+      }).then(function (ok) { if (ok) send(''); });
+      return;
+    }
+
+    // WITHOUT one, collect + confirm in ONE themed dialog. dsPrompt_ validates
+    // inline, so a malformed address is corrected in place instead of being
+    // bounced back by a toast after the value is gone (the window.prompt
+    // shape this replaced). The dialog states the destination rule up front;
+    // the server still re-resolves and re-authorizes whatever is typed.
+    dsPrompt_({
+      title: 'Send this report to ' + agentName + '?',
+      messageHtml: 'No work email is on file for <strong>'
+        + escapeHtml(agentName) + '</strong>. The report goes to exactly the '
+        + 'address you enter, so check it carefully.<br><br>' + subtitle,
+      label: 'Work email',
+      inputType: 'email',
+      placeholder: 'name@company.com',
+      confirmLabel: 'Send report',
+      validate: function (v) {
+        if (!v) return 'Enter their work email address.';
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return 'That does not look like an email address.';
+        return '';
+      },
+    }).then(function (typed) { if (typed) send(typed); });
   }
 
   /** Enables "Email to agent…" only when exactly one agent is rendered. */

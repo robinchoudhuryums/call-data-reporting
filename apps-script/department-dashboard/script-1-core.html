@@ -1184,6 +1184,99 @@
   }
 
   /**
+   * App-styled PROMPT dialog -- dsConfirm_'s sibling for the cases that need
+   * a value, not just a yes/no. Replaces window.prompt, which renders in the
+   * browser/Sheets chrome style (the same incongruence dsConfirm_ exists to
+   * fix) and, worse, cannot VALIDATE: a native prompt takes whatever is typed
+   * and leaves the caller to reject it afterwards with a toast, by which
+   * point the user has lost what they typed.
+   *
+   * Resolves the trimmed string, or null on Cancel / Escape / backdrop.
+   *
+   * opts: { title, message | messageHtml, label, placeholder, value,
+   *         inputType, confirmLabel, cancelLabel, tone,
+   *         validate(value) -> error string ('' / falsy = accept) }
+   * `validate` runs on submit AND clears as the user types, so the dialog
+   * stays open with the value intact until it is right -- the whole reason
+   * this exists rather than a prompt() plus a toast.
+   */
+  function dsPrompt_(opts) {
+    return new Promise(function (resolve) {
+      var o = opts || {};
+      var toneCls = o.tone === 'danger' ? ' ds-confirm--danger' : '';
+      var overlay = document.createElement('div');
+      overlay.className = 'ds-confirm-overlay';
+      overlay.innerHTML =
+          '<div class="ds-confirm' + toneCls + '" role="dialog" aria-modal="true">'
+        +   '<div class="ds-confirm-title" id="ds-prompt-title">' + escapeHtml(o.title || 'Enter a value') + '</div>'
+        +   '<div class="ds-confirm-body">' + (o.messageHtml || escapeHtml(o.message || '')) + '</div>'
+        +   '<label class="ds-prompt-label" for="ds-prompt-input">' + escapeHtml(o.label || '') + '</label>'
+        +   '<input type="' + escapeHtml(o.inputType || 'text') + '" id="ds-prompt-input" '
+        +     'class="ds-prompt-input" autocomplete="off" '
+        +     'placeholder="' + escapeHtml(o.placeholder || '') + '" '
+        +     'value="' + escapeHtml(o.value || '') + '">'
+        +   '<div class="ds-prompt-error" role="alert" hidden></div>'
+        +   '<div class="ds-confirm-actions">'
+        +     '<button type="button" class="btn btn-secondary ds-confirm-cancel">' + escapeHtml(o.cancelLabel || 'Cancel') + '</button>'
+        +     '<button type="button" class="btn ds-confirm-ok' + toneCls + '">' + escapeHtml(o.confirmLabel || 'OK') + '</button>'
+        +   '</div>'
+        + '</div>';
+      document.body.appendChild(overlay);
+      var input = overlay.querySelector('.ds-prompt-input');
+      var errEl = overlay.querySelector('.ds-prompt-error');
+      var okBtn = overlay.querySelector('.ds-confirm-ok');
+      var cancelBtn = overlay.querySelector('.ds-confirm-cancel');
+      var prevFocus = document.activeElement;   // F-42 focus-return discipline
+      var settle = function (val) {
+        document.removeEventListener('keydown', onKey, true);
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        try { if (prevFocus && prevFocus.focus) prevFocus.focus(); } catch (e) { /* gone */ }
+        resolve(val);
+      };
+      var submit = function () {
+        var v = String(input.value || '').trim();
+        var err = '';
+        try { err = (typeof o.validate === 'function') ? (o.validate(v) || '') : ''; }
+        catch (e) { err = 'That value could not be checked.'; }
+        if (err) {
+          errEl.textContent = err;
+          errEl.hidden = false;
+          input.focus();
+          input.select();
+          return;
+        }
+        settle(v);
+      };
+      input.addEventListener('input', function () { errEl.hidden = true; });
+      var onKey = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); settle(null); }
+        else if (e.key === 'Enter') {
+          e.preventDefault(); e.stopPropagation();
+          // Enter follows FOCUS (the E-6 rule): from Cancel it cancels.
+          if (document.activeElement === cancelBtn) settle(null); else submit();
+        } else if (e.key === 'Tab') {
+          // Focus TRAP over the three focusables, forward and back.
+          e.preventDefault(); e.stopPropagation();
+          var order = [input, cancelBtn, okBtn];
+          var i = order.indexOf(document.activeElement);
+          var next = e.shiftKey ? (i <= 0 ? order.length - 1 : i - 1)
+                                : (i === -1 || i === order.length - 1 ? 0 : i + 1);
+          order[next].focus();
+        }
+      };
+      okBtn.addEventListener('click', submit);
+      cancelBtn.addEventListener('click', function () { settle(null); });
+      overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) settle(null); });
+      document.addEventListener('keydown', onKey, true);
+      requestAnimationFrame(function () {
+        overlay.classList.add('is-open');
+        input.focus();
+        input.select();
+      });
+    });
+  }
+
+  /**
    * Renders the header data-freshness pill: "Data through Mon May 19
    * · 14h ago".  Source is getLatestDataDates -- which returns
    * { dqe, qcd, latest }.  The pill's visible date is `latest`

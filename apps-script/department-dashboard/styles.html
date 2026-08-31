@@ -6661,6 +6661,30 @@
   }
   /* Danger confirm button = warn-filled (destructive intent). */
   .btn.ds-confirm-ok.ds-confirm--danger { background: var(--warn); color: #fff; }
+  /* dsPrompt_ shares the confirm shell and adds a labelled input + inline
+     error (the thing window.prompt could not do -- validate without losing
+     what was typed). */
+  .ds-prompt-label {
+    display: block; font-family: var(--ui);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 0 0 5px;
+  }
+  .ds-prompt-input {
+    width: 100%; box-sizing: border-box;
+    padding: 8px 10px; margin-bottom: 8px;
+    font-family: var(--ui); font-size: 13px;
+    color: var(--ink); background: var(--paper);
+    border: 1px solid var(--line); border-radius: var(--r);
+  }
+  .ds-prompt-input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .ds-prompt-error {
+    font-size: 12px; line-height: 1.4; color: var(--warn);
+    margin: -2px 0 10px;
+  }
   @media (prefers-reduced-motion: reduce) {
     .ds-confirm-overlay, .ds-confirm { transition: none; }
   }
