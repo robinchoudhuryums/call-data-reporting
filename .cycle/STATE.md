@@ -1,6 +1,37 @@
 # Cycle State — resume note
 
-## Latest session (R27 — the block-158 follow-ons)
+## OPEN NOW (read this first)
+- **One deploy is pending and nothing else is:**
+  `cd apps-script/cdr-import && clasp push -f`. It ships the DST prune fix
+  (`DeleteOldSheets.js`), the only production file changed across increments
+  158-160. Until it lands, the live prune still deletes a day early across the
+  November fall-back transition — no urgency before then, but it is not live
+  until pushed. No other project changed, so no other `clasp push` is due.
+- Everything through increment 160 is MERGED to `main` (PR #266,
+  merge `c15227c`). Working tree clean; local, `origin/main` and
+  `origin/claude/broad-scan-76h2dr` all sit on that commit. Nothing is
+  unpushed and nothing awaits a PR — **do not open one for this work.**
+- The branch is a merged-PR branch. Per the repo rule, follow-up work restarts
+  it from the latest default branch rather than stacking on merged history.
+
+## Latest session (R28 — /sync-docs after the R26/R27 work)
+Increment 160. **1082/1082 tests**, `npm run ci` green. No block file: a
+doc-only pass, recorded here.
+- Both gaps found were the same rule — a convention written without naming
+  what enforces it (C2), which is how the first three duplications drifted.
+  `DQEdrilldown.js` now has its own bullet naming
+  `dqe-drilldown-parity.test.js`; the cross-PROJECT `hashPhone` /
+  `cdrHashPhone_` pair is named with `insurance-numbers.test.js` (the INV-16
+  guard pairs same-NAMED files, so it never covered them).
+- Operator State #43 gained one clause: it says this trigger's cadence IS the
+  answer to "how far back can X be rebuilt", and until the R27 fix that answer
+  was seasonally a day short.
+- Checks 2/3/5 came back clean: 101/101 subsystem paths exist with nothing
+  unassigned, the property registry passes both directions, and at 38.4 KB of
+  headroom with no bullet over the ratchet there was nothing worth pruning.
+  No deletions proposed, so nothing needed re-resolving.
+
+## Prior session (R27 — the block-158 follow-ons)
 Branch `claude/broad-scan-76h2dr`, **1082/1082 tests** + `drive-admin.js` 41/41, `npm run ci` green. Increment 159. Block: `.cycle/blocks/159-r27-followons-dst-fix-admin-driver-broad-implement.md`.
 - **DST prune fix (the real bug from 158)**: age is now whole calendar days via `Date.UTC` on both sides, not a local-midnight ms difference. Strictly LESS-deleting or equal in every case — the only safe direction for an irreversible delete. The characterization test became a regression test, plus its complement so the fix can't degenerate into "stop deleting near a transition".
 - **Malformed tab names are now REJECTED, not normalised**: `Date.UTC(2020,12,99)` is a real timestamp, so a nonsense suffix used to be aged as whatever it rolled over to. Range check + round-trip (catches Feb 30 / Apr 31); a leap-day test guards against over-strictness. Trade-off documented: a bad name accumulates rather than ageing out.
@@ -8,7 +39,7 @@ Branch `claude/broad-scan-76h2dr`, **1082/1082 tests** + `drive-admin.js` 41/41,
 - **`insurance-numbers.test.js`** (14): the normalizer input-by-input, the PHI contract (only hash+label reach Neon), and CROSS-PROJECT hash equivalence between `hashPhone` and `cdrHashPhone_` — a divergence there silently unlabels every insurer.
 - **`drive-admin.js`** (41 checks, now a blocking ci:ui stage): the six admin modals + the Escalations worklist finally have an ASSERTING driver.
 - Two things the mutation runs caught, worth remembering: the driver's first draft PASSED focus/Escape checks against a selector matching nothing (null is never `=== false`), and that vacuous pass was hiding a real find — **`#system-health-modal` does not exist**; the router names it `#health-modal`, and exploratory `drive-phase3.js` has been probing the wrong id all along without anyone noticing, because it records failures instead of raising them.
-- Where I left off: committed + pushed. Branch carries F8c + R26 + R27 and has no PR yet.
+- Outcome: MERGED to `main` in PR #266 together with F8c, R26 and the R28 doc pass. Its `drive-admin.js` stage ran in CI at 41/41, so the gate is proven on the runner and not only locally.
 
 ## Prior session (R26 — tests for the two untested destructive/mirrored paths)
 Branch `claude/broad-scan-76h2dr` (1 unmerged commit: the F8c relocation), **1051/1051 tests**, `npm run ci` green. Increment 158. Block: `.cycle/blocks/158-r26-untested-destructive-paths-broad-implement.md`.
@@ -18,7 +49,7 @@ Branch `claude/broad-scan-76h2dr` (1 unmerged commit: the F8c relocation), **105
 - Both suites were **mutation-tested, not assumed**. One mutation (forward loop) was deliberately NOT caught — `getSheets()` returns a snapshot, so the index-shift hazard the comment claimed does not exist; the comment was corrected rather than the test strengthened.
 - **REAL BUG found, characterized, not fixed** (flag-don't-fix): the prune deletes a day EARLY across the fall-back DST transition — fractional-day arithmetic on local midnights yields 14.0417 and clears `> 14`. Narrows retention to 13 days for ~2 weeks each November, against a window the queue-split backfill already races. One-line fix proposed in the block; a characterization test holds the current behavior and says to delete itself when fixed.
 - TESTS ONLY — no production source touched.
-- Where I left off: not yet committed. CLAUDE.md needs the Extraction-Sidebar bullet to name DQEdrilldown as the fourth duplication (a /sync-docs item, deliberately out of the implement scope).
+- Outcome: committed, and MERGED in PR #266. The CLAUDE.md follow-up it flagged (name DQEdrilldown as the fourth duplication) was done in increment 160 — closed, not outstanding.
 
 ## Prior session (R25b — bounded CSR read + weekly coverage trigger)
 Branch `claude/broad-scan-76h2dr` (6 unmerged commits), **1023/1023 tests**, all guards green. Increment 157. Block: `.cycle/blocks/157-r25b-bounded-read-weekly-trigger-broad-implement.md`.
