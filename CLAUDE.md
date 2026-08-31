@@ -178,7 +178,7 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # CI=true, where absence FAILS (F-9: a workflow refactor that loses the
 # install step must not turn the gate silently green); chromium-path.js
 # globs the Playwright browser revision, so CHROMIUM_PATH is rarely needed.
-# SEVEN ASSERTING stages gate it -- drive-smoke.js (page/console errors,
+# EIGHT ASSERTING stages gate it -- drive-smoke.js (page/console errors,
 # unmocked RPCs, BLANK chart canvases, horizontal overflow, both roles, plus
 # VIEW-AS-MANAGER: it enters preview, actually hides the admin-only surfaces
 # -- measured as rendered visibility, not a class -- reverses cleanly, and
@@ -196,6 +196,13 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # RENDERED until this driver clicked one, the dept-selector class of bug; the
 # drill was unreachable by any driver until getCallJourney was mocked, since
 # drive-smoke's unmocked-RPC check would have flagged the call),
+# drive-admin.js (the six ADMIN MODALS + the Escalations worklist: each modal
+# opens, renders, traps focus and closes on Escape, with no page errors, plus
+# the F10 no-duplicate-badge property -- these had thorough server-side pins
+# and no assertion that any of them RENDERED, the dept-selector class of bug.
+# It reads modal ids off the ROUTER TABLE in script-4-nav.html, which is how
+# it caught that the exploratory drive-phase3.js had been checking a
+# `#system-health-modal` that does not exist),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in

@@ -12,7 +12,7 @@ cd tools/ui-harness && npm init -y >/dev/null && npm i playwright && cd -
 npm run ci:ui
 ```
 `ci:ui` (→ `ci.mjs`) generates payloads → builds the admin + manager sites →
-runs the two **asserting** drivers, and exits non-zero on any failure. It SKIPS
+runs the **asserting** drivers, and exits non-zero on any failure. It SKIPS
 cleanly with a message when playwright isn't installed, so it's safe in any
 environment. This is what `.github/workflows/ci.yml`'s `ui-harness` job runs.
 
@@ -36,6 +36,16 @@ quietly verify the client against a different Chart.js than production ships.
   the exporter Blob-and-clicks, so the driver stubs `URL.createObjectURL` and
   reads the real bytes. Also the header **department switch**, which threw a
   `ReferenceError` in production until a driver first tried it.
+- `drive-admin.js` — the six **admin modals** (Alerts, Outlier Fix, Dept
+  Config, Access Control, System Health, Caller Lookup) and the **Escalations
+  worklist**. Each modal must open, render content, trap focus over 25 tabs,
+  close on Escape and fit the viewport, with no page or console errors; the
+  Escalations page must render its cards, give an admin the dept filter, and
+  never duplicate its nav count badge across re-entry (F10). Modal ids come
+  from the ROUTER TABLE in `script-4-nav.html`, which is the authority --
+  guessing them is what left phase3 silently checking a modal that does not
+  exist. These surfaces had thorough server-side pins and, until this driver,
+  nothing asserting that any of them RENDERED.
 - `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
   `google.script.run` **probe**. That probe redefines the single object every
   one of the ~91 server calls in `script.html` passes through, so a wrong
@@ -61,8 +71,11 @@ node drive-phase3.js          # Phase 3: Escalations + modals
 ```
 Output: `shots/*.png` + `report*.json` (console errors, overflow, focus walks,
 contrast, focus-trap escapes) — findings to read, not a pass/fail signal, which
-is why CI runs only the asserting drivers above (all four of them, via
-`ci.mjs`; `npm run ci:ui`).
+is why CI runs only the asserting drivers above (via `ci.mjs`;
+`npm run ci:ui`). NB `drive-phase3.js` also opens the admin modals, but it
+records failures instead of raising them -- `drive-admin.js` is the asserting
+version, and the two disagreed: phase3 had been probing a
+`#system-health-modal` that does not exist.
 
 **Chromium path** is resolved by `chromium-path.js` — it globs
 `/opt/pw-browsers/chromium-<rev>/chrome-linux/chrome` (the path carries the

@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
-## Latest session (R26 — tests for the two untested destructive/mirrored paths)
+## Latest session (R27 — the block-158 follow-ons)
+Branch `claude/broad-scan-76h2dr`, **1082/1082 tests** + `drive-admin.js` 41/41, `npm run ci` green. Increment 159. Block: `.cycle/blocks/159-r27-followons-dst-fix-admin-driver-broad-implement.md`.
+- **DST prune fix (the real bug from 158)**: age is now whole calendar days via `Date.UTC` on both sides, not a local-midnight ms difference. Strictly LESS-deleting or equal in every case — the only safe direction for an irreversible delete. The characterization test became a regression test, plus its complement so the fix can't degenerate into "stop deleting near a transition".
+- **Malformed tab names are now REJECTED, not normalised**: `Date.UTC(2020,12,99)` is a real timestamp, so a nonsense suffix used to be aged as whatever it rolled over to. Range check + round-trip (catches Feb 30 / Apr 31); a leap-day test guards against over-strictness. Trade-off documented: a bad name accumulates rather than ageing out.
+- **`neon-keepwarm.test.js`** (15): the cost gate, asserted on one observable — did this invocation open a connection? Half-open window, weekend skip, and a typo'd hour property that must NARROW to the default rather than widen to 24/7. TZ-independent by construction.
+- **`insurance-numbers.test.js`** (14): the normalizer input-by-input, the PHI contract (only hash+label reach Neon), and CROSS-PROJECT hash equivalence between `hashPhone` and `cdrHashPhone_` — a divergence there silently unlabels every insurer.
+- **`drive-admin.js`** (41 checks, now a blocking ci:ui stage): the six admin modals + the Escalations worklist finally have an ASSERTING driver.
+- Two things the mutation runs caught, worth remembering: the driver's first draft PASSED focus/Escape checks against a selector matching nothing (null is never `=== false`), and that vacuous pass was hiding a real find — **`#system-health-modal` does not exist**; the router names it `#health-modal`, and exploratory `drive-phase3.js` has been probing the wrong id all along without anyone noticing, because it records failures instead of raising them.
+- Where I left off: committed + pushed. Branch carries F8c + R26 + R27 and has no PR yet.
+
+## Prior session (R26 — tests for the two untested destructive/mirrored paths)
 Branch `claude/broad-scan-76h2dr` (1 unmerged commit: the F8c relocation), **1051/1051 tests**, `npm run ci` green. Increment 158. Block: `.cycle/blocks/158-r26-untested-destructive-paths-broad-implement.md`.
 - Came out of a coverage survey: the dashboard is 37/38 files loaded, but the pipeline projects had real holes. Two were worth closing.
 - **`retention-prune.test.js`** (14 tests): the Call_Legs_* prune is the only irreversible-deletion path in the repo and had zero tests. Pins the blast radius (non-Call_Legs tabs untouchable), the exclusive 14-day cutoff, P18 failing LOUDLY instead of a green "deleted 0", and the Pipeline Health row.

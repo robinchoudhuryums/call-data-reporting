@@ -200,7 +200,20 @@ tests/
                               rule set: one fixture drives the real build AND
                               the real drill sidebar, and the drill's Found-N
                               must reconcile with the DQE cell -- catches all
-                              three historical drifts, F24 / R8-D4 / F-13)
+                              three historical drifts, F24 / R8-D4 / F-13),
+                              neon-keepwarm (the COST gate: one observable --
+                              did this invocation open a connection? -- across
+                              the flag, the weekday check, the half-open hour
+                              window, and a typo'd hour property that must
+                              NARROW to the default rather than widen to
+                              24/7; plus the NEO-3 skipReadHealth contract),
+                              insurance-numbers (the insurer-label reference
+                              table: every punctuation variant canonicalizes
+                              to one form, REP-7's 10-digit country-code fix,
+                              the PHI contract that only hash+label reach
+                              Neon, and cross-PROJECT hash equivalence between
+                              hashPhone and cdrHashPhone_ -- a divergence
+                              there silently unlabels every insurer)
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass
