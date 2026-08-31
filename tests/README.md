@@ -164,7 +164,14 @@ tests/
                               self-clear pins), report-usage (the INV-01
                               telemetry carve-out + usage rollup),
                               ui-harness-vendor (the committed vendor
-                              bundles' version + F-11 sha256 pins)
+                              bundles' version + F-11 sha256 pins),
+                              outbound-fallback (the Outbound report's
+                              Neon-down sheet fallback: SOURCE PARITY
+                              between the Neon blob and the export tabs
+                              through the shared outboundShapeReport_, the
+                              callback rule's sheet-side mirror, the
+                              never-cache rule and all three failure
+                              branches)
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

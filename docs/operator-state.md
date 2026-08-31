@@ -1304,3 +1304,37 @@ When something looks wrong, before assuming a code bug, check:
     re-export of those dates. Pinned by
     `tests/unit/inbound-export.test.js` + `tests/unit/heatmap-fallback.test.js`
     + `tests/unit/journey-fallback.test.js`.
+
+50. **Outbound Calls tab export trigger — the keystone of the Neon-outage
+    story.** `outbound_calls` had no sheet primary, so an outage took THREE
+    surfaces fully dark at once: the Outbound report, the call-path drill's
+    OUTBOUND arm (`getCallJourney({kind:'outbound'})`) and Caller Lookup's
+    per-call outbound section. `cdr-report/outboundCallsExport.js` mirrors the
+    table into an "Outbound Calls" tab and those three now degrade to it.
+    Install the daily refresh from the CDR Report spreadsheet: CDR Tools →
+    "⏰ Daily Outbound Export Trigger" → Install (runs
+    `runOutboundCallsExport_` at 9 AM script-TZ: incremental export +
+    retention prune, one `outboundExport` Pipeline Health row per run; a
+    Neon-down day is a LOG-ONLY failure row — expected during an outage,
+    never an email; a not-yet-created `outbound_calls` table is a clean
+    `no-table` skip, not a failure).
+    **One-time seed:** run `exportOutboundCalls('<capture-start-ISO>',
+    '<today-ISO>')` once from the editor so the tab covers history rather
+    than only the last 30 days (the no-arg seed window). Do this while Neon
+    is REACHABLE — the export reads Neon, so it cannot be run to escape an
+    outage already in progress; the copy is a standing insurance policy, not
+    a recovery tool.
+    Retention: the prune keeps `OUTBOUND_EXPORT_KEEP_DAYS` days (Script
+    Property, default 400); the heavy `journey` column is populated only
+    within `OUTBOUND_EXPORT_JOURNEY_DAYS` (default 90) and blank beyond, so a
+    path drill past that window renders the summary rather than the timeline
+    (the Inbound tab's cols 18–22 rule). Column order is a CONTRACT — the
+    dashboard readers index this tab BY POSITION, so append any future column
+    at the END, never between.
+    The fallbacks themselves need no flag: they fire only when the Neon read
+    fails, are never cached, and disclose `fallbackSource`/`fallbackThrough`.
+    The journey drill's outbound arm additionally RE-DERIVES its two-arm
+    entitlement from the Inbound tab's related-call columns (21–22), so a
+    manager's reach during an outage is exactly what it is on the live path —
+    never widened. Pinned by `tests/unit/outbound-fallback.test.js`,
+    `tests/unit/journey-fallback.test.js` and `tests/unit/caller-lookup.test.js`.

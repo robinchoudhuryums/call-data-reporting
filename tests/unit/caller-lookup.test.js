@@ -208,3 +208,101 @@ test('caller lookup: a failing outbound/history query degrades that section only
   assert.equal(out.outboundHistory.length, 0);
   delete dash.ctx.getDashboardNeonConn_;
 });
+
+// ── NEON-DOWN SHEET FALLBACK ───────────────────────────────────────────────
+// Both export tabs carry the HMAC hash the lookup keys on (Inbound col 4,
+// Outbound col 3), so the communication history survives an outage with no
+// raw number stored anywhere. The day-level "Earlier outbound activity"
+// section genuinely cannot fall back (no sheet primary) and must report
+// itself unavailable rather than imply the caller had no earlier activity.
+
+function clFakeTab(rows, width) {
+  return {
+    getLastRow: function () { return rows.length + 1; },
+    getMaxColumns: function () { return width; },
+    getLastColumn: function () { return width; },
+    getRange: function (row, col, numRows, numCols) {
+      const out = [];
+      for (let i = 0; i < numRows; i++) {
+        const src = rows[row - 2 + i] || [];
+        const line = [];
+        for (let c = 0; c < numCols; c++) {
+          const v = src[col - 1 + c];
+          line.push(v == null ? '' : String(v));
+        }
+        out.push(line);
+      }
+      return { getDisplayValues: function () { return out; } };
+    },
+  };
+}
+
+function clInstallFallback(opts) {
+  opts = opts || {};
+  installAdmin();
+  dash.state.props.HMAC_SECRET = 'test-secret';
+  dash.ctx.getDashboardNeonConn_ = function () { return opts.conn || null; };
+  dash.ctx.logReportUsage_ = function () {};
+  dash.ctx.ncCellDateIso_ = function (v) {
+    const s = String(v == null ? '' : v).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+  };
+  dash.ctx.openSpreadsheet_ = function () {
+    return {
+      getSheetByName: function (n) {
+        if (n === 'Inbound Calls') return opts.noIb ? null : clFakeTab(opts.ibRows || [], 22);
+        if (n === 'Outbound Calls') return opts.noOb ? null : clFakeTab(opts.obRows || [], 12);
+        return null;
+      },
+    };
+  };
+}
+
+test('caller lookup fallback: reconstructs both sections from the export tabs by hash', function () {
+  const hash = dash.call('callerLookupHashPhone_', '+12145550123', 'test-secret');
+  const ib = new Array(22).fill('');
+  ib[0] = '2026-08-10'; ib[1] = 'i1'; ib[2] = 'Acme Health'; ib[3] = hash;
+  ib[5] = 'abandoned'; ib[10] = 'A_Q_CSR'; ib[15] = '08:00:00';
+  const other = new Array(22).fill('');
+  other[0] = '2026-08-10'; other[1] = 'i2'; other[3] = 'someone-else-hash'; other[5] = 'answered';
+  const ob = new Array(12).fill('');
+  ob[0] = '2026-08-11'; ob[1] = 'o1'; ob[2] = hash; ob[3] = 'Ann'; ob[6] = 'TRUE';
+  ob[7] = '45'; ob[9] = '1'; ob[10] = '09:00:00';
+
+  clInstallFallback({ ibRows: [ib, other], obRows: [ob] });
+  const res = dash.call('getCallerLookup',
+    { phone: '2145550123', from: '2026-08-01', to: '2026-08-31' });
+
+  assert.equal(res.meta.available, true, 'the lookup still answers during an outage');
+  assert.equal(res.meta.fallbackSource, 'sheet');
+  assert.equal(res.meta.matches, 1, 'only the entered number\'s calls, matched by hash');
+  assert.equal(res.calls[0].callId, 'i1');
+  assert.equal(res.calls[0].insurer, 'Acme Health', 'the insurer label rides the tab');
+  assert.equal(res.meta.outboundAvailable, true);
+  assert.equal(res.meta.outboundMatches, 1);
+  assert.equal(res.outboundCalls[0].callId, 'o1');
+  assert.equal(res.outboundCalls[0].connected, true);
+  // The day-level section has no sheet primary: unavailable, not empty-truthy.
+  assert.equal(res.meta.historyAvailable, false);
+  // PHI: no hash is ever echoed back to the client.
+  assert.ok(JSON.stringify(res).indexOf(hash) === -1, 'the hash never leaves the server');
+});
+
+test('caller lookup fallback: a missing Outbound tab degrades only that section', function () {
+  const hash = dash.call('callerLookupHashPhone_', '+12145550123', 'test-secret');
+  const ib = new Array(22).fill('');
+  ib[0] = '2026-08-10'; ib[1] = 'i1'; ib[3] = hash; ib[5] = 'abandoned'; ib[15] = '08:00:00';
+  clInstallFallback({ ibRows: [ib], noOb: true });
+  const res = dash.call('getCallerLookup',
+    { phone: '2145550123', from: '2026-08-01', to: '2026-08-31' });
+  assert.equal(res.meta.available, true);
+  assert.equal(res.meta.matches, 1, 'inbound still answers');
+  assert.equal(res.meta.outboundAvailable, false, 'the outbound section says so');
+});
+
+test('caller lookup fallback: no export tabs at all stays honestly unavailable', function () {
+  clInstallFallback({ noIb: true, noOb: true });
+  const res = dash.call('getCallerLookup',
+    { phone: '2145550123', from: '2026-08-01', to: '2026-08-31' });
+  assert.equal(res.meta.available, false, 'never a false "no history found"');
+});

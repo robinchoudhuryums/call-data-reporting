@@ -347,7 +347,7 @@ function callJourneyDeptPredicate_(dept, deptQueues) {
  */
 function getOutboundCallJourney_(callId, date, dept, user) {
   const conn = getDashboardNeonConn_();
-  if (!conn) return { available: false, found: false };
+  if (!conn) return outboundCallJourneySheetFallback_(callId, date, dept, user);
   try {
     if (user.role !== 'admin') {
       // Re-derive the capability. Managers only: admins are entitled to all
@@ -407,7 +407,7 @@ function getOutboundCallJourney_(callId, date, dept, user) {
              call: callerLookupShapeOutbound_(JSON.parse(json)) };
   } catch (e) {
     Logger.log('getOutboundCallJourney_ failed: ' + (e && e.message ? e.message : e));
-    return { available: false, found: false };
+    return outboundCallJourneySheetFallback_(callId, date, dept, user);
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -627,10 +627,174 @@ function callIdInDeptMissedReport_(dept, date, callId) {
 //     the entry->final summary, exactly like a pre-extension Neon row.
 //   * Discloses itself (fallbackSource / fallbackThrough) and is NEVER
 //     cached (getCallJourney is uncached by design, so this holds trivially).
-//   * kind:'outbound' has NO fallback -- outbound_calls has no sheet
-//     primary -- and the client says so rather than implying missing data.
+//   * kind:'outbound' now has a fallback TOO (it previously had none, since
+//     outbound_calls had no sheet primary): cdr-report/outboundCallsExport.js
+//     mirrors the table into an "Outbound Calls" tab, and
+//     outboundCallJourneySheetFallback_ below re-derives the SAME two-arm
+//     entitlement from the Inbound tab's related-call columns (21-22) before
+//     serving the row. Same disclosure + reason vocabulary as this one.
 // Pinned by tests/unit/journey-fallback.test.js.
 var INBOUND_JOURNEY_FALLBACK_TAIL_ROWS_ = 4000;   // F-20 widening tail, heatmap discipline
+
+/**
+ * SHEET FALLBACK for the call-path drill's OUTBOUND arm (kind:'outbound').
+ *
+ * The security-critical half is the ENTITLEMENT, and it is re-derived here
+ * exactly as the Neon path derives it -- never trusted from the client: a
+ * manager may drill outbound call O only if some INTERNAL inbound record
+ * points at O (related_call_id = O, related_call_kind = 'outbound') AND that
+ * linking record is itself one they could drill, checked over the SAME two
+ * arms in the SAME order (the dept predicate first, then the F-4
+ * missed-report fallback -- which reads the DQE sheet through its own
+ * fallback chain, so it survives the outage too). Admins are ungated, as on
+ * the Neon path.
+ *
+ * Reads the Inbound Calls tab (cols 21-22 carry the related-call link) and
+ * the Outbound Calls tab (cdr-report/outboundCallsExport.js). Shaped by the
+ * same callerLookupShapeOutbound_ contract, so the client renderers cannot
+ * tell the sources apart; discloses fallbackSource / fallbackThrough, and a
+ * blank Journey cell (past the export's journey retention) shapes to
+ * journey:null exactly like a pre-extension Neon row.
+ */
+function outboundCallJourneySheetFallback_(callId, date, dept, user) {
+  try {
+    var ss = openSpreadsheet_();
+    var ibSheet = ss.getSheetByName('Inbound Calls');
+    var obSheet = ss.getSheetByName('Outbound Calls');
+    if (!obSheet) return { available: false, found: false };
+    var obLast = obSheet.getLastRow();
+    if (obLast < 2) return { available: false, found: false };
+    var obCols = obSheet.getLastColumn();
+    if (obCols < 12) return { available: false, found: false };   // pre-contract tab
+
+    // ── Entitlement (managers only; admins are entitled to everything) ──
+    var isAdmin = !!(user && (user.role === 'admin' || user.allDepts));
+    if (!isAdmin && dept) {
+      if (!ibSheet) return { available: false, found: false };
+      var ibLast = ibSheet.getLastRow();
+      var ibCols = ibSheet.getLastColumn();
+      // The link columns (21-22) are required to re-derive the capability at
+      // all -- without them we must REFUSE, never fall open.
+      if (ibLast < 2 || ibCols < 22) {
+        return { available: true, found: false, reason: 'not-entitled',
+                 fallbackSource: 'sheet' };
+      }
+      var ibWin = INBOUND_JOURNEY_FALLBACK_TAIL_ROWS_;
+      var ibStart, ibDates;
+      for (;;) {
+        ibStart = Math.max(2, ibLast - ibWin + 1);
+        ibDates = ibSheet.getRange(ibStart, 1, ibLast - ibStart + 1, 1).getDisplayValues();
+        var ibOldest = ncCellDateIso_(ibDates[0][0]);
+        if (ibStart === 2 || (ibOldest && ibOldest < date)) break;
+        ibWin *= 4;
+      }
+      var ibFirst = -1, ibLastIdx = -1;
+      for (var d0 = 0; d0 < ibDates.length; d0++) {
+        if (ncCellDateIso_(ibDates[d0][0]) === date) {
+          if (ibFirst < 0) ibFirst = d0;
+          ibLastIdx = d0;
+        }
+      }
+      var entitled = false;
+      if (ibFirst >= 0) {
+        var ibGrid = ibSheet.getRange(ibStart + ibFirst, 1, ibLastIdx - ibFirst + 1, 22)
+                            .getDisplayValues();
+        var qSet2 = {};
+        inboundQueuesForDept_(dept).forEach(function (q) {
+          qSet2[String(q).trim().toLowerCase()] = true;
+        });
+        var linkers = [];
+        for (var li = 0; li < ibGrid.length; li++) {
+          var lrow = ibGrid[li];
+          // The Neon linkBase: related_call_id = ? AND is_internal = TRUE AND
+          // related_call_kind = 'outbound' (NULL kind reads as 'inbound').
+          if (String(lrow[20] == null ? '' : lrow[20]).trim() !== callId) continue;
+          if (String(lrow[21] == null ? '' : lrow[21]).trim().toLowerCase() !== 'outbound') continue;
+          if (String(lrow[16] == null ? '' : lrow[16]).trim().toUpperCase() !== 'TRUE') continue;
+          linkers.push(lrow);
+        }
+        // Arm 1: the dept predicate (entry / final queue / final dept).
+        for (var a1 = 0; a1 < linkers.length && !entitled; a1++) {
+          var eq2 = String(linkers[a1][10] == null ? '' : linkers[a1][10]).trim().toLowerCase();
+          var fq2 = String(linkers[a1][11] == null ? '' : linkers[a1][11]).trim().toLowerCase();
+          var fd2 = String(linkers[a1][12] == null ? '' : linkers[a1][12]).trim().toLowerCase();
+          if (qSet2[eq2] === true || qSet2[fq2] === true
+              || (!!fd2 && fd2 === String(dept).trim().toLowerCase())) entitled = true;
+        }
+        // Arm 2: the F-4 missed-report fallback, same order as the Neon path.
+        for (var a2 = 0; a2 < linkers.length && !entitled; a2++) {
+          var linkId = String(linkers[a2][1] == null ? '' : linkers[a2][1]).trim();
+          if (!linkId) continue;
+          if (typeof callIdInDeptMissedReport_ === 'function'
+              && callIdInDeptMissedReport_(dept, date, linkId)) entitled = true;
+        }
+      }
+      if (!entitled) {
+        Logger.log('outboundCallJourneySheetFallback_: refused (no drillable link) '
+          + 'call_id=%s date=%s dept=%s', callId, date, dept);
+        return { available: true, found: false, reason: 'not-entitled',
+                 fallbackSource: 'sheet' };
+      }
+    }
+
+    // ── The row itself (bounded widening tail scan, the F9 class) ──
+    var win = INBOUND_JOURNEY_FALLBACK_TAIL_ROWS_;
+    var startRow, dates;
+    for (;;) {
+      startRow = Math.max(2, obLast - win + 1);
+      dates = obSheet.getRange(startRow, 1, obLast - startRow + 1, 1).getDisplayValues();
+      var oldest = ncCellDateIso_(dates[0][0]);
+      if (startRow === 2 || (oldest && oldest < date)) break;
+      win *= 4;
+    }
+    var first = -1, last = -1, through = null, minSeen = null;
+    for (var i = 0; i < dates.length; i++) {
+      var dv = ncCellDateIso_(dates[i][0]);
+      if (!dv) continue;
+      if (through === null || dv > through) through = dv;
+      if (minSeen === null || dv < minSeen) minSeen = dv;
+      if (dv === date) { if (first < 0) first = i; last = i; }
+    }
+    var miss = { available: true, found: false,
+                 fallbackSource: 'sheet', fallbackThrough: through };
+    if (first < 0) {
+      if (through && date > through) miss.reason = 'fallback-gap';
+      else if (startRow === 2 && minSeen && date < minSeen) {
+        miss.reason = 'before-capture'; miss.minDate = minSeen;
+      } else miss.reason = 'date-gap';
+      return miss;
+    }
+    var grid = obSheet.getRange(startRow + first, 1, last - first + 1, 12).getDisplayValues();
+    var row = null;
+    for (var r = 0; r < grid.length; r++) {
+      if (String(grid[r][1] == null ? '' : grid[r][1]).trim() === callId) { row = grid[r]; break; }
+    }
+    if (!row) { miss.reason = 'not-captured'; return miss; }
+
+    // Adapt the sheet row to the Neon column names, then shape it with the
+    // SAME function the live path uses -- callee_hash is deliberately NOT
+    // carried across (the shaper drops it, and nothing here needs it).
+    var call = callerLookupShapeOutbound_({
+      call_date: date,
+      call_id: String(row[1] == null ? '' : row[1]).trim(),
+      agent_name: String(row[3] == null ? '' : row[3]).trim(),
+      agent_ext: String(row[4] == null ? '' : row[4]).trim(),
+      department: String(row[5] == null ? '' : row[5]).trim(),
+      connected: String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE',
+      talk_seconds: Number(row[7]) || 0,
+      ring_seconds: row[8] === '' ? null : (Number(row[8]) || 0),
+      attempts: Number(row[9]) || 1,
+      call_start: String(row[10] == null ? '' : row[10]).trim(),
+      journey: String(row[11] == null ? '' : row[11]).trim(),
+    });
+    return { available: true, found: true, kind: 'outbound', call: call,
+             fallbackSource: 'sheet', fallbackThrough: through };
+  } catch (e) {
+    Logger.log('outboundCallJourneySheetFallback_ failed (best-effort): '
+      + (e && e.message ? e.message : e));
+    return { available: false, found: false };
+  }
+}
 
 function inboundCallJourneySheetFallback_(callId, date, dept, user) {
   try {

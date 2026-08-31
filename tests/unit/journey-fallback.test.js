@@ -21,7 +21,8 @@ const { loadGas } = require('../harness/loadGas');
 //   (4) a blank Journey cell (past INBOUND_EXPORT_JOURNEY_DAYS) shapes to
 //       journey:null -- the summary render -- rather than throwing;
 //   (5) the mid-query CATCH degrades to the fallback too, and the OUTBOUND
-//       arm does NOT fall back (no sheet primary);
+//       arm falls back as well (the 'Outbound Calls' export tab) -- with its
+//       two-arm ENTITLEMENT re-derived from the sheets, never trusted;
 //   (6) fallback payloads disclose themselves (fallbackSource/-Through).
 // CallerLookup.gs joins the load for callerLookupShapeCall_;
 // NeonCoverage.gs for ncCellDateIso_ (the display-date normalizer).
@@ -238,10 +239,95 @@ test('a 17-col tab (heatmap-era, no journey cols) still serves the summary + aut
   assert.equal(res.call.originAgent, null);
 });
 
-test('OUTBOUND arm does NOT fall back -- no sheet primary exists for it', function () {
-  install({ sheet: fakeExportSheet([
-    exRow({ date: '2026-08-19', id: '111' }),
-  ]) });
+// ── OUTBOUND arm (the 'Outbound Calls' export tab) ────────────────────────
+// A 12-wide outbound export row, positions per OUTBOUND_EXPORT_HEADERS.
+function obRow(o) {
+  const r = new Array(12).fill('');
+  r[0] = o.date; r[1] = o.id; r[2] = o.hash || '';
+  r[3] = o.agent || 'Ann'; r[4] = o.ext || '101';
+  r[5] = o.dept || 'Customer Success';
+  r[6] = o.connected ? 'TRUE' : 'FALSE';
+  r[7] = o.talk == null ? '60' : String(o.talk);
+  r[8] = o.ring == null ? '5' : String(o.ring);
+  r[9] = o.attempts == null ? '1' : String(o.attempts);
+  r[10] = o.callStart || '09:00:00';
+  r[11] = o.journey || '';
+  return r;
+}
+
+// install() variant that serves BOTH tabs.
+function installOb(opts) {
+  opts = opts || {};
+  install(opts);
+  h.ctx.openSpreadsheet_ = function () {
+    return {
+      getSheetByName: function (n) {
+        if (n === 'Inbound Calls') return opts.sheet || null;
+        if (n === 'Outbound Calls') return opts.obSheet || null;
+        return null;
+      },
+    };
+  };
+}
+
+test('OUTBOUND arm falls back to the export tab, shaped like the Neon path', function () {
+  installOb({
+    obSheet: fakeExportSheet([obRow({ date: '2026-08-19', id: '111', connected: true,
+                                      journey: JOURNEY })], { cols: 12 }),
+  });
   const res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
-  assert.equal(res.available, false, 'unavailable, never a sheet answer');
+  assert.equal(res.available, true);
+  assert.equal(res.found, true);
+  assert.equal(res.kind, 'outbound');
+  assert.equal(res.fallbackSource, 'sheet');
+  assert.equal(res.call.callId, '111');
+  assert.equal(res.call.agentName, 'Ann');
+  assert.equal(res.call.connected, true);
+  assert.equal(res.call.talkSeconds, 60);
+  assert.ok(Array.isArray(res.call.journey), 'the journey cell parses to the shaped array');
+  // PHI: the hash never rides along, exactly as callerLookupShapeOutbound_ drops it.
+  assert.ok(!/hash/i.test(JSON.stringify(res.call)));
+});
+
+test('OUTBOUND fallback REFUSES a manager with no drillable link (entitlement re-derived)', function () {
+  // An outbound row exists, but no internal inbound record points at it --
+  // the manager must be refused exactly as on the Neon path.
+  installOb({
+    user: { role: 'manager', department: 'CSR', departments: ['CSR'], email: 'm@x.com' },
+    sheet: fakeExportSheet([exRow({ date: '2026-08-19', id: '900' })]),
+    obSheet: fakeExportSheet([obRow({ date: '2026-08-19', id: '111' })], { cols: 12 }),
+  });
+  const res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
+  assert.equal(res.found, false);
+  assert.equal(res.reason, 'not-entitled');
+  assert.ok(!res.call, 'no payload leaks to an unentitled manager');
+});
+
+test('OUTBOUND fallback ADMITS a manager whose own-dept internal record links the call', function () {
+  installOb({
+    user: { role: 'manager', department: 'CSR', departments: ['CSR'], email: 'm@x.com' },
+    sheet: fakeExportSheet([exRow({ date: '2026-08-19', id: '900', internal: true,
+                                    entryQueue: 'A_Q_CSR',
+                                    relatedId: '111', relatedKind: 'outbound' })]),
+    obSheet: fakeExportSheet([obRow({ date: '2026-08-19', id: '111' })], { cols: 12 }),
+  });
+  const res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
+  assert.equal(res.found, true, 'arm 1 (dept predicate) opens the gate');
+  assert.equal(res.call.callId, '111');
+});
+
+test('OUTBOUND fallback: a missing Outbound tab is unavailable, never a false miss', function () {
+  installOb({ obSheet: null });
+  const res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
+  assert.equal(res.available, false);
+});
+
+test('OUTBOUND fallback classifies a date past the copy ceiling as fallback-gap', function () {
+  installOb({
+    obSheet: fakeExportSheet([obRow({ date: '2026-08-10', id: '111' })], { cols: 12 }),
+  });
+  const res = drill({ callId: '111', date: '2026-08-19', kind: 'outbound' });
+  assert.equal(res.found, false);
+  assert.equal(res.reason, 'fallback-gap');
+  assert.equal(res.fallbackThrough, '2026-08-10');
 });

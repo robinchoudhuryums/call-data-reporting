@@ -783,6 +783,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   per-call capture doesn't cover -- day-level is the ceiling there). Each
   section is independently best-effort: a missing `outbound_calls` table
   flags `meta.outboundAvailable=false`; the inbound results stand.
+  **Neon-down degrades to the SHEET FALLBACK** (`callerLookupSheetFallback_`):
+  both export tabs carry the hash the lookup keys on (`Inbound Calls` col 4,
+  `Outbound Calls` col 3), so the per-call history reconstructs from the
+  sheets with no raw number stored anywhere, shaped by the same
+  `callerLookupShapeCall_`/`...Outbound_`. The day-level "Earlier outbound
+  activity" has NO sheet primary and reports `historyAvailable:false`.
 - **Per-call journey drill-through (inbound capture).**
   `InboundReport.gs::getCallJourney({callId, date, department})` returns ONE
   call's journey for the "↳ path" affordance on abandoned rings in the Missed
@@ -810,8 +816,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   disclosed via `fallbackSource`/`fallbackThrough` + an overlay caption, a
   `fallback-gap` reason for dates past the copy's ceiling; journey cells
   are only exported within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
-  #49), older dates render the summary; the OUTBOUND arm has NO fallback
-  (no sheet primary) and the client says so. Pinned by
+  #49), older dates render the summary; the OUTBOUND arm falls back to the
+  `Outbound Calls` tab (Op State #50) with its two-arm entitlement
+  RE-DERIVED from the Inbound tab's related-call columns, never trusted.
+  Pinned by
   journey-fallback.test.js. The journey carries no
   caller identity; the client reuses the Caller Lookup renderers
   (`clChainHtml_` / `clJourneyRowHtml_`) in a `#call-journey-overlay`.
@@ -954,6 +962,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   not-called-back drill (same lateral as the KPI, cap 200, no caller
   identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
   `outboundReport:v2` + the freshness tag; unavailable payloads uncached.
+  **Neon-down degrades to the SHEET FALLBACK** (`outboundSheetFallback_`):
+  the `Outbound Calls` export tab (Op State #50) + the `Inbound Calls` tab
+  for the abandon denominator, fed through the SAME pure
+  `outboundShapeReport_` the Neon path uses -- so source parity is by
+  CONSTRUCTION (outbound-fallback.test.js pins it over one fixture).
+  Disclosed via `meta.fallbackSource`/`fallbackThrough`, NEVER cached.
   **Vetting tool: `runOutboundVettingCheck`** (editor-run, admin-gated,
   read-only; `OUTBOUND_VETTING_FROM/_TO/_DEPT/_SAMPLE` props) -- LIVE
   two-code-path parity (rule 1 above, vs `computeInboundReport_`'s own
@@ -1758,6 +1772,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `idx_dqe_history_call_date` + `idx_dqe_history_date_agent` on
   `dqe_history` -- Postgres has no stored row order; `ORDER BY call_date`
   at query time and the indexes keep it fast.
+- **A Neon OUTAGE is a supported operating mode -- know what degrades and
+  what does not.** Flip `DQE_READ_SOURCE` (and `QCD_READ_SOURCE`) to `sheet`
+  for any outage lasting more than a few hours: the per-execution memo
+  (`NEON_CONN_DOWN_MEMO_`) bounds the failed handshakes to one, but each of
+  the ~20 cut-over readers still falls back with its OWN whole-sheet scan,
+  which measured 730s+ on the all-departments queue report (vs ~54s when the
+  same function was merely paying handshakes) -- and a run that hits the
+  6-min ceiling is KILLED PAST its catch blocks, so the designed fallbacks
+  never run (the class that once ate a Daily Queue Report day). Three tiers
+  when Neon is down: (1) **sheet-primary, no loss** -- DQE + QCD (the sheet
+  IS the authority; Neon mirrors it), so the flag flip is pre-cutover
+  behavior, not a degraded one; (2) **sheet FALLBACK, disclosed** -- Direct
+  Call (`Direct Call History` is the primary), Inbound report + heatmap +
+  call-path drill (the `Inbound Calls` tab, Op State #49), Escalations (the
+  E2 `ESC_SNAPSHOT_*` property snapshot, open rows only, read-only); (3)
+  **NEON-ONLY, unavailable** -- the Coaching worklist, Caller Lookup's
+  day-level "Earlier outbound activity" (`call_history_phones` aggregates),
+  and every Neon WRITE (escalation create/update, coaching close). The flags
+  do not change tier 2 or 3 either way. The Outbound report, the journey
+  drill's outbound arm and Caller Lookup's per-call outbound section LEFT
+  tier 3 when the `Outbound Calls` export landed (Op State #50). **Coming back is NOT just flipping back:**
+  every import during the outage skipped its mirror writes, so
+  `dqe_history` / `qcd_history` have a hole -- `runNeonCoverageCheck` (#35) to
+  size it, `backfillDQEHistoryUpsert()` / a force re-import to fill it, THEN
+  the parity gates over a window spanning the gap, and only flip on CLEAN
+  (a clean run now self-clears its window props, so set them per run).
 - **Neon keep-warm is an optional, admin-toggled trigger (`NeonKeepWarm.gs`).**
   Neon's free tier scale-to-zero suspends the compute after ~5 min idle, so
   the FIRST DQE read of a lull (when `DQE_READ_SOURCE=neon`) pays a
@@ -2362,6 +2402,7 @@ items for anything it flags or doesn't cover.)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; unset leaves it informational (and the figure is a FLOOR, so under-budget is not proof of headroom)
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install/arm from Admin ▾ → Coaching, first armed run emails one larger NEW-flag batch
 49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
+50. Outbound Calls tab export trigger -- the keystone that moved the Outbound report, the journey drill's outbound arm and Caller Lookup's per-call outbound section OUT of Neon-only (CDR Tools menu); seed it while Neon is reachable
 
 ## Cycle Workflow Config
 
@@ -2387,7 +2428,7 @@ CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js
 
 CDR Import:
   apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
