@@ -8,6 +8,7 @@
 //   Regression Scenarios    -> docs/regression-scenarios.md
 //   Operator State items    -> docs/operator-state.md
 //   client/UI gotchas       -> docs/client-ui-conventions.md
+//   per-call capture        -> docs/per-call-capture.md  (the F8c pass)
 //
 // That split creates ONE new failure mode that did not exist before: the index
 // and the full text can drift. A new INV added to docs/invariants.md but not to
@@ -61,7 +62,7 @@ function idMap(text, re) {
 
 test('F8 split: CLAUDE.md points at every split file', function () {
   ['docs/invariants.md', 'docs/regression-scenarios.md', 'docs/operator-state.md',
-   'docs/client-ui-conventions.md'].forEach(function (rel) {
+   'docs/client-ui-conventions.md', 'docs/per-call-capture.md'].forEach(function (rel) {
     assert.ok(CLAUDE.indexOf(rel) !== -1,
       'CLAUDE.md no longer links ' + rel + ' -- the split content is unreachable '
       + 'for anyone reading CLAUDE.md. Restore the pointer.');
@@ -161,6 +162,41 @@ test('F8 split: CLAUDE.md stays under the size budget', function () {
     + 'pattern: docs/invariants.md, docs/operator-state.md, '
     + 'docs/regression-scenarios.md, docs/client-ui-conventions.md) rather than '
     + 'raising this number.');
+});
+
+
+// F8c: the per-call capture split. Its index is a BULLET, not an ID table, so
+// the drift guard is on SUBJECT HEADINGS -- every `### ` in the doc must be
+// named in the CLAUDE.md index bullet and vice versa. Without it a subject
+// added to the doc is invisible to a CLAUDE.md reader, and a retired one keeps
+// sending readers to nothing. Both are silent, which is the failure mode the
+// whole F8 split created and this file exists to close.
+test('F8c split: the per-call capture index matches docs/per-call-capture.md', function () {
+  const headings = read('docs/per-call-capture.md').split('\n')
+    .map(function (l) { return /^### (.+)$/.exec(l); })
+    .filter(Boolean).map(function (m) { return m[1].trim(); }).sort();
+  assert.ok(headings.length > 0,
+    'docs/per-call-capture.md has no `### ` subject headings -- the index guard '
+    + 'below keys on them, so it would pass vacuously.');
+
+  const gotchas = section(CLAUDE, '## Common Gotchas');
+  const at = gotchas.indexOf('docs/per-call-capture.md');
+  assert.notEqual(at, -1,
+    'Common Gotchas no longer indexes docs/per-call-capture.md -- the split '
+    + 'content is unreachable for anyone reading CLAUDE.md.');
+  // Flatten the wrapped bullet; the subject list is ` · `-separated and runs up
+  // to the next bold run (the three rules that stayed in CLAUDE.md).
+  const flat = gotchas.slice(at).replace(/\s+/g, ' ');
+  const m = /this is the index:([^*]+)/.exec(flat);
+  assert.ok(m, 'the index bullet no longer carries a "this is the index:" list');
+  const named = m[1].split('\u00b7').map(function (x) {
+    return x.trim().replace(/\.$/, '').trim();
+  }).filter(Boolean).sort();
+
+  assert.deepEqual(named, headings,
+    'the CLAUDE.md per-call-capture index and docs/per-call-capture.md\'s `### ` '
+    + 'headings disagree. index=[' + named.join(', ') + '] doc=['
+    + headings.join(', ') + ']');
 });
 
 // ── Per-bullet ratchet ─────────────────────────────────────────────────────
