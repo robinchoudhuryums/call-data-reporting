@@ -503,6 +503,7 @@ const TRANSFER_TIERS_DEFAULT = Object.freeze({ deep: 25, light: 30, amber: 35 })
 const CSR_TRANSFER_COLS_ = 18;              // A..R
 const CSR_TRANSFER_QUEUE_FIRST_COL_ = 8;    // H (1-indexed)
 const CSR_TRANSFER_QUEUE_COUNT_ = 11;       // H..R
+const CSR_TRANSFER_DATE_COL_ = 3;           // C (1-indexed) -- the window filter
 
 // ── Script Property registry (the store's table of contents) ────────────────
 //
@@ -559,6 +560,7 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_KEEPWARM_END_HOUR: 'operator',
     NEON_BACKUP_HOUR: 'operator', NEON_BACKUP_KEEP: 'operator',
     NEON_COVERAGE_DAYS: 'operator', SHEET_COVERAGE_DAYS: 'operator',
+    SHEET_COVERAGE_ENABLED: 'operator',
     CACHE_WARM_HOUR: 'operator',
     QUEUE_REPORT_ENABLED: 'operator',
     // engine — outcome/state the code writes itself

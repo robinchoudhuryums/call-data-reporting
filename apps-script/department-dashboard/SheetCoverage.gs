@@ -198,3 +198,96 @@ function sheetCoverageNotify_(out, summary) {
     Logger.log('sheetCoverageNotify_ failed (best-effort): ' + (e && e.message ? e.message : e));
   }
 }
+
+// ── Weekly trigger (R25b) ────────────────────────────────────────────────
+//
+// The check above only helps if someone remembers to run it, and the gap it
+// finds is by nature one nobody noticed -- "remember to look for the thing
+// that produces no signal" is not a control. This runs it weekly and emails
+// admins ONLY on a finding (sheetCoverageNotify_'s existing rule), so a
+// clean week is silent.
+//
+// Follows the flag-gated-engine pattern (PipelineWatch/DqeSilenceWatch):
+// the handler no-ops cheaply on a property read when SHEET_COVERAGE_ENABLED
+// is not 'true', so an installed-but-disabled trigger cannot pretend to be
+// armed -- and the engine is registered in SystemHealth's svc() list WITH
+// its flagProp, which is what makes that mismatch visible on the Health page
+// (the install-readiness rule; an engine omitted from that list inherits the
+// old blind spot).
+
+var SHEET_COVERAGE_TRIGGER_HOUR_ = 7;        // Monday morning, script TZ
+
+/** Trigger handler: flag-gated, never throws to the trigger runner. */
+function runSheetCoverageWeekly_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (String(props.getProperty('SHEET_COVERAGE_ENABLED') || '') !== 'true') return;
+    // The check itself is assertAdmin_-gated for its editor/RPC entry point;
+    // a time trigger runs as the script owner (an admin), so this is the same
+    // identity the manual run uses -- no gate bypass.
+    runSheetCoverageCheck();
+  } catch (e) {
+    // A watchdog that throws is a watchdog that stops running. Record the
+    // failure where the Health page already looks, then return quietly.
+    try { sheetCoverageRecord_('FAILED ' + ((e && e.message) || e)); } catch (e2) {}
+    Logger.log('runSheetCoverageWeekly_ failed: ' + ((e && e.message) || e));
+  }
+}
+
+/** Admin-only: install the weekly trigger + set the enabled flag. */
+function installSheetCoverageTrigger() {
+  assertAdmin_();
+  PropertiesService.getScriptProperties().setProperty('SHEET_COVERAGE_ENABLED', 'true');
+  installSheetCoverageTrigger_();
+  return logStatusReturn_(getSheetCoverageStatus_());
+}
+
+/** Admin-only: uninstall the trigger + clear the flag (fully reversible). */
+function uninstallSheetCoverageTrigger() {
+  assertAdmin_();
+  uninstallSheetCoverageTrigger_();
+  PropertiesService.getScriptProperties().deleteProperty('SHEET_COVERAGE_ENABLED');
+  return logStatusReturn_(getSheetCoverageStatus_());
+}
+
+function installSheetCoverageTrigger_() {
+  uninstallSheetCoverageTrigger_();
+  ScriptApp.newTrigger('runSheetCoverageWeekly_')
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.MONDAY)
+    .atHour(SHEET_COVERAGE_TRIGGER_HOUR_)
+    .create();
+  Logger.log('Sheet coverage trigger installed (Mondays ~%s:00 script-TZ).',
+    SHEET_COVERAGE_TRIGGER_HOUR_);
+}
+
+function uninstallSheetCoverageTrigger_() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var removed = 0;
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'runSheetCoverageWeekly_') {
+      ScriptApp.deleteTrigger(triggers[i]);
+      removed++;
+    }
+  }
+  Logger.log('Sheet coverage trigger: removed %s existing trigger(s).', removed);
+  return removed;
+}
+
+/** {enabled, installed, last, lastResult} -- the install-readiness shape. */
+function getSheetCoverageStatus_() {
+  var props = PropertiesService.getScriptProperties();
+  var installed = false;
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === 'runSheetCoverageWeekly_') { installed = true; break; }
+    }
+  } catch (e) { /* scope not yet consented -- report as not installed */ }
+  return {
+    enabled: String(props.getProperty('SHEET_COVERAGE_ENABLED') || '') === 'true',
+    installed: installed,
+    last: props.getProperty('SHEET_COVERAGE_LAST') || '',
+    lastResult: props.getProperty('SHEET_COVERAGE_LAST_RESULT') || '',
+  };
+}

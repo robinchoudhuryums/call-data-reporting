@@ -1377,5 +1377,15 @@ When something looks wrong, before assuming a code bug, check:
     `SHEET_COVERAGE_LAST_RESULT` and rendered as the Health page's "Sheet
     coverage — last check" row; admins are emailed ONLY when there is a
     finding. A gap's fix is per sheet (force re-import the date; for Direct,
-    `runDirectCallBuild()`), and each finding names it. Pinned by
+    `runDirectCallBuild()`), and each finding names it.
+    **Weekly trigger (recommended):** `installSheetCoverageTrigger()` from the
+    dashboard editor arms `runSheetCoverageWeekly_` (Mondays ~7 AM script-TZ)
+    and sets `SHEET_COVERAGE_ENABLED=true`; `uninstallSheetCoverageTrigger()`
+    removes both. A check nobody remembers to run is not a control, and the
+    gap it finds is by definition one that produced no other signal --
+    a clean week is SILENT (admins are emailed only on a finding), so arming
+    it costs nothing in noise. Like the other flag-gated engines the handler
+    NO-OPS on a property read when the flag is off, and the engine is in the
+    Health page's trigger-readiness matrix WITH its flag, so
+    installed-but-disabled is flagged rather than reported as armed. Pinned by
     `tests/unit/sheet-coverage.test.js`.

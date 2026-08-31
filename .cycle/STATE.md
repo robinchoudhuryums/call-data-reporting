@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
-## Latest session (R25 — CSR transfer detail + sheet coverage check)
+## Latest session (R25b — bounded CSR read + weekly coverage trigger)
+Branch `claude/broad-scan-76h2dr` (6 unmerged commits), **1023/1023 tests**, all guards green. Increment 157. Block: `.cycle/blocks/157-r25b-bounded-read-weekly-trigger-broad-implement.md`.
+- **Bounded CSR read**: the A..R widening still scanned the whole sheet on every CSR dept load. Now a narrow date-column pass locates the window's row span and only that span is read wide. Deliberately NOT a tail scan — the sheet is append-only and never sorted, so a tail scan would drop backfilled dates (pinned by an out-of-order test).
+- **Weekly coverage trigger**: `runSheetCoverageWeekly_` flag-gated on `SHEET_COVERAGE_ENABLED`, registered in the Health readiness matrix WITH its flag; silent on a clean week. Operator must run `installSheetCoverageTrigger()` once.
+- **CLAUDE.md relocation pass is now due** — 191KB/200KB, and both increments here needed the System Health bullet trimmed to fit.
+- Where I left off: committed + pushed; branch needs a PR (6 commits).
+
+## Prior session (R25 — CSR transfer detail + sheet coverage check)
 Branch `claude/broad-scan-76h2dr` (5 unmerged commits; PR #264 was the last merge), **1016/1016 tests**, all guards green. Increment 156. Block: `.cycle/blocks/156-r25-csr-transfer-sheet-coverage-broad-implement.md`.
 - **#3 CSR transfer detail**: `CSR Transfer Historical Data` always carried per-AGENT rows + 11 per-QUEUE destination columns; the dashboard read 7 columns and showed one percentage. Now surfaces destinations, who transfers, a daily series, and DISCLOSES transfers outside the 11 fixed columns. `summary:v20 -> v21` synced across 8 docs.
 - **#2 sheet coverage**: NEW `SheetCoverage.gs` flags business days with ZERO rows in DQE / QCD / Direct sheets — the interior gap no other signal can see. No Neon connection, so it works mid-outage. Health row + Operator State #52.

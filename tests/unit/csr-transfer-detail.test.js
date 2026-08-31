@@ -56,6 +56,7 @@ const ROWS = [
 function install(rows) {
   h.state.props = { SPREADSHEET_ID: 'fake' };
   const data = rows === undefined ? ROWS : rows;
+  install.reads = [];   // every getRange the reader issues: {row, col, nr, nc}
   h.ctx.openSpreadsheet_ = function () {
     return {
       getSpreadsheetTimeZone: function () { return 'America/Chicago'; },
@@ -65,6 +66,7 @@ function install(rows) {
           getLastRow: function () { return data.length + 1; },
           getLastColumn: function () { return 18; },
           getRange: function (r, c, nr, nc) {
+            install.reads.push({ row: r, col: c, nr: nr, nc: nc });
             const src = r === 1 ? [HEADER] : data.slice(r - 2, r - 2 + nr);
             return { getDisplayValues: function () {
               return src.map(function (x) { return x.slice(c - 1, c - 1 + nc); });
@@ -155,4 +157,51 @@ test('the dept gate and the no-data contract are unchanged', function () {
     'non-CSR depts get nothing (the sheet is CSR-only)');
   install([]);
   assert.equal(run(), null, 'no rows in range -> null, not a zero-filled shape');
+});
+
+// ── R25b: the WIDE read is bounded, without assuming row order ───────────
+// The sheet is APPEND-ONLY and never sorted (cdr-import appends at
+// getLastRow()+1 on both the daily and bulk paths), so a backfill of older
+// dates lands AFTER newer rows. That is why the reader scans the date column
+// and then reads only the row SPAN containing the window -- rather than the
+// export tabs' widening TAIL scan, which assumes sorted rows and would
+// silently drop the backfilled ones.
+
+test('R25b: the wide read is BOUNDED to the window span, not the whole sheet', function () {
+  // 200 old rows, then the 4 in-window rows near the end.
+  const filler = [];
+  for (let i = 0; i < 200; i++) filler.push(row('2026-01-05', 'Old', 10, 1, { Sales: 1 }));
+  install(filler.concat(ROWS.slice(0, 3)));
+  const r = run();
+  assert.equal(r.totalCalls, 150, 'the window figures are unchanged');
+  const wide = install.reads.filter(function (x) { return x.nc >= 18 && x.row > 1; });
+  assert.equal(wide.length, 1, 'exactly one wide data read');
+  assert.ok(wide[0].nr <= 4,
+    'the wide read covers only the window span (got ' + wide[0].nr + ' rows of 203)');
+  // The narrow date-column scan still walks everything -- that is the cheap half.
+  const narrow = install.reads.filter(function (x) { return x.nc === 1 && x.row > 1; });
+  assert.equal(narrow.length, 1);
+  assert.equal(narrow[0].nr, 203);
+});
+
+test('R25b: OUT-OF-ORDER rows are still counted (a tail scan would drop them)', function () {
+  // A backfilled older in-window date appended AFTER a newer one -- exactly
+  // what cdr-import's bulk path produces.
+  install([
+    row('2026-08-11', 'Anna', 40, 10, { Sales: 10 }),
+    row('2026-09-20', 'Anna', 10, 0, {}),          // newer row in the middle
+    row('2026-08-10', 'Anna', 60, 20, { Sales: 20 }),   // backfilled, appended last
+  ]);
+  const r = run();
+  // Both August rows must count; the September row is outside the window.
+  assert.equal(r.totalCalls, 100, 'the backfilled row was NOT skipped');
+  assert.equal(r.transferred, 30);
+  assert.equal(r.agents[0].totalCalls, 100);
+});
+
+test('R25b: no rows in the window returns null WITHOUT a wide read', function () {
+  install([row('2026-01-05', 'Old', 10, 1, { Sales: 1 })]);
+  assert.equal(run(), null);
+  const wide = install.reads.filter(function (x) { return x.nc >= 18 && x.row > 1; });
+  assert.equal(wide.length, 0, 'an empty window costs only the narrow date scan');
 });

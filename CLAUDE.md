@@ -1721,12 +1721,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `retention-risk` (surviving dates the per-call tables are missing;
   #40/#43).
   **Install readiness: a trigger being
-  installed does NOT mean its engine runs.** Six engines gate their handler
+  installed does NOT mean its engine runs.** Seven engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
-  `PIPELINE_WATCH`, `QUEUE_REPORT`, `DQE_SILENCE_WATCH`,
-  `COACHING_DELIVERY`), so a trigger installed with the flag off
+  `PIPELINE_WATCH`, `QUEUE_REPORT`, `DQE_SILENCE_WATCH`, `COACHING_DELIVERY`,
+  `SHEET_COVERAGE`), so a trigger installed with the flag off
   fires on schedule and returns immediately -- and the page used to report it
-  as simply "installed". `svc()` takes an optional `flagProp` and now flags
+  as "installed". `svc()` takes an optional `flagProp` and now flags
   BOTH mismatch directions ("installed but DISABLED -- every run is a no-op" /
   "NO trigger installed but flag=true -- it never runs"), plus a single
   `trg-readiness` verdict row ("N armed, K need attention"). A new
@@ -2450,7 +2450,7 @@ items for anything it flags or doesn't cover.)
 49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
 50. Outbound Calls tab export trigger -- the keystone that moved the Outbound report, the journey drill's outbound arm and Caller Lookup's per-call outbound section OUT of Neon-only (CDR Tools menu); seed it while Neon is reachable
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use when emailing an Individual Report to its subject; prefer adding the agent's Access Control row instead (no typing, no mis-delivery risk)
-52. Sheet coverage check -- flags business days with ZERO rows in a dashboard-read historical sheet (the interior gap every other signal misses); no Neon needed, so it works mid-outage
+52. Sheet coverage check -- flags business days with ZERO rows in a dashboard-read historical sheet (the interior gap every other signal misses); no Neon needed, so it works mid-outage; arm the weekly trigger (`installSheetCoverageTrigger()`) -- a clean week is silent
 
 ## Cycle Workflow Config
 

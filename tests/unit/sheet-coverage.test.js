@@ -170,3 +170,82 @@ test('non-admins are refused', function () {
   h.state.userEmail = 'stranger@x.com';
   assert.throws(function () { h.call('runSheetCoverageCheck'); }, /admin/i);
 });
+
+// ── R25b: the weekly trigger (flag-gated-engine pattern) ─────────────────
+// A check nobody remembers to run is not a control -- and the gap it finds
+// is by definition one that produces no other signal. These pin the gate
+// (an installed-but-disabled trigger must be a NO-OP, which is what makes
+// the Health page's mismatch row meaningful) and the never-throw rule.
+
+function installTrigger(opts) {
+  opts = opts || {};
+  h.state.userEmail = 'admin@x.com';
+  h.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };
+  if (opts.enabled) h.state.props.SHEET_COVERAGE_ENABLED = 'true';
+  installTrigger.ran = 0;
+  const real = h.ctx.runSheetCoverageCheck;
+  installTrigger.restore = function () { h.ctx.runSheetCoverageCheck = real; };
+  h.ctx.runSheetCoverageCheck = function () {
+    installTrigger.ran++;
+    if (opts.throws) throw new Error('boom');
+    return { findings: 0 };
+  };
+}
+
+test('R25b: the weekly handler NO-OPS when the flag is off', function () {
+  installTrigger({ enabled: false });
+  try {
+    h.call('runSheetCoverageWeekly_');
+    assert.equal(installTrigger.ran, 0,
+      'an installed-but-disabled trigger must do nothing -- that mismatch is what '
+      + "SystemHealth's flagProp row exists to surface");
+  } finally { installTrigger.restore(); }
+});
+
+test('R25b: the weekly handler RUNS the check when enabled', function () {
+  installTrigger({ enabled: true });
+  try {
+    h.call('runSheetCoverageWeekly_');
+    assert.equal(installTrigger.ran, 1);
+  } finally { installTrigger.restore(); }
+});
+
+test('R25b: a throwing check is recorded, never re-thrown (a watchdog must not die)', function () {
+  installTrigger({ enabled: true, throws: true });
+  try {
+    assert.doesNotThrow(function () { h.call('runSheetCoverageWeekly_'); });
+    assert.match(h.state.props.SHEET_COVERAGE_LAST_RESULT, /^FAILED /,
+      'the failure lands where the Health page already looks');
+  } finally { installTrigger.restore(); }
+});
+
+test('R25b: install/uninstall are admin-gated and fully reversible', function () {
+  installTrigger({ enabled: false });
+  const made = [];
+  h.ctx.ScriptApp = {
+    WeekDay: { MONDAY: 'MON' },
+    getProjectTriggers: function () { return made.slice(); },
+    deleteTrigger: function (t) { made.splice(made.indexOf(t), 1); },
+    newTrigger: function (fn) {
+      const t = { getHandlerFunction: function () { return fn; } };
+      const b = { timeBased: function () { return b; }, onWeekDay: function () { return b; },
+                  atHour: function () { return b; },
+                  create: function () { made.push(t); return t; } };
+      return b;
+    },
+  };
+  h.ctx.logStatusReturn_ = function (o) { return o; };
+  try {
+    const on = h.call('installSheetCoverageTrigger');
+    assert.equal(on.enabled, true);
+    assert.equal(on.installed, true);
+    assert.equal(h.state.props.SHEET_COVERAGE_ENABLED, 'true');
+    const off = h.call('uninstallSheetCoverageTrigger');
+    assert.equal(off.enabled, false);
+    assert.equal(off.installed, false);
+    assert.ok(!('SHEET_COVERAGE_ENABLED' in h.state.props), 'the flag is cleared too');
+
+    h.state.userEmail = 'stranger@x.com';
+    assert.throws(function () { h.call('installSheetCoverageTrigger'); }, /admin/i);
+  } finally { installTrigger.restore(); }
+});

@@ -1400,7 +1400,35 @@ function computeCsrTransferRange_(dept, from, to) {
     // headline fields below are computed EXACTLY as before, so the existing
     // team-strip tile and its delta chip are unchanged.
     const width = Math.min(CSR_TRANSFER_COLS_, sheet.getLastColumn());
-    const disp = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
+
+    // R25b: bound the WIDE read. Widening A..G to A..R multiplied a
+    // whole-sheet read that already grew ~3.5K rows/year, and this runs on
+    // every CSR My Department load.
+    //
+    // NOT the export tabs' widening TAIL scan: those are kept date-sorted by
+    // their own exporter, and this sheet is APPEND-ONLY and never sorted --
+    // cdr-import appends at getLastRow()+1 on BOTH the daily and the bulk
+    // paths, so a backfill of older dates lands after newer rows. A tail scan
+    // would stop early and silently drop them, which on a metrics read means
+    // quietly wrong numbers -- strictly worse than being slow.
+    //
+    // Instead: read the DATE COLUMN alone (one narrow column, cheap even on a
+    // years-deep sheet), find the FIRST and LAST row whose date falls in the
+    // window, then read only that row SPAN at full width. Correct whatever
+    // the row order is -- an out-of-order row merely widens the span, it can
+    // never fall outside it -- and tight in the ordinary appended-in-order
+    // case. Same total rows scanned for dates as before; far fewer cells.
+    const tz0 = ss.getSpreadsheetTimeZone();
+    const dateCol = sheet.getRange(2, CSR_TRANSFER_DATE_COL_, lastRow - 1, 1).getDisplayValues();
+    let firstIdx = -1, lastIdx = -1;
+    for (let d = 0; d < dateCol.length; d++) {
+      const dIso = rowDateIso_(dateCol[d][0], tz0);
+      if (!dIso || dIso < from || dIso > to) continue;
+      if (firstIdx < 0) firstIdx = d;
+      lastIdx = d;
+    }
+    if (firstIdx < 0) return null;   // no rows in range -- same contract as before
+    const disp = sheet.getRange(2 + firstIdx, 1, lastIdx - firstIdx + 1, width).getDisplayValues();
     // Queue labels live in the sheet's own header row (cols H..R), same as
     // the pipeline's repair tool reads them -- never hardcoded, so a renamed
     // queue follows automatically.

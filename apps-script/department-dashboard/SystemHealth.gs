@@ -461,6 +461,16 @@ function getSystemHealth(req) {
     svc('trg-dqesilence', 'DQE-silence watchdog (queue active, agents dark)', ['runDqeSilenceWatch_'], false,
       'Optional but recommended: emails admins when a mapped queue shows QCD volume while ZERO DQE rows match the dept roster — the silent failure shape that cost Field Ops Power two months of agent history (Operator State #44). Enable via installDqeSilenceWatchTrigger().',
       'DQE_SILENCE_WATCH_ENABLED');
+    // R25b: the sheet-coverage check on a weekly schedule. Registered WITH
+    // its flagProp so an installed-but-disabled trigger is flagged rather
+    // than reported as armed (the install-readiness rule).
+    svc('trg-sheetcoverage', 'Sheet coverage check (weekly interior-gap scan)',
+      ['runSheetCoverageWeekly_'], false,
+      'Optional but recommended: finds business days with ZERO rows in a dashboard-read '
+      + 'historical sheet -- the interior gap freshness/staleness signals structurally cannot '
+      + 'see (Operator State #52). Emails admins only on a finding. Enable via '
+      + 'installSheetCoverageTrigger().',
+      'SHEET_COVERAGE_ENABLED');
     // F-e: the coaching delivery engine (weekly email + worklist upsert).
     // Admin-only while dark (owner ruling): emails go to getAdminEmails_().
     svc('trg-coaching', 'Coaching delivery (weekly flags → email + worklist)', ['runCoachingDelivery_'], false,
