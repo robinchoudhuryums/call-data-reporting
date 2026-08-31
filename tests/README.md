@@ -189,7 +189,18 @@ tests/
                               ir-send-to-agent (the three server-side gates
                               on emailing an Individual Report to its
                               subject: dept+roster, registered-address
-                              preference, domain allowlist)
+                              preference, domain allowlist),
+                              retention-prune (the destructive Call_Legs_*
+                              prune: non-Call_Legs tabs are untouchable, the
+                              14-day cutoff is exclusive, P18 fails LOUDLY
+                              rather than reporting 0, the Pipeline Health
+                              row is accurate -- plus a CHARACTERIZATION of
+                              the DST fall-back early deletion),
+                              dqe-drilldown-parity (the FOURTH hand-mirrored
+                              rule set: one fixture drives the real build AND
+                              the real drill sidebar, and the drill's Found-N
+                              must reconcile with the DQE cell -- catches all
+                              three historical drifts, F24 / R8-D4 / F-13)
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass
