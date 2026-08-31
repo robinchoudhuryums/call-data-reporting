@@ -648,6 +648,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the latent 35+37 double-count -- see docs/known-issues.md "QCDR Output
   row 34". Still diff
   both files when you touch either; the suite tells you WHICH cell drifted.
+  (`DQEdrilldown.js` is a FOURTH such mirror -- next bullet.)
+- **The DQE Drill-Down sidebar is a FOURTH hand-mirrored rule set, and it has
+  drifted three times.** `cdr-report/DQEdrilldown.js` ("which Raw Data rows
+  produced this DQE cell?") does NOT call the build: it re-implements the
+  parent-leg tree, INV-08 own-talk attribution (its own
+  `findAgentTalkOnParent`), INV-24 canonicalization (its own `canonicalize_`),
+  the INV-06 window, and a TTT/ATT summary. Structurally different code, so
+  `check-duplicated-files.sh` cannot diff it and `cross-file-pins` cannot
+  tokenize it. Every drift so far has been the same shape -- the verification
+  tool contradicting the build during exactly the investigation it exists to
+  serve (F24, R8-D4, F-13 -- backstories in fix-history). **A change to the
+  build's per-agent rules is a two-file edit here.** Pinned BEHAVIORALLY by
+  `tests/unit/dqe-drilldown-parity.test.js`: one fixture drives the real build
+  AND the real drill, and the drill's Found-N must reconcile with the DQE cell.
+- **`hashPhone` (cdr-report) and `cdrHashPhone_` (cdr-import) must agree, and
+  they are in different PROJECTS** -- so the INV-16 guard, which pairs
+  same-named files, does not cover them. They hash the insurer reference table
+  and the mirrored call rows respectively; if they diverge, nothing joins and
+  every insurer silently renders "(unlabeled)" -- no error, no count gap, the
+  label just never appears. Pinned by `tests/unit/insurance-numbers.test.js`
+  (same input, same 64-char hex, same null handling).
 - **`buildDQEHistoricalData.js` is also duplicated** between
   `apps-script/cdr-report/` and `apps-script/cdr-import/`. Same INV-16
   byte-identical discipline as `neonWrite.js`. cdr-import calls it
