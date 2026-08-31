@@ -164,7 +164,32 @@ tests/
                               self-clear pins), report-usage (the INV-01
                               telemetry carve-out + usage rollup),
                               ui-harness-vendor (the committed vendor
-                              bundles' version + F-11 sha256 pins)
+                              bundles' version + F-11 sha256 pins),
+                              outbound-fallback (the Outbound report's
+                              Neon-down sheet fallback: SOURCE PARITY
+                              between the Neon blob and the export tabs
+                              through the shared outboundShapeReport_, the
+                              callback rule's sheet-side mirror, the
+                              never-cache rule and all three failure
+                              branches),
+                              date-presets (the SHARED preset resolver: no
+                              open-ended preset includes today, the
+                              degenerate month/week-start clamps, and a
+                              tripwire that fails if a resolver computes its
+                              own dates again),
+                              sheet-coverage (R25: the interior-gap detector
+                              -- weekends/holidays/pre-start dates are not
+                              gaps, a missing sheet reads distinctly, and it
+                              opens no Neon connection),
+                              csr-transfer-detail (R25: the headline stays
+                              byte-identical, per-agent rows SUM to it,
+                              destination labels come from the sheet header,
+                              and transfers outside the 11 fixed columns are
+                              disclosed),
+                              ir-send-to-agent (the three server-side gates
+                              on emailing an Individual Report to its
+                              subject: dept+roster, registered-address
+                              preference, domain allowlist)
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

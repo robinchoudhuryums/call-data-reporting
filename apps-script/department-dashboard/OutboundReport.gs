@@ -161,7 +161,10 @@ function getOutboundReport(req) {
   const data = computeOutboundReport_(scope);
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
-  if (data.meta.available) {
+  // Fallback payloads are NEVER cached -- a recovered Neon must not be masked
+  // for the TTL (the unavailable-uncached rule extended to degraded payloads,
+  // same as the Direct report and the heatmap fallback).
+  if (data.meta.available && !data.meta.fallbackSource) {
     try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('OutboundReport cache put failed: %s', e); }
   }
@@ -188,7 +191,7 @@ function computeOutboundReport_(scope) {
   let conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
-    if (!conn) { empty.meta.available = false; return empty; }
+    if (!conn) return outboundSheetFallback_(scope);   // Neon down -> the export tabs
 
     // from/to are validated ISO. The abandon side reuses the Inbound report's
     // dept-attribution predicate + work-window clause verbatim -- AND (v2)
@@ -279,14 +282,13 @@ function computeOutboundReport_(scope) {
     const json = rs.next() ? rs.getString('j') : null;
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound');
     rs.close(); stmt.close();
-    if (!json) { empty.meta.available = false; return empty; }
+    if (!json) return outboundSheetFallback_(scope);
 
     const obj = JSON.parse(json);
     return outboundShapeReport_(scope, obj, buildDeptsByAgent_());
   } catch (e) {
     Logger.log('computeOutboundReport_ failed: ' + (e && e.message ? e.message : e));
-    empty.meta.available = false;
-    return empty;
+    return outboundSheetFallback_(scope);
   } finally {
     if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
   }
@@ -690,5 +692,250 @@ function runOutboundVettingCheck() {
     });
   } finally {
     if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NEON-DOWN SHEET FALLBACK (the DC-1 / heatmap-fallback pattern, applied to
+// the last big Neon-only report).
+//
+// `outbound_calls` had no sheet primary, so a Neon outage took this report,
+// the call-path drill's OUTBOUND arm and Caller Lookup's outbound section
+// fully dark. cdr-report/outboundCallsExport.js now mirrors the table into an
+// "Outbound Calls" tab; this reads it (plus the existing "Inbound Calls" tab
+// for the abandon denominator) and feeds the SAME pure `outboundShapeReport_`
+// the Neon path uses -- so the two sources cannot disagree on roster
+// attribution, KPI derivation or the callback rule (source parity is pinned
+// by tests/unit/outbound-fallback.test.js).
+//
+// What the fallback CANNOT reproduce, and therefore discloses:
+//   - rows outside the tabs' retention windows (the copy's `through` date is
+//     reported as meta.fallbackThrough; the client captions it),
+//   - `medianCallbackSec`, which the SQL derives with percentile_cont over
+//     the full population -- the sheet path computes a true median over the
+//     matched delays it can see, which is the same statistic on a possibly
+//     smaller set, so it is reported rather than suppressed.
+// Uncached (the R8-C1/B-3 outage-cache discipline: an outage payload must
+// never pin under the live key for the TTL).
+// ---------------------------------------------------------------------------
+
+var OUTBOUND_FALLBACK_SHEET_ = 'Outbound Calls';
+// Column count the fallback reader requires of the Outbound Calls tab (the
+// export's full width -- see cdr-report/outboundCallsExport.js's header
+// contract; a narrower/older tab reads as unavailable rather than misparsed).
+var OUTBOUND_EXPORT_FALLBACK_COLS_ = 12;
+var OUTBOUND_FALLBACK_TAIL_ROWS_ = 4000;   // widening tail scan (the F9 class)
+
+/** Widening tail read of a date-sorted export tab. {grid, through} or null. */
+function obSheetTailGrid_(sheetName, width, fromIso) {
+  var ss = openSpreadsheet_();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  if (sheet.getMaxColumns() < width || sheet.getLastColumn() < width) return null;
+  var win = OUTBOUND_FALLBACK_TAIL_ROWS_;
+  var startRow, dates;
+  for (;;) {
+    startRow = Math.max(2, lastRow - win + 1);
+    dates = sheet.getRange(startRow, 1, lastRow - startRow + 1, 1).getDisplayValues();
+    var oldest = ncCellDateIso_(dates[0][0]);
+    if (startRow === 2 || (oldest && oldest < fromIso)) break;
+    win *= 4;
+  }
+  var through = null;
+  for (var i = 0; i < dates.length; i++) {
+    var d = ncCellDateIso_(dates[i][0]);
+    if (d && (through === null || d > through)) through = d;
+  }
+  return {
+    grid: sheet.getRange(startRow, 1, lastRow - startRow + 1, width).getDisplayValues(),
+    through: through,
+  };
+}
+
+/** ISO date + 'HH:MM:SS' -> comparable seconds-since-epoch-ish ordinal. */
+function obOrdinal_(iso, hms) {
+  var base = Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 1000;
+  var p = String(hms || '').split(':');
+  var secs = (/^\d{1,2}:\d{2}:\d{2}$/.test(String(hms || '')))
+    ? ((+p[0]) * 3600 + (+p[1]) * 60 + (+p[2])) : 0;   // NULL start -> midnight (SQL parity)
+  return base + secs;
+}
+
+function obDaysAfterIso_(iso, n) {
+  var d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)));
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * PURE: builds the exact blob shape `outboundShapeReport_` consumes from the
+ * two export grids. Separated for testability -- every rule below mirrors a
+ * clause of the Neon SQL, and the parity test drives both from one fixture.
+ *
+ * obGrid rows: [date, callId, calleeHash, agent, ext, dept, connected,
+ *               talkSec, ringSec, attempts, callStart, journey]
+ * ibGrid rows: the Inbound Calls tab's cols 1..17 (ihRowInDept_'s shape).
+ */
+function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
+  var agentsFor = function (fromIso, toIso) {
+    var byAgent = {};
+    for (var i = 0; i < obGrid.length; i++) {
+      var row = obGrid[i];
+      var iso = ncCellDateIso_(row[0]);
+      if (!iso || iso < fromIso || iso > toIso) continue;
+      var agent = String(row[3] == null ? '' : row[3]).trim();
+      var a = byAgent[agent] || (byAgent[agent] = {
+        agent: agent, ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0,
+      });
+      a.ob_total++;
+      if (String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE') a.ob_connected++;
+      a.ob_talk_sec += Number(row[7]) || 0;
+      a.attempts += Number(row[9]) || 0;
+    }
+    // Same ORDER BY as agentsSel: ob_total DESC, then agent.
+    return Object.keys(byAgent).map(function (k) { return byAgent[k]; })
+      .sort(function (x, y) {
+        return (y.ob_total - x.ob_total) || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
+      });
+  };
+
+  // Callback index: hash -> ordinal-sorted outbound calls (the cbLateral
+  // "earliest qualifying outbound" rule, evaluated in JS).
+  var byHash = {};
+  for (var o = 0; o < obGrid.length; o++) {
+    var orow = obGrid[o];
+    var oiso = ncCellDateIso_(orow[0]);
+    var h = String(orow[2] == null ? '' : orow[2]).trim();
+    if (!oiso || !h) continue;   // NULL hash never matches (SQL parity)
+    (byHash[h] || (byHash[h] = [])).push({
+      iso: oiso,
+      ord: obOrdinal_(oiso, orow[10]),
+      connected: String(orow[6] == null ? '' : orow[6]).trim().toUpperCase() === 'TRUE',
+    });
+  }
+  Object.keys(byHash).forEach(function (k) {
+    byHash[k].sort(function (a, b) { return a.ord - b.ord; });
+  });
+
+  var deptFilter = !!scope.dept;
+  var qSet = {};
+  (deptQueues || []).forEach(function (q) { qSet[String(q).trim().toLowerCase()] = true; });
+  var labels = deptFilter
+    ? ((typeof getFinalDeptLabels_ === 'function') ? getFinalDeptLabels_(scope.dept)
+                                                  : [String(scope.dept).trim().toLowerCase()])
+      .map(function (l) { return String(l).trim().toLowerCase(); })
+    : [];
+  var allLabels = ((typeof getAllFinalDeptLabels_ === 'function') ? getAllFinalDeptLabels_() : [])
+    .map(function (l) { return String(l).trim().toLowerCase(); });
+
+  var todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var winStart = INBOUND_WORK_WINDOW_PST.start, winEnd = INBOUND_WORK_WINDOW_PST.end;
+
+  // One pass over the inbound abandons for a window -> the callback block
+  // (+ the per-day series when asked). Mirrors callbackSel/callbackDaily.
+  var callbackFor = function (fromIso, toIso, withDetail) {
+    var agg = { abandonedTotal: 0, abandonedAnonymous: 0, calledBack: 0, calledBackConnected: 0 };
+    var delays = [];
+    var pendingTail = 0;
+    var daily = {};
+    for (var i = 0; i < ibGrid.length; i++) {
+      var row = ibGrid[i];
+      var iso = ncCellDateIso_(row[0]);
+      if (!iso || iso < fromIso || iso > toIso) continue;
+      if (String(row[5] == null ? '' : row[5]).trim().toLowerCase() !== 'abandoned') continue;
+      if (String(row[16] == null ? '' : row[16]).trim().toUpperCase() === 'TRUE') continue;  // is_internal
+      var cs = String(row[15] == null ? '' : row[15]).trim();
+      // inboundWindowClause_(true): NULL/absent start counts as IN window.
+      if (cs && !(cs >= winStart && cs < winEnd)) continue;
+      if (deptFilter && !ihRowInDept_(row, qSet, labels, allLabels)) continue;
+
+      agg.abandonedTotal++;
+      var d = daily[iso] || (daily[iso] = { d: iso, tracked: 0, called_back: 0 });
+      var hash = String(row[3] == null ? '' : row[3]).trim();
+      if (!hash) { agg.abandonedAnonymous++; continue; }   // anonymous: never "not called back"
+      d.tracked++;
+      var abOrd = obOrdinal_(iso, cs);
+      var limitIso = obDaysAfterIso_(iso, OUTBOUND_CALLBACK_WINDOW_DAYS);
+      var list = byHash[hash] || [];
+      var match = null;
+      for (var m = 0; m < list.length; m++) {
+        var cand = list[m];
+        if (cand.iso < iso || cand.iso > limitIso) continue;
+        if (cand.ord < abOrd) continue;
+        match = cand; break;                                // list is ord-sorted -> earliest
+      }
+      if (match) {
+        agg.calledBack++;
+        d.called_back++;
+        if (match.connected) agg.calledBackConnected++;
+        delays.push(match.ord - abOrd);
+      } else if (iso > obDaysAfterIso_(todayIso, -OUTBOUND_CALLBACK_WINDOW_DAYS)) {
+        pendingTail++;                                      // still inside the window today
+      }
+    }
+    if (withDetail) {
+      agg.pendingTail = pendingTail;
+      var nonNeg = delays.filter(function (x) { return x >= 0; }).sort(function (a, b) { return a - b; });
+      agg.medianCallbackSec = nonNeg.length
+        ? (nonNeg.length % 2
+            ? nonNeg[(nonNeg.length - 1) / 2]
+            : (nonNeg[nonNeg.length / 2 - 1] + nonNeg[nonNeg.length / 2]) / 2)
+        : null;
+    }
+    var series = Object.keys(daily).sort().map(function (k) { return daily[k]; });
+    return { agg: agg, daily: series };
+  };
+
+  var cur = callbackFor(scope.from, scope.to, true);
+  var coverageStart = null;
+  for (var c = 0; c < obGrid.length; c++) {
+    var ci = ncCellDateIso_(obGrid[c][0]);
+    if (ci && (coverageStart === null || ci < coverageStart)) coverageStart = ci;
+  }
+  var blob = {
+    agents: agentsFor(scope.from, scope.to),
+    callback: cur.agg,
+    callbackDaily: cur.daily,
+    coverageStart: coverageStart,
+  };
+  if (pw) {
+    blob.agentsPrior = agentsFor(pw.from, pw.to);
+    blob.callbackPrior = callbackFor(pw.from, pw.to, false).agg;
+  }
+  return blob;
+}
+
+/**
+ * Sheet-sourced twin of computeOutboundReport_. Returns a shaped payload with
+ * meta.fallbackSource='sheet' (+ fallbackThrough), or an unavailable payload
+ * when the export tabs aren't there. Never throws to the caller.
+ */
+function outboundSheetFallback_(scope) {
+  var out = emptyOutboundReport_(scope);
+  try {
+    var deptQueues = scope.companyView ? [] : inboundQueuesForDept_(scope.dept);
+    var pw = (typeof computePriorWindow_ === 'function') ? computePriorWindow_(scope.from, scope.to) : null;
+    var readFrom = pw ? pw.from : scope.from;
+    // Read outbound THROUGH the callback window past `to` -- a last-day
+    // abandon's callback can land after the report window (the SQL match is
+    // likewise uncapped by `to`).
+    var ob = obSheetTailGrid_(OUTBOUND_FALLBACK_SHEET_, OUTBOUND_EXPORT_FALLBACK_COLS_, readFrom);
+    var ib = obSheetTailGrid_('Inbound Calls', 17, readFrom);
+    if (!ob || !ib) { out.meta.available = false; return out; }
+
+    var blob = obBuildBlobFromGrids_(scope, ob.grid, ib.grid, pw, deptQueues);
+    var shaped = outboundShapeReport_(scope, blob, buildDeptsByAgent_());
+    shaped.meta.fallbackSource = 'sheet';
+    // The OLDER of the two copies bounds what this payload can know.
+    shaped.meta.fallbackThrough =
+      (ob.through && ib.through) ? (ob.through < ib.through ? ob.through : ib.through)
+                                 : (ob.through || ib.through || null);
+    return shaped;
+  } catch (e) {
+    Logger.log('outboundSheetFallback_ failed (best-effort): ' + (e && e.message ? e.message : e));
+    out.meta.available = false;
+    return out;
   }
 }

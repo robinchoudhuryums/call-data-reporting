@@ -783,6 +783,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   per-call capture doesn't cover -- day-level is the ceiling there). Each
   section is independently best-effort: a missing `outbound_calls` table
   flags `meta.outboundAvailable=false`; the inbound results stand.
+  **Neon-down degrades to the SHEET FALLBACK** (`callerLookupSheetFallback_`):
+  both export tabs carry the hash the lookup keys on (`Inbound Calls` col 4,
+  `Outbound Calls` col 3), so the per-call history reconstructs from the
+  sheets with no raw number stored anywhere, shaped by the same
+  `callerLookupShapeCall_`/`...Outbound_`. The day-level "Earlier outbound
+  activity" has NO sheet primary and reports `historyAvailable:false`.
 - **Per-call journey drill-through (inbound capture).**
   `InboundReport.gs::getCallJourney({callId, date, department})` returns ONE
   call's journey for the "↳ path" affordance on abandoned rings in the Missed
@@ -810,8 +816,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   disclosed via `fallbackSource`/`fallbackThrough` + an overlay caption, a
   `fallback-gap` reason for dates past the copy's ceiling; journey cells
   are only exported within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
-  #49), older dates render the summary; the OUTBOUND arm has NO fallback
-  (no sheet primary) and the client says so. Pinned by
+  #49), older dates render the summary; the OUTBOUND arm falls back to the
+  `Outbound Calls` tab (Op State #50) with its two-arm entitlement
+  RE-DERIVED from the Inbound tab's related-call columns, never trusted.
+  Pinned by
   journey-fallback.test.js. The journey carries no
   caller identity; the client reuses the Caller Lookup renderers
   (`clChainHtml_` / `clJourneyRowHtml_`) in a `#call-journey-overlay`.
@@ -954,6 +962,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   not-called-back drill (same lateral as the KPI, cap 200, no caller
   identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
   `outboundReport:v2` + the freshness tag; unavailable payloads uncached.
+  **Neon-down degrades to the SHEET FALLBACK** (`outboundSheetFallback_`):
+  the `Outbound Calls` export tab (Op State #50) + the `Inbound Calls` tab
+  for the abandon denominator, fed through the SAME pure
+  `outboundShapeReport_` the Neon path uses -- so source parity is by
+  CONSTRUCTION (outbound-fallback.test.js pins it over one fixture).
+  Disclosed via `meta.fallbackSource`/`fallbackThrough`, NEVER cached.
   **Vetting tool: `runOutboundVettingCheck`** (editor-run, admin-gated,
   read-only; `OUTBOUND_VETTING_FROM/_TO/_DEPT/_SAMPLE` props) -- LIVE
   two-code-path parity (rule 1 above, vs `computeInboundReport_`'s own
@@ -1063,6 +1077,55 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   R11-B11 impact score); single-dept view keeps the flat table; the CSV
   stays flat with its Dept column. See
   `docs/direct-extension-metrics-design.md`.
+- **CSR transfer detail reads an APPEND-ONLY, never-sorted sheet.**
+  `CSR Transfer Historical Data` (INV-52) is per-AGENT per-DAY with 11
+  per-QUEUE transfer-DESTINATION columns (H..R, labels in its own header row
+  -- read them, never hardcode). `computeCsrTransferRange_` surfaces the
+  headline tile plus `agents` / `queues` / `daily`. Three rules: (1) cdr-import
+  APPENDS at `getLastRow()+1` on both the daily and the BULK paths and nothing
+  ever sorts the sheet, so a backfill of older dates lands after newer rows --
+  the reader scans the DATE COLUMN then reads only the window's row SPAN at
+  full width; the export tabs' widening TAIL scan is WRONG here and would
+  silently drop backfilled rows (pinned by an out-of-order test). (2) Per-agent
+  rows are deliberately NOT roster-filtered -- the headline sums every row, so
+  filtering would break the reconciliation. (3) The 11 destination columns are
+  a FIXED set, so `queueSum`/`queueUnaccounted` DISCLOSE transfers going
+  anywhere else rather than letting the lists silently disagree with the
+  headline. `tests/unit/csr-transfer-detail.test.js` pins all three.
+- **Date-range presets NEVER include today, and the rule lives in ONE place.**
+  `datePresetRange_` (script-1-core) is the single resolver behind every
+  "Quick select" dropdown (IR, Insights, Inbound, Direct, Outbound, the
+  all-dept Queue report). Every OPEN-ENDED preset (`yesterday` / `last7` /
+  `thisWeek` / `thisMonth` / `last30` / `last3Months` / `last12Months`) ends
+  YESTERDAY: today's ingest has not landed while a manager is looking (the
+  pipeline builds the PREVIOUS day), so including today tacks an empty day
+  onto the window -- dragging every rate and average toward zero and making
+  the last chart point dive. Fixed windows (`lastWeek`/`lastMonth`/`lastYear`)
+  already excluded it. The ONE exception is the Queue report's explicit
+  `today`, which the user picked by name. Degenerate edges CLAMP rather than
+  invert (a "This month" on the 1st, "This week" on a Monday -> that single
+  day), since the server rejects from > to. The rule was hand-mirrored in SIX
+  resolvers and had already drifted (`last30` fixed everywhere, the rest not);
+  ENFORCED by `tests/unit/date-presets.test.js`, whose tripwire fails if any
+  fragment computes preset dates locally again.
+- **Emailing an Individual Report TO the agent it is about (owner ruling
+  2026-09).** The IR Export menu's "Email to agent…" sends the rendered
+  report to its subject instead of the manager mailing it to themselves and
+  forwarding. Enabled only when exactly ONE agent is on screen. **The client
+  supplies an agent NAME, never a trusted destination** -- every gate is
+  re-derived server-side in `irResolveAgentRecipient_`: (1) `assertDeptAccess_`
+  on the agent's dept PLUS exact-INV-04 roster membership, so a crafted name
+  reaches nobody; (2) the agent's REGISTERED `Access Control` address wins
+  whenever one exists (a differing typed address is refused, not ignored) --
+  `irRegisteredAgentEmail_`, also surfaced as `meta.agentEmail` so the client
+  can skip asking; (3) a typed address (only for an agent with no row) must be
+  on the SENDER's own domain or one listed in the optional
+  `AGENT_EMAIL_DOMAINS` Script Property. The client's job is CONSENT -- a
+  `dsConfirm_` naming agent and recipient before the send (or, for an agent
+  with no row, a single `dsPrompt_` that collects AND confirms with inline
+  validation), which is what catches a typo the domain gate cannot. Sends are Logger-audited plus a
+  `individual:to-agent` usage row (the INV-01 append-only carve-out); the
+  agent's copy names the sender. Pinned by `tests/unit/ir-send-to-agent.test.js`.
 - **Client / presentation-layer conventions live in
   [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) — READ IT
   before touching `script.html`, `styles.html`, or `dashboard.html`**, and
@@ -1134,6 +1197,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the remaining legacy `window.confirm` callsites can adopt it incrementally.
   New confirmation
   UI should use `dsConfirm_` rather than adding another `window.confirm`.
+  **`dsPrompt_` is its sibling for dialogs that need a VALUE** (same shell,
+  same focus-return + Enter-follows-focus + Tab-trap rules, resolves the
+  trimmed string or null): it takes a `validate(v)` callback that runs on
+  submit and clears as the user types, so a bad value is corrected IN PLACE
+  -- the thing `window.prompt` structurally cannot do, since it discards what
+  was typed and leaves the caller to reject it afterwards with a toast.
+  Native `prompt()` is now ENFORCED out of the client
+  (`html-include-structure.test.js`); the ~12 legacy `window.confirm`
+  callsites remain the documented incremental backlog, which is why that pin
+  covers the prompt family only.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare
@@ -1632,41 +1705,43 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   admins by email. Three other sections share the page, each read-only and
   each documented at its own operator item: **"Report usage (last 30 days)"**
   (`computeReportUsageSummary_` -- the consolidation / un-gating EVIDENCE, so
-  every row is muted: usage is evidence, not a health state; a bounded tail
-  read, `REPORT_USAGE_SCAN_CAP_`=5000, which says so when the cap clips the
-  window rather than silently under-reporting);
+  every row is muted; a bounded tail read, `REPORT_USAGE_SCAN_CAP_`=5000, which
+  says so when the cap clips the window);
   **`SmokeCheck.gs::runLiveSmoke`** -- an editor-run, admin-gated, READ-ONLY
   sweep of the live read paths that complements the unit harness by exercising
   live WIRING (properties, scopes, sheets, Neon). **Run it after every
   deploy**; client-side surfaces still need the manual Regression Scenarios;
   and **`runNeonCoverageCheck`** (NeonCoverage.gs, Op State #35) -- per-date
   sheet-vs-Neon row-count reconciliation plus zero-row-weekday gaps on the two
-  no-sheet-primary tables (`inbound_calls`, `outbound_calls`; a not-yet-created
-  `outbound_calls` is a clean SKIP via `ncMissingTableError_`, not a probe
-  error, so deploying the dashboard ahead of the capture reads as such). All three store
+  no-sheet-primary tables (`inbound_calls`, `outbound_calls`; a not-yet-created table is a clean SKIP
+  via `ncMissingTableError_`, not a probe error); and
+  **`runSheetCoverageCheck`** (SheetCoverage.gs, Op State #52) -- the SHEET-side
+  twin: business days with ZERO rows in a dashboard-read historical sheet --
+  the interior gap every other signal misses (they watch the trailing edge, one
+  dept, or the two SIDES). Opens NO Neon connection, so it works mid-outage.
+  All four store
   an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, which is
   what the page's classifier reads. Pinned by `system-health.test.js` /
-  `smoke-check.test.js` / `neon-coverage.test.js`. **Two CAPACITY rows sit
+  `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Two CAPACITY rows sit
   alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47) and
-  email quota remaining -- because the resources they meter fail SILENTLY and
-  look healthy to every other probe on this page: a Neon that has spent its
-  monthly transfer is still reachable, and an exhausted MailApp quota just
-  stops sending. Read the Neon figure as a FLOOR (it counts our payloads,
+  email quota remaining -- because both fail SILENTLY and look healthy to every
+  other probe here (a spent Neon is still reachable; an exhausted MailApp quota
+  just stops sending). Read the Neon figure as a FLOOR (it counts our payloads,
   not the wire). The row also RANKS the top consumers -- every
   `neonNoteEgress_` callsite passes a surface label (unlabeled folds into
   `other`; system-health.test.js EA-1 pins it), so egress reduction starts
-  from the ranking, not guesswork. Also on the page: `build-stamp` ("unstamped" = the push
-  bypassed deploy.sh's CI gates, #2), `legs-horizon` (surviving
-  Call_Legs_* dates; sheet-only, so it renders mid-outage) and
+  from the ranking, not guesswork. Also on the page: `build-stamp` ("unstamped" = a push
+  bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
+  Call_Legs_* dates; sheet-only) and
   `retention-risk` (surviving dates the per-call tables are missing;
   #40/#43).
   **Install readiness: a trigger being
-  installed does NOT mean its engine runs.** Six engines gate their handler
+  installed does NOT mean its engine runs.** Seven engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
-  `PIPELINE_WATCH`, `QUEUE_REPORT`, `DQE_SILENCE_WATCH`,
-  `COACHING_DELIVERY`), so a trigger installed with the flag off
+  `PIPELINE_WATCH`, `QUEUE_REPORT`, `DQE_SILENCE_WATCH`, `COACHING_DELIVERY`,
+  `SHEET_COVERAGE`), so a trigger installed with the flag off
   fires on schedule and returns immediately -- and the page used to report it
-  as simply "installed". `svc()` takes an optional `flagProp` and now flags
+  as "installed". `svc()` takes an optional `flagProp` and now flags
   BOTH mismatch directions ("installed but DISABLED -- every run is a no-op" /
   "NO trigger installed but flag=true -- it never runs"), plus a single
   `trg-readiness` verdict row ("N armed, K need attention"). A new
@@ -1758,6 +1833,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `idx_dqe_history_call_date` + `idx_dqe_history_date_agent` on
   `dqe_history` -- Postgres has no stored row order; `ORDER BY call_date`
   at query time and the indexes keep it fast.
+- **A Neon OUTAGE is a supported operating mode -- know what degrades and
+  what does not.** Flip `DQE_READ_SOURCE` (and `QCD_READ_SOURCE`) to `sheet`
+  for any outage lasting more than a few hours: the per-execution memo
+  (`NEON_CONN_DOWN_MEMO_`) bounds the failed handshakes to one, but each of
+  the ~20 cut-over readers still falls back with its OWN whole-sheet scan,
+  which measured 730s+ on the all-departments queue report (vs ~54s when the
+  same function was merely paying handshakes) -- and a run that hits the
+  6-min ceiling is KILLED PAST its catch blocks, so the designed fallbacks
+  never run (the class that once ate a Daily Queue Report day). Three tiers
+  when Neon is down: (1) **sheet-primary, no loss** -- DQE + QCD (the sheet
+  IS the authority; Neon mirrors it), so the flag flip is pre-cutover
+  behavior, not a degraded one; (2) **sheet FALLBACK, disclosed** -- Direct
+  Call (`Direct Call History` is the primary), Inbound report + heatmap +
+  call-path drill (the `Inbound Calls` tab, Op State #49), Escalations (the
+  E2 `ESC_SNAPSHOT_*` property snapshot, open rows only, read-only); (3)
+  **NEON-ONLY, unavailable** -- the Coaching worklist, Caller Lookup's
+  day-level "Earlier outbound activity" (`call_history_phones` aggregates),
+  and every Neon WRITE (escalation create/update, coaching close). The flags
+  do not change tier 2 or 3 either way. The Outbound report, the journey
+  drill's outbound arm and Caller Lookup's per-call outbound section LEFT
+  tier 3 when the `Outbound Calls` export landed (Op State #50). **Coming back is NOT just flipping back:**
+  every import during the outage skipped its mirror writes, so
+  `dqe_history` / `qcd_history` have a hole -- `runNeonCoverageCheck` (#35) to
+  size it, `backfillDQEHistoryUpsert()` / a force re-import to fill it, THEN
+  the parity gates over a window spanning the gap, and only flip on CLEAN
+  (a clean run now self-clears its window props, so set them per run).
 - **Neon keep-warm is an optional, admin-toggled trigger (`NeonKeepWarm.gs`).**
   Neon's free tier scale-to-zero suspends the compute after ~5 min idle, so
   the FIRST DQE read of a lull (when `DQE_READ_SOURCE=neon`) pays a
@@ -1896,7 +1997,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" the parameter thinking it was dropped, and
   don't hardcode that default in a second place. `subScope` is a cache-key
-  dimension (`summary:v20`); `cdr.dept.subscope` is now an orphan key.
+  dimension (`summary:v21`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -2362,6 +2463,9 @@ items for anything it flags or doesn't cover.)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; unset leaves it informational (and the figure is a FLOOR, so under-budget is not proof of headroom)
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install/arm from Admin ▾ → Coaching, first armed run emails one larger NEW-flag batch
 49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
+50. Outbound Calls tab export trigger -- the keystone that moved the Outbound report, the journey drill's outbound arm and Caller Lookup's per-call outbound section OUT of Neon-only (CDR Tools menu); seed it while Neon is reachable
+51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use when emailing an Individual Report to its subject; prefer adding the agent's Access Control row instead (no typing, no mis-delivery risk)
+52. Sheet coverage check -- flags business days with ZERO rows in a dashboard-read historical sheet (the interior gap every other signal misses); no Neon needed, so it works mid-outage; arm the weekly trigger (`installSheetCoverageTrigger()`) -- a clean week is silent
 
 ## Cycle Workflow Config
 
@@ -2381,13 +2485,13 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js
 
 CDR Import:
   apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
@@ -2510,6 +2614,7 @@ S40 | Escalation overdue count agrees with the flagged cards (F3) | Subsystem: D
 S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
 S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
+S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

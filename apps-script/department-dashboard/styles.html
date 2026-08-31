@@ -6661,9 +6661,88 @@
   }
   /* Danger confirm button = warn-filled (destructive intent). */
   .btn.ds-confirm-ok.ds-confirm--danger { background: var(--warn); color: #fff; }
+  /* dsPrompt_ shares the confirm shell and adds a labelled input + inline
+     error (the thing window.prompt could not do -- validate without losing
+     what was typed). */
+  .ds-prompt-label {
+    display: block; font-family: var(--ui);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 0 0 5px;
+  }
+  .ds-prompt-input {
+    width: 100%; box-sizing: border-box;
+    padding: 8px 10px; margin-bottom: 8px;
+    font-family: var(--ui); font-size: 13px;
+    color: var(--ink); background: var(--paper);
+    border: 1px solid var(--line); border-radius: var(--r);
+  }
+  .ds-prompt-input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .ds-prompt-error {
+    font-size: 12px; line-height: 1.4; color: var(--warn);
+    margin: -2px 0 10px;
+  }
   @media (prefers-reduced-motion: reduce) {
     .ds-confirm-overlay, .ds-confirm { transition: none; }
   }
+
+  /* -------- R25: CSR transfer detail ------------------------------ */
+  /* A folded drill-in below the agent table (CSR only). Two columns on a
+     wide viewport, stacked on narrow -- the rows are bar+number pairs, so
+     they read at any width. */
+  .dept-transfer {
+    background: var(--paper-card); border: 1px solid var(--line);
+    border-radius: var(--r-lg); margin: 14px 0 0; padding: 0;
+  }
+  .dept-transfer-summary {
+    cursor: pointer; list-style: none; padding: 11px 14px;
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  }
+  .dept-transfer-summary::-webkit-details-marker { display: none; }
+  .dept-transfer-summary::before {
+    content: '\25B8'; color: var(--muted); font-size: 11px;
+    transition: transform var(--dur-2, 160ms) var(--ease, ease);
+  }
+  .dept-transfer[open] .dept-transfer-summary::before { transform: rotate(90deg); }
+  .dept-transfer-title {
+    font-family: var(--ui); font-size: 13px; font-weight: 600; color: var(--ink);
+  }
+  .dept-transfer-sub { font-size: 12px; color: var(--muted); }
+  .dept-transfer-body {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+    padding: 4px 14px 14px;
+  }
+  @media (max-width: 860px) { .dept-transfer-body { grid-template-columns: 1fr; } }
+  .dept-transfer-h {
+    font-family: var(--ui); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+    margin: 0 0 7px;
+  }
+  .dept-transfer .ds-note { margin: 0 14px 10px; }
+  .dtf-row {
+    display: grid; grid-template-columns: minmax(80px, 1.1fr) 2fr auto;
+    align-items: center; gap: 9px; padding: 3px 0;
+    font-size: 12px; color: var(--ink);
+  }
+  .dtf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dtf-bar {
+    height: 7px; background: var(--accent-soft);
+    border-radius: 999px; overflow: hidden;
+  }
+  .dtf-bar > span {
+    display: block; height: 100%; background: var(--accent); border-radius: 999px;
+  }
+  .dtf-num { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+  .dtf-pct { color: var(--muted); }
+  /* Same tier vocabulary as the headline Transfer % tile (R23), so one
+     agent's rate reads identically in both places. */
+  .dtf-pct.tf-deep  { color: var(--good); }
+  .dtf-pct.tf-light { color: var(--good); }
+  .dtf-pct.tf-amber { color: var(--warn); }
+  .dtf-pct.tf-red   { color: var(--bad); }
 
   /* -------- Date preset chips ------------------------------------ */
   /* R18: the To-date clamp note. Sits on its own line across the controls

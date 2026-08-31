@@ -347,3 +347,15 @@ S43 | Combined-view CSV export | Subsystem: Department Dashboard
     - Collapse a group, then export again. Confirm the CSV is UNCHANGED: collapsing is a display affordance and must not narrow the export.
     - Spot-check an agent whose name begins with `=`, `+`, `-` or `@` if one exists: the cell must be quote-prefixed (the `csvSafeCell_` formula-injection rule).
   Expected: as described. NOTE `drive-subqueue.js` now covers BOTH the combined and single-dept CSV shapes; what stays manual is the formula-injection spot-check and the filename-collision case, which a headless download cannot observe.
+
+S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboard
+  Steps:
+    - Open My Department as an admin (or a CSR manager) with department = CSR and a range covering at least a full week. Note the team strip's Transfer % tile (value + its "N of M calls" sub-line).
+    - Expand the folded `Transfer detail` section below the agent table.
+    - Switch to any NON-CSR department and confirm the section disappears entirely (the server ships `csrTransfer` for CSR alone).
+    - Back on CSR, check `Where transfers go`: one bar row per destination queue carrying a real queue NAME read from the sheet header -- never a `Queue 1/2/3` placeholder -- biggest first, with no zero-transfer rows.
+    - Check `Who transfers`: one row per agent, busiest transferrer first, each rate tinted on the SAME tier scale as the headline tile (at/below the deep tier reads green; past the amber tier reads red).
+    - Add up the per-agent `transferred` numbers and compare against the tile.
+    - Collapse and re-expand the section.
+  Expected: the per-agent transferred values SUM to the tile's transferred figure. Rows are deliberately NOT roster-filtered, so a departed agent may appear with historical volume -- correct, not a bug. When the 11 destination columns do not cover every transfer a note above the lists says so and gives both numbers; when they do, no note appears. Collapsing does not refetch or change any figure.
+  Fails if: the section renders for a non-CSR dept; queue labels are placeholders; the per-agent rows do not sum to the tile; or a range whose data was BACKFILLED (imported out of chronological order) shows fewer transfers than the tile -- that last one is the append-only/never-sorted trap the bounded-span read exists to prevent.

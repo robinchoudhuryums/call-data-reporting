@@ -970,28 +970,11 @@
   function insApplyPreset() {
     const v = $('ins-preset').value; insSavePrefs_();
     if (v === 'custom') return;
-    const today = new Date(); let s, e = new Date(today);
-    // Short-window presets (#2) for the agent-free queue/dept quick-look.
-    // daysSinceMon: 0=Mon .. 6=Sun (JS getDay is 0=Sun..6=Sat).
-    if (v === 'yesterday')        { s = new Date(today); s.setDate(today.getDate() - 1); e = new Date(s); }
-    else if (v === 'thisWeek')    { const dsm = (today.getDay() + 6) % 7; s = new Date(today); s.setDate(today.getDate() - dsm); }
-    else if (v === 'lastWeek')    { const dsm = (today.getDay() + 6) % 7;
-                                    e = new Date(today); e.setDate(today.getDate() - dsm - 1);
-                                    s = new Date(e); s.setDate(e.getDate() - 6); }
-    else if (v === 'thisMonth')   { s = new Date(today.getFullYear(), today.getMonth(), 1); }
-    else if (v === 'lastMonth')   { s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-                                    e = new Date(today.getFullYear(), today.getMonth(), 0); }
-    // "Last 30 days" = 30 days ending yesterday (matches the main page's
-    // chip, the Overview launcher window, and CacheWarm -- see applyIrPreset).
-    else if (v === 'last30')      { e = new Date(today); e.setDate(today.getDate() - 1);
-                                    s = new Date(today); s.setDate(today.getDate() - 30); }
-    else if (v === 'last3Months') { s = new Date(today); s.setMonth(today.getMonth() - 3); }
-    else if (v === 'last12Months'){ s = new Date(today); s.setFullYear(today.getFullYear() - 1); }
-    else if (v === 'lastYear')    { s = new Date(today.getFullYear() - 1, 0, 1);
-                                    e = new Date(today.getFullYear() - 1, 11, 31); }
-    if (!s) return;
-    $('ins-from').value = insIsoOf_(s);
-    $('ins-to').value   = insIsoOf_(e);
+    // Shared resolver (script-1-core): open-ended presets end YESTERDAY.
+    const r = datePresetRange_(v);
+    if (!r) return;
+    $('ins-from').value = r.from;
+    $('ins-to').value   = r.to;
     insScheduleActiveRefetch_(); insSavePrefs_();
   }
 

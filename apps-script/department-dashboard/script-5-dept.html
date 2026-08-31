@@ -1762,6 +1762,7 @@
     state.deptGroups = (data && data.deptGroups) || null;
     state.qcd = (data && data.qcd) || null;   // Batch D: feeds the team-strip range QCD tiles
     state.csrTransfer = (data && data.csrTransfer) || null;   // R10-5: CSR-only Transfer % tile
+    deptRenderTransferDetail_();   // R25: the per-agent / per-destination drill
     state.diagnostics = (data && data.diagnostics) || null;
 
     var dqeHeader = $('dqe-table-header');
@@ -3662,4 +3663,100 @@
     URL.revokeObjectURL(a.href);
   }
 
+
+  // ── R25: CSR transfer DETAIL ───────────────────────────────────────────
+  // Renders the per-DESTINATION and per-AGENT breakdowns the sheet has
+  // always carried. Hidden entirely for non-CSR depts (the server ships
+  // `csrTransfer` only for CSR) and when the detail arrays are absent -- an
+  // older cached payload from before this shipped renders the headline tile
+  // as before and simply omits the section, never an empty shell.
+  function deptRenderTransferDetail_() {
+    const sec = $('dept-transfer-section');
+    if (!sec) return;
+    const tr = state.csrTransfer;
+    const queues = (tr && tr.queues) || [];
+    const agents = (tr && tr.agents) || [];
+    if (!tr || (!queues.length && !agents.length)) { sec.style.display = 'none'; return; }
+    sec.style.display = '';
+
+    const sub = $('dept-transfer-sub');
+    if (sub) {
+      sub.textContent = fmtNumber(tr.transferred) + ' transfer'
+        + (tr.transferred === 1 ? '' : 's') + ' of ' + fmtNumber(tr.totalCalls)
+        + ' calls · ' + (tr.pctStr || '');
+    }
+
+    // Bars are proportional to the LARGEST row in each list, so the shape is
+    // readable without a scale; the numbers carry the absolute truth.
+    const barRow = function (label, value, pctText, max, title) {
+      const w = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
+      return '<div class="dtf-row" title="' + escapeHtml(title || '') + '">'
+        +   '<div class="dtf-name">' + escapeHtml(label) + '</div>'
+        +   '<div class="dtf-bar"><span style="width:' + w + '%"></span></div>'
+        +   '<div class="dtf-num">' + escapeHtml(fmtNumber(value))
+        +     (pctText ? ' <span class="dtf-pct">' + escapeHtml(pctText) + '</span>' : '')
+        +   '</div>'
+        + '</div>';
+    };
+
+    const qEl = $('dept-transfer-queues');
+    if (qEl) {
+      const qMax = queues.length ? queues[0].transferred : 0;
+      qEl.innerHTML = queues.length
+        ? queues.map(function (q) {
+            return barRow(q.queue, q.transferred,
+              q.share == null ? '' : (q.share + '%'), qMax,
+              q.queue + ': ' + fmtNumber(q.transferred) + ' of ' + fmtNumber(tr.transferred)
+              + ' transfers in this range');
+          }).join('')
+        : '<div class="ds-note">No destination detail for this range.</div>';
+    }
+
+    const aEl = $('dept-transfer-agents');
+    if (aEl) {
+      // Sorted busiest-transferrer first (server order). The RATE gets the
+      // same tiered tint as the headline tile so one agent's 45% reads the
+      // same way in both places (R23 standards, admin-tunable).
+      const tt = ((window.__STANDARDS__ || {}).transfer) || { deep: 25, light: 30, amber: 35 };
+      const aMax = agents.length ? agents[0].transferred : 0;
+      aEl.innerHTML = agents.length
+        ? agents.map(function (a) {
+            let cls = '';
+            if (a.pct != null && isFinite(Number(a.pct))) {
+              const p = Number(a.pct);
+              cls = p <= tt.deep ? ' tf-deep' : (p < tt.light ? ' tf-light'
+                  : (p < tt.amber ? ' tf-amber' : ' tf-red'));
+            }
+            return '<div class="dtf-row" title="' + escapeHtml(a.agent + ': '
+                + fmtNumber(a.transferred) + ' transferred of ' + fmtNumber(a.totalCalls)
+                + ' calls handled') + '">'
+              +   '<div class="dtf-name">' + escapeHtml(a.agent) + '</div>'
+              +   '<div class="dtf-bar"><span style="width:'
+              +     (aMax > 0 ? Math.max(2, Math.round((a.transferred / aMax) * 100)) : 0)
+              +     '%"></span></div>'
+              +   '<div class="dtf-num">' + escapeHtml(fmtNumber(a.transferred))
+              +     (a.pct == null ? '' : ' <span class="dtf-pct' + cls + '">' + a.pct + '%</span>')
+              +   '</div>'
+              + '</div>';
+          }).join('')
+        : '<div class="ds-note">No per-agent detail for this range.</div>';
+    }
+
+    // The 11 destination columns are a FIXED set, so transfers to anywhere
+    // else fall outside them. Say so rather than letting the two lists
+    // quietly disagree with the headline (the reconciliation rule).
+    const note = $('dept-transfer-note');
+    if (note) {
+      const un = Number(tr.queueUnaccounted) || 0;
+      if (un > 0) {
+        note.textContent = fmtNumber(un) + ' transfer' + (un === 1 ? '' : 's')
+          + ' went somewhere outside the ' + queues.length + ' tracked destination'
+          + (queues.length === 1 ? '' : 's') + ', so the destination list sums to '
+          + fmtNumber(tr.queueSum) + ', not ' + fmtNumber(tr.transferred) + '.';
+        note.style.display = '';
+      } else {
+        note.style.display = 'none';
+      }
+    }
+  }
 </script>

@@ -96,7 +96,7 @@ function getCallerLookup(req) {
   let conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
-    if (!conn) { out.meta.available = false; return out; }
+    if (!conn) return callerLookupSheetFallback_(hashes, from, to, out, user);
 
     // to_jsonb(c) serializes whatever columns exist, so the reader is
     // compatible with rows written BEFORE the journey extension (they
@@ -220,10 +220,162 @@ function getCallerLookup(req) {
     return out;
   } catch (e) {
     Logger.log('getCallerLookup failed (best-effort): ' + (e && e.message ? e.message : e));
-    out.meta.available = false;
-    return out;
+    return callerLookupSheetFallback_(hashes, from, to, out, user);
   } finally {
     if (conn) { try { conn.close(); } catch (ce) {} }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NEON-DOWN SHEET FALLBACK.
+//
+// Both export tabs carry the HMAC hash the lookup keys on -- "Inbound Calls"
+// col 4 (Caller Hash) and "Outbound Calls" col 3 (Callee Hash) -- so the
+// communication history is reconstructible from the sheets alone, with no raw
+// number stored anywhere (the hash IS the join key, which is what makes this
+// privacy-preserving fallback possible at all).
+//
+// One section genuinely CANNOT fall back: "Earlier outbound activity" comes
+// from the day-level `call_history_phones` aggregates, which have no sheet
+// primary -- it degrades to historyAvailable:false and the client's existing
+// unavailable state says so, rather than implying the caller had no earlier
+// activity. Rows are shaped by the SAME callerLookupShapeCall_ /
+// callerLookupShapeOutbound_ as the live path, so the client cannot tell the
+// sources apart beyond the disclosure fields.
+// ---------------------------------------------------------------------------
+var CALLER_LOOKUP_FALLBACK_TAIL_ROWS_ = 4000;
+
+/** Widening tail read of a date-sorted export tab: {grid, through} or null. */
+function clSheetTail_(sheetName, width, fromIso) {
+  var ss = openSpreadsheet_();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  if (sheet.getMaxColumns() < width || sheet.getLastColumn() < width) return null;
+  var win = CALLER_LOOKUP_FALLBACK_TAIL_ROWS_;
+  var startRow, dates;
+  for (;;) {
+    startRow = Math.max(2, lastRow - win + 1);
+    dates = sheet.getRange(startRow, 1, lastRow - startRow + 1, 1).getDisplayValues();
+    var oldest = ncCellDateIso_(dates[0][0]);
+    if (startRow === 2 || (oldest && oldest < fromIso)) break;
+    win *= 4;
+  }
+  var through = null;
+  for (var i = 0; i < dates.length; i++) {
+    var d = ncCellDateIso_(dates[i][0]);
+    if (d && (through === null || d > through)) through = d;
+  }
+  return {
+    grid: sheet.getRange(startRow, 1, lastRow - startRow + 1, width).getDisplayValues(),
+    through: through,
+  };
+}
+
+function callerLookupSheetFallback_(hashes, from, to, out, user) {
+  try {
+    var wanted = {};
+    (hashes || []).forEach(function (h) { if (h) wanted[String(h)] = true; });
+
+    var ib = clSheetTail_('Inbound Calls', 22, from);
+    var ob = clSheetTail_('Outbound Calls', 12, from);
+    if (!ib && !ob) { out.meta.available = false; return out; }
+
+    // ── Inbound section ──
+    out.calls = [];
+    if (ib) {
+      var inRows = [];
+      for (var i = 0; i < ib.grid.length; i++) {
+        var r = ib.grid[i];
+        var iso = ncCellDateIso_(r[0]);
+        if (!iso || iso < from || iso > to) continue;
+        if (!wanted[String(r[3] == null ? '' : r[3]).trim()]) continue;
+        inRows.push(callerLookupShapeCall_({
+          call_date: iso,
+          call_id: String(r[1] == null ? '' : r[1]).trim(),
+          insurer: String(r[2] == null ? '' : r[2]).trim(),
+          dial_in_number: String(r[4] == null ? '' : r[4]).trim(),
+          disposition: String(r[5] == null ? '' : r[5]).trim(),
+          abandon_stage: String(r[6] == null ? '' : r[6]).trim(),
+          abandoned_on_hold: String(r[7] == null ? '' : r[7]).trim().toUpperCase() === 'TRUE',
+          hold_seconds: Number(r[8]) || 0,
+          wait_seconds: r[9] === '' ? null : (Number(r[9]) || 0),
+          entry_queue: String(r[10] == null ? '' : r[10]).trim(),
+          final_queue: String(r[11] == null ? '' : r[11]).trim(),
+          final_dept: String(r[12] == null ? '' : r[12]).trim(),
+          num_queues: Number(r[13]) || 0,
+          num_transfers: Number(r[14]) || 0,
+          call_start: String(r[15] == null ? '' : r[15]).trim(),
+          is_internal: String(r[16] == null ? '' : r[16]).trim().toUpperCase() === 'TRUE',
+          journey: String(r[17] == null ? '' : r[17]).trim(),
+          origin_agent: String(r[18] == null ? '' : r[18]).trim(),
+          origin_dept: String(r[19] == null ? '' : r[19]).trim(),
+          related_call_id: String(r[20] == null ? '' : r[20]).trim(),
+          related_call_kind: String(r[21] == null ? '' : r[21]).trim(),
+        }));
+      }
+      // Chronological, newest kept on truncation (the R-2 rule).
+      inRows.sort(function (a, b) {
+        return (a.callDate + (a.callStart || '')) < (b.callDate + (b.callStart || '')) ? -1 : 1;
+      });
+      if (inRows.length > CALLER_LOOKUP_MAX_CALLS) {
+        inRows = inRows.slice(inRows.length - CALLER_LOOKUP_MAX_CALLS);
+        out.meta.truncated = true;
+      }
+      out.calls = inRows;
+    }
+    out.meta.matches = out.calls.length;
+
+    // ── Outbound section ──
+    out.outboundCalls = [];
+    out.meta.outboundAvailable = !!ob;
+    if (ob) {
+      var obRows = [];
+      for (var o = 0; o < ob.grid.length; o++) {
+        var q = ob.grid[o];
+        var oiso = ncCellDateIso_(q[0]);
+        if (!oiso || oiso < from || oiso > to) continue;
+        if (!wanted[String(q[2] == null ? '' : q[2]).trim()]) continue;
+        obRows.push(callerLookupShapeOutbound_({
+          call_date: oiso,
+          call_id: String(q[1] == null ? '' : q[1]).trim(),
+          agent_name: String(q[3] == null ? '' : q[3]).trim(),
+          agent_ext: String(q[4] == null ? '' : q[4]).trim(),
+          department: String(q[5] == null ? '' : q[5]).trim(),
+          connected: String(q[6] == null ? '' : q[6]).trim().toUpperCase() === 'TRUE',
+          talk_seconds: Number(q[7]) || 0,
+          ring_seconds: q[8] === '' ? null : (Number(q[8]) || 0),
+          attempts: Number(q[9]) || 1,
+          call_start: String(q[10] == null ? '' : q[10]).trim(),
+          journey: String(q[11] == null ? '' : q[11]).trim(),
+        }));
+      }
+      obRows.sort(function (a, b) {
+        return (a.callDate + (a.callStart || '')) < (b.callDate + (b.callStart || '')) ? -1 : 1;
+      });
+      if (obRows.length > CALLER_LOOKUP_MAX_CALLS) {
+        obRows = obRows.slice(obRows.length - CALLER_LOOKUP_MAX_CALLS);
+        out.meta.outboundTruncated = true;
+      }
+      out.outboundCalls = obRows;
+    }
+    out.meta.outboundMatches = out.outboundCalls.length;
+
+    // Day-level aggregates have no sheet primary -- honestly unavailable.
+    out.outboundHistory = [];
+    out.meta.historyAvailable = false;
+
+    out.meta.fallbackSource = 'sheet';
+    var t1 = ib && ib.through, t2 = ob && ob.through;
+    out.meta.fallbackThrough = (t1 && t2) ? (t1 < t2 ? t1 : t2) : (t1 || t2 || null);
+    try { logReportUsage_('caller-lookup', '(admin)', user, false); } catch (eU) { /* best-effort */ }
+    return out;
+  } catch (e) {
+    Logger.log('callerLookupSheetFallback_ failed (best-effort): '
+      + (e && e.message ? e.message : e));
+    out.meta.available = false;
+    return out;
   }
 }
 

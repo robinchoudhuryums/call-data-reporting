@@ -729,6 +729,15 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       trendStart: trendStartIso,
       trendEnd:   trendEndIso,
       agents: selectedAgents,
+      // The agent's registered work address, when exactly ONE agent is on
+      // screen -- lets the "Email to agent…" item skip asking for an address
+      // it already knows. Disclosure is bounded by the report's own gate:
+      // the caller is already entitled to this dept's agent-level data. Never
+      // populated for a multi-agent comparison (no single subject to send to)
+      // and '' when the agent has no Access Control row -- the client then
+      // asks for one, and the server still re-resolves + re-authorizes it.
+      agentEmail: (selectedAgents.length === 1 && typeof irRegisteredAgentEmail_ === 'function')
+        ? irRegisteredAgentEmail_(dept, selectedAgents[0]) : '',
       mode: selectedAgents.length > 1 ? 'comparison' : 'individual',
       rosterSize: roster.names.length,
       activeAgentCount: activeAgentCount,
@@ -921,6 +930,20 @@ function sendIndividualReportEmail(req) {
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
 
+  // Owner ruling 2026-09: a manager may send an agent THEIR OWN report
+  // instead of mailing it to themselves and forwarding. The recipient is
+  // RESOLVED SERVER-SIDE (irResolveAgentRecipient_ -- registered address
+  // preferred, else a domain-locked typed one) and re-authorized against the
+  // agent's dept, so the client can never name an arbitrary destination.
+  // Absent `sendToAgent`, this is the unchanged send-to-self path.
+  var recipient = email;
+  var sentToAgent = null;
+  if (req && req.sendToAgent) {
+    var resolved = irResolveAgentRecipient_(user, req);
+    recipient = resolved.to;
+    sentToAgent = resolved.agentName;
+  }
+
   const dataUrl = String((req && req.imageBase64) || '');
   const dateLabel = String((req && req.dateLabel) || 'Individual Report');
   if (!dataUrl) throw new Error('No image payload.');
@@ -934,7 +957,7 @@ function sendIndividualReportEmail(req) {
   // rendered report image (this export IS the visual snapshot).
   const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
   MailApp.sendEmail({
-    to: email,
+    to: recipient,
     subject: 'Individual Report: ' + dateLabel,
     htmlBody: ekShellHtml_({
       kicker: 'Call Data · Individual report',
@@ -946,11 +969,129 @@ function sendIndividualReportEmail(req) {
         + '</div>', '18px 26px 6px'),
       ctaUrl: dashboardUrl ? dashboardUrl + '#/report/individual' : '',
       ctaLabel: 'Open the Individual report',
-      footerHtml: 'Requested from the Individual Report — sent only to you.',
+      footerHtml: sentToAgent
+        ? ('Sent to you by ' + escapeHtmlServer_(email)
+           + ' from the Call Data dashboard. Questions about these numbers go to them.')
+        : 'Requested from the Individual Report — sent only to you.',
     }),
     inlineImages: { reportImg: blob },
   });
-  return { to: email };
+  // Audit trail: who sent whose report where. Logger only -- INV-01 keeps
+  // public callables off the spreadsheet except the documented carve-outs,
+  // and the append-only usage telemetry below is one of them.
+  if (sentToAgent) {
+    Logger.log('sendIndividualReportEmail: %s sent %s\'s report (%s) to %s',
+      email, sentToAgent, dateLabel, recipient);
+    try { logReportUsage_('individual:to-agent', sentToAgent, user, false); } catch (eU) {}
+  }
+  return { to: recipient, sentToAgent: sentToAgent };
+}
+
+/**
+ * Resolves + AUTHORIZES the agent recipient for sendIndividualReportEmail.
+ *
+ * Three gates, all server-side (the client supplies only an agent name and,
+ * optionally, a typed address -- never a destination we trust):
+ *   1. DEPT: the caller must be entitled to the agent's department
+ *      (assertDeptAccess_ -- admins and all-dept managers pass; a single-dept
+ *      manager is pinned), AND the agent must actually be on that dept's
+ *      roster (exact INV-04 match), so a crafted name reaches nobody.
+ *   2. ADDRESS: the agent's REGISTERED Access Control address wins whenever
+ *      one exists -- a typed address is only consulted when the agent has no
+ *      row, and then only if it matches the registered one or is on an
+ *      allowed domain.
+ *   3. DOMAIN: a typed address must share the SENDER's email domain (an
+ *      internal Workspace app -- their own domain is the honest default),
+ *      or be listed in the optional AGENT_EMAIL_DOMAINS Script Property.
+ *      This is what stops a typo from mailing performance data outside the
+ *      company; it cannot stop a typo that matches another colleague, which
+ *      is why the client also confirms the recipient by name before sending.
+ */
+function irResolveAgentRecipient_(user, req) {
+  const dept = String((req && req.department) || '').trim();
+  const agentName = String((req && req.agentName) || '').trim();
+  if (!dept) throw new Error('A department is required to send to an agent.');
+  if (!agentName) throw new Error('An agent is required.');
+  assertDeptAccess_(user, dept);   // gate 1a: admin | entitled manager
+
+  // Gate 1b: the agent must be on THIS dept's roster (exact match, INV-04).
+  const roster = getRosterForDepartment_(dept);
+  if ((roster.names || []).indexOf(agentName) === -1) {
+    throw new Error('That agent is not on the ' + dept + ' roster.');
+  }
+
+  const registered = irRegisteredAgentEmail_(dept, agentName);
+  const typed = String((req && req.toEmail) || '').trim().toLowerCase();
+
+  // Gate 2: a registered address always wins -- there is no reason to accept
+  // a typed one for an agent the roster already knows how to reach.
+  if (registered) {
+    if (typed && typed !== registered) {
+      throw new Error('That agent has a registered address on file; the report goes there.');
+    }
+    return { to: registered, agentName: agentName, source: 'registered' };
+  }
+  if (!typed) {
+    throw new Error('No address is on file for ' + agentName
+      + '. Enter their work email, or add an Access Control row for them.');
+  }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(typed)) {
+    throw new Error('That does not look like an email address.');
+  }
+  // Gate 3: domain allowlist.
+  const allowed = irAllowedAgentEmailDomains_(user);
+  const domain = typed.slice(typed.lastIndexOf('@') + 1);
+  if (allowed.indexOf(domain) === -1) {
+    throw new Error('Reports can only be sent to a company address ('
+      + allowed.map(function (d) { return '@' + d; }).join(', ') + ').');
+  }
+  return { to: typed, agentName: agentName, source: 'typed' };
+}
+
+/**
+ * The address recorded for (dept, agentName) in Access Control -- i.e. the
+ * account that agent signs into the agent app with. Scans the sheet ONCE
+ * (the sheet is small and this runs on an explicit user action); returns ''
+ * when the agent has no row. Independent of AGENT_ROLE_ENABLED: a row is a
+ * recorded address whether or not the agent app is switched on.
+ */
+function irRegisteredAgentEmail_(dept, agentName) {
+  try {
+    const sheet = openSpreadsheet_().getSheetByName(SHEETS.ACCESS_CONTROL);
+    if (!sheet || sheet.getLastRow() < 2) return '';
+    const width = Math.min(Math.max(sheet.getLastColumn(), 2), ACCESS_CONTROL_HEADERS.length);
+    if (width < 5) return '';   // pre-migration sheet has no Agent Name column
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+    for (let i = 0; i < rows.length; i++) {
+      const role = String(rows[i][3] || '').toLowerCase().trim();
+      if (role !== 'agent') continue;
+      if (String(rows[i][4] || '').trim() !== agentName) continue;
+      if (String(rows[i][1] || '').trim() !== dept) continue;
+      const addr = String(rows[i][0] || '').toLowerCase().trim();
+      if (addr) return addr;
+    }
+  } catch (e) {
+    Logger.log('irRegisteredAgentEmail_ failed (treated as no address): '
+      + (e && e.message ? e.message : e));
+  }
+  return '';
+}
+
+/** Domains a typed agent address may use: the sender's own, plus any listed
+ *  in AGENT_EMAIL_DOMAINS (comma/space separated, '@' optional). */
+function irAllowedAgentEmailDomains_(user) {
+  const out = [];
+  const self = String((user && user.email) || '').toLowerCase();
+  const at = self.lastIndexOf('@');
+  if (at > -1) out.push(self.slice(at + 1));
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty('AGENT_EMAIL_DOMAINS') || '';
+    raw.split(/[,\s]+/).forEach(function (d) {
+      const clean = String(d || '').toLowerCase().trim().replace(/^@/, '');
+      if (clean && out.indexOf(clean) === -1) out.push(clean);
+    });
+  } catch (e) { /* property unreadable -> sender domain only */ }
+  return out;
 }
 
 // generateMonthList_, formatSecondsHms_ moved to Util.gs.

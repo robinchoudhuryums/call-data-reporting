@@ -1092,7 +1092,7 @@ When something looks wrong, before assuming a code bug, check:
     CSR + Spanish) no longer contributes their other department's calls to
     both. OFF: that over-count returns on the three parent depts (Sales / CSR /
     Power) and the My Department chip says so in as many words. Reversible
-    either way with no redeploy — the scope is part of the `summary:v20` cache
+    either way with no redeploy — the scope is part of the `summary:v21` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a
@@ -1304,3 +1304,88 @@ When something looks wrong, before assuming a code bug, check:
     re-export of those dates. Pinned by
     `tests/unit/inbound-export.test.js` + `tests/unit/heatmap-fallback.test.js`
     + `tests/unit/journey-fallback.test.js`.
+
+50. **Outbound Calls tab export trigger — the keystone of the Neon-outage
+    story.** `outbound_calls` had no sheet primary, so an outage took THREE
+    surfaces fully dark at once: the Outbound report, the call-path drill's
+    OUTBOUND arm (`getCallJourney({kind:'outbound'})`) and Caller Lookup's
+    per-call outbound section. `cdr-report/outboundCallsExport.js` mirrors the
+    table into an "Outbound Calls" tab and those three now degrade to it.
+    Install the daily refresh from the CDR Report spreadsheet: CDR Tools →
+    "⏰ Daily Outbound Export Trigger" → Install (runs
+    `runOutboundCallsExport_` at 9 AM script-TZ: incremental export +
+    retention prune, one `outboundExport` Pipeline Health row per run; a
+    Neon-down day is a LOG-ONLY failure row — expected during an outage,
+    never an email; a not-yet-created `outbound_calls` table is a clean
+    `no-table` skip, not a failure).
+    **One-time seed:** run `exportOutboundCalls('<capture-start-ISO>',
+    '<today-ISO>')` once from the editor so the tab covers history rather
+    than only the last 30 days (the no-arg seed window). Do this while Neon
+    is REACHABLE — the export reads Neon, so it cannot be run to escape an
+    outage already in progress; the copy is a standing insurance policy, not
+    a recovery tool.
+    Retention: the prune keeps `OUTBOUND_EXPORT_KEEP_DAYS` days (Script
+    Property, default 400); the heavy `journey` column is populated only
+    within `OUTBOUND_EXPORT_JOURNEY_DAYS` (default 90) and blank beyond, so a
+    path drill past that window renders the summary rather than the timeline
+    (the Inbound tab's cols 18–22 rule). Column order is a CONTRACT — the
+    dashboard readers index this tab BY POSITION, so append any future column
+    at the END, never between.
+    The fallbacks themselves need no flag: they fire only when the Neon read
+    fails, are never cached, and disclose `fallbackSource`/`fallbackThrough`.
+    The journey drill's outbound arm additionally RE-DERIVES its two-arm
+    entitlement from the Inbound tab's related-call columns (21–22), so a
+    manager's reach during an outage is exactly what it is on the live path —
+    never widened. Pinned by `tests/unit/outbound-fallback.test.js`,
+    `tests/unit/journey-fallback.test.js` and `tests/unit/caller-lookup.test.js`.
+
+51. **`AGENT_EMAIL_DOMAINS` (optional) — widens where an Individual Report may
+    be emailed.** The IR Export menu's "Email to agent…" resolves the
+    recipient server-side: an agent's registered `Access Control` address is
+    always preferred, and a TYPED address (only possible for an agent with no
+    row) must be on the SENDER's own email domain. Set this property to a
+    comma/space-separated list of extra domains (`@other.com, third.com` —
+    the `@` is optional) if staff work under more than one company domain.
+    Unset = sender's domain only, which is correct for a single-domain
+    Workspace. It never widens WHO may send (that is `assertDeptAccess_` plus
+    roster membership) — only which addresses a typed one may use.
+    **The recorded-address path is the one to prefer:** adding an
+    `Access Control` row (Role=`agent`, Agent Name = the exact roster
+    spelling) for an agent removes the typing step entirely and with it the
+    only mis-delivery risk the domain gate cannot catch. Rows are readable by
+    this feature whether or not `AGENT_ROLE_ENABLED` (#46) is on — a row is a
+    recorded address, not a grant of the agent app. Pinned by
+    `tests/unit/ir-send-to-agent.test.js`.
+
+52. **Sheet coverage check — the interior-gap detector for the historical
+    sheets.** `runSheetCoverageCheck()` (SheetCoverage.gs, dashboard editor,
+    admin-gated, READ-ONLY) walks a window (`SHEET_COVERAGE_DAYS`, default 30,
+    ending yesterday) and flags BUSINESS DAYS with zero rows in each
+    dashboard-read historical sheet — `DQE Historical Data`, `QCD Historical
+    Data`, `Direct Call History` — holiday-aware (`COMPANY_HOLIDAYS`) and
+    floored at each sheet's own earliest date.
+    **Why it exists:** every other signal watches the trailing edge or one
+    dept. If the import skips a Tuesday and Wednesday's run succeeds,
+    freshness goes green and Tuesday is gone — permanently, silently, and
+    every report covering that window averages over a day that is not there.
+    #35's Neon check can't see it either: it compares the two sides, so a date
+    missing from BOTH produces no finding.
+    **It opens no Neon connection**, so it works during an outage — which is
+    exactly when a missed import is most likely and least likely to be
+    noticed. Run it monthly, and after any known import trouble.
+    Outcome is OPS-8 prefix-coded in `SHEET_COVERAGE_LAST` /
+    `SHEET_COVERAGE_LAST_RESULT` and rendered as the Health page's "Sheet
+    coverage — last check" row; admins are emailed ONLY when there is a
+    finding. A gap's fix is per sheet (force re-import the date; for Direct,
+    `runDirectCallBuild()`), and each finding names it.
+    **Weekly trigger (recommended):** `installSheetCoverageTrigger()` from the
+    dashboard editor arms `runSheetCoverageWeekly_` (Mondays ~7 AM script-TZ)
+    and sets `SHEET_COVERAGE_ENABLED=true`; `uninstallSheetCoverageTrigger()`
+    removes both. A check nobody remembers to run is not a control, and the
+    gap it finds is by definition one that produced no other signal --
+    a clean week is SILENT (admins are emailed only on a finding), so arming
+    it costs nothing in noise. Like the other flag-gated engines the handler
+    NO-OPS on a property read when the flag is off, and the engine is in the
+    Health page's trigger-readiness matrix WITH its flag, so
+    installed-but-disabled is flagged rather than reported as armed. Pinned by
+    `tests/unit/sheet-coverage.test.js`.

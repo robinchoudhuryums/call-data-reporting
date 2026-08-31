@@ -461,6 +461,16 @@ function getSystemHealth(req) {
     svc('trg-dqesilence', 'DQE-silence watchdog (queue active, agents dark)', ['runDqeSilenceWatch_'], false,
       'Optional but recommended: emails admins when a mapped queue shows QCD volume while ZERO DQE rows match the dept roster — the silent failure shape that cost Field Ops Power two months of agent history (Operator State #44). Enable via installDqeSilenceWatchTrigger().',
       'DQE_SILENCE_WATCH_ENABLED');
+    // R25b: the sheet-coverage check on a weekly schedule. Registered WITH
+    // its flagProp so an installed-but-disabled trigger is flagged rather
+    // than reported as armed (the install-readiness rule).
+    svc('trg-sheetcoverage', 'Sheet coverage check (weekly interior-gap scan)',
+      ['runSheetCoverageWeekly_'], false,
+      'Optional but recommended: finds business days with ZERO rows in a dashboard-read '
+      + 'historical sheet -- the interior gap freshness/staleness signals structurally cannot '
+      + 'see (Operator State #52). Emails admins only on a finding. Enable via '
+      + 'installSheetCoverageTrigger().',
+      'SHEET_COVERAGE_ENABLED');
     // F-e: the coaching delivery engine (weekly email + worklist upsert).
     // Admin-only while dark (owner ruling): emails go to getAdminEmails_().
     svc('trg-coaching', 'Coaching delivery (weekly flags → email + worklist)', ['runCoachingDelivery_'], false,
@@ -496,6 +506,12 @@ function getSystemHealth(req) {
       // R7 (G-2): Neon coverage check (NeonCoverage.gs, editor-run):
       // 'ok clean ...' / 'GAPS n finding(s) ...' / 'FAILED...' / 'skipped...'.
       ['out-coverage', 'Neon coverage — last check', 'NEON_COVERAGE_LAST', 'NEON_COVERAGE_LAST_RESULT'],
+      // R25: Sheet coverage (SheetCoverage.gs, editor-run) -- the sheet-side
+      // twin: a business day with ZERO rows in a dashboard-read historical
+      // sheet, which the Neon check structurally cannot see (it compares the
+      // two sides, so a date missing from BOTH yields no finding).
+      // 'CLEAN no missing business days ...' / 'GAPS n finding(s) ...' / 'FAILED...'.
+      ['out-sheetcoverage', 'Sheet coverage — last check', 'SHEET_COVERAGE_LAST', 'SHEET_COVERAGE_LAST_RESULT'],
       // R18d: 'ok ...' / 'SILENT n dept(s) ...' / 'ERROR: ...'.
       ['out-dqesilence', 'DQE silence — last check', 'DQE_SILENCE_WATCH_LAST', 'DQE_SILENCE_WATCH_LAST_RESULT'],
       // F-e: 'ok N new, M continuing ...' / 'skipped (...)' / 'ERROR: ...'.

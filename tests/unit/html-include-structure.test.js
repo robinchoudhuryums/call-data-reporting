@@ -232,6 +232,42 @@ test('S8: every tabular cell writer routes through csvSafeCell_', function () {
   });
 });
 
+test('S8: dsPrompt_ is the only prompt path -- no window.prompt callsite survives', function () {
+  // window.prompt renders in the browser/Sheets chrome (the incongruence
+  // dsConfirm_ exists to fix) and cannot validate without discarding what was
+  // typed. dsPrompt_ replaced the one callsite; this keeps it replaced.
+  // NOTE: ~12 legacy window.confirm callsites remain by design (the
+  // documented "adopt dsConfirm_ incrementally" backlog), so this pins the
+  // PROMPT family only -- tighten it to confirm() once that backlog closes.
+  const fragNames = [];
+  const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');
+  let fm; const fre = /<\?!= includeJs_\('([\w-]+)'\) \?>/g;
+  while ((fm = fre.exec(text)) !== null) fragNames.push(fm[1]);
+  const offenders = [];
+  fragNames.forEach(function (name) {
+    const src = fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
+    src.split('\n').forEach(function (ln, i) {
+      if (!/(^|[^.\w])(window\.)?prompt\s*\(/.test(ln)) return;
+      if (/^\s*(\/\/|\*)/.test(ln)) return;                 // comment lines
+      if (/function dsPrompt_|dsPrompt_\s*\(/.test(ln)) return;  // the replacement itself
+      offenders.push(name + '.html:' + (i + 1));
+    });
+  });
+  assert.deepEqual(offenders, [],
+    'native prompt() callsite -- route it through dsPrompt_ (script-1-core), '
+    + 'which is themed and validates in place: ' + offenders.join(', '));
+});
+
+test('S8: the email-to-agent flow routes through the app dialogs, not native ones', function () {
+  const src = fs.readFileSync(path.join(DIR, 'script-6-ir.html'), 'utf8');
+  const start = src.indexOf('function irEmailToAgent_');
+  assert.notEqual(start, -1, 'irEmailToAgent_ is missing -- move this pin with it');
+  const body = src.slice(start, start + 3000);
+  assert.match(body, /dsConfirm_\(/, 'the registered-address path must CONFIRM before sending');
+  assert.match(body, /dsPrompt_\(/, 'the no-address path must collect the address in-app');
+  assert.match(body, /validate:/, 'the prompt must validate inline, not bounce a toast afterwards');
+});
+
 test('update notice: both templates inject __BUILD_STAMP__ and both heartbeats route through presenceBeatOk_', function () {
   // The redeploy-detection wiring (CLAUDE.md live-presence bullet): the page
   // bakes the serving deployment's stamp in at load, and the presence beat's

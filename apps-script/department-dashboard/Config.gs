@@ -494,6 +494,17 @@ const DEPT_ANSWER_TARGET_SEED = Object.freeze({
 // better -- a transfer is a hand-off the caller had to sit through.
 const TRANSFER_TIERS_DEFAULT = Object.freeze({ deep: 25, light: 30, amber: 35 });
 
+// R25: `CSR Transfer Historical Data` layout (INV-52). The sheet is per-AGENT
+// per-DAY: A..G are Month Year | Week | Date | Agent | Trans % | Total Calls |
+// Transferred, and H..R are 11 per-QUEUE transfer-DESTINATION columns whose
+// labels live in the sheet's own header row (read, never hardcoded -- a
+// renamed queue must follow automatically). The dashboard read only A..G for
+// years; the detail section reads the full width.
+const CSR_TRANSFER_COLS_ = 18;              // A..R
+const CSR_TRANSFER_QUEUE_FIRST_COL_ = 8;    // H (1-indexed)
+const CSR_TRANSFER_QUEUE_COUNT_ = 11;       // H..R
+const CSR_TRANSFER_DATE_COL_ = 3;           // C (1-indexed) -- the window filter
+
 // ── Script Property registry (the store's table of contents) ────────────────
 //
 // The dashboard project stores well past the settings page's 50-property
@@ -534,6 +545,7 @@ var PROP_REGISTRY_ = Object.freeze({
     QUEUE_SPLIT_SCOPE: 'operator', AGENT_ROLE_ENABLED: 'operator',
     LOGIN_NOTIFY_ENABLED: 'operator', UI_FLAGS: 'operator',
     COMPANY_HOLIDAYS: 'operator', EMAIL_ALIASES: 'operator', DIAL_IN_LABELS: 'operator',
+    AGENT_EMAIL_DOMAINS: 'operator',
     ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
     NEON_EGRESS_BUDGET_MB: 'operator',
@@ -547,7 +559,9 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_KEEPWARM_ENABLED: 'operator', NEON_KEEPWARM_START_HOUR: 'operator',
     NEON_KEEPWARM_END_HOUR: 'operator',
     NEON_BACKUP_HOUR: 'operator', NEON_BACKUP_KEEP: 'operator',
-    NEON_COVERAGE_DAYS: 'operator', CACHE_WARM_HOUR: 'operator',
+    NEON_COVERAGE_DAYS: 'operator', SHEET_COVERAGE_DAYS: 'operator',
+    SHEET_COVERAGE_ENABLED: 'operator',
+    CACHE_WARM_HOUR: 'operator',
     QUEUE_REPORT_ENABLED: 'operator',
     // engine — outcome/state the code writes itself
     CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
@@ -562,6 +576,7 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_BACKUP_LAST: 'engine', NEON_BACKUP_LAST_RESULT: 'engine',
     NEON_BACKUP_FOLDER_ID: 'engine',
     NEON_COVERAGE_LAST: 'engine', NEON_COVERAGE_LAST_RESULT: 'engine',
+    SHEET_COVERAGE_LAST: 'engine', SHEET_COVERAGE_LAST_RESULT: 'engine',
     NEON_EGRESS_MTD: 'engine', NEON_READ_LAST_ERROR: 'engine',
     NEON_KEEPWARM_LAST: 'engine', NEON_KEEPWARM_LAST_RESULT: 'engine',
     PIPELINE_WATCH_LAST: 'engine', PIPELINE_WATCH_LAST_RESULT: 'engine',
