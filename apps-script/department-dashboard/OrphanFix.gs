@@ -47,7 +47,7 @@
  *      row to `Orphan Fix Log` BEFORE returning to the client.
  *      The log is append-only and idempotently created by setup().
  *
- * The downstream cache layers (companyOverview:v21, summary:v20,
+ * The downstream cache layers (companyOverview:v21, summary:v21,
  * individual:v11, etc.; see INV-30 for the canonical list) will
  * hold stale data for up to 6 hours (REPORT_CACHE_TTL_SECONDS,
  * R24) after a rename -- though the morning ingest's freshness tag

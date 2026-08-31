@@ -546,6 +546,31 @@
         </details>
       </div>
 
+      <!-- R25: CSR TRANSFER DETAIL. `CSR Transfer Historical Data` has always
+           carried per-AGENT rows plus 11 per-QUEUE destination columns
+           (INV-52); only the dept-wide percentage was ever surfaced, so the
+           actionable questions ("to WHERE?", "by WHOM?") had no answer on a
+           dataset that already held one. CSR-only: the section stays hidden
+           for every other dept because the server ships csrTransfer only for
+           CSR. Folded by default -- it is a drill-in, like Diagnostics. -->
+      <details id="dept-transfer-section" class="dept-transfer" style="display:none;">
+        <summary class="dept-transfer-summary">
+          <span class="dept-transfer-title">Transfer detail</span>
+          <span class="dept-transfer-sub" id="dept-transfer-sub"></span>
+        </summary>
+        <div class="ds-note" id="dept-transfer-note" style="display:none;"></div>
+        <div class="dept-transfer-body">
+          <div class="dept-transfer-col">
+            <div class="dept-transfer-h">Where transfers go</div>
+            <div id="dept-transfer-queues"></div>
+          </div>
+          <div class="dept-transfer-col">
+            <div class="dept-transfer-h">Who transfers</div>
+            <div id="dept-transfer-agents"></div>
+          </div>
+        </div>
+      </details>
+
       <details id="diagnostics" class="diagnostics" data-admin-only style="display:none;">
         <summary>Diagnostics <span id="diag-count" class="diag-count"></span></summary>
         <div id="diag-content"></div>

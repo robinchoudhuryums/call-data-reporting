@@ -177,6 +177,15 @@ tests/
                               degenerate month/week-start clamps, and a
                               tripwire that fails if a resolver computes its
                               own dates again),
+                              sheet-coverage (R25: the interior-gap detector
+                              -- weekends/holidays/pre-start dates are not
+                              gaps, a missing sheet reads distinctly, and it
+                              opens no Neon connection),
+                              csr-transfer-detail (R25: the headline stays
+                              byte-identical, per-agent rows SUM to it,
+                              destination labels come from the sheet header,
+                              and transfers outside the 11 fixed columns are
+                              disclosed),
                               ir-send-to-agent (the three server-side gates
                               on emailing an Individual Report to its
                               subject: dept+roster, registered-address

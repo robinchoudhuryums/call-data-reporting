@@ -830,7 +830,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v20` |
+| `Data.gs` (main table) | `summary:vN:` | `v21` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
 | `IndividualReport.gs` | `individual:vN:` | `v11` |
@@ -1697,7 +1697,7 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v21`) on success. Per-(dept,
-range) caches (`summary:v20`, `individual:v11`,
+range) caches (`summary:v21`, `individual:v11`,
 etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the

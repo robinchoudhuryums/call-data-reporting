@@ -1092,7 +1092,7 @@ When something looks wrong, before assuming a code bug, check:
     CSR + Spanish) no longer contributes their other department's calls to
     both. OFF: that over-count returns on the three parent depts (Sales / CSR /
     Power) and the My Department chip says so in as many words. Reversible
-    either way with no redeploy — the scope is part of the `summary:v20` cache
+    either way with no redeploy — the scope is part of the `summary:v21` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a
@@ -1356,3 +1356,26 @@ When something looks wrong, before assuming a code bug, check:
     this feature whether or not `AGENT_ROLE_ENABLED` (#46) is on — a row is a
     recorded address, not a grant of the agent app. Pinned by
     `tests/unit/ir-send-to-agent.test.js`.
+
+52. **Sheet coverage check — the interior-gap detector for the historical
+    sheets.** `runSheetCoverageCheck()` (SheetCoverage.gs, dashboard editor,
+    admin-gated, READ-ONLY) walks a window (`SHEET_COVERAGE_DAYS`, default 30,
+    ending yesterday) and flags BUSINESS DAYS with zero rows in each
+    dashboard-read historical sheet — `DQE Historical Data`, `QCD Historical
+    Data`, `Direct Call History` — holiday-aware (`COMPANY_HOLIDAYS`) and
+    floored at each sheet's own earliest date.
+    **Why it exists:** every other signal watches the trailing edge or one
+    dept. If the import skips a Tuesday and Wednesday's run succeeds,
+    freshness goes green and Tuesday is gone — permanently, silently, and
+    every report covering that window averages over a day that is not there.
+    #35's Neon check can't see it either: it compares the two sides, so a date
+    missing from BOTH produces no finding.
+    **It opens no Neon connection**, so it works during an outage — which is
+    exactly when a missed import is most likely and least likely to be
+    noticed. Run it monthly, and after any known import trouble.
+    Outcome is OPS-8 prefix-coded in `SHEET_COVERAGE_LAST` /
+    `SHEET_COVERAGE_LAST_RESULT` and rendered as the Health page's "Sheet
+    coverage — last check" row; admins are emailed ONLY when there is a
+    finding. A gap's fix is per sheet (force re-import the date; for Direct,
+    `runDirectCallBuild()`), and each finding names it. Pinned by
+    `tests/unit/sheet-coverage.test.js`.

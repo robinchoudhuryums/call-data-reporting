@@ -813,7 +813,7 @@ function getDepartmentSummary(req) {
   // rather than a version bump: the version tracks aggregation-RULE changes
   // (INV-30) and both modes are the same rule under a different scope.
   const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'summary:v20:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v21:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
@@ -1392,25 +1392,110 @@ function computeCsrTransferRange_(dept, from, to) {
     if (!sheet) return null;
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return null;
-    const disp = sheet.getRange(2, 1, lastRow - 1, 7).getDisplayValues();
+    // R25: widened from 7 to CSR_TRANSFER_COLS_ (A..R). The sheet has ALWAYS
+    // carried per-AGENT rows plus 11 per-QUEUE transfer-destination columns
+    // (INV-52); the dashboard read only A..G and collapsed it to one dept
+    // percentage, so "we transfer 30% of calls -- to WHERE, and who does it?"
+    // was unanswerable from a dataset that already held the answer. The
+    // headline fields below are computed EXACTLY as before, so the existing
+    // team-strip tile and its delta chip are unchanged.
+    const width = Math.min(CSR_TRANSFER_COLS_, sheet.getLastColumn());
+    const disp = sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues();
+    // Queue labels live in the sheet's own header row (cols H..R), same as
+    // the pipeline's repair tool reads them -- never hardcoded, so a renamed
+    // queue follows automatically.
+    const header = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+    const queueLabels = [];
+    for (let q = 0; q < CSR_TRANSFER_QUEUE_COUNT_; q++) {
+      const col = CSR_TRANSFER_QUEUE_FIRST_COL_ - 1 + q;
+      if (col >= width) break;
+      queueLabels.push(String(header[col] || ('Queue ' + (q + 1))).trim());
+    }
+    const num = function (v) { return Number(String(v == null ? '' : v).replace(/,/g, '')) || 0; };
     const tz = ss.getSpreadsheetTimeZone();
     let totalCalls = 0, transferred = 0;
     const days = {};
+    const byAgent = {};
+    const byDay = {};
+    const queueTotals = queueLabels.map(function () { return 0; });
     for (let i = 0; i < disp.length; i++) {
       const iso = rowDateIso_(disp[i][2], tz);
       if (!iso || iso < from || iso > to) continue;
-      totalCalls  += Number(String(disp[i][5]).replace(/,/g, '')) || 0;
-      transferred += Number(String(disp[i][6]).replace(/,/g, '')) || 0;
+      const rowCalls = num(disp[i][5]);
+      const rowTrans = num(disp[i][6]);
+      totalCalls  += rowCalls;
+      transferred += rowTrans;
       days[iso] = true;
+
+      // Per AGENT (col D). Rows are per-agent-per-day, so a range sums them.
+      const agent = String(disp[i][3] || '').trim();
+      if (agent) {
+        const a = byAgent[agent] || (byAgent[agent] = { agent: agent, totalCalls: 0, transferred: 0 });
+        a.totalCalls += rowCalls;
+        a.transferred += rowTrans;
+      }
+      // Per DAY (the trend).
+      const d = byDay[iso] || (byDay[iso] = { date: iso, totalCalls: 0, transferred: 0 });
+      d.totalCalls += rowCalls;
+      d.transferred += rowTrans;
+      // Per DESTINATION QUEUE (cols H..R).
+      for (let q = 0; q < queueLabels.length; q++) {
+        queueTotals[q] += num(disp[i][CSR_TRANSFER_QUEUE_FIRST_COL_ - 1 + q]);
+      }
     }
     if (totalCalls <= 0) return null;
     const pct = (transferred / totalCalls) * 100;
+    const rate = function (t, c) { return c > 0 ? round1_((t / c) * 100) : null; };
+
+    // Per-agent rows, busiest-transferrer first. Deliberately NOT filtered to
+    // the roster: the dept headline sums every row, so filtering here would
+    // break the reconciliation this repo depends on (the rows must add up to
+    // the tile). A departed agent simply shows with their historical volume.
+    const agents = Object.keys(byAgent).map(function (k) {
+      const a = byAgent[k];
+      a.pct = rate(a.transferred, a.totalCalls);
+      return a;
+    }).sort(function (x, y) {
+      return (y.transferred - x.transferred)
+          || (x.agent < y.agent ? -1 : x.agent > y.agent ? 1 : 0);
+    });
+
+    // Destination queues, biggest first; zero-transfer queues are dropped
+    // (11 fixed columns, most empty for any given dept-week).
+    const queues = [];
+    for (let q = 0; q < queueLabels.length; q++) {
+      if (queueTotals[q] <= 0) continue;
+      queues.push({
+        queue: queueLabels[q],
+        transferred: queueTotals[q],
+        // Share of TRANSFERS (not of calls) -- "where do the transfers go?".
+        share: transferred > 0 ? round1_((queueTotals[q] / transferred) * 100) : null,
+      });
+    }
+    queues.sort(function (x, y) { return y.transferred - x.transferred; });
+
+    const daily = Object.keys(byDay).sort().map(function (k) {
+      const d = byDay[k];
+      d.pct = rate(d.transferred, d.totalCalls);
+      return d;
+    });
+
+    // `queueSum` lets the client disclose the one place these numbers can
+    // legitimately not add up: the 11 destination columns are a fixed set, so
+    // transfers to anywhere else fall outside them. Never silently absorbed.
+    const queueSum = queueTotals.reduce(function (acc, n) { return acc + n; }, 0);
+
     return {
       pct: round1_(pct),
       pctStr: pct.toFixed(1) + '%',
       transferred: transferred,
       totalCalls: totalCalls,
       days: Object.keys(days).length,
+      agents: agents,
+      queues: queues,
+      daily: daily,
+      queueSum: queueSum,
+      queueUnaccounted: Math.max(0, transferred - queueSum),
     };
   } catch (e) {
     Logger.log('computeCsrTransferRange_ failed: %s', e);

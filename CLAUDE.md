@@ -1690,32 +1690,34 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   admins by email. Three other sections share the page, each read-only and
   each documented at its own operator item: **"Report usage (last 30 days)"**
   (`computeReportUsageSummary_` -- the consolidation / un-gating EVIDENCE, so
-  every row is muted: usage is evidence, not a health state; a bounded tail
-  read, `REPORT_USAGE_SCAN_CAP_`=5000, which says so when the cap clips the
-  window rather than silently under-reporting);
+  every row is muted; a bounded tail read, `REPORT_USAGE_SCAN_CAP_`=5000, which
+  says so when the cap clips the window);
   **`SmokeCheck.gs::runLiveSmoke`** -- an editor-run, admin-gated, READ-ONLY
   sweep of the live read paths that complements the unit harness by exercising
   live WIRING (properties, scopes, sheets, Neon). **Run it after every
   deploy**; client-side surfaces still need the manual Regression Scenarios;
   and **`runNeonCoverageCheck`** (NeonCoverage.gs, Op State #35) -- per-date
   sheet-vs-Neon row-count reconciliation plus zero-row-weekday gaps on the two
-  no-sheet-primary tables (`inbound_calls`, `outbound_calls`; a not-yet-created
-  `outbound_calls` is a clean SKIP via `ncMissingTableError_`, not a probe
-  error, so deploying the dashboard ahead of the capture reads as such). All three store
+  no-sheet-primary tables (`inbound_calls`, `outbound_calls`; a not-yet-created table is a clean SKIP
+  via `ncMissingTableError_`, not a probe error); and
+  **`runSheetCoverageCheck`** (SheetCoverage.gs, Op State #52) -- the SHEET-side
+  twin: business days with ZERO rows in a dashboard-read historical sheet --
+  the interior gap every other signal misses (they watch the trailing edge, one
+  dept, or the two SIDES). Opens NO Neon connection, so it works mid-outage.
+  All four store
   an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, which is
   what the page's classifier reads. Pinned by `system-health.test.js` /
-  `smoke-check.test.js` / `neon-coverage.test.js`. **Two CAPACITY rows sit
+  `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Two CAPACITY rows sit
   alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47) and
-  email quota remaining -- because the resources they meter fail SILENTLY and
-  look healthy to every other probe on this page: a Neon that has spent its
-  monthly transfer is still reachable, and an exhausted MailApp quota just
-  stops sending. Read the Neon figure as a FLOOR (it counts our payloads,
+  email quota remaining -- because both fail SILENTLY and look healthy to every
+  other probe here (a spent Neon is still reachable; an exhausted MailApp quota
+  just stops sending). Read the Neon figure as a FLOOR (it counts our payloads,
   not the wire). The row also RANKS the top consumers -- every
   `neonNoteEgress_` callsite passes a surface label (unlabeled folds into
   `other`; system-health.test.js EA-1 pins it), so egress reduction starts
-  from the ranking, not guesswork. Also on the page: `build-stamp` ("unstamped" = the push
-  bypassed deploy.sh's CI gates, #2), `legs-horizon` (surviving
-  Call_Legs_* dates; sheet-only, so it renders mid-outage) and
+  from the ranking, not guesswork. Also on the page: `build-stamp` ("unstamped" = a push
+  bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
+  Call_Legs_* dates; sheet-only) and
   `retention-risk` (surviving dates the per-call tables are missing;
   #40/#43).
   **Install readiness: a trigger being
@@ -1980,7 +1982,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" the parameter thinking it was dropped, and
   don't hardcode that default in a second place. `subScope` is a cache-key
-  dimension (`summary:v20`); `cdr.dept.subscope` is now an orphan key.
+  dimension (`summary:v21`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -2448,6 +2450,7 @@ items for anything it flags or doesn't cover.)
 49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
 50. Outbound Calls tab export trigger -- the keystone that moved the Outbound report, the journey drill's outbound arm and Caller Lookup's per-call outbound section OUT of Neon-only (CDR Tools menu); seed it while Neon is reachable
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use when emailing an Individual Report to its subject; prefer adding the agent's Access Control row instead (no typing, no mis-delivery risk)
+52. Sheet coverage check -- flags business days with ZERO rows in a dashboard-read historical sheet (the interior gap every other signal misses); no Neon needed, so it works mid-outage
 
 ## Cycle Workflow Config
 
@@ -2467,7 +2470,7 @@ Data Accuracy (DQE), Access Control Integrity, Source Pipeline Reliability, Migr
 
 ### Subsystems
 Department Dashboard:
-  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
+  apps-script/department-dashboard/Auth.gs, apps-script/department-dashboard/Code.gs, apps-script/department-dashboard/Coaching.gs, apps-script/department-dashboard/AgentHome.gs, apps-script/department-dashboard/agent.html, apps-script/department-dashboard/agentApp.html, apps-script/department-dashboard/Config.gs, apps-script/department-dashboard/BuildStamp.gs, apps-script/department-dashboard/Data.gs, apps-script/department-dashboard/Diagnostics.gs, apps-script/department-dashboard/Setup.gs, apps-script/department-dashboard/Util.gs, apps-script/department-dashboard/NeonRead.gs, apps-script/department-dashboard/NeonKeepWarm.gs, apps-script/department-dashboard/CacheWarm.gs, apps-script/department-dashboard/IngestWatchdog.gs, apps-script/department-dashboard/PipelineWatch.gs, apps-script/department-dashboard/DqeSilenceWatch.gs, apps-script/department-dashboard/NeonBackup.gs, apps-script/department-dashboard/NeonCoverage.gs, apps-script/department-dashboard/SheetCoverage.gs, apps-script/department-dashboard/SystemHealth.gs, apps-script/department-dashboard/SmokeCheck.gs, apps-script/department-dashboard/MissedCallsReport.gs, apps-script/department-dashboard/IndividualReport.gs, apps-script/department-dashboard/InsightsReport.gs, apps-script/department-dashboard/InboundReport.gs, apps-script/department-dashboard/DirectCallReport.gs, apps-script/department-dashboard/OutboundReport.gs, apps-script/department-dashboard/CallerLookup.gs, apps-script/department-dashboard/Alerts.gs, apps-script/department-dashboard/CompanyOverview.gs, apps-script/department-dashboard/Digest.gs, apps-script/department-dashboard/EmailKit.gs, apps-script/department-dashboard/DeptSummaryEmail.gs, apps-script/department-dashboard/QueueReportEmail.gs, apps-script/department-dashboard/OrphanFix.gs, apps-script/department-dashboard/QCDReport.gs, apps-script/department-dashboard/DeptConfig.gs, apps-script/department-dashboard/Escalations.gs, apps-script/department-dashboard/access_denied.html, apps-script/department-dashboard/dashboard.html, apps-script/department-dashboard/script.html, apps-script/department-dashboard/script-1-core.html, apps-script/department-dashboard/script-2-chrome.html, apps-script/department-dashboard/script-3-overview.html, apps-script/department-dashboard/script-4-nav.html, apps-script/department-dashboard/script-5-dept.html, apps-script/department-dashboard/script-6-ir.html, apps-script/department-dashboard/script-7-admin.html, apps-script/department-dashboard/script-8-insights.html, apps-script/department-dashboard/script-9-inbound-direct.html, apps-script/department-dashboard/script-10-escalations.html, apps-script/department-dashboard/script-11-qcd-boot.html, apps-script/department-dashboard/styles.html, apps-script/department-dashboard/appsscript.json
 
 CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json

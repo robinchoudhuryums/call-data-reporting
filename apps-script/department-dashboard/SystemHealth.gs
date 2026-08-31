@@ -496,6 +496,12 @@ function getSystemHealth(req) {
       // R7 (G-2): Neon coverage check (NeonCoverage.gs, editor-run):
       // 'ok clean ...' / 'GAPS n finding(s) ...' / 'FAILED...' / 'skipped...'.
       ['out-coverage', 'Neon coverage — last check', 'NEON_COVERAGE_LAST', 'NEON_COVERAGE_LAST_RESULT'],
+      // R25: Sheet coverage (SheetCoverage.gs, editor-run) -- the sheet-side
+      // twin: a business day with ZERO rows in a dashboard-read historical
+      // sheet, which the Neon check structurally cannot see (it compares the
+      // two sides, so a date missing from BOTH yields no finding).
+      // 'CLEAN no missing business days ...' / 'GAPS n finding(s) ...' / 'FAILED...'.
+      ['out-sheetcoverage', 'Sheet coverage — last check', 'SHEET_COVERAGE_LAST', 'SHEET_COVERAGE_LAST_RESULT'],
       // R18d: 'ok ...' / 'SILENT n dept(s) ...' / 'ERROR: ...'.
       ['out-dqesilence', 'DQE silence — last check', 'DQE_SILENCE_WATCH_LAST', 'DQE_SILENCE_WATCH_LAST_RESULT'],
       // F-e: 'ok N new, M continuing ...' / 'skipped (...)' / 'ERROR: ...'.
