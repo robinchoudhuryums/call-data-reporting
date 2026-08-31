@@ -145,7 +145,11 @@ node --test          # from repo root (or: npm test)
 scripts/deploy.sh .                      <dashboard-deployment-id>
 scripts/deploy.sh apps-script/cdr-report     # no id -- not a web app; the push IS the deploy
 scripts/deploy.sh apps-script/cdr-import     # no id -- ditto (triggers/menus run pushed code)
-# (dashboard: omit the id to just `clasp push -f` + finish the version bump manually)
+# (dashboard: write the id ONCE to a gitignored `.deployment-id` at repo root and
+# omit the argument; with neither, it just `clasp push -f`s + manual version bump.
+# Re-running on an already-deployed clean HEAD is a fast no-op via the gitignored
+# `.last-deployed` marker -- a redundant deploy would re-stamp and false-fire the
+# update notice -- FORCE=1 overrides.)
 
 # Still manual (NOT unit-covered): the deferred mirror's sheet-derived
 # payload re-derivation (NeonMirror.js) and anything UI/live -- verify

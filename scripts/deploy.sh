@@ -14,11 +14,17 @@
 #   [deployment-id]  the web-app deployment to roll forward — DASHBOARD ONLY.
 #                    Find it once with `clasp deployments` run in that dir,
 #                    and use the versioned web-app deployment's id (NOT the
-#                    @HEAD one). Omit to only `clasp push -f` and finish the
-#                    version bump manually in the editor. The two SIBLING
-#                    projects are not web apps (their triggers + menus always
-#                    run the pushed code), so for them the push IS the deploy
-#                    and no id exists to pass.
+#                    @HEAD one) -- or write it once to a gitignored
+#                    `.deployment-id` file in the project dir and omit the
+#                    argument forever. With neither, the script only
+#                    `clasp push -f`s and you finish the version bump
+#                    manually in the editor. The two SIBLING projects are
+#                    not web apps (their triggers + menus always run the
+#                    pushed code), so for them the push IS the deploy and
+#                    no id exists to pass.
+#
+#   FORCE=1          bypass the redundant-run guard (see below), e.g. to
+#                    re-roll a deployment after an editor-side change.
 #
 # Notes:
 #   - Each project keeps its own gitignored .clasp.json, so run this from the
@@ -36,6 +42,42 @@ fi
 if [ ! -f "$DIR/.clasp.json" ]; then
   echo "error: no .clasp.json in '$DIR' (gitignored, per-developer). See README." >&2
   exit 1
+fi
+
+# Per-developer default deployment id (the .clasp.json pattern): with no id
+# argument, fall back to a gitignored `.deployment-id` file in the project
+# dir -- write the versioned web-app deployment's id there once (from
+# `clasp deployments`; NOT the @HEAD one) and `scripts/deploy.sh .` rolls
+# the live deployment with nothing to remember. The sibling projects are
+# not web apps and simply won't have the file.
+if [ -z "$DEP_ID" ] && [ -f "$DIR/.deployment-id" ]; then
+  DEP_ID="$(head -n 1 "$DIR/.deployment-id" | tr -d '[:space:]')"
+  [ -n "$DEP_ID" ] && echo "==> deployment id from $DIR/.deployment-id"
+fi
+
+# Redundant-run guard: re-deploying the exact same commit is harmless to the
+# app but NOT free -- it mints a new deployment version and re-stamps the
+# build, so every open tab shows the "new version -- refresh" notice for
+# identical code. Skip when the current HEAD is CLEAN and matches this
+# project's last recorded deploy from this checkout; FORCE=1 overrides. A
+# dirty tree always proceeds (the stamp marks it +dirty, and the tree may
+# hold the very change being shipped). `.last-deployed` is gitignored,
+# per-developer, and written only after a COMPLETE deploy for the project
+# type (dashboard: after the version roll -- a push-only run without an id
+# does NOT record, so the finished deploy is never skipped later; siblings:
+# after the push, which IS their deploy).
+LAST_FILE="$(cd "$DIR" && pwd)/.last-deployed"   # absolute: the script cd's later
+HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+record_deploy() {
+  if [ -n "$HEAD_SHA" ]; then printf '%s' "$HEAD_SHA" > "$LAST_FILE" 2>/dev/null || true; fi
+}
+if [ "${FORCE:-}" != "1" ] && [ -n "$HEAD_SHA" ] && [ -f "$LAST_FILE" ] \
+   && [ -z "$(git status --porcelain 2>/dev/null)" ] \
+   && [ "$(cat "$LAST_FILE")" = "$HEAD_SHA" ]; then
+  echo "==> Already deployed: '$DIR' was last deployed from commit ${HEAD_SHA:0:9},"
+  echo "    which is the current clean HEAD -- nothing new to ship."
+  echo "    Re-run with FORCE=1 to deploy anyway."
+  exit 0
 fi
 
 # TST-7: gate the LIVE push on the same checks CI runs (node --test + the
@@ -114,6 +156,7 @@ if [ -n "$DEP_ID" ]; then
   DESC="deploy $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "==> clasp deploy -i $DEP_ID -d \"$DESC\""
   clasp deploy -i "$DEP_ID" -d "$DESC"
+  record_deploy
   echo "==> Done. Deployment $DEP_ID now serves the pushed code."
 else
   case "$DIR" in
@@ -122,6 +165,7 @@ else
       # execute the pushed code, so there is no deployment version to roll and
       # the old "finish in the editor" hint sent operators hunting for a step
       # that doesn't exist.
+      record_deploy
       echo "==> Pushed. Done -- this project is not a web app (triggers/menus"
       echo "    run the pushed code directly), so no version bump is needed."
       ;;
