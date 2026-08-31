@@ -180,6 +180,19 @@ function makeFakeSpreadsheet(opts) {
     getSheets: function () {
       return Object.keys(sheetMap).map(function (n) { return sheetMap[n]; });
     },
+    // Real Spreadsheet method, modelled not stubbed (the clearContent
+    // discipline): the retention prune DELETES sheets, and a no-op stub
+    // would make every prune assertion pass vacuously. Removes by IDENTITY,
+    // not by name -- the prune iterates a getSheets() snapshot, so a
+    // name-keyed delete would hide an index-shift bug rather than expose it.
+    deleteSheet: function (sheet) {
+      const name = Object.keys(sheetMap).find(function (n) { return sheetMap[n] === sheet; });
+      if (name === undefined) {
+        // The real API throws for a sheet that is not in this spreadsheet.
+        throw new Error('deleteSheet: sheet is not part of this spreadsheet');
+      }
+      delete sheetMap[name];
+    },
     insertSheet: function (name) {
       const s = makeFakeSheet(name, []);
       s._parent = this;

@@ -189,7 +189,31 @@ tests/
                               ir-send-to-agent (the three server-side gates
                               on emailing an Individual Report to its
                               subject: dept+roster, registered-address
-                              preference, domain allowlist)
+                              preference, domain allowlist),
+                              retention-prune (the destructive Call_Legs_*
+                              prune: non-Call_Legs tabs are untouchable, the
+                              14-day cutoff is exclusive, P18 fails LOUDLY
+                              rather than reporting 0, the Pipeline Health
+                              row is accurate -- plus a CHARACTERIZATION of
+                              the DST fall-back early deletion),
+                              dqe-drilldown-parity (the FOURTH hand-mirrored
+                              rule set: one fixture drives the real build AND
+                              the real drill sidebar, and the drill's Found-N
+                              must reconcile with the DQE cell -- catches all
+                              three historical drifts, F24 / R8-D4 / F-13),
+                              neon-keepwarm (the COST gate: one observable --
+                              did this invocation open a connection? -- across
+                              the flag, the weekday check, the half-open hour
+                              window, and a typo'd hour property that must
+                              NARROW to the default rather than widen to
+                              24/7; plus the NEO-3 skipReadHealth contract),
+                              insurance-numbers (the insurer-label reference
+                              table: every punctuation variant canonicalizes
+                              to one form, REP-7's 10-digit country-code fix,
+                              the PHI contract that only hash+label reach
+                              Neon, and cross-PROJECT hash equivalence between
+                              hashPhone and cdrHashPhone_ -- a divergence
+                              there silently unlabels every insurer)
 ```
 
 To load a sibling pipeline project instead of the dashboard, pass

@@ -43,8 +43,19 @@ function deleteOldCDRSheets() {
   }
   var sheets = ss.getSheets();
 
-  var today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Age is compared in WHOLE CALENDAR DAYS via Date.UTC, not by dividing a
+  // local-midnight millisecond difference by 86_400_000. The old arithmetic
+  // was DST-sensitive: a window containing the 25-hour fall-back day yielded
+  // 14.0417 for a nominally-14-day-old tab, which cleared the `> 14` cutoff
+  // and pruned it a day EARLY -- narrowing the load-bearing retention window
+  // to 13 days for ~2 weeks each November, against a window the queue-split
+  // backfill (Operator State #40) already races. Deletion is irreversible and
+  // the per-leg queue identity exists nowhere else, so the safe direction is
+  // to keep a tab a day too long, never to drop one a day too soon.
+  // Date.UTC on the LOCAL y/m/d of each side removes the offset entirely, so
+  // the difference is always an exact integer count of calendar days.
+  var now = new Date();
+  var todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
 
   var deleted = 0, kept = 0;
   // Reverse loop so deletions don't shift the un-visited entries.
@@ -54,8 +65,24 @@ function deleteOldCDRSheets() {
     if (name.indexOf(RETENTION_SHEET_PREFIX) !== 0) continue;
     var dateMatch = name.match(/Call_Legs_(\d{4})-(\d{2})-(\d{2})/);
     if (!dateMatch) continue;
-    var sheetDate = new Date(+dateMatch[1], +dateMatch[2] - 1, +dateMatch[3]);
-    var dayDiff = (today.getTime() - sheetDate.getTime()) / (1000 * 3600 * 24);
+    // Reject out-of-range components instead of letting Date normalise them.
+    // Date.UTC(2020, 12, 99) is a real timestamp (2021-04-09), so a nonsense
+    // suffix used to be aged as whatever it rolled over to and could then be
+    // deleted on that basis. For an irreversible delete the correct posture is
+    // "this name is not one I understand, so I will not act on it": an
+    // unparseable tab is skipped and therefore kept. The trade-off is that a
+    // hand-made bad name accumulates rather than ageing out -- visible and
+    // harmless, unlike deleting on a date nobody wrote.
+    var sy = +dateMatch[1], sm = +dateMatch[2], sd = +dateMatch[3];
+    if (sm < 1 || sm > 12 || sd < 1 || sd > 31) continue;
+    var sheetUtc = Date.UTC(sy, sm - 1, sd);
+    // Catches the day-vs-month combinations the range check above cannot
+    // (Feb 30, Apr 31): if normalisation moved any component, the date the
+    // name claims does not exist.
+    var back = new Date(sheetUtc);
+    if (back.getUTCFullYear() !== sy || back.getUTCMonth() !== sm - 1
+        || back.getUTCDate() !== sd) continue;
+    var dayDiff = (todayUtc - sheetUtc) / (1000 * 3600 * 24);
     if (dayDiff > RETENTION_CUTOFF_DAYS) {
       ss.deleteSheet(sheet);
       deleted++;

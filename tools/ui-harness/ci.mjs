@@ -48,6 +48,14 @@ const STAGES = [
   // so the driver stubs URL.createObjectURL and asserts the real bytes.
   ['node', ['drive-subqueue.js'], 'sub-queue scope + combined CSV (S35 addendum / S43)'],
   ['node', ['drive-journey.js'], 'call-path drill: origin line, outbound link, refusal'],
+  // The admin modals + the Escalations worklist. These have thorough
+  // SERVER-side pins and, until this stage, no assertion that any of them
+  // RENDERS -- the gap that shipped the header dept-selector ReferenceError.
+  // drive-phase3.js already opened them but swallowed every failure into a
+  // report for a human and exited 0; this asserts. It reads modal ids off the
+  // ROUTER TABLE in script-4-nav.html, which is how it caught that phase3 had
+  // been checking a `#system-health-modal` that never existed.
+  ['node', ['drive-admin.js'], 'admin modals + escalations worklist'],
   // O-11. The dev overlay redefines `google.script.run` for admins -- the one
   // object every server call in the app passes through -- so a wrong wrapper
   // breaks everything at once, and nothing in `node --test` can see it. This
