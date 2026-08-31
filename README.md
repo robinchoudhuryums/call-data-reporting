@@ -125,12 +125,21 @@ To skip the manual "New version" step (a recurring stale-deploy footgun —
 the helper, which pushes *and* rolls the deployment forward in one shot:
 
 ```bash
-# deployment id comes from `clasp deployments` in that project dir (one-time lookup)
-scripts/deploy.sh .                      <dashboard-deployment-id>   # repo root = dashboard
-scripts/deploy.sh apps-script/cdr-report <cdr-report-deployment-id>
-scripts/deploy.sh apps-script/cdr-import <cdr-import-deployment-id>
-# omit the id to just `clasp push -f` and finish the version bump manually
+# dashboard deployment id: one-time lookup via `clasp deployments` at repo root --
+# use the VERSIONED web-app deployment's id, not the @HEAD one. Write it once to
+# a gitignored .deployment-id file at repo root and never type it again:
+#   echo 'AKfycb...' > .deployment-id
+scripts/deploy.sh .                          # repo root = dashboard (id from .deployment-id)
+scripts/deploy.sh apps-script/cdr-report     # no id -- not a web app; the push IS the deploy
+scripts/deploy.sh apps-script/cdr-import     # no id -- ditto (triggers/menus run pushed code)
+# (dashboard with NO id anywhere: just `clasp push -f` + manual version bump)
 ```
+
+Re-running the helper on a commit it already fully deployed (clean tree) is a
+fast no-op — it tracks the last-deployed SHA per project in a gitignored
+`.last-deployed` file, because a redundant deploy mints a pointless version
+and re-stamps the build, which makes every open tab show the "new version —
+refresh" notice for identical code. `FORCE=1 scripts/deploy.sh .` overrides.
 
 The helper also stamps the pushed build (S6): the dashboard's stamp renders
 on the Health page, and the sibling projects' stamps ride the `autoImport` /

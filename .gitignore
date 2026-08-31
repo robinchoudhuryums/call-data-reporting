@@ -2,6 +2,13 @@
 # .clasp.example.json for the template, README.md for setup steps.
 .clasp.json
 
+# Per-developer deploy state (the .clasp.json pattern), read by
+# scripts/deploy.sh: .deployment-id holds the project's default web-app
+# deployment id (dashboard only); .last-deployed records the git SHA the
+# script last fully deployed from this checkout (the redundant-run guard).
+.deployment-id
+.last-deployed
+
 # Node tooling (clasp install footprint, etc.)
 node_modules/
 
