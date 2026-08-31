@@ -1077,6 +1077,21 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   R11-B11 impact score); single-dept view keeps the flat table; the CSV
   stays flat with its Dept column. See
   `docs/direct-extension-metrics-design.md`.
+- **CSR transfer detail reads an APPEND-ONLY, never-sorted sheet.**
+  `CSR Transfer Historical Data` (INV-52) is per-AGENT per-DAY with 11
+  per-QUEUE transfer-DESTINATION columns (H..R, labels in its own header row
+  -- read them, never hardcode). `computeCsrTransferRange_` surfaces the
+  headline tile plus `agents` / `queues` / `daily`. Three rules: (1) cdr-import
+  APPENDS at `getLastRow()+1` on both the daily and the BULK paths and nothing
+  ever sorts the sheet, so a backfill of older dates lands after newer rows --
+  the reader scans the DATE COLUMN then reads only the window's row SPAN at
+  full width; the export tabs' widening TAIL scan is WRONG here and would
+  silently drop backfilled rows (pinned by an out-of-order test). (2) Per-agent
+  rows are deliberately NOT roster-filtered -- the headline sums every row, so
+  filtering would break the reconciliation. (3) The 11 destination columns are
+  a FIXED set, so `queueSum`/`queueUnaccounted` DISCLOSE transfers going
+  anywhere else rather than letting the lists silently disagree with the
+  headline. `tests/unit/csr-transfer-detail.test.js` pins all three.
 - **Date-range presets NEVER include today, and the rule lives in ONE place.**
   `datePresetRange_` (script-1-core) is the single resolver behind every
   "Quick select" dropdown (IR, Insights, Inbound, Direct, Outbound, the
@@ -2599,6 +2614,7 @@ S40 | Escalation overdue count agrees with the flagged cards (F3) | Subsystem: D
 S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
 S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
+S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.
