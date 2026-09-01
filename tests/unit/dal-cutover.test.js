@@ -2,6 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { deepEqual } = require('node:assert'); // legacy: prototype-agnostic for cross-realm vm values
 const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
@@ -388,13 +389,18 @@ test('Batch 6: DQE gate — ZERO sheet rows is INCONCLUSIVE, never a pass', func
   install('sheet');
   h.state.props.DQE_PARITY_FROM = '2030-01-01';
   h.state.props.DQE_PARITY_TO = '2030-01-07';
+  // RESTORE, don't delete: `delete h.ctx.fn` removes the property from the vm
+  // global outright, so the REAL function is gone for every later test in this
+  // file. That went unnoticed until a test needed the real sheetFetchDqeRows_.
+  const realSheetFetch = h.ctx.sheetFetchDqeRows_;
+  const realNeonFetch  = h.ctx.neonFetchDqeRows_;
   h.ctx.sheetFetchDqeRows_ = function () { return []; };
   h.ctx.neonFetchDqeRows_ = function () { return []; };
   const r = dqeParityRun_();
   assert.doesNotMatch(r.log, /PARITY CLEAN/, 'never claims a pass with nothing compared');
   assert.equal(r.verdict.clean, false);
   assert.ok(r.verdict.error, 'carries a reason instead of returning undefined');
-  delete h.ctx.sheetFetchDqeRows_; delete h.ctx.neonFetchDqeRows_;
+  h.ctx.sheetFetchDqeRows_ = realSheetFetch; h.ctx.neonFetchDqeRows_ = realNeonFetch;
 });
 
 test('Batch 6: DQE gate — a real matching range reports clean + the compared count', function () {
@@ -405,13 +411,15 @@ test('Batch 6: DQE gate — a real matching range reports clean + the compared c
                 totalMissed: 0, totalAnswered: 2, tttSec: 903, attSec: 181,
                 avgAbdWaitSec: 0, csrAvgAbdWaitSec: 0, queueExt: '103',
                 slots: new Array(19).fill(''), abandonedParentIds: '', abandonedMissedTimes: '' };
+  const realSheetFetch2 = h.ctx.sheetFetchDqeRows_;
+  const realNeonFetch2  = h.ctx.neonFetchDqeRows_;
   h.ctx.sheetFetchDqeRows_ = function () { return [row]; };
   h.ctx.neonFetchDqeRows_ = function () { return [row]; };
   const r = dqeParityRun_();
   assert.match(r.log, /PARITY CLEAN/);
   assert.equal(r.verdict.clean, true);
   assert.equal(r.verdict.compared, 1, 'a pass is backed by a real compared count');
-  delete h.ctx.sheetFetchDqeRows_; delete h.ctx.neonFetchDqeRows_;
+  h.ctx.sheetFetchDqeRows_ = realSheetFetch2; h.ctx.neonFetchDqeRows_ = realNeonFetch2;
 });
 
 // --- L1/L2 (broad-scan 2026-08-27): the outage-empty CACHE-PUT corner --------
@@ -470,4 +478,137 @@ test('L2: getCompanyOverview does NOT cache an empty-DQE-read blob when a latest
   assert.equal(r.latestDate, '2026-03-11', 'payload still served (degraded, not thrown)');
   const ovKeys = Array.from(h.state.cache.keys()).filter(function (k) { return k.indexOf('companyOverview') === 0; });
   assert.deepEqual(ovKeys, [], 'no companyOverview key pinned by the outage blob');
+});
+
+// ── R26b: the bounded-span sheet read ─────────────────────────────────────
+//
+// sheetFetchDqeRows_ used to read the WHOLE sheet at full width, twice
+// (getValues for the numerics + getDisplayValues for the INV-02 duration
+// columns). On the live 31.5k-row sheet that is ~2.2M cell reads to answer a
+// one-day question -- ~48s, measured -- and it is charged PER DEPARTMENT,
+// because this primitive filters by DATE and computeSummary_ filters by
+// roster afterwards. Switching CSR -> Sales on the same day paid it twice.
+//
+// It now scans the date column alone, then reads only the span of rows whose
+// dates fall in range. Two properties have to hold together, and the second
+// is what makes the first safe:
+//   1. it reads materially less than the whole sheet, and
+//   2. the output is IDENTICAL to a full scan for any sheet ORDER -- the
+//      sheet is not reliably date-ordered, because backfills append older
+//      dates after newer ones (the R25b trap).
+
+const { dqeRow: r26Row, dqeSheet: r26Sheet, rosterGrid: r26Roster } = require('../harness/fixtures');
+
+/** A sheet whose rows are deliberately NOT in date order. */
+function r26Install(rows) {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  delete h.state.props.DQE_READ_SOURCE;
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'DO NOT EDIT!': r26Roster({ Alpha: ['Ana, 201'] }),
+      'DQE Historical Data': r26Sheet(rows.map(r26Row)),
+    },
+  });
+  // Record every getRange window so "did it read the whole sheet?" is
+  // observable rather than inferred.
+  const sheet = ss._sheet('DQE Historical Data');
+  sheet._reads = [];
+  const realGetRange = sheet.getRange.bind(sheet);
+  sheet.getRange = function (row, col, nr, nc) {
+    sheet._reads.push({ row: row, col: col, nr: nr, nc: nc });
+    return realGetRange(row, col, nr, nc);
+  };
+  h.state.spreadsheet = ss;
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.state.cache.clear();
+  return sheet;
+}
+
+function r26Fetch(from, to) { return h.fn('sheetFetchDqeRows_')(from, to); }
+
+test('R26b: a one-day window reads a BOUNDED span, not the whole sheet', function () {
+  const rows = [];
+  for (let d = 1; d <= 20; d++) {
+    const iso = '2026-03-' + String(d).padStart(2, '0');
+    rows.push({ date: iso.slice(5, 7) + '/' + iso.slice(8) + '/2026', agent: 'Ana',
+                unique: 1, rung: 1, missed: 0, answered: 1 });
+  }
+  const sheet = r26Install(rows);
+  const out = r26Fetch('2026-03-10', '2026-03-10');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].dateIso, '2026-03-10');
+
+  // The wide reads (nc > 1) must cover far fewer rows than the sheet holds.
+  const wide = sheet._reads.filter(function (x) { return x.nc > 1; });
+  assert.ok(wide.length > 0, 'expected at least one wide read');
+  wide.forEach(function (w) {
+    assert.ok(w.nr <= 3, 'wide read spans ' + w.nr + ' rows for a single-day window');
+  });
+});
+
+test('R26b: nothing in range does NO wide read at all', function () {
+  const sheet = r26Install([
+    { date: '03/01/2026', agent: 'Ana', unique: 1, rung: 1, missed: 0, answered: 1 },
+  ]);
+  const out = r26Fetch('2026-06-01', '2026-06-30');
+  deepEqual(out, []);   // vm-realm array -- legacy deepEqual
+  const wide = sheet._reads.filter(function (x) { return x.nc > 1; });
+  assert.equal(wide.length, 0,
+    'an empty window must skip the wide read entirely, not read and discard');
+});
+
+test('R26b: OUT-OF-ORDER rows (a backfill) still return every matching row', function () {
+  // The property that makes the span safe. A backfilled older date sits AFTER
+  // newer ones, so the target date's rows are not contiguous: the span covers
+  // them plus unrelated rows in between, and the per-row filter removes those.
+  // A tail scan would have missed the first one entirely.
+  const sheet = r26Install([
+    { date: '03/10/2026', agent: 'Ana', unique: 1, rung: 5, missed: 0, answered: 5 },  // target
+    { date: '03/20/2026', agent: 'Ana', unique: 1, rung: 1, missed: 0, answered: 1 },
+    { date: '03/21/2026', agent: 'Ana', unique: 1, rung: 1, missed: 0, answered: 1 },
+    { date: '03/10/2026', agent: 'Ben', unique: 1, rung: 7, missed: 0, answered: 7 },  // backfilled LATER
+  ]);
+  const out = r26Fetch('2026-03-10', '2026-03-10');
+  assert.equal(out.length, 2, 'both 03/10 rows must come back, despite the gap');
+  const byAgent = {};
+  out.forEach(function (x) { byAgent[x.agent] = x.totalRung; });
+  assert.deepEqual(byAgent, { Ana: 5, Ben: 7 });
+  // The span necessarily includes the two intervening rows -- that is expected
+  // and correct; the filter, not the span, decides membership.
+  const wide = sheet._reads.filter(function (x) { return x.nc > 1; })[0];
+  assert.equal(wide.nr, 4, 'the span covers first..last matching row inclusive');
+});
+
+test('R26b: the span read equals a FULL scan, row for row, on a scrambled sheet', function () {
+  // The equivalence that matters. Build a deliberately scrambled sheet and
+  // compare the bounded result against the same rows filtered by hand.
+  const dates = ['03/12/2026', '03/03/2026', '03/28/2026', '03/12/2026',
+                 '03/01/2026', '03/19/2026', '03/12/2026', '03/07/2026'];
+  const rows = dates.map(function (d, i) {
+    return { date: d, agent: 'A' + i, unique: 1, rung: i + 1, missed: 0, answered: 1 };
+  });
+  r26Install(rows);
+  const got = r26Fetch('2026-03-12', '2026-03-12')
+    .map(function (x) { return x.agent + ':' + x.totalRung; }).sort();
+  // Derived from the fixture rather than transcribed, so the expectation
+  // cannot drift away from the data it describes.
+  const expected = rows
+    .map(function (r, i) { return { r: r, i: i }; })
+    .filter(function (x) { return x.r.date === '03/12/2026'; })
+    .map(function (x) { return 'A' + x.i + ':' + x.r.rung; }).sort();
+  assert.equal(expected.length, 3, 'fixture should hold three 03/12 rows');
+  deepEqual(got, expected, 'bounded read lost or gained a row vs the full set');
+});
+
+test('R26b: a multi-day window spanning the whole sheet still returns everything', function () {
+  const rows = [];
+  for (let d = 1; d <= 12; d++) {
+    rows.push({ date: '03/' + String(d).padStart(2, '0') + '/2026', agent: 'Ana',
+                unique: 1, rung: 1, missed: 0, answered: 1 });
+  }
+  r26Install(rows);
+  assert.equal(r26Fetch('2026-03-01', '2026-03-31').length, 12,
+    'a window covering the sheet must not be narrowed by the span logic');
 });
