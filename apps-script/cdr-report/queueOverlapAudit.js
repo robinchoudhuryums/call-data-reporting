@@ -23,9 +23,27 @@
 //
 // Writes nothing. Reads 'Raw Data' + 'DO NOT EDIT!' from THIS spreadsheet.
 //
-// Run:  queueOverlapAudit()          -- most recent date in Raw Data
-//       set QUEUE_OVERLAP_DATE (Script Property, 'M/D/YYYY' as Raw Data
-//       renders it) to pin a specific day.
+// DATE SEMANTICS -- build parity, and the trap that broke the first version.
+// 'Raw Data' holds ONE day's legs, and the build does not date-filter at all:
+// it takes the date from the FIRST valid START_TIME and processes every row
+// (buildDQEHistoricalData's "Detect call date" block). It cannot, because a
+// day's legs include STRAY CARRY-OVER rows -- calls that crossed midnight --
+// which the build's own F2 comment calls out by name.
+//
+// The first version of this diagnostic instead picked the MAXIMUM date in the
+// sheet and analysed only rows matching it. On a real day that selected the
+// handful of carry-over stragglers: 19 legs out of ~1000, and it then reported
+// a confident "no queue overlap" from 2% of the data. Analysing all rows is
+// both correct AND what makes these numbers reconcile with the build.
+//
+// The date DISTRIBUTION is now printed first, so a sheet holding something
+// other than one clean day is visible immediately rather than silently
+// halving the answer.
+//
+// Run:  queueOverlapAudit()          -- all of Raw Data (build parity)
+//       QUEUE_OVERLAP_DATE (Script Property, 'M/D/YYYY' as Raw Data renders
+//       it) restricts to one date -- a DEPARTURE from build parity, useful
+//       only to isolate carry-over legs.
 //
 // Sections:
 //   1. CROSS-QUEUE CALL OVERLAP -- calls whose legs span two queues, ranked.
@@ -95,6 +113,41 @@ function qoaRostersByDept_(ss) {
   return out;
 }
 
+/**
+ * Parent/child + queue mapping from the 'Dept Config' sheet, which lives in
+ * THIS workbook (the dashboard's SPREADSHEET_ID points at the CDR Report
+ * spreadsheet, so its config sheets sit beside Raw Data). Columns per
+ * DeptConfig.gs::sheetReadDeptConfigRows_: 0 Department, 1 QCD Queues,
+ * 2 Overview Parent, 5 Active, 9 Inbound queue aliases.
+ * Returns { parentOf:{child:parent}, queuesOf:{dept:[names]} }; empty when the
+ * sheet is absent, which is a clean degradation, not an error.
+ */
+function qoaDeptConfig_(ss) {
+  var out = { parentOf: {}, queuesOf: {} };
+  try {
+    var sheet = ss.getSheetByName('Dept Config');
+    if (!sheet) return out;
+    var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+    if (lastRow < 2) return out;
+    var rows = sheet.getRange(2, 1, lastRow - 1, Math.max(lastCol, 10)).getValues();
+    var list = function (v) {
+      return String(v == null ? '' : v).split(',').map(function (x) { return x.trim(); })
+             .filter(function (x) { return x; });
+    };
+    for (var i = 0; i < rows.length; i++) {
+      var dept = String(rows[i][0] || '').trim();
+      if (!dept) continue;
+      var active = String(rows[i][5] == null ? '' : rows[i][5]).trim().toLowerCase();
+      if (active === 'false' || active === 'no' || active === '0') continue;
+      var parent = String(rows[i][2] || '').trim();
+      if (parent) out.parentOf[dept] = parent;
+      var qs = list(rows[i][1]).concat(list(rows[i][9]));   // QCD queues + inbound aliases
+      if (qs.length) out.queuesOf[dept] = qs;
+    }
+  } catch (e) { /* best-effort -- a diagnostic must not throw */ }
+  return out;
+}
+
 function qoaPad_(s, n) {
   s = String(s);
   while (s.length < n) s += ' ';
@@ -109,20 +162,30 @@ function queueOverlapAudit() {
   if (lastRow < 2) { Logger.log('queueOverlapAudit: Raw Data is empty.'); return; }
 
   var data = raw.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
-  var wanted = String(PropertiesService.getScriptProperties()
+  var pinned = String(PropertiesService.getScriptProperties()
                         .getProperty('QUEUE_OVERLAP_DATE') || '').trim();
 
-  // Raw Data start times render as "M/D/YYYY H:MM:SS"; the date is token 0.
+  // Same extraction as the build's displayToDateStr: token 0 of START_TIME.
   var dateOf = function (row) { return String(row[DQE_C.START_TIME]).trim().split(' ')[0]; };
-  if (!wanted) {
-    var seen = {};
-    for (var d0 = 0; d0 < data.length; d0++) { var dv = dateOf(data[d0]); if (dv) seen[dv] = true; }
-    var dates = Object.keys(seen).sort(function (a, b) {
-      return new Date(a) - new Date(b);
-    });
-    wanted = dates.length ? dates[dates.length - 1] : '';
+
+  // Row counts per date -- printed up front. A sheet that is not one clean
+  // day is the single thing most likely to make every number below wrong.
+  var dateHist = {};
+  for (var d0 = 0; d0 < data.length; d0++) {
+    var dv = dateOf(data[d0]);
+    if (dv) dateHist[dv] = (dateHist[dv] || 0) + 1;
   }
-  if (!wanted) { Logger.log('queueOverlapAudit: could not determine a date.'); return; }
+  var histKeys = Object.keys(dateHist).sort(function (a, b) { return dateHist[b] - dateHist[a]; });
+
+  // Build parity: the date is the FIRST valid START_TIME, not the maximum.
+  var buildDate = '';
+  for (var d1 = 0; d1 < data.length && !buildDate; d1++) {
+    var v = dateOf(data[d1]);
+    if (v && v.split('/').length === 3) buildDate = v;
+  }
+  if (!buildDate && histKeys.length) buildDate = histKeys[0];
+  if (!buildDate) { Logger.log('queueOverlapAudit: could not determine a date.'); return; }
+  var wanted = pinned || buildDate;
 
   var queueNameByExt = qoaQueueNameByExt_(data);
 
@@ -134,7 +197,8 @@ function queueOverlapAudit() {
 
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
-    if (dateOf(row) !== wanted) continue;
+    // Unpinned = every row, exactly as the build does. Pinned = one date.
+    if (pinned && dateOf(row) !== pinned) continue;
     var q = qoaQueueForRow_(row, queueNameByExt);
     if (!q) continue;
     legs++;
@@ -163,9 +227,29 @@ function queueOverlapAudit() {
   }
 
   var out = [];
-  out.push('=== Queue-overlap audit -- ' + wanted + ' ===');
+  out.push('=== Queue-overlap audit -- ' + wanted
+           + (pinned ? '  (PINNED to one date)' : '  (all of Raw Data -- build parity)') + ' ===');
   out.push('Queue legs: ' + legs + '   distinct calls: ' + Object.keys(callQueues).length
            + '   queues seen: ' + Object.keys(queueLegs).length);
+  out.push('');
+  out.push('Raw Data rows by date (the sheet should hold ONE day plus a few');
+  out.push('carry-over legs; anything else makes every number below suspect):');
+  histKeys.slice(0, 8).forEach(function (k) {
+    out.push('  ' + qoaPad_(k, 14) + dateHist[k] + ' row(s)'
+             + (k === buildDate ? '   <- the build dates this sheet here' : ''));
+  });
+  if (histKeys.length > 8) out.push('  ... and ' + (histKeys.length - 8) + ' more date(s)');
+  if (pinned) {
+    var pinnedRows = dateHist[pinned] || 0;
+    out.push('  PINNED to ' + pinned + ' (' + pinnedRows + ' of ' + data.length
+             + ' rows). This is NOT build parity -- the build reads every row.');
+    if (pinnedRows * 5 < data.length) {
+      out.push('  !! That is under a fifth of the sheet. If you meant the whole');
+      out.push('     day, clear QUEUE_OVERLAP_DATE -- a pin this narrow usually');
+      out.push('     selects carry-over legs and makes the overlap read as zero.');
+    }
+  }
+  out.push('');
   out.push('Queue derivation mirrors the DQE build, so these reconcile with');
   out.push('auditQueueSplitAttribution() in the dashboard project.');
   out.push('');
@@ -203,26 +287,47 @@ function queueOverlapAudit() {
   // The Daily Call Queue Report sums a parent's queues with its children's.
   // For each parent/child pair, how many calls does that sum count twice?
   out.push('--- 2. Parent + sub-queue summation (what the Queue Report adds up) ---');
-  var parentMap = (typeof OVERVIEW_PARENT_OF !== 'undefined') ? OVERVIEW_PARENT_OF : null;
-  if (!parentMap) {
-    out.push('  OVERVIEW_PARENT_OF is not available in this project -- listing raw');
-    out.push('  pairs only (section 1 above already shows every overlapping pair).');
+  var cfg = qoaDeptConfig_(ss);
+  var childrenOf = {};
+  Object.keys(cfg.parentOf).forEach(function (child) {
+    var p = cfg.parentOf[child];
+    (childrenOf[p] = childrenOf[p] || []).push(child);
+  });
+  var parents = Object.keys(childrenOf).sort();
+  if (!parents.length) {
+    out.push('  No parent/child pairs found in the "Dept Config" sheet.');
+    out.push('  (Section 1 above still lists every overlapping queue pair.)');
   } else {
-    var childrenOf = {};
-    Object.keys(parentMap).forEach(function (child) {
-      var p = parentMap[child];
-      (childrenOf[p] = childrenOf[p] || []).push(child);
+    parents.forEach(function (parent) {
+      var pq = cfg.queuesOf[parent] || [];
+      var kids = childrenOf[parent];
+      var kq = [];
+      kids.forEach(function (k) { kq = kq.concat(cfg.queuesOf[k] || []); });
+      var lower = function (a) { return a.map(function (x) { return x.toLowerCase(); }); };
+      var pl = lower(pq), kl = lower(kq);
+
+      // How many CALLS have a leg on a parent queue AND a leg on a child
+      // queue? That is exactly what a parent+child queue-sum counts twice.
+      var dbl = 0;
+      Object.keys(callQueues).forEach(function (pid) {
+        var qs = Object.keys(callQueues[pid]).map(function (x) { return x.toLowerCase(); });
+        var hitsP = qs.some(function (q) { return pl.indexOf(q) !== -1; });
+        var hitsK = qs.some(function (q) { return kl.indexOf(q) !== -1; });
+        if (hitsP && hitsK) dbl++;
+      });
+
+      out.push('  ' + parent + ' [' + (pq.join(', ') || 'no queues mapped') + ']');
+      out.push('    + ' + kids.join(', ') + ' [' + (kq.join(', ') || 'no queues mapped') + ']');
+      if (!pq.length || !kq.length) {
+        out.push('    -> cannot assess: one side has no mapped queues');
+      } else if (dbl === 0) {
+        out.push('    -> 0 calls touch both sides. Summing the two is EXACT for'
+                 + ' this day.');
+      } else {
+        out.push('    -> ' + dbl + ' call(s) touch BOTH sides, so a queue-sum'
+                 + ' over-counts by ' + dbl + '.');
+      }
     });
-    var anyParent = false;
-    Object.keys(childrenOf).forEach(function (parent) {
-      anyParent = true;
-      out.push('  ' + parent + ' + [' + childrenOf[parent].join(', ') + ']');
-      out.push('    (queue names below; a dept maps to queues via Dept Config --');
-      out.push('     match these against the Queue Report rows you are comparing)');
-    });
-    if (!anyParent) out.push('  no parent/child pairs configured');
-    out.push('  Use section 1: the overlap between a parent queue and a child');
-    out.push('  queue IS the number the summed figure over-counts.');
   }
   out.push('');
 

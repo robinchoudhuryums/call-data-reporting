@@ -210,11 +210,16 @@ tests/
                               queue-overlap-audit (the read-only diagnostic
                               behind "does one CALL get counted by two
                               queues?": cross-queue overlap detection, the
-                              REP-4 N/A-parent guard, roster->queues-worked,
+                              REP-4 N/A-parent guard, the Dept Config parent
+                              map + summation overlap, roster->queues-worked,
                               crossover agents -- plus a PARITY test driving
                               the real build and the diagnostic from one grid,
-                              since a divergent queue derivation would make
-                              its numbers un-reconcilable),
+                              and the CARRY-OVER regression: the first version
+                              picked the MAXIMUM date and analysed only rows
+                              matching it, which on a real day selected the
+                              handful of legs that crossed midnight, 19 of
+                              ~1000, then reported a confident "no overlap"
+                              from 2% of the data),
                               cdr-egress-metering (the cdr-report Neon read
                               meter: accumulation, UTC-month reset, surface
                               capping, the never-throws contract, a frozen
