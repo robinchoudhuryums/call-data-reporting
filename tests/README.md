@@ -207,6 +207,14 @@ tests/
                               window, and a typo'd hour property that must
                               NARROW to the default rather than widen to
                               24/7; plus the NEO-3 skipReadHealth contract),
+                              queue-overlap-audit (the read-only diagnostic
+                              behind "does one CALL get counted by two
+                              queues?": cross-queue overlap detection, the
+                              REP-4 N/A-parent guard, roster->queues-worked,
+                              crossover agents -- plus a PARITY test driving
+                              the real build and the diagnostic from one grid,
+                              since a divergent queue derivation would make
+                              its numbers un-reconcilable),
                               cdr-egress-metering (the cdr-report Neon read
                               meter: accumulation, UTC-month reset, surface
                               capping, the never-throws contract, a frozen
