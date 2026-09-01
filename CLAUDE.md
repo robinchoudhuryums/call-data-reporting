@@ -358,6 +358,30 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   by PARSING the stored time against the 8 AM-5 PM CST range
   (`MissedCallsReport.gs`), so a PST value reads ~2h early. Durations
   (TTT/ATT/AvgAbdWait), counts, and the Date are TZ-independent and untouched.
+- **A dated sheet read is bounded by a min/max SPAN, not a tail scan -- and the
+  discriminator is whether that sheet is date-ORDERED.** Two dashboard readers
+  answer a windowed question against a years-deep sheet, and both do it the same
+  way: scan the DATE COLUMN alone, find the FIRST and LAST row in the window,
+  then read only that row span at full width -- `computeCsrTransferRange_`
+  (Data.gs, R25b) and `sheetFetchDqeRows_` (NeonRead.gs, R26b, which had been
+  reading ~2.2M cells TWICE to answer a one-day question). A span is correct
+  whatever the row order is: an out-of-order row merely WIDENS it and can never
+  fall outside it, which is why **the per-row date filter always stays** -- the
+  span bounds the read, it does not replace the filter. A TAIL scan is the trap:
+  `DQE Historical Data` and `CSR Transfer Historical Data` are APPEND-ONLY and
+  never sorted (cdr-import appends at `getLastRow()+1` on both the daily and the
+  bulk paths), so a backfill of older dates lands after newer rows and a tail
+  scan stops early and silently drops them -- quietly wrong numbers, strictly
+  worse than being slow. **The one legitimate tail scan is
+  `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and it is safe for two reasons
+  that do NOT hold here: its sheet is kept date-sorted by its own exporter, AND
+  it WIDENS until the date's block is provably complete. So: date-ordered plus a
+  completeness check -> a tail scan is fine; anything else -> span it. New
+  windowed readers over a dated sheet must not add a third rediscovery.
+  ENFORCED by out-of-order + full-scan-equivalence tests in
+  `dal-cutover.test.js` (R26b) and `csr-transfer.test.js` (R25b); R26c's
+  `[dqe-read] dqeDateBounds ... openMs=N scanMs=N` line is what tells you
+  whether a slow read is the scan or the workbook open.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into
