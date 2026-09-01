@@ -226,11 +226,59 @@ test('a queue-sentinel row still counts as a queue LEG', function () {
 
 // ── Date selection ────────────────────────────────────────────────────────
 
-test('QUEUE_OVERLAP_DATE pins the day; otherwise the most recent is used', function () {
+test('BUILD PARITY: unpinned, it analyses EVERY row and dates from the FIRST', function () {
+  // The build does not date-filter -- 'Raw Data' holds one day, so it takes
+  // the date from the first valid START_TIME and processes every row
+  // (buildDQEHistoricalData's "Detect call date"). This must match, or the
+  // two reports cannot be reconciled.
   const rows = [
-    raw({ callId: 'Q1', legId: 0, start: '03/08/2026 7:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
-    raw({ callId: 'Q2', legId: 0, start: '03/09/2026 7:00:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
-    raw({ callId: 'Q3', legId: 0, start: '03/09/2026 7:30:00', parentCall: 'P3', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q1', legId: 0, start: '03/09/2026 7:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q2', legId: 0, start: '03/09/2026 7:30:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q3', legId: 0, start: '03/10/2026 0:05:00', parentCall: 'P3', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+  ];
+  const out = run(rows);
+  assert.match(out, /=== Queue-overlap audit -- 03\/09\/2026 {2}\(all of Raw Data -- build parity\)/,
+    'the label comes from the FIRST valid START_TIME, not the maximum');
+  assert.match(out, /Queue legs: 3/, 'every row is analysed, carry-over included');
+});
+
+test('REGRESSION: a carry-over straggler must not become the analysed date', function () {
+  // The bug this replaced. The first version picked the MAXIMUM date and
+  // analysed only rows matching it. On a real day that selected the handful
+  // of legs that crossed midnight -- 19 of ~1000 -- and then reported a
+  // confident "no queue overlap" from 2% of the data. The build's own F2
+  // comment names stray carry-over legs as exactly this hazard.
+  const rows = [];
+  for (let i = 0; i < 40; i++) {
+    rows.push(raw({ callId: 'Q' + i, legId: 0, start: '03/09/2026 8:00:00',
+                    parentCall: 'P' + i, callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }));
+  }
+  // Two stragglers on the NEXT day, one of which spans two queues.
+  rows.push(raw({ callId: 'S1', legId: 0, start: '03/10/2026 0:02:00', parentCall: 'PS', callerId: 'A_Q_Spanish', calleeName: 'Ana', missed: true }));
+  rows.push(raw({ callId: 'S2', legId: 1, start: '03/10/2026 0:03:00', parentCall: 'PS', callerId: 'A_Q_CSR',     calleeName: 'Ana', answered: true }));
+
+  const out = run(rows);
+  assert.match(out, /Queue legs: 42/,
+    'all 42 legs must be analysed -- selecting only the 2 stragglers is the bug');
+  assert.match(out, /Calls touching more than one queue: 1 of 41/);
+});
+
+test('the date DISTRIBUTION is printed, so a mixed sheet is visible', function () {
+  // The silent failure mode was invisible because nothing showed how much of
+  // the sheet was being read.
+  const out = run([
+    raw({ callId: 'Q1', legId: 0, start: '03/09/2026 8:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q2', legId: 0, start: '03/10/2026 0:02:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+  ]);
+  assert.match(out, /Raw Data rows by date/);
+  assert.match(out, /03\/09\/2026\s+1 row\(s\).*<- the build dates this sheet here/);
+  assert.match(out, /03\/10\/2026\s+1 row\(s\)/);
+});
+
+test('QUEUE_OVERLAP_DATE pins one date and says it is NOT build parity', function () {
+  const rows = [
+    raw({ callId: 'Q1', legId: 0, start: '03/09/2026 7:00:00', parentCall: 'P1', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q2', legId: 0, start: '03/10/2026 0:05:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
   ];
   h.state.spreadsheet = makeFakeSpreadsheet({
     timeZone: 'America/Chicago',
@@ -239,15 +287,83 @@ test('QUEUE_OVERLAP_DATE pins the day; otherwise the most recent is used', funct
       'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
     },
   });
+  h.state.props.QUEUE_OVERLAP_DATE = '03/10/2026';
+  const out = h.fn('queueOverlapAudit')();
+  assert.match(out, /\(PINNED to one date\)/);
+  assert.match(out, /Queue legs: 1/);
+  assert.match(out, /NOT build parity/);
   delete h.state.props.QUEUE_OVERLAP_DATE;
-  assert.match(h.fn('queueOverlapAudit')(), /=== Queue-overlap audit -- 03\/09\/2026/);
-  assert.match(h.fn('queueOverlapAudit')(), /Queue legs: 2/, 'latest date only');
+});
 
-  h.state.props.QUEUE_OVERLAP_DATE = '03/08/2026';
-  const pinned = h.fn('queueOverlapAudit')();
-  assert.match(pinned, /=== Queue-overlap audit -- 03\/08\/2026/);
-  assert.match(pinned, /Queue legs: 1/);
+test('a pin covering a tiny slice of the sheet WARNS that it is probably wrong', function () {
+  // Precisely the 19-of-1000 shape: if someone pins the carry-over date, the
+  // output must say so rather than answering confidently from 2% of the day.
+  const rows = [];
+  for (let i = 0; i < 30; i++) {
+    rows.push(raw({ callId: 'Q' + i, legId: 0, start: '03/09/2026 8:00:00',
+                    parentCall: 'P' + i, callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }));
+  }
+  rows.push(raw({ callId: 'S1', legId: 0, start: '03/10/2026 0:02:00', parentCall: 'PS', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }));
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': [new Array(26).fill('')].concat(rows),
+      'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
+    },
+  });
+  h.state.props.QUEUE_OVERLAP_DATE = '03/10/2026';
+  const out = h.fn('queueOverlapAudit')();
+  assert.match(out, /under a fifth of the sheet/);
   delete h.state.props.QUEUE_OVERLAP_DATE;
+});
+
+test('section 2 reads the real parent map and quantifies the summation overlap', function () {
+  // Dept Config lives in this same workbook, so the diagnostic can name the
+  // actual parent/child pairs instead of giving up.
+  const rows = [
+    raw({ callId: 'Q1', legId: 0, parentCall: 'P1', callerId: 'A_Q_Spanish', calleeName: 'Ana', missed: true }),
+    raw({ callId: 'Q2', legId: 1, parentCall: 'P1', callerId: 'A_Q_CSR',     calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q3', legId: 0, parentCall: 'P2', callerId: 'A_Q_CSR',     calleeName: 'Ana', answered: true }),
+  ];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': [new Array(26).fill('')].concat(rows),
+      'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
+      // Department | QCD Queues | Overview Parent | ... | Active(5) | ... | aliases(9)
+      'Dept Config': [
+        ['Department', 'QCD Queues', 'Overview Parent', 'Team Avg', 'Ext', 'Active', 'By', 'At', 'Notes', 'Inbound queue aliases'],
+        ['CSR',     'A_Q_CSR',     '',    '', '', 'TRUE', '', '', '', ''],
+        ['Spanish', 'A_Q_Spanish', 'CSR', '', '', 'TRUE', '', '', '', ''],
+      ],
+    },
+  });
+  delete h.state.props.QUEUE_OVERLAP_DATE;
+  const out = h.fn('queueOverlapAudit')();
+  assert.match(out, /CSR \[A_Q_CSR\]/);
+  assert.match(out, /\+ Spanish \[A_Q_Spanish\]/);
+  assert.match(out, /1 call\(s\) touch BOTH sides, so a queue-sum over-counts by 1/);
+});
+
+test('section 2 reports an EXACT sum when nothing touches both sides', function () {
+  const rows = [
+    raw({ callId: 'Q1', legId: 0, parentCall: 'P1', callerId: 'A_Q_CSR',     calleeName: 'Ana', answered: true }),
+    raw({ callId: 'Q2', legId: 0, parentCall: 'P2', callerId: 'A_Q_Spanish', calleeName: 'Ana', answered: true }),
+  ];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': [new Array(26).fill('')].concat(rows),
+      'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
+      'Dept Config': [
+        ['Department', 'QCD Queues', 'Overview Parent', 'Team Avg', 'Ext', 'Active', 'By', 'At', 'Notes', 'Inbound queue aliases'],
+        ['CSR',     'A_Q_CSR',     '',    '', '', 'TRUE', '', '', '', ''],
+        ['Spanish', 'A_Q_Spanish', 'CSR', '', '', 'TRUE', '', '', '', ''],
+      ],
+    },
+  });
+  delete h.state.props.QUEUE_OVERLAP_DATE;
+  assert.match(h.fn('queueOverlapAudit')(), /0 calls touch both sides. Summing the two is EXACT/);
 });
 
 test('it writes nothing and survives a missing Raw Data sheet', function () {
