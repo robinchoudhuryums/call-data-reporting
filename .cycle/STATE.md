@@ -7,15 +7,11 @@
   158-160. Until it lands, the live prune still deletes a day early across the
   November fall-back transition — no urgency before then, but it is not live
   until pushed. No other project changed, so no other `clasp push` is due.
-- All CODE through increment 160 is MERGED to `main` (PR #266, merge
-  `c15227c`). **Do not open a PR for that work** — it is already in.
-- The ONE thing on the branch and not on `main` is this resume note itself
-  (the commit that corrected it, pushed after the merge). It is docs only —
-  `.cycle/STATE.md`, nothing the app reads. Merge it whenever convenient, or
-  let the next PR carry it; either is fine, and neither blocks anything.
-- The branch otherwise sits on a merged PR. Per the repo rule, substantive
-  follow-up work restarts it from the latest default branch rather than
-  stacking on merged history — carry this one doc commit across if you do.
+- Everything through increment 160 is MERGED to `main` — the code in PR #266
+  (`c15227c`), this resume note in PR #267. **Do not open a PR for any of it**;
+  it is already in, and `main` is the whole record.
+- The branch sits on merged PRs. Per the repo rule, follow-up work restarts it
+  from the latest default branch rather than stacking on merged history.
 
 ## Latest session (R28 — /sync-docs after the R26/R27 work)
 Increment 160. **1082/1082 tests**, `npm run ci` green. No block file: a
