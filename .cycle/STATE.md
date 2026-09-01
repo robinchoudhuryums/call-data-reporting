@@ -1,19 +1,90 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
-- **One deploy is pending and nothing else is:**
-  `cd apps-script/cdr-import && clasp push -f`. It ships the DST prune fix
-  (`DeleteOldSheets.js`), the only production file changed across increments
-  158-160. Until it lands, the live prune still deletes a day early across the
-  November fall-back transition — no urgency before then, but it is not live
-  until pushed. No other project changed, so no other `clasp push` is due.
-- Everything through increment 160 is MERGED to `main` — the code in PR #266
-  (`c15227c`), this resume note in PR #267. **Do not open a PR for any of it**;
-  it is already in, and `main` is the whole record.
-- The branch sits on merged PRs. Per the repo rule, follow-up work restarts it
-  from the latest default branch rather than stacking on merged history.
+- **Two deploys are pending:**
+  (1) `clasp push -f` from the repo root (Department Dashboard) — ships the
+  R26b bounded DQE sheet read, the fix for the 108-second My Department load
+  the owner hit while Neon was down. (2) `cd apps-script/cdr-import &&
+  clasp push -f` — still ships the DST prune fix (`DeleteOldSheets.js`); it
+  matters before the November fall-back transition.
+- **Branch `claude/broad-scan-76h2dr` has 6 unmerged commits** (`ab6b788`,
+  `2df4670`, `49063ac`, `6873e97`, `09183b5`, plus the R26c commit). It sits on merged
+  PRs #266/#267; per the repo rule, restart it from the latest default branch
+  before opening the next PR rather than stacking further on merged history.
+- **After the next slow My Department load, read the execution log for
+  `[dqe-read] dqeDateBounds`.** Whichever of `openMs` / `scanMs` dominates
+  decides the next perf increment: bound the column scan, or memoize
+  `openSpreadsheet_()` (83 callsites, 26 files — the bigger change, held
+  pending this reading).
+- **Owner action, no deploy needed:** enable report cache warming — Alerts
+  modal → *Report cache warming* → Install, or run `installCacheWarmTrigger()`
+  in the dashboard editor. Operator State #21.
+- **Neon is data-transfer-quota-blocked**, not archived. Waiting on the
+  billing reset or a plan upgrade. `DQE_READ_SOURCE` / `QCD_READ_SOURCE` are
+  on `sheet`, which is a supported mode — the R26b fix is what makes that mode
+  usable at the current sheet size.
+- **Verification still outstanding from the queue-split flip:** with
+  `QUEUE_SPLIT_SCOPE=dept`, the dashboard should read **Spanish 17 rung / 15
+  answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
+  has confirmed the rendered page agrees.
 
-## Latest session (R28 — /sync-docs after the R26/R27 work)
+## Latest session (R26c — attributing the getLatestDataDate cost)
+Increment 162. **1122/1122 tests**, `npm run ci` green, INV-16 guard clean.
+Block: `.cycle/blocks/101-r26c-bounds-timing-followons-broad-implement.md`.
+- Took the two follow-ons from block 100 (the cross-caller memo was excluded
+  by the owner). One shipped as instrumentation, one was assessed and
+  deliberately NOT fixed.
+- **`sheetScanDqeDateBounds_` now splits its own timing** — workbook open vs
+  date-column read — into one `[dqe-read] dqeDateBounds ... openMs=N scanMs=N`
+  line, emitted after the memo check so extra callers don't re-log.
+- **Why not a fix:** the 36.5s has two candidate causes with OPPOSITE fixes —
+  the 31.5k-row column read (bound it) or `openSpreadsheet_()`, which is a bare
+  unmemoized `SpreadsheetApp.openById` with **83 callsites across 26 files**
+  (memoize it). Guessing wrong buys a wide change for nothing, and the memo's
+  test blast radius is real (20+ suites hand-reset memos; no central harness
+  hook; a forgotten reset is a silently stale fixture). Shipped the measurement
+  instead. **One slow morning's log now names the half to fix.**
+- **Request coalescing: assessed, rejected.** A `LockService` stampede gate
+  makes the waiter block behind a slow execution and risk the 6-minute ceiling
+  — whose kill SKIPS catch blocks, the class that once ate a Daily Queue Report
+  day. Worse failure mode than the gap. Mitigations stay the 6h TTL + cache
+  warming + R26b.
+- Mutation-tested, all three caught (combined ms, log above the memo, no
+  try/catch).
+- Where I left off: committed + pushed. Branch needs a PR.
+
+## Prior session (R26b — bounded DQE sheet read)
+Increment 161. **1119/1119 tests**, `npm run ci` green, INV-16 guard clean.
+Block: `.cycle/blocks/100-r26b-bounded-dqe-scan-broad-implement.md`.
+- `sheetFetchDqeRows_` read the WHOLE `DQE Historical Data` sheet at full
+  width, twice (getValues + getDisplayValues, INV-02), to answer a one-day
+  question — ~2.2M cells on the live 31.5k-row sheet, ~48s per call, and the
+  primitive is dept-independent so every department repeated the identical
+  read. Now: scan the date column, find the first/last in-range row, read only
+  that span. One day goes to ~37k cells.
+- **Min/max SPAN, not a tail scan** — the same R25b reasoning: a backfill
+  appends older dates after newer ones, so the sheet is not date-ordered and
+  the span can hold out-of-range rows in the middle. The per-row date filter
+  STAYS; the span bounds the read, it does not replace the filter. An empty
+  window skips the wide read entirely.
+- Mutation-tested, all four caught (full read restored, span collapsed to a
+  tail scan, filter removed, early-out removed). Five new tests in
+  `dal-cutover.test.js`, including full-scan equivalence on a scrambled sheet.
+- Also fixed a **pre-existing test-isolation bug** there: two tests did
+  `delete h.ctx.sheetFetchDqeRows_`, which strips the property from the vm
+  global for the rest of the run. Save/restore now.
+- Nine callers, none touched, none able to observe the change — the returned
+  row set is identical for any sheet order.
+- Earlier in this session, same branch: cdr-report Neon egress metering
+  (`neonEgress.js`, 5 callsites + a coverage tripwire), the
+  `queueOverlapAudit()` diagnostic (which proved the Spanish/CSR
+  double-counting empirically — ~8.6x inflation, 14 crossover agents — and
+  proved the 436 Daily Queue Report figure is NOT a double-count), and two
+  doc corrections (Neon free-tier compute 100h not ~190h; pruned Call_Legs are
+  re-importable from the Drive CSV archive, not gone).
+- Where I left off: committed + pushed. Branch needs a PR.
+
+## Prior session (R28 — /sync-docs after the R26/R27 work)
 Increment 160. **1082/1082 tests**, `npm run ci` green. No block file: a
 doc-only pass, recorded here.
 - Both gaps found were the same rule — a convention written without naming

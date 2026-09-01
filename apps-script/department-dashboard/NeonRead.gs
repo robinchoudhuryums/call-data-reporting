@@ -416,7 +416,37 @@ function sheetFetchDqeRows_(fromIso, toIso, opts) {
   // getRange past getMaxColumns THROWS (REP-10) and the sheet is 34 wide until
   // the Phase 1 pipeline runs against it.
   var numCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
-  var range = sheet.getRange(2, 1, lastRow - 1, numCols);
+
+  // R26b: BOUNDED SPAN read. This used to pull the whole sheet at full width
+  // -- and TWICE, since INV-02 needs getValues for the numerics and
+  // getDisplayValues for the duration columns. On a 31.5k-row sheet that is
+  // ~2.2M cell reads to answer a one-day question, measured at ~48s per call,
+  // and it is charged PER DEPARTMENT: this primitive is dept-independent (it
+  // filters by date; computeSummary_ filters by roster afterwards), so CSR and
+  // Sales for the same day each paid the identical full read.
+  //
+  // Instead: scan the DATE COLUMN alone, find the first and last row whose
+  // date falls in range, and read only that span at full width. One day of a
+  // 31.5k-row sheet goes from ~2.2M cells to ~37k.
+  //
+  // It is a min/max SPAN, deliberately not a tail scan: the sheet is NOT
+  // reliably date-ordered, because a backfill appends older dates after newer
+  // ones (the same trap that ruled out a tail scan for the CSR transfer read,
+  // R25b). The span can therefore contain out-of-range rows in the middle,
+  // which is why the per-row date filter below STAYS -- the span bounds the
+  // read, it does not replace the filter. Output is identical to the full
+  // scan for any sheet order; pinned by dal-cutover.test.js.
+  var dateCol = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
+  var firstIdx = -1, lastIdx = -1;
+  for (var d = 0; d < dateCol.length; d++) {
+    var dIso = rowDateIso_(dateCol[d][0], ssTZ);
+    if (!dIso || dIso < fromIso || dIso > toIso) continue;
+    if (firstIdx < 0) firstIdx = d;
+    lastIdx = d;
+  }
+  if (firstIdx < 0) return [];   // nothing in range -- skip the wide read entirely
+
+  var range = sheet.getRange(2 + firstIdx, 1, lastIdx - firstIdx + 1, numCols);
   var values = range.getValues();
   var displays = range.getDisplayValues();
   var out = [];

@@ -1101,7 +1101,12 @@ When something looks wrong, before assuming a code bug, check:
     queues' calls, so a crossover agent (one on two departments' rosters, e.g.
     CSR + Spanish) no longer contributes their other department's calls to
     both. OFF: that over-count returns on the three parent depts (Sales / CSR /
-    Power) and the My Department chip says so in as many words. Reversible
+    Power) and the My Department chip says so in as many words. **It is a
+    large effect, not a rounding one** -- measured 2026-09-01, the agents on
+    Spanish's roster worked `A_Q_CSR`=116 calls against `A_Q_Spanish`=17 in
+    the same window, so Spanish's OFF-mode figures run roughly **8.6x** its
+    real volume; 14 crossable agents span 6 department pairs. CSR/Spanish is
+    the canonical pair to spot-check. Reversible
     either way with no redeploy — the scope is part of the `summary:v21` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
@@ -1117,6 +1122,23 @@ When something looks wrong, before assuming a code bug, check:
     fail-safe, not a substitute for mapping the queues.
 
     Verify with `auditQueueSplitAttribution()` (#41) before and after a flip.
+
+    **Two diagnostics, two different questions -- don't substitute one for the
+    other.** `auditQueueSplitAttribution()` (#41) asks *is a raw queue name
+    mapped to no department* (a configuration fault that silently drops
+    calls). `queueOverlapAudit()` (cdr-report, CDR Tools -> "🔀 Queue Overlap
+    Audit", read-only) asks *does one CALL get counted by two departments, and
+    by how much* -- it reports cross-queue call overlap, parent/sub-queue
+    summation, which queues each roster actually worked, and the crossover
+    agents. It is what sizes the paragraph above.
+
+    **SETTLED (2026-09-01) -- the Daily Call Queue Report's per-queue figures
+    are NOT double-counted, so do not re-investigate that.** QCD counters key
+    on mutually exclusive RAW queue names, and the overlap audit found ZERO
+    calls appearing in both CSR's and Spanish's queues: CSR's `418` +
+    `A_Q_Spanish`'s `18` = `436` is exact. The double-count this item is about
+    is a DQE per-agent effect (a row is keyed (date, agent) with no queue
+    dimension, INV-10) and does not reach the QCD queue counters.
 
 43. **The `Call_Legs_*` retention prune (`DeleteOldSheets.js`, cdr-import) —
     install `runRetentionPrune_` via the CDR Tools menu ("Install Retention
@@ -1251,7 +1273,17 @@ When something looks wrong, before assuming a code bug, check:
     an egress-reduction lever; the biggest lever depends on which reader is
     spending. Distinct labels cap at 24 (overflow folds into `other`); a
     counter stored before this shipped upgrades in place, with earlier
-    reads that month left unattributed. General levers if it climbs: the
+    reads that month left unattributed. **A SECOND counter lives in the
+    cdr-report project** (`cdrNoteEgress_`, `neonEgress.js`), under the SAME
+    `NEON_EGRESS_MTD` key in that project's own store -- Script Properties are
+    per-project, so the Health page structurally CANNOT see it. Read that one
+    from CDR Tools -> "📈 Neon Read Volume (this project)"
+    (`showNeonEgress()`); the real month-to-date total is the SUM of the two.
+    Why it matters: when the allowance blew a second time the dashboard
+    counter read ~196 MB against a 5 GB cap -- about 4% of the overage -- and
+    the rest was in projects nothing was watching, including the two daily
+    per-call export triggers (#49/#50) that `json_agg` a whole window each run.
+    cdr-import is still uninstrumented. General levers if it climbs: the
     6 h report TTL plus the `reportFreshnessTag_` key suffix (#19) --
     every cached serve is a Neon fetch avoided -- then payload-shape
     slimming (json_build_object -> array) and SQL-side rollups on whatever

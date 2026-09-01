@@ -612,6 +612,26 @@ phases are history, invariants are truth.
 
 ---
 
+## `R25b` / `R26b` / `R26c` — bounded reads over the dated historical sheets (2026-08 → 2026-09)
+
+The live rule these produced is the **"a dated sheet read is bounded by a
+min/max SPAN, not a tail scan"** bullet in CLAUDE.md's Common Gotchas. Read
+that for what to DO; this is why it exists and why it took three codes.
+
+| code | what it fixed | where the rule lives now |
+|---|---|---|
+| R25b | **`computeCsrTransferRange_` scanned the whole `CSR Transfer Historical Data` sheet on every CSR My Department load.** Widening the read from A..G to A..R multiplied a whole-sheet read over a sheet growing ~3.5K rows/year. The first instinct was a tail scan — reasonable, and wrong: cdr-import appends at `getLastRow()+1` on BOTH the daily and the bulk paths, so a backfill of older dates lands AFTER newer rows and a tail scan stops early and silently drops them. Replaced with a date-column scan for the first/last in-window row, then one span read | code (Data.gs); out-of-order test in `csr-transfer.test.js` |
+| R26b | **`sheetFetchDqeRows_` did the same thing, worse, and nobody connected the two.** It read the entire `DQE Historical Data` sheet at full width TWICE — `getValues` for the numerics and `getDisplayValues` for the INV-02 duration columns — to answer a ONE-DAY question: ~2.2M cells on the 31,545-row live sheet, measured at ~48s per call. And because the primitive is dept-independent (it filters by date; `computeSummary_` filters by roster afterwards), CSR and Sales for the same day each paid the identical full read. Surfaced as a 108-second My Department load while Neon was quota-blocked and the sheet path was carrying everything. Same span fix; one day went to ~37k cells. **That the rule had to be rediscovered from scratch, six weeks after R25b, is the reason it is now written in CLAUDE.md rather than only in two callsite comments** | code (NeonRead.gs); 5 tests incl. full-scan equivalence on a scrambled sheet, `dal-cutover.test.js` |
+| R26c | **The follow-on that was NOT a fix.** `getLatestDataDate` measured 36.5s in the same execution log, and its whole sheet path is `sheetScanDqeDateBounds_` — but that number could not say whether the cost was the 31.5k-row date column (bound the scan) or `openSpreadsheet_()`, a bare unmemoized `SpreadsheetApp.openById` with **83 callsites across 26 files**, several firing per request (memoize the handle). Opposite fixes; guessing wrong buys a wide-blast-radius change for nothing, and the memo's test cost is real (20+ suites hand-reset per-execution memos, no central harness hook, and a forgotten reset is a silently stale fixture). So the scan attributes its own cost instead: `[dqe-read] dqeDateBounds source=sheet rows=N openMs=N scanMs=N`, emitted after the memo check so extra callers don't re-log. **Read that line before picking the next perf lever.** Also recorded there: request coalescing for concurrent `getDepartmentSummary` executions was assessed and REJECTED — a `LockService` gate makes the waiter block behind a slow execution and risk the 6-minute ceiling, whose kill skips catch blocks (the class that once ate a Daily Queue Report day) | code (Data.gs); 3 tests in `dal-cutover.test.js`; `.cycle/blocks/101-*` |
+
+**The discriminator, since "never tail-scan" would be wrong:** `nmReadDateRowsTail_`
+(F-20, NeonMirror.js) legitimately tail-scans, because its sheet is kept
+date-sorted by its own exporter AND it widens until the date's block is provably
+complete. Date-ordered plus a completeness check → a tail scan is fine.
+Anything else → span it.
+
+---
+
 ## 2026-08-27 broad-scan (increments 150–151) — the P/L family
 
 One three-stage audit, two implementation batches. Codes below are cited in

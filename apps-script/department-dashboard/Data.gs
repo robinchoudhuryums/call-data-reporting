@@ -117,14 +117,26 @@ var DQE_DATE_BOUNDS_MEMO_ = null;
 function sheetScanDqeDateBounds_() {
   if (DQE_DATE_BOUNDS_MEMO_) return DQE_DATE_BOUNDS_MEMO_;
   const empty = { min: null, max: null, rows: 0 };
+  // R26c: SPLIT TIMING. `getLatestDataDate` was measured at 36.5s on a live
+  // request, and this is the whole of its sheet path -- but "36.5s" does not
+  // say WHICH half: opening the workbook (`openSpreadsheet_()` is a bare
+  // `SpreadsheetApp.openById`, unmemoized and called ~80x across the project,
+  // so a large workbook's open cost is paid again on every call) or reading
+  // the 31.5k-row date column. Those have opposite fixes -- memoize the handle
+  // vs. bound the scan -- and guessing wrong costs a wide-blast-radius change
+  // for nothing. So the two are timed separately and logged under the existing
+  // `[dqe-read]` prefix; the next slow morning identifies the half to fix.
+  const _tOpen = Date.now();
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
+  const openMs = Date.now() - _tOpen;
   if (!sheet) { DQE_DATE_BOUNDS_MEMO_ = empty; return empty; }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) { DQE_DATE_BOUNDS_MEMO_ = empty; return empty; }
   const ssTZ = ss.getSpreadsheetTimeZone();
   // The Date column is at HISTORICAL_COLS.DATE. Scan only that column to keep
   // the read cheap.
+  const _tScan = Date.now();
   const values = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
   let min = '', max = '';
   for (let i = 0; i < values.length; i++) {
@@ -133,9 +145,25 @@ function sheetScanDqeDateBounds_() {
     if (iso > max) max = iso;
     if (!min || iso < min) min = iso;
   }
+  const scanMs = Date.now() - _tScan;
+  logDqeBoundsTiming_(openMs, scanMs, lastRow - 1);
   const out = max ? { min: min || null, max: max, rows: lastRow - 1 } : empty;
   DQE_DATE_BOUNDS_MEMO_ = out;
   return out;
+}
+
+/**
+ * R26c. One log line attributing the bounds scan's cost between opening the
+ * workbook and reading the date column. Best-effort by the
+ * `logDqeReadTiming_` contract -- a timing line must never be able to break
+ * the read it measures.
+ */
+function logDqeBoundsTiming_(openMs, scanMs, rowCount) {
+  try {
+    Logger.log('[dqe-read] dqeDateBounds source=sheet rows=%s openMs=%s scanMs=%s',
+      (rowCount === null || rowCount === undefined) ? '?' : rowCount,
+      openMs, scanMs);
+  } catch (e) { /* best-effort */ }
 }
 
 /**
