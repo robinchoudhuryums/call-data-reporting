@@ -7,10 +7,11 @@
   the owner hit while Neon was down. (2) `cd apps-script/cdr-import &&
   clasp push -f` — still ships the DST prune fix (`DeleteOldSheets.js`); it
   matters before the November fall-back transition.
-- **Branch `claude/broad-scan-76h2dr` has 6 unmerged commits** (`ab6b788`,
-  `2df4670`, `49063ac`, `6873e97`, `09183b5`, plus the R26c commit). It sits on merged
-  PRs #266/#267; per the repo rule, restart it from the latest default branch
-  before opening the next PR rather than stacking further on merged history.
+- **Everything through increment 163 is MERGED to `main`** (PR #270 — the
+  bounded DQE read, the bounds-timing split, cdr-report egress metering, the
+  queue-overlap diagnostic and the sync-docs pass). **Do not open a PR for any
+  of it.** The branch has been restarted from `main`; per the repo rule,
+  follow-up work continues from there rather than stacking on merged history.
 - **After the next slow My Department load, read the execution log for
   `[dqe-read] dqeDateBounds`.** Whichever of `openMs` / `scanMs` dominates
   decides the next perf increment: bound the column scan, or memoize
@@ -28,7 +29,34 @@
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
 
-## Latest session (R26c — attributing the getLatestDataDate cost)
+## Latest session (R29 — /sync-docs after the R26b/R26c work)
+Increment 163. **1122/1122 tests**, `npm run ci` green. Doc-only; merged in
+PR #270 with the code it documents.
+- **The overdue one:** the bounded-span sheet read was implemented TWICE
+  (R25b for CSR transfer, R26b for the DQE reader) and written NOWHERE — the
+  second rediscovered the rule from scratch six weeks after the first, with the
+  reasoning stranded in a callsite comment both times. Now a Common Gotchas
+  bullet naming both callsites, the enforcing tests, and the discriminator a
+  naive "never tail-scan" rule would get wrong (`nmReadDateRowsTail_`, F-20,
+  tail-scans legitimately: date-ordered sheet AND it widens until the block is
+  provably complete).
+- Operator State **#47** now says the Health egress gauge is blind to
+  cdr-report's counter by construction (same key, different project store),
+  how to read it, and that the total is the sum — the last overage was ~96%
+  invisible to the figure operators were reading.
+- Operator State **#42** gained the measured magnitude (Spanish's roster
+  worked 116 CSR calls vs 17 Spanish → ~8.6x off-mode inflation, 14 crossover
+  agents, 6 dept pairs), names `queueOverlapAudit()`, and records as SETTLED
+  that the Daily Call Queue Report's per-queue figures are NOT double-counted.
+- fix-history gained the `R25b`/`R26b`/`R26c` family so those codes, now cited
+  in code comments, resolve.
+- Checks 2 and 5 clean: 103/103 subsystem paths exist with nothing unassigned;
+  CLAUDE.md 163.6 KB with 36 KB headroom and no bullet over the 4 KB ratchet
+  (System Health sits at 4090 B — 6 bytes under, which is why the egress note
+  went to operator-state rather than there).
+- No block file: a doc-only pass, recorded here.
+
+## Prior session (R26c — attributing the getLatestDataDate cost)
 Increment 162. **1122/1122 tests**, `npm run ci` green, INV-16 guard clean.
 Block: `.cycle/blocks/101-r26c-bounds-timing-followons-broad-implement.md`.
 - Took the two follow-ons from block 100 (the cross-caller memo was excluded
@@ -51,7 +79,7 @@ Block: `.cycle/blocks/101-r26c-bounds-timing-followons-broad-implement.md`.
   warming + R26b.
 - Mutation-tested, all three caught (combined ms, log above the memo, no
   try/catch).
-- Where I left off: committed + pushed. Branch needs a PR.
+- Outcome: MERGED to `main` in PR #270.
 
 ## Prior session (R26b — bounded DQE sheet read)
 Increment 161. **1119/1119 tests**, `npm run ci` green, INV-16 guard clean.
@@ -82,7 +110,7 @@ Block: `.cycle/blocks/100-r26b-bounded-dqe-scan-broad-implement.md`.
   proved the 436 Daily Queue Report figure is NOT a double-count), and two
   doc corrections (Neon free-tier compute 100h not ~190h; pruned Call_Legs are
   re-importable from the Drive CSV archive, not gone).
-- Where I left off: committed + pushed. Branch needs a PR.
+- Outcome: MERGED to `main` in PR #270.
 
 ## Prior session (R28 — /sync-docs after the R26/R27 work)
 Increment 160. **1082/1082 tests**, `npm run ci` green. No block file: a
