@@ -25,7 +25,9 @@ const { loadGas } = require('../harness/loadGas');
 
 const h = loadGas({
   project: 'cdr-report',
-  files: ['inboundCallsExport.js'],
+  // neonEgress.js provides cdrNoteEgress_, which the export calls after its
+  // payload fetch (one global scope in production; explicit here).
+  files: ['neonEgress.js', 'inboundCallsExport.js'],
 });
 
 // Mutable fake sheet: a dense grid of display strings, header at row 1.

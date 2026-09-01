@@ -297,8 +297,12 @@ When something looks wrong, before assuming a code bug, check:
     and installs the `keepNeonWarm_` trigger (every 5 min, gated to a
     weekday window). Tune the window via the `NEON_KEEPWARM_START_HOUR` /
     `NEON_KEEPWARM_END_HOUR` Script Properties (defaults 7 / 13 Central);
-    the modal shows the estimated monthly compute-hours so you stay under
-    the Neon free allowance (~190h). Needs the dashboard `NEON_*` props +
+    the modal shows the estimated monthly compute-hours so you can size the
+    window against your plan's allowance. **Neon's free tier is 100
+    compute-hours as of 2026-09** (it was ~190h when the default 7-13
+    window was chosen, so that default -- ~132 h/mo -- no longer fits the
+    free tier at all; narrow the hours, or treat keep-warm as a paid-plan
+    feature). Needs the dashboard `NEON_*` props +
     `script.external_request` + `script.scriptapp` scopes (same as the
     read-back + alerts trigger). If keep-warm shows "unreachable" pings,
     check the `NEON_*` props; pings no-op cleanly when Neon is unconfigured.
@@ -815,7 +819,13 @@ When something looks wrong, before assuming a code bug, check:
     (holiday-aware, each floored at its own capture-start MIN(call_date);
     an outbound_calls table that doesn't exist yet -- the Option B capture
     not deployed -- is a clean skip, not a probe error; days past the
-    ~14-day Call_Legs retention are unrecoverable, IMP-11).
+    ~14-day Call_Legs retention are unrecoverable FROM THE SHEETS, IMP-11 --
+    recoverable in practice by re-importing those dates' source CSVs with
+    `importBulkCSVsFromDrive` (cdr-import) to recreate the `Call_Legs_*`
+    sheets, then re-running the backfill; do it in small batches, since
+    restoring a wide window at once strains the workbook's cell ceiling. The
+    true horizon is the CSV ARCHIVE's retention -- with no archive, the
+    original claim holds).
     Outcome in `NEON_COVERAGE_LAST(_RESULT)` ('ok clean' / 'GAPS n
     finding(s)' / 'FAILED*'), surfaced as the Health page's "Neon coverage
     -- last check" row. Complements the MAX(call_date)-only mirror-health

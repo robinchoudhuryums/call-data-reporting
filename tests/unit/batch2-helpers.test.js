@@ -8,7 +8,10 @@ const { loadGas } = require('../harness/loadGas');
 // F-10 inbound-export date normalizer, and the F-12 batch-PDF date anchor.
 
 const bf = loadGas({ project: 'cdr-report', files: ['neonbackfill.js'] });
-const ic = loadGas({ project: 'cdr-report', files: ['inboundCallsExport.js'] });
+// neonEgress.js first: Apps Script shares one global scope across a
+// project's files, so the export's cdrNoteEgress_ callsite resolves at
+// runtime. The harness loads only what a suite lists, so it must too.
+const ic = loadGas({ project: 'cdr-report', files: ['neonEgress.js', 'inboundCallsExport.js'] });
 const em = loadGas({ project: 'cdr-report', files: ['emailDailyReport.js'] });
 
 test('F-51: sanitizeSlotCellForNeon_ passes clean cells, recovers date-render coercion, nulls garbage', function () {

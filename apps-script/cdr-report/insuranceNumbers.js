@@ -182,12 +182,14 @@ function logInsuranceCallCounts() {
       "WHERE p.list_type = 'ob_ext_list_total' " +
       "GROUP BY 1 ORDER BY calls DESC");
     Logger.log('=== Outbound-external call counts by source ===');
-    var n = 0;
+    var n = 0, bytes = 0;
     while (rs.next() && n < 100) {
-      Logger.log('  %s: %s calls (%s distinct numbers)',
-                 rs.getString('source'), rs.getString('calls'), rs.getString('nums'));
+      var c1 = rs.getString('source'), c2 = rs.getString('calls'), c3 = rs.getString('nums');
+      bytes += String(c1).length + String(c2).length + String(c3).length;
+      Logger.log('  %s: %s calls (%s distinct numbers)', c1, c2, c3);
       n++;
     }
+    cdrNoteEgress_(bytes, 'insurance:outbound');
     rs.close(); stmt.close();
   } finally {
     try { conn.close(); } catch (ce) {}
@@ -230,13 +232,16 @@ function logInboundInsuranceCounts() {
       "WHERE c.caller_hash IS NOT NULL " +
       "GROUP BY 1 ORDER BY inbound_calls DESC");
     Logger.log('=== Inbound call counts by source (answered / abandoned / abandoned-on-hold) ===');
-    var n = 0;
+    var n = 0, bytes = 0;
     while (rs.next() && n < 100) {
+      var v = [rs.getString('source'), rs.getString('inbound_calls'), rs.getString('answered'),
+               rs.getString('abandoned'), rs.getString('aboh')];
+      for (var vi = 0; vi < v.length; vi++) bytes += String(v[vi]).length;
       Logger.log('  %s: %s calls (%s answered, %s abandoned, %s abandoned-on-hold)',
-                 rs.getString('source'), rs.getString('inbound_calls'),
-                 rs.getString('answered'), rs.getString('abandoned'), rs.getString('aboh'));
+                 v[0], v[1], v[2], v[3], v[4]);
       n++;
     }
+    cdrNoteEgress_(bytes, 'insurance:inbound');
     rs.close(); stmt.close();
   } finally {
     try { conn.close(); } catch (ce) {}

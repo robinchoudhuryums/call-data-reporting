@@ -342,7 +342,13 @@ function backfillOutboundCallsForce() {
  * covers everything after. Same contract as backfillInboundCalls: date-range
  * args optional, already-mirrored dates skipped unless force, time-budgeted
  * (re-run to resume), stops on Neon-unreachable, Pipeline Health summary row
- * (step 'outboundBackfill'). Dates whose Call_Legs sheet was pruned are gone.
+ * (step 'outboundBackfill'). Dates whose Call_Legs sheet was pruned are gone
+ * FROM THE SPREADSHEET -- but the sheet is not necessarily the last copy:
+ * `importBulkCSVsFromDrive` rebuilds a `Call_Legs_YYYY-MM-DD` sheet from the
+ * source CSV archive in Drive, after which this backfill works normally.
+ * Recovery is therefore bounded by that ARCHIVE's retention, not by the
+ * 14-day sheet prune. Re-import in small batches -- restoring a wide window
+ * at once can push the workbook toward the 10M-cell ceiling.
  */
 function backfillOutboundCalls(fromIso, toIso, force) {
   var startMs = Date.now();

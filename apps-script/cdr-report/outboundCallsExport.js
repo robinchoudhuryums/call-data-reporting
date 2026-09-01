@@ -186,6 +186,7 @@ function exportOutboundCalls(fromIso, toIso) {
     stmt.setString(3, endIso);
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
+    cdrNoteEgress_(json ? json.length : 0, 'export:outbound');   // daily trigger
     rs.close(); stmt.close();
 
     var rows = JSON.parse(json || '[]');

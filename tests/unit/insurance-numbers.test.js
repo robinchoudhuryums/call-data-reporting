@@ -27,7 +27,7 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 const h = loadGas({
   project: 'cdr-report',
-  files: ['dbHistorical.js', 'insuranceNumbers.js'],
+  files: ['neonEgress.js', 'dbHistorical.js', 'insuranceNumbers.js'],
   capture: ['INSURANCE_BLOCK_START_COL', 'INSURANCE_BLOCK_END_COL'],
 });
 const START = h.consts.INSURANCE_BLOCK_START_COL;   // col X (24)

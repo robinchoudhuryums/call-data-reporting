@@ -27,6 +27,12 @@ function onOpen() {
       .addItem('Install (runs at 9 AM)', 'installOutboundExportTrigger')
       .addItem('Uninstall',              'uninstallOutboundExportTrigger'))
     .addItem('📤 Refresh Outbound Calls Tab Now', 'runOutboundCallsExportNow')
+    // Month-to-date Neon read volume for THIS project + the per-surface
+    // ranking (neonEgress.js). The dashboard meters itself separately under
+    // the same key; add them for a total.
+    .addItem('📈 Neon Read Volume (this project)', 'showNeonEgress')
+    // Read-only: does one CALL get counted by two queues? (queueOverlapAudit.js)
+    .addItem('🔀 Queue Overlap Audit', 'queueOverlapAudit')
     //.addSeparator()
     //.addItem('Run Historical Transfer', 'transferDailyReportsData')
     //.addItem('Benchmark Calc Speed', 'measureCalculationSpeed')

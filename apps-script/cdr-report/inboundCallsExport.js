@@ -203,6 +203,10 @@ function exportInboundCalls(fromIso, toIso) {
     stmt.setString(3, endIso);
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
+    // Meter the read (post-fetch, best-effort, never gates the parse below).
+    // This runs DAILY on a trigger and json_aggs a whole window, so it is one
+    // of the two largest unmetered readers the transfer-cap round found.
+    cdrNoteEgress_(json ? json.length : 0, 'export:inbound');
     rs.close(); stmt.close();
 
     var rows = JSON.parse(json || '[]');

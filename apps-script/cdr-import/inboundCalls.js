@@ -998,7 +998,8 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // yielded belonged to ANOTHER date" is not evidence this date has no
       // calls -- it is the signature of a mislabeled/wrong-day grid, and
       // deleting on it would wipe the expected date's rows from a table with
-      // no sheet primary (unrecoverable past the Call_Legs retention). Leave
+      // no sheet primary (recoverable past the Call_Legs retention only by
+      // re-importing that date's source CSV -- see backfillInboundCalls). Leave
       // any stale rows in place (recoverable, like the unreachable case) and
       // tell the caller why so it can surface a Pipeline Health row.
       if (authoritative && expectedDateIso && rawRows && rawRows.length) {
@@ -1184,8 +1185,14 @@ var IC_BACKFILL_TIME_LIMIT_MS = 15 * 60 * 1000;
  *     project), so the run is visible in the dashboard's Alerts modal.
  *
  * Coverage note: this can only backfill dates whose Call_Legs_* sheet
- * still exists -- days pruned by DeleteOldSheets are gone from the
- * sheet side and cannot be reconstructed.
+ * still exists. A date pruned by DeleteOldSheets is gone from the
+ * SPREADSHEET, which is not the same as gone: `importBulkCSVsFromDrive`
+ * recreates the `Call_Legs_YYYY-MM-DD` sheet from the source CSV archive in
+ * Drive, and this backfill then covers it. So the real recovery horizon is
+ * the CSV archive's retention, not the 14-day sheet prune -- and if no such
+ * archive exists, the pruned dates ARE unrecoverable. Restore in small
+ * batches; a wide window recreated at once can approach the workbook's
+ * 10M-cell ceiling.
  */
 /**
  * Editor-run FORCE variant (the Run picker can't pass arguments). Use for
