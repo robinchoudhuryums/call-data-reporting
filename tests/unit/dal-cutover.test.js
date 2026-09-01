@@ -612,3 +612,71 @@ test('R26b: a multi-day window spanning the whole sheet still returns everything
   assert.equal(r26Fetch('2026-03-01', '2026-03-31').length, 12,
     'a window covering the sheet must not be narrowed by the span logic');
 });
+
+// ── R26c: split timing on the bounds scan ────────────────────────────────────
+//
+// `getLatestDataDate` measured 36.5s on a live request and the whole of its
+// sheet path is sheetScanDqeDateBounds_ -- but the number could not say whether
+// the cost was opening the workbook (openSpreadsheet_ is an unmemoized
+// SpreadsheetApp.openById called ~80x across the project) or reading the
+// 31.5k-row date column. Those have opposite fixes, so the scan now attributes
+// its own cost. These tests pin that the line is emitted with BOTH halves and
+// that emitting it can never break the read.
+
+function r26cCaptureLogger() {
+  const lines = [];
+  const realLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function () { lines.push(Array.prototype.slice.call(arguments)); } };
+  return { lines: lines, restore: function () { h.ctx.Logger = realLogger; } };
+}
+
+test('R26c: the bounds scan attributes its cost to open vs column read', function () {
+  install('sheet');
+  const cap = r26cCaptureLogger();
+  try {
+    const b = h.call('sheetScanDqeDateBounds_');
+    assert.ok(b.max, 'bounds still resolve');
+    const line = cap.lines.find(function (a) {
+      return typeof a[0] === 'string' && a[0].indexOf('dqeDateBounds') !== -1;
+    });
+    assert.ok(line, 'a dqeDateBounds timing line was emitted');
+    // Both halves must be reported SEPARATELY -- a single combined ms is the
+    // measurement that already existed and could not answer the question.
+    assert.ok(line[0].indexOf('openMs=') !== -1, 'open half is labelled');
+    assert.ok(line[0].indexOf('scanMs=') !== -1, 'column-read half is labelled');
+    // rows, open, scan -- in that order, all numeric and non-negative.
+    assert.equal(line.length, 4, 'rows + both timings are passed as args');
+    for (let i = 1; i < 4; i++) {
+      assert.equal(typeof line[i], 'number', 'arg ' + i + ' is numeric');
+      assert.ok(line[i] >= 0, 'arg ' + i + ' is non-negative');
+    }
+    assert.ok(line[1] > 0, 'the row count is the scanned column height');
+  } finally { cap.restore(); }
+});
+
+test('R26c: a THROWING Logger cannot break the bounds scan', function () {
+  install('sheet');
+  const realLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function () { throw new Error('logger exploded'); } };
+  try {
+    const b = h.call('sheetScanDqeDateBounds_');
+    assert.ok(b.max, 'bounds resolved despite the logger throwing');
+    assert.ok(b.min <= b.max, 'and are still coherent');
+  } finally { h.ctx.Logger = realLogger; }
+});
+
+test('R26c: the timing line is emitted ONCE per execution, not per caller', function () {
+  install('sheet');
+  const cap = r26cCaptureLogger();
+  try {
+    h.call('sheetScanDqeDateBounds_');
+    h.call('sheetScanDqeDateBounds_');
+    h.call('sheetScanDqeDateBounds_');
+    const hits = cap.lines.filter(function (a) {
+      return typeof a[0] === 'string' && a[0].indexOf('dqeDateBounds') !== -1;
+    });
+    // The memo short-circuits before the scan, so extra callers cost neither a
+    // read nor a log line -- a per-call line would misreport the real cost.
+    assert.equal(hits.length, 1, 'memoized calls do not re-log');
+  } finally { cap.restore(); }
+});

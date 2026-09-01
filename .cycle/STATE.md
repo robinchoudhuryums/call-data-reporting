@@ -7,10 +7,15 @@
   the owner hit while Neon was down. (2) `cd apps-script/cdr-import &&
   clasp push -f` — still ships the DST prune fix (`DeleteOldSheets.js`); it
   matters before the November fall-back transition.
-- **Branch `claude/broad-scan-76h2dr` has 5 unmerged commits** (`ab6b788`,
-  `2df4670`, `49063ac`, `6873e97`, plus the R26b commit). It sits on merged
+- **Branch `claude/broad-scan-76h2dr` has 6 unmerged commits** (`ab6b788`,
+  `2df4670`, `49063ac`, `6873e97`, `09183b5`, plus the R26c commit). It sits on merged
   PRs #266/#267; per the repo rule, restart it from the latest default branch
   before opening the next PR rather than stacking further on merged history.
+- **After the next slow My Department load, read the execution log for
+  `[dqe-read] dqeDateBounds`.** Whichever of `openMs` / `scanMs` dominates
+  decides the next perf increment: bound the column scan, or memoize
+  `openSpreadsheet_()` (83 callsites, 26 files — the bigger change, held
+  pending this reading).
 - **Owner action, no deploy needed:** enable report cache warming — Alerts
   modal → *Report cache warming* → Install, or run `installCacheWarmTrigger()`
   in the dashboard editor. Operator State #21.
@@ -23,7 +28,32 @@
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
 
-## Latest session (R26b — bounded DQE sheet read)
+## Latest session (R26c — attributing the getLatestDataDate cost)
+Increment 162. **1122/1122 tests**, `npm run ci` green, INV-16 guard clean.
+Block: `.cycle/blocks/101-r26c-bounds-timing-followons-broad-implement.md`.
+- Took the two follow-ons from block 100 (the cross-caller memo was excluded
+  by the owner). One shipped as instrumentation, one was assessed and
+  deliberately NOT fixed.
+- **`sheetScanDqeDateBounds_` now splits its own timing** — workbook open vs
+  date-column read — into one `[dqe-read] dqeDateBounds ... openMs=N scanMs=N`
+  line, emitted after the memo check so extra callers don't re-log.
+- **Why not a fix:** the 36.5s has two candidate causes with OPPOSITE fixes —
+  the 31.5k-row column read (bound it) or `openSpreadsheet_()`, which is a bare
+  unmemoized `SpreadsheetApp.openById` with **83 callsites across 26 files**
+  (memoize it). Guessing wrong buys a wide change for nothing, and the memo's
+  test blast radius is real (20+ suites hand-reset memos; no central harness
+  hook; a forgotten reset is a silently stale fixture). Shipped the measurement
+  instead. **One slow morning's log now names the half to fix.**
+- **Request coalescing: assessed, rejected.** A `LockService` stampede gate
+  makes the waiter block behind a slow execution and risk the 6-minute ceiling
+  — whose kill SKIPS catch blocks, the class that once ate a Daily Queue Report
+  day. Worse failure mode than the gap. Mitigations stay the 6h TTL + cache
+  warming + R26b.
+- Mutation-tested, all three caught (combined ms, log above the memo, no
+  try/catch).
+- Where I left off: committed + pushed. Branch needs a PR.
+
+## Prior session (R26b — bounded DQE sheet read)
 Increment 161. **1119/1119 tests**, `npm run ci` green, INV-16 guard clean.
 Block: `.cycle/blocks/100-r26b-bounded-dqe-scan-broad-implement.md`.
 - `sheetFetchDqeRows_` read the WHOLE `DQE Historical Data` sheet at full
