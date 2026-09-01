@@ -815,7 +815,13 @@ When something looks wrong, before assuming a code bug, check:
     (holiday-aware, each floored at its own capture-start MIN(call_date);
     an outbound_calls table that doesn't exist yet -- the Option B capture
     not deployed -- is a clean skip, not a probe error; days past the
-    ~14-day Call_Legs retention are unrecoverable, IMP-11).
+    ~14-day Call_Legs retention are unrecoverable FROM THE SHEETS, IMP-11 --
+    recoverable in practice by re-importing those dates' source CSVs with
+    `importBulkCSVsFromDrive` (cdr-import) to recreate the `Call_Legs_*`
+    sheets, then re-running the backfill; do it in small batches, since
+    restoring a wide window at once strains the workbook's cell ceiling. The
+    true horizon is the CSV ARCHIVE's retention -- with no archive, the
+    original claim holds).
     Outcome in `NEON_COVERAGE_LAST(_RESULT)` ('ok clean' / 'GAPS n
     finding(s)' / 'FAILED*'), surfaced as the Health page's "Neon coverage
     -- last check" row. Complements the MAX(call_date)-only mirror-health

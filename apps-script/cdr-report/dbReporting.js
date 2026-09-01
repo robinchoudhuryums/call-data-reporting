@@ -44,6 +44,8 @@ function pullReportData(startDate, endDate, department) {
     }
 
     rs.close();
+    // Meter what we actually pulled (serialized proxy for payload bytes).
+    try { cdrNoteEgress_(JSON.stringify(output).length, 'report:pull'); } catch (mE) {}
 
     // Write to a sheet named "Report Output"
     const sheet = SpreadsheetApp.getActiveSpreadsheet()

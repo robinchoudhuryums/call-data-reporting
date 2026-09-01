@@ -207,6 +207,13 @@ tests/
                               window, and a typo'd hour property that must
                               NARROW to the default rather than widen to
                               24/7; plus the NEO-3 skipReadHealth contract),
+                              cdr-egress-metering (the cdr-report Neon read
+                              meter: accumulation, UTC-month reset, surface
+                              capping, the never-throws contract, a frozen
+                              record reported as stale rather than current --
+                              plus the COVERAGE tripwire that every Neon
+                              reader in that project meters or is allowlisted,
+                              which is what the dashboard-only gauge lacked),
                               insurance-numbers (the insurer-label reference
                               table: every punctuation variant canonicalizes
                               to one form, REP-7's 10-digit country-code fix,
