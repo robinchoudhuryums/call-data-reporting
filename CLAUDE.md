@@ -1495,7 +1495,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Script-Property-tunable), no-opping cheaply (property + clock check, NO Neon
   connection) outside the window / on weekends / when
   `NEON_KEEPWARM_ENABLED!='true'`. Default window ≈ 6h × ~22 weekdays ≈
-  ~132 compute-hrs/mo, under the ~190h free allowance (the Alerts modal
+  ~132 compute-hrs/mo. NB Neon's free tier is now 100 compute-hrs (it was
+  ~190h when this window was sized), so the DEFAULT window no longer fits
+  inside it -- narrow the hours or expect to pay (the Alerts modal
   surfaces the estimate + last-ping outcome). Enable/disable from the Alerts
   modal's **Neon keep-warm** section (`installNeonKeepWarmTrigger` /
   `uninstallNeonKeepWarmTrigger`, both `assertAdmin_`-gated); reversible

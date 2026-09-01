@@ -297,8 +297,12 @@ When something looks wrong, before assuming a code bug, check:
     and installs the `keepNeonWarm_` trigger (every 5 min, gated to a
     weekday window). Tune the window via the `NEON_KEEPWARM_START_HOUR` /
     `NEON_KEEPWARM_END_HOUR` Script Properties (defaults 7 / 13 Central);
-    the modal shows the estimated monthly compute-hours so you stay under
-    the Neon free allowance (~190h). Needs the dashboard `NEON_*` props +
+    the modal shows the estimated monthly compute-hours so you can size the
+    window against your plan's allowance. **Neon's free tier is 100
+    compute-hours as of 2026-09** (it was ~190h when the default 7-13
+    window was chosen, so that default -- ~132 h/mo -- no longer fits the
+    free tier at all; narrow the hours, or treat keep-warm as a paid-plan
+    feature). Needs the dashboard `NEON_*` props +
     `script.external_request` + `script.scriptapp` scopes (same as the
     read-back + alerts trigger). If keep-warm shows "unreachable" pings,
     check the `NEON_*` props; pings no-op cleanly when Neon is unconfigured.
