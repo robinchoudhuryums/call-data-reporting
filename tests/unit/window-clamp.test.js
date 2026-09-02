@@ -175,3 +175,42 @@ test('the per-call surfaces are deliberately NOT clamped (no latest date exists)
       + 'test should be removed in that commit.');
   });
 });
+
+// ── The regression the first cut of this fix introduced ──────────────────────
+//
+// Wiring the clamp into runIrReport surfaced the note through irSetFormError,
+// whose element is `class="status status-error"` -- so a routine correction
+// rendered RED. And it fired on EVERY ordinary IR open, because IR's default
+// To was `isoOf(today)`: today's ingest has not landed while a manager is
+// looking, so the default window was over-long by at least a day. That is the
+// R18 bug living in a default nobody chose, and the clamp merely made it
+// visible. Both halves are pinned here because the first version of this
+// suite passed with both defects present.
+
+test('R30: IR defaults its To to the latest DATA date, not today', function () {
+  const text = read('script-6-ir.html');
+  assert.ok(/\$\('ir-to'\)\.value\s*=\s*\(typeof latestDqeIso_[\s\S]{0,120}latestDqeIso_/.test(text),
+    "IR's default To must use latestDqeIso_. Defaulting to today makes every "
+    + 'ordinary open an over-long window (the R18 divisor bug) and fires the '
+    + 'clamp on a window the user never chose.');
+  assert.ok(text.indexOf("$('ir-to')   .value   = isoOf(today);") === -1
+            && !/\$\('ir-to'\)\s*\)?\.value\s*=\s*isoOf\(today\)\s*;/.test(text),
+    "IR's default To is back to isoOf(today).");
+});
+
+test('R30: a window correction is NOT reported through the error channel', function () {
+  const text = read('script-6-ir.html');
+  // The clamp must not route into irSetFormError -- that element carries
+  // `status-error`, so the report would look failed when it ran fine.
+  assert.ok(/if \(irClampNote\) irSetFormNote_\(irClampNote\);/.test(text),
+    'the IR clamp note must go through irSetFormNote_ (warn tone), not '
+    + 'irSetFormError -- the report still runs, over the corrected window.');
+  assert.ok(/function irSetFormNote_[\s\S]{0,400}status-warn/.test(text),
+    'irSetFormNote_ must apply the warn tone');
+  // ...and the shared element must be restored, or the NEXT real error inherits
+  // the softer styling and reads as a mere note.
+  assert.ok(/function irSetFormError[\s\S]{0,400}remove\('status-warn'\)[\s\S]{0,120}add\('status-error'\)/.test(text),
+    'irSetFormError must restore the error tone -- it shares one element with '
+    + 'irSetFormNote_, so without this a real error after a correction renders '
+    + 'in the warn tone.');
+});
