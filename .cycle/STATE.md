@@ -8,11 +8,33 @@
   until this runs. (2) `cd apps-script/cdr-import && clasp push -f` — still
   the DST prune fix (`DeleteOldSheets.js`); it matters before the November
   fall-back transition.
-- **Everything through increment 165 is MERGED to `main`** (PR #270 the
+- **Everything through increment 166 is MERGED to `main`** (PR #270 the
   bounded read + egress metering + queue-overlap diagnostic; #272 the
-  month-boundary ui-harness fix; #273 the R30 clamp). **Do not open a PR for
-  any of it.** The branch has been restarted from `main`; per the repo rule,
+  month-boundary ui-harness fix; #273 the R30 clamp; #274 the R31 tone probe
+  + the IR note/default fix). **Do not open a PR for any of it.** The branch has been restarted from `main`; per the repo rule,
   follow-up work continues from there rather than stacking on merged history.
+- **NEON IS BACK (2026-09-02) and the coverage check found 56 gaps over
+  2026-08-03..2026-09-01. TWO DISTINCT SIGNATURES, do not treat as one:**
+  (a) MISSING IN NEON on Aug 20/21/24/25/26/27/28/31 -- eight weekdays,
+  IDENTICAL across dqe/qcd/cdr/direct: that is the mirror-write outage, cleanly
+  bounded. (b) COUNT MISMATCH on `dqe_history` ONLY for Aug 5/6/7/10/11/12,
+  sheet exceeding Neon by 3-6 rows: a DIFFERENT, earlier failure, cause not yet
+  established. Under `DQE_READ_SOURCE=neon` those dates would under-report a
+  few agents.
+  **The email TRUNCATES**: 36 of 56 findings printed, so ~16 zero-row weekdays
+  on `inbound_calls`/`outbound_calls` were never shown. Re-run
+  `runNeonCoverageCheck()` in the editor and read `out.noSheet[]` -- those are
+  the ONLY clock-bound ones (no sheet primary; `Call_Legs_*` prunes at ~14
+  days, so the recoverable edge is ~Aug 19 and moves daily).
+  **Prefer the sheet-reading backfills over a force re-import**: the sheets
+  already hold the rows, while a force re-import deletes the date across all
+  five historical sheets and rebuilds from `Call_Legs_*` that may be pruned
+  (the P-3 guard aborts cleanly, so it is safe but useless there).
+  Order: `backfillDQEHistoryUpsert()` (fixes BOTH signatures via ON CONFLICT DO
+  UPDATE) -> `backfillQCDHistory()` -> `backfillCDRHistory` ->
+  `backfillDirectCallToNeon()` -> re-run the check -> parity gates spanning
+  **Aug 5 .. Sep 1** (wide enough for both signatures) -> flip read sources
+  only on CLEAN.
 - **VERIFY R30 IN THE LIVE APP after the dashboard deploy** — the unit suite
   pins the arithmetic and the wiring, but not that the correction reads well.
   The owner's repro is the check: enter 08/31–09/02 with data through 08/31
@@ -35,7 +57,44 @@
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
 
-## Latest session (R30 — the window clamp reached one surface out of eight)
+## Latest session (R31 — teaching the gate to see a wrong TONE, and three wrong claims)
+Increment 166. **1134/1134 tests**, gate **92/92** (from 84), all stages, 7m6s.
+Merged in PR #274. No block file: recorded here.
+- **The fix:** `visibleErrorTones(page)` in drive-smoke asserts that nothing
+  carrying `.status-error` is actually rendered on a healthy page, per page and
+  per role. Plus the first automated coverage of the IR GENERATE path (menu ->
+  modal -> pick agent -> Generate), which no driver had.
+- **The lesson, which is the real content of this increment.** I made three
+  escalating claims and every one was wrong: (1) "a red banner on every IR
+  open" -- no, the clamp is in `runIrReport()`, which fires on GENERATE; a
+  direct open shows the setup form. (2) "on every generate the user sees red"
+  -- no: probing the live page showed the note IS set with `status-error`, but
+  it lives inside `#individual-form`, which the results replace, so it measures
+  **0x0 and never reaches the screen**. (3) "my guard is theatre" -- no: both
+  mutations passed because passing was CORRECT. There was no visible error tone
+  to find.
+  **The probe that settled it was one command and I ran it only after the third
+  claim.** Read a passing mutation as a possible wrong PREMISE, not just a
+  broken test.
+- The R30 IR changes still stand on merit: IR defaulted its To to
+  `isoOf(today)`, a genuinely over-long window (the R18 divisor bug), and a
+  stale correction left in the hidden form shows on a later return to it.
+- **Also fixed a driver I had just broken:** the first IR block guarded on
+  `locator.count()` (existence) then clicked a MENU-GATED button, so Playwright
+  retried a hidden element for 30s and killed the run. drive-admin has opened
+  `#admin-menu-btn` before its menu-gated modals all along -- read the existing
+  driver before writing a new one. IR is also admin-only from the header
+  (`data-admin-only` on the enclosing `.header-menu`), so the block skips
+  managers rather than asserting against a correctly-absent surface.
+- **Three assertions this session passed with their subject broken** (a source
+  pin matching my own comment; a fixed-width slice bleeding into the
+  neighbouring listener; this one). The baseline caught none of them; the
+  mutation caught all three.
+- CI slowness resolved as variance, measured not assumed: 7m6s locally, all
+  stages green.
+- Where I left off: merged. The dashboard deploy is still pending.
+
+## Prior session (R30 — the window clamp reached one surface out of eight)
 Increment 165. **1132/1132 tests**, `npm run ci` green, full `ci:ui` gate green
 (all stages, 84/84 smoke). Merged in PR #273. No block file: a
 bug-fix pass, recorded here.
