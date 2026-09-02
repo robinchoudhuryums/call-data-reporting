@@ -92,6 +92,42 @@ async function horizontalOverflow(page) {
   });
 }
 
+/**
+ * R31: VISIBLE ERROR TONE on a healthy render.
+ *
+ * The gate's blind spot, found the expensive way. It asserts page/console
+ * ERRORS, blank canvases and horizontal overflow -- none of which can see a
+ * correctly-rendered element carrying the WRONG TONE. R30 wired a routine
+ * window correction through irSetFormError, whose element is
+ * `class="status status-error"`, so every ordinary Individual Report open
+ * rendered a RED banner; the report ran fine, the page threw nothing, every
+ * canvas drew, and the gate passed it straight through to main.
+ *
+ * The property: on a healthy render with nothing induced to fail, NO
+ * error-toned status element is visible. `.status-error` is the app's one
+ * explicit error tone (styles.html: --bad background/foreground/border), so a
+ * visible one is either a real failure the driver should be reporting anyway,
+ * or a non-error wearing the error's clothes. Both are findings.
+ *
+ * Returns the offenders' text so a failure names WHAT is red, not just that
+ * something is.
+ */
+async function visibleErrorTones(page) {
+  return page.evaluate(() => {
+    const out = [];
+    document.querySelectorAll('.status-error').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      const shown = r.width > 0 && r.height > 0
+        && cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
+      if (!shown) return;
+      out.push((el.id || el.className || 'unknown') + ': '
+        + (el.textContent || '').trim().slice(0, 80));
+    });
+    return out;
+  });
+}
+
 (async () => {
   const browser = await chromium.launch(launchOptions());
 
@@ -116,6 +152,104 @@ async function horizontalOverflow(page) {
 
       const overflow = await horizontalOverflow(page);
       record(role + '/' + name + ': no horizontal page overflow', overflow <= 0, 'scrollWidth-clientWidth=' + overflow);
+
+      // R31: nothing on a healthy page should be wearing the error tone.
+      const reds = await visibleErrorTones(page);
+      record(role + '/' + name + ': no error-toned status is visible',
+        reds.length === 0, reds.join(' | '));
+    }
+
+    // R31: the INDIVIDUAL REPORT modal, opened solely so the error-tone probe
+    // can see it. No driver opened it before -- drive-admin covers the six
+    // ADMIN modals and IR is not one of them -- which is exactly why the red
+    // banner R30 put on every ordinary IR open reached main unseen. A tone
+    // check that never visits the surface it was written for is theatre, so
+    // the visit is part of the fix.
+    //
+    // ADMIN ONLY, and that is a property of the markup, not a shortcut: the
+    // button lives in #reports-menu-list, whose enclosing .header-menu carries
+    // data-admin-only and is display:none for everyone else (the attribute is
+    // cleared at init for admins). A manager reaches IR by other routes; there
+    // is no header path to assert for them, so this skips rather than invent
+    // one.
+    //
+    // It is MENU-GATED, which the first cut of this block got wrong: it
+    // guarded on locator.count() -- existence -- then clicked, and Playwright
+    // retried a hidden button for 30s and killed the driver. Existence is not
+    // visibility. Open the menu first, and gate on isVisible().
+    //
+    // Button + modal ids come from the ROUTER TABLE in script-4-nav.html
+    // ('/report/individual'), which is the authority -- drive-phase3.js
+    // guessing an id is how it spent months probing a modal that does not
+    // exist.
+    if (role === 'admin') {
+      const menuBtn = page.locator('#reports-menu-btn');
+      if (await menuBtn.count() && await menuBtn.isVisible()) {
+        await menuBtn.click();
+        await page.waitForTimeout(400);
+        const irBtn = page.locator('#individual-report-btn');
+        if (await irBtn.count() && await irBtn.isVisible()) {
+          await irBtn.click();
+          await page.waitForTimeout(3500);
+          const irOpen = await page.evaluate(() => {
+            const m = document.querySelector('#individual-modal');
+            return !!m && getComputedStyle(m).display !== 'none';
+          });
+          record(role + ': the Individual Report modal opens', irOpen, 'open=' + irOpen);
+
+          // GENERATE, don't just open. A direct open shows the SETUP FORM --
+          // `if (irPendingAutoRun_) showIrDrillLoading_(); else showIrForm()`
+          // -- and runIrReport(), where the R30 clamp lives, fires on Generate.
+          //
+          // HONEST SCOPE, measured rather than assumed: this does NOT pin the
+          // R30 red-note regression, because that note is not VISIBLE. Probing
+          // the real page with the bug restored shows the clamp firing
+          // correctly (to 2026-09-02 -> 2026-09-01) and the note set with
+          // `status status-error` -- but the element sits inside
+          // #individual-form, which the results replace, so it measures 0x0.
+          // Both mutation runs passed for that reason, and passing was CORRECT.
+          // What this asserts is the real property -- nothing red is visible on
+          // a healthy render -- plus the first automated coverage of the IR
+          // generate path, which no driver had. Do not read a green here as
+          // proof that IR's tones are right; read it as proof that nothing red
+          // reaches the screen.
+          await page.waitForTimeout(2500);              // roster load
+          const picked = await page.evaluate(() => {
+            const box = document.querySelector('#ir-agent-list input[type=checkbox]');
+            if (!box) return false;
+            box.click();                                 // enables #ir-generate-btn
+            return true;
+          });
+          if (picked) {
+            const gen = page.locator('#ir-generate-btn');
+            const genOn = await gen.count() && await gen.isVisible() && await gen.isEnabled();
+            if (genOn) {
+              await gen.click();
+              await page.waitForTimeout(4000);
+              // THE REGRESSION PIN: a generated report must not paint an
+              // error. IR's window is clamped here (R30); a correction is not
+              // a failure and must not wear the error tone.
+              const irReds = await visibleErrorTones(page);
+              record(role + ': generating an Individual Report shows no error tone',
+                irReds.length === 0, irReds.join(' | '));
+            } else {
+              record(role + ': the IR Generate button enables after picking an agent',
+                false, 'still disabled/hidden -- the tone check cannot run');
+            }
+          } else {
+            record(role + ': the IR agent picker offers a selectable agent',
+              false, 'no checkbox in #ir-agent-list -- the tone check cannot run');
+          }
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(600);
+        } else {
+          record(role + ': the Individual Report item is reachable from Reports',
+            false, '#individual-report-btn not visible after opening the menu');
+        }
+      } else {
+        record(role + ': the Reports menu is present for an admin', false,
+          '#reports-menu-btn not visible');
+      }
     }
 
     // R16e (owner round): the My Department totals label and the Insights

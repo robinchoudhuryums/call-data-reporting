@@ -507,7 +507,13 @@
       return d.getFullYear() + '-' + m + '-' + day;
     };
     if ($('ir-from')) $('ir-from').value = isoOf(first);
-    if ($('ir-to'))   $('ir-to').value   = isoOf(today);
+    // R30: default to the latest date WITH DATA, not today. Today's ingest has
+    // not landed while a manager is looking (the pipeline builds the previous
+    // day), so a To of today made IR's default window over-long by at least a
+    // day -- the R18 bug, living in a default nobody chose. It also meant the
+    // new clamp fired on every ordinary open, which is how this was found.
+    if ($('ir-to'))   $('ir-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_)
+      ? latestDqeIso_ : isoOf(today);
   }
 
   function showIrForm() {
@@ -537,7 +543,25 @@
   function irSetFormError(msg) {
     const el = $('ir-form-error');
     if (!el) return;
+    // R30: always restore the ERROR tone -- irSetFormNote_ borrows this same
+    // element for a warn-toned correction, and a later real error must not
+    // inherit that softer styling.
+    el.classList.remove('status-warn');
+    el.classList.add('status-error');
     if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg;
+    el.style.display = '';
+  }
+  /**
+   * R30: a window CORRECTION on the same line, in the warn tone rather than
+   * the error one. The report still runs -- over the corrected window -- so
+   * painting it red says the run failed when it did not.
+   */
+  function irSetFormNote_(msg) {
+    const el = $('ir-form-error');
+    if (!el || !msg) return;
+    el.classList.remove('status-error');
+    el.classList.add('status-warn');
     el.textContent = msg;
     el.style.display = '';
   }
@@ -948,7 +972,7 @@
     // form's own error line (as a correction, not a refusal: the report still
     // runs, over the corrected window).
     const irClampNote = clampInputsToLatest_('ir-from', 'ir-to', latestDqeIso_);
-    if (irClampNote) irSetFormError(irClampNote);
+    if (irClampNote) irSetFormNote_(irClampNote);
     const from = $('ir-from').value;
     const to   = $('ir-to').value;
     if (!from || !to) { irSetFormError('Pick a start and end date.'); return; }

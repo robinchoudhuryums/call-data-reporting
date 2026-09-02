@@ -1,17 +1,23 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
-- **Two deploys are pending:**
-  (1) `clasp push -f` from the repo root (Department Dashboard) — ships the
-  R26b bounded DQE sheet read, the fix for the 108-second My Department load
-  the owner hit while Neon was down. (2) `cd apps-script/cdr-import &&
-  clasp push -f` — still ships the DST prune fix (`DeleteOldSheets.js`); it
-  matters before the November fall-back transition.
-- **Everything through increment 163 is MERGED to `main`** (PR #270 — the
-  bounded DQE read, the bounds-timing split, cdr-report egress metering, the
-  queue-overlap diagnostic and the sync-docs pass). **Do not open a PR for any
-  of it.** The branch has been restarted from `main`; per the repo rule,
+- **Two deploys are pending, and the dashboard one now carries TWO fixes:**
+  (1) `clasp push -f` from the repo root (Department Dashboard) — the R26b
+  bounded DQE sheet read (the 108-second My Department load) AND the R30
+  window clamp (Insights reporting a window past the data). Neither is live
+  until this runs. (2) `cd apps-script/cdr-import && clasp push -f` — still
+  the DST prune fix (`DeleteOldSheets.js`); it matters before the November
+  fall-back transition.
+- **Everything through increment 165 is MERGED to `main`** (PR #270 the
+  bounded read + egress metering + queue-overlap diagnostic; #272 the
+  month-boundary ui-harness fix; #273 the R30 clamp). **Do not open a PR for
+  any of it.** The branch has been restarted from `main`; per the repo rule,
   follow-up work continues from there rather than stacking on merged history.
+- **VERIFY R30 IN THE LIVE APP after the dashboard deploy** — the unit suite
+  pins the arithmetic and the wiring, but not that the correction reads well.
+  The owner's repro is the check: enter 08/31–09/02 with data through 08/31
+  and confirm the dept controls AND the Insights section both land on 08/31,
+  with ONE correction note rather than two.
 - **After the next slow My Department load, read the execution log for
   `[dqe-read] dqeDateBounds`.** Whichever of `openMs` / `scanMs` dominates
   decides the next perf increment: bound the column scan, or memoize
@@ -29,7 +35,49 @@
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
 
-## Latest session (R29 — /sync-docs after the R26b/R26c work)
+## Latest session (R30 — the window clamp reached one surface out of eight)
+Increment 165. **1132/1132 tests**, `npm run ci` green, full `ci:ui` gate green
+(all stages, 84/84 smoke). Merged in PR #273. No block file: a
+bug-fix pass, recorded here.
+- Owner report: entering 08/31–09/02 with data through 08/31 corrected the
+  dept controls but left the open Insights region reporting a window past the
+  data. The `(scoped: …)` pill was working — it exists to flag exactly that
+  divergence. The silent half is the damaging one.
+- **`clampToLatestData_` (R18) had exactly TWO callers, both on the dept To
+  field.** Seven other date-entry surfaces accepted an over-long window, and
+  every per-workday figure divides by the INV-35 workday count of the SELECTED
+  window — the 273.8/day vs 365/day split that motivated R18 was still live on
+  all of them.
+- Fixed: the dept **From** field, Insights, the Individual Report, the
+  all-departments Daily Queue Report. **Clamped at each report's RUN
+  chokepoint, not per input** — Insights has two apply paths that each write
+  `ins-from`/`ins-to` and call `runInsReport()`, so hooking either alone would
+  leave the other broken.
+- **Source-aware by parameter.** The Daily Queue Report reads QCD and clamps to
+  `latestQcdIso_`; clamping it to the DQE date would HIDE a queue day that
+  exists. Same reason the per-call surfaces (Inbound / Outbound / Direct /
+  Caller Lookup) are deliberately left unclamped — the client holds no latest
+  date for those tables. A test pins that and says to delete itself if a
+  per-call latest is ever added.
+- New `window-clamp.test.js`, mutation-tested. **Two of five mutations
+  initially survived and both were defects in the TESTS**: one asserted against
+  an explanatory comment that happened to contain the source name, so a call
+  wired to the WRONG source still passed; the other used a fixed-width slice
+  that bled into the neighbouring listener, which legitimately clamps. Worth
+  remembering — both are the "test passes with its subject broken" class.
+- Also this increment (PR #272): **the ui-harness MTD check failed on the 1st
+  of a month.** `gen-payloads` derives `latest` from the wall clock and the
+  MTD window is `latest.slice(0,8)+'01'..latest`, so on the 1st it collapses
+  onto the dept page's single-day window and "the figures must differ" is
+  unsatisfiable. It now compares the rendered spans and asserts difference OR
+  equality accordingly. Would have recurred monthly.
+- **Still structural:** `gen-payloads.js` derives fixture dates from the wall
+  clock, so month-boundary and weekend-dependent failures remain a class. A
+  pinned fixture date would end it, but several checks are relative-to-today
+  by design (YTD calendar caption, freshness pill, preset clamps).
+- Where I left off: merged; the dashboard deploy is pending.
+
+## Prior session (R29 — /sync-docs after the R26b/R26c work)
 Increment 163. **1122/1122 tests**, `npm run ci` green. Doc-only; merged in
 PR #270 with the code it documents.
 - **The overdue one:** the bounded-span sheet read was implemented TWICE
