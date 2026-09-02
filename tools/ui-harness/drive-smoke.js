@@ -92,6 +92,42 @@ async function horizontalOverflow(page) {
   });
 }
 
+/**
+ * R31: VISIBLE ERROR TONE on a healthy render.
+ *
+ * The gate's blind spot, found the expensive way. It asserts page/console
+ * ERRORS, blank canvases and horizontal overflow -- none of which can see a
+ * correctly-rendered element carrying the WRONG TONE. R30 wired a routine
+ * window correction through irSetFormError, whose element is
+ * `class="status status-error"`, so every ordinary Individual Report open
+ * rendered a RED banner; the report ran fine, the page threw nothing, every
+ * canvas drew, and the gate passed it straight through to main.
+ *
+ * The property: on a healthy render with nothing induced to fail, NO
+ * error-toned status element is visible. `.status-error` is the app's one
+ * explicit error tone (styles.html: --bad background/foreground/border), so a
+ * visible one is either a real failure the driver should be reporting anyway,
+ * or a non-error wearing the error's clothes. Both are findings.
+ *
+ * Returns the offenders' text so a failure names WHAT is red, not just that
+ * something is.
+ */
+async function visibleErrorTones(page) {
+  return page.evaluate(() => {
+    const out = [];
+    document.querySelectorAll('.status-error').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      const shown = r.width > 0 && r.height > 0
+        && cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
+      if (!shown) return;
+      out.push((el.id || el.className || 'unknown') + ': '
+        + (el.textContent || '').trim().slice(0, 80));
+    });
+    return out;
+  });
+}
+
 (async () => {
   const browser = await chromium.launch(launchOptions());
 
@@ -116,6 +152,46 @@ async function horizontalOverflow(page) {
 
       const overflow = await horizontalOverflow(page);
       record(role + '/' + name + ': no horizontal page overflow', overflow <= 0, 'scrollWidth-clientWidth=' + overflow);
+
+      // R31: nothing on a healthy page should be wearing the error tone.
+      const reds = await visibleErrorTones(page);
+      record(role + '/' + name + ': no error-toned status is visible',
+        reds.length === 0, reds.join(' | '));
+    }
+
+    // R31: the INDIVIDUAL REPORT modal, opened solely so the error-tone probe
+    // can see it. No driver opened it before -- drive-admin covers the six
+    // ADMIN modals and IR is not one of them -- which is exactly why the red
+    // banner R30 put on every ordinary IR open reached main unseen. A tone
+    // check that never visits the surface it was written for is theatre, so
+    // the visit is part of the fix.
+    //
+    // Button + modal ids come from the ROUTER TABLE in script-4-nav.html
+    // ('/report/individual'), which is the authority -- drive-phase3.js
+    // guessing an id is how it spent months probing a modal that does not
+    // exist.
+    {
+      const irBtn = page.locator('#individual-report-btn');
+      if (await irBtn.count()) {
+        await irBtn.click();
+        await page.waitForTimeout(3500);
+        const irOpen = await page.evaluate(() => {
+          const m = document.querySelector('#individual-modal');
+          return !!m && getComputedStyle(m).display !== 'none';
+        });
+        record(role + ': the Individual Report modal opens', irOpen, 'open=' + irOpen);
+        // THE REGRESSION PIN: opening IR must not paint an error. Its default
+        // window is a default nobody chose, so a correction there is not an
+        // error and must not wear the error tone (R30 -- irSetFormNote_).
+        const irReds = await visibleErrorTones(page);
+        record(role + ': opening the Individual Report shows no error tone',
+          irReds.length === 0, irReds.join(' | '));
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
+      } else {
+        record(role + ': the Individual Report button is present', false,
+          '#individual-report-btn missing (router table names it)');
+      }
     }
 
     // R16e (owner round): the My Department totals label and the Insights
