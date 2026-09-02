@@ -196,12 +196,40 @@ async function visibleErrorTones(page) {
             return !!m && getComputedStyle(m).display !== 'none';
           });
           record(role + ': the Individual Report modal opens', irOpen, 'open=' + irOpen);
-          // THE REGRESSION PIN: opening IR must not paint an error. Its
-          // default window is a default nobody chose, so a correction there is
-          // not an error and must not wear the error tone (R30).
-          const irReds = await visibleErrorTones(page);
-          record(role + ': opening the Individual Report shows no error tone',
-            irReds.length === 0, irReds.join(' | '));
+
+          // GENERATE, don't just open. A direct open shows the SETUP FORM --
+          // `if (irPendingAutoRun_) showIrDrillLoading_(); else showIrForm()`
+          // -- and runIrReport() (where the clamp lives) fires on Generate.
+          // The first cut of this check only opened the modal, so the clamp
+          // never executed and the mutation that restores the red-note bug
+          // PASSED 92/92. A check that cannot fail is worse than no check.
+          await page.waitForTimeout(2500);              // roster load
+          const picked = await page.evaluate(() => {
+            const box = document.querySelector('#ir-agent-list input[type=checkbox]');
+            if (!box) return false;
+            box.click();                                 // enables #ir-generate-btn
+            return true;
+          });
+          if (picked) {
+            const gen = page.locator('#ir-generate-btn');
+            const genOn = await gen.count() && await gen.isVisible() && await gen.isEnabled();
+            if (genOn) {
+              await gen.click();
+              await page.waitForTimeout(4000);
+              // THE REGRESSION PIN: a generated report must not paint an
+              // error. IR's window is clamped here (R30); a correction is not
+              // a failure and must not wear the error tone.
+              const irReds = await visibleErrorTones(page);
+              record(role + ': generating an Individual Report shows no error tone',
+                irReds.length === 0, irReds.join(' | '));
+            } else {
+              record(role + ': the IR Generate button enables after picking an agent',
+                false, 'still disabled/hidden -- the tone check cannot run');
+            }
+          } else {
+            record(role + ': the IR agent picker offers a selectable agent',
+              false, 'no checkbox in #ir-agent-list -- the tone check cannot run');
+          }
           await page.keyboard.press('Escape');
           await page.waitForTimeout(600);
         } else {
