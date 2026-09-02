@@ -225,9 +225,22 @@ async function horizontalOverflow(page) {
       record(role + ': the Team Rings panel defaults to Range (reconciles with the table)',
         trpRange.active === 'range' && !/MTD|latest day/.test(trpRange.date),
         JSON.stringify(trpRange));
+      // The MTD window is `latest.slice(0,8) + '01' .. latest`, so on a day
+      // when `latest` IS the 1st it COINCIDES with the page's default single-day
+      // window (INV-43) and the two views are the same query. Asserting the
+      // figures differ is then unsatisfiable -- this failed CI on 2026-09-02 with
+      // nothing but a markdown file changed, because gen-payloads derives
+      // `latest` from the wall clock. So compare the SPANS the chip renders and
+      // assert the property that actually holds: different windows must move the
+      // numbers, identical windows must not.
+      const trpSpan = (d) => String(d || '').replace(/\s*·.*$/, '').trim();
+      const sameWindow = trpSpan(trpMtd.date) === trpSpan(trpRange.date);
       record(role + ': switching to MTD loads a DIFFERENT window and says so',
-        trpMtd.active === 'mtd' && /MTD/.test(trpMtd.date) && trpMtd.rings !== trpRange.rings,
-        JSON.stringify(trpMtd));
+        trpMtd.active === 'mtd' && /MTD/.test(trpMtd.date)
+          && (sameWindow ? trpMtd.rings === trpRange.rings
+                         : trpMtd.rings !== trpRange.rings),
+        JSON.stringify(Object.assign({ sameWindow: sameWindow,
+          rangeSpan: trpSpan(trpRange.date), mtdSpan: trpSpan(trpMtd.date) }, trpMtd)));
       record(role + ': switching back to Range restores the page-window figures',
         trpBack.active === 'range' && trpBack.rings === trpRange.rings
           && trpBack.rows === trpRange.rows,
