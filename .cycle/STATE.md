@@ -4368,4 +4368,4 @@ when a change's correctness is outside the harness's reach, stage the rollout.
 Invariant candidates INV-56..60 proposed (block `.cycle/blocks/149-a-reflect.md`);
 metrics.csv + estimates.csv seeded (first rows).
 
-Subsystem cycles since last Seams audit: 1
+Subsystem cycles since last Seams audit: 2
