@@ -942,6 +942,13 @@
   function runIrReport() {
     irSetFormError('');
     const dept = getRequestedDept();
+    // R30: the IR run chokepoint -- the typed form, the edit popover, the
+    // presets and the Insights drill-through all write ir-from/ir-to and land
+    // here. IR is DQE-backed, so it clamps to latestDqeIso_. Announced on the
+    // form's own error line (as a correction, not a refusal: the report still
+    // runs, over the corrected window).
+    const irClampNote = clampInputsToLatest_('ir-from', 'ir-to', latestDqeIso_);
+    if (irClampNote) irSetFormError(irClampNote);
     const from = $('ir-from').value;
     const to   = $('ir-to').value;
     if (!from || !to) { irSetFormError('Pick a start and end date.'); return; }

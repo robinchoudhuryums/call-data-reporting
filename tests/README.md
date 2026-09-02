@@ -177,6 +177,13 @@ tests/
                               degenerate month/week-start clamps, and a
                               tripwire that fails if a resolver computes its
                               own dates again),
+                              window-clamp (R30: the SHARED window clamp --
+                              no report runs past the latest data date, a
+                              wholly future window collapses to latest..latest
+                              without inverting, a null latest leaves the
+                              window alone, plus tripwires that every report's
+                              RUN chokepoint clamps against its OWN source and
+                              that the per-call surfaces stay unclamped),
                               sheet-coverage (R25: the interior-gap detector
                               -- weekends/holidays/pre-start dates are not
                               gaps, a missing sheet reads distinctly, and it

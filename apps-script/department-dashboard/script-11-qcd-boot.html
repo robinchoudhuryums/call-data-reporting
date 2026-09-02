@@ -239,10 +239,15 @@
   }
 
   function runQcdAllDept_() {
+    // R30: this report reads QCD, NOT DQE, so it clamps to latestQcdIso_ --
+    // the two sources drift apart (the freshness pill exists because of it),
+    // and clamping to the wrong one would hide a queue day that exists.
+    const qcdClampNote = clampInputsToLatest_('qcd-alldept-from', 'qcd-alldept-to', latestQcdIso_);
     const from = $('qcd-alldept-from').value;
     const to   = $('qcd-alldept-to').value;
     const err  = $('qcd-alldept-form-error');
     err.style.display = 'none';
+    if (qcdClampNote) { err.textContent = qcdClampNote; err.style.display = ''; }
     if (!from || !to) {
       err.textContent = 'Pick a start and end date.';
       err.style.display = '';

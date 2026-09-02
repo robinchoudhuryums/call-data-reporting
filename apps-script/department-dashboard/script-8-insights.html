@@ -1246,6 +1246,21 @@
 
   function runInsReport() {
     const dept = getRequestedDept(); if (!dept) { insSetFormError('No department selected.'); return; }
+    // R30: clamp HERE, the single chokepoint every Insights entry path funnels
+    // through -- typed dates, the "Comparison & agents" popover, the presets
+    // and the trend drill all end up reading ins-from/ins-to right below.
+    // insApplyWindow_ and insApplyEditPopover_ are two separate paths that
+    // each write these inputs and call this, so clamping at either one alone
+    // would leave the other uncorrected. Insights is DQE-backed, so it clamps
+    // to latestDqeIso_.
+    const insClampNote = clampInputsToLatest_('ins-from', 'ins-to', latestDqeIso_);
+    // Insights renders INLINE on My Department (the M1/N1 merge), so the
+    // correction is announced through the dept controls' own note rather than
+    // a second message in a second place -- the dept controls are the page's
+    // single date authority (M4). It only fires when Insights genuinely held a
+    // future window of its own: a window synced from already-clamped dept
+    // controls is in range and clamps to nothing.
+    if (insClampNote && typeof deptClampNoteSet_ === 'function') deptClampNoteSet_(insClampNote);
     const from = $('ins-from').value, to = $('ins-to').value;
     if (!from || !to) { insSetFormError('Pick a start and end date.'); return; }
     if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
