@@ -166,31 +166,51 @@ async function visibleErrorTones(page) {
     // check that never visits the surface it was written for is theatre, so
     // the visit is part of the fix.
     //
+    // ADMIN ONLY, and that is a property of the markup, not a shortcut: the
+    // button lives in #reports-menu-list, whose enclosing .header-menu carries
+    // data-admin-only and is display:none for everyone else (the attribute is
+    // cleared at init for admins). A manager reaches IR by other routes; there
+    // is no header path to assert for them, so this skips rather than invent
+    // one.
+    //
+    // It is MENU-GATED, which the first cut of this block got wrong: it
+    // guarded on locator.count() -- existence -- then clicked, and Playwright
+    // retried a hidden button for 30s and killed the driver. Existence is not
+    // visibility. Open the menu first, and gate on isVisible().
+    //
     // Button + modal ids come from the ROUTER TABLE in script-4-nav.html
     // ('/report/individual'), which is the authority -- drive-phase3.js
     // guessing an id is how it spent months probing a modal that does not
     // exist.
-    {
-      const irBtn = page.locator('#individual-report-btn');
-      if (await irBtn.count()) {
-        await irBtn.click();
-        await page.waitForTimeout(3500);
-        const irOpen = await page.evaluate(() => {
-          const m = document.querySelector('#individual-modal');
-          return !!m && getComputedStyle(m).display !== 'none';
-        });
-        record(role + ': the Individual Report modal opens', irOpen, 'open=' + irOpen);
-        // THE REGRESSION PIN: opening IR must not paint an error. Its default
-        // window is a default nobody chose, so a correction there is not an
-        // error and must not wear the error tone (R30 -- irSetFormNote_).
-        const irReds = await visibleErrorTones(page);
-        record(role + ': opening the Individual Report shows no error tone',
-          irReds.length === 0, irReds.join(' | '));
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(600);
+    if (role === 'admin') {
+      const menuBtn = page.locator('#reports-menu-btn');
+      if (await menuBtn.count() && await menuBtn.isVisible()) {
+        await menuBtn.click();
+        await page.waitForTimeout(400);
+        const irBtn = page.locator('#individual-report-btn');
+        if (await irBtn.count() && await irBtn.isVisible()) {
+          await irBtn.click();
+          await page.waitForTimeout(3500);
+          const irOpen = await page.evaluate(() => {
+            const m = document.querySelector('#individual-modal');
+            return !!m && getComputedStyle(m).display !== 'none';
+          });
+          record(role + ': the Individual Report modal opens', irOpen, 'open=' + irOpen);
+          // THE REGRESSION PIN: opening IR must not paint an error. Its
+          // default window is a default nobody chose, so a correction there is
+          // not an error and must not wear the error tone (R30).
+          const irReds = await visibleErrorTones(page);
+          record(role + ': opening the Individual Report shows no error tone',
+            irReds.length === 0, irReds.join(' | '));
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(600);
+        } else {
+          record(role + ': the Individual Report item is reachable from Reports',
+            false, '#individual-report-btn not visible after opening the menu');
+        }
       } else {
-        record(role + ': the Individual Report button is present', false,
-          '#individual-report-btn missing (router table names it)');
+        record(role + ': the Reports menu is present for an admin', false,
+          '#reports-menu-btn not visible');
       }
     }
 
