@@ -199,10 +199,20 @@ async function visibleErrorTones(page) {
 
           // GENERATE, don't just open. A direct open shows the SETUP FORM --
           // `if (irPendingAutoRun_) showIrDrillLoading_(); else showIrForm()`
-          // -- and runIrReport() (where the clamp lives) fires on Generate.
-          // The first cut of this check only opened the modal, so the clamp
-          // never executed and the mutation that restores the red-note bug
-          // PASSED 92/92. A check that cannot fail is worse than no check.
+          // -- and runIrReport(), where the R30 clamp lives, fires on Generate.
+          //
+          // HONEST SCOPE, measured rather than assumed: this does NOT pin the
+          // R30 red-note regression, because that note is not VISIBLE. Probing
+          // the real page with the bug restored shows the clamp firing
+          // correctly (to 2026-09-02 -> 2026-09-01) and the note set with
+          // `status status-error` -- but the element sits inside
+          // #individual-form, which the results replace, so it measures 0x0.
+          // Both mutation runs passed for that reason, and passing was CORRECT.
+          // What this asserts is the real property -- nothing red is visible on
+          // a healthy render -- plus the first automated coverage of the IR
+          // generate path, which no driver had. Do not read a green here as
+          // proof that IR's tones are right; read it as proof that nothing red
+          // reaches the screen.
           await page.waitForTimeout(2500);              // roster load
           const picked = await page.evaluate(() => {
             const box = document.querySelector('#ir-agent-list input[type=checkbox]');
