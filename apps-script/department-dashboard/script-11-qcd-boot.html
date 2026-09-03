@@ -265,10 +265,18 @@
     // change, so rapid switches overlap requests -- only the newest response
     // may write qcdAllDeptLast (which feeds CSV/Print) or repaint the table.
     var __tok = ++qcdAllDeptReqSeq_;
+    var __t0 = Date.now();
     google.script.run
       .withSuccessHandler(function (data) {
         if (__tok !== qcdAllDeptReqSeq_) return;   // superseded by a newer run
         if (gen) { gen.disabled = false; gen.innerHTML = orig; }
+        // Step timing (2026-09-03): the server's per-phase figures, visible
+        // in the browser console without the Apps Script execution log.
+        try {
+          var m = data && data.meta;
+          console.info('[qcdAll] rpc ' + (Date.now() - __t0) + 'ms'
+            + (m ? (' cacheHit=' + !!m.cacheHit + ' computeMs=' + m.computeMs) : ''), m && m.timing);
+        } catch (e) { /* console only */ }
         qcdAllDeptLast = data;
         qcdAllDeptRender_(data);
       })

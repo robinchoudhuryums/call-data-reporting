@@ -17,6 +17,9 @@ const h = loadGas({
   capture: ['DEPT_CONFIG_HEADERS'],
 });
 const DC_HEADERS = h.consts.DEPT_CONFIG_HEADERS;
+// Several suites below stub readQcdSheetData_ and never restore it; the
+// timing test needs the real one.
+const realReadQcdSheetData_ = h.ctx.readQcdSheetData_;
 
 const QCD_HEADER = ['Month Year', 'Week', 'Date', 'Call Queue', 'Call Source',
   'Total Calls', 'Total Answered', 'Abandoned', 'Longest Wait', 'Avg Answer',
@@ -397,7 +400,7 @@ test('#3 QCD Neon parity: getQcdAllDepartments (the Daily Call Queue Report) ide
   installQcd('neon');
   const n = h.call('getQcdAllDepartments', { from: '2026-06-01', to: '2026-06-02' });
   // Scrub run-volatile meta (cacheHit / computeMs).
-  const scrub = function (d) { const c = JSON.parse(JSON.stringify(d)); if (c.meta) { delete c.meta.cacheHit; delete c.meta.computeMs; } return c; };
+  const scrub = function (d) { const c = JSON.parse(JSON.stringify(d)); if (c.meta) { delete c.meta.cacheHit; delete c.meta.computeMs; delete c.meta.timing; } return c; };
   assert.equal(JSON.stringify(scrub(n)), JSON.stringify(scrub(s)),
     'company grand total + per-dept sections match across sources');
   // Each dept lists its OWN queues (includeChildren:false): Alpha's A_Q_Alpha
@@ -687,4 +690,37 @@ test('D-1: opts.fresh skips the cache READ but still warms the key', function ()
   assert.equal(computes(), 2);
   delete h.ctx.getLatestDataDates;
   delete h.ctx.computeQcdAllDepartments_;
+});
+
+
+// ── Step timing + the once-per-execution date normalization (2026-09-03) ──
+
+test('timing: the all-departments payload carries per-phase timings, and the sheet memo pre-normalizes dates', function () {
+  h.ctx.readQcdSheetData_ = realReadQcdSheetData_;
+  install(
+    rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Ben, 401'] }),
+    [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Beta', 'A_Q_Beta')],
+    [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1), qcdRow('2026-06-10', 'A_Q_Beta', 40, 35, 5, 0),
+     qcdRow('2026-05-20', 'A_Q_Alpha', 50, 40, 10, 5)]);
+  const rep = h.call('getQcdAllDepartments', { from: '2026-06-10', to: '2026-06-10' });
+  const tm = rep.meta.timing;
+  assert.ok(tm && typeof tm.totalMs === 'number', 'meta.timing.totalMs');
+  assert.equal(typeof tm.anchorMs, 'number');
+  assert.equal(typeof tm.cacheGetMs, 'number');
+  assert.ok(tm.reportCalls >= 2, 'range + MTD/prior passes counted');
+  ['Alpha', 'Beta'].forEach(function (d) {
+    assert.ok(tm.depts[d] && typeof tm.depts[d].rangeMs === 'number', d + ' timed');
+  });
+  // The memo carries one ISO per row, equal to what rowDateIso_ yields per row.
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  const grid = h.call('readQcdSheetData_');
+  assert.equal(grid.dates.length, grid.values.length);
+  for (let i = 0; i < grid.values.length; i++) {
+    assert.equal(grid.dates[i], h.call('rowDateIso_', grid.values[i][2], grid.ssTZ));
+  }
+  // And a consumer handed a grid WITHOUT dates (the Neon path) still works.
+  h.ctx.QCD_SHEET_DATA_MEMO_ = { values: grid.values, displays: grid.displays, ssTZ: grid.ssTZ };
+  const rep2 = h.call('computeQcdReport_', 'Alpha', '2026-06-10', '2026-06-10', false, false, true);
+  assert.equal(rep2.queueBreakdown[0].totalCalls, 80);
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
 });
