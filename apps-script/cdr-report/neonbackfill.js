@@ -788,6 +788,18 @@ function backfillCDRHistory() {
 
   var props      = PropertiesService.getScriptProperties();
   var startIndex = nbResumeRead_(props, 'CDR_BACKFILL_RESUME', data, NB_CDR_KEY_COLS_);   // T-8
+  // R27: optional ISO ceiling -- rows dated ON/AFTER it are skipped, so the
+  // Operator State #57 refill (TRUNCATE call_history_phones, then rebuild the
+  // pre-capture block) cannot re-create the post-2026-07-10 phone rows the
+  // outbound_calls capture superseded. Unset = no ceiling (the old behavior).
+  // NB this function ALWAYS writes phone children regardless of the
+  // CDR_PHONES_MIRROR gate: it is the tool that refills the archive.
+  var ceilingIso = String(props.getProperty('CDR_BACKFILL_BEFORE') || '').trim();
+  if (ceilingIso && !/^\d{4}-\d{2}-\d{2}$/.test(ceilingIso)) {
+    Logger.log('CDR backfill ABORTED: CDR_BACKFILL_BEFORE must be an ISO date (yyyy-mm-dd), got "' + ceilingIso + '".');
+    return;
+  }
+  var skippedByCeiling = 0;
 
   Logger.log('CDR backfill: starting at index ' + startIndex + ' of ' + data.length);
   if (startIndex >= data.length) {
@@ -835,6 +847,7 @@ function backfillCDRHistory() {
           Logger.log('CDR backfill: skipping row ' + (i + 2) + ' -- unparseable date "' + r[2] + '".');
           i++; continue;
         }
+        if (ceilingIso && cdrCallDate >= ceilingIso) { skippedByCeiling++; i++; continue; }
         batch.push({
           callDate:   cdrCallDate,
           dept:       r[3] || 'Unassigned',
@@ -1036,7 +1049,8 @@ function backfillCDRHistory() {
 
     props.deleteProperty('CDR_BACKFILL_RESUME');
     Logger.log('CDR backfill complete. Total processed: ' + (i - startIndex) +
-      '. Upserted: ' + totalUpserted + ', phone rows: ' + totalPhones);
+      '. Upserted: ' + totalUpserted + ', phone rows: ' + totalPhones
+      + (ceilingIso ? ' (' + skippedByCeiling + ' row(s) at/after CDR_BACKFILL_BEFORE=' + ceilingIso + ' skipped)' : ''));
 
   } catch (e) {
     Logger.log('CDR backfill stopped. Error: ' + e.message);

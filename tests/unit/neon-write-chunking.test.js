@@ -191,6 +191,7 @@ test('REP-2: the phone-child parent-id lookup is chunked (400 rows/query)', func
   const log = { sqls: [], commits: 0, rollbacks: 0 };
   h.ctx.getReachableNeonConn_ = function () { return recordingConn(log); };
   h.state.props.HMAC_SECRET = 'test-secret';
+  h.state.props.CDR_PHONES_MIRROR = 'on';   // R27: the phone path is gated
   try {
     const rows = [];
     for (let i = 0; i < 900; i++) {
@@ -250,6 +251,7 @@ test('IMP-4: phone children are per-parent DELETE-then-insert (corrections + rem
   }
   h.ctx.getReachableNeonConn_ = function () { return conn(); };
   h.state.props.HMAC_SECRET = 'test-secret';
+  h.state.props.CDR_PHONES_MIRROR = 'on';   // R27: the phone path is gated
   try {
     const rows = [
       { callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna',

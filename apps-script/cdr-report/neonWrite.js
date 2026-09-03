@@ -532,8 +532,17 @@ function writeCDRRowsToNeon(rows, opts) {
     // writes them via mirrorCdrPhonesToNeon on its own connection AFTER
     // this main write has committed. Otherwise written inline here on the
     // same connection (preserves the standalone / cdr-report behavior).
+    // R27 (Neon storage): the phone children are ALSO gated by the
+    // CDR_PHONES_MIRROR Script Property (cdrPhonesMirrorEnabled_) -- OFF
+    // unless it is 'on'. call_history_phones was half the 0.5 GB project
+    // (indexes larger than its data) and its only reader is Caller Lookup's
+    // day-level "Earlier outbound activity", which the per-call
+    // outbound_calls capture superseded from 2026-07-10 (the client hides it
+    // for dates that have outbound rows). The pre-capture block stays; new
+    // days simply stop adding to it. Operator State #57 is the runbook.
     var phoneCount = 0;
-    if (!(opts && opts.skipPhones) && hasHmac) {
+    var phonesOn = cdrPhonesMirrorEnabled_();
+    if (!(opts && opts.skipPhones) && hasHmac && phonesOn) {
       var hasAnyPhones = rows.some(function(r) {
         return (r.phonesX && String(r.phonesX).trim()) ||
                (r.phonesY && String(r.phonesY).trim()) ||
@@ -543,7 +552,7 @@ function writeCDRRowsToNeon(rows, opts) {
     }
 
     return { inserted: rows.length, skipped: 0, phones: phoneCount,
-             phonesDeferred: !!(opts && opts.skipPhones) };
+             phonesDeferred: !!(opts && opts.skipPhones), phonesGated: !phonesOn };
 
   } catch (e) {
     try { conn.rollback(); } catch (re) {}
@@ -722,6 +731,10 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
  */
 function mirrorCdrPhonesToNeon(rows) {
   if (!rows || !rows.length) return { phones: 0, skipped: 0 };
+  if (!cdrPhonesMirrorEnabled_()) {
+    Logger.log('mirrorCdrPhonesToNeon: CDR_PHONES_MIRROR is not "on" — phone mirror retired (R27).');
+    return { phones: 0, skipped: 0, phonesGated: true };
+  }
   CDR_HMAC_CACHE_ = {};   // reset the per-run phone-hash memo
   var hmacSecret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
   if (!hmacSecret) {
@@ -743,6 +756,20 @@ function mirrorCdrPhonesToNeon(rows) {
   } finally {
     try { conn.close(); } catch (ce) {}
   }
+}
+
+/**
+ * R27: the call_history_phones write gate. The child rows are written ONLY
+ * when this project's CDR_PHONES_MIRROR Script Property is exactly 'on'
+ * (case-insensitive). Unset = OFF: the deploy itself stops the growth, and
+ * turning it back on is one property, no redeploy. Read per call (cheap; a
+ * handful of calls per import). Same rule in both INV-16 copies.
+ */
+function cdrPhonesMirrorEnabled_() {
+  try {
+    var v = PropertiesService.getScriptProperties().getProperty('CDR_PHONES_MIRROR');
+    return String(v || '').trim().toLowerCase() === 'on';
+  } catch (e) { return false; }
 }
 
 // -- CDR field-parsing helpers (inlined for INV-16 portability) ---------------

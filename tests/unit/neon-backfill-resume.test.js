@@ -230,3 +230,59 @@ test('Batch 2 follow-on: the upsert leaves a Pipeline Health row -- success when
     delete h.ctx.logPipelineHealth_;
   }
 });
+
+// ── R27: the CDR backfill's CDR_BACKFILL_BEFORE ceiling ───────────────────
+// The Operator State #57 refill (TRUNCATE call_history_phones, rebuild the
+// pre-capture block) must not re-create the post-capture phone rows: rows
+// dated at/after the ISO ceiling are skipped; unset = every row (unchanged).
+function cdrRow(date, agent) {
+  const r = new Array(26).fill('');
+  r[0] = 'July 2026'; r[1] = 'W1'; r[2] = date; r[3] = 'CSR'; r[4] = agent;
+  r[23] = '555-0100 (0:01:00)';
+  return r;
+}
+function installCdr(rows, extraProps) {
+  h.state.props = Object.assign({ NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p',
+                                  HMAC_SECRET: 's' }, extraProps || {});
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'CDR Historical Data': [new Array(26).fill('h')].concat(rows) },
+  });
+  const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0 };
+  const c = fakeConn(cap);
+  const realPrepare = c.prepareStatement;
+  c.prepareStatement = function (sql) {
+    const st = realPrepare(sql);
+    st.getUpdateCount = function () { return -1; };
+    st.executeQuery = function () {  // the parent-id lookup: no parents -> no phone rows
+      cap.statements.push({ sql: sql, binds: [] });
+      return { next: function () { return false; }, close: function () {} };
+    };
+    return st;
+  };
+  h.ctx.getNeonConn_backfill = function () { return c; };
+  return cap;
+}
+function cdrDatesBound(cap) {
+  const ins = cap.statements.filter(function (s) { return /INSERT INTO call_history_dept/.test(s.sql); });
+  const dates = [];
+  ins.forEach(function (s) { for (let i = 0; i < s.binds.length; i += 21) dates.push(s.binds[i]); });
+  return dates;
+}
+
+test('R27: CDR_BACKFILL_BEFORE skips rows dated at/after the ceiling; unset keeps every row', function () {
+  const rows = [cdrRow('07/08/2026', 'Anna'), cdrRow('07/09/2026', 'Ben'),
+                cdrRow('07/10/2026', 'Cal'), cdrRow('07/13/2026', 'Dee')];
+  let cap = installCdr(rows);
+  h.call('backfillCDRHistory');
+  assert.deepEqual(cdrDatesBound(cap), ['2026-07-08', '2026-07-09', '2026-07-10', '2026-07-13']);
+
+  cap = installCdr(rows, { CDR_BACKFILL_BEFORE: '2026-07-10' });
+  h.call('backfillCDRHistory');
+  assert.deepEqual(cdrDatesBound(cap), ['2026-07-08', '2026-07-09'], 'the capture-start day itself is excluded');
+  assert.ok(!('CDR_BACKFILL_RESUME' in h.state.props), 'a completed run clears its pointer');
+
+  cap = installCdr(rows, { CDR_BACKFILL_BEFORE: '7/10/2026' });
+  h.call('backfillCDRHistory');
+  assert.equal(cdrDatesBound(cap).length, 0, 'a non-ISO ceiling aborts before writing anything');
+});

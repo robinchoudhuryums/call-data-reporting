@@ -91,6 +91,10 @@ tests/
                               config-neon-c3, caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
+                              neon-retention (R27: the storage-cap prune --
+                              floored horizons above the coverage window,
+                              the six ctid-batched steps, budget/skip/error
+                              isolation, the flag-gated weekly handler),
                               html-include-structure (the whole-file
                               tag-wrap trap + the assembled-client pins),
                               queue-split (cols A..AH byte-identical +

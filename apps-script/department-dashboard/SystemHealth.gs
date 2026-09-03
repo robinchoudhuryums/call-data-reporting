@@ -528,6 +528,14 @@ function getSystemHealth(req) {
       + 'see (Operator State #52). Emails admins only on a finding. Enable via '
       + 'installSheetCoverageTrigger().',
       'SHEET_COVERAGE_ENABLED');
+    // R27: the Neon retention prune -- the storage-cap control. Registered
+    // WITH its flag so installed-but-disabled is flagged, not reported armed.
+    svc('trg-neonretention', 'Neon retention prune (weekly storage-cap control)',
+      ['runNeonRetentionWeekly_'], false,
+      'Recommended: nulls per-call journeys past 90d, drops per-call rows past 400d and '
+      + 'dqe/qcd mirror rows past 13 months so the free-tier 0.5 GB cap is never reached '
+      + '(Operator State #57). Enable via installNeonRetentionTrigger().',
+      'NEON_RETENTION_ENABLED');
     // F-e: the coaching delivery engine (weekly email + worklist upsert).
     // Admin-only while dark (owner ruling): emails go to getAdminEmails_().
     svc('trg-coaching', 'Coaching delivery (weekly flags → email + worklist)', ['runCoachingDelivery_'], false,
@@ -590,6 +598,9 @@ function getSystemHealth(req) {
       // A skip here is a genuine attention state (flags unavailable or Neon
       // down = no worklist upkeep), so the bad-word match is correct for it.
       ['out-coaching', 'Coaching delivery — last run', 'COACHING_DELIVERY_LAST', 'COACHING_DELIVERY_LAST_RESULT', 'runCoachingDelivery_', 'COACHING_DELIVERY_ENABLED', 9 * DAY_],
+      // R27: 'ok pruned N row(s) ...' (a budget-hit backlog is still ok --
+      // it continues next run) / 'FAILED n step(s) threw ...' / 'skipped (...)'.
+      ['out-neonretention', 'Neon retention — last prune', 'NEON_RETENTION_LAST', 'NEON_RETENTION_LAST_RESULT', 'runNeonRetentionWeekly_', 'NEON_RETENTION_ENABLED', 9 * DAY_],
     ];
     var installedMap = (typeof installed === 'object' && installed) ? installed : {};
     for (var o = 0; o < outcomes.length; o++) {
