@@ -21,6 +21,8 @@
 //   name columns corrupted before the F2 splitter fix, and fills any
 //   partially-written phone children. Requires HMAC_SECRET (aborts without
 //   it to avoid nulling the JSONB). Resumable via CDR_BACKFILL_RESUME.
+//   (T-8: every *_RESUME pointer is a fingerprinted JSON {index,rowCount,key};
+//   a sheet change since the last run restarts from 0 -- see nbResumeRead_.)
 // ============================================================================
 
 
@@ -38,6 +40,123 @@ function getNeonConn_backfill() {
   // does support. cross-file-pins.test.js fails if the params come back.
   var url = 'jdbc:postgresql://' + p.getProperty('NEON_HOST') + '/' + p.getProperty('NEON_DB');
   return Jdbc.getConnection(url, p.getProperty('NEON_USER'), p.getProperty('NEON_PASS'));
+}
+
+
+// -- T-8: fingerprinted resume pointers ----------------------------------------
+//
+// The four `*_RESUME` Script Properties used to hold a bare row INDEX into the
+// getDisplayValues() grid. That is positional: any row deleted or inserted
+// above the pointer between runs (the duplicate-merge repair, a force
+// re-import that shrank a date, a manual clean-up) shifts every later row, so
+// the resumed run silently SKIPPED rows for good (or re-did some). The pointer
+// now carries a fingerprint -- the grid's row count and the key of the row it
+// would resume AT -- and a mismatch restarts from 0 with a log line saying
+// why. Restarting is always safe: every backfill here is ON CONFLICT
+// idempotent. A legacy bare-integer value has no fingerprint to verify, so it
+// restarts too (logged). Operators still clear the property to force a
+// from-the-top run, exactly as before.
+var NB_DQE_KEY_COLS_ = [1, 2];      // DQE Historical Data: B date, C agent
+var NB_CDR_KEY_COLS_ = [2, 3, 4];   // CDR Historical Data: C date, D dept, E name
+var NB_QCD_KEY_COLS_ = [2, 3, 4];   // QCD Historical Data: C date, D queue, E source
+
+function nbResumeKey_(row, keyCols) {
+  return keyCols.map(function (c) {
+    return String(row && row[c] != null ? row[c] : '').trim();
+  }).join('\u0001');
+}
+
+function nbResumeRead_(props, prop, data, keyCols) {
+  var raw = props.getProperty(prop);
+  if (!raw) return 0;
+  var st = null;
+  try { st = JSON.parse(raw); } catch (e) { st = null; }
+  if (!st || typeof st !== 'object') {
+    Logger.log(prop + ' = "' + raw + '" is a legacy positional pointer with no row '
+      + 'fingerprint -- restarting from 0 so no row can be skipped (T-8). Clear the '
+      + 'property to silence this.');
+    return 0;
+  }
+  var idx = parseInt(st.index, 10);
+  if (isNaN(idx) || idx < 0) idx = 0;
+  var why = null;
+  if (st.rowCount !== data.length) {
+    why = 'row count changed (' + st.rowCount + ' -> ' + data.length + ')';
+  } else if (idx < data.length && nbResumeKey_(data[idx], keyCols) !== st.key) {
+    why = 'the row at index ' + idx + ' changed ("' + st.key + '" -> "'
+      + nbResumeKey_(data[idx], keyCols) + '")';
+  }
+  if (why) {
+    Logger.log(prop + ': the sheet changed since the last run -- ' + why
+      + '. Restarting from 0 so no row is skipped (T-8).');
+    return 0;
+  }
+  return idx;
+}
+
+function nbResumeWrite_(props, prop, idx, data, keyCols) {
+  props.setProperty(prop, JSON.stringify({
+    index: idx,
+    rowCount: data.length,
+    key: idx < data.length ? nbResumeKey_(data[idx], keyCols) : '',
+  }));
+}
+
+// -- T-7: sanitizer loss tally -------------------------------------------------
+//
+// The DQE backfills route AD/AE through sanitizeAbandonedCellForNeon_ and the
+// K-AC slots + AF through sanitizeSlotCellForNeon_, which EXCLUDE (null) or
+// SENTINEL (#REBUILD) cells they cannot recover. Correct -- but it used to be
+// silent: a run could null hundreds of coerced cells and log only its row
+// counts. The tally is printed in the completion / time-limit log lines and
+// stored in `DQE_BACKFILL_LAST` / `DQE_UPSERT_LAST`, so "how much did this run
+// lose?" has an answer, and a non-zero figure is the cue to run the
+// sheetRepairs before re-running.
+function nbNewSanTally_() { return { nulled: 0, sentineled: 0, rowsAffected: 0 }; }
+
+function nbSanitizeDqeCells_(r, tally) {
+  var lostBefore = tally.nulled + tally.sentineled;
+  var slots = r.slice(10, 29).map(function (cell) {
+    var out = sanitizeSlotCellForNeon_(cell);   // F-51
+    if (out === null && String(cell == null ? '' : cell).trim()) tally.nulled++;
+    return out;
+  });
+  var abId = function (cell) {
+    var raw = String(cell == null ? '' : cell).trim();
+    var out = sanitizeAbandonedCellForNeon_(cell);
+    if (out === DQE_ABANDONED_LOST_SENTINEL && raw !== DQE_ABANDONED_LOST_SENTINEL) tally.sentineled++;
+    return out;
+  };
+  var abParentIds = abId(r[29]);
+  var abMissedIds = abId(r[30]);
+  // M3: AF is a comma-joined H:MM:SS TIMES column that coerces IDENTICALLY to
+  // the K-AC slots (a "12/30/1899 10:23:33" date-render or a bare serial), NOT
+  // like the numeric AD/AE IDs. Route it through the slot sanitizer (F-51) so
+  // a coerced date-render is RECOVERED to "10:23:33" instead of mirrored
+  // verbatim as garbage by the ID sanitizer. `|| null` preserves the
+  // empty-cell -> NULL contract the ID sanitizer gave (the slot sanitizer
+  // returns '' for empty).
+  var afOut = sanitizeSlotCellForNeon_(r[31]);
+  if (afOut === null && String(r[31] == null ? '' : r[31]).trim()) tally.nulled++;
+  if (tally.nulled + tally.sentineled > lostBefore) tally.rowsAffected++;
+  return { slots: slots, abParentIds: abParentIds, abMissedIds: abMissedIds,
+           abMissedTimes: afOut || null };
+}
+
+function nbSanTallyText_(t) {
+  return 'cells nulled=' + t.nulled + ' sentineled=' + t.sentineled
+    + ' rows-with-loss=' + t.rowsAffected;
+}
+
+function nbSanTallyLog_(label, t) {
+  if (t.nulled + t.sentineled === 0) {
+    Logger.log(label + ': sanitizer loss -- none (no coerced cells excluded).');
+    return;
+  }
+  Logger.log(label + ': sanitizer loss -- ' + nbSanTallyText_(t)
+    + '. Those cells are coerced beyond recovery on the SHEET; run the '
+    + 'sheetRepairs (repairDqeSlotTimestamps / repairDqeAbandonedIds) and, for '
+    + 'the #REBUILD rows, rebuild those dates from Raw Data, then re-run.');
 }
 
 
@@ -128,7 +247,8 @@ function backfillDQEHistory() {
   var data = sheet.getRange(2, 1, lastRow - 1, dqeWidth).getDisplayValues();
 
   var props      = PropertiesService.getScriptProperties();
-  var startIndex = parseInt(props.getProperty('DQE_BACKFILL_RESUME') || '0');
+  var sanTally   = nbNewSanTally_();   // T-7
+  var startIndex = nbResumeRead_(props, 'DQE_BACKFILL_RESUME', data, NB_DQE_KEY_COLS_);   // T-8
 
   Logger.log('DQE backfill: starting at index ' + startIndex + ' of ' + data.length);
 
@@ -147,9 +267,12 @@ function backfillDQEHistory() {
   try {
     while (i < data.length) {
       if (Date.now() - startTime > TIME_LIMIT_MS) {
-        props.setProperty('DQE_BACKFILL_RESUME', String(i));
+        nbResumeWrite_(props, 'DQE_BACKFILL_RESUME', i, data, NB_DQE_KEY_COLS_);
         Logger.log('Time limit reached. Resume saved at index ' + i +
           '. Inserted: ' + totalInserted + '. Run again to continue.');
+        nbSanTallyLog_('DQE backfill', sanTally);
+        props.setProperty('DQE_BACKFILL_LAST', 'PARTIAL ' + new Date().toISOString()
+          + ' resume=' + i + ' inserted=' + totalInserted + ' ' + nbSanTallyText_(sanTally));
         return;
       }
 
@@ -165,6 +288,7 @@ function backfillDQEHistory() {
         var cd0 = parseDateForNeon(r[1]);
         if (!cd0) { i++; continue; }   // unparseable date -> skip, don't poison the batch with a null call_date
 
+        var san = nbSanitizeDqeCells_(r, sanTally);   // T-7
         batch.push({
           monthYear:        r[0]  || null,
           callDate:         cd0,
@@ -176,17 +300,10 @@ function backfillDQEHistory() {
           totalAnswered:    parseInt(r[7]) || 0,
           ttt:              r[8]  || null,
           att:              r[9]  || null,
-          slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
-          abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
-          abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
-          // M3: AF is a comma-joined H:MM:SS TIMES column that coerces
-          // IDENTICALLY to the K-AC slots (a "12/30/1899 10:23:33" date-render
-          // or a bare serial), NOT like the numeric AD/AE IDs. Route it through
-          // the slot sanitizer (F-51) so a coerced date-render is RECOVERED to
-          // "10:23:33" instead of mirrored verbatim as garbage by the ID
-          // sanitizer. `|| null` preserves the empty-cell -> NULL contract the
-          // ID sanitizer gave (sanitizeSlotCellForNeon_ returns '' for empty).
-          abMissedTimes:    sanitizeSlotCellForNeon_(r[31]) || null,
+          slots:            san.slots,          // F-51 (tallied, T-7)
+          abParentIds:      san.abParentIds,
+          abMissedIds:      san.abMissedIds,
+          abMissedTimes:    san.abMissedTimes,   // M3: AF via the slot sanitizer
           // Durations via normalizeDuration so the "No abd calls" sentinel
           // (12 chars, written when a row has 0 abandoned calls) and any
           // other non-H:MM:SS value normalize to null instead of
@@ -264,7 +381,7 @@ function backfillDQEHistory() {
 
       } catch (e) {
         conn.rollback();
-        props.setProperty('DQE_BACKFILL_RESUME', String(batchStartIdx));
+        nbResumeWrite_(props, 'DQE_BACKFILL_RESUME', batchStartIdx, data, NB_DQE_KEY_COLS_);
         Logger.log('Batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
         throw e;
       } finally {
@@ -275,6 +392,9 @@ function backfillDQEHistory() {
     props.deleteProperty('DQE_BACKFILL_RESUME');
     Logger.log('DQE backfill complete. Total processed: ' + (i - startIndex) +
       '. Total inserted into Neon: ' + totalInserted);
+    nbSanTallyLog_('DQE backfill', sanTally);
+    props.setProperty('DQE_BACKFILL_LAST', 'OK ' + new Date().toISOString()
+      + ' inserted=' + totalInserted + ' ' + nbSanTallyText_(sanTally));
 
   } catch (e) {
     Logger.log('DQE backfill stopped. Error: ' + e.message);
@@ -316,7 +436,8 @@ function backfillDQEHistoryUpsert() {
   var data = sheet.getRange(2, 1, lastRow - 1, dqeWidth).getDisplayValues();
 
   var props      = PropertiesService.getScriptProperties();
-  var startIndex = parseInt(props.getProperty('DQE_UPSERT_RESUME') || '0');
+  var sanTally   = nbNewSanTally_();   // T-7
+  var startIndex = nbResumeRead_(props, 'DQE_UPSERT_RESUME', data, NB_DQE_KEY_COLS_);   // T-8
   // Optional date floor: when DQE_UPSERT_SINCE (YYYY-MM-DD) is set, only
   // rows with call_date >= it are upserted -- so after a bulk rebuild of
   // just a few recent days you can mirror only those instead of the whole
@@ -347,9 +468,12 @@ function backfillDQEHistoryUpsert() {
   try {
     while (i < data.length) {
       if (Date.now() - startTime > TIME_LIMIT_MS) {
-        props.setProperty('DQE_UPSERT_RESUME', String(i));
+        nbResumeWrite_(props, 'DQE_UPSERT_RESUME', i, data, NB_DQE_KEY_COLS_);
         Logger.log('Time limit reached. Resume saved at index ' + i +
           '. Upserted: ' + totalUpserted + '. Run again to continue.');
+        nbSanTallyLog_('DQE upsert', sanTally);
+        props.setProperty('DQE_UPSERT_LAST', 'PARTIAL ' + new Date().toISOString()
+          + ' resume=' + i + ' upserted=' + totalUpserted + ' ' + nbSanTallyText_(sanTally));
         return;   // finally closes conn
       }
 
@@ -368,6 +492,7 @@ function backfillDQEHistoryUpsert() {
         if (!cd) { i++; continue; }
         // Date floor (DQE_UPSERT_SINCE): skip rows older than the floor.
         if (sinceFloor && cd < sinceFloor) { i++; continue; }
+        var san = nbSanitizeDqeCells_(r, sanTally);   // T-7
         batch.push({
           monthYear:        r[0]  || null,
           callDate:         cd,
@@ -379,17 +504,10 @@ function backfillDQEHistoryUpsert() {
           totalAnswered:    parseInt(r[7]) || 0,
           ttt:              r[8]  || null,
           att:              r[9]  || null,
-          slots:            r.slice(10, 29).map(sanitizeSlotCellForNeon_),   // F-51
-          abParentIds:      sanitizeAbandonedCellForNeon_(r[29]),
-          abMissedIds:      sanitizeAbandonedCellForNeon_(r[30]),
-          // M3: AF is a comma-joined H:MM:SS TIMES column that coerces
-          // IDENTICALLY to the K-AC slots (a "12/30/1899 10:23:33" date-render
-          // or a bare serial), NOT like the numeric AD/AE IDs. Route it through
-          // the slot sanitizer (F-51) so a coerced date-render is RECOVERED to
-          // "10:23:33" instead of mirrored verbatim as garbage by the ID
-          // sanitizer. `|| null` preserves the empty-cell -> NULL contract the
-          // ID sanitizer gave (sanitizeSlotCellForNeon_ returns '' for empty).
-          abMissedTimes:    sanitizeSlotCellForNeon_(r[31]) || null,
+          slots:            san.slots,          // F-51 (tallied, T-7)
+          abParentIds:      san.abParentIds,
+          abMissedIds:      san.abMissedIds,
+          abMissedTimes:    san.abMissedTimes,   // M3: AF via the slot sanitizer
           // See backfillDQEHistory: normalizeDuration nulls the "No abd
           // calls" sentinel + any non-H:MM:SS so it can't overflow the
           // varchar(10) abd-wait columns.
@@ -501,7 +619,7 @@ function backfillDQEHistoryUpsert() {
           ' rows). Cumulative: ' + totalUpserted);
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
-        props.setProperty('DQE_UPSERT_RESUME', String(batchStartIdx));
+        nbResumeWrite_(props, 'DQE_UPSERT_RESUME', batchStartIdx, data, NB_DQE_KEY_COLS_);
         Logger.log('Batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
         throw e;
       }
@@ -510,6 +628,9 @@ function backfillDQEHistoryUpsert() {
     props.deleteProperty('DQE_UPSERT_RESUME');
     Logger.log('DQE upsert complete. Total processed: ' + (i - startIndex) +
       '. Total upserted into Neon: ' + totalUpserted);
+    nbSanTallyLog_('DQE upsert', sanTally);
+    props.setProperty('DQE_UPSERT_LAST', 'OK ' + new Date().toISOString()
+      + ' upserted=' + totalUpserted + ' ' + nbSanTallyText_(sanTally));
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -644,7 +765,7 @@ function backfillCDRHistory() {
   var data = sheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
 
   var props      = PropertiesService.getScriptProperties();
-  var startIndex = parseInt(props.getProperty('CDR_BACKFILL_RESUME') || '0');
+  var startIndex = nbResumeRead_(props, 'CDR_BACKFILL_RESUME', data, NB_CDR_KEY_COLS_);   // T-8
 
   Logger.log('CDR backfill: starting at index ' + startIndex + ' of ' + data.length);
   if (startIndex >= data.length) {
@@ -667,7 +788,7 @@ function backfillCDRHistory() {
   try {
     while (i < data.length) {
       if (Date.now() - startTime > TIME_LIMIT_MS) {
-        props.setProperty('CDR_BACKFILL_RESUME', String(i));
+        nbResumeWrite_(props, 'CDR_BACKFILL_RESUME', i, data, NB_CDR_KEY_COLS_);
         Logger.log('Time limit reached. Resume saved at index ' + i +
           '. Upserted: ' + totalUpserted + ', phones: ' + totalPhones +
           '. Run again to continue.');
@@ -883,7 +1004,7 @@ function backfillCDRHistory() {
 
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
-        props.setProperty('CDR_BACKFILL_RESUME', String(batchStartIdx));
+        nbResumeWrite_(props, 'CDR_BACKFILL_RESUME', batchStartIdx, data, NB_CDR_KEY_COLS_);
         Logger.log('CDR batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
         throw e;
       } finally {
@@ -917,7 +1038,7 @@ function backfillQCDHistory() {
   var data = sheet.getRange(2, 1, lastRow - 1, 12).getDisplayValues();
 
   var props      = PropertiesService.getScriptProperties();
-  var startIndex = parseInt(props.getProperty('QCD_BACKFILL_RESUME') || '0');
+  var startIndex = nbResumeRead_(props, 'QCD_BACKFILL_RESUME', data, NB_QCD_KEY_COLS_);   // T-8
 
   Logger.log('QCD backfill: starting at index ' + startIndex + ' of ' + data.length);
 
@@ -946,7 +1067,7 @@ function backfillQCDHistory() {
       if (Date.now() - startTime > TIME_LIMIT_MS) {
         try { conn.commit(); } catch (ce) {}
         try { conn.close();  } catch (ce) {}
-        props.setProperty('QCD_BACKFILL_RESUME', String(i));
+        nbResumeWrite_(props, 'QCD_BACKFILL_RESUME', i, data, NB_QCD_KEY_COLS_);
         Logger.log('Time limit reached. Resume saved at ' + i +
           '. Cumulative inserted: ' + totalInserted + '.');
         return;
@@ -1069,7 +1190,7 @@ function backfillQCDHistory() {
 
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
-        props.setProperty('QCD_BACKFILL_RESUME', String(batchStartIdx));
+        nbResumeWrite_(props, 'QCD_BACKFILL_RESUME', batchStartIdx, data, NB_QCD_KEY_COLS_);
         Logger.log('Batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
         try { conn.close(); } catch (ce) {}
         throw e;
@@ -1214,7 +1335,7 @@ function diagnoseDQELongValues() {
 
   Logger.log('=== DQE long-value scan (' + data.length + ' rows) ===');
   var resume = PropertiesService.getScriptProperties().getProperty('DQE_BACKFILL_RESUME');
-  if (resume) Logger.log('DQE_BACKFILL_RESUME = ' + resume + ' (failing batch starts here)');
+  if (resume) Logger.log('DQE_BACKFILL_RESUME = ' + resume + ' (T-8 fingerprinted pointer; its index is where the failing batch starts)');
   COLS.forEach(function(c) {
     var o = offenders[c.name];
     Logger.log(c.name + ' (varchar/limit ' + c.limit + '): ' + o.length + ' offender(s)');

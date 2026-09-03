@@ -271,7 +271,9 @@ When something looks wrong, before assuming a code bug, check:
     — Postgres has no stored row order; `ORDER BY call_date` at query time
     and the indexes keep the date/agent-filtered readers fast. It is resumable via
     the code-written `DQE_UPSERT_RESUME` cursor (clear it to restart from
-    the top), and takes an optional **`DQE_UPSERT_SINCE`** Script Property
+    the top; since T-8 it is a fingerprinted JSON `{index,rowCount,key}` and
+    a sheet change since the last run restarts from 0 on its own, logged),
+    and takes an optional **`DQE_UPSERT_SINCE`** Script Property
     -- a `YYYY-MM-DD` floor that upserts only rows on/after that date, so
     a bulk rebuild of a few recent days doesn't redo the whole history.
     (`DIRECT_UPSERT_SINCE` is the same knob on the Direct backfill, item
@@ -1481,9 +1483,16 @@ When something looks wrong, before assuming a code bug, check:
     a handful. Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
     with the tab gone, recreate it from the provider CSV (exact tab name) or,
     failing that, Neon holds the only intact copy. BEFORE any `backfill*`
-    run: clear `DQE_UPSERT_RESUME` (the pointer is positional and skips rows
-    after any row deletion, T-8), and spot-check col B for ISO-text dates
-    (`2026-05-19` shaped -- `parseDateForNeon` shifts them a day early, I2-9).
+    run: clearing `DQE_UPSERT_RESUME` still forces a from-the-top pass, but
+    since Batch 1 (2026-09-03) the four `*_RESUME` pointers are FINGERPRINTED
+    (`{index,rowCount,key}`) and restart from 0 by themselves when the sheet
+    changed underneath them (T-8, `nbResumeRead_`), and an ISO-text col B
+    cell (`2026-05-19` shaped) is keyed on its own date instead of a day
+    early (I2-9, `parseDateForNeon`). AFTER a `backfillDQEHistory*` run read
+    `DQE_UPSERT_LAST` / `DQE_BACKFILL_LAST` (cdr-report Script Properties):
+    `OK|PARTIAL <ts> ... cells nulled=N sentineled=M rows-with-loss=R` is
+    the T-7 sanitizer-loss tally -- a non-zero figure means coerced cells
+    were EXCLUDED from the mirror, so run the sheetRepairs and re-run.
     AFTER a rebuild: the zero-talk signature (a row with `answered > 0` and TTT
     `0:00:00`) is the corruption check that found the Aug 5-13 2026 rows, and
     `runDqeParityCheck` over the span should read CLEAN. Same-day duplicate

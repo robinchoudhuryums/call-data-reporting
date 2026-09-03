@@ -607,3 +607,84 @@ test('Batch 6: a REAL clean run reports clean + the rows it compared', function 
   assert.equal(v.clean, true);
   assert.ok(v.compared > 0, 'a pass must be backed by real compared rows');
 });
+
+
+// ── D-1 / O-1: the qcdAll cache is freshness-anchored and never pins empty ──
+//
+// Driven through the real qcdAllDeptCachedData_ with the compute stubbed, so
+// the pins are about the KEY and the PUT, not the report.
+
+function d1Install_(deptsOut) {
+  install(rosterGrid({ Alpha: ['Anna, 201'] }), [dcRow('Alpha', 'A_Q_Alpha')],
+    [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1)]);
+  let computes = 0;
+  h.ctx.computeQcdAllDepartments_ = function (from, to) {
+    computes++;
+    return { dateLabel: from, depts: deptsOut.slice(), grandTotals: {},
+             meta: { from: from, to: to, cacheHit: false } };
+  };
+  return function () { return computes; };
+}
+
+function cacheKeys_() { return Array.from(h.state.cache.keys()); }
+
+test('D-1: an EMPTY payload is served but NEVER cached; the next request recomputes', function () {
+  const computes = d1Install_([]);
+  const a = h.call('qcdAllDeptCachedData_', '2026-06-11', '2026-06-11');
+  assert.equal(a.cacheHit, false);
+  assert.deepEqual(a.data.depts, []);
+  assert.equal(cacheKeys_().filter(function (k) { return k.indexOf('qcdAll:') === 0; }).length, 0,
+    'no qcdAll key written for an empty payload');
+  const b = h.call('qcdAllDeptCachedData_', '2026-06-11', '2026-06-11');
+  assert.equal(b.cacheHit, false, 'recomputed, not served from a pinned empty blob');
+  assert.equal(computes(), 2);
+  delete h.ctx.computeQcdAllDepartments_;
+});
+
+test('D-1: a non-empty payload is cached under a key ANCHORED on the latest QCD date', function () {
+  const computes = d1Install_([{ dept: 'Alpha', totals: { totalCalls: 80 }, queues: [] }]);
+  h.ctx.getLatestDataDates = function () { return { qcd: '2026-06-10', dqe: '2026-06-10' }; };
+  const a = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  assert.equal(a.cacheHit, false);
+  const keys = cacheKeys_().filter(function (k) { return k.indexOf('qcdAll:') === 0; });
+  assert.equal(keys.length, 1);
+  assert.match(keys[0], /^qcdAll:v\d+:2026-06-10:2026-06-10:sheet:2026-06-10$/, 'source + anchor suffixes');
+  const b = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  assert.equal(b.cacheHit, true);
+  assert.equal(computes(), 1);
+  // The import lands a new day -> the anchor moves -> a NEW key, so a blob
+  // warmed before the ingest can no longer be served after it.
+  h.ctx.getLatestDataDates = function () { return { qcd: '2026-06-11', dqe: '2026-06-11' }; };
+  const c = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  assert.equal(c.cacheHit, false, 'anchor moved -> recompute');
+  assert.equal(computes(), 2);
+  delete h.ctx.getLatestDataDates;
+  delete h.ctx.computeQcdAllDepartments_;
+});
+
+test('D-1: in a trigger context (getLatestDataDates throws) the trigger-safe sheet scan anchors the key', function () {
+  d1Install_([{ dept: 'Alpha', totals: { totalCalls: 80 }, queues: [] }]);
+  h.ctx.getLatestDataDates = function () { throw new Error('Not authorized.'); };
+  h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  const keys = cacheKeys_().filter(function (k) { return k.indexOf('qcdAll:') === 0; });
+  assert.equal(keys.length, 1);
+  // queueReportQcdLatestIso_ (QueueReportEmail.gs) scans the fixture's QCD sheet.
+  assert.match(keys[0], /:sheet:2026-06-10$/);
+  assert.equal(h.call('qcdAllFreshnessAnchor_'), '2026-06-10');
+  delete h.ctx.getLatestDataDates;
+  delete h.ctx.computeQcdAllDepartments_;
+});
+
+test('D-1: opts.fresh skips the cache READ but still warms the key', function () {
+  const computes = d1Install_([{ dept: 'Alpha', totals: { totalCalls: 80 }, queues: [] }]);
+  h.ctx.getLatestDataDates = function () { return { qcd: '2026-06-10' }; };
+  h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  const a = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10', { fresh: true });
+  assert.equal(a.cacheHit, false, 'fresh recomputes even though the key is warm');
+  assert.equal(computes(), 2);
+  const b = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  assert.equal(b.cacheHit, true, 'the fresh compute re-warmed the key');
+  assert.equal(computes(), 2);
+  delete h.ctx.getLatestDataDates;
+  delete h.ctx.computeQcdAllDepartments_;
+});

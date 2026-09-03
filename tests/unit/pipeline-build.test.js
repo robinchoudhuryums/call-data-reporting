@@ -483,3 +483,25 @@ test('P4/M3: remirror routes AF through the slot sanitizer, AD/AE through the ID
   assert.deepEqual(afCalls.map(function (c) { return c[0]; }), ['slot'],
     'the AF cell reached ONLY the slot sanitizer');
 });
+
+
+// ── I2-9 / I-5: an ISO-shaped Raw Data START_TIME builds, and col B stays M/D/YYYY ──
+test('I2-9: an ISO START_TIME display parses as a LOCAL date and col B is written as M/D/YYYY, never ISO text', function () {
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P1', legId: 0, start: '2026-03-09 7:00:00', talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: '2026-03-09 7:00:00', caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const rows = ss._sheet('DQE Historical Data')._data.slice(1).filter(function (r) { return r[2] === 'Anna'; });
+  assert.equal(rows.length, 1, 'the day built (pre-fix: "No valid dates found")');
+  assert.equal(rows[0][1], '3/9/2026', 'col B canonicalized -- ISO text in col B is the coercion / one-day-early trap');
+  assert.equal(rows[0][7], 1);   // H answered
+});

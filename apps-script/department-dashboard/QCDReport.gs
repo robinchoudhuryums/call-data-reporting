@@ -211,15 +211,29 @@ function getQcdAllDepartments(req) {
  * it for the next web open. Returns { data, cacheHit }; NO auth / usage log
  * (those stay with the RPC so a trigger-context send has no Session to feed).
  */
-function qcdAllDeptCachedData_(from, to) {
+function qcdAllDeptCachedData_(from, to, opts) {
+  opts = opts || {};
   const cache = CacheService.getScriptCache();
   // CORE-3 pattern: suffix the (6h-TTL) all-dept key with the active QCD read
   // source so flipping QCD_READ_SOURCE can't serve a cross-source blob for the
   // TTL. (The shorter-TTL report caches that embed QCD -- insights/summary/
   // companyOverview, 30min -- are parity-gated and self-heal within the TTL.)
   const qcdSrc = (typeof getQcdReadSource_ === 'function') ? getQcdReadSource_() : 'sheet';
-  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to + ':' + qcdSrc;
-  const cached = cache.get(cacheKey);
+  // D-1 / O-1: the key is ANCHORED on the latest QCD date (the S3 stale-morning
+  // contract every other 6h key meets via reportFreshnessTag_ -- but that tag
+  // is the latest DQE date, the wrong source for a QCD-only report). Without
+  // it, any request for yesterday made BEFORE the import landed (an admin
+  // preview at 6:15, the modal's pre-load, a manager picking "yesterday")
+  // pinned `{depts:[]}` for 6h, and the 06:30 trigger -- whose readiness gate
+  // reads the SHEET, not this cache -- mailed every subscriber an empty
+  // report and marked the day sent. The anchor mints a new key the moment the
+  // import lands; the empty-payload put guard below closes the same-anchor
+  // window (Neon lagging the sheet under QCD_READ_SOURCE=neon).
+  const anchor = qcdAllFreshnessAnchor_();
+  const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to + ':' + qcdSrc + ':' + anchor;
+  // opts.fresh (the admin preview): skip the cache READ so the admin verifies
+  // a freshly computed report, but still WARM the key for the next web open.
+  const cached = opts.fresh ? null : cache.get(cacheKey);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
@@ -233,13 +247,45 @@ function qcdAllDeptCachedData_(from, to) {
   // constant-only this request -- and this cache's 6h TTL makes pinning
   // that especially costly. Serve uncached; the next request re-reads.
   const cfgFailed = (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_());
-  if (json.length <= 100000 && !cfgFailed) {
+  // D-1: an EMPTY payload (no dept had activity in the window) is never
+  // cached. computeQcdAllDepartments_ drops depts with zero calls, so a
+  // pre-ingest request for a real business day yields depts:[] -- legitimate
+  // to SERVE, poison to PIN for 6h. Recomputing an empty window is cheap.
+  const empty = !data || !data.depts || !data.depts.length;
+  if (json.length <= 100000 && !cfgFailed && !empty) {
     try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
+  } else if (empty) {
+    Logger.log('qcdAllDeptCachedData_: no dept rows for ' + from + '..' + to
+      + ' -- NOT cached (D-1: an empty, probably pre-ingest payload must not be pinned for the 6h TTL).');
   } else if (cfgFailed) {
     Logger.log('qcdAllDeptCachedData_: Dept Config read errored -- skipping cache put.');
   }
   return { data: data, cacheHit: false };
+}
+
+/**
+ * D-1: the qcdAll cache key's freshness anchor -- the latest QCD date, read
+ * source-aware (getLatestDataDates honors QCD_READ_SOURCE and is on the 5-min
+ * freshness tier). That RPC carries a signed-in gate, so in a TRIGGER context
+ * (the automated queue-report send has no Session user) it throws and the
+ * trigger-safe sheet scan (queueReportQcdLatestIso_, QueueReportEmail.gs)
+ * answers instead. Two anchors for one blob merely cost a cache miss.
+ * 'na' when neither can answer -- the empty-payload guard still holds then.
+ */
+function qcdAllFreshnessAnchor_() {
+  try {
+    if (typeof getLatestDataDates === 'function') {
+      const d = getLatestDataDates();
+      if (d && d.qcd) return String(d.qcd);
+    }
+  } catch (e) { /* trigger context (no signed-in user) or a read failure */ }
+  try {
+    if (typeof queueReportQcdLatestIso_ === 'function') {
+      return queueReportQcdLatestIso_() || 'na';
+    }
+  } catch (e2) { /* fall through */ }
+  return 'na';
 }
 
 // Pure all-departments QCD compute (no auth / cache / usage log), split out so

@@ -243,3 +243,28 @@ test('IMP-12: external non-phone CNAM display names are masked to initials', fun
   assert.equal(out.external[1].display, null);
   assert.ok(out.external[1].phone_hash, 'phone entry still hashed');
 });
+
+
+// ── I2-9 / I-5: parseDateForNeon returns an ISO-shaped cell VERBATIM ────────
+//
+// `new Date('2026-05-19')` is UTC midnight, which formatted in the script TZ
+// (Chicago) is 2026-05-18 -- so every sheet-fed caller (the backfills, the
+// deferred mirror's tail match, the duplicate-merge repair, the Direct
+// backfill, the CSR repair/vet) keyed an ISO-text row one day early, where
+// ON CONFLICT DO UPDATE then overwrote the WRONG date's row. The paste-old-rows
+// flow and a yyyy-mm-dd number format both produce that cell shape.
+test('I2-9: ISO-shaped cells are returned verbatim, never TZ-shifted', function () {
+  const f = h.fn('parseDateForNeon');
+  assert.equal(f('2026-05-19'), '2026-05-19');
+  assert.equal(f(' 2026-05-19 '), '2026-05-19');
+  assert.equal(f('2026-05-19 10:23:33'), '2026-05-19', 'ISO date + time keeps the date part');
+  // The M/D/YYYY display path is unchanged.
+  assert.equal(f('5/19/2026'), '2026-05-19');
+  assert.equal(f('05/19/2026 10:23:33'), '2026-05-19');
+  assert.equal(f(''), null);
+  assert.equal(f(null), null);
+  assert.equal(f('not a date'), null);
+  // A 'T'-joined ISO INSTANT is a UTC timestamp: it still goes through the
+  // Date parse + script-TZ format (Chicago is UTC-5 in May).
+  assert.equal(f('2026-05-19T03:00:00Z'), '2026-05-18');
+});
