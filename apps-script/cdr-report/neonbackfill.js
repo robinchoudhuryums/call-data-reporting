@@ -4,7 +4,8 @@
 // One-time backfill scripts that read existing rows from "DQE Historical Data"
 // and "QCD Historical Data" sheets and write them to Neon Postgres.
 //
-// Idempotent: ON CONFLICT DO NOTHING means safe to re-run if interrupted.
+// Idempotent: the *History() backfills use ON CONFLICT DO NOTHING (safe to
+// re-run if interrupted); the *Upsert variants DO UPDATE so rebuilt values win.
 // Resumable: tracks progress in Script Properties so timeouts don't lose work.
 //
 // Usage:

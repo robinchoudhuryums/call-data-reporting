@@ -711,8 +711,8 @@ function classifyAbandonedCell_(raw) {
  *
  * MOVED here from PerformanceReport.gs when the Performance Report was
  * retired (PR->Insights consolidation) -- InsightsReport.gs consumes it
- * for teamStats/agent metrics, and CompareRangesReport.gs mirrors its
- * shape.
+ * for teamStats/agent metrics (the retired Compare Ranges report mirrored
+ * its shape).
  */
 function deltaBlock_(curr, prev, type, formatted) {
   let delta, deltaPct;

@@ -10,7 +10,7 @@ The project keeps two surfaces:
   in one of the four reference files the F8 split moved OUT of it, each of which
   CLAUDE.md still indexes: `docs/invariants.md` (the Invariant Library,
   `INV-01`…`INV-55`), `docs/operator-state.md` (the numbered Operator State
-  items), `docs/regression-scenarios.md` (`S1`…`S40`), and
+  items), `docs/regression-scenarios.md` (`S1`…`S44`), and
   `docs/client-ui-conventions.md` (the client/presentation-layer conventions).
   Those four are still LIVE TRUTH, not archive — only their location changed.
 - **This file = the historical fix log.** The commit-by-commit "why": what each
@@ -767,3 +767,39 @@ Enforcement: `tests/unit/prop-registry.test.js` sweeps every
 and composed `'PREFIX' +` key in the dashboard .gs files — unregistered key
 fails CI (forward), dead registry entry fails CI (reverse). The C2 rule made
 mechanical for the property store, the cache-version-sync S2 pattern.
+
+## 2026-09-03 broad-scan (increments 167+) — pointers, retractions, one incident
+
+| Code | What | Live rule |
+|---|---|---|
+| `D-1`/`O-1` | The all-departments Daily Queue Report caches under `qcdAll:` with no freshness anchor and no empty guard; a pre-ingest preview pins an empty blob the trigger then emails and marks sent. | Batch 1 fix pending |
+| `I2-9` | `parseDateForNeon`'s `new Date(iso)` fallback shifts an ISO-text date a day early in Chicago; guarded at one of ~13 sheet-fed call sites. | Operator State #56 |
+| `T-8` | Backfill resume pointers are positional row indexes. | Operator State #56 |
+| `X-1` | Orphan rename creates same-day duplicate rows and the Neon mirror drops a partition (last-write-wins). **Retracted as the cause of the Aug 5-13 mismatch** -- `previewDqeDuplicateMerge()` found none; latent. | Operator State #56 |
+| `C2-5` | Five more failure-only Pipeline Health step names stick red under the most-recent-outcome rule. | System Health gotcha (COROLLARY) |
+| `O-2` | Round 16 renamed the queue report's post-window outcome `MISSED` -> `LATE`; the Health classifier still keys on `MISSED`. | Operator State #31 |
+| `T-1` | Extraction Sidebar col G (Avg Wait) predicates drift from the pipeline on rows 36/40; the parity test excludes cols F/G. | Extraction Sidebar gotcha |
+| `I2-1` | Both cdr-import roster parsers keep only `ext1`. | INV-03 (fix pending) |
+| `A-1` | `CONFIG_SOURCE=neon` falls back to the stale sheet copy on any Neon error, on the auth path too. | Operator State #25 |
+| `D-4` | Dept Config saves bust two caches; five report surfaces keep the old queue map up to 6 h. | Operator State #4, CacheService tiers decision |
+
+**The Aug 5-13 2026 zero-talk incident.** Neon coverage reported "sheet exceeds
+Neon by 3-6 rows" on six dates; the parity gate then showed 333 duration-only
+mismatches with matching counts. Ground truth in the sheet: rows with answered
+calls and TTT `0:00:00` (Andrew, Aug 5: 46 answered, 0:00:00), plus 29 agent-days
+Neon never had. A sheet-wide scan (answered > 0 AND TTT = 0) found the corruption
+confined to Aug 5/6/7/10/11/13 (9-18 rows each; the rest of 18 months shows at
+most one such row per date, the normal shape) -- a development-era re-import of
+those dates whose source lacked talk fields. Neon, mirrored from the ORIGINAL
+build, was the intact copy, so the standard "push the sheet into Neon" runbook
+would have destroyed it. Recovery: Manual Export per date from the provider CSVs.
+Two lessons became Operator State #56: run the sanity scan before trusting either
+side, and never upsert on a mismatch without knowing which side is right. The
+same scan surfaced a roster-less live agent (now the hidden `Sales MWC` dept, see
+known-issues) and three more pseudo-agents (added to `DQE_EXCLUDED_AGENTS`).
+
+**System Health bullet narrative moved here (trim pass):** LM1 was the freshness
+scan window widening 40 -> 250 after a deferred-mirror retry storm evicted the
+DQE row and false-alarmed (see `OPS-7`); before the `svc(flagProp)` readiness
+check, an engine whose trigger was installed with its `*_ENABLED` flag off was
+reported as "installed" while every run no-op'd.

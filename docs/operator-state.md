@@ -27,12 +27,17 @@ When something looks wrong, before assuming a code bug, check:
     (UTC + git short SHA + branch); "unstamped" means the last push bypassed
     the deploy helper, so no CI gate ran against exactly what went live.
 
-3. Did the user actually have access? `Access Control` sheet rows are
-   case-sensitive on email.
+3. Did the user actually have access? The `Access Control` email match is
+   case-INsensitive after trim (`resolveUser_`), so check the Department cell
+   (must match a roster header byte-for-byte or be `ALL`) and the Role
+   instead; `EMAIL_ALIASES` (#36) can also redirect an address.
 4. Is the cache stale? Bump the relevant per-report prefix (see INV-30)
-   or wait out the TTL -- up to 30 min for the heavy report aggregations
-   (`REPORT_CACHE_TTL_SECONDS`), 5 min for the latest-date + freshness
-   pill lookups (`CACHE_TTL_SECONDS`).
+   or wait out the TTL -- up to 6 h for the heavy report aggregations
+   (`REPORT_CACHE_TTL_SECONDS`, raised from 30 min in R24; every heavy key
+   also carries `reportFreshnessTag_`, so the morning ingest mints new keys
+   without waiting), 5 min for the latest-date + freshness pill lookups
+   (`CACHE_TTL_SECONDS`). A Dept Config or roster edit is NOT a freshness
+   change, so it can lag the full 6 h on the report surfaces (D-4, open).
 5. Did the source-pipeline bugs (window inclusion / ATT denominator / leg
    attribution — see `known-issues.md`) get re-introduced? Spot-check Sonia
    2026-03-09: TTT should be `0:15:03`, ATT should be `0:03:01`.
@@ -449,6 +454,11 @@ When something looks wrong, before assuming a code bug, check:
     Labels` column (Neon's copy is blank) and the old gate could not see the
     loss. Reversible with no redeploy (set back to `sheet`); to revert
     cleanly after edits were made in Neon, copy them back to the sheet first.
+    ⚠ Under `neon`, EVERY reader (the auth-path sub-queue widening included)
+    falls back to the SHEET copy on any Neon error, and nothing logs it -- so a
+    Neon blip serves whatever the sheet held at backfill time (a removed
+    `Overview Parent` edge would re-grant access for the outage). Keep the
+    sheet copy in sync after Neon-side edits until A-1 is closed.
     `dept_config` is created lazily (`CREATE TABLE IF NOT EXISTS`, no setup()
     change). Parity pinned by `tests/unit/dept-config-neon.test.js`. Needs the
     dashboard `NEON_*` props + `script.external_request` scope. (First of the
@@ -647,9 +657,10 @@ When something looks wrong, before assuming a code bug, check:
     first-row-wins (`duplicateRow` flag + "⚠ duplicate" chip in the modal;
     Remove deletes all copies). A day whose data never lands before the window
     closes is flagged ONCE post-window (`queueReportFlagMissedDay_`:
-    `QUEUE_REPORT_LAST_MISSED` property + a `MISSED <iso>` LAST_RESULT + one
-    admin email; suppressed on fresh installs with no prior send) instead of
-    being silently skipped -- it is NOT auto-retried after the window.
+    `QUEUE_REPORT_LAST_MISSED` property + a `LATE <iso>` LAST_RESULT + one
+    admin email; suppressed on fresh installs with no prior send) and, since
+    Round 16, the poller KEEPS retrying it. ⚠ The Health page's classifier
+    still keys on `MISSED`, so a `LATE` outcome renders green until O-2 lands.
     **INSTALLING THE TRIGGER DOES NOT SUBSCRIBE YOU (O-9).** They are two
     separate actions in the same modal section, and doing only the first is the
     most common way this engine ends up running every weekday and emailing
@@ -1435,3 +1446,48 @@ When something looks wrong, before assuming a code bug, check:
     Health page's trigger-readiness matrix WITH its flag, so
     installed-but-disabled is flagged rather than reported as armed. Pinned by
     `tests/unit/sheet-coverage.test.js`.
+53. **Script Properties past the settings page's 50-row display cap.** The
+    dashboard store holds ~90 keys and the Apps Script settings page shows only
+    the first 50, so a key past the cap cannot be added or edited there. Set or
+    clear it from code instead: paste a one-off function into any `.gs` file in
+    the web editor, e.g.
+    `function setTemp() { PropertiesService.getScriptProperties().setProperties({ DQE_PARITY_FROM: '2026-08-05', DQE_PARITY_TO: '2026-08-12' }); }`,
+    Run it once, then DELETE the function so the next deploy does not ship it.
+    The complete read view of the store is the Health page's folded "All Script
+    Properties (inventory)" section (the `PROP_REGISTRY_` bullet in CLAUDE.md).
+54. **Caller Lookup's Neon index is a one-time manual step.** `CallerLookup.gs`
+    queries `inbound_calls` by `caller_hash`; the index it expects,
+    `CREATE INDEX IF NOT EXISTS idx_inbound_calls_caller_hash ON inbound_calls (caller_hash)`,
+    is created in the Neon console by hand (the outbound writer auto-creates its
+    own hash index; the inbound writer does not). Without it every lookup is a
+    sequential scan -- slow, not wrong.
+55. **The `DO NOT EDIT!` insurance reference block (cols X-AG) has exactly one
+    reader, and it is fixed-column.** `cdr-report/insuranceNumbers.js::readInsuranceNumberRows_`
+    reads `INSURANCE_BLOCK_START_COL`=24 .. `INSURANCE_BLOCK_END_COL`=33 and feeds
+    Neon's `insurance_numbers` table via the editor-run `syncInsuranceNumbersToNeon`
+    (no trigger, no menu item); the dashboard's insurer labels read Neon only.
+    Moving the block = edit both constants, `clasp push` cdr-report, re-run the
+    sync. Every live dept-block reader stops at the FIRST BLANK header from
+    column F, so keep at least one blank header column between the last dept
+    column and the insurance block; nothing reads column U or any hyperlink on
+    the sheet. (Verified across all four projects 2026-09-03 when `Sales MWC`
+    took column U -- see docs/known-issues.md "Sales MWC".)
+56. **Reprocessing historical dates.** Prefer CDR Tools -> Manual Export, one
+    date at a time: it force-rebuilds from `Call_Legs_<date>` and mirrors to
+    Neon INLINE from the same build (or via the deferred queue), returning a
+    toast with counts + the Neon status per date. The bulk path (`bulkHistoricalUpdate`)
+    passes `skipNeon`, force-deletes every date in range up front and needs
+    `backfillDQEHistoryUpsert()` afterwards -- fine for dozens of dates, not for
+    a handful. Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
+    with the tab gone, recreate it from the provider CSV (exact tab name) or,
+    failing that, Neon holds the only intact copy. BEFORE any `backfill*`
+    run: clear `DQE_UPSERT_RESUME` (the pointer is positional and skips rows
+    after any row deletion, T-8), and spot-check col B for ISO-text dates
+    (`2026-05-19` shaped -- `parseDateForNeon` shifts them a day early, I2-9).
+    AFTER a rebuild: the zero-talk signature (a row with `answered > 0` and TTT
+    `0:00:00`) is the corruption check that found the Aug 5-13 2026 rows, and
+    `runDqeParityCheck` over the span should read CLEAN. Same-day duplicate
+    `(date, agent)` rows -- which `neonDedupeByKey_` would collapse
+    last-write-wins on the Neon side -- are found by `findDqeDuplicateRows`
+    (neonbackfill.js) and merged by `repairDqeDuplicateMerge` (sheetRepairs.js,
+    with a `preview` twin); an Orphan Fix rename can create them (X-1, open).

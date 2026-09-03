@@ -97,6 +97,14 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
       // Checked BEFORE the window branches: it is the department that decides
       // this payload's shape, not the range.
       if (req && req.department && req.department !== 'CSR') return P['summary-30d-sales'];
+      // The Team Rings MTD window, by EXACT from/to -- ahead of the span-length
+      // buckets, which would hand a 1-2-day-old month the single-day fixture
+      // and make "MTD moves the numbers" unsatisfiable (2026-09-03).
+      var latestIso = P.latestDates && P.latestDates.latest;
+      if (req && !req.subScope && latestIso && P['summary-mtd']
+          && req.to === latestIso && req.from === latestIso.slice(0, 8) + '01') {
+        return P['summary-mtd'];
+      }
       // Sub-queue scope: the 30-day window has all three scopes captured, so the
       // switcher's round-trip is exercised for real instead of always serving the
       // combined payload back. Other windows keep the single (combined) fixture.
