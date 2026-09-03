@@ -772,12 +772,20 @@ mechanical for the property store, the cache-version-sync S2 pattern.
 
 | Code | What | Live rule |
 |---|---|---|
-| `D-1`/`O-1` | The all-departments Daily Queue Report caches under `qcdAll:` with no freshness anchor and no empty guard; a pre-ingest preview pins an empty blob the trigger then emails and marks sent. | Batch 1 fix pending |
-| `I2-9` | `parseDateForNeon`'s `new Date(iso)` fallback shifts an ISO-text date a day early in Chicago; guarded at one of ~13 sheet-fed call sites. | Operator State #56 |
-| `T-8` | Backfill resume pointers are positional row indexes. | Operator State #56 |
+| `D-1`/`O-1` | The all-departments Daily Queue Report cached under `qcdAll:` with no freshness anchor and no empty guard; a pre-ingest preview pinned an empty blob the trigger then emailed and marked sent. FIXED Batch 1 (PR #277): `qcdAllFreshnessAnchor_` key suffix, empty payload never cached, `sendQueueReportForDate_` refuses empty (`EMPTY <iso>` outcome, marker not claimed). | CacheService tiers decision; Operator State #31 |
+| `I2-9` | `parseDateForNeon`'s `new Date(iso)` fallback shifted an ISO-text date a day early in Chicago; guarded at one of ~13 sheet-fed call sites. FIXED Batch 1: the helper returns `yyyy-mm-dd` verbatim (both INV-16 copies); `displayToDate` accepts ISO and the build canonicalizes col B to M/D/YYYY. | Operator State #56 |
+| `T-8` | Backfill resume pointers were positional row indexes. FIXED Batch 1: `{index,rowCount,key}` fingerprint (`nbResumeRead_`), mismatch restarts from 0. `T-7`: the sanitizer-loss tally (`nbSanitizeDqeCells_`) in `DQE_UPSERT_LAST` / `DQE_BACKFILL_LAST` and, since Batch 2, `dqeUpsert` / `dqeBackfill` Pipeline Health rows. | Operator State #56; INV-44 |
 | `X-1` | Orphan rename creates same-day duplicate rows and the Neon mirror drops a partition (last-write-wins). **Retracted as the cause of the Aug 5-13 mismatch** -- `previewDqeDuplicateMerge()` found none; latent. | Operator State #56 |
-| `C2-5` | Five more failure-only Pipeline Health step names stick red under the most-recent-outcome rule. | System Health gotcha (COROLLARY) |
-| `O-2` | Round 16 renamed the queue report's post-window outcome `MISSED` -> `LATE`; the Health classifier still keys on `MISSED`. | Operator State #31 |
+| `C2-5` (+ `O-3`/`I-8`) | Eight failure-only Pipeline Health step names stuck red under the most-recent-outcome rule for the whole 250-row window. FIXED Batch 2: `HEALTH_FAILURE_ONLY_STEPS_` + a 4-day aging rule (`healthAgeMs_`), aged-out names go to the hint. Chosen over logging success rows (no sheet growth, no INV-16 edits). | System Health gotcha; INV-44 |
+| `O-2` | Round 16 renamed the queue report's post-window outcome `MISSED` -> `LATE`; the Health classifier still keyed on `MISSED`. FIXED Batch 2: `^LATE` arm + the gate explainer's text. | Operator State #31 |
+| `O-4` | `*_LAST` ages were never checked (a 6-min kill skips catch/finally, leaving the previous `ok` green); CacheWarm's Overview/summaries/qcdAll phases had no budget. FIXED Batch 2: per-row handler + flag + age allowance (daily 4d, weekly 9d) -> STALE; `CACHE_WARM_TOTAL_BUDGET_MS`. | System Health gotcha; Operator State #21 |
+| `O-7` | DqeSilenceWatch wrote `ok (inconclusive …)` (green); IngestWatchdog returned on a null read without recording and had no outcome row. FIXED Batch 2: prefix-coded `INCONCLUSIVE`, `out-ingestwatch` row. | Operator State #23, #44 |
+| `O-6` | The Neon coverage email appended the clock-bound tables LAST, so the 40-line cap cut the perishable findings (2026-09-02: 36 of 56 shown). FIXED Batch 2: no-sheet tables first + `ncClockBoundSuffix_` in the stored result. | Operator State #35 |
+| `O-5` | `ncMissingTableError_` / NeonBackup matched any "does not exist" (a missing COLUMN read as "table not created yet"). FIXED Batch 2: anchored to `relation "…" does not exist`. | Operator State #35 |
+| `O-12` | Sheet-coverage reported a transient read error as sheet MISSING and a read-error-only window as CLEAN. FIXED Batch 2: `readError` + `FAILED-READ`. | Operator State #52 |
+| `O-14` | The Health page read `QUEUE_REPORT_LAST`, a key nothing ever wrote. FIXED Batch 2 (row keyed on the result string alone). | -- |
+| `I-6` | `processNewImport`'s force-delete preceded the three compute stages, so a compute throw destroyed the date across five sheets. FIXED Batch 2: compute runs right after the P-3 source validation. | Force-path guard gotcha |
+| `O-13` | Doc drift (open): #31 says QCD is the last sheet the import writes (DQE + Direct follow); NeonKeepWarm.gs:15 quotes the old 190h free tier; SystemHealth.gs:398 says "Four" engines (seven). | -- |
 | `T-1` | Extraction Sidebar col G (Avg Wait) predicates drift from the pipeline on rows 36/40; the parity test excludes cols F/G. | Extraction Sidebar gotcha |
 | `I2-1` | Both cdr-import roster parsers keep only `ext1`. | INV-03 (fix pending) |
 | `A-1` | `CONFIG_SOURCE=neon` falls back to the stale sheet copy on any Neon error, on the auth path too. | Operator State #25 |

@@ -39,6 +39,48 @@
 // barely an hour of history. Do NOT shrink this.
 var HEALTH_PIPELINE_SCAN_ROWS = 250;
 
+// O-3 / I-8 / C2-5: Pipeline Health step names that ONLY EVER log `failure`
+// (there is no matching success row on a clean run), so the "most recent
+// outcome is failure" rule above kept them red for the whole 250-row window
+// (~2-4 weeks) after ONE transient mirror error. For these names a failure
+// older than HEALTH_FAILURE_ONLY_MAX_AGE_MS_ is treated as aged out (named in
+// the row's hint, not flagged); a recurring failure re-lands inside the
+// window every day and stays flagged. Every other step name keeps the M1 rule:
+// it logs successes, so its latest row IS the truth. Keep this list in sync
+// with the failure-only names in INV-44.
+var HEALTH_FAILURE_ONLY_MAX_AGE_MS_ = 4 * 86400000;   // Fri -> Tue morning stays visible
+var HEALTH_FAILURE_ONLY_STEPS_ = [
+  'processIntegratedHistory:CDR:neon',
+  'processIntegratedHistory:QCD:neon',
+  'processIntegratedHistory:Direct:neon',
+  'buildDQE:neon',
+  'processIntegratedHistory:CSR-guard',
+  'neonMirror:gave-up',
+  'bulkBackfill:QCD',
+  'bulkBackfill:CSR',
+];
+
+function healthFailureOnlyStep_(step) {
+  return HEALTH_FAILURE_ONLY_STEPS_.indexOf(String(step || '')) !== -1;
+}
+
+/**
+ * Age in ms of a stamp, or null when unparseable. Accepts the Pipeline
+ * Health reader's 'yyyy-MM-dd HH:mm' (script-TZ wall clock, parsed as local
+ * time -- the Apps Script runtime IS the script TZ) and ISO instants (the
+ * engines' `*_LAST` properties, `new Date().toISOString()`).
+ */
+function healthAgeMs_(stamp, nowMs) {
+  var s = String(stamp || '').trim();
+  if (!s) return null;
+  var t;
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/);
+  if (m) t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime();
+  else t = new Date(s).getTime();
+  if (isNaN(t)) return null;
+  return (nowMs || Date.now()) - t;
+}
+
 // B4: warn when fewer than this many emails remain for the day. Absolute, not
 // a percentage, because the quota is plan-dependent (~100/day consumer, ~1500
 // Workspace) and the app cannot read which plan it is on -- below ~50 the
@@ -164,9 +206,24 @@ function getSystemHealth(req) {
     } else {
       var latestByStep = {};   // readPipelineHealth_ returns NEWEST-first, so first-seen per step is its latest
       phRows.forEach(function (r) { if (r && r.step && !(r.step in latestByStep)) latestByStep[r.step] = r; });
+      var agedOut = [];
+      var nowMs = Date.now();
       var failingSteps = Object.keys(latestByStep).filter(function (s) {
-        return String(latestByStep[s].status || '').toLowerCase() === 'failure';
+        var r = latestByStep[s];
+        if (String(r.status || '').toLowerCase() !== 'failure') return false;
+        // O-3 / C2-5: a failure-only step name has no success row to recover
+        // with, so age it out instead of flagging it for the whole window.
+        if (healthFailureOnlyStep_(s)) {
+          var age = healthAgeMs_(r.timestamp, nowMs);
+          if (age != null && age > HEALTH_FAILURE_ONLY_MAX_AGE_MS_) { agedOut.push(s); return false; }
+        }
+        return true;
       });
+      var agedHint = agedOut.length
+        ? ' ' + agedOut.length + ' failure-only step(s) whose last failure is older than '
+          + Math.round(HEALTH_FAILURE_ONLY_MAX_AGE_MS_ / 86400000) + ' days are not flagged ('
+          + agedOut.join(', ') + ') — they never log a success row, so an old failure is not a live one.'
+        : '';
       if (!failingSteps.length) {
         // Say what was MEASURED, not what is true. This row can only see the
         // scanned window, and "no step currently failing" overstated that into
@@ -176,14 +233,14 @@ function getSystemHealth(req) {
           'no step failing in the last ' + phScan + ' entries',
           'Scope: the newest ' + phScan + ' Pipeline Health rows (' + phRows.length
           + ' present). A step whose most recent row is older than that window is '
-          + 'not assessed here — see Alerts modal → Pipeline Health for the full log.');
+          + 'not assessed here — see Alerts modal → Pipeline Health for the full log.' + agedHint);
       } else {
         var latestFail = latestByStep[failingSteps[0]];
         add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn',
           failingSteps.length + ' step(s) whose latest outcome is failure: ' + failingSteps.join(', '),
           'Most recent: ' + failingSteps[0] + (latestFail.timestamp ? ' @ ' + latestFail.timestamp : '')
           + (latestFail.notes ? ' — ' + latestFail.notes : '')
-          + '. See Alerts modal → Pipeline Health for the full Notes.');
+          + '. See Alerts modal → Pipeline Health for the full Notes.' + agedHint);
       }
     }
   } catch (e) { add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn', 'probe failed', String(e && e.message || e)); }
@@ -491,36 +548,52 @@ function getSystemHealth(req) {
 
   // Last outcomes of the optional services (property-backed, cheap).
   try {
+    // O-4: each row also names its trigger HANDLER, the engine's `*_ENABLED`
+    // flag (if any) and the longest gap a live engine may leave between
+    // outcomes. An `*_LAST` older than that while the trigger is installed and
+    // the flag is on means runs are happening but never RECORD -- the
+    // signature of a run killed at the 6-minute ceiling (the kill skips
+    // catch/finally, so the previous "ok" stayed green indefinitely). The
+    // allowances absorb weekends + a holiday Monday for daily engines and a
+    // missed week for weekly ones; window-gated (keep-warm) and editor-run
+    // (smoke, coverage) engines carry no age.
+    var DAY_ = 86400000;
     var outcomes = [
-      ['out-warm',     'Cache warm — last outcome',   'CACHE_WARM_LAST',    'CACHE_WARM_LAST_RESULT'],
-      ['out-keepwarm', 'Keep-warm — last ping',       'NEON_KEEPWARM_LAST', 'NEON_KEEPWARM_LAST_RESULT'],
-      ['out-backup',   'Neon backup — last run',      'NEON_BACKUP_LAST',   'NEON_BACKUP_LAST_RESULT'],
-      ['out-pipewatch','Pipeline watch — last run',   'PIPELINE_WATCH_LAST','PIPELINE_WATCH_LAST_RESULT'],
+      ['out-warm',     'Cache warm — last outcome',   'CACHE_WARM_LAST',    'CACHE_WARM_LAST_RESULT',    'warmReportCaches_', null, 4 * DAY_],
+      ['out-keepwarm', 'Keep-warm — last ping',       'NEON_KEEPWARM_LAST', 'NEON_KEEPWARM_LAST_RESULT', 'keepNeonWarm_', 'NEON_KEEPWARM_ENABLED', null],
+      ['out-backup',   'Neon backup — last run',      'NEON_BACKUP_LAST',   'NEON_BACKUP_LAST_RESULT',   'runNeonBackup_', null, 9 * DAY_],
+      ['out-pipewatch','Pipeline watch — last run',   'PIPELINE_WATCH_LAST','PIPELINE_WATCH_LAST_RESULT','runPipelineWatch_', 'PIPELINE_WATCH_ENABLED', 4 * DAY_],
+      // O-7: the ingest-failure watchdog was the one flag-gated engine with
+      // no outcome row; it now records every assessed run (incl. INCONCLUSIVE).
+      ['out-ingestwatch', 'Ingest watchdog — last run', 'INGEST_WATCHDOG_LAST', 'INGEST_WATCHDOG_LAST_RESULT', 'runIngestWatchdog_', 'INGEST_WATCHDOG_ENABLED', 4 * DAY_],
       // O-5: queue-report outcome (this engine has no *_LAST timestamp prop;
       // the result string carries its own timestamp). MISSED / FAILED-ALL
       // outcomes trip the OPS-8 classifier's bad-word match, as intended.
-      ['out-queuereport', 'Queue report — last outcome', 'QUEUE_REPORT_LAST', 'QUEUE_REPORT_LAST_RESULT'],
+      // O-14: there is no QUEUE_REPORT_LAST timestamp property (the result
+      // string carries its own); the old row read a key nothing ever wrote.
+      ['out-queuereport', 'Queue report — last outcome', null, 'QUEUE_REPORT_LAST_RESULT', 'runDailyQueueReport_', 'QUEUE_REPORT_ENABLED', null],
       // Live smoke harness (SmokeCheck.gs, editor-run): result string is
       // OPS-8 prefix-coded ('ok N/N ...' / 'FAILED k/N ...').
-      ['out-smoke', 'Live smoke — last run', 'SMOKE_LAST', 'SMOKE_LAST_RESULT'],
+      ['out-smoke', 'Live smoke — last run', 'SMOKE_LAST', 'SMOKE_LAST_RESULT', null, null, null],
       // R7 (G-2): Neon coverage check (NeonCoverage.gs, editor-run):
       // 'ok clean ...' / 'GAPS n finding(s) ...' / 'FAILED...' / 'skipped...'.
-      ['out-coverage', 'Neon coverage — last check', 'NEON_COVERAGE_LAST', 'NEON_COVERAGE_LAST_RESULT'],
+      ['out-coverage', 'Neon coverage — last check', 'NEON_COVERAGE_LAST', 'NEON_COVERAGE_LAST_RESULT', null, null, null],
       // R25: Sheet coverage (SheetCoverage.gs, editor-run) -- the sheet-side
       // twin: a business day with ZERO rows in a dashboard-read historical
       // sheet, which the Neon check structurally cannot see (it compares the
       // two sides, so a date missing from BOTH yields no finding).
       // 'CLEAN no missing business days ...' / 'GAPS n finding(s) ...' / 'FAILED...'.
-      ['out-sheetcoverage', 'Sheet coverage — last check', 'SHEET_COVERAGE_LAST', 'SHEET_COVERAGE_LAST_RESULT'],
-      // R18d: 'ok ...' / 'SILENT n dept(s) ...' / 'ERROR: ...'.
-      ['out-dqesilence', 'DQE silence — last check', 'DQE_SILENCE_WATCH_LAST', 'DQE_SILENCE_WATCH_LAST_RESULT'],
+      ['out-sheetcoverage', 'Sheet coverage — last check', 'SHEET_COVERAGE_LAST', 'SHEET_COVERAGE_LAST_RESULT', 'runSheetCoverageWeekly_', 'SHEET_COVERAGE_ENABLED', 9 * DAY_],
+      // R18d: 'ok ...' / 'SILENT n dept(s) ...' / 'INCONCLUSIVE ...' (O-7) / 'ERROR: ...'.
+      ['out-dqesilence', 'DQE silence — last check', 'DQE_SILENCE_WATCH_LAST', 'DQE_SILENCE_WATCH_LAST_RESULT', 'runDqeSilenceWatch_', 'DQE_SILENCE_WATCH_ENABLED', 4 * DAY_],
       // F-e: 'ok N new, M continuing ...' / 'skipped (...)' / 'ERROR: ...'.
       // A skip here is a genuine attention state (flags unavailable or Neon
       // down = no worklist upkeep), so the bad-word match is correct for it.
-      ['out-coaching', 'Coaching delivery — last run', 'COACHING_DELIVERY_LAST', 'COACHING_DELIVERY_LAST_RESULT'],
+      ['out-coaching', 'Coaching delivery — last run', 'COACHING_DELIVERY_LAST', 'COACHING_DELIVERY_LAST_RESULT', 'runCoachingDelivery_', 'COACHING_DELIVERY_ENABLED', 9 * DAY_],
     ];
+    var installedMap = (typeof installed === 'object' && installed) ? installed : {};
     for (var o = 0; o < outcomes.length; o++) {
-      var at = props.getProperty(outcomes[o][2]);
+      var at = outcomes[o][2] ? props.getProperty(outcomes[o][2]) : '';
       var res = props.getProperty(outcomes[o][3]);
       if (!at && !res) { add('triggers', outcomes[o][0], outcomes[o][1], 'muted', 'never run'); continue; }
       // OPS-8: outcome strings are prefix-coded -- an "ok (...)" result is
@@ -537,15 +610,38 @@ function getSystemHealth(req) {
       // empty recipient list. It reads like a clean run and is the exact state
       // an admin lands in by installing the trigger without subscribing.
       // R18d: and the silence watchdog's found-something outcome ('SILENT n ...').
+      // O-2: and "LATE <iso> ..." -- Round-16 renamed the queue report's
+      // window-closed flag from MISSED to LATE (the poller keeps retrying),
+      // and the classifier kept keying on MISSED, so a day that had NOT gone
+      // out rendered green. A late SEND leads with "Sent ..." and stays green.
+      // O-7: and "INCONCLUSIVE ..." -- a watchdog whose SOURCE was unreadable
+      // used to write "ok (inconclusive ...)", i.e. green for a check that
+      // could not check anything.
       var bad = !/^ok\b/i.test(res || '')
         && (/fail|error|unreachable|skipped/i.test(res || '')
             || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || '')
             || /^NO-SUBSCRIBERS\b/.test(res || '') || /^SILENT\b/.test(res || '')
             // D-1: "EMPTY <iso> ..." -- the queue report refused to send an
             // empty payload; the next poll retries, but it is not a success.
-            || /^EMPTY\b/.test(res || ''));
-      add('triggers', outcomes[o][0], outcomes[o][1], bad ? 'warn' : 'ok',
-        (res || '') + (at ? (' @ ' + at) : ''));
+            || /^EMPTY\b/.test(res || '')
+            || /^LATE\b/.test(res || '') || /^INCONCLUSIVE\b/.test(res || ''));
+      // O-4: a live engine whose last RECORDED outcome is older than its
+      // allowance. Only when the trigger is installed and (if flag-gated) the
+      // flag is on -- a disabled engine is already reported by its svc row.
+      var stale = '';
+      var fn = outcomes[o][4], flag = outcomes[o][5], maxAge = outcomes[o][6];
+      if (!bad && fn && maxAge && at && installedMap[fn]
+          && (!flag || String(props.getProperty(flag) || '') === 'true')) {
+        var ageMs = healthAgeMs_(at, Date.now());
+        if (ageMs != null && ageMs > maxAge) {
+          stale = ' — STALE: last recorded outcome is ' + (Math.round(ageMs / DAY_ * 10) / 10)
+            + ' day(s) old but the trigger is armed. Runs that never record an outcome are '
+            + 'the signature of the 6-minute kill (it skips catch/finally) — check the '
+            + 'Executions log for this handler (O-4).';
+        }
+      }
+      add('triggers', outcomes[o][0], outcomes[o][1], (bad || stale) ? 'warn' : 'ok',
+        (res || '') + (at ? (' @ ' + at) : '') + stale);
     }
   } catch (e) { add('triggers', 'out-probe', 'Service outcomes', 'warn', 'probe failed', String(e && e.message || e)); }
 

@@ -975,7 +975,11 @@ test('O-10: each skip reason explains itself with the input that caused it', fun
     { reason: 'not-ready', send: false, activeSubs: 1, latestQcd: '2026-07-28', targetIso: '2026-07-30' });
   assert.match(nr.explanation, /2026-07-28/, 'names how far the data reaches');
   assert.match(nr.explanation, /2026-07-30/, 'and the date it is waiting for');
-  assert.match(nr.explanation, /MISSED/, 'and that the window closing is terminal for that day');
+  // O-2: Round-16 made the window close a CLASSIFICATION (LATE), not a gate --
+  // the explanation used to promise a terminal MISSED with no retry.
+  assert.match(nr.explanation, /LATE/, 'names the post-window flag by its real name');
+  assert.match(nr.explanation, /KEEPS retrying/, 'and says the poller keeps going');
+  assert.doesNotMatch(nr.explanation, /MISSED|NOT retried/, 'no stale pre-Round-16 wording');
 
   const as = h.call('queueReportGateExplain_',
     { reason: 'already-sent', send: false, activeSubs: 1, targetIso: '2026-07-30' });
@@ -1104,6 +1108,8 @@ test('D-1: runDailyQueueReport_ records EMPTY <iso>, claims NO marker, and retri
   assert.equal(h.state.props.QUEUE_REPORT_LAST_SENT, undefined, 'the day is NOT marked sent -- the next poll retries');
   assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^EMPTY 2026-07-10/);
   assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /NOT sent, marker not claimed/);
+  // Batch 2 follow-on: a genuinely quiet business day has a documented exit.
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /COMPANY_HOLIDAYS \(Operator State #27\)/);
 });
 
 test('D-1: the manual subscriber blast surfaces the refusal instead of "0 sent"', function () {

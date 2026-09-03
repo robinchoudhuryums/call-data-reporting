@@ -456,6 +456,20 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     if (sourceData.length < 2) throw new Error("Source sheet empty.");
     const cleanData = sourceData.map(row => row.slice(0, MAX_COLS));
 
+    // I-6: COMPUTE before the force-delete block too. P-3 moved the source
+    // validation ahead of it; the three compute stages still ran AFTER it, so
+    // a throw inside calculateMetricsInMemory / calcQcdReport / calcCsrReport
+    // (a config-sheet drift, a named range gone) destroyed the date across all
+    // five historical sheets and then failed. They read only the source grid,
+    // the config sheet, QCDR Output and the csr_* named ranges -- none of the
+    // sheets the delete touches -- so their results are order-independent.
+    if (!silent) sourceSS.toast("Calculating Core...", "Step 2/7", -1);
+    const results = calculateMetricsInMemory(cleanData, configSheet);
+
+    if (!silent) sourceSS.toast("Calculating Extra Reports...", "Step 3/7", -1);
+    results.qcdData = calcQcdReport(cleanData, targetSS);
+    results.csrData = calcCsrReport(cleanData, targetSS);
+
     // P26: capture what the force-delete below ACTUALLY removes, per sheet.
     // The loss guards (guardForceRebuildLoss_ / buildDQE's refuseIfForce_)
     // used to key on the force FLAG alone, and runManualExport always passes
@@ -515,7 +529,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     const needsRawDataWrite = !isHistoricalBackfill || willBuildDQE || willBuildDirect;
 
     if (needsRawDataWrite) {
-      if (!silent) sourceSS.toast("Transferring...", "Step 2/7", -1);
+      if (!silent) sourceSS.toast("Transferring...", "Step 4/7", -1);
       const valueData = cleanData.map(row => row.map(cell => {
         if (cell === "" || cell === null) return "";
         const num = Number(cell);
@@ -529,13 +543,6 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       }
       SpreadsheetApp.flush();
     }
-
-    if (!silent) sourceSS.toast("Calculating Core...", "Step 3/7", -1);
-    const results = calculateMetricsInMemory(cleanData, configSheet);
-
-    if (!silent) sourceSS.toast("Calculating Extra Reports...", "Step 4/7", -1);
-    results.qcdData = calcQcdReport(cleanData, targetSS);
-    results.csrData = calcCsrReport(cleanData, targetSS);
 
     if (!isHistoricalBackfill) {
       if (!silent) sourceSS.toast("Updating Reports...", "Step 5/7", -1);

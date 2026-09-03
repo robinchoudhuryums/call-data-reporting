@@ -1342,22 +1342,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   sheet ("Source sheet empty." throw) BEFORE the force-delete block -- a force
   re-run against an existing-but-empty/corrupt `Call_Legs` sheet used to
   destroy the date across all five historical sheets and THEN throw; it is now
-  a clean no-op. New force-path writers must keep source validation ahead of
+  a clean no-op -- and since I-6 (Batch 2) the three compute stages
+  (`calculateMetricsInMemory` / `calcQcdReport` / `calcCsrReport`) run before
+  the delete too, so a compute throw is likewise a no-op (`csr-transfer.test.js`
+  pins the order). New force-path writers must keep source validation ahead of
   any delete. Pinned by `csr-transfer.test.js` (the helper) + `pipeline-build.test.js` (M2).
 - **System Health "Recent pipeline step failures" is the single trustworthy
   pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
   `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- never NARROWER
   than the Overview banner's window (LM1), and its OK text states the window
   measured. It flags a step ONLY when its MOST RECENT outcome is `failure`
-  (failed-then-recovered is not flagged -- the OPS-8/M1 rule). COROLLARY: that
-  rule assumes every step name ALSO logs successes; the failure-only names
-  (`:CDR:neon`/`:QCD:neon`/`:Direct:neon`/`buildDQE:neon`, `CSR-guard`,
-  `neonMirror:gave-up`, `bulkBackfill:QCD/CSR`) stay red until they scroll out
-  of the 250-row window (C2-5, open).
-  Catches every step in one place: the CDR/QCD/DQE/Inbound sheet writes, the
-  `:CDR:neon`/`:QCD:neon` inline-mirror failures (L7), `buildDQE:neon` (F4) /
-  `:Inbound` (F9), the deferred `neonMirror:*` drains, and the
-  `guardForceRebuildLoss_` QCD signal above. Pinned by `system-health.test.js`.
+  (failed-then-recovered is not flagged -- the OPS-8/M1 rule). The
+  FAILURE-ONLY names (INV-44 lists them; `HEALTH_FAILURE_ONLY_STEPS_`) never
+  log a success row, so a failure older than `HEALTH_FAILURE_ONLY_MAX_AGE_MS_`
+  (4 days) is named in the hint, not flagged (O-3/C2-5; a recurring one stays
+  red). The engine outcome rows (`*_LAST`) also warn STALE when an ARMED engine
+  has not recorded past its allowance (O-4) -- a run killed at the 6-min
+  ceiling records nothing. Catches every INV-44 step in one place (sheet
+  writes, inline + deferred mirrors, the force-loss guards, the
+  `dqeUpsert`/`dqeBackfill` tally rows). Pinned by `system-health.test.js`.
   This page is the PULL view; the optional **Pipeline-failure watchdog**
   (`PipelineWatch.gs`, Operator State #32) PUSHES the same new failure rows to
   admins by email. Three other sections share the page, each read-only and
@@ -1595,8 +1598,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `backfillDQEHistoryUpsert()` (cdr-report) once** to mirror those dates to
   `dqe_history` with `ON CONFLICT DO UPDATE` (so re-calculated values
   OVERWRITE stale rows -- `backfillDQEHistory`'s `DO NOTHING` would skip
-  them). Resumable via `DQE_UPSERT_RESUME`; opens one connection per
-  invocation. The bulk-complete alert reminds the operator.
+  them). Resumable via `DQE_UPSERT_RESUME` (fingerprinted since T-8: a sheet
+  change restarts from 0, logged); one connection per invocation; the T-7
+  sanitizer-loss tally lands in `DQE_UPSERT_LAST` and a `dqeUpsert` Pipeline
+  Health row (`failure` on loss = run the sheetRepairs). The bulk-complete
+  alert reminds the operator.
 
 ## Key Design Decisions
 
@@ -1626,9 +1632,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   cache-version-sync's ANCHOR_SPECS classifies every prefix and fails when
   a tag-anchored file stops calling `reportFreshnessTag_()`. **6 h (`QCD_ALLDEPT_CACHE_TTL_SECONDS`,
   CacheService's max) on the all-departments Daily Queue Report
-  (`qcdAll:`)** -- QCD lands once daily, so a warmed yesterday-blob can
-  serve all day; trade-off: a rare mid-day force re-import's corrections
-  can lag there up to 6h (paired with the CacheWarm qcdAll warm, which is
+  (`qcdAll:`)** -- keyed on the latest QCD date (`qcdAllFreshnessAnchor_`,
+  D-1) and never caching an EMPTY payload, so a pre-ingest request cannot pin
+  a blank report; a mid-day force re-import's corrections can still lag up to
+  6h (the anchor moves only when the latest date does; the CacheWarm warm is
   freshness-guarded); 5 min (`CACHE_TTL_SECONDS`) on the freshness-sensitive
   `latestDate` / `latestDates` lookups so the morning ingest surfaces
   promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The tradeoff

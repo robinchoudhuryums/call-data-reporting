@@ -334,7 +334,12 @@ When something looks wrong, before assuming a code bug, check:
     (last 30 days ending yesterday) the Help quick-start chips auto-run.
     Both run LAST under a SHARED 4-min runtime budget so the trigger can't be
     killed mid-warm; unwarmed depts take the cold path and the outcome line
-    reports how many were skipped (across both passes). **Warming only (b)
+    reports how many were skipped (across both passes). Since Batch 2 (O-4)
+    the WHOLE run is budgeted (`CACHE_WARM_TOTAL_BUDGET_MS`, 5 min): the
+    per-dept summaries and the qcdAll warm also stop at the budget and the
+    outcome line counts them (`N summaries skipped on budget`, `qcdAll skipped
+    on budget`), so the run always ends by RECORDING -- and the Health page
+    warns STALE when an armed warm has not recorded in 4 days. **Warming only (b)
     was a silent miss** -- the cache key carries the window, so every first
     dept open paid a full cold aggregation while the warm sat unread.
     A 1-day window is NOT cheaper to compute than a 30-day one (both fetch
@@ -410,8 +415,11 @@ When something looks wrong, before assuming a code bug, check:
     next run instead of silencing the episode), skips weekends AND company
     holidays, credits 24h of staleness allowance per weekend/holiday day
     inside the gap (OPS-7 -- a zero-activity holiday's expected rows:0
-    build can't false-alarm the next morning), and treats a null freshness
-    read as inconclusive (no false alarm).
+    build can't false-alarm the next morning), and records a null freshness
+    read as `INCONCLUSIVE` in `INGEST_WATCHDOG_LAST_RESULT` (no false alarm,
+    but visible: the Health page's `out-ingestwatch` row paints it
+    needs-attention, O-7; `fresh` / `stale (...)` otherwise, and STALE past 4
+    days without any record).
     Tunable Script Properties: `INGEST_WATCHDOG_HOUR` (0-23, default 10
     Central) and `INGEST_WATCHDOG_STALE_HOURS` (default 36). Reuses
     `script.scriptapp` + `script.send_mail` (no new scope); best-effort
@@ -661,8 +669,12 @@ When something looks wrong, before assuming a code bug, check:
     closes is flagged ONCE post-window (`queueReportFlagMissedDay_`:
     `QUEUE_REPORT_LAST_MISSED` property + a `LATE <iso>` LAST_RESULT + one
     admin email; suppressed on fresh installs with no prior send) and, since
-    Round 16, the poller KEEPS retrying it. ⚠ The Health page's classifier
-    still keys on `MISSED`, so a `LATE` outcome renders green until O-2 lands.
+    Round 16, the poller KEEPS retrying it. The Health page classifies `LATE`,
+    `EMPTY` (D-1: the sheet had the date but the report computed with no
+    departments -- not sent, marker not claimed, retried; a genuinely quiet day
+    belongs in `COMPANY_HOLIDAYS`) and `NO-SUBSCRIBERS` as needs-attention (O-2
+    landed in Batch 2, 2026-09-03); a late SEND reads `Sent ... (LATE ...)` and
+    stays green. The gate check's not-ready explanation says the same.
     **INSTALLING THE TRIGGER DOES NOT SUBSCRIBE YOU (O-9).** They are two
     separate actions in the same modal section, and doing only the first is the
     most common way this engine ends up running every weekday and emailing
@@ -840,8 +852,13 @@ When something looks wrong, before assuming a code bug, check:
     true horizon is the CSV ARCHIVE's retention -- with no archive, the
     original claim holds).
     Outcome in `NEON_COVERAGE_LAST(_RESULT)` ('ok clean' / 'GAPS n
-    finding(s)' / 'FAILED*'), surfaced as the Health page's "Neon coverage
-    -- last check" row. Complements the MAX(call_date)-only mirror-health
+    finding(s)' / 'FAILED*', plus a ` | clock-bound: <table> d1,d2` suffix
+    naming the zero-row weekdays of the no-sheet tables, O-6), surfaced as
+    the Health page's "Neon coverage -- last check" row. The email lists the
+    no-sheet tables FIRST so the 40-line cap can no longer cut the perishable
+    findings (the 2026-09-02 email lost all of them). Only `relation "…" does
+    not exist` is the clean not-created skip (O-5); a missing COLUMN is a
+    probe error. Complements the MAX(call_date)-only mirror-health
     lines (#19/#30): those catch a LAGGING mirror; this catches INTERIOR
     gaps and count drift. Run after deploys that touched mirrors, or when
     a journey drill reports a 'date-gap'. It never writes -- remediation is
@@ -1207,7 +1224,8 @@ When something looks wrong, before assuming a code bug, check:
     an unreadable source is INCONCLUSIVE (state untouched, never a false
     alarm). Health page: the `trg-dqesilence` readiness row + the
     `out-dqesilence` outcome row (`DQE_SILENCE_WATCH_LAST_RESULT`,
-    prefix-coded `ok` / `SILENT n dept(s)` / `ERROR`). Spot-check any time
+    prefix-coded `ok` / `SILENT n dept(s)` / `INCONCLUSIVE …` (O-7:
+    needs-attention, not green) / `ERROR`). Spot-check any time
     with `runDqeSilenceCheckNow()` (admin; assesses now, no email). State
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
@@ -1433,7 +1451,9 @@ When something looks wrong, before assuming a code bug, check:
     exactly when a missed import is most likely and least likely to be
     noticed. Run it monthly, and after any known import trouble.
     Outcome is OPS-8 prefix-coded in `SHEET_COVERAGE_LAST` /
-    `SHEET_COVERAGE_LAST_RESULT` and rendered as the Health page's "Sheet
+    `SHEET_COVERAGE_LAST_RESULT` (`CLEAN` / `GAPS n` / `FAILED-READ n` when a
+    sheet READ threw -- O-12: a read error is reported as such, never as a
+    MISSING sheet) and rendered as the Health page's "Sheet
     coverage — last check" row; admins are emailed ONLY when there is a
     finding. A gap's fix is per sheet (force re-import the date; for Direct,
     `runDirectCallBuild()`), and each finding names it.

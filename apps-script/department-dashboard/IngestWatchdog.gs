@@ -86,8 +86,18 @@ function runIngestWatchdog_() {
 
     // null = couldn't read Pipeline Health (missing/empty sheet, parse error).
     // Treat as inconclusive rather than stale so a transient read failure
-    // can't push a false alarm; the next run re-checks.
-    if (!fresh) return;
+    // can't push a false alarm; the next run re-checks. O-7: RECORD it --
+    // returning silently left the previous "fresh" on the Health page while
+    // the watchdog had stopped being able to see anything.
+    if (!fresh) {
+      try {
+        props.setProperty('INGEST_WATCHDOG_LAST', new Date().toISOString());
+        props.setProperty('INGEST_WATCHDOG_LAST_RESULT',
+          'INCONCLUSIVE — Pipeline Health unreadable (missing/empty sheet or parse error); '
+          + 'state untouched, the next run re-checks');
+      } catch (pe) { /* best-effort */ }
+      return;
+    }
 
     var staleHours = ingestWatchdogStaleHours_(props.getProperty('INGEST_WATCHDOG_STALE_HOURS'));
     // OPS-7: credit 24h per weekend/company-holiday day inside the stale

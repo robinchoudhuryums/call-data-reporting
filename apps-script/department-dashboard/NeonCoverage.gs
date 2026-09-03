@@ -180,6 +180,9 @@ function runNeonCoverageCheck() {
          + (out.errors.length ? (' (+' + out.errors.length + ' probe error(s))') : '') + ' | ' + out.ms + 'ms')
       : ((out.errors.length ? ('FAILED-PROBE ' + out.errors.length + ' table probe error(s)')
                             : 'ok clean') + ' over ' + fromIso + '..' + toIso + ' | ' + out.ms + 'ms');
+    // O-6: the stored result names the CLOCK-BOUND dates themselves, so they
+    // survive an email truncation and are readable from the Health page.
+    summary += ncClockBoundSuffix_(out.noSheet);
     ncRecord_(summary);
     ncEmailResult_(out, summary);
     Logger.log('runNeonCoverageCheck: ' + summary);
@@ -209,7 +212,10 @@ function runNeonCoverageCheck() {
  * deployed yet, as opposed to a real probe failure worth alarming on.
  */
 function ncMissingTableError_(msg) {
-  return /relation .* does not exist|does not exist/i.test(String(msg || ''));
+  // O-5: anchored to the undefined_table shape ONLY. The old `|does not
+  // exist` alternative also matched `column "x" does not exist` (schema
+  // drift) and read it as a clean "not created yet" skip.
+  return /relation "[^"]*" does not exist/i.test(String(msg || ''));
 }
 
 function ncCellDateIso_(s) {
@@ -393,6 +399,23 @@ function ncRetentionRisk_(conn, survivingDates, holidayFn) {
 
 // ── Outcome recording + email ───────────────────────────────────────────
 
+/**
+ * PURE (O-6). ' | clock-bound: <table> d1,d2,…; <table> …' listing the
+ * zero-row weekdays of the no-sheet-primary tables (capped per table), or
+ * '' when there are none.
+ */
+function ncClockBoundSuffix_(noSheet) {
+  var CAP = 25;
+  var parts = [];
+  (noSheet || []).forEach(function (ns) {
+    var d = (ns && ns.zeroRowWeekdays) || [];
+    if (!d.length) return;
+    parts.push(ns.table + ' ' + d.slice(0, CAP).join(',')
+      + (d.length > CAP ? ' +' + (d.length - CAP) + ' more' : ''));
+  });
+  return parts.length ? (' | clock-bound: ' + parts.join('; ')) : '';
+}
+
 function ncRecord_(result) {
   try {
     var props = PropertiesService.getScriptProperties();
@@ -407,6 +430,23 @@ function ncEmailResult_(out, summary) {
     var to = getAdminEmails_().join(',');
     if (!to) return;
     var lines = [];
+    // O-6: the no-sheet-primary tables FIRST. Their findings are the
+    // perishable ones (a zero-row weekday on inbound_calls / outbound_calls
+    // is recoverable only inside the ~14-day Call_Legs retention), and they
+    // used to be appended LAST -- so the line cap cut exactly them (the
+    // 2026-09-02 email showed 36 of 56 findings and lost every clock-bound
+    // date).
+    (out.noSheet || (out.inbound ? [out.inbound] : [])).forEach(function (ns) {
+      if (ns.skipped) { lines.push(ns.table + ' (no sheet primary): skipped (' + ns.skipped + ')'); return; }
+      var ibm = ns.zeroRowWeekdays || [];
+      if (!ibm.length) {
+        lines.push(ns.table + ' (no sheet primary): clean — every eligible weekday has rows'
+          + (ns.captureStart ? ' (capture since ' + ns.captureStart + ')' : ''));
+      } else {
+        lines.push(ns.table + ' (no sheet primary): ' + ibm.length + ' zero-row weekday(s) — CLOCK-BOUND, fix: ' + ns.fix);
+        lines.push('    ' + ibm.join(', '));
+      }
+    });
     (out.tables || []).forEach(function (t) {
       if (t.skipped) { lines.push(t.table + ' ← ' + t.sheet + ': skipped (' + t.skipped + ')'); return; }
       var n = t.missingInNeon.length + t.countMismatch.length + t.extraInNeon.length;
@@ -420,17 +460,6 @@ function ncEmailResult_(out, summary) {
         // trimmed sheet is the intended end state.
         lines.push('    (info) ' + t.sheetTrimmed.length + ' date(s) in Neon only — expected: '
           + 'read source is neon and the sheet may be trimmed');
-      }
-    });
-    (out.noSheet || (out.inbound ? [out.inbound] : [])).forEach(function (ns) {
-      if (ns.skipped) { lines.push(ns.table + ' (no sheet primary): skipped (' + ns.skipped + ')'); return; }
-      var ibm = ns.zeroRowWeekdays || [];
-      if (!ibm.length) {
-        lines.push(ns.table + ' (no sheet primary): clean — every eligible weekday has rows'
-          + (ns.captureStart ? ' (capture since ' + ns.captureStart + ')' : ''));
-      } else {
-        lines.push(ns.table + ' (no sheet primary): ' + ibm.length + ' zero-row weekday(s) — fix: ' + ns.fix);
-        lines.push('    ' + ibm.join(', '));
       }
     });
     (out.errors || []).forEach(function (e) { lines.push('PROBE ERROR: ' + e); });

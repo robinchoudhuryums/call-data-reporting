@@ -1,6 +1,13 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **Batch 2 of the 2026-09-03 broad scan is implemented on
+  `claude/broad-scan-p493eu` (O-2, O-3/I-8/C2-5, O-4, O-5, O-6, O-7, O-12,
+  O-14 + the Batch 1 follow-ons I-6 / backfill tally rows / EMPTY holiday
+  exit) -- block `168-batch2-health-truth-broad-implement.md`. Batch 1 (D-1,
+  I2-9, T-8, T-7) MERGED as PR #277. Three deploys carry Batch 2 (dashboard,
+  cdr-import, cdr-report). Next: Batch 3 (pipeline silent catches I-3/I-2/I-1,
+  the roster ext parsers I2-1, I-4 stray legs, I-10, P-1/P-9, X-1).**
 - **Batch 1 of the 2026-09-03 broad scan is implemented on
   `claude/broad-scan-p493eu` (D-1/O-1 empty queue report, I2-9 ISO date
   trap, T-8 fingerprinted resume pointers, T-7 sanitizer-loss tally) --
@@ -64,6 +71,24 @@
   `QUEUE_SPLIT_SCOPE=dept`, the dashboard should read **Spanish 17 rung / 15
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
+
+## Latest session (Batch 2 — Health page truth + Batch 1 follow-ons, 2026-09-03)
+- Implemented the seven Batch 2 findings plus I-6 and two follow-ons;
+  summary block verbatim in `.cycle/blocks/168-batch2-health-truth-broad-implement.md`.
+  `npm run ci` 1172/0; INV-16 in sync.
+- Decisions: (1) failure-only Pipeline Health steps AGE OUT in the Health
+  classifier (4 days, `HEALTH_FAILURE_ONLY_STEPS_`) rather than logging
+  success rows -- no sheet growth, no INV-16 edits; (2) `*_LAST` age checks
+  are gated on the trigger being installed AND the flag on, with 4-day /
+  9-day allowances and none for window-gated or editor-run engines; (3) the
+  backfill sanitizer tally reaches the Health page as `dqeUpsert` /
+  `dqeBackfill` Pipeline Health rows (`failure` on loss -- the cue to run
+  the sheetRepairs); (4) I-6 moved the three compute stages ahead of the
+  force-delete (they read none of the deleted sheets).
+- Open from this session: the DOCUMENTATION UPDATES list in the block
+  (CLAUDE.md System Health corollary is now FALSE and must be rewritten;
+  fix-history rows; operator-state #21/#23/#35/#44/#52).
+- Where I left off: Batch 2 committed + pushed; PR opened for the owner.
 
 ## Latest session (Batch 1 — wrong numbers leaving the system, 2026-09-03)
 - Implemented the four Batch 1 findings; summary block verbatim in

@@ -893,3 +893,135 @@ test('EA-1: the Health row appends the top-consumer ranking when attribution exi
   const row2 = rowByKey(h.call('getSystemHealth'), 'neon-egress');
   assert.ok(row2.value.indexOf('top:') === -1);
 });
+
+
+// ── Batch 2 (2026-09-03 broad scan): the Health page's false-green / sticky-red cluster ──
+
+function isoDaysAgo_(n) { return new Date(Date.now() - n * 86400000).toISOString(); }
+function phStampDaysAgo_(n) {
+  // The Pipeline Health reader's 'yyyy-MM-dd HH:mm' shape (script-TZ wall clock).
+  const d = new Date(Date.now() - n * 86400000);
+  const p = function (x) { return String(x).padStart(2, '0'); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function withTriggers_(fns, fn) {
+  const orig = h.ctx.ScriptApp;
+  h.ctx.ScriptApp = Object.assign({}, orig, {
+    getProjectTriggers: function () {
+      return fns.map(function (f) { return { getHandlerFunction: function () { return f; } }; });
+    },
+  });
+  try { return fn(); } finally { h.ctx.ScriptApp = orig; }
+}
+
+test('O-2: a LATE queue-report outcome paints the row amber (it used to read green)', function () {
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    QUEUE_REPORT_LAST_RESULT: 'LATE 2026-07-09 — QCD data did not land before the window closed; the poller keeps retrying.',
+  } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-queuereport').status, 'warn');
+  // A late SEND leads with "Sent" and stays green.
+  installHealth({ props: { NEON_HOST: 'h',
+    QUEUE_REPORT_LAST_RESULT: 'Sent 2026-07-09 to 3 subscribers (LATE — QCD data landed after the morning window) at X' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-queuereport').status, 'ok');
+});
+
+test('O-14: the queue-report row no longer reads the never-written QUEUE_REPORT_LAST key', function () {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'SystemHealth.gs'), 'utf8');
+  assert.doesNotMatch(src, /'QUEUE_REPORT_LAST'/, 'the bare key was dead: nothing ever wrote it');
+  // And the row still renders from the result string alone.
+  installHealth({ props: { NEON_HOST: 'h', QUEUE_REPORT_LAST_RESULT: 'Sent 2026-07-16 to 4 subscribers at X' } });
+  const row = rowByKey(h.call('getSystemHealth'), 'out-queuereport');
+  assert.equal(row.status, 'ok');
+  assert.doesNotMatch(row.value, / @ /, 'no phantom timestamp suffix');
+});
+
+test('O-7: an INCONCLUSIVE watchdog outcome warns, and the ingest watchdog has an outcome row', function () {
+  installHealth({ props: { NEON_HOST: 'h',
+    DQE_SILENCE_WATCH_LAST: '2026-07-16 07:00',
+    DQE_SILENCE_WATCH_LAST_RESULT: 'INCONCLUSIVE — QCD read failed; state untouched, the next run re-checks',
+    INGEST_WATCHDOG_LAST: isoDaysAgo_(0.1),
+    INGEST_WATCHDOG_LAST_RESULT: 'INCONCLUSIVE — Pipeline Health unreadable (missing/empty sheet or parse error); state untouched, the next run re-checks',
+  } });
+  const data = h.call('getSystemHealth');
+  assert.equal(rowByKey(data, 'out-dqesilence').status, 'warn', 'a check that could not check is not green');
+  const iw = rowByKey(data, 'out-ingestwatch');
+  assert.ok(iw, 'the ingest watchdog was the one flag-gated engine with no outcome row');
+  assert.equal(iw.status, 'warn');
+  installHealth({ props: { NEON_HOST: 'h', INGEST_WATCHDOG_LAST: isoDaysAgo_(0.1), INGEST_WATCHDOG_LAST_RESULT: 'fresh' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-ingestwatch').status, 'ok');
+});
+
+test('O-3 / C2-5: a failure-only step name ages out of pipe-failures; a recurring one and a normal step do not', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  // 1. buildDQE:neon failed 10 days ago and (by construction) never logs
+  //    success -> not flagged, but named in the hint.
+  h.ctx.readPipelineHealth_ = function () {
+    return [{ timestamp: phStampDaysAgo_(10), step: 'buildDQE:neon', status: 'failure', notes: 'unreachable' },
+            { timestamp: phStampDaysAgo_(0.5), step: 'processIntegratedHistory:DQE', status: 'success', notes: '' }];
+  };
+  let row = rowByKey(h.call('getSystemHealth'), 'pipe-failures');
+  assert.equal(row.status, 'ok', 'a 10-day-old failure-only row is not a live failure');
+  assert.match(row.hint, /buildDQE:neon/, 'but it is disclosed');
+  assert.match(row.hint, /never log a success row/);
+  // 2. The same step failed YESTERDAY -> flagged.
+  h.ctx.readPipelineHealth_ = function () {
+    return [{ timestamp: phStampDaysAgo_(1), step: 'buildDQE:neon', status: 'failure', notes: 'unreachable' }];
+  };
+  row = rowByKey(h.call('getSystemHealth'), 'pipe-failures');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /buildDQE:neon/);
+  // 3. A step that DOES log successes keeps the M1 rule regardless of age:
+  //    its latest row is failure, so it is failing.
+  h.ctx.readPipelineHealth_ = function () {
+    return [{ timestamp: phStampDaysAgo_(10), step: 'processIntegratedHistory:DQE', status: 'failure', notes: 'x' }];
+  };
+  row = rowByKey(h.call('getSystemHealth'), 'pipe-failures');
+  assert.equal(row.status, 'warn');
+  // 4. The list and INV-44 agree on the failure-only names.
+  const names = h.ctx.HEALTH_FAILURE_ONLY_STEPS_;
+  ['processIntegratedHistory:CDR:neon', 'processIntegratedHistory:QCD:neon', 'processIntegratedHistory:Direct:neon',
+   'buildDQE:neon', 'processIntegratedHistory:CSR-guard', 'neonMirror:gave-up', 'bulkBackfill:QCD', 'bulkBackfill:CSR']
+    .forEach(function (n) { assert.ok(names.indexOf(n) !== -1, n + ' is failure-only'); });
+  const inv = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'docs', 'invariants.md'), 'utf8');
+  names.forEach(function (n) { assert.ok(inv.indexOf(n) !== -1, 'INV-44 names ' + n); });
+  delete h.ctx.readPipelineHealth_;
+});
+
+test('O-4: an armed engine whose last RECORDED outcome is older than its allowance warns STALE', function () {
+  // Cache warm: daily trigger, 4-day allowance. 10 days old + installed -> stale.
+  installHealth({ props: { NEON_HOST: 'h', CACHE_WARM_LAST: isoDaysAgo_(10), CACHE_WARM_LAST_RESULT: 'ok (12 warmed, 900ms)' } });
+  let row = withTriggers_(['warmReportCaches_'], function () { return rowByKey(h.call('getSystemHealth'), 'out-warm'); });
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /STALE: last recorded outcome is 10(\.\d)? day\(s\) old/);
+  assert.match(row.value, /6-minute kill/);
+  // Same age, trigger NOT installed -> just an old ok (the svc row says "not installed").
+  row = rowByKey(h.call('getSystemHealth'), 'out-warm');
+  assert.equal(row.status, 'ok');
+  // Fresh outcome + installed -> ok.
+  installHealth({ props: { NEON_HOST: 'h', CACHE_WARM_LAST: isoDaysAgo_(1), CACHE_WARM_LAST_RESULT: 'ok (12 warmed, 900ms)' } });
+  row = withTriggers_(['warmReportCaches_'], function () { return rowByKey(h.call('getSystemHealth'), 'out-warm'); });
+  assert.equal(row.status, 'ok');
+  // A flag-gated engine with the flag OFF is never aged (its svc row already
+  // says "installed but DISABLED"); with the flag ON it is.
+  installHealth({ props: { NEON_HOST: 'h', DQE_SILENCE_WATCH_LAST: '2026-01-05 07:00', DQE_SILENCE_WATCH_LAST_RESULT: 'ok 0 silent' } });
+  row = withTriggers_(['runDqeSilenceWatch_'], function () { return rowByKey(h.call('getSystemHealth'), 'out-dqesilence'); });
+  assert.equal(row.status, 'ok', 'flag off -> not aged');
+  installHealth({ props: { NEON_HOST: 'h', DQE_SILENCE_WATCH_ENABLED: 'true', DQE_SILENCE_WATCH_LAST: '2026-01-05 07:00', DQE_SILENCE_WATCH_LAST_RESULT: 'ok 0 silent' } });
+  row = withTriggers_(['runDqeSilenceWatch_'], function () { return rowByKey(h.call('getSystemHealth'), 'out-dqesilence'); });
+  assert.equal(row.status, 'warn', 'flag on + armed + months old -> stale');
+  // Window-gated keep-warm carries no allowance: an old ping is not stale.
+  installHealth({ props: { NEON_HOST: 'h', NEON_KEEPWARM_ENABLED: 'true', NEON_KEEPWARM_LAST: isoDaysAgo_(30), NEON_KEEPWARM_LAST_RESULT: 'ok 12ms' } });
+  row = withTriggers_(['keepNeonWarm_'], function () { return rowByKey(h.call('getSystemHealth'), 'out-keepwarm'); });
+  assert.equal(row.status, 'ok');
+});
+
+test('O-4: healthAgeMs_ reads both stamp shapes and rejects junk', function () {
+  const f = h.ctx.healthAgeMs_;
+  const now = Date.now();
+  assert.ok(Math.abs(f(new Date(now - 3600000).toISOString(), now) - 3600000) < 1000, 'ISO instant');
+  assert.ok(f(phStampDaysAgo_(2), now) > 1.9 * 86400000 && f(phStampDaysAgo_(2), now) < 2.1 * 86400000, 'reader wall-clock stamp');
+  assert.equal(f('', now), null);
+  assert.equal(f('not a date', now), null);
+});

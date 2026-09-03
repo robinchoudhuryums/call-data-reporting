@@ -143,6 +143,20 @@ function nbSanitizeDqeCells_(r, tally) {
            abMissedTimes: afOut || null };
 }
 
+// Batch 2 follow-on: the tally also lands as a Pipeline Health row (the
+// cross-project channel the dashboard's Health page reads -- `*_LAST` Script
+// Properties live in THIS project and the page cannot see them). `success`
+// on a clean run; `failure` when cells were excluded (the cue to run the
+// sheetRepairs) or a batch threw. logPipelineHealth_ is defined in this
+// project's buildDQEHistoricalData.js; typeof-guarded for the unit harness.
+function nbPipelineRow_(ss, step, status, rows, t0, notes) {
+  try {
+    if (typeof logPipelineHealth_ !== 'function') return;
+    logPipelineHealth_(ss, { step: step, status: status, rows: rows,
+                             durationMs: Date.now() - t0, notes: notes });
+  } catch (e) { /* best-effort */ }
+}
+
 function nbSanTallyText_(t) {
   return 'cells nulled=' + t.nulled + ' sentineled=' + t.sentineled
     + ' rows-with-loss=' + t.rowsAffected;
@@ -395,6 +409,9 @@ function backfillDQEHistory() {
     nbSanTallyLog_('DQE backfill', sanTally);
     props.setProperty('DQE_BACKFILL_LAST', 'OK ' + new Date().toISOString()
       + ' inserted=' + totalInserted + ' ' + nbSanTallyText_(sanTally));
+    var bfLoss = sanTally.nulled + sanTally.sentineled;
+    nbPipelineRow_(ss, 'dqeBackfill', bfLoss ? 'failure' : 'success', totalInserted, startTime,
+      nbSanTallyText_(sanTally) + (bfLoss ? ' -- coerced cells EXCLUDED from the mirror; run the sheetRepairs, then re-run' : ''));
 
   } catch (e) {
     Logger.log('DQE backfill stopped. Error: ' + e.message);
@@ -621,6 +638,8 @@ function backfillDQEHistoryUpsert() {
         try { conn.rollback(); } catch (re) {}
         nbResumeWrite_(props, 'DQE_UPSERT_RESUME', batchStartIdx, data, NB_DQE_KEY_COLS_);
         Logger.log('Batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
+        nbPipelineRow_(ss, 'dqeUpsert', 'failure', totalUpserted, startTime,
+          'batch starting at index ' + batchStartIdx + ' threw: ' + e.message + ' -- resume pointer saved');
         throw e;
       }
     }
@@ -631,6 +650,9 @@ function backfillDQEHistoryUpsert() {
     nbSanTallyLog_('DQE upsert', sanTally);
     props.setProperty('DQE_UPSERT_LAST', 'OK ' + new Date().toISOString()
       + ' upserted=' + totalUpserted + ' ' + nbSanTallyText_(sanTally));
+    var upLoss = sanTally.nulled + sanTally.sentineled;
+    nbPipelineRow_(ss, 'dqeUpsert', upLoss ? 'failure' : 'success', totalUpserted, startTime,
+      nbSanTallyText_(sanTally) + (upLoss ? ' -- coerced cells EXCLUDED from the mirror; run the sheetRepairs, then re-run' : ''));
   } finally {
     try { conn.close(); } catch (ce) {}
   }
