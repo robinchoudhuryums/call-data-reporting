@@ -249,6 +249,13 @@ dump('ov-manager', h.call('getCompanyOverview', {}));
 // Dept summaries (CSR): single latest day (page default, INV-43), last-30, YTD.
 install('admin@ums.com');
 dump('summary-day', h.call('getDepartmentSummary', { department: 'CSR', from: LATEST, to: LATEST }));
+// The Team Rings panel's MTD window (`latest.slice(0,8)+'01' .. latest`,
+// script-5-dept). Captured for REAL so the mock can serve it by exact window:
+// routing it by span LENGTH served the single-day fixture back whenever the
+// month was 1-2 days old, and the "MTD moves the numbers" check failed on the
+// 3rd with nothing but docs changed (2026-09-03).
+dump('summary-mtd', h.call('getDepartmentSummary',
+  { department: 'CSR', from: LATEST.slice(0, 8) + '01', to: LATEST }));
 const s30 = span(30);
 dump('summary-30d', h.call('getDepartmentSummary', { department: 'CSR', from: s30.from, to: s30.to }));
 const yStart = iso(new Date(today.getFullYear(), 0, 1));

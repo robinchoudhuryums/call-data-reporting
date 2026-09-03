@@ -359,22 +359,40 @@ async function visibleErrorTones(page) {
       record(role + ': the Team Rings panel defaults to Range (reconciles with the table)',
         trpRange.active === 'range' && !/MTD|latest day/.test(trpRange.date),
         JSON.stringify(trpRange));
-      // The MTD window is `latest.slice(0,8) + '01' .. latest`, so on a day
-      // when `latest` IS the 1st it COINCIDES with the page's default single-day
-      // window (INV-43) and the two views are the same query. Asserting the
-      // figures differ is then unsatisfiable -- this failed CI on 2026-09-02 with
-      // nothing but a markdown file changed, because gen-payloads derives
-      // `latest` from the wall clock. So compare the SPANS the chip renders and
-      // assert the property that actually holds: different windows must move the
-      // numbers, identical windows must not.
+      // The MTD window is `latest.slice(0,8) + '01' .. latest`, and gen-payloads
+      // derives `latest` from the wall clock, so what MTD ADDS to the page's
+      // default single-day window (INV-43) depends on the calendar: nothing on
+      // the 1st (the windows coincide -- failed CI 2026-09-02), only weekend days
+      // when the month opens on one, and the fixture has rows on WEEKDAYS only.
+      // So the property that actually holds is: the figures move exactly when the
+      // MTD span adds a fixture weekday the Range span lacks. Read both spans off
+      // the chip and count those days, rather than asserting "different" blindly
+      // (the 2026-09-03 failure -- the mock was serving the wrong fixture too;
+      // see build-harness's exact-window route).
       const trpSpan = (d) => String(d || '').replace(/\s*·.*$/, '').trim();
-      const sameWindow = trpSpan(trpMtd.date) === trpSpan(trpRange.date);
+      const trpBounds = (span) => {
+        const m = span.match(/\d{4}-\d{2}-\d{2}/g) || [];
+        return { from: m[0] || '', to: m[m.length - 1] || m[0] || '' };
+      };
+      const trpAddedWeekdays = (mtdSpan, rangeSpan) => {
+        const a = trpBounds(mtdSpan), b = trpBounds(rangeSpan);
+        if (!a.from || !b.from) return -1;
+        let n = 0;
+        for (let d = new Date(a.from + 'T12:00:00'); d.toISOString().slice(0, 10) < b.from;
+             d.setDate(d.getDate() + 1)) {
+          if (d.getDay() !== 0 && d.getDay() !== 6) n++;
+        }
+        return n;
+      };
+      const rangeSpan = trpSpan(trpRange.date), mtdSpan = trpSpan(trpMtd.date);
+      const sameWindow = mtdSpan === rangeSpan;
+      const addedWeekdays = sameWindow ? 0 : trpAddedWeekdays(mtdSpan, rangeSpan);
       record(role + ': switching to MTD loads a DIFFERENT window and says so',
-        trpMtd.active === 'mtd' && /MTD/.test(trpMtd.date)
-          && (sameWindow ? trpMtd.rings === trpRange.rings
-                         : trpMtd.rings !== trpRange.rings),
-        JSON.stringify(Object.assign({ sameWindow: sameWindow,
-          rangeSpan: trpSpan(trpRange.date), mtdSpan: trpSpan(trpMtd.date) }, trpMtd)));
+        trpMtd.active === 'mtd' && /MTD/.test(trpMtd.date) && addedWeekdays >= 0
+          && (addedWeekdays > 0 ? trpMtd.rings !== trpRange.rings
+                                : trpMtd.rings === trpRange.rings),
+        JSON.stringify(Object.assign({ sameWindow: sameWindow, addedWeekdays: addedWeekdays,
+          rangeSpan: rangeSpan, mtdSpan: mtdSpan }, trpMtd)));
       record(role + ': switching back to Range restores the page-window figures',
         trpBack.active === 'range' && trpBack.rings === trpRange.rings
           && trpBack.rows === trpRange.rows,
