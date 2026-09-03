@@ -40,6 +40,44 @@ test('rowDateIso_ handles Date objects honoring the passed TZ (INV-02 root cause
   assert.equal(h.call('rowDateIso_', noonUtc, 'America/Mexico_City'), '2026-03-09');
 });
 
+test('rowDateIso_ memoizes the Date branch per execution (R27: one formatDate per distinct (ms, tz))', function () {
+  const U = h.ctx.Utilities;
+  const real = U.formatDate;
+  let calls = 0;
+  U.formatDate = function () { calls++; return real.apply(U, arguments); };
+  try {
+    h.ctx.ROW_DATE_ISO_MEMO_ = {}; h.ctx.ROW_DATE_ISO_MEMO_SIZE_ = 0;
+    const d1 = new Date(Date.UTC(2026, 2, 9, 12, 0, 0));
+    const d2 = new Date(Date.UTC(2026, 2, 10, 12, 0, 0));
+    // A column of ~100 rows per date: 300 calls, 3 distinct (ms, tz) keys.
+    for (let i = 0; i < 100; i++) {
+      assert.equal(h.call('rowDateIso_', new Date(d1.getTime()), 'America/Chicago'), '2026-03-09');
+      assert.equal(h.call('rowDateIso_', new Date(d2.getTime()), 'America/Chicago'), '2026-03-10');
+      assert.equal(h.call('rowDateIso_', new Date(d1.getTime()), 'America/Mexico_City'), '2026-03-09');
+    }
+    assert.equal(calls, 3, 'formatDate runs once per distinct (epoch ms, tz), not per row');
+    // The tz is part of the key: a different zone for the same instant is a
+    // fresh format, never a cross-zone hit.
+    h.call('rowDateIso_', new Date(d1.getTime()), 'UTC');
+    assert.equal(calls, 4);
+    // An invalid Date bypasses the memo (no key to store under) -- it reaches
+    // formatDate, whatever that then does with it (the shim throws).
+    try { h.call('rowDateIso_', new Date(NaN), 'America/Chicago'); } catch (e) { /* expected */ }
+    assert.equal(calls, 5);
+    // The cap resets the memo instead of growing it without bound.
+    h.ctx.ROW_DATE_ISO_MEMO_CAP_ = 2;
+    h.ctx.ROW_DATE_ISO_MEMO_ = {}; h.ctx.ROW_DATE_ISO_MEMO_SIZE_ = 0;
+    h.call('rowDateIso_', new Date(d1.getTime()), 'UTC');
+    h.call('rowDateIso_', new Date(d2.getTime()), 'UTC');
+    h.call('rowDateIso_', new Date(d1.getTime() + 86400000 * 5), 'UTC');
+    assert.ok(h.ctx.ROW_DATE_ISO_MEMO_SIZE_ <= 2, 'memo size stays under the cap: ' + h.ctx.ROW_DATE_ISO_MEMO_SIZE_);
+  } finally {
+    U.formatDate = real;
+    h.ctx.ROW_DATE_ISO_MEMO_CAP_ = 20000;
+    h.ctx.ROW_DATE_ISO_MEMO_ = {}; h.ctx.ROW_DATE_ISO_MEMO_SIZE_ = 0;
+  }
+});
+
 test('rowDateIso_ converts Sheets serial dates (F-8: right calendar day in ANY tz)', function () {
   // Serial 45726 = 2025-03-10 (days since 1899-12-30). This test previously
   // pinned 2025-03-09 -- the OLD off-by-one: the serial converts to UTC

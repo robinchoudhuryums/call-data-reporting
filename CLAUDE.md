@@ -1139,7 +1139,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `{min, max, rows}` from one read, memoized per EXECUTION in
   `DQE_DATE_BOUNDS_MEMO_` (the `DEPT_CONFIG_ROWS_MEMO_` discipline) --
   deliberately NOT cached across requests, so each caller keeps its own
-  R8-C2 negative-cache semantics. **Test-side trap:** a suite that swaps
+  R8-C2 negative-cache semantics. **Date cells resolve through `rowDateIso_`,
+  which memoizes its Date branch per execution (R27)** -- the per-row
+  `Utilities.formatDate` was the whole cost of that scan (~0.5 ms x 31.7k rows;
+  33 s on a cache-HIT queue report), so a new dated-sheet reader must route
+  through it rather than format per row (data-parsing.test.js pins the memo).
+  **Test-side trap:** a suite that swaps
   the DQE fixture must reset `DQE_DATE_BOUNDS_MEMO_` in its
   `install()` or it serves the previous test's bounds (dal-cutover
   + missed-report already do).

@@ -2136,10 +2136,34 @@ function parseExtensions_(cellValue) {
  * differs from the script's TZ -- same root cause as the duration
  * column issue. Falls back to the script's TZ if omitted.
  */
+// R27: per-EXECUTION memo for the Date branch of rowDateIso_. A whole-column
+// date scan (the 31.7k-row DQE bounds scan, the QCD column in
+// getLatestDataDates, every dated-sheet reader) calls Utilities.formatDate
+// once per ROW, at ~0.5 ms each -- measured as scanMs=17751 on one live
+// request, 33 s for the Daily Call Queue Report's freshness anchor on a
+// CACHE HIT. A date column holds ~100 rows per distinct date, so keying the
+// result on (epoch ms, tz) turns tens of thousands of formatDate calls into
+// a few hundred. Pure function of its key (deterministic), so a memoized
+// value is always the value the call would have produced; bounded so a
+// pathological column cannot grow it without limit.
+var ROW_DATE_ISO_MEMO_ = {};
+var ROW_DATE_ISO_MEMO_SIZE_ = 0;
+var ROW_DATE_ISO_MEMO_CAP_ = 20000;
+
 function rowDateIso_(v, tz) {
   const useTz = tz || TZ;
   if (v instanceof Date) {
-    return Utilities.formatDate(v, useTz, 'yyyy-MM-dd');
+    const ms = v.getTime();
+    if (isNaN(ms)) return Utilities.formatDate(v, useTz, 'yyyy-MM-dd');
+    const key = ms + '|' + useTz;
+    const hit = ROW_DATE_ISO_MEMO_[key];
+    if (hit !== undefined) return hit;
+    const iso = Utilities.formatDate(v, useTz, 'yyyy-MM-dd');
+    if (ROW_DATE_ISO_MEMO_SIZE_ >= ROW_DATE_ISO_MEMO_CAP_) {
+      ROW_DATE_ISO_MEMO_ = {}; ROW_DATE_ISO_MEMO_SIZE_ = 0;
+    }
+    ROW_DATE_ISO_MEMO_[key] = iso; ROW_DATE_ISO_MEMO_SIZE_++;
+    return iso;
   }
   // Sheets serial date: e.g. 45726 = 2025-03-10 (days since 1899-12-30).
   // Plausible date range (~1982 to ~2100) keeps us from misinterpreting
