@@ -132,7 +132,7 @@ function deptHasSubQueues_(dept) {
  * mapped queues, including sub-queue rollup). Used for the
  * "Violations (current month)" KPI tile.
  */
-function computeMtdViolations_(dept, values, ssTZ, qOpts) {
+function computeMtdViolations_(dept, values, ssTZ, qOpts, dates) {
   const queues = queuesForDept_(dept, qOpts);
   if (queues.length === 0) return 0;
   const queueSet = {};
@@ -148,7 +148,7 @@ function computeMtdViolations_(dept, values, ssTZ, qOpts) {
     if (source !== QCD_TOTAL_CALLS_SOURCE) continue;
     const q = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
     if (!queueSet[q]) continue;
-    const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
+    const dateIso = dates ? dates[i] : rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
     if (!dateIso || dateIso < mtdStart) continue;
     total += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1]) || 0;
   }
@@ -193,10 +193,13 @@ function getQcdAllDepartments(req) {
   }
   if (from > to) throw new Error('from must be on or before to.');
 
+  const tRpc = Date.now();
   const res = qcdAllDeptCachedData_(from, to);
   // RPT-10: the INV-01 telemetry carve-out. 'ALL' because the report has no
   // dept dimension. Logged here (the RPC boundary) with the real cacheHit.
   logReportUsage_('qcdAllDept', 'ALL', _user, res.cacheHit);
+  Logger.log('[qcdAll] rpc user=' + (_user && _user.email) + ' window=' + from + '..' + to
+    + ' cacheHit=' + res.cacheHit + ' totalMs=' + (Date.now() - tRpc));
   return res.data;
 }
 
@@ -229,19 +232,32 @@ function qcdAllDeptCachedData_(from, to, opts) {
   // report and marked the day sent. The anchor mints a new key the moment the
   // import lands; the empty-payload put guard below closes the same-anchor
   // window (Neon lagging the sheet under QCD_READ_SOURCE=neon).
+  const tAnchor = Date.now();
   const anchor = qcdAllFreshnessAnchor_();
+  const anchorMs = Date.now() - tAnchor;
   const cacheKey = QCD_ALLDEPT_CACHE_PREFIX + ':' + from + ':' + to + ':' + qcdSrc + ':' + anchor;
   // opts.fresh (the admin preview): skip the cache READ so the admin verifies
   // a freshly computed report, but still WARM the key for the next web open.
+  const tGet = Date.now();
   const cached = opts.fresh ? null : cache.get(cacheKey);
+  const getMs = Date.now() - tGet;
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
       if (parsed && parsed.meta) parsed.meta.cacheHit = true;
+      Logger.log('[qcdAll] cache HIT key=' + cacheKey + ' anchorMs=' + anchorMs + ' getMs=' + getMs);
       return { data: parsed, cacheHit: true };
     } catch (e) { /* recompute */ }
   }
+  Logger.log('[qcdAll] cache MISS key=' + cacheKey + ' anchorMs=' + anchorMs + ' getMs=' + getMs
+    + (opts.fresh ? ' (fresh: read skipped)' : '') + ' -- computing');
+  const tCompute = Date.now();
   const data = computeQcdAllDepartments_(from, to);
+  const computeMs = Date.now() - tCompute;
+  if (data && data.meta && data.meta.timing) {
+    data.meta.timing.anchorMs = anchorMs;
+    data.meta.timing.cacheGetMs = getMs;
+  }
   const json = JSON.stringify(data);
   // R8-C4: a failed Dept Config read means the dept->queue maps may be
   // constant-only this request -- and this cache's 6h TTL makes pinning
@@ -253,8 +269,11 @@ function qcdAllDeptCachedData_(from, to, opts) {
   // to SERVE, poison to PIN for 6h. Recomputing an empty window is cheap.
   const empty = !data || !data.depts || !data.depts.length;
   if (json.length <= 100000 && !cfgFailed && !empty) {
+    const tPut = Date.now();
     try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
+    Logger.log('[qcdAll] computeMs=' + computeMs + ' putMs=' + (Date.now() - tPut)
+      + ' bytes=' + json.length + ' key=' + cacheKey);
   } else if (empty) {
     Logger.log('qcdAllDeptCachedData_: no dept rows for ' + from + '..' + to
       + ' -- NOT cached (D-1: an empty, probably pre-ingest payload must not be pinned for the 6h TTL).');
@@ -330,17 +349,27 @@ function computeQcdAllDepartments_(from, to) {
   const priorTo = priorMonth + '-' + pad2_(priorEnd.getDate());
   let mTotal = 0, mAns = 0, mAbnd = 0, pTotal = 0, pAns = 0, pAbnd = 0;
   const mSeen = {}, pSeen = {};
+  // Step timing (2026-09-03): the report was taking 10+ minutes with nothing
+  // in the execution log to say where. Every phase now logs, and the
+  // per-dept figures ride the payload as meta.timing so the client can show
+  // them without the log.
+  const timing = { depts: {}, reportCalls: 0, gridMs: 0 };
 
   allDepts.forEach(function (dept) {
     // Own queues only -- children listed under their own dept.
     if (queuesForDept_(dept, { includeChildren: false }).length === 0) return;
+    const tDept = Date.now();
     const rep = computeQcdReport_(dept, from, to,
                                   /*includeSubQueues=*/ false,
                                   /*separateSubQueues=*/ false,
                                   /*rangeOnly=*/ true);   // perf: only queueBreakdown is used
+    const tRange = Date.now();
+    timing.reportCalls++;
     const mtdRep = (mtdFrom === from)
       ? rep
       : computeQcdReport_(dept, mtdFrom, to, false, false, true);
+    const tMtdDone = Date.now();
+    if (mtdFrom !== from) timing.reportCalls++;
     const mtdByQueue = {};
     const mtdCallsByQueue = {}, priorCallsByQueue = {};
     (mtdRep.queueBreakdown || []).forEach(function (r) {
@@ -351,6 +380,9 @@ function computeQcdAllDepartments_(from, to) {
     const priorRep = (priorFrom === from && priorTo === to)
       ? rep
       : computeQcdReport_(dept, priorFrom, priorTo, false, false, true);
+    timing.depts[dept] = { rangeMs: tRange - tDept, mtdMs: tMtdDone - tRange, priorMs: Date.now() - tMtdDone };
+    Logger.log('[qcdAll] dept=' + dept + ' rangeMs=' + (tRange - tDept) + ' mtdMs=' + (tMtdDone - tRange)
+      + ' priorMs=' + (Date.now() - tMtdDone));
     (mtdRep.queueBreakdown || []).forEach(function (r) {
       if (excludeSet[String(r.queue || '').toLowerCase()] || mSeen[r.queue]) return;
       mSeen[r.queue] = true;
@@ -486,8 +518,13 @@ function computeQcdAllDepartments_(from, to) {
     priorWorkdays: countWorkingDays_(priorFrom, priorTo),
   };
 
+  timing.totalMs = Date.now() - t0;
+  timing.deptCount = depts.length;
+  Logger.log('[qcdAll] compute totalMs=' + timing.totalMs + ' depts=' + depts.length
+    + ' reportCalls=' + timing.reportCalls + ' (per-dept lines above; grid read timing in [qcd-grid])');
   const data = {
-    meta:        { from: from, to: to, cacheHit: false, computeMs: Date.now() - t0, deptCount: depts.length },
+    meta:        { from: from, to: to, cacheHit: false, computeMs: Date.now() - t0, deptCount: depts.length,
+                   timing: timing },
     dateLabel:   dateLabel,
     depts:       depts,
     grandTotals: grandTotals,
@@ -542,11 +579,27 @@ function readQcdSheetData_() {
   // Read all 12 cols. Display values for the H:MM:SS time fields
   // (longestWait / avgAnswer); raw values for everything else.
   const range = sheet.getRange(2, 1, lastRow - 1, 12);
-  QCD_SHEET_DATA_MEMO_ = {
-    values:   range.getValues(),
-    displays: range.getDisplayValues(),
-    ssTZ:     ss.getSpreadsheetTimeZone(),
-  };
+  const tRead = Date.now();
+  const values = range.getValues();
+  const displays = range.getDisplayValues();
+  const ssTZ = ss.getSpreadsheetTimeZone();
+  const readMs = Date.now() - tRead;
+  // PERF (2026-09-03): normalize the date column ONCE per execution. The
+  // all-departments report calls computeQcdReport_ up to three times per
+  // dept (range / MTD / prior month) and each call walked every row through
+  // rowDateIso_ -- which is Utilities.formatDate for a Date cell, one of the
+  // slowest calls on the platform -- so a 23k-row sheet paid ~40 full
+  // normalizations per request. The memo now carries the ISO date per row;
+  // every consumer indexes it instead of re-formatting. Output is identical
+  // (pinned in qcd-report.test.js).
+  const tNorm = Date.now();
+  const dates = new Array(values.length);
+  for (let i = 0; i < values.length; i++) {
+    dates[i] = rowDateIso_(values[i][QCD_HISTORICAL_COLS.DATE - 1], ssTZ);
+  }
+  Logger.log('[qcd-grid] sheet read rows=' + values.length + ' readMs=' + readMs
+    + ' dateNormMs=' + (Date.now() - tNorm));
+  QCD_SHEET_DATA_MEMO_ = { values: values, displays: displays, ssTZ: ssTZ, dates: dates };
   return QCD_SHEET_DATA_MEMO_;
 }
 
@@ -763,7 +816,9 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   const mainFrom = rangeOnly ? from : trendStartIso;
   const readFrom = (mainFrom < mtdStartIso) ? mainFrom : mtdStartIso;
   const readTo   = (to > todayIso) ? to : todayIso;
+  const tGrid = Date.now();
   const sheetData = readQcdGrid_(readFrom, readTo);
+  const gridMs = Date.now() - tGrid;
   if (sheetData.missing) {
     throw new Error('Sheet "QCD Historical Data" not found. Verify the pipeline has run at least once for this dept.');
   }
@@ -786,6 +841,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
 
   const values   = sheetData.values;
   const displays = sheetData.displays;
+  const dates    = sheetData.dates || null;   // PERF: pre-normalized ISO per row (sheet path)
 
   // Per-queue accumulators for the selected range. Only the
   // QCD_TOTAL_CALLS_SOURCE rows are summed -- other callSource
@@ -816,10 +872,11 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   const dailyAcc = {};
   const dailyDateSet = {};   // F-15: union of ALL queues' active dates (axis)   // iso -> { totalCalls, answered, abandoned, violations }
 
+  const tLoop = Date.now();
   for (let i = 0; i < values.length; i++) {
     const r  = values[i];
     const rd = displays[i];
-    const dateIso = rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], ssTZ);
+    const dateIso = dates ? dates[i] : rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], ssTZ);
     if (!dateIso) continue;
     const callQueue = String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1] || '').trim();
     if (!queueSet[callQueue]) continue;
@@ -943,6 +1000,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
       mb.violations    += violations;
     }
   }
+  const loopMs = Date.now() - tLoop;
 
   // Per-queue rows in DEPT_QCD_QUEUES order.
   const queueBreakdown = queues.map(function (q) {
@@ -1017,8 +1075,12 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   // had this month?") and matches the "Violations (current month)"
   // label on the KPI tile. Range-scoped violations are still
   // available per-queue in queueBreakdown[].violations.
+  const tMtd = Date.now();
   const violationsMtd = computeMtdViolations_(dept, values, ssTZ,
-    separate ? { includeChildren: false } : qOpts);
+    separate ? { includeChildren: false } : qOpts, dates);
+  Logger.log('[qcd-report] dept=' + dept + ' window=' + from + '..' + to
+    + (rangeOnly ? ' rangeOnly' : '') + ' gridMs=' + gridMs + ' loopMs=' + loopMs
+    + ' mtdPassMs=' + (Date.now() - tMtd) + ' rows=' + values.length);
   const totals = {
     totalCalls:       tTotal,
     totalAnswered:    tAns,
