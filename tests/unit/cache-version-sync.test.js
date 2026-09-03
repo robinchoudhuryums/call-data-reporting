@@ -196,7 +196,7 @@ const ANCHOR_SPECS = {
   individual_active:   'tag',
   missed:              'tag',
   companyOverview:     'tag',
-  qcdAll:              'exception: 6h by design (QCD lands once daily); CacheWarm re-warm is freshness-guarded',
+  qcdAll:              'exception: anchored on the latest QCD date via qcdAllFreshnessAnchor_ (D-1) -- the DQE tag is the wrong source for a QCD-only report -- plus an empty-payload put guard; CacheWarm re-warm is freshness-guarded',
   inbound:             'tag',
   inboundHeatmap:      'tag',
   insights:            'tag',

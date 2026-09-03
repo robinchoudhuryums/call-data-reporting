@@ -77,6 +77,19 @@ function notifyNeonWriteFailure(context, errMsg) {
 function parseDateForNeon(str) {
   if (!str) return null;
   var s = String(str).trim();
+  // I2-9: an ISO-shaped cell ("2026-05-19", or "2026-05-19 10:23:33" -- the
+  // documented paste-old-rows / yyyy-mm-dd-number-format shapes) is returned
+  // VERBATIM. It used to fall through to `new Date(s)`, which the platform
+  // parses as UTC MIDNIGHT, so formatting it in the script TZ (Chicago) gave
+  // the PREVIOUS day -- and every sheet-fed caller (the backfills, the
+  // deferred mirror's tail match, the duplicate-merge repair, the Direct
+  // backfill, the CSR repair/vet) then keyed the row one day early, where
+  // ON CONFLICT DO UPDATE overwrote the WRONG date's row. Handled here so all
+  // ~13 call sites are fixed at once. A 'T'-joined ISO instant
+  // ("2026-05-19T15:00:00Z") is NOT matched: that is a UTC timestamp and the
+  // TZ conversion below is the right thing for it.
+  var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s|$)/);
+  if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
   var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!m) {
     var d = new Date(s);
@@ -426,8 +439,9 @@ function writeCDRRowsToNeon(rows, opts) {
     // caller's retry (the throw already notifies / keeps the date queued).
     if (opts && opts.authoritative) {
       var cdrIsoDates = neonDistinctIsoDates_(rows, function (r) {
-        // All current callers pass ISO callDate already; the guard avoids
-        // parseDateForNeon's UTC-midnight parse shift on an ISO input.
+        // All current callers pass ISO callDate already. (Since I2-9
+        // parseDateForNeon returns an ISO input verbatim itself; the explicit
+        // test here is kept as a belt-and-braces guard on the DELETE's dates.)
         var s = String(r.callDate == null ? '' : r.callDate).trim();
         return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : parseDateForNeon(s);
       });

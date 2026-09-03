@@ -84,7 +84,9 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
-                              sheet-repairs-merge, dept-config-neon /
+                              sheet-repairs-merge, neon-backfill-resume
+                              (T-8 fingerprinted resume pointers + the
+                              T-7 sanitizer-loss tally), dept-config-neon /
                               config-neon-c3, caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,

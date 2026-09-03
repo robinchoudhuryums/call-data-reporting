@@ -1,6 +1,14 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **Batch 1 of the 2026-09-03 broad scan is implemented on
+  `claude/broad-scan-p493eu` (D-1/O-1 empty queue report, I2-9 ISO date
+  trap, T-8 fingerprinted resume pointers, T-7 sanitizer-loss tally) --
+  block `167-batch1-wrong-numbers-broad-implement.md`. Three deploys carry it (dashboard,
+  cdr-report, cdr-import). The operator is reprocessing Aug 5/6/7/10/11/12/13
+  via Manual Export in parallel; nothing in Batch 1 changes what a Manual
+  Export writes for DQE.** Next: Batch 2 (Health page truth: O-2 LATE, O-3/C2-5
+  one-sided steps, O-4 age checks, O-7, O-6, O-5, O-12/O-14).
 - **Two deploys are pending, and the dashboard one now carries TWO fixes:**
   (1) `clasp push -f` from the repo root (Department Dashboard) — the R26b
   bounded DQE sheet read (the 108-second My Department load) AND the R30
@@ -56,6 +64,25 @@
   `QUEUE_SPLIT_SCOPE=dept`, the dashboard should read **Spanish 17 rung / 15
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
+
+## Latest session (Batch 1 — wrong numbers leaving the system, 2026-09-03)
+- Implemented the four Batch 1 findings; summary block verbatim in
+  `.cycle/blocks/%s`. `npm run ci` 1154/0; INV-16 in sync.
+- Decisions: (1) the qcdAll anchor is the latest QCD date, NOT
+  `reportFreshnessTag_` (the DQE date is the wrong source for a QCD-only
+  report), with a trigger-safe sheet-scan fallback because the RPC carries a
+  signed-in gate; (2) an EMPTY report is REFUSED (trigger: flagged result, no
+  marker; preview/blast: throw) -- a zero-activity business day therefore
+  holds at `EMPTY` instead of sending "no activity", accepted; (3) the
+  preview reads fresh but still warms the key; (4) legacy bare-integer
+  resume pointers restart from 0 rather than being trusted; (5)
+  `displayToDate` accepts ISO but the build canonicalizes col B to M/D/YYYY
+  so ISO text is never written.
+- Open from this session: the DOCUMENTATION UPDATES list in the block
+  (CLAUDE.md two bullets, fix-history rows, operator-state #31); the
+  cdr-report `DQE_UPSERT_LAST` tally is not visible on the Health page.
+- Where I left off: Batch 1 committed + pushed; PR opened for the owner to
+  merge and deploy after the Aug reprocess. Batch 2 not started.
 
 ## Latest session (R31 — teaching the gate to see a wrong TONE, and three wrong claims)
 Increment 166. **1134/1134 tests**, gate **92/92** (from 84), all stages, 7m6s.

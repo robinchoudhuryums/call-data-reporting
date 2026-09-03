@@ -151,6 +151,19 @@ function runDailyQueueReport_() {
       return;
     }
 
+    // D-1 / O-1: the sheet said QCD was ready, but the report computed with
+    // NO departments (the read source lags the sheet, or the day had no
+    // activity). Nothing was sent and the marker is NOT claimed, so the next
+    // poll retries; the status is prefix-coded so the Health page shows it as
+    // needs-attention rather than green (the O-9 NO-SUBSCRIBERS shape).
+    if (result.emptyReport) {
+      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+        'EMPTY ' + targetIso + ' — the QCD sheet had the date but the report computed with '
+        + 'NO departments; NOT sent, marker not claimed, will retry next poll. ('
+        + result.reason + ') At ' + new Date());
+      return;
+    }
+
     // O-1: marker discipline around per-recipient failures.
     //  - At least one send landed (or a clean no-recipients run): claim the
     //    date. The recipients who already got it must NEVER be re-blasted by
@@ -259,7 +272,25 @@ function sendQueueReportForDate_(targetIso, opts) {
   // admin "Send me a preview" doesn't pay the full cold compute when the exact
   // (targetIso,targetIso) blob is already warm (and a preview warms it for the
   // next web open). Falls through to a fresh compute + cache when cold.
-  const data = qcdAllDeptCachedData_(targetIso, targetIso).data;
+  // D-1: a preview reads FRESH (it still warms the key for the next web open).
+  const data = qcdAllDeptCachedData_(targetIso, targetIso, { fresh: !!opts.isPreview }).data;
+  // D-1 / O-1: REFUSE an empty report. computeQcdAllDepartments_ omits every
+  // dept with zero calls, so depts:[] means the QCD rows for this date have
+  // not landed on the read source (or the day genuinely had none) -- and the
+  // email for that state is "No queue activity recorded for this day" to every
+  // subscriber, after which the sent-marker stopped the real one from ever
+  // going out. The trigger path returns a flagged result (marker NOT claimed,
+  // so the next poll retries); the single-address preview path throws so the
+  // admin sees it in the modal.
+  const deptCount = (data && data.depts) ? data.depts.length : 0;
+  if (!deptCount) {
+    const why = 'no queue activity found for ' + targetIso
+      + ' -- the QCD rows for that date have not landed on the active read source, '
+      + 'or the day had none';
+    Logger.log('sendQueueReportForDate_(%s): %s. NOT sent.', targetIso, why);
+    if (opts.to) throw new Error('Not sent: ' + why + '. Try again once the import has landed.');
+    return { count: 0, to: [], failed: [], emptyReport: true, reason: why };
+  }
   const subject = 'Daily Call Queue Report — ' + (data.dateLabel || targetIso);
   const html = buildQueueReportEmailHtml_(data, targetIso, !!opts.isPreview);
   // Single send (see the To/Cc note above). One malformed hand-edited
@@ -1318,6 +1349,8 @@ function sendQcdAllDeptToSubscribers(req) {
       + '(by the automated send or another admin). Re-open the dialog to send again anyway.');
   }
   const result = sendQueueReportForDate_(date, {});
+  // D-1: surface the empty-report refusal to the admin instead of "0 sent".
+  if (result.emptyReport) throw new Error('Not sent: ' + result.reason + '.');
   let markerClaimed = false;
   if (result.count > 0 && date === prevBusinessDayIso_(new Date())) {
     try {

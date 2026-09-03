@@ -12,6 +12,18 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 // readiness logic is testable without a clock.
 const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'QueueReportEmail.gs'] });
 
+// D-1 (2026-09-03): sendQueueReportForDate_ now REFUSES an empty payload, so
+// every stub of the all-dept compute carries one department with activity --
+// the pre-D-1 `depts: [oneDept_()]` stubs encoded exactly the state that used to be
+// emailed to every subscriber.
+function oneDept_() {
+  return { dept: 'CSR', parent: null,
+           totals: { totalCalls: 10, totalAnswered: 9, abandoned: 1, abandonedPct: 10,
+                     longestWaitSec: 30, avgAnswerSec: 20, violations: 0, violationsMtd: 0 },
+           queues: [{ queue: 'A_Q_CSR', totalCalls: 10, totalAnswered: 9, abandoned: 1,
+                      abandonedPct: 10, abandonedPctStr: '10.0%', violations: 0 }] };
+}
+
 function baseCtx(over) {
   // A "would send" context: enabled, mid-window, a weekday, no holiday, data
   // ready (latestQcd >= target), not yet sent.
@@ -607,7 +619,7 @@ test('Round-16 To/Cc: ONE message -- To rows joined, Cc rows on cc (dedupe by sh
     },
   });
   h.ctx.qcdAllDeptCachedData_ = function () {
-    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {} } };
   };
   const mails = [];
   h.ctx.MailApp = { sendEmail: function (arg) { mails.push(arg); } };
@@ -630,7 +642,7 @@ test('Round-16 To/Cc: a send failure fails the WHOLE message -- count 0, every r
     },
   });
   h.ctx.qcdAllDeptCachedData_ = function () {
-    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {} } };
   };
   h.ctx.MailApp = { sendEmail: function () { throw new Error('Invalid email: bad@x.com'); } };
   const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
@@ -651,7 +663,7 @@ test('Round-16 To/Cc: all-Cc rows promote to To (an email needs a To); legacy 3-
     },
   });
   h.ctx.qcdAllDeptCachedData_ = function () {
-    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {} } };
   };
   const mails = [];
   h.ctx.MailApp = { sendEmail: function (arg) { mails.push(arg); } };
@@ -673,7 +685,7 @@ test('Round-16 To/Cc: all-Cc rows promote to To (an email needs a To); legacy 3-
 
 test('O-1: the single-address preview path still throws (admin sees the error)', function () {
   h.ctx.qcdAllDeptCachedData_ = function () {
-    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {} } };
   };
   h.ctx.MailApp = { sendEmail: function () { throw new Error('quota'); } };
   assert.throws(function () {
@@ -743,7 +755,7 @@ function qvInstall_(role) {
   };
   h.ctx.qcdAllDeptCachedData_ = function (from, to) {
     return { data: { dateLabel: from === to ? from : (from + ' - ' + to),
-                     depts: [], grandTotals: {}, meta: { from: from, to: to } } };
+                     depts: [oneDept_()], grandTotals: {}, meta: { from: from, to: to } } };
   };
 }
 
@@ -820,7 +832,7 @@ test('O-9: no active subscribers -> noRecipients, and the report is never compos
   let composed = 0;
   h.ctx.qcdAllDeptCachedData_ = function () {
     composed++;
-    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {} } };
   };
   const sent = [];
   h.ctx.MailApp = { sendEmail: function (a) { sent.push(a.to); } };
@@ -847,7 +859,7 @@ test('O-9: a real send does NOT carry noRecipients (the flag is not sticky)', fu
     },
   });
   h.ctx.qcdAllDeptCachedData_ = function () {
-    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {} } };
   };
   h.ctx.MailApp = { sendEmail: function () {} };
   const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
@@ -1006,4 +1018,121 @@ test('O-10: the next window and the date THAT run will target are both reported'
   assert.match(String(out.nextWindowDate), /^\d{4}-\d{2}-\d{2}$/, 'a concrete next window date');
   assert.match(String(out.nextWindowTarget), /^\d{4}-\d{2}-\d{2}$/, 'and the date it will send');
   assert.ok(out.nextWindowTarget < out.nextWindowDate, 'it always targets an EARLIER day than the run');
+});
+
+
+// ── D-1 / O-1: an EMPTY report is never sent, cached, or marked sent ──────
+//
+// The all-dept compute omits every dept with zero calls, so a request made
+// before the import lands yields depts:[]. That payload used to be (a) pinned
+// in the 6h qcdAll cache with no freshness anchor and (b) emailed verbatim
+// ("No queue activity recorded for this day") to every subscriber by the
+// 06:30 poll, whose readiness gate reads the SHEET, after which the sent
+// marker stopped the real report from ever going out.
+
+function emptyStub_(seen) {
+  h.ctx.qcdAllDeptCachedData_ = function (from, to, opts) {
+    if (seen) seen.push({ from: from, to: to, opts: opts });
+    return { data: { dateLabel: 'Jul 10, 2026', depts: [], grandTotals: {} } };
+  };
+}
+
+test('D-1: the trigger path returns emptyReport -- nothing sent, no throw', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake' };
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
+  });
+  emptyStub_();
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (a) { sent.push(a); } };
+  const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(res.emptyReport, true);
+  assert.equal(res.count, 0);
+  assert.equal(res.failed.length, 0);
+  assert.match(res.reason, /no queue activity found for 2026-07-10/);
+  assert.equal(sent.length, 0, 'nothing mailed');
+});
+
+test('D-1: the admin preview path THROWS on an empty report and reads FRESH (cache read skipped)', function () {
+  const seen = [];
+  emptyStub_(seen);
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('must not send'); } };
+  assert.throws(function () {
+    h.call('sendQueueReportForDate_', '2026-07-10', { to: 'admin@x.com', isPreview: true });
+  }, /Not sent: no queue activity found for 2026-07-10/);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].opts && seen[0].opts.fresh, true, 'a preview bypasses the cache READ');
+  // The trigger path does not.
+  h.state.props = { SPREADSHEET_ID: 'fake' };
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
+  });
+  h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(seen[1].opts && seen[1].opts.fresh, false);
+});
+
+test('D-1: runDailyQueueReport_ records EMPTY <iso>, claims NO marker, and retries on the next poll', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com' };
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: {
+      'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']],
+      'QCD Historical Data': [['Month Year', 'Week', 'Date'], ['', '', '2026-07-10']],
+    },
+  });
+  emptyStub_();
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (a) { sent.push(a); } };
+  // Inside the morning window on the next business day (Mon Jul 13, 7 AM
+  // Chicago) with the sheet READY for Fri Jul 10 -- the exact pre-fix path.
+  const realDate = h.ctx.Date;
+  const fixed = new realDate('2026-07-13T07:00:00-05:00');
+  h.ctx.Date = function (a) { return arguments.length ? new realDate(a) : new realDate(fixed.getTime()); };
+  h.ctx.Date.now = function () { return fixed.getTime(); };
+  h.ctx.prevBusinessDayIso_ = function () { return '2026-07-10'; };
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  try {
+    h.call('runDailyQueueReport_');
+  } finally {
+    h.ctx.Date = realDate;
+    delete h.ctx.prevBusinessDayIso_;
+    delete h.ctx.isCompanyHoliday_;
+  }
+  assert.equal(sent.length, 0, 'no subscriber received an empty report');
+  assert.equal(h.state.props.QUEUE_REPORT_LAST_SENT, undefined, 'the day is NOT marked sent -- the next poll retries');
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^EMPTY 2026-07-10/);
+  assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /NOT sent, marker not claimed/);
+});
+
+test('D-1: the manual subscriber blast surfaces the refusal instead of "0 sent"', function () {
+  qvInstall_('admin');
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['s1@x.com', 'TRUE', '']] },
+  });
+  emptyStub_();
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('must not send'); } };
+  assert.throws(function () {
+    h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' });
+  }, /Not sent: no queue activity found for 2026-07-10/);
+  assert.equal(h.state.props.QUEUE_REPORT_LAST_SENT, undefined);
+  delete h.ctx.resolveUser_;
+});
+
+test('D-1: the Health classifier treats EMPTY as needs-attention (the O-9 NO-SUBSCRIBERS shape)', function () {
+  // Mirrors the SystemHealth.gs outcome classifier arm added for D-1.
+  function classify(res) {
+    return !/^ok\b/i.test(res || '')
+      && (/fail|error|unreachable|skipped/i.test(res || '')
+          || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || '')
+          || /^NO-SUBSCRIBERS\b/.test(res || '') || /^SILENT\b/.test(res || '')
+          || /^EMPTY\b/.test(res || ''));
+  }
+  assert.equal(classify('EMPTY 2026-07-10 — the QCD sheet had the date but the report computed with NO departments'), true);
+  assert.equal(classify('Sent 2026-07-10 to 3 subscribers at Fri Jul 10'), false);
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'SystemHealth.gs'), 'utf8');
+  assert.ok(src.indexOf("/^EMPTY\\b/.test(res || '')") !== -1, 'SystemHealth.gs carries the EMPTY arm');
 });

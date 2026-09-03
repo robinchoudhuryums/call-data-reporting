@@ -321,6 +321,15 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     if (!str) return null;
     const datePart = String(str).trim().split(' ')[0];
     if (!datePart) return null;
+    // I2-9 / I-5: accept an ISO-shaped display ("2026-05-19") as a LOCAL date,
+    // the same recognition parseDateForNeon (neonWrite.js) applies -- three
+    // parsers used to disagree on this one shape (this one returned null, so
+    // an ISO-formatted Raw Data START_TIME column refused the whole day).
+    const iso = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (iso) {
+      const di = new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]));
+      return isNaN(di.getTime()) ? null : di;
+    }
     const p = datePart.split('/');
     if (p.length < 3) return null;
     const d = new Date(parseInt(p[2]), parseInt(p[0]) - 1, parseInt(p[1]));
@@ -399,6 +408,14 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     if (val && val.trim()) {
       callDateStr = displayToDateStr(val);
       callDateObj = displayToDate(val);
+      // I2-9: an ISO-shaped START_TIME parses now (displayToDate), but col B
+      // must never RECEIVE ISO text -- that is the exact cell shape the
+      // number-coercion / one-day-early traps grow from. Canonicalize the
+      // written string to the M/D/YYYY display every other row carries.
+      if (callDateObj && /^\d{4}-\d{2}-\d{2}$/.test(callDateStr || '')) {
+        callDateStr = (callDateObj.getMonth() + 1) + '/' + callDateObj.getDate()
+          + '/' + callDateObj.getFullYear();
+      }
       if (callDateObj) break;
     }
   }

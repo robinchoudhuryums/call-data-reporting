@@ -540,7 +540,10 @@ function getSystemHealth(req) {
       var bad = !/^ok\b/i.test(res || '')
         && (/fail|error|unreachable|skipped/i.test(res || '')
             || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || '')
-            || /^NO-SUBSCRIBERS\b/.test(res || '') || /^SILENT\b/.test(res || ''));
+            || /^NO-SUBSCRIBERS\b/.test(res || '') || /^SILENT\b/.test(res || '')
+            // D-1: "EMPTY <iso> ..." -- the queue report refused to send an
+            // empty payload; the next poll retries, but it is not a success.
+            || /^EMPTY\b/.test(res || ''));
       add('triggers', outcomes[o][0], outcomes[o][1], bad ? 'warn' : 'ok',
         (res || '') + (at ? (' @ ' + at) : ''));
     }
