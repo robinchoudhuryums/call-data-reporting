@@ -21,7 +21,9 @@ const DQE_EXCLUDED_AGENTS = [
   "A_Q_Billing", "Ryan Antao", "Sunil Kurian", "A_Q_PAK", "A_Q_AfterHours",
   "Normal Call Menu Hawaii", "Introduction Hawaii", "A_Q_FieldOps_Power", "Ripal Amin",
   "A_Q_Spanish", "Shagun Shastri", "A_Q_PowerChairs", "A_Q_Resupply",
-  "A_Q_BackUp_FieldOps", "A_Q_Eligibility_MM&R"
+  "A_Q_BackUp_FieldOps", "A_Q_Eligibility_MM&R",
+  // 2026-09-03 owner ruling: three more pseudo-agents seen in the zero-talk scan.
+  "Introduction New", "8x8 Test Queue", "8x8 Test"
 ];
 
 const DQE_CSR_QUEUES = ["A_Q_CSR", "A_Q_Intake", "Backup CSR"];

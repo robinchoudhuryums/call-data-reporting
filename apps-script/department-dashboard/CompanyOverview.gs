@@ -269,7 +269,7 @@ const OVERVIEW_PARENT_OF = Object.freeze({
  * landing view (e.g. "CSR Backup" is a coverage queue, not a
  * department worth surfacing at a glance).
  */
-const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup']);
+const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup', 'Sales MWC']);
 
 function getCompanyOverview(req) {
   const email = Session.getActiveUser().getEmail();

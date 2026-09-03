@@ -533,6 +533,17 @@ These are correct rejections — don't add them to any dept roster.
 *should* drop them upstream; missing entries should be added there, not
 worked around downstream.
 
+2026-09-03: a sheet-wide zero-talk scan surfaced three more pseudo-agents
+with DQE rows -- `Introduction New` (a spelling drift of the already-excluded
+`Introduction - New`), `8x8 Test Queue`, `8x8 Test` -- and they were added
+to the list (both INV-16 copies). Still UNRULED and still producing rows:
+`RT Phone Transition` (49 rows), `8x8 Billing Test`, `MWC Advt`,
+`Dialysis Advt`, `Repair Advt`, `Virtual Office Analytics Access`, and the
+brand-prefixed queue names `UDC_A_Q_Dialysis` / `UUC_A_Q_BackUp` (which the
+IMP-8 recognizer deliberately does not treat as queues, so they land as
+agent rows). The exclusion applies to FUTURE builds only; historical rows
+stay as harmless orphans unless a date is rebuilt.
+
 ### Blank Date column in QCD Historical Data (observed 2026-07, cause unconfirmed)
 
 Owner-reported incident: rows for 07/03–07/10 were present in
@@ -584,6 +595,35 @@ If you see similar attribution issues on other days, suspect either:
   parent leg (data quality issue in the CDR export)
 
 ---
+
+### OWNER RULING: `Sales MWC` is a real department, hidden from the Overview (2026-09-03)
+
+`A_Q_Sales_MWC` is a newer/testing Sales queue staffed by one agent
+(`Kendra (Keerthana) Ravi`). The Sales manager asked that it NOT roll into
+Sales' reporting yet, so it was set up the same way as `CSR Backup`: its own
+`DO NOT EDIT!` roster column (`Sales MWC`, col U), a Dept Config row with
+**no `Overview Parent`** (so no rollup into Sales, no combined view, and no
+access for the Sales manager), and `'Sales MWC'` added to
+`OVERVIEW_HIDDEN_DEPTS` (CompanyOverview.gs) so the tile never appears on the
+Overview grid. Admins see the department's real figures; Alerts and Digests
+never pick it up because they are per-dept subscriptions. Before this, the
+agent's 117 DQE rows (Dec 2025 onward) were roster-less orphans invisible to
+every manager view.
+
+To graduate the queue later: add the `Overview Parent = Sales` edge in Dept
+Config (one edit, no redeploy) and remove the hidden-depts entry. Review
+date: when the queue leaves testing.
+
+Two roster facts established while placing the column (verified across all
+four projects): every live dept-block reader stops at the FIRST BLANK header
+from column F, so the insurance reference block (cols X-AG) stays out of the
+roster as long as at least one blank header column separates them; and the
+insurance block is read by exactly one function
+(`cdr-report/insuranceNumbers.js::readInsuranceNumberRows_`) via the
+hard-coded `INSURANCE_BLOCK_START_COL/END_COL` constants -- moving that
+block means editing both constants, pushing cdr-report, and re-running
+`syncInsuranceNumbersToNeon`. Nothing reads column U or any hyperlink on the
+sheet.
 
 ### OWNER RULING: the cross-dept outbound journey drill (Step 4, 2026-08-24)
 
