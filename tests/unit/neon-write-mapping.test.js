@@ -268,3 +268,45 @@ test('I2-9: ISO-shaped cells are returned verbatim, never TZ-shifted', function 
   // Date parse + script-TZ format (Chicago is UTC-5 in May).
   assert.equal(f('2026-05-19T03:00:00Z'), '2026-05-18');
 });
+
+// ── R27: the call_history_phones write gate ────────────────────────────────
+// The child rows are written only when CDR_PHONES_MIRROR is exactly 'on'.
+// Unset = OFF (the deploy itself stops the table's growth); the main
+// call_history_dept write is unaffected either way.
+test('R27: phone children are gated OFF by default and ON only with CDR_PHONES_MIRROR=on', function () {
+  const cap = {};
+  install(cap);
+  h.state.props.HMAC_SECRET = 'secret';
+  let childCalls = 0;
+  const realChild = h.ctx.cdrInsertPhoneChildRows_;
+  h.ctx.cdrInsertPhoneChildRows_ = function () { childCalls++; return 7; };
+  try {
+    const row = { callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna', phonesX: '555-0100 (0:01:00)' };
+    delete h.state.props.CDR_PHONES_MIRROR;
+    let res = h.fn('writeCDRRowsToNeon')([row]);
+    assert.equal(res.inserted, 1, 'the parent row still writes');
+    assert.equal(childCalls, 0, 'unset -> no phone children');
+    assert.equal(res.phones, 0);
+    assert.equal(res.phonesGated, true);
+
+    h.state.props.CDR_PHONES_MIRROR = 'off';
+    res = h.fn('writeCDRRowsToNeon')([row]);
+    assert.equal(childCalls, 0, 'anything but "on" is off');
+
+    h.state.props.CDR_PHONES_MIRROR = 'ON';
+    res = h.fn('writeCDRRowsToNeon')([row]);
+    assert.equal(childCalls, 1, '"on" (case-insensitive) writes them');
+    assert.equal(res.phones, 7);
+    assert.equal(res.phonesGated, false);
+
+    // The deferred off-path mirror honors the same gate.
+    delete h.state.props.CDR_PHONES_MIRROR;
+    const m = h.fn('mirrorCdrPhonesToNeon')([row]);
+    assert.deepEqual(JSON.parse(JSON.stringify(m)), { phones: 0, skipped: 0, phonesGated: true });
+    assert.equal(childCalls, 1);
+  } finally {
+    h.ctx.cdrInsertPhoneChildRows_ = realChild;
+    delete h.state.props.HMAC_SECRET;
+    delete h.state.props.CDR_PHONES_MIRROR;
+  }
+});

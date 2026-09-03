@@ -561,6 +561,8 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_BACKUP_HOUR: 'operator', NEON_BACKUP_KEEP: 'operator',
     NEON_COVERAGE_DAYS: 'operator', SHEET_COVERAGE_DAYS: 'operator',
     SHEET_COVERAGE_ENABLED: 'operator',
+    NEON_RETENTION_ENABLED: 'operator', NEON_RETENTION_JOURNEY_DAYS: 'operator',
+    NEON_RETENTION_CALL_DAYS: 'operator', NEON_RETENTION_HISTORY_MONTHS: 'operator',
     CACHE_WARM_HOUR: 'operator',
     QUEUE_REPORT_ENABLED: 'operator',
     // engine — outcome/state the code writes itself
@@ -579,6 +581,7 @@ var PROP_REGISTRY_ = Object.freeze({
     SHEET_COVERAGE_LAST: 'engine', SHEET_COVERAGE_LAST_RESULT: 'engine',
     NEON_EGRESS_MTD: 'engine', NEON_READ_LAST_ERROR: 'engine',
     NEON_KEEPWARM_LAST: 'engine', NEON_KEEPWARM_LAST_RESULT: 'engine',
+    NEON_RETENTION_LAST: 'engine', NEON_RETENTION_LAST_RESULT: 'engine',
     PIPELINE_WATCH_LAST: 'engine', PIPELINE_WATCH_LAST_RESULT: 'engine',
     PIPELINE_WATCH_LAST_TS: 'engine',
     PIPELINE_WATCH_BACKUP_MARK: 'engine', PIPELINE_WATCH_READBACK_MARK: 'engine',

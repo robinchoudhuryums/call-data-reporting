@@ -1520,3 +1520,74 @@ When something looks wrong, before assuming a code bug, check:
     last-write-wins on the Neon side -- are found by `findDqeDuplicateRows`
     (neonbackfill.js) and merged by `repairDqeDuplicateMerge` (sheetRepairs.js,
     with a `preview` twin); an Orphan Fix rename can create them (X-1, open).
+
+57. **Neon storage cap — the phones-write gate, the weekly retention prune,
+    and the one-time reclaim runbook (R27, 2026-09).** The free tier is 0.5 GB
+    and the project reached 89% of it: `call_history_phones` was ~250 MB (its
+    indexes larger than its data) and the two per-call tables grew without
+    bound on their `journey` text. Three pieces, all reversible:
+    **(a) `CDR_PHONES_MIRROR` (cdr-import AND cdr-report Script Properties)**
+    — the `call_history_phones` child write is OFF unless this is exactly
+    `on` (`cdrPhonesMirrorEnabled_`, neonWrite.js, both INV-16 copies). The
+    deploy itself stops the growth. Nothing manager-facing is lost: the
+    table's only reader is Caller Lookup's day-level "Earlier outbound
+    activity", which the client hides for any date that has `outbound_calls`
+    rows (capture start 2026-07-10); the call-path drill, the Outbound
+    report, and per-number dial counts all read `outbound_calls`. Set it to
+    `on` to resume (no redeploy).
+    **(b) `NEON_RETENTION_ENABLED` (dashboard)** — `installNeonRetentionTrigger()`
+    from the dashboard editor arms `runNeonRetentionWeekly_` (Sundays ~3 AM
+    script-TZ, the day after the Saturday backup) and sets the flag;
+    `uninstallNeonRetentionTrigger()` removes both. Each run nulls
+    `inbound_calls` / `outbound_calls` journeys older than
+    `NEON_RETENTION_JOURNEY_DAYS` (default 90, floor 30), deletes per-call
+    rows older than `NEON_RETENTION_CALL_DAYS` (default 400, floor 367 —
+    strictly above the coverage checks' 366-day max window, so a pruned date
+    can never read as a coverage gap), and deletes `dqe_history` /
+    `qcd_history` rows older than `NEON_RETENTION_HISTORY_MONTHS` (default
+    13, floor 13 — the sheet is the authority for both and every DQE/QCD
+    reader is bounded by the INV-29 12-month window; a DQE/QCD parity gate
+    over a pruned range will report the pruned dates as missing on the Neon
+    side, which is expected). It NEVER touches `call_history_phones`,
+    `call_history_dept`, `direct_call_history`, escalations or coaching.
+    Statements are ctid-batched (5000 rows) under a 4-minute run budget; a
+    first-run backlog drains over a few runs and reports `ok ... budget hit`
+    (re-run `runNeonRetentionPrune()` by hand to finish sooner). Outcome is
+    OPS-8 coded in `NEON_RETENTION_LAST` / `NEON_RETENTION_LAST_RESULT`
+    (`ok` / `FAILED` / `skipped`), the Health page's "Neon retention — last
+    prune" row reads it, admins are emailed only on FAILED. Closed months of
+    the per-call tables are backed up ONCE (#28) before any horizon here can
+    reach them.
+    **(c) `CDR_BACKFILL_BEFORE` (cdr-report)** — an ISO ceiling for
+    `backfillCDRHistory`: rows dated at/after it are skipped. The backfill
+    ALWAYS writes phone children (it is the refill tool), so the ceiling is
+    what keeps a refill from re-creating the post-capture rows.
+    **One-time reclaim runbook** (Postgres only returns disk to the pool on
+    TRUNCATE or VACUUM FULL, and VACUUM FULL needs free space to copy into,
+    so the order matters; run each in the Neon SQL editor and watch the
+    storage gauge between steps):
+    1. Drop the two never-used indexes: `DROP INDEX IF EXISTS idx_phones_type;
+       DROP INDEX IF EXISTS idx_phones_hash;` (done 2026-09-03).
+    2. Deploy this PR to all three projects; leave `CDR_PHONES_MIRROR` unset.
+    3. Delete the post-capture phone rows (dates the outbound capture
+       already covers): `DELETE FROM call_history_phones p USING
+       call_history_dept d WHERE d.id = p.call_history_id AND d.call_date IN
+       (SELECT DISTINCT call_date FROM outbound_calls);`
+    4. Reclaim the table: `TRUNCATE call_history_phones;` then set
+       `CDR_BACKFILL_BEFORE=2026-07-10` (cdr-report), clear
+       `CDR_BACKFILL_RESUME`, and run `backfillCDRHistory()` from the
+       cdr-report editor until it logs "complete" (it is resumable; each run
+       is bounded at ~4 min). The pre-capture block (day-level dialed-number
+       aggregates that exist nowhere else) is back; nothing after the
+       capture start is re-created. Then clear `CDR_BACKFILL_BEFORE`.
+    5. Arm the prune: `installNeonRetentionTrigger()`, then run
+       `runNeonRetentionPrune()` once by hand and re-run until the result
+       stops saying `budget hit`.
+    6. On a quiet evening, `VACUUM FULL inbound_calls; VACUUM FULL
+       outbound_calls;` (each takes an exclusive lock for the copy; the
+       dashboard's per-call readers fall back to the sheet tabs meanwhile).
+    7. Watch the Neon storage gauge for a week; the weekly `ok pruned N` row
+       on the Health page is the ongoing proof of life. If the gauge still
+       trends up, the remaining growth is `call_history_dept` /
+       `direct_call_history` (small, unpruned by design) — revisit the
+       horizons before the plan upgrade.
