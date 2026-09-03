@@ -249,3 +249,43 @@ test('R25b: install/uninstall are admin-gated and fully reversible', function ()
     assert.throws(function () { h.call('installSheetCoverageTrigger'); }, /admin/i);
   } finally { installTrigger.restore(); }
 });
+
+
+// ── Batch 2 (2026-09-03): O-12 a transient read error is not a MISSING sheet ──
+
+test('O-12: an undefined count map (the read threw) reports readError, not missingSheet', function () {
+  const got = h.call('sheetCoverageAssess_', SPECS, '2026-08-10', '2026-08-14',
+    { 'DQE Historical Data': undefined }, {}, function () { return false; });
+  assert.equal(got[0].missingSheet, false, 'the sheet was there; the READ failed');
+  assert.equal(got[0].readError, true);
+  deepEqual(got[0].gaps, []);
+});
+
+test('O-12: the runner records FAILED-READ (not CLEAN) when a sheet read throws, and does not email', function () {
+  // The other two scanned sheets are healthy (every recent business day
+  // present); only the DQE read throws.
+  const today = new Date();
+  const iso = function (d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+         + '-' + String(d.getDate()).padStart(2, '0');
+  };
+  const recent = [];
+  for (let i = 1; i <= 40; i++) {
+    const d = new Date(today); d.setDate(today.getDate() - i);
+    if (d.getDay() >= 1 && d.getDay() <= 5) recent.push(iso(d));
+  }
+  installRunner({ 'QCD Historical Data': recent, 'Direct Call History': recent });
+  const healthy = h.ctx.openSpreadsheet_;
+  h.ctx.openSpreadsheet_ = function () {
+    const ss = healthy();
+    return { getSheetByName: function (n) {
+      if (n !== 'DQE Historical Data') return ss.getSheetByName(n);
+      return { getLastRow: function () { return 5; }, getRange: function () { throw new Error('Service error'); } };
+    } };
+  };
+  const res = h.call('runSheetCoverageCheck');
+  assert.equal(res.findings, 0, 'a read error is not a gap finding');
+  assert.ok(res.errors.length >= 1);
+  assert.match(h.state.props.SHEET_COVERAGE_LAST_RESULT, /^FAILED-READ /, 'not painted CLEAN');
+  assert.equal(h.state.sentEmails.length, 0);
+});

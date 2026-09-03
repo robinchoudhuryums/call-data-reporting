@@ -201,3 +201,19 @@ test('P26: processIntegratedHistory fires the QCD/CSR guards only when that shee
   assert.deepEqual(JSON.parse(JSON.stringify(run({ qcd: false, csr: false, dqe: false }))), [],
     'force but nothing was deleted (first-time import) -> no false alarm');
 });
+
+
+test('I-6: processNewImport COMPUTES before the force-delete block (a compute throw can no longer destroy the date)', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const iCompute = src.indexOf('const results = calculateMetricsInMemory(cleanData, configSheet);');
+  const iQcd = src.indexOf('results.qcdData = calcQcdReport(cleanData, targetSS);');
+  const iCsr = src.indexOf('results.csrData = calcCsrReport(cleanData, targetSS);');
+  const iForce = src.indexOf('const forceDeleted = { qcd: false, csr: false, dqe: false };');
+  const iSource = src.indexOf('if (sourceData.length < 2) throw new Error("Source sheet empty.");');
+  assert.ok(iCompute > 0 && iQcd > 0 && iCsr > 0 && iForce > 0 && iSource > 0, 'anchors present');
+  assert.ok(iSource < iCompute, 'P-3: source validated first');
+  assert.ok(iCompute < iForce && iQcd < iForce && iCsr < iForce,
+    'all three compute stages run BEFORE the force-delete (I-6)');
+});

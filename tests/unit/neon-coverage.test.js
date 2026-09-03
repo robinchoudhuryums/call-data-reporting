@@ -183,3 +183,55 @@ test('E1: a missing table reads as missingTable (deploy-ahead-of-capture), never
   assert.equal(ob.missingTable, true);
   assert.deepEqual(ob.atRisk, []);
 });
+
+
+// ── Batch 2 (2026-09-03): O-5 anchored missing-table match, O-6 email order ──
+
+test('O-5: only the undefined_table shape is a clean skip -- a missing COLUMN is a real failure', function () {
+  assert.equal(h.ctx.ncMissingTableError_('ERROR: column "queue_split" does not exist'), false,
+    'schema drift used to read as "table not created yet"');
+  assert.equal(h.ctx.ncMissingTableError_('function foo() does not exist'), false);
+  assert.equal(h.ctx.ncMissingTableError_('relation "inbound_calls" does not exist'), true);
+  // NeonBackup.gs carries the same anchored regex inline.
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'NeonBackup.gs'), 'utf8');
+  assert.ok(src.indexOf('/relation "[^"]*" does not exist/i') !== -1, 'NeonBackup.gs anchored too');
+  assert.ok(src.indexOf('|does not exist/i') === -1, 'the over-broad alternative is gone');
+});
+
+test('O-6: ncClockBoundSuffix_ names the clock-bound dates for the stored result', function () {
+  const f = h.ctx.ncClockBoundSuffix_;
+  assert.equal(f([]), '');
+  assert.equal(f([{ table: 'inbound_calls', zeroRowWeekdays: [] }]), '');
+  assert.equal(f([{ table: 'inbound_calls', zeroRowWeekdays: ['2026-08-19', '2026-08-20'] },
+                  { table: 'outbound_calls', skipped: 'x' },
+                  { table: 'other', zeroRowWeekdays: ['2026-08-21'] }]),
+    ' | clock-bound: inbound_calls 2026-08-19,2026-08-20; other 2026-08-21');
+  const many = []; for (let i = 1; i <= 30; i++) many.push('2026-07-' + String(i).padStart(2, '0'));
+  assert.match(f([{ table: 't', zeroRowWeekdays: many }]), / \+5 more$/, 'capped per table');
+});
+
+test('O-6: the coverage email lists the no-sheet (clock-bound) tables FIRST, so the line cap cannot cut them', function () {
+  h.state.sentEmails.length = 0;
+  h.ctx.getAdminEmails_ = function () { return ['admin@x.com']; };
+  // 60 sheet-vs-Neon findings (well past NEON_COVERAGE_MAX_EMAIL_LINES) and 2
+  // clock-bound dates that used to be appended LAST and truncated away.
+  const missing = []; for (let i = 0; i < 60; i++) missing.push({ date: '2026-06-' + String((i % 28) + 1).padStart(2, '0'), sheetRows: 5 });
+  const out = {
+    from: '2026-06-01', to: '2026-08-31', findings: 62, errors: [],
+    tables: [{ table: 'dqe_history', sheet: 'DQE Historical Data', fix: 'upsert',
+               missingInNeon: missing, countMismatch: [], extraInNeon: [] }],
+    noSheet: [{ table: 'inbound_calls', captureStart: '2026-05-01', zeroRowWeekdays: ['2026-08-19', '2026-08-20'], fix: 'force re-import' },
+              { table: 'outbound_calls', skipped: 'table not created yet' }],
+  };
+  try { h.call('ncEmailResult_', out, 'GAPS 62'); } finally { delete h.ctx.getAdminEmails_; }
+  assert.equal(h.state.sentEmails.length, 1);
+  const body = h.state.sentEmails[0].body;
+  const lines = body.split('\n');
+  const first = lines.findIndex(function (l) { return /inbound_calls \(no sheet primary\)/.test(l); });
+  const firstTable = lines.findIndex(function (l) { return /dqe_history/.test(l); });
+  assert.ok(first !== -1 && first < firstTable, 'clock-bound table precedes the sheet-vs-Neon tables');
+  assert.match(body, /CLOCK-BOUND/);
+  assert.match(body, /2026-08-19, 2026-08-20/, 'the perishable dates survive the truncation');
+  assert.match(body, /detail truncated/, 'and the cap still applies to the rest');
+});

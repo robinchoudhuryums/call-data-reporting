@@ -78,3 +78,15 @@ test('OPS-7: non-business days inside the gap earn a 24h staleness credit', func
   // Inconclusive freshness earns nothing.
   assert.equal(h.call('ingestWatchdogNonBusinessCredit_', null), 0);
 });
+
+
+test('O-7: an unreadable Pipeline Health RECORDS an INCONCLUSIVE outcome instead of returning silently', function (t) {
+  if (isRealWeekend_()) { t.skip('weekend: the trigger body self-skips'); return; }
+  install(null);   // computeOverviewPipelineFreshness_ -> null (missing/empty sheet, parse error)
+  h.state.props.INGEST_WATCHDOG_LAST_RESULT = 'fresh';   // yesterday's verdict must not survive
+  h.call('runIngestWatchdog_');
+  assert.match(h.state.props.INGEST_WATCHDOG_LAST_RESULT, /^INCONCLUSIVE/, 'the Health page can now see it');
+  assert.ok(h.state.props.INGEST_WATCHDOG_LAST, 'stamped');
+  assert.equal(h.state.props.INGEST_WATCHDOG_ALERTED, undefined, 'no episode armed, no alarm');
+  assert.equal(h.state.sentEmails.length, 0);
+});

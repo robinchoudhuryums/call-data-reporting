@@ -195,3 +195,38 @@ test('T-7: nbSanitizeDqeCells_ tallies without changing what the sanitizers retu
   // Cross-realm (vm) object: compare fields, not prototypes.
   assert.deepEqual(JSON.parse(JSON.stringify(tally)), { nulled: 2, sentineled: 1, rowsAffected: 1 });
 });
+
+
+test('Batch 2 follow-on: the upsert leaves a Pipeline Health row -- success when clean, failure when cells were excluded or a batch threw', function () {
+  const rows = [];
+  h.ctx.logPipelineHealth_ = function (ss, ev) { rows.push(ev); };
+  try {
+    let cap = install(ROWS);
+    h.call('backfillDQEHistoryUpsert');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].step, 'dqeUpsert');
+    assert.equal(rows[0].status, 'success');
+    assert.equal(rows[0].rows, 4);
+    assert.match(rows[0].notes, /nulled=0 sentineled=0/);
+
+    rows.length = 0;
+    cap = install([dqeRow('08/05/2026', 'Anna', { 10: '0.433020833333' })]);
+    h.call('backfillDQEHistoryUpsert');
+    assert.equal(rows[0].status, 'failure', 'excluded cells are the cue to run the sheetRepairs');
+    assert.match(rows[0].notes, /nulled=1 .*EXCLUDED/);
+
+    rows.length = 0;
+    cap = install(ROWS);
+    const conn = fakeConn(cap);
+    conn.prepareStatement = function () {
+      return { setString: function () {}, setInt: function () {}, setDouble: function () {},
+               execute: function () { throw new Error('boom'); }, close: function () {} };
+    };
+    h.ctx.getNeonConn_backfill = function () { return conn; };
+    assert.throws(function () { h.call('backfillDQEHistoryUpsert'); }, /boom/);
+    assert.equal(rows[0].status, 'failure');
+    assert.match(rows[0].notes, /threw: boom/);
+  } finally {
+    delete h.ctx.logPipelineHealth_;
+  }
+});

@@ -66,8 +66,16 @@ function sheetCoverageAssess_(specs, fromIso, toIso, countsBySheet, floorBySheet
   for (var i = 0; i < specs.length; i++) {
     var spec = specs[i];
     var counts = countsBySheet[spec.sheet];
-    if (counts === null || counts === undefined) {
+    if (counts === null) {
       out.push({ sheet: spec.sheet, label: spec.label, missingSheet: true, gaps: [], fix: spec.fix });
+      continue;
+    }
+    // O-12: `undefined` is the runner's "the READ threw" marker (recorded in
+    // out.errors), not a missing sheet -- reporting it as MISSING told the
+    // operator to recreate a sheet that was there all along.
+    if (counts === undefined) {
+      out.push({ sheet: spec.sheet, label: spec.label, missingSheet: false, readError: true,
+                 gaps: [], fix: 'transient read error — re-run; see the run\'s errors' });
       continue;
     }
     // Floor at the sheet's earliest date: a window reaching back before the
@@ -145,7 +153,10 @@ function runSheetCoverageCheck() {
     ? ('GAPS ' + out.findings + ' finding(s) over ' + fromIso + '..' + toIso
        + (out.errors.length ? (' (+' + out.errors.length + ' read error(s))') : '')
        + ' | ' + out.ms + 'ms')
-    : ('CLEAN no missing business days over ' + fromIso + '..' + toIso + ' | ' + out.ms + 'ms');
+    // O-12: a window with no gaps but an unreadable sheet is not CLEAN.
+    : (out.errors.length
+        ? ('FAILED-READ ' + out.errors.length + ' sheet read error(s) over ' + fromIso + '..' + toIso + ' | ' + out.ms + 'ms')
+        : ('CLEAN no missing business days over ' + fromIso + '..' + toIso + ' | ' + out.ms + 'ms'));
   sheetCoverageRecord_(summary);
   sheetCoverageLog_(out, summary);
   sheetCoverageNotify_(out, summary);
@@ -165,6 +176,7 @@ function sheetCoverageLog_(out, summary) {
     Logger.log('=== SHEET COVERAGE %s ===', summary);
     (out.sheets || []).forEach(function (s) {
       if (s.missingSheet) { Logger.log('  %s: SHEET MISSING — %s', s.sheet, s.fix); return; }
+      if (s.readError) { Logger.log('  %s: READ ERROR (not assessed; see read error below)', s.sheet); return; }
       if (!s.gaps.length) { Logger.log('  %s: clean', s.sheet); return; }
       Logger.log('  %s: %s missing business day(s): %s — fix: %s',
         s.sheet, s.gaps.length, s.gaps.join(', '), s.fix);

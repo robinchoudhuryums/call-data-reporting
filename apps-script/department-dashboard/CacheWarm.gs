@@ -34,6 +34,14 @@
  */
 
 var CACHE_WARM_DEFAULT_HOUR = 9;   // Central; after the morning ingest window
+// O-4: a WHOLE-RUN budget. Apps Script kills a trigger around 6 minutes and
+// the kill skips catch/finally, so a run that overran never reached
+// recordCacheWarm_ -- the previous day's "ok" stayed on the Health page. Only
+// the Insights phase had a budget; the Overview + per-dept summaries + qcdAll
+// phases were unbudgeted (an all-dept compute on the sheet-fallback path has
+// measured 730s+). Each phase now checks this before starting a unit of work
+// and records what it skipped, so the run always ends by recording.
+var CACHE_WARM_TOTAL_BUDGET_MS = 5 * 60 * 1000;
 
 // ── Public (admin-gated) API ──────────────────────────────────────────
 
@@ -88,7 +96,10 @@ function warmReportCaches_() {
   var depts = [];
   try { depts = getAllDepartments_(); }
   catch (e) { Logger.log('warmReportCaches_: getAllDepartments_ failed: ' + e); }
+  var overBudget_ = function () { return Date.now() - start > CACHE_WARM_TOTAL_BUDGET_MS; };
+  var sumSkipped = 0, qcdSkipped = 0;
   for (var i = 0; i < depts.length; i++) {
+    if (overBudget_()) { sumSkipped = depts.length - i; break; }   // O-4
     try {
       getDepartmentSummary({ department: depts[i], from: latest, to: latest });
       warmed++;
@@ -113,7 +124,10 @@ function warmReportCaches_() {
     var dates = null;
     try { dates = getLatestDataDates(); } catch (e2) { dates = null; }
     var qcdLatest = dates && dates.qcd;
-    if (qcdLatest && qcdLatest >= yesterday) {
+    if (overBudget_()) {
+      qcdSkipped = 1;   // O-4
+      Logger.log('warmReportCaches_: skipping qcdAll warm (run budget hit)');
+    } else if (qcdLatest && qcdLatest >= yesterday) {
       getQcdAllDepartments({ from: yesterday, to: yesterday });
       warmed++;
     } else {
@@ -143,7 +157,7 @@ function warmReportCaches_() {
   // Cost note: a 1-day window is NOT cheaper to compute than a 30-day one
   // -- both fetch the whole 12-month trend range (computeTrendStartDate_,
   // INV-29) -- so ordering, not window size, is what the budget buys.
-  var INSIGHTS_WARM_BUDGET_MS = 4 * 60 * 1000;
+  var INSIGHTS_WARM_BUDGET_MS = Math.min(4 * 60 * 1000, CACHE_WARM_TOTAL_BUDGET_MS);
   var insSkipped = 0;
   var warmInsightsWindow_ = function (from, to, label) {
     var skipped = 0;
@@ -178,6 +192,8 @@ function warmReportCaches_() {
     + ' for ' + latest + ' in ' + ms + 'ms');
   recordCacheWarm_('ok (' + warmed + ' warmed'
     + (failed ? ', ' + failed + ' failed' : '')
+    + (sumSkipped ? ', ' + sumSkipped + ' summaries skipped on budget' : '')
+    + (qcdSkipped ? ', qcdAll skipped on budget' : '')
     + (insSkipped ? ', ' + insSkipped + ' insights skipped on budget' : '')
     + ', ' + ms + 'ms)');
   } finally {

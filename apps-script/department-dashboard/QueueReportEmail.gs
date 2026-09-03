@@ -160,7 +160,8 @@ function runDailyQueueReport_() {
       props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
         'EMPTY ' + targetIso + ' — the QCD sheet had the date but the report computed with '
         + 'NO departments; NOT sent, marker not claimed, will retry next poll. ('
-        + result.reason + ') At ' + new Date());
+        + result.reason + ') If the day genuinely had no queue activity, add it to '
+        + 'COMPANY_HOLIDAYS (Operator State #27) so the poll stops expecting it. At ' + new Date());
       return;
     }
 
@@ -1184,9 +1185,10 @@ function queueReportGateExplain_(ctx) {
   } else if (ctx.reason === 'not-ready') {
     explanation = 'QCD Historical Data only reaches ' + (ctx.latestQcd || '(nothing)') + ', so '
       + targetIso + ' has not been imported + processed yet. The poll retries every '
-      + QUEUE_REPORT_EVERY_MINUTES + ' min until the window closes at '
-      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central; after that the day is flagged MISSED and is '
-      + 'NOT retried automatically.';
+      + QUEUE_REPORT_EVERY_MINUTES + ' min. If it is still not ready when the window closes at '
+      + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central the day is flagged LATE once (one admin email) '
+      + 'and the poller KEEPS retrying until midnight rolls the target, so a late-landing import '
+      + 'still sends the same day (Round-16).';
   } else if (!subs) {
     explanation = 'The gate would send, but there are no active Queue Report subscribers — so '
       + 'nothing would go out. Add a row under Report Subscribers.';

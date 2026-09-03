@@ -661,8 +661,12 @@ When something looks wrong, before assuming a code bug, check:
     closes is flagged ONCE post-window (`queueReportFlagMissedDay_`:
     `QUEUE_REPORT_LAST_MISSED` property + a `LATE <iso>` LAST_RESULT + one
     admin email; suppressed on fresh installs with no prior send) and, since
-    Round 16, the poller KEEPS retrying it. ⚠ The Health page's classifier
-    still keys on `MISSED`, so a `LATE` outcome renders green until O-2 lands.
+    Round 16, the poller KEEPS retrying it. The Health page classifies `LATE`,
+    `EMPTY` (D-1: the sheet had the date but the report computed with no
+    departments -- not sent, marker not claimed, retried; a genuinely quiet day
+    belongs in `COMPANY_HOLIDAYS`) and `NO-SUBSCRIBERS` as needs-attention (O-2
+    landed in Batch 2, 2026-09-03); a late SEND reads `Sent ... (LATE ...)` and
+    stays green. The gate check's not-ready explanation says the same.
     **INSTALLING THE TRIGGER DOES NOT SUBSCRIBE YOU (O-9).** They are two
     separate actions in the same modal section, and doing only the first is the
     most common way this engine ends up running every weekday and emailing

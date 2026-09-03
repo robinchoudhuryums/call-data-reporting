@@ -106,8 +106,11 @@ function runDqeSilenceWatch_() {
     props.setProperty('DQE_SILENCE_WATCH_LAST', stamp);
     if (read.inconclusive) {
       // A flaky read must not mutate streaks or alert -- next run re-checks.
+      // O-7: prefix-coded INCONCLUSIVE, not "ok (inconclusive ...)": a check
+      // that could not read its source is not a healthy check, and the Health
+      // classifier paints the `ok` prefix green.
       props.setProperty('DQE_SILENCE_WATCH_LAST_RESULT',
-        'ok (inconclusive — ' + read.reason + '; state untouched)');
+        'INCONCLUSIVE — ' + read.reason + '; state untouched, the next run re-checks');
       return;
     }
 

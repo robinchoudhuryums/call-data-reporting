@@ -125,3 +125,21 @@ test('OPS-1: send confirms true on success, false on empty recipients, false on 
     assert.equal(h.call('dqeSilenceSendAlert_', alerts, '2026-08-13'), false, 'MailApp throw -> false, not a crash');
   } finally { h.ctx.MailApp = realMail; }
 });
+
+
+test('O-7: an inconclusive read records a prefix-coded INCONCLUSIVE outcome, not "ok (inconclusive)"', function (t) {
+  const dow = new Date().getDay();
+  if (dow === 0 || dow === 6) { t.skip('weekend: the trigger body self-skips'); return; }
+  h.state.props = { DQE_SILENCE_WATCH_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com', DQE_SILENCE_STREAKS: '{"CSR":{"days":1}}' };
+  h.ctx.prevBusinessDayIso_ = function () { return '2026-08-31'; };
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  h.ctx.dqeSilenceReadDay_ = function () { return { inconclusive: true, reason: 'QCD read failed' }; };
+  try {
+    h.call('runDqeSilenceWatch_');
+  } finally {
+    delete h.ctx.prevBusinessDayIso_; delete h.ctx.isCompanyHoliday_; delete h.ctx.dqeSilenceReadDay_;
+  }
+  assert.match(h.state.props.DQE_SILENCE_WATCH_LAST_RESULT, /^INCONCLUSIVE — QCD read failed/);
+  assert.doesNotMatch(h.state.props.DQE_SILENCE_WATCH_LAST_RESULT, /^ok/i, 'the Health classifier keys on the prefix');
+  assert.equal(h.state.props.DQE_SILENCE_STREAKS, '{"CSR":{"days":1}}', 'state untouched');
+});

@@ -185,7 +185,9 @@ function runNeonBackup_() {
         // capture's first run) is a clean SKIP, not a backup failure -- the
         // ncMissingTableError_ distinction NeonCoverage draws for the same
         // reason. Every other error stays a loud FAILED outcome.
-        if (/relation .* does not exist|does not exist/i.test(m2)) {
+        // O-5: anchored like ncMissingTableError_ -- `column "x" does not
+        // exist` (schema drift) is a real failure, not a not-yet-created table.
+        if (/relation "[^"]*" does not exist/i.test(m2)) {
           outcomes.push(spec.table + ' skipped (table not created yet — the capture creates it on first run)');
         } else {
           outcomes.push(spec.table + ' FAILED: ' + m2);
