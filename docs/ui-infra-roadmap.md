@@ -1,6 +1,9 @@
 # Roadmap — Missed bar chart, Escalations page, Config sheets → Neon
 
-Status: **PLAN ONLY.** Three independent tracks from deploy-testing feedback,
+Status: **ALL THREE TRACKS SHIPPED** (A: the Bars/Radar toggle, `missedBarCfg_`;
+B: the Escalations PAGE, `#/escalations`; C: `CONFIG_SOURCE`, Operator State
+#25). Kept as the historical build plan; CLAUDE.md and its split files carry the
+live rules. Originally three independent tracks from deploy-testing feedback,
 each phaseable. Ordered by effort/risk: A (small, client-only) → B (medium,
 client) → C (larger, infra, security-sensitive). Owner-approved direction;
 this doc is the build plan to approve before coding each track.

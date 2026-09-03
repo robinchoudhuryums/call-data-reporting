@@ -102,7 +102,7 @@ bash scripts/check-duplicated-files.sh
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~80 suites pin the invariants, the report
+# Non-zero exit on failure. ~90 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -200,9 +200,9 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
 # the F10 no-duplicate-badge property -- these had thorough server-side pins
 # and no assertion that any of them RENDERED, the dept-selector class of bug.
-# It reads modal ids off the ROUTER TABLE in script-4-nav.html, which is how
-# it caught that the exploratory drive-phase3.js had been checking a
-# `#system-health-modal` that does not exist),
+# Its MODALS list is hand-copied from the router table in script-4-nav.html --
+# the Coaching modal (`/admin/coaching`) is NOT in it yet, so that surface has
+# no rendered-gate coverage; a new admin route must be added to the list),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
@@ -368,18 +368,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   whatever the row order is: an out-of-order row merely WIDENS it and can never
   fall outside it, which is why **the per-row date filter always stays** -- the
   span bounds the read, it does not replace the filter. A TAIL scan is the trap:
-  `DQE Historical Data` and `CSR Transfer Historical Data` are APPEND-ONLY and
-  never sorted (cdr-import appends at `getLastRow()+1` on both the daily and the
-  bulk paths), so a backfill of older dates lands after newer rows and a tail
-  scan stops early and silently drops them -- quietly wrong numbers, strictly
-  worse than being slow. **The one legitimate tail scan is
+  `DQE Historical Data` and `CSR Transfer Historical Data` are NOT reliably
+  date-ordered: the daily path appends at `getLastRow()+1`, and although the DQE
+  build re-sorts col B after each write (and the bulk archive sorts too), a col B
+  holding mixed Date-typed and text cells does not sort chronologically -- so a
+  backfill of older dates can still sit after newer rows and a tail scan stops
+  early and silently drops them -- quietly wrong numbers, strictly worse than
+  being slow. **The one legitimate tail scan is
   `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and it is safe for two reasons
   that do NOT hold here: its sheet is kept date-sorted by its own exporter, AND
   it WIDENS until the date's block is provably complete. So: date-ordered plus a
   completeness check -> a tail scan is fine; anything else -> span it. New
   windowed readers over a dated sheet must not add a third rediscovery.
   ENFORCED by out-of-order + full-scan-equivalence tests in
-  `dal-cutover.test.js` (R26b) and `csr-transfer.test.js` (R25b); R26c's
+  `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); R26c's
   `[dqe-read] dqeDateBounds ... openMs=N scanMs=N` line is what tells you
   whether a slow read is the scan or the workbook open.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
@@ -665,8 +667,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `cross-file-pins.test.js` ("R20 row-40"), and since Batch C the row rules
   are pinned BEHAVIORALLY by `qcd-sidebar-parity.test.js` (one shared fixture
   drives both implementations; sidebar row count must equal the pipeline's
-  cell value) -- with one honest exclusion: window-edge shapes beyond the
-  fixed row-35 one. Row 34 was RULED (2026-08-20) the "CSR Total Calls" SUM
+  cell value) -- with two honest exclusions: cols F and G (a MAX and a MEAN,
+  which no row set can equal -- and where the row-36/row-40 col-G predicates
+  have since drifted, T-1) and window-edge shapes beyond the fixed row-35 one. Row 34 was RULED (2026-08-20) the "CSR Total Calls" SUM
   row: the sidebar now refuses it like every total row (parity-pinned), and
   the read-only `previewRow34Overlap` (cdr-import, CDR Tools menu) measures
   the latent 35+37 double-count -- see docs/known-issues.md "QCDR Output
@@ -889,7 +892,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   quote-escaping -- CSV or not: the IR copy-as-TSV button (E-3) feeds the
   same spreadsheet paste target. ENFORCED (S8):
   `tests/unit/html-include-structure.test.js` pins the routing for all
-  eight current writers (`exportTableCsv_`/`csvEscape`, `insDownloadCsv_`,
+  seven current writers (`exportTableCsv_`/`csvEscape`, `insDownloadCsv_`,
   `inboundDownloadCsv_`, `directCallDownloadCsv_`, `outboundDownloadCsv_`,
   `qcdAllDeptCsv_`, the E-3 TSV handler).
 - **Chart.js v4 + chartjs-plugin-datalabels needs explicit
@@ -980,8 +983,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   verdict only — MISMATCH/INCONCLUSIVE keeps them so the fix-and-re-run loop
   re-compares the same window. ENFORCED both ways by
   `tests/unit/prop-registry.test.js`: every code-referenced key (literal,
-  resolvable constant, or composed prefix) must be registered, every registry
-  entry must still be referenced, and the Health payload stays value-free.
+  resolvable constant, or composed prefix) must be registered and every registry
+  entry must still be referenced; `system-health.test.js` pins that the Health
+  payload stays value-free.
 - **Role model + the all-departments manager (`allDepts`).** Four roles
   (`admin`|`manager`|`agent`|`none`; `Auth.gs::resolveUser_` -- `agent`
   has its OWN bullet below). A manager is
@@ -1343,10 +1347,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **System Health "Recent pipeline step failures" is the single trustworthy
   pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
   `HEALTH_PIPELINE_SCAN_ROWS`=250 Pipeline Health rows -- never NARROWER
-  than the Overview banner's window (LM1: eviction at 40 made a false
-  ALL-CLEAR), and its OK text states the window measured. It flags a step
-  ONLY when its MOST RECENT outcome is `failure` (failed-then-recovered is
-  not flagged -- the OPS-8/M1 no-crying-wolf rule).
+  than the Overview banner's window (LM1), and its OK text states the window
+  measured. It flags a step ONLY when its MOST RECENT outcome is `failure`
+  (failed-then-recovered is not flagged -- the OPS-8/M1 rule). COROLLARY: that
+  rule assumes every step name ALSO logs successes; the failure-only names
+  (`:CDR:neon`/`:QCD:neon`/`:Direct:neon`/`buildDQE:neon`, `CSR-guard`,
+  `neonMirror:gave-up`, `bulkBackfill:QCD/CSR`) stay red until they scroll out
+  of the 250-row window (C2-5, open).
   Catches every step in one place: the CDR/QCD/DQE/Inbound sheet writes, the
   `:CDR:neon`/`:QCD:neon` inline-mirror failures (L7), `buildDQE:neon` (F4) /
   `:Inbound` (F9), the deferred `neonMirror:*` drains, and the
@@ -1355,9 +1362,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`PipelineWatch.gs`, Operator State #32) PUSHES the same new failure rows to
   admins by email. Three other sections share the page, each read-only and
   each documented at its own operator item: **"Report usage (last 30 days)"**
-  (`computeReportUsageSummary_` -- the consolidation / un-gating EVIDENCE, so
-  every row is muted; a bounded tail read, `REPORT_USAGE_SCAN_CAP_`=5000, which
-  says so when the cap clips the window);
+  (`computeReportUsageSummary_`; a bounded tail read, `REPORT_USAGE_SCAN_CAP_`=5000);
   **`SmokeCheck.gs::runLiveSmoke`** -- an editor-run, admin-gated, READ-ONLY
   sweep of the live read paths that complements the unit harness by exercising
   live WIRING (properties, scopes, sheets, Neon). **Run it after every
@@ -1368,20 +1373,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   via `ncMissingTableError_`, not a probe error); and
   **`runSheetCoverageCheck`** (SheetCoverage.gs, Op State #52) -- the SHEET-side
   twin: business days with ZERO rows in a dashboard-read historical sheet --
-  the interior gap every other signal misses (they watch the trailing edge, one
-  dept, or the two SIDES). Opens NO Neon connection, so it works mid-outage.
+  the interior gap every other signal misses. Opens NO Neon connection, so it
+  works mid-outage.
   All four store
   an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, which is
   what the page's classifier reads. Pinned by `system-health.test.js` /
   `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Two CAPACITY rows sit
   alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47) and
   email quota remaining -- because both fail SILENTLY and look healthy to every
-  other probe here (a spent Neon is still reachable; an exhausted MailApp quota
-  just stops sending). Read the Neon figure as a FLOOR (it counts our payloads,
+  other probe here. Read the Neon figure as a FLOOR (it counts our payloads,
   not the wire). The row also RANKS the top consumers -- every
   `neonNoteEgress_` callsite passes a surface label (unlabeled folds into
-  `other`; system-health.test.js EA-1 pins it), so egress reduction starts
-  from the ranking, not guesswork. Also on the page: `build-stamp` ("unstamped" = a push
+  `other`; system-health.test.js EA-1 pins it). Also on the page: `build-stamp` ("unstamped" = a push
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only) and
   `retention-risk` (surviving dates the per-call tables are missing;
@@ -1391,8 +1394,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
   `PIPELINE_WATCH`, `QUEUE_REPORT`, `DQE_SILENCE_WATCH`, `COACHING_DELIVERY`,
   `SHEET_COVERAGE`), so a trigger installed with the flag off
-  fires on schedule and returns immediately -- and the page used to report it
-  as "installed". `svc()` takes an optional `flagProp` and now flags
+  fires on schedule and returns immediately. `svc()` takes an optional
+  `flagProp` and flags
   BOTH mismatch directions ("installed but DISABLED -- every run is a no-op" /
   "NO trigger installed but flag=true -- it never runs"), plus a single
   `trg-readiness` verdict row ("N armed, K need attention"). A new
@@ -1631,7 +1634,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   promptly; 60 sec on auth lookups (`AUTH_CACHE_TTL_SECONDS`). The tradeoff
   of the 6 h tier: ad-hoc admin corrections (orphan renames, DQE rebuilds,
   a mid-day force re-import) can lag up to 6 h in cached views not
-  explicitly busted on write (Orphan Fix + Dept Config save bust theirs;
+  explicitly busted on write (Orphan Fix + Dept Config save bust their own
+  init blobs and the Overview key ONLY -- `summary`/`missed`/`insights`/
+  `individual`/`qcdAll` carry no config dimension, so a queue-mapping edit
+  reaches those surfaces when the freshness tag moves or the TTL expires;
   the freshness tag busts only when the LATEST date moves). Each report file owns its own versioned
   cache prefix; bump the relevant version on any aggregation-rule change
   (cache-version-sync's S2 sweep fails on an unregistered prefix). See INV-30 for current versions. **Admin-modal init blobs are
@@ -2119,6 +2125,10 @@ items for anything it flags or doesn't cover.)
 50. Outbound Calls tab export trigger -- the keystone that moved the Outbound report, the journey drill's outbound arm and Caller Lookup's per-call outbound section OUT of Neon-only (CDR Tools menu); seed it while Neon is reachable
 51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use when emailing an Individual Report to its subject; prefer adding the agent's Access Control row instead (no typing, no mis-delivery risk)
 52. Sheet coverage check -- flags business days with ZERO rows in a dashboard-read historical sheet (the interior gap every other signal misses); no Neon needed, so it works mid-outage; arm the weekly trigger (`installSheetCoverageTrigger()`) -- a clean week is silent
+53. Script Properties past the settings page's 50-row display cap -- set or clear one from a TEMPORARY editor-run function, then delete the function; the Health page inventory is the complete read view
+54. Caller Lookup's one-time Neon index (`idx_inbound_calls_caller_hash`) -- create it in the Neon console; nothing auto-creates it
+55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants in `insuranceNumbers.js`, a cdr-report push, and re-running `syncInsuranceNumbersToNeon`; keep a blank header column between the dept block and it
+56. Reprocessing historical dates -- Manual Export per date (mirrors Neon inline) over the bulk path; clear `DQE_UPSERT_RESUME` before any backfill; the zero-talk scan (answered > 0 with TTT 0:00:00) is the post-rebuild check, and `repairDqeDuplicateMerge` is the remedy for same-day (date, agent) duplicates
 
 ## Cycle Workflow Config
 

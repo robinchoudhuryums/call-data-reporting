@@ -463,7 +463,10 @@ RPT-4/5/9/10, TST-1/6/7.
   Output row map, two DNIS literals, and `Steering Number!B51:H51`
   with no drift detection; a layout change silently re-labels which
   filter logic runs. Real fix is a config block + assertions
-  (mini-project on an internal verification tool).
+  (mini-project on an internal verification tool). 2026-09-03: the
+  `steeringSet` read from `Steering Number!B51:H51` is now DEAD -- its only
+  consumer was the row-34 rule removed 2026-08-20 -- but the range is still
+  read on every extraction (T-3).
 - **REP-8** — DQE drill-down on a slot column (K–AC) returns the whole
   day's missed set, not the slot's half hour, so "Found N vs
   Dashboard X" can read as a false mismatch. Slot-aware drilling needs

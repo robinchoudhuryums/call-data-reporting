@@ -13,7 +13,7 @@ External CDR system (telephony provider)
         ▼
 ┌─────────────────────────────────────────────┐
 │ CDR Import (Apps Script project)            │
-│   autoImport.gs                              │
+│   autoImport.js                              │
 │   - Pulls the day's CSV                      │
 │   - Writes rows into "Raw Data" sheet of     │
 │     the CDR Report spreadsheet               │
@@ -27,7 +27,7 @@ External CDR system (telephony provider)
 │  │ Raw Data      │  ← per-leg call rows      │
 │  └──────┬────────┘                           │
 │         │                                    │
-│  buildDQEHistoricalData.gs                   │
+│  buildDQEHistoricalData.js                   │
 │  - Aggregates per-agent per-date metrics     │
 │  - Filters to the 6:30AM-3PM PST work window │
 │  - Writes one row per agent per day          │
@@ -44,7 +44,7 @@ External CDR system (telephony provider)
 │         │                       per-day      │
 │         │                       metrics      │
 │         │                                    │
-│         │  neonWrite.gs mirrors rows         │
+│         │  neonWrite.js mirrors rows         │
 │         ▼                                    │
 │  Neon Postgres (dqe_history table)           │
 │                                              │
@@ -65,7 +65,7 @@ External CDR system (telephony provider)
 │ - Per-dept tabs with │         │ - Reads DQE Historical  │
 │   formulas filtering │         │   Data + DO NOT EDIT!   │
 │   DQE Historical     │         │ - Caches in CacheService│
-│   Data per dept      │         │   for 5–30 min          │
+│   Data per dept      │         │   6 h, freshness-tagged │
 └──────────────────────┘         └────────────┬────────────┘
                                               │
                                               ▼
@@ -116,7 +116,7 @@ several of these — see [known-issues.md](known-issues.md)).
    `HISTORICAL_COLS` in the dashboard's `Config.gs`. Adding/removing
    columns in the source pipeline requires updating that constant.
 3. **The 6:30 AM – 3:00 PM PST work window** (constants `DQE_WINDOW_START`,
-   `DQE_WINDOW_END` in `buildDQEHistoricalData.gs`) bounds what counts as
+   `DQE_WINDOW_END` in `buildDQEHistoricalData.js`) bounds what counts as
    "in shift". TTT/ATT, missed-call slot totals, etc. all use it. Changing
    it shifts every metric. See [conventions.md](conventions.md).
 4. **`DO NOT EDIT!` cell format** is `"Name, ext1, ext2"`. The dashboard
@@ -168,7 +168,9 @@ raw queue names like `A_Q_CSR` / `A_Q_PowerChairs`, not
 dashboard dept names. The dashboard reads from three sites
 (`QCDReport.gs`, `CompanyOverview.gs::computeQcdSnapshots_`,
 `Data.gs::computeDeptQcdSnapshot_`), and all three route the
-queue ↔ dept mapping through `Config.gs::DEPT_QCD_QUEUES`.
+queue ↔ dept mapping through `getDeptQcdQueues_` (DeptConfig.gs) -- the
+admin-authored `Dept Config` sheet layered over the `Config.gs::DEPT_QCD_QUEUES`
+seed (INV-54); never index the constant directly.
 
 That mapping is **dashboard-side only** -- the pipeline doesn't
 know about dashboard depts and the QCDR Output labels don't know
@@ -179,7 +181,7 @@ about which dashboard dept owns which queue. Two consequences:
    renamed from `A_Q_CSR` to `A_Q_CustomerService` in QCDR
    Output, QCD Historical Data starts emitting the new name on
    the next ingest. The dashboard's CSR dept loses its QCD chips
-   + modal until `Config.gs::DEPT_QCD_QUEUES['CSR']` is updated.
+   + chips until the CSR row in `Dept Config` (or the seed constant) is updated.
 2. **New depts producing QCD rows don't surface in the
    dashboard until they're added to the map.** The dashboard
    doesn't auto-discover dept-name-like values in col D because
@@ -195,7 +197,9 @@ Until OrphanFix.gs shipped, the dashboard had ZERO write paths into
 shared sheets -- everything in `apps-script/department-dashboard/`
 was read-only via the trailing-underscore convention (INV-01). The
 Orphan Fix engine introduced the first three admin-only public
-writes:
+writes (INV-01 now carries the AUTHORITATIVE carve-out list -- Dept Config,
+Access Control, the Alert/Digest config editors, Escalations and Coaching
+followed):
 
 | Function | Writes to | Notes |
 |---|---|---|
@@ -207,16 +211,16 @@ All three are admin-only at the server boundary
 length-capped, canonical destination must be on some roster),
 serialized via `LockService`, and audited to the `Orphan Fix Log`
 sheet (also in the CDR Report spreadsheet) before returning.
-INV-01's text was widened to spell out this carve-out; do not add
-more public writes outside `OrphanFix.gs` without the same four
-mitigations.
+INV-01's text was widened to spell out this carve-out; a new public
+write needs the same four mitigations (or, for config paths, at least the
+admin gate) and a line in INV-01.
 
 **Dashboard → Neon write (orphan-rename-to-Neon).** `applyOrphanRename`
 also best-effort mirrors the rename into Neon's `dqe_history`
 (`renameAgentInNeon_` in `OrphanFix.gs`) so the change isn't lost once
 aged rows are dropped from the sheet (forward-looking for the Neon
-read-back). This is the dashboard's ONLY Neon write and the first
-non-sheet write path; it needs the `script.external_request` OAuth
+read-back). It was the dashboard's FIRST Neon write; Escalations
+(INV-55, per-dept gated) and the Coaching worklist write Neon too. It it needs the `script.external_request` OAuth
 scope plus `NEON_HOST/NEON_DB/NEON_USER/NEON_PASS` Script Properties on
 the dashboard project. It is conflict-safe: `uq_dqe_history` is
 `UNIQUE (call_date, agent_name)`, so rows whose `(call_date, toName)`
@@ -265,7 +269,8 @@ is canonical and reflects current code.
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —
 the same active-in-range subset cache (`individual_active:v2:`). The
-Individual / Performance / Compare Ranges "Email image" exports AND
+Individual and Insights "Email image" exports (Performance and Compare
+Ranges were retired into Insights) AND
 the Alerts engine all require the `script.send_mail` OAuth scope
 declared in `appsscript.json`.
 
@@ -273,7 +278,7 @@ declared in `appsscript.json`.
 
 Neon Postgres is the long-term archive and the future query backend.
 
-- `buildDQEHistoricalData.gs` writes to both the sheet AND `neonWrite.gs`.
+- `buildDQEHistoricalData.js` writes to both the sheet AND `neonWrite.js`.
   Sheet write is the primary; Neon write is best-effort with email
   notification on failure (`notifyNeonWriteFailure`). The three live
   writers (`writeDQE/QCD/CDRRowsToNeon`) use `ON CONFLICT DO UPDATE`, and
@@ -296,9 +301,9 @@ Neon Postgres is the long-term archive and the future query backend.
   builders) read `dqe_history` and fall back to the sheet on any
   null/empty/error. Default (unset) is byte-identical to sheet-only.
   Gate the flip on `runDqeParityCheck` (see README). The admin-only
-  **Inbound report** (`InboundReport.gs`) is the one Neon-ONLY reader —
-  it has no sheet equivalent and renders an "unavailable" state when
-  Neon is unreachable.
+  **Inbound report** (`InboundReport.gs`) reads Neon with an `Inbound Calls`
+  tab fallback (Operator State #49); the Neon-ONLY surfaces are the Coaching
+  worklist, Caller Lookup's day-level history, and every Neon write.
 - **Per-call inbound capture** (`cdr-import/inboundCalls.js`):
   `processIntegratedHistory` builds one record per distinct inbound
   call from Raw Data (caller HMAC hash, dial-in line, disposition +
@@ -355,7 +360,7 @@ Neon Postgres is the long-term archive and the future query backend.
   `inbound_calls.caller_hash` (inbound) yields labeled per-insurer
   call counts with zero raw customer PHI stored anywhere. Re-run the
   sync after editing the insurance block.
-- `apps-script/cdr-report/neonBackfill.gs` is for one-off historical
+- `apps-script/cdr-report/neonbackfill.js` is for one-off historical
   backfills from the sheet into Neon: `backfillDQEHistory()` /
   `backfillQCDHistory()` (idempotent `DO NOTHING`), plus
   `backfillCDRHistory()` — a repair tool that re-mirrors `CDR Historical
