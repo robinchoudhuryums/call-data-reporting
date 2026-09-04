@@ -173,25 +173,42 @@ function ekShellHtml_(o) {
     ? '<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;font-size:1px;line-height:1px;color:'
       + C.page + ';">' + ekEsc_(o.preheader) + '</div>'
     : '';
+  // R29: `band` switches to the v2 dark header (ekBandRowsHtml_); the CTA
+  // then takes the accent color and a second, text-only CTA is allowed.
+  // Callers that pass no band render byte-identically to before.
+  const banded = !!o.band;
+  const ctaBg = banded ? C.good : C.ink;
+  const cta2 = (banded && o.cta2Url && o.cta2Label)
+    ? '<td style="padding-left:12px;"><a href="' + ekEsc_(o.cta2Url) + '" style="font:600 13px ' + EK_SANS_ + ';color:' + C.mut + ';text-decoration:underline;">' + ekEsc_(o.cta2Label) + '</a></td>'
+    : '';
   const cta = (o.ctaUrl && o.ctaLabel)
     ? '<tr><td style="padding:12px 26px 24px;" align="left"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-      + '<td bgcolor="' + C.ink + '" style="border-radius:8px;"><a href="' + ekEsc_(o.ctaUrl) + '" '
+      + '<td bgcolor="' + ctaBg + '" style="border-radius:8px;"><a href="' + ekEsc_(o.ctaUrl) + '" '
       + 'style="display:block;padding:11px 20px;font:bold 13px Arial,sans-serif;color:#ffffff;text-decoration:none;">'
-      + ekEsc_(o.ctaLabel) + ' &rarr;</a></td></tr></table></td></tr>'
+      + ekEsc_(o.ctaLabel) + ' &rarr;</a></td>' + cta2 + '</tr></table></td></tr>'
     : '';
+  const header = banded
+    ? ekBandRowsHtml_({ tone: o.band.tone, glyph: o.band.glyph, kicker: o.kicker, title: o.title, subtitle: o.subtitle })
+    : '<tr><td style="padding:22px 26px 18px;border-bottom:1px solid ' + C.line + ';">'
+    +   '<div style="font:600 11px ' + EK_SANS_ + ';letter-spacing:1.5px;text-transform:uppercase;color:#8a97a4;">' + ekEsc_(o.kicker || 'Call Data') + '</div>'
+    +   '<div style="font:bold 23px Arial,sans-serif;color:' + C.ink + ';letter-spacing:-0.4px;padding-top:4px;">' + ekEsc_(o.title || '') + '</div>'
+    +   (o.subtitle ? '<div style="font:400 13px Arial,sans-serif;color:' + C.mut + ';padding-top:3px;">' + ekEsc_(o.subtitle) + '</div>' : '')
+    + '</td></tr>';
+  const footerInner = banded
+    ? '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+      + '<td style="font:400 11px/1.6 Arial,sans-serif;color:#8a97a4;">' + (o.footerHtml || 'Sent from the Call Data dashboard.') + '</td>'
+      + '<td align="right" valign="top" style="font:bold 11px ' + EK_SANS_ + ';letter-spacing:1.2px;color:#b3bcc6;white-space:nowrap;padding-left:12px;">CALL DATA</td>'
+      + '</tr></table>'
+    : '<div style="font:400 11px/1.6 Arial,sans-serif;color:#8a97a4;">' + (o.footerHtml || 'Sent from the Call Data dashboard.') + '</div>';
   return ''
     + preheader
     + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + C.page + ';"><tr><td align="center" style="padding:24px 12px;">'
     + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="wrap" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">'
-    + '<tr><td style="padding:22px 26px 18px;border-bottom:1px solid ' + C.line + ';">'
-    +   '<div style="font:600 11px ' + EK_SANS_ + ';letter-spacing:1.5px;text-transform:uppercase;color:#8a97a4;">' + ekEsc_(o.kicker || 'Call Data') + '</div>'
-    +   '<div style="font:bold 23px Arial,sans-serif;color:' + C.ink + ';letter-spacing:-0.4px;padding-top:4px;">' + ekEsc_(o.title || '') + '</div>'
-    +   (o.subtitle ? '<div style="font:400 13px Arial,sans-serif;color:' + C.mut + ';padding-top:3px;">' + ekEsc_(o.subtitle) + '</div>' : '')
-    + '</td></tr>'
+    + header
     + (o.rowsHtml || '')
     + cta
     + '<tr><td style="padding:16px 26px 22px;border-top:1px solid ' + C.line + ';background:#f7fafc;">'
-    +   '<div style="font:400 11px/1.6 Arial,sans-serif;color:#8a97a4;">' + (o.footerHtml || 'Sent from the Call Data dashboard.') + '</div>'
+    +   footerInner
     + '</td></tr>'
     + '</table></td></tr></table>';
 }
@@ -199,4 +216,150 @@ function ekShellHtml_(o) {
 /** A body row wrapping arbitrary inner HTML with the standard side padding. */
 function ekRow_(innerHtml, pad) {
   return '<tr><td style="padding:' + (pad || '16px 26px 4px') + ';">' + innerHtml + '</td></tr>';
+}
+
+// ── EmailKit v2 (R29): the notice family ─────────────────────────────────
+//
+// Every admin notice (watchdogs, run failures, sign-in sightings, client
+// issues, coverage checks, the coaching batch, the smoke result) used to be
+// a plain-text `body`. They now ALSO carry an HTML alternative in the house
+// style, built from ONE spec by ekNoticeHtml_: a dark header band with a
+// severity-toned stripe + glyph badge, up to a row of status tiles, a toned
+// callout, a list, numbered steps, a monospace block for stacks/logs, and
+// one or two CTAs. The plain-text body stays as the client fallback (and is
+// what the existing tests pin), so nothing a test reads has changed.
+//
+// Senders do not call this directly: they pass `notice: {...}` to
+// sendAppEmail_ (Config.gs), which renders it through ekNoticeHtml_ when the
+// kit is loaded. That keeps every sender file free of a hard dependency on
+// this file (the unit suites load files selectively) while production --
+// one shared scope -- always renders it. email-kit-v2.test.js sweeps every
+// plain-text sender for the `notice:` spec.
+
+var EK_BAND_ = Object.freeze({
+  neutral: { stripe: '#8a97a4', glyph: '#5f6b77', kicker: '#aab4bf' },
+  good:    { stripe: '#3d9476', glyph: '#3d9476', kicker: '#9fd3bd' },
+  warn:    { stripe: '#c66b4b', glyph: '#c66b4b', kicker: '#f0c4ae' },
+  bad:     { stripe: '#b23a2c', glyph: '#b23a2c', kicker: '#f2b8ae' },
+});
+var EK_GLYPH_ = Object.freeze({ neutral: 'i', good: '&#10003;', warn: '!', bad: '&#10007;' });
+
+/** The dark header band: stripe, glyph badge, kicker / title / subtitle. */
+function ekBandRowsHtml_(o) {
+  const tone = EK_BAND_[o.tone] ? o.tone : 'neutral';
+  const t = EK_BAND_[tone];
+  const glyph = o.glyph || EK_GLYPH_[tone];
+  return '<tr><td style="height:5px;background:' + t.stripe + ';font-size:0;line-height:0;">&nbsp;</td></tr>'
+    + '<tr><td bgcolor="' + EK_C_.ink + '" style="background:' + EK_C_.ink + ';padding:22px 26px 20px;">'
+    + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+    + '<td valign="top" style="width:44px;padding-right:14px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+    + '<td width="44" height="44" align="center" valign="middle" bgcolor="' + t.glyph + '" style="border-radius:22px;font:bold 20px ' + EK_SANS_ + ';color:#ffffff;">' + glyph + '</td></tr></table></td>'
+    + '<td valign="middle">'
+    + '<div style="font:600 10px ' + EK_SANS_ + ';letter-spacing:1.6px;text-transform:uppercase;color:' + t.kicker + ';">' + ekEsc_(o.kicker || 'Call Data') + '</div>'
+    + '<div style="font:bold 22px ' + EK_SANS_ + ';color:#ffffff;letter-spacing:-0.3px;padding-top:4px;">' + ekEsc_(o.title || '') + '</div>'
+    + (o.subtitle ? '<div style="font:400 13px ' + EK_SANS_ + ';color:#aab4bf;padding-top:4px;">' + ekEsc_(o.subtitle) + '</div>' : '')
+    + '</td></tr></table></td></tr>';
+}
+
+/** A row of equal tinted status tiles: [{label, value, sub, tone}]. */
+function ekTilesHtml_(list) {
+  const C = EK_C_;
+  list = (list || []).filter(function (t) { return t && t.label != null; }).slice(0, 4);
+  if (!list.length) return '';
+  const w = Math.floor(100 / list.length);
+  return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
+    + list.map(function (t, i) {
+      const bg = t.tone === 'good' ? C.goodTile : t.tone === 'warn' ? '#f6e2d4' : t.tone === 'bad' ? C.badTile : C.neuTile;
+      const bd = t.tone === 'good' ? C.goodTileB : t.tone === 'warn' ? '#e8c3ad' : t.tone === 'bad' ? C.badTileB : C.neuTileB;
+      const ink = t.tone === 'good' ? C.okInk : (t.tone === 'warn' || t.tone === 'bad') ? C.alertInk : C.ink;
+      return '<td width="' + w + '%" valign="top" style="padding:0 ' + (i === list.length - 1 ? 0 : 8) + 'px 0 0;">'
+        + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:10px;"><tr><td style="padding:12px 12px 10px;">'
+        + '<div style="font:600 9px ' + EK_SANS_ + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;">' + ekEsc_(t.label) + '</div>'
+        + '<div style="font:bold 18px ' + EK_SANS_ + ';color:' + ink + ';padding-top:3px;letter-spacing:-0.2px;word-break:break-word;">' + ekEsc_(t.value == null ? '' : t.value) + '</div>'
+        + (t.sub ? '<div style="font:11px ' + EK_SANS_ + ';color:' + C.mut + ';padding-top:2px;">' + ekEsc_(t.sub) + '</div>' : '')
+        + '</td></tr></table></td>';
+    }).join('') + '</tr></table>';
+}
+
+/** Numbered steps with round chips: [{head, body}] (body is HTML, caller-escaped). */
+function ekStepsHtml_(list, tone) {
+  const chip = tone === 'warn' ? EK_C_.watch : tone === 'bad' ? EK_C_.bad : EK_C_.good;
+  return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+    + (list || []).map(function (s, i) {
+      return '<tr><td valign="top" style="width:30px;padding:6px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        + '<td width="24" height="24" align="center" valign="middle" bgcolor="' + chip + '" style="border-radius:12px;font:bold 12px ' + EK_SANS_ + ';color:#ffffff;">' + (i + 1) + '</td></tr></table></td>'
+        + '<td valign="top" style="padding:7px 0 6px 10px;font:13px/1.5 ' + EK_SANS_ + ';color:' + EK_C_.ink + ';border-bottom:1px solid ' + EK_C_.line + ';">'
+        + '<strong>' + ekEsc_(s.head || '') + '</strong>' + (s.body ? ' <span style="color:' + EK_C_.mut + ';">' + s.body + '</span>' : '') + '</td></tr>';
+    }).join('') + '</table>';
+}
+
+/** A bulleted list of pre-escaped HTML items with a small uppercase title. */
+function ekListHtml_(title, items) {
+  items = (items || []).filter(Boolean);
+  if (!items.length) return '';
+  return (title ? ekSectionTitle_(title) : '')
+    + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+    + items.map(function (it) {
+      return '<tr><td valign="top" style="width:14px;padding:4px 0;font:13px ' + EK_SANS_ + ';color:#8a97a4;">&bull;</td>'
+        + '<td style="padding:4px 0 4px 6px;font:13px/1.5 ' + EK_SANS_ + ';color:' + EK_C_.ink + ';border-bottom:1px solid ' + EK_C_.rowline + ';">' + it + '</td></tr>';
+    }).join('') + '</table>';
+}
+
+/** Monospace block for stacks / logs (escaped, wrapped, capped). */
+function ekMonoHtml_(title, text, cap) {
+  const t = String(text == null ? '' : text);
+  if (!t.trim()) return '';
+  const shown = t.length > (cap || 4000) ? (t.slice(0, cap || 4000) + '\n…') : t;
+  return (title ? ekSectionTitle_(title) : '')
+    + '<div style="font:12px/1.5 Menlo,Consolas,monospace;color:' + EK_C_.ink + ';background:' + EK_C_.headbg
+    + ';border:1px solid ' + EK_C_.line + ';border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;">'
+    + ekEsc_(shown) + '</div>';
+}
+
+function ekSectionTitle_(title) {
+  return '<div style="font:600 9px ' + EK_SANS_ + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;padding-bottom:4px;">' + ekEsc_(title) + '</div>';
+}
+
+/** Dashboard URL + route hash, or '' when DASHBOARD_URL is unset (no CTA). */
+function ekDashUrl_(hash) {
+  var url = '';
+  try { url = String(PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '').trim(); } catch (e) {}
+  return url ? (url + (hash || '')) : '';
+}
+
+/**
+ * One notice, one spec:
+ *   { tone, glyph, kicker, title, subtitle, preheader,
+ *     tiles: [{label, value, sub, tone}],
+ *     callout: {kicker, html, tone},
+ *     list: {title, items: [html]},
+ *     stepsTitle, steps: [{head, body}],
+ *     mono: {title, text},
+ *     intro (html), outro (html),
+ *     ctaUrl, ctaLabel, cta2Url, cta2Label, footerHtml }
+ * Sections render in that order; absent ones are skipped.
+ */
+function ekNoticeHtml_(o) {
+  o = o || {};
+  const tone = EK_BAND_[o.tone] ? o.tone : 'neutral';
+  let rows = '';
+  if (o.intro) rows += ekRow_('<div style="font:14px/1.55 ' + EK_SANS_ + ';color:' + EK_C_.ink + ';">' + o.intro + '</div>', '20px 26px 4px');
+  if (o.tiles && o.tiles.length) rows += ekRow_(ekTilesHtml_(o.tiles), (o.intro ? '10px' : '20px') + ' 26px 6px');
+  if (o.callout && o.callout.html) rows += ekRow_(ekCalloutHtml_(o.callout.kicker || '', o.callout.html, o.callout.tone || (tone === 'neutral' ? 'neutral' : tone === 'good' ? 'good' : 'warn')), '10px 26px 4px');
+  if (o.list && o.list.items && o.list.items.length) rows += ekRow_(ekListHtml_(o.list.title, o.list.items), '12px 26px 4px');
+  if (o.steps && o.steps.length) rows += ekRow_((o.stepsTitle ? ekSectionTitle_(o.stepsTitle) : '') + ekStepsHtml_(o.steps, tone === 'bad' ? 'bad' : tone === 'warn' ? 'warn' : 'good'), '12px 26px 6px');
+  if (o.mono && o.mono.text) rows += ekRow_(ekMonoHtml_(o.mono.title, o.mono.text), '12px 26px 6px');
+  if (o.outro) rows += ekRow_('<div style="font:13px/1.5 ' + EK_SANS_ + ';color:' + EK_C_.mut + ';">' + o.outro + '</div>', '10px 26px 8px');
+  if (!rows) rows = ekRow_('', '8px 26px 8px');
+  return ekShellHtml_({
+    band: { tone: tone, glyph: o.glyph },
+    kicker: o.kicker || 'Call Data · Admin notice',
+    title: o.title || '',
+    subtitle: o.subtitle || '',
+    preheader: o.preheader || o.title || '',
+    rowsHtml: rows,
+    ctaUrl: o.ctaUrl || '', ctaLabel: o.ctaLabel || '',
+    cta2Url: o.cta2Url || '', cta2Label: o.cta2Label || '',
+    footerHtml: o.footerHtml || 'Sent from the Call Data dashboard.',
+  });
 }

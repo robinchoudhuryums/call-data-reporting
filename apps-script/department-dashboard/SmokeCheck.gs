@@ -74,7 +74,25 @@ function runLiveSmoke() {
             + (c.note ? '\n       ' + c.note : '');
         }).join('\n')
       + '\n\nRe-run from the Apps Script editor: Run -> runLiveSmoke.';
-    sendAppEmail_(getAdminEmails_().join(','), subject, body);
+    sendAppEmail_({
+      to: getAdminEmails_().join(','), subject: subject, body: body,
+      notice: {
+        tone: failed.length ? 'bad' : 'good', kicker: 'Admin notice · Live smoke',
+        title: failed.length ? ('Live smoke FAILED: ' + failed.length + ' of ' + checks.length) : ('Live smoke passed: ' + checks.length + ' of ' + checks.length),
+        subtitle: 'Read-only sweep of the live read paths',
+        tiles: [{ label: 'Passed', value: (checks.length - failed.length) + ' / ' + checks.length, tone: failed.length ? 'warn' : 'good' },
+                { label: 'Failed', value: String(failed.length), tone: failed.length ? 'bad' : 'neutral' },
+                { label: 'Total time', value: checks.reduce(function (a, c) { return a + (c.ms || 0); }, 0) + ' ms' }],
+        list: { title: 'Checks', items: checks.map(function (c) {
+          return '<strong style="color:' + (c.ok ? '#2f5f4a' : '#b23a2c') + ';">' + (c.ok ? 'PASS' : 'FAIL') + '</strong> '
+            + appEsc_(c.name) + ' <span style="color:#8a97a4;">(' + appEsc_(c.ms) + ' ms)</span>'
+            + (c.note ? '<br><span style="color:#606872;">' + appEsc_(c.note) + '</span>' : '');
+        }) },
+        outro: 'Re-run from the Apps Script editor: Run → runLiveSmoke. Client-side surfaces still need the manual Regression Scenarios.',
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by runLiveSmoke (SmokeCheck.gs); run it after every deploy.',
+      },
+    });
   } catch (mailErr) {
     Logger.log('runLiveSmoke: result email failed: ' + mailErr);
   }

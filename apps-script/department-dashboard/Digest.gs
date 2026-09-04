@@ -362,6 +362,21 @@ function notifyDigestRecipientFailures_(cadence, failures) {
     to:      to,
     subject: '[Dashboard] ' + cadence + ' digest: ' + failures.length
              + ' recipient' + (failures.length === 1 ? '' : 's') + ' failed to send',
+    notice: {
+      tone: 'warn', kicker: 'Admin notice · Manager digests',
+      title: failures.length + ' ' + cadence + ' digest send' + (failures.length === 1 ? '' : 's') + ' failed',
+      subtitle: 'The other recipients were delivered; the run completed',
+      tiles: [{ label: 'Cadence', value: cadence }, { label: 'Failed', value: String(failures.length), tone: 'warn' },
+              { label: 'Others', value: 'delivered', tone: 'good' }],
+      list: { title: 'Failed recipients', items: failures.map(function (f) {
+        return '<strong>' + appEsc_(f.email) + '</strong> (' + appEsc_(f.dept || '?') + '): ' + appEsc_(f.error);
+      }) },
+      stepsTitle: 'What to do',
+      steps: [{ head: 'Fix the address.', body: 'Digest Config (Alerts modal): a typo or a departed mailbox is the usual cause; per-recipient quota is the other.' },
+              { head: 'Verify with a preview.', body: 'Send yourself a preview for that department, then leave it to the next scheduled run.' }],
+      ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Digest Config',
+      footerHtml: 'Sent once per cadence run that had a failed recipient. INV-45 has the run semantics.',
+    },
     body:    'These ' + cadence + ' digest sends failed (other recipients were '
              + 'unaffected, and the run otherwise completed):\n\n' + lines
              + '\n\nTime: ' + new Date(),
@@ -1189,6 +1204,20 @@ function notifyDigestFailure_(cadence, err) {
     sendAppEmail_({
       to:      to,
       subject: '[Dashboard] ' + cadence + ' digest run failed',
+      notice: {
+        tone: 'bad', kicker: 'Admin notice · Manager digests', title: cadence + ' digest run failed',
+        subtitle: 'No digests went out for this run',
+        tiles: [{ label: 'Cadence', value: cadence }, { label: 'Handler', value: fnName },
+                { label: 'Digests sent', value: 'none', tone: 'bad' }],
+        callout: { kicker: 'Error', html: appEsc_((err && err.message) ? err.message : String(err)), tone: 'warn' },
+        stepsTitle: 'What to check',
+        steps: [{ head: 'Digest Config rows.', body: 'A malformed row (unknown dept, bad cadence) fails the whole run before any send.' },
+                { head: 'Execution log.', body: 'Apps Script → Executions → ' + appEsc_(fnName) + ' for the full trace.' },
+                { head: 'Re-run.', body: 'The run-claim marker is NOT set on a throw, so the next scheduled run retries; or run it from the editor now.' }],
+        mono: { title: 'Stack', text: (err && err.stack) ? err.stack : '(no stack)' },
+        ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Digest Config',
+        footerHtml: 'Sent when a whole digest run aborts (cfg read / window compute). Operator State #12 has the seven checks.',
+      },
       body:    fnName
                + ' threw: ' + ((err && err.message) ? err.message : String(err))
                + '\n\nTime: ' + new Date()

@@ -306,6 +306,20 @@ function runDailyAlerts_() {
       sendAppEmail_({
         to: getAdminEmails_().join(','),
         subject: '[Dashboard] Daily alert trigger failed',
+        notice: {
+          tone: 'bad', kicker: 'Admin notice · Daily alerts', title: 'Daily alert trigger failed',
+          subtitle: 'Assessing ' + dateIso,
+          tiles: [{ label: 'Date assessed', value: dateIso }, { label: 'Handler', value: 'runDailyAlerts_' },
+                  { label: 'Alerts sent', value: 'none', sub: 'this run', tone: 'bad' }],
+          callout: { kicker: 'Error', html: appEsc_(e && e.message ? e.message : String(e)), tone: 'warn' },
+          stepsTitle: 'What to check',
+          steps: [{ head: 'Alert Log.', body: 'The Alerts modal shows the last runs; an <em>error</em> row names the dept it died on.' },
+                  { head: 'Execution log.', body: 'Apps Script → Executions → runDailyAlerts_ for the full trace.' },
+                  { head: 'Re-send by hand.', body: 'Alerts modal → Send for ' + appEsc_(dateIso) + ' once the cause is fixed; the trigger re-runs tomorrow regardless.' }],
+          mono: { title: 'Stack', text: (e && e.stack) ? e.stack : '(no stack)' },
+          ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Alerts',
+          footerHtml: 'Sent by the daily alerts trigger when it throws before assessing any department. Operator State #8.',
+        },
         body: 'runDailyAlerts_ threw: ' + (e && e.message ? e.message : String(e))
             + '\nDate: ' + dateIso + '\nStack: ' + (e && e.stack ? e.stack : '(no stack)'),
       });
