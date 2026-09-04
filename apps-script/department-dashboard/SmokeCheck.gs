@@ -74,7 +74,7 @@ function runLiveSmoke() {
             + (c.note ? '\n       ' + c.note : '');
         }).join('\n')
       + '\n\nRe-run from the Apps Script editor: Run -> runLiveSmoke.';
-    MailApp.sendEmail(getAdminEmails_().join(','), subject, body);
+    sendAppEmail_(getAdminEmails_().join(','), subject, body);
   } catch (mailErr) {
     Logger.log('runLiveSmoke: result email failed: ' + mailErr);
   }

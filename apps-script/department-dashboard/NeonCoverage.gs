@@ -467,7 +467,7 @@ function ncEmailResult_(out, summary) {
       lines = lines.slice(0, NEON_COVERAGE_MAX_EMAIL_LINES);
       lines.push('… detail truncated; run runNeonCoverageCheck() in the editor for the full object.');
     }
-    MailApp.sendEmail({
+    sendAppEmail_({
       to: to,
       subject: '[Dashboard] Neon coverage check: '
         + (out.findings ? (out.findings + ' finding(s)') : (out.errors && out.errors.length ? 'probe errors' : 'clean'))

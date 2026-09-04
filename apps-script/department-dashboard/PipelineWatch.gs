@@ -356,7 +356,7 @@ function notifyPipelineFailures_(failures, auxLines) {
         + (auxLines.length ? ' (+' + auxLines.length + ' signal(s))' : '')
       : '[Dashboard] Monitoring signal' + (auxLines.length === 1 ? '' : 's') + ': '
         + auxLines.length + ' new';
-    MailApp.sendEmail({ to: to, subject: subject, body: body });
+    sendAppEmail_({ to: to, subject: subject, body: body });
     return true;
   } catch (mailErr) {
     Logger.log('notifyPipelineFailures_ mail failed: ' + mailErr);

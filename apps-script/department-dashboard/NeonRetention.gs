@@ -208,7 +208,7 @@ function neonRetentionNotify_(summary) {
   try {
     var to = getAdminEmails_().join(',');
     if (!to) return;
-    MailApp.sendEmail({
+    sendAppEmail_({
       to: to,
       subject: '[Dashboard] Neon retention prune FAILED',
       htmlBody: '<p>A step of the weekly Neon retention prune threw. The other steps ran; '

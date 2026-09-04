@@ -198,7 +198,7 @@ function sheetCoverageNotify_(out, summary) {
         + s.gaps.length + ' missing business day(s) — ' + escapeHtmlServer_(s.gaps.join(', '))
         + '<br><em>Fix: ' + escapeHtmlServer_(s.fix) + '</em></li>';
     }).filter(function (x) { return !!x; });
-    MailApp.sendEmail({
+    sendAppEmail_({
       to: to,
       subject: '[Dashboard] Sheet coverage — ' + out.findings + ' missing day(s)',
       htmlBody: '<p>A business day inside ' + out.from + '..' + out.to + ' has NO rows in a '

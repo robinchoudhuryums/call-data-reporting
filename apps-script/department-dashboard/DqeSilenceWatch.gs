@@ -278,7 +278,7 @@ function dqeSilenceSendAlert_(alerts, dateIso) {
       + ' business day(s), ' + a.calls + ' queue calls with NO agent rows)';
   });
   try {
-    MailApp.sendEmail({
+    sendAppEmail_({
       to: to,
       subject: '[Dashboard] Agent data went dark for ' + alerts.length + ' department(s) — queue still active',
       body: 'As of ' + dateIso + ', these departments\' queues are taking calls '

@@ -91,6 +91,10 @@ tests/
                               config-neon-c3, caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
+                              app-email (R28: the sendAppEmail_ chokepoint --
+                              default admin BCC, EMAIL_BCC override/none,
+                              dedup, both signatures, and the sweep that
+                              no .gs sends mail directly),
                               neon-retention (R27: the storage-cap prune --
                               floored horizons above the coverage window,
                               the six ctid-batched steps, budget/skip/error

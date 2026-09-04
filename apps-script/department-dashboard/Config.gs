@@ -33,6 +33,57 @@ function getAdminEmails_() {
   return out.length ? out : ADMIN_EMAILS_FALLBACK.slice();
 }
 
+/**
+ * R28: the ONE send chokepoint for every dashboard email. Every
+ * MailApp.sendEmail callsite routes through here (cross-file-pins.test.js
+ * fails on a bare one) so the default BCC cannot be missed by a new sender.
+ *
+ * BCC rule (owner ruling 2026-09): the first admin (`getAdminEmails_()[0]`)
+ * is BCC'd on EVERY email the app sends, so a broken template, a wrong
+ * recipient, or a send that silently never happens is seen the day it
+ * happens rather than when a manager mentions it. `EMAIL_BCC` overrides the
+ * address list (comma-separated); `EMAIL_BCC=none` turns it off. An address
+ * already in to/cc/bcc is not added again (an admin-only alert does not
+ * arrive twice). Accepts the object form AND the (to, subject, body)
+ * positional form MailApp supports. Lives beside getAdminEmails_ (not
+ * Util.gs) because Config.gs is the one file every suite and file loads.
+ */
+function sendAppEmail_(a, b, c) {
+  var msg;
+  if (a && typeof a === 'object') {
+    msg = {};
+    for (var k in a) if (Object.prototype.hasOwnProperty.call(a, k)) msg[k] = a[k];
+  } else {
+    msg = { to: a, subject: b, body: c };
+  }
+  var bcc = appEmailBcc_(msg);
+  if (bcc) msg.bcc = msg.bcc ? (String(msg.bcc) + ',' + bcc) : bcc;
+  MailApp.sendEmail(msg);
+  return msg;
+}
+
+/** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The BCC list to ADD, or ''. */
+function appEmailBcc_(msg) {
+  var raw = '';
+  try { raw = String(PropertiesService.getScriptProperties().getProperty('EMAIL_BCC') || '').trim(); } catch (e) {}
+  if (/^(none|off|false)$/i.test(raw)) return '';
+  var list = raw
+    ? raw.split(/[,;\s]+/).map(function (x) { return x.trim(); }).filter(Boolean)
+    : getAdminEmails_().slice(0, 1);
+  var already = {};
+  ['to', 'cc', 'bcc'].forEach(function (f) {
+    String((msg && msg[f]) || '').split(/[,;\s]+/).forEach(function (x) {
+      x = x.trim().toLowerCase(); if (x) already[x] = true;
+    });
+  });
+  var out = [];
+  list.forEach(function (x) {
+    var key = x.toLowerCase();
+    if (!already[key]) { already[key] = true; out.push(x); }
+  });
+  return out.join(',');
+}
+
 // Sheet names. Roster sheet is the existing "DO NOT EDIT!" tab; the
 // Access Control sheet is auto-created by setup_() on first run if
 // missing. Queue extensions are parsed inline from the roster cells
@@ -545,7 +596,7 @@ var PROP_REGISTRY_ = Object.freeze({
     QUEUE_SPLIT_SCOPE: 'operator', AGENT_ROLE_ENABLED: 'operator',
     LOGIN_NOTIFY_ENABLED: 'operator', UI_FLAGS: 'operator',
     COMPANY_HOLIDAYS: 'operator', EMAIL_ALIASES: 'operator', DIAL_IN_LABELS: 'operator',
-    AGENT_EMAIL_DOMAINS: 'operator',
+    AGENT_EMAIL_DOMAINS: 'operator', EMAIL_BCC: 'operator', ACCESS_WELCOME_EMAIL: 'operator',
     ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
     NEON_EGRESS_BUDGET_MB: 'operator',

@@ -63,7 +63,7 @@ test('smoke: healthy install -> every check passes, ok-prefixed result, property
   assert.equal(h.state.props.SMOKE_LAST_RESULT, res.summary);
   assert.ok(h.state.props.SMOKE_LAST, 'SMOKE_LAST timestamp recorded');
   assert.equal(h.state.sentEmails.length, 1, 'result email sent');
-  assert.equal(h.state.sentEmails[0], 'admin@x.com', 'sent to getAdminEmails_()');
+  assert.equal(h.state.sentEmails[0].to, 'admin@x.com', 'sent to getAdminEmails_() (R28: via sendAppEmail_)');
   // Unconfigured Neon is an informational pass, not a failure.
   assert.equal(byName(res, 'neon').note, 'n/a (Neon unconfigured)');
 });

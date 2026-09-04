@@ -239,3 +239,42 @@ test('getAccessControlInit: groups rows into managers with a departments list', 
   const solo = init.managers.find(function (x) { return x.email.toLowerCase() === 'solo@x.com'; });
   deepEqual(JSON.parse(JSON.stringify(solo.departments)), ['Power']);
 });
+
+// ── R28: the new-grant welcome email ─────────────────────────────────────
+test('R28: a brand-new grant emails the person the dashboard link (admin BCC\'d); re-grants are silent', function () {
+  install([]);
+  h.state.props.DASHBOARD_URL = 'https://script.google.com/a/x/exec';
+  h.state.sentEmails.length = 0;
+  const r = h.call('saveAccessControlRow', { email: 'New@X.com', department: 'Sales' });
+  assert.equal(r.welcomed, true);
+  assert.equal(h.state.sentEmails.length, 1);
+  const m = h.state.sentEmails[0];
+  assert.equal(m.to, 'New@X.com');
+  assert.match(m.subject, /access to the Department Dashboard/);
+  assert.match(m.body, /Sales/);
+  assert.match(m.body, /https:\/\/script\.google\.com\/a\/x\/exec/);
+  assert.equal(m.bcc, 'admin@x.com', 'the default BCC rides on the welcome too');
+
+  // Re-save (edit / re-grant): the address already had a row -> no email.
+  h.state.sentEmails.length = 0;
+  const r2 = h.call('saveAccessControlRow', { email: 'new@x.com', departments: ['Sales', 'Power'] });
+  assert.equal(r2.welcomed, false);
+  assert.equal(h.state.sentEmails.length, 0);
+});
+
+test('R28: the welcome is skipped without DASHBOARD_URL or with ACCESS_WELCOME_EMAIL=false; the save still lands', function () {
+  install([]);
+  delete h.state.props.DASHBOARD_URL;
+  h.state.sentEmails.length = 0;
+  let r = h.call('saveAccessControlRow', { email: 'a@x.com', department: 'CSR' });
+  assert.equal(r.saved, true); assert.equal(r.welcomed, false);
+  assert.equal(h.state.sentEmails.length, 0, 'nothing to link to');
+
+  install([]);
+  h.state.props.DASHBOARD_URL = 'https://x/exec';
+  h.state.props.ACCESS_WELCOME_EMAIL = 'false';
+  r = h.call('saveAccessControlRow', { email: 'b@x.com', department: 'CSR' });
+  assert.equal(r.saved, true); assert.equal(r.welcomed, false);
+  assert.equal(h.state.sentEmails.length, 0);
+  assert.equal(acSheetRows().length, 1, 'the row is written regardless');
+});

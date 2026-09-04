@@ -21,7 +21,7 @@ function sendDepartmentSummaryEmail(req) {
   const from = meta.from || '', to = meta.to || '';
   const rangeLabel = from === to ? from : from + ' – ' + to;
 
-  MailApp.sendEmail({
+  sendAppEmail_({
     to: email,
     subject: 'My Department: ' + dept + ' · ' + rangeLabel,
     htmlBody: deptSummaryEmailHtml_(data, dept, rangeLabel),

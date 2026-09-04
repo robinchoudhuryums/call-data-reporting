@@ -957,6 +957,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Canonical pattern: `tmpl.userJson = JSON.stringify(obj).replace(/</g, '\\u003c')`
   in `Code.gs::renderDashboard_`, then `window.__USER__ = <?!= userJson ?>;`
   in `dashboard.html`.
+- **Every dashboard email is sent through `sendAppEmail_` (Config.gs), never
+  `MailApp.sendEmail` directly -- it BCCs the first admin by default (R28,
+  owner ruling: a wrong recipient or a silent non-send must be seen the day
+  it happens), dedups an address already in to/cc, and honors `EMAIL_BCC`
+  (override list; `none` disables). A new send site that calls MailApp
+  directly fails `app-email.test.js`'s sweep. Operator State #58.
 - **Admin emails are resolved at request time.** Membership checks
   and admin recipient lookups go through `Config.gs::getAdminEmails_()`,
   which reads the `ADMIN_EMAILS` Script Property (comma-separated
@@ -2146,6 +2152,7 @@ items for anything it flags or doesn't cover.)
 55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants in `insuranceNumbers.js`, a cdr-report push, and re-running `syncInsuranceNumbersToNeon`; keep a blank header column between the dept block and it
 56. Reprocessing historical dates -- Manual Export per date (mirrors Neon inline) over the bulk path; clear `DQE_UPSERT_RESUME` before any backfill; the zero-talk scan (answered > 0 with TTT 0:00:00) is the post-rebuild check, and `repairDqeDuplicateMerge` is the remedy for same-day (date, agent) duplicates
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, and the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL)
+58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
 
 ## Cycle Workflow Config
 
