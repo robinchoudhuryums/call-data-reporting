@@ -587,6 +587,53 @@ function saveAccessControlRow(req) {
   return { saved: true, departments: toStore, role: role, welcomed: welcomed };
 }
 
+/**
+ * R28. The welcome email body in the EmailKit house style (the same 600px
+ * card the report + digest emails use). Pure: no I/O.
+ */
+function acWelcomeEmailHtml_(email, scope, role, url) {
+  const C = EK_C_;
+  const isAgent = role === 'agent';
+  const what = isAgent ? 'Your own call metrics' : scope;
+  const pill = function (label) {
+    return '<span style="display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:999px;'
+      + 'background:' + C.neuTile + ';border:1px solid ' + C.neuTileB + ';font:600 11px ' + EK_SANS_
+      + ';letter-spacing:0.3px;color:' + C.ink + ';">' + ekEsc_(label) + '</span>';
+  };
+  const pills = isAgent ? pill('Agent view') : scope.split(', ').map(pill).join('');
+  const rows = ekRow_(
+      '<div style="font:15px/1.55 Arial,sans-serif;color:' + C.ink + ';">'
+      + 'Hi, you have been given access to the <strong>Department Dashboard</strong>. '
+      + 'Sign in with <strong>' + ekEsc_(email) + '</strong> and it opens straight to your view.'
+      + '</div>', '20px 26px 6px')
+    + ekRow_(
+      '<div style="font:600 9px ' + EK_SANS_ + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;padding-bottom:6px;">'
+      + (isAgent ? 'What you can see' : 'Your department' + (scope.indexOf(',') >= 0 ? 's' : '')) + '</div>'
+      + '<div>' + pills + '</div>', '8px 26px 4px')
+    + ekRow_(ekCalloutHtml_('What is in it',
+        isAgent
+          ? 'Your answered and missed calls, talk time, and a 12-month history, alongside your team\'s aggregate. Teammates\' individual numbers are never shown.'
+          : 'A daily view of every agent\'s answered, missed and talk-time figures for ' + ekEsc_(what)
+            + ', the missed-call timeline, queue health, and the Insights, Individual and Inbound reports.',
+        'neutral'), '12px 26px 4px')
+    + ekRow_(
+      '<div style="font:13px/1.5 Arial,sans-serif;color:' + C.mut + ';">'
+      + 'If the page says <em>access denied</em>, reload it once. Access is live as of now, and the '
+      + 'browser may be showing an earlier attempt.'
+      + '</div>', '10px 26px 8px');
+  return ekShellHtml_({
+    kicker: 'Call Data · Access granted',
+    title: 'Welcome to the Department Dashboard',
+    subtitle: isAgent ? 'Your call metrics, at a glance' : ('Manager access · ' + what),
+    preheader: 'You now have access to the Department Dashboard' + (isAgent ? '' : (' for ' + what)),
+    rowsHtml: rows,
+    ctaUrl: url,
+    ctaLabel: 'Open the dashboard',
+    footerHtml: 'Sent from the Call Data dashboard because an admin granted this address access. '
+      + 'Questions about your access go to ' + ekEsc_(getAdminEmails_()[0] || 'your admin') + '.',
+  });
+}
+
 /** R28. Returns true when a welcome email was sent. Never throws. */
 function acSendWelcomeEmail_(email, depts, role) {
   try {
@@ -596,12 +643,14 @@ function acSendWelcomeEmail_(email, depts, role) {
     if (!url) return false;
     const scope = (depts.length === 1 && isAllDeptsSentinel_(depts[0]))
       ? 'all departments' : depts.join(', ');
-    const what = role === 'agent' ? 'your own call metrics' : ('the ' + scope + ' dashboard');
     sendAppEmail_({
       to: email,
       subject: 'You now have access to the Department Dashboard',
-      body: 'Hi,\n\nYou have been given access to ' + what + '.\n\n'
-        + 'Open it here (sign in with this Google account): ' + url + '\n\n'
+      htmlBody: acWelcomeEmailHtml_(email, scope, role, url),
+      // Plain-text alternative for clients that prefer it.
+      body: 'You have been given access to the Department Dashboard ('
+        + (role === 'agent' ? 'your own call metrics' : scope) + ').\n\n'
+        + 'Open it here, signed in with this Google account: ' + url + '\n\n'
         + 'If the page says access denied, reload once -- the grant is live as of now.\n',
     });
     return true;
