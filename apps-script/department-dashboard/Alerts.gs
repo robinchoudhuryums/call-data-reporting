@@ -1312,6 +1312,7 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
   }
 
   const htmlBody = ekShellHtml_({
+    band: { tone: 'warn' },   // R30: uniform banded header
     kicker: 'Call Data · Low answer rate alert',
     title: dept,
     subtitle: dateIso,

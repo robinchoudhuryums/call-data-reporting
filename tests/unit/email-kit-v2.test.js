@@ -148,3 +148,23 @@ test('R29 sweep: every sendAppEmail_ call that sends a plain `body:` also passes
   });
   assert.deepEqual(offenders, [], 'a plain-text email must carry a `notice:` spec so it renders in the house style: ' + offenders.join(' | '));
 });
+
+// ── R30 (owner ruling 2026-09-04): the family is UNIFORM -- every report /
+// alert / digest email built on ekShellHtml_ passes `band`, so the dark
+// header is the one look across notices, welcome, and reports. (The Daily
+// Call Queue Report keeps its own pinned local shell on purpose.)
+test('R30 sweep: every ekShellHtml_ caller passes band', function () {
+  const offenders = [];
+  fs.readdirSync(DASH).filter(function (f) { return f.endsWith('.gs') && f !== 'EmailKit.gs'; }).forEach(function (f) {
+    const src = fs.readFileSync(path.join(DASH, f), 'utf8');
+    let i = 0;
+    for (;;) {
+      const k = src.indexOf('ekShellHtml_({', i);
+      if (k < 0) break;
+      // The options literal opens at k; `band:` must appear within its first 200 chars.
+      if (!/\bband:\s*\{/.test(src.slice(k, k + 200))) offenders.push(f + '@' + k);
+      i = k + 1;
+    }
+  });
+  assert.deepEqual(offenders, [], 'pass band: { tone } to ekShellHtml_ -- the email family is uniform (R30): ' + offenders.join(', '));
+});

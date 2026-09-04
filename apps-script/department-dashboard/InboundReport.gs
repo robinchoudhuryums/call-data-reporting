@@ -973,6 +973,7 @@ function sendInboundReportEmail(req) {
   // CTA, quiet footer) like every other report email.
   const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
   const htmlBody = ekShellHtml_({
+    band: { tone: 'neutral', glyph: '&#9776;' },   // R30: uniform banded header
     kicker: 'Call Data · Inbound calls',
     title: scopeLabel,
     subtitle: dateLabel + ' · vs prior ' + priorLabel,

@@ -967,9 +967,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `EmailKit.gs::ekNoticeHtml_` (banded shell, tiles, steps, callout, mono)
   as the HTML alternative, keeping `body` as the fallback; senders never
   call the kit directly (the suites load files selectively -- use
-  `appEsc_` / `appDashUrl_` from Config.gs inside a spec). ENFORCED:
-  `email-kit-v2.test.js` sweeps every `body:` sender for a spec. Operator
-  State #58.
+  `appEsc_` / `appDashUrl_` from Config.gs inside a spec). **The family is
+  UNIFORM (R30, owner ruling): every `ekShellHtml_` caller passes `band`**
+  (the dark header) -- only the Daily Call Queue Report keeps its own pinned
+  local shell. ENFORCED: `email-kit-v2.test.js` sweeps every `body:` sender
+  for a spec and every shell caller for `band`. Operator State #58.
 - **Admin emails are resolved at request time.** Membership checks
   and admin recipient lookups go through `Config.gs::getAdminEmails_()`,
   which reads the `ADMIN_EMAILS` Script Property (comma-separated
