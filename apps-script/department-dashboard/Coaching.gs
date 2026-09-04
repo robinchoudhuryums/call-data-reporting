@@ -414,7 +414,7 @@ function coachingDeliveryRun_() {
         var dashUrl = '';
         try { dashUrl = propsSvc.getProperty('DASHBOARD_URL') || ''; } catch (e2) {}
         try {
-          MailApp.sendEmail({
+          sendAppEmail_({
             to: to,
             subject: '[Dashboard] Coaching: ' + toEmail.length + ' new flag(s) — '
               + preview.window.from + '..' + preview.window.to,

@@ -1347,7 +1347,7 @@ function escPendingReviewPing_() {
       var to = getAdminEmails_().join(',');
       if (!to) return;   // no recipients -- leave the watermark; retry later
       var url = props.getProperty('DASHBOARD_URL') || '';
-      MailApp.sendEmail({
+      sendAppEmail_({
         to: to,
         subject: '[Dashboard] ' + n + ' escalation submission' + (n === 1 ? '' : 's') + ' awaiting review',
         body: n + ' new externally-submitted escalation' + (n === 1 ? ' is' : 's are')
@@ -1380,7 +1380,7 @@ function escNotifyNewEscalation_(rec) {
     }
     var dashUrl = props.getProperty('DASHBOARD_URL') || '';
     var link = dashUrl ? (dashUrl + '#/escalations') : '';
-    MailApp.sendEmail({
+    sendAppEmail_({
       to:       recipients.join(','),
       subject:  'New escalation logged — ' + rec.department,
       htmlBody: escNotifyHtml_(rec, link),

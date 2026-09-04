@@ -358,7 +358,7 @@ function notifyDigestRecipientFailures_(cadence, failures) {
   const lines = failures.map(function (f) {
     return '- ' + f.email + ' (' + (f.dept || '?') + '): ' + f.error;
   }).join('\n');
-  MailApp.sendEmail({
+  sendAppEmail_({
     to:      to,
     subject: '[Dashboard] ' + cadence + ' digest: ' + failures.length
              + ' recipient' + (failures.length === 1 ? '' : 's') + ' failed to send',
@@ -547,7 +547,7 @@ function sendDigestEmail_(opts) {
       + 'ask an admin to remove your row from the &ldquo;Digest Config&rdquo; sheet (or set Active=FALSE).',
   });
 
-  MailApp.sendEmail({
+  sendAppEmail_({
     to:       to,
     subject:  subject,
     htmlBody: htmlBody,
@@ -1186,7 +1186,7 @@ function notifyDigestFailure_(cadence, err) {
                  : cadence === 'weekly'  ? 'runWeeklyDigests_'
                  : cadence === 'monthly' ? 'runMonthlyDigests_'
                  : '(' + cadence + ' digest run)';
-    MailApp.sendEmail({
+    sendAppEmail_({
       to:      to,
       subject: '[Dashboard] ' + cadence + ' digest run failed',
       body:    fnName

@@ -956,7 +956,7 @@ function sendIndividualReportEmail(req) {
   // email reads as part of the same family — the content itself stays the
   // rendered report image (this export IS the visual snapshot).
   const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
-  MailApp.sendEmail({
+  sendAppEmail_({
     to: recipient,
     subject: 'Individual Report: ' + dateLabel,
     htmlBody: ekShellHtml_({

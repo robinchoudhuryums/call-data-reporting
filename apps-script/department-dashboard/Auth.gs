@@ -541,6 +541,7 @@ function saveAccessControlRow(req) {
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
+  let hadRows = false;
   try {
     const ss = openSpreadsheet_();
     let sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
@@ -554,6 +555,7 @@ function saveAccessControlRow(req) {
       for (let i = col.length - 1; i >= 0; i--) {
         if (String(col[i][0] || '').toLowerCase().trim() === normalized) {
           sheet.deleteRow(i + 2);
+          hadRows = true;
         }
       }
     }
@@ -567,13 +569,46 @@ function saveAccessControlRow(req) {
       sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(d), sheetSafeCell_(notes),
                        sheetSafeCell_(role), sheetSafeCell_(role === 'agent' ? agentName : '')]);
     });
+    // The auth cache is busted here, so the grant is live on the person's
+    // NEXT page load -- no 60 s wait (AUTH_CACHE_TTL_SECONDS is the ceiling
+    // only for hand-edits of the sheet).
     CacheService.getScriptCache().remove('access:' + normalized);
     Logger.log('saveAccessControlRow: %s -> [%s] role=%s%s by %s', normalized, toStore.join(', '),
       role, role === 'agent' ? (' agent=' + agentName) : '', Session.getActiveUser().getEmail());
   } finally {
     lock.releaseLock();
   }
-  return { saved: true, departments: toStore, role: role };
+  // R28: a brand-new grant (no prior row for this address) tells the person
+  // -- nothing else does; the requester used to find out by trying again.
+  // Skipped for re-grants/edits, when ACCESS_WELCOME_EMAIL=false, or when
+  // there is no DASHBOARD_URL to send. Best-effort: a send failure never
+  // fails the save (the row is already written).
+  const welcomed = !hadRows && acSendWelcomeEmail_(email, toStore, role);
+  return { saved: true, departments: toStore, role: role, welcomed: welcomed };
+}
+
+/** R28. Returns true when a welcome email was sent. Never throws. */
+function acSendWelcomeEmail_(email, depts, role) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (String(props.getProperty('ACCESS_WELCOME_EMAIL') || 'true').toLowerCase() === 'false') return false;
+    const url = String(props.getProperty('DASHBOARD_URL') || '').trim();
+    if (!url) return false;
+    const scope = (depts.length === 1 && isAllDeptsSentinel_(depts[0]))
+      ? 'all departments' : depts.join(', ');
+    const what = role === 'agent' ? 'your own call metrics' : ('the ' + scope + ' dashboard');
+    sendAppEmail_({
+      to: email,
+      subject: 'You now have access to the Department Dashboard',
+      body: 'Hi,\n\nYou have been given access to ' + what + '.\n\n'
+        + 'Open it here (sign in with this Google account): ' + url + '\n\n'
+        + 'If the page says access denied, reload once -- the grant is live as of now.\n',
+    });
+    return true;
+  } catch (e) {
+    Logger.log('acSendWelcomeEmail_ failed (best-effort): ' + ((e && e.message) || e));
+    return false;
+  }
 }
 
 /** Remove ALL Access Control rows for an email (revokes manager access). */
@@ -714,7 +749,7 @@ function notifyLoginEvent_(email, user) {
       + 'may just be a crawler — the store notifies once per address, not per hit.');
   }
   try {
-    MailApp.sendEmail({ to: to, subject: subject, body: lines.join('\n') });
+    sendAppEmail_({ to: to, subject: subject, body: lines.join('\n') });
   } catch (e) {
     Logger.log('notifyLoginEvent_: send FAILED (%s) -- sighting NOT recorded, will retry on the next hit.',
       (e && e.message) || e);

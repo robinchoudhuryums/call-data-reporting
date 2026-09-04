@@ -988,7 +988,7 @@ function sendInboundReportEmail(req) {
       + 'capture (a different lens than QCD).',
   });
 
-  MailApp.sendEmail({ to: email,
+  sendAppEmail_({ to: email,
     subject: 'Inbound Calls Report: ' + dateLabel + ' (' + scopeLabel + ')',
     htmlBody: htmlBody });
   return { to: email };

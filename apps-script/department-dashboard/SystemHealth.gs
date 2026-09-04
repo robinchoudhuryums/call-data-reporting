@@ -980,7 +980,7 @@ function reportClientIssue(payload) {
     if (!seen && count < CLIENT_ISSUE_WINDOW_CAP_) {
       var to = getAdminEmails_().join(',');
       if (to) {
-        MailApp.sendEmail({
+        sendAppEmail_({
           to: to,
           subject: '[Dashboard] Client issue — ' + kind + ' (' + user.email + ')',
           body: 'A user\'s browser reported a client-side issue.\n\n'

@@ -302,7 +302,7 @@ function sendQueueReportForDate_(targetIso, opts) {
   try {
     const msg = { to: toList.join(','), subject: subject, htmlBody: html };
     if (ccList.length) msg.cc = ccList.join(',');
-    MailApp.sendEmail(msg);
+    sendAppEmail_(msg);
     return { count: recipients.length, to: recipients, failed: [] };
   } catch (e) {
     if (opts.to) throw e;
@@ -325,7 +325,7 @@ function notifyQueueReportSendFailures_(targetIso, failed, allFailed) {
     const lines = (failed || []).map(function (f) {
       return ' - ' + f.email + ': ' + f.error;
     });
-    MailApp.sendEmail({
+    sendAppEmail_({
       to: to,
       subject: '[Dashboard] Daily Call Queue Report — '
         + (allFailed ? 'ALL subscriber sends failed' : 'some subscriber sends failed')
@@ -368,7 +368,7 @@ function queueReportFlagMissedDay_(props, now, targetIso) {
       + 'once the data lands. Flagged at ' + new Date());
     const to = getAdminEmails_().join(',');
     if (to) {
-      MailApp.sendEmail({
+      sendAppEmail_({
         to: to,
         subject: '[Dashboard] Daily Call Queue Report is LATE for ' + targetIso,
         body: 'The ' + QUEUE_REPORT_WINDOW_START_HOUR + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR
@@ -991,7 +991,7 @@ function notifyQueueReportFailure_(err) {
   try {
     const to = getAdminEmails_().join(',');
     if (!to) return;
-    MailApp.sendEmail({
+    sendAppEmail_({
       to:      to,
       subject: '[Dashboard] Daily Call Queue Report run failed',
       body:    'runDailyQueueReport_ threw: ' + ((err && err.message) ? err.message : String(err))
@@ -1312,7 +1312,7 @@ function sendQcdAllDeptEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const label = data.dateLabel || (from === to ? from : (from + ' – ' + to));
   const html = buildQueueReportEmailHtml_(data, label, false);
-  MailApp.sendEmail({ to: email, subject: 'Daily Call Queue Report — ' + label, htmlBody: html });
+  sendAppEmail_({ to: email, subject: 'Daily Call Queue Report — ' + label, htmlBody: html });
   Logger.log('sendQcdAllDeptEmail: %s..%s -> %s', from, to, email);
   return { to: email, dateLabel: label };
 }

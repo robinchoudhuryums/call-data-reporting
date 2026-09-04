@@ -1168,7 +1168,7 @@ function sendInsightsReportEmail(req) {
       + 'Charts (trend, share, per-agent) live in the web app via Copy image / Print.',
   });
 
-  MailApp.sendEmail({ to: email,
+  sendAppEmail_({ to: email,
     subject: 'Insights Report: ' + dateLabel,
     htmlBody: htmlBody });
   return { to: email };

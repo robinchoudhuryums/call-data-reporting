@@ -9,7 +9,7 @@ const { loadGas } = require('../harness/loadGas');
 
 // Util.gs supplies assertManagerOrAdmin_ (the Phase A agent-role allowlist
 // the escalation entry points now call).
-const h = loadGas({ files: ['Util.gs', 'Escalations.gs'] });
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Escalations.gs'] });   // Config.gs: sendAppEmail_ (R28)
 
 test('F-44: escCleanDateTime_ accepts the documented shapes only', function () {
   const f = h.fn('escCleanDateTime_');

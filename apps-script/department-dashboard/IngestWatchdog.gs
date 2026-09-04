@@ -160,7 +160,7 @@ function notifyIngestStale_(fresh, staleHours) {
     var lastTs = fresh.latestTimestamp || '(none found in recent Pipeline Health)';
     var hrs = (fresh.hoursSinceFresh == null) ? 'unknown' : fresh.hoursSinceFresh;
     var url = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
-    MailApp.sendEmail({
+    sendAppEmail_({
       to:      to,
       subject: '[Dashboard] Ingest stale: no fresh DQE build in ' + staleHours + 'h',
       body:    'The daily ingest watchdog did not find a fresh DQE build.\n\n'

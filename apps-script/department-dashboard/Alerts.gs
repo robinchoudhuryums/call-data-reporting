@@ -303,7 +303,7 @@ function runDailyAlerts_() {
     // Surface to admins via email so a silent trigger failure
     // doesn't go unnoticed.
     try {
-      MailApp.sendEmail({
+      sendAppEmail_({
         to: getAdminEmails_().join(','),
         subject: '[Dashboard] Daily alert trigger failed',
         body: 'runDailyAlerts_ threw: ' + (e && e.message ? e.message : String(e))
@@ -1314,7 +1314,7 @@ function sendAlertEmail_(cfgEntry, dateIso, stats, recipientsTo, recipientsCc) {
       + 'configured in the &ldquo;Alert Config&rdquo; sheet.',
   });
 
-  MailApp.sendEmail({
+  sendAppEmail_({
     to:       recipientsTo.join(','),
     cc:       (recipientsCc || []).join(','),
     subject:  '[Dashboard Alert] ' + dept + ' answer rate ' + pctStr + ' on ' + dateIso,

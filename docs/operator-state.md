@@ -1590,3 +1590,22 @@ When something looks wrong, before assuming a code bug, check:
        trends up, the remaining growth is `call_history_dept` /
        `direct_call_history` (small, unpruned by design) — revisit the
        horizons before the plan upgrade.
+
+58. **`EMAIL_BCC` + `ACCESS_WELCOME_EMAIL` (dashboard) — the default BCC on
+    every app email, and the new-grant welcome email (R28, 2026-09).**
+    **BCC.** Every dashboard email (alerts, digests, the Daily Call Queue
+    Report, report exports and to-agent sends, escalation notices, coaching,
+    the watchdogs, client-issue reports, sign-in notices, the welcome below)
+    goes through `Config.gs::sendAppEmail_`, which BCCs `getAdminEmails_()[0]`
+    unless the address is already a recipient. Set `EMAIL_BCC` to a
+    comma-separated list to BCC other addresses instead, or `none` to turn it
+    off (e.g. once the app is trusted and the admin inbox is noisy). Pinned by
+    `tests/unit/app-email.test.js`, whose sweep fails on any dashboard .gs
+    that calls `MailApp.sendEmail` directly.
+    **Welcome email.** `saveAccessControlRow` (the Access modal) busts the
+    auth cache, so a grant is live on the person's next page load; and when
+    the address had NO prior Access Control row it emails them the
+    `DASHBOARD_URL` with their scope (best-effort; the save never fails on a
+    send error). Re-grants and edits are silent. Needs `DASHBOARD_URL` (#7);
+    `ACCESS_WELCOME_EMAIL=false` disables it. The denied-sign-in notice to
+    admins (#45) is unchanged -- it is what tells you someone is waiting.
