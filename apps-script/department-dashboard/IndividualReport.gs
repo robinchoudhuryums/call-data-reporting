@@ -960,6 +960,7 @@ function sendIndividualReportEmail(req) {
     to: recipient,
     subject: 'Individual Report: ' + dateLabel,
     htmlBody: ekShellHtml_({
+      band: { tone: 'neutral', glyph: '&#9776;' },   // R30: uniform banded header
       kicker: 'Call Data · Individual report',
       title: dateLabel,
       subtitle: 'Visual snapshot of the on-screen report',

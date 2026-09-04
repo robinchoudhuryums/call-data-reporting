@@ -551,6 +551,7 @@ function sendDigestEmail_(opts) {
     + 'Dashboard digest — ' + dept + ' — ' + rangeLabel;
 
   const htmlBody = ekShellHtml_({
+    band: { tone: 'neutral', glyph: '&#9776;' },   // R30: uniform banded header
     kicker: 'Call Data · ' + (opts.cadence || 'scheduled') + ' digest',
     title: dept,
     subtitle: rangeLabel,

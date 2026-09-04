@@ -193,6 +193,7 @@ function deptSummaryEmailHtml_(data, dept, rangeLabel) {
   const preTxt = dept + ': ' + (total ? rate.toFixed(1) + '% answered (' + ekFmtInt_(a) + ' of ' + ekFmtInt_(total) + ' rings)' : 'no call activity') + ' · ' + rangeLabel;
 
   return ekShellHtml_({
+    band: { tone: 'neutral', glyph: '&#9776;' },   // R30: uniform banded header
     kicker: 'Call Data · My Department',
     title: dept,
     subtitle: rangeLabel + (multiDept ? ' · combined with sub-queues' : ''),

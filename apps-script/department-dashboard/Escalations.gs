@@ -1415,6 +1415,7 @@ function escNotifyHtml_(rec, link) {
          + '</tr>';
   };
   return ekShellHtml_({
+    band: { tone: 'neutral', glyph: '&#9873;' },   // R30: uniform banded header
     kicker: 'Call Data · Escalations',
     title: 'New escalation — ' + rec.department,
     subtitle: 'An escalation was just logged for your department.',

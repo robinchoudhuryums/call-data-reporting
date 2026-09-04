@@ -1606,8 +1606,11 @@ When something looks wrong, before assuming a code bug, check:
     `sendAppEmail_` builds the HTML alternative through EmailKit v2 (dark
     header band with a severity stripe + glyph, status tiles, numbered
     steps, callout, monospace block, CTA into the relevant admin page); the
-    plain-text `body` stays as the client fallback. Nothing to configure;
-    `DASHBOARD_URL` unset just drops the CTA button.
+    plain-text `body` stays as the client fallback. The report / alert /
+    digest emails carry the same banded header (R30, owner ruling: one look
+    across the family); the Daily Call Queue Report keeps its own pinned
+    shell. Nothing to configure; `DASHBOARD_URL` unset just drops the CTA
+    button.
     **Welcome email.** `saveAccessControlRow` (the Access modal) busts the
     auth cache, so a grant is live on the person's next page load; and when
     the address had NO prior Access Control row it emails them the

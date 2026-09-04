@@ -1157,6 +1157,7 @@ function sendInsightsReportEmail(req) {
   const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
   const takeaway = digestTakeaway_((data && data.teamStats) || {});
   const htmlBody = ekShellHtml_({
+    band: { tone: 'neutral', glyph: '&#9776;' },   // R30: uniform banded header
     kicker: 'Call Data · Insights',
     title: dept,
     subtitle: dateLabel + ' · vs ' + priorLabel,
