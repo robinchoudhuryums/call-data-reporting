@@ -1569,24 +1569,23 @@ When something looks wrong, before assuming a code bug, check:
     1. Drop the two never-used indexes: `DROP INDEX IF EXISTS idx_phones_type;
        DROP INDEX IF EXISTS idx_phones_hash;` (done 2026-09-03).
     2. Deploy this PR to all three projects; leave `CDR_PHONES_MIRROR` unset.
-    3. Delete the post-capture phone rows (dates the outbound capture
-       already covers): `DELETE FROM call_history_phones p USING
-       call_history_dept d WHERE d.id = p.call_history_id AND d.call_date IN
-       (SELECT DISTINCT call_date FROM outbound_calls);`
-    4. Reclaim the table: `TRUNCATE call_history_phones;` then set
-       `CDR_BACKFILL_BEFORE=2026-07-10` (cdr-report), clear
-       `CDR_BACKFILL_RESUME`, and run `backfillCDRHistory()` from the
-       cdr-report editor until it logs "complete" (it is resumable; each run
-       is bounded at ~4 min). The pre-capture block (day-level dialed-number
-       aggregates that exist nowhere else) is back; nothing after the
-       capture start is re-created. Then clear `CDR_BACKFILL_BEFORE`.
-    5. Arm the prune: `installNeonRetentionTrigger()`, then run
+    3. Reclaim the table: `TRUNCATE call_history_phones;` (a plain DELETE
+       would not return the disk -- Postgres only frees space on TRUNCATE or
+       VACUUM FULL). Then in the cdr-report Script Properties set
+       `CDR_BACKFILL_BEFORE=2026-07-10`, delete `CDR_BACKFILL_RESUME` if
+       present, and run `backfillCDRHistory()` from the cdr-report editor
+       until it logs "CDR backfill complete" (resumable; each run is bounded
+       at ~4 min and picks up where it stopped). The pre-capture block
+       (day-level dialed-number aggregates that exist nowhere else) is back;
+       nothing on/after the capture start is re-created. Then delete
+       `CDR_BACKFILL_BEFORE`.
+    4. Arm the prune: `installNeonRetentionTrigger()`, then run
        `runNeonRetentionPrune()` once by hand and re-run until the result
        stops saying `budget hit`.
-    6. On a quiet evening, `VACUUM FULL inbound_calls; VACUUM FULL
+    5. On a quiet evening, `VACUUM FULL inbound_calls; VACUUM FULL
        outbound_calls;` (each takes an exclusive lock for the copy; the
        dashboard's per-call readers fall back to the sheet tabs meanwhile).
-    7. Watch the Neon storage gauge for a week; the weekly `ok pruned N` row
+    6. Watch the Neon storage gauge for a week; the weekly `ok pruned N` row
        on the Health page is the ongoing proof of life. If the gauge still
        trends up, the remaining growth is `call_history_dept` /
        `direct_call_history` (small, unpruned by design) — revisit the
