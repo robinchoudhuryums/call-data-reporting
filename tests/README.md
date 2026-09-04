@@ -91,6 +91,10 @@ tests/
                               config-neon-c3, caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
+                              email-kit-v2 (R29: the notice family -- the
+                              banded shell, tiles/steps/list/mono, the
+                              `notice:` render hook, and the sweep that every
+                              plain-text sender is styled),
                               app-email (R28: the sendAppEmail_ chokepoint --
                               default admin BCC, EMAIL_BCC override/none,
                               dedup, both signatures, and the sweep that

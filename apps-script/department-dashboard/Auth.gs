@@ -594,43 +594,36 @@ function saveAccessControlRow(req) {
 function acWelcomeEmailHtml_(email, scope, role, url) {
   const C = EK_C_;
   const isAgent = role === 'agent';
-  const what = isAgent ? 'Your own call metrics' : scope;
-  const pill = function (label) {
-    return '<span style="display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:999px;'
-      + 'background:' + C.neuTile + ';border:1px solid ' + C.neuTileB + ';font:600 11px ' + EK_SANS_
-      + ';letter-spacing:0.3px;color:' + C.ink + ';">' + ekEsc_(label) + '</span>';
-  };
-  const pills = isAgent ? pill('Agent view') : scope.split(', ').map(pill).join('');
-  const rows = ekRow_(
-      '<div style="font:15px/1.55 Arial,sans-serif;color:' + C.ink + ';">'
-      + 'Hi, you have been given access to the <strong>Department Dashboard</strong>. '
-      + 'Sign in with <strong>' + ekEsc_(email) + '</strong> and it opens straight to your view.'
-      + '</div>', '20px 26px 6px')
-    + ekRow_(
-      '<div style="font:600 9px ' + EK_SANS_ + ';letter-spacing:0.8px;text-transform:uppercase;color:#8a97a4;padding-bottom:6px;">'
-      + (isAgent ? 'What you can see' : 'Your department' + (scope.indexOf(',') >= 0 ? 's' : '')) + '</div>'
-      + '<div>' + pills + '</div>', '8px 26px 4px')
-    + ekRow_(ekCalloutHtml_('What is in it',
-        isAgent
-          ? 'Your answered and missed calls, talk time, and a 12-month history, alongside your team\'s aggregate. Teammates\' individual numbers are never shown.'
-          : 'A daily view of every agent\'s answered, missed and talk-time figures for ' + ekEsc_(what)
-            + ', the missed-call timeline, queue health, and the Insights, Individual and Inbound reports.',
-        'neutral'), '12px 26px 4px')
-    + ekRow_(
-      '<div style="font:13px/1.5 Arial,sans-serif;color:' + C.mut + ';">'
-      + 'If the page says <em>access denied</em>, reload it once. Access is live as of now, and the '
-      + 'browser may be showing an earlier attempt.'
-      + '</div>', '10px 26px 8px');
+  const multi = scope.indexOf(',') >= 0;
+  const tiles = isAgent
+    ? [{ label: 'What you see', value: 'Your numbers' },
+       { label: 'Alongside', value: 'Team averages', sub: 'never teammates\' rows' },
+       { label: 'Access', value: 'Live now', sub: 'sign in with this account', tone: 'good' }]
+    : [{ label: 'Department' + (multi ? 's' : ''), value: scope },
+       { label: 'Role', value: 'Manager', sub: 'agent-level detail' },
+       { label: 'Access', value: 'Live now', sub: 'sign in with this account', tone: 'good' }];
+  const steps = isAgent
+    ? [{ head: 'Open the page.', body: 'Answered, missed, talk time and answer rate for the window you pick.' },
+       { head: 'Check History.', body: 'Twelve months of your monthly figures, so a good month is easy to point at.' },
+       { head: 'Missed calls.', body: 'Timestamps of the rings you missed, so you can see the pattern, not just the count.' }]
+    : [{ head: 'Open the dashboard.', body: 'It lands on the company Overview; your department' + (multi ? 's are' : ' is') + ' the highlighted tile' + (multi ? 's' : '') + '.' },
+       { head: 'Go to My Department.', body: 'Every agent\'s answered, missed and talk-time figures for the window you pick. Yesterday is the default.' },
+       { head: 'Drill in.', body: 'Missed-call timeline, queue health, and the Insights, Individual and Inbound reports are one click below the table.' }];
+  const rows = ekRow_(ekTilesHtml_(tiles), '20px 26px 6px')
+    + ekRow_(ekSectionTitle_('Getting started') + ekStepsHtml_(steps, 'good'), '10px 26px 6px')
+    + ekRow_(ekCalloutHtml_('If it says access denied',
+        'Reload once. Access is live as of now; the browser may be showing an earlier attempt.', 'neutral'), '12px 26px 14px');
   return ekShellHtml_({
-    kicker: 'Call Data · Access granted',
-    title: 'Welcome to the Department Dashboard',
-    subtitle: isAgent ? 'Your call metrics, at a glance' : ('Manager access · ' + what),
-    preheader: 'You now have access to the Department Dashboard' + (isAgent ? '' : (' for ' + what)),
+    band: { tone: 'good', glyph: '&#10003;' },
+    kicker: 'Access granted',
+    title: isAgent ? 'Your call metrics, at a glance' : 'Welcome to the Department Dashboard',
+    subtitle: email + ' · ' + (isAgent ? ('agent · ' + scope) : 'manager'),
+    preheader: 'You now have access to the Department Dashboard' + (isAgent ? '' : (' for ' + scope)),
     rowsHtml: rows,
-    ctaUrl: url,
-    ctaLabel: 'Open the dashboard',
+    ctaUrl: url, ctaLabel: isAgent ? 'Open my metrics' : 'Open the dashboard',
+    cta2Url: isAgent ? '' : (url + '#/help'), cta2Label: isAgent ? '' : 'Read the quick guide',
     footerHtml: 'Sent from the Call Data dashboard because an admin granted this address access. '
-      + 'Questions about your access go to ' + ekEsc_(getAdminEmails_()[0] || 'your admin') + '.',
+      + 'Questions about your access: ' + ekEsc_(getAdminEmails_()[0] || 'your admin') + '.',
   });
 }
 
@@ -798,7 +791,30 @@ function notifyLoginEvent_(email, user) {
       + 'may just be a crawler — the store notifies once per address, not per hit.');
   }
   try {
-    sendAppEmail_({ to: to, subject: subject, body: lines.join('\n') });
+    sendAppEmail_({
+      to: to, subject: subject, body: lines.join('\n'),
+      notice: {
+        tone: denied ? 'warn' : 'neutral', kicker: 'Admin notice · Sign-in',
+        title: denied ? 'Denied sign-in attempt' : (d.reason === 'first' ? 'First sign-in' : 'Access changed'),
+        subtitle: emailLower,
+        tiles: [{ label: 'Address', value: emailLower },
+                { label: 'Outcome', value: outcomeKey, tone: denied ? 'warn' : 'good' },
+                { label: 'Previously', value: d.prev !== undefined ? d.prev : 'first sighting' }],
+        callout: denied
+          ? { kicker: 'What it means', html: 'Someone signed into the dashboard URL with an address that has no Access Control row. '
+              + 'If you expected them, grant access; if not, nothing happened -- they saw the access-denied page.', tone: 'warn' }
+          : { kicker: 'What it means', html: 'This address resolved to <strong>' + appEsc_(outcomeKey) + '</strong>'
+              + (d.prev !== undefined ? ' (was <strong>' + appEsc_(d.prev) + '</strong>)' : ' for the first time') + '. One email per change; nothing to do unless it is unexpected.', tone: 'neutral' },
+        stepsTitle: denied ? 'To grant access' : '',
+        steps: denied
+          ? [{ head: 'Add an Access Control row.', body: 'Admin ▸ Access: pick the department(s) and save. The grant is live on their next reload, and they get a welcome email.' },
+             { head: 'Or map an alias.', body: 'If this is a second address of an existing user, add it to the EMAIL_ALIASES Script Property (Operator State #36).' },
+             { head: 'Or ignore it.', body: 'Unknown addresses hitting the URL repeatedly may be a crawler; the store notifies once per address, not per hit.' }]
+          : [],
+        ctaUrl: appDashUrl_('#/admin/access-control'), ctaLabel: 'Open Access Control',
+        footerHtml: 'Sent by the sign-in notifier (LOGIN_NOTIFY_ENABLED, Operator State #45): first sightings, outcome changes, and denied attempts.',
+      },
+    });
   } catch (e) {
     Logger.log('notifyLoginEvent_: send FAILED (%s) -- sighting NOT recorded, will retry on the next hit.',
       (e && e.message) || e);

@@ -281,6 +281,28 @@ function dqeSilenceSendAlert_(alerts, dateIso) {
     sendAppEmail_({
       to: to,
       subject: '[Dashboard] Agent data went dark for ' + alerts.length + ' department(s) — queue still active',
+      notice: {
+        tone: 'warn', kicker: 'Admin notice · DQE-silence watchdog',
+        title: 'Agent data went dark for ' + alerts.length + ' department' + (alerts.length === 1 ? '' : 's'),
+        subtitle: 'Queue still taking calls · as of ' + dateIso,
+        tiles: [{ label: 'Departments dark', value: String(alerts.length), tone: 'warn' },
+                { label: 'As of', value: dateIso },
+                { label: 'Raw legs survive', value: '~14 days', sub: 'rebuild window' }],
+        list: { title: 'Silent departments', items: alerts.map(function (a) {
+          return '<strong>' + appEsc_(a.dept) + '</strong> — silent since ' + appEsc_(a.since) + ' (' + appEsc_(a.days)
+            + ' business day(s), ' + appEsc_(a.calls) + ' queue calls with NO agent rows)';
+        }) },
+        callout: { kicker: 'Why this matters', html: 'This is the Field Ops Power failure shape (2026-06-17): the phone system changed a queue\'s '
+          + 'caller-ID label, the pipeline\'s A_Q_* recognizer stopped matching those legs, and per-agent data vanished '
+          + 'silently while queue totals kept flowing. Call_Legs source sheets are pruned at ~14 days, so act today.', tone: 'warn' },
+        stepsTitle: 'Check, in order',
+        steps: [{ head: 'Raw Data col W (Caller ID).', body: 'On an agent-ring leg for the dept\'s queue: does it still contain the A_Q_* token?' },
+                { head: 'The roster column.', body: 'DO NOT EDIT!: are the names still exact-matching DQE col C (INV-04)?' },
+                { head: 'The phone-system change log.', body: 'For the silent-since date.' }],
+        outro: 'One email per episode: this will not re-send unless the department recovers and goes silent again.',
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by the DQE-silence watchdog (Operator State #44).',
+      },
       body: 'As of ' + dateIso + ', these departments\' queues are taking calls '
         + '(QCD volume) while ZERO DQE agent rows match their roster:\n\n'
         + lines.join('\n') + '\n\n'

@@ -330,6 +330,23 @@ function notifyQueueReportSendFailures_(targetIso, failed, allFailed) {
       subject: '[Dashboard] Daily Call Queue Report — '
         + (allFailed ? 'ALL subscriber sends failed' : 'some subscriber sends failed')
         + ' (' + targetIso + ')',
+      notice: {
+        tone: allFailed ? 'bad' : 'warn', kicker: 'Admin notice · Daily Call Queue Report',
+        title: allFailed ? 'Every subscriber send failed' : 'Some subscriber sends failed',
+        subtitle: 'Report for ' + targetIso,
+        tiles: [{ label: 'Target date', value: targetIso },
+                { label: 'Failed sends', value: String((failed || []).length), tone: allFailed ? 'bad' : 'warn' },
+                { label: 'Retry', value: allFailed ? 'automatic' : 'manual', sub: allFailed ? 'next 30-min poll' : 'not retried' }],
+        list: { title: 'Failed recipients', items: (failed || []).map(function (f) {
+          return '<strong>' + appEsc_(f.email) + '</strong>: ' + appEsc_(f.error);
+        }) },
+        callout: { kicker: 'What happens next', html: allFailed
+          ? 'The run will RETRY on the next 30-minute poll inside the send window; nothing to do unless it keeps failing.'
+          : 'The report was delivered to the other subscribers. The failures above are NOT retried automatically: '
+            + 're-add or fix the address, then use "Send me a preview" to verify.', tone: allFailed ? 'warn' : 'neutral' },
+        ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open the report settings',
+        footerHtml: 'Sent by the Daily Call Queue Report sender (Operator State #31).',
+      },
       body: (allFailed
           ? 'Every subscriber send failed; the run will RETRY on the next 30-min poll inside the window.\n'
           : 'The report was delivered to the other subscribers; the failures below are NOT retried automatically '
@@ -371,6 +388,18 @@ function queueReportFlagMissedDay_(props, now, targetIso) {
       sendAppEmail_({
         to: to,
         subject: '[Dashboard] Daily Call Queue Report is LATE for ' + targetIso,
+        notice: {
+          tone: 'warn', kicker: 'Admin notice · Daily Call Queue Report',
+          title: 'Report is late for ' + targetIso,
+          subtitle: 'The send window closed without the data being ready',
+          tiles: [{ label: 'Target date', value: targetIso },
+                  { label: 'Send window', value: QUEUE_REPORT_WINDOW_START_HOUR + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR + ':00', sub: 'Central', tone: 'warn' },
+                  { label: 'Poller', value: 'every ' + QUEUE_REPORT_EVERY_MINUTES + ' min', sub: 'until midnight' }],
+          callout: { kicker: 'What happens next', html: 'The poller keeps retrying and sends automatically as soon as the QCD data lands '
+            + '(the result will read "Sent … (LATE)"). If the import is genuinely stuck, fix it and the send follows; nothing else to do here.', tone: 'neutral' },
+          ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+          footerHtml: 'Sent once per late day by the Daily Call Queue Report poller (Operator State #31).',
+        },
         body: 'The ' + QUEUE_REPORT_WINDOW_START_HOUR + ':00–' + QUEUE_REPORT_WINDOW_END_HOUR
           + ':00 send window closed without the report going out for ' + targetIso
           + ' (QCD data was not ready in time, or the import did not run).\n\n'
@@ -994,6 +1023,16 @@ function notifyQueueReportFailure_(err) {
     sendAppEmail_({
       to:      to,
       subject: '[Dashboard] Daily Call Queue Report run failed',
+      notice: {
+        tone: 'bad', kicker: 'Admin notice · Daily Call Queue Report', title: 'Report run failed',
+        subtitle: 'runDailyQueueReport_ threw before sending',
+        tiles: [{ label: 'Handler', value: 'runDailyQueueReport_' }, { label: 'Sent', value: 'no', tone: 'bad' },
+                { label: 'Retry', value: 'next poll', sub: 'marker not claimed' }],
+        callout: { kicker: 'Error', html: appEsc_((err && err.message) ? err.message : String(err)), tone: 'warn' },
+        mono: { title: 'Stack', text: (err && err.stack) ? err.stack : '(no stack)' },
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by the Daily Call Queue Report poller (Operator State #31).',
+      },
       body:    'runDailyQueueReport_ threw: ' + ((err && err.message) ? err.message : String(err))
                + '\n\nTime: ' + new Date()
                + '\n\nStack:\n' + ((err && err.stack) ? err.stack : '(no stack)'),

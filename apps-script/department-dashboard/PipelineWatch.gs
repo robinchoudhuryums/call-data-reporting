@@ -356,7 +356,30 @@ function notifyPipelineFailures_(failures, auxLines) {
         + (auxLines.length ? ' (+' + auxLines.length + ' signal(s))' : '')
       : '[Dashboard] Monitoring signal' + (auxLines.length === 1 ? '' : 's') + ': '
         + auxLines.length + ' new';
-    sendAppEmail_({ to: to, subject: subject, body: body });
+    sendAppEmail_({
+      to: to, subject: subject, body: body,
+      notice: {
+        tone: n ? 'bad' : 'neutral', kicker: 'Admin notice · Pipeline watchdog',
+        title: n ? (n + ' new pipeline failure' + (n === 1 ? '' : 's')) : (auxLines.length + ' new monitoring signal' + (auxLines.length === 1 ? '' : 's')),
+        subtitle: 'One email per new batch; these items will not be re-sent',
+        tiles: [{ label: 'New failures', value: String(n), tone: n ? 'bad' : 'neutral' },
+                { label: 'Other signals', value: String(auxLines.length) },
+                { label: 'Shown', value: shown.length + ' of ' + n }],
+        list: n ? { title: 'Failure rows', items: shown.map(function (f) {
+          return '<strong>' + appEsc_(f.step || '(step?)') + '</strong> [' + appEsc_(f.status || 'failure') + ']'
+            + (f.notes ? ' — ' + appEsc_(f.notes) : '')
+            + ' <span style="color:#8a97a4;">' + appEsc_(f.timestamp || '(no time)') + '</span>';
+        }).concat(failures.length > PIPELINE_WATCH_MAX_EMAIL_ROWS
+          ? ['… and ' + (failures.length - PIPELINE_WATCH_MAX_EMAIL_ROWS) + ' more.'] : []) } : null,
+        callout: auxLines.length ? { kicker: 'Other monitored signals', html: auxLines.map(appEsc_).join('<br>'), tone: 'neutral' } : null,
+        stepsTitle: n ? 'Investigate via' : '',
+        steps: n ? [{ head: 'System Health.', body: 'Admin ▾ → Health → "Recent pipeline step failures" (the classifier flags a step only while its latest outcome is a failure).' },
+                    { head: 'The execution log.', body: 'cdr-import / cdr-report → Executions for the failing step.' },
+                    { head: 'Pipeline Health sheet.', body: 'Alerts modal → Pipeline Health for the raw rows and notes.' }] : [],
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by the pipeline-failure watchdog (Operator State #32).',
+      },
+    });
     return true;
   } catch (mailErr) {
     Logger.log('notifyPipelineFailures_ mail failed: ' + mailErr);

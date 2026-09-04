@@ -472,6 +472,20 @@ function ncEmailResult_(out, summary) {
       subject: '[Dashboard] Neon coverage check: '
         + (out.findings ? (out.findings + ' finding(s)') : (out.errors && out.errors.length ? 'probe errors' : 'clean'))
         + ' (' + out.from + '..' + out.to + ')',
+      notice: {
+        tone: out.findings ? 'warn' : (out.errors && out.errors.length ? 'warn' : 'good'),
+        kicker: 'Admin notice · Neon coverage',
+        title: out.findings ? (out.findings + ' coverage finding' + (out.findings === 1 ? '' : 's'))
+          : (out.errors && out.errors.length ? 'Coverage check hit probe errors' : 'Neon coverage is clean'),
+        subtitle: out.from + ' .. ' + out.to,
+        tiles: [{ label: 'Window', value: out.from + ' → ' + out.to },
+                { label: 'Findings', value: String(out.findings || 0), tone: out.findings ? 'warn' : 'good' },
+                { label: 'Probe errors', value: String((out.errors || []).length), tone: (out.errors || []).length ? 'warn' : 'neutral' }],
+        mono: { title: 'Detail', text: lines.join('\n') },
+        outro: 'Findings also surface on the Health page ("Neon coverage — last check"). All fixes are the existing idempotent re-import / backfill paths; this check never writes.',
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by runNeonCoverageCheck (Operator State #35).',
+      },
       body: 'Per-date sheet-vs-Neon coverage over ' + out.from + '..' + out.to + ':\n\n'
         + lines.join('\n') + '\n\n'
         + 'Summary: ' + summary + '\n'

@@ -163,6 +163,23 @@ function notifyIngestStale_(fresh, staleHours) {
     sendAppEmail_({
       to:      to,
       subject: '[Dashboard] Ingest stale: no fresh DQE build in ' + staleHours + 'h',
+      notice: {
+        tone: 'warn', kicker: 'Admin notice · Ingest watchdog',
+        title: 'No fresh DQE build in ' + staleHours + ' hours',
+        subtitle: 'Every dashboard is reading the last good day',
+        tiles: [{ label: 'Last fresh build', value: fresh.latestTimestamp || 'none found', sub: 'Pipeline Health success with rows' },
+                { label: 'Hours since', value: String(hrs), tone: 'warn' },
+                { label: 'Threshold', value: staleHours + 'h', sub: 'INGEST_WATCHDOG_STALE_HOURS' }],
+        callout: { kicker: 'What it means', html: 'The daily import or the DQE rebuild has not run, so managers are looking at stale numbers '
+          + 'and the header pill has gone orange.', tone: 'warn' },
+        stepsTitle: 'What to check',
+        steps: [{ head: 'DQE Historical Data.', body: 'The latest date in the CDR Report sheet.' },
+                { head: 'Pipeline Health.', body: 'cdr-import execution log and the autoImport / *:DQE rows: a failure row names the step; no row means the trigger never fired.' },
+                { head: 'Triggers.', body: 'All trigger families installed (Operator State #8)? Then CDR Tools → Manual Export for the missing date.' }],
+        outro: 'ONE alert per stale episode; the next fresh build re-arms it.',
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by the ingest-failure watchdog (Operator State #23).',
+      },
       body:    'The daily ingest watchdog did not find a fresh DQE build.\n\n'
              + 'Most recent DQE-freshness Pipeline Health success: ' + lastTs + '\n'
              + 'Hours since: ' + hrs + ' (threshold ' + staleHours + 'h)\n\n'

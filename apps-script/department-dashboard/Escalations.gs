@@ -1350,6 +1350,17 @@ function escPendingReviewPing_() {
       sendAppEmail_({
         to: to,
         subject: '[Dashboard] ' + n + ' escalation submission' + (n === 1 ? '' : 's') + ' awaiting review',
+        notice: {
+          tone: 'neutral', kicker: 'Admin notice · Escalations',
+          title: n + ' escalation submission' + (n === 1 ? '' : 's') + ' awaiting review',
+          subtitle: 'Externally submitted · count only, no call or patient detail',
+          tiles: [{ label: 'Awaiting review', value: String(n) },
+                  { label: 'Department' + (depts.indexOf(',') !== -1 ? 's' : ''), value: depts || 'unknown' }],
+          callout: { kicker: 'Where', html: 'Escalations → the <strong>awaiting review</strong> chip. One email per new batch; '
+            + 'enable NOTIFY_ON_NEW_ESCALATION for full-detail manager emails (a PII surface).', tone: 'neutral' },
+          ctaUrl: appDashUrl_('#/escalations'), ctaLabel: 'Open Escalations',
+          footerHtml: 'Sent by the pending-review ping (NOTIFY_PENDING_REVIEW).',
+        },
         body: n + ' new externally-submitted escalation' + (n === 1 ? ' is' : 's are')
           + ' awaiting review (department' + (depts.indexOf(',') !== -1 ? 's' : '') + ': '
           + (depts || 'unknown') + ').\n\n'

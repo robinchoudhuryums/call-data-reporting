@@ -56,10 +56,35 @@ function sendAppEmail_(a, b, c) {
   } else {
     msg = { to: a, subject: b, body: c };
   }
+  // R29: a `notice` spec becomes the HTML alternative via EmailKit's
+  // ekNoticeHtml_ when the kit is loaded (always, in production's shared
+  // scope; the unit suites load files selectively, and a suite without
+  // EmailKit.gs still sends the plain body). The spec never reaches MailApp.
+  if (msg.notice && typeof msg.notice === 'object') {
+    if (!msg.htmlBody && typeof ekNoticeHtml_ === 'function') {
+      try { msg.htmlBody = ekNoticeHtml_(msg.notice); }
+      catch (e) { Logger.log('sendAppEmail_: notice render failed, sending plain body: ' + ((e && e.message) || e)); }
+    }
+    delete msg.notice;
+  }
   var bcc = appEmailBcc_(msg);
   if (bcc) msg.bcc = msg.bcc ? (String(msg.bcc) + ',' + bcc) : bcc;
   MailApp.sendEmail(msg);
   return msg;
+}
+
+/** R29: DASHBOARD_URL + route hash, or '' when unset (senders then omit the CTA). */
+function appDashUrl_(hash) {
+  var url = '';
+  try { url = String(PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '').trim(); } catch (e) {}
+  return url ? (url + (hash || '')) : '';
+}
+
+/** R29: minimal HTML escaper for notice specs (Util.gs is not loaded by every suite). */
+function appEsc_(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
 }
 
 /** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The BCC list to ADD, or ''. */

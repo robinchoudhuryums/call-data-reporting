@@ -983,6 +983,18 @@ function reportClientIssue(payload) {
         sendAppEmail_({
           to: to,
           subject: '[Dashboard] Client issue — ' + kind + ' (' + user.email + ')',
+          notice: {
+            tone: 'warn', kicker: 'Admin notice · Client issue', title: 'A browser reported a client-side issue',
+            subtitle: kind + ' · ' + user.email,
+            tiles: [{ label: 'User', value: user.email, sub: user.role },
+                    { label: 'Page', value: route || '(unknown)' },
+                    { label: 'Kind', value: kind, tone: 'warn' }],
+            mono: { title: 'Message', text: msg + (stack ? '\n\n' + stack : '') },
+            outro: (ua ? 'Browser: ' + appEsc_(ua) + '<br>' : '')
+              + 'Repeats of this error are throttled for 30 minutes; the full tail is in the Apps Script Executions log (reportClientIssue).',
+            ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+            footerHtml: 'Sent by the client-error beacon (R19); at most ' + CLIENT_ISSUE_WINDOW_CAP_ + ' per rolling 6 h.',
+          },
           body: 'A user\'s browser reported a client-side issue.\n\n'
             + 'User:  ' + user.email + ' (' + user.role + ')\n'
             + 'Page:  ' + (route || '(unknown)') + '\n'

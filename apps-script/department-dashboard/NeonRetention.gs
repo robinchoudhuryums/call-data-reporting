@@ -211,9 +211,17 @@ function neonRetentionNotify_(summary) {
     sendAppEmail_({
       to: to,
       subject: '[Dashboard] Neon retention prune FAILED',
-      htmlBody: '<p>A step of the weekly Neon retention prune threw. The other steps ran; '
-        + 'the failed one retries next run. Operator State #57 has the runbook.</p>'
-        + '<p style="font-family:monospace;font-size:12px;">' + escapeHtmlServer_(summary) + '</p>',
+      body: 'A step of the weekly Neon retention prune threw. The other steps ran; the failed one '
+        + 'retries next run. Operator State #57 has the runbook.\n\n' + summary,
+      notice: {
+        tone: 'bad', kicker: 'Admin notice · Neon retention', title: 'Weekly prune: a step threw',
+        subtitle: 'The other steps ran; the failed one retries next run',
+        callout: { kicker: 'What to do', html: 'Open the Neon console and check the failing table\'s state; a lock timeout or a '
+          + 'suspended compute is the usual cause. Re-run <strong>runNeonRetentionPrune()</strong> from the dashboard editor once it clears.', tone: 'warn' },
+        mono: { title: 'Result', text: summary },
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by the weekly Neon retention prune (Operator State #57); a clean run is silent.',
+      },
     });
   } catch (e) {
     Logger.log('neonRetentionNotify_ failed (best-effort): ' + (e && e.message ? e.message : e));

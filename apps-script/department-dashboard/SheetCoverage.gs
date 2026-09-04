@@ -191,20 +191,39 @@ function sheetCoverageNotify_(out, summary) {
     if (!out.findings) return;
     var to = getAdminEmails_().join(',');
     if (!to) return;
-    var lines = (out.sheets || []).map(function (s) {
-      if (s.missingSheet) return '<li><strong>' + escapeHtmlServer_(s.sheet) + '</strong>: sheet MISSING — ' + escapeHtmlServer_(s.fix) + '</li>';
+    var items = (out.sheets || []).map(function (s) {
+      if (s.missingSheet) return '<strong>' + appEsc_(s.sheet) + '</strong>: sheet MISSING — ' + appEsc_(s.fix);
       if (!s.gaps.length) return '';
-      return '<li><strong>' + escapeHtmlServer_(s.sheet) + '</strong> (' + escapeHtmlServer_(s.label) + '): '
-        + s.gaps.length + ' missing business day(s) — ' + escapeHtmlServer_(s.gaps.join(', '))
-        + '<br><em>Fix: ' + escapeHtmlServer_(s.fix) + '</em></li>';
+      return '<strong>' + appEsc_(s.sheet) + '</strong> (' + appEsc_(s.label) + '): ' + s.gaps.length
+        + ' missing business day(s) — ' + appEsc_(s.gaps.join(', '))
+        + '<br><em>Fix: ' + appEsc_(s.fix) + '</em>';
+    }).filter(function (x) { return !!x; });
+    var plain = (out.sheets || []).map(function (s) {
+      if (s.missingSheet) return '- ' + s.sheet + ': sheet MISSING — ' + s.fix;
+      if (!s.gaps.length) return '';
+      return '- ' + s.sheet + ' (' + s.label + '): ' + s.gaps.length + ' missing business day(s) — '
+        + s.gaps.join(', ') + '\n  Fix: ' + s.fix;
     }).filter(function (x) { return !!x; });
     sendAppEmail_({
       to: to,
       subject: '[Dashboard] Sheet coverage — ' + out.findings + ' missing day(s)',
-      htmlBody: '<p>A business day inside ' + out.from + '..' + out.to + ' has NO rows in a '
-        + 'dashboard-read historical sheet. Reports covering that window are averaging over a '
-        + 'day that silently is not there.</p><ul>' + lines.join('') + '</ul>'
-        + '<p style="color:#666;font-size:12px;">' + escapeHtmlServer_(summary) + '</p>',
+      body: 'A business day inside ' + out.from + '..' + out.to + ' has NO rows in a dashboard-read '
+        + 'historical sheet. Reports covering that window are averaging over a day that silently is not there.\n\n'
+        + plain.join('\n') + '\n\n' + summary,
+      notice: {
+        tone: 'warn', kicker: 'Admin notice · Sheet coverage',
+        title: out.findings + ' missing business day' + (out.findings === 1 ? '' : 's'),
+        subtitle: out.from + ' .. ' + out.to,
+        tiles: [{ label: 'Window', value: out.from + ' → ' + out.to },
+                { label: 'Findings', value: String(out.findings), tone: 'warn' },
+                { label: 'Sheets checked', value: String((out.sheets || []).length) }],
+        callout: { kicker: 'What it means', html: 'A business day inside the window has NO rows in a dashboard-read historical sheet. '
+          + 'Every report covering that window is averaging over a day that silently is not there.', tone: 'warn' },
+        list: { title: 'Per sheet', items: items },
+        outro: appEsc_(summary),
+        ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+        footerHtml: 'Sent by the sheet coverage check (Operator State #52); a clean week is silent.',
+      },
     });
   } catch (e) {
     Logger.log('sheetCoverageNotify_ failed (best-effort): ' + (e && e.message ? e.message : e));

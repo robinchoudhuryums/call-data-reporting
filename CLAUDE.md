@@ -962,7 +962,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   owner ruling: a wrong recipient or a silent non-send must be seen the day
   it happens), dedups an address already in to/cc, and honors `EMAIL_BCC`
   (override list; `none` disables). A new send site that calls MailApp
-  directly fails `app-email.test.js`'s sweep. Operator State #58.
+  directly fails `app-email.test.js`'s sweep. **A plain-text admin notice
+  passes a `notice:` spec (R29)** -- sendAppEmail_ renders it through
+  `EmailKit.gs::ekNoticeHtml_` (banded shell, tiles, steps, callout, mono)
+  as the HTML alternative, keeping `body` as the fallback; senders never
+  call the kit directly (the suites load files selectively -- use
+  `appEsc_` / `appDashUrl_` from Config.gs inside a spec). ENFORCED:
+  `email-kit-v2.test.js` sweeps every `body:` sender for a spec. Operator
+  State #58.
 - **Admin emails are resolved at request time.** Membership checks
   and admin recipient lookups go through `Config.gs::getAdminEmails_()`,
   which reads the `ADMIN_EMAILS` Script Property (comma-separated

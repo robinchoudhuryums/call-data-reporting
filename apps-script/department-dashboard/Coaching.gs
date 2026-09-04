@@ -418,6 +418,24 @@ function coachingDeliveryRun_() {
             to: to,
             subject: '[Dashboard] Coaching: ' + toEmail.length + ' new flag(s) — '
               + preview.window.from + '..' + preview.window.to,
+            notice: {
+              tone: 'neutral', kicker: 'Admin notice · Coaching',
+              title: toEmail.length + ' new coaching flag' + (toEmail.length === 1 ? '' : 's'),
+              subtitle: preview.window.from + ' .. ' + preview.window.to + ' (10 working days)',
+              tiles: [{ label: 'New flags', value: String(toEmail.length), tone: 'warn' },
+                      { label: 'Still open', value: String(diff.continuing.length), sub: 'metrics refreshed' },
+                      { label: 'Recovered', value: String(diff.recoveredOpenRows.length), sub: 'left open to close', tone: diff.recoveredOpenRows.length ? 'good' : 'neutral' }],
+              list: { title: 'Flagged agents', items: toEmail.map(function (f) {
+                return '<strong>' + appEsc_(f.dept) + ' · ' + appEsc_(f.agent) + '</strong>: answers ' + appEsc_(f.teamRatioPct)
+                  + '% as often as the team (' + appEsc_(f.ratePct) + '% vs ' + appEsc_(f.teamRatePct) + '%, ' + appEsc_(f.gapPts)
+                  + ' pts behind) — ' + appEsc_(f.missed) + ' missed of ' + appEsc_(f.rung) + ' rung';
+              }) },
+              callout: { kicker: 'Gates', html: 'rate &lt; ' + (COACHING_MAX_TEAM_RATIO_ * 100) + '% of team rate, &ge; ' + COACHING_BEHIND_TEAM_PTS_
+                + ' pts behind, &ge; ' + COACHING_MIN_MISSED_ + ' missed — roster rows only (INV-53), TEAM_AVG_EXCLUDES out of both sides. '
+                + 'Admin-only until released; managers are not copied.', tone: 'neutral' },
+              ctaUrl: appDashUrl_('#/admin/coaching'), ctaLabel: 'Open the worklist',
+              footerHtml: 'Sent by the weekly coaching delivery (Operator State #48).',
+            },
             body: coachingEmailBody_(toEmail, diff.continuing.length,
               diff.recoveredOpenRows.length, preview.window, dashUrl),
           });
