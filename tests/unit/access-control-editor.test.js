@@ -12,7 +12,7 @@ const { deepEqual } = require('node:assert');   // prototype-agnostic for cross-
 const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
-const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs'] });
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'EmailKit.gs', 'Auth.gs'] });   // EmailKit: the R28 welcome shell
 
 const ROSTER_HEADERS = (function () {
   // DO NOT EDIT!: dept headers start at ROSTER.DEPT_FIRST_COL (col 6 = idx 5).
@@ -253,6 +253,9 @@ test('R28: a brand-new grant emails the person the dashboard link (admin BCC\'d)
   assert.match(m.subject, /access to the Department Dashboard/);
   assert.match(m.body, /Sales/);
   assert.match(m.body, /https:\/\/script\.google\.com\/a\/x\/exec/);
+  assert.match(m.htmlBody, /Welcome to the Department Dashboard/, 'EmailKit-styled HTML alternative');
+  assert.match(m.htmlBody, /Sales/);
+  assert.match(m.htmlBody, /href="https:\/\/script\.google\.com\/a\/x\/exec"/, 'the CTA links the dashboard');
   assert.equal(m.bcc, 'admin@x.com', 'the default BCC rides on the welcome too');
 
   // Re-save (edit / re-grant): the address already had a row -> no email.
