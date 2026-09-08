@@ -102,7 +102,7 @@ bash scripts/check-duplicated-files.sh
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~90 suites pin the invariants, the report
+# Non-zero exit on failure. ~100 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -985,7 +985,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `getAdminEmails_()`.
 - **Script Properties are REGISTERED — adding one means registering it in
   `Config.gs::PROP_REGISTRY_` in the same commit.** The dashboard store holds
-  ~90 keys, past the settings page's 50-row display cap, so the Health page's
+  ~100 keys, past the settings page's 50-row display cap, so the Health page's
   folded "All Script Properties (inventory)" section is the complete view: it
   classifies the LIVE store against the registry (operator config / engine
   state / diagnostic tool params) and warn-flags UNRECOGNIZED keys — retired
@@ -1274,16 +1274,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   platform-supported mechanism, not URL properties.
 - **Neon write discipline (don't regress this — it caused a daily-import
   timeout).** The Neon mirror is the dominant cost of the daily import,
-  and these rules in `neonWrite.js` (duplicated, INV-16) keep it under the
-  execution ceiling AND from corrupting the mirror on a timeout. (1) **Hash phone numbers through the per-run memo
+  and these rules live in `neonWrite.js` (duplicated, INV-16) -- plus the
+  cdr-import-ONLY `directCallMetrics.js`, which has NO twin. (1) **Hash phone numbers through the per-run memo
   `CDR_HMAC_CACHE_`, never raw per-occurrence** — `Utilities.computeHmacSha256Signature`
   is slow and the same outbound numbers recur thousands of times per day;
   the cache is reset at the top of `writeCDRRowsToNeon`. (2) **Inline-literal
   VALUES, size-packed, commit ONCE (R38)** — every daily writer (DQE / QCD /
-  CDR parents + the Direct writer via `neonInsertInline_`, the phones
-  children) emits dollar-quoted literals with ZERO bound params (each JDBC
-  bind is a ~50 ms bridge call), packed to `NEON_INLINE_STMT_CHARS_` (30 KB; the bridge rejects
-  ~44 KB SQL strings); a lone oversize tuple falls back to the ORIGINAL
+  CDR parents + the cdr-import-only Direct writer, all via
+  `neonInsertInline_`, plus the phones children) emits dollar-quoted literals
+  with ZERO bound params, packed to `NEON_INLINE_STMT_CHARS_` (30 KB; the
+  bridge rejects ~44 KB SQL strings); a lone oversize tuple falls back to the ORIGINAL
   bound insert (`dqeBoundInsert_` / `qcdBoundInsert_` / `cdrBoundInsert_` /
   `dcBoundUpsert_`); the writer suites pin inline == bound value-for-value. One
   `conn.commit()` after the loop: smaller commits add round-trips AND leave
@@ -1320,11 +1320,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `backfillDirectCallToNeon`) -- must NOT pass authoritative. Duplicate
   conflict-key rows are deduped last-write-wins first (IMP-6; since P10
   `backfillCDRHistory`'s batches too). The
-  `call_history_phones` children are per-parent DELETE-then-insert (IMP-4:
+  `call_history_phones` children are per-parent DELETE-then-insert (IMP-4 --
   each payload row carries its parent's COMPLETE entry set, so per-parent
-  replace is safe even on partial-date bulk batches; `DO NOTHING` survives
-  only as an intra-payload dup guard; `backfillCDRHistory`'s child path
-  deliberately stays fill-only per its docstring).
+  replace is safe even on a partial-date bulk batch; `DO NOTHING` is ONLY an
+  intra-payload dup guard, never cross-run dedup; `backfillCDRHistory`'s
+  child path stays fill-only per its docstring).
   (5) **`call_history_phones` children are GATED OFF (R27)** -- written only
   when `CDR_PHONES_MIRROR` is `on` (both copies), and the weekly
   `NeonRetention.gs` prune bounds storage (`NEON_RETENTION_ENABLED`).
