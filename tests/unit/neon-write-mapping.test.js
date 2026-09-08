@@ -29,8 +29,11 @@ function recConn(cap) {
         close: function () {},
       };
     },
-    createStatement: function () { return { execute: function () {}, close: function () {} }; },
-    commit: function () {}, rollback: function () {}, close: function () {},
+    // R38: the INSERT itself is an inline statement now -- record its SQL.
+    createStatement: function () {
+      return { execute: function (sql) { (cap.inline = cap.inline || []).push(sql); return true; }, close: function () {} };
+    },
+    commit: function () { cap.commits = (cap.commits || 0) + 1; }, rollback: function () {}, close: function () {},
   };
 }
 
@@ -46,6 +49,55 @@ function columnsOf(sql) {
 function values(cap) { return cap.params.map(function (p) { return p ? p.v : undefined; }); }
 function methods(cap) { return cap.params.map(function (p) { return p ? p.m : undefined; }); }
 
+// R38: the daily writers render INLINE tuples (dollar-quoted text, bare
+// numbers, 'iso'::date, $..$::jsonb). This tokenizer walks the VALUES list
+// dollar-quote-aware and decodes each token back to the value the old bound
+// setter would have carried, so the column-order pins below compare the
+// same lists they always did.
+function rawTuplesOf(sql) {
+  const at = sql.indexOf(') VALUES ');
+  const vals = at >= 0 ? sql.slice(at + 9) : sql;
+  const out = [];
+  let i = 0;
+  while (i < vals.length) {
+    if (vals.startsWith(' ON CONFLICT', i)) break;
+    if (vals[i] !== '(') { i++; continue; }
+    i++;
+    const tuple = []; let tok = '';
+    while (i < vals.length) {
+      const c = vals[i];
+      if (c === '$') {
+        const m = /^\$([a-z]*)\$/.exec(vals.slice(i));
+        const tag = m[0];
+        const end = vals.indexOf(tag, i + tag.length);
+        tok += vals.slice(i, end + tag.length); i = end + tag.length; continue;
+      }
+      if (c === "'") { const end = vals.indexOf("'", i + 1); tok += vals.slice(i, end + 1); i = end + 1; continue; }
+      if (c === ',') { tuple.push(tok); tok = ''; i++; continue; }
+      if (c === ')') { tuple.push(tok); i++; break; }
+      tok += c; i++;
+    }
+    out.push(tuple);
+  }
+  return out;
+}
+function decodeTok(t) {
+  t = t.trim();
+  if (t === 'NULL') return null;
+  let m = /^\$([a-z]*)\$([\s\S]*)\$\1\$(::jsonb)?$/.exec(t);
+  if (m) return m[2];
+  m = /^'([^']*)'::date$/.exec(t);
+  if (m) return m[1];
+  if (/^-?\d+(\.\d+)?(e[-+]?\d+)?$/i.test(t)) return Number(t);
+  return t;
+}
+function tuplesOf(sql) { return rawTuplesOf(sql).map(function (t) { return t.map(decodeTok); }); }
+
+function lastInsert(cap) {
+  const ins = (cap.inline || []).filter(function (q) { return /^INSERT INTO/.test(q); });
+  return ins[ins.length - 1];
+}
+
 test('DQE writer: 35 params bind in the dqe_history column order', function () {
   const cap = {};
   install(cap);
@@ -60,7 +112,8 @@ test('DQE writer: 35 params bind in the dqe_history column order', function () {
     queueSplit: '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}',
   }]);
 
-  assert.deepEqual(columnsOf(cap.sql), [
+  const dqeSql = lastInsert(cap);
+  assert.deepEqual(columnsOf(dqeSql), [
     'month_year', 'call_date', 'agent_name', 'queue_extensions',
     'total_unique', 'total_rung', 'total_missed', 'total_answered', 'ttt', 'att',
     'slot_0800_0830', 'slot_0830_0900', 'slot_0900_0930', 'slot_0930_1000', 'slot_1000_1030',
@@ -71,8 +124,11 @@ test('DQE writer: 35 params bind in the dqe_history column order', function () {
     'avg_abd_wait', 'csr_avg_abd_wait',
     'queue_split',                                   // sub-queue Phase 1
   ]);
-  assert.equal(cap.params.length, 35);
-  assert.deepEqual(values(cap), [
+  const dqeTuples = tuplesOf(dqeSql);
+  assert.equal(dqeTuples.length, 1);
+  assert.equal(dqeTuples[0].length, 35);
+  assert.equal(cap.params, undefined, 'R38: no bound statement on the normal path');
+  assert.deepEqual(dqeTuples[0], [
     'June 2026', '2026-06-22', 'Anna', '103,204',   // MM/DD/YYYY -> ISO (parseDateForNeon)
     5, 10, 2, 8, '0:15:03', '0:03:01',
     '9:00:00', null, '10:23:33,10:08:41',            // '' and absent slots -> NULL
@@ -82,9 +138,11 @@ test('DQE writer: 35 params bind in the dqe_history column order', function () {
     '0:00:40', null,                                 // normalizeDuration: '' -> NULL
     '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}',
   ]);
-  // JDBC setter types: counts are ints, everything else strings here.
-  assert.deepEqual(methods(cap).slice(4, 10),
-    ['int', 'int', 'int', 'int', 'string', 'string']);
+  // Renderings: counts are bare ints, everything else dollar-quoted text.
+  const raw = rawTuplesOf(dqeSql)[0];
+  assert.deepEqual(raw.slice(4, 8), ['5', '10', '2', '8']);
+  assert.match(raw[8], /^\$nq\$0:15:03\$nq\$$/);
+  assert.equal(raw[11], 'NULL');
 });
 
 test('QCD writer: 12 params bind in the qcd_history column order (pct is a double)', function () {
@@ -97,17 +155,19 @@ test('QCD writer: 12 params bind in the qcd_history column order (pct is a doubl
     longestWait: '0:01:00', avgAnswer: '0:00:20', abandonedPct: 10, violations: 1,
   }]);
 
-  assert.deepEqual(columnsOf(cap.sql), [
+  const qcdSql = lastInsert(cap);
+  assert.deepEqual(columnsOf(qcdSql), [
     'month_year', 'week', 'call_date', 'call_queue', 'call_source',
     'total_calls', 'total_answered', 'abandoned', 'longest_wait', 'avg_answer',
     'abandoned_pct', 'violations',
   ]);
-  assert.deepEqual(values(cap), [
+  assert.deepEqual(tuplesOf(qcdSql)[0], [
     'June 2026', 'Week 4', '2026-06-22', 'A_Q_CSR', 'Total Calls',
     100, 90, 10, '0:01:00', '0:00:20', 10, 1,
   ]);
-  assert.equal(methods(cap)[10], 'double');   // abandoned_pct
-  assert.equal(methods(cap)[11], 'int');      // violations
+  const qraw = rawTuplesOf(qcdSql)[0];
+  assert.equal(qraw[10], '10', 'abandoned_pct is a bare number');
+  assert.equal(qraw[11], '1');
 });
 
 test('CDR writer (no HMAC): 21 params bind in the call_history_dept order; JSONB fields NULL', function () {
@@ -121,7 +181,8 @@ test('CDR writer (no HMAC): 21 params bind in the call_history_dept order; JSONB
     obExtTotal: '4', obExtAns: '3', obExtTTT: '0:10:00', obExtATT: '0:02:30',
   }]);
 
-  assert.deepEqual(columnsOf(cap.sql), [
+  const cdrSql = lastInsert(cap);
+  assert.deepEqual(columnsOf(cdrSql), [
     'call_date', 'department', 'agent_name',
     'ob_total', 'ob_answered', 'ob_missed',
     'ob_list_total_entries', 'ob_list_answered_entries', 'ob_list_missed_entries',
@@ -130,7 +191,7 @@ test('CDR writer (no HMAC): 21 params bind in the call_history_dept order; JSONB
     'ib_list_total_entries', 'ib_list_answered_entries', 'ib_list_missed_entries',
     'ob_ext_total', 'ob_ext_answered', 'ob_ext_ttt_sec', 'ob_ext_att_sec',
   ]);
-  assert.deepEqual(values(cap), [
+  assert.deepEqual(tuplesOf(cdrSql)[0], [
     '2026-06-22', 'CSR', 'Anna',
     7, 5, 2,
     null, null, null,          // JSONB name lists skipped without HMAC_SECRET
@@ -159,7 +220,10 @@ function seqConn(log) {
   return {
     setAutoCommit: function () {},
     prepareStatement: stmt,
-    createStatement: function () { return stmt('(adhoc)'); },
+    // R38: an inline statement is logged when EXECUTED, in order with the binds.
+    createStatement: function () {
+      return { execute: function (sql) { log.push({ sql: sql, params: [] }); return true; }, close: function () {} };
+    },
     commit: function () {}, rollback: function () {}, close: function () {},
   };
 }
@@ -309,4 +373,91 @@ test('R27: phone children are gated OFF by default and ON only with CDR_PHONES_M
     delete h.state.props.HMAC_SECRET;
     delete h.state.props.CDR_PHONES_MIRROR;
   }
+});
+
+
+// ── R38: the inline path -- escaping, numbers, parity with the bound path, fallback ──
+test('R38: neonSqlLit_ dollar-quotes text byte-for-byte (quotes, backslashes, tag collision, NUL)', function () {
+  const lit = h.fn('neonSqlLit_');
+  assert.equal(lit(null), 'NULL');
+  assert.equal(lit(undefined), 'NULL');
+  assert.equal(lit(''), '$nq$$nq$', 'empty string stays an empty string, never NULL');
+  assert.equal(lit("O'Brien"), "$nq$O'Brien$nq$", 'no quote doubling needed under dollar quoting');
+  assert.equal(lit('{"n":"A \\"B\\" \\\\ C"}'), '$nq${"n":"A \\"B\\" \\\\ C"}$nq$', 'JSON backslashes untouched');
+  assert.equal(lit('price $nq$ tag'), '$nqx$price $nq$ tag$nqx$', 'a value containing the tag gets a longer tag');
+  assert.equal(lit('a\u0000b'), '$nq$ab$nq$', 'NUL stripped');
+  assert.equal(lit(42), '$nq$42$nq$', 'a number given to the text renderer is text (setString semantics)');
+  assert.equal(h.fn('neonSqlInt_')('7'), '7');
+  assert.equal(h.fn('neonSqlInt_')(4.9), '4');
+  assert.equal(h.fn('neonSqlInt_')('abc'), '0');
+  assert.equal(h.fn('neonSqlInt_')(null), '0');
+  assert.equal(h.fn('neonSqlNum_')(4.17), '4.17');
+  assert.equal(h.fn('neonSqlNum_')('0.5'), '0.5');
+  assert.equal(h.fn('neonSqlNum_')(NaN), '0');
+  assert.equal(h.fn('neonSqlJson_')(null), 'NULL');
+  assert.equal(h.fn('neonSqlJson_')('{"a":1}'), '$nq${"a":1}$nq$::jsonb');
+  assert.throws(function () { h.fn('neonSqlDate_')('6/22/2026'); }, /ISO date required/);
+});
+
+// The strongest pin: for one representative row per writer, the decoded
+// inline tuple equals, field for field, what the ORIGINAL bound statement
+// (kept as the fallback) binds for the same row.
+function boundValuesFor(boundFn, args) {
+  const cap = {};
+  const conn = recConn(cap);
+  h.fn(boundFn).apply(null, [conn].concat(args));
+  return values(cap);
+}
+test('R38 parity: DQE inline tuple == bound params, field for field', function () {
+  const row = { monthYear: 'June 2026', callDate: '06/22/2026', agentName: "Anna O'Neil",
+    queueExtensions: '103,204', totalUnique: 5, totalRung: '10', totalMissed: 2, totalAnswered: 8,
+    ttt: '0:15:03', att: '0:03:01', slots: ['9:00:00', '', '10:23:33,10:08:41'],
+    abParentIds: 'PA,PB', abMissedIds: 'QA', abMissedTimes: '9:05:00', avgAbdWait: '0:00:40', csrAvgAbdWait: '',
+    queueSplit: '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}' };
+  const inline = tuplesOf('INSERT INTO x (a) VALUES ' + h.fn('dqeInlineTuple_')(row))[0];
+  const bound = boundValuesFor('dqeBoundInsert_', [[row]]);
+  assert.equal(inline.length, 35); assert.equal(bound.length, 35);
+  // setInt coerces '10' -> 10 on the bridge; the inline renderer parses it.
+  bound[5] = Number(bound[5]);
+  assert.deepEqual(inline, bound);
+});
+test('R38 parity: QCD inline tuple == bound params, field for field', function () {
+  const row = { monthYear: 'June 2026', week: 'Week 4', callDate: '06/22/2026', callQueue: "A_Q_Sales's",
+    callSource: 'Total Calls', totalCalls: 100, totalAnswered: 90, abandoned: 10,
+    longestWait: '0:01:00', avgAnswer: '', abandonedPct: 4.17, violations: 1 };
+  const inline = tuplesOf('INSERT INTO x (a) VALUES ' + h.fn('qcdInlineTuple_')(row))[0];
+  const bound = boundValuesFor('qcdBoundInsert_', [[row]]);
+  assert.deepEqual(inline, bound);
+});
+test('R38 parity: CDR inline tuple == bound params (HMAC on: JSON name lists ride as jsonb literals)', function () {
+  const row = { callDate: '2026-06-22', dept: 'CSR', agentName: 'Anna "A" Smith',
+    obTotal: '7', obAns: '5', obMiss: '2', obListTot: 'SMITH JOHN (2), +13125550100 (1)', obListAns: '', obListMiss: null,
+    ibTotal: '20', ibAns: '18', ibMiss: '2', ibAnsInt: '3', ibAnsExt: '15',
+    ibListTot: '\n|\nDOE JANE (1)', ibListAns: '', ibListMiss: '',
+    obExtTotal: '4', obExtAns: '3', obExtTTT: '0:10:00', obExtATT: '0:02:30' };
+  const inline = tuplesOf('INSERT INTO x (a) VALUES ' + h.fn('cdrInlineTuple_')(row, true, 'test-secret'))[0];
+  const bound = boundValuesFor('cdrBoundInsert_', [[row], true, 'test-secret']);
+  assert.equal(inline.length, 21);
+  assert.deepEqual(inline, bound);
+  assert.ok(typeof inline[6] === 'string' && inline[6].indexOf('"phone_hash"') >= 0, 'the JSON list survives the round trip');
+  const raw = rawTuplesOf('INSERT INTO x (a) VALUES ' + h.fn('cdrInlineTuple_')(row, true, 'test-secret'))[0];
+  assert.match(raw[6], /\$nq\$\{.*\}\$nq\$::jsonb$/, 'jsonb cast on the literal');
+});
+
+test('R38: an oversize row falls back to the bound statement; the rest stay inline; one commit', function () {
+  const cap = {};
+  install(cap);
+  const mk = function (agent, ids) {
+    return { monthYear: 'June 2026', callDate: '06/22/2026', agentName: agent, queueExtensions: '',
+             slots: [], abParentIds: ids, abMissedIds: '', abMissedTimes: '', ttt: '0:01:00', att: '0:01:00' };
+  };
+  const huge = new Array(3200).fill('1762242202191').join(',');   // ~45 KB: cannot fit a statement alone
+  const res = h.fn('writeDQERowsToNeon')([mk('A', 'x'), mk('B', huge), mk('C', 'y')]);
+  assert.equal(res.inserted, 3);
+  assert.equal((cap.inline || []).length, 2, 'A flushed before the fallback, C after it');
+  assert.equal(cap.params.length, 35, 'B went through the original bound statement');
+  assert.equal(cap.params[29].v, huge);
+  assert.equal(cap.commits, 1, 'still ONE commit for the whole write');
+  assert.deepEqual(tuplesOf(cap.inline[0])[0].slice(2, 3), ['A']);
+  assert.deepEqual(tuplesOf(cap.inline[1])[0].slice(2, 3), ['C']);
 });

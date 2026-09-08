@@ -11,19 +11,51 @@ const { loadGas } = require('../harness/loadGas');
 
 const h = loadGas({ project: 'cdr-report', files: ['neonWrite.js'] });
 
+// R38: the writers render inline tuples now; count the tuples in each
+// executed statement (dollar-quote-aware) and record its size, since the
+// packing rule is BY SIZE under the JDBC cap rather than by row count.
+function countTuples(sql) {
+  const at = sql.indexOf(') VALUES ');
+  const vals = at >= 0 ? sql.slice(at + 9) : sql;
+  let n = 0, depth = 0, i = 0;
+  while (i < vals.length) {
+    if (vals.startsWith(' ON CONFLICT', i)) break;
+    const c = vals[i];
+    if (c === '$') { const m = /^\$([a-z]*)\$/.exec(vals.slice(i)); const tag = m[0]; i = vals.indexOf(tag, i + tag.length) + tag.length; continue; }
+    if (c === "'") { i = vals.indexOf("'", i + 1) + 1; continue; }
+    if (c === '(') { if (depth === 0) n++; depth++; }
+    else if (c === ')') depth--;
+    i++;
+  }
+  return n;
+}
+const JDBC_SQL_CAP = 44000;
+
 function fakeConn(log) {
   return {
     setAutoCommit: function () {},
     prepareStatement: function (sql) {
-      // One "(?," per row placeholder -- counts the rows in this statement.
-      log.stmtRows.push((sql.match(/\(\?[,:]/g) || []).length);
+      // The bound path is the oversize-row fallback only (R38). One "(?,"
+      // per row placeholder -- counts the rows in this statement.
+      (log.boundRows = log.boundRows || []).push((sql.match(/\(\?[,:]/g) || []).length);
       return {
         setString: function () {}, setInt: function () {}, setDouble: function () {},
         execute: function () { return true; }, executeQuery: function () { throw new Error('unexpected'); },
         close: function () {},
       };
     },
-    createStatement: function () { return { execute: function () {}, close: function () {} }; },
+    createStatement: function () {
+      return {
+        execute: function (sql) {
+          if (/^INSERT INTO/.test(sql)) {
+            log.stmtRows.push(countTuples(sql));
+            (log.stmtChars = log.stmtChars || []).push(sql.length);
+          }
+          return true;
+        },
+        close: function () {},
+      };
+    },
     commit: function () { log.commits++; },
     rollback: function () { log.rollbacks++; },
     close: function () { log.closed = true; },
@@ -34,7 +66,7 @@ function install(log) {
   h.ctx.getReachableNeonConn_ = function () { return fakeConn(log); };
 }
 
-test('F-21: writeDQERowsToNeon chunks at 400 rows/statement with ONE commit', function () {
+test('F-21/R38: writeDQERowsToNeon packs inline statements under the JDBC cap with ONE commit', function () {
   const log = { stmtRows: [], commits: 0, rollbacks: 0 };
   install(log);
   const rows = [];
@@ -45,13 +77,16 @@ test('F-21: writeDQERowsToNeon chunks at 400 rows/statement with ONE commit', fu
   }
   const res = h.fn('writeDQERowsToNeon')(rows);
   assert.equal(res.inserted, 900);
-  assert.equal(JSON.stringify(log.stmtRows), JSON.stringify([400, 400, 100]));
+  assert.equal(log.stmtRows.reduce(function (a, b) { return a + b; }, 0), 900, 'every row in exactly one inline statement');
+  assert.ok(!log.boundRows, 'no bound fallback for ordinary rows');
+  log.stmtChars.forEach(function (n) { assert.ok(n < JDBC_SQL_CAP, 'statement under the JDBC cap: ' + n); });
+  assert.ok(log.stmtRows.length >= 2, 'a 900-row batch packs into several statements');
   assert.equal(log.commits, 1, 'single commit across all chunks');
   assert.equal(log.rollbacks, 0);
   assert.ok(log.closed, 'connection closed');
 });
 
-test('F-21: writeQCDRowsToNeon chunks at 1000 rows/statement with ONE commit', function () {
+test('F-21/R38: writeQCDRowsToNeon packs inline statements under the JDBC cap with ONE commit', function () {
   const log = { stmtRows: [], commits: 0, rollbacks: 0 };
   install(log);
   const rows = [];
@@ -66,11 +101,13 @@ test('F-21: writeQCDRowsToNeon chunks at 1000 rows/statement with ONE commit', f
   }
   const res = h.fn('writeQCDRowsToNeon')(rows);
   assert.equal(res.inserted, 2500);
-  assert.equal(JSON.stringify(log.stmtRows), JSON.stringify([1000, 1000, 500]));
+  assert.equal(log.stmtRows.reduce(function (a, b) { return a + b; }, 0), 2500, 'every row in exactly one inline statement');
+  assert.ok(!log.boundRows, 'no bound fallback for ordinary rows');
+  log.stmtChars.forEach(function (n) { assert.ok(n < JDBC_SQL_CAP, 'statement under the JDBC cap: ' + n); });
   assert.equal(log.commits, 1);
 });
 
-test('F-21/IMP-3: writeCDRRowsToNeon (main insert, no HMAC) chunks at 300 rows with ONE commit', function () {
+test('F-21/IMP-3/R38: writeCDRRowsToNeon (main insert, no HMAC) packs inline statements under the cap with ONE commit', function () {
   // IMP-3: 300 rows/chunk (was 500 -- a FULL 500-row chunk measured ~44.2KB
   // of SQL, at/over the observed ~44KB Apps Script JDBC statement cap).
   const log = { stmtRows: [], commits: 0, rollbacks: 0 };
@@ -82,11 +119,13 @@ test('F-21/IMP-3: writeCDRRowsToNeon (main insert, no HMAC) chunks at 300 rows w
   }
   const res = h.fn('writeCDRRowsToNeon')(rows);
   assert.equal(res.inserted, 1100);
-  assert.equal(JSON.stringify(log.stmtRows), JSON.stringify([300, 300, 300, 200]));
+  assert.equal(log.stmtRows.reduce(function (a, b) { return a + b; }, 0), 1100, 'every row in exactly one inline statement');
+  assert.ok(!log.boundRows, 'no bound fallback for ordinary rows');
+  log.stmtChars.forEach(function (n) { assert.ok(n < JDBC_SQL_CAP, 'statement under the JDBC cap: ' + n); });
   assert.equal(log.commits, 1);
 });
 
-test('daily-scale batches still produce exactly one statement (common path unchanged)', function () {
+test('daily-scale batches pack into a handful of statements, every one under the cap', function () {
   const log = { stmtRows: [], commits: 0, rollbacks: 0 };
   install(log);
   const rows = [];
@@ -96,7 +135,9 @@ test('daily-scale batches still produce exactly one statement (common path uncha
                 abMissedTimes: '', ttt: '0:01:00', att: '0:01:00' });
   }
   h.fn('writeDQERowsToNeon')(rows);
-  assert.equal(JSON.stringify(log.stmtRows), JSON.stringify([250]));
+  assert.equal(log.stmtRows.reduce(function (a, b) { return a + b; }, 0), 250, 'every row in exactly one inline statement');
+  assert.ok(!log.boundRows, 'no bound fallback for ordinary rows');
+  log.stmtChars.forEach(function (n) { assert.ok(n < JDBC_SQL_CAP, 'statement under the JDBC cap: ' + n); });
   assert.equal(log.commits, 1);
 });
 
@@ -143,7 +184,9 @@ function recordingConn(log) {
         close: function () {},
       };
     },
-    createStatement: function () { return { execute: function () {}, close: function () {} }; },
+    createStatement: function () {
+      return { execute: function (sql) { if (typeof sql === 'string') log.sqls.push(sql); return true; }, close: function () {} };
+    },
     commit: function () { log.commits++; },
     rollback: function () { log.rollbacks++; },
     close: function () { log.closed = true; },

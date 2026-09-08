@@ -359,11 +359,19 @@ spreadsheet). See `dept-config.test.js` for the fake-spreadsheet pattern.
     all-departments grand-total dedup (a double-mapped queue counts
     once company-wide while listing under both dept sections), via
     Dept Config fixtures (parent/child + double-mapped queues).
-- *Neon writers (`neonWrite.js`, INV-16 pair):* chunking + single-commit
-  discipline (`neon-write-chunking.test.js`) AND the field mappings
-  (`neon-write-mapping.test.js` -- a recording fake conn asserts the SQL
-  column list + every bound param's index/setter/value for the DQE /
-  QCD / CDR writers, incl. the no-HMAC NULL-JSONB path).
+- *Neon writers (`neonWrite.js`, INV-16 pair):* size-packing under the
+  JDBC SQL cap + single-commit discipline (`neon-write-chunking.test.js`)
+  AND the field mappings (`neon-write-mapping.test.js` -- a recording fake
+  conn decodes the R38 inline-literal tuples and asserts the SQL column
+  list + every value's position for the DQE / QCD / CDR writers, incl. the
+  no-HMAC NULL-JSONB path; plus the dollar-quote escaping, inline == bound
+  parity against the kept `*BoundInsert_` fallbacks, and the oversize-row
+  fallback).
+- *Force-path row delete (force-delete-rows.test.js):* R38
+  `deleteHistoricalRowsForDate` -- Date + text cells match identically,
+  split blocks deleted bottom-up, the removed count, untouched rows kept
+  in order, the sheet re-padded to its prior capacity, a single
+  date-column read.
 - *Deferred-mirror tail-scan (neon-mirror-tail.test.js):* the F-20
   `nmReadDateRowsTail_` bounded read -- accepted-window parity with a
   full scan, widening on a top-clipped block, old-date full-scan

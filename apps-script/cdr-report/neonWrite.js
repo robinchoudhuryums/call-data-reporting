@@ -175,6 +175,187 @@ function neonAuthoritativeDateDelete_(conn, table, isoDates) {
 // -- DQE writer --------------------------------------------------------------
 // Per-EXECUTION memo for the Phase 1 queue_split column add (see below).
 var DQE_QUEUE_SPLIT_COLUMN_READY_ = false;
+// ── R38: inline-literal rendering for the daily writers ─────────────────────
+//
+// A bound parameter and an inline literal reach Postgres as the same typed
+// value; only the transport differs, and the JDBC bind bridge is the
+// dominant per-row cost in Apps Script (~50 ms per setXxx call: 152 CDR rows
+// x 21 binds measured 2m47s on a Manual Export, 90 DQE rows x 35 binds
+// 2m43s, while the inline phone-child and inbound/outbound paths took
+// seconds). The three writers below now render each row as ONE inline
+// tuple and pack tuples into statements by SIZE (NEON_INLINE_STMT_CHARS_,
+// under the ~44 KB "Argument too large: sql" cap).
+//
+// Text goes through neonSqlLit_ as a DOLLAR-QUOTED literal ($nq$...$nq$):
+// Postgres takes it byte-for-byte with no escape processing, so quotes,
+// backslashes (JSON name lists) and standard_conforming_strings are all
+// moot; a value containing the tag gets a longer tag. NUL is stripped
+// (Postgres text cannot hold it; a bound NUL failed too). null/undefined
+// render as NULL, which keeps every writer's existing null rule
+// (empty slot -> NULL, normalizeDuration('') -> NULL, absent queue_split ->
+// NULL). Ints via parseInt and doubles via Number fall to 0 where the bound
+// code did `|| 0` -- strictly more tolerant than setInt, which threw on a
+// string. Dates are regex-checked before entering the SQL.
+//
+// The one thing binds gave for free was immunity to the SQL-string size cap:
+// a single pathological row (a huge comma-joined id list) that fits bound
+// might not fit inline. neonInsertInline_ therefore keeps EACH writer's
+// original bound-parameter code as a per-row fallback: a tuple that would
+// not fit a statement on its own is written the old way, one row per
+// statement, and the log line says how many took that path. Same
+// transaction, same single commit.
+var NEON_INLINE_STMT_CHARS_ = 30000;
+
+function neonSqlLit_(v) {
+  if (v === null || v === undefined) return 'NULL';
+  var s = String(v).replace(/\u0000/g, '');
+  var tag = 'nq';
+  while (s.indexOf('$' + tag + '$') !== -1) tag += 'x';
+  return '$' + tag + '$' + s + '$' + tag + '$';
+}
+function neonSqlInt_(v) { var n = parseInt(v, 10); return isFinite(n) ? String(n) : '0'; }
+function neonSqlNum_(v) { var n = Number(v); return isFinite(n) ? String(n) : '0'; }
+function neonSqlJson_(v) { return (v === null || v === undefined) ? 'NULL' : (neonSqlLit_(v) + '::jsonb'); }
+function neonSqlDate_(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) throw new Error('neonSqlDate_: ISO date required, got "' + iso + '"');
+  return "'" + iso + "'::date";
+}
+
+/**
+ * Packs `rows` into inline INSERT statements (head + tuples + tail) under
+ * the size cap; rows whose tuple cannot fit alone go through `boundFn(conn,
+ * [row])`, the writer's original bound-param statement. Returns
+ * { statements, fallback }. No commit here -- the caller commits once.
+ */
+function neonInsertInline_(conn, head, tail, rows, tupleFn, boundFn) {
+  var cap = NEON_INLINE_STMT_CHARS_;
+  var stmt = conn.createStatement();
+  var buf = [], chars = 0, statements = 0, fallback = 0;
+  var flush = function () {
+    if (!buf.length) return;
+    stmt.execute(head + buf.join(',') + tail);
+    statements++; buf = []; chars = 0;
+  };
+  for (var i = 0; i < rows.length; i++) {
+    var t = tupleFn(rows[i]);
+    if (t.length > cap) { flush(); boundFn(conn, [rows[i]]); fallback++; continue; }
+    if (buf.length && chars + t.length + 1 > cap) flush();
+    buf.push(t); chars += t.length + 1;
+  }
+  flush();
+  stmt.close();
+  return { statements: statements, fallback: fallback };
+}
+function neonInlineNote_(res) {
+  return ' (' + res.statements + ' statement(s)'
+    + (res.fallback ? ', ' + res.fallback + ' oversize row(s) via bound params' : '') + ')';
+}
+
+// R38: DQE statement head/tail (byte-identical to the former inline SQL) +
+// the original bound-param statement, kept as neonInsertInline_'s per-row
+// fallback, + the inline tuple renderer (same values, same order as the
+// setters).
+var DQE_INSERT_HEAD_ = 'INSERT INTO dqe_history (' +
+      'month_year, call_date, agent_name, queue_extensions, ' +
+      'total_unique, total_rung, total_missed, total_answered, ttt, att, ' +
+      'slot_0800_0830, slot_0830_0900, slot_0900_0930, slot_0930_1000, slot_1000_1030, ' +
+      'slot_1030_1100, slot_1100_1130, slot_1130_1200, slot_1200_1230, slot_1230_1300, ' +
+      'slot_1300_1330, slot_1330_1400, slot_1400_1430, slot_1430_1500, slot_1500_1530, ' +
+      'slot_1530_1600, slot_1600_1630, slot_1630_1700, slot_1700_1730, ' +
+      'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
+      'avg_abd_wait, csr_avg_abd_wait, queue_split' +
+      ') VALUES ';
+var DQE_INSERT_TAIL_ = ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET ' +
+      'month_year = EXCLUDED.month_year, ' +
+      'queue_extensions = EXCLUDED.queue_extensions, ' +
+      'total_unique = EXCLUDED.total_unique, ' +
+      'total_rung = EXCLUDED.total_rung, ' +
+      'total_missed = EXCLUDED.total_missed, ' +
+      'total_answered = EXCLUDED.total_answered, ' +
+      'ttt = EXCLUDED.ttt, att = EXCLUDED.att, ' +
+      'slot_0800_0830 = EXCLUDED.slot_0800_0830, slot_0830_0900 = EXCLUDED.slot_0830_0900, ' +
+      'slot_0900_0930 = EXCLUDED.slot_0900_0930, slot_0930_1000 = EXCLUDED.slot_0930_1000, ' +
+      'slot_1000_1030 = EXCLUDED.slot_1000_1030, slot_1030_1100 = EXCLUDED.slot_1030_1100, ' +
+      'slot_1100_1130 = EXCLUDED.slot_1100_1130, slot_1130_1200 = EXCLUDED.slot_1130_1200, ' +
+      'slot_1200_1230 = EXCLUDED.slot_1200_1230, slot_1230_1300 = EXCLUDED.slot_1230_1300, ' +
+      'slot_1300_1330 = EXCLUDED.slot_1300_1330, slot_1330_1400 = EXCLUDED.slot_1330_1400, ' +
+      'slot_1400_1430 = EXCLUDED.slot_1400_1430, slot_1430_1500 = EXCLUDED.slot_1430_1500, ' +
+      'slot_1500_1530 = EXCLUDED.slot_1500_1530, slot_1530_1600 = EXCLUDED.slot_1530_1600, ' +
+      'slot_1600_1630 = EXCLUDED.slot_1600_1630, slot_1630_1700 = EXCLUDED.slot_1630_1700, ' +
+      'slot_1700_1730 = EXCLUDED.slot_1700_1730, ' +
+      'abandoned_parent_ids = EXCLUDED.abandoned_parent_ids, ' +
+      'abandoned_missed_ids = EXCLUDED.abandoned_missed_ids, ' +
+      'abandoned_missed_times = EXCLUDED.abandoned_missed_times, ' +
+      'avg_abd_wait = EXCLUDED.avg_abd_wait, ' +
+      'csr_avg_abd_wait = EXCLUDED.csr_avg_abd_wait, ' +
+      // COALESCE, not a plain overwrite. remirrorExistingDqeDate_ re-reads the
+      // SHEET, so a date whose rows predate Phase 1 sends NULL here and would
+      // otherwise erase a queue_split a later build had already mirrored.
+      // A build that genuinely has no split emits '{}', never NULL, so the
+      // only thing COALESCE can preserve is a value nothing intended to clear.
+      'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split)';
+
+function dqeBoundInsert_(conn, chunk) {
+  var placeholderRow = '(' + new Array(35).fill('?').join(',') + ')';
+  var stmt = conn.prepareStatement(DQE_INSERT_HEAD_ + chunk.map(function () { return placeholderRow; }).join(',') + DQE_INSERT_TAIL_);
+  var p = 1;
+  for (var b = 0; b < chunk.length; b++) {
+    var row = chunk[b];
+    stmt.setString(p++, row.monthYear);
+    stmt.setString(p++, parseDateForNeon(row.callDate));
+    stmt.setString(p++, row.agentName);
+    stmt.setString(p++, row.queueExtensions);
+    stmt.setInt(p++,    row.totalUnique || 0);
+    stmt.setInt(p++,    row.totalRung || 0);
+    stmt.setInt(p++,    row.totalMissed || 0);
+    stmt.setInt(p++,    row.totalAnswered || 0);
+    stmt.setString(p++, row.ttt);
+    stmt.setString(p++, row.att);
+    for (var s = 0; s < 19; s++) {
+      stmt.setString(p++, (row.slots && row.slots[s]) || null);
+    }
+    stmt.setString(p++, row.abParentIds);
+    stmt.setString(p++, row.abMissedIds);
+    stmt.setString(p++, row.abMissedTimes);
+    stmt.setString(p++, normalizeDuration(row.avgAbdWait));
+    stmt.setString(p++, normalizeDuration(row.csrAvgAbdWait));
+    // Sub-queue Phase 1. NULL rather than '' for a row with no split (a
+    // pre-Phase-1 sheet row, or an INV-23 queue sentinel), so "never
+    // computed" is distinguishable in SQL from "computed, came out empty"
+    // -- which is '{}'. A partial-set caller that omits the field writes
+    // NULL and the ON CONFLICT update above would then blank an existing
+    // value, so callers must carry it; the row builders all do.
+    stmt.setString(p++, row.queueSplit ? String(row.queueSplit) : null);
+  }
+
+  stmt.execute();
+  stmt.close();
+}
+
+function dqeInlineTuple_(row) {
+  var vals = [
+    neonSqlLit_(row.monthYear),
+    neonSqlLit_(parseDateForNeon(row.callDate)),
+    neonSqlLit_(row.agentName),
+    neonSqlLit_(row.queueExtensions),
+    neonSqlInt_(row.totalUnique || 0),
+    neonSqlInt_(row.totalRung || 0),
+    neonSqlInt_(row.totalMissed || 0),
+    neonSqlInt_(row.totalAnswered || 0),
+    neonSqlLit_(row.ttt),
+    neonSqlLit_(row.att),
+  ];
+  for (var s = 0; s < 19; s++) vals.push(neonSqlLit_((row.slots && row.slots[s]) || null));
+  vals.push(
+    neonSqlLit_(row.abParentIds),
+    neonSqlLit_(row.abMissedIds),
+    neonSqlLit_(row.abMissedTimes),
+    neonSqlLit_(normalizeDuration(row.avgAbdWait)),
+    neonSqlLit_(normalizeDuration(row.csrAvgAbdWait)),
+    neonSqlLit_(row.queueSplit ? String(row.queueSplit) : null));
+  return '(' + vals.join(',') + ')';
+}
+
 function writeDQERowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0 };
   // IMP-6: uq_dqe_history is (call_date, agent_name). Key on the SAME
@@ -214,91 +395,13 @@ function writeDQERowsToNeon(rows, opts) {
     // bind-param cap (34 params/row). 400 rows/chunk stays comfortably
     // under both. Still ONE commit after all chunks (Neon write
     // discipline: batch inserts, commit once).
-    var DQE_CHUNK_ROWS = 400;
-    // 35 params/row since sub-queue Phase 1 added queue_split. 400 rows/chunk
-    // is still far under Postgres's 65,535 bind-param cap (14,000 params).
-    var placeholderRow  = '(' + new Array(35).fill('?').join(',') + ')';
-    for (var off = 0; off < rows.length; off += DQE_CHUNK_ROWS) {
-    var chunk = rows.slice(off, off + DQE_CHUNK_ROWS);
-    var allPlaceholders = chunk.map(function() { return placeholderRow; }).join(',');
-
-    var sql = 'INSERT INTO dqe_history (' +
-      'month_year, call_date, agent_name, queue_extensions, ' +
-      'total_unique, total_rung, total_missed, total_answered, ttt, att, ' +
-      'slot_0800_0830, slot_0830_0900, slot_0900_0930, slot_0930_1000, slot_1000_1030, ' +
-      'slot_1030_1100, slot_1100_1130, slot_1130_1200, slot_1200_1230, slot_1230_1300, ' +
-      'slot_1300_1330, slot_1330_1400, slot_1400_1430, slot_1430_1500, slot_1500_1530, ' +
-      'slot_1530_1600, slot_1600_1630, slot_1630_1700, slot_1700_1730, ' +
-      'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
-      'avg_abd_wait, csr_avg_abd_wait, queue_split' +
-      ') VALUES ' + allPlaceholders +
-      ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET ' +
-      'month_year = EXCLUDED.month_year, ' +
-      'queue_extensions = EXCLUDED.queue_extensions, ' +
-      'total_unique = EXCLUDED.total_unique, ' +
-      'total_rung = EXCLUDED.total_rung, ' +
-      'total_missed = EXCLUDED.total_missed, ' +
-      'total_answered = EXCLUDED.total_answered, ' +
-      'ttt = EXCLUDED.ttt, att = EXCLUDED.att, ' +
-      'slot_0800_0830 = EXCLUDED.slot_0800_0830, slot_0830_0900 = EXCLUDED.slot_0830_0900, ' +
-      'slot_0900_0930 = EXCLUDED.slot_0900_0930, slot_0930_1000 = EXCLUDED.slot_0930_1000, ' +
-      'slot_1000_1030 = EXCLUDED.slot_1000_1030, slot_1030_1100 = EXCLUDED.slot_1030_1100, ' +
-      'slot_1100_1130 = EXCLUDED.slot_1100_1130, slot_1130_1200 = EXCLUDED.slot_1130_1200, ' +
-      'slot_1200_1230 = EXCLUDED.slot_1200_1230, slot_1230_1300 = EXCLUDED.slot_1230_1300, ' +
-      'slot_1300_1330 = EXCLUDED.slot_1300_1330, slot_1330_1400 = EXCLUDED.slot_1330_1400, ' +
-      'slot_1400_1430 = EXCLUDED.slot_1400_1430, slot_1430_1500 = EXCLUDED.slot_1430_1500, ' +
-      'slot_1500_1530 = EXCLUDED.slot_1500_1530, slot_1530_1600 = EXCLUDED.slot_1530_1600, ' +
-      'slot_1600_1630 = EXCLUDED.slot_1600_1630, slot_1630_1700 = EXCLUDED.slot_1630_1700, ' +
-      'slot_1700_1730 = EXCLUDED.slot_1700_1730, ' +
-      'abandoned_parent_ids = EXCLUDED.abandoned_parent_ids, ' +
-      'abandoned_missed_ids = EXCLUDED.abandoned_missed_ids, ' +
-      'abandoned_missed_times = EXCLUDED.abandoned_missed_times, ' +
-      'avg_abd_wait = EXCLUDED.avg_abd_wait, ' +
-      'csr_avg_abd_wait = EXCLUDED.csr_avg_abd_wait, ' +
-      // COALESCE, not a plain overwrite. remirrorExistingDqeDate_ re-reads the
-      // SHEET, so a date whose rows predate Phase 1 sends NULL here and would
-      // otherwise erase a queue_split a later build had already mirrored.
-      // A build that genuinely has no split emits '{}', never NULL, so the
-      // only thing COALESCE can preserve is a value nothing intended to clear.
-      'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split)';
-
-    var stmt = conn.prepareStatement(sql);
-    var p = 1;
-    for (var b = 0; b < chunk.length; b++) {
-      var row = chunk[b];
-      stmt.setString(p++, row.monthYear);
-      stmt.setString(p++, parseDateForNeon(row.callDate));
-      stmt.setString(p++, row.agentName);
-      stmt.setString(p++, row.queueExtensions);
-      stmt.setInt(p++,    row.totalUnique || 0);
-      stmt.setInt(p++,    row.totalRung || 0);
-      stmt.setInt(p++,    row.totalMissed || 0);
-      stmt.setInt(p++,    row.totalAnswered || 0);
-      stmt.setString(p++, row.ttt);
-      stmt.setString(p++, row.att);
-      for (var s = 0; s < 19; s++) {
-        stmt.setString(p++, (row.slots && row.slots[s]) || null);
-      }
-      stmt.setString(p++, row.abParentIds);
-      stmt.setString(p++, row.abMissedIds);
-      stmt.setString(p++, row.abMissedTimes);
-      stmt.setString(p++, normalizeDuration(row.avgAbdWait));
-      stmt.setString(p++, normalizeDuration(row.csrAvgAbdWait));
-      // Sub-queue Phase 1. NULL rather than '' for a row with no split (a
-      // pre-Phase-1 sheet row, or an INV-23 queue sentinel), so "never
-      // computed" is distinguishable in SQL from "computed, came out empty"
-      // -- which is '{}'. A partial-set caller that omits the field writes
-      // NULL and the ON CONFLICT update above would then blank an existing
-      // value, so callers must carry it; the row builders all do.
-      stmt.setString(p++, row.queueSplit ? String(row.queueSplit) : null);
-    }
-
-    stmt.execute();
-    stmt.close();
-    }
+    // R38: inline-literal tuples packed by size; the bound-param statement
+    // survives as the per-row fallback for an oversize tuple (see
+    // neonInsertInline_). ONE commit after all statements, as before.
+    var inlineRes = neonInsertInline_(conn, DQE_INSERT_HEAD_, DQE_INSERT_TAIL_, rows, dqeInlineTuple_, dqeBoundInsert_);
     conn.commit();
 
-    Logger.log('writeDQERowsToNeon: wrote ' + rows.length + ' rows.');
+    Logger.log('writeDQERowsToNeon: wrote ' + rows.length + ' rows' + neonInlineNote_(inlineRes) + '.');
     return { inserted: rows.length };
 
   } catch (e) {
@@ -310,6 +413,67 @@ function writeDQERowsToNeon(rows, opts) {
 }
 
 // -- QCD writer --------------------------------------------------------------
+// R38: QCD statement head/tail (byte-identical to the former inline SQL) +
+// the original bound-param statement, kept as neonInsertInline_'s per-row
+// fallback, + the inline tuple renderer (same values, same order as the
+// setters).
+var QCD_INSERT_HEAD_ = 'INSERT INTO qcd_history (' +
+      'month_year, week, call_date, call_queue, call_source, ' +
+      'total_calls, total_answered, abandoned, longest_wait, avg_answer, ' +
+      'abandoned_pct, violations' +
+      ') VALUES ';
+var QCD_INSERT_TAIL_ = ' ON CONFLICT ON CONSTRAINT uq_qcd_history DO UPDATE SET ' +
+      'month_year = EXCLUDED.month_year, ' +
+      'week = EXCLUDED.week, ' +
+      'total_calls = EXCLUDED.total_calls, ' +
+      'total_answered = EXCLUDED.total_answered, ' +
+      'abandoned = EXCLUDED.abandoned, ' +
+      'longest_wait = EXCLUDED.longest_wait, ' +
+      'avg_answer = EXCLUDED.avg_answer, ' +
+      'abandoned_pct = EXCLUDED.abandoned_pct, ' +
+      'violations = EXCLUDED.violations';
+
+function qcdBoundInsert_(conn, chunk) {
+  var placeholderRow = '(' + new Array(12).fill('?').join(',') + ')';
+  var stmt = conn.prepareStatement(QCD_INSERT_HEAD_ + chunk.map(function () { return placeholderRow; }).join(',') + QCD_INSERT_TAIL_);
+  var p = 1;
+  for (var b = 0; b < chunk.length; b++) {
+    var row = chunk[b];
+    stmt.setString(p++, row.monthYear);
+    stmt.setString(p++, row.week);
+    stmt.setString(p++, parseDateForNeon(row.callDate));
+    stmt.setString(p++, row.callQueue);
+    stmt.setString(p++, row.callSource);
+    stmt.setInt(p++,    row.totalCalls || 0);
+    stmt.setInt(p++,    row.totalAnswered || 0);
+    stmt.setInt(p++,    row.abandoned || 0);
+    stmt.setString(p++, normalizeDuration(row.longestWait));
+    stmt.setString(p++, normalizeDuration(row.avgAnswer));
+    stmt.setDouble(p++, row.abandonedPct || 0);
+    stmt.setInt(p++,    row.violations || 0);
+  }
+
+  stmt.execute();
+  stmt.close();
+}
+
+function qcdInlineTuple_(row) {
+  return '(' + [
+    neonSqlLit_(row.monthYear),
+    neonSqlLit_(row.week),
+    neonSqlLit_(parseDateForNeon(row.callDate)),
+    neonSqlLit_(row.callQueue),
+    neonSqlLit_(row.callSource),
+    neonSqlInt_(row.totalCalls || 0),
+    neonSqlInt_(row.totalAnswered || 0),
+    neonSqlInt_(row.abandoned || 0),
+    neonSqlLit_(normalizeDuration(row.longestWait)),
+    neonSqlLit_(normalizeDuration(row.avgAnswer)),
+    neonSqlNum_(row.abandonedPct || 0),
+    neonSqlInt_(row.violations || 0),
+  ].join(',') + ')';
+}
+
 function writeQCDRowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0 };
   // IMP-6: uq_qcd_history is (call_date, call_queue, call_source).
@@ -332,52 +496,13 @@ function writeQCDRowsToNeon(rows, opts) {
     // F-21: chunked like the DQE writer (12 params/row; the bulk-archive
     // path mirrors the whole accumulated Pending Archive in one call).
     // ONE commit after all chunks.
-    var QCD_CHUNK_ROWS = 1000;
-    var placeholderRow  = '(' + new Array(12).fill('?').join(',') + ')';
-    for (var off = 0; off < rows.length; off += QCD_CHUNK_ROWS) {
-    var chunk = rows.slice(off, off + QCD_CHUNK_ROWS);
-    var allPlaceholders = chunk.map(function() { return placeholderRow; }).join(',');
-
-    var sql = 'INSERT INTO qcd_history (' +
-      'month_year, week, call_date, call_queue, call_source, ' +
-      'total_calls, total_answered, abandoned, longest_wait, avg_answer, ' +
-      'abandoned_pct, violations' +
-      ') VALUES ' + allPlaceholders +
-      ' ON CONFLICT ON CONSTRAINT uq_qcd_history DO UPDATE SET ' +
-      'month_year = EXCLUDED.month_year, ' +
-      'week = EXCLUDED.week, ' +
-      'total_calls = EXCLUDED.total_calls, ' +
-      'total_answered = EXCLUDED.total_answered, ' +
-      'abandoned = EXCLUDED.abandoned, ' +
-      'longest_wait = EXCLUDED.longest_wait, ' +
-      'avg_answer = EXCLUDED.avg_answer, ' +
-      'abandoned_pct = EXCLUDED.abandoned_pct, ' +
-      'violations = EXCLUDED.violations';
-
-    var stmt = conn.prepareStatement(sql);
-    var p = 1;
-    for (var b = 0; b < chunk.length; b++) {
-      var row = chunk[b];
-      stmt.setString(p++, row.monthYear);
-      stmt.setString(p++, row.week);
-      stmt.setString(p++, parseDateForNeon(row.callDate));
-      stmt.setString(p++, row.callQueue);
-      stmt.setString(p++, row.callSource);
-      stmt.setInt(p++,    row.totalCalls || 0);
-      stmt.setInt(p++,    row.totalAnswered || 0);
-      stmt.setInt(p++,    row.abandoned || 0);
-      stmt.setString(p++, normalizeDuration(row.longestWait));
-      stmt.setString(p++, normalizeDuration(row.avgAnswer));
-      stmt.setDouble(p++, row.abandonedPct || 0);
-      stmt.setInt(p++,    row.violations || 0);
-    }
-
-    stmt.execute();
-    stmt.close();
-    }
+    // R38: inline-literal tuples packed by size; the bound-param statement
+    // survives as the per-row fallback for an oversize tuple (see
+    // neonInsertInline_). ONE commit after all statements, as before.
+    var inlineRes = neonInsertInline_(conn, QCD_INSERT_HEAD_, QCD_INSERT_TAIL_, rows, qcdInlineTuple_, qcdBoundInsert_);
     conn.commit();
 
-    Logger.log('writeQCDRowsToNeon: wrote ' + rows.length + ' rows.');
+    Logger.log('writeQCDRowsToNeon: wrote ' + rows.length + ' rows' + neonInlineNote_(inlineRes) + '.');
     return { inserted: rows.length };
 
   } catch (e) {
@@ -394,6 +519,88 @@ function writeQCDRowsToNeon(rows, opts) {
 // fields and phone child-table inserts when HMAC_SECRET is available.
 // Without HMAC_SECRET, writes the main metric columns but skips
 // name-list JSONB and phone child rows (logs a warning).
+
+// R38: CDR statement head/tail (byte-identical to the former inline SQL) +
+// the original bound-param statement, kept as neonInsertInline_'s per-row
+// fallback, + the inline tuple renderer (same values, same order as the
+// setters).
+var CDR_INSERT_HEAD_ = 'INSERT INTO call_history_dept (' +
+      'call_date, department, agent_name, ' +
+      'ob_total, ob_answered, ob_missed, ' +
+      'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
+      'ib_total, ib_answered, ib_missed, ' +
+      'ib_answered_internal, ib_answered_external, ' +
+      'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
+      'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
+      ') VALUES ';
+var CDR_INSERT_TAIL_ = ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
+      'ob_total = EXCLUDED.ob_total, ob_answered = EXCLUDED.ob_answered, ob_missed = EXCLUDED.ob_missed, ' +
+      'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
+      'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
+      'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
+      'ib_total = EXCLUDED.ib_total, ib_answered = EXCLUDED.ib_answered, ib_missed = EXCLUDED.ib_missed, ' +
+      'ib_answered_internal = EXCLUDED.ib_answered_internal, ib_answered_external = EXCLUDED.ib_answered_external, ' +
+      'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
+      'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
+      'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
+      'ob_ext_total = EXCLUDED.ob_ext_total, ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
+      'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
+
+function cdrBoundInsert_(conn, chunk, hasHmac, hmacSecret) {
+  var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
+  var stmt = conn.prepareStatement(CDR_INSERT_HEAD_ + chunk.map(function () { return placeholderRow; }).join(',') + CDR_INSERT_TAIL_);
+  var p = 1;
+  for (var i = 0; i < chunk.length; i++) {
+    var row = chunk[i];
+    stmt.setString(p++, row.callDate);
+    stmt.setString(p++, row.dept);
+    stmt.setString(p++, row.agentName);
+    stmt.setInt(p++,    parseInt(row.obTotal)   || 0);
+    stmt.setInt(p++,    parseInt(row.obAns)     || 0);
+    stmt.setInt(p++,    parseInt(row.obMiss)    || 0);
+    stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret) : null);
+    stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret) : null);
+    stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret) : null);
+    stmt.setInt(p++,    parseInt(row.ibTotal)   || 0);
+    stmt.setInt(p++,    parseInt(row.ibAns)     || 0);
+    stmt.setInt(p++,    parseInt(row.ibMiss)    || 0);
+    stmt.setInt(p++,    parseInt(row.ibAnsInt)  || 0);
+    stmt.setInt(p++,    parseInt(row.ibAnsExt)  || 0);
+    stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret) : null);
+    stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret) : null);
+    stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret) : null);
+    stmt.setInt(p++,    parseInt(row.obExtTotal) || 0);
+    stmt.setInt(p++,    parseInt(row.obExtAns)   || 0);
+    stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtTTT));
+    stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtATT));
+  }
+
+  stmt.execute();
+  stmt.close();
+}
+
+function cdrInlineTuple_(row, hasHmac, hmacSecret) {
+  var j = function (v) { return neonSqlJson_(hasHmac ? cdrParseNameFieldJson_(v, false, hmacSecret) : null); };
+  return '(' + [
+    neonSqlLit_(row.callDate),
+    neonSqlLit_(row.dept),
+    neonSqlLit_(row.agentName),
+    neonSqlInt_(row.obTotal),
+    neonSqlInt_(row.obAns),
+    neonSqlInt_(row.obMiss),
+    j(row.obListTot), j(row.obListAns), j(row.obListMiss),
+    neonSqlInt_(row.ibTotal),
+    neonSqlInt_(row.ibAns),
+    neonSqlInt_(row.ibMiss),
+    neonSqlInt_(row.ibAnsInt),
+    neonSqlInt_(row.ibAnsExt),
+    j(row.ibListTot), j(row.ibListAns), j(row.ibListMiss),
+    neonSqlInt_(row.obExtTotal),
+    neonSqlInt_(row.obExtAns),
+    String(cdrTimeToSeconds_(row.obExtTTT)),
+    String(cdrTimeToSeconds_(row.obExtATT)),
+  ].join(',') + ')';
+}
 
 function writeCDRRowsToNeon(rows, opts) {
   if (!rows || !rows.length) return { inserted: 0, skipped: 0, phones: 0 };
@@ -466,66 +673,15 @@ function writeCDRRowsToNeon(rows, opts) {
     // JDBC cap ("Argument too large: sql"), so every exactly-full chunk on
     // a multi-date bulk mirror was a coin-flip. 300 rows ~= 27KB: safe
     // margin, and the daily path (~250 rows) still fits one statement.
-    var CDR_CHUNK_ROWS = 300;
-    var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
-    for (var off = 0; off < rows.length; off += CDR_CHUNK_ROWS) {
-    var chunk = rows.slice(off, off + CDR_CHUNK_ROWS);
-    var allPlaceholders = chunk.map(function() { return placeholderRow; }).join(',');
-
-    var sql = 'INSERT INTO call_history_dept (' +
-      'call_date, department, agent_name, ' +
-      'ob_total, ob_answered, ob_missed, ' +
-      'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
-      'ib_total, ib_answered, ib_missed, ' +
-      'ib_answered_internal, ib_answered_external, ' +
-      'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
-      'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
-      ') VALUES ' + allPlaceholders +
-      ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
-      'ob_total = EXCLUDED.ob_total, ob_answered = EXCLUDED.ob_answered, ob_missed = EXCLUDED.ob_missed, ' +
-      'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
-      'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
-      'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
-      'ib_total = EXCLUDED.ib_total, ib_answered = EXCLUDED.ib_answered, ib_missed = EXCLUDED.ib_missed, ' +
-      'ib_answered_internal = EXCLUDED.ib_answered_internal, ib_answered_external = EXCLUDED.ib_answered_external, ' +
-      'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
-      'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
-      'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
-      'ob_ext_total = EXCLUDED.ob_ext_total, ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
-      'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
-
-    var stmt = conn.prepareStatement(sql);
-    var p = 1;
-    for (var i = 0; i < chunk.length; i++) {
-      var row = chunk[i];
-      stmt.setString(p++, row.callDate);
-      stmt.setString(p++, row.dept);
-      stmt.setString(p++, row.agentName);
-      stmt.setInt(p++,    parseInt(row.obTotal)   || 0);
-      stmt.setInt(p++,    parseInt(row.obAns)     || 0);
-      stmt.setInt(p++,    parseInt(row.obMiss)    || 0);
-      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret) : null);
-      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret) : null);
-      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret) : null);
-      stmt.setInt(p++,    parseInt(row.ibTotal)   || 0);
-      stmt.setInt(p++,    parseInt(row.ibAns)     || 0);
-      stmt.setInt(p++,    parseInt(row.ibMiss)    || 0);
-      stmt.setInt(p++,    parseInt(row.ibAnsInt)  || 0);
-      stmt.setInt(p++,    parseInt(row.ibAnsExt)  || 0);
-      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret) : null);
-      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret) : null);
-      stmt.setString(p++, hasHmac ? cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret) : null);
-      stmt.setInt(p++,    parseInt(row.obExtTotal) || 0);
-      stmt.setInt(p++,    parseInt(row.obExtAns)   || 0);
-      stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtTTT));
-      stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtATT));
-    }
-
-    stmt.execute();
-    stmt.close();
-    }
+    // R38: inline-literal tuples packed by size; the bound-param statement
+    // survives as the per-row fallback for an oversize tuple (see
+    // neonInsertInline_). ONE commit after all statements, as before.
+    var inlineRes = neonInsertInline_(conn, CDR_INSERT_HEAD_, CDR_INSERT_TAIL_, rows,
+      function (r) { return cdrInlineTuple_(r, hasHmac, hmacSecret); },
+      function (c, chunk) { cdrBoundInsert_(c, chunk, hasHmac, hmacSecret); });
     conn.commit();
-    Logger.log('writeCDRRowsToNeon: wrote ' + rows.length + ' main rows.');
+
+    Logger.log('writeCDRRowsToNeon: wrote ' + rows.length + ' main rows' + neonInlineNote_(inlineRes) + '.');
 
     // Phone child-table inserts (requires HMAC_SECRET + parent row IDs).
     // Skipped when opts.skipPhones -- the deferred off-path mirror (#1)

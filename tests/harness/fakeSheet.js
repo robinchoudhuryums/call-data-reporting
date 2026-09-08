@@ -118,7 +118,13 @@ function makeFakeSheet(name, data) {
     getLastColumn: function () {
       return this._data.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
     },
-    getMaxRows: function () { return Math.max(this._data.length, 1000); },
+    // `_maxRows` lets a test pin the sheet's row capacity (R38: the
+    // force-delete re-pads to its previous getMaxRows). Unset = the old
+    // floor.
+    getMaxRows: function () {
+      if (this._maxRows != null) return this._maxRows;
+      return Math.max(this._data.length, 1000);
+    },
     // Grid WIDTH, distinct from getLastColumn (the last column with content).
     // Real Sheets throws on a getRange past getMaxColumns -- it does NOT
     // auto-expand columns the way it does rows -- which is why writers that
@@ -158,6 +164,20 @@ function makeFakeSheet(name, data) {
     deleteRow: function (rowPosition) {
       const idx = rowPosition - 1;
       if (idx >= 0 && idx < this._data.length) this._data.splice(idx, 1);
+      if (this._maxRows != null) this._maxRows--;
+      return this;
+    },
+    // 1-based contiguous delete (R38). Throws past the grid like Sheets does.
+    deleteRows: function (rowPosition, howMany) {
+      const idx = rowPosition - 1;
+      if (idx < 0 || idx + howMany > this._data.length) throw new Error('deleteRows out of range');
+      this._data.splice(idx, howMany);
+      if (this._maxRows != null) this._maxRows -= howMany;
+      return this;
+    },
+    // Blank rows at the bottom only affect capacity, never getLastRow.
+    insertRowsAfter: function (afterPosition, howMany) {
+      if (this._maxRows != null) this._maxRows += howMany;
       return this;
     },
   };

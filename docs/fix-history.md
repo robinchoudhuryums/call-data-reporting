@@ -204,7 +204,7 @@ dashed-`F-#` vs bare-`F#`.
 | Code | What it fixed | Where the live rule lives |
 |---|---|---|
 | `P-1` | Inbound authoritative DELETE trusted payload-derived dates; a stray D-1 carry-over leg wiped D-1's `inbound_calls` rows. `expectedDateIso` pins the delete + drops strays. | Neon write discipline rule (4), CLAUDE.md |
-| `P-2` | External-only NOP cells bypassed IMP-12 PHI masking (`join()` omitted the `\|` separator; parser treated pipe-less cells as internal). Producer always emits the separator; parser hashes phone-shaped entries on BOTH sides. | known-issues.md IMP-12/P-2 section |
+| `P-2` | External-only NOP cells bypassed IMP-12 PHI masking (`join()` omitted the `\|` separator; parser treated pipe-less cells as internal). Producer always emits the separator; parser hashes phone-shaped entries on BOTH sides. Healing of pre-P-2 rows (moved here from the CLAUDE.md Neon-write bullet, R38 trim): `ib_list_*` JSONB rows heal on a force re-import; past the Call_Legs retention, `backfillCDRHistory` re-hashes phone-shaped entries but raw NAME strings need a re-import or a one-off SQL cleanup. | known-issues.md IMP-12/P-2 section |
 | `P-3` | Force re-import deleted 5 sheets' rows BEFORE validating the source; an empty/corrupt source destroyed the date then threw. Source read+validate now precedes the delete block. | Force-path guard convention (M2) bullet, CLAUDE.md |
 | `P-4` | Direct-call build stamped the whole day with the grid's first-row date (no F2 guard); a stray first row mislabeled + wiped D-1. `opts.expectedDate` refusal, both callers pass it. | Direct-extension metrics bullet, CLAUDE.md |
 | `P-5` | `writeDirectCallRowsToNeon_` early-returned on empty rows before its date-DELETE while the sheet writer cleared the date — permanent sheet/Neon divergence on goes-to-zero force re-imports. | Direct-extension metrics bullet, CLAUDE.md |
@@ -790,6 +790,13 @@ mechanical for the property store, the cache-version-sync S2 pattern.
 | `I2-1` | Both cdr-import roster parsers keep only `ext1`. | INV-03 (fix pending) |
 | `A-1` | `CONFIG_SOURCE=neon` falls back to the stale sheet copy on any Neon error, on the auth path too. | Operator State #25 |
 | `D-4` | Dept Config saves bust two caches; five report surfaces keep the old queue map up to 6 h. | Operator State #4, CacheService tiers decision |
+
+## 2026-09-08 — R33…R38, the Neon reclaim tools and the Manual Export cost
+
+| Code | What | Live rule |
+|---|---|---|
+| `R33`/`R34`/`R35`/`R37` | The reclaim runbook's tools (cdr-report `neonbackfill.js`): `backfillCDRPhonesOnly`, `backfillCDRMissingParents` (800-row scan batches; its first cut hit "Argument too large: sql" at one statement per batch, then bound 21 params per parent -- 499 parents in 8.5 min -- and moved to size-packed inline literals), `previewNeonExtraRows` / `pruneNeonExtraRows` (the COUNT MISMATCH neon=sheet+1 class: stale-name phantoms an orphan rename left behind, since the rename touches only the DQE sheet). | Operator State #57 |
+| `R38` | A Manual Export took ~1003 s per date: the force-delete rewrote every historical sheet in full (~4 min), the three daily Neon mirrors bound every column per row (~6 min; a JDBC `setXxx` is a ~50 ms bridge call). FIXED: all three writers emit dollar-quoted inline literals packed under the JDBC SQL cap with the original bound insert kept as the per-row oversize fallback (inline == bound pinned value-for-value); `deleteHistoricalRowsForDate` reads the date column only and deletes contiguous blocks, re-padding to the prior `getMaxRows`. Acceptance gate: one date's Manual Export, then `runDqeParityCheck` + `runQcdParityCheck` CLEAN over it. | Neon write discipline (2); Force-path guard gotcha |
 
 **The Aug 5-13 2026 zero-talk incident.** Neon coverage reported "sheet exceeds
 Neon by 3-6 rows" on six dates; the parity gate then showed 333 duration-only

@@ -1274,23 +1274,24 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   platform-supported mechanism, not URL properties.
 - **Neon write discipline (don't regress this — it caused a daily-import
   timeout).** The Neon mirror is the dominant cost of the daily import,
-  and three rules in `neonWrite.js` (duplicated, INV-16) keep it from
-  blowing the Apps Script execution ceiling AND from corrupting the
-  mirror on a timeout. (1) **Hash phone numbers through the per-run memo
+  and these rules in `neonWrite.js` (duplicated, INV-16) keep it under the
+  execution ceiling AND from corrupting the mirror on a timeout. (1) **Hash phone numbers through the per-run memo
   `CDR_HMAC_CACHE_`, never raw per-occurrence** — `Utilities.computeHmacSha256Signature`
   is slow and the same outbound numbers recur thousands of times per day;
-  the cache is reset at the top of `writeCDRRowsToNeon`. (2) **Batch
-  inserts and commit ONCE** — `call_history_phones` writes inline-literal
-  VALUES in 200-row chunks (zero bound params — the JDBC bridge rejects
-  oversized SQL strings) with a
-  single `conn.commit()` after the loop. Per-row/small-chunk
-  commits mean extra round-trips AND leave partially-committed rows
-  on a mid-loop timeout. (3) **One probed connection per
+  the cache is reset at the top of `writeCDRRowsToNeon`. (2) **Inline-literal
+  VALUES, size-packed, commit ONCE (R38)** — every daily writer (DQE / QCD /
+  CDR parents via `neonInsertInline_`, the phones children) emits
+  dollar-quoted literals with ZERO bound params (a JDBC `setXxx` is a ~50 ms
+  bridge call), packed to `NEON_INLINE_STMT_CHARS_` (30 KB; the bridge rejects
+  ~44 KB SQL strings); a lone oversize tuple falls back to the ORIGINAL
+  bound insert (`dqeBoundInsert_` / `qcdBoundInsert_` / `cdrBoundInsert_`),
+  and `neon-write-mapping.test.js` pins inline == bound value-for-value. One
+  `conn.commit()` after the loop: smaller commits add round-trips AND leave
+  partially-committed rows on a mid-loop timeout. (3) **One probed connection per
   writer** via `getReachableNeonConn_()` (above), not a separate probe +
   write connection. (4) **Authoritative per-date replace (IMP-5)** --
   upsert-only mirrors leave PHANTOM rows when a force re-import's rebuilt
-  set SHRINKS (with `DQE_READ_SOURCE=neon` that shows a split agent +
-  double-counted totals). Callers whose payload is provably the COMPLETE
+  set SHRINKS. Callers whose payload is provably the COMPLETE
   set for its date(s) pass `{ authoritative: true }` (an in-transaction
   DELETE of those dates before the insert): the daily DQE build + dup-guard
   re-mirror (both INV-16 copies), the daily QCD mirror, the deferred
@@ -1312,11 +1313,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   all-stray = wrong-day grid; C-6 all-unparsed = format drift; refused with
   `allStray`/`allUnparsed` + a failure row + email). It reports
   `unreachable` when Neon is down so a deferred-mirror date stays queued.
-  Pinned by the inbound-/outbound-calls suites.
-  **PHI healing note (P-2):** pre-P-2 `ib_list_*` JSONB rows heal on a
-  force re-import; past the Call_Legs retention, `backfillCDRHistory`
-  re-hashes phone-shaped entries but raw NAME strings need a re-import or
-  one-off SQL cleanup.
+  Pinned by the inbound-/outbound-calls suites. (P-2 PHI healing of old
+  `ib_list_*` rows: fix-history.)
   Partial-set callers -- the bulk archive after `dedupeAlreadyArchived_`,
   the row-batched backfills (`backfillDQEHistory*`,
   `backfillDirectCallToNeon`) -- must NOT pass authoritative. Duplicate
@@ -1362,7 +1360,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the guard list is keyed on "is this dashboard-read", and that property
   changes over time. A NON-force empty rebuild is a legitimate no-op (F5) and
   is never flagged. New force-path writers that delete-then-rebuild must call
-  one of these. **P-3 (ordering):** `processNewImport` reads + validates the SOURCE
+  one of these. The delete itself (`deleteHistoricalRowsForDate`) reads only
+  the date column and removes matching rows as contiguous BLOCKS, re-padded
+  to the prior `getMaxRows` (R38; `force-delete-rows.test.js` pins the match,
+  count and post-state) -- never rewrite the whole sheet again. **P-3 (ordering):** `processNewImport` reads + validates the SOURCE
   sheet ("Source sheet empty." throw) BEFORE the force-delete block -- a force
   re-run against an existing-but-empty/corrupt `Call_Legs` sheet used to
   destroy the date across all five historical sheets and THEN throw; it is now

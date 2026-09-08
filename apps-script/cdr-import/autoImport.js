@@ -2690,16 +2690,22 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
 
-  const lastCol   = sheet.getLastColumn();
+  // R38: this used to read EVERY column of EVERY row, keep the non-matching
+  // rows, and rewrite all of them (27k rows on the CDR sheet -- ~1 min per
+  // big sheet on a Manual Export, and a setValues pass over untouched cells,
+  // which is the coercion class the plain-text protections defend against).
+  // It now reads ONLY the date column, runs the IDENTICAL match (Date branch
+  // + the P-8 parseHistoryDateCell_ branch), deletes the matching rows as
+  // contiguous blocks bottom-up, and re-pads the sheet to its previous
+  // getMaxRows so the post-state is indistinguishable from the old padded
+  // rewrite for any downstream reader. The removed count (which the P26
+  // loss guards key on) and the log line keep their shape.
   const targetStr = dateObj.toDateString();
+  const dates = sheet.getRange(2, dateColIndex, lastRow - 1, 1).getValues();
 
-  const allRows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-
-  const kept = [];
-  let   removedCount = 0;
-
-  allRows.forEach(row => {
-    const d = row[dateColIndex - 1];
+  const matchRows = [];   // 1-based sheet row numbers
+  for (let i = 0; i < dates.length; i++) {
+    const d = dates[i][0];
     let match = false;
     if (d instanceof Date) {
       match = d.toDateString() === targetStr;
@@ -2707,31 +2713,31 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
       const parsed = parseHistoryDateCell_(d);   // P-8
       if (!isNaN(parsed.getTime())) match = parsed.toDateString() === targetStr;
     }
-    if (match) { removedCount++; }
-    else       { kept.push(row); }
-  });
+    if (match) matchRows.push(i + 2);
+  }
+  if (matchRows.length === 0) return 0;
 
-  if (removedCount === 0) return 0;
+  const blocks = [];   // [startRow, count], ascending
+  let start = matchRows[0], prev = matchRows[0];
+  for (let k = 1; k < matchRows.length; k++) {
+    if (matchRows[k] === prev + 1) { prev = matchRows[k]; continue; }
+    blocks.push([start, prev - start + 1]);
+    start = prev = matchRows[k];
+  }
+  blocks.push([start, prev - start + 1]);
 
   console.log(
     `deleteHistoricalRowsForDate [${sheet.getName()}]: ` +
-    `removing ${removedCount} rows for ${targetStr}, ` +
-    `keeping ${kept.length} rows. Rewriting now.`
+    `removing ${matchRows.length} rows for ${targetStr} in ${blocks.length} block(s), ` +
+    `keeping ${lastRow - 1 - matchRows.length} rows.`
   );
 
-  // Crash-safe rewrite: instead of clearContent() THEN setValues(kept)
-  // (which loses data for this sheet if the rewrite throws after the
-  // clear -- quota, lock, etc.), build the kept rows padded with blank
-  // rows up to the original data height and write them in a SINGLE
-  // setValues call. One atomic op: it either fully succeeds or leaves
-  // the sheet untouched -- never a half-cleared state.
-  const originalCount = lastRow - 1;
-  const blankRow = new Array(lastCol).fill('');
-  const newValues = kept.slice();
-  while (newValues.length < originalCount) newValues.push(blankRow.slice());
-  sheet.getRange(2, 1, originalCount, lastCol).setValues(newValues);
+  const maxBefore = sheet.getMaxRows();
+  for (let bi = blocks.length - 1; bi >= 0; bi--) sheet.deleteRows(blocks[bi][0], blocks[bi][1]);
+  const maxAfter = sheet.getMaxRows();
+  if (maxAfter < maxBefore) sheet.insertRowsAfter(maxAfter, maxBefore - maxAfter);
 
-  return removedCount;
+  return matchRows.length;
 }
 
 function getLatestValidSheet(ss) {
