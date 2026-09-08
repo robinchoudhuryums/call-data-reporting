@@ -235,3 +235,17 @@ test('O-6: the coverage email lists the no-sheet (clock-bound) tables FIRST, so 
   assert.match(body, /2026-08-19, 2026-08-20/, 'the perishable dates survive the truncation');
   assert.match(body, /detail truncated/, 'and the cap still applies to the rest');
 });
+
+// R36: the editor cannot pass arguments and the property store is past the
+// settings page's display cap, so the window is overridable per call and two
+// named wrappers exist.
+test('R36: opts.days overrides NEON_COVERAGE_DAYS for one run; the wrappers pin their windows', function () {
+  const seen = [];
+  const real = h.ctx.runNeonCoverageCheck;
+  h.ctx.runNeonCoverageCheck = function (o) { seen.push(o); return { from: 'x' }; };
+  try {
+    h.call('runNeonCoverageCheckFullYear');
+    h.call('runNeonCoverageCheckQuarter');
+    assert.deepEqual(JSON.parse(JSON.stringify(seen)), [{ days: 366 }, { days: 90 }]);
+  } finally { h.ctx.runNeonCoverageCheck = real; }
+});
