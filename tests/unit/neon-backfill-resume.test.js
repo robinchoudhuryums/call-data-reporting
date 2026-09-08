@@ -260,13 +260,21 @@ function installCdr(rows, extraProps) {
     };
     return st;
   };
+  // R35: the parent upsert is an inline statement now -- record its SQL.
+  c.createStatement = function () {
+    return { execute: function (sql) { cap.statements.push({ sql: sql, binds: [] }); return true; },
+             getUpdateCount: function () { return -1; }, close: function () {} };
+  };
   h.ctx.getNeonConn_backfill = function () { return c; };
   return cap;
 }
 function cdrDatesBound(cap) {
   const ins = cap.statements.filter(function (s) { return /INSERT INTO call_history_dept/.test(s.sql); });
   const dates = [];
-  ins.forEach(function (s) { for (let i = 0; i < s.binds.length; i += 21) dates.push(s.binds[i]); });
+  ins.forEach(function (s) {
+    const re = /\('(\d{4}-\d{2}-\d{2})'::date,/g;
+    let m; while ((m = re.exec(s.sql)) !== null) dates.push(m[1]);
+  });
   return dates;
 }
 
@@ -385,23 +393,28 @@ test('R33: cdrInsertPhoneChildRows_ skips the bound lookup when given an idMap',
 // Finds sheet rows whose (date, dept, agent) has no call_history_dept row,
 // upserts ONLY those parents, then their phone children (ceiling-gated).
 function missingConn(cap, parents) {
+  // R35: the parent upsert is inline too, so every statement -- lookups,
+  // upserts, child deletes/inserts -- goes through createStatement(). The
+  // fake parses the upsert's tuples so later lookups see the new parents.
   const c = phonesConn(cap, parents);
-  c.prepareStatement = function (sql) {
-    const binds = [];
-    return {
-      setString: function (i, v) { binds[i - 1] = v; }, setInt: function (i, v) { binds[i - 1] = v; },
-      setDouble: function (i, v) { binds[i - 1] = v; },
-      execute: function () {
-        cap.statements.push({ sql: sql, binds: binds.slice() }); cap.binds += binds.length;
-        // Simulate the upsert: the new parents become visible to later lookups.
-        for (let o = 0; o < binds.length; o += 21) {
-          parents.push({ id: 100 + parents.length, d: binds[o], dept: binds[o + 1], a: binds[o + 2] });
+  const inner = c.createStatement;
+  c.createStatement = function () {
+    const st = inner();
+    const exec = st.execute;
+    st.execute = function (sql) {
+      if (/^INSERT INTO call_history_dept/.test(sql)) {
+        const re = /\('(\d{4}-\d{2}-\d{2})'::date,'((?:[^']|'')*)','((?:[^']|'')*)'/g;
+        let m, n = 0;
+        while ((m = re.exec(sql)) !== null) {
+          parents.push({ id: 100 + parents.length, d: m[1], dept: m[2].replace(/''/g, "'"), a: m[3].replace(/''/g, "'") });
+          n++;
         }
-        return true;
-      },
-      getUpdateCount: function () { return binds.length / 21; },
-      close: function () {},
+        cap.upsertRows = (cap.upsertRows || 0) + n;
+      }
+      return exec(sql);
     };
+    st.getUpdateCount = function () { return -1; };
+    return st;
   };
   return c;
 }
@@ -416,8 +429,10 @@ test('R34: backfillCDRMissingParents fills only the rows with no parent, phones 
   h.call('backfillCDRMissingParents');
   const upserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_dept/.test(s.sql); });
   assert.equal(upserts.length, 1, 'one parent upsert statement for the batch');
-  assert.equal(upserts[0].binds.length, 2 * 21, 'exactly the two missing parents');
-  assert.deepEqual([upserts[0].binds[0], upserts[0].binds[21]], ['2026-07-09', '2026-07-13']);
+  assert.equal(cap.binds, 0, 'zero binds: the parent upsert is inline too (R35)');
+  assert.equal(cap.upsertRows, 2, 'exactly the two missing parents');
+  assert.match(upserts[0].sql, /\('2026-07-09'::date,'CSR','Ben'/);
+  assert.match(upserts[0].sql, /\('2026-07-13'::date,'CSR','Dee'/);
   const phoneInserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_phones/.test(s.sql); });
   assert.equal(phoneInserts.length, 1, 'one inline phone insert');
   const benId = parents.filter(function (x) { return x.a === 'Ben'; })[0].id;
@@ -434,15 +449,26 @@ test('R34: backfillCDRMissingParents fills only the rows with no parent, phones 
   assert.equal(cap2.statements.filter(function (s) { return /INSERT/.test(s.sql); }).length, 0);
 });
 
-test('R34: the parent upsert is chunked at 300 rows (the IMP-3 JDBC size cap) with one commit', function () {
+test('R35: the parent upsert is inline, size-packed under the JDBC cap, quote-safe, one commit', function () {
   const cap = { statements: [], commits: 0, binds: 0 };
   const parents = [];
   const conn = missingConn(cap, parents);
   const rows = [];
-  for (let i = 0; i < 700; i++) rows.push({ callDate: '2026-04-2' + (i % 10), dept: 'CSR', agentName: 'A' + i });
+  for (let i = 0; i < 700; i++) {
+    rows.push({ callDate: '2026-04-2' + (i % 10), dept: 'CSR', agentName: "O'Brien " + i,
+                obListTot: 'Alice Smith | Bob Jones', ibListAns: '+12145550000 0:01:00 (2)' });
+  }
   const n = h.fn('nbUpsertCdrParents_')(conn, rows, 's');
-  const upserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_dept/.test(s.sql); });
-  assert.deepEqual(upserts.map(function (s) { return s.binds.length / 21; }), [300, 300, 100]);
   assert.equal(n, 700);
-  assert.equal(cap.commits, 1, 'one commit after all chunks');
+  assert.equal(cap.binds, 0);
+  assert.equal(cap.commits, 1, 'one commit after all statements');
+  const upserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_dept/.test(s.sql); });
+  assert.ok(upserts.length >= 2, 'packed into several statements: ' + upserts.length);
+  upserts.forEach(function (s) { assert.ok(s.sql.length < 44000, 'under the JDBC cap: ' + s.sql.length); });
+  assert.equal(cap.upsertRows, 700, 'every row present across the statements');
+  assert.match(upserts[0].sql, /'O''Brien 0'/, 'a quote in a name is doubled, never a bind');
+  assert.match(upserts[0].sql, /'::jsonb/, 'JSONB name lists ride as literals with the cast');
+  assert.ok(upserts[0].sql.split('VALUES ')[1].indexOf('?') === -1, 'no placeholders in the VALUES');
+  assert.throws(function () { h.fn('nbUpsertCdrParents_')(conn, [{ callDate: '7/9/2026', dept: 'CSR', agentName: 'x' }], 's'); },
+    /callDate must be ISO/, 'a non-ISO date never reaches the SQL');
 });
