@@ -88,7 +88,8 @@ tests/
                               O-4 whole-run budget), neon-backfill-resume
                               (T-8 fingerprinted resume pointers + the
                               T-7 sanitizer-loss tally + the R33 zero-bind
-                              phones-only refill), dept-config-neon /
+                              phones-only refill + the R34 missing-parents
+                              pass), dept-config-neon /
                               config-neon-c3, caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
