@@ -1640,3 +1640,146 @@ function backfillCDRMissingParents() {
     throw e;
   }
 }
+
+
+// ── R37: prune Neon rows the sheet no longer has (stale-name phantoms) ──────
+//
+// The R34 pass inserted the CURRENT-name row for every sheet row that had no
+// Neon parent; where an agent had been renamed in the sheet, the OLD-name
+// row was still in Neon, so the coverage check now reads "sheet N vs neon
+// N+1" on those dates (before the pass the two counts matched and the stale
+// key was invisible -- the check compares counts, not keys). Same shape in
+// dqe_history. These are phantoms: the sheet is the authority for both
+// tables (IMP-5), so a Neon row whose (date, dept, agent) / (date, agent)
+// key is absent from the sheet ON A DATE THE SHEET HAS is removed. Dates
+// the sheet lacks entirely are left alone (that is the coverage check's own
+// EXTRA IN NEON finding with a different remedy). previewNeonExtraRows()
+// lists them; pruneNeonExtraRows() deletes them (phone children first, then
+// parents; dqe_history by literal key tuples) -- zero binds throughout, one
+// commit per table, and a hard cap (NB_EXTRAS_MAX_) that ABORTS the prune
+// when the sheet read looks wrong (a truncated sheet would otherwise wipe
+// Neon).
+var NB_EXTRAS_MAX_ = 2000;
+var NB_EXTRAS_DATE_CHUNK_ = 40;
+
+function previewNeonExtraRows() { return nbNeonExtras_(false); }
+function pruneNeonExtraRows()   { return nbNeonExtras_(true); }
+
+function nbNeonExtras_(apply) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var out = { cdr: { dates: 0, extras: [] }, dqe: { dates: 0, extras: [] }, applied: false, deleted: {} };
+
+  // Sheet key sets, per date.
+  var cdrSheet = ss.getSheetByName('CDR Historical Data');
+  var cdrKeys = {};
+  if (cdrSheet && cdrSheet.getLastRow() >= 2) {
+    var cdr = cdrSheet.getRange(2, 3, cdrSheet.getLastRow() - 1, 3).getDisplayValues();   // C date, D dept, E agent
+    for (var i = 0; i < cdr.length; i++) {
+      if (!cdr[i][0] || !cdr[i][2]) continue;
+      var ci = parseDateForNeon(cdr[i][0]);
+      if (!ci) continue;
+      (cdrKeys[ci] = cdrKeys[ci] || {})[nbCdrKey_(ci, cdr[i][1] || 'Unassigned', cdr[i][2])] = true;
+    }
+  }
+  var dqeSheet = ss.getSheetByName('DQE Historical Data');
+  var dqeKeys = {};
+  if (dqeSheet && dqeSheet.getLastRow() >= 2) {
+    var dqe = dqeSheet.getRange(2, 2, dqeSheet.getLastRow() - 1, 2).getDisplayValues();   // B date, C agent
+    for (var j = 0; j < dqe.length; j++) {
+      if (!dqe[j][0] || !dqe[j][1]) continue;
+      var di = parseDateForNeon(dqe[j][0]);
+      if (!di) continue;
+      (dqeKeys[di] = dqeKeys[di] || {})[String(dqe[j][1])] = true;
+    }
+  }
+  var cdrDates = Object.keys(cdrKeys).sort(), dqeDates = Object.keys(dqeKeys).sort();
+  out.cdr.dates = cdrDates.length; out.dqe.dates = dqeDates.length;
+
+  var conn = getNeonConn_backfill();
+  conn.setAutoCommit(false);
+  try {
+    // call_history_dept: rows on sheet dates whose key the sheet lacks.
+    for (var c = 0; c < cdrDates.length; c += NB_EXTRAS_DATE_CHUNK_) {
+      var dchunk = cdrDates.slice(c, c + NB_EXTRAS_DATE_CHUNK_);
+      var neonRows = nbCdrParentRowsForDates_(conn, dchunk);
+      for (var r = 0; r < neonRows.length; r++) {
+        var nr = neonRows[r];
+        if (!cdrKeys[nr.d]) continue;                       // date not in the sheet: leave alone
+        var k = nbCdrKey_(nr.d, nr.dept, nr.a);
+        if (!cdrKeys[nr.d][k]) out.cdr.extras.push({ id: nr.id, key: k });
+      }
+    }
+    // dqe_history: (date, agent) pairs the sheet lacks on sheet dates.
+    for (var e = 0; e < dqeDates.length; e += NB_EXTRAS_DATE_CHUNK_) {
+      var echunk = dqeDates.slice(e, e + NB_EXTRAS_DATE_CHUNK_);
+      var dq = nbDqeKeysForDates_(conn, echunk);
+      for (var q = 0; q < dq.length; q++) {
+        if (!dqeKeys[dq[q].d]) continue;
+        if (!dqeKeys[dq[q].d][String(dq[q].a)]) out.dqe.extras.push({ d: dq[q].d, a: dq[q].a });
+      }
+    }
+    Logger.log('Neon extras: call_history_dept %s extra row(s) over %s sheet date(s); dqe_history %s over %s.',
+      out.cdr.extras.length, out.cdr.dates, out.dqe.extras.length, out.dqe.dates);
+    out.cdr.extras.slice(0, 200).forEach(function (x) { Logger.log('  CDR extra  id=%s  %s', x.id, x.key); });
+    out.dqe.extras.slice(0, 200).forEach(function (x) { Logger.log('  DQE extra  %s | %s', x.d, x.a); });
+
+    if (!apply) { Logger.log('Preview only -- run pruneNeonExtraRows() to delete them.'); return out; }
+    if (out.cdr.extras.length + out.dqe.extras.length > NB_EXTRAS_MAX_) {
+      throw new Error('Refusing to prune ' + (out.cdr.extras.length + out.dqe.extras.length)
+        + ' rows (> NB_EXTRAS_MAX_=' + NB_EXTRAS_MAX_ + ') -- the sheet read looks wrong; nothing deleted.');
+    }
+    var stmt = conn.createStatement();
+    var ids = out.cdr.extras.map(function (x) { return parseInt(x.id, 10); }).filter(function (n) { return isFinite(n); });
+    for (var o = 0; o < ids.length; o += 500) {
+      var idList = ids.slice(o, o + 500).join(',');
+      stmt.execute('DELETE FROM call_history_phones WHERE call_history_id IN (' + idList + ')');
+      stmt.execute('DELETE FROM call_history_dept WHERE id IN (' + idList + ')');
+    }
+    if (ids.length) conn.commit();
+    out.deleted.call_history_dept = ids.length;
+    var pairs = out.dqe.extras.map(function (x) { return "('" + x.d + "'::date," + nbSqlLit_(x.a) + ')'; });
+    for (var p2 = 0; p2 < pairs.length; p2 += 300) {
+      stmt.execute('DELETE FROM dqe_history WHERE (call_date, agent_name) IN (' + pairs.slice(p2, p2 + 300).join(',') + ')');
+    }
+    if (pairs.length) conn.commit();
+    out.deleted.dqe_history = pairs.length;
+    stmt.close();
+    out.applied = true;
+    Logger.log('Pruned: call_history_dept %s (+ their phone children), dqe_history %s.', ids.length, pairs.length);
+    return out;
+  } catch (err) {
+    try { conn.rollback(); } catch (re) {}
+    Logger.log('nbNeonExtras_ stopped: ' + err.message);
+    throw err;
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
+}
+
+/** R37. [{id, d, dept, a}] for whole dates, one zero-bind json_agg query. */
+function nbCdrParentRowsForDates_(conn, isoDates) {
+  var lits = (isoDates || []).filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(String(d)); })
+    .map(function (d) { return "'" + d + "'::date"; });
+  if (!lits.length) return [];
+  var stmt = conn.createStatement();
+  var rs = stmt.executeQuery(
+    "SELECT COALESCE(json_agg(json_build_object('id', id, 'd', call_date::text, 'dept', department, 'a', agent_name)), '[]')::text AS j "
+    + 'FROM call_history_dept WHERE call_date IN (' + lits.join(',') + ')');
+  var json = rs.next() ? rs.getString(1) : '[]';
+  rs.close(); stmt.close();
+  try { return JSON.parse(json || '[]') || []; } catch (e) { return []; }
+}
+
+/** R37. [{d, a}] for whole dates from dqe_history, one zero-bind json_agg query. */
+function nbDqeKeysForDates_(conn, isoDates) {
+  var lits = (isoDates || []).filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(String(d)); })
+    .map(function (d) { return "'" + d + "'::date"; });
+  if (!lits.length) return [];
+  var stmt = conn.createStatement();
+  var rs = stmt.executeQuery(
+    "SELECT COALESCE(json_agg(json_build_object('d', call_date::text, 'a', agent_name)), '[]')::text AS j "
+    + 'FROM dqe_history WHERE call_date IN (' + lits.join(',') + ')');
+  var json = rs.next() ? rs.getString(1) : '[]';
+  rs.close(); stmt.close();
+  try { return JSON.parse(json || '[]') || []; } catch (e) { return []; }
+}

@@ -472,3 +472,76 @@ test('R35: the parent upsert is inline, size-packed under the JDBC cap, quote-sa
   assert.throws(function () { h.fn('nbUpsertCdrParents_')(conn, [{ callDate: '7/9/2026', dept: 'CSR', agentName: 'x' }], 's'); },
     /callDate must be ISO/, 'a non-ISO date never reaches the SQL');
 });
+
+
+// ── R37: prune stale-name phantoms (rows the sheet no longer has) ───────────
+function extrasConn(cap, cdrRows, dqeRows) {
+  return {
+    setAutoCommit: function () {},
+    prepareStatement: function () { cap.binds++; throw new Error('no binds on the R37 path'); },
+    createStatement: function () {
+      return {
+        execute: function (sql) { cap.statements.push({ sql: sql }); return true; },
+        executeQuery: function (sql) {
+          cap.statements.push({ sql: sql, query: true });
+          const j = /FROM call_history_dept/.test(sql) ? JSON.stringify(cdrRows) : JSON.stringify(dqeRows);
+          return { next: function () { return true; }, getString: function () { return j; }, close: function () {} };
+        },
+        close: function () {},
+      };
+    },
+    commit: function () { cap.commits++; }, rollback: function () { cap.rollbacks++; }, close: function () {},
+  };
+}
+function dqeMini(date, agent) { const r = new Array(34).fill(''); r[1] = date; r[2] = agent; return r; }
+
+test('R37: preview lists Neon rows whose key the sheet lacks on sheet dates, touches nothing; prune deletes children-first, zero binds', function () {
+  h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
+  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+    'CDR Historical Data': [new Array(26).fill('h'), cdrRow('03/10/2026', 'Anna Smith'), cdrRow('03/10/2026', 'Ben')],
+    'DQE Historical Data': [new Array(34).fill('h'), dqeMini('03/10/2026', 'Anna Smith')],
+  } });
+  const cdrNeon = [{ id: 1, d: '2026-03-10', dept: 'CSR', a: 'Anna Smith' }, { id: 2, d: '2026-03-10', dept: 'CSR', a: 'Ben' },
+                   { id: 3, d: '2026-03-10', dept: 'CSR', a: 'Anna (Annie) Smith' },   // the renamed phantom
+                   { id: 4, d: '2026-03-11', dept: 'CSR', a: 'Ghost' }];             // a date the sheet lacks: left alone
+  const dqeNeon = [{ d: '2026-03-10', a: 'Anna Smith' }, { d: '2026-03-10', a: "O'Old Name" }];
+  let cap = { statements: [], commits: 0, rollbacks: 0, binds: 0 };
+  h.ctx.getNeonConn_backfill = function () { return extrasConn(cap, cdrNeon, dqeNeon); };
+  const pv = h.call('previewNeonExtraRows');
+  assert.deepEqual(JSON.parse(JSON.stringify(pv.cdr.extras)), [{ id: 3, key: '2026-03-10|CSR|Anna (Annie) Smith' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(pv.dqe.extras)), [{ d: '2026-03-10', a: "O'Old Name" }]);
+  assert.equal(pv.applied, false);
+  assert.equal(cap.statements.filter(function (s) { return /DELETE/.test(s.sql); }).length, 0, 'preview deletes nothing');
+  assert.equal(cap.binds, 0);
+  // Only the sheet's dates are looked up (the lookup SQL names them).
+  assert.match(cap.statements[0].sql, /WHERE call_date IN \('2026-03-10'::date\)/);
+
+  cap = { statements: [], commits: 0, rollbacks: 0, binds: 0 };
+  h.ctx.getNeonConn_backfill = function () { return extrasConn(cap, cdrNeon, dqeNeon); };
+  const pr = h.call('pruneNeonExtraRows');
+  assert.equal(pr.applied, true);
+  const dels = cap.statements.filter(function (s) { return /DELETE/.test(s.sql); }).map(function (s) { return s.sql; });
+  assert.deepEqual(dels, [
+    'DELETE FROM call_history_phones WHERE call_history_id IN (3)',
+    'DELETE FROM call_history_dept WHERE id IN (3)',
+    "DELETE FROM dqe_history WHERE (call_date, agent_name) IN (('2026-03-10'::date,'O''Old Name'))",
+  ], 'children before parents; id 4 (date absent from the sheet) untouched; the quote is doubled');
+  assert.equal(cap.commits, 2);
+  assert.equal(cap.binds, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(pr.deleted)), { call_history_dept: 1, dqe_history: 1 });
+});
+
+test('R37: the prune refuses past the cap (a wrong sheet read must not wipe Neon)', function () {
+  h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
+  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+    'CDR Historical Data': [new Array(26).fill('h'), cdrRow('03/10/2026', 'Anna')],
+    'DQE Historical Data': [new Array(34).fill('h')],
+  } });
+  const many = [];
+  for (let i = 0; i < 2100; i++) many.push({ id: 10 + i, d: '2026-03-10', dept: 'CSR', a: 'X' + i });
+  const cap = { statements: [], commits: 0, rollbacks: 0, binds: 0 };
+  h.ctx.getNeonConn_backfill = function () { return extrasConn(cap, many, []); };
+  assert.throws(function () { h.call('pruneNeonExtraRows'); }, /Refusing to prune 2100/);
+  assert.equal(cap.statements.filter(function (s) { return /DELETE/.test(s.sql); }).length, 0);
+  assert.equal(cap.commits, 0);
+});
