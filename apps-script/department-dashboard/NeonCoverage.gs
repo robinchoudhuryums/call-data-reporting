@@ -83,12 +83,19 @@ function ncReclassifyTrimmed_(cmp, source) {
   return cmp;
 }
 
-/** Admin/editor entry point. Returns the full result object (also emailed). */
-function runNeonCoverageCheck() {
+/**
+ * Admin/editor entry point. Returns the full result object (also emailed).
+ * `opts.days` (R36) overrides the NEON_COVERAGE_DAYS window for ONE run --
+ * the editor's Run picker cannot pass arguments and the dashboard's
+ * property store is past the settings page's 50-row display cap (Operator
+ * State #53), so the wrappers below exist for the two windows an operator
+ * actually reaches for.
+ */
+function runNeonCoverageCheck(opts) {
   assertAdmin_();
   var t0 = Date.now();
   var props = PropertiesService.getScriptProperties();
-  var days = parseInt(props.getProperty('NEON_COVERAGE_DAYS'), 10);
+  var days = parseInt(opts && opts.days != null ? opts.days : props.getProperty('NEON_COVERAGE_DAYS'), 10);
   if (!isFinite(days) || days < 1 || days > 366) days = NEON_COVERAGE_DEFAULT_DAYS;
 
   // Window: `days` days ending YESTERDAY (today's import may not have run).
@@ -425,6 +432,11 @@ function ncRecord_(result) {
 }
 
 /** Emails the admins the run's findings (or the all-clear). Best-effort. */
+/** R36: the full 366-day window (a gap older than the default 30 days). */
+function runNeonCoverageCheckFullYear() { return runNeonCoverageCheck({ days: 366 }); }
+/** R36: the last 90 days. */
+function runNeonCoverageCheckQuarter() { return runNeonCoverageCheck({ days: 90 }); }
+
 function ncEmailResult_(out, summary) {
   try {
     var to = getAdminEmails_().join(',');

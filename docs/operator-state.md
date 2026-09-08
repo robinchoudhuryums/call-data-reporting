@@ -878,6 +878,10 @@ When something looks wrong, before assuming a code bug, check:
     gaps and count drift. Run after deploys that touched mirrors, or when
     a journey drill reports a 'date-gap'. It never writes -- remediation is
     always the existing idempotent re-import/backfill paths.
+    **R36:** the window is also overridable per call -- `runNeonCoverageCheckFullYear()`
+    (366 days) and `runNeonCoverageCheckQuarter()` (90 days) run it from the
+    editor without touching `NEON_COVERAGE_DAYS`, whose store is past the
+    settings page's display cap (#53).
 36. `EMAIL_ALIASES` Script Property (dashboard; optional, Tier C) -- maps
     sign-in alias addresses to a canonical identity so several Workspace
     addresses that route to one person resolve to the SAME role + departments.
