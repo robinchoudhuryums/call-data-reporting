@@ -1271,6 +1271,22 @@ function diagnoseDQELongValues() {
  * + JSONB name lists are untrusted text); commits; returns the row count.
  */
 function nbUpsertCdrParents_(conn, batch, hmacSecret) {
+  // IMP-3 (the daily writer's rule): 300 rows/statement. A full 500-row
+  // statement measured ~44 KB -- the Apps Script JDBC "Argument too large:
+  // sql" cap -- and the R34 missing-parents pass can hand over an entire
+  // 800-row scan batch when a whole stretch of dates is absent from Neon
+  // (2026-09-08: it did, at index 14400). One commit after all chunks.
+  var CDR_UPSERT_CHUNK_ROWS = 300;
+  var total = 0;
+  for (var off = 0; off < batch.length; off += CDR_UPSERT_CHUNK_ROWS) {
+    total += nbUpsertCdrParentsChunk_(conn, batch.slice(off, off + CDR_UPSERT_CHUNK_ROWS), hmacSecret);
+  }
+  conn.commit();   // commit main so the phone id-lookup SELECT sees the rows
+  return total;
+}
+
+/** One <=300-row INSERT ... ON CONFLICT DO UPDATE statement; no commit. */
+function nbUpsertCdrParentsChunk_(conn, batch, hmacSecret) {
   var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
   var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
   var sql = 'INSERT INTO call_history_dept (' +
@@ -1331,7 +1347,6 @@ function nbUpsertCdrParents_(conn, batch, hmacSecret) {
   stmt.execute();
   var affected = stmt.getUpdateCount();
   stmt.close();
-  conn.commit();   // commit main so the phone id-lookup SELECT sees the rows
   return (affected >= 0 ? affected : batch.length);
 }
 

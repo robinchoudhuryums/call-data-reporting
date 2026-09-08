@@ -433,3 +433,16 @@ test('R34: backfillCDRMissingParents fills only the rows with no parent, phones 
   h.call('backfillCDRMissingParents');
   assert.equal(cap2.statements.filter(function (s) { return /INSERT/.test(s.sql); }).length, 0);
 });
+
+test('R34: the parent upsert is chunked at 300 rows (the IMP-3 JDBC size cap) with one commit', function () {
+  const cap = { statements: [], commits: 0, binds: 0 };
+  const parents = [];
+  const conn = missingConn(cap, parents);
+  const rows = [];
+  for (let i = 0; i < 700; i++) rows.push({ callDate: '2026-04-2' + (i % 10), dept: 'CSR', agentName: 'A' + i });
+  const n = h.fn('nbUpsertCdrParents_')(conn, rows, 's');
+  const upserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_dept/.test(s.sql); });
+  assert.deepEqual(upserts.map(function (s) { return s.binds.length / 21; }), [300, 300, 100]);
+  assert.equal(n, 700);
+  assert.equal(cap.commits, 1, 'one commit after all chunks');
+});
