@@ -1608,7 +1608,13 @@ When something looks wrong, before assuming a code bug, check:
        and re-creates their phone children (ceiling-gated), and logs the gap
        dates; a clean sheet writes nothing. (The 30-day coverage window,
        `NEON_COVERAGE_DAYS`, will not show a gap older than that -- raise it
-       to 366 to see one.) Then delete `CDR_BACKFILL_BEFORE`.
+       to 366 to see one.) A `COUNT MISMATCH  sheet N vs neon N+1` on a date
+       AFTER that pass is a stale-name phantom (the sheet's agent was renamed;
+       Neon kept the old-name row): `previewNeonExtraRows()` lists the Neon
+       rows whose key the sheet lacks on the sheet's dates
+       (`call_history_dept` + `dqe_history`), `pruneNeonExtraRows()` deletes
+       them (children first; capped at 2000 rows -- a bigger count means the
+       sheet read is wrong, and it refuses). Then delete `CDR_BACKFILL_BEFORE`.
     4. Arm the prune: `installNeonRetentionTrigger()`, then run
        `runNeonRetentionPrune()` once by hand and re-run until the result
        stops saying `budget hit`.
