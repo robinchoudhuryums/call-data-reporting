@@ -1496,6 +1496,13 @@ When something looks wrong, before assuming a code bug, check:
     Run it once, then DELETE the function so the next deploy does not ship it.
     The complete read view of the store is the Health page's folded "All Script
     Properties (inventory)" section (the `PROP_REGISTRY_` bullet in CLAUDE.md).
+    **The two PIPELINE projects have no registry and no inventory view**, so
+    their optional diagnostic pins live only in their own file headers. The two
+    that nothing else names: `QUEUE_OVERLAP_DATE` (cdr-report
+    `queueOverlapAudit.js`) and `TRANSFER_PREVIEW_DATE` (cdr-import
+    `inboundCalls.js`) -- each a `M/D/YYYY` date an editor run reads when it
+    cannot show a prompt. Clear them after use; a stale pin silently narrows the
+    next run to that one day.
 54. **Caller Lookup's Neon index is a one-time manual step.** `CallerLookup.gs`
     queries `inbound_calls` by `caller_hash`; the index it expects,
     `CREATE INDEX IF NOT EXISTS idx_inbound_calls_caller_hash ON inbound_calls (caller_hash)`,
@@ -1523,9 +1530,15 @@ When something looks wrong, before assuming a code bug, check:
     with the tab gone, recreate it from the provider CSV (exact tab name) or,
     failing that, Neon holds the only intact copy. BEFORE any `backfill*`
     run: clearing `DQE_UPSERT_RESUME` still forces a from-the-top pass, but
-    since Batch 1 (2026-09-03) the four `*_RESUME` pointers are FINGERPRINTED
+    since Batch 1 (2026-09-03) the four `*_RESUME` pointers -- `DQE_UPSERT_RESUME`,
+    `DQE_BACKFILL_RESUME`, `CDR_BACKFILL_RESUME` and `QCD_BACKFILL_RESUME`, all
+    cdr-report -- are FINGERPRINTED
     (`{index,rowCount,key}`) and restart from 0 by themselves when the sheet
-    changed underneath them (T-8, `nbResumeRead_`), and an ISO-text col B
+    changed underneath them (T-8, `nbResumeRead_`). **Corollary: hand-setting one
+    to a bare row index does NOT resume there** -- the fingerprint fails to parse
+    and the pass starts from 0 (2026-09-08: an operator set `CDR_BACKFILL_RESUME`
+    to `24600` and the run ignored it). To skip work, use the `*_SINCE` date
+    floors instead. An ISO-text col B
     cell (`2026-05-19` shaped) is keyed on its own date instead of a day
     early (I2-9, `parseDateForNeon`). AFTER a `backfillDQEHistory*` run read
     `DQE_UPSERT_LAST` / `DQE_BACKFILL_LAST` (cdr-report Script Properties):
