@@ -1271,83 +1271,95 @@ function diagnoseDQELongValues() {
  * + JSONB name lists are untrusted text); commits; returns the row count.
  */
 function nbUpsertCdrParents_(conn, batch, hmacSecret) {
-  // IMP-3 (the daily writer's rule): 300 rows/statement. A full 500-row
-  // statement measured ~44 KB -- the Apps Script JDBC "Argument too large:
-  // sql" cap -- and the R34 missing-parents pass can hand over an entire
-  // 800-row scan batch when a whole stretch of dates is absent from Neon
-  // (2026-09-08: it did, at index 14400). One commit after all chunks.
-  var CDR_UPSERT_CHUNK_ROWS = 300;
-  var total = 0;
-  for (var off = 0; off < batch.length; off += CDR_UPSERT_CHUNK_ROWS) {
-    total += nbUpsertCdrParentsChunk_(conn, batch.slice(off, off + CDR_UPSERT_CHUNK_ROWS), hmacSecret);
+  // R35 (the R33 rule, applied to the parent row): INLINE LITERALS, zero
+  // binds. A 499-parent batch of the missing-parents pass bound 21 params
+  // per row -- ~10,500 JDBC bridge calls, 8.5 minutes (2026-09-08) -- while
+  // its 14k phone rows took 11 s through the inline path. Every text value
+  // goes through nbSqlLit_ (standard_conforming_strings: a single quote is
+  // the only metacharacter; NUL is stripped because Postgres text cannot
+  // hold it), JSONB through the same literal + ::jsonb cast, ints through
+  // parseInt. Statements are packed by SIZE (NB_UPSERT_STMT_CHARS_) rather
+  // than row count, since the JSONB name lists vary widely; the ~44 KB
+  // "Argument too large: sql" cap is the constraint. One commit after all
+  // statements.
+  var tuples = batch.map(function (row) { return nbCdrParentTuple_(row, hmacSecret); });
+  var stmt = conn.createStatement();
+  var total = 0, buf = [], bufChars = 0;
+  var flush = function () {
+    if (!buf.length) return;
+    stmt.execute(NB_CDR_UPSERT_HEAD_ + buf.join(',') + NB_CDR_UPSERT_TAIL_);
+    var affected = -1;
+    try { affected = stmt.getUpdateCount(); } catch (e) { affected = -1; }
+    total += (affected >= 0 ? affected : buf.length);
+    buf = []; bufChars = 0;
+  };
+  for (var i = 0; i < tuples.length; i++) {
+    if (buf.length && bufChars + tuples[i].length + 1 > NB_UPSERT_STMT_CHARS_) flush();
+    buf.push(tuples[i]); bufChars += tuples[i].length + 1;
   }
+  flush();
+  stmt.close();
   conn.commit();   // commit main so the phone id-lookup SELECT sees the rows
   return total;
 }
 
-/** One <=300-row INSERT ... ON CONFLICT DO UPDATE statement; no commit. */
-function nbUpsertCdrParentsChunk_(conn, batch, hmacSecret) {
-  var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
-  var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
-  var sql = 'INSERT INTO call_history_dept (' +
-    'call_date, department, agent_name, ' +
-    'ob_total, ob_answered, ob_missed, ' +
-    'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
-    'ib_total, ib_answered, ib_missed, ' +
-    'ib_answered_internal, ib_answered_external, ' +
-    'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
-    'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
-    ') VALUES ' + allPlaceholders +
-    ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
-    'ob_total = EXCLUDED.ob_total, ' +
-    'ob_answered = EXCLUDED.ob_answered, ' +
-    'ob_missed = EXCLUDED.ob_missed, ' +
-    'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
-    'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
-    'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
-    'ib_total = EXCLUDED.ib_total, ' +
-    'ib_answered = EXCLUDED.ib_answered, ' +
-    'ib_missed = EXCLUDED.ib_missed, ' +
-    'ib_answered_internal = EXCLUDED.ib_answered_internal, ' +
-    'ib_answered_external = EXCLUDED.ib_answered_external, ' +
-    'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
-    'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
-    'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
-    'ob_ext_total = EXCLUDED.ob_ext_total, ' +
-    'ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
-    'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ' +
-    'ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
+var NB_UPSERT_STMT_CHARS_ = 30000;   // ~44 KB is the JDBC cap; leave margin for the head/tail
+var NB_CDR_UPSERT_HEAD_ = 'INSERT INTO call_history_dept (' +
+  'call_date, department, agent_name, ' +
+  'ob_total, ob_answered, ob_missed, ' +
+  'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
+  'ib_total, ib_answered, ib_missed, ' +
+  'ib_answered_internal, ib_answered_external, ' +
+  'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
+  'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
+  ') VALUES ';
+var NB_CDR_UPSERT_TAIL_ = ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
+  'ob_total = EXCLUDED.ob_total, ' +
+  'ob_answered = EXCLUDED.ob_answered, ' +
+  'ob_missed = EXCLUDED.ob_missed, ' +
+  'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
+  'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
+  'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
+  'ib_total = EXCLUDED.ib_total, ' +
+  'ib_answered = EXCLUDED.ib_answered, ' +
+  'ib_missed = EXCLUDED.ib_missed, ' +
+  'ib_answered_internal = EXCLUDED.ib_answered_internal, ' +
+  'ib_answered_external = EXCLUDED.ib_answered_external, ' +
+  'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
+  'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
+  'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
+  'ob_ext_total = EXCLUDED.ob_ext_total, ' +
+  'ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
+  'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ' +
+  'ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
 
-  var stmt = conn.prepareStatement(sql);
-  var p = 1;
-  for (var b = 0; b < batch.length; b++) {
-    var row = batch[b];
-    stmt.setString(p++, row.callDate);
-    stmt.setString(p++, row.dept);
-    stmt.setString(p++, row.agentName);
-    stmt.setInt(p++,    parseInt(row.obTotal) || 0);
-    stmt.setInt(p++,    parseInt(row.obAns)   || 0);
-    stmt.setInt(p++,    parseInt(row.obMiss)  || 0);
-    stmt.setString(p++, cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret));
-    stmt.setString(p++, cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret));
-    stmt.setString(p++, cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret));
-    stmt.setInt(p++,    parseInt(row.ibTotal)  || 0);
-    stmt.setInt(p++,    parseInt(row.ibAns)    || 0);
-    stmt.setInt(p++,    parseInt(row.ibMiss)   || 0);
-    stmt.setInt(p++,    parseInt(row.ibAnsInt) || 0);
-    stmt.setInt(p++,    parseInt(row.ibAnsExt) || 0);
-    stmt.setString(p++, cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret));
-    stmt.setString(p++, cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret));
-    stmt.setString(p++, cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret));
-    stmt.setInt(p++,    parseInt(row.obExtTotal) || 0);
-    stmt.setInt(p++,    parseInt(row.obExtAns)   || 0);
-    stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtTTT));
-    stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtATT));
-  }
-  stmt.execute();
-  var affected = stmt.getUpdateCount();
-  stmt.close();
-  return (affected >= 0 ? affected : batch.length);
+/** R35. SQL text literal: NULL for null/undefined, quotes doubled, NUL stripped. */
+function nbSqlLit_(v) {
+  if (v === null || v === undefined) return 'NULL';
+  return "'" + String(v).replace(/\u0000/g, '').replace(/'/g, "''") + "'";
+}
+function nbSqlInt_(v) { var n = parseInt(v, 10); return isFinite(n) ? String(n) : '0'; }
+function nbSqlJson_(v) { return v == null ? 'NULL' : (nbSqlLit_(v) + '::jsonb'); }
+
+/** R35. One inline "(...)" tuple in NB_CDR_UPSERT_HEAD_'s column order. */
+function nbCdrParentTuple_(row, hmacSecret) {
+  var iso = String(row.callDate || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) throw new Error('nbCdrParentTuple_: callDate must be ISO, got "' + iso + '"');
+  return '(' + [
+    "'" + iso + "'::date",
+    nbSqlLit_(row.dept), nbSqlLit_(row.agentName),
+    nbSqlInt_(row.obTotal), nbSqlInt_(row.obAns), nbSqlInt_(row.obMiss),
+    nbSqlJson_(cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret)),
+    nbSqlJson_(cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret)),
+    nbSqlJson_(cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret)),
+    nbSqlInt_(row.ibTotal), nbSqlInt_(row.ibAns), nbSqlInt_(row.ibMiss),
+    nbSqlInt_(row.ibAnsInt), nbSqlInt_(row.ibAnsExt),
+    nbSqlJson_(cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret)),
+    nbSqlJson_(cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret)),
+    nbSqlJson_(cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret)),
+    nbSqlInt_(row.obExtTotal), nbSqlInt_(row.obExtAns),
+    String(cdrTimeToSeconds_(row.obExtTTT)), String(cdrTimeToSeconds_(row.obExtATT)),
+  ].join(',') + ')';
 }
 
 // ── R33: phones-only refill (Operator State #57 step B) ────────────────────
