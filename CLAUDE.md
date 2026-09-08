@@ -1280,14 +1280,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   is slow and the same outbound numbers recur thousands of times per day;
   the cache is reset at the top of `writeCDRRowsToNeon`. (2) **Inline-literal
   VALUES, size-packed, commit ONCE (R38)** — every daily writer (DQE / QCD /
-  CDR parents via `neonInsertInline_`, the phones children) emits
-  dollar-quoted literals with ZERO bound params (a JDBC `setXxx` is a ~50 ms
-  bridge call), packed to `NEON_INLINE_STMT_CHARS_` (30 KB; the bridge rejects
+  CDR parents + the Direct writer via `neonInsertInline_`, the phones
+  children) emits dollar-quoted literals with ZERO bound params (each JDBC
+  bind is a ~50 ms bridge call), packed to `NEON_INLINE_STMT_CHARS_` (30 KB; the bridge rejects
   ~44 KB SQL strings); a lone oversize tuple falls back to the ORIGINAL
-  bound insert (`dqeBoundInsert_` / `qcdBoundInsert_` / `cdrBoundInsert_`),
-  and `neon-write-mapping.test.js` pins inline == bound value-for-value. One
+  bound insert (`dqeBoundInsert_` / `qcdBoundInsert_` / `cdrBoundInsert_` /
+  `dcBoundUpsert_`); the writer suites pin inline == bound value-for-value. One
   `conn.commit()` after the loop: smaller commits add round-trips AND leave
-  partially-committed rows on a mid-loop timeout. (3) **One probed connection per
+  partial rows behind on a mid-loop timeout. (3) **One probed connection per
   writer** via `getReachableNeonConn_()` (above), not a separate probe +
   write connection. (4) **Authoritative per-date replace (IMP-5)** --
   upsert-only mirrors leave PHANTOM rows when a force re-import's rebuilt

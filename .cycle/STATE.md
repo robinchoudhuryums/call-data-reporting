@@ -4444,3 +4444,9 @@ Subsystem cycles since last Seams audit: 2
 - Decisions: keep the bound insert as the oversize fallback rather than deleting it (parity pinned against it); size-pack statements (30 KB) rather than row-count chunks; re-pad the sheet to the prior getMaxRows so the post-state matches the old rewrite.
 - Open follow-ons: inbound derivation cost (~3.7 min/export); inbound/outbound/direct writers still bind params.
 - Where I left off: block 172 written; committing + PR. Owner must run the acceptance gate (one Manual Export + both parity checks CLEAN) before the remaining Aug 20–31 exports; then holiday property (2026-09-07), delete CDR_BACKFILL_BEFORE, retention prune, VACUUM FULL.
+
+## 2026-09-08 (later) — R39 Direct Call step
+- Completed: R38 accepted (PR #295; Aug 24 re-export 654 s vs 1003 s; DQE + QCD parity CLEAN). R39 (block 173): Direct writer block delete + inline upsert with bound fallback.
+- Decisions: keep `v | 0` in the inline tuple (bound parity) rather than neonSqlInt_; no sheet re-pad (old per-row delete shrank capacity too); the single-bind authoritative DELETE left as is.
+- Open follow-ons: three separate Raw Data reads per import; the ui.alert inflating the reported export time.
+- Where I left off: block 173 written; committing + PR. Owner continues Aug 20–31 Manual Exports, then runNeonCoverageCheck, holiday property, delete CDR_BACKFILL_BEFORE, retention prune, VACUUM FULL.

@@ -465,7 +465,14 @@ runs its authoritative date-DELETE even for an EMPTY row set (matching
 date at all. The deferred bulk mirror is flushed by the editor-run
 **`backfillDirectCallToNeon()`** (cdr-import-local; resumable via
 `DIRECT_UPSERT_RESUME`, optional `DIRECT_UPSERT_SINCE` floor); the shared
-`dcUpsertRows_` holds the upsert SQL for both writers. Dashboard read
+`dcUpsertRows_` holds the upsert SQL for both writers -- since R39 it emits
+inline literals through `neonWrite.js`'s `neonInsertInline_` (same project,
+so the Direct writer now DEPENDS on that helper family; suites that call it
+load `neonWrite.js` too) with the original bound statement kept as
+`dcBoundUpsert_`, the oversize-row fallback, and `dcWriteSheet_` deletes the
+date's sheet rows as contiguous blocks rather than one `deleteRow` per row
+(the R38 rules; `direct-call-backfill.test.js` pins inline == bound,
+`direct-call-metrics.test.js` the block delete). Dashboard read
 surface: `DirectCallReport.gs::getDirectCallReport({from,to,department?})`
 (ONE json_build_object round-trip; answer rate EXCLUDES the busy
 carve-out; cached `directCall:v4`; R11-M `kpisPrior`/`deptsPrior` feed

@@ -430,9 +430,23 @@ function dcWriteSheet_(ss, rows, monthYear, dateStr) {
   if (last > 1 && targetIso) {
     // getDisplayValues, not getValues (see dcDateIso_ above).
     const dateCol = sh.getRange(2, 2, last - 1, 1).getDisplayValues();  // col B = Date
-    for (let i = dateCol.length - 1; i >= 0; i--) {
-      if (dcDateIso_(dateCol[i][0]) === targetIso) { sh.deleteRow(i + 2); deleted++; }
+    // R39 (the R38-B rule): delete the date's rows as contiguous BLOCKS,
+    // bottom-up, instead of one deleteRow call per row -- each call is a
+    // synchronous reflow of a years-deep sheet, and ~80 of them was the
+    // larger half of the Direct step's ~4 min on a Manual Export. Same
+    // match (ISO-normalized DISPLAY values, F-3), same `deleted` count.
+    const blocks = [];   // [startRow, count], ascending
+    let start = -1, prev = -1;
+    for (let i = 0; i < dateCol.length; i++) {
+      if (dcDateIso_(dateCol[i][0]) !== targetIso) continue;
+      const row = i + 2;
+      if (start < 0) { start = prev = row; }
+      else if (row === prev + 1) { prev = row; }
+      else { blocks.push([start, prev - start + 1]); start = prev = row; }
+      deleted++;
     }
+    if (start >= 0) blocks.push([start, prev - start + 1]);
+    for (let b = blocks.length - 1; b >= 0; b--) sh.deleteRows(blocks[b][0], blocks[b][1]);
   }
   if (!rows.length) return { written: 0, deleted: deleted };
   const out = rows.map(function (r) {
@@ -505,12 +519,39 @@ function dcUpsertRows_(conn, rows) {
       rows.length - order.length);
     rows = order.map(function (k) { return seen[k]; });
   }
+  // R39 (the R38 rule, applied here): INLINE LITERALS, zero binds, packed
+  // by size under the JDBC SQL cap via neonWrite.js's neonInsertInline_
+  // (same project -- no INV-16 edit). 18 binds x ~80 agent-days was ~70 s
+  // of bridge calls per daily write. The original bound statement survives
+  // as dcBoundUpsert_, the per-row fallback for a tuple that alone exceeds
+  // the cap; direct-call-backfill.test.js pins inline == bound value-for-
+  // value. The CALLER still owns the transaction (no commit here).
+  const res = neonInsertInline_(conn, DIRECT_CALL_UPSERT_HEAD_, DIRECT_CALL_UPSERT_TAIL_,
+    rows, dcInlineTuple_, dcBoundUpsert_);
+  Logger.log('dcUpsertRows_: wrote %s rows%s.', rows.length, neonInlineNote_(res));
+  return rows.length;
+}
+
+// R39: the upsert SQL split into head/tail around the VALUES list (byte-
+// identical to the former single string) + the ORIGINAL bound-param
+// statement, kept as neonInsertInline_'s oversize fallback, + the inline
+// tuple renderer (same values, same order, same `v | 0` coercion as the
+// setInt loop -- NOT neonSqlInt_'s parseInt, so the two paths stay equal).
+const DIRECT_CALL_UPSERT_HEAD_ = 'INSERT INTO direct_call_history (' + DIRECT_CALL_INSERT_COLS + ') VALUES ';
+const DIRECT_CALL_UPSERT_TAIL_ = ' ON CONFLICT (call_date, department, agent_name) DO UPDATE SET ' +
+  DIRECT_CALL_UPDATE_COLS.map(function (c) { return c + ' = EXCLUDED.' + c; }).join(', ') +
+  ', updated_at = now()';
+
+function dcMetricValues_(r) {
+  return [r.ib_int_answered, r.ib_int_missed_free, r.ib_int_missed_busy, r.ib_int_talk_sec,
+          r.ib_ext_answered, r.ib_ext_missed_free, r.ib_ext_missed_busy, r.ib_ext_talk_sec,
+          r.ob_int_total, r.ob_int_connected, r.ob_int_talk_sec,
+          r.ob_ext_total, r.ob_ext_connected, r.ob_ext_talk_sec];
+}
+
+function dcBoundUpsert_(conn, rows) {
   const ph = '(' + new Array(18).fill('?').join(',') + ')';
-  const sql = 'INSERT INTO direct_call_history (' + DIRECT_CALL_INSERT_COLS + ') VALUES ' +
-    rows.map(function () { return ph; }).join(',') +
-    ' ON CONFLICT (call_date, department, agent_name) DO UPDATE SET ' +
-    DIRECT_CALL_UPDATE_COLS.map(function (c) { return c + ' = EXCLUDED.' + c; }).join(', ') +
-    ', updated_at = now()';
+  const sql = DIRECT_CALL_UPSERT_HEAD_ + rows.map(function () { return ph; }).join(',') + DIRECT_CALL_UPSERT_TAIL_;
   const stmt = conn.prepareStatement(sql);
   let p = 0;
   rows.forEach(function (r) {
@@ -518,14 +559,16 @@ function dcUpsertRows_(conn, rows) {
     stmt.setString(++p, r.isoDate);
     stmt.setString(++p, r.dept);
     stmt.setString(++p, r.agent);
-    [r.ib_int_answered, r.ib_int_missed_free, r.ib_int_missed_busy, r.ib_int_talk_sec,
-     r.ib_ext_answered, r.ib_ext_missed_free, r.ib_ext_missed_busy, r.ib_ext_talk_sec,
-     r.ob_int_total, r.ob_int_connected, r.ob_int_talk_sec,
-     r.ob_ext_total, r.ob_ext_connected, r.ob_ext_talk_sec].forEach(function (v) { stmt.setInt(++p, v | 0); });
+    dcMetricValues_(r).forEach(function (v) { stmt.setInt(++p, v | 0); });
   });
   stmt.execute();
   stmt.close();
-  return rows.length;
+}
+
+function dcInlineTuple_(r) {
+  return '(' + [neonSqlLit_(r.monthYear), neonSqlLit_(r.isoDate), neonSqlLit_(r.dept), neonSqlLit_(r.agent)]
+    .concat(dcMetricValues_(r).map(function (v) { return String(v | 0); }))
+    .join(',') + ')';
 }
 
 /** Upsert per-agent-day rows for one date. Best-effort; returns a status object. */

@@ -164,6 +164,7 @@ function makeFakeSheet(name, data) {
     deleteRow: function (rowPosition) {
       const idx = rowPosition - 1;
       if (idx >= 0 && idx < this._data.length) this._data.splice(idx, 1);
+      if (this._displays && idx >= 0 && idx < this._displays.length) this._displays.splice(idx, 1);
       if (this._maxRows != null) this._maxRows--;
       return this;
     },
@@ -172,6 +173,7 @@ function makeFakeSheet(name, data) {
       const idx = rowPosition - 1;
       if (idx < 0 || idx + howMany > this._data.length) throw new Error('deleteRows out of range');
       this._data.splice(idx, howMany);
+      if (this._displays) this._displays.splice(idx, howMany);
       if (this._maxRows != null) this._maxRows -= howMany;
       return this;
     },
