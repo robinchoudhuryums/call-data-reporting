@@ -4427,3 +4427,9 @@ Subsystem cycles since last Seams audit: 2
 - Open follow-ons: report emails could adopt `band`; queue report keeps its own shell; pipeline-project failure emails stay plain.
 - Decisions: senders never call EmailKit directly (suites load selectively) — spec via `notice:`; appEsc_/appDashUrl_ live in Config.gs for that reason.
 - Where I left off: block 169 written; committing + PR for R29. Neon reclaim runbook (Operator State #57) is mid-execution by the owner (step B.2, backfillCDRHistory runs).
+
+## 2026-09-04 (later) — R30 uniform email headers, R31 daily digest freshness gate
+- Completed: R30 every ekShellHtml_ caller banded (PR #286); R31 daily digest freshness gate (block 170): DEFERRED + one-shot retry until the 12:00 cutoff, stale callout, window threaded into the send.
+- Root cause found for "blank digest tiles": tiles read the single previous-business-day window via computeSummary_, the WoW callout reads 14 days; 8 AM trigger fired before the import landed.
+- Open follow-ons: quiet-day callout on the summary digest; weekly/monthly ungated; DEFERRED tint in the Alerts modal.
+- Where I left off: block 170 written; committing + PR. Owner mid-runbook on Neon reclaim (Operator State #57 step B.2).

@@ -2115,7 +2115,7 @@ items for anything it flags or doesn't cover.)
 9. Did the latest push add an OAuth SCOPE? (Run any function once in the editor to consent)
 10. Does a new `OVERVIEW_PARENT_OF` key match the roster column header byte-for-byte?
 11. Pipeline Health sheet -- a long quiet stretch on `autoImport` or any DQE-freshness step
-12. Manager digest not delivered -- the seven things to check
+12. Manager digest not delivered -- the eight things to check (incl. the R31 daily freshness gate: `DEFERRED` before noon is waiting on the import, not lost)
 13. `ADMIN_EMAILS` Script Property (a new admin who sees no admin features)
 14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy); the SAME list narrows My Department's per-agent numbers WHEN `QUEUE_SPLIT_SCOPE=dept` (#42), so a partially-mapped dept under-reports only in that mode
 15. `TARGET_SS_ID` in CDR Import must point at the CDR Report spreadsheet
