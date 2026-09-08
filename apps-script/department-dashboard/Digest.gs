@@ -47,6 +47,21 @@
  */
 
 const DIGEST_DAILY_TRIGGER_HOUR   = 8;   // 8 AM script-TZ
+// R31: the DAILY digest's freshness gate. The 8 AM trigger used to send
+// whatever the previous business day held at that minute -- and when the
+// morning import/DQE build had not landed yet, every subscriber got blank
+// KPI tiles beside a "What changed" callout computed from the surrounding
+// two weeks (the two read different windows). The daily attempt now checks
+// that the DQE data for the window day EXISTS; if not, it records DEFERRED,
+// schedules a ONE-SHOT retry in DIGEST_DAILY_RETRY_MINUTES, and repeats until
+// DIGEST_DAILY_CUTOFF_HOUR, when it sends anyway with an explicit
+// "data not yet available" callout so an empty digest says why. The
+// installed trigger is unchanged (no reinstall), the run-claim marker still
+// owns dedup, and weekly/monthly are untouched (their windows are closed
+// weeks/months). Manual previews always send (the callout shows if stale).
+const DIGEST_DAILY_CUTOFF_HOUR    = 12;  // noon script-TZ: send regardless
+const DIGEST_DAILY_RETRY_MINUTES  = 60;
+const DIGEST_DAILY_RETRY_HANDLER_ = 'runDailyDigestRetry_';
 const DIGEST_WEEKLY_TRIGGER_HOUR  = 8;
 const DIGEST_MONTHLY_TRIGGER_HOUR = 8;   // 1st of the month, 8 AM
 
@@ -126,32 +141,133 @@ function uninstallDigestTriggers() {
 // -- Trigger entry points (underscore = not RPC-callable) ----------
 
 function runDailyDigests_() {
+  digestDailyAttempt_(new Date(), 'trigger');
+}
+
+/** R31: the one-shot retry the gate schedules. Cleans itself up first. */
+function runDailyDigestRetry_() {
+  digestClearRetryTriggers_();
+  digestDailyAttempt_(new Date(), 'retry');
+}
+
+/**
+ * R31. PURE decision for one daily attempt.
+ *   'done'       -- this window was already sent (run-claim marker)
+ *   'send'       -- the window day's DQE data exists
+ *   'defer'      -- not yet, and it is before the cutoff: retry later
+ *   'send-stale' -- not yet, but the cutoff has passed: send with the callout
+ */
+function digestDailyDecision_(hour, fresh, alreadySent, cutoffHour) {
+  if (alreadySent) return 'done';
+  if (fresh) return 'send';
+  const cutoff = (cutoffHour == null) ? DIGEST_DAILY_CUTOFF_HOUR : cutoffHour;
+  return hour >= cutoff ? 'send-stale' : 'defer';
+}
+
+/**
+ * R31. Trigger-safe (no Session user) latest DQE date on the ACTIVE read
+ * source: Neon MAX(call_date) when DQE_READ_SOURCE=neon, else the memoized
+ * sheet bounds scan. '' when unknown -- which the gate treats as NOT fresh.
+ */
+function digestLatestDqeIso_() {
+  try {
+    const src = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
+    if (src === 'neon' && typeof neonGetMaxDqeDate_ === 'function') {
+      const iso = neonGetMaxDqeDate_();
+      if (iso) return String(iso);
+    }
+    if (typeof sheetScanDqeDateBounds_ === 'function') {
+      const b = sheetScanDqeDateBounds_();
+      if (b && b.max) return String(b.max);
+    }
+  } catch (e) {
+    Logger.log('digestLatestDqeIso_ failed: %s', e);
+  }
+  return '';
+}
+
+/** R31. One daily attempt (trigger or retry). Never throws to the runner. */
+function digestDailyAttempt_(now, source) {
   try {
     // F-6: skip when TODAY is Sat/Sun -- the trigger fires every day, and
     // the contract is "sends each weekday morning; Monday's digest covers
     // Friday". The data window is resolved by digestWindowFor_('daily') as
     // the previous BUSINESS day, so Monday's run sends Friday's data.
-    // (The old check tested the DATA date's day-of-week instead, which
-    // sent Friday's digest on SATURDAY morning and skipped Monday
-    // entirely -- the opposite of the documented behavior.)
-    const dow = new Date().getDay();   // 0=Sun, 6=Sat
+    const dow = now.getDay();   // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) {
       Logger.log('runDailyDigests_: weekend run -- skipping.');
-      return;
+      return { decision: 'skip-weekend' };
     }
     // S5: company holidays skip the TRIGGER run like weekends do (manual
     // previews unaffected); the next weekday's digest covers the previous
-    // business day via the shared holiday-aware walker below.
-    const todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+    // business day via the shared holiday-aware walker.
+    const todayIso = Utilities.formatDate(now, TZ, 'yyyy-MM-dd');
     if (isCompanyHoliday_(todayIso)) {
       Logger.log('runDailyDigests_: company holiday (' + todayIso + ') -- skipping.');
-      return;
+      return { decision: 'skip-holiday' };
     }
-    sendDigestsForCadence_('daily');
+    const window = digestWindowFor_('daily', now);
+    const props = PropertiesService.getScriptProperties();
+    const alreadySent = props.getProperty('DIGEST_RUN_MARKER_daily') === window.toIso;
+    const hour = Number(Utilities.formatDate(now, TZ, 'H')) || 0;
+    const latest = digestLatestDqeIso_();
+    const fresh = !!latest && latest >= window.toIso;
+    const decision = digestDailyDecision_(hour, fresh, alreadySent);
+    Logger.log('digestDailyAttempt_(%s): window=%s latestDqe=%s hour=%s -> %s',
+      source, window.toIso, latest || '(none)', hour, decision);
+    if (decision === 'done') { digestClearRetryTriggers_(); return { decision: decision }; }
+    if (decision === 'defer') {
+      const hhmm = Utilities.formatDate(now, TZ, 'HH:mm');
+      const scheduled = digestScheduleRetry_();
+      if (scheduled) {
+        try {
+          props.setProperty('DIGEST_LAST_RESULT_daily',
+            'DEFERRED ' + window.toIso + ': DQE data is through ' + (latest || '(none)')
+            + ' at ' + hhmm + ' -- the import has not landed yet; retrying in '
+            + DIGEST_DAILY_RETRY_MINUTES + ' min (sends regardless at '
+            + DIGEST_DAILY_CUTOFF_HOUR + ':00 with a data-not-available note). At ' + now);
+        } catch (pe) { /* best-effort */ }
+        return { decision: decision, latest: latest };
+      }
+      // Could not schedule a retry (scope / trigger quota): deferring would
+      // lose the day, so fall through to a stale send now.
+      Logger.log('digestDailyAttempt_: retry could not be scheduled -- sending with the stale note now.');
+    }
+    sendDigestsForCadence_('daily', fresh
+      ? { window: window }
+      : { window: window, staleLatest: latest || '' });
+    digestClearRetryTriggers_();
+    return { decision: fresh ? 'send' : 'send-stale', latest: latest };
   } catch (e) {
     Logger.log('runDailyDigests_ failed: %s', e);
     notifyDigestFailure_('daily', e);
+    return { decision: 'error' };
   }
+}
+
+/** R31. Schedules ONE retry attempt; true on success. Best-effort. */
+function digestScheduleRetry_() {
+  try {
+    digestClearRetryTriggers_();
+    ScriptApp.newTrigger(DIGEST_DAILY_RETRY_HANDLER_)
+      .timeBased().after(DIGEST_DAILY_RETRY_MINUTES * 60 * 1000).create();
+    return true;
+  } catch (e) {
+    Logger.log('digestScheduleRetry_ failed: %s', e);
+    return false;
+  }
+}
+
+/** R31. Deletes every pending retry trigger (idempotent, best-effort). */
+function digestClearRetryTriggers_() {
+  try {
+    const triggers = ScriptApp.getProjectTriggers();
+    for (let i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === DIGEST_DAILY_RETRY_HANDLER_) {
+        ScriptApp.deleteTrigger(triggers[i]);
+      }
+    }
+  } catch (e) { /* scope not consented / none pending */ }
 }
 
 // B-6: the weekly/monthly handlers DELIBERATELY lack the daily handler's
@@ -184,7 +300,8 @@ function runMonthlyDigests_() {
 
 // -- Engine --------------------------------------------------------
 
-function sendDigestsForCadence_(cadence) {
+function sendDigestsForCadence_(cadence, runOpts) {
+  runOpts = runOpts || {};
   // F4: serialize so a duplicate/overlapping trigger for the SAME cadence can't
   // double-send digests. Different cadences target disjoint subscriber rows
   // (filtered by entry.cadence), so cross-cadence runs never duplicate; a
@@ -221,7 +338,11 @@ function sendDigestsForCadence_(cadence) {
   var cfg, window;
   try {
     cfg = readDigestConfig_();
-    window = digestWindowFor_(cadence, new Date());
+    // R31: the daily gate decided freshness for ONE window and hands it in,
+    // so the send can never drift onto a different day than the one it
+    // checked; every other caller resolves the window from the clock.
+    window = (runOpts.window && runOpts.window.toIso) ? runOpts.window
+      : digestWindowFor_(cadence, new Date());
     if (!window) return;
     var props = PropertiesService.getScriptProperties();
     var markerKey = 'DIGEST_RUN_MARKER_' + cadence;
@@ -281,6 +402,7 @@ function sendDigestsForCadence_(cadence) {
         fromIso:   window.fromIso,
         toIso:     window.toIso,
         isPreview: false,
+        staleLatest: runOpts.staleLatest,   // R31: cutoff send without the day's data
       });
       sent++;
     } catch (e) {
@@ -333,6 +455,10 @@ function sendDigestsForCadence_(cadence) {
       propsOut.setProperty(resultKey,
         'ok ' + window.toIso + ': sent ' + sent + ' of ' + attempted
         + (failures.length ? ' (' + failures.length + ' failure(s) -- see admin email)' : '')
+        + (runOpts.staleLatest !== undefined
+            ? ' -- sent at the ' + DIGEST_DAILY_CUTOFF_HOUR + ':00 cutoff WITHOUT ' + window.toIso
+              + ' data (DQE through ' + (runOpts.staleLatest || '(none)') + '); tiles carry the note'
+            : '')
         + ' at ' + new Date());
     }
   } catch (propErr) { Logger.log('digest last-result record failed: %s', propErr); }
@@ -547,6 +673,15 @@ function sendDigestEmail_(opts) {
         + ' digest on ' + ekEsc_(rangeLabel) + '.', 'warn'), '16px 26px 0')
     : '';
 
+  // R31: the cutoff send names the gap instead of showing blank tiles.
+  const staleRow = (opts.staleLatest !== undefined)
+    ? ekRow_(ekCalloutHtml_('Data not yet available for ' + rangeLabel,
+        'The morning import had not landed for ' + ekEsc_(rangeLabel) + ' when this digest was sent '
+        + '(data is through ' + ekEsc_(opts.staleLatest || 'an earlier date') + '). The tiles below are '
+        + 'empty for that reason, not because the team took no calls; the dashboard will show the day '
+        + 'once the import completes.', 'warn'), '16px 26px 0')
+    : '';
+
   const subject = (opts.isPreview ? '[Preview] ' : '')
     + 'Dashboard digest — ' + dept + ' — ' + rangeLabel;
 
@@ -556,7 +691,7 @@ function sendDigestEmail_(opts) {
     title: dept,
     subtitle: rangeLabel,
     preheader: dept + ' ' + (opts.cadence || '') + ' digest · ' + rangeLabel,
-    rowsHtml: previewRow + coreHtml,
+    rowsHtml: previewRow + staleRow + coreHtml,
     ctaUrl: dashboardUrl,
     ctaLabel: linkLabel,
     footerHtml: 'Sent by the Department Dashboard digest engine. To stop receiving these, '
@@ -1173,6 +1308,7 @@ function digestWindowFor_(cadence, now) {
 }
 
 function uninstallDigestTriggers_() {
+  digestClearRetryTriggers_();   // R31: a pending one-shot retry goes with them
   const triggers = ScriptApp.getProjectTriggers();
   for (let i = 0; i < triggers.length; i++) {
     const fn = triggers[i].getHandlerFunction();
