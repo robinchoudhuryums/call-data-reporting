@@ -26,14 +26,14 @@ const h = loadGas({
 });
 const ROSTER = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'] });
 const REAL_SEND = h.ctx.sendDigestsForCadence_;
-const REAL_ATTEMPT = h.ctx.digestDailyAttempt_;
+const REAL_ATTEMPT = h.ctx.digestGatedAttempt_;
 
 function install(opts) {
   opts = opts || {};
   h.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };
   h.state.sentEmails.length = 0;
   h.ctx.sendDigestsForCadence_ = REAL_SEND;   // earlier tests stub it
-  h.ctx.digestDailyAttempt_ = REAL_ATTEMPT;
+  h.ctx.digestGatedAttempt_ = REAL_ATTEMPT;
   const rows = [];
   (opts.dates || []).forEach(function (d) {
     rows.push(dqeRow({ date: d, agent: 'Anna', ext: '201', rung: 10, missed: 1, answered: 9, att: '0:03:00' }));
@@ -45,6 +45,7 @@ function install(opts) {
   }
   h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
   h.state.cache.clear();
   // Fake ScriptApp: records one-shot triggers with their delay.
   const made = [];
@@ -156,13 +157,13 @@ test('R31: the retry handler deletes its own trigger before attempting; weekends
   h.call('digestScheduleRetry_');
   assert.equal(made.length, 1);
   let pendingWhenAttempted = -1;
-  h.ctx.digestDailyAttempt_ = function (now, source) {
+  h.ctx.digestGatedAttempt_ = function (cadence, now, source) {
     pendingWhenAttempted = made.length;
-    return { decision: 'stubbed', source: source };
+    return { decision: 'stubbed', cadence: cadence, source: source };
   };
   h.call('runDailyDigestRetry_');
   assert.equal(pendingWhenAttempted, 0, 'its own one-shot is removed BEFORE the attempt runs');
-  h.ctx.digestDailyAttempt_ = REAL_ATTEMPT;
+  h.ctx.digestGatedAttempt_ = REAL_ATTEMPT;
   // Saturday 2026-09-05 08:15 Central.
   const r = h.call('digestDailyAttempt_', new Date('2026-09-05T08:15:00-05:00'), 'trigger');
   assert.equal(r.decision, 'skip-weekend');
@@ -187,4 +188,75 @@ test('R31 end-to-end: the cutoff send carries the data-not-available callout and
   assert.equal(h.state.sentEmails.length, 1);
   assert.ok(!/Data not yet available/.test(h.state.sentEmails[0].htmlBody));
   assert.match(h.state.props.DIGEST_LAST_RESULT_daily, /^ok 2026-09-02: sent 1 of 1 at /);
+});
+
+// ── R32: the gate covers weekly + monthly too, and quiet days explain themselves ──
+test('R32: a Monday weekly run before Friday\'s build defers with its OWN retry handler; a holiday Monday does not skip it', function () {
+  // Mon 2026-09-07 08:20 Central; window = Mon 08-31 .. Fri 09-04; data through Thu 09-03.
+  const made = install({ dates: ['2026-09-03'] });
+  const calls = stubSend();
+  h.state.props.COMPANY_HOLIDAYS = '2026-09-07';   // Labor Day: weekly still runs (B-6)
+  h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;             // the holiday list is memoized per execution
+  const r = h.call('digestGatedAttempt_', 'weekly', new Date('2026-09-07T08:20:00-05:00'), 'trigger');
+  assert.equal(r.decision, 'defer');
+  assert.equal(calls.length, 0);
+  assert.equal(made.length, 1);
+  assert.equal(made[0].getHandlerFunction(), 'runWeeklyDigestRetry_');
+  assert.match(h.state.props.DIGEST_LAST_RESULT_weekly, /^DEFERRED 2026-09-04: DQE data is through 2026-09-03/);
+  // The daily attempt on that same holiday Monday DOES skip (F-6/S5).
+  const d = h.call('digestGatedAttempt_', 'daily', new Date('2026-09-07T08:20:00-05:00'), 'trigger');
+  assert.equal(d.decision, 'skip-holiday');
+  // Friday lands -> the weekly retry sends with the checked window, no note.
+  install({ dates: ['2026-09-03', '2026-09-04'] });
+  const calls2 = stubSend();
+  const r2 = h.call('digestGatedAttempt_', 'weekly', new Date('2026-09-07T09:25:00-05:00'), 'retry');
+  assert.equal(r2.decision, 'send');
+  assert.equal(calls2[0].cadence, 'weekly');
+  assert.equal(calls2[0].runOpts.window.fromIso, '2026-08-31');
+  assert.equal(calls2[0].runOpts.window.toIso, '2026-09-04');
+  assert.equal(calls2[0].runOpts.staleLatest, undefined);
+});
+
+test('R32: a monthly run on the 1st before the month-end build defers, then sends stale at the cutoff', function () {
+  // Tue 2026-09-01 08:05 Central; window = Aug 1..31; data through Aug 28.
+  const made = install({ dates: ['2026-08-28'] });
+  const calls = stubSend();
+  let r = h.call('digestGatedAttempt_', 'monthly', new Date('2026-09-01T08:05:00-05:00'), 'trigger');
+  assert.equal(r.decision, 'defer');
+  assert.equal(made[0].getHandlerFunction(), 'runMonthlyDigestRetry_');
+  r = h.call('digestGatedAttempt_', 'monthly', new Date('2026-09-01T12:03:00-05:00'), 'retry');
+  assert.equal(r.decision, 'send-stale');
+  assert.equal(calls[0].cadence, 'monthly');
+  assert.equal(calls[0].runOpts.staleLatest, '2026-08-28');
+  assert.equal(calls[0].runOpts.window.toIso, '2026-08-31');
+  assert.equal(made.length, 0, 'the monthly retry is cleared after the send');
+  // Clearing without a cadence removes every pending retry.
+  h.call('digestScheduleRetry_', 'daily'); h.call('digestScheduleRetry_', 'weekly');
+  assert.equal(made.length, 2);
+  h.call('digestClearRetryTriggers_');
+  assert.equal(made.length, 0);
+});
+
+test('R32: a quiet window with FRESH data explains its zero tiles; a stale send does not double up', function () {
+  // Data exists for the window day, but Alpha's roster took no calls: the
+  // sheet holds only a non-roster agent's row on that date.
+  h.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };
+  h.state.sentEmails.length = 0;
+  h.ctx.sendDigestsForCadence_ = REAL_SEND;
+  const rows = [dqeRow({ date: '2026-09-02', agent: 'Zed Other', ext: '999', rung: 5, missed: 1, answered: 4, att: '0:01:00' })];
+  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+    'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows),
+    'Digest Config': [['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format'],
+                      ['m@x.com', 'Alpha', 'daily', 'TRUE', '', 'summary']] } });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.state.cache.clear();
+  h.ctx.ScriptApp = { getProjectTriggers: function () { return []; }, deleteTrigger: function () {}, newTrigger: function () { throw new Error('unused'); } };
+  const r = h.call('digestGatedAttempt_', 'daily', at('08:30'), 'trigger');
+  assert.equal(r.decision, 'send', 'the day exists on the source, so it is fresh');
+  const m = h.state.sentEmails[0];
+  assert.match(m.htmlBody, /No calls recorded/);
+  assert.match(m.htmlBody, /Alpha's roster on 2026-09-02/);
+  assert.ok(!/Data not yet available/.test(m.htmlBody));
+  // Stale path: the data-not-available callout only.
+  const html = h.call('digestSummaryHtml_', 'Alpha', '2026-09-03', '2026-09-03', { stale: true });
+  assert.ok(!/No calls recorded/.test(html), 'the stale callout (added by the sender) already explains the zeros');
 });

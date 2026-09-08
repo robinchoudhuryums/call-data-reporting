@@ -136,18 +136,21 @@ When something looks wrong, before assuming a code bug, check:
     Department matches a `DO NOT EDIT!` header exactly (an unknown dept is
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
-    (h) **R31 -- the daily digest is FRESHNESS-GATED.** The 8 AM run sends only
-    once the previous business day's DQE data exists on the active read
-    source; otherwise it records `DEFERRED <date>: DQE data is through …` in
-    the same "Last runs" line, schedules a one-shot retry
-    (`runDailyDigestRetry_`, +60 min) and repeats until the 12:00 cutoff, when
+    (h) **R31/R32 -- every digest cadence is FRESHNESS-GATED.** The 8 AM run
+    sends only once the window's last day (daily: the previous business day;
+    weekly: last Friday; monthly: the month's last day) exists on the active
+    DQE read source; otherwise it records `DEFERRED <date>: DQE data is
+    through …` in the same "Last runs" line (warn-tinted in the modal),
+    schedules a one-shot retry (`run<Cadence>DigestRetry_`, +60 min) and
+    repeats until the 12:00 cutoff, when
     it sends regardless with a "Data not yet available" callout above the
     tiles (the record then reads `ok … sent at the 12:00 cutoff WITHOUT …`).
     So a digest that is "late" before noon is waiting on the import, not
     lost; a digest with blank tiles after noon means the import never landed
     that morning (check #1 / #11). No reinstall needed -- the installed 8 AM
-    trigger is unchanged; uninstalling the digest triggers also removes a
-    pending retry. Weekly/monthly are not gated (closed windows).
+    triggers are unchanged; uninstalling the digest triggers also removes any
+    pending retry. A quiet day with fresh data says "No calls recorded" under
+    its zero tiles instead of leaving them bare (summary format).
 13. `ADMIN_EMAILS` Script Property: if a recently-added admin
     doesn't see admin-only features, verify Project Settings →
     Script Properties → `ADMIN_EMAILS` includes their email

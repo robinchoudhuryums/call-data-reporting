@@ -4433,3 +4433,8 @@ Subsystem cycles since last Seams audit: 2
 - Root cause found for "blank digest tiles": tiles read the single previous-business-day window via computeSummary_, the WoW callout reads 14 days; 8 AM trigger fired before the import landed.
 - Open follow-ons: quiet-day callout on the summary digest; weekly/monthly ungated; DEFERRED tint in the Alerts modal.
 - Where I left off: block 170 written; committing + PR. Owner mid-runbook on Neon reclaim (Operator State #57 step B.2).
+
+## 2026-09-04 (latest) — R32 digest follow-ons
+- Completed: gate generalized to weekly/monthly (per-cadence one-shot retries), quiet-day "No calls recorded" callout, DEFERRED warn tint in the Alerts modal (block 171).
+- Remaining follow-ons: pipeline-project failure emails stay plain (no EmailKit there, by design); queue report keeps its shell.
+- Where I left off: block 171 written; committing + PR.
