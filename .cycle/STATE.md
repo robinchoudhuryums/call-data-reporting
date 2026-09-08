@@ -4420,7 +4420,7 @@ when a change's correctness is outside the harness's reach, stage the rollout.
 Invariant candidates INV-56..60 proposed (block `.cycle/blocks/149-a-reflect.md`);
 metrics.csv + estimates.csv seeded (first rows).
 
-Subsystem cycles since last Seams audit: 2
+Subsystem cycles since last Seams audit: 3
 
 ## 2026-09-04 (late) — R28/R29 email family
 - Completed: R28 default admin BCC chokepoint (PR #283) + welcome email on a new grant (PR #284); R29 EmailKit v2 notice family for the welcome email and all 16 admin notices (block 169). Also merged this session: #280 rowDateIso_ memo, #281 Neon retention (phones gate, weekly prune, CDR_BACKFILL_BEFORE), #282 runbook fix.
