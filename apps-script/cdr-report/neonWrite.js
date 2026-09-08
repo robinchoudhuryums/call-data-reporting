@@ -581,11 +581,19 @@ function writeCDRRowsToNeon(rows, opts) {
  * (a) Emits a timing line splitting build(+HMAC) vs insert + the unique-
  * hash count, so the HMAC-vs-insert cost is measurable from the logs.
  */
-function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
+function cdrInsertPhoneChildRows_(conn, rows, hmacSecret, opts) {
   if (!rows || !rows.length) return 0;
   // F3: normalize null/undefined key parts so the JS-side lookup key
   // matches the DB-readback key (getString returns JS null for a SQL NULL).
   var cdrKeyPart_ = function (x) { return x == null ? '<null>' : String(x); };
+
+  // R33: a caller that already holds the parent ids (the phones-only
+  // refill, which fetches a whole date's parents with ONE zero-bind
+  // json_agg query) passes them as opts.idMap -- keyed `date|dept|agent`
+  // with the cdrKeyPart_ convention -- and the bound-param lookup below
+  // (3 binds per row, the dominant cost on a large batch) is skipped.
+  var idMap = (opts && opts.idMap) ? opts.idMap : {};
+  var lookupNeeded = !(opts && opts.idMap);
 
   // REP-2: the parent-id lookup is CHUNKED like the inserts (F-21). One
   // (?::date, ?, ?) tuple per input row over the ENTIRE rows array crossed
@@ -593,8 +601,7 @@ function cdrInsertPhoneChildRows_(conn, rows, hmacSecret) {
   // F-18 bulk-archive mirror (whole Pending Archive in one call), which
   // then lost the phone-child mirror for the whole run.
   var CDR_ID_LOOKUP_CHUNK_ROWS = 400;
-  var idMap = {};
-  for (var lk = 0; lk < rows.length; lk += CDR_ID_LOOKUP_CHUNK_ROWS) {
+  for (var lk = 0; lookupNeeded && lk < rows.length; lk += CDR_ID_LOOKUP_CHUNK_ROWS) {
     var lkChunk = rows.slice(lk, lk + CDR_ID_LOOKUP_CHUNK_ROWS);
     var joinPlaceholders = lkChunk.map(function() { return '(?::date, ?, ?)'; }).join(',');
     var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +

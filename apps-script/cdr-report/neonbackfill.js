@@ -956,82 +956,24 @@ function backfillCDRHistory() {
         conn.commit();   // commit main so the phone id-lookup SELECT sees the rows
         totalUpserted += (affected >= 0 ? affected : batch.length);
 
-        // --- 2. Phone children: fill gaps (ON CONFLICT DO NOTHING) ---
-        // Look up parent ids for this batch's (date, dept, agent) keys.
-        var joinPlaceholders = batch.map(function() { return '(?::date, ?, ?)'; }).join(',');
-        var idSql = 'SELECT d.id, d.call_date::text, d.department, d.agent_name ' +
-          'FROM call_history_dept d ' +
-          'JOIN (VALUES ' + joinPlaceholders + ') AS v(cd, dept, agent) ' +
-          'ON d.call_date = v.cd AND d.department IS NOT DISTINCT FROM v.dept ' +
-          'AND d.agent_name IS NOT DISTINCT FROM v.agent';
-        var idStmt = conn.prepareStatement(idSql);
-        var q = 1;
-        for (var j = 0; j < batch.length; j++) {
-          idStmt.setString(q++, batch[j].callDate);
-          idStmt.setString(q++, batch[j].dept);
-          idStmt.setString(q++, batch[j].agentName);
+        // --- 2. Phone children: the daily writer's path (R33) ---
+        // This used to bind FIVE params per phone row -- ~5,600 JDBC bridge
+        // calls for a 50-row batch, five minutes per batch on the 2026-09
+        // refill. cdrInsertPhoneChildRows_ (neonWrite.js) renders the child
+        // tuples as inline literals (every field is a DB int, a code
+        // constant or a validated hex digest) and does the IMP-4 per-parent
+        // replace; each payload row carries its parent's COMPLETE entry set,
+        // so replace is safe here too. Committed inside the helper.
+        var phoneRowsN = 0;
+        var hasAnyPhones = batch.some(function (b0) {
+          return (b0.phonesX && String(b0.phonesX).trim()) || (b0.phonesY && String(b0.phonesY).trim())
+              || (b0.phonesZ && String(b0.phonesZ).trim());
+        });
+        if (hasAnyPhones) {
+          phoneRowsN = cdrInsertPhoneChildRows_(conn, batch, hmacSecret);
+          totalPhones += phoneRowsN;
         }
-        var idRs = idStmt.executeQuery();
-        var idMap = {};
-        while (idRs.next()) {
-          idMap[idRs.getString(2) + '|' + idRs.getString(3) + '|' + idRs.getString(4)] = idRs.getInt(1);
-        }
-        idRs.close(); idStmt.close();
-
-        var phoneRows = [];
-        for (var k = 0; k < batch.length; k++) {
-          var key = batch[k].callDate + '|' + batch[k].dept + '|' + batch[k].agentName;
-          var parentId = idMap[key];
-          if (!parentId) continue;
-          var phoneSets = [
-            { raw: batch[k].phonesX, type: 'ob_ext_list_total' },
-            { raw: batch[k].phonesY, type: 'ob_ext_list_answered' },
-            { raw: batch[k].phonesZ, type: 'ob_ext_list_missed' }
-          ];
-          for (var ps = 0; ps < phoneSets.length; ps++) {
-            var parsed = cdrParsePhoneField_(phoneSets[ps].raw, hmacSecret);
-            for (var ph = 0; ph < parsed.length; ph++) {
-              phoneRows.push({
-                parentId: parentId, type: phoneSets[ps].type,
-                phone_hash: parsed[ph].phone_hash,
-                duration_sec: parsed[ph].duration_sec,
-                occurrences: parsed[ph].occurrences
-              });
-            }
-          }
-        }
-
-        if (phoneRows.length > 0) {
-          // Chunk to keep each prepared-statement SQL string under Apps
-          // Script's Jdbc argument-size limit ("Argument too large: sql"
-          // fires around ~44KB / ~4000 rows; ~7.5KB statements succeed).
-          // 500 rows (~5.7KB) is safely under. A 50-row CDR batch can hold
-          // ~1500 phones, so without this it would build a ~17KB statement
-          // and fail. One commit per batch (below) keeps it atomic.
-          var PHONE_CHUNK = 500;
-          var poff = 0;
-          while (poff < phoneRows.length) {
-            var chunk = phoneRows.slice(poff, poff + PHONE_CHUNK);
-            var phPlaceholders = chunk.map(function() { return '(?,?,?,?,?)'; }).join(',');
-            var phSql = 'INSERT INTO call_history_phones ' +
-              '(call_history_id, list_type, phone_hash, duration_sec, occurrences) ' +
-              'VALUES ' + phPlaceholders +
-              ' ON CONFLICT ON CONSTRAINT uq_phone_entry DO NOTHING';
-            var phStmt = conn.prepareStatement(phSql);
-            var s = 1;
-            for (var c = 0; c < chunk.length; c++) {
-              phStmt.setInt(s++,    chunk[c].parentId);
-              phStmt.setString(s++, chunk[c].type);
-              phStmt.setString(s++, chunk[c].phone_hash);
-              phStmt.setInt(s++,    chunk[c].duration_sec);
-              phStmt.setInt(s++,    chunk[c].occurrences);
-            }
-            phStmt.execute(); phStmt.close();
-            poff += PHONE_CHUNK;
-          }
-          conn.commit();
-          totalPhones += phoneRows.length;
-        }
+        var phoneRows = { length: phoneRowsN };   // keeps the log line below unchanged
 
         Logger.log('Committed CDR batch ending at index ' + i + ' (' + batch.length
           + ' rows upserted, ' + phoneRows.length + ' phone rows). Cumulative upserted: '
@@ -1380,4 +1322,145 @@ function diagnoseDQELongValues() {
         ' (len ' + x.len + '): "' + x.val + '"');
     });
   });
+}
+
+
+// ── R33: phones-only refill (Operator State #57 step B) ────────────────────
+//
+// After `TRUNCATE call_history_phones` the PARENT rows (call_history_dept)
+// still exist, so the refill needs no main upsert at all: for each sheet row
+// dated before CDR_BACKFILL_BEFORE, look the parent up and re-create its
+// phone children. Two things make this fast where backfillCDRHistory was
+// five minutes per 50 rows:
+//   (1) parent ids come from ONE json_agg query per batch's dates (zero
+//       binds; one rs.getString), not a 3-bind-per-row lookup;
+//   (2) the children go in as inline literals via cdrInsertPhoneChildRows_
+//       (zero binds per row).
+// Resumable via CDR_PHONES_BACKFILL_RESUME (the T-8 fingerprinted pointer);
+// honors CDR_BACKFILL_BEFORE; skips rows with no phone cells (nothing to
+// re-create); a batch's idMap is filtered to the batch's own rows so the
+// helper's per-parent delete never touches a parent this batch does not
+// carry. Run from the cdr-report editor until it logs "complete".
+var NB_PHONES_BATCH_ROWS_ = 400;
+
+function backfillCDRPhonesOnly() {
+  var hmacSecret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+  if (!hmacSecret) {
+    Logger.log('CDR phones refill ABORTED: HMAC_SECRET is not set (same value as the import project).');
+    return;
+  }
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CDR Historical Data');
+  if (!sheet) { Logger.log('CDR phones refill: sheet not found.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('CDR phones refill: sheet is empty.'); return; }
+  var data = sheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
+
+  var props = PropertiesService.getScriptProperties();
+  var RESUME_KEY = 'CDR_PHONES_BACKFILL_RESUME';
+  var startIndex = nbResumeRead_(props, RESUME_KEY, data, NB_CDR_KEY_COLS_);
+  var ceilingIso = String(props.getProperty('CDR_BACKFILL_BEFORE') || '').trim();
+  if (ceilingIso && !/^\d{4}-\d{2}-\d{2}$/.test(ceilingIso)) {
+    Logger.log('CDR phones refill ABORTED: CDR_BACKFILL_BEFORE must be yyyy-mm-dd, got "' + ceilingIso + '".');
+    return;
+  }
+  Logger.log('CDR phones refill: starting at index ' + startIndex + ' of ' + data.length
+    + (ceilingIso ? ' (ceiling ' + ceilingIso + ')' : ''));
+  if (startIndex >= data.length) {
+    Logger.log('CDR phones refill complete. Clear ' + RESUME_KEY + ' to re-run.');
+    return;
+  }
+  CDR_HMAC_CACHE_ = {};
+  var TIME_LIMIT_MS = 240000, startTime = Date.now();
+  var totalPhones = 0, totalRows = 0, skippedCeiling = 0, skippedNoPhones = 0, i = startIndex;
+  try {
+    while (i < data.length) {
+      if (Date.now() - startTime > TIME_LIMIT_MS) {
+        nbResumeWrite_(props, RESUME_KEY, i, data, NB_CDR_KEY_COLS_);
+        Logger.log('Time limit reached. Resume saved at index ' + i + '. Phone rows so far this run: '
+          + totalPhones + ' over ' + totalRows + ' parent rows. Run again to continue.');
+        return;
+      }
+      var batchStartIdx = i;
+      var batch = [];
+      var batchEnd = Math.min(i + NB_PHONES_BATCH_ROWS_, data.length);
+      while (i < batchEnd) {
+        var r = data[i]; i++;
+        if (!r[2] || !r[4]) continue;
+        var iso = parseDateForNeon(r[2]);
+        if (!iso) continue;
+        if (ceilingIso && iso >= ceilingIso) { skippedCeiling++; continue; }
+        var hasPhones = (r[23] && String(r[23]).trim()) || (r[24] && String(r[24]).trim()) || (r[25] && String(r[25]).trim());
+        if (!hasPhones) { skippedNoPhones++; continue; }
+        batch.push({ callDate: iso, dept: r[3] || 'Unassigned', agentName: r[4],
+                     phonesX: r[23], phonesY: r[24], phonesZ: r[25] });
+      }
+      if (!batch.length) continue;
+
+      var conn = getNeonConn_backfill();
+      conn.setAutoCommit(false);
+      try {
+        var dates = {};
+        batch.forEach(function (b0) { dates[b0.callDate] = true; });
+        var fullMap = nbCdrParentIdMapForDates_(conn, Object.keys(dates));
+        // Only this batch's parents: the helper deletes children for every
+        // id in the map before re-inserting.
+        var idMap = {};
+        batch.forEach(function (b0) {
+          var k = nbCdrKey_(b0.callDate, b0.dept, b0.agentName);
+          if (fullMap[k] != null) idMap[k] = fullMap[k];
+        });
+        var n = cdrInsertPhoneChildRows_(conn, batch, hmacSecret, { idMap: idMap });
+        totalPhones += n; totalRows += batch.length;
+        Logger.log('CDR phones refill: batch ending at index ' + i + ' -> ' + n + ' phone rows for '
+          + batch.length + ' parent rows (' + Object.keys(idMap).length + ' parents found). Cumulative: ' + totalPhones);
+      } catch (e) {
+        try { conn.rollback(); } catch (re) {}
+        nbResumeWrite_(props, RESUME_KEY, batchStartIdx, data, NB_CDR_KEY_COLS_);
+        Logger.log('CDR phones refill batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
+        throw e;
+      } finally {
+        try { conn.close(); } catch (ce) {}
+      }
+    }
+    props.deleteProperty(RESUME_KEY);
+    Logger.log('CDR phones refill complete. Phone rows: ' + totalPhones + ' over ' + totalRows
+      + ' parent rows; skipped ' + skippedNoPhones + ' row(s) with no phone cells'
+      + (ceilingIso ? ', ' + skippedCeiling + ' at/after ' + ceilingIso : '') + '.');
+  } catch (e) {
+    Logger.log('CDR phones refill stopped. Error: ' + e.message);
+    throw e;
+  }
+}
+
+/** R33. The cdrKeyPart_ convention (neonWrite.js): null -> '<null>'. */
+function nbCdrKey_(d, dept, agent) {
+  var part = function (x) { return x == null ? '<null>' : String(x); };
+  return part(d) + '|' + part(dept) + '|' + part(agent);
+}
+
+/**
+ * R33. Parent ids for whole dates in ONE zero-bind query: json_agg of
+ * {id, d, dept, a} fetched with a single rs.getString (the F1 rule --
+ * per-row rs.getXXX is the slow path). Dates are regex-validated ISO
+ * literals, so inlining them is injection-safe.
+ */
+function nbCdrParentIdMapForDates_(conn, isoDates) {
+  var lits = (isoDates || []).filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(String(d)); })
+    .map(function (d) { return "'" + d + "'::date"; });
+  var map = {};
+  if (!lits.length) return map;
+  var stmt = conn.createStatement();
+  var rs = stmt.executeQuery(
+    "SELECT COALESCE(json_agg(json_build_object('id', id, 'd', call_date::text, 'dept', department, 'a', agent_name)), '[]')::text AS j "
+    + 'FROM call_history_dept WHERE call_date IN (' + lits.join(',') + ')');
+  var json = rs.next() ? rs.getString(1) : '[]';
+  rs.close(); stmt.close();
+  var arr = [];
+  try { arr = JSON.parse(json || '[]') || []; } catch (e) { arr = []; }
+  for (var i = 0; i < arr.length; i++) {
+    var pid = parseInt(arr[i].id, 10);
+    if (isFinite(pid)) map[nbCdrKey_(arr[i].d, arr[i].dept, arr[i].a)] = pid;
+  }
+  return map;
 }

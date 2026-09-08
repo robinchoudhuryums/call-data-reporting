@@ -238,7 +238,7 @@ test('Batch 2 follow-on: the upsert leaves a Pipeline Health row -- success when
 function cdrRow(date, agent) {
   const r = new Array(26).fill('');
   r[0] = 'July 2026'; r[1] = 'W1'; r[2] = date; r[3] = 'CSR'; r[4] = agent;
-  r[23] = '555-0100 (0:01:00)';
+  r[23] = '+12145550000 0:01:00 (1)';
   return r;
 }
 function installCdr(rows, extraProps) {
@@ -285,4 +285,98 @@ test('R27: CDR_BACKFILL_BEFORE skips rows dated at/after the ceiling; unset keep
   cap = installCdr(rows, { CDR_BACKFILL_BEFORE: '7/10/2026' });
   h.call('backfillCDRHistory');
   assert.equal(cdrDatesBound(cap).length, 0, 'a non-ISO ceiling aborts before writing anything');
+});
+
+// ── R33: the phones-only refill (zero binds) ───────────────────────────────
+// backfillCDRHistory bound five params per phone row -- ~5,600 bridge calls
+// and five minutes for a 50-row batch on the 2026-09 refill. The refill of
+// a truncated call_history_phones needs no parent upsert at all: parents
+// are looked up per date with ONE json_agg query (zero binds) and the
+// children go in as inline literals through cdrInsertPhoneChildRows_.
+function phonesConn(cap, parents) {
+  // parents: [{id, d, dept, a}] served by the json_agg lookup.
+  return {
+    setAutoCommit: function () {},
+    prepareStatement: function () { cap.binds++; throw new Error('prepareStatement must not be used on the zero-bind path'); },
+    createStatement: function () {
+      return {
+        execute: function (sql) { cap.statements.push({ sql: sql }); return true; },
+        executeQuery: function (sql) {
+          cap.statements.push({ sql: sql, query: true });
+          const j = JSON.stringify(parents);
+          return { next: function () { return true; }, getString: function () { return j; }, close: function () {} };
+        },
+        close: function () {},
+      };
+    },
+    commit: function () { cap.commits++; }, rollback: function () { cap.rollbacks++; }, close: function () { cap.closes++; },
+  };
+}
+function installPhones(rows, parents, extraProps) {
+  h.state.props = Object.assign({ NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p', HMAC_SECRET: 's' }, extraProps || {});
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'CDR Historical Data': [new Array(26).fill('h')].concat(rows) },
+  });
+  const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0, binds: 0 };
+  h.ctx.getNeonConn_backfill = function () { return phonesConn(cap, parents); };
+  return cap;
+}
+
+test('R33: backfillCDRPhonesOnly re-creates children for existing parents with zero binds', function () {
+  const rows = [cdrRow('07/08/2026', 'Anna'), cdrRow('07/09/2026', 'Ben'),
+                cdrRow('07/10/2026', 'Cal'), cdrRow('07/13/2026', 'Dee')];
+  rows[1][23] = ''; rows[1][24] = ''; rows[1][25] = '';   // Ben: no phone cells -> skipped
+  const parents = [{ id: 11, d: '2026-07-08', dept: 'CSR', a: 'Anna' }, { id: 12, d: '2026-07-09', dept: 'CSR', a: 'Ben' },
+                   { id: 13, d: '2026-07-10', dept: 'CSR', a: 'Cal' }];
+  const cap = installPhones(rows, parents, { CDR_BACKFILL_BEFORE: '2026-07-10' });
+  h.call('backfillCDRPhonesOnly');
+  assert.equal(cap.binds, 0, 'no prepared statements at all');
+  const lookups = cap.statements.filter(function (s) { return s.query; });
+  assert.equal(lookups.length, 1, 'one json_agg lookup for the batch');
+  assert.match(lookups[0].sql, /json_agg\(json_build_object\('id', id, 'd', call_date::text, 'dept', department, 'a', agent_name\)\)/);
+  assert.match(lookups[0].sql, /WHERE call_date IN \('2026-07-08'::date\)/, 'only the batch\'s dates, ceiling applied, no-phone rows skipped');
+  const inserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_phones/.test(s.sql); });
+  assert.equal(inserts.length, 1);
+  assert.match(inserts[0].sql, /VALUES \(11,'ob_ext_list_total','[0-9a-f]{64}',60,1\)/, 'inline literal tuple for Anna\'s parent id');
+  const dels = cap.statements.filter(function (s) { return /DELETE FROM call_history_phones WHERE call_history_id IN \(11\)/.test(s.sql); });
+  assert.equal(dels.length, 1, 'the IMP-4 per-parent replace, scoped to the batch\'s own parent');
+  assert.ok(!('CDR_PHONES_BACKFILL_RESUME' in h.state.props), 'a completed run clears its pointer');
+  assert.ok(cap.commits >= 1);
+});
+
+test('R33: the refill resumes from its own pointer and a batch failure rolls back + re-points', function () {
+  const rows = [cdrRow('07/08/2026', 'Anna'), cdrRow('07/09/2026', 'Ben')];
+  const parents = [{ id: 11, d: '2026-07-08', dept: 'CSR', a: 'Anna' }, { id: 12, d: '2026-07-09', dept: 'CSR', a: 'Ben' }];
+  const cap = installPhones(rows, parents);
+  h.ctx.getNeonConn_backfill = function () {
+    const c = phonesConn(cap, parents);
+    c.createStatement = function () {
+      return { execute: function (sql) { if (/INSERT/.test(sql)) throw new Error('boom'); return true; },
+               executeQuery: function () { return { next: function () { return true; }, getString: function () { return JSON.stringify(parents); }, close: function () {} }; },
+               close: function () {} };
+    };
+    return c;
+  };
+  assert.throws(function () { h.call('backfillCDRPhonesOnly'); }, /boom/);
+  assert.equal(cap.rollbacks, 1);
+  const st = JSON.parse(h.state.props.CDR_PHONES_BACKFILL_RESUME);
+  assert.equal(st.index, 0, 'the batch start is re-pointed');
+  // Honors a matching pointer: index past the end reports complete without touching Neon.
+  h.fn('nbResumeWrite_')(h.state.props && { getProperty: function (k) { return h.state.props[k] || null; }, setProperty: function (k, v) { h.state.props[k] = String(v); } },
+    'CDR_PHONES_BACKFILL_RESUME', 2, rows.map(function (r) { return r; }), h.ctx.NB_CDR_KEY_COLS_);
+  const before = cap.statements.length;
+  h.call('backfillCDRPhonesOnly');
+  assert.equal(cap.statements.length, before, 'nothing executed when already complete');
+});
+
+test('R33: cdrInsertPhoneChildRows_ skips the bound lookup when given an idMap', function () {
+  const cap = { statements: [], binds: 0 };
+  const conn = phonesConn(cap, []);
+  const n = h.fn('cdrInsertPhoneChildRows_')(conn,
+    [{ callDate: '2026-07-08', dept: 'CSR', agentName: 'Anna', phonesX: '+12145550000 0:01:00 (1)' }],
+    's', { idMap: { '2026-07-08|CSR|Anna': 77 } });
+  assert.equal(n, 1);
+  assert.equal(cap.binds, 0);
+  assert.match(cap.statements.map(function (s) { return s.sql; }).join('\n'), /VALUES \(77,'ob_ext_list_total'/);
 });

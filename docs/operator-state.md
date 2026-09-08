@@ -1587,13 +1587,17 @@ When something looks wrong, before assuming a code bug, check:
     3. Reclaim the table: `TRUNCATE call_history_phones;` (a plain DELETE
        would not return the disk -- Postgres only frees space on TRUNCATE or
        VACUUM FULL). Then in the cdr-report Script Properties set
-       `CDR_BACKFILL_BEFORE=2026-07-10`, delete `CDR_BACKFILL_RESUME` if
-       present, and run `backfillCDRHistory()` from the cdr-report editor
-       until it logs "CDR backfill complete" (resumable; each run is bounded
-       at ~4 min and picks up where it stopped). The pre-capture block
-       (day-level dialed-number aggregates that exist nowhere else) is back;
-       nothing on/after the capture start is re-created. Then delete
-       `CDR_BACKFILL_BEFORE`.
+       `CDR_BACKFILL_BEFORE=2026-07-10`, delete `CDR_PHONES_BACKFILL_RESUME`
+       if present, and run **`backfillCDRPhonesOnly()`** from the cdr-report
+       editor until it logs "CDR phones refill complete" (resumable; each run
+       is bounded at ~4 min and picks up where it stopped). The parents
+       (`call_history_dept`) were never truncated, so this re-creates ONLY
+       the phone children: one zero-bind json_agg parent lookup per batch
+       and inline-literal inserts (R33) -- a few runs for the whole sheet.
+       Do NOT use `backfillCDRHistory()` for this: it re-upserts every parent
+       with 21 bound params per row and took five minutes per 50 rows
+       before its phone path was rerouted; it remains the tool for repairing
+       the PARENT rows' JSONB name lists. Then delete `CDR_BACKFILL_BEFORE`.
     4. Arm the prune: `installNeonRetentionTrigger()`, then run
        `runNeonRetentionPrune()` once by hand and re-run until the result
        stops saying `budget hit`.
