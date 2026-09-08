@@ -169,9 +169,12 @@ tests/
                               streaks + the OPS-1 confirmed-send rule),
                               direct-call-metrics / direct-call-backfill /
                               direct-call-report (the direct-extension
-                              family: busy carve-out engine, resumable
-                              upsert, report + R11-M priors + DC-1
-                              fallback siblings),
+                              family: busy carve-out engine, the R39
+                              block delete, resumable upsert -- R39 inline
+                              literals decoded from the SQL, inline == bound
+                              parity, size packing + oversize fallback --
+                              report + R11-M priors + DC-1 fallback
+                              siblings),
                               heatmap-cell-drill (the R16h dow+slot pair
                               contract), inbound-window-scope (the
                               INBOUND_WORK_WINDOW_PST sweep + its two

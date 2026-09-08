@@ -325,6 +325,29 @@ test('F-3: dcWriteSheet_ deletes the date\'s existing rows even when Sheets coer
   assert.equal(JSON.stringify(agents), JSON.stringify(['Anna', 'Cara']));
 });
 
+test('R39: dcWriteSheet_ deletes the date as contiguous BLOCKS bottom-up, never one row at a time', function () {
+  const HEADERS = new Array(18).fill('h');
+  const mk = function (date, agent) {
+    const r = new Array(18).fill(0);
+    r[0] = 'June 2026'; r[1] = date; r[2] = 'CSR'; r[3] = agent;
+    return r;
+  };
+  // rows 2..8: T T O T O O T  -> blocks [2,2] [5,1] [8,1]
+  const grid = [HEADERS, mk('6/22/2026', 'a'), mk('6/22/2026', 'b'), mk('6/21/2026', 'c'),
+                mk('6/22/2026', 'd'), mk('6/21/2026', 'e'), mk('6/23/2026', 'f'), mk('6/22/2026', 'g')];
+  const ss = makeFakeSpreadsheet({ sheets: { 'Direct Call History': grid } });
+  const sh = ss.getSheetByName('Direct Call History');
+  const calls = [];
+  const inner = sh.deleteRows;
+  sh.deleteRows = function (r, n) { calls.push([r, n]); return inner.call(this, r, n); };
+  sh.deleteRow = function () { throw new Error('per-row deleteRow must not be used (R39)'); };
+  const res = h.fn('dcWriteSheet_')(ss, [], 'June 2026', '06/22/2026');
+  assert.equal(res.deleted, 4, 'the removed count keeps its C-5 meaning');
+  assert.equal(res.written, 0);
+  assert.deepEqual(calls, [[8, 1], [5, 1], [2, 2]], 'contiguous blocks, deleted bottom-up');
+  assert.deepEqual(sh._data.slice(1).map(function (r) { return r[3]; }), ['c', 'e', 'f'], 'the other dates survive in order');
+});
+
 test('F-19: dcBuildExtMaps_ reads past 14 dept columns and stops at the first blank header', function () {
   // 16 dept columns (F..U) with agents in cols 14-16 -- the old hard-coded
   // 14-col read silently dropped everything past col S. A blank header ends
