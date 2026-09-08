@@ -91,7 +91,8 @@ Quality checks — verify all of these before proceeding:
 If any check fails, adjust the groupings and explain the tradeoff.
 
 Flag SEAM FILES — files that sit at the boundary between subsystems
-and could reasonably belong to either.
+and could reasonably belong to either. These are important for the
+Seams & Invariants audit.
 
 Flag FROZEN SUBSYSTEM CANDIDATES — subsystems that are explicitly
 legacy / being retired / being migrated out (e.g., a deprecated
@@ -121,8 +122,14 @@ For each dimension:
 - Which subsystem(s) primarily feed evidence into this score
 
 Also recommend:
-- Policy threshold: [score ≤ N triggers policy response]
-- Consecutive cycles before trigger: [typically 2]
+- Policy threshold: [the ABSOLUTE FLOOR backstop — recommend a value based
+  on project maturity: 4/10 for mature projects, 5/10 for early-stage
+  projects that need faster feedback loops. Note this is NOT the primary
+  trigger: the primary trigger is relative (a category that declines, or
+  stays lowest without recovering), because a fixed floor never fires on a
+  healthy project]
+- Consecutive cycles before trigger: [typically 2, but 1 for
+  safety-critical projects]
 
 Also propose the project's HORIZONTAL (Axis B) bug-shape categories —
 cross-cutting failure patterns that no single subsystem owns, scored in
@@ -231,3 +238,4 @@ Seams audit frequency: every [N] subsystem cycles
 CONFIDENCE ASSESSMENT:
 For each subsystem, rate confidence that file list is complete
 and boundary is correct: High / Medium / Low.
+For any Medium or Low, explain what you'd need to verify.

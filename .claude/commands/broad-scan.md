@@ -167,5 +167,23 @@ One paragraph: is this tool ready for production use? What's the gap
 between current state and production-ready? Be specific about what
 "production-ready" means for this type of application.
 
+IMPLEMENTATION BATCH PLAN (every finding, in suggested implementation order):
+The Top 5 ranks impact; this ranks the WORK. Group every finding from
+Stages 1–3 — interface findings included — into sequential batches,
+each sized for one /broad-implement session. Order batches by
+production impact first, then by dependency: a fix that a later batch's
+regression check relies on goes earlier, and a new guard that would
+turn CI red until a gap closes goes AFTER the batch that closes it.
+Within a batch, order by severity. Estimate each item (S/M/L + rough
+hours) and total each batch.
+
+Batch 1 — [theme] | est. [total hours]
+  [ID] | [Severity] | [one-line fix] | [effort: S/M/L + hours] | [depends on / unblocks, or "—"]
+(repeat per batch)
+Deferred (not batched): [ID] — [why: needs a decision, out of scope, or blocked on another item]
+
+Every finding must appear exactly once — in a batch or under Deferred.
+The sequence is a suggestion; I will choose which batches to run.
+
 After I review the audit, I will tell you which findings to implement.
 Do not implement anything until then.

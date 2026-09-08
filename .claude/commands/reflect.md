@@ -65,7 +65,9 @@ Defensive/structural count from the tally above — a secondary signal that
 does NOT change net_score); take the `cycle` value from .cycle/STATE.md's
 Cycle field (the single source of truth — don't invent one); leave the
 synthesis-only columns blank. defensive_count is the LAST column (after
-the quoted notes). Do NOT also record net_score/prod_fixes/
+the quoted notes). Double-quote ANY field that contains a comma — the
+subsystem column often does ("Auth, Security & HIPAA") — exactly as notes
+is quoted, or the row's columns shift. Do NOT also record net_score/prod_fixes/
 new_failure_modes on an implement-phase row (the implement commands write
 STATE.md, not metrics). Skip if no .cycle/.
 
