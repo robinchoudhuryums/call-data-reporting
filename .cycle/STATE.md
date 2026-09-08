@@ -4438,3 +4438,9 @@ Subsystem cycles since last Seams audit: 2
 - Completed: gate generalized to weekly/monthly (per-cadence one-shot retries), quiet-day "No calls recorded" callout, DEFERRED warn tint in the Alerts modal (block 171).
 - Remaining follow-ons: pipeline-project failure emails stay plain (no EmailKit there, by design); queue report keeps its shell.
 - Where I left off: block 171 written; committing + PR.
+
+## 2026-09-08 — R33…R38 Neon reclaim tools + Manual Export cost
+- Completed: R33 `backfillCDRPhonesOnly` (#288), R34 `backfillCDRMissingParents` (#290/#291), R35 inline parent upsert (#292), R36 coverage window wrappers (#293), R37 preview/prune Neon extra rows (#294); R38 (block 172): inline-literal DQE/QCD/CDR daily writers with bound fallback + block-delete `deleteHistoricalRowsForDate`.
+- Decisions: keep the bound insert as the oversize fallback rather than deleting it (parity pinned against it); size-pack statements (30 KB) rather than row-count chunks; re-pad the sheet to the prior getMaxRows so the post-state matches the old rewrite.
+- Open follow-ons: inbound derivation cost (~3.7 min/export); inbound/outbound/direct writers still bind params.
+- Where I left off: block 172 written; committing + PR. Owner must run the acceptance gate (one Manual Export + both parity checks CLEAN) before the remaining Aug 20–31 exports; then holiday property (2026-09-07), delete CDR_BACKFILL_BEFORE, retention prune, VACUUM FULL.
