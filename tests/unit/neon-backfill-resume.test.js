@@ -380,3 +380,56 @@ test('R33: cdrInsertPhoneChildRows_ skips the bound lookup when given an idMap',
   assert.equal(cap.binds, 0);
   assert.match(cap.statements.map(function (s) { return s.sql; }).join('\n'), /VALUES \(77,'ob_ext_list_total'/);
 });
+
+// ── R34: the missing-parents pass ──────────────────────────────────────────
+// Finds sheet rows whose (date, dept, agent) has no call_history_dept row,
+// upserts ONLY those parents, then their phone children (ceiling-gated).
+function missingConn(cap, parents) {
+  const c = phonesConn(cap, parents);
+  c.prepareStatement = function (sql) {
+    const binds = [];
+    return {
+      setString: function (i, v) { binds[i - 1] = v; }, setInt: function (i, v) { binds[i - 1] = v; },
+      setDouble: function (i, v) { binds[i - 1] = v; },
+      execute: function () {
+        cap.statements.push({ sql: sql, binds: binds.slice() }); cap.binds += binds.length;
+        // Simulate the upsert: the new parents become visible to later lookups.
+        for (let o = 0; o < binds.length; o += 21) {
+          parents.push({ id: 100 + parents.length, d: binds[o], dept: binds[o + 1], a: binds[o + 2] });
+        }
+        return true;
+      },
+      getUpdateCount: function () { return binds.length / 21; },
+      close: function () {},
+    };
+  };
+  return c;
+}
+
+test('R34: backfillCDRMissingParents fills only the rows with no parent, phones only before the ceiling', function () {
+  const rows = [cdrRow('07/08/2026', 'Anna'),   // has a parent -> untouched
+                cdrRow('07/09/2026', 'Ben'),    // MISSING, pre-capture -> parent + phones
+                cdrRow('07/13/2026', 'Dee')];   // MISSING, post-capture -> parent only
+  const parents = [{ id: 11, d: '2026-07-08', dept: 'CSR', a: 'Anna' }];
+  const cap = installPhones(rows, parents, { CDR_BACKFILL_BEFORE: '2026-07-10' });
+  h.ctx.getNeonConn_backfill = function () { return missingConn(cap, parents); };
+  h.call('backfillCDRMissingParents');
+  const upserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_dept/.test(s.sql); });
+  assert.equal(upserts.length, 1, 'one parent upsert statement for the batch');
+  assert.equal(upserts[0].binds.length, 2 * 21, 'exactly the two missing parents');
+  assert.deepEqual([upserts[0].binds[0], upserts[0].binds[21]], ['2026-07-09', '2026-07-13']);
+  const phoneInserts = cap.statements.filter(function (s) { return /INSERT INTO call_history_phones/.test(s.sql); });
+  assert.equal(phoneInserts.length, 1, 'one inline phone insert');
+  const benId = parents.filter(function (x) { return x.a === 'Ben'; })[0].id;
+  const deeId = parents.filter(function (x) { return x.a === 'Dee'; })[0].id;
+  assert.match(phoneInserts[0].sql, new RegExp('\\(' + benId + ",'ob_ext_list_total'"), 'Ben (pre-capture) gets phone children');
+  assert.ok(phoneInserts[0].sql.indexOf('(' + deeId + ',') === -1, 'Dee (at/after the ceiling) gets none');
+  assert.equal(cap.statements.filter(function (s) { return s.query; }).length, 2, 'two zero-bind lookups: before and after the upsert');
+  assert.ok(!('CDR_MISSING_BACKFILL_RESUME' in h.state.props), 'a completed run clears its pointer');
+
+  // A clean sheet writes nothing at all.
+  const cap2 = installPhones([cdrRow('07/08/2026', 'Anna')], parents);
+  h.ctx.getNeonConn_backfill = function () { return missingConn(cap2, parents); };
+  h.call('backfillCDRMissingParents');
+  assert.equal(cap2.statements.filter(function (s) { return /INSERT/.test(s.sql); }).length, 0);
+});

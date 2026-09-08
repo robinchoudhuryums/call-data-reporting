@@ -1597,7 +1597,14 @@ When something looks wrong, before assuming a code bug, check:
        Do NOT use `backfillCDRHistory()` for this: it re-upserts every parent
        with 21 bound params per row and took five minutes per 50 rows
        before its phone path was rerouted; it remains the tool for repairing
-       the PARENT rows' JSONB name lists. Then delete `CDR_BACKFILL_BEFORE`.
+       the PARENT rows' JSONB name lists. If a batch logs fewer "parents
+       found" than parent rows, some sheet rows have NO `call_history_dept`
+       row (a day the CDR mirror skipped): run **`backfillCDRMissingParents()`**
+       (R34) -- it scans the whole sheet, upserts only the parentless rows
+       and re-creates their phone children (ceiling-gated), and logs the gap
+       dates; a clean sheet writes nothing. (The 30-day coverage window,
+       `NEON_COVERAGE_DAYS`, will not show a gap older than that -- raise it
+       to 366 to see one.) Then delete `CDR_BACKFILL_BEFORE`.
     4. Arm the prune: `installNeonRetentionTrigger()`, then run
        `runNeonRetentionPrune()` once by hand and re-run until the result
        stops saying `budget hit`.

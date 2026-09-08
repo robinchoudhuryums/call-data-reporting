@@ -893,68 +893,7 @@ function backfillCDRHistory() {
 
       try {
         // --- 1. Main rows: INSERT ... ON CONFLICT DO UPDATE (repairs JSONB) ---
-        var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
-        var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
-        var sql = 'INSERT INTO call_history_dept (' +
-          'call_date, department, agent_name, ' +
-          'ob_total, ob_answered, ob_missed, ' +
-          'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
-          'ib_total, ib_answered, ib_missed, ' +
-          'ib_answered_internal, ib_answered_external, ' +
-          'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
-          'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
-          ') VALUES ' + allPlaceholders +
-          ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
-          'ob_total = EXCLUDED.ob_total, ' +
-          'ob_answered = EXCLUDED.ob_answered, ' +
-          'ob_missed = EXCLUDED.ob_missed, ' +
-          'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
-          'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
-          'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
-          'ib_total = EXCLUDED.ib_total, ' +
-          'ib_answered = EXCLUDED.ib_answered, ' +
-          'ib_missed = EXCLUDED.ib_missed, ' +
-          'ib_answered_internal = EXCLUDED.ib_answered_internal, ' +
-          'ib_answered_external = EXCLUDED.ib_answered_external, ' +
-          'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
-          'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
-          'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
-          'ob_ext_total = EXCLUDED.ob_ext_total, ' +
-          'ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
-          'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ' +
-          'ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
-
-        var stmt = conn.prepareStatement(sql);
-        var p = 1;
-        for (var b = 0; b < batch.length; b++) {
-          var row = batch[b];
-          stmt.setString(p++, row.callDate);
-          stmt.setString(p++, row.dept);
-          stmt.setString(p++, row.agentName);
-          stmt.setInt(p++,    parseInt(row.obTotal) || 0);
-          stmt.setInt(p++,    parseInt(row.obAns)   || 0);
-          stmt.setInt(p++,    parseInt(row.obMiss)  || 0);
-          stmt.setString(p++, cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret));
-          stmt.setString(p++, cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret));
-          stmt.setString(p++, cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret));
-          stmt.setInt(p++,    parseInt(row.ibTotal)  || 0);
-          stmt.setInt(p++,    parseInt(row.ibAns)    || 0);
-          stmt.setInt(p++,    parseInt(row.ibMiss)   || 0);
-          stmt.setInt(p++,    parseInt(row.ibAnsInt) || 0);
-          stmt.setInt(p++,    parseInt(row.ibAnsExt) || 0);
-          stmt.setString(p++, cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret));
-          stmt.setString(p++, cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret));
-          stmt.setString(p++, cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret));
-          stmt.setInt(p++,    parseInt(row.obExtTotal) || 0);
-          stmt.setInt(p++,    parseInt(row.obExtAns)   || 0);
-          stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtTTT));
-          stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtATT));
-        }
-        stmt.execute();
-        var affected = stmt.getUpdateCount();
-        stmt.close();
-        conn.commit();   // commit main so the phone id-lookup SELECT sees the rows
-        totalUpserted += (affected >= 0 ? affected : batch.length);
+        totalUpserted += nbUpsertCdrParents_(conn, batch, hmacSecret);
 
         // --- 2. Phone children: the daily writer's path (R33) ---
         // This used to bind FIVE params per phone row -- ~5,600 JDBC bridge
@@ -1325,6 +1264,77 @@ function diagnoseDQELongValues() {
 }
 
 
+/**
+ * R34. The parent upsert (INSERT ... ON CONFLICT DO UPDATE on uq_call_hist)
+ * for one batch of sheet-shaped rows, factored out of backfillCDRHistory so
+ * the missing-parents pass can reuse it verbatim. Bound params (agent names
+ * + JSONB name lists are untrusted text); commits; returns the row count.
+ */
+function nbUpsertCdrParents_(conn, batch, hmacSecret) {
+  var placeholderRow = '(?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?,?,?)';
+  var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
+  var sql = 'INSERT INTO call_history_dept (' +
+    'call_date, department, agent_name, ' +
+    'ob_total, ob_answered, ob_missed, ' +
+    'ob_list_total_entries, ob_list_answered_entries, ob_list_missed_entries, ' +
+    'ib_total, ib_answered, ib_missed, ' +
+    'ib_answered_internal, ib_answered_external, ' +
+    'ib_list_total_entries, ib_list_answered_entries, ib_list_missed_entries, ' +
+    'ob_ext_total, ob_ext_answered, ob_ext_ttt_sec, ob_ext_att_sec' +
+    ') VALUES ' + allPlaceholders +
+    ' ON CONFLICT ON CONSTRAINT uq_call_hist DO UPDATE SET ' +
+    'ob_total = EXCLUDED.ob_total, ' +
+    'ob_answered = EXCLUDED.ob_answered, ' +
+    'ob_missed = EXCLUDED.ob_missed, ' +
+    'ob_list_total_entries = EXCLUDED.ob_list_total_entries, ' +
+    'ob_list_answered_entries = EXCLUDED.ob_list_answered_entries, ' +
+    'ob_list_missed_entries = EXCLUDED.ob_list_missed_entries, ' +
+    'ib_total = EXCLUDED.ib_total, ' +
+    'ib_answered = EXCLUDED.ib_answered, ' +
+    'ib_missed = EXCLUDED.ib_missed, ' +
+    'ib_answered_internal = EXCLUDED.ib_answered_internal, ' +
+    'ib_answered_external = EXCLUDED.ib_answered_external, ' +
+    'ib_list_total_entries = EXCLUDED.ib_list_total_entries, ' +
+    'ib_list_answered_entries = EXCLUDED.ib_list_answered_entries, ' +
+    'ib_list_missed_entries = EXCLUDED.ib_list_missed_entries, ' +
+    'ob_ext_total = EXCLUDED.ob_ext_total, ' +
+    'ob_ext_answered = EXCLUDED.ob_ext_answered, ' +
+    'ob_ext_ttt_sec = EXCLUDED.ob_ext_ttt_sec, ' +
+    'ob_ext_att_sec = EXCLUDED.ob_ext_att_sec';
+
+  var stmt = conn.prepareStatement(sql);
+  var p = 1;
+  for (var b = 0; b < batch.length; b++) {
+    var row = batch[b];
+    stmt.setString(p++, row.callDate);
+    stmt.setString(p++, row.dept);
+    stmt.setString(p++, row.agentName);
+    stmt.setInt(p++,    parseInt(row.obTotal) || 0);
+    stmt.setInt(p++,    parseInt(row.obAns)   || 0);
+    stmt.setInt(p++,    parseInt(row.obMiss)  || 0);
+    stmt.setString(p++, cdrParseNameFieldJson_(row.obListTot,  false, hmacSecret));
+    stmt.setString(p++, cdrParseNameFieldJson_(row.obListAns,  false, hmacSecret));
+    stmt.setString(p++, cdrParseNameFieldJson_(row.obListMiss, false, hmacSecret));
+    stmt.setInt(p++,    parseInt(row.ibTotal)  || 0);
+    stmt.setInt(p++,    parseInt(row.ibAns)    || 0);
+    stmt.setInt(p++,    parseInt(row.ibMiss)   || 0);
+    stmt.setInt(p++,    parseInt(row.ibAnsInt) || 0);
+    stmt.setInt(p++,    parseInt(row.ibAnsExt) || 0);
+    stmt.setString(p++, cdrParseNameFieldJson_(row.ibListTot,  false, hmacSecret));
+    stmt.setString(p++, cdrParseNameFieldJson_(row.ibListAns,  false, hmacSecret));
+    stmt.setString(p++, cdrParseNameFieldJson_(row.ibListMiss, false, hmacSecret));
+    stmt.setInt(p++,    parseInt(row.obExtTotal) || 0);
+    stmt.setInt(p++,    parseInt(row.obExtAns)   || 0);
+    stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtTTT));
+    stmt.setInt(p++,    cdrTimeToSeconds_(row.obExtATT));
+  }
+  stmt.execute();
+  var affected = stmt.getUpdateCount();
+  stmt.close();
+  conn.commit();   // commit main so the phone id-lookup SELECT sees the rows
+  return (affected >= 0 ? affected : batch.length);
+}
+
 // ── R33: phones-only refill (Operator State #57 step B) ────────────────────
 //
 // After `TRUNCATE call_history_phones` the PARENT rows (call_history_dept)
@@ -1463,4 +1473,143 @@ function nbCdrParentIdMapForDates_(conn, isoDates) {
     if (isFinite(pid)) map[nbCdrKey_(arr[i].d, arr[i].dept, arr[i].a)] = pid;
   }
   return map;
+}
+
+
+// ── R34: fill the parent gap (rows in the sheet with NO call_history_dept row) ─
+//
+// The R33 refill found 62 sheet rows whose (date, dept, agent) parent did not
+// exist in Neon -- a day the CDR mirror skipped. Neither the fingerprinted
+// resume pointer nor the 30-day coverage window is a good way to reach such
+// rows by hand, so this pass finds them itself: it walks the whole sheet in
+// date-batches, fetches each batch's parents with the zero-bind json_agg
+// lookup, collects the rows with no parent, upserts ONLY those parents
+// (nbUpsertCdrParents_, 21 binds/row -- fine for a few dozen rows) and then
+// re-creates their phone children, honoring CDR_BACKFILL_BEFORE for the
+// children only (parents are wanted for every date; post-capture phone rows
+// are retired). Read-mostly: a clean sheet writes nothing. Logs the dates it
+// found gaps on. Resumable via CDR_MISSING_BACKFILL_RESUME.
+var NB_MISSING_SCAN_ROWS_ = 800;
+
+function backfillCDRMissingParents() {
+  var hmacSecret = PropertiesService.getScriptProperties().getProperty('HMAC_SECRET');
+  if (!hmacSecret) {
+    Logger.log('CDR missing-parents pass ABORTED: HMAC_SECRET is not set (same value as the import project).');
+    return;
+  }
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CDR Historical Data');
+  if (!sheet) { Logger.log('CDR missing-parents pass: sheet not found.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('CDR missing-parents pass: sheet is empty.'); return; }
+  var data = sheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
+
+  var props = PropertiesService.getScriptProperties();
+  var RESUME_KEY = 'CDR_MISSING_BACKFILL_RESUME';
+  var startIndex = nbResumeRead_(props, RESUME_KEY, data, NB_CDR_KEY_COLS_);
+  var ceilingIso = String(props.getProperty('CDR_BACKFILL_BEFORE') || '').trim();
+  if (ceilingIso && !/^\d{4}-\d{2}-\d{2}$/.test(ceilingIso)) {
+    Logger.log('CDR missing-parents pass ABORTED: CDR_BACKFILL_BEFORE must be yyyy-mm-dd, got "' + ceilingIso + '".');
+    return;
+  }
+  Logger.log('CDR missing-parents pass: starting at index ' + startIndex + ' of ' + data.length
+    + (ceilingIso ? ' (phone children only before ' + ceilingIso + ')' : ''));
+  if (startIndex >= data.length) {
+    Logger.log('CDR missing-parents pass complete. Clear ' + RESUME_KEY + ' to re-run.');
+    return;
+  }
+  CDR_HMAC_CACHE_ = {};
+  var TIME_LIMIT_MS = 240000, startTime = Date.now();
+  var scanned = 0, filledParents = 0, filledPhones = 0, gapDates = {}, i = startIndex;
+  try {
+    while (i < data.length) {
+      if (Date.now() - startTime > TIME_LIMIT_MS) {
+        nbResumeWrite_(props, RESUME_KEY, i, data, NB_CDR_KEY_COLS_);
+        Logger.log('Time limit reached. Resume saved at index ' + i + '. So far: ' + filledParents
+          + ' parent(s) filled, ' + filledPhones + ' phone rows, gap dates: '
+          + (Object.keys(gapDates).sort().join(', ') || 'none') + '. Run again to continue.');
+        return;
+      }
+      var batchStartIdx = i;
+      var rows = [];
+      var batchEnd = Math.min(i + NB_MISSING_SCAN_ROWS_, data.length);
+      while (i < batchEnd) {
+        var r = data[i]; i++;
+        if (!r[2] || !r[4]) continue;
+        var iso = parseDateForNeon(r[2]);
+        if (!iso) continue;
+        rows.push({
+          callDate:   iso,
+          dept:       r[3] || 'Unassigned',
+          agentName:  r[4],
+          obTotal:    r[5],  obAns:     r[6],  obMiss:     r[7],
+          obListTot:  r[8],  obListAns: r[9],  obListMiss: r[10],
+          ibTotal:    r[11], ibAns:     r[12], ibMiss:     r[13],
+          ibAnsInt:   r[14], ibAnsExt:  r[15],
+          ibListTot:  r[16], ibListAns: r[17], ibListMiss: r[18],
+          obExtTotal: r[19], obExtAns:  r[20],
+          obExtTTT:   r[21], obExtATT:  r[22],
+          phonesX:    r[23], phonesY:   r[24], phonesZ:    r[25]
+        });
+      }
+      scanned += rows.length;
+      if (!rows.length) continue;
+
+      var conn = getNeonConn_backfill();
+      conn.setAutoCommit(false);
+      try {
+        var dates = {};
+        rows.forEach(function (b0) { dates[b0.callDate] = true; });
+        var have = nbCdrParentIdMapForDates_(conn, Object.keys(dates));
+        // P10 dedup (last write wins) on the conflict key, then keep only
+        // the rows with no parent.
+        var seen = {}, missing = [];
+        for (var d = rows.length - 1; d >= 0; d--) {
+          var k = nbCdrKey_(rows[d].callDate, rows[d].dept, rows[d].agentName);
+          if (seen[k]) continue;
+          seen[k] = true;
+          if (have[k] == null) missing.push(rows[d]);
+        }
+        missing.reverse();
+        if (missing.length) {
+          missing.forEach(function (m0) { gapDates[m0.callDate] = (gapDates[m0.callDate] || 0) + 1; });
+          filledParents += nbUpsertCdrParents_(conn, missing, hmacSecret);
+          var phoneRows = missing.filter(function (m0) {
+            return (!ceilingIso || m0.callDate < ceilingIso)
+              && ((m0.phonesX && String(m0.phonesX).trim()) || (m0.phonesY && String(m0.phonesY).trim())
+                  || (m0.phonesZ && String(m0.phonesZ).trim()));
+          });
+          if (phoneRows.length) {
+            // Re-fetch the ids the upsert just created (zero-bind) so the
+            // helper skips its bound lookup, and scope them to these rows.
+            var pdates = {};
+            phoneRows.forEach(function (m0) { pdates[m0.callDate] = true; });
+            var nowHave = nbCdrParentIdMapForDates_(conn, Object.keys(pdates));
+            var idMap = {};
+            phoneRows.forEach(function (m0) {
+              var pk = nbCdrKey_(m0.callDate, m0.dept, m0.agentName);
+              if (nowHave[pk] != null) idMap[pk] = nowHave[pk];
+            });
+            filledPhones += cdrInsertPhoneChildRows_(conn, phoneRows, hmacSecret, { idMap: idMap });
+          }
+          Logger.log('CDR missing-parents pass: batch ending at index ' + i + ' -> ' + missing.length
+            + ' parent(s) filled on ' + Object.keys(dates).filter(function (dd) { return gapDates[dd]; }).sort().join(', '));
+        }
+      } catch (e) {
+        try { conn.rollback(); } catch (re) {}
+        nbResumeWrite_(props, RESUME_KEY, batchStartIdx, data, NB_CDR_KEY_COLS_);
+        Logger.log('CDR missing-parents batch failed, rolled back. Resume at ' + batchStartIdx + '. Error: ' + e.message);
+        throw e;
+      } finally {
+        try { conn.close(); } catch (ce) {}
+      }
+    }
+    props.deleteProperty(RESUME_KEY);
+    var gapList = Object.keys(gapDates).sort().map(function (dd) { return dd + ' (' + gapDates[dd] + ')'; });
+    Logger.log('CDR missing-parents pass complete. Scanned ' + scanned + ' rows; filled ' + filledParents
+      + ' parent(s) + ' + filledPhones + ' phone rows. Gap dates: ' + (gapList.join(', ') || 'none') + '.');
+  } catch (e) {
+    Logger.log('CDR missing-parents pass stopped. Error: ' + e.message);
+    throw e;
+  }
 }
