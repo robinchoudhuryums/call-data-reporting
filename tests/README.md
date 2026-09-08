@@ -91,10 +91,11 @@ tests/
                               config-neon-c3, caller-lookup, answer-targets
                               (R12-25/R23 display standards),
                               access-control-editor, neon-coverage,
-                              digest-freshness-gate (R31: the daily digest
-                              sends only once the window day's DQE data
-                              exists -- DEFERRED + one-shot retry until the
-                              noon cutoff, which sends with the callout),
+                              digest-freshness-gate (R31/R32: every cadence
+                              sends only once its window's last day exists
+                              on the DQE source -- DEFERRED + one-shot retry
+                              until the noon cutoff, which sends with the
+                              callout; quiet-day note on the summary),
                               email-kit-v2 (R29: the notice family -- the
                               banded shell, tiles/steps/list/mono, the
                               `notice:` render hook, and the sweep that every

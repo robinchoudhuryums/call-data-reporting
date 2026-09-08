@@ -61,7 +61,6 @@ const DIGEST_DAILY_TRIGGER_HOUR   = 8;   // 8 AM script-TZ
 // weeks/months). Manual previews always send (the callout shows if stale).
 const DIGEST_DAILY_CUTOFF_HOUR    = 12;  // noon script-TZ: send regardless
 const DIGEST_DAILY_RETRY_MINUTES  = 60;
-const DIGEST_DAILY_RETRY_HANDLER_ = 'runDailyDigestRetry_';
 const DIGEST_WEEKLY_TRIGGER_HOUR  = 8;
 const DIGEST_MONTHLY_TRIGGER_HOUR = 8;   // 1st of the month, 8 AM
 
@@ -140,18 +139,24 @@ function uninstallDigestTriggers() {
 
 // -- Trigger entry points (underscore = not RPC-callable) ----------
 
-function runDailyDigests_() {
-  digestDailyAttempt_(new Date(), 'trigger');
-}
+function runDailyDigests_()   { digestGatedAttempt_('daily',   new Date(), 'trigger'); }
+function runWeeklyDigests_()  { digestGatedAttempt_('weekly',  new Date(), 'trigger'); }
+function runMonthlyDigests_() { digestGatedAttempt_('monthly', new Date(), 'trigger'); }
 
-/** R31: the one-shot retry the gate schedules. Cleans itself up first. */
-function runDailyDigestRetry_() {
-  digestClearRetryTriggers_();
-  digestDailyAttempt_(new Date(), 'retry');
+/** R31/R32: the one-shot retries the gate schedules (one handler per cadence). */
+function runDailyDigestRetry_()   { digestRetry_('daily'); }
+function runWeeklyDigestRetry_()  { digestRetry_('weekly'); }
+function runMonthlyDigestRetry_() { digestRetry_('monthly'); }
+function digestRetry_(cadence) {
+  digestClearRetryTriggers_(cadence);
+  digestGatedAttempt_(cadence, new Date(), 'retry');
 }
+var DIGEST_RETRY_HANDLERS_ = Object.freeze({
+  daily: 'runDailyDigestRetry_', weekly: 'runWeeklyDigestRetry_', monthly: 'runMonthlyDigestRetry_',
+});
 
 /**
- * R31. PURE decision for one daily attempt.
+ * R31. PURE decision for one gated attempt.
  *   'done'       -- this window was already sent (run-claim marker)
  *   'send'       -- the window day's DQE data exists
  *   'defer'      -- not yet, and it is before the cutoff: retry later
@@ -186,42 +191,57 @@ function digestLatestDqeIso_() {
   return '';
 }
 
-/** R31. One daily attempt (trigger or retry). Never throws to the runner. */
+/** R31. The daily attempt (name kept for readers/tests; see digestGatedAttempt_). */
 function digestDailyAttempt_(now, source) {
+  return digestGatedAttempt_('daily', now, source);
+}
+
+/**
+ * R31 (daily) / R32 (every cadence). One gated attempt, trigger or retry.
+ * Never throws to the runner.
+ *
+ * The daily cadence keeps its F-6/S5 weekend + holiday skips (the next
+ * weekday's run covers the previous business day). B-6: weekly/monthly
+ * DELIBERATELY have no such skip -- they fire only on Monday / the 1st, so a
+ * skipped run has no later run to cover it; their windows (prior Mon-Fri /
+ * prior calendar month) are complete either way. The freshness gate applies
+ * to all three: the window's last day must exist on the DQE read source, or
+ * the attempt defers (one-shot retry, +60 min) until the noon cutoff, then
+ * sends with the data-not-available note. A weekly run before a late
+ * Friday build, or a monthly run on the 1st before the month-end build, is
+ * exactly the daily blank-tiles shape and gets the same treatment.
+ */
+function digestGatedAttempt_(cadence, now, source) {
   try {
-    // F-6: skip when TODAY is Sat/Sun -- the trigger fires every day, and
-    // the contract is "sends each weekday morning; Monday's digest covers
-    // Friday". The data window is resolved by digestWindowFor_('daily') as
-    // the previous BUSINESS day, so Monday's run sends Friday's data.
-    const dow = now.getDay();   // 0=Sun, 6=Sat
-    if (dow === 0 || dow === 6) {
-      Logger.log('runDailyDigests_: weekend run -- skipping.');
-      return { decision: 'skip-weekend' };
+    if (cadence === 'daily') {
+      const dow = now.getDay();   // 0=Sun, 6=Sat
+      if (dow === 0 || dow === 6) {
+        Logger.log('runDailyDigests_: weekend run -- skipping.');
+        return { decision: 'skip-weekend' };
+      }
+      const todayIso = Utilities.formatDate(now, TZ, 'yyyy-MM-dd');
+      if (isCompanyHoliday_(todayIso)) {
+        Logger.log('runDailyDigests_: company holiday (' + todayIso + ') -- skipping.');
+        return { decision: 'skip-holiday' };
+      }
     }
-    // S5: company holidays skip the TRIGGER run like weekends do (manual
-    // previews unaffected); the next weekday's digest covers the previous
-    // business day via the shared holiday-aware walker.
-    const todayIso = Utilities.formatDate(now, TZ, 'yyyy-MM-dd');
-    if (isCompanyHoliday_(todayIso)) {
-      Logger.log('runDailyDigests_: company holiday (' + todayIso + ') -- skipping.');
-      return { decision: 'skip-holiday' };
-    }
-    const window = digestWindowFor_('daily', now);
+    const window = digestWindowFor_(cadence, now);
+    if (!window) return { decision: 'no-window' };
     const props = PropertiesService.getScriptProperties();
-    const alreadySent = props.getProperty('DIGEST_RUN_MARKER_daily') === window.toIso;
+    const alreadySent = props.getProperty('DIGEST_RUN_MARKER_' + cadence) === window.toIso;
     const hour = Number(Utilities.formatDate(now, TZ, 'H')) || 0;
     const latest = digestLatestDqeIso_();
     const fresh = !!latest && latest >= window.toIso;
     const decision = digestDailyDecision_(hour, fresh, alreadySent);
-    Logger.log('digestDailyAttempt_(%s): window=%s latestDqe=%s hour=%s -> %s',
-      source, window.toIso, latest || '(none)', hour, decision);
-    if (decision === 'done') { digestClearRetryTriggers_(); return { decision: decision }; }
+    Logger.log('digestGatedAttempt_(%s, %s): window=%s..%s latestDqe=%s hour=%s -> %s',
+      cadence, source, window.fromIso, window.toIso, latest || '(none)', hour, decision);
+    if (decision === 'done') { digestClearRetryTriggers_(cadence); return { decision: decision }; }
     if (decision === 'defer') {
       const hhmm = Utilities.formatDate(now, TZ, 'HH:mm');
-      const scheduled = digestScheduleRetry_();
+      const scheduled = digestScheduleRetry_(cadence);
       if (scheduled) {
         try {
-          props.setProperty('DIGEST_LAST_RESULT_daily',
+          props.setProperty('DIGEST_LAST_RESULT_' + cadence,
             'DEFERRED ' + window.toIso + ': DQE data is through ' + (latest || '(none)')
             + ' at ' + hhmm + ' -- the import has not landed yet; retrying in '
             + DIGEST_DAILY_RETRY_MINUTES + ' min (sends regardless at '
@@ -230,72 +250,47 @@ function digestDailyAttempt_(now, source) {
         return { decision: decision, latest: latest };
       }
       // Could not schedule a retry (scope / trigger quota): deferring would
-      // lose the day, so fall through to a stale send now.
-      Logger.log('digestDailyAttempt_: retry could not be scheduled -- sending with the stale note now.');
+      // lose the run, so fall through to a stale send now.
+      Logger.log('digestGatedAttempt_: retry could not be scheduled -- sending with the stale note now.');
     }
-    sendDigestsForCadence_('daily', fresh
+    sendDigestsForCadence_(cadence, fresh
       ? { window: window }
       : { window: window, staleLatest: latest || '' });
-    digestClearRetryTriggers_();
+    digestClearRetryTriggers_(cadence);
     return { decision: fresh ? 'send' : 'send-stale', latest: latest };
   } catch (e) {
-    Logger.log('runDailyDigests_ failed: %s', e);
-    notifyDigestFailure_('daily', e);
+    Logger.log('digestGatedAttempt_(%s) failed: %s', cadence, e);
+    notifyDigestFailure_(cadence, e);
     return { decision: 'error' };
   }
 }
 
-/** R31. Schedules ONE retry attempt; true on success. Best-effort. */
-function digestScheduleRetry_() {
+/** R31. Schedules ONE retry attempt for the cadence; true on success. Best-effort. */
+function digestScheduleRetry_(cadence) {
+  cadence = cadence || 'daily';
   try {
-    digestClearRetryTriggers_();
-    ScriptApp.newTrigger(DIGEST_DAILY_RETRY_HANDLER_)
+    digestClearRetryTriggers_(cadence);
+    ScriptApp.newTrigger(DIGEST_RETRY_HANDLERS_[cadence])
       .timeBased().after(DIGEST_DAILY_RETRY_MINUTES * 60 * 1000).create();
     return true;
   } catch (e) {
-    Logger.log('digestScheduleRetry_ failed: %s', e);
+    Logger.log('digestScheduleRetry_(%s) failed: %s', cadence, e);
     return false;
   }
 }
 
-/** R31. Deletes every pending retry trigger (idempotent, best-effort). */
-function digestClearRetryTriggers_() {
+/** R31. Deletes pending retry triggers -- one cadence's, or all when omitted. */
+function digestClearRetryTriggers_(cadence) {
   try {
+    const names = cadence ? [DIGEST_RETRY_HANDLERS_[cadence]]
+      : Object.keys(DIGEST_RETRY_HANDLERS_).map(function (k) { return DIGEST_RETRY_HANDLERS_[k]; });
     const triggers = ScriptApp.getProjectTriggers();
     for (let i = 0; i < triggers.length; i++) {
-      if (triggers[i].getHandlerFunction() === DIGEST_DAILY_RETRY_HANDLER_) {
+      if (names.indexOf(triggers[i].getHandlerFunction()) !== -1) {
         ScriptApp.deleteTrigger(triggers[i]);
       }
     }
   } catch (e) { /* scope not consented / none pending */ }
-}
-
-// B-6: the weekly/monthly handlers DELIBERATELY lack the daily handler's
-// weekend/holiday gates, and the asymmetry is load-bearing, not drift.
-// The daily skip is safe because the NEXT weekday's run covers the previous
-// business day (the holiday-aware walker); weekly fires only on Monday and
-// monthly only on the 1st, so a skipped run has NO later run to cover it --
-// the gate would silently LOSE that week's/month's digest. The data windows
-// are complete either way (prior Mon-Fri / prior calendar month), so on a
-// holiday Monday or a weekend 1st the email simply waits in the inbox.
-// Deferring to the next business day would mean re-architecting the triggers
-// around a daily poll + the run-claim marker -- not worth it here.
-function runWeeklyDigests_() {
-  try {
-    sendDigestsForCadence_('weekly');
-  } catch (e) {
-    Logger.log('runWeeklyDigests_ failed: %s', e);
-    notifyDigestFailure_('weekly', e);
-  }
-}
-
-function runMonthlyDigests_() {
-  try {
-    sendDigestsForCadence_('monthly');
-  } catch (e) {
-    Logger.log('runMonthlyDigests_ failed: %s', e);
-    notifyDigestFailure_('monthly', e);
-  }
 }
 
 // -- Engine --------------------------------------------------------
@@ -647,7 +642,8 @@ function sendDigestEmail_(opts) {
   if (format === 'insights') {
     coreHtml = digestInsightsHtml_(dept, opts.fromIso, opts.toIso, opts.cadence);
   } else {
-    coreHtml = digestSummaryHtml_(dept, opts.fromIso, opts.toIso);
+    coreHtml = digestSummaryHtml_(dept, opts.fromIso, opts.toIso,
+      { stale: opts.staleLatest !== undefined });
   }
 
   // Deep link into the dashboard pre-primed to this digest's exact view
@@ -711,7 +707,8 @@ function sendDigestEmail_(opts) {
  * Missed tiles, the ATT caption, and the WoW driver callout (#11) with an
  * answer-first quiet-week fallback. Returns shell ROWS for ekShellHtml_.
  */
-function digestSummaryHtml_(dept, fromIso, toIso) {
+function digestSummaryHtml_(dept, fromIso, toIso, opts) {
+  opts = opts || {};
   const stats   = computeDigestStats_(dept, fromIso, toIso);
   const totals  = stats.totals || {};
   const rung = Number(totals.totalRung) || 0;
@@ -755,7 +752,17 @@ function digestSummaryHtml_(dept, fromIso, toIso) {
       'neutral');
   }
 
+  // R32: a quiet window with FRESH data still explains its zero tiles. (A
+  // stale send already carries the data-not-available callout above the
+  // tiles -- sendDigestEmail_ -- so this one is skipped then.)
+  const quietNote = (rung === 0 && !opts.stale)
+    ? ekCalloutHtml_('No calls recorded',
+        'No answered or missed calls were recorded for ' + ekEsc_(dept) + '\'s roster on '
+        + ekEsc_(fromIso === toIso ? fromIso : (fromIso + ' – ' + toIso)) + '. If the team was '
+        + 'working, the roster or the queue mapping may need a look (Operator State #44).', 'neutral')
+    : '';
   return ekRow_(kpis)
+    + (quietNote ? ekRow_(quietNote, '12px 26px 4px') : '')
     + (wowNarrative ? ekRow_(wowNarrative, '12px 26px 4px') : '');
 }
 
