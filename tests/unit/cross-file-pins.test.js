@@ -660,3 +660,122 @@ test('S1/INV-06: the DQE drill-down\'s own window constants match the pipeline',
     'the drill-down window END drifted from the pipeline -- the drill would '
     + 'attribute legs the build does not count (INV-06)');
 });
+
+// ---- F1 / F2 (broad-scan 2026-09-09): two conventions that were WRITTEN as
+// obligations and enforced by nothing -- the C2 corollary gap. Both are the
+// repo's recurring shape: a list you must remember to join, where forgetting
+// is invisible until the surface it guards breaks in production.
+
+// F1. drive-admin.js's MODALS list is hand-copied from the ROUTER TABLE in
+// script-4-nav.html. Nothing compared them, and the gap had already
+// materialised: '/admin/coaching' shipped with no rendered coverage at all.
+// This pins every kind:'modal' route to either the driver's list or a
+// documented exemption, so a new modal route cannot join the router silently.
+const DRIVER_MODAL_EXEMPT = {
+  // The three report modals are a SEPARATE coverage question (they are
+  // admin-only while being vetted, and their payload fixtures are not built
+  // by gen-phase3.js). Listed here so the omission is deliberate and visible
+  // rather than an accident of who last edited the driver.
+  'inbound-modal':     'report modal — admin-only while vetted; no harness fixture yet',
+  'direct-call-modal': 'report modal — admin-only while vetted; no harness fixture yet',
+  'outbound-modal':    'report modal — admin-only while vetted; no harness fixture yet',
+};
+
+test('F1: every modal route in the router is driven by drive-admin.js or documented as exempt', function () {
+  const nav = read('script-4-nav.html', DASH);
+  const routed = [];
+  for (const m of nav.matchAll(/'(\/[^']+)':\s*\{\s*kind:\s*'modal',\s*modalId:\s*'([^']+)'/g)) {
+    routed.push({ route: m[1], modalId: m[2] });
+  }
+  assert.ok(routed.length >= 7,
+    'the router table parse found only ' + routed.length + ' modal routes -- the '
+    + 'table was reshaped and this pin can no longer read it. Fix the pin.');
+
+  // Scan EVERY asserting driver the gate runs, not just drive-admin: the
+  // Individual Report modal is driven by drive-smoke + drive-f13, and a pin
+  // that looked only at drive-admin would have called it uncovered. The
+  // driver list is read from ci.mjs's STAGES so it follows the real gate.
+  const ci = read('tools/ui-harness/ci.mjs');
+  const driverFiles = [...ci.matchAll(/\['node',\s*\['(drive-[a-z0-9-]+\.js)'\]/g)].map((m) => m[1]);
+  assert.ok(driverFiles.length >= 5,
+    'only ' + driverFiles.length + ' asserting drivers parsed out of ci.mjs -- '
+    + 'the STAGES table was reshaped. Fix the pin.');
+  const driven = new Set();
+  for (const df of driverFiles) {
+    const src = read('tools/ui-harness/' + df);
+    for (const m of src.matchAll(/#([a-z0-9-]+-modal)\b/g)) driven.add(m[1]);
+  }
+
+  const uncovered = routed
+    .filter((r) => !driven.has(r.modalId) && !(r.modalId in DRIVER_MODAL_EXEMPT))
+    .map((r) => r.route + ' (#' + r.modalId + ')');
+
+  assert.deepEqual(uncovered, [],
+    'modal route(s) with NO rendered-gate coverage and no documented exemption: '
+    + uncovered.join(', ') + '. Add each to drive-admin.js\'s MODALS list (its '
+    + 'RPCs must be mocked in build-harness.js first), or add it to '
+    + 'DRIVER_MODAL_EXEMPT here with the reason. A modal nothing ever OPENS is '
+    + 'how the header dept-selector ReferenceError reached production.');
+});
+
+test('F1: every DRIVER_MODAL_EXEMPT entry still names a real modal route', function () {
+  const nav = read('script-4-nav.html', DASH);
+  const routedIds = new Set();
+  for (const m of nav.matchAll(/kind:\s*'modal',\s*modalId:\s*'([^']+)'/g)) routedIds.add(m[1]);
+  const stale = Object.keys(DRIVER_MODAL_EXEMPT).filter((id) => !routedIds.has(id));
+  assert.deepEqual(stale, [],
+    'DRIVER_MODAL_EXEMPT names modal id(s) the router no longer has: ' + stale.join(', ')
+    + '. Drop them -- a stale exemption silently widens the hole it documents.');
+});
+
+// F2. Eight engines gate their handler BODY on an `*_ENABLED` Script Property,
+// so an installed trigger whose flag is off fires and returns immediately.
+// svc()'s optional `flagProp` is what makes the Health page say so ("installed
+// but DISABLED -- every run is a no-op" / "NO trigger installed but
+// flag=true"). CLAUDE.md states that a new flag-gated engine MUST pass it;
+// nothing checked, so a ninth engine would silently inherit the old blind spot.
+test('F2: every *_ENABLED-gated engine passes its flagProp to svc()', function () {
+  const health = read('SystemHealth.gs', DASH);
+  // Extract the flags actually PASSED TO svc(), by walking each call's
+  // balanced parens. A first draft just grepped SystemHealth.gs for the flag
+  // string and passed even after the argument was deleted -- the flag is also
+  // named in hint text and the property inventory. A check that stays green
+  // when its subject is gone is worse than no check.
+  const svcFlags = new Set();
+  for (let i = health.indexOf('svc('); i !== -1; i = health.indexOf('svc(', i + 1)) {
+    let depth = 0, j = i + 3;
+    for (; j < health.length; j++) {
+      if (health[j] === '(') depth++;
+      else if (health[j] === ')') { depth--; if (depth === 0) break; }
+    }
+    const call = health.slice(i, j + 1);
+    for (const m of call.matchAll(/'([A-Z0-9_]+_ENABLED)'/g)) svcFlags.add(m[1]);
+  }
+  assert.ok(svcFlags.size >= 6,
+    'only ' + svcFlags.size + ' flagProps parsed out of svc() calls -- the call '
+    + 'shape changed and this pin can no longer read it. Fix the pin.');
+
+  // The engines, discovered from their own files rather than restated here:
+  // a handler that reads `<X>_ENABLED` is flag-gated by definition.
+  const dir = path.join(ROOT, 'apps-script', 'department-dashboard');
+  const engines = new Set();
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.gs'))) {
+    if (f === 'SystemHealth.gs' || f === 'Config.gs') continue;   // reader + registry, not engines
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    // An ENGINE is a flag-gated TRIGGER handler. A file that reads an
+    // `*_ENABLED` property but installs no trigger is a feature flag
+    // (AGENT_ROLE_ENABLED, LOGIN_NOTIFY_ENABLED in Auth.gs) -- svc() reports
+    // TRIGGERS, so those correctly have no flagProp and must not be demanded.
+    if (!/ScriptApp\.newTrigger\(/.test(src)) continue;
+    for (const m of src.matchAll(/getProperty\(\s*'([A-Z0-9_]+_ENABLED)'\s*\)/g)) engines.add(m[1]);
+  }
+  assert.ok(engines.size >= 6,
+    'only ' + engines.size + ' flag-gated engines discovered -- the property read '
+    + 'was reshaped and this pin can no longer see them. Fix the pin.');
+
+  const missing = [...engines].filter((f) => !svcFlags.has(f)).sort();
+  assert.deepEqual(missing, [],
+    'flag-gated engine(s) whose flag is never passed to svc(): ' + missing.join(', ')
+    + '. Pass it as svc()\'s last argument, or the Health page reports the trigger '
+    + 'ARMED while every run is a no-op -- the exact blind spot flagProp exists to close.');
+});

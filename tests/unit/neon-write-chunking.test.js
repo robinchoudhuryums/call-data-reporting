@@ -317,3 +317,37 @@ test('IMP-4: phone children are per-parent DELETE-then-insert (corrections + rem
     assert.equal(log.commits, 2, 'parent commit + one child (delete+insert) commit');
   } finally { delete h.state.props.HMAC_SECRET; }
 });
+
+// F5 (broad-scan 2026-09-09): a non-finite numeric used to become a real,
+// believable 0 in Neon with nothing saying so. The VALUE is unchanged (the
+// bound fallback has always written 0 via `|| 0`, and inline == bound parity
+// is pinned above) -- what is new is that the coercion is COUNTED and rides
+// out on the log note every writer already prints. Pinned here because a
+// counter nothing checks is exactly the silent path it was added to close.
+test('F5: non-finite numerics are counted, and the clean note is unchanged', function () {
+  const sqlInt = h.fn('neonSqlInt_'), sqlNum = h.fn('neonSqlNum_');
+  assert.equal(sqlInt(42), '42');
+  assert.equal(sqlNum(1.5), '1.5');
+
+  h.ctx.NEON_COERCED_ = 0;
+  assert.equal(sqlInt(7), '7');
+  assert.equal(h.ctx.NEON_COERCED_, 0, 'a finite value must not be counted');
+
+  // The three shapes an upstream defect actually produces.
+  assert.equal(sqlInt(NaN), '0');
+  assert.equal(sqlNum(undefined), '0');
+  assert.equal(sqlNum(Infinity), '0');
+  assert.equal(h.ctx.NEON_COERCED_, 3, 'NaN / undefined / Infinity must each be counted');
+
+  // The common path's log line must be BYTE-IDENTICAL to before this landed --
+  // operators and any log-scraping read it.
+  assert.equal(h.fn('neonInlineNote_')({ statements: 3, fallback: 0, coerced: 0 }),
+    ' (3 statement(s))');
+  assert.equal(h.fn('neonInlineNote_')({ statements: 3, fallback: 1, coerced: 0 }),
+    ' (3 statement(s), 1 oversize row(s) via bound params)');
+
+  // And the dirty path must NAME the problem as upstream, not as a write bug.
+  const dirty = h.fn('neonInlineNote_')({ statements: 3, fallback: 0, coerced: 2 });
+  assert.match(dirty, /2 NON-FINITE value\(s\) written as 0/);
+  assert.match(dirty, /wrong at the source/);
+});

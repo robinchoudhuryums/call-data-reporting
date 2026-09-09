@@ -53,6 +53,14 @@ const MODALS = [
   // because that driver never asserts. Read selectors off the router.
   { name: 'System Health',  btn: '#system-health-btn',   sel: '#health-modal',         adminMenu: true },
   { name: 'Caller Lookup',  btn: '#caller-lookup-btn',   sel: '#caller-lookup-modal',  adminMenu: false },
+  // F1 (broad-scan 2026-09-09): the coaching worklist. It was the one admin
+  // route in the router table with no rendered coverage -- thorough server
+  // pins, and no assertion that the modal had ever OPENED, which is the
+  // dept-selector class of bug this driver exists to catch. Its RPCs
+  // (getCoachingWorklist / getCoachingDeliveryStatus) are already mocked in
+  // build-harness.js. cross-file-pins.test.js now fails if a NEW modal route
+  // joins the router without joining this list or the documented exemptions.
+  { name: 'Coaching',       btn: '#coaching-btn',        sel: '#coaching-modal',       adminMenu: true },
 ];
 
 (async () => {

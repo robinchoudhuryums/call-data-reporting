@@ -1,6 +1,29 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **Batch 1 + Batch 2 of the 2026-09-09 broad scan are implemented** (F1 modal
+  rendered-coverage tripwire + Coaching added; F2 svc() flagProp tripwire; F3
+  window.confirm ratchet; F5 non-finite coercion counted) -- block
+  `175-batch1-batch2-broad-implement.md`. **TWO DEPLOYS PENDING:** the F5
+  change is shipped code in both `apps-script/cdr-report` and
+  `apps-script/cdr-import` (`clasp push -f` in each); nothing else in the batch
+  needs a deploy. **`npm run ci:ui` was NOT run** (playwright absent here), so
+  the new Coaching driver stage is unverified until CI -- statically checked
+  against the six passing modals, low but non-zero risk.
+- **F4 was RETRACTED, not implemented.** The audit claimed dark mode inherits
+  light-mode black shadows as an oversight; styles.html line 68 documents it as
+  deliberate ("Constant across themes -- rgba(black) reads on both light and
+  dark surfaces"), and my evidence was wrong anyway (I diffed the @media print
+  block, not `body[data-mode="dark"]`). Whether it reads on dark is PERCEPTUAL
+  and belongs to the operator visual check, not a code finding. Do not
+  re-raise it from the audit text.
+- **Correction to the audit's F3 evidence:** it claimed the window.confirm
+  backlog GREW to 14; the precise count (excluding comments) is 11, i.e. it
+  SHRANK below the documented "~12". The finding's mechanism (no tripwire)
+  stood; the number did not. The ratchet now pins it at 11.
+- **Follow-on surfaced by building F1:** the three REPORT modals (inbound /
+  direct / outbound) have no rendered coverage at all. Now explicit in
+  `DRIVER_MODAL_EXEMPT` rather than invisible; needs gen-phase3.js fixtures.
 - **INV-06 work-window parity is CLOSED and needs no deploy** (block
   `174-inv06-window-parity-broad-implement.md`). The `S1/INV-06` pin in
   cross-file-pins now covers FOUR copies, not two: it gained the DQE

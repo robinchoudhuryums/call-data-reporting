@@ -207,9 +207,12 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
 # the F10 no-duplicate-badge property -- these had thorough server-side pins
 # and no assertion that any of them RENDERED, the dept-selector class of bug.
-# Its MODALS list is hand-copied from the router table in script-4-nav.html --
-# the Coaching modal (`/admin/coaching`) is NOT in it yet, so that surface has
-# no rendered-gate coverage; a new admin route must be added to the list),
+# Its MODALS list mirrors the router table in script-4-nav.html, and since F1
+# that mirror is ENFORCED: cross-file-pins.test.js fails when a `kind:'modal'`
+# route is neither driven by an asserting driver nor listed in its
+# DRIVER_MODAL_EXEMPT with a reason. Coaching (`/admin/coaching`) joined the
+# list; the three REPORT modals (inbound / direct / outbound) are the current
+# documented exemptions -- admin-only while vetted, no harness fixture yet),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
@@ -865,9 +868,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   -- the thing `window.prompt` structurally cannot do, since it discards what
   was typed and leaves the caller to reject it afterwards with a toast.
   Native `prompt()` is now ENFORCED out of the client
-  (`html-include-structure.test.js`); the ~12 legacy `window.confirm`
-  callsites remain the documented incremental backlog, which is why that pin
-  covers the prompt family only.
+  (`html-include-structure.test.js`); the 11 legacy `window.confirm` callsites
+  remain the documented incremental backlog, which is why that pin covers the
+  prompt family only. That backlog is now a RATCHET, not a promise -- the same
+  suite pins the count and fails if it RISES (a new native confirm instead of
+  `dsConfirm_`) or if it falls without the cap being lowered in the same
+  commit, so the number cannot drift from the prose again.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare
