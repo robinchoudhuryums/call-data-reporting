@@ -11,11 +11,14 @@
   enforcement"; that was wrong — the pin has existed since the 2026-08-27
   scan and tests/README.md listed it. docs/module-dependencies.md carried
   that false claim for one day and is fixed.
-- **OPEN QUESTION put to the operator, not yet decided:** whether to move the
-  tooling layer (`tests/`, `tools/ui-harness/`, `scripts/`) inside the Cycle
-  Workflow Config Subsystems. Analysis was given in-session; no config change
-  was made. Nothing depends on the answer — it changes what cycle commands
-  can target, not how anything runs.
+- **DEFERRED by the operator (2026-09-09), not open:** moving the tooling layer
+  (`tests/`, `tools/ui-harness/`, `scripts/`) inside the Cycle Workflow Config
+  Subsystems. Recommendation was to leave it alone; operator said skip for now.
+  Do not re-raise unprompted. Context if it comes back: `/broad-scan` is
+  repo-wide and already reaches that code, so the only gap is that the
+  subsystem-scoped commands (`/targeted-audit`, `/audit`, `/plan`,
+  `/implement`) cannot target it. The middle option, if ever wanted, is ONE
+  subsystem listing just the ~18 enforcement files rather than all 99 suites.
 - **Batch 2 of the 2026-09-03 broad scan is implemented on
   `claude/broad-scan-p493eu` (O-2, O-3/I-8/C2-5, O-4, O-5, O-6, O-7, O-12,
   O-14 + the Batch 1 follow-ons I-6 / backfill tally rows / EMPTY holiday
