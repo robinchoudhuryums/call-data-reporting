@@ -103,6 +103,15 @@ corresponding scriptId (from the Apps Script project's Settings page).
 The top-level `.clasp.json` controls the dashboard's push from the repo
 root, as before.
 
+## Module dependencies
+
+The table above says WHERE code lives; it does not say what depends on what.
+Apps Script's single global scope makes that graph invisible (no imports), so
+it is computed rather than written:
+[`module-dependencies.md`](module-dependencies.md) carries the per-file
+fan-out, the most-shared symbols, and the cross-project seams. Regenerate it
+with `node scripts/module-deps.mjs --write`.
+
 ## Key cross-project assumptions
 
 These are easy to break inadvertently. Change one without the other and the

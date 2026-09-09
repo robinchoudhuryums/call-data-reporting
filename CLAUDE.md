@@ -54,6 +54,13 @@ drift apart, and caps this file's size.
 - [`docs/architecture.md`](docs/architecture.md) — data flow across CDR
   Import, CDR Report, Department Dashboard, Neon Postgres. Read this first
   when chasing a bug to figure out which layer is involved.
+- [`docs/module-dependencies.md`](docs/module-dependencies.md) — the
+  **inter-module dependency map**: which dashboard `.gs` files are reachable
+  from which, and the cross-project seams. Apps Script's single global scope
+  hides this (no imports to read), so it is COMPUTED — regenerate with
+  `node scripts/module-deps.mjs --write` after adding or renaming a `.gs`.
+  Read it before touching `Config.gs` / `Util.gs` / `Auth.gs` / `NeonRead.gs` /
+  `Data.gs`, which 61-95% of the project depends on.
 - [`docs/known-issues.md`](docs/known-issues.md) — institutional memory.
   Fixed bugs, design rules, drift risks. Read before changing the source
   pipeline or the dashboard's data layer.
