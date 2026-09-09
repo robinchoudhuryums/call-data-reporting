@@ -636,7 +636,14 @@ function alertRowsForDate_(dateIso) {
         // path carries queue_split like the DAL does. Display read for the
         // split cell is unnecessary here -- the cell is plain-texted JSON.
         const alertNumCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
-        const values = sheet.getRange(2, 1, lastRow - 1, alertNumCols).getValues();
+        // R41: bounded SPAN read. This asks a ONE-DAY question and was reading
+        // the whole sheet to answer it. No ext derivation here, so the span is
+        // the only read needed. The per-row date filter below STAYS -- the span
+        // bounds the read, it does not replace the filter (the sheet is not
+        // reliably date-ordered).
+        const span = dqeWindowRowSpan_(sheet, lastRow, dateIso, dateIso, ssTZ);
+        const values = span
+          ? sheet.getRange(span.startRow, 1, span.numRows, alertNumCols).getValues() : [];
         for (let i = 0; i < values.length; i++) {
           const r = values[i];
           const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);

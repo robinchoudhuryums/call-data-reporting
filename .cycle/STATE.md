@@ -1,6 +1,91 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **Phase 0 of the historical date-column work is DONE and awaiting a LIVE RUN**
+  (block `182-phase0-historical-date-census-broad-implement.md`).
+  `previewHistoricalDateColumns()` (cdr-report/sheetRepairs.js) is a read-only
+  census over all five historical sheets. **Nothing downstream can be sized
+  until an operator runs it in the editor and captures the output** — Phase 1's
+  scope is literally "whichever sheets the census calls MIXED-TYPE".
+- **The three-phase plan this belongs to** (agreed with the owner, not yet in
+  `docs/`): Phase 1 normalize DQE col B to real `Date` (the other four sheets
+  already write `dateObj`, so Date is the family-consistent target and the
+  writer needs NO change — hence no INV-16 two-file edit); Phase 2 a nightly
+  check-and-sort trigger over all five sheets; Phase 3 the binary-search span,
+  DEFERRED and gated on a verified-order guarantee.
+- **Two findings that reshaped that plan — do not re-derive them:**
+  (1) Only DQE sorts itself on every write. The daily / Manual Export path
+  (the path Operator State #56 tells operators to use for reprocessing) NEVER
+  sorts Q Path / QCD / CSR Transfer, and sorts CDR only against the last row.
+  So the nightly trigger is the PRIMARY mechanism for those three, not a safety
+  net. (2) The check must be "single-typed AND ordered", never just ordered:
+  Sheets groups numeric/Date before text, so a mixed column that has been
+  sorted reads as non-decreasing while being wrong — an order-only check would
+  certify DQE forever.
+- **The date-column CACHE was investigated and REFUSED** (no code written).
+  Two measured blockers: the column serializes to ~436 KB against CacheService's
+  ~100 KB per-value cap; and the span is POSITIONAL, so a force re-import of an
+  older date shifts rows while neither `reportFreshnessTag_()` nor `lastRow`
+  necessarily moves — a stale span silently under-reports, and the per-row date
+  filter cannot recover rows never read. Do not revive it; the real fix is the
+  three phases above.
+- **C2 is now mechanized as far as it honestly can be** (block
+  `176-c2-mechanized-broad-implement.md`). claude-md-split fails when CLAUDE.md
+  names a test/script/driver/docs file that does not exist. Test + doc only, no
+  deploy. **The bullet-level "every convention names an enforcement" meta-test
+  was deliberately NOT built** — measured against F1/F2/F3 it catches 0 of 3
+  (F2/F3 cite a test for a different claim in the same bullet; F1 is not in a
+  bullet). Do not revive it from the audit text without re-reading that
+  measurement.
+- **NEXT: bound the Neon-outage fallback (planned, not started).** Findings
+  from the planning pass: R26b bounded the sheet read's SPAN but the read is
+  DEPT-INDEPENDENT and still charged PER DEPT, so the all-dept loop
+  (`QCDReport.gs:358 allDepts.forEach`) multiplies one identical read by 14.
+  The repo already has the two mechanisms needed: per-execution memos
+  (`DQE_DATE_BOUNDS_MEMO_`, `DEPT_CONFIG_ROWS_MEMO_`) and whole-run time
+  budgets (`CACHE_WARM_TOTAL_BUDGET_MS`, `NEON_MIRROR_BUDGET_MS`). Plan is
+  memo-first, budget-second; full plan in the session transcript.
+- **Batch 1 + Batch 2 of the 2026-09-09 broad scan are implemented** (F1 modal
+  rendered-coverage tripwire + Coaching added; F2 svc() flagProp tripwire; F3
+  window.confirm ratchet; F5 non-finite coercion counted) -- block
+  `175-batch1-batch2-broad-implement.md`. **TWO DEPLOYS PENDING:** the F5
+  change is shipped code in both `apps-script/cdr-report` and
+  `apps-script/cdr-import` (`clasp push -f` in each); nothing else in the batch
+  needs a deploy. **`npm run ci:ui` was NOT run** (playwright absent here), so
+  the new Coaching driver stage is unverified until CI -- statically checked
+  against the six passing modals, low but non-zero risk.
+- **F4 was RETRACTED, not implemented.** The audit claimed dark mode inherits
+  light-mode black shadows as an oversight; styles.html line 68 documents it as
+  deliberate ("Constant across themes -- rgba(black) reads on both light and
+  dark surfaces"), and my evidence was wrong anyway (I diffed the @media print
+  block, not `body[data-mode="dark"]`). Whether it reads on dark is PERCEPTUAL
+  and belongs to the operator visual check, not a code finding. Do not
+  re-raise it from the audit text.
+- **Correction to the audit's F3 evidence:** it claimed the window.confirm
+  backlog GREW to 14; the precise count (excluding comments) is 11, i.e. it
+  SHRANK below the documented "~12". The finding's mechanism (no tripwire)
+  stood; the number did not. The ratchet now pins it at 11.
+- **Follow-on surfaced by building F1:** the three REPORT modals (inbound /
+  direct / outbound) have no rendered coverage at all. Now explicit in
+  `DRIVER_MODAL_EXEMPT` rather than invisible; needs gen-phase3.js fixtures.
+- **INV-06 work-window parity is CLOSED and needs no deploy** (block
+  `174-inv06-window-parity-broad-implement.md`). The `S1/INV-06` pin in
+  cross-file-pins now covers FOUR copies, not two: it gained the DQE
+  drill-down's own `DQE_DD_WINDOW_START/END` and the CST half of
+  `DASHBOARD_WORK_WINDOW` (derived via `DQE_PST_TO_CST`). Test-and-docs only
+  — no production code, so nothing to push. **Correction recorded there:** the
+  2026-09-08 systems-map run claimed INV-06 was "the one seam with NO
+  enforcement"; that was wrong — the pin has existed since the 2026-08-27
+  scan and tests/README.md listed it. docs/module-dependencies.md carried
+  that false claim for one day and is fixed.
+- **DEFERRED by the operator (2026-09-09), not open:** moving the tooling layer
+  (`tests/`, `tools/ui-harness/`, `scripts/`) inside the Cycle Workflow Config
+  Subsystems. Recommendation was to leave it alone; operator said skip for now.
+  Do not re-raise unprompted. Context if it comes back: `/broad-scan` is
+  repo-wide and already reaches that code, so the only gap is that the
+  subsystem-scoped commands (`/targeted-audit`, `/audit`, `/plan`,
+  `/implement`) cannot target it. The middle option, if ever wanted, is ONE
+  subsystem listing just the ~18 enforcement files rather than all 99 suites.
 - **Batch 2 of the 2026-09-03 broad scan is implemented on
   `claude/broad-scan-p493eu` (O-2, O-3/I-8/C2-5, O-4, O-5, O-6, O-7, O-12,
   O-14 + the Batch 1 follow-ons I-6 / backfill tally rows / EMPTY holiday
@@ -4451,3 +4536,59 @@ Subsystem cycles since last Seams audit: 3
 - Open follow-ons: three separate Raw Data reads per import; the ui.alert inflating the reported export time.
 - Where I left off: R38 (#295) + R39 (#296) MERGED; branch restarted from main. Owner-side runbook is COMPLETE: Aug 20-31 Manual Exports done, runNeonCoverageCheck clean on all four sheet-backed tables (only Sept 7 flagged, since resolved as a holiday), COMPANY_HOLIDAYS updated, CDR_BACKFILL_BEFORE deleted, retention trigger armed + prune at steady state (0 rows, no budget hit), VACUUM FULL run.
 - STILL OPEN (deploy confirmation, not code): (a) cdr-import pushed since R39 merged? The Aug exports all ran on R38, so R39's Direct-writer change may be in the repo but not live -- its acceptance signal is the processIntegratedHistory:Direct durationMs on the next import. (b) cdr-report pushed since R38 merged? It carries the INV-16 neonWrite.js twin plus three consumers (buildDQEHistoricalData.js, dbHistorical.js, neonbackfill.js); the guard checks the REPO, so a stale cdr-report deployment leaves the two LIVE copies drifted and its safety-net DQE build + backfill tools still binding params.
+
+## 2026-09-09 (later) — R40 per-execution memo on the sheet DQE DAL (Neon-outage fallback, Phase 1)
+- **Pre-work (owner's three confirmations, all verified in QueueReportEmail.gs):** on an error or an empty/partial REPORT nothing reaches subscribers, `QUEUE_REPORT_LAST_SENT` is not claimed (so the next poll retries), and only `getAdminEmails_()` is notified. Nuance reported rather than glossed: a partial DELIVERY failure (some addresses bounced) DOES claim the day and the successful recipients keep their copy — deliberate, so a retry cannot re-blast them.
+- **Completed:** `DQE_SHEET_ROWS_MEMO_` (block 177) — per-execution memo on `sheetFetchDqeRows_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped at 6, body moved to `sheetFetchDqeRowsUncached_`. Six R40 pins in dal-cutover, all six mutation-tested.
+- **Decisions:** clone-on-read is load-bearing, not tidiness (six readers hand the result to `applyQueueSplitToRows_`, which mutates in place — an un-cloned memo leaks dept A's narrowing into dept B and passes every parity assertion while doing it); shallow clone suffices only because `slots` is always assigned, never index-mutated; per-execution not CacheService (a cross-request cache would need ingest invalidation the freshness tags don't provide at DAL granularity); measurement via `source=sheet-memo` log lines, no test asserting it is faster.
+- **Code family:** used **R40** — R32 was already the digest freshness gate. Checked the whole `R\d\d` space before assigning.
+- **C2 answered in-commit:** adding a SECOND per-execution DQE memo broke 8 tests in 2 suites on stale fixtures — the trap CLAUDE.md had documented in prose. Prose was sufficient for one memo and is not for two, so cross-file-pins now pins the family (`DQE_EXEC_MEMOS`) to reset together, with a discovery floor. Mutation-tested both directions.
+- **FINDING — Phase 1 reaches 2 of 7 readers.** Five DQE readers bypass the DAL entirely and never adopted R26b: `computeSummary_` (per DEPT — the N× multiplier that motivated the whole task), IndividualReport, InsightsReport, `computeActiveAgentsInRange_`, Alerts. Each does its own whole-sheet `getRange(2,1,lastRow-1,~35)` + getValues + getDisplayValues. Only MissedCallsReport + AgentHome use the DAL. Recorded in CLAUDE.md's span bullet as a KNOWN GAP so it is not rediscovered.
+- **Phase 1b (proposed, not started):** apply the R26b span transform to those five. Same proven change, ~60× per read, no memory retention, and no ownership reasoning needed since each keeps its own fetch. Not bundled — five readers with five column requirements is its own review surface.
+- **Phase 2 (unstarted, from the earlier plan):** per-caller failure policy + whole-run time budget.
+- **Where I left off:** block 177 written; `npm run ci` 1245 pass / 0 fail, INV-16 clean, ci:ui skips (no playwright locally). Committing next.
+- **Still open from 2026-09-08 (deploy confirmation, not code):** cdr-import and cdr-report pushes since R38/R39 merged — see the previous entry.
+
+## 2026-09-09 (latest) — R41 span-bound the five DAL-bypassing DQE readers (Neon-outage fallback, Phase 1b)
+- **Completed:** the R26b transform applied to `computeSummary_` (charged per DEPT), IndividualReport, InsightsReport, `computeActiveAgentsInRange_` and `alertRowsForDate_`, through ONE new shared `Data.gs::dqeWindowRowSpan_` (block 178). New suite `tests/unit/dqe-span-readers.test.js`, 7 pins, all mutation-tested.
+- **The trap, found by reading callers before writing code:** four of the five ALSO derive `deptQueueExts` from the same bulk grid, and that derivation needs every ext a roster agent EVER used — a naive span shrinks it, changes which floaters are recognized, and leaves every pre-existing test green. Split into `deptQueueExtsFromSheet_` (whole sheet, cols A..D) + the full-width span. That is the suite's central pin.
+- **Two mutations that could NOT fire, measured rather than assumed:** removing the read-side date filter in `computeSummary_` or IR leaves the suite green — computeSummary_ re-checks from/to + priorFrom/priorTo in its aggregation loop, IR buckets the trend against a fixed month-key list. Alerts is the ONE reader with no second gate, so that is where the filter is pinned. Written into the suite instead of contorting a fixture to force a pass — an assertion that cannot fail is worse than none.
+- **Decisions:** no cache-version bump (no aggregation rule changed; payload identity is pinned by a span-vs-full-scan equivalence test); `deptQueueExtsFromSheet_` deliberately does NOT reuse `deptQueueExtsForNeonReader_`, whose Neon-first preference is wrong for a reader that is on the sheet because Neon is off; `meta.rowsScanned` verified to come from `lastRow`, not the grid length.
+- **Code family:** R41 (R40 was Phase 1's memo; R32 was the digest freshness gate).
+- **Left deliberately undone:** `sheetFetchDqeRows_` still carries its own inline span — two implementations of one computation. A drift note sits in NeonRead.gs and CLAUDE.md; consolidation is a follow-on, not bundled here (6th reader, own review surface).
+- **CLAUDE.md corrected:** the span bullet's "five readers still bypass … a known gap" paragraph (written last session) is now FALSE and was replaced with the R41 rule + the all-history trap. Trimmed twice to stay under the 4 KB per-bullet ratchet, which fired on the first attempt.
+- **Where I left off:** block 178 written; `npm run ci` 1252 pass / 0 fail, INV-16 clean, ci:ui skips (no playwright locally). Committing next.
+- **Operator still owes (manual, needs a live deploy):** Regression Scenarios S6, S35, S13 first — they exercise the floater/ext derivation, the only place this change could alter behavior — then S1/S2/S11/S14/S20. Plus `runLiveSmoke` after deploy.
+- **Still open from 2026-09-08 (deploy confirmation, not code):** cdr-import and cdr-report pushes since R38/R39 merged.
+
+## 2026-09-09 (latest+1) — R42 span consolidation + R43 all-dept compute budget (Neon-outage Phase 2)
+- **Completed (R42):** `sheetFetchDqeRows_`'s inline span folded into `Data.gs::dqeWindowRowSpan_` — the follow-on block 178 left open. There is now exactly ONE span implementation. Best evidence it was worth doing: mutating the shared helper to a tail scan now fails SIX pins across dal-cutover AND dqe-span-readers, where it used to fail one.
+- **Completed (R43 / Phase 2):** `computeQcdAllDepartments_` bounds itself at `QCD_ALLDEPT_BUDGET_MS` (default 4 min, Script-Property override, NeonMirror's shape), stopping on a DEPT BOUNDARY and marking the payload `meta.partial`. Block 179.
+- **The budget is ~10 lines; the per-caller policy is the substance.** A partial payload has a NON-ZERO dept count, so the existing D-1 empty check could NOT have caught it — the subscriber email would have gone out with departments silently missing (absent reads as "no calls") and the sent-marker would then have stopped the real report going out that day. That is exactly the guarantee the owner asked me to confirm two sessions ago. Four callers enumerated, four decisions: subscriber blast REFUSES (marker not claimed, `PARTIAL <iso>` status, next poll retries); cache REFUSES (a 6h TTL would pin an incomplete report); web SHOWS + note; self-send SHOWS + discloses in the EMAIL body (refusing would block an admin mailing themselves a snapshot during the very outage that causes a partial, and a forwarded copy loses the web note).
+- **Decisions:** stop before a dept, never mid-dept — the company grand totals accumulate per dept, so a half-computed dept corrupts the verdict band; the budget accessor refuses 0/negative (a 0 budget makes every report partial — 8 tests catch it); no cache-version bump (a complete payload serializes identically, the partial fields being `undefined`).
+- **The Health classifier is a prefix ALLOWLIST**, so `PARTIAL` renders GREEN unless added — the same hole O-5 / D-1 / O-9 each patched by hand. Added + pinned.
+- **Code family:** R42, R43 (R40 = the memo, R41 = the five span readers).
+- **Where I left off:** block 179 written; `npm run ci` 1261 pass / 0 fail, INV-16 clean, module-deps in sync, ci:ui skips (no playwright locally). Committing next.
+- **Follow-ons opened:** the D-1 cache tests in qcd-report.test.js `delete` the real `computeQcdAllDepartments_` from the vm context instead of restoring it (worked around via a load-time capture, worth fixing properly); the budget is per-RUN, so one pathologically slow dept can still eat most of it; the other ~20 cut-over readers have no whole-run budget — none loops over depts, but that is an argument from structure, not measurement.
+- **Operator owes (manual, needs a live deploy):** S32 + S20, and S4/S1 for the span consolidation. Worth setting `QCD_ALLDEPT_BUDGET_MS=1` once to see the partial note render and confirm no email goes out.
+- **Still open from 2026-09-08 (deploy confirmation, not code):** cdr-import and cdr-report pushes since R38/R39 merged.
+
+## 2026-09-09 (latest+2) — R44 shared per-execution DQE grid memos (from a live 53s trace)
+- **Owner supplied a live 53.4s `getDepartmentSummary` log** (Sales + PAP combined view, 31.9k rows). Diagnosis: 142 rows out for ~16s in per dept — the cost was never the aggregation. The DATE COLUMN was read 3× (bounds + once per dept inside `dqeWindowRowSpan_`, ~7.4s each ≈ 22s) and the cols-A..D EXT GRID 2× (~8s each ≈ 16s). Both grids are dept-independent; every repeat returned identical bytes.
+- **Completed:** `dqeDateColumnIso_` (date column, once per execution, returned ISO-normalized so the per-row `rowDateIso_` pass goes too) + `dqeExtGrid_` (cols A..D, once per execution, shared by BOTH ext derivations incl. the Neon path's sheet fallback). Block 180. Four read-count pins, all mutation-tested; payload equality pinned separately so the memos can only change cost.
+- **Expected ~53s → ~30s for a 2-dept combined view** — arithmetic on the owner's numbers, NOT measured by me. The `[dqe-read] computeSummary_:<2nd dept>` line is the confirmation after deploy.
+- **R41 bounded the WIDTH of the windowed read; these are the two reads a span structurally cannot bound**, and nothing had bounded their COUNT. R40 made exactly this argument for the DAL's row sets — it was always true here and simply never made.
+- **The reset trap fired for real, twice.** The R40 family tripwire named five suites; a SIXTH (`individual-report.test.js`) broke and was NOT named, because the tripwire only sees suites that reset at least one member. **Measured the obvious widening** ("any suite building a DQE fixture must reset the family"): it flags 20 suites of which ~1 is real — mostly pipeline suites that never call a dashboard reader. Not shipped; the hole is documented in the tripwire itself so the next person knows why.
+- **Where I left off:** block 180 written; `npm run ci` 1265 pass / 0 fail, INV-16 clean, ci:ui skips. Committing next.
+- **Follow-ons opened:** the ext grid could go to CacheService anchored on `reportFreshnessTag_()` (~0 on warm cache, costs INV-30 anchor reasoning); `getDeptQueueExts_` is handed cols A..D but only reads C+D; **the CLAUDE.md span bullet is at 4026/4096 bytes** and now carries R25b/R26b/R40/R41/R42/R44 — the next addition trips the ratchet and the honest fix is moving incident detail to fix-history, not another trim.
+- **Operator owes:** S6/S35/S13 after deploy (the floater/ext path is the only place a stale ext grid could change an answer), then S1/S2/S4.
+
+## 2026-09-09 (latest+3) — R45 cross-request cache for the dept ext set
+- **Completed:** `deptExts:v1:<dept>:<freshnessTag>:<rosterHash>` on `deptQueueExtsFromSheet_` (block 181), TTL 6h. The Neon path's sheet fallback now delegates to the same function, so there is one cached derivation. R44's per-execution memo still covers a MISS; R45 removes the read from most requests.
+- **Checked the cap BEFORE designing:** the grid is ~128k cells, far past CacheService's ~100 KB per-value limit, so the grid is not a cacheable unit — only the derived SET (a few dozen strings) is.
+- **The key has two inputs because the value does.** Grid → freshness tag; dept ROSTER → `hashAgents_`. The tag does NOT move when `DO NOT EDIT!` is edited or Orphan Fix adds an agent, and a stale ext set changes which agents count as floaters (INV-53) — a wrong number, not an error. The override path returns before the lookup, so a Dept Config change takes effect immediately.
+- **Three of my first-draft pins did not fire, and each was the test's fault.** The tag test drove the tag through fixtures, but `install()` clears the cache and `reportFreshnessTag_` reads through the latestDate cache — rewritten to stub the tag. The isolation test mutated a cache MISS, never the hit path — rewritten to two hits. The throwing-cache mutation was equivalent along the tested path — re-targeted at removing the guard. Worth remembering: on cache work the first draft of a pin usually tests the miss path by accident.
+- **The S2 sweep caught the unregistered prefix immediately** — registered in SPECS + classified `tag` in ANCHOR_SPECS. The enforcement working as designed, twice in two sessions (R44 hit the memo-family tripwire the same way).
+- **Where I left off:** block 181 written; `npm run ci` 1271 pass / 0 fail, INV-16 clean, ci:ui skips. Committing next.
+- **Remaining per-request floor after R44+R45:** the date-column read (~7.4s, once) and the QCD grid (~7.7s, already once). The date column has the same shape as the ext set — dept-independent, changes only on ingest — so the same treatment applies if it is still the visible floor after deploy.
+- **Operator owes:** S6/S35/S13 after deploy, plus one deliberate check the unit tests cannot do — add an agent to a roster mid-day and confirm the floater view reflects it on the next load, not after the TTL.

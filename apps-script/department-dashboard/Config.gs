@@ -641,6 +641,10 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_RETENTION_CALL_DAYS: 'operator', NEON_RETENTION_HISTORY_MONTHS: 'operator',
     CACHE_WARM_HOUR: 'operator',
     QUEUE_REPORT_ENABLED: 'operator',
+    // R43: the all-departments report's whole-run compute budget (ms). Unset
+    // uses QCD_ALLDEPT_BUDGET_MS_DEFAULT; raising it past the ~6 min ceiling
+    // just restores the vanishing-run failure it exists to prevent.
+    QCD_ALLDEPT_BUDGET_MS: 'operator',
     // engine — outcome/state the code writes itself
     CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',

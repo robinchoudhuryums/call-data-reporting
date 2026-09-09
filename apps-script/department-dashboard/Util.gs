@@ -620,14 +620,19 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
     // Pull col D too -- needed for queue-extension matching against
     // the dept's queue ext set (mirrors Data.gs::computeSummary_).
     const numCols = Math.max(HISTORICAL_COLS.TOTAL_ANSWERED, HISTORICAL_COLS.QUEUE_EXT);
-    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
-    const values = range.getValues();
 
-    // Dept's queue extension set -- the same getDeptQueueExts_ helper
+    // Dept's queue extension set -- the same getDeptQueueExts_ derivation
     // Data.gs uses, so the floater list here exactly matches what My
-    // Department would surface for the same range.
-    const deptQueueResult = getDeptQueueExts_(dept, rosterSet, values);
+    // Department would surface for the same range. R41: that derivation needs
+    // ALL history, so it reads its own whole-sheet cols-A..D slice rather than
+    // the windowed span below.
+    const deptQueueResult = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow);
     const deptQueueExts = deptQueueResult.exts;
+
+    // R41: bounded SPAN read (the per-row date filter below STAYS -- the span
+    // bounds the read, it does not replace the filter).
+    const span = dqeWindowRowSpan_(sheet, lastRow, from, to, ssTZ);
+    const values = span ? sheet.getRange(span.startRow, 1, span.numRows, numCols).getValues() : [];
 
     for (let i = 0; i < values.length; i++) {
       const r = values[i];

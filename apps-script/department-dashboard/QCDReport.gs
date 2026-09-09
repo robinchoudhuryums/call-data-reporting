@@ -268,7 +268,12 @@ function qcdAllDeptCachedData_(from, to, opts) {
   // pre-ingest request for a real business day yields depts:[] -- legitimate
   // to SERVE, poison to PIN for 6h. Recomputing an empty window is cheap.
   const empty = !data || !data.depts || !data.depts.length;
-  if (json.length <= 100000 && !cfgFailed && !empty) {
+  // R43: a PARTIAL payload is never cached either, and for a sharper reason
+  // than the empty one -- pinning it would serve an incomplete report to every
+  // viewer for the full 6h TTL, with departments silently missing rather than
+  // showing zero. Recomputing is the correct cost.
+  const partial = !!(data && data.meta && data.meta.partial);
+  if (json.length <= 100000 && !cfgFailed && !empty && !partial) {
     const tPut = Date.now();
     try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
@@ -277,6 +282,9 @@ function qcdAllDeptCachedData_(from, to, opts) {
   } else if (empty) {
     Logger.log('qcdAllDeptCachedData_: no dept rows for ' + from + '..' + to
       + ' -- NOT cached (D-1: an empty, probably pre-ingest payload must not be pinned for the 6h TTL).');
+  } else if (partial) {
+    Logger.log('qcdAllDeptCachedData_: PARTIAL payload for ' + from + '..' + to
+      + ' -- NOT cached (R43: an incomplete report must not be pinned for the 6h TTL).');
   } else if (cfgFailed) {
     Logger.log('qcdAllDeptCachedData_: Dept Config read errored -- skipping cache put.');
   }
@@ -311,6 +319,33 @@ function qcdAllFreshnessAnchor_() {
 // the automated Daily Call Queue Report email (QueueReportEmail.gs) can reuse
 // the EXACT report compute in a trigger context, which has no Session user to
 // feed getQcdAllDepartments' auth gate (the computeDigestStats_ convention).
+/**
+ * R43: whole-run time budget for the all-departments report.
+ *
+ * This loop calls computeQcdReport_ up to THREE times per department (range,
+ * MTD, prior month) across every mapped dept, and each of those falls back to
+ * its own sheet scan when Neon is unreachable. That is the run that measured
+ * 730s+ during an outage -- past the 6-minute ceiling, whose kill SKIPS catch
+ * blocks, so none of the designed fallbacks run and the execution simply
+ * vanishes. A vanished run records nothing: no payload, no failure row, no
+ * status. The Daily Call Queue Report lost a day to exactly this.
+ *
+ * So the loop stops itself first and returns what it has, MARKED PARTIAL. The
+ * budget is deliberately well under the ceiling -- everything after the loop
+ * (the verdict block, JSON.stringify, the cache put) still has to run.
+ *
+ * Same shape as NeonMirror's NEON_MIRROR_BUDGET_MS: a default with a
+ * Script-Property override, so an operator can widen it without a redeploy.
+ */
+var QCD_ALLDEPT_BUDGET_MS_DEFAULT = 4 * 60 * 1000;   // 4 min of the ~6 min ceiling
+
+function qcdAllDeptBudgetMs_() {
+  var raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty('QCD_ALLDEPT_BUDGET_MS'); } catch (e) {}
+  var n = Number(raw);
+  return (isFinite(n) && n > 0) ? n : QCD_ALLDEPT_BUDGET_MS_DEFAULT;
+}
+
 function computeQcdAllDepartments_(from, to) {
   const t0 = Date.now();
   const allDepts = getAllDepartments_();
@@ -355,9 +390,27 @@ function computeQcdAllDepartments_(from, to) {
   // them without the log.
   const timing = { depts: {}, reportCalls: 0, gridMs: 0 };
 
+  // R43 budget state. `mapped` counts the depts this run INTENDED to compute,
+  // so `partial` can say how much is missing rather than just that some is.
+  const budgetMs = qcdAllDeptBudgetMs_();
+  let budgetHit = false;
+  let deptsSkipped = 0;
+  let mapped = 0;
+
   allDepts.forEach(function (dept) {
     // Own queues only -- children listed under their own dept.
     if (queuesForDept_(dept, { includeChildren: false }).length === 0) return;
+    mapped++;
+    // R43: check BEFORE starting a dept, never mid-dept -- a half-computed
+    // department would corrupt the company grand totals it feeds (they
+    // accumulate per dept), and those are the figures the verdict band reads.
+    // Stopping on a clean dept boundary keeps every number that IS reported
+    // exactly as correct as a full run's.
+    if (budgetHit || Date.now() - t0 > budgetMs) {
+      budgetHit = true;
+      deptsSkipped++;
+      return;
+    }
     const tDept = Date.now();
     const rep = computeQcdReport_(dept, from, to,
                                   /*includeSubQueues=*/ false,
@@ -522,9 +575,24 @@ function computeQcdAllDepartments_(from, to) {
   timing.deptCount = depts.length;
   Logger.log('[qcdAll] compute totalMs=' + timing.totalMs + ' depts=' + depts.length
     + ' reportCalls=' + timing.reportCalls + ' (per-dept lines above; grid read timing in [qcd-grid])');
+  if (budgetHit) {
+    Logger.log('[qcdAll] PARTIAL: budget ' + budgetMs + 'ms exhausted after ' + depts.length
+      + ' of ' + mapped + ' mapped dept(s); ' + deptsSkipped + ' skipped. The payload is marked '
+      + 'partial -- it is NOT cached and the subscriber email refuses it. Raise '
+      + 'QCD_ALLDEPT_BUDGET_MS only if the ~6 min ceiling genuinely has room; the usual cause '
+      + 'is Neon being unreachable so every per-dept read falls back to a sheet scan.');
+  }
   const data = {
     meta:        { from: from, to: to, cacheHit: false, computeMs: Date.now() - t0, deptCount: depts.length,
-                   timing: timing },
+                   timing: timing,
+                   // R43: an INCOMPLETE run says so, in the payload, so every
+                   // consumer can decide for itself. `partial` is the flag the
+                   // cache and the subscriber email both refuse on; the counts
+                   // are what the web note tells the viewer.
+                   partial: budgetHit || undefined,
+                   partialDeptsSkipped: budgetHit ? deptsSkipped : undefined,
+                   partialDeptsMapped: budgetHit ? mapped : undefined,
+                   partialBudgetMs: budgetHit ? budgetMs : undefined },
     dateLabel:   dateLabel,
     depts:       depts,
     grandTotals: grandTotals,

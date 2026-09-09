@@ -464,12 +464,45 @@
     return band;
   }
 
+  /**
+   * R43: renders (or removes) the incomplete-report note on the results
+   * wrapper. Anchored to the same host as the coverage note and NOT to
+   * #qcd-alldept-body, whose innerHTML is rewritten on every render.
+   */
+  function qcdAllDeptPartialNote_(data) {
+    const host = $('qcd-alldept-results');
+    if (!host) return;
+    const old = host.querySelector(':scope > .qcd-partial-note');
+    const meta = (data && data.meta) || {};
+    if (!meta.partial) { if (old) old.remove(); return; }
+    const shown = (data && data.depts) ? data.depts.length : 0;
+    const mapped = Number(meta.partialDeptsMapped) || 0;
+    const secs = Math.round((Number(meta.partialBudgetMs) || 0) / 1000);
+    const html = '<div class="ds-note qcd-partial-note" role="status">'
+      + '<strong>This report is incomplete.</strong> '
+      + 'It computed ' + shown + ' of ' + mapped + ' departments before its '
+      + secs + '-second budget ran out, so the departments below are correct but '
+      + '<strong>some are missing entirely</strong> \u2014 a department that is absent '
+      + 'here is not a department with no calls. Nothing was cached and no subscriber '
+      + 'email was sent. Retry, or narrow the date range.'
+      + '</div>';
+    if (old) old.outerHTML = html;
+    else host.insertAdjacentHTML('afterbegin', html);
+  }
+
   function qcdAllDeptRender_(data) {
     // R12-26: host is the RESULTS wrapper, not #qcd-alldept-body -- the body's
     // innerHTML is rewritten below (which would wipe the note) and the print
     // clone reads only the body, so the note stays out of print.
     coverageNoteUpsert_('qcd-alldept-results', 'qcdAll',
       (data && data.meta && data.meta.from) || null, 'qcd');
+    // R43: a PARTIAL payload is legitimate to SHOW (some data beats a run that
+    // hit the 6-min ceiling and returned nothing) but must never READ as
+    // complete -- a missing department is indistinguishable from one that had
+    // no calls, and this report exists to compare departments against each
+    // other. Idempotent upsert, same shape as the coverage note above, so a
+    // re-render never stacks two notes.
+    qcdAllDeptPartialNote_(data);
     $('qcd-alldept-results-date').textContent = data.dateLabel || '';
     // QV-5: the subscriber blast is single-day only (the engine's unit of
     // send); disable it with a reason on multi-day views.

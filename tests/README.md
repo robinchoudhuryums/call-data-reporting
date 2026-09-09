@@ -67,7 +67,15 @@ tests/
     ...                       + 81 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
-                              trim pass): dal-cutover parity, escalations
+                              trim pass): dal-cutover parity (+ the R40
+                              per-execution sheet-DAL row memo: hit parity,
+                              per-caller row ownership, key separation,
+                              bounded retention), dqe-span-readers (R41: the
+                              five readers that bypassed the DAL now share
+                              dqeWindowRowSpan_ -- out-of-order/backfill rows,
+                              span-vs-full-scan equivalence, the ALL-HISTORY
+                              ext derivation that a naive span would shrink,
+                              and the wide-read count), escalations
                               hardening, neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
@@ -84,7 +92,13 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
-                              sheet-repairs-merge, cache-warm-budget (the
+                              sheet-repairs-merge,
+                              historical-date-columns (Phase 0: the read-only
+                              date-column census over all five historical
+                              sheets -- MIXED TYPE is detected separately from
+                              disorder, because a mixed column that has been
+                              sorted reads as non-decreasing while being
+                              wrong), cache-warm-budget (the
                               O-4 whole-run budget), neon-backfill-resume
                               (T-8 fingerprinted resume pointers + the
                               T-7 sanitizer-loss tally + the R33 zero-bind

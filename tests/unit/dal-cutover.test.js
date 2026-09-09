@@ -130,6 +130,9 @@ function install(source) {
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;   // F9: shared date-column bounds scan
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.state.cache.clear();
   h.ctx.getDashboardNeonConn_ = (source === 'neon')
     ? fakeNeonConn
@@ -358,6 +361,9 @@ test('F9: a missing DQE sheet yields empty bounds and still caches the negative'
     timeZone: 'America/Chicago', sheets: { 'DO NOT EDIT!': ROSTER },
   });
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.state.cache.clear();
   const b = h.call('sheetScanDqeDateBounds_');
   assert.equal(b.max, null);
@@ -522,6 +528,9 @@ function r26Install(rows) {
   h.state.spreadsheet = ss;
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.state.cache.clear();
   return sheet;
 }
@@ -679,4 +688,102 @@ test('R26c: the timing line is emitted ONCE per execution, not per caller', func
     // read nor a log line -- a per-call line would misreport the real cost.
     assert.equal(hits.length, 1, 'memoized calls do not re-log');
   } finally { cap.restore(); }
+});
+
+// ── R40: the per-execution sheet DAL memo ─────────────────────────────────
+//
+// sheetFetchDqeRows_ is DEPT-INDEPENDENT -- it filters by date, and each
+// caller filters by roster afterwards -- so every department asking the same
+// question for the same window paid an identical read. R26b bounded the WIDTH
+// of each read; the memo bounds the COUNT. It is the sheet path that carries
+// this, which is the default read source AND the whole of the Neon-outage
+// fallback.
+//
+// The memo is only safe because of the clone: six readers hand this result
+// straight to applyQueueSplitToRows_, which rewrites rows IN PLACE. The
+// isolation test below is the one that actually guards that -- a memo without
+// the clone passes every parity assertion here and silently corrupts the
+// second department's numbers in production.
+
+/** Counts wide reads of DQE Historical Data by wrapping the sheet's getRange. */
+function r40CountDqeReads() {
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const real = sheet.getRange;
+  let wide = 0;
+  sheet.getRange = function (startRow, startCol, numRows, numCols) {
+    if (numCols && numCols > 1) wide++;      // the full-width span read, not the date-column scan
+    return real.apply(sheet, arguments);
+  };
+  return { get count() { return wide; }, restore: function () { sheet.getRange = real; } };
+}
+
+test('R40: a repeated (window, shape) is served from the memo, not re-read', function () {
+  install('sheet');
+  const c = r40CountDqeReads();
+  try {
+    h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+    assert.equal(c.count, 1, 'the first call reads the sheet');
+    h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+    h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+    assert.equal(c.count, 1, 'the 2nd and 3rd callers cost no read at all');
+  } finally { c.restore(); }
+});
+
+test('R40: a memo hit is value-identical to a fresh read', function () {
+  install('sheet');
+  const fresh = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+  const hit = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+  assert.deepEqual(hit, fresh, 'the memo changes cost, never content');
+  // And it is still the same answer the uncached primitive gives, so the memo
+  // cannot drift from the read it stands in for.
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
+  assert.deepEqual(h.call('sheetFetchDqeRowsUncached_', '2026-03-10', '2026-03-11'), fresh);
+});
+
+test('R40: each caller owns its rows -- one caller\'s narrowing cannot leak into the next', function () {
+  install('sheet');
+  const a = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+  // Exactly what applyQueueSplitToRows_ does to a row it narrows.
+  a[0].totalAnswered = -999;
+  a[0].queueScoped = true;
+  a.length = 1;
+  const b = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+  assert.notEqual(b[0].totalAnswered, -999, 'the second dept sees un-narrowed figures');
+  assert.equal(b[0].queueScoped, undefined, 'and no leaked narrowing marker');
+  assert.ok(b.length > 1, 'array-level mutation does not truncate the next caller');
+  // The memo itself is likewise untouched, so a THIRD caller is clean too.
+  const c = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+  assert.deepEqual(c, b);
+});
+
+test('R40: the memo is keyed on the window AND the detail shape', function () {
+  install('sheet');
+  const day = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-10');
+  const both = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+  assert.ok(both.length > day.length, 'a different window is not served the first window\'s rows');
+  assert.ok(day.every(function (r) { return r.dateIso === '2026-03-10'; }));
+
+  const plain = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11');
+  assert.equal(plain[0].slots, undefined, 'the plain shape carries no slots');
+  const detail = h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11', { includeMissedDetail: true });
+  assert.ok(Array.isArray(detail[0].slots), 'the detail shape does');
+  // The detail shape is a superset, but serving it to a plain caller would
+  // change what applyQueueSplitToRows_'s narrowSlots branch does -- so the two
+  // shapes must never share a key in either direction.
+  assert.equal(h.call('sheetFetchDqeRows_', '2026-03-10', '2026-03-11')[0].slots, undefined,
+    'a plain call after a detail call still gets the plain shape');
+});
+
+test('R40: retention is bounded -- the memo cannot grow without limit', function () {
+  install('sheet');
+  const max = h.ctx.DQE_SHEET_ROWS_MEMO_MAX_;
+  assert.ok(max > 0 && max < 100, 'the cap is a small positive number');
+  for (let i = 0; i < max + 4; i++) {
+    h.call('sheetFetchDqeRows_', '2026-03-' + String(10 + i).padStart(2, '0'), '2026-03-11');
+  }
+  assert.equal(h.ctx.DQE_SHEET_ROWS_MEMO_.order.length, max, 'FIFO evicts past the cap');
+  assert.equal(Object.keys(h.ctx.DQE_SHEET_ROWS_MEMO_.byKey).length, max,
+    'and the evicted rows are released, not just unlisted');
 });

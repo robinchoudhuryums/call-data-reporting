@@ -54,6 +54,13 @@ drift apart, and caps this file's size.
 - [`docs/architecture.md`](docs/architecture.md) — data flow across CDR
   Import, CDR Report, Department Dashboard, Neon Postgres. Read this first
   when chasing a bug to figure out which layer is involved.
+- [`docs/module-dependencies.md`](docs/module-dependencies.md) — the
+  **inter-module dependency map**: which dashboard `.gs` files are reachable
+  from which, and the cross-project seams. Apps Script's single global scope
+  hides this (no imports to read), so it is COMPUTED — regenerate with
+  `node scripts/module-deps.mjs --write` after adding or renaming a `.gs`.
+  Read it before touching `Config.gs` / `Util.gs` / `Auth.gs` / `NeonRead.gs` /
+  `Data.gs`, which 61-95% of the project depends on.
 - [`docs/known-issues.md`](docs/known-issues.md) — institutional memory.
   Fixed bugs, design rules, drift risks. Read before changing the source
   pipeline or the dashboard's data layer.
@@ -200,9 +207,12 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
 # the F10 no-duplicate-badge property -- these had thorough server-side pins
 # and no assertion that any of them RENDERED, the dept-selector class of bug.
-# Its MODALS list is hand-copied from the router table in script-4-nav.html --
-# the Coaching modal (`/admin/coaching`) is NOT in it yet, so that surface has
-# no rendered-gate coverage; a new admin route must be added to the list),
+# Its MODALS list mirrors the router table in script-4-nav.html, and since F1
+# that mirror is ENFORCED: cross-file-pins.test.js fails when a `kind:'modal'`
+# route is neither driven by an asserting driver nor listed in its
+# DRIVER_MODAL_EXEMPT with a reason. Coaching (`/admin/coaching`) joined the
+# list; the three REPORT modals (inbound / direct / outbound) are the current
+# documented exemptions -- admin-only while vetted, no harness fixture yet),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
@@ -259,6 +269,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 >    the INV-30 docs but not in cache-version-sync's SPECS (F3b), and a
 >    second read-source dimension with no B-2-style tripwire (F11). "None —
 >    prose only" is an acceptable answer; an unanswered question is not.
+>    **What enforces C2 itself:** only its testable half. `claude-md-split`
+>    fails when this file names a test / script / driver / `docs/` file that
+>    does NOT exist — a doc advertising a guarantee that was renamed away is
+>    worse than one admitting a rule is prose-only. The other half ("does THIS
+>    claim have a test?") is deliberately NOT mechanized: a bullet-level
+>    "cites an enforcement" check was measured against F1/F2/F3 and would have
+>    caught NONE — the gap is always one unenforced claim inside a bullet that
+>    cites a test for a different one. Answering C2 stays a human step.
 >
 > `tests/unit/claude-md-split.test.js` enforces this with a per-bullet
 > ratchet: every bullet stays under 4 KB (the once-grandfathered oversize five
@@ -363,8 +381,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   answer a windowed question against a years-deep sheet, and both do it the same
   way: scan the DATE COLUMN alone, find the FIRST and LAST row in the window,
   then read only that row span at full width -- `computeCsrTransferRange_`
-  (Data.gs, R25b) and `sheetFetchDqeRows_` (NeonRead.gs, R26b, which had been
-  reading ~2.2M cells TWICE to answer a one-day question). A span is correct
+  (Data.gs, R25b) and `sheetFetchDqeRows_` (NeonRead.gs, R26b). A span is correct
   whatever the row order is: an out-of-order row merely WIDENS it and can never
   fall outside it, which is why **the per-row date filter always stays** -- the
   span bounds the read, it does not replace the filter. A TAIL scan is the trap:
@@ -375,15 +392,46 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   backfill of older dates can still sit after newer rows and a tail scan stops
   early and silently drops them -- quietly wrong numbers, strictly worse than
   being slow. **The one legitimate tail scan is
-  `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and it is safe for two reasons
-  that do NOT hold here: its sheet is kept date-sorted by its own exporter, AND
-  it WIDENS until the date's block is provably complete. So: date-ordered plus a
-  completeness check -> a tail scan is fine; anything else -> span it. New
-  windowed readers over a dated sheet must not add a third rediscovery.
+  `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and its warrant is NOT that its
+  sheets are ordered -- it reads DQE / QCD / CDR Historical Data, and none of
+  those reliably is. It WIDENS until the date's block is provably complete, and
+  a date's rows are contiguous because a force re-import deletes then re-appends.
+  So: a completeness check -> a tail scan is fine; ordering alone is never the
+  warrant. New windowed readers over a dated sheet must not add a third
+  rediscovery.
   ENFORCED by out-of-order + full-scan-equivalence tests in
-  `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); R26c's
-  `[dqe-read] dqeDateBounds ... openMs=N scanMs=N` line is what tells you
-  whether a slow read is the scan or the workbook open.
+  `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); the
+  `[dqe-read]` log lines say whether a slow read is the scan or the open (R26c).
+  **The five DAL-bypassing readers are span-bounded too (R41), via ONE shared
+  `Data.gs::dqeWindowRowSpan_`** -- `computeSummary_` (charged per dept),
+  IndividualReport, InsightsReport, `computeActiveAgentsInRange_`, Alerts.
+  **The trap that makes it more than find-and-replace:** four of them ALSO
+  derive `deptQueueExts` from that grid, and that needs every ext a roster
+  agent EVER used -- feed it the span and the set silently shrinks, changing
+  which floaters are recognized while every existing test stays green. So each
+  concern takes its own read: `deptQueueExtsFromSheet_` (whole sheet, cols
+  A..D) plus the full-width span. Pinned by `dqe-span-readers.test.js`.
+  R42 folded `sheetFetchDqeRows_`'s own copy in too, so there is now exactly
+  ONE span implementation and a bug in it fails pins in BOTH suites.
+- **A span bounds a dated read's WIDTH; only a per-execution MEMO bounds the
+  COUNT (R40/R44).** `sheetFetchDqeRows_` is DEPT-INDEPENDENT, so every dept asking the same question for the same window
+  re-read the same span. It now memoizes per EXECUTION in
+  `DQE_SHEET_ROWS_MEMO_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped
+  at `DQE_SHEET_ROWS_MEMO_MAX_`. **It returns a SHALLOW CLONE per call, and
+  that is load-bearing:** six readers hand the result straight to
+  `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an un-cloned memo
+  leaks dept A's narrowing into dept B. Shallow suffices only because `slots`
+  is always ASSIGNED, never index-mutated -- deep-clone it if that changes.
+  **R44: the two whole-sheet grids a span CANNOT bound are read once per
+  EXECUTION** -- `dqeDateColumnIso_` (the date column, returned ISO-normalized;
+  shared by `sheetScanDqeDateBounds_` AND every `dqeWindowRowSpan_` call) and
+  `dqeExtGrid_` (the cols-A..D ext slice, shared by both ext derivations).
+  Both grids are DEPT-INDEPENDENT, so a combined sub-queue view was re-reading
+  identical bytes per dept (measurements: R44 in fix-history). Read-counts
+  pinned in `dqe-span-readers.test.js`; both join `DQE_EXEC_MEMOS`. Making these
+  sheets genuinely date-ordered -- which would replace the span scan with a
+  binary search -- is a separate staged project:
+  [`docs/date-column-normalization-plan.md`](docs/date-column-normalization-plan.md).
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into
@@ -858,9 +906,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   -- the thing `window.prompt` structurally cannot do, since it discards what
   was typed and leaves the caller to reject it afterwards with a toast.
   Native `prompt()` is now ENFORCED out of the client
-  (`html-include-structure.test.js`); the ~12 legacy `window.confirm`
-  callsites remain the documented incremental backlog, which is why that pin
-  covers the prompt family only.
+  (`html-include-structure.test.js`); the 11 legacy `window.confirm` callsites
+  remain the documented incremental backlog, which is why that pin covers the
+  prompt family only. That backlog is now a RATCHET, not a promise -- the same
+  suite pins the count and fails if it RISES (a new native confirm instead of
+  `dsConfirm_`) or if it falls without the cap being lowered in the same
+  commit, so the number cannot drift from the prose again.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
   error on `cache.get`. The Individual / Performance / Compare
@@ -1159,10 +1210,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `Utilities.formatDate` was the whole cost of that scan (~0.5 ms x 31.7k rows;
   33 s on a cache-HIT queue report), so a new dated-sheet reader must route
   through it rather than format per row (data-parsing.test.js pins the memo).
-  **Test-side trap:** a suite that swaps
-  the DQE fixture must reset `DQE_DATE_BOUNDS_MEMO_` in its
-  `install()` or it serves the previous test's bounds (dal-cutover
-  + missed-report already do).
+  **Test-side trap:** a suite that swaps the DQE fixture must reset EVERY
+  per-execution DQE memo in its `install()` or it serves the previous test's
+  data -- silently, as a wrong number rather than an error. There are now four
+  (`DQE_DATE_BOUNDS_MEMO_`, `DQE_SHEET_ROWS_MEMO_`, plus R44's
+  `DQE_DATE_COL_MEMO_` / `DQE_EXT_GRID_MEMO_`) and they reset TOGETHER:
+  their scope is identical, so no suite legitimately resets only half.
+  ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
+  memo resets the whole family" -- copying the reset you know about and missing
+  the one you don't is exactly how this broke eight tests when the second memo
+  landed, which is why it is no longer prose. A third memo over this sheet joins
+  `DQE_EXEC_MEMOS`.
 - **Count badges must be idempotent, not append-only (F10).** The
   escalations nav badge was rendered behind an
   `if (!tab.querySelector('.nav-count-badge'))` guard and fetched
@@ -1523,7 +1581,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   which measured 730s+ on the all-departments queue report (vs ~54s when the
   same function was merely paying handshakes) -- and a run that hits the
   6-min ceiling is KILLED PAST its catch blocks, so the designed fallbacks
-  never run (the class that once ate a Daily Queue Report day). Three tiers
+  never run (the class that once ate a Daily Queue Report day). **That run now
+  bounds itself (R43):** `computeQcdAllDepartments_` stops its dept loop on a
+  DEPT BOUNDARY once `QCD_ALLDEPT_BUDGET_MS` (default 4 min) is spent -- a
+  half-computed dept would corrupt the company grand totals it feeds -- and
+  marks the payload `meta.partial`. **A partial is served, never trusted:** it
+  is not cached (it would pin an incomplete report for the 6h TTL), the
+  subscriber email REFUSES it (a non-zero dept count slips past the D-1 empty
+  check, and an omitted dept reads as "no calls"), the day is not claimed so
+  the next poll retries, and the web view carries an explicit note. A new
+  consumer of this payload must decide what `meta.partial` means for it. Three tiers
   when Neon is down: (1) **sheet-primary, no loss** -- DQE + QCD (the sheet
   IS the authority; Neon mirrors it), so the flag flip is pre-cutover
   behavior, not a degraded one; (2) **sheet FALLBACK, disclosed** -- Direct
@@ -1679,6 +1746,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `REPORT_CACHE_TTL_SECONDS` and are busted on EVERY write via
   `bustOrphanFixCache_()` / `dcBustCaches_()` -- admin-only surfaces, so the
   shared script cache is safe (no per-viewer personalization).
+  **`deptExts:v1` (R45) rides the same tier for a NON-report value** -- the
+  derived per-dept queue-ext set, the all-history scan a windowed span cannot
+  bound. Its key carries the freshness tag AND a `hashAgents_` of the dept
+  ROSTER, because the tag does not move when the roster is edited and a stale
+  ext set silently changes which floaters are recognized (INV-53). Only the
+  SET is cached; the grid is ~128k cells, past the per-value cap.
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
   (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
   with each group's heading row as its collapse toggle; the three-way scope
@@ -2208,7 +2281,7 @@ INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDi
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard
 INV-05 | Dashboard per-agent ATT is the SIMPLE MEAN of stored ATT values, not TTT/Answered weighted | Subsystem: Department Dashboard
-INV-06 | Work window is 6:30 AM-3:00 PM PST (8:30 AM-5:00 PM CST); the dashboard's `DASHBOARD_WORK_WINDOW` mirrors the pipeline constants and must stay in sync | Subsystem: CDR DQE Pipeline + Department Dashboard
+INV-06 | Work window is 6:30 AM-3:00 PM PST (8:30 AM-5:00 PM CST); the pipeline constants are the source of truth and THREE mirrors must agree (dashboard display, inbound query strings, the DQE drill-down's own copy) -- pinned by `cross-file-pins.test.js` | Subsystem: CDR DQE Pipeline + Department Dashboard
 INV-07 | The TTT/ATT loop iterates `windowLegs`, not all-day `legs`, so it shares Answered's denominator | Subsystem: CDR DQE Pipeline
 INV-08 | TTT attribution uses each agent's OWN `leg.talkSec` via `findAgentTalkOnParent`, never `parent.talkSec` | Subsystem: CDR DQE Pipeline
 INV-09 | The Data.gs cache key is versioned (`summary:vN:`); bump on any aggregation-rule change | Subsystem: Department Dashboard

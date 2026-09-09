@@ -30,6 +30,10 @@ If you're new to this codebase or chasing a bug, start with the docs:
   Bugs we've fixed, quirks to respect, design rules to preserve. Read
   before changing anything in the source pipeline or the dashboard's
   data layer.
+- [`docs/module-dependencies.md`](docs/module-dependencies.md) — the computed
+  inter-module dependency map (what depends on what, and the cross-project
+  seams). Apps Script's one-global-scope model hides this; regenerate with
+  `node scripts/module-deps.mjs --write`.
 - [`docs/conventions.md`](docs/conventions.md) — naming, time windows,
   aggregation rules, scope semantics. The "why are TTT and ATT computed
   this way?" reference.

@@ -156,6 +156,19 @@ function runDailyQueueReport_() {
     // activity). Nothing was sent and the marker is NOT claimed, so the next
     // poll retries; the status is prefix-coded so the Health page shows it as
     // needs-attention rather than green (the O-9 NO-SUBSCRIBERS shape).
+    // R43: a PARTIAL compute is not a send and never claims the day. Unlike
+    // EMPTY (which is the ordinary pre-ingest state and clears itself once the
+    // import lands), this one repeats every poll until the underlying slowness
+    // is fixed -- so the status names the likely cause and the remedy.
+    if (result.partialReport) {
+      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+        'PARTIAL ' + targetIso + ' - ' + result.reason + '; NOT sent, marker not claimed, '
+        + 'will retry next poll. If this repeats, check Neon reachability first (an outage '
+        + 'makes every per-dept read fall back to a whole-sheet scan), then consider raising '
+        + 'QCD_ALLDEPT_BUDGET_MS. At ' + new Date());
+      return;
+    }
+
     if (result.emptyReport) {
       props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
         'EMPTY ' + targetIso + ' — the QCD sheet had the date but the report computed with '
@@ -283,6 +296,25 @@ function sendQueueReportForDate_(targetIso, opts) {
   // going out. The trigger path returns a flagged result (marker NOT claimed,
   // so the next poll retries); the single-address preview path throws so the
   // admin sees it in the modal.
+  // R43: REFUSE a PARTIAL report before the empty check. The budget guard in
+  // computeQcdAllDepartments_ can stop the dept loop early and return what it
+  // has -- legitimate for the WEB view (some data, clearly marked), wrong for
+  // this send: a subscriber's copy would silently omit departments, read as
+  // "those queues had no calls", and the sent-marker would then stop the real
+  // report from ever going out for that day. The empty check below could not
+  // catch it, because a partial payload has a NON-ZERO dept count.
+  // Same contract as emptyReport: nothing sent, marker NOT claimed, next poll
+  // retries; the preview path throws so the admin sees it in the modal.
+  if (data && data.meta && data.meta.partial) {
+    const pWhy = 'the report computed only ' + ((data.depts || []).length) + ' of '
+      + (data.meta.partialDeptsMapped || '?') + ' mapped departments before its '
+      + Math.round((data.meta.partialBudgetMs || 0) / 1000) + 's compute budget ran out '
+      + '-- sending it would omit departments without saying so';
+    Logger.log('sendQueueReportForDate_(%s): %s. NOT sent.', targetIso, pWhy);
+    if (opts.to) throw new Error('Not sent: ' + pWhy + '. This usually means Neon is '
+      + 'unreachable and every per-dept read is falling back to a sheet scan.');
+    return { count: 0, to: [], failed: [], partialReport: true, reason: pWhy };
+  }
   const deptCount = (data && data.depts) ? data.depts.length : 0;
   if (!deptCount) {
     const why = 'no queue activity found for ' + targetIso
@@ -994,6 +1026,23 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       + '<strong style="color:#92400E;">Preview only.</strong> This is what subscribers receive each weekday morning once the previous workday&rsquo;s data has been processed.</div></td></tr>')
     : '';
 
+  // R43: the SELF-SEND path (sendQcdAllDeptEmail) can legitimately carry a
+  // partial payload -- refusing it would block an admin from mailing themselves
+  // a snapshot during exactly the outage that causes one. So it is disclosed
+  // instead, and disclosed IN THE EMAIL rather than only on screen, because a
+  // forwarded copy loses the web note. The subscriber path never reaches here
+  // with a partial (sendQueueReportForDate_ refuses it outright), so this bar
+  // is the self-send's alone.
+  const pMeta = (data && data.meta) || {};
+  const partialBar = pMeta.partial
+    ? ('<tr><td style="padding:14px 26px 0;"><div style="background:#FEF3C7;border-left:4px solid #D97706;padding:10px 14px;border-radius:6px;font:400 13px Arial,sans-serif;color:#7C2D12;">'
+      + '<strong style="color:#92400E;">Incomplete report.</strong> Only '
+      + esc(depts.length) + ' of ' + esc(pMeta.partialDeptsMapped || '?')
+      + ' departments were computed before the report ran out of time, so some are '
+      + 'missing entirely &mdash; a department absent below is <strong>not</strong> a '
+      + 'department with no calls.</div></td></tr>')
+    : '';
+
   return ''
     + preheader
     + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:' + C.page + ';"><tr><td align="center" style="padding:24px 12px;">'
@@ -1005,6 +1054,7 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
     +   '<div style="font:400 13px Arial,sans-serif;color:' + C.mut + ';padding-top:3px;">' + dateLbl + ' &middot; all departments</div>'
     + '</td></tr>'
     + previewBar
+    + partialBar
     + kpiRow
     + tableBlock
     + ctaBlock

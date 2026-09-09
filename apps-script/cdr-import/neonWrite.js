@@ -206,6 +206,22 @@ var DQE_QUEUE_SPLIT_COLUMN_READY_ = false;
 // transaction, same single commit.
 var NEON_INLINE_STMT_CHARS_ = 30000;
 
+// F5 (broad-scan 2026-09-09): a NON-FINITE numeric silently became 0.
+// neonSqlInt_/neonSqlNum_ returned '0' for NaN/undefined and the bound
+// fallback does the same via `row.x || 0`, so an upstream NaN count wrote a
+// real, believable zero into Neon with nothing anywhere saying so -- the
+// silent-degradation shape this repo surfaces everywhere else.
+//
+// It COUNTS rather than throws, deliberately. Throwing would fail the whole
+// daily import over one bad cell, which is strictly worse than writing the 0
+// the bound path has always written; and the written VALUE is unchanged, so
+// inline == bound parity (pinned by the writer suites) still holds exactly.
+// The count rides out on the log line every writer already prints.
+//
+// Known asymmetry, stated rather than hidden: the bound fallback's own
+// `|| 0` coercions are not counted -- it runs only for a lone oversize tuple.
+var NEON_COERCED_ = 0;
+
 function neonSqlLit_(v) {
   if (v === null || v === undefined) return 'NULL';
   var s = String(v).replace(/\u0000/g, '');
@@ -213,8 +229,8 @@ function neonSqlLit_(v) {
   while (s.indexOf('$' + tag + '$') !== -1) tag += 'x';
   return '$' + tag + '$' + s + '$' + tag + '$';
 }
-function neonSqlInt_(v) { var n = parseInt(v, 10); return isFinite(n) ? String(n) : '0'; }
-function neonSqlNum_(v) { var n = Number(v); return isFinite(n) ? String(n) : '0'; }
+function neonSqlInt_(v) { var n = parseInt(v, 10); if (isFinite(n)) return String(n); NEON_COERCED_++; return '0'; }
+function neonSqlNum_(v) { var n = Number(v);        if (isFinite(n)) return String(n); NEON_COERCED_++; return '0'; }
 function neonSqlJson_(v) { return (v === null || v === undefined) ? 'NULL' : (neonSqlLit_(v) + '::jsonb'); }
 function neonSqlDate_(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) throw new Error('neonSqlDate_: ISO date required, got "' + iso + '"');
@@ -229,6 +245,7 @@ function neonSqlDate_(iso) {
  */
 function neonInsertInline_(conn, head, tail, rows, tupleFn, boundFn) {
   var cap = NEON_INLINE_STMT_CHARS_;
+  NEON_COERCED_ = 0;                     // F5: per-call, reported in the note
   var stmt = conn.createStatement();
   var buf = [], chars = 0, statements = 0, fallback = 0;
   var flush = function () {
@@ -244,11 +261,15 @@ function neonInsertInline_(conn, head, tail, rows, tupleFn, boundFn) {
   }
   flush();
   stmt.close();
-  return { statements: statements, fallback: fallback };
+  return { statements: statements, fallback: fallback, coerced: NEON_COERCED_ };
 }
 function neonInlineNote_(res) {
   return ' (' + res.statements + ' statement(s)'
-    + (res.fallback ? ', ' + res.fallback + ' oversize row(s) via bound params' : '') + ')';
+    + (res.fallback ? ', ' + res.fallback + ' oversize row(s) via bound params' : '')
+    + (res.coerced ? ', ' + res.coerced + ' NON-FINITE value(s) written as 0 -- '
+        + 'a count/duration arrived NaN or undefined; the figure is wrong at the '
+        + 'source, not here' : '')
+    + ')';
 }
 
 // R38: DQE statement head/tail (byte-identical to the former inline SQL) +

@@ -36,6 +36,9 @@ function install() {
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.state.cache.clear();
   h.state.sentEmails.length = 0;
 }

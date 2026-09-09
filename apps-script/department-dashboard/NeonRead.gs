@@ -391,6 +391,98 @@ function neonDqeRowsUsable_(rows) {
   return !!(rows && (rows.length || rows._neonReachable));
 }
 
+// R40: per-EXECUTION memo for the SHEET DQE fetch, and the clone discipline
+// that makes it safe. Same shape as DQE_DATE_BOUNDS_MEMO_ / DEPT_CONFIG_ROWS_MEMO_
+// -- `var` so a test harness can reset it through the global object between
+// fixture swaps (the documented trap: a suite that swaps the DQE fixture must
+// null this in its install() or it serves the previous test's rows).
+//
+// WHY: this primitive is DEPT-INDEPENDENT (it filters by date; the callers
+// filter by roster afterwards), so every department asking the same question
+// for the same window paid an identical read. R26b bounded each read to a
+// min/max span, which cut the WIDTH; it could not cut the COUNT, because the
+// callers are separate functions with no channel between them. On the sheet
+// path -- which is the DEFAULT (`getDqeReadSource_()` returns 'neon' only when
+// the property is explicitly set) and the whole of the Neon-outage fallback --
+// that repetition is paid on every request.
+//
+// Deliberately NOT CacheService: a cross-request cache would have to be
+// invalidated against the morning ingest, and the freshness-tag machinery that
+// does that job for the report caches is keyed per report, not per DAL read.
+// Per-execution is the whole scope that is provably safe -- the dashboard never
+// writes DQE Historical Data, so the sheet cannot change under one request.
+var DQE_SHEET_ROWS_MEMO_ = null;          // { order: [key...], byKey: { key: rows } }
+
+// Bounds the memo's retention. A request realistically asks for at most a
+// handful of distinct windows (a report's own window + the INV-28 prior, or a
+// window + the INV-29 12-month trend), so this never evicts in practice -- it
+// exists so a pathological caller looping over many windows cannot accumulate
+// row sets without limit. FIFO: the oldest key is dropped first.
+var DQE_SHEET_ROWS_MEMO_MAX_ = 6;
+
+/**
+ * Shallow-clones a DAL row set so each caller owns its own array and its own
+ * row objects.
+ *
+ * This is what makes the memo INVISIBLE to callers. Six readers today hand the
+ * result straight to `applyQueueSplitToRows_`, which REWRITES rows in place --
+ * correct while each reader owned its fetch, corrupting the moment two readers
+ * share one array (exactly the hazard `queueSplitNarrowedCopy_` was written for
+ * on the Company Overview's shared-array path). Cloning on the way out keeps
+ * the old ownership contract exactly, so no caller changes and no caller can
+ * leak its narrowing into another's pass.
+ *
+ * SHALLOW is sufficient for the same reason it is sufficient there: the only
+ * reference-typed field is `slots`, and every writer ASSIGNS a fresh array
+ * rather than mutating one in place (Data.gs's narrowSlots rebuild and its
+ * rollback both assign). An indexed write to `row.slots[i]` anywhere would
+ * break that assumption -- deep-clone `slots` if one is ever added.
+ */
+function dqeRowsShallowCopy_(rows) {
+  var outRows = new Array(rows.length);
+  for (var i = 0; i < rows.length; i++) {
+    var src = rows[i], c = {};
+    for (var k in src) if (Object.prototype.hasOwnProperty.call(src, k)) c[k] = src[k];
+    outRows[i] = c;
+  }
+  return outRows;
+}
+
+function sheetFetchDqeRows_(fromIso, toIso, opts) {
+  var includeMissedDetail = !!(opts && opts.includeMissedDetail);
+  // The detail shape is a SUPERSET, but it is memoized under its own key rather
+  // than served to a plain caller: the extra `slots` / abandoned fields change
+  // what `applyQueueSplitToRows_`'s narrowSlots branch does, so handing a
+  // detail row set to a caller that asked for the plain shape would silently
+  // alter its behavior. A separate key costs at most one extra read in the rare
+  // execution that wants both shapes of the same window.
+  var memoKey = String(fromIso) + '|' + String(toIso) + '|' + (includeMissedDetail ? '1' : '0');
+  if (DQE_SHEET_ROWS_MEMO_ &&
+      Object.prototype.hasOwnProperty.call(DQE_SHEET_ROWS_MEMO_.byKey, memoKey)) {
+    // Timed from before the clone, so the logged ms is what a hit genuinely
+    // costs (the copy), not a hard-coded zero. Counting `sheet-memo` lines in
+    // the log against `sheet` ones is how the saving is measured -- there is no
+    // assertion that it IS faster, only the evidence to judge it.
+    var _tHit = Date.now();
+    var copy = dqeRowsShallowCopy_(DQE_SHEET_ROWS_MEMO_.byKey[memoKey]);
+    if (typeof logDqeReadTiming_ === 'function') {
+      logDqeReadTiming_('sheetFetchDqeRows_:memo-hit', 'sheet-memo', _tHit, copy.length);
+    }
+    return copy;
+  }
+  var fetched = sheetFetchDqeRowsUncached_(fromIso, toIso, opts);
+  if (!DQE_SHEET_ROWS_MEMO_) DQE_SHEET_ROWS_MEMO_ = { order: [], byKey: {} };
+  DQE_SHEET_ROWS_MEMO_.byKey[memoKey] = fetched;
+  DQE_SHEET_ROWS_MEMO_.order.push(memoKey);
+  while (DQE_SHEET_ROWS_MEMO_.order.length > DQE_SHEET_ROWS_MEMO_MAX_) {
+    delete DQE_SHEET_ROWS_MEMO_.byKey[DQE_SHEET_ROWS_MEMO_.order.shift()];
+  }
+  // The memo keeps the canonical set; every caller -- the first one included --
+  // gets its own copy, so the single-call path and the shared path behave
+  // identically and there is no "first caller may mutate" special case.
+  return dqeRowsShallowCopy_(fetched);
+}
+
 /**
  * Reads DQE Historical Data (the sheet) for [fromIso, toIso] into the same
  * normalized shape as neonFetchDqeRows_. Uses getDisplayValues() for the
@@ -404,7 +496,7 @@ function neonDqeRowsUsable_(rows) {
  * uncovered). With opts absent the shape is byte-identical to before, so the
  * existing parity comparison + any other caller is unaffected.
  */
-function sheetFetchDqeRows_(fromIso, toIso, opts) {
+function sheetFetchDqeRowsUncached_(fromIso, toIso, opts) {
   var includeMissedDetail = !!(opts && opts.includeMissedDetail);
   var ss = openSpreadsheet_();
   var sheet = ss.getSheetByName(SHEETS.HISTORICAL);
@@ -436,17 +528,17 @@ function sheetFetchDqeRows_(fromIso, toIso, opts) {
   // which is why the per-row date filter below STAYS -- the span bounds the
   // read, it does not replace the filter. Output is identical to the full
   // scan for any sheet order; pinned by dal-cutover.test.js.
-  var dateCol = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
-  var firstIdx = -1, lastIdx = -1;
-  for (var d = 0; d < dateCol.length; d++) {
-    var dIso = rowDateIso_(dateCol[d][0], ssTZ);
-    if (!dIso || dIso < fromIso || dIso > toIso) continue;
-    if (firstIdx < 0) firstIdx = d;
-    lastIdx = d;
-  }
-  if (firstIdx < 0) return [];   // nothing in range -- skip the wide read entirely
+  //
+  // R42: the span itself is `Data.gs::dqeWindowRowSpan_` -- ONE implementation
+  // shared with the five readers that adopted it in R41. This function is where
+  // the transform was invented (R26b) and kept its own copy through R41; two
+  // copies of one computation is the drift risk this repo keeps paying for, so
+  // the copy is gone. No new cross-file coupling: this file already reads
+  // `rowDateIso_`, `openSpreadsheet_` and `parseHmsDisplay_` from Data.gs.
+  var span = dqeWindowRowSpan_(sheet, lastRow, fromIso, toIso, ssTZ);
+  if (!span) return [];   // nothing in range -- skip the wide read entirely
 
-  var range = sheet.getRange(2 + firstIdx, 1, lastIdx - firstIdx + 1, numCols);
+  var range = sheet.getRange(span.startRow, 1, span.numRows, numCols);
   var values = range.getValues();
   var displays = range.getDisplayValues();
   var out = [];

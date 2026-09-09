@@ -1,0 +1,137 @@
+# Historical date columns: normalization + ordering plan
+
+**Status:** Phase 0 shipped (2026-09-09). Phases 1–3 not started.
+**Why this exists:** five historical sheets are read by windowed date queries,
+and none is reliably date-ordered. Today that is *handled* — every dashboard
+reader uses a min/max SPAN, which is correct at any row order (CLAUDE.md,
+"A dated sheet read is bounded by a min/max SPAN"). This plan is about making
+the sheets genuinely ordered, which is a precondition for replacing the span
+SCAN (~31.9k cell reads on DQE) with a binary search (~15).
+
+Read the SPAN and MEMO bullets in CLAUDE.md first. `R40`–`R45` in
+[`fix-history.md`](fix-history.md) covers what has already been done to bound
+these reads, including two optimizations that were measured and **refused**.
+
+## The two problems, which are not the same problem
+
+Sorting a date column only works if the column is single-typed: Sheets groups
+numeric/Date cells ahead of text, so a MIXED column sorts into dates-then-text,
+each half ascending and the whole thing wrong. Worse, the result then reads as
+non-decreasing, so a naive "is it ordered?" check certifies it forever.
+
+| Sheet | Daily / Manual Export | Bulk | Date cell written |
+|---|---|---|---|
+| DQE Historical Data | **sorts** every write (`buildDQEHistoricalData.js:1075`, col B) | same code | `callDateStr` **string**, coerced to Date by Sheets |
+| CDR Historical Data | **conditional** sort (`autoImport.js:1854-57`) | sorts (`:1329`) | `dateObj` (real Date) |
+| Q Path Historical Data | **none** (`:1954` bare append) | sorts (`:1329`) | `dateObj` |
+| QCD Historical Data | **none** (`:1989` bare append) | sorts (`:1329`) | `dateObj` |
+| CSR Transfer Historical | **none** (`:2083` bare append) | sorts (`:1329`) | `dateObj` |
+
+So: **DQE sorts every day and cannot work** (mixed col B). **Q Path / QCD / CSR
+Transfer work fine and never run** on the daily path — the path Operator State
+#56 tells operators to use when reprocessing a date, which is exactly when rows
+land out of order. CDR sorts only against the LAST row, so it prevents a fresh
+tail inversion but can never repair disorder already present.
+
+*Make the sort work* (DQE) and *make the sort run* (the other four) are
+different fixes. Note this also settles the canonical type: four of five sheets
+already store real `Date`, so DQE normalizes toward them, not the reverse.
+
+## Phase 0 — census (SHIPPED)
+
+`previewHistoricalDateColumns()` in `apps-script/cdr-report/sheetRepairs.js`.
+Read-only; writes nothing (test-pinned, including that `setNumberFormat` is
+never called).
+
+**To run it:** `cd apps-script/cdr-report && clasp push -f`, then in the CDR
+Report Apps Script editor pick `previewHistoricalDateColumns` from the Run
+dropdown (it is non-underscore precisely so the picker shows it) and read the
+Execution log. No new OAuth scope. Expect roughly 10–30 s — ten single-column
+reads, the widest being DQE at ~31.9k rows.
+
+Per sheet it reports a storage-type histogram with **per-type first/last row**
+(so an era split is visible, not just a count), single-typedness, ISO order with
+inversion samples, unresolvable-cell samples, min/max ISO, and a verdict:
+`CLEAN` / `MIXED-TYPE` / `UNSORTED` / `UNPARSED` (combinable) / `EMPTY` /
+`MISSING`.
+
+Cells are TYPED from `getValues()` but RESOLVED through the existing
+`parseDateForNeon` on the DISPLAY value — reusing the project's one date
+resolver rather than adding a sixth hand-mirrored parser. One guard sits on top:
+a bare-numeric display is treated as unresolvable rather than passed to that
+helper, whose `new Date(s)` fallback reads `"45726"` as the **year 45726**
+(verified). That is a latent issue for its ~13 other callers and is filed as a
+follow-on, not fixed here.
+
+**Read the output for three things:** which sheets say `MIXED-TYPE` (that is
+Phase 1's scope); whether `unparsed` is non-zero anywhere (those rows need a
+serial-aware repair, not a sort — and a non-zero count means the
+`parseDateForNeon` bug is live rather than theoretical); and whether the type
+row ranges are contiguous (a clean era split, like the PST→CST cutover, allows a
+date-gated repair) or scattered (row-by-row, more work).
+
+## Phase 1 — normalize DQE col B (NOT STARTED; scope contingent on Phase 0)
+
+`previewDqeDateNormalize()` / `repairDqeDateNormalize()`, matching the existing
+preview/repair pair convention in that file. Canonicalize to real `Date`.
+
+Col B is **not** in the plain-text list (`setNumberFormat('@')` covers cols 4,
+11–29, 30–32, 35 — never 2), so the pipeline's `callDateStr` string is already
+coerced to a Date on write. Canonicalizing to Date therefore needs **no writer
+change, and no INV-16 two-file edit**. Text `yyyy-MM-dd` would need col B
+plain-texted plus a change in both duplicated copies, fighting that coercion.
+
+**The trap is F-8.** A numeric serial is UTC midnight of its calendar date;
+formatting it in the spreadsheet's `America/Mexico_City` renders 18:00 of the
+*previous* day. Reuse `rowDateIso_`'s serial branch verbatim — a hand-rolled
+conversion here shifts history back one day, silently.
+
+Col-B-only, block writes, idempotent, re-runnable after a partial failure. Run
+outside the import window. Then sort once.
+
+## Phase 2 — nightly check-and-sort (NOT STARTED)
+
+Modeled on `runRetentionPrune_` / `installRetentionPruneTrigger`
+(`DeleteOldSheets.js:100,136`): daily ~3 AM, installed from a CDR Tools menu
+item, with an uninstall. Home: cdr-report (it owns `sheetRepairs.js` and the DQE
+build's own sort).
+
+- **Flag-gated** `HISTORICAL_SORT_ENABLED`, per the eight-engine convention, so
+  an installed trigger with the flag off is a visible no-op. (Note
+  `PROP_REGISTRY_` is the *dashboard's* store; cdr-report has no registry, so
+  that enforcement does not extend here.)
+- **The check is "single-typed AND non-decreasing", never just ordered** — see
+  the top of this document for why an order-only check would certify DQE
+  forever. Reuse Phase 0's two predicates.
+- Read the date column, sort only on failure. Most nights: a no-op.
+- All five sheets, at their own date columns (DQE col B; the rest col C).
+- **Log a Pipeline Health row per sheet** (new INV-44 step name) so a sort that
+  starts firing *every* night — meaning a writer regressed — surfaces rather
+  than quietly churning.
+- **Skip when any `*_RESUME` property is set.** A sort invalidates the four T-8
+  fingerprinted resume pointers. That is safe (the key check trips, the run
+  restarts from 0, logged, and every backfill is `ON CONFLICT` idempotent) but a
+  nightly sort during a multi-run backfill would reset it every night and the
+  backfill would never finish.
+
+This is worth shipping for Q Path / QCD / CSR Transfer **even if Phase 1 slips**
+— those three are single-typed today, so the trigger fixes them on its first
+run. The nightly job is a compensating control for the missing writer-side
+sorts; if it fires on QCD every night, that is the writer talking.
+
+## Phase 3 — binary-search span (DEFERRED, gated)
+
+Payoff: ~31,911 cell reads → ~15. It does **not** fall out of Phase 2.
+
+A nightly sort means the sheet can be unsorted *during the day* — a force
+re-import appends. Binary-searching a maybe-sorted sheet is the same silent
+under-report class that got the span cache refused (see the note at the end of
+`R40`–`R45` in fix-history): rows never read cannot be recovered by the per-row
+date filter. The cheap signatures do not close it either — `getLastRow()` is
+unchanged when a re-import rebuilds an interior date to the same row count, and
+first/last dates do not move.
+
+Making it safe needs a sorted-ness stamp that every writer across two projects
+maintains, plus a B-2-style tripwire — a real cross-project invariant. Revisit
+only after Phases 1–2 have been live long enough to show the per-write sort
+actually holds.

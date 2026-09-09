@@ -1,10 +1,13 @@
 // ============================================================================
-// sheetRepairs.js — one-off DQE Historical Data sheet repairs (cdr-report).
+// sheetRepairs.js — historical-sheet maintenance utilities (cdr-report).
 // ----------------------------------------------------------------------------
-// Editor-run maintenance utilities. NOT part of the daily pipeline. Each is
-// idempotent and safe to re-run. Run from the CDR Report Apps Script editor's
-// Run dropdown (the picker hides `_`-suffixed helpers, so the two entry points
-// below are non-underscore).
+// Editor-run. NOT part of the daily pipeline. Each is idempotent and safe to
+// re-run. Run from the CDR Report Apps Script editor's Run dropdown (the picker
+// hides `_`-suffixed helpers, so every entry point here is non-underscore).
+//
+// Most of the file is one-off DQE Historical Data repairs. The exception is the
+// read-only date-column CENSUS at the bottom (previewHistoricalDateColumns),
+// which spans all five historical sheets and writes nothing.
 // ============================================================================
 
 
@@ -840,4 +843,199 @@ function mergeDqeDuplicateRows_(dryRun) {
   Logger.log('DQE merge: merged ' + dupKeys.length + ' group(s), deleted ' + deleteRows.length + ' row(s).\n'
     + 'If DQE_READ_SOURCE=neon (or the mirror is consumed), re-run backfillDQEHistoryUpsert() to refresh dqe_history.');
   return { applied: true, merged: dupKeys.length, deleted: deleteRows.length };
+}
+
+
+// ============================================================================
+// Phase 0 -- historical date-column CENSUS (read-only, writes nothing).
+// ----------------------------------------------------------------------------
+// Answers two questions per historical sheet, which together decide whether a
+// `.sort({column: <date>})` can produce chronological order at all:
+//
+//   1. Is the date column SINGLE-TYPED?  Sheets sorts numeric/Date cells as one
+//      group and text cells as another, so a MIXED column sorts into
+//      dates-then-text -- each half ascending, the whole thing wrong. Worse, it
+//      then LOOKS sorted to a naive "is it non-decreasing?" check, which is why
+//      the sortedness test below is "single-typed AND ordered", never just
+//      ordered.
+//   2. Is it actually in date order right now?
+//
+// Why it spans five sheets: only DQE sorts itself on every write
+// (buildDQEHistoricalData.js, col B). On the daily / Manual Export path CDR
+// sorts CONDITIONALLY (autoImport.js -- and only against the last row, so it
+// cannot repair pre-existing disorder), while Q Path / QCD / CSR Transfer
+// never sort at all. The bulk path sorts all four. Reprocessing a single date
+// goes through the daily path (Operator State #56), which is exactly when rows
+// land out of order.
+//
+// DATE RESOLUTION: cells are typed from getValues() but resolved to an ISO date
+// through parseDateForNeon() on the DISPLAY value -- the same single resolver
+// every other cdr-report sheet reader uses (nmReadDateRowsTail_, the backfills,
+// the merge repair). This file deliberately does NOT add a sixth hand-mirrored
+// date parser. One consequence is worth reading the output for: a numeric
+// SERIAL cell carrying a numeric (not date) number format displays as a bare
+// number, which parseDateForNeon cannot resolve -- such rows land in `unparsed`
+// rather than being silently guessed at. That count IS the finding: those rows
+// need a serial-aware repair, not a sort.
+//
+// Usage: run previewHistoricalDateColumns() from the Run dropdown. It logs a
+// per-sheet report and returns the structured census.
+
+var HISTORICAL_DATE_COLUMNS_ = [
+  { sheet: 'DQE Historical Data',          dateCol: 2 },
+  { sheet: 'QCD Historical Data',          dateCol: 3 },
+  { sheet: 'CDR Historical Data',          dateCol: 3 },
+  { sheet: 'CSR Transfer Historical Data', dateCol: 3 },
+  { sheet: 'Q Path Historical Data',       dateCol: 3 },
+];
+
+// Cap on per-category examples carried in the report (keeps the log readable
+// and the returned object small on a sheet where every row is a finding).
+var HD_SCAN_SAMPLE_CAP_ = 8;
+
+/** Read-only census of every historical sheet's date column. Writes nothing. */
+function previewHistoricalDateColumns() {
+  return scanHistoricalDateColumns_();
+}
+
+// Classify a RAW cell value (getValues()) by storage type. The serial window
+// mirrors the plausibility range the dashboard's rowDateIso_ uses (~1982-2100)
+// so a small integer is not read as a date; out-of-window numbers are reported
+// as 'number' rather than being folded in, so the threshold never hides a row.
+function hdCellType_(v) {
+  if (v === null || v === undefined || v === '') return 'blank';
+  if (v instanceof Date) return isNaN(v.getTime()) ? 'invalid-date' : 'date';
+  if (typeof v === 'number') return (v > 30000 && v < 100000) ? 'serial' : 'number';
+  if (typeof v === 'string') {
+    var s = v.trim();
+    if (!s) return 'blank';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s))        return 'text:iso';
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s))  return 'text:mdy';
+    if (/^\d{1,2}\/\d{1,2}\/\d{2}$/.test(s))  return 'text:mdy2';
+    return 'text:other';
+  }
+  return 'other';
+}
+
+function scanHistoricalDateColumns_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var out = { scannedAt: new Date().toISOString(), sheets: [] };
+  HISTORICAL_DATE_COLUMNS_.forEach(function (spec) {
+    out.sheets.push(hdScanOneSheet_(ss, spec));
+  });
+  hdLogCensus_(out);
+  return out;
+}
+
+function hdScanOneSheet_(ss, spec) {
+  var res = {
+    sheet: spec.sheet, dateCol: spec.dateCol, rows: 0,
+    types: {}, typeRanges: {}, singleTyped: null, ordered: null,
+    inversions: 0, inversionSamples: [], unparsed: 0, unparsedSamples: [],
+    minIso: null, maxIso: null, verdict: 'MISSING', ms: 0,
+  };
+  var t0 = Date.now();
+  var sheet = ss.getSheetByName(spec.sheet);
+  if (!sheet) return res;
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { res.verdict = 'EMPTY'; res.ms = Date.now() - t0; return res; }
+
+  var n = lastRow - 1;
+  res.rows = n;
+  // Two reads of ONE column: raw values carry the storage type, display values
+  // are what parseDateForNeon consumes (INV-02 discipline -- never String() a
+  // getValues() date cell to decide what it says).
+  var vals  = sheet.getRange(2, spec.dateCol, n, 1).getValues();
+  var disp  = sheet.getRange(2, spec.dateCol, n, 1).getDisplayValues();
+
+  var prevIso = null;
+  for (var i = 0; i < n; i++) {
+    var rowNum = i + 2;
+    var raw = vals[i][0];
+    var type = hdCellType_(raw);
+    res.types[type] = (res.types[type] || 0) + 1;
+    var range = res.typeRanges[type];
+    if (!range) res.typeRanges[type] = { firstRow: rowNum, lastRow: rowNum };
+    else range.lastRow = rowNum;
+
+    if (type === 'blank') continue;
+
+    var display = String(disp[i][0] == null ? '' : disp[i][0]);
+    // A serial cell carrying a NUMERIC (not date) number format displays as a
+    // bare number, and parseDateForNeon's `new Date(s)` fallback reads "45726"
+    // as the YEAR 45726 -- a valid-looking ISO that would land in maxIso and
+    // hide the very rows this census exists to find. Refuse the resolver here
+    // rather than patching it: it has ~13 callers and is not Phase 0's to
+    // change (flagged as a follow-on). An unreadable cell is a finding.
+    var iso = /^\d+(\.\d+)?$/.test(display.trim()) ? null : parseDateForNeon(display);
+    if (!iso) {
+      res.unparsed++;
+      if (res.unparsedSamples.length < HD_SCAN_SAMPLE_CAP_) {
+        res.unparsedSamples.push({ row: rowNum, type: type, display: display });
+      }
+      continue;
+    }
+    if (!res.minIso || iso < res.minIso) res.minIso = iso;
+    if (!res.maxIso || iso > res.maxIso) res.maxIso = iso;
+    if (prevIso && iso < prevIso) {
+      res.inversions++;
+      if (res.inversionSamples.length < HD_SCAN_SAMPLE_CAP_) {
+        res.inversionSamples.push({ row: rowNum, prev: prevIso, cur: iso });
+      }
+    }
+    prevIso = iso;
+  }
+
+  var presentTypes = Object.keys(res.types).filter(function (t) { return t !== 'blank'; });
+  res.singleTyped = presentTypes.length <= 1;
+  res.ordered = res.inversions === 0;
+  res.verdict = hdVerdict_(res);
+  res.ms = Date.now() - t0;
+  return res;
+}
+
+function hdVerdict_(res) {
+  if (!res.rows) return 'EMPTY';
+  var flags = [];
+  if (!res.singleTyped) flags.push('MIXED-TYPE');
+  if (!res.ordered)     flags.push('UNSORTED');
+  if (res.unparsed)     flags.push('UNPARSED');
+  return flags.length ? flags.join('+') : 'CLEAN';
+}
+
+function hdLogCensus_(census) {
+  var lines = ['Historical date-column census (read-only) -- ' + census.scannedAt];
+  census.sheets.forEach(function (s) {
+    lines.push('');
+    lines.push('== ' + s.sheet + ' (col ' + s.dateCol + ') -- ' + s.verdict
+      + ' -- ' + s.rows + ' data rows, ' + s.ms + 'ms');
+    if (s.verdict === 'MISSING' || s.verdict === 'EMPTY') return;
+    lines.push('   range: ' + (s.minIso || '?') + ' .. ' + (s.maxIso || '?'));
+    Object.keys(s.types).sort().forEach(function (t) {
+      var r = s.typeRanges[t];
+      lines.push('   type ' + t + ': ' + s.types[t] + ' cell(s), rows '
+        + r.firstRow + '-' + r.lastRow);
+    });
+    if (!s.singleTyped) {
+      lines.push('   ** MIXED TYPE -- a sort on this column CANNOT order it '
+        + 'chronologically (Sheets groups numeric/Date before text), and the '
+        + 'result still reads as "sorted". Normalize before sorting.');
+    }
+    if (s.inversions) {
+      lines.push('   ** ' + s.inversions + ' inversion(s); first '
+        + s.inversionSamples.length + ':');
+      s.inversionSamples.forEach(function (x) {
+        lines.push('      row ' + x.row + ': ' + x.prev + ' -> ' + x.cur);
+      });
+    }
+    if (s.unparsed) {
+      lines.push('   ** ' + s.unparsed + ' cell(s) no date resolver could read '
+        + '(these need a repair, not a sort); first ' + s.unparsedSamples.length + ':');
+      s.unparsedSamples.forEach(function (x) {
+        lines.push('      row ' + x.row + ' [' + x.type + ']: "' + x.display + '"');
+      });
+    }
+  });
+  Logger.log(lines.join('\n'));
 }

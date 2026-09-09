@@ -236,9 +236,10 @@ test('S8: dsPrompt_ is the only prompt path -- no window.prompt callsite survive
   // window.prompt renders in the browser/Sheets chrome (the incongruence
   // dsConfirm_ exists to fix) and cannot validate without discarding what was
   // typed. dsPrompt_ replaced the one callsite; this keeps it replaced.
-  // NOTE: ~12 legacy window.confirm callsites remain by design (the
-  // documented "adopt dsConfirm_ incrementally" backlog), so this pins the
-  // PROMPT family only -- tighten it to confirm() once that backlog closes.
+  // NOTE: legacy window.confirm callsites remain by design (the documented
+  // "adopt dsConfirm_ incrementally" backlog), so this pins the PROMPT family
+  // only -- tighten it to confirm() once that backlog closes. The confirm
+  // backlog itself is RATCHETED by the next test rather than left to prose.
   const fragNames = [];
   const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');
   let fm; const fre = /<\?!= includeJs_\('([\w-]+)'\) \?>/g;
@@ -284,4 +285,42 @@ test('update notice: both templates inject __BUILD_STAMP__ and both heartbeats r
     const src = fs.readFileSync(path.join(DIR, p[0]), 'utf8');
     assert.ok(p[1].test(src), p[0] + ': ' + p[2] + ' lost -- the update notice is silently dead');
   });
+});
+
+// F3 (broad-scan 2026-09-09): the window.confirm backlog is a RATCHET, not a
+// promise. "New confirmation UI should use dsConfirm_" was prose with nothing
+// behind it -- the count could drift in either direction unnoticed, and the
+// docs said "~12" while nobody was counting. It is 11. This may only go DOWN:
+// lower the cap in the same commit that removes a callsite; a rise means a
+// native confirm was added instead of dsConfirm_, which the rule forbids.
+// The equality assert is deliberate -- a cap alone would let the number sit
+// stale after a real improvement, which is how "~12" outlived the truth.
+const WINDOW_CONFIRM_MAX = 11;
+
+test('F3: the legacy window.confirm backlog only shrinks', function () {
+  const fragNames = [];
+  const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');
+  let fm; const fre = /<\?!= includeJs_\('([\w-]+)'\) \?>/g;
+  while ((fm = fre.exec(text)) !== null) fragNames.push(fm[1]);
+
+  const sites = [];
+  fragNames.forEach(function (name) {
+    const src = fs.readFileSync(path.join(DIR, name + '.html'), 'utf8');
+    src.split('\n').forEach(function (ln, i) {
+      if (!/(^|[^.\w])window\.confirm\s*\(/.test(ln)) return;
+      if (/^\s*(\/\/|\*)/.test(ln)) return;              // comment lines
+      sites.push(name + '.html:' + (i + 1));
+    });
+  });
+
+  assert.ok(sites.length <= WINDOW_CONFIRM_MAX,
+    'window.confirm callsites grew to ' + sites.length + ' (cap ' + WINDOW_CONFIRM_MAX
+    + '). New confirmation UI must use dsConfirm_ (script-1-core) -- themed, '
+    + 'Escape/Enter/backdrop aware, with a danger tone for destructive actions. '
+    + 'Sites: ' + sites.join(', '));
+
+  assert.equal(sites.length, WINDOW_CONFIRM_MAX,
+    'window.confirm callsites are down to ' + sites.length + ' -- good. Lower '
+    + 'WINDOW_CONFIRM_MAX to ' + sites.length + ' in this commit so the ratchet '
+    + 'holds the ground you just took.');
 });

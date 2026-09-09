@@ -763,6 +763,26 @@ When something looks wrong, before assuming a code bug, check:
     only the CURRENT target day, so a repeat blast of an OLDER date has no
     record to refuse from -- the un-warned dialog says so
     ("repeat sends of an older day are not tracked").
+    **R43 -- the compute budget and the PARTIAL outcome.** The all-departments
+    compute calls `computeQcdReport_` up to three times PER DEPT, and each of
+    those falls back to its own sheet scan when Neon is unreachable; that run
+    measured 730s+ during an outage, past the ~6-minute ceiling whose kill skips
+    catch blocks, so the execution vanished leaving no payload, no failure row
+    and no status. It now stops itself at `QCD_ALLDEPT_BUDGET_MS` (optional
+    Script Property, **default 4 min**) on a DEPT BOUNDARY -- never mid-dept,
+    which would corrupt the company grand totals that accumulate per dept --
+    and marks the payload partial. **You will see this as a
+    `PARTIAL <iso> ...` outcome on the Health page's "Queue report -- last
+    outcome" row (amber).** Nothing was sent, the day was NOT claimed, and the
+    next poll retries. **Diagnose in this order:** (1) is Neon reachable? an
+    outage is the usual cause and the fix is the outage, not the budget;
+    (2) has the dept count grown? each new mapped dept adds up to three
+    computes; (3) only then consider raising the budget -- and note the ceiling
+    is ~6 min TOTAL, with the verdict block, `JSON.stringify` and the cache put
+    still to run after the loop, so raising it past ~5 min just restores the
+    vanishing-run failure it exists to prevent. A partial is also never cached
+    (it would pin an incomplete report for the 6h TTL) and the web view shows it
+    with an explicit "This report is incomplete" note.
 32. Pipeline-failure watchdog (optional; `PipelineWatch.gs`, dashboard).
     Defaults OFF. PUSHES the explicit Pipeline Health FAILURE signal that the
     System Health page ("Recent pipeline step failures") + the Overview

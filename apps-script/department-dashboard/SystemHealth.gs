@@ -635,6 +635,12 @@ function getSystemHealth(req) {
             // D-1: "EMPTY <iso> ..." -- the queue report refused to send an
             // empty payload; the next poll retries, but it is not a success.
             || /^EMPTY\b/.test(res || '')
+            // R43: and "PARTIAL <iso> ..." -- the all-dept compute ran out of
+            // budget, so the report was refused with departments missing. None
+            // of the bad-words above match the word "partial", so without this
+            // prefix the row renders GREEN for a report that never went out --
+            // the same hole O-5 / D-1 / O-9 each had to patch by hand.
+            || /^PARTIAL\b/.test(res || '')
             || /^LATE\b/.test(res || '') || /^INCONCLUSIVE\b/.test(res || ''));
       // O-4: a live engine whose last RECORDED outcome is older than its
       // allowance. Only when the trigger is installed and (if flag-gated) the
