@@ -779,3 +779,46 @@ test('F2: every *_ENABLED-gated engine passes its flagProp to svc()', function (
     + '. Pass it as svc()\'s last argument, or the Health page reports the trigger '
     + 'ARMED while every run is a no-op -- the exact blind spot flagProp exists to close.');
 });
+
+// ── R40: the per-execution DQE memo family resets together ────────────────
+//
+// Two globals memoize DQE-sheet-derived state for the length of one execution
+// -- DQE_DATE_BOUNDS_MEMO_ (the date-column bounds) and DQE_SHEET_ROWS_MEMO_
+// (the DAL row sets). Apps Script drops both at the end of a request, but a
+// TEST harness ctx outlives every test in its file, so a suite that swaps the
+// DQE fixture without nulling them serves the PREVIOUS test's data -- silently,
+// as a wrong number rather than an error. That trap was documented in prose for
+// the bounds memo; adding the second one made prose insufficient, because the
+// failure mode is a suite that copies the reset it knows about and misses the
+// one it does not. (This is exactly what happened when the rows memo landed:
+// eight tests in two suites broke on stale fixtures.)
+//
+// So: the two are pinned to reset TOGETHER. Their scope is identical -- both
+// are invalidated by precisely the same event, a fixture swap -- so a suite
+// needing one always needs the other, and no suite legitimately resets only
+// half. A third memo over the same sheet should join this list.
+const DQE_EXEC_MEMOS = ['DQE_DATE_BOUNDS_MEMO_', 'DQE_SHEET_ROWS_MEMO_'];
+
+test('R40: a suite resetting one per-execution DQE memo resets the whole family', () => {
+  const unitDir = path.join(ROOT, 'tests', 'unit');
+  const offenders = [];
+  let sawAny = 0;
+  for (const f of fs.readdirSync(unitDir).filter((x) => x.endsWith('.test.js'))) {
+    const src = fs.readFileSync(path.join(unitDir, f), 'utf8');
+    // Only a suite that actually RESETS one of them is in scope; merely naming
+    // a memo (this pin itself, or a doc comment) is not a reset.
+    const resets = DQE_EXEC_MEMOS.filter(
+      (m) => new RegExp('ctx\\.' + m + '\\s*=\\s*null').test(src));
+    if (!resets.length) continue;
+    sawAny++;
+    const missing = DQE_EXEC_MEMOS.filter((m) => !resets.includes(m));
+    if (missing.length) offenders.push(f + ' -> missing ' + missing.join(', '));
+  }
+  assert.ok(sawAny >= 4,
+    'only ' + sawAny + ' suite(s) seen resetting a DQE execution memo -- the reset '
+    + 'was reshaped and this pin can no longer see it. Fix the pin.');
+  assert.deepEqual(offenders, [],
+    'suite(s) resetting only part of the DQE per-execution memo family: '
+    + offenders.join('; ') + '. Reset every memo in DQE_EXEC_MEMOS in the same '
+    + 'install(), or the suite silently serves the previous fixture\'s DQE data.');
+});

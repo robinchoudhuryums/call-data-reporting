@@ -67,7 +67,10 @@ tests/
     ...                       + 81 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
-                              trim pass): dal-cutover parity, escalations
+                              trim pass): dal-cutover parity (+ the R40
+                              per-execution sheet-DAL row memo: hit parity,
+                              per-caller row ownership, key separation,
+                              bounded retention), escalations
                               hardening, neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code

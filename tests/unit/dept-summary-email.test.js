@@ -36,6 +36,7 @@ function install() {
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
   h.state.cache.clear();
   h.state.sentEmails.length = 0;
 }

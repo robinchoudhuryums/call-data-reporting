@@ -401,7 +401,26 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ENFORCED by out-of-order + full-scan-equivalence tests in
   `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); R26c's
   `[dqe-read] dqeDateBounds ... openMs=N scanMs=N` line is what tells you
-  whether a slow read is the scan or the workbook open.
+  whether a slow read is the scan or the workbook open. **A span bounds a
+  read's WIDTH; only a memo bounds the COUNT (R40)** -- `sheetFetchDqeRows_` is
+  DEPT-INDEPENDENT, so every dept asking the same question for the same window
+  re-read the same span. It now memoizes per EXECUTION in
+  `DQE_SHEET_ROWS_MEMO_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped
+  at `DQE_SHEET_ROWS_MEMO_MAX_`. **It returns a SHALLOW CLONE per call, and
+  that is load-bearing, not defensive tidiness:** six readers hand the result
+  straight to `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an
+  un-cloned memo leaks dept A's narrowing into dept B (the hazard
+  `queueSplitNarrowedCopy_` exists for). Shallow suffices only because `slots`
+  is always ASSIGNED, never index-mutated -- deep-clone it if that changes.
+  Count `source=sheet-memo` lines against `source=sheet` to measure the saving.
+  **Five readers still bypass the DAL entirely and are NOT span-bounded** --
+  `computeSummary_` (per dept, so the N-dept combined view pays it N times),
+  IndividualReport, InsightsReport, `computeActiveAgentsInRange_` and Alerts
+  each run their own `getRange(2, 1, lastRow-1, ~35)` + `getDisplayValues()`
+  over the whole sheet. R26b was never applied to them; neither is the memo.
+  That is the remaining cost of the sheet path (which is the DEFAULT read
+  source and the whole of the Neon-outage fallback), and it is a known gap, not
+  an oversight to rediscover.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into
@@ -1180,10 +1199,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `Utilities.formatDate` was the whole cost of that scan (~0.5 ms x 31.7k rows;
   33 s on a cache-HIT queue report), so a new dated-sheet reader must route
   through it rather than format per row (data-parsing.test.js pins the memo).
-  **Test-side trap:** a suite that swaps
-  the DQE fixture must reset `DQE_DATE_BOUNDS_MEMO_` in its
-  `install()` or it serves the previous test's bounds (dal-cutover
-  + missed-report already do).
+  **Test-side trap:** a suite that swaps the DQE fixture must reset EVERY
+  per-execution DQE memo in its `install()` or it serves the previous test's
+  data -- silently, as a wrong number rather than an error. There are now two
+  (`DQE_DATE_BOUNDS_MEMO_`, `DQE_SHEET_ROWS_MEMO_`) and they reset TOGETHER:
+  their scope is identical, so no suite legitimately resets only half.
+  ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
+  memo resets the whole family" -- copying the reset you know about and missing
+  the one you don't is exactly how this broke eight tests when the second memo
+  landed, which is why it is no longer prose. A third memo over this sheet joins
+  `DQE_EXEC_MEMOS`.
 - **Count badges must be idempotent, not append-only (F10).** The
   escalations nav badge was rendered behind an
   `if (!tab.querySelector('.nav-count-badge'))` guard and fetched
