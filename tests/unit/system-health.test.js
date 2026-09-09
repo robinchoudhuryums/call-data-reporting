@@ -1025,3 +1025,17 @@ test('O-4: healthAgeMs_ reads both stamp shapes and rejects junk', function () {
   assert.equal(f('', now), null);
   assert.equal(f('not a date', now), null);
 });
+
+test('R43: a PARTIAL queue-report outcome paints the row amber (the classifier is a prefix ALLOWLIST)', function () {
+  // The bad-word regex matches fail|error|unreachable|skipped -- none of which
+  // appear in "PARTIAL". Every prefix in that list (MISSED, GAPS,
+  // NO-SUBSCRIBERS, SILENT, EMPTY, LATE, INCONCLUSIVE) had to be added by hand
+  // after a run that had NOT gone out rendered green; this is the same hole.
+  installHealth({ props: {
+    NEON_HOST: 'h',
+    QUEUE_REPORT_LAST_RESULT: 'PARTIAL 2026-07-09 - the report computed only 6 of 14 mapped '
+      + 'departments before its 240s compute budget ran out; NOT sent, marker not claimed.',
+  } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-queuereport').status, 'warn',
+    'a refused partial must never read as a successful send');
+});

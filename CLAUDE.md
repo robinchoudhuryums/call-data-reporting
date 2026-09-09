@@ -422,7 +422,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   which floaters are recognized while every existing test stays green. So each
   concern takes its own read: `deptQueueExtsFromSheet_` (whole sheet, cols
   A..D) plus the full-width span. Pinned by `dqe-span-readers.test.js`.
-  NOTE `sheetFetchDqeRows_` keeps its own inline span -- fix one, fix both.
+  R42 folded `sheetFetchDqeRows_`'s own copy in too, so there is now exactly
+  ONE span implementation and a bug in it fails pins in BOTH suites.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into
@@ -1571,7 +1572,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   which measured 730s+ on the all-departments queue report (vs ~54s when the
   same function was merely paying handshakes) -- and a run that hits the
   6-min ceiling is KILLED PAST its catch blocks, so the designed fallbacks
-  never run (the class that once ate a Daily Queue Report day). Three tiers
+  never run (the class that once ate a Daily Queue Report day). **That run now
+  bounds itself (R43):** `computeQcdAllDepartments_` stops its dept loop on a
+  DEPT BOUNDARY once `QCD_ALLDEPT_BUDGET_MS` (default 4 min) is spent -- a
+  half-computed dept would corrupt the company grand totals it feeds -- and
+  marks the payload `meta.partial`. **A partial is served, never trusted:** it
+  is not cached (it would pin an incomplete report for the 6h TTL), the
+  subscriber email REFUSES it (a non-zero dept count slips past the D-1 empty
+  check, and an omitted dept reads as "no calls"), the day is not claimed so
+  the next poll retries, and the web view carries an explicit note. A new
+  consumer of this payload must decide what `meta.partial` means for it. Three tiers
   when Neon is down: (1) **sheet-primary, no loss** -- DQE + QCD (the sheet
   IS the authority; Neon mirrors it), so the flag flip is pre-cutover
   behavior, not a degraded one; (2) **sheet FALLBACK, disclosed** -- Direct

@@ -724,3 +724,95 @@ test('timing: the all-departments payload carries per-phase timings, and the she
   assert.equal(rep2.queueBreakdown[0].totalCalls, 80);
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;
 });
+
+// Captured at FILE LOAD, before any test body runs: the D-1 cache tests above
+// stub `computeQcdAllDepartments_` and then `delete` it, which removes the REAL
+// function from the shared vm context rather than restoring it. Anything after
+// them would otherwise call a deleted global. (Pre-existing; noted as a
+// follow-on rather than fixed here.)
+const REAL_ALLDEPT_ = h.ctx.computeQcdAllDepartments_;
+
+// ── R43: the all-dept whole-run budget ────────────────────────────────────
+//
+// The loop calls computeQcdReport_ up to three times per dept and each falls
+// back to its own sheet scan when Neon is unreachable -- the run that measured
+// 730s+, past the 6-minute ceiling whose kill SKIPS catch blocks. A killed run
+// records NOTHING: no payload, no failure row, no status. So the loop stops
+// itself first and returns what it has, marked partial.
+//
+// Two properties decide whether that is safe rather than merely faster:
+// the stop lands on a DEPT BOUNDARY (a half-computed dept would corrupt the
+// company grand totals it feeds), and the partial is never PINNED for the 6h
+// TTL. The subscriber-email refusal is pinned in queue-report.test.js.
+
+test('R43: the budget stops the loop on a dept boundary and marks the payload partial', function () {
+  h.ctx.computeQcdAllDepartments_ = REAL_ALLDEPT_;
+  install(rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Bob, 202'] }),
+          [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Beta', 'A_Q_Beta')],
+          [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1),
+           qcdRow('2026-06-10', 'A_Q_Beta', 40, 35, 5, 0)]);
+  // Budget of 1ms: the first dept starts (the check is BEFORE each dept and
+  // t0 is set at entry, so dept 1 always runs), every later dept is skipped.
+  h.state.props.QCD_ALLDEPT_BUDGET_MS = '1';
+  const data = h.call('computeQcdAllDepartments_', '2026-06-10', '2026-06-10');
+  assert.equal(data.meta.partial, true, 'the payload says it is incomplete');
+  assert.ok(data.depts.length >= 1, 'at least one dept still computed');
+  assert.ok(data.meta.partialDeptsSkipped >= 1, 'and it counts what it skipped');
+  assert.equal(data.meta.partialDeptsMapped, data.depts.length + data.meta.partialDeptsSkipped,
+    'computed + skipped accounts for every mapped dept');
+  assert.equal(data.meta.partialBudgetMs, 1, 'the budget in force rides the payload');
+  // Dept boundary: every dept that IS reported carries its full figures, so a
+  // partial run's numbers are exactly as correct as a complete run's.
+  data.depts.forEach(function (d) {
+    assert.ok(d.totals && typeof d.totals.totalCalls === 'number',
+      'a reported dept is whole, never half-computed');
+  });
+  delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
+});
+
+test('R43: a generous budget leaves the payload UNMARKED (no false partial)', function () {
+  h.ctx.computeQcdAllDepartments_ = REAL_ALLDEPT_;
+  install(rosterGrid({ Alpha: ['Anna, 201'], Beta: ['Bob, 202'] }),
+          [dcRow('Alpha', 'A_Q_Alpha'), dcRow('Beta', 'A_Q_Beta')],
+          [qcdRow('2026-06-10', 'A_Q_Alpha', 80, 70, 10, 1),
+           qcdRow('2026-06-10', 'A_Q_Beta', 40, 35, 5, 0)]);
+  const data = h.call('computeQcdAllDepartments_', '2026-06-10', '2026-06-10');
+  assert.equal(data.meta.partial, undefined, 'a complete run carries no partial flag');
+  assert.equal(data.meta.partialDeptsSkipped, undefined);
+  assert.equal(data.depts.length, 2, 'both depts reported');
+});
+
+test('R43: a PARTIAL payload is served but NEVER cached', function () {
+  const computes = d1Install_([{ dept: 'Alpha', totals: { totalCalls: 80 }, queues: [] }]);
+  // Re-stub with the partial marker -- non-empty, so the D-1 empty guard above
+  // cannot be what refuses it.
+  h.ctx.computeQcdAllDepartments_ = function (from, to) {
+    return { dateLabel: from, depts: [{ dept: 'Alpha', totals: { totalCalls: 80 }, queues: [] }],
+             grandTotals: {},
+             meta: { from: from, to: to, cacheHit: false, partial: true,
+                     partialDeptsSkipped: 5, partialDeptsMapped: 6, partialBudgetMs: 240000 } };
+  };
+  const a = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  assert.equal(a.cacheHit, false);
+  assert.equal(a.data.meta.partial, true, 'the partial is still SERVED');
+  assert.equal(cacheKeys_().filter(function (k) { return k.indexOf('qcdAll:') === 0; }).length, 0,
+    'but no qcdAll key is written for it');
+  const b = h.call('qcdAllDeptCachedData_', '2026-06-10', '2026-06-10');
+  assert.equal(b.cacheHit, false, 'recomputed, not served from a pinned partial blob');
+  delete h.ctx.computeQcdAllDepartments_;
+  void computes;
+});
+
+test('R43: the budget is Script-Property tunable, with a sane default', function () {
+  delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
+  const def = h.call('qcdAllDeptBudgetMs_');
+  assert.ok(def >= 60000 && def < 6 * 60 * 1000,
+    'the default sits under the ~6 min ceiling, leaving room for the work after the loop');
+  h.state.props.QCD_ALLDEPT_BUDGET_MS = '120000';
+  assert.equal(h.call('qcdAllDeptBudgetMs_'), 120000, 'an operator override is honored');
+  h.state.props.QCD_ALLDEPT_BUDGET_MS = 'nonsense';
+  assert.equal(h.call('qcdAllDeptBudgetMs_'), def, 'junk falls back to the default, never 0');
+  h.state.props.QCD_ALLDEPT_BUDGET_MS = '-5';
+  assert.equal(h.call('qcdAllDeptBudgetMs_'), def, 'a negative would skip every dept -- refused');
+  delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
+});

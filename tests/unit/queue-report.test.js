@@ -1142,3 +1142,91 @@ test('D-1: the Health classifier treats EMPTY as needs-attention (the O-9 NO-SUB
     require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'SystemHealth.gs'), 'utf8');
   assert.ok(src.indexOf("/^EMPTY\\b/.test(res || '')") !== -1, 'SystemHealth.gs carries the EMPTY arm');
 });
+
+// ── R43: a PARTIAL all-dept compute never reaches a subscriber ─────────────
+//
+// The whole-run budget in computeQcdAllDepartments_ can stop the dept loop
+// early and return what it has. That is right for the WEB view and wrong for
+// this send: a partial payload has a NON-ZERO dept count, so the D-1 empty
+// check above cannot catch it, and a subscriber's copy would omit departments
+// with nothing saying so -- reading as "those queues had no calls" -- while the
+// sent-marker stopped the real report from ever going out that day.
+//
+// This is the same guarantee the owner asked for on the empty path: nothing
+// sent, the day not claimed, admins-only notification.
+
+function partialStub_(seen) {
+  h.ctx.qcdAllDeptCachedData_ = function (from, to, opts) {
+    if (seen) seen.push({ from: from, to: to, opts: opts });
+    return { data: {
+      dateLabel: 'Jul 10, 2026',
+      // NON-ZERO -- the point. A partial is not an empty.
+      depts: [oneDept_()],
+      grandTotals: {},
+      meta: { from: from, to: to, partial: true, partialDeptsSkipped: 9,
+              partialDeptsMapped: 10, partialBudgetMs: 240000 },
+    } };
+  };
+}
+
+test('R43: the trigger path refuses a PARTIAL report -- nothing sent, no throw', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake' };
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
+  });
+  partialStub_();
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (a) { sent.push(a); } };
+  const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(res.partialReport, true);
+  assert.equal(res.count, 0);
+  assert.equal(res.failed.length, 0);
+  assert.match(res.reason, /1 of 10 mapped departments/);
+  assert.equal(sent.length, 0, 'a partial report reaches NO subscriber');
+});
+
+test('R43: the admin preview path THROWS on a partial rather than mailing one', function () {
+  partialStub_();
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('must not send'); } };
+  assert.throws(function () {
+    h.call('sendQueueReportForDate_', '2026-07-10', { to: 'admin@x.com', isPreview: true });
+  }, /Not sent:.*mapped departments/);
+});
+
+test('R43: a partial does NOT claim the day, so the next poll retries', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true' };
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    timeZone: 'America/Chicago',
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
+  });
+  partialStub_();
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('must not send'); } };
+  // Drive the marker discipline directly: the send returns the flag, and the
+  // trigger wrapper must translate it into "not sent, not claimed".
+  const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
+  assert.equal(res.partialReport, true);
+  assert.ok(!h.state.props.QUEUE_REPORT_LAST_SENT,
+    'the sent-marker is never claimed for a day whose report was refused');
+});
+
+test('R43: the SELF-SEND email discloses a partial in the message body', function () {
+  // sendQcdAllDeptEmail does not refuse a partial -- an admin mailing
+  // themselves a snapshot during an outage is a legitimate use, and that is
+  // exactly when a partial happens. But a forwarded copy loses the web note,
+  // so the disclosure has to ride in the HTML.
+  const partial = { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {},
+                    meta: { from: '2026-07-10', to: '2026-07-10', partial: true,
+                            partialDeptsSkipped: 9, partialDeptsMapped: 10 } };
+  const html = h.call('buildQueueReportEmailHtml_', partial, '2026-07-10', false);
+  assert.match(html, /Incomplete report/, 'the partial is disclosed in the email body');
+  assert.match(html, /1 of 10 departments/, 'and quantified');
+  assert.match(html, /not<\/strong> a department with no calls/,
+    'and says what an absent department does NOT mean');
+
+  // A complete payload carries no such bar -- the note must not become wallpaper.
+  const whole = { dateLabel: 'Jul 10, 2026', depts: [oneDept_()], grandTotals: {},
+                  meta: { from: '2026-07-10', to: '2026-07-10' } };
+  assert.doesNotMatch(h.call('buildQueueReportEmailHtml_', whole, '2026-07-10', false),
+    /Incomplete report/, 'a complete report shows no incompleteness bar');
+});

@@ -529,22 +529,16 @@ function sheetFetchDqeRowsUncached_(fromIso, toIso, opts) {
   // read, it does not replace the filter. Output is identical to the full
   // scan for any sheet order; pinned by dal-cutover.test.js.
   //
-  // R41 NOTE: this is the same computation `Data.gs::dqeWindowRowSpan_` now
-  // performs for the five readers that never adopted R26b. It is deliberately
-  // NOT called from here yet -- consolidating is a separate change with its own
-  // review surface -- but the two must not be allowed to drift: fix one, fix
-  // both, or better, finish the consolidation.
-  var dateCol = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
-  var firstIdx = -1, lastIdx = -1;
-  for (var d = 0; d < dateCol.length; d++) {
-    var dIso = rowDateIso_(dateCol[d][0], ssTZ);
-    if (!dIso || dIso < fromIso || dIso > toIso) continue;
-    if (firstIdx < 0) firstIdx = d;
-    lastIdx = d;
-  }
-  if (firstIdx < 0) return [];   // nothing in range -- skip the wide read entirely
+  // R42: the span itself is `Data.gs::dqeWindowRowSpan_` -- ONE implementation
+  // shared with the five readers that adopted it in R41. This function is where
+  // the transform was invented (R26b) and kept its own copy through R41; two
+  // copies of one computation is the drift risk this repo keeps paying for, so
+  // the copy is gone. No new cross-file coupling: this file already reads
+  // `rowDateIso_`, `openSpreadsheet_` and `parseHmsDisplay_` from Data.gs.
+  var span = dqeWindowRowSpan_(sheet, lastRow, fromIso, toIso, ssTZ);
+  if (!span) return [];   // nothing in range -- skip the wide read entirely
 
-  var range = sheet.getRange(2 + firstIdx, 1, lastIdx - firstIdx + 1, numCols);
+  var range = sheet.getRange(span.startRow, 1, span.numRows, numCols);
   var values = range.getValues();
   var displays = range.getDisplayValues();
   var out = [];
