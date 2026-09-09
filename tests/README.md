@@ -92,7 +92,13 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
-                              sheet-repairs-merge, cache-warm-budget (the
+                              sheet-repairs-merge,
+                              historical-date-columns (Phase 0: the read-only
+                              date-column census over all five historical
+                              sheets -- MIXED TYPE is detected separately from
+                              disorder, because a mixed column that has been
+                              sorted reads as non-decreasing while being
+                              wrong), cache-warm-budget (the
                               O-4 whole-run budget), neon-backfill-resume
                               (T-8 fingerprinted resume pointers + the
                               T-7 sanitizer-loss tally + the R33 zero-bind

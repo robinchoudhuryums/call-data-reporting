@@ -1,6 +1,34 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **Phase 0 of the historical date-column work is DONE and awaiting a LIVE RUN**
+  (block `182-phase0-historical-date-census-broad-implement.md`).
+  `previewHistoricalDateColumns()` (cdr-report/sheetRepairs.js) is a read-only
+  census over all five historical sheets. **Nothing downstream can be sized
+  until an operator runs it in the editor and captures the output** — Phase 1's
+  scope is literally "whichever sheets the census calls MIXED-TYPE".
+- **The three-phase plan this belongs to** (agreed with the owner, not yet in
+  `docs/`): Phase 1 normalize DQE col B to real `Date` (the other four sheets
+  already write `dateObj`, so Date is the family-consistent target and the
+  writer needs NO change — hence no INV-16 two-file edit); Phase 2 a nightly
+  check-and-sort trigger over all five sheets; Phase 3 the binary-search span,
+  DEFERRED and gated on a verified-order guarantee.
+- **Two findings that reshaped that plan — do not re-derive them:**
+  (1) Only DQE sorts itself on every write. The daily / Manual Export path
+  (the path Operator State #56 tells operators to use for reprocessing) NEVER
+  sorts Q Path / QCD / CSR Transfer, and sorts CDR only against the last row.
+  So the nightly trigger is the PRIMARY mechanism for those three, not a safety
+  net. (2) The check must be "single-typed AND ordered", never just ordered:
+  Sheets groups numeric/Date before text, so a mixed column that has been
+  sorted reads as non-decreasing while being wrong — an order-only check would
+  certify DQE forever.
+- **The date-column CACHE was investigated and REFUSED** (no code written).
+  Two measured blockers: the column serializes to ~436 KB against CacheService's
+  ~100 KB per-value cap; and the span is POSITIONAL, so a force re-import of an
+  older date shifts rows while neither `reportFreshnessTag_()` nor `lastRow`
+  necessarily moves — a stale span silently under-reports, and the per-row date
+  filter cannot recover rows never read. Do not revive it; the real fix is the
+  three phases above.
 - **C2 is now mechanized as far as it honestly can be** (block
   `176-c2-mechanized-broad-implement.md`). claude-md-split fails when CLAUDE.md
   names a test/script/driver/docs file that does not exist. Test + doc only, no
