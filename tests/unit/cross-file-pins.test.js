@@ -796,8 +796,20 @@ test('F2: every *_ENABLED-gated engine passes its flagProp to svc()', function (
 // So: the two are pinned to reset TOGETHER. Their scope is identical -- both
 // are invalidated by precisely the same event, a fixture swap -- so a suite
 // needing one always needs the other, and no suite legitimately resets only
-// half. A third memo over the same sheet should join this list.
-const DQE_EXEC_MEMOS = ['DQE_DATE_BOUNDS_MEMO_', 'DQE_SHEET_ROWS_MEMO_'];
+// half. A further memo over the same sheet should join this list.
+//
+// KNOWN HOLE, measured and deliberately left open: this only sees suites that
+// reset AT LEAST ONE member. A suite that swaps the DQE fixture and resets
+// NONE is invisible -- which is exactly how individual-report.test.js broke
+// when R44 memoized the ext grid. The obvious widening ("any suite building a
+// 'DQE Historical Data' fixture must reset the family") was measured against
+// the current tree: it flags 20 suites, of which ~1 is real. Most are pipeline
+// suites that build the fixture but never call a dashboard reader touching
+// these memos. A 20-flag tripwire teaches people to add resets ritually or to
+// suppress it, so it is NOT shipped. If you add a memo here and a suite starts
+// failing on stale data, this paragraph is why it wasn't caught for you.
+const DQE_EXEC_MEMOS = ['DQE_DATE_BOUNDS_MEMO_', 'DQE_SHEET_ROWS_MEMO_',
+                        'DQE_DATE_COL_MEMO_', 'DQE_EXT_GRID_MEMO_'];
 
 test('R40: a suite resetting one per-execution DQE memo resets the whole family', () => {
   const unitDir = path.join(ROOT, 'tests', 'unit');

@@ -131,6 +131,8 @@ function install(source) {
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;   // F9: shared date-column bounds scan
   h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.state.cache.clear();
   h.ctx.getDashboardNeonConn_ = (source === 'neon')
     ? fakeNeonConn
@@ -360,6 +362,8 @@ test('F9: a missing DQE sheet yields empty bounds and still caches the negative'
   });
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
   h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.state.cache.clear();
   const b = h.call('sheetScanDqeDateBounds_');
   assert.equal(b.max, null);
@@ -525,6 +529,8 @@ function r26Install(rows) {
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
   h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.state.cache.clear();
   return sheet;
 }
@@ -731,6 +737,8 @@ test('R40: a memo hit is value-identical to a fresh read', function () {
   // And it is still the same answer the uncached primitive gives, so the memo
   // cannot drift from the read it stands in for.
   h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   assert.deepEqual(h.call('sheetFetchDqeRowsUncached_', '2026-03-10', '2026-03-11'), fresh);
 });
 

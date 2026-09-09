@@ -99,6 +99,53 @@ function getLatestDataDate() {
 // reset it through the global object between fixture swaps.
 var DQE_DATE_BOUNDS_MEMO_ = null;
 
+// R44: the DQE date column, READ ONCE PER EXECUTION and returned already
+// normalized to ISO. `var` so a harness can reset it (see DQE_EXEC_MEMOS).
+//
+// Measured on a live 31.9k-row sheet: ONE read of this single column costs
+// ~7.4s, and a combined sub-queue view read it THREE times -- once for
+// sheetScanDqeDateBounds_ and once per department inside dqeWindowRowSpan_
+// (a Sales+PAP request spent ~22s of its 53s re-reading the same column).
+// The column is DEPT-INDEPENDENT, so every one of those reads returned
+// identical bytes. R40 made this argument for the DAL's row sets; the same
+// argument was always true here and was simply never made.
+//
+// It caches the ISO-NORMALIZED array rather than the raw cells, which also
+// removes the per-row rowDateIso_ pass each caller ran (R27 memoizes the Date
+// branch, but the call itself still costs something 31.9k times).
+//
+// SCOPE: `DQE Historical Data`'s date column ONLY -- all callers pass that
+// sheet. The row-count guard catches a sheet that grew within one execution;
+// it cannot distinguish a different sheet of the same height, so do not reuse
+// this helper for another sheet.
+var DQE_DATE_COL_MEMO_ = null;   // { iso: [...], rows: n }
+
+function dqeDateColumnIso_(sheet, lastRow, ssTZ) {
+  const want = lastRow - 1;
+  if (DQE_DATE_COL_MEMO_ && DQE_DATE_COL_MEMO_.rows === want) return DQE_DATE_COL_MEMO_.iso;
+  const values = sheet.getRange(2, HISTORICAL_COLS.DATE, want, 1).getValues();
+  const iso = new Array(values.length);
+  for (let i = 0; i < values.length; i++) iso[i] = rowDateIso_(values[i][0], ssTZ);
+  DQE_DATE_COL_MEMO_ = { iso: iso, rows: want };
+  return iso;
+}
+
+// R44: the cols A..D slice the ext derivation scans, READ ONCE PER EXECUTION.
+// The GRID is dept-independent -- only the rosterSet filter applied to it is
+// per-dept, and that is in-memory -- so a combined sub-queue view was reading
+// ~128k identical cells once per department (~8s each live). Shared by BOTH
+// derivations: the sheet path (deptQueueExtsFromSheet_) and the Neon path's
+// sheet fallback (deptQueueExtsForNeonReader_), which have the same repetition.
+var DQE_EXT_GRID_MEMO_ = null;   // { grid: [[...]], rows: n }
+
+function dqeExtGrid_(sheet, lastRow) {
+  const want = lastRow - 1;
+  if (DQE_EXT_GRID_MEMO_ && DQE_EXT_GRID_MEMO_.rows === want) return DQE_EXT_GRID_MEMO_.grid;
+  const grid = sheet.getRange(2, 1, want, HISTORICAL_COLS.QUEUE_EXT).getValues();
+  DQE_EXT_GRID_MEMO_ = { grid: grid, rows: want };
+  return grid;
+}
+
 /**
  * F9. ONE scan of `DQE Historical Data`'s date column yielding BOTH bounds,
  * memoized per execution.
@@ -137,13 +184,12 @@ function sheetScanDqeDateBounds_() {
   // The Date column is at HISTORICAL_COLS.DATE. Scan only that column to keep
   // the read cheap.
   const _tScan = Date.now();
-  const values = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
+  const iso = dqeDateColumnIso_(sheet, lastRow, ssTZ);
   let min = '', max = '';
-  for (let i = 0; i < values.length; i++) {
-    const iso = rowDateIso_(values[i][0], ssTZ);
-    if (!iso) continue;
-    if (iso > max) max = iso;
-    if (!min || iso < min) min = iso;
+  for (let i = 0; i < iso.length; i++) {
+    if (!iso[i]) continue;
+    if (iso[i] > max) max = iso[i];
+    if (!min || iso[i] < min) min = iso[i];
   }
   const scanMs = Date.now() - _tScan;
   logDqeBoundsTiming_(openMs, scanMs, lastRow - 1);
@@ -2068,10 +2114,12 @@ function parseRosterCell_(cellValue) {
  * getValues AND getDisplayValues) to ~37k.
  */
 function dqeWindowRowSpan_(sheet, lastRow, fromIso, toIso, ssTZ) {
-  const dateCol = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
+  // R44: through the shared per-execution column memo -- this used to re-read
+  // the whole date column on EVERY call, i.e. once per department.
+  const dateIso = dqeDateColumnIso_(sheet, lastRow, ssTZ);
   let firstIdx = -1, lastIdx = -1;
-  for (let i = 0; i < dateCol.length; i++) {
-    const iso = rowDateIso_(dateCol[i][0], ssTZ);
+  for (let i = 0; i < dateIso.length; i++) {
+    const iso = dateIso[i];
     if (!iso || iso < fromIso || iso > toIso) continue;
     if (firstIdx < 0) firstIdx = i;
     lastIdx = i;
@@ -2103,8 +2151,7 @@ function deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow) {
   const overrideList = getDeptQueueExtsOverride_(dept);
   if (overrideList && overrideList.length) return getDeptQueueExts_(dept, rosterSet, []);
   if (!sheet || !lastRow || lastRow < 2) return getDeptQueueExts_(dept, rosterSet, []);
-  const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
-  return getDeptQueueExts_(dept, rosterSet, extValues);
+  return getDeptQueueExts_(dept, rosterSet, dqeExtGrid_(sheet, lastRow));
 }
 
 function getDeptQueueExts_(dept, rosterSet, values) {
@@ -2170,8 +2217,7 @@ function deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow) {
   // Neon -- fall through to the override/empty derivation instead of
   // crashing on getRange.
   if (!sheet || !lastRow || lastRow < 2) return getDeptQueueExts_(dept, rosterSet, []);
-  const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
-  return getDeptQueueExts_(dept, rosterSet, extValues);
+  return getDeptQueueExts_(dept, rosterSet, dqeExtGrid_(sheet, lastRow));
 }
 
 /**

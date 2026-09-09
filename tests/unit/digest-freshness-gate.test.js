@@ -44,7 +44,7 @@ function install(opts) {
                                ['m@x.com', 'Alpha', 'daily', 'TRUE', '', 'summary']];
   }
   h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
-  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null; h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
   h.state.cache.clear();
   // Fake ScriptApp: records one-shot triggers with their delay.
@@ -248,7 +248,7 @@ test('R32: a quiet window with FRESH data explains its zero tiles; a stale send 
     'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows),
     'Digest Config': [['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format'],
                       ['m@x.com', 'Alpha', 'daily', 'TRUE', '', 'summary']] } });
-  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null; h.state.cache.clear();
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null; h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null; h.state.cache.clear();
   h.ctx.ScriptApp = { getProjectTriggers: function () { return []; }, deleteTrigger: function () {}, newTrigger: function () { throw new Error('unused'); } };
   const r = h.call('digestGatedAttempt_', 'daily', at('08:30'), 'trigger');
   assert.equal(r.decision, 'send', 'the day exists on the source, so it is fresh');

@@ -56,6 +56,8 @@ function install(rows) {
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
   h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null;   // R44: shared date-column memo
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;   // R44: shared cols-A..D ext grid
   h.ctx.ALERT_DATE_ROWS_MEMO_ = null;
   h.state.cache.clear();
 }
@@ -228,4 +230,92 @@ test('R41: IR and Insights read their windows out of an out-of-order sheet', fun
   const ins = h.call('computeInsights_', 'Alpha', '2026-03-09', '2026-03-10', [], h.call('getRosterForDepartment_', 'Alpha'));
   assert.ok(ins.teamStats, 'Insights renders');
   assert.equal(ins.teamStats.rung.val, 22, 'Insights sums both agents across both days');
+});
+
+// ── R44: the repeated whole-sheet reads a COMBINED view was paying ────────
+//
+// From a live 53.4s getDepartmentSummary on a 31.9k-row sheet (Sales + PAP,
+// the sub-queue combined view):
+//   [dqe-read] dqeDateBounds        scanMs=7418
+//   [dqe-read] computeSummary_:Sales  ms=16131   rows=142
+//   [dqe-read] computeSummary_:PAP    ms=15696   rows=142
+// 142 rows out, ~16s in -- so the cost was never the aggregation. Each
+// computeSummary_ re-read the whole DATE COLUMN (for the span) and the whole
+// cols-A..D slice (for the all-history ext derivation), and the bounds scan
+// had read that same date column already. Three reads of one column, two of
+// one grid, all returning identical bytes because BOTH grids are
+// dept-independent -- only the rosterSet filter applied to the ext grid is
+// per-dept, and that is in-memory.
+//
+// These pins are about READ COUNTS. The payload-equality pins above already
+// guarantee the memos cannot change an answer.
+
+/** Counts reads by width: the date column (1 col) vs the ext slice (A..D). */
+function r44CountReads() {
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const real = sheet.getRange;
+  const n = { dateCol: 0, extGrid: 0, wide: 0 };
+  sheet.getRange = function (startRow, startCol, numRows, numCols) {
+    if (numCols === 1) n.dateCol++;
+    else if (numCols === 4) n.extGrid++;
+    else if (numCols > 4) n.wide++;
+    return real.apply(sheet, arguments);
+  };
+  return { n: n, restore: function () { sheet.getRange = real; } };
+}
+
+test('R44: N departments cost ONE date-column read and ONE ext-grid read, not N', function () {
+  install(outOfOrderRows());
+  const c = r44CountReads();
+  try {
+    // The combined sub-queue path: computeSummary_ once per dept, exactly what
+    // the live trace showed.
+    h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'both');
+    h.call('computeSummary_', 'Beta',  '2026-03-09', '2026-03-10', 'both');
+    assert.equal(c.n.dateCol, 1, 'the date column is read ONCE for both depts');
+    assert.equal(c.n.extGrid, 1, 'so is the all-history ext grid');
+    assert.equal(c.n.wide, 2, 'each dept still does its own narrow SPAN read');
+  } finally { c.restore(); }
+});
+
+test('R44: the bounds scan and the span share that ONE date-column read', function () {
+  install(outOfOrderRows());
+  const c = r44CountReads();
+  try {
+    // getLatestDataDate goes through sheetScanDqeDateBounds_; computeSummary_
+    // goes through dqeWindowRowSpan_. Before R44 these were separate reads of
+    // the same column -- the single biggest line in the live trace.
+    h.call('sheetScanDqeDateBounds_');
+    h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'both');
+    assert.equal(c.n.dateCol, 1, 'bounds + span = one read, not two');
+  } finally { c.restore(); }
+});
+
+test('R44: memoizing does not change any answer (payload identical either way)', function () {
+  install(outOfOrderRows());
+  const warm = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'both');
+  // Same request with the memos cleared between: a cold read must agree.
+  install(outOfOrderRows());
+  h.state.cache.clear();
+  const cold = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'both');
+  const scrub = function (d) {
+    const x = JSON.parse(JSON.stringify(d));
+    if (x.meta) { delete x.meta.generatedAt; delete x.meta.computeMs; delete x.meta.cacheHit; }
+    return x;
+  };
+  assert.deepEqual(scrub(warm), scrub(cold), 'the memo changes cost, never content');
+});
+
+test('R44: a sheet that GREW within one execution is re-read, never served stale', function () {
+  install(outOfOrderRows());
+  h.call('sheetScanDqeDateBounds_');
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const before = h.ctx.DQE_DATE_COL_MEMO_.rows;
+  // Simulate growth: the row-count guard is what stops a stale serve. (The
+  // dashboard never writes DQE, so this is belt-and-braces -- but a memo that
+  // cannot notice its input changed is the kind that bites years later.)
+  h.ctx.DQE_DATE_COL_MEMO_ = { iso: ['nonsense'], rows: before + 5 };
+  const iso = h.call('dqeDateColumnIso_', sheet, before + 1, 'America/Chicago');
+  assert.equal(iso.length, before, 'a row-count mismatch forces a fresh read');
+  assert.notEqual(iso[0], 'nonsense', 'and the stale array is discarded');
 });

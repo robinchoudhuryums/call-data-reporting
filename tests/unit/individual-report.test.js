@@ -32,6 +32,11 @@ function install(rows, deptConfigRows) {
   if (deptConfigRows) sheets['Dept Config'] = [DC_HEADERS].concat(deptConfigRows);
   h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  // R44: this suite swaps the DQE fixture between tests, so every
+  // per-execution DQE memo must be cleared or it serves the previous one's
+  // grid (DQE_EXEC_MEMOS in cross-file-pins.test.js is the family).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 

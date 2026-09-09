@@ -399,20 +399,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   completeness check -> a tail scan is fine; anything else -> span it. New
   windowed readers over a dated sheet must not add a third rediscovery.
   ENFORCED by out-of-order + full-scan-equivalence tests in
-  `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); R26c's
-  `[dqe-read] dqeDateBounds ... openMs=N scanMs=N` line is what tells you
-  whether a slow read is the scan or the workbook open. **A span bounds a
+  `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); the
+  `[dqe-read]` log lines say whether a slow read is the scan or the open (R26c). **A span bounds a
   read's WIDTH; only a memo bounds the COUNT (R40)** -- `sheetFetchDqeRows_` is
   DEPT-INDEPENDENT, so every dept asking the same question for the same window
   re-read the same span. It now memoizes per EXECUTION in
   `DQE_SHEET_ROWS_MEMO_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped
   at `DQE_SHEET_ROWS_MEMO_MAX_`. **It returns a SHALLOW CLONE per call, and
-  that is load-bearing, not defensive tidiness:** six readers hand the result
-  straight to `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an
-  un-cloned memo leaks dept A's narrowing into dept B (the hazard
-  `queueSplitNarrowedCopy_` exists for). Shallow suffices only because `slots`
+  that is load-bearing:** six readers hand the result straight to
+  `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an un-cloned memo
+  leaks dept A's narrowing into dept B. Shallow suffices only because `slots`
   is always ASSIGNED, never index-mutated -- deep-clone it if that changes.
-  Count `source=sheet-memo` lines against `source=sheet` to measure the saving.
   **The five DAL-bypassing readers are span-bounded too (R41), via ONE shared
   `Data.gs::dqeWindowRowSpan_`** -- `computeSummary_` (charged per dept),
   IndividualReport, InsightsReport, `computeActiveAgentsInRange_`, Alerts.
@@ -424,6 +421,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   A..D) plus the full-width span. Pinned by `dqe-span-readers.test.js`.
   R42 folded `sheetFetchDqeRows_`'s own copy in too, so there is now exactly
   ONE span implementation and a bug in it fails pins in BOTH suites.
+  **R44: the two whole-sheet grids a span CANNOT bound are read once per
+  EXECUTION** -- `dqeDateColumnIso_` (the date column, returned ISO-normalized;
+  shared by `sheetScanDqeDateBounds_` AND every `dqeWindowRowSpan_` call) and
+  `dqeExtGrid_` (the cols-A..D ext slice, shared by both ext derivations).
+  Both grids are DEPT-INDEPENDENT, so a combined sub-queue view was re-reading
+  identical bytes per dept: a live 53s request spent ~22s on three reads of the
+  same column and ~16s on two of the same grid. Read-counts pinned in
+  `dqe-span-readers.test.js`; both join `DQE_EXEC_MEMOS`.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into
@@ -1204,8 +1209,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   through it rather than format per row (data-parsing.test.js pins the memo).
   **Test-side trap:** a suite that swaps the DQE fixture must reset EVERY
   per-execution DQE memo in its `install()` or it serves the previous test's
-  data -- silently, as a wrong number rather than an error. There are now two
-  (`DQE_DATE_BOUNDS_MEMO_`, `DQE_SHEET_ROWS_MEMO_`) and they reset TOGETHER:
+  data -- silently, as a wrong number rather than an error. There are now four
+  (`DQE_DATE_BOUNDS_MEMO_`, `DQE_SHEET_ROWS_MEMO_`, plus R44's
+  `DQE_DATE_COL_MEMO_` / `DQE_EXT_GRID_MEMO_`) and they reset TOGETHER:
   their scope is identical, so no suite legitimately resets only half.
   ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
   memo resets the whole family" -- copying the reset you know about and missing
