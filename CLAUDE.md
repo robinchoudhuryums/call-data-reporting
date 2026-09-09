@@ -381,8 +381,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   answer a windowed question against a years-deep sheet, and both do it the same
   way: scan the DATE COLUMN alone, find the FIRST and LAST row in the window,
   then read only that row span at full width -- `computeCsrTransferRange_`
-  (Data.gs, R25b) and `sheetFetchDqeRows_` (NeonRead.gs, R26b, which had been
-  reading ~2.2M cells TWICE to answer a one-day question). A span is correct
+  (Data.gs, R25b) and `sheetFetchDqeRows_` (NeonRead.gs, R26b). A span is correct
   whatever the row order is: an out-of-order row merely WIDENS it and can never
   fall outside it, which is why **the per-row date filter always stays** -- the
   span bounds the read, it does not replace the filter. A TAIL scan is the trap:
@@ -393,23 +392,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   backfill of older dates can still sit after newer rows and a tail scan stops
   early and silently drops them -- quietly wrong numbers, strictly worse than
   being slow. **The one legitimate tail scan is
-  `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and it is safe for two reasons
-  that do NOT hold here: its sheet is kept date-sorted by its own exporter, AND
-  it WIDENS until the date's block is provably complete. So: date-ordered plus a
-  completeness check -> a tail scan is fine; anything else -> span it. New
-  windowed readers over a dated sheet must not add a third rediscovery.
+  `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and its warrant is NOT that its
+  sheets are ordered -- it reads DQE / QCD / CDR Historical Data, and none of
+  those reliably is. It WIDENS until the date's block is provably complete, and
+  a date's rows are contiguous because a force re-import deletes then re-appends.
+  So: a completeness check -> a tail scan is fine; ordering alone is never the
+  warrant. New windowed readers over a dated sheet must not add a third
+  rediscovery.
   ENFORCED by out-of-order + full-scan-equivalence tests in
   `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); the
-  `[dqe-read]` log lines say whether a slow read is the scan or the open (R26c). **A span bounds a
-  read's WIDTH; only a memo bounds the COUNT (R40)** -- `sheetFetchDqeRows_` is
-  DEPT-INDEPENDENT, so every dept asking the same question for the same window
-  re-read the same span. It now memoizes per EXECUTION in
-  `DQE_SHEET_ROWS_MEMO_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped
-  at `DQE_SHEET_ROWS_MEMO_MAX_`. **It returns a SHALLOW CLONE per call, and
-  that is load-bearing:** six readers hand the result straight to
-  `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an un-cloned memo
-  leaks dept A's narrowing into dept B. Shallow suffices only because `slots`
-  is always ASSIGNED, never index-mutated -- deep-clone it if that changes.
+  `[dqe-read]` log lines say whether a slow read is the scan or the open (R26c).
   **The five DAL-bypassing readers are span-bounded too (R41), via ONE shared
   `Data.gs::dqeWindowRowSpan_`** -- `computeSummary_` (charged per dept),
   IndividualReport, InsightsReport, `computeActiveAgentsInRange_`, Alerts.
@@ -421,14 +413,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   A..D) plus the full-width span. Pinned by `dqe-span-readers.test.js`.
   R42 folded `sheetFetchDqeRows_`'s own copy in too, so there is now exactly
   ONE span implementation and a bug in it fails pins in BOTH suites.
+- **A span bounds a dated read's WIDTH; only a per-execution MEMO bounds the
+  COUNT (R40/R44).** `sheetFetchDqeRows_` is DEPT-INDEPENDENT, so every dept asking the same question for the same window
+  re-read the same span. It now memoizes per EXECUTION in
+  `DQE_SHEET_ROWS_MEMO_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped
+  at `DQE_SHEET_ROWS_MEMO_MAX_`. **It returns a SHALLOW CLONE per call, and
+  that is load-bearing:** six readers hand the result straight to
+  `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an un-cloned memo
+  leaks dept A's narrowing into dept B. Shallow suffices only because `slots`
+  is always ASSIGNED, never index-mutated -- deep-clone it if that changes.
   **R44: the two whole-sheet grids a span CANNOT bound are read once per
   EXECUTION** -- `dqeDateColumnIso_` (the date column, returned ISO-normalized;
   shared by `sheetScanDqeDateBounds_` AND every `dqeWindowRowSpan_` call) and
   `dqeExtGrid_` (the cols-A..D ext slice, shared by both ext derivations).
   Both grids are DEPT-INDEPENDENT, so a combined sub-queue view was re-reading
-  identical bytes per dept: a live 53s request spent ~22s on three reads of the
-  same column and ~16s on two of the same grid. Read-counts pinned in
-  `dqe-span-readers.test.js`; both join `DQE_EXEC_MEMOS`.
+  identical bytes per dept (measurements: R44 in fix-history). Read-counts
+  pinned in `dqe-span-readers.test.js`; both join `DQE_EXEC_MEMOS`. Making these
+  sheets genuinely date-ordered -- which would replace the span scan with a
+  binary search -- is a separate staged project:
+  [`docs/date-column-normalization-plan.md`](docs/date-column-normalization-plan.md).
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into

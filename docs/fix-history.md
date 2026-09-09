@@ -632,6 +632,33 @@ Anything else → span it.
 
 ---
 
+## `R40`–`R45` — the same dated read, charged per department (2026-09)
+
+R25b/R26b bounded each dated read's WIDTH. These six bound its COUNT. The
+trigger was a live `getDepartmentSummary` log: **53.4 s to return 142 rows**,
+which ruled out aggregation as the cost — the expense was re-reading the same
+dept-INDEPENDENT grids once per department in a combined sub-queue view. The
+live rules are the SPAN bullet and the "only a per-execution MEMO bounds the
+COUNT" bullet in CLAUDE.md's Common Gotchas; read those for what to do.
+
+| code | what it fixed | where the rule lives now |
+|---|---|---|
+| R40 | **`sheetFetchDqeRows_` is dept-independent but was charged per dept.** Memoized per EXECUTION in `DQE_SHEET_ROWS_MEMO_`. It returns a SHALLOW CLONE, which is load-bearing and was not obvious: six readers hand the result straight to `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an un-cloned memo leaks dept A's queue-narrowing into dept B | code (NeonRead.gs); `dal-cutover.test.js` |
+| R41 | **The five readers that bypass the DAL were still doing whole-sheet reads.** Span-bounded via one shared `dqeWindowRowSpan_`. The trap that made it more than find-and-replace: four of them ALSO derive `deptQueueExts` from that grid, and that needs every ext a roster agent EVER used — feeding it the span silently shrinks the set, changing which floaters are recognized (INV-53) while every existing test stays green. Two of the five mutations could NOT be made to fire (the downstream re-filters absorb them); recorded in the suite rather than contorting a fixture to fake a pin | code (Data.gs + 4 readers); `dqe-span-readers.test.js` |
+| R42 | Folded `sheetFetchDqeRows_`'s own inline span into `dqeWindowRowSpan_`, so ONE implementation exists and a bug in it fails pins in both suites | code (NeonRead.gs) |
+| R43 | **A Neon-down all-dept queue report could hit the 6-min ceiling, whose kill SKIPS catch blocks** — so the designed fallbacks never ran (the class that once ate a Daily Queue Report day). `computeQcdAllDepartments_` now stops on a DEPT BOUNDARY at `QCD_ALLDEPT_BUDGET_MS`; a half-computed dept would corrupt the company grand totals. The partial is served but never trusted: not cached, the subscriber email REFUSES it (a non-zero dept count slips past the D-1 empty check, and an omitted dept reads as "no calls"), the day is not claimed | code (QCDReport.gs, QueueReportEmail.gs); Operator State; `qcd-report.test.js` |
+| R44 | **The two whole-sheet grids a span CANNOT bound were read per dept.** `dqeDateColumnIso_` and `dqeExtGrid_` memoized per execution. Measured on the live 53.4 s request: **~22 s on three reads of the same date column and ~16 s on two reads of the same A..D grid.** The test-side trap this created is now mechanized — a suite that resets one per-execution DQE memo must reset the whole `DQE_EXEC_MEMOS` family, because copying the reset you know about and missing the one you don't broke eight tests when the second memo landed | code (Data.gs); `dqe-span-readers.test.js`, `cross-file-pins.test.js` |
+| R45 | **The derived per-dept ext SET now caches across requests** (`deptExts:v1`, ~8 s of all-history A..D scan). Only the SET is cached — the grid is ~128k cells, far past CacheService's ~100 KB per-value cap. The key carries TWO inputs because the set has two: `reportFreshnessTag_()` for the grid AND `hashAgents_` over the dept ROSTER, since the tag does NOT move when `DO NOT EDIT!` is edited and a stale ext set is a wrong number rather than an error | code (Data.gs); INV-30; `dqe-span-readers.test.js`, `cache-version-sync.test.js` |
+
+**Rejected in the same pass, deliberately.** Caching the DQE date COLUMN, and
+caching the resolved SPAN, were both investigated and refused — the column
+serializes to ~436 KB against the ~100 KB per-value cap, and a span is
+POSITIONAL, so a force re-import of an older date shifts rows while neither
+`reportFreshnessTag_()` nor `lastRow` necessarily moves. A stale span silently
+UNDER-reports, and the per-row date filter cannot recover rows never read. The
+real fix is to make the sheets genuinely date-ordered:
+[`date-column-normalization-plan.md`](date-column-normalization-plan.md).
+
 ## 2026-08-27 broad-scan (increments 150–151) — the P/L family
 
 One three-stage audit, two implementation batches. Codes below are cited in
