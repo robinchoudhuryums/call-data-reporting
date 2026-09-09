@@ -319,3 +319,135 @@ test('R44: a sheet that GREW within one execution is re-read, never served stale
   assert.equal(iso.length, before, 'a row-count mismatch forces a fresh read');
   assert.notEqual(iso[0], 'nonsense', 'and the stale array is discarded');
 });
+
+// ── R45: the derived ext set is cached ACROSS requests ────────────────────
+//
+// R44 collapsed the repeats within one execution; this removes the cols-A..D
+// read from most requests entirely. Only the derived SET is cached -- a few
+// dozen short strings -- because the grid itself (~128k cells) is far past
+// CacheService's ~100 KB per-value cap and is not a cacheable unit.
+//
+// The danger here is NOT slowness, it is staleness: a wrong ext set changes
+// which floaters are recognized (INV-53), which is a wrong number rather than
+// an error. The set has exactly two inputs, and these pins are that both are
+// in the key.
+
+/** A fresh "request": clears the per-execution memos, keeps the shared cache. */
+function r45NextRequest() {
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null;
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;
+}
+
+test('R45: a SECOND request reuses the derived ext set -- no cols-A..D read at all', function () {
+  install(outOfOrderRows());
+  const roster = h.call('getRosterForDepartment_', 'Alpha');
+  h.call('computeActiveAgentsInRange_', 'Alpha', '2026-03-10', '2026-03-10', roster);
+
+  r45NextRequest();
+  const c = r44CountReads();
+  try {
+    h.call('computeActiveAgentsInRange_', 'Alpha', '2026-03-10', '2026-03-10', roster);
+    assert.equal(c.n.extGrid, 0, 'the whole-sheet ext read is gone on a warm cache');
+  } finally { c.restore(); }
+});
+
+test('R45: a ROSTER change busts it -- the freshness tag alone would not', function () {
+  // This is the pin that matters. The tag is the latest DQE DATE; editing
+  // `DO NOT EDIT!` (or the Orphan Fix add-to-roster flow) does not move it, so
+  // a key without the roster hash would serve the OLD ext set and silently
+  // change which agents count as floaters.
+  install(outOfOrderRows());
+  const rosterA = h.call('getRosterForDepartment_', 'Alpha');
+  const warm = h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true },
+                      h.state.spreadsheet.getSheetByName('DQE Historical Data'),
+                      h.state.spreadsheet.getSheetByName('DQE Historical Data').getLastRow());
+  assert.ok(Object.keys(warm.exts).length > 0, 'the one-agent roster derives some exts');
+
+  r45NextRequest();
+  // A DIFFERENT roster set for the same dept and the same data date.
+  const other = h.call('deptQueueExtsFromSheet_', 'Alpha', { Nobody: true },
+                       h.state.spreadsheet.getSheetByName('DQE Historical Data'),
+                       h.state.spreadsheet.getSheetByName('DQE Historical Data').getLastRow());
+  assert.equal(Object.keys(other.exts).length, 0,
+    'a roster matching no rows derives an EMPTY set -- not the previous roster\'s');
+  void rosterA;
+});
+
+test('R45: the freshness tag is IN the key -- new data does not serve the old set', function () {
+  // install() clears the shared cache, and reportFreshnessTag_ reads through
+  // the latestDate cache, so driving this via fixtures cannot isolate the key.
+  // Stubbing the tag tests exactly the claim: the key moves when it moves.
+  install(outOfOrderRows());
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const lastRow = sheet.getLastRow();
+  const realTag = h.ctx.reportFreshnessTag_;
+  h.ctx.reportFreshnessTag_ = function () { return '2026-03-10'; };
+  try {
+    h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);   // warm
+    r45NextRequest();
+    // Same dept, same roster, LATER data date -> must re-derive, not reuse.
+    h.ctx.reportFreshnessTag_ = function () { return '2026-04-01'; };
+    const c = r44CountReads();
+    try {
+      h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);
+      assert.equal(c.n.extGrid, 1, 'the tag moved, so the set is re-derived');
+    } finally { c.restore(); }
+    // And the OLD tag still hits its own entry -- the key separates them.
+    r45NextRequest();
+    h.ctx.reportFreshnessTag_ = function () { return '2026-03-10'; };
+    const c2 = r44CountReads();
+    try {
+      h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);
+      assert.equal(c2.n.extGrid, 0, 'the earlier tag is still cached under its own key');
+    } finally { c2.restore(); }
+  } finally { h.ctx.reportFreshnessTag_ = realTag; }
+});
+
+test('R45: two cache HITS get separate objects -- one caller cannot poison the next', function () {
+  install(outOfOrderRows());
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const lastRow = sheet.getLastRow();
+  h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);   // warm (a MISS)
+
+  // Both of these are HITS -- the path where a shared object would bite.
+  r45NextRequest();
+  const a = h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);
+  a.exts.POISON = true;
+  r45NextRequest();
+  const b = h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);
+  assert.equal(b.exts.POISON, undefined,
+    'a set mutated by one caller never reaches the next through the cache');
+});
+
+test('R45: the OVERRIDE path never consults the cache (it reads nothing anyway)', function () {
+  install(outOfOrderRows());
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const lastRow = sheet.getLastRow();
+  h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);   // warm
+  h.ctx.getDeptQueueExtsOverride_ = function () { return ['999']; };
+  try {
+    r45NextRequest();
+    const o = h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);
+    assert.equal(o.source, 'override', 'an override added later takes effect immediately');
+    assert.deepEqual(Object.keys(o.exts), ['999'], 'and is not shadowed by the warm derived set');
+  } finally { delete h.ctx.getDeptQueueExtsOverride_; }
+});
+
+test('R45: a cache that throws degrades to a plain read, never an error', function () {
+  install(outOfOrderRows());
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const lastRow = sheet.getLastRow();
+  const realCache = h.ctx.CacheService;
+  h.ctx.CacheService = { getScriptCache: function () {
+    return { get: function () { throw new Error('quota'); },
+             put: function () { throw new Error('quota'); } };
+  } };
+  try {
+    const out = h.call('deptQueueExtsFromSheet_', 'Alpha', { Anna: true }, sheet, lastRow);
+    assert.ok(Object.keys(out.exts).length > 0, 'still derives the correct set');
+    assert.equal(out.source, 'derived');
+  } finally { h.ctx.CacheService = realCache; }
+});

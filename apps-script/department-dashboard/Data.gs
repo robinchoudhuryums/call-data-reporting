@@ -2148,10 +2148,55 @@ function dqeWindowRowSpan_(sheet, lastRow, fromIso, toIso, ssTZ) {
  * The override path resolves BEFORE any read, so an override dept pays nothing.
  */
 function deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow) {
+  // The OVERRIDE path reads nothing, so it never touches the cache: an admin
+  // adding an override takes effect on the next request (this returns before
+  // the lookup), and removing one falls through to a derived value that never
+  // depended on the override anyway.
   const overrideList = getDeptQueueExtsOverride_(dept);
   if (overrideList && overrideList.length) return getDeptQueueExts_(dept, rosterSet, []);
   if (!sheet || !lastRow || lastRow < 2) return getDeptQueueExts_(dept, rosterSet, []);
-  return getDeptQueueExts_(dept, rosterSet, dqeExtGrid_(sheet, lastRow));
+
+  // R45: cross-request cache of the DERIVED set. R44's memo already collapses
+  // the repeats WITHIN one execution; this removes the read from most requests
+  // entirely. What is cached is the derived SET (a few dozen short extension
+  // strings), never the grid -- ~128k cells is far past CacheService's ~100 KB
+  // per-value cap, so the grid is not a cacheable unit at all.
+  //
+  // The set has exactly TWO inputs and the key carries both:
+  //   1. the all-history grid  -> reportFreshnessTag_() (latest DQE date), the
+  //      INV-30 anchor every 6h key carries;
+  //   2. the dept ROSTER       -> hashAgents_ over the roster names. The
+  //      freshness tag does NOT move when someone edits `DO NOT EDIT!` or the
+  //      Orphan Fix modal adds an agent, so without this a roster change would
+  //      silently serve the old ext set -- and a wrong ext set changes which
+  //      floaters are recognized (INV-53), i.e. a wrong number, not an error.
+  //
+  // Inherited limitation, same as every key on this tier: a force re-import
+  // that REWRITES an existing date's extensions without moving the latest date
+  // is not detected, and lags up to the TTL.
+  const key = 'deptExts:v1:' + dept + ':' + reportFreshnessTag_()
+            + ':' + hashAgents_(Object.keys(rosterSet || {}));
+  let cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) { /* harness / quota */ }
+  if (cache) {
+    try {
+      const hit = cache.get(key);
+      if (hit) {
+        // Rebuilt fresh per call rather than shared, so no caller can mutate
+        // another's set (the R40 clone lesson).
+        const set = {};
+        JSON.parse(hit).forEach(function (x) { set[x] = true; });
+        return { exts: set, source: 'derived' };
+      }
+    } catch (e) { /* a cache miss is never fatal -- fall through and derive */ }
+  }
+
+  const out = getDeptQueueExts_(dept, rosterSet, dqeExtGrid_(sheet, lastRow));
+  if (cache) {
+    try { cache.put(key, JSON.stringify(Object.keys(out.exts)), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { Logger.log('deptQueueExtsFromSheet_: cache put failed: %s', e); }
+  }
+  return out;
 }
 
 function getDeptQueueExts_(dept, rosterSet, values) {
@@ -2216,8 +2261,10 @@ function deptQueueExtsForNeonReader_(dept, rosterSet, sheet, lastRow) {
   // F-35: the sheet may legitimately be absent/empty once reads are on
   // Neon -- fall through to the override/empty derivation instead of
   // crashing on getRange.
-  if (!sheet || !lastRow || lastRow < 2) return getDeptQueueExts_(dept, rosterSet, []);
-  return getDeptQueueExts_(dept, rosterSet, dqeExtGrid_(sheet, lastRow));
+  // R45: the fallback is the same derivation, so it shares the same cache
+  // (deptQueueExtsFromSheet_ re-checks the override, which has already
+  // returned above -- harmless, and it keeps ONE cached derivation).
+  return deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow);
 }
 
 /**

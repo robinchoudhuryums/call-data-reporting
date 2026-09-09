@@ -1743,6 +1743,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `REPORT_CACHE_TTL_SECONDS` and are busted on EVERY write via
   `bustOrphanFixCache_()` / `dcBustCaches_()` -- admin-only surfaces, so the
   shared script cache is safe (no per-viewer personalization).
+  **`deptExts:v1` (R45) rides the same tier for a NON-report value** -- the
+  derived per-dept queue-ext set, the all-history scan a windowed span cannot
+  bound. Its key carries the freshness tag AND a `hashAgents_` of the dept
+  ROSTER, because the tag does not move when the roster is edited and a stale
+  ext set silently changes which floaters are recognized (INV-53). Only the
+  SET is cached; the grid is ~128k cells, past the per-value cap.
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
   (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
   with each group's heading row as its collapse toggle; the three-way scope

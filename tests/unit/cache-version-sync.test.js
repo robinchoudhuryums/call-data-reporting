@@ -39,6 +39,9 @@ const SPECS = [
   ['summary',           'Data.gs',                /'summary:v(\d+):'/],
   ['latestDate',        'Data.gs',                /'latestDate:v(\d+):'/],
   ['latestDates',       'Data.gs',                /'latestDates:v(\d+):'/],
+  // R45: the derived dept queue-ext set (the all-history scan the span
+  // cannot bound). Tag-anchored AND roster-hashed -- see the key comment.
+  ['deptExts',          'Data.gs',                /'deptExts:v(\d+):'/],
   ['individual',        'IndividualReport.gs',    /'individual:v(\d+)'/],
   ['individual_active', 'Util.gs',                /'individual_active:v(\d+):'/],
   // 'performance' retired with the Performance Report (PR->Insights
@@ -192,6 +195,7 @@ const ANCHOR_SPECS = {
   summary:             'tag',
   latestDate:          'exception: 5-min CACHE_TTL_SECONDS freshness tier',
   latestDates:         'exception: 5-min CACHE_TTL_SECONDS freshness tier',
+  deptExts:            'tag',
   individual:          'tag',
   individual_active:   'tag',
   missed:              'tag',
