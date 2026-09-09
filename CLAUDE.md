@@ -413,14 +413,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `queueSplitNarrowedCopy_` exists for). Shallow suffices only because `slots`
   is always ASSIGNED, never index-mutated -- deep-clone it if that changes.
   Count `source=sheet-memo` lines against `source=sheet` to measure the saving.
-  **Five readers still bypass the DAL entirely and are NOT span-bounded** --
-  `computeSummary_` (per dept, so the N-dept combined view pays it N times),
-  IndividualReport, InsightsReport, `computeActiveAgentsInRange_` and Alerts
-  each run their own `getRange(2, 1, lastRow-1, ~35)` + `getDisplayValues()`
-  over the whole sheet. R26b was never applied to them; neither is the memo.
-  That is the remaining cost of the sheet path (which is the DEFAULT read
-  source and the whole of the Neon-outage fallback), and it is a known gap, not
-  an oversight to rediscover.
+  **The five DAL-bypassing readers are span-bounded too (R41), via ONE shared
+  `Data.gs::dqeWindowRowSpan_`** -- `computeSummary_` (charged per dept),
+  IndividualReport, InsightsReport, `computeActiveAgentsInRange_`, Alerts.
+  **The trap that makes it more than find-and-replace:** four of them ALSO
+  derive `deptQueueExts` from that grid, and that needs every ext a roster
+  agent EVER used -- feed it the span and the set silently shrinks, changing
+  which floaters are recognized while every existing test stays green. So each
+  concern takes its own read: `deptQueueExtsFromSheet_` (whole sheet, cols
+  A..D) plus the full-width span. Pinned by `dqe-span-readers.test.js`.
+  NOTE `sheetFetchDqeRows_` keeps its own inline span -- fix one, fix both.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into

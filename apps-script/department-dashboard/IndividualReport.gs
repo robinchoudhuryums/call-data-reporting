@@ -347,10 +347,15 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       if (neonCapable) e.meta.sourceUnavailable = true;
       return e;
     }
-    const range = sheet.getRange(2, 1, lastRow - 1, numCols);
-    const values   = range.getValues();
-    const displays = range.getDisplayValues();
-    deptQueueExts = getDeptQueueExts_(dept, rosterSet, values).exts;
+    // R41: the ext derivation needs ALL history (getDeptQueueExts_ docstring),
+    // so it reads its own whole-sheet cols-A..D slice; the windowed rows come
+    // from a bounded SPAN. The per-row date filter below STAYS -- the span
+    // bounds the read, it does not replace the filter.
+    deptQueueExts = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow).exts;
+    const span = dqeWindowRowSpan_(sheet, lastRow, fetchFrom, fetchTo, ssTZ);
+    const range = span ? sheet.getRange(span.startRow, 1, span.numRows, numCols) : null;
+    const values   = range ? range.getValues() : [];
+    const displays = range ? range.getDisplayValues() : [];
     srcRows = [];
     for (let i = 0; i < values.length; i++) {
       const r = values[i], rd = displays[i];

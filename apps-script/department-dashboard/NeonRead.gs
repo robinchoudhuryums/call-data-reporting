@@ -528,6 +528,12 @@ function sheetFetchDqeRowsUncached_(fromIso, toIso, opts) {
   // which is why the per-row date filter below STAYS -- the span bounds the
   // read, it does not replace the filter. Output is identical to the full
   // scan for any sheet order; pinned by dal-cutover.test.js.
+  //
+  // R41 NOTE: this is the same computation `Data.gs::dqeWindowRowSpan_` now
+  // performs for the five readers that never adopted R26b. It is deliberately
+  // NOT called from here yet -- consolidating is a separate change with its own
+  // review surface -- but the two must not be allowed to drift: fix one, fix
+  // both, or better, finish the consolidation.
   var dateCol = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
   var firstIdx = -1, lastIdx = -1;
   for (var d = 0; d < dateCol.length; d++) {

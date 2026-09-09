@@ -70,7 +70,12 @@ tests/
                               trim pass): dal-cutover parity (+ the R40
                               per-execution sheet-DAL row memo: hit parity,
                               per-caller row ownership, key separation,
-                              bounded retention), escalations
+                              bounded retention), dqe-span-readers (R41: the
+                              five readers that bypassed the DAL now share
+                              dqeWindowRowSpan_ -- out-of-order/backfill rows,
+                              span-vs-full-scan equivalence, the ALL-HISTORY
+                              ext derivation that a naive span would shrink,
+                              and the wide-read count), escalations
                               hardening, neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code

@@ -1032,14 +1032,22 @@ function computeSummary_(dept, from, to, scope) {
     // split cell reads undefined -> '' -> every row keeps its rollup, which is
     // exactly the pre-Phase-2 behavior.
     const readCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
-    const range = sheet.getRange(2, 1, lastRow - 1, readCols);
-    const values = range.getValues();
-    const displays = range.getDisplayValues();
     // Queue-scope/Both-scope matching uses this set, NOT roster.allExtensions
     // (personal exts, which never overlap col D's shared-queue exts). See
-    // getDeptQueueExts_ docstring.
-    const dqr = getDeptQueueExts_(dept, rosterSet, values);
+    // getDeptQueueExts_ docstring. R41: its DERIVED path needs ALL history, so
+    // it reads its own whole-sheet cols-A..D slice -- it must NOT be fed the
+    // windowed span below, which would shrink the set.
+    const dqr = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow);
     deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
+    // R41: bounded SPAN read over [priorFrom, to] -- this used to pull the
+    // whole sheet at full width, TWICE (INV-02 needs values AND displays), and
+    // it is charged PER DEPARTMENT by combineSummaries_. The per-row date
+    // filter below STAYS: the span bounds the read, it does not replace the
+    // filter (the sheet is not reliably date-ordered).
+    const span = dqeWindowRowSpan_(sheet, lastRow, priorFrom, to, ssTZ);
+    const range = span ? sheet.getRange(span.startRow, 1, span.numRows, readCols) : null;
+    const values = range ? range.getValues() : [];
+    const displays = range ? range.getDisplayValues() : [];
     // Build the same normalized [priorFrom, to] window the Neon path
     // returns, so the aggregation loop below is identical for both sources.
     srcRows = [];
@@ -2039,6 +2047,66 @@ function parseRosterCell_(cellValue) {
  * overlap, so matching agent-row col D against roster.allExtensions
  * always fails. deptQueueExts gives us the right comparison set.
  */
+/**
+ * R41: the R26b bounded-span read, extracted so the five readers that never
+ * adopted it share ONE implementation instead of five copies.
+ *
+ * Scans the DATE COLUMN alone and returns the 1-based sheet-row span covering
+ * every row in [fromIso, toIso] -- `{ startRow, numRows }`, or null when the
+ * window has no rows at all (the caller then skips the wide read entirely).
+ *
+ * It is a min/max SPAN, deliberately NOT a tail scan: `DQE Historical Data` is
+ * not reliably date-ordered (a backfill of older dates appends after newer
+ * rows), so a tail scan stops early and silently drops them. A span is correct
+ * whatever the row order is -- an out-of-order row merely WIDENS it and can
+ * never fall outside it. Which is exactly why **the caller's per-row date
+ * filter must STAY**: the span bounds the read, it does not replace the
+ * filter, and the span can contain out-of-range rows in the middle.
+ *
+ * Costs one narrow column read to save a full-width one: on a 31.5k-row sheet
+ * a one-day question went from ~2.2M cells (twice over, since INV-02 needs
+ * getValues AND getDisplayValues) to ~37k.
+ */
+function dqeWindowRowSpan_(sheet, lastRow, fromIso, toIso, ssTZ) {
+  const dateCol = sheet.getRange(2, HISTORICAL_COLS.DATE, lastRow - 1, 1).getValues();
+  let firstIdx = -1, lastIdx = -1;
+  for (let i = 0; i < dateCol.length; i++) {
+    const iso = rowDateIso_(dateCol[i][0], ssTZ);
+    if (!iso || iso < fromIso || iso > toIso) continue;
+    if (firstIdx < 0) firstIdx = i;
+    lastIdx = i;
+  }
+  if (firstIdx < 0) return null;
+  return { startRow: 2 + firstIdx, numRows: lastIdx - firstIdx + 1 };
+}
+
+/**
+ * R41: the ALL-HISTORY dept queue-ext set for the SHEET read path.
+ *
+ * This exists because `dqeWindowRowSpan_` is NOT a drop-in for the four
+ * readers that also derive `deptQueueExts` from the same bulk grid. That
+ * derivation needs EVERY extension a roster agent has EVER used, not just the
+ * window's (see getDeptQueueExts_ above) -- so handing it a windowed span
+ * would silently SHRINK the set and change which floaters are recognized. That
+ * is a behavior change, not an optimization.
+ *
+ * So the two concerns get the read each actually needs: this one reads the
+ * whole sheet at cols A..D (`getValues` only, no display pass), the caller
+ * spans the window at full width. Same split `deptQueueExtsForNeonReader_`
+ * already uses for the Neon path, and the same getRange -- but WITHOUT its
+ * Neon-first preference, which would be wrong here: a sheet-path reader is on
+ * the sheet precisely because Neon is off or unreachable.
+ *
+ * The override path resolves BEFORE any read, so an override dept pays nothing.
+ */
+function deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow) {
+  const overrideList = getDeptQueueExtsOverride_(dept);
+  if (overrideList && overrideList.length) return getDeptQueueExts_(dept, rosterSet, []);
+  if (!sheet || !lastRow || lastRow < 2) return getDeptQueueExts_(dept, rosterSet, []);
+  const extValues = sheet.getRange(2, 1, lastRow - 1, HISTORICAL_COLS.QUEUE_EXT).getValues();
+  return getDeptQueueExts_(dept, rosterSet, extValues);
+}
+
 function getDeptQueueExts_(dept, rosterSet, values) {
   const set = {};
   // Effective override list (Dept Config sheet over the
