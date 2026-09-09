@@ -193,8 +193,8 @@ cdr-import  ─── hashPhone ≟ cdrHashPhone_ ───  cdr-report
 
 pipeline    ───reads roster───▶  dashboard sheets   INV-24 / INV-46
 dashboard   ───writes aliases, renameAgentInNeon_──▶  pipeline / Neon
-dashboard   ─── DASHBOARD_WORK_WINDOW mirrors pipeline constants ──▶  INV-06 ❌
-                the one seam with NO enforcement — prose only
+dashboard   ─── DASHBOARD_WORK_WINDOW mirrors pipeline constants ──▶  INV-06 ✅
+                4 copies, all derived from the pipeline in cross-file-pins
 ```
 
 Four **hand-mirrored rule sets** re-implement pipeline logic in structurally
@@ -205,4 +205,4 @@ different code, so no diff can compare them; three are pinned behaviourally:
 | `dataFilters.js` Extraction Sidebar ↔ `autoImport.js` QCD rules | `qcd-sidebar-parity.test.js` (cols F/G excluded — a MAX and a MEAN) |
 | `DQEdrilldown.js` ↔ the DQE build | `dqe-drilldown-parity.test.js` — **has drifted three times** |
 | `NeonMirror.js` sanitizers ↔ `neonbackfill.js` | `check-duplicated-files.sh` |
-| `DASHBOARD_WORK_WINDOW` ↔ pipeline window | **nothing** |
+| `DASHBOARD_WORK_WINDOW` + `INBOUND_WORK_WINDOW_PST` + `DQE_DD_WINDOW_*` ↔ pipeline window | `cross-file-pins.test.js` (S1/INV-06) — every mirror derived from `DQE_WINDOW_START/END` |

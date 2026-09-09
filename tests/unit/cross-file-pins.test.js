@@ -564,22 +564,50 @@ test('FO-1: only the shared helper reads __COMPANY_HOLIDAYS__ on the client', fu
     + 'the most defensive of the copies it replaced');
 });
 
-// ---- S1 (broad-scan 2026-08-27): the INV-06 work window's THREE copies -----
+// ---- S1 (broad-scan 2026-08-27): the INV-06 work window's FOUR copies ------
 //
-// The pipeline's numeric seconds (DQE_WINDOW_START/END), the dashboard's
-// display mirror (DASHBOARD_WORK_WINDOW), and the inbound query strings
-// (INBOUND_WORK_WINDOW_PST) all state the same 6:30 AM-3:00 PM PST window,
-// and CLAUDE.md calls keeping them equal a "sync obligation" -- with, until
-// now, nothing enforcing it (the C2 corollary violation the scan flagged).
-test('S1/INV-06: the three work-window copies agree (pipeline seconds, dashboard display, inbound strings)', function () {
+// The pipeline's numeric seconds (DQE_WINDOW_START/END) are the SOURCE OF
+// TRUTH. Three mirrors restate the same 6:30 AM-3:00 PM PST window, and
+// CLAUDE.md calls keeping them equal a "sync obligation":
+//   - DASHBOARD_WORK_WINDOW   (Config.gs)  the display strings, BOTH zones
+//   - INBOUND_WORK_WINDOW_PST (Config.gs)  the SQL query strings
+//   - DQE_DD_WINDOW_START/END (DQEdrilldown.js)  the drill's own re-implementation
+// Every mirror is derived from the pipeline numbers here, never hardcoded
+// twice, so moving the window forces every copy to move with it.
+const pipelineWindow_ = function () {
   const build = read('apps-script/cdr-import/buildDQEHistoricalData.js');
   const startExpr = /const DQE_WINDOW_START = ([^;]+);/.exec(build);
   const endExpr   = /const DQE_WINDOW_END\s*=\s*([^;]+);/.exec(build);
+  const shiftExpr = /const DQE_PST_TO_CST\s*=\s*([^;]+);/.exec(build);
   assert.ok(startExpr && endExpr, 'DQE_WINDOW_START/END not found -- update this pin');
-  // The RHS is plain arithmetic ((6 * 60 + 30) * 60); evaluate it.
-  const secs = function (expr) { return Function('return (' + expr + ');')(); };
-  const pipeStart = secs(startExpr[1]);
-  const pipeEnd   = secs(endExpr[1]);
+  assert.ok(shiftExpr, 'DQE_PST_TO_CST not found -- update this pin');
+  return {
+    start: windowSecs_(startExpr[1], 'DQE_WINDOW_START'),
+    end:   windowSecs_(endExpr[1],   'DQE_WINDOW_END'),
+    toCst: windowSecs_(shiftExpr[1], 'DQE_PST_TO_CST'),
+  };
+};
+
+// The RHS of each window constant is plain arithmetic ((6 * 60 + 30) * 60), so
+// evaluate it rather than re-deriving the number here. Guarded: if a constant
+// ever becomes an expression referencing something else, this says WHICH one
+// and why it could not be read, instead of a bare ReferenceError from Function.
+const windowSecs_ = function (expr, name) {
+  let v;
+  try { v = Function('return (' + expr + ');')(); }
+  catch (e) {
+    assert.fail(name + ' is no longer plain arithmetic (' + expr.trim() + ') -- '
+      + 'this pin evaluates the RHS to compare copies. Rework the pin. ' + e.message);
+  }
+  assert.ok(Number.isFinite(v),
+    name + ' did not evaluate to a number (' + expr.trim() + ') -- rework this pin');
+  return v;
+};
+
+test('S1/INV-06: the work-window copies agree (pipeline seconds, dashboard display in BOTH zones, inbound strings)', function () {
+  const pipe = pipelineWindow_();
+  const pipeStart = pipe.start;
+  const pipeEnd   = pipe.end;
 
   const inbStart = /start:\s*'(\d{2}):(\d{2}):(\d{2})'/.exec(configGs);
   const inbEnd   = /end:\s*'(\d{2}):(\d{2}):(\d{2})'/.exec(configGs);
@@ -596,4 +624,39 @@ test('S1/INV-06: the three work-window copies agree (pipeline seconds, dashboard
   };
   assert.equal(ampmSecs(disp[1], disp[2], disp[3]), pipeStart, 'display window START drifted');
   assert.equal(ampmSecs(disp[4], disp[5], disp[6]), pipeEnd,   'display window END drifted');
+
+  // The CST half of the SAME object. It is the PST window plus the pipeline's
+  // own DQE_PST_TO_CST shift, so it is derived here rather than restated --
+  // the .pst check above passing said nothing about .cst, and the CST string
+  // is the one managers actually read on the work-window pill (E2).
+  const dispC = /cst:\s*'(\d{1,2}):(\d{2}) (AM|PM) [^']*?(\d{1,2}):(\d{2}) (PM|AM) CST'/.exec(configGs);
+  assert.ok(dispC, 'DASHBOARD_WORK_WINDOW.cst not found / reshaped -- update this pin');
+  assert.equal(ampmSecs(dispC[1], dispC[2], dispC[3]), pipeStart + pipe.toCst,
+    'display window START (CST) drifted from pipeline start + DQE_PST_TO_CST');
+  assert.equal(ampmSecs(dispC[4], dispC[5], dispC[6]), pipeEnd + pipe.toCst,
+    'display window END (CST) drifted from pipeline end + DQE_PST_TO_CST');
+});
+
+// The FOURTH copy, and the one with the worst track record: DQEdrilldown.js
+// re-implements the INV-06 window with its own constants (CLAUDE.md: it has
+// drifted from the build three times, each time contradicting the build during
+// the investigation the drill exists to serve). dqe-drilldown-parity.test.js
+// drives both with a fixture and would catch SOME window drift -- its Q4 leg
+// sits at 05:00 PST -- but only where a fixture leg straddles the moved edge,
+// so an END drift is invisible to it. This pin is unconditional.
+test('S1/INV-06: the DQE drill-down\'s own window constants match the pipeline', function () {
+  const pipe = pipelineWindow_();
+  const dd = read('apps-script/cdr-report/DQEdrilldown.js');
+  const ddStart = /DQE_DD_WINDOW_START\s*=\s*([^;]+);/.exec(dd);
+  const ddEnd   = /DQE_DD_WINDOW_END\s*=\s*([^;]+);/.exec(dd);
+  assert.ok(ddStart && ddEnd,
+    'DQE_DD_WINDOW_START/END not found in DQEdrilldown.js -- if the drill now '
+    + 'reads the pipeline constants directly, delete this pin; if it was '
+    + 'renamed, update it. Do not let it become unpinned.');
+  assert.equal(windowSecs_(ddStart[1], 'DQE_DD_WINDOW_START'), pipe.start,
+    'the drill-down window START drifted from the pipeline -- the drill would '
+    + 'attribute legs the build does not count (INV-06)');
+  assert.equal(windowSecs_(ddEnd[1], 'DQE_DD_WINDOW_END'), pipe.end,
+    'the drill-down window END drifted from the pipeline -- the drill would '
+    + 'attribute legs the build does not count (INV-06)');
 });

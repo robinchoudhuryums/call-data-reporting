@@ -1,6 +1,21 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **INV-06 work-window parity is CLOSED and needs no deploy** (block
+  `174-inv06-window-parity-broad-implement.md`). The `S1/INV-06` pin in
+  cross-file-pins now covers FOUR copies, not two: it gained the DQE
+  drill-down's own `DQE_DD_WINDOW_START/END` and the CST half of
+  `DASHBOARD_WORK_WINDOW` (derived via `DQE_PST_TO_CST`). Test-and-docs only
+  — no production code, so nothing to push. **Correction recorded there:** the
+  2026-09-08 systems-map run claimed INV-06 was "the one seam with NO
+  enforcement"; that was wrong — the pin has existed since the 2026-08-27
+  scan and tests/README.md listed it. docs/module-dependencies.md carried
+  that false claim for one day and is fixed.
+- **OPEN QUESTION put to the operator, not yet decided:** whether to move the
+  tooling layer (`tests/`, `tools/ui-harness/`, `scripts/`) inside the Cycle
+  Workflow Config Subsystems. Analysis was given in-session; no config change
+  was made. Nothing depends on the answer — it changes what cycle commands
+  can target, not how anything runs.
 - **Batch 2 of the 2026-09-03 broad scan is implemented on
   `claude/broad-scan-p493eu` (O-2, O-3/I-8/C2-5, O-4, O-5, O-6, O-7, O-12,
   O-14 + the Batch 1 follow-ons I-6 / backfill tally rows / EMPTY holiday

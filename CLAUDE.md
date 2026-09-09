@@ -2215,7 +2215,7 @@ INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDi
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard
 INV-05 | Dashboard per-agent ATT is the SIMPLE MEAN of stored ATT values, not TTT/Answered weighted | Subsystem: Department Dashboard
-INV-06 | Work window is 6:30 AM-3:00 PM PST (8:30 AM-5:00 PM CST); the dashboard's `DASHBOARD_WORK_WINDOW` mirrors the pipeline constants and must stay in sync | Subsystem: CDR DQE Pipeline + Department Dashboard
+INV-06 | Work window is 6:30 AM-3:00 PM PST (8:30 AM-5:00 PM CST); the pipeline constants are the source of truth and THREE mirrors must agree (dashboard display, inbound query strings, the DQE drill-down's own copy) -- pinned by `cross-file-pins.test.js` | Subsystem: CDR DQE Pipeline + Department Dashboard
 INV-07 | The TTT/ATT loop iterates `windowLegs`, not all-day `legs`, so it shares Answered's denominator | Subsystem: CDR DQE Pipeline
 INV-08 | TTT attribution uses each agent's OWN `leg.talkSec` via `findAgentTalkOnParent`, never `parent.talkSec` | Subsystem: CDR DQE Pipeline
 INV-09 | The Data.gs cache key is versioned (`summary:vN:`); bump on any aggregation-rule change | Subsystem: Department Dashboard
