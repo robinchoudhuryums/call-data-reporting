@@ -1,6 +1,22 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **C2 is now mechanized as far as it honestly can be** (block
+  `176-c2-mechanized-broad-implement.md`). claude-md-split fails when CLAUDE.md
+  names a test/script/driver/docs file that does not exist. Test + doc only, no
+  deploy. **The bullet-level "every convention names an enforcement" meta-test
+  was deliberately NOT built** — measured against F1/F2/F3 it catches 0 of 3
+  (F2/F3 cite a test for a different claim in the same bullet; F1 is not in a
+  bullet). Do not revive it from the audit text without re-reading that
+  measurement.
+- **NEXT: bound the Neon-outage fallback (planned, not started).** Findings
+  from the planning pass: R26b bounded the sheet read's SPAN but the read is
+  DEPT-INDEPENDENT and still charged PER DEPT, so the all-dept loop
+  (`QCDReport.gs:358 allDepts.forEach`) multiplies one identical read by 14.
+  The repo already has the two mechanisms needed: per-execution memos
+  (`DQE_DATE_BOUNDS_MEMO_`, `DEPT_CONFIG_ROWS_MEMO_`) and whole-run time
+  budgets (`CACHE_WARM_TOTAL_BUDGET_MS`, `NEON_MIRROR_BUDGET_MS`). Plan is
+  memo-first, budget-second; full plan in the session transcript.
 - **Batch 1 + Batch 2 of the 2026-09-09 broad scan are implemented** (F1 modal
   rendered-coverage tripwire + Coaching added; F2 svc() flagProp tripwire; F3
   window.confirm ratchet; F5 non-finite coercion counted) -- block

@@ -269,6 +269,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 >    the INV-30 docs but not in cache-version-sync's SPECS (F3b), and a
 >    second read-source dimension with no B-2-style tripwire (F11). "None —
 >    prose only" is an acceptable answer; an unanswered question is not.
+>    **What enforces C2 itself:** only its testable half. `claude-md-split`
+>    fails when this file names a test / script / driver / `docs/` file that
+>    does NOT exist — a doc advertising a guarantee that was renamed away is
+>    worse than one admitting a rule is prose-only. The other half ("does THIS
+>    claim have a test?") is deliberately NOT mechanized: a bullet-level
+>    "cites an enforcement" check was measured against F1/F2/F3 and would have
+>    caught NONE — the gap is always one unenforced claim inside a bullet that
+>    cites a test for a different one. Answering C2 stays a human step.
 >
 > `tests/unit/claude-md-split.test.js` enforces this with a per-bullet
 > ratchet: every bullet stays under 4 KB (the once-grandfathered oversize five

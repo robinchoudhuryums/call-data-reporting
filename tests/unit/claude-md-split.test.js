@@ -356,3 +356,82 @@ test('coverage map: tests/README.md names every unit suite (the designated map c
     + 'coverage map (a one-line entry in the unit/ roll is enough): '
     + missing.join(', '));
 });
+
+// ---- C2 MECHANIZED (broad-scan 2026-09-09, strategic suggestion #2) --------
+//
+// The C2 corollary says a written convention must answer "what enforces
+// this?" in the same commit. The 2026-09-09 scan found three conventions
+// (F1/F2/F3) that answered it in prose and were enforced by nothing, and
+// proposed "a single meta-test over declared conventions" to stop
+// rediscovering the class.
+//
+// WHAT IS NOT BUILT, and why -- this matters more than what is:
+// The obvious meta-test is "every Common Gotchas bullet must NAME an
+// enforcement (or be listed as prose-only)". It was measured against the
+// three findings it exists to prevent and would have caught NONE of them.
+// F2's bullet named system-health.test.js six times and F3's named
+// html-include-structure.test.js four times -- both would have scored as
+// "enforced" -- while F1's text is not in a bullet at all (it lives in the
+// Key commands block). The real gap is never "this bullet cites no test";
+// it is "THIS PARTICULAR CLAIM has no test, in a bullet that cites a test
+// for a DIFFERENT claim", which no bullet-level regex can see. Building it
+// anyway would add a check that goes green while its subject is missing --
+// the failure this repo treats as worse than no check at all.
+//
+// WHAT IS BUILT: the half that is real and needs no exemption list. A named
+// enforcement that no longer exists is strictly worse than an unenforced
+// convention, because CLAUDE.md keeps advertising a guarantee that is gone
+// and every reader believes it. Renaming or deleting a suite is ordinary
+// work; this makes the doc follow.
+
+function claudeMdRefs_(re, resolveDirs) {
+  const out = new Map();               // ref -> first line number, for the message
+  const lines = CLAUDE.split('\n');
+  lines.forEach(function (ln, i) {
+    // NO line filter. A first draft skipped `#`-prefixed lines as markdown
+    // headings; every ui-harness driver is named inside the Key commands bash
+    // block, whose lines are `#` comments, so the driver class was silently
+    // invisible and a deleted driver passed. The regexes below already require
+    // a specific file extension, which no heading has.
+    let m;
+    const rx = new RegExp(re.source, 'g');
+    while ((m = rx.exec(ln)) !== null) if (!out.has(m[1])) out.set(m[1], i + 1);
+  });
+  return [...out.entries()].map(function (e) {
+    const base = e[0].replace(/^.*\//, '');
+    return { ref: e[0], line: e[1], exists: resolveDirs.some(function (d) {
+      return fs.existsSync(path.join(ROOT, d ? d + base : e[0]));
+    }) };
+  });
+}
+
+test('C2: every enforcement CLAUDE.md names actually exists', function () {
+  const refs = []
+    .concat(claudeMdRefs_(/([A-Za-z0-9_.\/-]*[A-Za-z0-9_-]+\.test\.js)/, ['', 'tests/unit/']))
+    .concat(claudeMdRefs_(/(scripts\/[A-Za-z0-9_.-]+\.(?:sh|mjs))/, ['', 'scripts/']))
+    .concat(claudeMdRefs_(/\b((?:drive|build|gen)-[a-z0-9-]+\.js)/, ['', 'tools/ui-harness/']));
+
+  assert.ok(refs.length >= 30,
+    'only ' + refs.length + ' enforcement artifacts parsed out of CLAUDE.md -- the '
+    + 'reference shapes changed and this pin can no longer see them. Fix the pin.');
+
+  const dead = refs.filter(function (r) { return !r.exists; })
+                   .map(function (r) { return r.ref + ' (CLAUDE.md:' + r.line + ')'; });
+  assert.deepEqual(dead, [],
+    'CLAUDE.md names enforcement that does NOT exist: ' + dead.join(', ')
+    + '. Either restore/rename the reference, or delete the claim -- a doc that '
+    + 'advertises a guarantee which no longer exists is worse than one that '
+    + 'admits the convention is prose-only.');
+});
+
+test('C2: every docs/ file CLAUDE.md links actually exists', function () {
+  const refs = claudeMdRefs_(/(docs\/[A-Za-z0-9_.-]+\.md)/, ['']);
+  assert.ok(refs.length >= 8,
+    'only ' + refs.length + ' docs/ links parsed -- fix the pin.');
+  const dead = refs.filter(function (r) { return !r.exists; })
+                   .map(function (r) { return r.ref + ' (CLAUDE.md:' + r.line + ')'; });
+  assert.deepEqual(dead, [],
+    'CLAUDE.md links docs/ file(s) that do not exist: ' + dead.join(', ')
+    + '. CLAUDE.md is the finding aid for the split files; a dead link sends '
+    + 'the reader nowhere at the moment they most need the full entry.');
+});
