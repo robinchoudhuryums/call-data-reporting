@@ -28,24 +28,28 @@ const HEADERS = ['Month', 'Date', 'Agent'];
 // Date instead would feed parseDateForNeon a UTC instant and shift it a day
 // (the F-8 class), which is a property of the fake, not of Sheets.
 function dateCell(y, m, d) {
-  return { v: new Date(y, m - 1, d), disp: m + '/' + d + '/' + y };
+  return { v: new Date(y, m - 1, d), disp: m + '/' + d + '/' + y, fmt: 'M/d/yyyy' };
 }
-function textCell(str)   { return { v: str, disp: str }; }
-function serialCell(n)   { return { v: n, disp: String(n) }; }   // numeric number-format
-const BLANK = { v: '', disp: '' };
+// Phase 0b: a text cell may sit in a plain-text ('@') cell -- the live
+// finding -- or in a General cell (a writer emitting a non-coercible string).
+function textCell(str, fmt) { return { v: str, disp: str, fmt: fmt || 'General' }; }
+function serialCell(n)      { return { v: n, disp: String(n), fmt: '0' }; }   // numeric number-format
+const BLANK = { v: '', disp: '', fmt: 'General' };
 
 // DQE keeps its date in col B; the other four use col C.
 function buildSheet(cells, dateIdx) {
-  const values = [], displays = [];
+  const values = [], displays = [], formats = [];
   const header = ['Month', 'Date', 'Agent', 'x'];
   values.push(header.slice()); displays.push(header.slice());
+  formats.push(['General', 'General', 'General', 'General']);
   cells.forEach(function (c, i) {
     const v = ['Mar, 26', 'W1', 'row' + i, 'x'];
     const d = v.slice();
-    v[dateIdx] = c.v; d[dateIdx] = c.disp;
-    values.push(v); displays.push(d);
+    const f = ['General', 'General', 'General', 'General'];
+    v[dateIdx] = c.v; d[dateIdx] = c.disp; f[dateIdx] = c.fmt;
+    values.push(v); displays.push(d); formats.push(f);
   });
-  return { values: values, displays: displays };
+  return { values: values, displays: displays, formats: formats };
 }
 function dqeSheet(cells)   { return buildSheet(cells, 1); }
 function colCSheet(cells)  { return buildSheet(cells, 2); }
@@ -116,8 +120,11 @@ test('Phase 0: type ranges expose an ERA split rather than just a count', functi
       textCell('3/1/2026'), textCell('3/2/2026'), dateCell(2026, 3, 3), dateCell(2026, 3, 4),
     ]),
   })['DQE Historical Data'];
-  deepEqual(got.typeRanges['text:mdy'], { firstRow: 2, lastRow: 3 });
-  deepEqual(got.typeRanges['date'],     { firstRow: 4, lastRow: 5 });
+  // (Phase 0b added minIso/maxIso to each entry -- asserted in its own test.)
+  assert.equal(got.typeRanges['text:mdy'].firstRow, 2);
+  assert.equal(got.typeRanges['text:mdy'].lastRow, 3);
+  assert.equal(got.typeRanges['date'].firstRow, 4);
+  assert.equal(got.typeRanges['date'].lastRow, 5);
 });
 
 test('Phase 0: an unresolvable cell is counted, never guessed at', function () {
@@ -185,4 +192,58 @@ test('Phase 0: the census WRITES NOTHING (it is a preview, and the sheet is live
   const after = JSON.stringify(sheet.getRange(1, 1, sheet.getLastRow(), 3).getValues());
   assert.equal(after, before, 'cell values unchanged');
   assert.equal(sheet._numberFormats, undefined, 'no setNumberFormat call');
+});
+
+// ── Phase 0b ─────────────────────────────────────────────────────────────
+
+test('Phase 0b: each type reports its own ISO range, so an era boundary is a DATE', function () {
+  // The live census found rows 2-22470 Date-typed and 22471-31912 text, in
+  // order -- but could not say when the boundary was, because it printed
+  // only row numbers. Per-type min/max names the boundary date directly.
+  const got = scan({
+    'DQE Historical Data': dqeSheet([
+      dateCell(2026, 3, 1), dateCell(2026, 3, 2), textCell('3/3/2026'), textCell('3/4/2026'),
+    ]),
+  })['DQE Historical Data'];
+  deepEqual(got.typeRanges['date'],
+    { firstRow: 2, lastRow: 3, minIso: '2026-03-01', maxIso: '2026-03-02' });
+  deepEqual(got.typeRanges['text:mdy'],
+    { firstRow: 4, lastRow: 5, minIso: '2026-03-03', maxIso: '2026-03-04' });
+});
+
+test('Phase 0b: the number-format histogram separates plain-text cells from a text-emitting writer', function () {
+  // THE Phase 1 gate. A coercible "M/D/YYYY" string stays text in an '@'
+  // cell; the same string in a General cell would have coerced to a Date.
+  // Which one the live sheet is decides whether the repair resets formats.
+  const got = scan({
+    'DQE Historical Data': dqeSheet([
+      dateCell(2026, 3, 1), textCell('3/2/2026', '@'), textCell('3/3/2026', '@'),
+      textCell('3/4/2026', 'General'),
+    ]),
+  })['DQE Historical Data'];
+  deepEqual(got.formats['date'],     { 'M/d/yyyy': 1 });
+  deepEqual(got.formats['text:mdy'], { '@': 2, 'General': 1 });
+});
+
+test('Phase 0b: a failing format read costs only the format signal, never the census', function () {
+  // getNumberFormats is the SECONDARY signal. If the platform refuses it
+  // (quota, a sheet shape the API rejects), the type/order/range findings
+  // must still come back -- they are what Phase 1's scope hangs on.
+  install({
+    'DQE Historical Data': dqeSheet([dateCell(2026, 3, 1), dateCell(2026, 3, 2)]),
+  });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const realGetRange = sheet.getRange;
+  sheet.getRange = function () {
+    const r = realGetRange.apply(sheet, arguments);
+    r.getNumberFormats = function () { throw new Error('formats unavailable'); };
+    return r;
+  };
+  const census = h.call('previewHistoricalDateColumns');
+  const got = census.sheets.filter(function (x) { return x.sheet === 'DQE Historical Data'; })[0];
+  assert.equal(got.formats, null, 'format signal marked unreadable');
+  assert.equal(got.verdict, 'CLEAN', 'every other finding still computed');
+  assert.equal(got.rows, 2);
+  assert.equal(got.minIso, '2026-03-01');
+  assert.equal(got.typeRanges['date'].maxIso, '2026-03-02');
 });

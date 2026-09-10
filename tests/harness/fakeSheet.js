@@ -55,6 +55,20 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
         return row.map(function (v) { return v === '' ? '' : String(v); });
       });
     },
+    // Phase 0b: the per-cell number format, served from an optional fixture
+    // grid (`{ values, displays, formats }`), 'General' where none is given.
+    // Read-only by design: it does NOT reflect setNumberFormat calls made in
+    // the same test -- those are RECORDED on sheet._numberFormats (F-6) and a
+    // writer test asserts against that record. A future round-trip test must
+    // model the write-through here first, not assume it.
+    getNumberFormats: function () {
+      if (sheet._formats) {
+        return sliceGrid(sheet._formats, startRow, startCol, numRows, numCols)
+          .map(function (row) { return row.map(function (f) { return f === '' ? 'General' : f; }); });
+      }
+      return this.getValues().map(function (row) { return row.map(function () { return 'General'; }); });
+    },
+    getNumberFormat: function () { return this.getNumberFormats()[0][0]; },
     setValues: function (vals) {
       for (let r = 0; r < vals.length; r++) {
         const tgt = startRow - 1 + r;
@@ -99,9 +113,10 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
 
 /**
  * `data` is either a 2-D values grid (display = stringified values) or
- * `{ values: [[...]], displays: [[...]] }` to model the duration
- * columns whose getValue() ≠ getDisplayValue() (INV-02). Both grids
- * include the header row at index 0.
+ * `{ values: [[...]], displays: [[...]], formats: [[...]] }` to model the
+ * duration columns whose getValue() ≠ getDisplayValue() (INV-02) and, since
+ * Phase 0b, per-cell number formats for getNumberFormats(). All grids
+ * include the header row at index 0; `formats` is optional.
  */
 function makeFakeSheet(name, data) {
   const hasDisplays = data && !Array.isArray(data) && data.values;
@@ -110,6 +125,9 @@ function makeFakeSheet(name, data) {
     _data: values.map(function (row) { return row.slice(); }),
     _displays: hasDisplays && data.displays
       ? data.displays.map(function (row) { return row.slice(); })
+      : null,
+    _formats: hasDisplays && data.formats
+      ? data.formats.map(function (row) { return row.slice(); })
       : null,
     _parent: null,   // set by makeFakeSpreadsheet
     getName: function () { return name; },
@@ -165,6 +183,7 @@ function makeFakeSheet(name, data) {
       const idx = rowPosition - 1;
       if (idx >= 0 && idx < this._data.length) this._data.splice(idx, 1);
       if (this._displays && idx >= 0 && idx < this._displays.length) this._displays.splice(idx, 1);
+      if (this._formats && idx >= 0 && idx < this._formats.length) this._formats.splice(idx, 1);
       if (this._maxRows != null) this._maxRows--;
       return this;
     },
@@ -174,6 +193,7 @@ function makeFakeSheet(name, data) {
       if (idx < 0 || idx + howMany > this._data.length) throw new Error('deleteRows out of range');
       this._data.splice(idx, howMany);
       if (this._displays) this._displays.splice(idx, howMany);
+      if (this._formats) this._formats.splice(idx, howMany);
       if (this._maxRows != null) this._maxRows -= howMany;
       return this;
     },

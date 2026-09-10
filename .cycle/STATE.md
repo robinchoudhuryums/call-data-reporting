@@ -1,12 +1,33 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
-- **Phase 0 of the historical date-column work is DONE and awaiting a LIVE RUN**
-  (block `182-phase0-historical-date-census-broad-implement.md`).
-  `previewHistoricalDateColumns()` (cdr-report/sheetRepairs.js) is a read-only
-  census over all five historical sheets. **Nothing downstream can be sized
-  until an operator runs it in the editor and captures the output** — Phase 1's
-  scope is literally "whichever sheets the census calls MIXED-TYPE".
+- **Phase 0 RAN LIVE (2026-09-10); Phase 0b shipped and awaits ITS live run**
+  (blocks 182, 183; results + readings in
+  `docs/date-column-normalization-plan.md`). Census: DQE MIXED-TYPE — 22,469
+  Date rows then 9,442 text rows, ZERO inversions (in order by ACCIDENT: type
+  boundary == era boundary; breaks on the first pre-boundary reprocess). QCD +
+  CDR clean. CSR Transfer + Q Path UNSORTED, 3 inversions each, the same three
+  reprocessed dates. **The current writer emits TEXT and no code path
+  plain-texts col B** — Phase 0b adds the per-type format histogram that says
+  whether the cells are '@'-formatted. **Phase 1 now needs a writer-side col-B
+  format reset in BOTH INV-16 copies** (the earlier "no writer change" claim was
+  wrong). Open question: why QCD is clean — check Pipeline Health
+  `processIntegratedHistory:QCD` on Sept 1/3/4 for a 0-row force rebuild.
+- **Owner decisions on the 2026-09-10 testing notes (plan only, NO code yet):**
+  #8 Range button on the QCD card, Yesterday stays default. #2+#1: relabel the
+  chip "How is my team doing?", DROP its last-30-days override (it defeats the
+  cache and contradicts M4's single-date-authority), seq-guard rapid clicks;
+  gate the tour on `ovLoad_` completing instead of the fixed 1200 ms timer —
+  no artificial delay, no sample pages. #5: TWO ADDITIVE DQE columns, AJ
+  AFTER_HOURS_ANSWERED + AK AFTER_HOURS_TTT over `startPST ∈ [15:00, 15:30)`
+  (hard 5:30 PM CST cutoff); cols A–AI untouched; new constant joins the
+  INV-06 pin; Neon ADD COLUMN + COALESCE; the 14-day capture clock is running.
+  NEW: stale pill → dedicated `--stale` amber token pair (`--warn` is hue 30,
+  red-orange), not a global `--warn` shift. #6 bar sorts by `totalAnswered`;
+  #7 ans/day per active day as a hideable column. Already shipped, do not
+  rebuild: presets exclude today; managers out of averages/in for volume; IR
+  email-to-agent; Caller Lookup +1. Order: #8→#6→#7→stale (one dashboard
+  deploy) → #2+#1 → #5 alone.
 - **The three-phase plan this belongs to** (agreed with the owner, not yet in
   `docs/`): Phase 1 normalize DQE col B to real `Date` (the other four sheets
   already write `dateObj`, so Date is the family-consistent target and the

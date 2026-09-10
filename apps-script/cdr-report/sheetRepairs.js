@@ -878,6 +878,19 @@ function mergeDqeDuplicateRows_(dryRun) {
 // rather than being silently guessed at. That count IS the finding: those rows
 // need a serial-aware repair, not a sort.
 //
+// Phase 0b: two more read-only signals, because the first live run found a
+// clean ERA SPLIT (22,469 Date rows, then 9,442 text rows, in date order by
+// the accident that the type boundary coincided with an era boundary) but
+// could not say WHEN it started or WHY the current writer emits text:
+//   - per-type ISO min/max, so the boundary is a DATE, not a row number;
+//   - per-type NUMBER-FORMAT histogram (getNumberFormats), which separates
+//     "the cells are plain-text-formatted, so a coercible string stays text"
+//     from "the writer's string changed". Phase 1 hangs on that distinction:
+//     setting a Date into an '@' cell does not coerce back, it displays the
+//     serial, so the repair must reset the format FIRST and the writer must
+//     format its own write range. The format read is best-effort -- a throw
+//     leaves `formats: null` and the rest of the census stands.
+//
 // Usage: run previewHistoricalDateColumns() from the Run dropdown. It logs a
 // per-sheet report and returns the structured census.
 
@@ -930,7 +943,7 @@ function scanHistoricalDateColumns_() {
 function hdScanOneSheet_(ss, spec) {
   var res = {
     sheet: spec.sheet, dateCol: spec.dateCol, rows: 0,
-    types: {}, typeRanges: {}, singleTyped: null, ordered: null,
+    types: {}, typeRanges: {}, formats: {}, singleTyped: null, ordered: null,
     inversions: 0, inversionSamples: [], unparsed: 0, unparsedSamples: [],
     minIso: null, maxIso: null, verdict: 'MISSING', ms: 0,
   };
@@ -948,6 +961,12 @@ function hdScanOneSheet_(ss, spec) {
   // getValues() date cell to decide what it says).
   var vals  = sheet.getRange(2, spec.dateCol, n, 1).getValues();
   var disp  = sheet.getRange(2, spec.dateCol, n, 1).getDisplayValues();
+  // Phase 0b: the cells' number formats -- the signal that tells a
+  // plain-text-formatted column apart from a writer emitting text. Best
+  // effort: this is the secondary signal, so a throw must not cost the census.
+  var fmts = null;
+  try { fmts = sheet.getRange(2, spec.dateCol, n, 1).getNumberFormats(); }
+  catch (e) { res.formats = null; }
 
   var prevIso = null;
   for (var i = 0; i < n; i++) {
@@ -956,8 +975,16 @@ function hdScanOneSheet_(ss, spec) {
     var type = hdCellType_(raw);
     res.types[type] = (res.types[type] || 0) + 1;
     var range = res.typeRanges[type];
-    if (!range) res.typeRanges[type] = { firstRow: rowNum, lastRow: rowNum };
-    else range.lastRow = rowNum;
+    if (!range) {
+      range = res.typeRanges[type] = { firstRow: rowNum, lastRow: rowNum, minIso: null, maxIso: null };
+    } else {
+      range.lastRow = rowNum;
+    }
+    if (fmts && res.formats) {
+      var f = String(fmts[i][0] == null ? '' : fmts[i][0]);
+      var byFmt = res.formats[type] || (res.formats[type] = {});
+      byFmt[f] = (byFmt[f] || 0) + 1;
+    }
 
     if (type === 'blank') continue;
 
@@ -978,6 +1005,8 @@ function hdScanOneSheet_(ss, spec) {
     }
     if (!res.minIso || iso < res.minIso) res.minIso = iso;
     if (!res.maxIso || iso > res.maxIso) res.maxIso = iso;
+    if (!range.minIso || iso < range.minIso) range.minIso = iso;
+    if (!range.maxIso || iso > range.maxIso) range.maxIso = iso;
     if (prevIso && iso < prevIso) {
       res.inversions++;
       if (res.inversionSamples.length < HD_SCAN_SAMPLE_CAP_) {
@@ -1014,9 +1043,22 @@ function hdLogCensus_(census) {
     lines.push('   range: ' + (s.minIso || '?') + ' .. ' + (s.maxIso || '?'));
     Object.keys(s.types).sort().forEach(function (t) {
       var r = s.typeRanges[t];
+      var span = r.minIso ? ', ' + r.minIso + '..' + r.maxIso : '';
+      var fm = s.formats && s.formats[t];
+      var fmStr = fm
+        ? ', formats: ' + Object.keys(fm).sort().map(function (k) {
+            return JSON.stringify(k) + '\u00d7' + fm[k];
+          }).join(' ')
+        : (s.formats === null ? ', formats: (unreadable)' : '');
       lines.push('   type ' + t + ': ' + s.types[t] + ' cell(s), rows '
-        + r.firstRow + '-' + r.lastRow);
+        + r.firstRow + '-' + r.lastRow + span + fmStr);
     });
+    if (s.formats && s.formats['text:mdy'] && s.formats['text:mdy']['@']) {
+      lines.push('   ** ' + s.formats['text:mdy']['@'] + ' text cell(s) sit in PLAIN-TEXT (@) '
+        + 'formatted cells: a coercible date string stays text there. The repair '
+        + 'must reset the format BEFORE writing Dates, and the writer must format '
+        + 'its own write range (Phase 1).');
+    }
     if (!s.singleTyped) {
       lines.push('   ** MIXED TYPE -- a sort on this column CANNOT order it '
         + 'chronologically (Sheets groups numeric/Date before text), and the '
