@@ -1,6 +1,6 @@
 # Historical date columns: normalization + ordering plan
 
-**Status:** Phase 0 shipped (2026-09-09). Phases 1–3 not started.
+**Status:** Phase 0 shipped (2026-09-09) and run live (2026-09-10); Phase 0b shipped, awaiting its live run. Phases 1–3 not started.
 **Why this exists:** five historical sheets are read by windowed date queries,
 and none is reliably date-ordered. Today that is *handled* — every dashboard
 reader uses a min/max SPAN, which is correct at any row order (CLAUDE.md,
@@ -70,7 +70,66 @@ serial-aware repair, not a sort — and a non-zero count means the
 row ranges are contiguous (a clean era split, like the PST→CST cutover, allows a
 date-gated repair) or scattered (row-by-row, more work).
 
-## Phase 1 — normalize DQE col B (NOT STARTED; scope contingent on Phase 0)
+### Live census, 2026-09-10
+
+| Sheet | Verdict | Rows | Finding |
+|---|---|---|---|
+| DQE Historical Data | **MIXED-TYPE** | 31,911 | 22,469 `Date` rows (2–22,470), then 9,442 `text:mdy` rows (22,471–31,912). **Zero inversions, zero unparsed.** |
+| QCD Historical Data | CLEAN | 23,486 | all `Date` |
+| CDR Historical Data | CLEAN | 27,784 | all `Date` |
+| CSR Transfer Historical | **UNSORTED** | 4,931 | 3 inversions: Aug 5 / 12 / 20 appended after Sept 1 / 3 / 4 |
+| Q Path Historical Data | **UNSORTED** | 1,855 | the same 3 dates, same shape |
+
+Three things the numbers say:
+
+- **DQE is in date order by accident.** Every Date-typed row is older than every
+  text row, so Sheets' dates-before-text grouping happened to produce
+  chronological order. It breaks the first time a pre-boundary date is
+  reprocessed: the current writer emits TEXT, so that row lands in the text
+  block after every Date row, however old it is. The three reprocessed dates
+  so far are all post-boundary, which is the only reason it has not happened.
+- **The current writer is producing text** — the text block runs to yesterday's
+  build. Col B is not in the plain-text list and `callDateStr` is a coercible
+  `M/D/YYYY`, and a sweep of every `setNumberFormat` across all three projects
+  found none reaching col B. So the cause is outside the code, most likely a
+  plain-text format on col B that new rows inherit. **This overturns the
+  earlier "no writer change, no INV-16 edit" claim**: Phase 1 needs a col-B
+  format reset on the exact write range in BOTH `buildDQEHistoricalData.js`
+  copies — the a350042 "re-format the EXACT write range" discipline, pointed
+  the other way. One line, two files.
+- **CSR Transfer and Q Path are exactly the predicted shape**; Phase 2's first
+  run fixes both. **QCD reading CLEAN is unexplained**: the same three dates
+  reordered CSR and Q Path and QCD has no daily sort either. Either those runs
+  skipped QCD or the rebuild wrote zero QCD rows after the force-delete — the
+  case `guardForceRebuildLoss_` logs. Check Pipeline Health for
+  `processIntegratedHistory:QCD` on Sept 1 / 3 / 4.
+
+## Phase 0b — the format probe (SHIPPED, awaiting live run)
+
+The first census printed row numbers per type but not dates, and read values
+but not formats — so it could not say WHEN the era started or WHY the writer
+emits text. Two additions to the same function, both read-only:
+
+- **per-type ISO min/max** in `typeRanges`, so the boundary is a date;
+- **per-type number-format histogram** (`formats`, via `getNumberFormats`),
+  which separates *"the cells are `@`-formatted, so a coercible string stays
+  text"* from *"the writer's string changed"*. Best-effort: a throw leaves
+  `formats: null` and the rest of the census stands.
+
+**Phase 1 hangs on the second signal.** Setting a `Date` into an `@` cell does
+not coerce back — it displays the serial (the F-8 trap in a new coat) — so if
+the text rows sit in `@` cells the repair must reset the format FIRST and the
+writer must format its own write range. Re-run `previewHistoricalDateColumns()`
+after pushing; the DQE block now prints a per-type `formats:` tally and, if
+text cells sit in `@`, an explicit note.
+
+## Phase 1 — normalize DQE col B (NOT STARTED; scope contingent on Phase 0b)
+
+Now the easiest case the plan allowed for: **one contiguous block (rows
+22,471–31,912), one input shape (`text:mdy`), no serials** — so the F-8 serial
+branch is never exercised. Steps: reset col B's number format on that block →
+write `Date` values → sort once. Plus the writer-side line above, in both
+INV-16 copies.
 
 `previewDqeDateNormalize()` / `repairDqeDateNormalize()`, matching the existing
 preview/repair pair convention in that file. Canonicalize to real `Date`.
