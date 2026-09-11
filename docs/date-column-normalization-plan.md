@@ -246,6 +246,17 @@ build's own sort).
   the sheet whose sort threw (the `guardForceRebuildLoss_` pattern — log, don't
   throw, so the already-written sheets stand) instead of `console.warn`. Ship
   (2) with Phase 2, since it uses the same new step name.
+- **Surface the outcome on the Health page (added 2026-09-11).** cdr-report's
+  Script Properties are NOT the dashboard's, so the nightly result cannot travel
+  as a `*_LAST` property; it travels as the `historicalSort:<sheet>` Pipeline
+  Health rows above, and `SystemHealth.gs` renders a `historical-sort` row from
+  the latest one per sheet — "five sheets clean", or the sheet that needed
+  sorting, or a TZ-SPLIT.
+- **The TZ-SPLIT predicate (R46) joins the check, memoized per distinct
+  instant.** A Date cell must read the same calendar day in the spreadsheet TZ
+  and the script TZ. The per-row form costs ~49 s on DQE (measured 2026-09-11);
+  a sheet has ~600 distinct date instants, so memoize `(instant → sheetDay,
+  scriptDay)` and the check is a map lookup per row.
 - **Skip when any `*_RESUME` property is set.** A sort invalidates the four T-8
   fingerprinted resume pointers. That is safe (the key check trips, the run
   restarts from 0, logged, and every backfill is `ON CONFLICT` idempotent) but a

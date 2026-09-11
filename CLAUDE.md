@@ -66,6 +66,9 @@ drift apart, and caps this file's size.
   pipeline or the dashboard's data layer.
 - [`docs/conventions.md`](docs/conventions.md) — time windows, aggregation
   rules, naming conventions, scope semantics.
+- [`docs/next-steps.md`](docs/next-steps.md) — the **sequenced roadmap**:
+  what is queued, in which batch, and why in that order. Read before starting
+  new work; `.cycle/STATE.md` carries the per-session state.
 - [`docs/fix-history.md`](docs/fix-history.md) — the **historical fix log**:
   what each short fix code (`F-2`, `IMP-7`, `CORE-3`, `RPT-1`, `OPS-7`,
   `NEO-1`, the bare-`F#` Neon family, …) fixed, with a pointer to the live
