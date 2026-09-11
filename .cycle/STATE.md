@@ -20,8 +20,7 @@
   Operator State #61), cdr-import, dashboard. Batch 5's 2-week gate clock
   starts at that install. NEXT: PR when the owner asks; the parallel Neon
   storage decision; Batch 5's design spike after the gate.
-- **Batch 3 SHIPPED (2026-09-11, block 187; one commit on the branch, not
-  yet PR'd):** after-hours capture -- DQE cols AJ `After-Hrs Answered` (36) +
+- **Batch 3 SHIPPED (2026-09-11, block 187; merged to main in PR #308):** after-hours capture -- DQE cols AJ `After-Hrs Answered` (36) +
   AK `After-Hrs TTT (sec)` (37, integer seconds) over `[15:00, 15:30)` PST,
   `DQE_AFTER_HOURS_END` under the INV-06 pin with `DASHBOARD_AFTER_HOURS_WINDOW`;
   writer widens to 37 + labels once; Neon nullable ints (ADD COLUMN IF NOT
@@ -33,8 +32,7 @@
   + cdr-import (same day) + the ONE-TIME backfill by force re-import of the
   surviving `Call_Legs_*` dates -- Operator State #60. NEXT: PR when the owner
   asks; then Batch 4 (Phase 2 nightly check-and-sort).
-- **Batches 1 + 2 SHIPPED (2026-09-11, block 186; four commits on the branch,
-  not yet PR'd):** 1a harness under the live TZ split by default (+2
+- **Batches 1 + 2 SHIPPED (2026-09-11, block 186; merged to main in PR #308):** 1a harness under the live TZ split by default (+2
   tripwires in cross-file-pins); 1b snapshot-before-bulk-repair
   (`hrBackupBeforeApply_`, `HR_BACKUP_SS_ID`, Operator State #59, new suite);
   2a Escalations ADMIN delete (`deleteEscalation`, INV-55, S45); 2b the team
@@ -253,8 +251,9 @@
   timezone fix (PRs #305/#306), the roadmap landed (#307), and PR #304 (the
   dashboard batch) merged -- all on main. Tomorrow's census after the 9/10
   build is Phase 1's last acceptance step.
-- Where I left off: PR #308 (Batches 1-4 + the /sync-docs pass) MERGED to
-  main; the branch is fast-forwarded onto it. Owner's steps: deploy all three
+- Where I left off: PR #308 (Batches 1-4 + the /sync-docs pass) and PR #309
+  (this checkpoint) MERGED to main; the branch is fast-forwarded onto main
+  with nothing unmerged. Owner's steps: deploy all three
   projects, INSTALL the nightly sort check from CDR Tools (#61), run the #60
   after-hours backfill while the Call_Legs tabs survive, walk S45 / S23 / the
   chip. Next code work: the Neon storage decision (parallel track) and Batch
