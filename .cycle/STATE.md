@@ -4,8 +4,8 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
-- **Batch 4 (Phase 2) SHIPPED (2026-09-11, block 188; one commit on the
-  branch, not yet PR'd):** the nightly check-and-sort over the five historical
+- **Batches 1–4 MERGED to main in PR #308 (2026-09-11), after a /sync-docs
+  pass (block 188 is Batch 4's).** Batch 4 (Phase 2): the nightly check-and-sort over the five historical
   sheets -- `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js, flag
   `HISTORICAL_SORT_ENABLED`, CDR Tools install/uninstall/preview/run-now);
   "single-typed AND ordered AND no TZ split", sorts only a single-typed
@@ -253,11 +253,12 @@
   timezone fix (PRs #305/#306), the roadmap landed (#307), and PR #304 (the
   dashboard batch) merged -- all on main. Tomorrow's census after the 9/10
   build is Phase 1's last acceptance step.
-- Where I left off: Batch 4 (block 188) committed + pushed on
-  `claude/sync-commands-kmeo99` on top of the Batch 1-3 commits, all un-PR'd;
-  the owner decides PR + merge, then deploys all three projects, INSTALLS the
-  nightly sort check from CDR Tools (#61), runs the #60 after-hours backfill
-  while the Call_Legs tabs survive, and walks S45 / S23 / the chip.
+- Where I left off: PR #308 (Batches 1-4 + the /sync-docs pass) MERGED to
+  main; the branch is fast-forwarded onto it. Owner's steps: deploy all three
+  projects, INSTALL the nightly sort check from CDR Tools (#61), run the #60
+  after-hours backfill while the Call_Legs tabs survive, walk S45 / S23 / the
+  chip. Next code work: the Neon storage decision (parallel track) and Batch
+  5's design spike once Phase 2 has been quiet for two weeks.
 
 ## Latest session (Batch 2 — Health page truth + Batch 1 follow-ons, 2026-09-03)
 - Implemented the seven Batch 2 findings plus I-6 and two follow-ons;
