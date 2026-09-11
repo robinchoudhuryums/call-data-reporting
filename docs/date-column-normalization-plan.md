@@ -1,6 +1,6 @@
 # Historical date columns: normalization + ordering plan
 
-**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 shipped and run live (2026-09-11); the run exposed a timezone shift (R46, fixed same day) — DQE is CLEAN once the corrected repair has re-anchored the shifted block. Phases 2–3 not started.
+**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 COMPLETE (2026-09-11): the first run exposed a timezone shift (R46, fixed and re-run the same day); the corrected repair re-anchored 9,516 cells and the census reads DQE CLEAN, no TZ-SPLIT, latest date = latest build. Last acceptance step: the next morning's build keeps it so. Phases 2–3 not started.
 **Why this exists:** five historical sheets are read by windowed date queries,
 and none is reliably date-ordered. Today that is *handled* — every dashboard
 reader uses a min/max SPAN, which is correct at any row order (CLAUDE.md,
@@ -202,6 +202,19 @@ the census flags the shape as **TZ-SPLIT**. Backstory: fix-history R46.
 `repairDqeDateNormalize()`, then `previewHistoricalDateColumns()`: DQE CLEAN
 with NO TZ-SPLIT line and its latest date equal to the latest build's. Then
 the next morning's build must keep it so.
+
+**Corrected run, 2026-09-11 12:17.** Preview and apply matched the prediction
+exactly: 22,469 already at sheet midnight, 0 to convert, 9,516 re-anchored
+(rows 22471–31986, 2026-03-09..2026-09-09), 0 refused. Re-census: DQE CLEAN,
+no TZ-SPLIT, 2024-02-29..2026-09-09. None of the other four sheets shows a
+TZ-SPLIT line either, which is the first positive confirmation that QCD /
+CDR / CSR Transfer / Q Path date cells read the same calendar day in both
+zones. Cost note: the TZ-SPLIT check adds two `Utilities.formatDate` calls per
+row, and the DQE scan went from ~20 s to ~49 s (~137 s for all five sheets);
+acceptable for an occasional read-only census, and a per-instant memo (a
+sheet has ~600 distinct date instants, not 32k) would recover most of it if
+the census ever joins a scheduled path — Phase 2's nightly check must NOT
+inherit this per-row cost.
 
 ## Phase 2 — nightly check-and-sort (NOT STARTED)
 
