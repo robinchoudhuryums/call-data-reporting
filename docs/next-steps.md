@@ -18,7 +18,7 @@ batch, items are independent unless marked.
 | 2 | **Dashboard round** — SHIPPED 2026-09-11 (block 186) | 2a Escalations: admin delete · 2b notes #2+#1 (help chip + tour) | dashboard (deploy pending) | done |
 | 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **SHIPPED 2026-09-11** (deploy + backfill: Operator State #60) |
 | 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | **SHIPPED 2026-09-11** (install + flag: Operator State #61) |
-| ∥ | **Neon storage decision** | operator decision; optional Health row "Neon storage by table" | none, or dashboard | any time |
+| ∥ | **Neon storage decision** | operator decision; Health row "Neon storage by table" **SHIPPED 2026-09-11** (block 189) | dashboard (deploy pending) | any time |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
@@ -248,10 +248,17 @@ grow with call volume. Decide once: **budget for the paid tier**, or **set
 shorter history. Inputs: the per-table size query and the Health page's
 retention row (Operator State #57 step 6).
 
-Optional code (S, dashboard): a Health page **"Neon storage by table"** row
+~~Optional code (S, dashboard): a Health page **"Neon storage by table"** row
 running `pg_total_relation_size` per table — one round trip, and the gauge
-stops being a surprise. Note the Neon console figure includes history
-retention the query cannot see.
+stops being a surprise.~~ **SHIPPED 2026-09-11 (block 189):** the `neon-storage`
+row (`neonStorageByTable_` + the pure `neonStorageVerdict_`, NeonRetention.gs)
+reads `pg_database_size` + every public table's total size in one round trip
+on the Health page's shared connection, names the top 5, and is informational
+until `NEON_STORAGE_CAP_MB` is set (warn at 80%). The hint carries the two
+readings the operator needs: the Neon console figure includes history
+retention the query cannot see (a FLOOR), and a DELETE never moves it (disk
+returns only on TRUNCATE / VACUUM FULL). Operator State #57 (d). **Deploy:**
+dashboard. The DECISION itself is still the operator's.
 
 ---
 

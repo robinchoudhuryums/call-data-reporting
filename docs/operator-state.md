@@ -1618,6 +1618,25 @@ When something looks wrong, before assuming a code bug, check:
     `backfillCDRHistory`: rows dated at/after it are skipped. The backfill
     ALWAYS writes phone children (it is the refill tool), so the ceiling is
     what keeps a refill from re-creating the post-capture rows.
+    **(d) The Health page's "Neon storage by table" row + `NEON_STORAGE_CAP_MB`
+    (dashboard, optional).** The row (`neon-storage`, Neon section, the
+    live-Neon half of the page) reads `pg_database_size` plus every public
+    table's `pg_total_relation_size` (heap + indexes + TOAST) in ONE round
+    trip on the page's shared connection and names the five largest, so
+    the console gauge stops being a surprise and the storage decision
+    (paid tier vs shorter `NEON_RETENTION_*` horizons) has its inputs on
+    the page. Unset, it is informational (muted). Set `NEON_STORAGE_CAP_MB`
+    to the plan's allowance (the free tier is 512) and it warns at 80% --
+    at 100% every Neon WRITE fails while every read still says "reachable".
+    Two things to know when reading it: it is a FLOOR (the console figure
+    also counts Neon's history retention, which no query inside the
+    database can see), and a DELETE -- the weekly prune in (b) included --
+    does NOT move it, because Postgres returns disk only on TRUNCATE or
+    VACUUM FULL (step 5 below); a flat line after a big prune is expected,
+    not a prune that failed. Unreachable Neon renders it muted (the mirror
+    + retention-risk rows already warn for the outage). Pinned by
+    `neon-retention.test.js` (the query + the pure verdict) and
+    `system-health.test.js` (the row's four branches).
     **One-time reclaim runbook** (Postgres only returns disk to the pool on
     TRUNCATE or VACUUM FULL, and VACUUM FULL needs free space to copy into,
     so the order matters; run each in the Neon SQL editor and watch the

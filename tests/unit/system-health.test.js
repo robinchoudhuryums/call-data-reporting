@@ -904,6 +904,77 @@ test('E1: with the helpers absent (suite default) both rows degrade to absent, a
   assert.equal(rowByKey(data, 'retention-risk'), undefined);
 });
 
+// ── Storage by table: the THIRD capacity row (roadmap parallel track) ────────
+// Rides the shared connection like retention-risk; helpers live in
+// NeonRetention.gs (not loaded here) so the row is typeof-gated and both are
+// stubbed -- the verdict's own pins are in neon-retention.test.js.
+function installStorage(reading) {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const calls = { byTable: [], verdict: [] };
+  h.ctx.neonStorageByTable_ = function (conn) {
+    calls.byTable.push(conn);
+    if (reading instanceof Error) throw reading;
+    return reading;
+  };
+  h.ctx.neonStorageVerdict_ = function (r, cap) {
+    calls.verdict.push({ reading: r, cap: cap });
+    return { status: cap > 0 ? 'ok' : 'muted', value: 'V(' + r.dbBytes + ',' + cap + ')', hint: 'H' };
+  };
+  return calls;
+}
+function uninstallStorage() { h.ctx.neonStorageByTable_ = undefined; h.ctx.neonStorageVerdict_ = undefined; }
+
+test('storage: the row reads ONCE on the shared connection and passes NEON_STORAGE_CAP_MB to the verdict', function () {
+  const calls = installStorage({ dbBytes: 7, tables: [] });
+  const conn = { close: function () {} };
+  let opened = 0;
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return conn; };
+  h.state.props.NEON_STORAGE_CAP_MB = '512';
+  const row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'neon-storage');
+  assert.equal(row.section, 'neon');
+  assert.equal(row.status, 'ok');
+  assert.equal(row.value, 'V(7,512)');
+  assert.equal(row.hint, 'H');
+  assert.equal(calls.byTable.length, 1, 'one storage read per load');
+  assert.equal(calls.byTable[0], conn, 'the SHARED connection (R21), not a second handshake');
+  assert.equal(opened, 1, 'still one connection for the whole neon part');
+  assert.equal(calls.verdict[0].cap, 512);
+  // Unset cap -> 0 -> the verdict's informational branch.
+  delete h.state.props.NEON_STORAGE_CAP_MB;
+  const row2 = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'neon-storage');
+  assert.equal(row2.status, 'muted');
+  assert.equal(calls.verdict[1].cap, 0);
+  uninstallStorage();
+});
+
+test('storage: unreachable Neon renders MUTED without calling the reader (the outage already warns above)', function () {
+  const calls = installStorage({ dbBytes: 7, tables: [] });
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  const row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'neon-storage');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /unreachable/);
+  assert.equal(calls.byTable.length, 0);
+  uninstallStorage();
+});
+
+test('storage: a throwing reader degrades to its own warn row; the fast part and an absent helper render no row', function () {
+  installStorage(new Error('permission denied for pg_class'));
+  h.ctx.getDashboardNeonConn_ = function () { return { close: function () {} }; };
+  const row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'neon-storage');
+  assert.equal(row.status, 'warn');
+  assert.equal(row.value, 'probe failed');
+  assert.match(row.hint, /permission denied/);
+  assert.equal(rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'neon-storage'), undefined, 'sheet-only half (R21)');
+  uninstallStorage();
+  assert.equal(rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'neon-storage'), undefined);
+  // Unconfigured Neon: no row either (nothing to measure).
+  installStorage({ dbBytes: 1, tables: [] });
+  installHealth({});
+  h.ctx.neonStorageByTable_ = function () { throw new Error('must not be called when NEON_HOST is unset'); };
+  assert.equal(rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'neon-storage'), undefined);
+  uninstallStorage();
+});
+
 // ── EA-1: per-surface egress attribution ─────────────────────────────────────
 // The single monthly total left egress reduction blind: the biggest lever
 // depends on WHICH reader is spending. Every neonNoteEgress_ callsite now

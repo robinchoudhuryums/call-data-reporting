@@ -497,6 +497,27 @@ function getSystemHealth(req) {
         }
       }
     } catch (e) { add('neon', 'retention-risk', 'Per-call tables vs retention window', 'warn', 'probe failed', String(e && e.message || e)); }
+    // Storage by table (roadmap parallel track): the THIRD capacity row. The
+    // egress gauge counts what we read; this one measures what we STORE --
+    // the figure that reached 89% of the free tier twice with nothing on this
+    // page moving. One round trip on the shared connection (R21). Unreachable
+    // Neon renders MUTED, not warn: the mirror + retention-risk rows above
+    // already warn for that outage, and a third warn for one cause is noise.
+    // The verdict is pure (NeonRetention.gs::neonStorageVerdict_) -- the cap
+    // comes from NEON_STORAGE_CAP_MB and is informational when unset.
+    try {
+      if (neonConfigured && typeof neonStorageByTable_ === 'function'
+          && typeof neonStorageVerdict_ === 'function') {
+        if (!sharedNeonConn) {
+          add('neon', 'neon-storage', 'Neon storage by table', 'muted',
+            'Neon unreachable — not measured this load');
+        } else {
+          var stv = neonStorageVerdict_(neonStorageByTable_(sharedNeonConn),
+            Number(PropertiesService.getScriptProperties().getProperty('NEON_STORAGE_CAP_MB') || 0) || 0);
+          add('neon', 'neon-storage', 'Neon storage by table', stv.status, stv.value, stv.hint);
+        }
+      }
+    } catch (e) { add('neon', 'neon-storage', 'Neon storage by table', 'warn', 'probe failed', String(e && e.message || e)); }
   } finally {
     if (sharedNeonConn) { try { sharedNeonConn.close(); } catch (ce) {} }
   }

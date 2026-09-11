@@ -88,7 +88,10 @@ tests/
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
                               cache-pin drift), heatmap drill,
-                              system-health + smoke-check, queue-report,
+                              system-health (incl. the neon-storage row's
+                              four branches: shared-conn read, unreachable
+                              -> muted, throw -> warn, absent/fast/unconfigured
+                              -> no row) + smoke-check, queue-report,
                               pipeline-watch, missed-slice,
                               inbound-qcd-parity, journey-fallback (the
                               call-path drill's sheet fallback: source
@@ -171,7 +174,12 @@ tests/
                               neon-retention (R27: the storage-cap prune --
                               floored horizons above the coverage window,
                               the six ctid-batched steps, budget/skip/error
-                              isolation, the flag-gated weekly handler),
+                              isolation, the flag-gated weekly handler; plus
+                              the Health page's storage-by-table reading --
+                              one json round trip over the public tables,
+                              largest first -- and its pure verdict:
+                              informational without NEON_STORAGE_CAP_MB,
+                              warn at 80% with it, top 5 named),
                               html-include-structure (the whole-file
                               tag-wrap trap + the assembled-client pins),
                               queue-split (cols A..AH byte-identical +

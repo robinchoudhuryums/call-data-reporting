@@ -214,3 +214,91 @@ test('R27: install/uninstall are admin-gated and fully reversible', function () 
   h.state.userEmail = 'stranger@x.com';
   assert.throws(function () { h.call('installNeonRetentionTrigger'); }, /admin/i);
 });
+
+// ── Storage by table (the Health page's third capacity row) ─────────────────
+// One round trip, one getString, largest-first; the verdict is PURE and
+// informational without a declared cap (the egress rule), warn at 80% with one.
+
+function storageConn(json, seen) {
+  return {
+    createStatement: function () {
+      return {
+        setQueryTimeout: function (s) { seen.timeout = s; },
+        executeQuery: function (sql) {
+          seen.sql.push(sql);
+          let consumed = false;
+          return {
+            next: function () { if (consumed) return false; consumed = true; return true; },
+            getString: function (col) { seen.cols.push(col); return json; },
+            close: function () {},
+          };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  };
+}
+
+test('storage: neonStorageByTable_ is ONE json round-trip over the public tables, largest first', function () {
+  const seen = { sql: [], cols: [], timeout: 0 };
+  const json = JSON.stringify({ db: 300 * 1024 * 1024, tables: [
+    { t: 'dqe_history', b: 10 * 1024 * 1024 },        // deliberately out of order
+    { t: 'inbound_calls', b: 120 * 1024 * 1024 },
+    { t: '', b: 5 },                                    // a nameless entry is dropped
+    { t: 'outbound_calls', b: 80 * 1024 * 1024 },
+  ] });
+  const r = h.call('neonStorageByTable_', storageConn(json, seen));
+  assert.equal(seen.sql.length, 1, 'one statement');
+  assert.equal(seen.cols.length, 1, 'one getString -- never per-row iteration');
+  assert.match(seen.sql[0], /pg_database_size\(current_database\(\)\)/);
+  assert.match(seen.sql[0], /pg_total_relation_size\(c\.oid\)/, 'heap + indexes + TOAST, not the heap alone');
+  assert.match(seen.sql[0], /nspname = 'public'/);
+  assert.match(seen.sql[0], /relkind IN \('r', 'p'\)/);
+  assert.match(seen.sql[0], /ORDER BY pg_total_relation_size\(c\.oid\) DESC/);
+  assert.ok(seen.timeout > 0, 'the statement is time-bounded (setQueryTimeout, never a URL property)');
+  assert.equal(r.dbBytes, 300 * 1024 * 1024);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.tables.map(function (t) { return t.table; }))),
+    ['inbound_calls', 'outbound_calls', 'dqe_history']);
+  // An empty database (or a driver returning no row) is a zero reading, not a throw.
+  const seen2 = { sql: [], cols: [], timeout: 0 };
+  const empty = h.call('neonStorageByTable_', storageConn('{"db":0,"tables":[]}', seen2));
+  assert.equal(empty.dbBytes, 0); assert.equal(empty.tables.length, 0);
+});
+
+test('storage: neonStorageByTable_ lets a JDBC error propagate (the probe-failed branch, never a fake zero)', function () {
+  const bad = { createStatement: function () { return {
+    setQueryTimeout: function () {}, close: function () {},
+    executeQuery: function () { throw new Error('connection reset'); },
+  }; }, close: function () {} };
+  assert.throws(function () { h.call('neonStorageByTable_', bad); }, /connection reset/);
+});
+
+test('storage: the verdict is informational without a cap, ok/warn at 80% with one, top 5 tables named', function () {
+  const MB = 1024 * 1024;
+  const tables = ['a', 'b', 'c', 'd', 'e', 'f'].map(function (n, i) { return { table: 't_' + n, bytes: (60 - i * 10) * MB }; });
+  const reading = { dbBytes: 400 * MB, tables: tables };
+  const none = h.call('neonStorageVerdict_', reading, 0);
+  assert.equal(none.status, 'muted');
+  assert.match(none.value, /^400 MB on disk · top: t_a 60 MB, t_b 50 MB, t_c 40 MB, t_d 30 MB, t_e 20 MB$/);
+  assert.ok(none.value.indexOf('t_f') === -1, 'top list is capped at five');
+  assert.match(none.hint, /Set the NEON_STORAGE_CAP_MB/);
+  assert.match(none.hint, /FLOOR/);
+  assert.match(none.hint, /TRUNCATE or VACUUM FULL/, 'says why a prune does not move the figure');
+  assert.match(none.hint, /Operator State #57/);
+
+  const ok = h.call('neonStorageVerdict_', reading, 512);
+  assert.equal(ok.status, 'ok');
+  assert.equal(ok.pct, 78);
+  assert.match(ok.value, /^400 MB on disk — 78% of the 512 MB cap · top: /);
+  assert.match(ok.hint, /^Warns at 80% of NEON_STORAGE_CAP_MB/);
+
+  const warn = h.call('neonStorageVerdict_', reading, 500);   // 80% exactly
+  assert.equal(warn.status, 'warn');
+  assert.match(warn.hint, /^Near the cap: at 100% every Neon WRITE fails/);
+  assert.match(warn.hint, /Operator State #57/);
+
+  // Unset / junk cap reads as no cap; a reading with no tables still renders.
+  assert.equal(h.call('neonStorageVerdict_', { dbBytes: 0, tables: [] }, 'junk').status, 'muted');
+  assert.equal(h.call('neonStorageVerdict_', { dbBytes: 0, tables: [] }, 'junk').value, '0 MB on disk');
+});
