@@ -1,4 +1,4 @@
-# Next steps — the sequenced roadmap (as of 2026-09-11)
+# Next steps — the sequenced roadmap (as of 2026-09-11; Batches 1–2 SHIPPED the same day)
 
 **What this is.** The one place that says what is queued, in which batch, and
 why in that order. Detailed designs stay in their own plan docs (linked); the
@@ -14,9 +14,9 @@ batch, items are independent unless marked.
 
 | # | Batch | Items | Projects / deploy | Start when |
 |---|---|---|---|---|
-| 1 | **Safety nets** | 1a harness runs under the live TZ split · 1b snapshot before any bulk repair | 1a none · 1b cdr-report | now |
-| 2 | **Dashboard round** | 2a Escalations: admin delete · 2b notes #2+#1 (help chip + tour) | dashboard (one deploy) | after 1a |
-| 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | after 2 (owner's order; the 14-day clock argues for swapping 2 and 3 — owner's call) |
+| 1 | **Safety nets** — SHIPPED 2026-09-11 (block 186) | 1a harness runs under the live TZ split · 1b snapshot before any bulk repair | 1a none · 1b cdr-report (deploy pending) | done |
+| 2 | **Dashboard round** — SHIPPED 2026-09-11 (block 186) | 2a Escalations: admin delete · 2b notes #2+#1 (help chip + tour) | dashboard (deploy pending) | done |
+| 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **NEXT** (the 14-day clock is running) |
 | 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | after 3 |
 | ∥ | **Neon storage decision** | operator decision; optional Health row "Neon storage by table" | none, or dashboard | any time |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
@@ -35,7 +35,7 @@ nightly census (Phase 2) as its gate and the snapshot (1b) as its rollback.
 
 ---
 
-## Batch 1 — safety nets
+## Batch 1 — safety nets (SHIPPED 2026-09-11; `.cycle/blocks/186-*`)
 
 ### 1a. Run the unit suite under the live timezone split
 
@@ -66,7 +66,9 @@ the shim's script TZ — nobody may set both to the same zone again; (2) any
 
 **Acceptance.** Suite green; the R46 mutation "helper → script midnight" fires
 from `pipeline-build.test.js` with its local `SS_TZ` constant removed (the
-default now carries it).
+default now carries it). **As built:** all 1,300 tests passed on the flip with
+every explicit Chicago argument removed — no fixture had relied on the two
+midnights coinciding; the two tripwires live in `cross-file-pins`.
 
 **Size.** M (the fixture sweep). **Deploy.** None.
 
@@ -105,11 +107,14 @@ backup), then any apply over 500 cells → the backup workbook appears with one
 dated tab and the log names it.
 
 **Size.** M. **Deploy.** cdr-report. **Operator.** `HR_BACKUP_SS_ID`
-self-populates; add as Operator State #59 with the restore procedure.
+self-populates; Operator State #59 carries the restore procedure. **As built:**
+`sheet-repairs-backup.test.js` (8 tests, 5 mutations caught); the fake gained
+`copyTo` / `setName` and the shim `SpreadsheetApp.create` + a strict
+`openById`.
 
 ---
 
-## Batch 2 — dashboard round (one deploy)
+## Batch 2 — dashboard round (SHIPPED 2026-09-11; one deploy pending)
 
 ### 2a. Escalations: admin delete (owner ask, 2026-09-11)
 
@@ -151,7 +156,9 @@ verb; the CLAUDE.md "Public write paths" bullet gains one clause; new
 regression scenario S45 "Admin deletes a mistaken escalation"; Operator State
 #24 gets a line.
 
-**Size.** S–M. **Deploy.** dashboard.
+**Size.** S–M. **Deploy.** dashboard. **As built:** exactly as designed; the
+usage row carries department only (not even the id). drive-admin.js walks
+open → Cancel → Confirm; drive-smoke.js pins the manager sees no control.
 
 ### 2b. Notes #2 + #1 — help chip + tour (owner decisions of 2026-09-10)
 
@@ -161,8 +168,13 @@ regression scenario S45 "Admin deletes a mistaken escalation"; Operator State
 - Gate the onboarding tour on `ovLoad_` completing instead of the fixed
   1200 ms timer — no artificial delay, no sample pages.
 - Client-only. Pins: `html-include-structure` source pins for the label, the
-  absent override and the gate; `drive-smoke.js` / `drive-f13.js` for the
-  rendered tour trigger. **Size.** S. **Deploy.** dashboard (shared with 2a).
+  absent override and the gate. **Size.** S. **Deploy.** dashboard (shared
+  with 2a). **As built:** the chip copies the dept controls' window (the M4
+  authority) rather than merely dropping the override; `onOverviewSettled_`
+  fires on the first cache paint, success or failure of `ovLoad_`, and the
+  tour starts 250 ms after it. No driver clicks a chip or lets the tour
+  auto-run (they all set `cdr.tour.done`), so both rest on source pins + the
+  manual walk (S23 for the tour; the chip is a Help-modal click).
 
 ---
 
