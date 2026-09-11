@@ -33,7 +33,15 @@
   (no loss); the sheet was sorted BY HAND on 9/10. Follow-on folded into the
   Phase 2 plan: the bulk path swallows sort failures into `console.warn`
   (invisible) — log a Pipeline Health failure row instead, same step name.
-- **Owner decisions on the 2026-09-10 testing notes (plan only, NO code yet):**
+- **Dashboard batch SHIPPED (2026-09-11, block 185): #8 Range on the QCD card
+  (Yesterday default), #6 bar sorts by `totalAnswered`, #7 "Ans / day" column
+  (`ansPerDay` per row over the EXISTING `daysActive`; `totals.daysActive` =
+  roster-active days; `summary:v22`, 8 doc sites synced), stale pill amber via
+  a new `--stale` token defined at all five `--warn` sites. 1293/1293; ci:ui
+  green locally (all 8 stages -- playwright now installed in the gitignored
+  tools/ui-harness). NOT yet PR'd/merged/deployed.** Remaining from the notes:
+  #2+#1 (help chips + tour), #5 (after-hours; 14-day clock), then Phase 2.
+- **Owner decisions on the 2026-09-10 testing notes (#8/#6/#7/stale DONE above):**
   #8 Range button on the QCD card, Yesterday stays default. #2+#1: relabel the
   chip "How is my team doing?", DROP its last-30-days override (it defeats the
   cache and contradicts M4's single-date-authority), seq-guard rapid clicks;

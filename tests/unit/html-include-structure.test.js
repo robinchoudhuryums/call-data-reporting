@@ -183,6 +183,60 @@ test('styles.html: the sub-queue CSS is inside the style element', function () {
 // cell writer must call csvSafeCell_" were rules with no tripwire. Both are
 // currently clean; these pins keep them that way.
 
+// Owner (2026-09): the Answered / Missed bar sorts by answered VOLUME; the
+// Answer % column to its right keeps the RATE sort. Both static theads (My
+// Department + the Overview mini-table, 1:1 by position with COLUMNS) and the
+// COLUMNS model must agree, and sortRows must idle-sink BOTH keys -- the old
+// special case covered answerRate alone, so a volume sort would have floated
+// idle agents to the top of an ascending sort.
+test('bar column sorts by totalAnswered, Answer % by answerRate, in both theads + COLUMNS; sortRows idle-sinks both', function () {
+  const html = fs.readFileSync(path.join(DIR, 'dashboard.html'), 'utf8');
+  const bar = html.match(/<th data-sort="([^"]+)">Answered \/ Missed /g) || [];
+  assert.equal(bar.length, 2, 'two Answered / Missed headers (dept table + overview mini-table)');
+  bar.forEach(function (m) { assert.ok(/data-sort="totalAnswered"/.test(m), 'bar th sorts by volume: ' + m); });
+  const pct = html.match(/<th data-sort="([^"]+)">Answer % /g) || [];
+  assert.equal(pct.length, 2);
+  pct.forEach(function (m) { assert.ok(/data-sort="answerRate"/.test(m), 'Answer % th sorts by rate: ' + m); });
+  const core = fs.readFileSync(path.join(DIR, 'script-1-core.html'), 'utf8');
+  assert.ok(/key: 'answeredBar',[^\n]*sortKey: 'totalAnswered'/.test(core), 'COLUMNS bar sortKey');
+  assert.ok(/key: 'answerRate',[^\n]*sortKey: 'answerRate'/.test(core), 'COLUMNS Answer % sortKey');
+  const dept = fs.readFileSync(path.join(DIR, 'script-5-dept.html'), 'utf8');
+  assert.ok(/if \(key === 'answerRate' \|\| key === 'totalAnswered'\) \{/.test(dept),
+    'sortRows idle-sink special case must cover the volume sort too');
+});
+
+// Owner (2026-09): the QCD card's period toggle offers Range (the page's own
+// From/To -- the one period that reconciles with the agent table, mirroring
+// panel 2). The renderer resolves it from `qcd.range`, the toggle accepts it,
+// the markup carries the button, and Yesterday stays the default.
+test('QCD card: Range period is wired end to end (markup, resolver, toggle) and Yesterday stays default', function () {
+  const html = fs.readFileSync(path.join(DIR, 'dashboard.html'), 'utf8');
+  assert.ok(/class="dept-qcd-period-btn" data-period="range"/.test(html), 'Range button in the toggle markup');
+  const dept = fs.readFileSync(path.join(DIR, 'script-5-dept.html'), 'utf8');
+  assert.ok(/deptQcdPeriod === 'range' && hasRange\) \? 'range'/.test(dept), 'renderer resolves range from qcd.range');
+  assert.ok(/p !== 'yesterday' && p !== 'mtd' && p !== 'range'/.test(dept), 'toggle accepts range');
+  assert.ok(/return \(v === 'mtd' \|\| v === 'yesterday' \|\| v === 'range'\) \? v : 'yesterday';/.test(dept),
+    'persisted period accepts range; default stays yesterday (owner)');
+  assert.ok(/period === 'range' && qcd\.rangePrior && qcd\.range/.test(dept), 'range deltas come from qcd.rangePrior');
+});
+
+// Owner (2026-09): the stale freshness pill is AMBER via its own --stale
+// token, not the red-orange --warn. The token must exist at EVERY site the
+// palette defines --warn (light, light-oklch, dark, dark-oklch, export
+// override) -- a color defined in one block and missing from another is the
+// "resolves only inside a media block" trap the artifact rules name.
+test('freshness pill: .is-stale uses --stale, defined everywhere --warn is', function () {
+  const css = fs.readFileSync(path.join(DIR, 'styles.html'), 'utf8');
+  const stale = css.match(/\.freshness-pill\.is-stale \{[\s\S]*?\}/);
+  assert.ok(stale, '.is-stale rule present');
+  assert.ok(/var\(--stale-soft\)/.test(stale[0]) && /var\(--stale\)/.test(stale[0]), 'pill uses --stale tokens');
+  assert.ok(!/var\(--warn/.test(stale[0]), 'pill no longer uses --warn');
+  const warnSites = (css.match(/^\s*--warn:\s/gm) || []).length;
+  const staleSites = (css.match(/^\s*--stale:\s/gm) || []).length;
+  assert.equal(staleSites, warnSites, '--stale defined at every site --warn is (' + warnSites + ')');
+  assert.equal((css.match(/^\s*--stale-soft:\s/gm) || []).length, (css.match(/^\s*--warn-soft:\s/gm) || []).length);
+});
+
 test('S8: safeChart_ is the ONLY `new Chart(` callsite in the client', function () {
   const fragNames = [];
   const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');

@@ -1472,12 +1472,19 @@
     // see fmtCell handling for `type: 'chip'`. Plain-text export
     // (CSV) is handled in exportTableCsv_ via sourceChipCsv_.
     { key: 'source',               label: 'Source',          type: 'chip',     hideable: true },
-    { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'answerRate' },
+    // Owner (2026-09): the bar sorts by answered VOLUME. Its inline rate is a
+    // duplicate of the Answer % column to its right, which keeps the rate sort.
+    { key: 'answeredBar',          label: 'Answered / Missed', type: 'bar', sortKey: 'totalAnswered' },
     // #8 -> owner round 4: the dedicated Total-calls column was FOLDED into
     // the split-bar cell (answeredBarHtml_ renders the rung total inline as
     // the muted "(N)"), saving a column; the CSV still emits a numeric
     // Total calls column (exportTableCsv_ splices it after the bar).
     { key: 'answerRate',           label: 'Answer %',        type: 'pct', sortKey: 'answerRate' },
+    // Owner (2026-09): answered calls per ACTIVE day -- days the agent had any
+    // rung activity in the window, so PTO does not drag it down. The day count
+    // rides in the tooltip. Server: Data.gs computeSummary_ (the existing
+    // daysActive + new ansPerDay, summary:v22). Folds away with the other detail columns.
+    { key: 'ansPerDay',            label: 'Ans / day',       type: 'num1',     hideable: true },
     { key: 'totalUnique',          label: 'Unique',          type: 'num',      hideable: true },
     { key: 'tttSeconds',           label: 'TTT',             type: 'duration', hideable: true },
     { key: 'attSeconds',           label: 'ATT (daily avg)', type: 'duration' },

@@ -268,7 +268,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   render beside `renderDeptTeamStrip_` is RETIRED with its `.dis-*` CSS
   (the team strip itself is unchanged: "% Answered (rings)" labeling, the
   R10-5 Avg answer + CSR Transfer % tiles, R11-C1 delta chips --
-  summary:v21). Insights' Queue-health **"See missed calls ->"** drill
+  summary:v22). Insights' Queue-health **"See missed calls ->"** drill
   (-> `handoffToMyDept_`) is wired in `initInsightsReport`. **R9-3 shared date window (client-only, no
   server/cache change; SUPERSEDED the Batch-E "Use these dates" offer
   chip):** the hand-off buttons carry a window only when you explicitly
@@ -884,6 +884,13 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   rate threshold, abandoned % warning, missed-delta orange,
   regression deltas). Reach for `--bad` deliberately when adding new
   error-state UI; don't blanket-replace existing `--warn` usage.
+  **`--stale` / `--stale-soft` (owner 2026-09) is a THIRD semantic: amber
+  (hue ~80), for "this data is old" -- the freshness pill past 36h. `--warn`
+  sits at hue ~30 and reads as red-orange, i.e. as an error; staleness is a
+  caution about age, not a fault. Defined at all five sites `--warn` is
+  (light, light-oklch, dark, dark-oklch, the export override) --
+  html-include-structure pins that count, so a token defined in one block
+  and missing from another cannot ship.
   (2) **`--r: 2px` is the canonical border-radius token.** New UI
   should use `var(--r)` for squared-off corners. Exceptions are
   intentional: `999px` pills/badges, `50%` avatars/dots, skeleton

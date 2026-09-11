@@ -203,3 +203,52 @@ test('meta + diagnostics: roster size, no-data list, queue-only matched', functi
   deepEqual(data.diagnostics.queueOnlyMatched, ['Cara']);
   assert.equal(data.qcd, null);                   // Alpha unmapped in QCD
 });
+
+// Owner (2026-09), summary:v22: answered per ACTIVE day. The divisor is the
+// number of days the agent had ANY row in the USER window -- never the E5
+// prior window, which accumulates separately -- so PTO does not drag it down.
+// totals.ansPerDay divides by the dept's distinct ROSTER-active days so the
+// team figure reconciles with totals.totalAnswered (a mean of per-agent rates
+// would not).
+test('v22: daysActive / ansPerDay per row + on totals; prior-window and floater days never count', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, missed: 2, answered: 8 }),
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 5,  missed: 0, answered: 5 }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '501', rung: 4,  missed: 1, answered: 3 }),
+    // Cara is Beta's agent ringing Alpha's ext on a day NO Alpha roster agent
+    // worked: a queue-only floater (INV-53). She gets her own row under 'both'
+    // scope, but her day must not enter the dept's roster-active day count.
+    dqeRow({ date: '2026-03-11', agent: 'Cara', ext: '501', rung: 7,  missed: 1, answered: 6 }),
+    // Prior-window rows (R24 working-day prior of Mon-Wed 9-11 is Wed-Fri 4-6):
+    // they feed the E5 chips and must NOT count as active days.
+    dqeRow({ date: '2026-03-06', agent: 'Anna', ext: '501', rung: 6,  missed: 1, answered: 5 }),
+    dqeRow({ date: '2026-03-05', agent: 'Ben',  ext: '501', rung: 6,  missed: 1, answered: 5 }),
+  ]);
+  const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-11', 'both');
+  const anna = rowFor(data, 'Anna'), ben = rowFor(data, 'Ben'), cara = rowFor(data, 'Cara');
+  assert.equal(anna.daysActive, 2);
+  assert.equal(anna.ansPerDay, 6.5);          // (8 + 5) / 2
+  assert.equal(anna.priorHasData, true);      // the prior row still feeds the chip...
+  assert.equal(ben.daysActive, 1);            // ...but never the day count
+  assert.equal(ben.ansPerDay, 3);
+  assert.equal(cara.matchedViaRoster, false); // floater
+  assert.equal(cara.daysActive, 1);           // her OWN figure is still honest
+  assert.equal(cara.ansPerDay, 6);
+  // Totals (roster only, INV-53): 16 answered over the dept's 2 distinct
+  // roster-active days -- NOT 3 (Cara's day), NOT the mean of the rates, and
+  // NOT the sum of per-agent days.
+  assert.equal(data.totals.totalAnswered, 16);
+  assert.equal(data.totals.daysActive, 2);
+  assert.equal(data.totals.ansPerDay, 8);
+});
+
+test('v22: a dept with no active days carries totals.ansPerDay=null, never 0.0', function () {
+  // A roster member with NO rows in range never reaches the row list (they
+  // land in diagnostics.rosterWithNoData); the null contract is exercised on
+  // totals when the dept had no roster-active day at all.
+  install([]);
+  const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'roster');
+  assert.equal(data.rows.length, 0);
+  assert.equal(data.totals.daysActive, 0);
+  assert.equal(data.totals.ansPerDay, null);
+});

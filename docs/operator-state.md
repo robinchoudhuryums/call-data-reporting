@@ -1176,7 +1176,7 @@ When something looks wrong, before assuming a code bug, check:
     the same window, so Spanish's OFF-mode figures run roughly **8.6x** its
     real volume; 14 crossable agents span 6 department pairs. CSR/Spanish is
     the canonical pair to spot-check. Reversible
-    either way with no redeploy — the scope is part of the `summary:v21` cache
+    either way with no redeploy — the scope is part of the `summary:v22` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a

@@ -1180,7 +1180,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   stays fresh during periods where one source updates without
   the other (e.g. integrated import refreshes QCD before the
   cdr-report safety-net trigger refreshes DQE, or vice versa).
-  Past 36h adds the `.is-stale` class and tints warm orange -- measured
+  Past 36h adds the `.is-stale` class and tints AMBER (`--stale`, owner
+  2026-09 -- its own token, since `--warn` read as red) -- measured
   with a **WEEKEND/HOLIDAY CREDIT** (24h per non-business day in the gap,
   `freshnessNonBusinessCredit_`), or Friday's data reads as stale every
   Monday morning at ~57h while being the most recent WORKDAY. The Overview
@@ -1761,7 +1762,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" the parameter thinking it was dropped, and
   don't hardcode that default in a second place. `subScope` is a cache-key
-  dimension (`summary:v21`); `cdr.dept.subscope` is now an orphan key.
+  dimension (`summary:v22`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -2018,14 +2019,16 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **Total calls** column; built by
   `answeredBarHtml_`, carries the E5 WoW chips inline on the answered/missed
   counts and the rung total as a muted "(N)", answer-rate gets the R23
-  three-tier dept-standard tint, sorts by computed `answerRate` via a special
-  case in `sortRows`. **The CSV still emits a numeric Total calls column** spliced
+  three-tier dept-standard tint, sorts by answered VOLUME (`totalAnswered`,
+  owner 2026-09 -- the rate sort lives on Answer %; both keys idle-sink in
+  `sortRows`). **The CSV still emits a numeric Total calls column** spliced
   after the bar in `exportTableCsv_`) · **Answer %** (a `type:'pct'`
   cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
-  rate the bar folds in is readable without decoding it; shares the bar's
-  `answerRate` sort key) · Unique ·
-  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The five `hideable:true`
-  columns (Source / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
+  rate the bar folds in is readable without decoding it; the `answerRate`
+  sort key and the default landing) · Ans / day (owner 2026-09: answered per
+  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`) · Unique ·
+  TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The six `hideable:true`
+  columns (Source / Ans / day / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
   AWAY by default behind the **"Show all columns"** toggle
   (`#dept-cols-toggle`, persisted in `cdr.dept.cols`, applied via the
   `hide-extra` class + `.col-extra` cells through the shared `cellClass_`

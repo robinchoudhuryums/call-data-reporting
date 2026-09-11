@@ -887,7 +887,7 @@ function getDepartmentSummary(req) {
   // rather than a version bump: the version tracks aggregation-RULE changes
   // (INV-30) and both modes are the same rule under a different scope.
   const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'summary:v21:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v22:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
@@ -1129,6 +1129,12 @@ function computeSummary_(dept, from, to, scope) {
   const splitInfo = applyQueueSplitToRows_(srcRows, dept);
 
   const acc = {};
+
+  // Owner (2026-09): dept-level distinct ROSTER-active days in the window,
+
+  // the divisor for totals.ansPerDay (a per-agent mean would not reconcile).
+
+  const deptDays = {};
   let rowsMatched = 0;
   // For diagnostics: agents that matched only via queue extension
   // overlap (not on the dept roster). Empty when scope === 'roster'.
@@ -1248,6 +1254,7 @@ function computeSummary_(dept, from, to, scope) {
     if (caw) { a.csrAvgAbdWaitSecondsSum += caw; a.csrAvgAbdWaitSecondsCount++; }
 
     a.days[dateIso] = true;
+    if (a.matchedViaRoster) deptDays[dateIso] = true;
   }
 
   // Build the agent -> [other-depts] lookup used to populate
@@ -1302,6 +1309,12 @@ function computeSummary_(dept, from, to, scope) {
       totalRung: a.totalRung,
       totalMissed: a.totalMissed,
       totalAnswered: a.totalAnswered,
+      // Owner (2026-09): answered per ACTIVE day -- the `daysActive` count
+      // emitted below (days with any row in the USER window; a.days is
+      // user-window only, the E5 prior window accumulates in priorAcc), so
+      // PTO does not drag it down. 1 dp; null when no active day so the
+      // client renders a dash, never 0.0.
+      ansPerDay: Object.keys(a.days).length ? round1_(a.totalAnswered / Object.keys(a.days).length) : null,
       priorRung:     priorHasData ? priorBucket.rung     : 0,
       priorMissed:   priorHasData ? priorBucket.missed   : 0,
       priorAnswered: priorHasData ? priorBucket.answered : 0,
@@ -1358,6 +1371,11 @@ function computeSummary_(dept, from, to, scope) {
   totals.avgAbdWaitSeconds = avgNonzero_(rosterRows, 'avgAbdWaitSeconds');
   totals.csrAvgAbdWaitSeconds = avgNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
   totals.rosterAgentCount = rosterRows.length;
+  // Owner (2026-09): team answered per roster-active day (distinct days on
+  // which ANY roster agent had a row), so the totals figure reconciles with
+  // totals.totalAnswered rather than averaging the per-agent rates.
+  totals.daysActive = Object.keys(deptDays).length;
+  totals.ansPerDay = totals.daysActive ? round1_(totals.totalAnswered / totals.daysActive) : null;
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
   // Sub-queue Phase 1: every row names its OWN department, so a combined
   // parent+child table can group and label rows without inferring ownership.
@@ -1638,6 +1656,7 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
       avgAbdWaitSeconds: 0, csrAvgAbdWaitSeconds: 0,
       // CORE-8: mirror the populated path's INV-53 count fields so client
       // code reading them never sees undefined on a no-data day.
+      daysActive: 0, ansPerDay: null,   // v22: same shape as the populated totals
       rosterAgentCount: 0, queueOnlyAgentCount: 0,
     },
     qcd: null,
