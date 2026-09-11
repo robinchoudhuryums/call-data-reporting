@@ -11,6 +11,14 @@ const { rosterGrid } = require('../harness/fixtures');
 // window legs, INV-08 per-agent TTT attribution, INV-20 PST->CST
 // slots, INV-21 parentMap). Same byte-identical file in cdr-import.
 const h = loadGas({ project: 'cdr-report', files: ['buildDQEHistoricalData.js'] });
+
+// Phase 1: col B is a DATE now. Local calendar date of a Date object, in the
+// harness TZ (CI pins TZ to the Apps Script manifest's) -- the shape every
+// col-B assertion below compares against.
+function localIso_(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+}
 // Neon mirror + failure-notify live in neonWrite.js (not loaded); stub
 // them so the build's mirror block is a no-op.
 h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
@@ -100,7 +108,12 @@ test('INV-20: missed-call time slots are stored as CST (PST + 2h), bucketed 30-m
 test('INV-21: queue-extension + date/agent columns are populated from the legs', function () {
   const row = build();
   assert.equal(row[0], 'March 2026');     // A Month Year
-  assert.equal(row[1], '03/09/2026');     // B Date
+  // B Date -- Phase 1: a DATE object at LOCAL MIDNIGHT (the same instant the
+  // repair in sheetRepairs.js builds from "M/D/YYYY" text, so the two eras
+  // sort as one), not the coercible string that setValues left as text.
+  assert.ok(row[1] instanceof Date, 'B is a Date object');
+  assert.equal(localIso_(row[1]), '2026-03-09');
+  assert.equal(row[1].getHours() + row[1].getMinutes() + row[1].getSeconds(), 0, 'local midnight');
   assert.equal(row[2], 'Anna');           // C Agent
   assert.equal(row[3], '103');            // D Queue Extensions (from CallQueue(103))
 });
@@ -502,6 +515,9 @@ test('I2-9: an ISO START_TIME display parses as a LOCAL date and col B is writte
   h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
   const rows = ss._sheet('DQE Historical Data')._data.slice(1).filter(function (r) { return r[2] === 'Anna'; });
   assert.equal(rows.length, 1, 'the day built (pre-fix: "No valid dates found")');
-  assert.equal(rows[0][1], '3/9/2026', 'col B canonicalized -- ISO text in col B is the coercion / one-day-early trap');
+  // Phase 1: col B is a Date; the one-day-early trap this pin guards is that
+  // an ISO-shaped START_TIME must still land on the 9th, not the 8th.
+  assert.ok(rows[0][1] instanceof Date, 'col B is a Date');
+  assert.equal(localIso_(rows[0][1]), '2026-03-09', 'col B canonicalized -- the ISO-shaped display is a LOCAL date, never UTC-shifted');
   assert.equal(rows[0][7], 1);   // H answered
 });

@@ -1081,3 +1081,134 @@ function hdLogCensus_(census) {
   });
   Logger.log(lines.join('\n'));
 }
+
+
+// ============================================================================
+// Phase 1 -- DQE col B normalization: text "M/D/YYYY" -> Date (one-time).
+// ----------------------------------------------------------------------------
+// The 2026-09-10 census (previewHistoricalDateColumns, above) found col B of
+// "DQE Historical Data" split at the 2026-03-09 pipeline cutover: 22,469 Date
+// cells before it, 9,442 TEXT cells after, all in automatic-format cells --
+// the current build's coercible "M/D/YYYY" string simply was not coerced. A
+// mixed column cannot be sorted chronologically (Sheets groups Date before
+// text), so the build's after-write sort only ordered the sheet by the
+// accident that every Date row was older than every text row; the first
+// reprocess of a pre-cutover date would have landed a text row after every
+// Date row. The build now writes col B as a Date (buildDQEHistoricalData.js,
+// both INV-16 copies); this converts the rows already written as text.
+//
+// What it does NOT do, on purpose:
+//   - no number-format writes: the cells are automatic-format and a Date
+//     value displays as a date there (the census checked -- an '@' cell would
+//     have needed a reset first, and would have shown the serial otherwise);
+//   - no Neon re-mirror: the DATES are unchanged, only the cell type. Every
+//     Neon writer reads col B through getDisplayValues, which is "3/9/2026"
+//     either way;
+//   - no partial run: if ANY non-blank cell is neither a Date nor exactly the
+//     "M/D/YYYY" shape the census certified, the apply REFUSES the whole run
+//     and names the cells. Converting around a stray cell would leave the
+//     column mixed -- and unsortable -- while looking repaired.
+//
+// The Date is built exactly as the writer builds callDateObj (its nested
+// displayToDate): `new Date(Y, M-1, D)`, local midnight. A repaired cell is
+// therefore indistinguishable from one the build writes, which is what lets
+// the two eras sort as one -- pinned as a shared property in
+// pipeline-build.test.js (writer) and historical-date-columns.test.js (repair).
+//
+// After a successful apply the sheet is sorted once by col B -- the sort the
+// build already runs after every write, now able to work. That reorders rows,
+// so a mid-run DQE backfill's T-8 fingerprinted resume pointer restarts from 0
+// on its next run (harmless: every backfill is ON CONFLICT idempotent).
+//
+// Usage: previewDqeDateNormalize() (writes nothing; logs counts + any cells it
+// would refuse), then repairDqeDateNormalize(). Run outside the import window.
+
+/** Preview only: count what WOULD convert and list any cell that blocks the apply. */
+function previewDqeDateNormalize() {
+  return normalizeDqeDateColumn_(/*dryRun=*/true);
+}
+
+/** Apply: convert every "M/D/YYYY" text cell in col B to a Date, then sort by col B. */
+function repairDqeDateNormalize() {
+  return normalizeDqeDateColumn_(/*dryRun=*/false);
+}
+
+// Same construction as the build's displayToDate for the M/D/YYYY branch:
+// local midnight of the calendar date. Stricter in one way -- a calendar
+// round-trip check refuses "2/30/2026", which `new Date` would silently roll
+// to March 2; the build never produces such a string, so the two agree on
+// every input the build emits.
+function dqeDateFromMdy_(display) {
+  var m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(display == null ? '' : display).trim());
+  if (!m) return null;
+  var mo = parseInt(m[1], 10), da = parseInt(m[2], 10), yr = parseInt(m[3], 10);
+  var d = new Date(yr, mo - 1, da);
+  if (isNaN(d.getTime())) return null;
+  if (d.getFullYear() !== yr || d.getMonth() !== mo - 1 || d.getDate() !== da) return null;
+  return d;
+}
+
+function normalizeDqeDateColumn_(dryRun) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DQE Historical Data');
+  if (!sheet) throw new Error('normalizeDqeDateColumn_: "DQE Historical Data" not found.');
+  var out = { applied: false, scanned: 0, alreadyDate: 0, blank: 0, converted: 0, refused: [] };
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('DQE date normalize: no data rows.'); return out; }
+
+  var n = lastRow - 1;
+  out.scanned = n;
+  // Typed from getValues, resolved from the DISPLAY (INV-02 discipline; and the
+  // census classifier hdCellType_ is reused so "what counts as text:mdy" has
+  // exactly one definition in this file).
+  var vals = sheet.getRange(2, 2, n, 1).getValues();
+  var disp = sheet.getRange(2, 2, n, 1).getDisplayValues();
+  var targets = [];   // { row, date } in row order
+  for (var i = 0; i < n; i++) {
+    var type = hdCellType_(vals[i][0]);
+    if (type === 'date')  { out.alreadyDate++; continue; }
+    if (type === 'blank') { out.blank++; continue; }
+    var display = String(disp[i][0] == null ? '' : disp[i][0]).trim();
+    var d = (type === 'text:mdy') ? dqeDateFromMdy_(display) : null;
+    if (!d) { out.refused.push({ row: i + 2, type: type, display: display }); continue; }
+    targets.push({ row: i + 2, date: d });
+  }
+  out.converted = targets.length;
+
+  var head = 'DQE date normalize (' + (dryRun ? 'PREVIEW' : 'APPLY') + '): ' + n + ' rows -- '
+    + out.alreadyDate + ' already Date, ' + out.blank + ' blank, '
+    + targets.length + ' text "M/D/YYYY" to convert, ' + out.refused.length + ' refused.';
+  if (out.refused.length) {
+    var sample = out.refused.slice(0, 12).map(function (r) {
+      return 'row ' + r.row + ' [' + r.type + '] "' + r.display + '"';
+    }).join('; ');
+    Logger.log(head + '\n** REFUSING: cells that are neither Date nor "M/D/YYYY" text -- converting '
+      + 'around them would leave col B mixed and unsortable while looking repaired. '
+      + 'Re-run previewHistoricalDateColumns() and repair these first: ' + sample);
+    return out;
+  }
+  if (dryRun || !targets.length) {
+    Logger.log(head + (dryRun ? ' (nothing written)' : ' Nothing to convert.'));
+    return out;
+  }
+
+  // Write in contiguous row runs so one setValues covers each block (the live
+  // sheet is one 9,442-row block; a scattered case still works, just slower).
+  var runStart = 0;
+  for (var j = 1; j <= targets.length; j++) {
+    if (j === targets.length || targets[j].row !== targets[j - 1].row + 1) {
+      var run = targets.slice(runStart, j);
+      sheet.getRange(run[0].row, 2, run.length, 1)
+           .setValues(run.map(function (t) { return [t.date]; }));
+      runStart = j;
+    }
+  }
+  SpreadsheetApp.flush();
+  // The build's own after-write sort, now over a single-typed column.
+  sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort({ column: 2, ascending: true });
+  out.applied = true;
+  Logger.log(head + '\nConverted ' + targets.length + ' cell(s) and sorted col B ascending. '
+    + 'No Neon re-mirror needed (dates unchanged, only the cell type). Re-run '
+    + 'previewHistoricalDateColumns(): DQE should now read CLEAN.');
+  return out;
+}

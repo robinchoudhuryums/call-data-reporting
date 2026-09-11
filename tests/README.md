@@ -100,7 +100,12 @@ tests/
                               that has been sorted reads as non-decreasing
                               while being wrong; 0b adds per-type ISO ranges
                               and a per-type number-format histogram, with the
-                              format read best-effort), cache-warm-budget (the
+                              format read best-effort; Phase 1 pins the
+                              text->Date repair: local-midnight construction,
+                              idempotence, whole-run refusal on a stray cell,
+                              no number-format writes -- the writer side of
+                              Phase 1 is pinned in pipeline-build),
+                              cache-warm-budget (the
                               O-4 whole-run budget), neon-backfill-resume
                               (T-8 fingerprinted resume pointers + the
                               T-7 sanitizer-loss tally + the R33 zero-bind

@@ -1068,6 +1068,23 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   dqeSheet.getRange(firstBlank, 30, outputRows.length, 3).setNumberFormat('@');
   dqeSheet.getRange(firstBlank, 35, outputRows.length, 1).setNumberFormat('@');
   dqeSheet.getRange(firstBlank, 1, outputRows.length, outputRows[0].length).setValues(outputRows);
+  // Phase 1 (date-column normalization): col B is written a SECOND time, as a
+  // DATE. `callDateStr` is a coercible "M/D/YYYY" string, yet the 2026-09-10
+  // census found every row since the 2026-03-09 cutover holding TEXT in an
+  // automatic-format cell -- setValues did not coerce it -- while the old
+  // pipeline's rows are real Dates. A mixed column cannot be sorted
+  // chronologically (Sheets groups Date before text), so the sort below was
+  // ordering the sheet only by the accident that every Date row happened to
+  // be older than every text row. Writing the Date separately is the pattern
+  // the CDR writer already uses for its own date column (autoImport.js:
+  // `raw.map(() => [dateObj])`) and never depends on string coercion.
+  // `outputRows[1]` stays the string: the Neon mirror below reads it
+  // (`callDate: r[1]`) and parseDateForNeon expects text. The dup guard reads
+  // col B through getDisplayValues + displayToDate, which sees "3/9/2026"
+  // either way. Pinned by pipeline-build.test.js (col B instanceof Date, local
+  // midnight) and the repair in sheetRepairs.js builds the same instant.
+  dqeSheet.getRange(firstBlank, 2, outputRows.length, 1)
+          .setValues(outputRows.map(function () { return [callDateObj]; }));
 
   const newLastRow = dqeSheet.getLastRow();
   if (newLastRow > 2) {
