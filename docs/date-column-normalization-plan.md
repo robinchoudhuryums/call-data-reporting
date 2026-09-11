@@ -1,6 +1,6 @@
 # Historical date columns: normalization + ordering plan
 
-**Status:** Phase 0 shipped (2026-09-09) and run live (2026-09-10); Phase 0b shipped, awaiting its live run. Phases 1–3 not started.
+**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 shipped (2026-09-11), awaiting its live run. Phases 2–3 not started.
 **Why this exists:** five historical sheets are read by windowed date queries,
 and none is reliably date-ordered. Today that is *handled* — every dashboard
 reader uses a min/max SPAN, which is correct at any row order (CLAUDE.md,
@@ -104,7 +104,7 @@ Three things the numbers say:
   case `guardForceRebuildLoss_` logs. Check Pipeline Health for
   `processIntegratedHistory:QCD` on Sept 1 / 3 / 4.
 
-## Phase 0b — the format probe (SHIPPED, awaiting live run)
+## Phase 0b — the format probe (SHIPPED, run live 2026-09-10)
 
 The first census printed row numbers per type but not dates, and read values
 but not formats — so it could not say WHEN the era started or WHY the writer
@@ -116,20 +116,59 @@ emits text. Two additions to the same function, both read-only:
   text"* from *"the writer's string changed"*. Best-effort: a throw leaves
   `formats: null` and the rest of the census stands.
 
-**Phase 1 hangs on the second signal.** Setting a `Date` into an `@` cell does
-not coerce back — it displays the serial (the F-8 trap in a new coat) — so if
-the text rows sit in `@` cells the repair must reset the format FIRST and the
-writer must format its own write range. Re-run `previewHistoricalDateColumns()`
-after pushing; the DQE block now prints a per-type `formats:` tally and, if
-text cells sit in `@`, an explicit note.
+**What the live run said (2026-09-10):**
 
-## Phase 1 — normalize DQE col B (NOT STARTED; scope contingent on Phase 0b)
+```
+type date:      rows 2-22470,     2024-02-29..2026-03-06,  formats: ""×22469
+type text:mdy:  rows 22471-31912, 2026-03-09..2026-09-08,  formats: ""×9442
+```
 
-Now the easiest case the plan allowed for: **one contiguous block (rows
-22,471–31,912), one input shape (`text:mdy`), no serials** — so the F-8 serial
-branch is never exercised. Steps: reset col B's number format on that block →
-write `Date` values → sort once. Plus the writer-side line above, in both
-INV-16 copies.
+Both hypotheses it was built to separate turned out wrong in the same
+direction: the text cells are **automatic-format** (`""`), not `@`, so no
+format reset is needed; and the boundary is **2026-03-09 — the documented
+pipeline cutover** (CLAUDE.md's PST→CST bullet). The old pipeline wrote `Date`
+objects; the current one writes `callDateStr` and the string is simply **not
+coerced** — why it coerces in Direct Call History (F-3) and not here is
+unresolved, and the fix below deliberately does not depend on knowing. CSR
+Transfer also showed three date formats across its history (`""`,
+`m/d/yyyy`, `mm/dd/yyyy`) — all Date-typed, cosmetic, sorts fine.
+
+## Phase 1 — normalize DQE col B (SHIPPED 2026-09-11, awaiting live run)
+
+Smaller than either earlier version of this section, and the earlier
+"reset col B's number format first" step is **gone** — the cells are
+automatic-format and a Date displays as a date there.
+
+**Writer (both INV-16 copies, `buildDQEHistoricalData.js`).** After the main
+`setValues`, col B is written a second time as `callDateObj` — the pattern the
+CDR writer already uses for its own date column (`autoImport.js`,
+`raw.map(() => [dateObj])`), which never depends on string coercion.
+`outputRows[1]` stays the string so the Neon mirror (`callDate: r[1]`) is
+untouched; the dup guard reads col B through `getDisplayValues` +
+`displayToDate` and sees `3/9/2026` either way. Pinned in
+`pipeline-build.test.js`: col B `instanceof Date`, local midnight, correct
+calendar date — including the I2-9 ISO-START_TIME case.
+
+**Repair (`sheetRepairs.js`): `previewDqeDateNormalize()` /
+`repairDqeDateNormalize()`.** Types every col-B cell with the census's own
+`hdCellType_`; converts each `text:mdy` cell to `new Date(Y, M-1, D)` — the
+writer's own construction, so a repaired cell is indistinguishable from one
+the build writes — skips Date cells and blanks, writes no number formats,
+then runs the build's own after-write sort once. **Whole-run refusal**: any
+non-blank cell that is neither a Date nor exactly `M/D/YYYY` refuses the apply
+and is named, because converting around it would leave the column mixed while
+looking repaired. An impossible calendar date (`2/30/2026`) is refused rather
+than rolled forward. Idempotent. No Neon re-mirror needed — the dates are
+unchanged, only the cell type. A mid-run DQE backfill's T-8 resume pointer
+restarts from 0 after the sort (harmless, ON CONFLICT idempotent).
+
+**Acceptance:** re-run `previewHistoricalDateColumns()` — DQE reads `CLEAN`,
+one type, zero inversions. Then the next morning's build must keep it so.
+
+**Harness:** the fake sheet now renders a `Date` cell as `M/D/YYYY` on the
+display path (it used to return `String(date)`, a rendering Sheets never
+produces) — Phase 1 made that load-bearing, since the dup guard reads the
+Date-typed col B back through `getDisplayValues`.
 
 `previewDqeDateNormalize()` / `repairDqeDateNormalize()`, matching the existing
 preview/repair pair convention in that file. Canonicalize to real `Date`.

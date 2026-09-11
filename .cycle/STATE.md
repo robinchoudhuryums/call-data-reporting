@@ -1,7 +1,25 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
-- **Phase 0 RAN LIVE (2026-09-10); Phase 0b shipped and awaits ITS live run**
+- **Phase 1 SHIPPED (2026-09-11), awaiting its live run** (block 184). The 0b
+  live run overturned BOTH 0b hypotheses: the 9,442 text cells are
+  AUTOMATIC-format (no format reset needed), and the boundary is 2026-03-09 —
+  the documented pipeline cutover. The old pipeline wrote Dates; the current
+  one writes `callDateStr` and the string is NOT coerced (why it coerces in
+  Direct Call History/F-3 and not here is unresolved; the fix does not depend
+  on knowing). Writer: col B written a second time as `callDateObj` after the
+  main setValues, both INV-16 copies — the CDR writer's own pattern.
+  `outputRows[1]` stays the string for Neon. Repair:
+  `previewDqeDateNormalize()` / `repairDqeDateNormalize()` (sheetRepairs.js):
+  text:mdy → `new Date(Y,M-1,D)` local midnight (the writer's construction),
+  whole-run REFUSAL on any non-Date non-M/D/YYYY cell, no format writes, no
+  Neon re-mirror, sorts once after. Harness: the fake now renders a Date cell
+  as M/D/YYYY on the display path (Sheets' rendering; `String(date)` never
+  was) — load-bearing, since the dup guard reads Date-typed col B via display.
+  **Operator next: push cdr-report, `previewDqeDateNormalize()` →
+  `repairDqeDateNormalize()` outside the import window → re-census: DQE must
+  read CLEAN. Then the next morning's build must keep it so.**
+- **Phase 0 RAN LIVE (2026-09-10); Phase 0b shipped and RAN LIVE (2026-09-10)**
   (blocks 182, 183; results + readings in
   `docs/date-column-normalization-plan.md`). Census: DQE MIXED-TYPE — 22,469
   Date rows then 9,442 text rows, ZERO inversions (in order by ACCIDENT: type

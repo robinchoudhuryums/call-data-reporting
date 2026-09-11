@@ -13,6 +13,22 @@
  * requested width so positional reads never see `undefined`.
  */
 
+// Default rendering for a cell with no explicit display grid. A Date renders
+// as "M/D/YYYY" -- what Sheets shows for an automatic-format date cell (en-US)
+// and what every display-path reader (parseDateForNeon, the DQE build's dup
+// guard via displayToDate) is written against. `String(date)` -- the old
+// fallback -- is a rendering Sheets never produces; readers that resolved it
+// through `new Date(s)` got a TZ-dependent answer that only held because CI
+// pins TZ. Phase 1 made this load-bearing: the DQE build now writes col B as
+// a Date, and its dup guard reads that cell back through the display path.
+function fakeDisplay_(v) {
+  if (v === '') return '';
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    return (v.getMonth() + 1) + '/' + v.getDate() + '/' + v.getFullYear();
+  }
+  return String(v);
+}
+
 function sliceGrid(grid, startRow, startCol, numRows, numCols) {
   const out = [];
   for (let r = 0; r < numRows; r++) {
@@ -51,9 +67,7 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       if (sheet._displays) {
         return sliceGrid(sheet._displays, startRow, startCol, numRows, numCols);
       }
-      return this.getValues().map(function (row) {
-        return row.map(function (v) { return v === '' ? '' : String(v); });
-      });
+      return this.getValues().map(function (row) { return row.map(fakeDisplay_); });
     },
     // Phase 0b: the per-cell number format, served from an optional fixture
     // grid (`{ values, displays, formats }`), 'General' where none is given.

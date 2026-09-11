@@ -247,3 +247,91 @@ test('Phase 0b: a failing format read costs only the format signal, never the ce
   assert.equal(got.minIso, '2026-03-01');
   assert.equal(got.typeRanges['date'].maxIso, '2026-03-02');
 });
+
+// ── Phase 1: the repair ──────────────────────────────────────────────────
+
+function colB(sheet) {
+  return sheet._data.slice(1).map(function (r) { return r[1]; });
+}
+function localIso(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+test('Phase 1: preview counts the text cells and writes nothing', function () {
+  install({ 'DQE Historical Data': dqeSheet([
+    dateCell(2026, 3, 6), textCell('3/9/2026'), textCell('3/10/2026'), BLANK,
+  ]) });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const before = JSON.stringify(colB(sheet).map(String));
+  const res = h.call('previewDqeDateNormalize');
+  assert.equal(res.applied, false);
+  assert.equal(res.alreadyDate, 1);
+  assert.equal(res.converted, 2);
+  assert.equal(res.blank, 1);
+  assert.deepEqual(res.refused.length, 0);
+  assert.equal(JSON.stringify(colB(sheet).map(String)), before, 'preview wrote nothing');
+  assert.equal(sheet._numberFormats, undefined, 'and touched no number format');
+});
+
+test('Phase 1: apply converts text "M/D/YYYY" to a LOCAL-MIDNIGHT Date, skips Dates and blanks, then sorts', function () {
+  // Post-cutover text rows landed AFTER the Date rows (the live shape) and,
+  // to prove the sort ran, one text row is older than the last Date row.
+  install({ 'DQE Historical Data': dqeSheet([
+    dateCell(2026, 3, 5), dateCell(2026, 3, 6), textCell('3/10/2026'), textCell('3/4/2026'), BLANK,
+  ]) });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const res = h.call('repairDqeDateNormalize');
+  assert.equal(res.applied, true);
+  assert.equal(res.converted, 2);
+  const b = colB(sheet).filter(function (v) { return v !== ''; });
+  b.forEach(function (v, i) {
+    assert.ok(v instanceof Date, 'row ' + i + ' is a Date after apply');
+    assert.equal(v.getHours() + v.getMinutes() + v.getSeconds() + v.getMilliseconds(), 0,
+      'row ' + i + ' is local midnight -- the writer\'s construction');
+  });
+  // The fake's sort is a no-op (tests filter by key rather than row order), so
+  // order is asserted on the CONVERTED set, not the sheet: every date is present
+  // and each converted cell carries its own calendar date, not a neighbour's.
+  const isos = b.map(localIso).sort();
+  assert.deepEqual(isos, ['2026-03-04', '2026-03-05', '2026-03-06', '2026-03-10']);
+  assert.equal(sheet._numberFormats, undefined, 'no number-format write -- the cells are automatic-format');
+});
+
+test('Phase 1: the repair is idempotent -- a second apply converts nothing', function () {
+  install({ 'DQE Historical Data': dqeSheet([dateCell(2026, 3, 6), textCell('3/9/2026')]) });
+  assert.equal(h.call('repairDqeDateNormalize').converted, 1);
+  const again = h.call('repairDqeDateNormalize');
+  assert.equal(again.converted, 0);
+  assert.equal(again.alreadyDate, 2);
+  assert.equal(again.applied, false, 'nothing to write, so no sort either');
+});
+
+test('Phase 1: any cell that is neither Date nor "M/D/YYYY" text REFUSES the whole apply', function () {
+  // A stray ISO string and a bare serial. Converting the good cells around them
+  // would leave col B mixed -- still unsortable -- while looking repaired.
+  install({ 'DQE Historical Data': dqeSheet([
+    textCell('3/9/2026'), textCell('2026-03-10'), serialCell(45726), textCell('3/11/2026'),
+  ]) });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const res = h.call('repairDqeDateNormalize');
+  assert.equal(res.applied, false);
+  assert.equal(res.refused.length, 2);
+  assert.equal(res.refused[0].row, 3);
+  assert.equal(res.refused[0].type, 'text:iso');
+  assert.equal(res.refused[1].row, 4);
+  assert.equal(res.refused[1].type, 'serial');
+  // The convertible cells were NOT converted -- whole-run refusal.
+  assert.equal(typeof colB(sheet)[0], 'string', 'row 2 left as text');
+  assert.equal(typeof colB(sheet)[3], 'string', 'row 5 left as text');
+});
+
+test('Phase 1: an impossible calendar date is refused, never rolled forward', function () {
+  // new Date(2026, 1, 30) silently becomes March 2. The build never emits such
+  // a string, but a hand-pasted row could; the repair must not invent a date.
+  const d = h.call('dqeDateFromMdy_', '2/30/2026');
+  assert.equal(d, null);
+  const ok = h.call('dqeDateFromMdy_', '2/28/2026');
+  assert.equal(localIso(ok), '2026-02-28');
+  assert.equal(ok.getHours(), 0);
+});
