@@ -26,7 +26,6 @@ function phRow(ms, step, status, notes) {
 function setRows(rows) {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Pipeline Health': [HDR].concat(rows) },
   });
 }

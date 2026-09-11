@@ -61,7 +61,6 @@ function rosterGridWith(deptToNames) {
 
 function run(rawRows, rosters) {
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')].concat(rawRows),
       'DO NOT EDIT!': rosterGridWith(rosters || { CSR: ['Ana, 101'] }),
@@ -135,7 +134,6 @@ test('PARITY: the diagnostic derives a leg\'s queue exactly as the build does', 
     raw({ callId: 'Q3', legId: 0, parentCall: 'P3', caller: 'CallQueue (344)', calleeName: 'Ana', answered: true }),
   ];
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')].concat(rows),
       'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
@@ -281,7 +279,6 @@ test('QUEUE_OVERLAP_DATE pins one date and says it is NOT build parity', functio
     raw({ callId: 'Q2', legId: 0, start: '03/10/2026 0:05:00', parentCall: 'P2', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }),
   ];
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')].concat(rows),
       'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
@@ -305,7 +302,6 @@ test('a pin covering a tiny slice of the sheet WARNS that it is probably wrong',
   }
   rows.push(raw({ callId: 'S1', legId: 0, start: '03/10/2026 0:02:00', parentCall: 'PS', callerId: 'A_Q_CSR', calleeName: 'Ana', answered: true }));
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')].concat(rows),
       'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
@@ -326,7 +322,6 @@ test('section 2 reads the real parent map and quantifies the summation overlap',
     raw({ callId: 'Q3', legId: 0, parentCall: 'P2', callerId: 'A_Q_CSR',     calleeName: 'Ana', answered: true }),
   ];
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')].concat(rows),
       'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),
@@ -351,7 +346,6 @@ test('section 2 reports an EXACT sum when nothing touches both sides', function 
     raw({ callId: 'Q2', legId: 0, parentCall: 'P2', callerId: 'A_Q_Spanish', calleeName: 'Ana', answered: true }),
   ];
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')].concat(rows),
       'DO NOT EDIT!': rosterGridWith({ CSR: ['Ana, 101'] }),

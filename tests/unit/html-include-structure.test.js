@@ -237,6 +237,36 @@ test('freshness pill: .is-stale uses --stale, defined everywhere --warn is', fun
   assert.equal((css.match(/^\s*--stale-soft:\s/gm) || []).length, (css.match(/^\s*--warn-soft:\s/gm) || []).length);
 });
 
+// Owner (2026-09-10 notes #2 + #1; roadmap 2b): the quick-start chip is
+// "How is my team doing?" and runs over WHATEVER window the dept controls hold
+// -- its old last-30-days override defeated the report cache and contradicted
+// M4's single date authority; rapid re-clicks are sequence-guarded; and the
+// onboarding tour waits for the Overview to SETTLE (first paint or first
+// failure) instead of a fixed 1200 ms timer.
+test('2b: the team chip is relabelled, drops its 30-day override, copies the dept window, and is seq-guarded', function () {
+  const nav = fs.readFileSync(path.join(DIR, 'script-4-nav.html'), 'utf8');
+  assert.ok(/data-launch="team-lately">How is my team doing\?<\/button>/.test(nav), 'chip label');
+  assert.ok(!/How is my team doing lately\?/.test(nav), 'the old label is gone everywhere in the fragment');
+  const fn = nav.slice(nav.indexOf('function launcherOpenInsights_('), nav.indexOf('function launcherOpenMissed_('));
+  assert.ok(!/launcherIsoDaysAgo_\(/.test(fn), 'no 30-day override inside launcherOpenInsights_');
+  assert.ok(/\$\('from-date'\)/.test(fn) && /\$\('to-date'\)/.test(fn), 'the chip copies the dept controls\' window (M4 authority)');
+  const init = nav.slice(nav.indexOf('function initOverviewLauncher_('), nav.indexOf('function launcherShowLoading_('));
+  assert.ok(/launchSeq_\+\+|\+\+launchSeq_/.test(init), 'a launch increments launchSeq_');
+  assert.ok(/launcherLastAt_/.test(init) && /LAUNCHER_DEBOUNCE_MS_/.test(init), 'rapid re-clicks are debounced');
+});
+
+test('2b: the onboarding tour is gated on the Overview settling, not a 1200 ms timer', function () {
+  const esc = fs.readFileSync(path.join(DIR, 'script-10-escalations.html'), 'utf8');
+  const tour = esc.slice(esc.indexOf('function initTour_('), esc.indexOf('function clSetDefaultDates_('));
+  assert.ok(/onOverviewSettled_\(/.test(tour), 'initTour_ waits on onOverviewSettled_');
+  assert.ok(!/1200\)/.test(tour), 'the fixed 1200 ms timer is gone');
+  const ov = fs.readFileSync(path.join(DIR, 'script-3-overview.html'), 'utf8');
+  const load = ov.slice(ov.indexOf('function ovLoad_('), ov.indexOf('.getCompanyOverview({ viewAsDept'));
+  assert.equal((load.match(/ovMarkSettled_\(\)/g) || []).length, 3,
+    'ovLoad_ marks settled on the cache paint, the success handler and the failure handler');
+  assert.ok(/function onOverviewSettled_\(/.test(ov) && /function ovMarkSettled_\(/.test(ov), 'the settle hooks exist');
+});
+
 test('S8: safeChart_ is the ONLY `new Chart(` callsite in the client', function () {
   const fragNames = [];
   const text = fs.readFileSync(path.join(DIR, 'script.html'), 'utf8');

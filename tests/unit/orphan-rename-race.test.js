@@ -28,7 +28,6 @@ function dqeRowFor(date, agent) {
 function install(rows) {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DQE Historical Data': [DQE_HEADER].concat(rows) },
   });
   return h.state.spreadsheet._sheet('DQE Historical Data');

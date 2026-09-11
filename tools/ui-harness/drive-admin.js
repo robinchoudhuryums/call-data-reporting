@@ -171,6 +171,45 @@ const MODALS = [
     record('Escalations: the worklist renders cards', esc.cards > 0, 'cards=' + esc.cards);
     record('Escalations: an admin gets the dept filter', esc.deptFilter === true);
 
+    // 2a: the admin Delete control -- rendered (visibly) on the cards, opens
+    // the DANGER-tone confirm, Cancel keeps the card, Confirm calls the
+    // (mocked) verb and reloads without a page error. Rendered VISIBILITY,
+    // not class presence: view-as-manager hides it via [data-admin-only].
+    {
+      const del = page.locator('.esc-delete').first();
+      const delCount = await page.locator('.esc-delete').count();
+      record('2a: an admin sees a Delete control on the cards', delCount > 0, 'controls=' + delCount);
+      if (delCount > 0) {
+        const visible = await del.isVisible();
+        record('2a: the Delete control is rendered visible for an admin', visible === true);
+        await del.click();
+        await page.waitForTimeout(300);
+        const dlg = await page.evaluate(() => {
+          const ok = document.querySelector('.ds-confirm-ok');
+          return { open: !!ok, danger: !!(ok && ok.classList.contains('ds-confirm--danger')),
+                   cancel: !!document.querySelector('.ds-confirm-cancel') };
+        });
+        record('2a: Delete opens the confirm dialog in DANGER tone', dlg.open && dlg.danger && dlg.cancel, JSON.stringify(dlg));
+        const cardsBefore = esc.cards;
+        await page.click('.ds-confirm-cancel');
+        await page.waitForTimeout(300);
+        const afterCancel = await page.evaluate(() => ({
+          dlg: !!document.querySelector('.ds-confirm-ok'),
+          cards: document.querySelectorAll('.esc-card').length,
+        }));
+        record('2a: Cancel closes the dialog and keeps every card', !afterCancel.dlg && afterCancel.cards === cardsBefore, JSON.stringify(afterCancel));
+        await del.click();
+        await page.waitForTimeout(300);
+        await page.click('.ds-confirm-ok');
+        await page.waitForTimeout(1500);
+        const afterOk = await page.evaluate(() => ({
+          dlg: !!document.querySelector('.ds-confirm-ok'),
+          cards: document.querySelectorAll('.esc-card').length,
+        }));
+        record('2a: Confirm calls the verb and the list reloads cleanly', !afterOk.dlg && afterOk.cards > 0, JSON.stringify(afterOk));
+      }
+    }
+
     // F10: the nav badge must update IN PLACE. The original bug rendered it
     // behind an "if it does not already exist" guard and fetched once, so it
     // could neither update nor disappear -- and a second render appended a

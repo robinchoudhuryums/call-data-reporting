@@ -30,7 +30,7 @@ function install(rows, deptConfigRows) {
     'DQE Historical Data': dqeSheet(rows),
   };
   if (deptConfigRows) sheets['Dept Config'] = [DC_HEADERS].concat(deptConfigRows);
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   // R44: this suite swaps the DQE fixture between tests, so every
   // per-execution DQE memo must be cleared or it serves the previous one's

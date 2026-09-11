@@ -7577,6 +7577,9 @@
 
   /* §3 admin edit affordance on pending cards */
   .esc-pending-actions { margin-top: 8px; }
+  .esc-admin-actions { margin-top: 8px; display: flex; justify-content: flex-end; }   /* 2a: admin delete, right-aligned, below the card body */
+  .esc-admin-actions .esc-delete { color: var(--muted); }
+  .esc-admin-actions .esc-delete:hover { color: var(--bad); }
 
   /* §2 reopen affordance on resolved cards */
   .esc-reopen-wrap { margin-top: 8px; }

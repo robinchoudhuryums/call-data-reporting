@@ -31,7 +31,7 @@ function install(rows, digestConfigRows) {
       ['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format'],
     ].concat(digestConfigRows);
   }
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.state.cache.clear();
 }

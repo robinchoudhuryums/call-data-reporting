@@ -245,6 +245,62 @@ function getSystemHealth(req) {
     }
   } catch (e) { add('pipeline', 'pipe-failures', 'Recent pipeline step failures', 'warn', 'probe failed', String(e && e.message || e)); }
 
+  // ── Batch 4 / Phase 2: the nightly historical sort check ─────────────
+  // cdr-report's Script Properties are NOT this project's, so the check's
+  // outcome cannot travel as a *_LAST property; it travels as
+  // `historicalSort:<sheet>` Pipeline Health rows (INV-44) and this row reads
+  // the LATEST one per sheet inside the same scanned window as pipe-failures
+  // (which also flags a failing one -- this row says what it MEANS).
+  try {
+    var hsPrefix = 'historicalSort:';
+    var hsAll = (typeof phRows !== 'undefined' && phRows) ? phRows : [];
+    var hsLatest = {};
+    hsAll.forEach(function (r) {
+      if (r && r.step && String(r.step).indexOf(hsPrefix) === 0 && !(r.step in hsLatest)) hsLatest[r.step] = r;
+    });
+    var hsKeys = Object.keys(hsLatest).sort();
+    var hsName = function (k) { return String(k).slice(hsPrefix.length); };
+    var hsHead = function (k) { return String(hsLatest[k].notes || '').split(' -- ')[0]; };
+    var hsIsFail = function (k) { return String(hsLatest[k].status || '').toLowerCase() === 'failure'; };
+    if (!hsKeys.length) {
+      add('pipeline', 'historical-sort', 'Nightly historical sort check', 'muted',
+        'no historicalSort rows in the last ' + HEALTH_PIPELINE_SCAN_ROWS + ' entries',
+        'Not installed, disabled (HISTORICAL_SORT_ENABLED lives in the cdr-report project), or its '
+        + 'rows have scrolled out of the window. Install from CDR Report → CDR Tools → Nightly '
+        + 'Historical Sort Check (Operator State #61).');
+    } else {
+      var hsFailing = hsKeys.filter(hsIsFail);
+      var hsSorted  = hsKeys.filter(function (k) { return !hsIsFail(k) && /^sorted/.test(String(hsLatest[k].notes || '')); });
+      var hsSkipped = hsKeys.filter(function (k) { return !hsIsFail(k) && /^skipped/.test(String(hsLatest[k].notes || '')); });
+      var hsNewest  = hsKeys.map(function (k) { return String(hsLatest[k].timestamp || ''); }).sort().pop() || '';
+      if (hsFailing.length) {
+        add('pipeline', 'historical-sort', 'Nightly historical sort check', 'warn',
+          hsFailing.length + ' sheet(s) the check could not fix: '
+            + hsFailing.map(function (k) { return hsName(k) + ' (' + hsHead(k) + ')'; }).join('; '),
+          'A MIXED-TYPE / TZ-SPLIT / UNPARSED date column needs its repair (previewHistoricalDateColumns → '
+          + 'the matching repair*), not a sort; a "check threw" or bulk-path "sort threw" row clears on the '
+          + 'next clean nightly run. Latest row ' + hsNewest + '. Operator State #61.');
+      } else if (hsSorted.length) {
+        add('pipeline', 'historical-sort', 'Nightly historical sort check', 'warn',
+          hsSorted.length + ' sheet(s) needed sorting on the latest run: '
+            + hsSorted.map(function (k) { return hsName(k) + ' (' + hsHead(k) + ')'; }).join('; '),
+          'One night after a reprocess (Operator State #56) is expected; a sheet that needs sorting EVERY '
+          + 'night is a writer appending out of order — find the writer, not the sort. Latest row '
+          + hsNewest + '.');
+      } else if (hsSkipped.length === hsKeys.length) {
+        add('pipeline', 'historical-sort', 'Nightly historical sort check', 'muted',
+          'skipped on the latest run — ' + String(hsLatest[hsSkipped[0]].notes || '').replace(/^skipped -- /, ''),
+          'The check defers while any backfill *_RESUME pointer is set (a sort would reset it) and resumes '
+          + 'when the backfill clears its pointer. Latest row ' + hsNewest + '.');
+      } else {
+        add('pipeline', 'historical-sort', 'Nightly historical sort check', 'ok',
+          hsKeys.length + ' sheet(s) checked, none needed sorting (' + hsKeys.map(hsName).join(', ') + ')',
+          'Latest row ' + hsNewest + '. Nightly, per historical sheet: the date column must be single-typed '
+          + 'AND in date order with no TZ split; only a single-typed out-of-order column is sorted.');
+      }
+    }
+  } catch (eHs) { add('pipeline', 'historical-sort', 'Nightly historical sort check', 'warn', 'probe failed', String(eHs && eHs.message || eHs)); }
+
   // ── Neon ────────────────────────────────────────────────────────────
   var props = PropertiesService.getScriptProperties();
   var neonConfigured = false;

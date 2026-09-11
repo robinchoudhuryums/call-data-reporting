@@ -257,7 +257,7 @@ function backfillDQEHistory() {
   // width, so take what the sheet actually has. 35 cols since sub-queue Phase 1
   // (AI Queue Split); a sheet still 34 wide yields undefined for r[34], which the
   // row builder maps to null -- byte-identical to pre-Phase-1 behavior.
-  var dqeWidth = Math.min(35, sheet.getMaxColumns());
+  var dqeWidth = Math.min(37, sheet.getMaxColumns());   // Batch 3: +AJ/AK; narrower sheets yield undefined -> NULL
   var data = sheet.getRange(2, 1, lastRow - 1, dqeWidth).getDisplayValues();
 
   var props      = PropertiesService.getScriptProperties();
@@ -329,7 +329,11 @@ function backfillDQEHistory() {
           // Sub-queue Phase 1. Carried so the DO-UPDATE backfill -- the
           // documented post-bulk-rebuild step -- cannot blank an existing
           // queue_split back to NULL. undefined on a pre-Phase-1 sheet.
-          queueSplit:       r[34] || null
+          queueSplit:       r[34] || null,
+          // Batch 3: AJ/AK after-hours; undefined on a pre-Batch-3 sheet -> NULL,
+          // which the DO-UPDATE path COALESCEs (never blanks a stored value).
+          afterHoursAnswered: (r[35] == null || r[35] === '') ? null : r[35],
+          afterHoursTtt:      (r[36] == null || r[36] === '') ? null : r[36]
         });
         i++;
       }
@@ -340,7 +344,7 @@ function backfillDQEHistory() {
       conn.setAutoCommit(false);
 
       try {
-        var placeholderRow  = '(' + new Array(35).fill('?').join(',') + ')';   // +queue_split (Phase 1)
+        var placeholderRow  = '(' + new Array(35).fill('?').join(',') + ",NULLIF(?, '')::int,NULLIF(?, '')::int)";   // +queue_split (Phase 1), +after_hours pair (Batch 3)
         var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
 
         var sql = 'INSERT INTO dqe_history (' +
@@ -351,7 +355,7 @@ function backfillDQEHistory() {
           'slot_1300_1330, slot_1330_1400, slot_1400_1430, slot_1430_1500, slot_1500_1530, ' +
           'slot_1530_1600, slot_1600_1630, slot_1630_1700, slot_1700_1730, ' +
           'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
-          'avg_abd_wait, csr_avg_abd_wait, queue_split' +
+          'avg_abd_wait, csr_avg_abd_wait, queue_split, after_hours_answered, after_hours_ttt' +
           ') VALUES ' + allPlaceholders +
           ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO NOTHING';
 
@@ -378,6 +382,8 @@ function backfillDQEHistory() {
           stmt.setString(p++, row.avgAbdWait);
           stmt.setString(p++, row.csrAvgAbdWait);
           stmt.setString(p++, row.queueSplit ? String(row.queueSplit) : null);
+          stmt.setString(p++, neonBindIntOrNull_(row.afterHoursAnswered));   // Batch 3 (AJ)
+          stmt.setString(p++, neonBindIntOrNull_(row.afterHoursTtt));        // Batch 3 (AK)
         }
 
         stmt.execute();
@@ -449,7 +455,7 @@ function backfillDQEHistoryUpsert() {
   // width, so take what the sheet actually has. 35 cols since sub-queue Phase 1
   // (AI Queue Split); a sheet still 34 wide yields undefined for r[34], which the
   // row builder maps to null -- byte-identical to pre-Phase-1 behavior.
-  var dqeWidth = Math.min(35, sheet.getMaxColumns());
+  var dqeWidth = Math.min(37, sheet.getMaxColumns());   // Batch 3: +AJ/AK; narrower sheets yield undefined -> NULL
   var data = sheet.getRange(2, 1, lastRow - 1, dqeWidth).getDisplayValues();
 
   var props      = PropertiesService.getScriptProperties();
@@ -533,7 +539,11 @@ function backfillDQEHistoryUpsert() {
           // Sub-queue Phase 1. Carried so the DO-UPDATE backfill -- the
           // documented post-bulk-rebuild step -- cannot blank an existing
           // queue_split back to NULL. undefined on a pre-Phase-1 sheet.
-          queueSplit:       r[34] || null
+          queueSplit:       r[34] || null,
+          // Batch 3: AJ/AK after-hours; undefined on a pre-Batch-3 sheet -> NULL,
+          // which the DO-UPDATE path COALESCEs (never blanks a stored value).
+          afterHoursAnswered: (r[35] == null || r[35] === '') ? null : r[35],
+          afterHoursTtt:      (r[36] == null || r[36] === '') ? null : r[36]
         });
         i++;
       }
@@ -563,7 +573,7 @@ function backfillDQEHistoryUpsert() {
       if (batch.length === 0) continue;
 
       try {
-        var placeholderRow  = '(' + new Array(35).fill('?').join(',') + ')';   // +queue_split (Phase 1)
+        var placeholderRow  = '(' + new Array(35).fill('?').join(',') + ",NULLIF(?, '')::int,NULLIF(?, '')::int)";   // +queue_split (Phase 1), +after_hours pair (Batch 3)
         var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
         var sql = 'INSERT INTO dqe_history (' +
           'month_year, call_date, agent_name, queue_extensions, ' +
@@ -573,7 +583,7 @@ function backfillDQEHistoryUpsert() {
           'slot_1300_1330, slot_1330_1400, slot_1400_1430, slot_1430_1500, slot_1500_1530, ' +
           'slot_1530_1600, slot_1600_1630, slot_1630_1700, slot_1700_1730, ' +
           'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
-          'avg_abd_wait, csr_avg_abd_wait, queue_split' +
+          'avg_abd_wait, csr_avg_abd_wait, queue_split, after_hours_answered, after_hours_ttt' +
           ') VALUES ' + allPlaceholders +
           ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET ' +
           'month_year = EXCLUDED.month_year, ' +
@@ -602,7 +612,10 @@ function backfillDQEHistoryUpsert() {
           // SHEET, so a pre-Phase-1 sheet row would send NULL and erase a
           // queue_split that a later build had already mirrored. Keep the stored
           // value whenever the incoming one is NULL.
-          'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split)';
+          'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split), ' +
+          // Batch 3: same COALESCE rule for the after-hours pair.
+          'after_hours_answered = COALESCE(EXCLUDED.after_hours_answered, dqe_history.after_hours_answered), ' +
+          'after_hours_ttt = COALESCE(EXCLUDED.after_hours_ttt, dqe_history.after_hours_ttt)';
 
         var stmt = conn.prepareStatement(sql);
         var p = 1;
@@ -627,6 +640,8 @@ function backfillDQEHistoryUpsert() {
           stmt.setString(p++, row.avgAbdWait);
           stmt.setString(p++, row.csrAvgAbdWait);
           stmt.setString(p++, row.queueSplit ? String(row.queueSplit) : null);
+          stmt.setString(p++, neonBindIntOrNull_(row.afterHoursAnswered));   // Batch 3 (AJ)
+          stmt.setString(p++, neonBindIntOrNull_(row.afterHoursTtt));        // Batch 3 (AK)
         }
         stmt.execute();
         stmt.close();

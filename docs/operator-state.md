@@ -441,7 +441,11 @@ When something looks wrong, before assuming a code bug, check:
     (never throws). Complements the passive banner (#11) -- the banner is
     pull, this is push.
 24. Escalations notification + activity-trail migration (optional;
-    `Escalations.gs`, dashboard; INV-55). (a) **`NOTIFY_ON_NEW_ESCALATION`
+    `Escalations.gs`, dashboard; INV-55). **(c, 2a) An admin can permanently
+    DELETE an escalation** (mistake / test entry) from its card: row + activity
+    trail in one transaction, audited as an `escalations:delete` Report Usage
+    row (dept only, no PHI) -- no property, no trigger; managers never see the
+    control. (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
     (`lookupDeptManagers_`, Access Control rows) on every new escalation.
     Defaults OFF. The email carries FULL escalation detail (caller / patient /
@@ -535,7 +539,7 @@ When something looks wrong, before assuming a code bug, check:
     yearly (e.g. `2026-01-01, 2026-05-25, 2026-07-03, 2026-11-26..2026-11-27,
     2026-12-25`); it is GLOBAL -- per-dept exceptions stay in Alert Config
     Skip Dates. No redeploy needed to edit.
-28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard).
+28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard; trigger handler `runNeonBackup_`).
     Weekly Drive export of the tables with NO sheet fallback --
     `escalations`, `escalation_activity`, `inbound_calls` (incl. journey
     JSON) -- as one-JSON-object-per-line files: a full escalations
@@ -1241,7 +1245,7 @@ When something looks wrong, before assuming a code bug, check:
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
     `installDqeSilenceWatchTrigger()` (admin) sets
-    `DQE_SILENCE_WATCH_ENABLED` + installs a daily trigger at the hour named
+    `DQE_SILENCE_WATCH_ENABLED` + installs a daily trigger (handler `runDqeSilenceWatch_`) at the hour named
     by `DQE_SILENCE_HOUR` (0-23, default 11 Central -- after the ingest AND
     the DQE build, so moving it EARLIER makes every run assess an
     incomplete day); `uninstallDqeSilenceWatchTrigger()` reverses both. Each weekday run
@@ -1687,3 +1691,91 @@ When something looks wrong, before assuming a code bug, check:
     send error). Re-grants and edits are silent. Needs `DASHBOARD_URL` (#7);
     `ACCESS_WELCOME_EMAIL=false` disables it. The denied-sign-in notice to
     admins (#45) is unchanged -- it is what tells you someone is waiting.
+
+59. **`HR_BACKUP_SS_ID` (cdr-report) — the repair-backup workbook, and how to
+    restore from it (roadmap 1b, 2026-09).** Every `repair*` apply in
+    `cdr-report/sheetRepairs.js` that rewrites 500+ cells (`HR_BACKUP_MIN_CELLS_`)
+    first copies the sheet, as it stands, into ONE standing backup workbook
+    named "CDR Report -- repair backups", as a tab `<sheet>|<yyyyMMdd-HHmm>|<label>`
+    (a same-minute re-run gets a `-2` suffix). The workbook is created on the
+    first such apply via `SpreadsheetApp.create` and its id stored here; you
+    never set it by hand. If the property points at a deleted workbook the next
+    apply creates a fresh one and re-stores the id. The newest 3 tabs per SOURCE
+    sheet are kept (`HR_BACKUP_KEEP_`; older ones deleted via `deleteSheet`, so
+    no Drive scope). Previews never back up. The apply log names the tab and
+    the workbook URL. **Why a separate workbook:** a DQE copy is ~1.1M cells and
+    the CDR Report workbook is already large, so in-workbook copies could reach
+    the 10M-cell cap; the backup workbook holds its own.
+    **Restore:** open the backup workbook, right-click the tab -> "Copy to" ->
+    the CDR Report spreadsheet, then in CDR Report select ALL of the copied tab
+    (Ctrl+A), copy, select cell A1 of the damaged sheet, and Paste -- or, for a
+    partial rollback, paste only the affected column range. Re-run the
+    relevant `preview*` afterwards and, if the sheet feeds Neon, the matching
+    re-mirror (`backfillDQEHistoryUpsert()` for DQE). Delete the copied tab from
+    CDR Report when done. Pinned by `tests/unit/sheet-repairs-backup.test.js`.
+
+60. **After-hours capture (roadmap Batch 3, 2026-09) — verifying the deploy,
+    and the one-time backfill whose window CLOSES.** The daily build now
+    writes two additive DQE columns, `AJ After-Hrs Answered` / `AK After-Hrs
+    TTT (sec)` (INV-10), over the 3:00–3:30 PM PST half hour after the work
+    window (INV-06). Deploy BOTH `cdr-report` and `cdr-import` (the INV-16
+    pair) — whichever project builds DQE that day must carry it, or the day is
+    written 35 wide with the pair blank. The dashboard push carries only
+    constants (`HISTORICAL_COLS`, `DASHBOARD_AFTER_HOURS_WINDOW`); no surface
+    reads the pair yet.
+    **Verify after the first post-deploy build:** (a) `DQE Historical Data` is
+    37 columns and row 1 reads `After-Hrs Answered` / `After-Hrs TTT (sec)` in
+    AJ/AK (the writer widens and labels once; an existing AJ header is never
+    overwritten); (b) that date's rows carry NUMERIC AJ/AK — `0`/`0` is a
+    valid capture ("nothing after hours"), a BLANK is not; (c) in Neon,
+    `SELECT count(*) FILTER (WHERE after_hours_answered IS NOT NULL), count(*)
+    FROM dqe_history WHERE call_date = '<date>'` — the two counts match (the
+    mirror self-upgrades the table with `ADD COLUMN IF NOT EXISTS` on its
+    first write; if the first count is 0 the columns exist but the mirror ran
+    before the push — the next build heals it, or re-mirror the date).
+    **Backfill (one-time, do it the week of the deploy):** the pair can only
+    be computed while a date's `Call_Legs_*` tab still exists (#43 prunes at
+    ~14 days), so force re-import each surviving date — Manual Export per date
+    (#56), which rebuilds DQE and mirrors inline. Older dates stay NULL
+    forever; that is the documented "never captured" state, distinct from 0.
+    Do NOT reach for `backfillDQEHistoryUpsert` here: it re-mirrors the SHEET,
+    whose old rows have no pair, and the upsert's COALESCE keeps NULL as NULL.
+    A `repairDqeDuplicateMerge` on a captured date CLEARS its AI..AK (a merged
+    row cannot carry either) — re-import the date afterwards if it is still
+    inside the window. Pinned by `tests/unit/pipeline-build.test.js` (Batch 3
+    block), `neon-write-mapping.test.js`, `neon-backfill-resume.test.js`,
+    `sheet-repairs-merge.test.js`, `cross-file-pins.test.js`.
+
+61. **Nightly historical sort check (roadmap Batch 4 / date-column plan Phase 2,
+    2026-09) — `HISTORICAL_SORT_ENABLED` in the CDR REPORT project, its trigger,
+    and what the Health row means.** Every night at ~3 AM script-TZ
+    `runHistoricalSortCheck_` (`cdr-report/sheetRepairs.js`) reads each of the
+    five historical sheets' date column (DQE col B; QCD / CDR / CSR Transfer /
+    Q Path col C) and asks the census's question — single-typed AND in date
+    order AND no TZ split — then: CLEAN → a `historicalSort:<DQE|QCD|CDR|CSR|QPath>`
+    `success` row (most nights, every sheet); single-typed but out of order →
+    sorts on the date column, re-checks, `success` row "sorted -- N
+    inversion(s)"; MIXED-TYPE / TZ-SPLIT / UNPARSED → REFUSED, `failure` row —
+    a sort cannot fix those (Sheets orders numbers-then-text and the result
+    LOOKS sorted), so run `previewHistoricalDateColumns()` and the matching
+    repair (Phase 1's `repairDqeDateNormalize` for a text/Date era split on
+    DQE). **Install:** CDR Report → CDR Tools → ⏰ Nightly Historical Sort
+    Check → Install — creates the trigger AND sets the flag (Uninstall clears
+    both); Preview is read-only (no rows, no sort); Run now is the real run. A
+    trigger with the flag off is a visible no-op (the flag is this project's,
+    not the dashboard's registry). **The dashboard Health page's
+    `historical-sort` row** (Pipeline section) reads the latest row per sheet
+    in the scanned window: muted "no rows" = not installed / disabled /
+    scrolled out; ok = none needed sorting; warn "needed sorting" = a writer
+    appended out of order (ONE night after a reprocess, #56, is expected —
+    every night is a writer regressing: find the writer, not the sort); warn
+    "could not fix" = refused or threw → the repair above; muted "skipped" = a
+    backfill `*_RESUME` pointer is set — the check defers so a nightly sort
+    cannot reset a multi-run backfill's T-8 fingerprint, and resumes when the
+    backfill clears its pointer. The bulk path (`processBatchArchive`) now logs
+    its own post-write sort failure under the same step name, so the next
+    clean nightly run supersedes it; until the check is installed such a row
+    stays flagged in "Recent pipeline step failures", which is correct — the
+    sheet IS out of order. No 1b snapshot before a sort (whole rows move, no
+    cell is lost). Pinned by `tests/unit/historical-sort.test.js` +
+    `system-health.test.js`.

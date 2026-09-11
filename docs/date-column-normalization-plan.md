@@ -1,6 +1,6 @@
 # Historical date columns: normalization + ordering plan
 
-**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 COMPLETE (2026-09-11): the first run exposed a timezone shift (R46, fixed and re-run the same day); the corrected repair re-anchored 9,516 cells and the census reads DQE CLEAN, no TZ-SPLIT, latest date = latest build. Last acceptance step: the next morning's build keeps it so. Phases 2–3 not started.
+**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 COMPLETE (2026-09-11): the first run exposed a timezone shift (R46, fixed and re-run the same day); the corrected repair re-anchored 9,516 cells and the census reads DQE CLEAN, no TZ-SPLIT, latest date = latest build. Last acceptance step: the next morning's build keeps it so. Phase 2 SHIPPED 2026-09-11 (roadmap Batch 4; install + flag: Operator State #61) — its two quiet weeks gate Batch 5. Phase 3 deferred.
 **Why this exists:** five historical sheets are read by windowed date queries,
 and none is reliably date-ordered. Today that is *handled* — every dashboard
 reader uses a min/max SPAN, which is correct at any row order (CLAUDE.md,
@@ -216,7 +216,7 @@ sheet has ~600 distinct date instants, not 32k) would recover most of it if
 the census ever joins a scheduled path — Phase 2's nightly check must NOT
 inherit this per-row cost.
 
-## Phase 2 — nightly check-and-sort (NOT STARTED)
+## Phase 2 — nightly check-and-sort (SHIPPED 2026-09-11, roadmap Batch 4 — install pending)
 
 Modeled on `runRetentionPrune_` / `installRetentionPruneTrigger`
 (`DeleteOldSheets.js:100,136`): daily ~3 AM, installed from a CDR Tools menu
@@ -267,6 +267,19 @@ This is worth shipping for Q Path / QCD / CSR Transfer **even if Phase 1 slips**
 — those three are single-typed today, so the trigger fixes them on its first
 run. The nightly job is a compensating control for the missing writer-side
 sorts; if it fires on QCD every night, that is the writer talking.
+
+**As built (2026-09-11, `.cycle/blocks/188-*`).** Every bullet above landed:
+`runHistoricalSortCheck_` / `historicalSortCheck_` in `sheetRepairs.js`, the
+CDR Tools submenu (install arms `HISTORICAL_SORT_ENABLED`, uninstall clears
+it, preview is read-only, run-now), `hdScanOneSheet_` reused with a
+`skipFormats` option and the per-instant TZ memo, the sort-vs-refuse rule
+exactly as written (MIXED-TYPE / TZ-SPLIT / UNPARSED are never sorted), a
+re-check after every sort, the `*_RESUME` deferral, `historicalSort:<label>`
+rows (labels shared with the bulk path so its new failure row is superseded),
+and the Health page's `historical-sort` row. Two things the design did not
+say: the run is per-sheet fault-isolated (a throw costs that sheet a failure
+row, the other four still run), and the harness now MODELS `Range.sort`, which
+is what let the sort + re-check be pinned behaviourally.
 
 ## Phase 3 — binary-search span (DEFERRED, gated)
 

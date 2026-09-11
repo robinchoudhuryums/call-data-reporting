@@ -877,3 +877,24 @@ scan window widening 40 -> 250 after a deferred-mirror retry storm evicted the
 DQE row and false-alarmed (see `OPS-7`); before the `svc(flagProp)` readiness
 check, an engine whose trigger was installed with its `*_ENABLED` flag off was
 reported as "installed" while every run no-op'd.
+
+## 2026-09-11 — roadmap Batches 1–4 (blocks 186–188; `docs/next-steps.md`)
+
+The codes the CLAUDE.md bullets cite for this day's work. Rules live in the
+bullets; this is the why.
+
+| Code | What happened / why the rule exists | Live rule |
+|---|---|---|
+| `1a` | The harness pinned the process TZ AND the fake spreadsheet to Chicago, so script-midnight and sheet-midnight coincided in every fixture and R46 shipped green. The fake now DEFAULTS to America/Mexico_City (the live zone); all 1,300 tests passed on the flip (no fixture had relied on the coincidence); cross-file-pins keeps the two zones apart and requires a `// same-tz:` reason on any Chicago fixture; README: fixture dates must be SUMMER dates. | TZ gotcha, CLAUDE.md; `cross-file-pins.test.js` |
+| `1b` | R46 was recoverable only because each shifted instant still encoded its true date; the next bulk repair might not be that lucky, and Sheets version history on a 32k-row tab is not a rollback. Every `repair*` apply over 500 cells now copies the sheet into ONE standing backup workbook first (`hrBackupBeforeApply_`, `HR_BACKUP_SS_ID` self-populating, newest 3 tabs per sheet, previews never). A separate workbook because a DQE copy is ~1.1M cells against the 10M-cell cap. | "Bulk sheet repairs snapshot first" bullet; Operator State #59; `sheet-repairs-backup.test.js` |
+| `2a` | Owner ask: delete an escalation logged by mistake or for testing. HARD delete (a soft delete would add a predicate to six readers, the badge, the outage snapshot and the digests to preserve rows with no value); admin SURFACE, so the all-departments manager cannot; row + activity trail in one transaction; usage-row audit carries the department only (no PHI, not even the id); forced snapshot refresh so a Neon-down read cannot resurrect it. | INV-01 / INV-55; S45; `escalations-hardening.test.js` |
+| `2b` | The "How is my team doing?" chip forced a last-30-days window (defeated the cache, contradicted M4's single date authority) and the tour started on a fixed 1200 ms timer over a skeleton. The chip copies the dept controls' window; the tour waits on `onOverviewSettled_` (+250 ms). | `docs/client-ui-conventions.md`; `html-include-structure.test.js` |
+| `Batch 3` | After-hours capture (testing note #5) had a clock: `Call_Legs` is pruned at 14 days, so every undeployed day was a day AJ/AK could never be filled. Two decisions beyond the design: AK is INTEGER SECONDS (an integer cell sidesteps INV-02), and NULL ≠ 0 (nullable Neon ints, `NULLIF` binds, COALESCE upserts — a pre-Batch-3 row mirrors NULL, a captured-empty row writes 0). One real bug found on the way in: refactoring the own-talk loop into `talkForLegs` unbound `agentTalkPerParent`, which the queue-split call reads INSIDE a try/catch — AI went blank silently and only `queue-split.test.js` noticed. The duplicate-merge repair clears AI..AK together (summing would double a double-append). | AJ/AK bullet, CLAUDE.md; INV-06 / INV-10; Operator State #60; `pipeline-build.test.js` |
+| `Batch 4` | Phase 2 of the date-column plan. The bulk path's post-write sort failed inside `catch (e) { console.warn(...) }` — Cloud Logging, nowhere an operator looks — so a CSR / Q Path left unsorted was seen nowhere; it now logs a `historicalSort:<sheet>` failure row. `parseDateForNeon('45726')` was the YEAR 45726 through the `new Date(s)` fallback (a valid-looking ISO every sheet-fed caller would have keyed on); the census had guarded it privately, the resolver now refuses it for all ~30 callers. The census's per-row TZ-SPLIT `formatDate` pair cost ~49 s on DQE (2026-09-11 measurement) and is memoized per instant (~600 instants, not 32k rows). The harness had stubbed `Range.sort` as a no-op, which made sort+re-check unpinnable; it is MODELLED now (numbers/Dates, then text, blanks last), and one R46 expectation that had encoded the no-op moved to date order. | "re-checked for date order NIGHTLY" bullet; INV-44; Operator State #61; `historical-sort.test.js` |
+
+**Carried narrative (trim pass, moved out of the "Neon writes are guarded"
+bullet):** `getReachableNeonConn_` replaced `isNeonReachable_()`, which opened
+a throwaway probe connection AND a second write connection per writer — six
+handshakes per import run; the replacement probes ONE connection with
+`SELECT 1` and hands that same connection to the insert.
+

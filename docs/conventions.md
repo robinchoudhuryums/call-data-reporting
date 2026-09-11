@@ -29,6 +29,31 @@ the work window — they reflect all-day abandoned counts. If that turns
 out to be wrong, fix it in the source pipeline and add an entry to
 [known-issues.md](known-issues.md).
 
+### After-hours capture window (Batch 3, 2026-09)
+
+The half hour immediately AFTER the work window is captured separately,
+into two additive columns, `AJ After-Hrs Answered` and `AK After-Hrs TTT
+(sec)`:
+
+| | PST | CST | CDT |
+|---|---|---|---|
+| Start | 3:00 PM | 5:00 PM | 6:00 PM |
+| End   | 3:30 PM | 5:30 PM | 6:30 PM |
+
+```js
+const DQE_AFTER_HOURS_END = (15 * 60 + 30) * 60;   // 3:30 PM PST in seconds
+// after-hours legs: startPST ∈ [DQE_WINDOW_END, DQE_AFTER_HOURS_END)
+```
+
+Half-open on both ends and disjoint from the work window, so a leg is in
+at most one of the two. AK is **integer seconds** (not `H:MM:SS`), and the
+pair is `0` / `0` when the agent had nothing after hours; a blank cell means
+the row was built before the capture existed (mirrors to Neon as NULL).
+Nothing in cols A–AI reads differently. No dashboard surface consumes the
+pair yet (capture only — the 14-day `Call_Legs` window is why it shipped
+first). Mirror: `DASHBOARD_AFTER_HOURS_WINDOW` in the dashboard `Config.gs`,
+pinned against the pipeline constant by `cross-file-pins.test.js`.
+
 ## Timezones
 
 | Where | Value | Why |

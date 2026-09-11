@@ -207,6 +207,24 @@
   // company-aggregate hero) inside the supposed manager preview.
   var ovLoadSeq_ = 0;
 
+  // 2b: "the Overview has SETTLED" -- fires ONCE, on the first cache paint,
+  // first success or first failure of ovLoad_ (whichever comes first). The
+  // onboarding tour waits on this instead of a fixed 1200 ms timer, so a slow
+  // first load no longer starts the tour over a skeleton and a fast one does
+  // not wait. Callbacks registered after settling run immediately.
+  let ovSettled_ = false;
+  const ovSettleCallbacks_ = [];
+  function onOverviewSettled_(fn) {
+    if (typeof fn !== 'function') return;
+    if (ovSettled_) { try { fn(); } catch (e) {} return; }
+    ovSettleCallbacks_.push(fn);
+  }
+  function ovMarkSettled_() {
+    if (ovSettled_) return;
+    ovSettled_ = true;
+    ovSettleCallbacks_.splice(0).forEach(function (fn) { try { fn(); } catch (e) {} });
+  }
+
   function ovLoad_(silent) {
     var paintedFromCache = false;
     var __otok = ++ovLoadSeq_;
@@ -222,6 +240,7 @@
         ovRender_(cached);
         ovSetCachedIndicator_(true);
         paintedFromCache = true;
+        ovMarkSettled_();   // 2b: content is on screen
       } else {
         $('ov-loading').style.display = '';
         $('ov-body').style.display = 'none';
@@ -237,6 +256,7 @@
         ovSetCachedIndicator_(false);
         ovRender_(data);
         ovScheduleAutoRefresh_();
+        ovMarkSettled_();   // 2b
       })
       .withFailureHandler(function (err) {
         if (__otok !== ovLoadSeq_) return;   // a newer request owns the UI
@@ -254,6 +274,7 @@
           ovSetRefreshWarn_(true);
         }
         ovScheduleAutoRefresh_();
+        ovMarkSettled_();   // 2b: a hard error is a settled page too (the tour must not hang)
       })
       // R19: auto:true on the silent paths (5-min auto-refresh, banner Retry)
       // so server-side landing telemetry counts deliberate visits only.

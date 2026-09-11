@@ -683,6 +683,18 @@ coercion; apply the matching `repair…()` and re-run
 `backfillDQEHistoryUpsert()` if you're on the Neon read source. See
 CLAUDE.md's number-coercion gotcha for the full mechanism.
 
+**Two more classes a paste introduces.** (1) Pasted date cells land as
+TEXT ("M/D/YYYY"), and a col B that mixes text and real Dates cannot be
+sorted chronologically (Sheets orders numbers-then-text) — run
+`previewHistoricalDateColumns()` (the census) and, when it reports
+MIXED-TYPE on DQE, `repairDqeDateNormalize()` from the CDR Report editor
+(it converts the text cells to sheet-midnight Dates, snapshots first, then
+sorts). (2) Pasted rows sit at the bottom regardless of date; the nightly
+historical sort check (Operator State #61) re-orders a single-typed sheet
+on its next run, or run it now from CDR Tools → ⏰ Nightly Historical Sort
+Check. Every dashboard reader is span-bounded and tolerates disorder in the
+meantime.
+
 ## Working on sibling Apps Script projects
 
 `apps-script/cdr-report/` and `apps-script/cdr-import/` are full clasp

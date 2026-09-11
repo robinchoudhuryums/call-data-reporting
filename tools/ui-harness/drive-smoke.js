@@ -399,6 +399,54 @@ async function visibleErrorTones(page) {
         JSON.stringify(trpBack));
     }
 
+    // Roadmap follow-on (Batch 4 ride-along): the Queue Call Data card's own
+    // Yesterday / MTD / Range toggle had only source pins -- no driver had ever
+    // clicked it (Range shipped in the #304 batch on pins alone). A period
+    // switch re-renders from the stashed snapshot (no RPC), so the property is
+    // that the active button, the card TITLE and the tiles follow the click,
+    // and that Yesterday restores the original card byte-for-byte.
+    {
+      const qcdRead = () => page.evaluate(() => {
+        const shown = (el) => !!el && el.style.display !== 'none' && el.offsetParent !== null;
+        const bar = document.getElementById('dept-qcd-period');
+        return {
+          barShown: shown(bar),
+          rangeShown: shown(document.querySelector('#dept-qcd-period [data-period="range"]')),
+          active: Array.from(document.querySelectorAll('#dept-qcd-period .dept-qcd-period-btn'))
+            .filter((b) => b.classList.contains('active'))
+            .map((b) => b.getAttribute('data-period')).join(','),
+          title: (document.getElementById('dept-qcd-title') || {}).textContent || '',
+          tiles: (document.getElementById('dept-qcd-tiles') || {}).innerHTML || '',
+        };
+      });
+      const qcdPick = (p) => page.evaluate((sel) => {
+        const b = document.querySelector('#dept-qcd-period [data-period="' + sel + '"]');
+        if (b) b.click();
+      }, p);
+      const q0 = await qcdRead();
+      await qcdPick('mtd');
+      await page.waitForTimeout(600);
+      const qMtd = await qcdRead();
+      await qcdPick('range');
+      await page.waitForTimeout(600);
+      const qRange = await qcdRead();
+      await qcdPick('yesterday');
+      await page.waitForTimeout(600);
+      const qBack = await qcdRead();
+      record(role + ': the Queue Call Data card offers Yesterday / MTD / Range and starts on Yesterday',
+        q0.barShown && q0.rangeShown && q0.active === 'yesterday' && /Queue Call Data — \w{3} \w{3} \d/.test(q0.title),
+        JSON.stringify({ barShown: q0.barShown, rangeShown: q0.rangeShown, active: q0.active, title: q0.title }));
+      record(role + ': MTD switches the active button and the card title',
+        qMtd.active === 'mtd' && /Month to date/.test(qMtd.title) && qMtd.tiles.length > 0,
+        JSON.stringify({ active: qMtd.active, title: qMtd.title }));
+      record(role + ': Range names the selected window on the card',
+        qRange.active === 'range' && /→/.test(qRange.title) && qRange.title !== qMtd.title,
+        JSON.stringify({ active: qRange.active, title: qRange.title }));
+      record(role + ': Yesterday restores the original card',
+        qBack.active === 'yesterday' && qBack.title === q0.title && qBack.tiles === q0.tiles,
+        JSON.stringify({ active: qBack.active, title: qBack.title, same: qBack.tiles === q0.tiles }));
+    }
+
     // R17d: the trend Calendar is available at ANY window length. On the dept
     // page's default single-day window (INV-43) the selected range cannot fill
     // a calendar, so the renderer falls back to the server's year-to-date
@@ -745,6 +793,11 @@ async function visibleErrorTones(page) {
       const badges = await page.locator('#escalations-btn .nav-count-badge').count();
       record(role + ': escalation badge never duplicates on reload', badges <= 1,
         'badge spans=' + badges);
+      // 2a: the admin Delete control is an admin SURFACE -- a manager's
+      // cards must not carry it at all (drive-admin exercises the admin side).
+      const delCtl = await page.locator('.esc-delete').count();
+      record(role + ': escalation Delete control ' + (role === 'admin' ? 'present for admin' : 'ABSENT for manager'),
+        role === 'admin' ? delCtl > 0 : delCtl === 0, 'controls=' + delCtl);
     }
 
     // The all-departments QCD report (its fixture payload is new in F7).

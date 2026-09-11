@@ -4,6 +4,43 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **Batch 4 (Phase 2) SHIPPED (2026-09-11, block 188; one commit on the
+  branch, not yet PR'd):** the nightly check-and-sort over the five historical
+  sheets -- `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js, flag
+  `HISTORICAL_SORT_ENABLED`, CDR Tools install/uninstall/preview/run-now);
+  "single-typed AND ordered AND no TZ split", sorts only a single-typed
+  out-of-order column + re-checks, REFUSES mixed / TZ-split / unparsed with a
+  failure row, defers on any `*_RESUME` pointer; `historicalSort:<sheet>`
+  Pipeline Health rows -> the Health page's `historical-sort` row; the bulk
+  path's sort failure is a failure row under the same name. Follow-ons rode
+  along: the census's per-instant TZ memo, `parseDateForNeon` refusing a bare
+  number, drive-smoke clicking the QCD period toggle. The harness MODELS
+  `Range.sort` since this batch. 1351/1351; 18/18 mutations; ci:ui green (102/16/30/14/52/14/20, both roles).
+  **Deploys pending:** cdr-report (+ INSTALL the check from CDR Tools --
+  Operator State #61), cdr-import, dashboard. Batch 5's 2-week gate clock
+  starts at that install. NEXT: PR when the owner asks; the parallel Neon
+  storage decision; Batch 5's design spike after the gate.
+- **Batch 3 SHIPPED (2026-09-11, block 187; one commit on the branch, not
+  yet PR'd):** after-hours capture -- DQE cols AJ `After-Hrs Answered` (36) +
+  AK `After-Hrs TTT (sec)` (37, integer seconds) over `[15:00, 15:30)` PST,
+  `DQE_AFTER_HOURS_END` under the INV-06 pin with `DASHBOARD_AFTER_HOURS_WINDOW`;
+  writer widens to 37 + labels once; Neon nullable ints (ADD COLUMN IF NOT
+  EXISTS, COALESCE, NULLIF binds; NULL = never captured, 0 = captured/empty);
+  every full-width DQE reader ceiling pinned to Config.gs; duplicate-merge
+  clears AI..AK. 1327/1327; 17/17 mutations; INV-16 clean. One real bug found
+  on the way: the refactor unbound `agentTalkPerParent` inside the split's
+  try/catch -> blank AI (queue-split caught it). **Deploys pending:** cdr-report
+  + cdr-import (same day) + the ONE-TIME backfill by force re-import of the
+  surviving `Call_Legs_*` dates -- Operator State #60. NEXT: PR when the owner
+  asks; then Batch 4 (Phase 2 nightly check-and-sort).
+- **Batches 1 + 2 SHIPPED (2026-09-11, block 186; four commits on the branch,
+  not yet PR'd):** 1a harness under the live TZ split by default (+2
+  tripwires in cross-file-pins); 1b snapshot-before-bulk-repair
+  (`hrBackupBeforeApply_`, `HR_BACKUP_SS_ID`, Operator State #59, new suite);
+  2a Escalations ADMIN delete (`deleteEscalation`, INV-55, S45); 2b the team
+  chip over the dept window + seq guard, the tour gated on
+  `onOverviewSettled_`. 1316/1316; ci:ui green twice (after 2a, after 2b).
+  **Deploys pending:** dashboard (2a+2b) and cdr-report (1b). Batch 3 followed (above).
 - **Phase 1 COMPLETE (2026-09-11; blocks 184 + the R46 fix, PRs #305/#306).**
   The first live run exposed a TIMEZONE SHIFT: the repair (and the writer
   change) built each Date as `new Date(Y,M-1,D)` = SCRIPT-TZ midnight, and
@@ -196,6 +233,31 @@
   `QUEUE_SPLIT_SCOPE=dept`, the dashboard should read **Spanish 17 rung / 15
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
+
+## Latest session (Batches 1+2 of the roadmap — safety nets + dashboard round, 2026-09-11)
+- Implemented 1a / 1b / 2a / 2b; summary block verbatim in
+  `.cycle/blocks/186-batch1-2-safety-nets-dashboard-round-broad-implement.md`.
+  `node --test` 1316/0; INV-16 in sync; `npm run ci:ui` all eight stages
+  green after 2a and again after 2b; 16/16 mutations fired across the four.
+- Decisions: (1) the fake spreadsheet's DEFAULT zone is the live one and a
+  pin keeps it apart from the script zone -- the 89 explicit Chicago fixture
+  args were simply removed (nothing relied on them); (2) the repair backup
+  lives in a SEPARATE workbook (cell cap) with the id self-stored, and a
+  failed copy BLOCKS the apply; (3) the escalation delete is a HARD delete of
+  row + trail, admin-only, audited as a usage row carrying the department
+  only (no id, no PHI); (4) the chip copies the dept window rather than
+  merely dropping its override, so it shares the region's cache key; (5) the
+  tour waits for the Overview to settle (cache paint / success / failure)
+  plus 250 ms.
+- Same-day context: Phase 1 of the date-column plan completed after the R46
+  timezone fix (PRs #305/#306), the roadmap landed (#307), and PR #304 (the
+  dashboard batch) merged -- all on main. Tomorrow's census after the 9/10
+  build is Phase 1's last acceptance step.
+- Where I left off: Batch 4 (block 188) committed + pushed on
+  `claude/sync-commands-kmeo99` on top of the Batch 1-3 commits, all un-PR'd;
+  the owner decides PR + merge, then deploys all three projects, INSTALLS the
+  nightly sort check from CDR Tools (#61), runs the #60 after-hours backfill
+  while the Call_Legs tabs survive, and walks S45 / S23 / the chip.
 
 ## Latest session (Batch 2 — Health page truth + Batch 1 follow-ons, 2026-09-03)
 - Implemented the seven Batch 2 findings plus I-6 and two follow-ons;

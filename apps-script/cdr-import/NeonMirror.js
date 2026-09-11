@@ -532,7 +532,7 @@ function mirrorDqeForDate_(ss, iso) {
   // sheet: getRange past getMaxColumns() THROWS (the REP-10 lesson), and a
   // queued date whose sheet predates Phase 1 is still 34 wide. At 34, r[34] is
   // undefined -> null below, so an old date mirrors exactly as it did before.
-  var data = nmReadDateRowsTail_(sheet, Math.min(35, sheet.getMaxColumns()), 1, iso);   // F-20 bounded tail-scan
+  var data = nmReadDateRowsTail_(sheet, Math.min(37, sheet.getMaxColumns()), 1, iso);   // F-20 bounded tail-scan; 37 since Batch 3 (AJ/AK)
   var batch = [];
   data.forEach(function (r) {
     if (!r[1] || !r[2]) return;                 // date (col 2), agent (col 3)
@@ -569,6 +569,10 @@ function mirrorDqeForDate_(ss, iso) {
       // Sub-queue Phase 1. The writer COALESCEs a NULL, so a pre-Phase-1 date
       // draining from the queue cannot erase a split written by a later build.
       queueSplit:       r[34] || null,
+      // Batch 3: AJ/AK after-hours; undefined/'' on a narrower sheet -> NULL,
+      // which the writer COALESCEs.
+      afterHoursAnswered: (r[35] == null || r[35] === '') ? null : r[35],
+      afterHoursTtt:      (r[36] == null || r[36] === '') ? null : r[36],
     });
   });
   if (!batch.length) return { rows: 0 };

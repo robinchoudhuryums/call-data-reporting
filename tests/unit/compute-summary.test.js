@@ -27,7 +27,6 @@ const ROSTER = rosterGrid({
 function install(rows) {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DO NOT EDIT!': ROSTER,
       'DQE Historical Data': dqeSheet(rows),

@@ -295,9 +295,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a Date in the spreadsheet TZ, so `new Date(y, m-1, d)` (script-TZ midnight)
   lands as 23:00 of the PREVIOUS day from March to November, every
   spreadsheet-TZ reader keys the row a day early, and the census still reads
-  CLEAN (the display parses as a valid date). The first live Phase 1 repair
-  shifted 9,516 rows this way; `repairDqeDateNormalize()` re-anchors them and
-  `previewHistoricalDateColumns()` now flags the shape as TZ-SPLIT. Pinned by
+  CLEAN (the display parses as a valid date). `repairDqeDateNormalize()`
+  re-anchors that shape and `previewHistoricalDateColumns()` flags it as
+  TZ-SPLIT (R46 in fix-history). Pinned by
   `historical-date-columns.test.js` + `pipeline-build.test.js` on a Mexico
   City fixture (the fake sheet renders Dates in the spreadsheet TZ).
 - **Comma-joined ID/time cells coerce to Numbers unless plain-text
@@ -350,12 +350,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   history backwards". **The same coercion class hits DATE-shaped strings
   written via setValues**: Sheets coerces an "M/D/YYYY" string cell to a
   Date value, so a later `getValues()` + `String()` comparison never
-  matches the original string -- this made `Direct Call History`'s
-  refresh-in-window delete a silent no-op (duplicate row sets per
-  re-import; FIXED via `dcDateIso_` + `getDisplayValues`, F-3) and broke
-  `inboundCallsExport.js`'s refresh-in-window semantics (FIXED via
-  `ic_cellDateIso_`, F-10). New writer-side date comparisons must compare
-  ISO-NORMALIZED DISPLAY values, never `String(getValues())`.
+  matches the original string (F-3 / F-10 in fix-history). New writer-side
+  date comparisons must compare ISO-NORMALIZED DISPLAY values, never
+  `String(getValues())`.
 - **DQE cols AD/AE/AF are POSITIONALLY PAIRED (lockstep contract).**
   The Missed Calls report pairs `AF[i]` (abandoned missed-ring time) with
   `AD[i]` (its parent call id) to hang a parent id on each 🚨 timestamp --
@@ -389,6 +386,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   by PARSING the stored time against the 8 AM-5 PM CST range
   (`MissedCallsReport.gs`), so a PST value reads ~2h early. Durations
   (TTT/ATT/AvgAbdWait), counts, and the Date are TZ-independent and untouched.
+- **Bulk sheet repairs snapshot first (1b).** Every `repair*` apply in
+  `cdr-report/sheetRepairs.js` that rewrites 500+ cells copies the sheet into
+  the standing repair-backup workbook BEFORE its first write
+  (`hrBackupBeforeApply_`; `HR_BACKUP_SS_ID` self-populates, newest 3 tabs per
+  sheet kept; Operator State #59 has the restore). Previews never back up. A
+  new bulk apply must call it -- the source pin in
+  `tests/unit/sheet-repairs-backup.test.js` fails when one of the applies
+  writes before it.
 - **A dated sheet read is bounded by a min/max SPAN, not a tail scan -- and the
   discriminator is whether that sheet is date-ORDERED.** Two dashboard readers
   answer a windowed question against a years-deep sheet, and both do it the same
@@ -399,12 +404,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   fall outside it, which is why **the per-row date filter always stays** -- the
   span bounds the read, it does not replace the filter. A TAIL scan is the trap:
   `DQE Historical Data` and `CSR Transfer Historical Data` are NOT reliably
-  date-ordered: the daily path appends at `getLastRow()+1`, and although the DQE
-  build re-sorts col B after each write (and the bulk archive sorts too), a col B
-  holding mixed Date-typed and text cells does not sort chronologically -- so a
-  backfill of older dates can still sit after newer rows and a tail scan stops
-  early and silently drops them -- quietly wrong numbers, strictly worse than
-  being slow. **The one legitimate tail scan is
+  date-ordered: the daily path appends at `getLastRow()+1`, and only DQE
+  re-sorts itself after each write (col B is single-typed since Phase 1; the
+  Phase 2 nightly check re-sorts every sheet, but that is a compensating
+  control, not a guarantee until Phase 3) -- so a backfill of older dates can
+  still sit after newer rows and a tail scan stops early and silently drops
+  them -- quietly wrong numbers, strictly worse than being slow. **The one legitimate tail scan is
   `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and its warrant is NOT that its
   sheets are ordered -- it reads DQE / QCD / CDR Historical Data, and none of
   those reliably is. It WIDENS until the date's block is provably complete, and
@@ -445,6 +450,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   sheets genuinely date-ordered -- which would replace the span scan with a
   binary search -- is a separate staged project:
   [`docs/date-column-normalization-plan.md`](docs/date-column-normalization-plan.md).
+- **The five historical sheets are re-checked for date order NIGHTLY, and the
+  check is "single-typed AND ordered AND no TZ split", never just ordered
+  (Batch 4 / Phase 2).** `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js,
+  flag `HISTORICAL_SORT_ENABLED`, installed from CDR Tools) runs the census
+  scan per sheet and SORTS only a single-typed column that is out of order; a
+  MIXED-TYPE / TZ-SPLIT / UNPARSED column is REFUSED with a failure row,
+  because Sheets sorts numbers-then-text and the result LOOKS sorted while
+  being wrong. Outcome = `historicalSort:<sheet>` Pipeline Health rows
+  (INV-44) -> the Health page's `historical-sort` row; a sheet that needs
+  sorting EVERY night is a writer appending out of order, not a job to tune.
+  It DEFERS while any backfill `*_RESUME` pointer is set (a sort resets the
+  T-8 fingerprints). Two traps: (1) never `console.warn` a sheet-sort failure
+  -- the bulk path's did, and a CSR / Q Path left unsorted was seen nowhere;
+  it now logs a failure row under the same step name. (2) `parseDateForNeon`
+  refuses a BARE NUMBER (a serial under a numeric format used to read as the
+  year 45726), so a new sheet reader must not add its own copy of that guard.
+  The harness MODELS `Range.sort` (numbers/Dates, then text, blanks last;
+  `_sortCalls`, `_sortError`) -- a test that reads rows by index after a
+  sorting writer must filter by key. Pinned by `historical-sort.test.js`,
+  `system-health.test.js`, `historical-date-columns.test.js` (the per-instant
+  TZ memo); Operator State #61.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into
@@ -482,8 +508,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   new public write functions without `assertAdmin_()` at minimum;
   data-mutation paths need all four mitigations; config/creation
   paths need at least the admin gate.** The dashboard's NON-spreadsheet
-  (Neon) write paths are: Escalations (INV-55, per-dept-gated), the
-  admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
+  (Neon) write paths are: Escalations (INV-55, per-dept-gated; its
+  `deleteEscalation` is ADMIN-gated -- row + activity trail in one
+  transaction, audited as an `escalations:delete` usage row with no PHI),
+  the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
   `applyOrphanRename`'s best-effort `dqe_history` rename mirror
   (`renameAgentInNeon_`).
@@ -704,8 +732,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   nowhere else, so history before the deploy is permanently unsplittable** --
   every day this is not deployed is another one. Two traps: it embeds
   comma-joined times, so col 35 is plain-texted like AD-AF / K-AC; and Sheets
-  does NOT auto-expand columns, so the writer WIDENS a 34-col sheet before
-  touching col 35 (a getRange past `getMaxColumns` throws -- REP-10). Mirrored
+  does NOT auto-expand columns, so the writer WIDENS a narrower sheet first
+  (`DQE_WRITE_WIDTH`, 37 since Batch 3; a getRange past `getMaxColumns` throws
+  -- REP-10). Mirrored
   to `dqe_history.queue_split` via an idempotent ADD COLUMN, and every upsert
   COALESCEs so a sheet-sourced NULL can't erase a stored split.
   **The pipeline always WRITES this column; whether any dashboard surface USES
@@ -713,6 +742,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   State #42). So keep deploying and backfilling the split on its own urgency
   (the 14-day window closes regardless); the reader gate does not slow that
   down, and turning the gate on later costs nothing extra.
+- **DQE cols AJ/AK (`After-Hrs Answered` / `After-Hrs TTT (sec)`) capture the
+  half hour AFTER the work window -- ADDITIVE, capture-only, on AI's 14-day
+  clock (Batch 3).** `HISTORICAL_COLS.AFTER_HOURS_ANSWERED`=36 /
+  `AFTER_HOURS_TTT_SEC`=37, from `afterHoursLegs` (`startPST ∈
+  [DQE_WINDOW_END, DQE_AFTER_HOURS_END)`, 3:00-3:30 PM PST, half-open and
+  DISJOINT from `windowLegs`, so no in-window figure can move) with the SAME
+  own-talk rule as TTT (`talkForLegs`, INV-08). Three rules: (1) AK is INTEGER
+  SECONDS, not H:MM:SS -- no reader exists yet, and an integer cell sidesteps
+  the INV-02 duration trap. (2) NULL and 0 are DIFFERENT facts: an agent or
+  sentinel row with nothing after hours writes numeric `0`/`0`; a blank (a
+  pre-Batch-3 row, or a duplicate-merge, which clears AI..AK together) mirrors
+  as NULL to the nullable-int `dqe_history` pair (idempotent ADD COLUMN, every
+  upsert COALESCEs, binds via `NULLIF(?, '')::int`) -- a future reader must
+  keep them apart. (3) `DQE_WRITE_WIDTH`=37: the writer widens first (REP-10),
+  labels the two headers ONCE (only while AJ's header is blank), and every
+  full-width reader clamps to `getMaxColumns()` with a 37 ceiling -- a ceiling
+  left at 35 mirrors NULL on every row with no error, and COALESCE then keeps
+  the stale value forever (`cross-file-pins` R8-D1 Batch 3 derives every
+  ceiling from Config.gs). `DQE_AFTER_HOURS_END` joins the INV-06 pin family
+  with its display mirror `DASHBOARD_AFTER_HOURS_WINDOW`. One refactor trap
+  caught on the way in: the queue-split call sits in a try/catch, so a rename
+  that unbinds anything it reads blanks AI SILENTLY -- `queue-split.test.js`
+  fails on it. **Backfill = force re-import of the dates whose `Call_Legs_*`
+  tab survives** (Operator State #60). Pinned by `pipeline-build.test.js`
+  (Batch 3 block), `neon-write-mapping.test.js`, `neon-backfill-resume.test.js`,
+  `sheet-repairs-merge.test.js`.
 - **The Extraction Sidebar mirrors the pipeline's QCD rules BY HAND -- a THIRD
   duplication, and it has already drifted.** `cdr-report/dataFilters.js`
   (CDR Tools -> Open Extraction Sidebar: "which raw CDR rows produced this
@@ -1231,10 +1286,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `DQE_DATE_COL_MEMO_` / `DQE_EXT_GRID_MEMO_`) and they reset TOGETHER:
   their scope is identical, so no suite legitimately resets only half.
   ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
-  memo resets the whole family" -- copying the reset you know about and missing
-  the one you don't is exactly how this broke eight tests when the second memo
-  landed, which is why it is no longer prose. A third memo over this sheet joins
-  `DQE_EXEC_MEMOS`.
+  memo resets the whole family" (the eight-test breakage that made it a pin:
+  R40 in fix-history). A third memo over this sheet joins `DQE_EXEC_MEMOS`.
 - **Count badges must be idempotent, not append-only (F10).** The
   escalations nav badge was rendered behind an
   `if (!tab.querySelector('.nav-count-badge'))` guard and fetched
@@ -1321,10 +1374,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   one write connection and probes it with `SELECT 1` (5-second timeout),
   returning that SAME connection for the insert (or null). If Neon is
   down (free-tier suspend, exhausted compute) or unconfigured, the write
-  is skipped with a clean log — no failure email, no exception. (Replaced
-  the old `isNeonReachable_()`, which opened a throwaway probe connection
-  AND a second write connection per writer — six handshakes per import
-  run; see "Neon write discipline" below.) `NEON_HOST`, `NEON_DB`,
+  is skipped with a clean log — no failure email, no exception (the one-probe
+  rule's backstory: the 2026-09-11 section of fix-history). `NEON_HOST`, `NEON_DB`,
   `NEON_USER`, `NEON_PASS` must be set in BOTH the CDR Report AND CDR
   Import project's Script Properties for Neon mirroring to work.
   **NEVER put `connectTimeout` / `socketTimeout` / `loginTimeout` on a Neon
@@ -2252,6 +2303,9 @@ items for anything it flags or doesn't cover.)
 56. Reprocessing historical dates -- Manual Export per date (mirrors Neon inline) over the bulk path; clear `DQE_UPSERT_RESUME` before any backfill; the zero-talk scan (answered > 0 with TTT 0:00:00) is the post-rebuild check, and `repairDqeDuplicateMerge` is the remedy for same-day (date, agent) duplicates
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, and the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL)
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
+59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
+60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the ONE-TIME backfill by force re-import of the dates whose `Call_Legs_*` tab survives (NULL = never captured, 0 = captured and empty)
+61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + the ~3 AM trigger from CDR Tools; the Health page's `historical-sort` row (needed sorting EVERY night = a writer regressing; "could not fix" = a repair, not a sort; skipped = a backfill resume pointer is set)
 
 ## Cycle Workflow Config
 
@@ -2401,6 +2455,7 @@ S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
 S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
 S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboard
+S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

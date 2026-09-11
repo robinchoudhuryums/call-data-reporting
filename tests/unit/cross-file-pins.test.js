@@ -29,9 +29,11 @@ function read(rel, base) { return fs.readFileSync(path.join(base || ROOT, rel), 
 const configGs = read('Config.gs', DASH);
 
 // The LAST DQE column is the sheet width. Sub-queue Phase 1 appended AI
-// (QUEUE_SPLIT), so derive from that and fall back to CSR_AVG_ABD_WAIT -- an
-// append is exactly what this pin exists to propagate.
-const dqeColsM = /QUEUE_SPLIT:\s*(\d+)/.exec(configGs)
+// (QUEUE_SPLIT); Batch 3 appended AJ/AK (AFTER_HOURS_TTT_SEC is the last).
+// Derive from the newest and fall back through the older ones -- an append
+// is exactly what this pin exists to propagate.
+const dqeColsM = /AFTER_HOURS_TTT_SEC:\s*(\d+)/.exec(configGs)
+             || /QUEUE_SPLIT:\s*(\d+)/.exec(configGs)
              || /CSR_AVG_ABD_WAIT:\s*(\d+)/.exec(configGs);
 assert.ok(dqeColsM, 'HISTORICAL_COLS last column not found in Config.gs -- update this suite');
 const DQE_COLS = Number(dqeColsM[1]);   // the last DQE column = the sheet width
@@ -54,7 +56,7 @@ test('R8-D1: NeonMirror\'s deferred DQE read width matches the DQE schema (REP-1
   assert.ok(m, 'mirrorDqeForDate_ read call not found, or it no longer clamps to '
     + 'sheet.getMaxColumns() -- an unclamped read throws on a width-trimmed sheet.');
   assert.equal(Number(m[1]), DQE_COLS,
-    'DQE Historical Data is ' + DQE_COLS + ' cols (A-AI, INV-10)');
+    'DQE Historical Data is ' + DQE_COLS + ' cols (A-AK, INV-10)');
 });
 
 test('R8-D1: NeonMirror\'s deferred QCD read width matches the QCD schema', function () {
@@ -74,9 +76,33 @@ test('R8-D1: the duplicate-row merge repair reads the DQE ROLLUP width', functio
   // as "not split" rather than carrying a split that describes fewer calls
   // than the row it sits on.
   assert.equal(Number(m[1]), 34);
-  assert.ok(/getRange\(w\.row, 35\)\.setValue\(''\)/.test(sr),
-    'the merge must CLEAR col AI -- a stale split on a merged row is worse '
-    + 'than no split, because a reader would trust it');
+  // Batch 3: the clear covers AI AND the after-hours pair AJ/AK (35..37),
+  // clamped to the sheet's width (a pre-widen sheet is still 34 or 35).
+  assert.ok(/var extraCols = Math\.min\(37, sheet\.getMaxColumns\(\)\) - 34;\s*\n\s*if \(extraCols > 0\) sheet\.getRange\(w\.row, 35, 1, extraCols\)\.setValues/.test(sr),
+    'the merge must CLEAR cols AI..AK -- a stale split (or a first-row after-hours '
+    + 'pair) on a merged row is worse than none, because a reader would trust it');
+});
+
+test('R8-D1 (Batch 3): every full-width DQE reader clamps to the schema width, DERIVED from Config.gs', function () {
+  // The three readers that re-derive a Neon payload from the sheet at FULL
+  // width: the row-batched backfills (neonbackfill.js, two reads), the daily
+  // dup-guard re-mirror (buildDQEHistoricalData.js, both INV-16 copies). Each
+  // must clamp to getMaxColumns() (REP-10) and its ceiling must be the
+  // schema width -- a ceiling left at 35 silently mirrors NULL for AJ/AK on
+  // every row, and COALESCE then keeps the old value forever (no error).
+  const nb = read('apps-script/cdr-report/neonbackfill.js');
+  const nbWidths = [];
+  nb.replace(/var dqeWidth = Math\.min\((\d+), sheet\.getMaxColumns\(\)\)/g, function (_, n) { nbWidths.push(Number(n)); return _; });
+  assert.equal(nbWidths.length, 2, 'neonbackfill.js has two clamped DQE reads (backfillDQEHistory + the upsert) -- update this pin if that changes');
+  nbWidths.forEach(function (w) { assert.equal(w, DQE_COLS, 'neonbackfill.js DQE read ceiling'); });
+  ['apps-script/cdr-report/buildDQEHistoricalData.js', 'apps-script/cdr-import/buildDQEHistoricalData.js'].forEach(function (rel) {
+    const m = /function remirrorExistingDqeDate_[\s\S]*?const readWidth = Math\.min\((\d+), dqeSheet\.getMaxColumns\(\)\)/.exec(read(rel));
+    assert.ok(m, rel + ': remirrorExistingDqeDate_ read is no longer clamped -- update this pin');
+    assert.equal(Number(m[1]), DQE_COLS, rel + ' remirror read ceiling');
+  });
+  // And the writer's own width IS the schema width.
+  const m2 = /const DQE_WRITE_WIDTH = (\d+);/.exec(read('apps-script/cdr-report/buildDQEHistoricalData.js'));
+  assert.ok(m2); assert.equal(Number(m2[1]), DQE_COLS, 'DQE_WRITE_WIDTH');
 });
 
 // ---- D2: UI_FLAGS registry <-> CSS <-> markup parity ------------------------
@@ -579,12 +605,15 @@ const pipelineWindow_ = function () {
   const startExpr = /const DQE_WINDOW_START = ([^;]+);/.exec(build);
   const endExpr   = /const DQE_WINDOW_END\s*=\s*([^;]+);/.exec(build);
   const shiftExpr = /const DQE_PST_TO_CST\s*=\s*([^;]+);/.exec(build);
+  const afterExpr = /const DQE_AFTER_HOURS_END\s*=\s*([^;]+);/.exec(build);
   assert.ok(startExpr && endExpr, 'DQE_WINDOW_START/END not found -- update this pin');
   assert.ok(shiftExpr, 'DQE_PST_TO_CST not found -- update this pin');
+  assert.ok(afterExpr, 'DQE_AFTER_HOURS_END not found (Batch 3) -- update this pin');
   return {
     start: windowSecs_(startExpr[1], 'DQE_WINDOW_START'),
     end:   windowSecs_(endExpr[1],   'DQE_WINDOW_END'),
     toCst: windowSecs_(shiftExpr[1], 'DQE_PST_TO_CST'),
+    afterEnd: windowSecs_(afterExpr[1], 'DQE_AFTER_HOURS_END'),
   };
 };
 
@@ -635,6 +664,33 @@ test('S1/INV-06: the work-window copies agree (pipeline seconds, dashboard displ
     'display window START (CST) drifted from pipeline start + DQE_PST_TO_CST');
   assert.equal(ampmSecs(dispC[4], dispC[5], dispC[6]), pipeEnd + pipe.toCst,
     'display window END (CST) drifted from pipeline end + DQE_PST_TO_CST');
+});
+
+// Batch 3 (owner note #5): the AFTER-HOURS window is the half-hour AFTER the
+// work window -- [DQE_WINDOW_END, DQE_AFTER_HOURS_END) -- feeding only the
+// additive AJ/AK columns. Its one mirror is the dashboard display pair
+// DASHBOARD_AFTER_HOURS_WINDOW (Config.gs), derived here from the pipeline
+// numbers exactly like the work window's, so the two windows can never
+// overlap, gap, or drift apart.
+test('S1/INV-06 (Batch 3): the after-hours window starts where the work window ends, and its display mirror agrees', function () {
+  const pipe = pipelineWindow_();
+  assert.ok(pipe.afterEnd > pipe.end, 'DQE_AFTER_HOURS_END must lie after DQE_WINDOW_END');
+  assert.equal(pipe.afterEnd - pipe.end, 30 * 60, 'the owner ruled a HARD 5:30 PM CST cutoff: exactly one half-hour');
+  const blk = /const DASHBOARD_AFTER_HOURS_WINDOW = Object\.freeze\(\{([\s\S]*?)\}\);/.exec(configGs);
+  assert.ok(blk, 'DASHBOARD_AFTER_HOURS_WINDOW not found / reshaped -- update this pin');
+  const disp = /pst:\s*'(\d{1,2}):(\d{2}) (AM|PM) [^']*?(\d{1,2}):(\d{2}) (PM|AM) PST'/.exec(blk[1]);
+  const dispC = /cst:\s*'(\d{1,2}):(\d{2}) (AM|PM) [^']*?(\d{1,2}):(\d{2}) (PM|AM) CST'/.exec(blk[1]);
+  assert.ok(disp && dispC, 'DASHBOARD_AFTER_HOURS_WINDOW.pst/.cst not found / reshaped');
+  const ampmSecs = function (h, m, ap) { let hh = (+h) % 12; if (ap === 'PM') hh += 12; return hh * 3600 + (+m) * 60; };
+  assert.equal(ampmSecs(disp[1], disp[2], disp[3]), pipe.end, 'after-hours display START (PST) != DQE_WINDOW_END');
+  assert.equal(ampmSecs(disp[4], disp[5], disp[6]), pipe.afterEnd, 'after-hours display END (PST) != DQE_AFTER_HOURS_END');
+  assert.equal(ampmSecs(dispC[1], dispC[2], dispC[3]), pipe.end + pipe.toCst, 'after-hours display START (CST) drifted');
+  assert.equal(ampmSecs(dispC[4], dispC[5], dispC[6]), pipe.afterEnd + pipe.toCst, 'after-hours display END (CST) drifted');
+  // The dashboard column map names the pair at the positions the build writes.
+  assert.match(configGs, /AFTER_HOURS_ANSWERED:\s*36/, 'HISTORICAL_COLS.AFTER_HOURS_ANSWERED = 36 (AJ)');
+  assert.match(configGs, /AFTER_HOURS_TTT_SEC:\s*37/, 'HISTORICAL_COLS.AFTER_HOURS_TTT_SEC = 37 (AK)');
+  const buildSrc = read('apps-script/cdr-import/buildDQEHistoricalData.js');
+  assert.match(buildSrc, /const DQE_WRITE_WIDTH = 37;/, 'the build writes 37 columns');
 });
 
 // The FOURTH copy, and the one with the worst track record: DQEdrilldown.js
@@ -833,4 +889,47 @@ test('R40: a suite resetting one per-execution DQE memo resets the whole family'
     'suite(s) resetting only part of the DQE per-execution memo family: '
     + offenders.join('; ') + '. Reset every memo in DQE_EXEC_MEMOS in the same '
     + 'install(), or the suite silently serves the previous fixture\'s DQE data.');
+});
+
+// ── R46 / roadmap 1a: the harness runs under the LIVE timezone split ────────
+//
+// The R46 shift (every converted DQE date cell landing at 23:00 of the previous
+// day) shipped through 1,300 green tests because CI pins the process TZ to the
+// script's AND the fake spreadsheet defaulted to that same zone, so script
+// midnight and sheet midnight coincided in every fixture. The fake's default
+// is now the live spreadsheet's zone (America/Mexico_City), which differs from
+// the shim's script zone (America/Chicago) by an hour on summer dates. These
+// two pins keep it that way: nobody may set the two zones equal again, and a
+// suite that opts back into "same zone" must say why on the line.
+
+test('R46: the fake spreadsheet\'s default timezone is NOT the shim\'s script timezone', () => {
+  const fake = read('tests/harness/fakeSheet.js');
+  const shim = read('tests/harness/shim.js');
+  const def = /const tz = opts\.timeZone \|\| '([^']+)'/.exec(fake);
+  const script = /getScriptTimeZone: function \(\) \{ return '([^']+)'; \}/.exec(shim);
+  assert.ok(def, 'fakeSheet.js: the default-timezone line was reshaped; fix this pin');
+  assert.ok(script, 'shim.js: Session.getScriptTimeZone was reshaped; fix this pin');
+  assert.notEqual(def[1], script[1],
+    'the fake spreadsheet defaults to the script timezone (' + def[1] + '): script midnight '
+    + 'and sheet midnight then coincide in every fixture and a TZ-blind date writer passes -- '
+    + 'the R46 class. Keep the default on the live spreadsheet zone.');
+  assert.equal(def[1], 'America/Mexico_City',
+    'the default should be the LIVE spreadsheet zone, not merely a different one');
+});
+
+test('R46: a suite that pins its fixture back to the script timezone says why (same-tz:)', () => {
+  const unitDir = path.join(ROOT, 'tests', 'unit');
+  const offenders = [];
+  for (const f of fs.readdirSync(unitDir).filter((x) => x.endsWith('.test.js'))) {
+    const lines = fs.readFileSync(path.join(unitDir, f), 'utf8').split('\n');
+    lines.forEach((ln, i) => {
+      if (/timeZone:\s*'America\/Chicago'/.test(ln) && !/same-tz:/.test(ln)) {
+        offenders.push(f + ':' + (i + 1));
+      }
+    });
+  }
+  assert.deepEqual(offenders, [],
+    'fixture(s) pinned to the script timezone without a `// same-tz: <reason>` on the line: '
+    + offenders.join(', ') + '. Drop the argument (the default is the live split) or state '
+    + 'why this suite needs script midnight == sheet midnight.');
 });

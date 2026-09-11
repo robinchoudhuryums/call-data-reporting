@@ -498,5 +498,74 @@ test('Phase A sweep: escalation entry points + row gate + verbs all refuse the a
   // the wiring, not just the helper.
   assert.throws(function () { h.call('resolveEscalation', { id: 'e1', resolution: 'x' }); }, /Not authorized/);
   assert.throws(function () { h.call('approveEscalation', { id: 'e1' }); }, /Not authorized/);
+  assert.throws(function () { h.call('deleteEscalation', { id: 'e1' }); }, /admin-only/);   // 2a
   assert.equal(log.writes.length, 0, 'nothing was written on any refused call');
+});
+
+// -- 2a: admin permanent delete ----------------------------------------------
+
+test('2a: deleteEscalation is ADMIN-ONLY -- a manager on the row\'s own dept and the all-departments manager are both refused', function () {
+  const log = { writes: [] };
+  installReview({ role: 'manager', department: 'CSR', departments: ['CSR'], email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('deleteEscalation', { id: 'e1' }); }, /admin-only/);
+  installReview({ role: 'manager', allDepts: true, department: null, departments: ['CSR', 'Sales'], email: 'all@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('deleteEscalation', { id: 'e1' }); }, /admin-only/);
+  assert.equal(log.writes.length, 0, 'no writes on a refusal');
+});
+
+test('2a: an admin delete removes the activity trail THEN the row in ONE transaction, refreshes the snapshot, and audits without PHI', function () {
+  const log = { writes: [] };
+  installReview({ role: 'admin', email: 'admin@x.com' },
+    { status: 'resolved', department: 'Sales', caller: 'Jane Caller', patientName: 'Pat Patient', trx: 'TRX9', reason: 'r' }, log);
+  const usage = [];
+  h.ctx.logReportUsage_ = function (report, dept, user, cacheHit) { usage.push({ report: report, dept: dept, email: user && user.email, cacheHit: cacheHit }); };
+  const snap = [];
+  h.ctx.escSnapshotMaybeRefresh_ = function (conn, force) { snap.push({ force: !!force, afterCommit: log.commits === 1 }); };
+  const res = h.call('deleteEscalation', { id: 'e1' });
+  assert.equal(res.id, 'e1'); assert.equal(res.deleted, 1);   // property checks: vm-realm object
+  const dels = log.writes.map(function (w) { return w.sql; });
+  assert.deepEqual(dels, ['DELETE FROM escalation_activity WHERE escalation_id = ?', 'DELETE FROM escalations WHERE id = ?'],
+    'trail first (no orphaned activity rows), then the row, nothing else');
+  assert.equal(log.writes[0].params[0], 'e1');
+  assert.equal(log.writes[1].params[0], 'e1');
+  assert.equal(log.commits, 1, 'one commit');
+  assert.equal(log.rollbacks || 0, 0);
+  assert.deepEqual(snap, [{ force: true, afterCommit: true }], 'the outage snapshot is refreshed UNCONDITIONALLY, after the commit');
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].report, 'escalations:delete');
+  assert.equal(usage[0].dept, 'Sales');
+  assert.equal(usage[0].email, 'admin@x.com');
+  const audit = JSON.stringify(usage);
+  ['Jane Caller', 'Pat Patient', 'TRX9', 'e1'].forEach(function (pii) {
+    assert.ok(audit.indexOf(pii) === -1, 'the usage row must not carry "' + pii + '" (no PHI, no id in the usage sheet)');
+  });
+});
+
+test('2a: an unknown id is a no-op -- { deleted: 0 }, no writes, no throw (double click / stale card)', function () {
+  const log = { writes: [] };
+  installReview({ role: 'admin', email: 'admin@x.com' }, null, log);
+  h.ctx.logReportUsage_ = function () { throw new Error('must not be called'); };
+  const res = h.call('deleteEscalation', { id: 'nope' });
+  assert.equal(res.id, 'nope'); assert.equal(res.deleted, 0);   // property checks: vm-realm object
+  assert.equal(log.writes.length, 0);
+  assert.equal(log.commits || 0, 0);
+  assert.throws(function () { h.call('deleteEscalation', {}); }, /Missing escalation id/);
+});
+
+test('2a: a failed DELETE rolls back and surfaces the error -- never a half-deleted escalation', function () {
+  const log = { writes: [] };
+  installReview({ role: 'admin', email: 'admin@x.com' }, { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  const conn = h.ctx.getDashboardNeonConn_();
+  const orig = conn.prepareStatement;
+  conn.prepareStatement = function (sql) {
+    const st = orig(sql);
+    if (sql.indexOf('DELETE FROM escalations WHERE') === 0) st.execute = function () { throw new Error('boom'); };
+    return st;
+  };
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+  assert.throws(function () { h.call('deleteEscalation', { id: 'e1' }); }, /boom/);
+  assert.equal(log.rollbacks, 1, 'rolled back');
+  assert.equal(log.commits || 0, 0, 'never committed');
 });

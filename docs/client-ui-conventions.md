@@ -230,8 +230,9 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   so the headline lands AFTER the popover in DOM order (owner note: it
   previously wedged between the header and the popover). The results
   date line labels the window so it doesn't read as arbitrary: it
-  appends "last 30 days" when the range matches the launcher default
-  and always appends the workday count ("· N workdays",
+  appends "last 30 days" when the range matches the 30-day cold-load
+  fallback window (`insSetDefaultDates`; the quick-start chip no longer
+  forces it -- 2b) and always appends the workday count ("· N workdays",
   `insWorkdaysLabel_` -- server `meta.currentWorkDays` preferred, client
   `workingDaysBetween_` fallback); the compare line appends the PRIOR
   window's workdays likewise. The team
@@ -567,7 +568,10 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   inline Missed report; Insights' header date controls + the R9-3 shared
   date window) since those live off the Overview landing and can't be their
   own visible steps. Auto-runs ONCE for first-time visitors (localStorage
-  `cdr.tour.done`, gated to the Overview landing, 1.2s after load) and
+  `cdr.tour.done`, gated to the Overview landing, and -- 2b -- to the
+  Overview SETTLING: `onOverviewSettled_` fires once on the first cache
+  paint, success or failure of `ovLoad_`, replacing a fixed 1.2 s timer
+  that started the tour over a skeleton on a slow first load) and
   is always replayable from **Settings -> "Take the tour"** (`#tour-replay-btn`
   lives in the Settings modal, dashboard.html; the replay handler closes the
   SETTINGS modal via its own close button -- the F-42 focus-trap discipline --

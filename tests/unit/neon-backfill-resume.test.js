@@ -36,9 +36,10 @@ function dqeRow(date, agent, over) {
   return Object.assign(r, over || {});
 }
 
-// One upsert statement per batch; every row binds 35 params (34 cols +
-// queue_split). Row count per statement = binds / 35.
-const DQE_BINDS_PER_ROW = 35;
+// One upsert statement per batch; every row binds 37 params (34 cols +
+// queue_split; Batch 3 appended after_hours_answered + after_hours_ttt).
+// Row count per statement = binds / 37.
+const DQE_BINDS_PER_ROW = 37;
 
 // The fingerprint key joins the key columns with U+0001 (nbResumeKey_).
 function K() { return Array.prototype.slice.call(arguments).join('\u0001'); }
@@ -67,7 +68,6 @@ function fakeConn(cap) {
 function install(rows) {
   h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DQE Historical Data': [new Array(34).fill('h')].concat(rows) },
   });
   const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0 };
@@ -183,6 +183,24 @@ test('T-7: coerced cells the sanitizers exclude are COUNTED, per cell and per ro
   assert.equal(b[DQE_BINDS_PER_ROW + 29], '#REBUILD', 'pre-marked sentinel passes through');
 });
 
+test('Batch 3: the upsert binds AJ/AK from a 37-wide sheet, and NULL (never 0) where the sheet has none', function () {
+  const cap = install([
+    dqeRow('08/05/2026', 'Anna', { 35: '2', 36: '500' }),   // 37-wide: captured
+    dqeRow('08/05/2026', 'Ben',  { 35: '0', 36: '0' }),     // captured, nothing after hours
+    dqeRow('08/06/2026', 'Cara'),                            // pre-Batch-3 row: blank
+  ]);
+  h.call('backfillDQEHistoryUpsert');
+  assert.equal(upsertedRows(cap), 3);
+  const b = cap.statements[0].binds;
+  assert.equal(b[35], '2');   assert.equal(b[36], '500');
+  assert.equal(b[DQE_BINDS_PER_ROW + 35], '0', 'a captured 0 stays 0');
+  assert.equal(b[DQE_BINDS_PER_ROW + 36], '0');
+  assert.equal(b[2 * DQE_BINDS_PER_ROW + 35], null, 'blank AJ -> NULL (COALESCE keeps the stored value)');
+  assert.equal(b[2 * DQE_BINDS_PER_ROW + 36], null);
+  assert.match(cap.statements[0].sql, /after_hours_answered = COALESCE\(EXCLUDED\.after_hours_answered, dqe_history\.after_hours_answered\)/);
+  assert.match(cap.statements[0].sql, /NULLIF\(\?, ''\)::int,NULLIF\(\?, ''\)::int\)/, 'the pair binds through NULLIF casts');
+});
+
 test('T-7: nbSanitizeDqeCells_ tallies without changing what the sanitizers return', function () {
   const tally = h.fn('nbNewSanTally_')();
   const r = dqeRow('08/05/2026', 'Anna', { 12: '17,622,419,789,481,700,000', 30: '17,622,419,789,481,700,000,000', 31: '0.5' });
@@ -245,7 +263,6 @@ function installCdr(rows, extraProps) {
   h.state.props = Object.assign({ NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p',
                                   HMAC_SECRET: 's' }, extraProps || {});
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'CDR Historical Data': [new Array(26).fill('h')].concat(rows) },
   });
   const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0 };
@@ -323,7 +340,6 @@ function phonesConn(cap, parents) {
 function installPhones(rows, parents, extraProps) {
   h.state.props = Object.assign({ NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p', HMAC_SECRET: 's' }, extraProps || {});
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'CDR Historical Data': [new Array(26).fill('h')].concat(rows) },
   });
   const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0, binds: 0 };
@@ -497,7 +513,7 @@ function dqeMini(date, agent) { const r = new Array(34).fill(''); r[1] = date; r
 
 test('R37: preview lists Neon rows whose key the sheet lacks on sheet dates, touches nothing; prune deletes children-first, zero binds', function () {
   h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
     'CDR Historical Data': [new Array(26).fill('h'), cdrRow('03/10/2026', 'Anna Smith'), cdrRow('03/10/2026', 'Ben')],
     'DQE Historical Data': [new Array(34).fill('h'), dqeMini('03/10/2026', 'Anna Smith')],
   } });
@@ -533,7 +549,7 @@ test('R37: preview lists Neon rows whose key the sheet lacks on sheet dates, tou
 
 test('R37: the prune refuses past the cap (a wrong sheet read must not wipe Neon)', function () {
   h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
     'CDR Historical Data': [new Array(26).fill('h'), cdrRow('03/10/2026', 'Anna')],
     'DQE Historical Data': [new Array(34).fill('h')],
   } });

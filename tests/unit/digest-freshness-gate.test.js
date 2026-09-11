@@ -43,7 +43,7 @@ function install(opts) {
     sheets['Digest Config'] = [['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format'],
                                ['m@x.com', 'Alpha', 'daily', 'TRUE', '', 'summary']];
   }
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null; h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null; h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
   h.state.cache.clear();
@@ -244,7 +244,7 @@ test('R32: a quiet window with FRESH data explains its zero tiles; a stale send 
   h.state.sentEmails.length = 0;
   h.ctx.sendDigestsForCadence_ = REAL_SEND;
   const rows = [dqeRow({ date: '2026-09-02', agent: 'Zed Other', ext: '999', rung: 5, missed: 1, answered: 4, att: '0:01:00' })];
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
     'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows),
     'Digest Config': [['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format'],
                       ['m@x.com', 'Alpha', 'daily', 'TRUE', '', 'summary']] } });

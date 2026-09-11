@@ -40,6 +40,14 @@ const DQE_C = {
 const DQE_PST_TO_CST   = 7200;
 const DQE_WINDOW_START = (6 * 60 + 30) * 60;
 const DQE_WINDOW_END   = 15 * 60 * 60;
+// Batch 3 (owner note #5, 2026-09-10): the AFTER-HOURS window is the half-hour
+// after the work window -- [DQE_WINDOW_END, DQE_AFTER_HOURS_END) = 3:00-3:30 PM
+// PST = 5:00-5:30 PM CST, a HARD cutoff. Legs starting in it feed ONLY the two
+// additive columns AJ/AK (after-hours answered + after-hours talk seconds);
+// cols A..AI keep their in-window meaning byte for byte (queue-split.test.js
+// pins A..AI). Its dashboard mirror is DASHBOARD_AFTER_HOURS_WINDOW
+// (Config.gs), pinned against these two constants by cross-file-pins.
+const DQE_AFTER_HOURS_END = (15 * 60 + 30) * 60;
 
 const DQE_TIME_SLOTS = Array.from({ length: 19 }, (_, i) => ({
   start: 6 * 3600 + i * 1800,
@@ -68,7 +76,9 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
   // widened (no Phase 1 build has run on it) is still 34 wide. At width 34,
   // r[34] is undefined and the mirror maps it to '' below, so an old sheet
   // re-mirrors byte-identically to before Phase 1.
-  const readWidth = Math.min(35, dqeSheet.getMaxColumns());
+  // Batch 3: 37 since AJ/AK (after-hours); a narrower sheet yields undefined
+  // for the missing cells and the writer COALESCEs the resulting NULLs.
+  const readWidth = Math.min(37, dqeSheet.getMaxColumns());
   const block = dqeSheet.getRange(firstRow, 1, lastRow - firstRow + 1, readWidth).getDisplayValues();
   const matched = {};
   offsets.forEach(function (o) { matched[o] = true; });   // absolute data-region offsets
@@ -119,7 +129,9 @@ function remirrorExistingDqeDate_(dqeSheet, offsets, callDateStr) {
       abMissedTimes:   saneSlot(r[31]),
       avgAbdWait:      r[32],
       csrAvgAbdWait:   r[33],
-      queueSplit:      r[34] == null ? '' : r[34]   // AI -- sub-queue Phase 1
+      queueSplit:      r[34] == null ? '' : r[34],  // AI -- sub-queue Phase 1
+      afterHoursAnswered: (r[35] == null || r[35] === '') ? null : r[35],   // AJ (Batch 3)
+      afterHoursTtt:      (r[36] == null || r[36] === '') ? null : r[36]    // AK (Batch 3)
     });
   }
   if (!neonRows.length) return;
@@ -744,6 +756,11 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     const windowLegs = legs.filter(l =>
       l.startPST !== null && l.startPST >= DQE_WINDOW_START && l.startPST < DQE_WINDOW_END
     );
+    // Batch 3: the after-hours legs are DISJOINT from windowLegs (half-open on
+    // both sides), so nothing here can move an in-window figure.
+    const afterHoursLegs = legs.filter(l =>
+      l.startPST !== null && l.startPST >= DQE_WINDOW_END && l.startPST < DQE_AFTER_HOURS_END
+    );
 
     // REP-4: exclude a literal 'N/A' parent id -- truthy, so it would
     // collapse all such legs into one phantom unique parent (Pass 1's own
@@ -778,22 +795,39 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       return maxTalk;
     }
 
-    const agentTalkPerParent = {};
-    for (const leg of windowLegs) {
-      if (!leg.parentCallId || !leg.answered) continue;
-      const t = findAgentTalkOnParent(leg.parentCallId, agentName);
-      if (t > (agentTalkPerParent[leg.parentCallId] || 0)) {
-        agentTalkPerParent[leg.parentCallId] = t;
+    // One attribution rule for any leg list: the agent's OWN talk on each
+    // parent (INV-08), the max across that agent's legs on the parent, once
+    // per parent. Batch 3 runs it over the after-hours legs too, so the two
+    // windows can never drift in how they count a conversation.
+    function talkForLegs(legList) {
+      const perParent = {};
+      for (const leg of legList) {
+        if (!leg.parentCallId || !leg.answered) continue;
+        const t = findAgentTalkOnParent(leg.parentCallId, agentName);
+        if (t > (perParent[leg.parentCallId] || 0)) perParent[leg.parentCallId] = t;
       }
+      let total = 0;
+      const times = [];
+      for (const pid in perParent) {
+        const t = perParent[pid];
+        if (t > 0) { total += t; times.push(t); }
+      }
+      return { tttSec: total, talkTimes: times, perParent: perParent };
     }
-    let tttSec = 0;
-    const talkTimes = [];
-    for (const pid in agentTalkPerParent) {
-      const t = agentTalkPerParent[pid];
-      if (t > 0) { tttSec += t; talkTimes.push(t); }
-    }
+    const talk = talkForLegs(windowLegs);
+    const tttSec = talk.tttSec;
+    const talkTimes = talk.talkTimes;
+    // The per-parent own-talk map feeds the Phase 1 queue split below (its
+    // parent-level talk figure). Keep it bound here: the split call sits in a
+    // try/catch that would turn a missing binding into a silently blank AI.
+    const agentTalkPerParent = talk.perParent;
     const attSec = talkTimes.length
       ? talkTimes.reduce((a, b) => a + b, 0) / talkTimes.length : 0;
+    // Batch 3: after-hours answered count + talk seconds (an INTEGER, not
+    // H:MM:SS -- no reader exists yet, and integer seconds sidestep the INV-02
+    // duration-cell trap entirely).
+    const afterHoursAnswered = afterHoursLegs.filter(l => l.answered).length;
+    const afterHoursTttSec   = talkForLegs(afterHoursLegs).tttSec;
 
     // Sub-queue Phase 1. Computed from data already in hand, and wrapped so a
     // defect here can NEVER cost a day of DQE history: on a throw the column
@@ -866,7 +900,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       abanMissedTimes,                          // AF Abandoned Missed Leg Times
       secToHMS(Math.round(avgAbanWaitSec)),     // AG Avg Abd Wait Time
       secToHMS(Math.round(csrAvgAbanWaitSec)),  // AH CSR Avg Abd Wait Time
-      queueSplitJson                            // AI Queue Split (Phase 1)
+      queueSplitJson,                           // AI Queue Split (Phase 1)
+      afterHoursAnswered,                       // AJ After-hours answered (Batch 3; 3:00-3:30 PM PST legs)
+      afterHoursTttSec                          // AK After-hours TTT, integer SECONDS (Batch 3)
     ]);
   }
 
@@ -1038,7 +1074,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       // must therefore ask "is this DATE split-aware?" (does any agent row
       // carry a non-empty AI) rather than testing row by row, or every
       // sentinel would read as a pre-Phase-1 row.
-      ''
+      '',
+      0,                                        // AJ After-hours answered: per-agent only (Batch 3)
+      0                                         // AK After-hours TTT sec: per-agent only (Batch 3)
     ]);
   });
 
@@ -1053,12 +1091,18 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // Phase 1 must be widened BEFORE any col-35 access below, or the first build
   // after deploy would throw and lose that day. Idempotent: a sheet already
   // >= 35 wide is untouched.
-  const DQE_WRITE_WIDTH = 35;
+  // Batch 3 added AJ/AK (36-37): same rule, same idempotent widen.
+  const DQE_WRITE_WIDTH = 37;
   if (dqeSheet.getMaxColumns() < DQE_WRITE_WIDTH) {
     dqeSheet.insertColumnsAfter(dqeSheet.getMaxColumns(),
       DQE_WRITE_WIDTH - dqeSheet.getMaxColumns());
     Logger.log('DQE: widened sheet to ' + DQE_WRITE_WIDTH
-      + ' columns for the Phase 1 queue-split column.');
+      + ' columns (AI queue split, AJ/AK after-hours).');
+  }
+  // Batch 3: label the two new columns the first time they are blank, so a
+  // widened sheet does not carry two headerless columns. Never rewritten.
+  if (!String(dqeSheet.getRange(1, 36).getValue() || '').trim()) {
+    dqeSheet.getRange(1, 36, 1, 2).setValues([['After-Hrs Answered', 'After-Hrs TTT (sec)']]);
   }
 
   // Force col D to plain text so "1003,183" isn't reformatted as a number
@@ -1167,7 +1211,9 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
         abMissedTimes:    r[31],
         avgAbdWait:       r[32],
         csrAvgAbdWait:    r[33],
-        queueSplit:       r[34]        // AI -- sub-queue Phase 1
+        queueSplit:       r[34],       // AI -- sub-queue Phase 1
+        afterHoursAnswered: r[35],     // AJ -- Batch 3
+        afterHoursTtt:      r[36]      // AK -- Batch 3 (integer seconds)
       };
     });
     // IMP-5: the build's rows are the COMPLETE set for callDate --

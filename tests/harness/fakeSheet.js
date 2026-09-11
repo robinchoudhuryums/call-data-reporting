@@ -111,15 +111,55 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
     // The plain-text ('@') formats are the repo's primary defense against
     // the comma-joined cell coercion class (CLAUDE.md's largest gotcha) --
     // with a no-op here, deleting every protection passed all tests. Tests
-    // assert coverage via sheet._numberFormats. Sort stays a no-op (tests
-    // filter by key rather than relying on row order).
+    // assert coverage via sheet._numberFormats. Sort is MODELLED below
+    // (Batch 4) -- tests that read rows by index after a sorting writer
+    // should filter by key, as the row order now follows the sort.
     setNumberFormat: function (fmt) {
       if (!sheet._numberFormats) sheet._numberFormats = [];
       sheet._numberFormats.push({ startRow: startRow, startCol: startCol,
         numRows: numRows, numCols: numCols, format: fmt });
       return this;
     },
-    sort: function () { return this; },
+    // Batch 4 / Phase 2: MODELLED, not stubbed (the clearContent discipline).
+    // Real Range.sort orders the range's rows by the given ABSOLUTE column,
+    // numbers + Dates first (as numbers), then text, blanks last, stably;
+    // the displays / formats grids move with their rows. `_sortCalls`
+    // records every call; `_sortError` makes the next call throw (the
+    // bulk-path "sort threw" class).
+    sort: function (spec) {
+      const specs = Array.isArray(spec) ? spec : [spec];
+      const first = specs[0];
+      const column = typeof first === 'number' ? first : Number(first && first.column);
+      const ascending = (first && typeof first === 'object' && first.ascending === false) ? false : true;
+      if (!sheet._sortCalls) sheet._sortCalls = [];
+      sheet._sortCalls.push({ startRow: startRow, numRows: numRows, column: column, ascending: ascending });
+      if (sheet._sortError) { const err = sheet._sortError; sheet._sortError = null; throw err; }
+      const rank = function (v) {
+        if (v === null || v === undefined || v === '') return { g: 2, k: 0 };
+        if (v instanceof Date) return { g: 0, k: v.getTime() };
+        if (typeof v === 'number') return { g: 0, k: v };
+        return { g: 1, k: String(v) };
+      };
+      const idx = [];
+      for (let r = 0; r < numRows; r++) idx.push(startRow - 1 + r);
+      const keyed = idx.map(function (i, pos) {
+        const row = sheet._data[i] || [];
+        return { i: i, pos: pos, r: rank(row[column - 1]) };
+      });
+      keyed.sort(function (a, b) {
+        if (a.r.g !== b.r.g) return a.r.g - b.r.g;            // blanks always last
+        if (a.r.g === 2) return a.pos - b.pos;
+        let c = a.r.k < b.r.k ? -1 : a.r.k > b.r.k ? 1 : 0;
+        if (!ascending) c = -c;
+        return c || (a.pos - b.pos);                             // stable
+      });
+      ['_data', '_displays', '_formats'].forEach(function (g) {
+        if (!sheet[g]) return;
+        const moved = keyed.map(function (k) { return sheet[g][k.i]; });
+        keyed.forEach(function (k, pos) { sheet[g][idx[pos]] = moved[pos]; });
+      });
+      return this;
+    },
     // Blanks the range's cells, leaving the rows in place -- the real
     // Range.clearContent. NOT a no-op: the deferred Neon mirror's queue
     // rewrite is clearContent-then-setValues, so a no-op here would leave
@@ -158,7 +198,25 @@ function makeFakeSheet(name, data) {
       ? data.formats.map(function (row) { return row.slice(); })
       : null,
     _parent: null,   // set by makeFakeSpreadsheet
-    getName: function () { return name; },
+    _name: name,
+    getName: function () { return this._name; },
+    // Roadmap 1b: real Sheet methods, modelled not stubbed (the clearContent
+    // discipline) -- the repair backup copies a sheet into another workbook
+    // and names the copy; a no-op copy would make every backup pin vacuous.
+    setName: function (newName) {
+      if (this._parent && typeof this._parent._rename === 'function') this._parent._rename(this, newName);
+      this._name = newName;
+      return this;
+    },
+    copyTo: function (targetSs) {
+      const copy = targetSs.insertSheet('Copy of ' + this._name);
+      copy._data = this._data.map(function (row) { return row.slice(); });
+      copy._displays = this._displays ? this._displays.map(function (row) { return row.slice(); }) : null;
+      copy._formats = this._formats ? this._formats.map(function (row) { return row.slice(); }) : null;
+      if (this._maxColumns != null) copy._maxColumns = this._maxColumns;
+      if (this._maxRows != null) copy._maxRows = this._maxRows;
+      return copy;
+    },
     getParent: function () { return this._parent; },
     getLastRow: function () { return this._data.length; },
     getLastColumn: function () {
@@ -240,11 +298,32 @@ function makeFakeSheet(name, data) {
  */
 function makeFakeSpreadsheet(opts) {
   opts = opts || {};
-  const tz = opts.timeZone || 'America/Chicago';
+  // R46 / roadmap 1a: the DEFAULT is the live spreadsheet's zone, which is NOT
+  // the script's (the shim's Session.getScriptTimeZone() is America/Chicago).
+  // Script midnight and sheet midnight therefore DIFFER on summer dates in
+  // every fixture unless a suite opts out with an explicit timeZone -- the
+  // condition under which the R46 shift was invisible to 1,300 tests.
+  // cross-file-pins pins that this default never equals the script zone.
+  const tz = opts.timeZone || 'America/Mexico_City';
   const sheetMap = {};
+  const ssId = opts.id || 'fake';
+  const ssName = opts.name || 'Fake Spreadsheet';
   const ss = {
     getSpreadsheetTimeZone: function () { return tz; },
+    getId: function () { return ssId; },
+    getUrl: function () { return 'https://docs.google.com/spreadsheets/d/' + ssId; },
+    getName: function () { return ssName; },
     getSheetByName: function (name) { return sheetMap[name] || null; },
+    // Roadmap 1b: Sheet.setName re-keys the map; a duplicate name THROWS like
+    // the real API (the backup helper suffixes a same-minute collision).
+    _rename: function (sheet, newName) {
+      if (sheetMap[newName] && sheetMap[newName] !== sheet) {
+        throw new Error('A sheet with the name "' + newName + '" already exists. Please enter another name.');
+      }
+      const oldName = Object.keys(sheetMap).find(function (n) { return sheetMap[n] === sheet; });
+      if (oldName !== undefined) delete sheetMap[oldName];
+      sheetMap[newName] = sheet;
+    },
     // E1: real Spreadsheet method, modelled not stubbed (the clearContent
     // discipline) -- ncSurvivingCallLegsDates_ enumerates Call_Legs_* tabs.
     getSheets: function () {

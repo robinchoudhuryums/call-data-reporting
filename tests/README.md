@@ -1,5 +1,13 @@
 # Regression test harness
 
+**Fixture timezone (R46 / roadmap 1a).** `makeFakeSpreadsheet` DEFAULTS to the
+live spreadsheet zone, `America/Mexico_City`, while the shim's script zone is
+`America/Chicago` -- one hour apart from March to November. Leave it that way:
+a date-cell writer or reader that confuses the two midnights fails on a SUMMER
+fixture date and passes on a winter one, so date fixtures should sit between
+March and October. Pass `timeZone: 'America/Chicago'` only with a
+`// same-tz: <reason>` on the line (`cross-file-pins` enforces both rules).
+
 Node-based unit tests for the **Department Dashboard** Apps Script
 code. Zero dependencies — uses Node's built-in `node:test` + `node:assert`
 (Node ≥ 18; developed on Node 22). No `npm install` needed.
@@ -93,6 +101,15 @@ tests/
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
                               sheet-repairs-merge,
+                              sheet-repairs-backup (roadmap 1b: every bulk
+                              repair apply snapshots the sheet into the
+                              standing backup workbook BEFORE its first write
+                              -- threshold, once-created workbook + stored id,
+                              dated|label tab naming + same-minute suffix,
+                              per-source prune, stale-id recreate, the
+                              pre-repair values in the tab, previews and small
+                              applies never back up, plus a source pin that
+                              all five applies call it before writing),
                               historical-date-columns (Phase 0/0b: the
                               read-only date-column census over all five
                               historical sheets -- MIXED TYPE is detected
@@ -109,7 +126,25 @@ tests/
                               display rendering), idempotence, whole-run
                               refusal on a stray cell, no number-format writes
                               -- the writer side of Phase 1 is pinned in
-                              pipeline-build),
+                              pipeline-build; Batch 4 adds the per-instant
+                              TZ-SPLIT memo pin and the shared-resolver
+                              bare-serial refusal),
+                              historical-sort (Phase 2 / roadmap Batch 4: the
+                              nightly check-and-sort over the five historical
+                              sheets -- flag-gated handler, one Pipeline
+                              Health row per sheet under historicalSort:<label>,
+                              a single-typed out-of-order sheet is sorted on
+                              its own date column + re-checked + reported, a
+                              MIXED-TYPE / TZ-SPLIT column is REFUSED with a
+                              failure row and never sorted, the preview writes
+                              nothing, a backfill *_RESUME pointer defers the
+                              run without a read, a thrown check or sort costs
+                              that sheet only, install arms the flag +
+                              trigger and uninstall clears both; source pins
+                              for the CDR Tools menu wiring and the bulk
+                              path's sort-failure row under the same step
+                              family -- the harness MODELS Range.sort since
+                              this batch),
                               cache-warm-budget (the
                               O-4 whole-run budget), neon-backfill-resume
                               (T-8 fingerprinted resume pointers + the

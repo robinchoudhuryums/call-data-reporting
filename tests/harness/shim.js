@@ -20,6 +20,9 @@ function createShim() {
     props: {},                        // Script Properties
     cache: new Map(),                 // CacheService script cache
     spreadsheet: null,                // current fake spreadsheet (set per test)
+    spreadsheetsById: {},             // 1b: SpreadsheetApp.create() registry, keyed by id
+    createdSpreadsheets: [],          // 1b: every fake SpreadsheetApp.create() call, in order
+    strictOpenById: false,            // 1b: true -> openById THROWS for an unknown id (real API)
     sentEmails: [],                   // MailApp.sendEmail captures
     locks: 0,                         // LockService.tryLock call count
     mailQuota: undefined,             // MailApp.getRemainingDailyQuota (B4)
@@ -92,9 +95,24 @@ function createShim() {
     },
 
     SpreadsheetApp: {
-      openById: function () {
+      openById: function (id) {
+        // 1b: a spreadsheet this run CREATED resolves by id; anything else is
+        // the test's one fake workbook (the historical behaviour), unless a
+        // suite opts into the real API's throw for an unknown id.
+        if (id && Object.prototype.hasOwnProperty.call(state.spreadsheetsById, id)) return state.spreadsheetsById[id];
+        if (state.strictOpenById) throw new Error('Requested entity was not found. (openById: ' + id + ')');
         if (!state.spreadsheet) throw new Error('No fake spreadsheet set on shim.state.spreadsheet');
         return state.spreadsheet;
+      },
+      // 1b: real SpreadsheetApp.create, modelled -- a new workbook with the
+      // default "Sheet1" tab, registered so openById finds it afterwards.
+      create: function (name) {
+        const { makeFakeSpreadsheet } = require('./fakeSheet');
+        const id = 'fake-ss-' + (state.createdSpreadsheets.length + 1);
+        const ss = makeFakeSpreadsheet({ id: id, name: name, sheets: { Sheet1: [] } });
+        state.spreadsheetsById[id] = ss;
+        state.createdSpreadsheets.push(ss);
+        return ss;
       },
       // The cdr-report/cdr-import pipeline reads the active spreadsheet
       // (loadRosterCanonicalNames_ falls back to getActive()).

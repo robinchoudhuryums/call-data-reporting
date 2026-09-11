@@ -34,7 +34,6 @@ function install(dataset) {
   h.state.props.SPREADSHEET_ID = 'fake';
   delete h.state.props.DQE_READ_SOURCE;
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(dataset.map(dqeRow)) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;

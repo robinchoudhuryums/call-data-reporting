@@ -101,6 +101,9 @@ function lastInsert(cap) {
 test('DQE writer: 35 params bind in the dqe_history column order', function () {
   const cap = {};
   install(cap);
+  // Batch 3: the after-hours DDL is memoized per execution -- reset it so
+  // this test observes the self-upgrade regardless of suite ordering.
+  h.ctx.DQE_AFTER_HOURS_COLUMNS_READY_ = false;
   h.fn('writeDQERowsToNeon')([{
     monthYear: 'June 2026', callDate: '06/22/2026', agentName: 'Anna',
     queueExtensions: '103,204', totalUnique: 5, totalRung: 10, totalMissed: 2,
@@ -110,6 +113,7 @@ test('DQE writer: 35 params bind in the dqe_history column order', function () {
     abParentIds: 'PA,PB', abMissedIds: 'QA', abMissedTimes: '9:05:00',
     avgAbdWait: '0:00:40', csrAvgAbdWait: '',
     queueSplit: '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}',
+    afterHoursAnswered: 1, afterHoursTtt: 240,         // Batch 3 (AJ/AK)
   }]);
 
   const dqeSql = lastInsert(cap);
@@ -123,10 +127,11 @@ test('DQE writer: 35 params bind in the dqe_history column order', function () {
     'abandoned_parent_ids', 'abandoned_missed_ids', 'abandoned_missed_times',
     'avg_abd_wait', 'csr_avg_abd_wait',
     'queue_split',                                   // sub-queue Phase 1
+    'after_hours_answered', 'after_hours_ttt',       // Batch 3
   ]);
   const dqeTuples = tuplesOf(dqeSql);
   assert.equal(dqeTuples.length, 1);
-  assert.equal(dqeTuples[0].length, 35);
+  assert.equal(dqeTuples[0].length, 37);
   assert.equal(cap.params, undefined, 'R38: no bound statement on the normal path');
   assert.deepEqual(dqeTuples[0], [
     'June 2026', '2026-06-22', 'Anna', '103,204',   // MM/DD/YYYY -> ISO (parseDateForNeon)
@@ -137,7 +142,15 @@ test('DQE writer: 35 params bind in the dqe_history column order', function () {
     'PA,PB', 'QA', '9:05:00',
     '0:00:40', null,                                 // normalizeDuration: '' -> NULL
     '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}',
+    1, 240,                                          // Batch 3: bare ints
   ]);
+  // Batch 3: the DDL self-upgrade adds BOTH after-hours columns idempotently.
+  const ddl = (cap.inline || []).filter(function (q) { return /^ALTER TABLE/.test(q); }).join('\n');
+  assert.match(ddl, /ADD COLUMN IF NOT EXISTS after_hours_answered integer/);
+  assert.match(ddl, /ADD COLUMN IF NOT EXISTS after_hours_ttt integer/);
+  // and the upsert COALESCEs them (a narrower sheet's NULL never erases a value).
+  assert.match(dqeSql, /after_hours_answered = COALESCE\(EXCLUDED\.after_hours_answered, dqe_history\.after_hours_answered\)/);
+  assert.match(dqeSql, /after_hours_ttt = COALESCE\(EXCLUDED\.after_hours_ttt, dqe_history\.after_hours_ttt\)/);
   // Renderings: counts are bare ints, everything else dollar-quoted text.
   const raw = rawTuplesOf(dqeSql)[0];
   assert.deepEqual(raw.slice(4, 8), ['5', '10', '2', '8']);
@@ -333,6 +346,20 @@ test('I2-9: ISO-shaped cells are returned verbatim, never TZ-shifted', function 
   assert.equal(f('2026-05-19T03:00:00Z'), '2026-05-18');
 });
 
+test('Batch 4: a BARE NUMBER (a serial rendered by a numeric format) is refused, never read as a year', function () {
+  const f = h.fn('parseDateForNeon');
+  // Before the guard `new Date('45726')` was the year 45726 -> '45726-01-01',
+  // a valid-looking ISO that every sheet-fed caller would have keyed a row on.
+  assert.equal(f('45726'), null);
+  assert.equal(f(' 45726.5 '), null);
+  assert.equal(f('0'), null);
+  assert.equal(f('-3'), null);
+  // The date-shaped inputs are untouched.
+  assert.equal(f('5/19/2026'), '2026-05-19');
+  assert.equal(f('2026-05-19'), '2026-05-19');
+  assert.equal(f('May 19, 2026'), '2026-05-19', 'a free-form date string still parses');
+});
+
 // ── R27: the call_history_phones write gate ────────────────────────────────
 // The child rows are written only when CDR_PHONES_MIRROR is exactly 'on'.
 // Unset = OFF (the deploy itself stops the table's growth); the main
@@ -413,13 +440,24 @@ test('R38 parity: DQE inline tuple == bound params, field for field', function (
     queueExtensions: '103,204', totalUnique: 5, totalRung: '10', totalMissed: 2, totalAnswered: 8,
     ttt: '0:15:03', att: '0:03:01', slots: ['9:00:00', '', '10:23:33,10:08:41'],
     abParentIds: 'PA,PB', abMissedIds: 'QA', abMissedTimes: '9:05:00', avgAbdWait: '0:00:40', csrAvgAbdWait: '',
-    queueSplit: '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}' };
+    queueSplit: '{"A_Q_CSR":{"u":5,"r":10,"m":2,"a":8,"t":180,"n":1,"mt":"9:05:00"}}',
+    afterHoursAnswered: '3', afterHoursTtt: 615 };   // Batch 3: a string count coerces like totalRung
   const inline = tuplesOf('INSERT INTO x (a) VALUES ' + h.fn('dqeInlineTuple_')(row))[0];
   const bound = boundValuesFor('dqeBoundInsert_', [[row]]);
-  assert.equal(inline.length, 35); assert.equal(bound.length, 35);
+  assert.equal(inline.length, 37); assert.equal(bound.length, 37);
   // setInt coerces '10' -> 10 on the bridge; the inline renderer parses it.
   bound[5] = Number(bound[5]);
+  // Batch 3: the after-hours pair binds as STRINGS through NULLIF(?, '')::int
+  // (Postgres casts), so the bound values are the inline ints as text.
+  bound[35] = Number(bound[35]); bound[36] = Number(bound[36]);
   assert.deepEqual(inline, bound);
+  // A row without the pair (a pre-Batch-3 sheet re-mirrored) sends NULL on
+  // BOTH transports -- the COALESCE contract depends on it.
+  const bare = Object.assign({}, row); delete bare.afterHoursAnswered; delete bare.afterHoursTtt;
+  const inlineBare = tuplesOf('INSERT INTO x (a) VALUES ' + h.fn('dqeInlineTuple_')(bare))[0];
+  const boundBare = boundValuesFor('dqeBoundInsert_', [[bare]]);
+  assert.deepEqual(inlineBare.slice(35), [null, null]);
+  assert.deepEqual(boundBare.slice(35), [null, null]);
 });
 test('R38 parity: QCD inline tuple == bound params, field for field', function () {
   const row = { monthYear: 'June 2026', week: 'Week 4', callDate: '06/22/2026', callQueue: "A_Q_Sales's",
@@ -455,7 +493,7 @@ test('R38: an oversize row falls back to the bound statement; the rest stay inli
   const res = h.fn('writeDQERowsToNeon')([mk('A', 'x'), mk('B', huge), mk('C', 'y')]);
   assert.equal(res.inserted, 3);
   assert.equal((cap.inline || []).length, 2, 'A flushed before the fallback, C after it');
-  assert.equal(cap.params.length, 35, 'B went through the original bound statement');
+  assert.equal(cap.params.length, 37, 'B went through the original bound statement (35 + the Batch 3 pair)');
   assert.equal(cap.params[29].v, huge);
   assert.equal(cap.commits, 1, 'still ONE commit for the whole write');
   assert.deepEqual(tuplesOf(cap.inline[0])[0].slice(2, 3), ['A']);

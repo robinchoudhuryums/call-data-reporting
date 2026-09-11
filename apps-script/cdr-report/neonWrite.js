@@ -92,6 +92,13 @@ function parseDateForNeon(str) {
   if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
   var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!m) {
+    // Batch 4: a BARE NUMBER ("45726", "45726.5") is a date SERIAL rendered by
+    // a numeric number format, never a date string -- `new Date('45726')`
+    // reads it as the YEAR 45726 and the format below returns a valid-looking
+    // ISO that every sheet-fed caller would then key a row on. Refuse it; the
+    // census counts such cells as unparsed (a serial-aware repair is the
+    // remedy, not a guess).
+    if (/^-?\d+(\.\d+)?$/.test(s)) return null;
     var d = new Date(s);
     if (isNaN(d.getTime())) return null;
     return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
@@ -175,6 +182,8 @@ function neonAuthoritativeDateDelete_(conn, table, isoDates) {
 // -- DQE writer --------------------------------------------------------------
 // Per-EXECUTION memo for the Phase 1 queue_split column add (see below).
 var DQE_QUEUE_SPLIT_COLUMN_READY_ = false;
+// Batch 3: same memo for the two after-hours columns (AJ/AK).
+var DQE_AFTER_HOURS_COLUMNS_READY_ = false;
 // ── R38: inline-literal rendering for the daily writers ─────────────────────
 //
 // A bound parameter and an inline literal reach Postgres as the same typed
@@ -284,7 +293,7 @@ var DQE_INSERT_HEAD_ = 'INSERT INTO dqe_history (' +
       'slot_1300_1330, slot_1330_1400, slot_1400_1430, slot_1430_1500, slot_1500_1530, ' +
       'slot_1530_1600, slot_1600_1630, slot_1630_1700, slot_1700_1730, ' +
       'abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times, ' +
-      'avg_abd_wait, csr_avg_abd_wait, queue_split' +
+      'avg_abd_wait, csr_avg_abd_wait, queue_split, after_hours_answered, after_hours_ttt' +
       ') VALUES ';
 var DQE_INSERT_TAIL_ = ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET ' +
       'month_year = EXCLUDED.month_year, ' +
@@ -314,10 +323,23 @@ var DQE_INSERT_TAIL_ = ' ON CONFLICT ON CONSTRAINT uq_dqe_history DO UPDATE SET 
       // otherwise erase a queue_split a later build had already mirrored.
       // A build that genuinely has no split emits '{}', never NULL, so the
       // only thing COALESCE can preserve is a value nothing intended to clear.
-      'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split)';
+      'queue_split = COALESCE(EXCLUDED.queue_split, dqe_history.queue_split), ' +
+      // Batch 3: the same COALESCE rule for the after-hours pair -- a sheet
+      // narrower than 37 (a pre-Batch-3 row re-mirrored or backfilled) sends
+      // NULL and must not erase a value a later build wrote. A build always
+      // emits numbers (0 when nothing happened), never NULL.
+      'after_hours_answered = COALESCE(EXCLUDED.after_hours_answered, dqe_history.after_hours_answered), ' +
+      'after_hours_ttt = COALESCE(EXCLUDED.after_hours_ttt, dqe_history.after_hours_ttt)';
+
+// Batch 3: the two after-hours params bind as STRINGS through NULLIF(?, '')::int
+// (the house pattern for nullable typed columns -- no JDBC setNull/setObject),
+// so a missing value is NULL and a present one is cast by Postgres.
+var DQE_BOUND_PLACEHOLDER_ROW_ = '(' + new Array(35).fill('?').join(',') + ",NULLIF(?, '')::int,NULLIF(?, '')::int)";
+function neonSqlIntOrNull_(v) { return (v === null || v === undefined || v === '') ? 'NULL' : neonSqlInt_(v); }
+function neonBindIntOrNull_(v) { return (v === null || v === undefined || v === '') ? null : String(parseInt(v, 10) || 0); }
 
 function dqeBoundInsert_(conn, chunk) {
-  var placeholderRow = '(' + new Array(35).fill('?').join(',') + ')';
+  var placeholderRow = DQE_BOUND_PLACEHOLDER_ROW_;
   var stmt = conn.prepareStatement(DQE_INSERT_HEAD_ + chunk.map(function () { return placeholderRow; }).join(',') + DQE_INSERT_TAIL_);
   var p = 1;
   for (var b = 0; b < chunk.length; b++) {
@@ -347,6 +369,8 @@ function dqeBoundInsert_(conn, chunk) {
     // NULL and the ON CONFLICT update above would then blank an existing
     // value, so callers must carry it; the row builders all do.
     stmt.setString(p++, row.queueSplit ? String(row.queueSplit) : null);
+    stmt.setString(p++, neonBindIntOrNull_(row.afterHoursAnswered));   // Batch 3 (AJ)
+    stmt.setString(p++, neonBindIntOrNull_(row.afterHoursTtt));        // Batch 3 (AK)
   }
 
   stmt.execute();
@@ -373,7 +397,9 @@ function dqeInlineTuple_(row) {
     neonSqlLit_(row.abMissedTimes),
     neonSqlLit_(normalizeDuration(row.avgAbdWait)),
     neonSqlLit_(normalizeDuration(row.csrAvgAbdWait)),
-    neonSqlLit_(row.queueSplit ? String(row.queueSplit) : null));
+    neonSqlLit_(row.queueSplit ? String(row.queueSplit) : null),
+    neonSqlIntOrNull_(row.afterHoursAnswered),   // Batch 3 (AJ)
+    neonSqlIntOrNull_(row.afterHoursTtt));       // Batch 3 (AK)
   return '(' + vals.join(',') + ')';
 }
 
@@ -402,6 +428,14 @@ function writeDQERowsToNeon(rows, opts) {
       ddl.execute('ALTER TABLE dqe_history ADD COLUMN IF NOT EXISTS queue_split text');
       ddl.close();
       DQE_QUEUE_SPLIT_COLUMN_READY_ = true;
+    }
+    // Batch 3: the after-hours pair, same idempotent self-upgrade.
+    if (!DQE_AFTER_HOURS_COLUMNS_READY_) {
+      var ddl2 = conn.createStatement();
+      ddl2.execute('ALTER TABLE dqe_history ADD COLUMN IF NOT EXISTS after_hours_answered integer');
+      ddl2.execute('ALTER TABLE dqe_history ADD COLUMN IF NOT EXISTS after_hours_ttt integer');
+      ddl2.close();
+      DQE_AFTER_HOURS_COLUMNS_READY_ = true;
     }
     // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
     if (opts && opts.authoritative) {

@@ -29,7 +29,7 @@ function install(opts) {
     'Orphan Fix Log': [LOG_HEADER],
   };
   if (opts.noLog) delete sheets['Orphan Fix Log'];
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.state.cache.clear();
 }
 
@@ -135,7 +135,7 @@ test('roster-add: admin-only; audit sheet is a precondition', function () {
 test('R8-3: deactivateAgentAlias_ writes only the Active cell (no whole-block setValues)', function () {
   install();
   const ALIAS_HEADER = ['Old Name', 'Canonical Name', 'Active', 'Added By', 'Added At', 'Notes'];
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
     'DO NOT EDIT!': rosterGrid({ Alpha: ['Anna, 201'] }),
     'Orphan Fix Log': [LOG_HEADER],
     'Agent Alias Overrides': [
