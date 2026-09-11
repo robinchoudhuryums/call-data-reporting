@@ -29,8 +29,10 @@
   plain-texts col B** — Phase 0b adds the per-type format histogram that says
   whether the cells are '@'-formatted. **Phase 1 now needs a writer-side col-B
   format reset in BOTH INV-16 copies** (the earlier "no writer change" claim was
-  wrong). Open question: why QCD is clean — check Pipeline Health
-  `processIntegratedHistory:QCD` on Sept 1/3/4 for a 0-row force rebuild.
+  wrong). QCD-clean RESOLVED: Pipeline Health shows 48 Aug-5 rows written on 9/3
+  (no loss); the sheet was sorted BY HAND on 9/10. Follow-on folded into the
+  Phase 2 plan: the bulk path swallows sort failures into `console.warn`
+  (invisible) — log a Pipeline Health failure row instead, same step name.
 - **Owner decisions on the 2026-09-10 testing notes (plan only, NO code yet):**
   #8 Range button on the QCD card, Yesterday stays default. #2+#1: relabel the
   chip "How is my team doing?", DROP its last-30-days override (it defeats the

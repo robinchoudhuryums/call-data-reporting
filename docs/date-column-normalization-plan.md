@@ -98,11 +98,13 @@ Three things the numbers say:
   copies — the a350042 "re-format the EXACT write range" discipline, pointed
   the other way. One line, two files.
 - **CSR Transfer and Q Path are exactly the predicted shape**; Phase 2's first
-  run fixes both. **QCD reading CLEAN is unexplained**: the same three dates
-  reordered CSR and Q Path and QCD has no daily sort either. Either those runs
-  skipped QCD or the rebuild wrote zero QCD rows after the force-delete — the
-  case `guardForceRebuildLoss_` logs. Check Pipeline Health for
-  `processIntegratedHistory:QCD` on Sept 1 / 3 / 4.
+  run fixes both. **QCD reading CLEAN — resolved (2026-09-11):** Pipeline
+  Health shows `processIntegratedHistory:QCD` wrote 48 rows for Aug 5 on 9/3
+  (the normal per-day shape), so no data was lost; the Aug-5 block sits in
+  chronological position because the sheet was **sorted by hand** on 9/10.
+  The census was right about the sheet as it stood — and the episode is the
+  case for Phase 2: a manual sort leaves no record, and the nightly job would
+  have made the question answerable from a Pipeline Health row.
 
 ## Phase 0b — the format probe (SHIPPED, run live 2026-09-10)
 
@@ -206,6 +208,17 @@ build's own sort).
 - **Log a Pipeline Health row per sheet** (new INV-44 step name) so a sort that
   starts firing *every* night — meaning a writer regressed — surfaces rather
   than quietly churning.
+- **Follow-on folded in here: the bulk path's sort failures are invisible.**
+  `autoImport.js` (~1319–1331) sorts all four sheets after a bulk write inside
+  `try { … } catch (e) { console.warn(...) }`. In Apps Script `console.warn`
+  goes to Cloud Logging, not to `Logger` or the Pipeline Health sheet, so a sort
+  that fails there is seen nowhere an operator looks — a run could leave CDR
+  and QCD sorted and CSR / Q Path not, with no trace. Two remedies, both
+  cheap: (1) Phase 2's nightly check would catch the *result* the next
+  morning; (2) the bulk path should log a Pipeline Health **failure** row for
+  the sheet whose sort threw (the `guardForceRebuildLoss_` pattern — log, don't
+  throw, so the already-written sheets stand) instead of `console.warn`. Ship
+  (2) with Phase 2, since it uses the same new step name.
 - **Skip when any `*_RESUME` property is set.** A sort invalidates the four T-8
   fingerprinted resume pointers. That is safe (the key check trips, the run
   restarts from 0, logged, and every backfill is `ON CONFLICT` idempotent) but a
