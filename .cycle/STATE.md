@@ -15,7 +15,7 @@
   path's sort failure is a failure row under the same name. Follow-ons rode
   along: the census's per-instant TZ memo, `parseDateForNeon` refusing a bare
   number, drive-smoke clicking the QCD period toggle. The harness MODELS
-  `Range.sort` since this batch. 1351/1351; 18/18 mutations; ci:ui green.
+  `Range.sort` since this batch. 1351/1351; 18/18 mutations; ci:ui green (102/16/30/14/52/14/20, both roles).
   **Deploys pending:** cdr-report (+ INSTALL the check from CDR Tools --
   Operator State #61), cdr-import, dashboard. Batch 5's 2-week gate clock
   starts at that install. NEXT: PR when the owner asks; the parallel Neon
