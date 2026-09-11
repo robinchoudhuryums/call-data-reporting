@@ -957,8 +957,9 @@
   }
   function insSetDefaultDates() {
     if ($('ins-from') && $('ins-from').value) return;   // keep restored/last value
-    // Default = the launcher window (last 30 days ending yesterday), which
-    // CacheWarm warms per dept (pass 2). NOTE this default is the FALLBACK
+    // Default = a 30-day window ending yesterday (until 2b this was ALSO the
+    // quick-start chip's forced window; the chip now uses the dept window),
+    // which CacheWarm warms per dept (pass 2). NOTE this default is the FALLBACK
     // only: since M2 the dept controls are the date authority, so
     // insEnsurePage_ overwrites it with the dept window whenever those
     // inputs are populated -- which is the normal path. It survives on a

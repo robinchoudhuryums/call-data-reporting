@@ -993,7 +993,8 @@
 
   // ── Guided tour (#5, onboarding) ──────────────────────────────
   // Client-only coachmark walkthrough (fits the anti-intimidation layer).
-  // Auto-runs once for first-time visitors (localStorage cdr.tour.done) and is
+  // Auto-runs once for first-time visitors (localStorage cdr.tour.done; 2b:
+  // gated on the Overview settling, see initTour_) and is
   // always replayable from Help -> Guided tour. Spotlight = a highlight box
   // with a huge box-shadow that dims everything else; reduced-motion aware.
   var TOUR_KEY_ = 'cdr.tour.done';
@@ -1127,10 +1128,17 @@
     });
     var seen = true;
     try { seen = !!localStorage.getItem(TOUR_KEY_); } catch (e) { seen = true; }
-    if (!seen) setTimeout(function () {
-      // Autostart only on the Overview landing (the steps assume it).
-      if (document.body.getAttribute('data-page') === 'overview') startTour_();
-    }, 1200);
+    // 2b (owner): start when the Overview has SETTLED (first paint, success
+    // or failure -- onOverviewSettled_, script-3-overview), not on a fixed
+    // 1200 ms timer that raced the first load: slow, and the tour opened over
+    // a skeleton; fast, and it waited for nothing. A short beat after the
+    // settle lets the rendered layout finish before the spotlight measures it.
+    if (!seen) onOverviewSettled_(function () {
+      setTimeout(function () {
+        // Autostart only on the Overview landing (the steps assume it).
+        if (document.body.getAttribute('data-page') === 'overview') startTour_();
+      }, 250);
+    });
   }
 
   function clSetDefaultDates_() {

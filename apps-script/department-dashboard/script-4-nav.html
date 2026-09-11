@@ -416,6 +416,12 @@
   let latestQcdIso_ = null;          // ditto -- drives the all-dept QCD report's default date
   let insLauncherAutoRun_ = false;   // consumed by insRenderAgentList
   let insScrollPending_ = null;      // quick-start chip target section id (one-shot, consumed on render)
+  // 2b: rapid re-clicks on a chip are guarded -- each launch takes a sequence
+  // number and a click inside the debounce window is ignored, so a double
+  // click cannot arm two auto-runs (two loading panes, two fetches) at once.
+  let launchSeq_ = 0;
+  let launcherLastAt_ = 0;
+  const LAUNCHER_DEBOUNCE_MS_ = 600;
 
   function launcherIsoDaysAgo_(n) {
     const d = new Date();
@@ -430,7 +436,7 @@
   function launcherRowHtml_() {
     return '<div class="ov-launcher-kicker">What do you want to know?</div>'
       + '<div class="ov-launcher-row">'
-      +   '<button type="button" class="ov-launcher-q" data-launch="team-lately">How is my team doing lately?</button>'
+      +   '<button type="button" class="ov-launcher-q" data-launch="team-lately">How is my team doing?</button>'
       +   '<button type="button" class="ov-launcher-q" data-launch="missed-yesterday">When did we miss calls?</button>'
       +   '<button type="button" class="ov-launcher-q" data-launch="agent-trend">Is one of my agents struggling or improving?</button>'
       +   '<button type="button" class="ov-launcher-q" data-launch="abandons">Are callers giving up before we answer?</button>'
@@ -447,12 +453,16 @@
     const onLaunch = function (e) {
       const btn = e.target.closest('[data-launch]');
       if (!btn) return;
+      const now = Date.now();
+      if (now - launcherLastAt_ < LAUNCHER_DEBOUNCE_MS_) return;   // 2b: the first click owns the launch
+      launcherLastAt_ = now;
+      launchSeq_++;
       const kind = btn.getAttribute('data-launch');
       const helpClose = $('help-close');
       if (helpClose) { try { helpClose.click(); } catch (e2) {} }
       try {
         if (kind === 'team-lately') {
-          launcherOpenInsights_('How is my team doing lately?', 'ins-kpi-row');
+          launcherOpenInsights_('How is my team doing?', 'ins-kpi-row');
         } else if (kind === 'missed-yesterday') {
           launcherOpenMissed_();
         } else if (kind === 'agent-trend') {
@@ -502,28 +512,34 @@
     if (el) el.style.display = 'none';
   }
 
-  // "How is my team doing lately?" -> Insights, last 30 days, all active
-  // agents, auto-generated. setPage('insights') runs the page's normal
-  // entry (first-entry defaults + prefs + roster fetch via insEnsurePage_);
-  // we then override the dates and re-ensure the roster for the new range --
-  // insRenderAgentList consumes insLauncherAutoRun_ once the picker is
-  // rendered, so the select-all + generate happen at a race-free
-  // synchronization point. The form never flashes: a loading pane covers
-  // the roster fetch + generate; failures fall back to the primed form
-  // (insShowForm).
+  // "How is my team doing?" -> Insights over WHATEVER window the dept
+  // controls hold, all active agents, auto-generated. setPage('insights')
+  // runs the page's normal entry (first-entry defaults + prefs + roster fetch
+  // via insEnsurePage_); insRenderAgentList consumes insLauncherAutoRun_ once
+  // the picker is rendered, so the select-all + generate happen at a
+  // race-free synchronization point. The form never flashes: a loading pane
+  // covers the roster fetch + generate; failures fall back to the primed
+  // form (insShowForm).
+  // 2b (owner): the chip used to FORCE a last-30-days window here. That
+  // defeated the report cache (a second key per visit) and contradicted M4's
+  // single date authority -- the dept controls -- so it now copies THAT
+  // window instead, and the region's own sync (insSyncToDeptWindow_) stands
+  // down while the launcher run is armed exactly as before.
   function launcherOpenInsights_(question, scrollTarget) {
     if (!$('insights-page')) return;
     // Land on (and spotlight) the exact section that answers the chip's
     // question; consumed at the end of insRenderReport_ (one-shot).
     insScrollPending_ = scrollTarget || null;
     setPage('insights');
-    if ($('ins-from')) $('ins-from').value = launcherIsoDaysAgo_(30);
-    if ($('ins-to'))   $('ins-to').value   = launcherIsoDaysAgo_(1);
-    const p = $('ins-preset');
-    if (p) p.value = 'custom';
+    const df = $('from-date'), dt = $('to-date');
+    if (df && dt && df.value && dt.value) {
+      if ($('ins-from')) $('ins-from').value = df.value;
+      if ($('ins-to'))   $('ins-to').value   = dt.value;
+      if ($('ins-preset')) $('ins-preset').value = 'custom';
+    }
     insLauncherAutoRun_ = true;
     launcherShowLoading_('ins-launcher-loading', 'insights-form', 'insights-results',
-      question || 'How is my team doing lately?');
+      question || 'How is my team doing?');
     insEnsureRoster();
   }
 
