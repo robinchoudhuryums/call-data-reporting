@@ -659,6 +659,37 @@ UNDER-reports, and the per-row date filter cannot recover rows never read. The
 real fix is to make the sheets genuinely date-ordered:
 [`date-column-normalization-plan.md`](date-column-normalization-plan.md).
 
+## `R46` — the Phase 1 timezone shift (2026-09-11)
+
+The first live run of `repairDqeDateNormalize()` converted 9,516 text cells
+and the acceptance census read **CLEAN** — and DQE's latest date read
+2026-09-08 while Pipeline Health showed a successful 74-row build for
+2026-09-09. The repair (and the Phase 1 writer change) built each Date as
+`new Date(Y, M-1, D)`: midnight in the SCRIPT's timezone (Chicago, UTC-5 in
+summer). `setValues` converts a Date in the SPREADSHEET's timezone (Mexico
+City, UTC-6, no DST), so every converted cell landed as 23:00 of the previous
+day. The dashboard's `rowDateIso_` resolves in the spreadsheet TZ, the census
+and every backfill read display values, so all of them keyed those rows one
+day early — while the census's display value ("9/8/2026 23:00:00") parsed as
+a perfectly valid 9/8. The harness could not see it either: CI pins the
+process TZ to the script's and the fake sheet rendered Dates in the process
+TZ, so script midnight and sheet midnight coincided in every fixture. Nothing
+was lost — each instant still encodes the true date unambiguously — and the
+Neon mirror was never touched (it reads the string `outputRows[1]`).
+
+| code | what it fixed | where the rule lives now |
+|---|---|---|
+| R46 | **Date-only cells are built at SPREADSHEET-TZ midnight, through one helper.** `dateAtSheetMidnight_` (buildDQEHistoricalData.js, both INV-16 copies) needs only `yyyy-MM-dd HH:mm` formatting: start at UTC midnight, measure what the zone shows, correct by the difference, verify. The writer's col-B write and the repair's `dqeDateFromMdy_` both route through it; the repair additionally RE-ANCHORS a Date at script-TZ midnight (the shifted shape) to sheet midnight of its script-TZ calendar day, refuses any other time-of-day, and reports the re-anchored row/ISO range so the operator can check it matches the converted block. The census flags a Date cell whose calendar day differs between the two zones as **TZ-SPLIT** — the check the acceptance run lacked. The fake sheet now renders Dates in the spreadsheet TZ, and both suites put the fixture on Mexico City against the Chicago script TZ so the two midnights differ on summer dates | CLAUDE.md TZ gotcha; `historical-date-columns.test.js`, `pipeline-build.test.js`; `date-column-normalization-plan.md` |
+
+**What the shift did NOT reach**: the force-delete path (`deleteHistoricalRowsForDate`)
+matches on `toDateString()` in the script TZ, so a force re-import of an
+affected date still deleted the right rows; the build's dup guard splits the
+display on the space and so read "9/8/2026" — it would have treated 9/9 as
+absent, which only matters for a re-run of an affected date. The tools that
+WOULD have written wrong dates from the shifted sheet — `backfillDQEHistoryUpsert`,
+`previewNeonExtraRows` / `pruneNeonExtraRows`, `repairDqeDuplicateMerge` — were
+held until the corrected repair ran.
+
 ## 2026-08-27 broad-scan (increments 150–151) — the P/L family
 
 One three-stage audit, two implementation batches. Codes below are cited in

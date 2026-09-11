@@ -286,7 +286,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `America/Mexico_City`; the script is on `America/Chicago`. Duration cells
   (TTT, ATT, AvgAbdWait, CSRAvgAbdWait) get a phantom +36:36 offset if you
   read them via `getValue()`. **Always use `getDisplayValues()`** for those
-  columns and parse the H:MM:SS string directly.
+  columns and parse the H:MM:SS string directly. **The write-side twin (R46):
+  a date-only cell must be written at midnight in the SPREADSHEET's TZ**
+  (`dateAtSheetMidnight_`, buildDQEHistoricalData.js) -- `setValues` converts
+  a Date in the spreadsheet TZ, so `new Date(y, m-1, d)` (script-TZ midnight)
+  lands as 23:00 of the PREVIOUS day from March to November, every
+  spreadsheet-TZ reader keys the row a day early, and the census still reads
+  CLEAN (the display parses as a valid date). The first live Phase 1 repair
+  shifted 9,516 rows this way; `repairDqeDateNormalize()` re-anchors them and
+  `previewHistoricalDateColumns()` now flags the shape as TZ-SPLIT. Pinned by
+  `historical-date-columns.test.js` + `pipeline-build.test.js` on a Mexico
+  City fixture (the fake sheet renders Dates in the spreadsheet TZ).
 - **Comma-joined ID/time cells coerce to Numbers unless plain-text
   formatted.** Three column groups in `DQE Historical Data` store
   comma-joined values: **K-AC** (half-hour slot missed-times, e.g.

@@ -12,9 +12,16 @@ const { rosterGrid } = require('../harness/fixtures');
 // slots, INV-21 parentMap). Same byte-identical file in cdr-import.
 const h = loadGas({ project: 'cdr-report', files: ['buildDQEHistoricalData.js'] });
 
-// Phase 1: col B is a DATE now. Local calendar date of a Date object, in the
-// harness TZ (CI pins TZ to the Apps Script manifest's) -- the shape every
-// col-B assertion below compares against.
+// Phase 1: col B is a DATE now. R46: its instant is midnight in the
+// SPREADSHEET's timezone, so the fixtures below put the sheet on Mexico City
+// (UTC-6, no DST) while the process/script TZ is Chicago (UTC-5 in summer) --
+// the live pair. On 2026-03-09 (the day after DST starts) the two differ by an
+// hour, so a script-TZ midnight (`callDateObj` itself) fails these pins.
+const { formatDate } = require('../harness/formatDate');
+const SS_TZ = 'America/Mexico_City';
+function sheetStamp_(d) { return formatDate(d, SS_TZ, 'yyyy-MM-dd HH:mm'); }
+// Calendar date in the SCRIPT TZ -- must agree with the sheet's day (the R46
+// invariant: one calendar day in both zones).
 function localIso_(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
     + '-' + String(d.getDate()).padStart(2, '0');
@@ -63,7 +70,7 @@ function build() {
     rawRow({ callId: 'Q4', legId: 0, start: OUT, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P4', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
+    timeZone: SS_TZ,
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],   // header only
@@ -108,12 +115,14 @@ test('INV-20: missed-call time slots are stored as CST (PST + 2h), bucketed 30-m
 test('INV-21: queue-extension + date/agent columns are populated from the legs', function () {
   const row = build();
   assert.equal(row[0], 'March 2026');     // A Month Year
-  // B Date -- Phase 1: a DATE object at LOCAL MIDNIGHT (the same instant the
-  // repair in sheetRepairs.js builds from "M/D/YYYY" text, so the two eras
-  // sort as one), not the coercible string that setValues left as text.
+  // B Date -- Phase 1: a DATE object at SPREADSHEET-TZ midnight (R46; the same
+  // instant the repair in sheetRepairs.js builds from "M/D/YYYY" text, so the
+  // two eras sort as one), not the coercible string that setValues left as
+  // text, and not script-TZ midnight, which the sheet renders as 23:00 of the
+  // 8th.
   assert.ok(row[1] instanceof Date, 'B is a Date object');
-  assert.equal(localIso_(row[1]), '2026-03-09');
-  assert.equal(row[1].getHours() + row[1].getMinutes() + row[1].getSeconds(), 0, 'local midnight');
+  assert.equal(sheetStamp_(row[1]), '2026-03-09 00:00', 'midnight where the sheet renders it');
+  assert.equal(localIso_(row[1]), '2026-03-09', 'and the same calendar day in the script TZ');
   assert.equal(row[2], 'Anna');           // C Agent
   assert.equal(row[3], '103');            // D Queue Extensions (from CallQueue(103))
 });
@@ -505,7 +514,7 @@ test('I2-9: an ISO START_TIME display parses as a LOCAL date and col B is writte
     rawRow({ callId: 'Q1', legId: 0, start: '2026-03-09 7:00:00', caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
+    timeZone: SS_TZ,
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -516,8 +525,10 @@ test('I2-9: an ISO START_TIME display parses as a LOCAL date and col B is writte
   const rows = ss._sheet('DQE Historical Data')._data.slice(1).filter(function (r) { return r[2] === 'Anna'; });
   assert.equal(rows.length, 1, 'the day built (pre-fix: "No valid dates found")');
   // Phase 1: col B is a Date; the one-day-early trap this pin guards is that
-  // an ISO-shaped START_TIME must still land on the 9th, not the 8th.
+  // an ISO-shaped START_TIME must still land on the 9th, not the 8th -- in
+  // BOTH zones (R46).
   assert.ok(rows[0][1] instanceof Date, 'col B is a Date');
+  assert.equal(sheetStamp_(rows[0][1]), '2026-03-09 00:00', 'col B is sheet midnight of the 9th');
   assert.equal(localIso_(rows[0][1]), '2026-03-09', 'col B canonicalized -- the ISO-shaped display is a LOCAL date, never UTC-shifted');
   assert.equal(rows[0][7], 1);   // H answered
 });

@@ -101,10 +101,15 @@ tests/
                               while being wrong; 0b adds per-type ISO ranges
                               and a per-type number-format histogram, with the
                               format read best-effort; Phase 1 pins the
-                              text->Date repair: local-midnight construction,
-                              idempotence, whole-run refusal on a stray cell,
-                              no number-format writes -- the writer side of
-                              Phase 1 is pinned in pipeline-build),
+                              text->Date repair: SHEET-TZ-midnight construction
+                              (R46 -- on a Mexico City fixture against the
+                              Chicago script TZ, the re-anchoring of the
+                              shifted script-midnight shape, the census's
+                              TZ-SPLIT flag, and the fake's spreadsheet-TZ
+                              display rendering), idempotence, whole-run
+                              refusal on a stray cell, no number-format writes
+                              -- the writer side of Phase 1 is pinned in
+                              pipeline-build),
                               cache-warm-budget (the
                               O-4 whole-run budget), neon-backfill-resume
                               (T-8 fingerprinted resume pointers + the
