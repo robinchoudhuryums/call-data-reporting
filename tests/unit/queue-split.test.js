@@ -96,7 +96,11 @@ test('cols A..AH are BYTE-IDENTICAL to the pre-Phase-1 build', function () {
   // frozen as literals. If a future edit to the split changes ANY of them the
   // change stopped being additive, which is the one thing that must not happen
   // to the pipeline.
-  assert.equal(row.length, 35, 'exactly one column was added');
+  assert.equal(row.length, 37, 'Phase 1 added AI; Batch 3 added AJ/AK -- nothing else');
+  // Batch 3: this fixture has no after-hours leg, so the pair is 0/0 and
+  // every in-window figure below is untouched by their computation.
+  assert.equal(row[35], 0, 'AJ after-hours answered');
+  assert.equal(row[36], 0, 'AK after-hours TTT seconds');
   assert.equal(row[2], 'Anna');
   assert.equal(row[3], '103,104', 'D: both queue extensions, unchanged');
   assert.equal(row[4], 3, 'E: unique parents in window (P1, P2, P9)');
@@ -128,7 +132,7 @@ test('a 34-wide sheet is WIDENED before the write instead of throwing', function
   const rows = build(crossoverGrid(), 34);
   const row = annaRow(rows);
   assert.ok(row, 'the build completed on a narrow sheet');
-  assert.equal(row.length, 35);
+  assert.equal(row.length, 37, 'widened to the Batch 3 width (AI + AJ/AK)');
   assert.ok(row[34] && row[34] !== '', 'and the split still landed');
 });
 

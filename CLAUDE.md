@@ -723,6 +723,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   State #42). So keep deploying and backfilling the split on its own urgency
   (the 14-day window closes regardless); the reader gate does not slow that
   down, and turning the gate on later costs nothing extra.
+- **DQE cols AJ/AK (`After-Hrs Answered` / `After-Hrs TTT (sec)`) capture the
+  half hour AFTER the work window -- ADDITIVE, capture-only, on AI's 14-day
+  clock (Batch 3).** `HISTORICAL_COLS.AFTER_HOURS_ANSWERED`=36 /
+  `AFTER_HOURS_TTT_SEC`=37, from `afterHoursLegs` (`startPST ∈
+  [DQE_WINDOW_END, DQE_AFTER_HOURS_END)`, 3:00-3:30 PM PST, half-open and
+  DISJOINT from `windowLegs`, so no in-window figure can move) with the SAME
+  own-talk rule as TTT (`talkForLegs`, INV-08). Three rules: (1) AK is INTEGER
+  SECONDS, not H:MM:SS -- no reader exists yet, and an integer cell sidesteps
+  the INV-02 duration trap. (2) NULL and 0 are DIFFERENT facts: an agent or
+  sentinel row with nothing after hours writes numeric `0`/`0`; a blank (a
+  pre-Batch-3 row, or a duplicate-merge, which clears AI..AK together) mirrors
+  as NULL to the nullable-int `dqe_history` pair (idempotent ADD COLUMN, every
+  upsert COALESCEs, binds via `NULLIF(?, '')::int`) -- a future reader must
+  keep them apart. (3) `DQE_WRITE_WIDTH`=37: the writer widens first (REP-10),
+  labels the two headers ONCE (only while AJ's header is blank), and every
+  full-width reader clamps to `getMaxColumns()` with a 37 ceiling -- a ceiling
+  left at 35 mirrors NULL on every row with no error, and COALESCE then keeps
+  the stale value forever (`cross-file-pins` R8-D1 Batch 3 derives every
+  ceiling from Config.gs). `DQE_AFTER_HOURS_END` joins the INV-06 pin family
+  with its display mirror `DASHBOARD_AFTER_HOURS_WINDOW`. One refactor trap
+  caught on the way in: the queue-split call sits in a try/catch, so a rename
+  that unbinds anything it reads blanks AI SILENTLY -- `queue-split.test.js`
+  fails on it. **Backfill = force re-import of the dates whose `Call_Legs_*`
+  tab survives** (Operator State #60). Pinned by `pipeline-build.test.js`
+  (Batch 3 block), `neon-write-mapping.test.js`, `neon-backfill-resume.test.js`,
+  `sheet-repairs-merge.test.js`.
 - **The Extraction Sidebar mirrors the pipeline's QCD rules BY HAND -- a THIRD
   duplication, and it has already drifted.** `cdr-report/dataFilters.js`
   (CDR Tools -> Open Extraction Sidebar: "which raw CDR rows produced this
@@ -2263,6 +2289,7 @@ items for anything it flags or doesn't cover.)
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, and the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL)
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
+60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the ONE-TIME backfill by force re-import of the dates whose `Call_Legs_*` tab survives (NULL = never captured, 0 = captured and empty)
 
 ## Cycle Workflow Config
 

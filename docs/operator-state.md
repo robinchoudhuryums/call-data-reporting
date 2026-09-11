@@ -1713,3 +1713,35 @@ When something looks wrong, before assuming a code bug, check:
     relevant `preview*` afterwards and, if the sheet feeds Neon, the matching
     re-mirror (`backfillDQEHistoryUpsert()` for DQE). Delete the copied tab from
     CDR Report when done. Pinned by `tests/unit/sheet-repairs-backup.test.js`.
+
+60. **After-hours capture (roadmap Batch 3, 2026-09) — verifying the deploy,
+    and the one-time backfill whose window CLOSES.** The daily build now
+    writes two additive DQE columns, `AJ After-Hrs Answered` / `AK After-Hrs
+    TTT (sec)` (INV-10), over the 3:00–3:30 PM PST half hour after the work
+    window (INV-06). Deploy BOTH `cdr-report` and `cdr-import` (the INV-16
+    pair) — whichever project builds DQE that day must carry it, or the day is
+    written 35 wide with the pair blank. The dashboard push carries only
+    constants (`HISTORICAL_COLS`, `DASHBOARD_AFTER_HOURS_WINDOW`); no surface
+    reads the pair yet.
+    **Verify after the first post-deploy build:** (a) `DQE Historical Data` is
+    37 columns and row 1 reads `After-Hrs Answered` / `After-Hrs TTT (sec)` in
+    AJ/AK (the writer widens and labels once; an existing AJ header is never
+    overwritten); (b) that date's rows carry NUMERIC AJ/AK — `0`/`0` is a
+    valid capture ("nothing after hours"), a BLANK is not; (c) in Neon,
+    `SELECT count(*) FILTER (WHERE after_hours_answered IS NOT NULL), count(*)
+    FROM dqe_history WHERE call_date = '<date>'` — the two counts match (the
+    mirror self-upgrades the table with `ADD COLUMN IF NOT EXISTS` on its
+    first write; if the first count is 0 the columns exist but the mirror ran
+    before the push — the next build heals it, or re-mirror the date).
+    **Backfill (one-time, do it the week of the deploy):** the pair can only
+    be computed while a date's `Call_Legs_*` tab still exists (#43 prunes at
+    ~14 days), so force re-import each surviving date — Manual Export per date
+    (#56), which rebuilds DQE and mirrors inline. Older dates stay NULL
+    forever; that is the documented "never captured" state, distinct from 0.
+    Do NOT reach for `backfillDQEHistoryUpsert` here: it re-mirrors the SHEET,
+    whose old rows have no pair, and the upsert's COALESCE keeps NULL as NULL.
+    A `repairDqeDuplicateMerge` on a captured date CLEARS its AI..AK (a merged
+    row cannot carry either) — re-import the date afterwards if it is still
+    inside the window. Pinned by `tests/unit/pipeline-build.test.js` (Batch 3
+    block), `neon-write-mapping.test.js`, `neon-backfill-resume.test.js`,
+    `sheet-repairs-merge.test.js`, `cross-file-pins.test.js`.

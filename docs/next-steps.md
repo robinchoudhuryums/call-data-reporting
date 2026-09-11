@@ -16,7 +16,7 @@ batch, items are independent unless marked.
 |---|---|---|---|---|
 | 1 | **Safety nets** — SHIPPED 2026-09-11 (block 186) | 1a harness runs under the live TZ split · 1b snapshot before any bulk repair | 1a none · 1b cdr-report (deploy pending) | done |
 | 2 | **Dashboard round** — SHIPPED 2026-09-11 (block 186) | 2a Escalations: admin delete · 2b notes #2+#1 (help chip + tour) | dashboard (deploy pending) | done |
-| 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **NEXT** (the 14-day clock is running) |
+| 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **SHIPPED 2026-09-11** (deploy + backfill: Operator State #60) |
 | 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | after 3 |
 | ∥ | **Neon storage decision** | operator decision; optional Health row "Neon storage by table" | none, or dashboard | any time |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
@@ -190,6 +190,14 @@ batch is capture only, because the capture window closes daily.
 
 **Size.** M. **Deploy.** cdr-report + cdr-import (+ the one-time
 `backfill` over whatever `Call_Legs_*` tabs survive on deploy day).
+
+**Status (2026-09-11): SHIPPED** on the branch (block 187). What landed
+beyond the design: AK is integer seconds; NULL-vs-0 is a documented
+distinction (nullable Neon ints, `NULLIF` binds, COALESCE upserts); the
+duplicate-merge repair clears AI..AK together; every full-width DQE reader's
+ceiling is pinned to Config.gs (`cross-file-pins` R8-D1 Batch 3). Operator
+State #60 has the deploy verification and the backfill. Display surfaces
+remain a later note.
 
 ---
 

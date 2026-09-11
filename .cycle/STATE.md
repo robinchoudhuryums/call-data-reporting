@@ -4,6 +4,19 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **Batch 3 SHIPPED (2026-09-11, block 187; one commit on the branch, not
+  yet PR'd):** after-hours capture -- DQE cols AJ `After-Hrs Answered` (36) +
+  AK `After-Hrs TTT (sec)` (37, integer seconds) over `[15:00, 15:30)` PST,
+  `DQE_AFTER_HOURS_END` under the INV-06 pin with `DASHBOARD_AFTER_HOURS_WINDOW`;
+  writer widens to 37 + labels once; Neon nullable ints (ADD COLUMN IF NOT
+  EXISTS, COALESCE, NULLIF binds; NULL = never captured, 0 = captured/empty);
+  every full-width DQE reader ceiling pinned to Config.gs; duplicate-merge
+  clears AI..AK. 1327/1327; 17/17 mutations; INV-16 clean. One real bug found
+  on the way: the refactor unbound `agentTalkPerParent` inside the split's
+  try/catch -> blank AI (queue-split caught it). **Deploys pending:** cdr-report
+  + cdr-import (same day) + the ONE-TIME backfill by force re-import of the
+  surviving `Call_Legs_*` dates -- Operator State #60. NEXT: PR when the owner
+  asks; then Batch 4 (Phase 2 nightly check-and-sort).
 - **Batches 1 + 2 SHIPPED (2026-09-11, block 186; four commits on the branch,
   not yet PR'd):** 1a harness under the live TZ split by default (+2
   tripwires in cross-file-pins); 1b snapshot-before-bulk-repair
@@ -11,8 +24,7 @@
   2a Escalations ADMIN delete (`deleteEscalation`, INV-55, S45); 2b the team
   chip over the dept window + seq guard, the tour gated on
   `onOverviewSettled_`. 1316/1316; ci:ui green twice (after 2a, after 2b).
-  **Deploys pending:** dashboard (2a+2b) and cdr-report (1b). **NEXT: Batch 3
-  (#5 after-hours capture, own PR -- the 14-day Call_Legs clock is running).**
+  **Deploys pending:** dashboard (2a+2b) and cdr-report (1b). Batch 3 followed (above).
 - **Phase 1 COMPLETE (2026-09-11; blocks 184 + the R46 fix, PRs #305/#306).**
   The first live run exposed a TIMEZONE SHIFT: the repair (and the writer
   change) built each Date as `new Date(Y,M-1,D)` = SCRIPT-TZ midnight, and
@@ -225,9 +237,11 @@
   timezone fix (PRs #305/#306), the roadmap landed (#307), and PR #304 (the
   dashboard batch) merged -- all on main. Tomorrow's census after the 9/10
   build is Phase 1's last acceptance step.
-- Where I left off: four batch commits + the roadmap status commit pushed on
-  `claude/sync-commands-kmeo99`, un-PR'd; the owner decides PR + merge, then
-  deploys dashboard + cdr-report and walks S45 / S23 / the chip.
+- Where I left off: Batch 3 (block 187) committed + pushed on
+  `claude/sync-commands-kmeo99` on top of the Batch 1+2 commits, all un-PR'd;
+  the owner decides PR + merge, then deploys cdr-report + cdr-import (same
+  day) and runs the #60 backfill while the Call_Legs tabs survive, plus the
+  earlier pending dashboard + cdr-report deploys and the S45 / S23 / chip walks.
 
 ## Latest session (Batch 2 — Health page truth + Batch 1 follow-ons, 2026-09-03)
 - Implemented the seven Batch 2 findings plus I-6 and two follow-ons;

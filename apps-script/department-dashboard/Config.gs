@@ -289,6 +289,14 @@ const HISTORICAL_COLS = Object.freeze({
   // sentinel); '{}' = computed with nothing in the work window. Cannot be
   // backfilled past the ~14-day Call_Legs retention.
   QUEUE_SPLIT: 35,       // AI - JSON
+  // Batch 3 (owner note #5): the AFTER-HOURS pair -- legs starting in the
+  // half-hour after the work window (3:00-3:30 PM PST = 5:00-5:30 PM CST, a
+  // hard cutoff). Additive: A..AI keep their in-window meaning. AK is INTEGER
+  // SECONDS, not H:MM:SS (no INV-02 duration-cell trap). No dashboard reader
+  // yet -- capture only, so the 14-day Call_Legs window is not lost while the
+  // display is designed (Operator State #60).
+  AFTER_HOURS_ANSWERED: 36,   // AJ - integer count
+  AFTER_HOURS_TTT_SEC: 37,    // AK - integer seconds
 });
 
 // Sentinel written into abandoned-ID/time cells (AD/AE/AF) whose original
@@ -443,6 +451,13 @@ const TEAM_AVG_EXCLUDES = Object.freeze({
 const DASHBOARD_WORK_WINDOW = Object.freeze({
   pst: '6:30 AM – 3:00 PM PST',
   cst: '8:30 AM – 5:00 PM CST',
+});
+// Batch 3: the AFTER-HOURS window's display mirror -- the pipeline's
+// DQE_WINDOW_END..DQE_AFTER_HOURS_END, pinned against those constants by
+// cross-file-pins (the INV-06 family). No surface renders it yet.
+const DASHBOARD_AFTER_HOURS_WINDOW = Object.freeze({
+  pst: '3:00 PM – 3:30 PM PST',
+  cst: '5:00 PM – 5:30 PM CST',
 });
 
 /**

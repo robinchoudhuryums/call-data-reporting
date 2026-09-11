@@ -896,8 +896,13 @@ function mergeDqeDuplicateRows_(dryRun) {
     // rather than leave it stale: '' is the documented "never computed" state,
     // so a reader falls back to the rollup and marks the date, which is
     // correct. A merged row is rare and can be re-split by rebuilding the date
-    // while it is still inside the Call_Legs window.
-    if (sheet.getMaxColumns() >= 35) sheet.getRange(w.row, 35).setValue('');
+    // while it is still inside the Call_Legs window. Batch 3: the after-hours
+    // pair AJ/AK is cleared the same way -- blank mirrors as NULL ("never
+    // captured"), so a rebuild inside the window re-captures it; summing the
+    // duplicates would double a double-append and the rollup's own dedup
+    // rules do not reach these columns.
+    var extraCols = Math.min(37, sheet.getMaxColumns()) - 34;
+    if (extraCols > 0) sheet.getRange(w.row, 35, 1, extraCols).setValues([new Array(extraCols).fill('')]);
   });
   SpreadsheetApp.flush();
   // Delete extras bottom-up so earlier deletions don't shift later row numbers.

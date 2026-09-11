@@ -161,3 +161,28 @@ test('R8-B6: IDENTICAL duplicate rows (double-append) are deduped, not doubled',
   assert.equal(String(rows[0][5]), '2', 'rung kept at 2, not doubled to 4');
   assert.equal(rows[0][29], 'P1', 'AD kept, not duplicated');
 });
+
+test('Batch 3: a merged row has AI, AJ and AK CLEARED (blank = never captured; a rebuild re-captures)', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: {
+      'DQE Historical Data': [
+        new Array(37).fill('h'),   // header, 37 wide (post-Batch-3 sheet)
+        dqeRow('06/22/2026', 'Anna Smith', { 29: 'P1', 30: 'M1', 31: '10:30:00', 34: '{"A_Q_CSR":{"a":1}}', 35: 1, 36: 240 }),
+        dqeRow('06/22/2026', 'Anna Smith', { 29: 'P2', 30: 'M2', 31: '9:15:00',  34: '{"A_Q_CSR":{"a":1}}', 35: 2, 36: 300 }),
+        dqeRow('06/22/2026', 'Ben Jones',  { 35: 3, 36: 400 }),   // not a duplicate: untouched
+      ],
+    },
+  });
+  const res = h.call('repairDqeDuplicateMerge');
+  assert.equal(res.merged, 1);
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 37).getDisplayValues();
+  const merged = rows.filter(function (r) { return r[2] === 'Anna Smith'; })[0];
+  assert.equal(merged[34], '', 'AI cleared');
+  assert.equal(merged[35], '', 'AJ cleared -- not summed, not the first row\'s');
+  assert.equal(merged[36], '', 'AK cleared');
+  const ben = rows.filter(function (r) { return r[2] === 'Ben Jones'; })[0];
+  assert.equal(String(ben[35]), '3', 'a non-duplicate row keeps its pair');
+  assert.equal(String(ben[36]), '400');
+});

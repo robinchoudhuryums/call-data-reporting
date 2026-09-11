@@ -212,6 +212,11 @@ test('INV-23 producer (Pass 4): a no-ring abandoned queue call emits ONE queue-s
   assert.equal(s[30], '');
   assert.equal(s[31], '9:10:00');
   assert.equal(s[32], '0:00:00'); assert.equal(s[33], '0:00:00');
+  // Batch 3: a sentinel is queue-level, so its after-hours pair is 0/0 --
+  // numeric zeros, never blanks (a blank AJ/AK mirrors as NULL, which the
+  // COALESCE upsert would read as "no value to store").
+  assert.equal(s[35], 0, 'AJ on a sentinel row');
+  assert.equal(s[36], 0, 'AK on a sentinel row');
   // Anna's agent row coexists -- the sentinel doesn't displace it, and
   // her AD carries the rung-abandoned parent PY (per-agent path).
   const anna = rows.filter(function (r) { return r[2] === 'Anna'; })[0];
@@ -496,6 +501,152 @@ test('P4/M3: remirror routes AF through the slot sanitizer, AD/AE through the ID
   const afCalls = seen.filter(function (c) { return c[1] === '12/30/1899 10:23:33'; });
   assert.deepEqual(afCalls.map(function (c) { return c[0]; }), ['slot'],
     'the AF cell reached ONLY the slot sanitizer');
+  // Batch 3: a pre-Batch-3 (35-wide) sheet has no AJ/AK -- the remirror
+  // carries NULL, not 0, so the COALESCE upsert keeps whatever Neon holds.
+  assert.equal(r.afterHoursAnswered, null, 'AJ absent -> null');
+  assert.equal(r.afterHoursTtt, null, 'AK absent -> null');
+});
+
+test('Batch 3: remirror carries AJ/AK from a 37-wide sheet, and a blank cell rides as NULL', function () {
+  const row = new Array(37).fill('');
+  row[0] = 'March 2026'; row[1] = '3/10/2026'; row[2] = 'Anna'; row[3] = '501';
+  row[4] = '2'; row[5] = '6'; row[6] = '2'; row[7] = '4';
+  row[8] = '0:12:00'; row[9] = '0:03:00';
+  row[35] = 2; row[36] = 500;
+  const blankRow = row.slice(); blankRow[2] = 'Bob'; blankRow[35] = ''; blankRow[36] = '';
+  const ss = makeFakeSpreadsheet({
+    sheets: { 'DQE Historical Data': [
+      ['Month-Year', 'Date', 'Agent', 'Ext'],   // header
+      row, blankRow,
+    ] },
+  });
+  const dqeSheet = ss.getSheetByName('DQE Historical Data');
+  dqeSheet._maxColumns = 37;
+  let captured = null;
+  h.ctx.writeDQERowsToNeon = function (rows) { captured = rows; return { skipped: 0 }; };
+  try {
+    h.call('remirrorExistingDqeDate_', dqeSheet, [0, 1], '3/10/2026');
+  } finally {
+    h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
+  }
+  assert.ok(captured && captured.length === 2, 'both rows re-mirrored');
+  // The remirror reads DISPLAY values (INV-02), so the pair rides as the
+  // cell's text; neonWrite's neonSqlIntOrNull_ / neonBindIntOrNull_ parse it.
+  assert.equal(Number(captured[0].afterHoursAnswered), 2);
+  assert.equal(Number(captured[0].afterHoursTtt), 500);
+  assert.equal(captured[1].afterHoursAnswered, null, 'blank AJ -> NULL (COALESCE keeps the stored value)');
+  assert.equal(captured[1].afterHoursTtt, null, 'blank AK -> NULL');
+});
+
+
+// ── Batch 3: after-hours capture (AJ/AK) ────────────────────────────────────
+// The 3:00-3:30 PM PST half hour AFTER the work window. Additive: cols A-AI
+// keep their in-window meaning; the pair is written on every agent row.
+
+const AH_IN   = '03/09/2026 15:10:00';   // 54600s PST -> inside [15:00, 15:30)
+const AH_EDGE = '03/09/2026 15:30:00';   // 55800s PST -> the half-open END, excluded
+
+function buildAfterHours(extraRows, sheetGrid) {
+  const rawGrid = [new Array(26).fill('')].concat([
+    // In-window activity, identical to build() above: H=2, I=0:08:00.
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'P2', legId: 0, start: IN, talk: '0:05:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    rawRow({ callId: 'Q2', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P2', callerId: 'A_Q_CSR', answered: true }),
+    rawRow({ callId: 'Q3', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P3', callerId: 'A_Q_CSR', missed: true }),
+  ]).concat(extraRows || []);
+  const ss = makeFakeSpreadsheet({
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': sheetGrid || [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  const dqe = ss._sheet('DQE Historical Data');
+  if (sheetGrid) dqe._maxColumns = sheetGrid[0].length;
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), dqe);
+  return { sheet: dqe, anna: dqe._data.slice(1).filter(function (r) { return r[2] === 'Anna'; })[0] };
+}
+
+// An answered after-hours call: parent P5 (Anna's own talk 4:00, plus a Bob
+// decoy so INV-08 own-talk attribution is proven on this path too) and the
+// queue leg Q5 that rang her at 15:10 PST.
+function afterHoursAnswered_() {
+  return [
+    rawRow({ callId: 'P5', legId: 0, start: AH_IN, talk: '0:04:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'P5', legId: 1, start: AH_IN, talk: '0:16:39', calleeName: 'Bob',  parentCall: 'N/A' }),
+    rawRow({ callId: 'Q5', legId: 0, start: AH_IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P5', callerId: 'A_Q_CSR', answered: true }),
+  ];
+}
+
+test('Batch 3: an after-hours answered call lands in AJ/AK and leaves the in-window figures untouched', function () {
+  const out = buildAfterHours(afterHoursAnswered_());
+  const row = out.anna;
+  assert.equal(row.length, 37, 'A-AK');
+  assert.equal(row[35], 1, 'AJ: one after-hours answered leg');
+  assert.equal(row[36], 240, "AK: Anna's OWN talk on P5 in integer seconds (not Bob's 999)");
+  // Additive: the work-window columns are byte-identical to build()'s.
+  assert.equal(row[5], 3, 'F: rung (in-window only)');
+  assert.equal(row[7], 2, 'H: answered (in-window only)');
+  assert.equal(row[8], '0:08:00', 'I: TTT excludes the after-hours talk');
+  assert.equal(row[9], '0:04:00', 'J: ATT excludes the after-hours talk');
+  assert.equal(row[4], 3, 'E: unique parents in window only');
+});
+
+test('Batch 3: the after-hours window is half-open -- a 15:30 PST leg is in NEITHER window', function () {
+  const rows = afterHoursAnswered_().map(function (r) { r[2] = AH_EDGE; return r; });
+  const row = buildAfterHours(rows).anna;
+  assert.equal(row[35], 0, 'AJ: excluded at the boundary');
+  assert.equal(row[36], 0, 'AK: excluded at the boundary');
+  assert.equal(row[7], 2, 'H: and not counted in-window either');
+  assert.equal(row[8], '0:08:00');
+});
+
+test('Batch 3: a MISSED after-hours leg counts toward neither AJ nor AK', function () {
+  const rows = [
+    rawRow({ callId: 'P6', legId: 0, start: AH_IN, callTime: '0:02:00', calleeName: 'A_Q_CSR', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q6', legId: 0, start: AH_IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P6', callerId: 'A_Q_CSR', missed: true }),
+  ];
+  const row = buildAfterHours(rows).anna;
+  assert.equal(row[35], 0, 'AJ counts ANSWERED legs only');
+  assert.equal(row[36], 0);
+  assert.equal(row[6], 1, 'G: the in-window miss (Q3) is still the only miss counted');
+});
+
+test('Batch 3: no after-hours activity writes numeric 0/0, never blanks', function () {
+  const row = buildAfterHours([]).anna;
+  assert.strictEqual(row[35], 0);
+  assert.strictEqual(row[36], 0);
+});
+
+test('Batch 3: a 34-wide sheet is widened to 37 and the two headers are written ONCE', function () {
+  const out = buildAfterHours(afterHoursAnswered_());
+  assert.ok(out.sheet.getMaxColumns() >= 37, 'widened (REP-10: Sheets does not auto-expand columns)');
+  assert.equal(out.sheet._data[0][35], 'After-Hrs Answered');
+  assert.equal(out.sheet._data[0][36], 'After-Hrs TTT (sec)');
+  // A sheet whose AJ header is already set (an operator relabel, or a prior
+  // build) is never rewritten -- the header write is gated on a BLANK AJ.
+  const hdr = new Array(37).fill('');
+  hdr[35] = 'Custom AJ'; hdr[36] = 'Custom AK';
+  const out2 = buildAfterHours(afterHoursAnswered_(), [hdr]);
+  assert.equal(out2.sheet._data[0][35], 'Custom AJ', 'existing header kept');
+  assert.equal(out2.sheet._data[0][36], 'Custom AK');
+  assert.equal(out2.anna[35], 1, 'and the data still lands on the pre-widened sheet');
+});
+
+test('Batch 3: the daily Neon mirror payload carries afterHoursAnswered / afterHoursTtt', function () {
+  let captured = null;
+  h.ctx.writeDQERowsToNeon = function (rows) { captured = rows; return { skipped: 0 }; };
+  try {
+    buildAfterHours(afterHoursAnswered_());
+  } finally {
+    h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
+  }
+  assert.ok(captured, 'the inline mirror ran');
+  const anna = captured.filter(function (r) { return r.agentName === 'Anna'; })[0];
+  assert.equal(anna.afterHoursAnswered, 1);
+  assert.equal(anna.afterHoursTtt, 240);
+  assert.equal(anna.queueSplit && anna.queueSplit[0], '{', 'AI still rides alongside (the split is not displaced)');
 });
 
 

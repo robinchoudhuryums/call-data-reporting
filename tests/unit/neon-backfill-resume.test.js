@@ -36,9 +36,10 @@ function dqeRow(date, agent, over) {
   return Object.assign(r, over || {});
 }
 
-// One upsert statement per batch; every row binds 35 params (34 cols +
-// queue_split). Row count per statement = binds / 35.
-const DQE_BINDS_PER_ROW = 35;
+// One upsert statement per batch; every row binds 37 params (34 cols +
+// queue_split; Batch 3 appended after_hours_answered + after_hours_ttt).
+// Row count per statement = binds / 37.
+const DQE_BINDS_PER_ROW = 37;
 
 // The fingerprint key joins the key columns with U+0001 (nbResumeKey_).
 function K() { return Array.prototype.slice.call(arguments).join('\u0001'); }
@@ -180,6 +181,24 @@ test('T-7: coerced cells the sanitizers exclude are COUNTED, per cell and per ro
   assert.equal(b[29], '#REBUILD', 'lost AD sentineled');
   assert.equal(b[31], '10:23:33', 'AF date-render recovered, not counted as loss');
   assert.equal(b[DQE_BINDS_PER_ROW + 29], '#REBUILD', 'pre-marked sentinel passes through');
+});
+
+test('Batch 3: the upsert binds AJ/AK from a 37-wide sheet, and NULL (never 0) where the sheet has none', function () {
+  const cap = install([
+    dqeRow('08/05/2026', 'Anna', { 35: '2', 36: '500' }),   // 37-wide: captured
+    dqeRow('08/05/2026', 'Ben',  { 35: '0', 36: '0' }),     // captured, nothing after hours
+    dqeRow('08/06/2026', 'Cara'),                            // pre-Batch-3 row: blank
+  ]);
+  h.call('backfillDQEHistoryUpsert');
+  assert.equal(upsertedRows(cap), 3);
+  const b = cap.statements[0].binds;
+  assert.equal(b[35], '2');   assert.equal(b[36], '500');
+  assert.equal(b[DQE_BINDS_PER_ROW + 35], '0', 'a captured 0 stays 0');
+  assert.equal(b[DQE_BINDS_PER_ROW + 36], '0');
+  assert.equal(b[2 * DQE_BINDS_PER_ROW + 35], null, 'blank AJ -> NULL (COALESCE keeps the stored value)');
+  assert.equal(b[2 * DQE_BINDS_PER_ROW + 36], null);
+  assert.match(cap.statements[0].sql, /after_hours_answered = COALESCE\(EXCLUDED\.after_hours_answered, dqe_history\.after_hours_answered\)/);
+  assert.match(cap.statements[0].sql, /NULLIF\(\?, ''\)::int,NULLIF\(\?, ''\)::int\)/, 'the pair binds through NULLIF casts');
 });
 
 test('T-7: nbSanitizeDqeCells_ tallies without changing what the sanitizers return', function () {
