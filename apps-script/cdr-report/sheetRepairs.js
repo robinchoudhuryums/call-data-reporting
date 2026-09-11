@@ -945,11 +945,22 @@ function hdScanOneSheet_(ss, spec) {
     sheet: spec.sheet, dateCol: spec.dateCol, rows: 0,
     types: {}, typeRanges: {}, formats: {}, singleTyped: null, ordered: null,
     inversions: 0, inversionSamples: [], unparsed: 0, unparsedSamples: [],
+    tzSplit: 0, tzSplitSamples: [],
     minIso: null, maxIso: null, verdict: 'MISSING', ms: 0,
   };
   var t0 = Date.now();
   var sheet = ss.getSheetByName(spec.sheet);
   if (!sheet) return res;
+  // R46: a Date cell must read the SAME calendar day in the spreadsheet TZ
+  // (what the sheet displays and what the dashboard's rowDateIso_ resolves)
+  // and in the script TZ (what a `new Date(y, m-1, d)` writer meant). A cell
+  // whose instant is script-TZ midnight in a spreadsheet one hour behind reads
+  // a day EARLY on the sheet side while parsing as a perfectly valid date --
+  // the shape the first Phase 1 repair wrote 9,516 times, and the reason its
+  // acceptance census said CLEAN. Checked on the raw value; the display path
+  // below cannot see it.
+  var ssTz = ss.getSpreadsheetTimeZone();
+  var scriptTz = Session.getScriptTimeZone();
 
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { res.verdict = 'EMPTY'; res.ms = Date.now() - t0; return res; }
@@ -987,6 +998,17 @@ function hdScanOneSheet_(ss, spec) {
     }
 
     if (type === 'blank') continue;
+
+    if (type === 'date') {
+      var daySheet  = Utilities.formatDate(raw, ssTz, 'yyyy-MM-dd');
+      var dayScript = Utilities.formatDate(raw, scriptTz, 'yyyy-MM-dd');
+      if (daySheet !== dayScript) {
+        res.tzSplit++;
+        if (res.tzSplitSamples.length < HD_SCAN_SAMPLE_CAP_) {
+          res.tzSplitSamples.push({ row: rowNum, sheet: daySheet, script: dayScript });
+        }
+      }
+    }
 
     var display = String(disp[i][0] == null ? '' : disp[i][0]);
     // A serial cell carrying a NUMERIC (not date) number format displays as a
@@ -1030,6 +1052,7 @@ function hdVerdict_(res) {
   if (!res.singleTyped) flags.push('MIXED-TYPE');
   if (!res.ordered)     flags.push('UNSORTED');
   if (res.unparsed)     flags.push('UNPARSED');
+  if (res.tzSplit)      flags.push('TZ-SPLIT');
   return flags.length ? flags.join('+') : 'CLEAN';
 }
 
@@ -1063,6 +1086,15 @@ function hdLogCensus_(census) {
       lines.push('   ** MIXED TYPE -- a sort on this column CANNOT order it '
         + 'chronologically (Sheets groups numeric/Date before text), and the '
         + 'result still reads as "sorted". Normalize before sorting.');
+    }
+    if (s.tzSplit) {
+      var tzs = s.tzSplitSamples[0];
+      lines.push('   ** TZ-SPLIT: ' + s.tzSplit + ' Date cell(s) read a DIFFERENT calendar day in the '
+        + 'spreadsheet TZ than in the script TZ (first: row ' + tzs.row + ', sheet ' + tzs.sheet
+        + ' / script ' + tzs.script + '). The instant is not midnight in the spreadsheet TZ, so '
+        + 'the sheet, the dashboard and every display-value reader key these rows a day off. '
+        + 'DQE: run previewDqeDateNormalize() / repairDqeDateNormalize() (it re-anchors them). '
+        + 'Another sheet: its writer builds Dates in the script TZ -- see dateAtSheetMidnight_ (R46).');
     }
     if (s.inversions) {
       lines.push('   ** ' + s.inversions + ' inversion(s); first '
@@ -1133,26 +1165,31 @@ function repairDqeDateNormalize() {
   return normalizeDqeDateColumn_(/*dryRun=*/false);
 }
 
-// Same construction as the build's displayToDate for the M/D/YYYY branch:
-// local midnight of the calendar date. Stricter in one way -- a calendar
-// round-trip check refuses "2/30/2026", which `new Date` would silently roll
-// to March 2; the build never produces such a string, so the two agree on
-// every input the build emits.
-function dqeDateFromMdy_(display) {
+// The instant is midnight in the SPREADSHEET's timezone -- the writer's own
+// construction since R46 (`dateAtSheetMidnight_`, buildDQEHistoricalData.js),
+// so a repaired cell is indistinguishable from one the build writes. NOT
+// `new Date(Y, M-1, D)`: that is script-TZ midnight, which the sheet renders as
+// 23:00 of the previous day (the first live run's shift). Stricter than the
+// build in one way -- a calendar round-trip check refuses "2/30/2026", which
+// `new Date` would silently roll to March 2.
+function dqeDateFromMdy_(display, tz) {
   var m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(display == null ? '' : display).trim());
   if (!m) return null;
   var mo = parseInt(m[1], 10), da = parseInt(m[2], 10), yr = parseInt(m[3], 10);
   var d = new Date(yr, mo - 1, da);
   if (isNaN(d.getTime())) return null;
   if (d.getFullYear() !== yr || d.getMonth() !== mo - 1 || d.getDate() !== da) return null;
-  return d;
+  return dateAtSheetMidnight_(tz || SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone(), yr, mo, da);
 }
 
 function normalizeDqeDateColumn_(dryRun) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('DQE Historical Data');
   if (!sheet) throw new Error('normalizeDqeDateColumn_: "DQE Historical Data" not found.');
-  var out = { applied: false, scanned: 0, alreadyDate: 0, blank: 0, converted: 0, refused: [] };
+  var ssTz = ss.getSpreadsheetTimeZone();
+  var scriptTz = Session.getScriptTimeZone();
+  var out = { applied: false, scanned: 0, alreadyDate: 0, blank: 0, converted: 0,
+              reanchored: 0, reanchorRange: null, refused: [] };
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('DQE date normalize: no data rows.'); return out; }
 
@@ -1165,26 +1202,55 @@ function normalizeDqeDateColumn_(dryRun) {
   var disp = sheet.getRange(2, 2, n, 1).getDisplayValues();
   var targets = [];   // { row, date } in row order
   for (var i = 0; i < n; i++) {
-    var type = hdCellType_(vals[i][0]);
-    if (type === 'date')  { out.alreadyDate++; continue; }
+    var raw = vals[i][0];
+    var type = hdCellType_(raw);
     if (type === 'blank') { out.blank++; continue; }
     var display = String(disp[i][0] == null ? '' : disp[i][0]).trim();
-    var d = (type === 'text:mdy') ? dqeDateFromMdy_(display) : null;
+    var d = null;
+    if (type === 'date') {
+      // Already midnight in the spreadsheet TZ: the shape the writer (R46) and
+      // this repair produce, and the old pipeline's coerced-string rows.
+      if (Utilities.formatDate(raw, ssTz, 'HH:mm') === '00:00') { out.alreadyDate++; continue; }
+      // R46: midnight in the SCRIPT TZ but not the sheet's -- the first live
+      // run's construction (and the writer's, until the same fix). Its calendar
+      // day is unambiguous in the script TZ; re-anchor to sheet midnight of
+      // that day. Any other time-of-day is unknown provenance: refused.
+      if (Utilities.formatDate(raw, scriptTz, 'HH:mm') === '00:00') {
+        var iso = Utilities.formatDate(raw, scriptTz, 'yyyy-MM-dd');
+        d = dateAtSheetMidnight_(ssTz, +iso.slice(0, 4), +iso.slice(5, 7), +iso.slice(8, 10));
+        if (d) {
+          out.reanchored++;
+          var rr = out.reanchorRange || (out.reanchorRange = { firstRow: i + 2, lastRow: i + 2, minIso: iso, maxIso: iso });
+          rr.lastRow = i + 2;
+          if (iso < rr.minIso) rr.minIso = iso;
+          if (iso > rr.maxIso) rr.maxIso = iso;
+          targets.push({ row: i + 2, date: d });
+          continue;
+        }
+      }
+      out.refused.push({ row: i + 2, type: 'date:time', display: display });
+      continue;
+    }
+    d = (type === 'text:mdy') ? dqeDateFromMdy_(display, ssTz) : null;
     if (!d) { out.refused.push({ row: i + 2, type: type, display: display }); continue; }
+    out.converted++;
     targets.push({ row: i + 2, date: d });
   }
-  out.converted = targets.length;
 
+  var rr0 = out.reanchorRange;
   var head = 'DQE date normalize (' + (dryRun ? 'PREVIEW' : 'APPLY') + '): ' + n + ' rows -- '
-    + out.alreadyDate + ' already Date, ' + out.blank + ' blank, '
-    + targets.length + ' text "M/D/YYYY" to convert, ' + out.refused.length + ' refused.';
+    + out.alreadyDate + ' already Date at sheet midnight, ' + out.blank + ' blank, '
+    + out.converted + ' text "M/D/YYYY" to convert, '
+    + out.reanchored + ' Date cell(s) at script-TZ midnight to re-anchor'
+    + (rr0 ? ' (rows ' + rr0.firstRow + '-' + rr0.lastRow + ', ' + rr0.minIso + '..' + rr0.maxIso + ')' : '')
+    + ', ' + out.refused.length + ' refused.';
   if (out.refused.length) {
     var sample = out.refused.slice(0, 12).map(function (r) {
       return 'row ' + r.row + ' [' + r.type + '] "' + r.display + '"';
     }).join('; ');
-    Logger.log(head + '\n** REFUSING: cells that are neither Date nor "M/D/YYYY" text -- converting '
-      + 'around them would leave col B mixed and unsortable while looking repaired. '
-      + 'Re-run previewHistoricalDateColumns() and repair these first: ' + sample);
+    Logger.log(head + '\n** REFUSING: cells that are neither a Date at sheet or script midnight nor '
+      + '"M/D/YYYY" text -- converting around them would leave col B mixed and unsortable while '
+      + 'looking repaired. Re-run previewHistoricalDateColumns() and repair these first: ' + sample);
     return out;
   }
   if (dryRun || !targets.length) {
@@ -1207,8 +1273,9 @@ function normalizeDqeDateColumn_(dryRun) {
   // The build's own after-write sort, now over a single-typed column.
   sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort({ column: 2, ascending: true });
   out.applied = true;
-  Logger.log(head + '\nConverted ' + targets.length + ' cell(s) and sorted col B ascending. '
-    + 'No Neon re-mirror needed (dates unchanged, only the cell type). Re-run '
-    + 'previewHistoricalDateColumns(): DQE should now read CLEAN.');
+  Logger.log(head + '\nWrote ' + targets.length + ' cell(s) (' + out.converted + ' converted, '
+    + out.reanchored + ' re-anchored) and sorted col B ascending. No Neon re-mirror needed '
+    + '(the calendar dates are unchanged). Re-run previewHistoricalDateColumns(): DQE should '
+    + 'now read CLEAN with no TZ-SPLIT line, and its latest date should be the latest build.');
   return out;
 }

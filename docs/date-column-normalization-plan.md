@@ -1,6 +1,6 @@
 # Historical date columns: normalization + ordering plan
 
-**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 shipped and run live (2026-09-11): DQE reads CLEAN. Phases 2–3 not started.
+**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 shipped and run live (2026-09-11); the run exposed a timezone shift (R46, fixed same day) — DQE is CLEAN once the corrected repair has re-anchored the shifted block. Phases 2–3 not started.
 **Why this exists:** five historical sheets are read by windowed date queries,
 and none is reliably date-ordered. Today that is *handled* — every dashboard
 reader uses a min/max SPAN, which is correct at any row order (CLAUDE.md,
@@ -182,7 +182,26 @@ CDR unchanged (CLEAN). CSR Transfer + Q Path still UNSORTED with the same
 three Aug 5 / 12 / 20 reprocess inversions — Phase 2's job. CSR Transfer's
 date column carries three number FORMATS (`""` / `m/d/yyyy` / `mm/dd/yyyy`)
 on one type; cosmetic, single-typed either way, not a sort hazard.
-Remaining acceptance: the next morning's build must keep DQE CLEAN.
+**But CLEAN was wrong (R46, same day).** DQE's latest date read 2026-09-08
+while Pipeline Health showed a 74-row build for 09-09: the repair (and the
+writer change) built each Date as `new Date(Y, M-1, D)` — midnight in the
+SCRIPT's TZ — and `setValues` converts a Date in the SPREADSHEET's TZ, one
+hour behind in summer, so all 9,516 cells landed as 23:00 of the previous day.
+The census could not see it (a display of "9/8/2026 23:00:00" parses as a
+valid 9/8) and neither could the harness (CI pins the process TZ to the
+script's; the fake rendered Dates in the process TZ). Fix, shipped 2026-09-11:
+`dateAtSheetMidnight_` (buildDQEHistoricalData.js, both copies) is the one
+construction for a date-only cell; the writer and `dqeDateFromMdy_` route
+through it; `repairDqeDateNormalize()` re-anchors a Date at script-TZ
+midnight to sheet midnight of the same calendar day (and reports the
+re-anchored row/ISO range — expect the converted block, 2026-03-09..latest);
+the census flags the shape as **TZ-SPLIT**. Backstory: fix-history R46.
+
+**Corrected acceptance:** push both projects, `previewDqeDateNormalize()`
+(expect N re-anchor, 0 refused, the range = the converted block),
+`repairDqeDateNormalize()`, then `previewHistoricalDateColumns()`: DQE CLEAN
+with NO TZ-SPLIT line and its latest date equal to the latest build's. Then
+the next morning's build must keep it so.
 
 ## Phase 2 — nightly check-and-sort (NOT STARTED)
 

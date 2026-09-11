@@ -19,7 +19,21 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 // sheetRepairs.js needs parseDateForNeon (neonWrite.js, same project) -- the
 // census deliberately reuses that one resolver rather than adding a sixth
 // hand-mirrored date parser.
-const h = loadGas({ project: 'cdr-report', files: ['neonWrite.js', 'sheetRepairs.js'] });
+const { formatDate } = require('../harness/formatDate');
+// buildDQEHistoricalData.js is loaded for dateAtSheetMidnight_ (R46): the
+// writer's own col-B construction, which the repair and these fixtures share.
+const h = loadGas({ project: 'cdr-report', files: ['neonWrite.js', 'buildDQEHistoricalData.js', 'sheetRepairs.js'] });
+
+// R46: the fake spreadsheet sits in a timezone that is NOT the script's
+// (the shim's Session.getScriptTimeZone() is America/Chicago, and CI pins the
+// process TZ to it). Mexico City is UTC-6 year round, Chicago UTC-5 in summer
+// -- the live pair, one hour apart from March to November. A script-TZ
+// midnight built for a summer date is 23:00 of the previous day here, which is
+// what the first live Phase 1 run wrote 9,516 times.
+const SS_TZ = 'America/Mexico_City';
+const SCRIPT_TZ = 'America/Chicago';
+function sheetMidnight(y, m, d) { return h.call('dateAtSheetMidnight_', SS_TZ, y, m, d); }
+function inTz(v, tz) { return formatDate(v, tz, 'yyyy-MM-dd HH:mm'); }
 
 const HEADERS = ['Month', 'Date', 'Agent'];
 
@@ -28,7 +42,21 @@ const HEADERS = ['Month', 'Date', 'Agent'];
 // Date instead would feed parseDateForNeon a UTC instant and shift it a day
 // (the F-8 class), which is a property of the fake, not of Sheets.
 function dateCell(y, m, d) {
-  return { v: new Date(y, m - 1, d), disp: m + '/' + d + '/' + y, fmt: 'M/d/yyyy' };
+  return { v: sheetMidnight(y, m, d), disp: m + '/' + d + '/' + y, fmt: 'M/d/yyyy' };
+}
+// R46: the shifted shape -- a Date at SCRIPT-TZ midnight of (y, m, d), which
+// the Mexico City sheet renders as 23:00 of the day before. Built as an
+// explicit instant so the fixture does not depend on the process TZ.
+function scriptMidnightCell(y, m, d) {
+  const want = Date.UTC(y, m - 1, d);
+  let t = want;
+  for (let k = 0; k < 3; k++) {
+    const seen = Date.parse(inTz(new Date(t), SCRIPT_TZ).replace(' ', 'T') + ':00Z');
+    if (seen === want) break;
+    t += want - seen;
+  }
+  const v = new Date(t);
+  return { v: v, disp: formatDate(v, SS_TZ, 'M/d/yyyy H:mm') + ':00', fmt: '' };
 }
 // Phase 0b: a text cell may sit in a plain-text ('@') cell -- the live
 // finding -- or in a General cell (a writer emitting a non-coercible string).
@@ -56,7 +84,7 @@ function colCSheet(cells)  { return buildSheet(cells, 2); }
 
 function install(sheets) {
   h.state.props.SPREADSHEET_ID = 'fake';
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: SS_TZ, sheets: sheets });
 }
 
 function scan(sheets) {
@@ -274,7 +302,7 @@ test('Phase 1: preview counts the text cells and writes nothing', function () {
   assert.equal(sheet._numberFormats, undefined, 'and touched no number format');
 });
 
-test('Phase 1: apply converts text "M/D/YYYY" to a LOCAL-MIDNIGHT Date, skips Dates and blanks, then sorts', function () {
+test('Phase 1: apply converts text "M/D/YYYY" to a SHEET-MIDNIGHT Date, skips Dates and blanks, then sorts', function () {
   // Post-cutover text rows landed AFTER the Date rows (the live shape) and,
   // to prove the sort ran, one text row is older than the last Date row.
   install({ 'DQE Historical Data': dqeSheet([
@@ -287,13 +315,13 @@ test('Phase 1: apply converts text "M/D/YYYY" to a LOCAL-MIDNIGHT Date, skips Da
   const b = colB(sheet).filter(function (v) { return v !== ''; });
   b.forEach(function (v, i) {
     assert.ok(v instanceof Date, 'row ' + i + ' is a Date after apply');
-    assert.equal(v.getHours() + v.getMinutes() + v.getSeconds() + v.getMilliseconds(), 0,
-      'row ' + i + ' is local midnight -- the writer\'s construction');
+    assert.equal(inTz(v, SS_TZ).slice(11), '00:00',
+      'row ' + i + ' is midnight in the SPREADSHEET TZ -- the writer\'s construction (R46)');
   });
   // The fake's sort is a no-op (tests filter by key rather than row order), so
   // order is asserted on the CONVERTED set, not the sheet: every date is present
   // and each converted cell carries its own calendar date, not a neighbour's.
-  const isos = b.map(localIso).sort();
+  const isos = b.map(function (v) { return inTz(v, SS_TZ).slice(0, 10); }).sort();
   assert.deepEqual(isos, ['2026-03-04', '2026-03-05', '2026-03-06', '2026-03-10']);
   assert.equal(sheet._numberFormats, undefined, 'no number-format write -- the cells are automatic-format');
 });
@@ -329,9 +357,140 @@ test('Phase 1: any cell that is neither Date nor "M/D/YYYY" text REFUSES the who
 test('Phase 1: an impossible calendar date is refused, never rolled forward', function () {
   // new Date(2026, 1, 30) silently becomes March 2. The build never emits such
   // a string, but a hand-pasted row could; the repair must not invent a date.
-  const d = h.call('dqeDateFromMdy_', '2/30/2026');
+  const d = h.call('dqeDateFromMdy_', '2/30/2026', SS_TZ);
   assert.equal(d, null);
-  const ok = h.call('dqeDateFromMdy_', '2/28/2026');
-  assert.equal(localIso(ok), '2026-02-28');
-  assert.equal(ok.getHours(), 0);
+  const ok = h.call('dqeDateFromMdy_', '2/28/2026', SS_TZ);
+  assert.equal(inTz(ok, SS_TZ), '2026-02-28 00:00');
+});
+
+// ── Phase 1b / R46: the timezone of a date-only cell ───────────────────────
+//
+// The first live Phase 1 run built every converted cell with
+// `new Date(Y, M-1, D)` -- midnight in the SCRIPT's timezone -- and the
+// spreadsheet, one hour behind in summer, rendered all 9,516 of them as 23:00
+// of the previous day. The census then read CLEAN, because a display value of
+// "9/8/2026 23:00:00" parses as a perfectly valid 9/8. These pins are the
+// ones that would have failed.
+
+test('R46: dateAtSheetMidnight_ builds midnight in the SPREADSHEET timezone, whatever the process TZ', function () {
+  // Tokyo is +9: far from every plausible process TZ, so a process-local
+  // midnight can never coincide with the right answer by accident.
+  const d = h.call('dateAtSheetMidnight_', 'Asia/Tokyo', 2026, 9, 9);
+  assert.equal(inTz(d, 'Asia/Tokyo'), '2026-09-09 00:00');
+  assert.equal(inTz(d, 'UTC'), '2026-09-08 15:00');
+  // The live pair, on a summer date: Mexico City midnight is 05:00 Chicago...
+  const mx = h.call('dateAtSheetMidnight_', SS_TZ, 2026, 9, 9);
+  assert.equal(inTz(mx, SS_TZ), '2026-09-09 00:00');
+  assert.equal(inTz(mx, SCRIPT_TZ), '2026-09-09 01:00');
+  // ...and a winter date coincides (both UTC-6) -- the reason the bug was
+  // invisible in March fixtures.
+  const mxw = h.call('dateAtSheetMidnight_', SS_TZ, 2026, 1, 15);
+  assert.equal(inTz(mxw, SCRIPT_TZ), '2026-01-15 00:00');
+  // Impossible dates are refused, never rolled.
+  assert.equal(h.call('dateAtSheetMidnight_', SS_TZ, 2026, 2, 30), null);
+  assert.equal(h.call('dateAtSheetMidnight_', SS_TZ, 2026, 13, 1), null);
+});
+
+test('R46: the converted cell is sheet midnight, NOT script midnight -- the live shift, on a summer date', function () {
+  install({ 'DQE Historical Data': dqeSheet([textCell('9/9/2026')]) });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  h.call('repairDqeDateNormalize');
+  const v = colB(sheet)[0];
+  assert.equal(inTz(v, SS_TZ), '2026-09-09 00:00', 'midnight where the sheet renders it');
+  assert.equal(inTz(v, SCRIPT_TZ), '2026-09-09 01:00', 'and the SAME calendar day in the script TZ');
+  // The fake now renders Dates in the spreadsheet TZ, so the display path
+  // agrees with the sheet the dup guard and the census will read.
+  assert.equal(sheet.getRange(2, 2).getDisplayValues()[0][0], '9/9/2026');
+});
+
+test('R46: a Date at script-TZ midnight that is not sheet midnight is RE-ANCHORED to its own calendar day', function () {
+  // Row 2 is the shifted shape (23:00 of 9/8 on the sheet, meant 9/9); row 3
+  // is a correct cell; row 4 is text. The preview must count them apart and
+  // the apply must leave all three at sheet midnight of the RIGHT day.
+  install({ 'DQE Historical Data': dqeSheet([
+    scriptMidnightCell(2026, 9, 9), dateCell(2026, 9, 8), textCell('9/10/2026'),
+  ]) });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  assert.equal(sheet.getRange(2, 2).getDisplayValues()[0][0], '9/8/2026 23:00:00', 'fixture renders the live shift');
+  const pre = h.call('previewDqeDateNormalize');
+  assert.equal(pre.reanchored, 1);
+  assert.equal(pre.alreadyDate, 1);
+  assert.equal(pre.converted, 1);
+  deepEqual(pre.reanchorRange, { firstRow: 2, lastRow: 2, minIso: '2026-09-09', maxIso: '2026-09-09' });   // legacy deepEqual: vm-realm object
+  assert.equal(pre.refused.length, 0);
+  assert.equal(inTz(colB(sheet)[0], SS_TZ), '2026-09-08 23:00', 'preview wrote nothing');
+  const res = h.call('repairDqeDateNormalize');
+  assert.equal(res.applied, true);
+  assert.equal(res.reanchored, 1);
+  const days = colB(sheet).map(function (v) { return inTz(v, SS_TZ); });
+  assert.deepEqual(days, ['2026-09-09 00:00', '2026-09-08 00:00', '2026-09-10 00:00']);
+  // Idempotent: a second pass sees three cells at sheet midnight.
+  const again = h.call('repairDqeDateNormalize');
+  assert.equal(again.alreadyDate, 3);
+  assert.equal(again.reanchored + again.converted, 0);
+});
+
+test('R46: a Date with a genuine time-of-day in BOTH zones is refused, never re-anchored by guess', function () {
+  // Noon Chicago = 11:00 Mexico City: neither zone reads midnight, so the cell
+  // is of unknown provenance and the whole apply refuses (the Phase 1 rule).
+  const noon = new Date(Date.UTC(2026, 8, 9, 17, 0, 0));
+  install({ 'DQE Historical Data': dqeSheet([
+    { v: noon, disp: '9/9/2026 11:00:00', fmt: '' }, textCell('9/10/2026'),
+  ]) });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const res = h.call('repairDqeDateNormalize');
+  assert.equal(res.applied, false);
+  assert.equal(res.refused.length, 1);
+  assert.equal(res.refused[0].type, 'date:time');
+  assert.equal(typeof colB(sheet)[1], 'string', 'the text cell was left alone -- whole-run refusal');
+});
+
+test('R46: the census flags TZ-SPLIT when a Date cell reads a different calendar day in the two zones', function () {
+  // The shifted cell reads 9/8 on the sheet and 9/9 to the script; a
+  // CDR-style NOON cell reads 9/9 in both and is NOT flagged -- the check is
+  // on the calendar DAY, not on having a time component.
+  const noon = new Date(Date.UTC(2026, 8, 9, 17, 0, 0));
+  const by = scan({
+    'DQE Historical Data': dqeSheet([dateCell(2026, 9, 8), scriptMidnightCell(2026, 9, 9)]),
+    'CDR Historical Data': colCSheet([{ v: noon, disp: '9/9/2026', fmt: 'm/d/yyyy' }]),
+  });
+  const dqe = by['DQE Historical Data'];
+  assert.equal(dqe.tzSplit, 1);
+  deepEqual(dqe.tzSplitSamples, [{ row: 3, sheet: '2026-09-08', script: '2026-09-09' }]);   // legacy deepEqual: vm-realm objects
+  assert.match(dqe.verdict, /TZ-SPLIT/);
+  // Without the R46 check this sheet read CLEAN: single-typed, ordered (9/8, 9/8), parsed.
+  assert.equal(dqe.singleTyped, true);
+  assert.equal(dqe.ordered, true);
+  assert.equal(dqe.unparsed, 0);
+  const cdr = by['CDR Historical Data'];
+  assert.equal(cdr.tzSplit, 0);
+  assert.equal(cdr.verdict, 'CLEAN');
+});
+
+test('R46: the fake sheet renders a Date in the SPREADSHEET timezone -- the shift is visible on the display path', function () {
+  // No explicit display grid here: the fake must derive the display from the
+  // raw value, as Sheets does. A script-TZ midnight of 9/9 renders as 9/8 in
+  // a Mexico City sheet -- the exact thing the dup guard, the census and every
+  // backfill read after the first live run.
+  const ss = makeFakeSpreadsheet({ timeZone: SS_TZ, sheets: { X: [
+    ['Date'], [scriptMidnightCell(2026, 9, 9).v], [sheetMidnight(2026, 9, 9)],
+  ] } });
+  const disp = ss.getSheetByName('X').getRange(2, 1, 2, 1).getDisplayValues().map(function (r) { return r[0]; });
+  assert.deepEqual(disp, ['9/8/2026', '9/9/2026']);
+});
+
+test('R46: the writer and the repair build a col-B Date ONLY through dateAtSheetMidnight_ (source pin)', function () {
+  const fs = require('fs'), path = require('path');
+  const root = path.join(__dirname, '..', '..', 'apps-script');
+  ['cdr-report', 'cdr-import'].forEach(function (proj) {
+    const src = fs.readFileSync(path.join(root, proj, 'buildDQEHistoricalData.js'), 'utf8');
+    const write = src.slice(src.indexOf('const colBDate = dateAtSheetMidnight_('), src.indexOf('const newLastRow'));
+    assert.ok(write.length > 0, proj + ': col-B write site found');
+    assert.ok(/return \[colBDate\]/.test(write), proj + ': col B is written from the helper\'s instant');
+    assert.ok(!/return \[callDateObj\]/.test(write), proj + ': never callDateObj itself (script-TZ midnight)');
+  });
+  const rep = fs.readFileSync(path.join(root, 'cdr-report', 'sheetRepairs.js'), 'utf8');
+  const fn = rep.slice(rep.indexOf('function dqeDateFromMdy_('), rep.indexOf('function normalizeDqeDateColumn_('));
+  assert.ok(/return dateAtSheetMidnight_\(/.test(fn), 'dqeDateFromMdy_ returns the helper\'s instant');
+  assert.ok(!/return d;/.test(fn), 'and never the local-midnight probe');
 });

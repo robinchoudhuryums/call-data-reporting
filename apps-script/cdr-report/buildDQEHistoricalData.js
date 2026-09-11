@@ -217,6 +217,37 @@ function dqeQueueSplitForAgent_(windowLegs, talkForParent, pstToCSTFn) {
 
 // ── Main DQE build function ───────────────────────────────────────────────────
 
+// Phase 1b / R46 (date-column normalization): the ONE way to build a Date for
+// a date-only cell. setValues converts a Date to a serial in the SPREADSHEET's
+// timezone, so the instant has to be midnight THERE. `new Date(y, m-1, d)` is
+// midnight in the SCRIPT's timezone -- and with the spreadsheet on
+// America/Mexico_City (UTC-6, no DST) and the script on America/Chicago (UTC-5
+// in summer) that instant is 23:00 of the PREVIOUS day in the sheet, so every
+// reader that resolves the cell in the spreadsheet TZ (the dashboard's
+// rowDateIso_, the census, every display-value backfill) keys the row one day
+// early. The first live Phase 1 repair shifted 9,516 rows exactly this way
+// (2026-09-11). Needs only 'yyyy-MM-dd HH:mm' formatting, no offset token:
+// start at UTC midnight, measure what the zone shows, correct by the
+// difference, verify -- two steps for a fixed-offset zone, three across a DST
+// edge. Returns null (never a guess) for an impossible calendar date or a zone
+// that cannot place it; callers leave the cell alone then.
+function dateAtSheetMidnight_(tz, yr, mo, da) {
+  var want = Date.UTC(yr, mo - 1, da);
+  if (isNaN(want)) return null;
+  var probe = new Date(want);
+  if (probe.getUTCFullYear() !== yr || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== da) return null;
+  var t = want;
+  for (var k = 0; k < 3; k++) {
+    var shown = Utilities.formatDate(new Date(t), tz, 'yyyy-MM-dd HH:mm');
+    var m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(shown);
+    if (!m) return null;
+    var seen = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+    if (seen === want) return new Date(t);
+    t += (want - seen);
+  }
+  return null;
+}
+
 function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // Wall-clock start used by the Pipeline Health log entry below.
   const __pipelineStartMs = Date.now();
@@ -1081,10 +1112,22 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   // `outputRows[1]` stays the string: the Neon mirror below reads it
   // (`callDate: r[1]`) and parseDateForNeon expects text. The dup guard reads
   // col B through getDisplayValues + displayToDate, which sees "3/9/2026"
-  // either way. Pinned by pipeline-build.test.js (col B instanceof Date, local
-  // midnight) and the repair in sheetRepairs.js builds the same instant.
-  dqeSheet.getRange(firstBlank, 2, outputRows.length, 1)
-          .setValues(outputRows.map(function () { return [callDateObj]; }));
+  // either way. R46: the instant is midnight in the SPREADSHEET's timezone
+  // (dateAtSheetMidnight_ above), never `callDateObj` itself -- that is
+  // script-TZ midnight, which the sheet renders as 23:00 of the previous day.
+  // Pinned by pipeline-build.test.js; the repair in sheetRepairs.js builds the
+  // same instant, so the two eras sort as one. If the zone cannot place the
+  // date (null), col B is left as the text the main write put there -- the
+  // pre-Phase-1 shape, which repairDqeDateNormalize() converts later.
+  const colBDate = dateAtSheetMidnight_(dqeSheet.getParent().getSpreadsheetTimeZone(),
+    callDateObj.getFullYear(), callDateObj.getMonth() + 1, callDateObj.getDate());
+  if (colBDate) {
+    dqeSheet.getRange(firstBlank, 2, outputRows.length, 1)
+            .setValues(outputRows.map(function () { return [colBDate]; }));
+  } else {
+    Logger.log('DQE: col B left as text "' + callDateStr + '" -- dateAtSheetMidnight_ could not '
+      + 'place it in the spreadsheet TZ; repairDqeDateNormalize() converts it later.');
+  }
 
   const newLastRow = dqeSheet.getLastRow();
   if (newLastRow > 2) {

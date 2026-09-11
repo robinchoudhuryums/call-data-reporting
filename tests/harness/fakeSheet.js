@@ -21,9 +21,19 @@
 // through `new Date(s)` got a TZ-dependent answer that only held because CI
 // pins TZ. Phase 1 made this load-bearing: the DQE build now writes col B as
 // a Date, and its dup guard reads that cell back through the display path.
-function fakeDisplay_(v) {
+//
+// R46: the day is rendered in the SPREADSHEET's timezone when the sheet has a
+// parent, because that is what Sheets does -- a script-TZ-midnight instant in a
+// spreadsheet one hour behind displays as the PREVIOUS day. The first Phase 1
+// repair shifted 9,516 live rows exactly that way, and this fake (rendering in
+// the process TZ, which CI pins to the script's) could not show it. Duck-typed
+// on getTime(): vm-realm Dates fail `instanceof` against the host constructor.
+const { formatDate } = require('./formatDate');
+
+function fakeDisplay_(v, tz) {
   if (v === '') return '';
-  if (v instanceof Date && !isNaN(v.getTime())) {
+  if (v && typeof v.getTime === 'function' && !isNaN(v.getTime())) {
+    if (tz) return formatDate(v, tz, 'M/d/yyyy');
     return (v.getMonth() + 1) + '/' + v.getDate() + '/' + v.getFullYear();
   }
   return String(v);
@@ -67,7 +77,11 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
       if (sheet._displays) {
         return sliceGrid(sheet._displays, startRow, startCol, numRows, numCols);
       }
-      return this.getValues().map(function (row) { return row.map(fakeDisplay_); });
+      const tz = (sheet._parent && typeof sheet._parent.getSpreadsheetTimeZone === 'function')
+        ? sheet._parent.getSpreadsheetTimeZone() : null;
+      return this.getValues().map(function (row) {
+        return row.map(function (v) { return fakeDisplay_(v, tz); });
+      });
     },
     // Phase 0b: the per-cell number format, served from an optional fixture
     // grid (`{ values, displays, formats }`), 'General' where none is given.
