@@ -48,6 +48,64 @@
 //   3. If DQE_READ_SOURCE=neon, re-mirror the affected dates afterward
 //      (backfillDQEHistoryUpsert()) so dqe_history picks up the corrected rows.
 
+// ── Roadmap 1b: snapshot before any bulk repair ──────────────────────────────
+//
+// Every apply in this file that rewrites HR_BACKUP_MIN_CELLS_ or more cells
+// first copies the sheet, as it stands, into ONE standing backup workbook
+// (created on first use, its id remembered in the cdr-report Script Property
+// HR_BACKUP_SS_ID -- Operator State #59). The R46 shift (9,516 cells) was
+// recoverable only because each wrong instant still encoded the true date;
+// the next bulk rewrite may not be that lucky, and "Sheets version history on
+// a 32,000-row tab" is not a rollback. A separate workbook, not a hidden tab:
+// a DQE copy is ~1.1M cells and the CDR Report workbook is already large, so
+// in-workbook copies could approach the 10M-cell cap; the backup workbook
+// holds its own. Pruned to the newest HR_BACKUP_KEEP_ tabs per source sheet
+// via deleteSheet -- no Drive scope, so no new OAuth consent. Previews never
+// back up. Pinned by tests/unit/sheet-repairs-backup.test.js.
+var HR_BACKUP_MIN_CELLS_ = 500;
+var HR_BACKUP_KEEP_ = 3;
+var HR_BACKUP_PROP_ = 'HR_BACKUP_SS_ID';
+var HR_BACKUP_SS_NAME_ = 'CDR Report -- repair backups';
+
+/**
+ * Copies `sheet` into the backup workbook when `cellCount` reaches the
+ * threshold. Returns { url, tab, cells } or null (below threshold). Throws
+ * only if the copy itself fails -- an apply must not proceed without its
+ * snapshot when one is due.
+ */
+function hrBackupBeforeApply_(ss, sheet, label, cellCount) {
+  if (!(cellCount >= HR_BACKUP_MIN_CELLS_)) return null;
+  var props = PropertiesService.getScriptProperties();
+  var backupSs = null;
+  var id = props.getProperty(HR_BACKUP_PROP_);
+  if (id) { try { backupSs = SpreadsheetApp.openById(id); } catch (e) { backupSs = null; } }
+  if (!backupSs) {
+    backupSs = SpreadsheetApp.create(HR_BACKUP_SS_NAME_);
+    props.setProperty(HR_BACKUP_PROP_, backupSs.getId());
+    Logger.log('[repair-backup] created the backup workbook ' + backupSs.getUrl()
+      + ' and stored its id in ' + HR_BACKUP_PROP_ + '.');
+  }
+  var src = sheet.getName();
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmm');
+  var base = src + '|' + stamp + '|' + String(label || 'repair');
+  var copy = sheet.copyTo(backupSs);
+  var tabName = base;
+  for (var k = 2; k < 50; k++) {                 // same-minute re-run: suffix, never overwrite
+    try { copy.setName(tabName); break; } catch (e) { tabName = base + '-' + k; }
+  }
+  // Prune: newest HR_BACKUP_KEEP_ per source sheet. The stamp leads the name,
+  // so lexical order is chronological.
+  var prefix = src + '|';
+  var mine = backupSs.getSheets()
+    .filter(function (t) { return t.getName().indexOf(prefix) === 0; })
+    .sort(function (a, b) { return a.getName() < b.getName() ? -1 : (a.getName() > b.getName() ? 1 : 0); });
+  while (mine.length > HR_BACKUP_KEEP_) backupSs.deleteSheet(mine.shift());
+  Logger.log('[repair-backup] ' + src + ': ' + cellCount + ' cell(s) about to be rewritten; snapshot "'
+    + tabName + '" in ' + backupSs.getUrl() + ' (newest ' + HR_BACKUP_KEEP_ + ' kept). Restore = copy '
+    + 'that tab back over the sheet (Operator State #59).');
+  return { url: backupSs.getUrl(), tab: tabName, cells: cellCount };
+}
+
 /** Preview only: report what WOULD change; no writes. */
 function previewDqeSlotTimestampRepair() {
   return repairDqeSlotTimestamps_(/*dryRun=*/true);
@@ -80,6 +138,8 @@ function repairDqeSlotTimestamps_(dryRun) {
 
   var fixed = 0, samples = [];
   var pending = [];                                    // [{ range, vals }] to write back on apply
+  // 1b: both column groups are rewritten in full on apply (n rows x 20 cols).
+  if (!dryRun) hrBackupBeforeApply_(ss, sheet, 'slot-timestamps', n * 20);
   for (var g = 0; g < groups.length; g++) {
     var start = groups[g].start, label = groups[g].label;
     var range = sheet.getRange(2, start, n, groups[g].count);
@@ -289,6 +349,7 @@ function repairDqeAbandonedIds_(dryRun) {
   // Lock AD-AE to plain text (so recovered values + the sentinel STAY text and
   // the columns can't re-coerce), then write back. (T-5: AF's plain-text lock
   // lives in the slot repair, which owns that column's recovery.)
+  hrBackupBeforeApply_(ss, sheet, 'abandoned-ids', vals.length * (vals[0] ? vals[0].length : 0));   // 1b
   range.setNumberFormat('@');
   range.setValues(vals);
   SpreadsheetApp.flush();
@@ -528,6 +589,7 @@ function repairDqeOldPstTimestampShift_(dryRun) {
   }
 
   // Apply: rewrite ONLY changed rows (K-AC range + AF cell), as plain text.
+  hrBackupBeforeApply_(ss, sheet, 'pst-shift', changes.length * (SLOT_N + 1));   // 1b
   for (var x = 0; x < changes.length; x++) {
     var ch = changes[x];
     var sr = sheet.getRange(ch.rowNum, SLOT_START, 1, SLOT_N);
@@ -822,6 +884,7 @@ function mergeDqeDuplicateRows_(dryRun) {
 
   // Plain-text-protect the coercion-prone cols on each target row, then write
   // cols D..AH only (A-C untouched -> no date-cell coercion).
+  hrBackupBeforeApply_(ss, sheet, 'duplicate-merge', writes.length * 31 + deleteRows.length * sheet.getLastColumn());   // 1b
   writes.forEach(function (w) {
     sheet.getRange(w.row, 4).setNumberFormat('@');           // D queue exts
     sheet.getRange(w.row, 11, 1, 19).setNumberFormat('@');   // K-AC slots
@@ -1189,7 +1252,7 @@ function normalizeDqeDateColumn_(dryRun) {
   var ssTz = ss.getSpreadsheetTimeZone();
   var scriptTz = Session.getScriptTimeZone();
   var out = { applied: false, scanned: 0, alreadyDate: 0, blank: 0, converted: 0,
-              reanchored: 0, reanchorRange: null, refused: [] };
+              reanchored: 0, reanchorRange: null, refused: [], backup: null };
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('DQE date normalize: no data rows.'); return out; }
 
@@ -1258,6 +1321,8 @@ function normalizeDqeDateColumn_(dryRun) {
     return out;
   }
 
+  // 1b: snapshot first (one cell per target).
+  out.backup = hrBackupBeforeApply_(ss, sheet, 'date-normalize', targets.length);
   // Write in contiguous row runs so one setValues covers each block (the live
   // sheet is one 9,442-row block; a scattered case still works, just slower).
   var runStart = 0;
@@ -1276,6 +1341,7 @@ function normalizeDqeDateColumn_(dryRun) {
   Logger.log(head + '\nWrote ' + targets.length + ' cell(s) (' + out.converted + ' converted, '
     + out.reanchored + ' re-anchored) and sorted col B ascending. No Neon re-mirror needed '
     + '(the calendar dates are unchanged). Re-run previewHistoricalDateColumns(): DQE should '
-    + 'now read CLEAN with no TZ-SPLIT line, and its latest date should be the latest build.');
+    + 'now read CLEAN with no TZ-SPLIT line, and its latest date should be the latest build.'
+    + (out.backup ? ' Snapshot: "' + out.backup.tab + '" in ' + out.backup.url + '.' : ''));
   return out;
 }

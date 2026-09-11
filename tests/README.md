@@ -101,6 +101,15 @@ tests/
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
                               sheet-repairs-merge,
+                              sheet-repairs-backup (roadmap 1b: every bulk
+                              repair apply snapshots the sheet into the
+                              standing backup workbook BEFORE its first write
+                              -- threshold, once-created workbook + stored id,
+                              dated|label tab naming + same-minute suffix,
+                              per-source prune, stale-id recreate, the
+                              pre-repair values in the tab, previews and small
+                              applies never back up, plus a source pin that
+                              all five applies call it before writing),
                               historical-date-columns (Phase 0/0b: the
                               read-only date-column census over all five
                               historical sheets -- MIXED TYPE is detected

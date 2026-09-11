@@ -158,7 +158,25 @@ function makeFakeSheet(name, data) {
       ? data.formats.map(function (row) { return row.slice(); })
       : null,
     _parent: null,   // set by makeFakeSpreadsheet
-    getName: function () { return name; },
+    _name: name,
+    getName: function () { return this._name; },
+    // Roadmap 1b: real Sheet methods, modelled not stubbed (the clearContent
+    // discipline) -- the repair backup copies a sheet into another workbook
+    // and names the copy; a no-op copy would make every backup pin vacuous.
+    setName: function (newName) {
+      if (this._parent && typeof this._parent._rename === 'function') this._parent._rename(this, newName);
+      this._name = newName;
+      return this;
+    },
+    copyTo: function (targetSs) {
+      const copy = targetSs.insertSheet('Copy of ' + this._name);
+      copy._data = this._data.map(function (row) { return row.slice(); });
+      copy._displays = this._displays ? this._displays.map(function (row) { return row.slice(); }) : null;
+      copy._formats = this._formats ? this._formats.map(function (row) { return row.slice(); }) : null;
+      if (this._maxColumns != null) copy._maxColumns = this._maxColumns;
+      if (this._maxRows != null) copy._maxRows = this._maxRows;
+      return copy;
+    },
     getParent: function () { return this._parent; },
     getLastRow: function () { return this._data.length; },
     getLastColumn: function () {
@@ -248,9 +266,24 @@ function makeFakeSpreadsheet(opts) {
   // cross-file-pins pins that this default never equals the script zone.
   const tz = opts.timeZone || 'America/Mexico_City';
   const sheetMap = {};
+  const ssId = opts.id || 'fake';
+  const ssName = opts.name || 'Fake Spreadsheet';
   const ss = {
     getSpreadsheetTimeZone: function () { return tz; },
+    getId: function () { return ssId; },
+    getUrl: function () { return 'https://docs.google.com/spreadsheets/d/' + ssId; },
+    getName: function () { return ssName; },
     getSheetByName: function (name) { return sheetMap[name] || null; },
+    // Roadmap 1b: Sheet.setName re-keys the map; a duplicate name THROWS like
+    // the real API (the backup helper suffixes a same-minute collision).
+    _rename: function (sheet, newName) {
+      if (sheetMap[newName] && sheetMap[newName] !== sheet) {
+        throw new Error('A sheet with the name "' + newName + '" already exists. Please enter another name.');
+      }
+      const oldName = Object.keys(sheetMap).find(function (n) { return sheetMap[n] === sheet; });
+      if (oldName !== undefined) delete sheetMap[oldName];
+      sheetMap[newName] = sheet;
+    },
     // E1: real Spreadsheet method, modelled not stubbed (the clearContent
     // discipline) -- ncSurvivingCallLegsDates_ enumerates Call_Legs_* tabs.
     getSheets: function () {

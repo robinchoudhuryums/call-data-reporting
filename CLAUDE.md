@@ -389,6 +389,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   by PARSING the stored time against the 8 AM-5 PM CST range
   (`MissedCallsReport.gs`), so a PST value reads ~2h early. Durations
   (TTT/ATT/AvgAbdWait), counts, and the Date are TZ-independent and untouched.
+- **Bulk sheet repairs snapshot first (1b).** Every `repair*` apply in
+  `cdr-report/sheetRepairs.js` that rewrites 500+ cells copies the sheet into
+  the standing repair-backup workbook BEFORE its first write
+  (`hrBackupBeforeApply_`; `HR_BACKUP_SS_ID` self-populates, newest 3 tabs per
+  sheet kept; Operator State #59 has the restore). Previews never back up. A
+  new bulk apply must call it -- the source pin in
+  `tests/unit/sheet-repairs-backup.test.js` fails when one of the applies
+  writes before it.
 - **A dated sheet read is bounded by a min/max SPAN, not a tail scan -- and the
   discriminator is whether that sheet is date-ORDERED.** Two dashboard readers
   answer a windowed question against a years-deep sheet, and both do it the same
@@ -2252,6 +2260,7 @@ items for anything it flags or doesn't cover.)
 56. Reprocessing historical dates -- Manual Export per date (mirrors Neon inline) over the bulk path; clear `DQE_UPSERT_RESUME` before any backfill; the zero-talk scan (answered > 0 with TTT 0:00:00) is the post-rebuild check, and `repairDqeDuplicateMerge` is the remedy for same-day (date, agent) duplicates
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, and the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL)
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
+59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
 
 ## Cycle Workflow Config
 

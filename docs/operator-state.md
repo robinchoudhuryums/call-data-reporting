@@ -1687,3 +1687,25 @@ When something looks wrong, before assuming a code bug, check:
     send error). Re-grants and edits are silent. Needs `DASHBOARD_URL` (#7);
     `ACCESS_WELCOME_EMAIL=false` disables it. The denied-sign-in notice to
     admins (#45) is unchanged -- it is what tells you someone is waiting.
+
+59. **`HR_BACKUP_SS_ID` (cdr-report) — the repair-backup workbook, and how to
+    restore from it (roadmap 1b, 2026-09).** Every `repair*` apply in
+    `cdr-report/sheetRepairs.js` that rewrites 500+ cells (`HR_BACKUP_MIN_CELLS_`)
+    first copies the sheet, as it stands, into ONE standing backup workbook
+    named "CDR Report -- repair backups", as a tab `<sheet>|<yyyyMMdd-HHmm>|<label>`
+    (a same-minute re-run gets a `-2` suffix). The workbook is created on the
+    first such apply via `SpreadsheetApp.create` and its id stored here; you
+    never set it by hand. If the property points at a deleted workbook the next
+    apply creates a fresh one and re-stores the id. The newest 3 tabs per SOURCE
+    sheet are kept (`HR_BACKUP_KEEP_`; older ones deleted via `deleteSheet`, so
+    no Drive scope). Previews never back up. The apply log names the tab and
+    the workbook URL. **Why a separate workbook:** a DQE copy is ~1.1M cells and
+    the CDR Report workbook is already large, so in-workbook copies could reach
+    the 10M-cell cap; the backup workbook holds its own.
+    **Restore:** open the backup workbook, right-click the tab -> "Copy to" ->
+    the CDR Report spreadsheet, then in CDR Report select ALL of the copied tab
+    (Ctrl+A), copy, select cell A1 of the damaged sheet, and Paste -- or, for a
+    partial rollback, paste only the affected column range. Re-run the
+    relevant `preview*` afterwards and, if the sheet feeds Neon, the matching
+    re-mirror (`backfillDQEHistoryUpsert()` for DQE). Delete the copied tab from
+    CDR Report when done. Pinned by `tests/unit/sheet-repairs-backup.test.js`.
