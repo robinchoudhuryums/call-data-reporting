@@ -295,9 +295,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a Date in the spreadsheet TZ, so `new Date(y, m-1, d)` (script-TZ midnight)
   lands as 23:00 of the PREVIOUS day from March to November, every
   spreadsheet-TZ reader keys the row a day early, and the census still reads
-  CLEAN (the display parses as a valid date). The first live Phase 1 repair
-  shifted 9,516 rows this way; `repairDqeDateNormalize()` re-anchors them and
-  `previewHistoricalDateColumns()` now flags the shape as TZ-SPLIT. Pinned by
+  CLEAN (the display parses as a valid date). `repairDqeDateNormalize()`
+  re-anchors that shape and `previewHistoricalDateColumns()` flags it as
+  TZ-SPLIT (R46 in fix-history). Pinned by
   `historical-date-columns.test.js` + `pipeline-build.test.js` on a Mexico
   City fixture (the fake sheet renders Dates in the spreadsheet TZ).
 - **Comma-joined ID/time cells coerce to Numbers unless plain-text
@@ -350,12 +350,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   history backwards". **The same coercion class hits DATE-shaped strings
   written via setValues**: Sheets coerces an "M/D/YYYY" string cell to a
   Date value, so a later `getValues()` + `String()` comparison never
-  matches the original string -- this made `Direct Call History`'s
-  refresh-in-window delete a silent no-op (duplicate row sets per
-  re-import; FIXED via `dcDateIso_` + `getDisplayValues`, F-3) and broke
-  `inboundCallsExport.js`'s refresh-in-window semantics (FIXED via
-  `ic_cellDateIso_`, F-10). New writer-side date comparisons must compare
-  ISO-NORMALIZED DISPLAY values, never `String(getValues())`.
+  matches the original string (F-3 / F-10 in fix-history). New writer-side
+  date comparisons must compare ISO-NORMALIZED DISPLAY values, never
+  `String(getValues())`.
 - **DQE cols AD/AE/AF are POSITIONALLY PAIRED (lockstep contract).**
   The Missed Calls report pairs `AF[i]` (abandoned missed-ring time) with
   `AD[i]` (its parent call id) to hang a parent id on each 🚨 timestamp --
@@ -407,12 +404,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   fall outside it, which is why **the per-row date filter always stays** -- the
   span bounds the read, it does not replace the filter. A TAIL scan is the trap:
   `DQE Historical Data` and `CSR Transfer Historical Data` are NOT reliably
-  date-ordered: the daily path appends at `getLastRow()+1`, and although the DQE
-  build re-sorts col B after each write (and the bulk archive sorts too), a col B
-  holding mixed Date-typed and text cells does not sort chronologically -- so a
-  backfill of older dates can still sit after newer rows and a tail scan stops
-  early and silently drops them -- quietly wrong numbers, strictly worse than
-  being slow. **The one legitimate tail scan is
+  date-ordered: the daily path appends at `getLastRow()+1`, and only DQE
+  re-sorts itself after each write (col B is single-typed since Phase 1; the
+  Phase 2 nightly check re-sorts every sheet, but that is a compensating
+  control, not a guarantee until Phase 3) -- so a backfill of older dates can
+  still sit after newer rows and a tail scan stops early and silently drops
+  them -- quietly wrong numbers, strictly worse than being slow. **The one legitimate tail scan is
   `nmReadDateRowsTail_` (F-20, NeonMirror.js)**, and its warrant is NOT that its
   sheets are ordered -- it reads DQE / QCD / CDR Historical Data, and none of
   those reliably is. It WIDENS until the date's block is provably complete, and
@@ -735,8 +732,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   nowhere else, so history before the deploy is permanently unsplittable** --
   every day this is not deployed is another one. Two traps: it embeds
   comma-joined times, so col 35 is plain-texted like AD-AF / K-AC; and Sheets
-  does NOT auto-expand columns, so the writer WIDENS a 34-col sheet before
-  touching col 35 (a getRange past `getMaxColumns` throws -- REP-10). Mirrored
+  does NOT auto-expand columns, so the writer WIDENS a narrower sheet first
+  (`DQE_WRITE_WIDTH`, 37 since Batch 3; a getRange past `getMaxColumns` throws
+  -- REP-10). Mirrored
   to `dqe_history.queue_split` via an idempotent ADD COLUMN, and every upsert
   COALESCEs so a sheet-sourced NULL can't erase a stored split.
   **The pipeline always WRITES this column; whether any dashboard surface USES
@@ -1288,10 +1286,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `DQE_DATE_COL_MEMO_` / `DQE_EXT_GRID_MEMO_`) and they reset TOGETHER:
   their scope is identical, so no suite legitimately resets only half.
   ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
-  memo resets the whole family" -- copying the reset you know about and missing
-  the one you don't is exactly how this broke eight tests when the second memo
-  landed, which is why it is no longer prose. A third memo over this sheet joins
-  `DQE_EXEC_MEMOS`.
+  memo resets the whole family" (the eight-test breakage that made it a pin:
+  R40 in fix-history). A third memo over this sheet joins `DQE_EXEC_MEMOS`.
 - **Count badges must be idempotent, not append-only (F10).** The
   escalations nav badge was rendered behind an
   `if (!tab.querySelector('.nav-count-badge'))` guard and fetched
@@ -1378,10 +1374,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   one write connection and probes it with `SELECT 1` (5-second timeout),
   returning that SAME connection for the insert (or null). If Neon is
   down (free-tier suspend, exhausted compute) or unconfigured, the write
-  is skipped with a clean log — no failure email, no exception. (Replaced
-  the old `isNeonReachable_()`, which opened a throwaway probe connection
-  AND a second write connection per writer — six handshakes per import
-  run; see "Neon write discipline" below.) `NEON_HOST`, `NEON_DB`,
+  is skipped with a clean log — no failure email, no exception (the one-probe
+  rule's backstory: the 2026-09-11 section of fix-history). `NEON_HOST`, `NEON_DB`,
   `NEON_USER`, `NEON_PASS` must be set in BOTH the CDR Report AND CDR
   Import project's Script Properties for Neon mirroring to work.
   **NEVER put `connectTimeout` / `socketTimeout` / `loginTimeout` on a Neon

@@ -539,7 +539,7 @@ When something looks wrong, before assuming a code bug, check:
     yearly (e.g. `2026-01-01, 2026-05-25, 2026-07-03, 2026-11-26..2026-11-27,
     2026-12-25`); it is GLOBAL -- per-dept exceptions stay in Alert Config
     Skip Dates. No redeploy needed to edit.
-28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard).
+28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard; trigger handler `runNeonBackup_`).
     Weekly Drive export of the tables with NO sheet fallback --
     `escalations`, `escalation_activity`, `inbound_calls` (incl. journey
     JSON) -- as one-JSON-object-per-line files: a full escalations
@@ -1245,7 +1245,7 @@ When something looks wrong, before assuming a code bug, check:
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
     `installDqeSilenceWatchTrigger()` (admin) sets
-    `DQE_SILENCE_WATCH_ENABLED` + installs a daily trigger at the hour named
+    `DQE_SILENCE_WATCH_ENABLED` + installs a daily trigger (handler `runDqeSilenceWatch_`) at the hour named
     by `DQE_SILENCE_HOUR` (0-23, default 11 Central -- after the ingest AND
     the DQE build, so moving it EARLIER makes every run assess an
     incomplete day); `uninstallDqeSilenceWatchTrigger()` reverses both. Each weekday run
