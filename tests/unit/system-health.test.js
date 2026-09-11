@@ -187,6 +187,79 @@ test('single-signal: pipe-failures is OK when every step recovered', function ()
   assert.equal(rowByKey(h.call('getSystemHealth'), 'pipe-failures').status, 'ok');
 });
 
+// Batch 4 / Phase 2: the nightly historical sort check's row, read from the
+// latest historicalSort:<sheet> Pipeline Health row per sheet.
+function hsRow(step, status, notes, ts) {
+  return { timestamp: ts || '2026-09-12 03:02', step: step, status: status, notes: notes };
+}
+test('Batch 4: historical-sort is muted with the install hint when no historicalSort rows exist', function () {
+  installHealth();
+  h.ctx.readPipelineHealth_ = function () { return [hsRow('processIntegratedHistory:DQE', 'success', '')]; };
+  const row = rowByKey(h.call('getSystemHealth'), 'historical-sort');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /no historicalSort rows/);
+  assert.match(row.hint, /HISTORICAL_SORT_ENABLED/);
+  assert.match(row.hint, /Operator State #61/);
+});
+
+test('Batch 4: five clean latest rows -> ok, naming the sheets', function () {
+  installHealth();
+  h.ctx.readPipelineHealth_ = function () {
+    return ['DQE', 'QCD', 'CDR', 'CSR', 'QPath'].map(function (l) {
+      return hsRow('historicalSort:' + l, 'success', 'clean -- 31986 rows single-typed and in date order');
+    }).concat([   // older: last night QCD needed sorting -- superseded by today's clean row
+      hsRow('historicalSort:QCD', 'success', 'sorted -- 3 inversion(s); re-check CLEAN', '2026-09-11 03:02'),
+    ]);
+  };
+  const row = rowByKey(h.call('getSystemHealth'), 'historical-sort');
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /5 sheet\(s\) checked, none needed sorting \(CDR, CSR, DQE, QCD, QPath\)/);
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'pipe-failures').status, 'ok', 'no failure flagged');
+});
+
+test('Batch 4: a sheet that needed sorting on the LATEST run warns and names it (a nightly repeat is a writer regressing)', function () {
+  installHealth();
+  h.ctx.readPipelineHealth_ = function () {
+    return [
+      hsRow('historicalSort:QCD', 'success', 'sorted -- 3 inversion(s) (first at row 31000: 2026-09-10 then 2026-09-08); re-check CLEAN. A sheet that needs this EVERY night is a writer appending out of order.'),
+      hsRow('historicalSort:DQE', 'success', 'clean -- 31986 rows single-typed and in date order'),
+    ];
+  };
+  const row = rowByKey(h.call('getSystemHealth'), 'historical-sort');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /1 sheet\(s\) needed sorting on the latest run: QCD \(sorted\)/);
+  assert.match(row.hint, /EVERY night is a writer/);
+});
+
+test('Batch 4: a REFUSED or thrown check is a warn that says a repair, not a sort, is needed -- and pipe-failures still flags the step', function () {
+  installHealth();
+  h.ctx.readPipelineHealth_ = function () {
+    return [
+      hsRow('historicalSort:DQE', 'failure', 'MIXED-TYPE -- a sort cannot fix this column (...); run previewHistoricalDateColumns() and the matching repair (Operator State #61)'),
+      hsRow('historicalSort:CSR', 'failure', 'bulk-path post-write sort threw: quota -- the sheet may be out of date order until the nightly sort check runs (Operator State #61)', '2026-09-11 14:10'),
+      hsRow('historicalSort:QCD', 'success', 'sorted -- 3 inversion(s); re-check CLEAN'),   // a sorted sheet does not mask the failures
+    ];
+  };
+  const data = h.call('getSystemHealth');
+  const row = rowByKey(data, 'historical-sort');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /2 sheet\(s\) the check could not fix: CSR \(bulk-path post-write sort threw: quota\); DQE \(MIXED-TYPE\)/);
+  assert.match(row.hint, /needs its repair/);
+  assert.match(rowByKey(data, 'pipe-failures').value, /historicalSort:DQE/, 'the single trustworthy signal still names it');
+});
+
+test('Batch 4: every sheet skipped for a resume pointer is muted, not a warning', function () {
+  installHealth();
+  h.ctx.readPipelineHealth_ = function () {
+    return ['DQE', 'QCD'].map(function (l) {
+      return hsRow('historicalSort:' + l, 'success', 'skipped -- backfill resume pointer(s) set: DQE_UPSERT_RESUME (a sort would reset them); re-checks once the backfill clears its pointer');
+    });
+  };
+  const row = rowByKey(h.call('getSystemHealth'), 'historical-sort');
+  assert.equal(row.status, 'muted');
+  assert.match(row.value, /skipped on the latest run — backfill resume pointer\(s\) set: DQE_UPSERT_RESUME/);
+});
+
 test('O-5: queue-report trigger + MISSED outcome are covered by the Health page', function () {
   installHealth({ props: {
     NEON_HOST: 'h',

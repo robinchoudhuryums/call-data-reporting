@@ -17,7 +17,7 @@ batch, items are independent unless marked.
 | 1 | **Safety nets** — SHIPPED 2026-09-11 (block 186) | 1a harness runs under the live TZ split · 1b snapshot before any bulk repair | 1a none · 1b cdr-report (deploy pending) | done |
 | 2 | **Dashboard round** — SHIPPED 2026-09-11 (block 186) | 2a Escalations: admin delete · 2b notes #2+#1 (help chip + tour) | dashboard (deploy pending) | done |
 | 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **SHIPPED 2026-09-11** (deploy + backfill: Operator State #60) |
-| 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | after 3 |
+| 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | **SHIPPED 2026-09-11** (install + flag: Operator State #61) |
 | ∥ | **Neon storage decision** | operator decision; optional Health row "Neon storage by table" | none, or dashboard | any time |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
@@ -222,6 +222,21 @@ Phase 2. Three additions from the 2026-09-11 work:
 
 **Size.** M–L. **Deploy.** cdr-report + cdr-import + dashboard.
 
+**Status (2026-09-11): SHIPPED** on the branch (block 188). As built: the
+engine is `runHistoricalSortCheck_` in `sheetRepairs.js` (flag
+`HISTORICAL_SORT_ENABLED`, CDR Tools install/uninstall/preview/run-now); it
+reuses the census scan (`hdScanOneSheet_`, now with the per-instant TZ memo
+and a `skipFormats` option), sorts only a single-typed out-of-order column,
+re-checks, and REFUSES mixed / TZ-split / unparsed columns with a failure row;
+it defers while any `*_RESUME` pointer is set. The Health page's
+`historical-sort` row reads the latest `historicalSort:<sheet>` row per sheet.
+The bulk path's sort failure is a Pipeline Health failure row under the same
+name. Two follow-ons rode along: `parseDateForNeon` refuses a bare number
+(all ~30 callers), and the smoke driver now clicks the Queue Call Data card's
+period toggle. The harness models `Range.sort` since this batch.
+**Operator:** install from CDR Tools after the cdr-report push (Operator
+State #61); Batch 5's gate clock starts at that install.
+
 ---
 
 ## Parallel track — the Neon storage decision (operator)
@@ -279,15 +294,16 @@ tripwire. Revisit only after Batch 5 has held.
 
 ## Follow-ons (ride along with the batch that touches the file)
 
-- `parseDateForNeon` reads a bare serial ("45726") as the year 45726; the
-  census guards it, the resolver does not. → Batch 4 (same file family).
+- ~~`parseDateForNeon` reads a bare serial ("45726") as the year 45726; the
+  census guards it, the resolver does not.~~ DONE in Batch 4 (the resolver
+  refuses it; the census's own guard is gone).
 - `IndividualReport.gs` keeps its own `activeDays` beside `daysActive`. →
   next IR change.
-- `drive-smoke.js` never clicks the QCD period toggle, so Range renders on
-  source pins only. → Batch 2 (dashboard deploy anyway).
+- ~~`drive-smoke.js` never clicks the QCD period toggle, so Range renders on
+  source pins only.~~ DONE with Batch 4 (four rendered checks per role).
 - The three REPORT modals (inbound / direct / outbound) have no rendered
   coverage (`DRIVER_MODAL_EXEMPT`). → needs gen-phase3.js fixtures; unbatched.
-- The census's per-instant memo (see Batch 4).
+- ~~The census's per-instant memo.~~ DONE in Batch 4 (`hdScanOneSheet_`).
 - Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
   instead of C+D; the all-dept QCD budget being per-run.
 

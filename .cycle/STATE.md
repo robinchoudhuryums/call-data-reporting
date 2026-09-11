@@ -4,6 +4,22 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **Batch 4 (Phase 2) SHIPPED (2026-09-11, block 188; one commit on the
+  branch, not yet PR'd):** the nightly check-and-sort over the five historical
+  sheets -- `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js, flag
+  `HISTORICAL_SORT_ENABLED`, CDR Tools install/uninstall/preview/run-now);
+  "single-typed AND ordered AND no TZ split", sorts only a single-typed
+  out-of-order column + re-checks, REFUSES mixed / TZ-split / unparsed with a
+  failure row, defers on any `*_RESUME` pointer; `historicalSort:<sheet>`
+  Pipeline Health rows -> the Health page's `historical-sort` row; the bulk
+  path's sort failure is a failure row under the same name. Follow-ons rode
+  along: the census's per-instant TZ memo, `parseDateForNeon` refusing a bare
+  number, drive-smoke clicking the QCD period toggle. The harness MODELS
+  `Range.sort` since this batch. 1351/1351; 18/18 mutations; ci:ui green.
+  **Deploys pending:** cdr-report (+ INSTALL the check from CDR Tools --
+  Operator State #61), cdr-import, dashboard. Batch 5's 2-week gate clock
+  starts at that install. NEXT: PR when the owner asks; the parallel Neon
+  storage decision; Batch 5's design spike after the gate.
 - **Batch 3 SHIPPED (2026-09-11, block 187; one commit on the branch, not
   yet PR'd):** after-hours capture -- DQE cols AJ `After-Hrs Answered` (36) +
   AK `After-Hrs TTT (sec)` (37, integer seconds) over `[15:00, 15:30)` PST,
@@ -237,11 +253,11 @@
   timezone fix (PRs #305/#306), the roadmap landed (#307), and PR #304 (the
   dashboard batch) merged -- all on main. Tomorrow's census after the 9/10
   build is Phase 1's last acceptance step.
-- Where I left off: Batch 3 (block 187) committed + pushed on
-  `claude/sync-commands-kmeo99` on top of the Batch 1+2 commits, all un-PR'd;
-  the owner decides PR + merge, then deploys cdr-report + cdr-import (same
-  day) and runs the #60 backfill while the Call_Legs tabs survive, plus the
-  earlier pending dashboard + cdr-report deploys and the S45 / S23 / chip walks.
+- Where I left off: Batch 4 (block 188) committed + pushed on
+  `claude/sync-commands-kmeo99` on top of the Batch 1-3 commits, all un-PR'd;
+  the owner decides PR + merge, then deploys all three projects, INSTALLS the
+  nightly sort check from CDR Tools (#61), runs the #60 after-hours backfill
+  while the Call_Legs tabs survive, and walks S45 / S23 / the chip.
 
 ## Latest session (Batch 2 — Health page truth + Batch 1 follow-ons, 2026-09-03)
 - Implemented the seven Batch 2 findings plus I-6 and two follow-ons;

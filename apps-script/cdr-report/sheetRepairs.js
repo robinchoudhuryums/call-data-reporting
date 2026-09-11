@@ -1008,7 +1008,7 @@ function scanHistoricalDateColumns_() {
   return out;
 }
 
-function hdScanOneSheet_(ss, spec) {
+function hdScanOneSheet_(ss, spec, opts) {
   var res = {
     sheet: spec.sheet, dateCol: spec.dateCol, rows: 0,
     types: {}, typeRanges: {}, formats: {}, singleTyped: null, ordered: null,
@@ -1044,8 +1044,17 @@ function hdScanOneSheet_(ss, spec) {
   // plain-text-formatted column apart from a writer emitting text. Best
   // effort: this is the secondary signal, so a throw must not cost the census.
   var fmts = null;
-  try { fmts = sheet.getRange(2, spec.dateCol, n, 1).getNumberFormats(); }
-  catch (e) { res.formats = null; }
+  if (opts && opts.skipFormats) {
+    res.formats = null;   // Batch 4: the nightly check does not need the histogram
+  } else {
+    try { fmts = sheet.getRange(2, spec.dateCol, n, 1).getNumberFormats(); }
+    catch (e) { res.formats = null; }
+  }
+  // Batch 4: the R46 predicate is memoized per distinct INSTANT. A sheet has
+  // ~600 distinct date instants, not 32k rows, and the per-row formatDate
+  // pair was the whole cost of this scan (~49 s on DQE, measured 2026-09-11)
+  // -- too slow for a nightly job. Same answer per row, one lookup per row.
+  var tzMemo = {};
 
   var prevIso = null;
   for (var i = 0; i < n; i++) {
@@ -1068,24 +1077,31 @@ function hdScanOneSheet_(ss, spec) {
     if (type === 'blank') continue;
 
     if (type === 'date') {
-      var daySheet  = Utilities.formatDate(raw, ssTz, 'yyyy-MM-dd');
-      var dayScript = Utilities.formatDate(raw, scriptTz, 'yyyy-MM-dd');
-      if (daySheet !== dayScript) {
+      var tzKey = raw.getTime();
+      var days = tzMemo[tzKey];
+      if (!days) {
+        days = tzMemo[tzKey] = {
+          sheet:  Utilities.formatDate(raw, ssTz, 'yyyy-MM-dd'),
+          script: Utilities.formatDate(raw, scriptTz, 'yyyy-MM-dd'),
+        };
+      }
+      if (days.sheet !== days.script) {
         res.tzSplit++;
         if (res.tzSplitSamples.length < HD_SCAN_SAMPLE_CAP_) {
-          res.tzSplitSamples.push({ row: rowNum, sheet: daySheet, script: dayScript });
+          res.tzSplitSamples.push({ row: rowNum, sheet: days.sheet, script: days.script });
         }
       }
     }
 
     var display = String(disp[i][0] == null ? '' : disp[i][0]);
     // A serial cell carrying a NUMERIC (not date) number format displays as a
-    // bare number, and parseDateForNeon's `new Date(s)` fallback reads "45726"
-    // as the YEAR 45726 -- a valid-looking ISO that would land in maxIso and
-    // hide the very rows this census exists to find. Refuse the resolver here
-    // rather than patching it: it has ~13 callers and is not Phase 0's to
-    // change (flagged as a follow-on). An unreadable cell is a finding.
-    var iso = /^\d+(\.\d+)?$/.test(display.trim()) ? null : parseDateForNeon(display);
+    // bare number ("45726"). Since Batch 4 parseDateForNeon itself refuses a
+    // bare number (its `new Date(s)` fallback used to read it as the YEAR
+    // 45726 -- a valid-looking ISO that would have landed in maxIso and hidden
+    // the very rows this census exists to find), so every one of its ~30
+    // callers gets the guard and this scan no longer carries its own copy. An
+    // unreadable cell is a finding: it lands in `unparsed`.
+    var iso = parseDateForNeon(display);
     if (!iso) {
       res.unparsed++;
       if (res.unparsedSamples.length < HD_SCAN_SAMPLE_CAP_) {
@@ -1349,4 +1365,177 @@ function normalizeDqeDateColumn_(dryRun) {
     + 'now read CLEAN with no TZ-SPLIT line, and its latest date should be the latest build.'
     + (out.backup ? ' Snapshot: "' + out.backup.tab + '" in ' + out.backup.url + '.' : ''));
   return out;
+}
+
+
+// ============================================================================
+// Phase 2 -- NIGHTLY CHECK-AND-SORT (roadmap Batch 4; date-column plan §Phase 2).
+// ----------------------------------------------------------------------------
+// The compensating control for the writers that append out of date order:
+// the daily / Manual Export path appends at the bottom (Operator State #56 is
+// exactly when older dates land after newer ones), only DQE sorts itself, and
+// the bulk path's own sorts could fail invisibly (console.warn -- fixed
+// alongside this: autoImport.js now logs a `historicalSort:<sheet>` FAILURE
+// row). Every night, for each of the five sheets:
+//
+//   1. Run the census scan (hdScanOneSheet_) -- "single-typed AND in date
+//      order AND no TZ split", never just ordered, because a MIXED column
+//      that has been sorted reads as non-decreasing while being wrong.
+//   2. CLEAN -> success row, nothing written. Most nights, every sheet.
+//   3. Single-typed but UNSORTED -> sort on the date column, re-scan, success
+//      row saying so ("sorted -- N inversion(s)"). A sheet that needs this
+//      EVERY night is a writer regressing; the Health page's historical-sort
+//      row says which one.
+//   4. MIXED-TYPE / TZ-SPLIT / UNPARSED -> REFUSED, failure row. A sort
+//      cannot fix those (it would produce the wrong order and then look
+//      sorted); they need previewHistoricalDateColumns() + the matching
+//      repair.
+//
+// Flag-gated on HISTORICAL_SORT_ENABLED (this project's store -- the
+// dashboard's PROP_REGISTRY_ does not extend here), installed from the CDR
+// Tools menu (daily ~3 AM, before the ~7 AM builds). The outcome travels to
+// the dashboard's Health page as Pipeline Health rows (INV-44 step family
+// `historicalSort:<DQE|QCD|CDR|CSR|QPath>` -- the labels the bulk path uses),
+// since cdr-report's Script Properties are not the dashboard's.
+//
+// DEFERS while any backfill *_RESUME pointer is set: a sort invalidates the
+// T-8 fingerprinted pointers (safe -- the run restarts from 0 -- but a nightly
+// reset would keep a multi-run backfill from ever finishing).
+//
+// No 1b snapshot before the sort: a sort moves whole rows and loses no cell,
+// and the DQE build already sorts nightly without one.
+
+var HISTORICAL_SORT_FLAG_PROP_   = 'HISTORICAL_SORT_ENABLED';
+var HISTORICAL_SORT_STEP_PREFIX_ = 'historicalSort:';
+var HISTORICAL_SORT_HOUR_        = 3;   // script-TZ; the imports run ~7 AM
+// Short step labels -- the same four the bulk path uses (autoImport.js
+// sheetsToSort), plus DQE, so a nightly success row supersedes a bulk-path
+// failure row under the SAME step name (the Health page's latest-outcome rule).
+var HISTORICAL_SORT_LABELS_ = {
+  'DQE Historical Data':          'DQE',
+  'QCD Historical Data':          'QCD',
+  'CDR Historical Data':          'CDR',
+  'CSR Transfer Historical Data': 'CSR',
+  'Q Path Historical Data':       'QPath',
+};
+var HISTORICAL_SORT_RESUME_PROPS_ = [
+  'DQE_UPSERT_RESUME', 'DQE_BACKFILL_RESUME', 'QCD_BACKFILL_RESUME',
+  'CDR_BACKFILL_RESUME', 'CDR_MISSING_BACKFILL_RESUME', 'CDR_PHONES_BACKFILL_RESUME',
+];
+
+/** Read-only: what tonight's run WOULD do. Writes nothing, logs no rows. */
+function previewHistoricalSortCheck() { return historicalSortCheck_({ apply: false }); }
+
+/** Menu / editor wrapper (the runRetentionPruneNow precedent): the real run, flag-gated. */
+function runHistoricalSortCheckNow() { return runHistoricalSortCheck_(); }
+
+/** Time-trigger handler. Gated on the flag so an installed trigger with the flag off is a visible no-op. */
+function runHistoricalSortCheck_() {
+  var flag = String(PropertiesService.getScriptProperties().getProperty(HISTORICAL_SORT_FLAG_PROP_) || '').trim().toLowerCase();
+  if (flag !== 'true') {
+    Logger.log('Historical sort check: ' + HISTORICAL_SORT_FLAG_PROP_ + ' is not "true" -- no-op. '
+      + 'Install from CDR Tools -> Nightly Historical Sort Check (Operator State #61).');
+    return { skipped: 'disabled', sheets: [] };
+  }
+  return historicalSortCheck_({ apply: true });
+}
+
+function hsSortSheet_(sheet, dateCol) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) return;
+  sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).sort({ column: dateCol, ascending: true });
+  SpreadsheetApp.flush();
+}
+
+function historicalSortCheck_(opts) {
+  var apply = !!(opts && opts.apply);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var props = PropertiesService.getScriptProperties();
+  var out = { scannedAt: new Date().toISOString(), apply: apply, resumePending: [], sheets: [] };
+  out.resumePending = HISTORICAL_SORT_RESUME_PROPS_.filter(function (k) { return !!props.getProperty(k); });
+
+  HISTORICAL_DATE_COLUMNS_.forEach(function (spec) {
+    var t0 = Date.now();
+    var label = HISTORICAL_SORT_LABELS_[spec.sheet] || spec.sheet;
+    var entry = { sheet: spec.sheet, label: label, verdict: null, action: 'none',
+                  rows: null, inversions: 0, status: 'success', notes: '', ms: 0 };
+    try {
+      if (out.resumePending.length) {
+        entry.action = 'skipped';
+        entry.notes = 'skipped -- backfill resume pointer(s) set: ' + out.resumePending.join(', ')
+          + ' (a sort would reset them); re-checks once the backfill clears its pointer';
+      } else {
+        var res = hdScanOneSheet_(ss, spec, { skipFormats: true });
+        entry.verdict = res.verdict; entry.rows = res.rows; entry.inversions = res.inversions;
+        if (res.verdict === 'MISSING' || res.verdict === 'EMPTY') {
+          entry.notes = res.verdict.toLowerCase() + ' -- nothing to check';
+        } else if (res.verdict === 'CLEAN') {
+          entry.notes = 'clean -- ' + res.rows + ' rows single-typed and in date order';
+        } else if (res.singleTyped && !res.tzSplit && !res.unparsed && !res.ordered) {
+          var first = res.inversionSamples[0];
+          var where = first ? ' (first at row ' + first.row + ': ' + first.prev + ' then ' + first.cur + ')' : '';
+          if (!apply) {
+            entry.action = 'would-sort';
+            entry.notes = 'UNSORTED -- ' + res.inversions + ' inversion(s)' + where
+              + '; the apply would sort on col ' + spec.dateCol;
+          } else {
+            hsSortSheet_(ss.getSheetByName(spec.sheet), spec.dateCol);
+            entry.action = 'sorted';
+            var after = hdScanOneSheet_(ss, spec, { skipFormats: true });
+            if (after.verdict === 'CLEAN') {
+              entry.notes = 'sorted -- ' + res.inversions + ' inversion(s)' + where + '; re-check CLEAN. '
+                + 'A sheet that needs this EVERY night is a writer appending out of order.';
+            } else {
+              entry.status = 'failure';
+              entry.notes = 'sorted, but the re-check still reads ' + after.verdict + ' ('
+                + after.inversions + ' inversion(s), ' + after.unparsed + ' unparsed) -- '
+                + 'run previewHistoricalDateColumns() (Operator State #61)';
+            }
+          }
+        } else {
+          entry.action = 'refused';
+          entry.status = 'failure';
+          entry.notes = res.verdict + ' -- a sort cannot fix this column (a mixed-type / TZ-split / '
+            + 'unparsable date column sorts into the wrong order and then LOOKS sorted); run '
+            + 'previewHistoricalDateColumns() and the matching repair (Operator State #61)';
+        }
+      }
+    } catch (e) {
+      entry.status = 'failure';
+      entry.action = 'error';
+      entry.notes = 'check threw: ' + (e && e.message ? e.message : String(e));
+    }
+    entry.ms = Date.now() - t0;
+    if (apply) {
+      logPipelineHealth_(ss, {
+        step: HISTORICAL_SORT_STEP_PREFIX_ + label, status: entry.status,
+        rows: entry.rows, durationMs: entry.ms, notes: entry.notes,
+      });
+    }
+    out.sheets.push(entry);
+  });
+
+  Logger.log('Historical sort check (' + (apply ? 'APPLY' : 'PREVIEW') + ') -- ' + out.scannedAt + '\n'
+    + out.sheets.map(function (e) {
+        return '  ' + e.label + ': ' + e.status + ' / ' + e.action + ' -- ' + e.notes + ' [' + e.ms + ' ms]';
+      }).join('\n'));
+  return out;
+}
+
+/** Installs the daily trigger AND arms the flag (uninstall clears both). */
+function installHistoricalSortTrigger() {
+  uninstallHistoricalSortTrigger();
+  ScriptApp.newTrigger('runHistoricalSortCheck_').timeBased().everyDays(1).atHour(HISTORICAL_SORT_HOUR_).create();
+  PropertiesService.getScriptProperties().setProperty(HISTORICAL_SORT_FLAG_PROP_, 'true');
+  Logger.log('Nightly historical sort check installed (runHistoricalSortCheck_, daily ~' + HISTORICAL_SORT_HOUR_
+    + ' AM script-TZ) and ' + HISTORICAL_SORT_FLAG_PROP_ + '=true. Outcome: historicalSort:<sheet> '
+    + 'Pipeline Health rows + the dashboard Health page (Operator State #61).');
+}
+
+function uninstallHistoricalSortTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'runHistoricalSortCheck_') ScriptApp.deleteTrigger(t);
+  });
+  PropertiesService.getScriptProperties().deleteProperty(HISTORICAL_SORT_FLAG_PROP_);
+  Logger.log('Nightly historical sort check removed (trigger deleted if it existed; ' + HISTORICAL_SORT_FLAG_PROP_ + ' cleared).');
 }

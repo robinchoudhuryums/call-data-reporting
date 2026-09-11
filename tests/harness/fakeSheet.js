@@ -111,15 +111,55 @@ function makeFakeRange(sheet, startRow, startCol, numRows, numCols) {
     // The plain-text ('@') formats are the repo's primary defense against
     // the comma-joined cell coercion class (CLAUDE.md's largest gotcha) --
     // with a no-op here, deleting every protection passed all tests. Tests
-    // assert coverage via sheet._numberFormats. Sort stays a no-op (tests
-    // filter by key rather than relying on row order).
+    // assert coverage via sheet._numberFormats. Sort is MODELLED below
+    // (Batch 4) -- tests that read rows by index after a sorting writer
+    // should filter by key, as the row order now follows the sort.
     setNumberFormat: function (fmt) {
       if (!sheet._numberFormats) sheet._numberFormats = [];
       sheet._numberFormats.push({ startRow: startRow, startCol: startCol,
         numRows: numRows, numCols: numCols, format: fmt });
       return this;
     },
-    sort: function () { return this; },
+    // Batch 4 / Phase 2: MODELLED, not stubbed (the clearContent discipline).
+    // Real Range.sort orders the range's rows by the given ABSOLUTE column,
+    // numbers + Dates first (as numbers), then text, blanks last, stably;
+    // the displays / formats grids move with their rows. `_sortCalls`
+    // records every call; `_sortError` makes the next call throw (the
+    // bulk-path "sort threw" class).
+    sort: function (spec) {
+      const specs = Array.isArray(spec) ? spec : [spec];
+      const first = specs[0];
+      const column = typeof first === 'number' ? first : Number(first && first.column);
+      const ascending = (first && typeof first === 'object' && first.ascending === false) ? false : true;
+      if (!sheet._sortCalls) sheet._sortCalls = [];
+      sheet._sortCalls.push({ startRow: startRow, numRows: numRows, column: column, ascending: ascending });
+      if (sheet._sortError) { const err = sheet._sortError; sheet._sortError = null; throw err; }
+      const rank = function (v) {
+        if (v === null || v === undefined || v === '') return { g: 2, k: 0 };
+        if (v instanceof Date) return { g: 0, k: v.getTime() };
+        if (typeof v === 'number') return { g: 0, k: v };
+        return { g: 1, k: String(v) };
+      };
+      const idx = [];
+      for (let r = 0; r < numRows; r++) idx.push(startRow - 1 + r);
+      const keyed = idx.map(function (i, pos) {
+        const row = sheet._data[i] || [];
+        return { i: i, pos: pos, r: rank(row[column - 1]) };
+      });
+      keyed.sort(function (a, b) {
+        if (a.r.g !== b.r.g) return a.r.g - b.r.g;            // blanks always last
+        if (a.r.g === 2) return a.pos - b.pos;
+        let c = a.r.k < b.r.k ? -1 : a.r.k > b.r.k ? 1 : 0;
+        if (!ascending) c = -c;
+        return c || (a.pos - b.pos);                             // stable
+      });
+      ['_data', '_displays', '_formats'].forEach(function (g) {
+        if (!sheet[g]) return;
+        const moved = keyed.map(function (k) { return sheet[g][k.i]; });
+        keyed.forEach(function (k, pos) { sheet[g][idx[pos]] = moved[pos]; });
+      });
+      return this;
+    },
     // Blanks the range's cells, leaving the rows in place -- the real
     // Range.clearContent. NOT a no-op: the deferred Neon mirror's queue
     // rewrite is clearContent-then-setValues, so a no-op here would leave

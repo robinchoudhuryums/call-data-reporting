@@ -126,7 +126,25 @@ tests/
                               display rendering), idempotence, whole-run
                               refusal on a stray cell, no number-format writes
                               -- the writer side of Phase 1 is pinned in
-                              pipeline-build),
+                              pipeline-build; Batch 4 adds the per-instant
+                              TZ-SPLIT memo pin and the shared-resolver
+                              bare-serial refusal),
+                              historical-sort (Phase 2 / roadmap Batch 4: the
+                              nightly check-and-sort over the five historical
+                              sheets -- flag-gated handler, one Pipeline
+                              Health row per sheet under historicalSort:<label>,
+                              a single-typed out-of-order sheet is sorted on
+                              its own date column + re-checked + reported, a
+                              MIXED-TYPE / TZ-SPLIT column is REFUSED with a
+                              failure row and never sorted, the preview writes
+                              nothing, a backfill *_RESUME pointer defers the
+                              run without a read, a thrown check or sort costs
+                              that sheet only, install arms the flag +
+                              trigger and uninstall clears both; source pins
+                              for the CDR Tools menu wiring and the bulk
+                              path's sort-failure row under the same step
+                              family -- the harness MODELS Range.sort since
+                              this batch),
                               cache-warm-budget (the
                               O-4 whole-run budget), neon-backfill-resume
                               (T-8 fingerprinted resume pointers + the

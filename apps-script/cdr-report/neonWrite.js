@@ -92,6 +92,13 @@ function parseDateForNeon(str) {
   if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
   var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!m) {
+    // Batch 4: a BARE NUMBER ("45726", "45726.5") is a date SERIAL rendered by
+    // a numeric number format, never a date string -- `new Date('45726')`
+    // reads it as the YEAR 45726 and the format below returns a valid-looking
+    // ISO that every sheet-fed caller would then key a row on. Refuse it; the
+    // census counts such cells as unparsed (a serial-aware repair is the
+    // remedy, not a guess).
+    if (/^-?\d+(\.\d+)?$/.test(s)) return null;
     var d = new Date(s);
     if (isNaN(d.getTime())) return null;
     return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');

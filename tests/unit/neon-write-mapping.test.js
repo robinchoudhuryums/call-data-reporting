@@ -346,6 +346,20 @@ test('I2-9: ISO-shaped cells are returned verbatim, never TZ-shifted', function 
   assert.equal(f('2026-05-19T03:00:00Z'), '2026-05-18');
 });
 
+test('Batch 4: a BARE NUMBER (a serial rendered by a numeric format) is refused, never read as a year', function () {
+  const f = h.fn('parseDateForNeon');
+  // Before the guard `new Date('45726')` was the year 45726 -> '45726-01-01',
+  // a valid-looking ISO that every sheet-fed caller would have keyed a row on.
+  assert.equal(f('45726'), null);
+  assert.equal(f(' 45726.5 '), null);
+  assert.equal(f('0'), null);
+  assert.equal(f('-3'), null);
+  // The date-shaped inputs are untouched.
+  assert.equal(f('5/19/2026'), '2026-05-19');
+  assert.equal(f('2026-05-19'), '2026-05-19');
+  assert.equal(f('May 19, 2026'), '2026-05-19', 'a free-form date string still parses');
+});
+
 // ── R27: the call_history_phones write gate ────────────────────────────────
 // The child rows are written only when CDR_PHONES_MIRROR is exactly 'on'.
 // Unset = OFF (the deploy itself stops the table's growth); the main

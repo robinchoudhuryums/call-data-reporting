@@ -453,6 +453,27 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   sheets genuinely date-ordered -- which would replace the span scan with a
   binary search -- is a separate staged project:
   [`docs/date-column-normalization-plan.md`](docs/date-column-normalization-plan.md).
+- **The five historical sheets are re-checked for date order NIGHTLY, and the
+  check is "single-typed AND ordered AND no TZ split", never just ordered
+  (Batch 4 / Phase 2).** `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js,
+  flag `HISTORICAL_SORT_ENABLED`, installed from CDR Tools) runs the census
+  scan per sheet and SORTS only a single-typed column that is out of order; a
+  MIXED-TYPE / TZ-SPLIT / UNPARSED column is REFUSED with a failure row,
+  because Sheets sorts numbers-then-text and the result LOOKS sorted while
+  being wrong. Outcome = `historicalSort:<sheet>` Pipeline Health rows
+  (INV-44) -> the Health page's `historical-sort` row; a sheet that needs
+  sorting EVERY night is a writer appending out of order, not a job to tune.
+  It DEFERS while any backfill `*_RESUME` pointer is set (a sort resets the
+  T-8 fingerprints). Two traps: (1) never `console.warn` a sheet-sort failure
+  -- the bulk path's did, and a CSR / Q Path left unsorted was seen nowhere;
+  it now logs a failure row under the same step name. (2) `parseDateForNeon`
+  refuses a BARE NUMBER (a serial under a numeric format used to read as the
+  year 45726), so a new sheet reader must not add its own copy of that guard.
+  The harness MODELS `Range.sort` (numbers/Dates, then text, blanks last;
+  `_sortCalls`, `_sortError`) -- a test that reads rows by index after a
+  sorting writer must filter by key. Pinned by `historical-sort.test.js`,
+  `system-health.test.js`, `historical-date-columns.test.js` (the per-instant
+  TZ memo); Operator State #61.
 - **`clasp push -f` does NOT delete remote files** that are absent locally.
   Removing files from an Apps Script project requires manual deletion in
   the web editor -- `scripts/check-remote-orphans.mjs` (wired into
@@ -2290,6 +2311,7 @@ items for anything it flags or doesn't cover.)
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
 60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the ONE-TIME backfill by force re-import of the dates whose `Call_Legs_*` tab survives (NULL = never captured, 0 = captured and empty)
+61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + the ~3 AM trigger from CDR Tools; the Health page's `historical-sort` row (needed sorting EVERY night = a writer regressing; "could not fix" = a repair, not a sort; skipped = a backfill resume pointer is set)
 
 ## Cycle Workflow Config
 

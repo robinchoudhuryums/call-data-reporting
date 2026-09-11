@@ -424,7 +424,9 @@ test('R46: a Date at script-TZ midnight that is not sheet midnight is RE-ANCHORE
   assert.equal(res.applied, true);
   assert.equal(res.reanchored, 1);
   const days = colB(sheet).map(function (v) { return inTz(v, SS_TZ); });
-  assert.deepEqual(days, ['2026-09-09 00:00', '2026-09-08 00:00', '2026-09-10 00:00']);
+  // The apply sorts col B after writing (the build's own after-write sort), and
+  // since Batch 4 the fake MODELS Range.sort, so the rows land in date order.
+  assert.deepEqual(days, ['2026-09-08 00:00', '2026-09-09 00:00', '2026-09-10 00:00']);
   // Idempotent: a second pass sees three cells at sheet midnight.
   const again = h.call('repairDqeDateNormalize');
   assert.equal(again.alreadyDate, 3);
@@ -494,4 +496,42 @@ test('R46: the writer and the repair build a col-B Date ONLY through dateAtSheet
   const fn = rep.slice(rep.indexOf('function dqeDateFromMdy_('), rep.indexOf('function normalizeDqeDateColumn_('));
   assert.ok(/return dateAtSheetMidnight_\(/.test(fn), 'dqeDateFromMdy_ returns the helper\'s instant');
   assert.ok(!/return d;/.test(fn), 'and never the local-midnight probe');
+});
+
+test('Batch 4: the TZ-SPLIT predicate is memoized per distinct INSTANT (a nightly job cannot afford ~32k formatDate pairs)', function () {
+  // 300 rows over 3 distinct instants -> at most 2 formatDate calls per
+  // instant (sheet zone + script zone), not 2 per row. parseDateForNeon's
+  // M/D/YYYY path never formats, so the count is the predicate's alone.
+  const cells = [];
+  for (let i = 0; i < 300; i++) cells.push(dateCell(2026, 6, 1 + (i % 3)));
+  install({ 'DQE Historical Data': dqeSheet(cells) });
+  const real = h.ctx.Utilities.formatDate;
+  let calls = 0;
+  h.ctx.Utilities.formatDate = function () { calls++; return real.apply(this, arguments); };
+  try {
+    const census = h.call('previewHistoricalDateColumns');
+    const dqe = census.sheets.filter(function (s) { return s.sheet === 'DQE Historical Data'; })[0];
+    assert.equal(dqe.rows, 300);
+    assert.equal(dqe.verdict, 'MIXED-TYPE+UNSORTED'.length ? (dqe.ordered ? 'CLEAN' : 'UNSORTED') : '', 'sanity');
+    assert.ok(calls > 0, 'the predicate ran');
+    assert.ok(calls <= 2 * 3, 'formatDate calls bounded by 2 x distinct instants, got ' + calls);
+  } finally {
+    h.ctx.Utilities.formatDate = real;
+  }
+});
+
+test('Batch 4: the memo does not change the verdict -- a shifted instant is still flagged on every row that carries it', function () {
+  const cells = [dateCell(2026, 7, 1), scriptMidnightCell(2026, 7, 2), scriptMidnightCell(2026, 7, 2), dateCell(2026, 7, 3)];
+  const byName = scan({ 'DQE Historical Data': dqeSheet(cells) });
+  const dqe = byName['DQE Historical Data'];
+  assert.equal(dqe.tzSplit, 2, 'both rows counted');
+  assert.match(dqe.verdict, /TZ-SPLIT/);
+});
+
+test('Batch 4: a serial cell displaying a bare number is UNPARSED through the shared resolver (the census no longer guards it alone)', function () {
+  const byName = scan({ 'DQE Historical Data': dqeSheet([dateCell(2026, 6, 1), serialCell(46114), dateCell(2026, 6, 3)]) });
+  const dqe = byName['DQE Historical Data'];
+  assert.equal(dqe.unparsed, 1);
+  assert.equal(dqe.maxIso, '2026-06-03', 'the serial never became a year-46114 maxIso');
+  assert.equal(h.fn('parseDateForNeon')('46114'), null, 'the resolver itself refuses it');
 });

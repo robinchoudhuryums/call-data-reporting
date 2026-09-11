@@ -1745,3 +1745,37 @@ When something looks wrong, before assuming a code bug, check:
     inside the window. Pinned by `tests/unit/pipeline-build.test.js` (Batch 3
     block), `neon-write-mapping.test.js`, `neon-backfill-resume.test.js`,
     `sheet-repairs-merge.test.js`, `cross-file-pins.test.js`.
+
+61. **Nightly historical sort check (roadmap Batch 4 / date-column plan Phase 2,
+    2026-09) — `HISTORICAL_SORT_ENABLED` in the CDR REPORT project, its trigger,
+    and what the Health row means.** Every night at ~3 AM script-TZ
+    `runHistoricalSortCheck_` (`cdr-report/sheetRepairs.js`) reads each of the
+    five historical sheets' date column (DQE col B; QCD / CDR / CSR Transfer /
+    Q Path col C) and asks the census's question — single-typed AND in date
+    order AND no TZ split — then: CLEAN → a `historicalSort:<DQE|QCD|CDR|CSR|QPath>`
+    `success` row (most nights, every sheet); single-typed but out of order →
+    sorts on the date column, re-checks, `success` row "sorted -- N
+    inversion(s)"; MIXED-TYPE / TZ-SPLIT / UNPARSED → REFUSED, `failure` row —
+    a sort cannot fix those (Sheets orders numbers-then-text and the result
+    LOOKS sorted), so run `previewHistoricalDateColumns()` and the matching
+    repair (Phase 1's `repairDqeDateNormalize` for a text/Date era split on
+    DQE). **Install:** CDR Report → CDR Tools → ⏰ Nightly Historical Sort
+    Check → Install — creates the trigger AND sets the flag (Uninstall clears
+    both); Preview is read-only (no rows, no sort); Run now is the real run. A
+    trigger with the flag off is a visible no-op (the flag is this project's,
+    not the dashboard's registry). **The dashboard Health page's
+    `historical-sort` row** (Pipeline section) reads the latest row per sheet
+    in the scanned window: muted "no rows" = not installed / disabled /
+    scrolled out; ok = none needed sorting; warn "needed sorting" = a writer
+    appended out of order (ONE night after a reprocess, #56, is expected —
+    every night is a writer regressing: find the writer, not the sort); warn
+    "could not fix" = refused or threw → the repair above; muted "skipped" = a
+    backfill `*_RESUME` pointer is set — the check defers so a nightly sort
+    cannot reset a multi-run backfill's T-8 fingerprint, and resumes when the
+    backfill clears its pointer. The bulk path (`processBatchArchive`) now logs
+    its own post-write sort failure under the same step name, so the next
+    clean nightly run supersedes it; until the check is installed such a row
+    stays flagged in "Recent pipeline step failures", which is correct — the
+    sheet IS out of order. No 1b snapshot before a sort (whole rows move, no
+    cell is lost). Pinned by `tests/unit/historical-sort.test.js` +
+    `system-health.test.js`.

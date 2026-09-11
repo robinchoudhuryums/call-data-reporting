@@ -1328,7 +1328,20 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
       sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn())
            .sort({ column: 3, ascending: true });
     } catch (e) {
-      console.warn(`Sort failed for ${label} Historical Data: ${e.message}`);
+      // Batch 4 / Phase 2: this used to be console.warn, which goes to Cloud
+      // Logging -- nowhere an operator looks -- so a sort that failed here
+      // left the sheet out of date order with no trace. Log a Pipeline Health
+      // FAILURE row under the nightly sort check's step name (the
+      // guardForceRebuildLoss_ pattern: log, never throw, so the written
+      // sheets stand); the check's next clean run supersedes it.
+      logPipelineHealthWithFallback_(targetSS, {
+        step:       'historicalSort:' + label,
+        status:     'failure',
+        rows:       null,
+        durationMs: null,
+        notes:      'bulk-path post-write sort threw: ' + (e && e.message ? e.message : e)
+                  + ' -- the sheet may be out of date order until the nightly sort check runs (Operator State #61)',
+      });
     }
   });
 
