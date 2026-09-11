@@ -273,8 +273,9 @@
               <tr>
                 <th data-sort="agent">Agent <span class="arrow"></span></th>
                 <th class="col-extra">Source</th>
-                <th data-sort="answerRate">Answered / Missed <span class="arrow"></span></th>
+                <th data-sort="totalAnswered">Answered / Missed <span class="arrow"></span></th>
                 <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
+                <th data-sort="ansPerDay" class="col-extra">Ans / day <span class="arrow"></span></th>
                 <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
                 <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
                 <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
@@ -448,8 +449,9 @@
           <tr>
             <th data-sort="agent">Agent <span class="arrow"></span></th>
             <th class="col-extra">Source</th>
-            <th data-sort="answerRate">Answered / Missed <span class="arrow"></span></th>
+            <th data-sort="totalAnswered">Answered / Missed <span class="arrow"></span></th>
             <th data-sort="answerRate">Answer % <span class="arrow"></span></th>
+            <th data-sort="ansPerDay" class="col-extra">Ans / day <span class="arrow"></span></th>
             <th data-sort="totalUnique" class="col-extra">Unique <span class="arrow"></span></th>
             <th data-sort="tttSeconds" class="col-extra">TTT <span class="arrow"></span></th>
             <th data-sort="attSeconds">ATT (daily avg) <span class="arrow"></span></th>
@@ -1251,11 +1253,15 @@
             <span class="side-hint-i" tabindex="0" title="Daily roll-up across this dept's mapped queues from QCD Historical Data. For a date range, open the Insights report — its Queue health section is the range view.">&#9432;</span>
             <span class="dept-qcd-date" id="dept-qcd-date"></span>
           </div>
-          <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date).
-               Hidden when the server didn't ship an MTD block. -->
+          <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date) /
+               Range (the page's own From/To -- the one period that reconciles
+               with the agent table; mirrors panel 2's toggle). Hidden when the
+               server didn't ship an MTD block; Range shown only when it shipped
+               a range block. Yesterday stays the default (owner). -->
           <div id="dept-qcd-period" class="dept-qcd-period" role="group" aria-label="Queue data period" style="display:none;">
             <button type="button" class="dept-qcd-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
             <button type="button" class="dept-qcd-period-btn" data-period="mtd" aria-pressed="false">MTD</button>
+            <button type="button" class="dept-qcd-period-btn" data-period="range" aria-pressed="false" style="display:none;">Range</button>
           </div>
           <div class="dept-qcd-tiles" id="dept-qcd-tiles"></div>
         </div>

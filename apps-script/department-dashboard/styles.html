@@ -48,6 +48,13 @@
        crossing threshold). */
     --bad:         #b23a2c;
     --bad-soft:    #f1d7d2;
+    /* --stale (owner 2026-09): AMBER for "this data is old" -- the freshness
+       pill past 36h. Deliberately its own token: --warn sits at hue ~30
+       (red-orange) and read as an error; staleness is a caution, not a fault.
+       Defined at every site --warn is (light, light-oklch, dark, dark-oklch,
+       the export override) so it never resolves only inside one block. */
+    --stale:       #a97a12;
+    --stale-soft:  #f6ecd0;
 
     --display: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --ui:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -89,6 +96,8 @@
       --warn-soft:   oklch(93% 0.04 30);
       --bad:         oklch(50% 0.16 25);
       --bad-soft:    oklch(91% 0.04 25);
+      --stale:       oklch(58% 0.13 80);
+      --stale-soft:  oklch(94% 0.04 85);
     }
   }
   /* Light-mode theme variants -- swapped via body[data-theme="..."]
@@ -128,6 +137,7 @@
     --good-soft:   #1a2f24;
     --warn-soft:   #3a1e15;
     --bad-soft:    #3a1410;
+    --stale-soft:  #3a2d10;
     /* Brand + semantics, lightened for the dark surface (constant hue).
        Contrast vs --paper #0c0f14: accent 7.4:1, good 7.7:1, warn 7.3:1,
        bad 5.8:1 — all clear AA text (light-paper values were 3.2–5.2:1). */
@@ -135,6 +145,7 @@
     --good:   #5cb494;
     --warn:   #e08a63;
     --bad:    #e06a56;
+    --stale:  #e2b04e;
   }
   /* Native calendar-picker icon: by default the WebKit/Chromium
      SVG is black, which disappears against the dark paper. Invert
@@ -149,12 +160,14 @@
       --good-soft:   oklch(26% 0.04 160);
       --warn-soft:   oklch(26% 0.05 30);
       --bad-soft:    oklch(24% 0.05 25);
+      --stale-soft:  oklch(27% 0.05 80);
       /* Base brand/semantics lightened to clear AA on the dark surface
          (mirrors the hex overrides above, constant hue). */
       --accent: oklch(70% 0.12 250);
       --good:   oklch(73% 0.10 165);
       --warn:   oklch(73% 0.13 45);
       --bad:    oklch(67% 0.16 28);
+      --stale:  oklch(78% 0.13 85);
     }
   }
 
@@ -326,9 +339,11 @@
     white-space: nowrap;
   }
   .freshness-pill.is-stale {
-    background: var(--warn-soft);
-    border-color: var(--warn);
-    color: var(--warn);
+    /* Owner (2026-09): amber, not the red-orange --warn -- stale is a
+       caution about age, not an error about correctness. */
+    background: var(--stale-soft);
+    border-color: var(--stale);
+    color: var(--stale);
   }
   .freshness-pill .freshness-date { color: var(--ink); }
   /* Non-admin variant (owner note): quiet inline text, no box/border --
@@ -5414,6 +5429,8 @@
       --warn-soft:   #f6e2d4 !important;
       --bad:         #b23a2c !important;
       --bad-soft:    #f1d7d2 !important;
+      --stale:       #a97a12 !important;
+      --stale-soft:  #f6ecd0 !important;
     }
     body {
       background: #ffffff !important;

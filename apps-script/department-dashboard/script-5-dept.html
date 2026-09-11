@@ -2298,7 +2298,7 @@
   // historical latest-day view.
   const DEPT_QCD_PERIOD_KEY_ = 'cdr.dept.qcdperiod';
   let deptQcdPeriod = (function () {
-    try { var v = localStorage.getItem(DEPT_QCD_PERIOD_KEY_); return (v === 'mtd' || v === 'yesterday') ? v : 'yesterday'; }
+    try { var v = localStorage.getItem(DEPT_QCD_PERIOD_KEY_); return (v === 'mtd' || v === 'yesterday' || v === 'range') ? v : 'yesterday'; }
     catch (e) { return 'yesterday'; }
   })();
   let deptQcdSnap_ = null;      // last snapshot payload, for re-render on toggle
@@ -2311,8 +2311,15 @@
     // Resolve the active period block. MTD is only offered when the server
     // shipped it; a missing `mtd` (older cache) falls back to Yesterday.
     var hasMtd = !!qcd.mtd;
-    var period = (deptQcdPeriod === 'mtd' && hasMtd) ? 'mtd' : 'yesterday';
-    var block = (period === 'mtd') ? qcd.mtd : qcd;
+    // Owner (2026-09): Range = the page's own From/To (`qcd.range`, Batch D;
+    // the same buildBlock_ shape as mtd), the one period that reconciles with
+    // the agent table -- mirrors panel 2's toggle. Only offered when the server
+    // shipped it (null when no range was supplied). Yesterday stays default.
+    var hasRange = !!qcd.range;
+    var period = (deptQcdPeriod === 'mtd' && hasMtd) ? 'mtd'
+               : (deptQcdPeriod === 'range' && hasRange) ? 'range'
+               : 'yesterday';
+    var block = (period === 'mtd') ? qcd.mtd : (period === 'range') ? qcd.range : qcd;
     // Round-16 (owner): the MTD view carries deltas vs the ENTIRE previous
     // month (the QCD report band's semantics): aban% in pts (down = sage,
     // up = warm), volume as per-WORKDAY averages (neutral gray); everything
@@ -2334,6 +2341,26 @@
         prior: qcd.mtdPrior,
       };
     }
+    // Range deltas vs the E5 prior window (`qcd.rangePrior`, R11-C1). The
+    // INV-28 prior has the SAME working-day count as the range, so volume
+    // compares RAW (no per-workday normalization -- perDay:false) and there is
+    // no low-signal gate. Reuses the MTD context shape so mtdSubs / mtdPriorOf
+    // need no second code path.
+    if (period === 'range' && qcd.rangePrior && qcd.range) {
+      var rPriorByQueue = {};
+      (qcd.rangePrior.perQueue || []).forEach(function (pq) { rPriorByQueue[pq.queue] = pq; });
+      var rmd = function (iso) { var p = String(iso || '').split('-'); return p.length === 3 ? (Number(p[1]) + '/' + Number(p[2])) : String(iso || ''); };
+      mtdCtx = {
+        wd: 1, pwd: 1, perDay: false,
+        label: 'prior',
+        lowSignal: false,
+        title: 'Range ' + rmd(qcd.range.from) + ' → ' + rmd(qcd.range.to)
+          + ' vs prior ' + rmd(qcd.rangePrior.from) + ' → ' + rmd(qcd.rangePrior.to)
+          + ' (same working-day count)',
+        byQueue: rPriorByQueue,
+        prior: qcd.rangePrior,
+      };
+    }
     // Prior counterpart for a tile-row's stats object: a per-queue page maps
     // by queue name; the gated summary pages map to the prior block's SAME
     // aggregate (buildBlock_ emits identical shapes on both sides).
@@ -2349,7 +2376,9 @@
     var mtdSubs = function (q, prior) {
       if (!mtdCtx) return { calls: '', abd: '' };
       var mAvg = mtdCtx.wd > 0 ? (Number(q.totalCalls) || 0) / mtdCtx.wd : 0;
-      var callsTxt = 'Ø ' + Math.round(mAvg) + '/day';
+      // Range (perDay:false): the tile already shows the raw total, so the
+      // sub-line is the delta alone; MTD keeps its per-workday average.
+      var callsTxt = (mtdCtx.perDay === false) ? '' : 'Ø ' + Math.round(mAvg) + '/day';
       var abdTxt = '';
       var pOk = prior && (Number(prior.totalCalls) || 0) > 0 && mtdCtx.pwd > 0;
       var abdCls = 'is-muted';
@@ -2357,7 +2386,7 @@
         var pAvg = (Number(prior.totalCalls) || 0) / mtdCtx.pwd;
         if (pAvg > 0) {
           var dV = (mAvg - pAvg) / pAvg * 100;
-          callsTxt += ' · ' + (dV >= 0 ? '▲' : '▼') + ' '
+          callsTxt += (callsTxt ? ' · ' : '') + (dV >= 0 ? '▲' : '▼') + ' '
             + Math.abs(dV).toFixed(1) + '% vs ' + mtdCtx.label;
         }
         var dA = (Number(q.abandonedPct) || 0) - (Number(prior.abandonedPct) || 0);
@@ -2367,14 +2396,20 @@
       }
       var t = ' title="' + escapeHtml(mtdCtx.title) + '"';
       return {
-        calls: '<div class="dept-qcd-sub"' + t + '>' + escapeHtml(callsTxt) + '</div>',
+        calls: callsTxt ? '<div class="dept-qcd-sub"' + t + '>' + escapeHtml(callsTxt) + '</div>' : '',
         abd: abdTxt ? '<div class="dept-qcd-sub ' + abdCls + '"' + t + '>' + escapeHtml(abdTxt) + '</div>' : '',
       };
     };
-    deptQcdWirePeriod_(hasMtd, period);
+    deptQcdWirePeriod_(hasMtd, period, hasRange);
     var titleEl = $('dept-qcd-title');
     if (titleEl) {
-      if (period === 'mtd') {
+      if (period === 'range') {
+        var rr = function (iso) { var p = String(iso || '').split('-'); return p.length === 3 ? (Number(p[1]) + '/' + Number(p[2])) : String(iso || ''); };
+        titleEl.textContent = 'Queue Call Data — ' + rr(qcd.range.from) + ' → ' + rr(qcd.range.to);
+        titleEl.title = 'The selected From/To across this department’s queues — the '
+          + 'one period here that reconciles with the agent table above.';
+        titleEl.style.cursor = 'help';
+      } else if (period === 'mtd') {
         var msStr = qcd.mtdStart || '';
         var msLabel = '';
         if (msStr) {
@@ -2384,8 +2419,8 @@
         }
         titleEl.textContent = 'Queue Call Data — Month to date' + (msLabel ? ' (since ' + msLabel + ')' : '');
         titleEl.title = 'Month-to-date across this department’s queues, through the '
-          + 'latest day with queue data. For a custom range, open the Insights '
-          + 'report’s Queue health section.';
+          + 'latest day with queue data. Use the Range button for the selected '
+          + 'From/To, or the Insights report’s Queue health section for detail.';
         titleEl.style.cursor = 'help';
       } else {
         var dateStr = qcd.date || '';
@@ -2402,8 +2437,8 @@
         // than DQE, and the range defaults to the latest DQE date). Clarify that
         // so the static card next to the range controls doesn't read as broken.
         titleEl.title = 'Most recent day of queue data — independent of the date '
-          + 'range above. For a specific date range, open the Insights report’s '
-          + 'Queue health section.';
+          + 'range above. Use the Range button for the selected From/To, or the '
+          + 'Insights report’s Queue health section for detail.';
         titleEl.style.cursor = 'help';
       }
     }
@@ -2584,14 +2619,17 @@
   // render; hides the toggle entirely when the server didn't ship an MTD block
   // (older cache). Wired once; a switch re-renders from the stashed snapshot.
   let deptQcdPeriodWired = false;
-  function deptQcdWirePeriod_(hasMtd, activePeriod) {
+  function deptQcdWirePeriod_(hasMtd, activePeriod, hasRange) {
     const bar = $('dept-qcd-period');
     if (!bar) return;
     bar.style.display = hasMtd ? '' : 'none';
     bar.querySelectorAll('.dept-qcd-period-btn').forEach(function (b) {
-      const on = b.getAttribute('data-period') === activePeriod;
+      const p = b.getAttribute('data-period');
+      const on = p === activePeriod;
       b.classList.toggle('active', on);
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      // Range is offered only when the server shipped a range block.
+      if (p === 'range') b.style.display = hasRange ? '' : 'none';
     });
     if (deptQcdPeriodWired) return;
     deptQcdPeriodWired = true;
@@ -2599,7 +2637,7 @@
       const b = e.target.closest('.dept-qcd-period-btn');
       if (!b) return;
       const p = b.getAttribute('data-period');
-      if ((p !== 'yesterday' && p !== 'mtd') || p === deptQcdPeriod) return;
+      if ((p !== 'yesterday' && p !== 'mtd' && p !== 'range') || p === deptQcdPeriod) return;
       deptQcdPeriod = p;
       try { localStorage.setItem(DEPT_QCD_PERIOD_KEY_, p); } catch (e2) { /* best-effort */ }
       if (deptQcdSnap_) renderDeptQcdSnapshot_(deptQcdSnap_);
@@ -2752,18 +2790,19 @@
     const col = COLUMNS.find(function (c) { return c.key === key; });
     const isText = col && col.type === 'text';
     return rows.slice().sort(function (a, b) {
-      // Answer-rate sort (the stacked bar column). Idle agents -- no
-      // rung activity at all -- always sink to the bottom regardless of
-      // direction so they don't crowd the top of an ascending sort.
-      if (key === 'answerRate') {
+      // Answer-rate sort (the Answer % column) and answered-VOLUME sort (the
+      // stacked bar, owner 2026-09). Idle agents -- no rung activity at all --
+      // always sink to the bottom regardless of direction so they don't crowd
+      // the top of an ascending sort; ties break by name.
+      if (key === 'answerRate' || key === 'totalAnswered') {
         const at = (Number(a.totalAnswered) || 0) + (Number(a.totalMissed) || 0);
         const bt = (Number(b.totalAnswered) || 0) + (Number(b.totalMissed) || 0);
         if (!at && !bt) return String(a.agent).localeCompare(String(b.agent));
         if (!at) return 1;
         if (!bt) return -1;
-        const ar = (Number(a.totalAnswered) || 0) / at;
-        const br = (Number(b.totalAnswered) || 0) / bt;
-        if (ar !== br) return (ar - br) * dir;
+        const av2 = (key === 'answerRate') ? (Number(a.totalAnswered) || 0) / at : (Number(a.totalAnswered) || 0);
+        const bv2 = (key === 'answerRate') ? (Number(b.totalAnswered) || 0) / bt : (Number(b.totalAnswered) || 0);
+        if (av2 !== bv2) return (av2 - bv2) * dir;
         return String(a.agent).localeCompare(String(b.agent));
       }
       const av = a[key], bv = b[key];
@@ -2805,6 +2844,15 @@
     }
     const v = row[col.key];
     if (col.type === 'text') return escapeHtml(v == null ? '' : v);
+    if (col.type === 'num1') {
+      // One decimal (Ans / day). Null = no active days; the day count rides
+      // in the title so the divisor is never a mystery.
+      if (v == null || !isFinite(Number(v))) return zeroCell_('–');
+      const days = Number(row.daysActive) || 0;
+      const t = days ? ' title="' + escapeHtml(fmtNumber(row.totalAnswered || 0) + ' answered over ' + days + ' active day' + (days === 1 ? '' : 's')) + '"' : '';
+      const txt = Number(v).toFixed(1);
+      return Number(v) === 0 ? zeroCell_(txt) : '<span' + t + '>' + txt + '</span>';
+    }
     if (col.type === 'duration') {
       const dur = fmtDuration(v);
       return (Number(v) || 0) === 0 ? zeroCell_(dur) : dur;
