@@ -490,8 +490,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   new public write functions without `assertAdmin_()` at minimum;
   data-mutation paths need all four mitigations; config/creation
   paths need at least the admin gate.** The dashboard's NON-spreadsheet
-  (Neon) write paths are: Escalations (INV-55, per-dept-gated), the
-  admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
+  (Neon) write paths are: Escalations (INV-55, per-dept-gated; its
+  `deleteEscalation` is ADMIN-gated -- row + activity trail in one
+  transaction, audited as an `escalations:delete` usage row with no PHI),
+  the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
   `applyOrphanRename`'s best-effort `dqe_history` rename mirror
   (`renameAgentInNeon_`).
@@ -2410,6 +2412,7 @@ S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
 S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
 S43 | Combined-view CSV export | Subsystem: Department Dashboard
 S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboard
+S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

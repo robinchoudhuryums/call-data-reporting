@@ -441,7 +441,11 @@ When something looks wrong, before assuming a code bug, check:
     (never throws). Complements the passive banner (#11) -- the banner is
     pull, this is push.
 24. Escalations notification + activity-trail migration (optional;
-    `Escalations.gs`, dashboard; INV-55). (a) **`NOTIFY_ON_NEW_ESCALATION`
+    `Escalations.gs`, dashboard; INV-55). **(c, 2a) An admin can permanently
+    DELETE an escalation** (mistake / test entry) from its card: row + activity
+    trail in one transaction, audited as an `escalations:delete` Report Usage
+    row (dept only, no PHI) -- no property, no trigger; managers never see the
+    control. (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
     (`lookupDeptManagers_`, Access Control rows) on every new escalation.
     Defaults OFF. The email carries FULL escalation detail (caller / patient /

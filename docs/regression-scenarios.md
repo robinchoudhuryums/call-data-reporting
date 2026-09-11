@@ -359,3 +359,14 @@ S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboa
     - Collapse and re-expand the section.
   Expected: the per-agent transferred values SUM to the tile's transferred figure. Rows are deliberately NOT roster-filtered, so a departed agent may appear with historical volume -- correct, not a bug. When the 11 destination columns do not cover every transfer a note above the lists says so and gives both numbers; when they do, no note appears. Collapsing does not refetch or change any figure.
   Fails if: the section renders for a non-CSR dept; queue labels are placeholders; the per-agent rows do not sum to the tile; or a range whose data was BACKFILLED (imported out of chronological order) shows fewer transfers than the tile -- that last one is the append-only/never-sorted trap the bounded-span read exists to prevent.
+
+S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, log a throwaway escalation via "+ New escalation" (any dept, reason "test -- delete me").
+    - On its card, find the muted "Delete…" control below the card body (right-aligned). Click it. Confirm the dialog is the DANGER tone, names the escalation by id / dept / date and NOT by patient, and offers "Keep it" / "Delete permanently". Click "Keep it": the card stays.
+    - Click "Delete…" again and confirm. Expect the toast "Escalation deleted", the card gone, and the nav badge / sidebar counts updated (the F10 reload).
+    - Open Admin -> Health -> "Report usage": a fresh `escalations:delete` row for your email and the dept, carrying no id and no patient text.
+    - Enter View-as-Manager (any dept): no "Delete…" control on any card. Sign in as (or view the page as) a real manager: none either.
+    - Optional: with Neon reachable, run `SELECT count(*) FROM escalation_activity WHERE escalation_id = '<the id>'` in the Neon console -> 0 (the trail went with the row).
+  Expected: as described. Clicking Delete twice quickly, or on a card another admin already deleted, shows "That escalation was already gone" and reloads -- never an error.
+  Fails if: a manager sees or can invoke the control; the dialog is not danger-toned or names the patient; the trail survives the row; the usage row carries an id or PHI; or an outage-snapshot read (Neon down) still shows the deleted card.

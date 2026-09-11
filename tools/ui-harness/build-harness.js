@@ -137,6 +137,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     getEscalationsInit: function () { var e = JSON.parse(JSON.stringify(P['esc-init'])); if (ROLE==='manager'){e.role='manager';e.isAdmin=false;e.department='CSR';e.departments=['CSR'];} return e; },
     getEscalations: function () { return P[ROLE==='manager' ? 'esc-list-mgr' : 'esc-list']; },
     getEscalationActivity: function () { return P['esc-activity']; },
+    deleteEscalation: function () { return { deleted: 1 }; },   // 2a: drive-admin confirms + deletes one card
     getAlertsInit: function () { return P['alerts-init']; },
     getDigestsInit: function () { return P['digests-init']; },
     getQueueReportInit: function () { return P['queuereport-init']; },

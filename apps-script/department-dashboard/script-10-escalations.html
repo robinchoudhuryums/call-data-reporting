@@ -641,6 +641,17 @@
         + '</div></div></details>';
     }
 
+    // 2a: admin-only permanent delete (a mistaken or test entry), on EVERY
+    // status. Rendered only for admins (the server re-checks assertAdmin_)
+    // and carries data-admin-only so View-as-Manager hides it with the rest
+    // of the admin chrome. The handler confirms in danger tone first.
+    if (isAdmin) {
+      body += '<div class="esc-admin-actions" data-admin-only>'
+        + '<button class="btn btn-ghost esc-delete" type="button" data-id="' + idAttr
+        + '" title="Admin only: permanently delete this escalation and its activity trail">&#128465; Delete&hellip;</button>'
+        + '</div>';
+    }
+
     // §5: append-only activity trail, collapsed by default (progressive
     // disclosure). Lazy-loaded on first open via getEscalationActivity.
     body += '<details class="esc-activity" data-id="' + idAttr + '">'
@@ -702,7 +713,42 @@
     if (t.classList.contains('esc-reject-save'))    { escReject_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-start'))          { escStart_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-edit'))           { escEditOpen_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-delete'))         { escDelete_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
+  }
+
+  // 2a: admin permanent delete. dsConfirm_ in danger tone names the row by
+  // id / dept / date -- never the patient -- and only then calls the server,
+  // which re-checks admin, deletes row + trail in one transaction, and returns
+  // { deleted: 0|1 } (0 = already gone: a stale card, not an error).
+  function escDelete_(id) {
+    const rows = (escLastResp_ && escLastResp_.rows) || [];
+    const row = rows.filter(function (r) { return String(r.id) === String(id); })[0];
+    const when = (row && row.occurred_at) ? escFmtWhen_(row.occurred_at) : '';
+    dsConfirm_({
+      title: 'Delete this escalation?',
+      messageHtml: 'This permanently removes escalation <code>' + escapeHtml(String(id)) + '</code>'
+        + (row ? ' (' + escapeHtml(row.department || '') + (when ? ', ' + escapeHtml(when) : '') + ')' : '')
+        + ' and its activity trail. Use it for entries logged by mistake or for testing. It cannot be undone.',
+      confirmLabel: 'Delete permanently',
+      cancelLabel: 'Keep it',
+      tone: 'danger',
+    }).then(function (ok) {
+      if (!ok) return;
+      escRowError_(id, '');
+      const btn = document.querySelector('.esc-delete[data-id="' + escCssId_(id) + '"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+      google.script.run
+        .withSuccessHandler(function (res) {
+          showToast((res && res.deleted) ? 'Escalation deleted' : 'That escalation was already gone', 'success');
+          escLoad_();
+        })
+        .withFailureHandler(function (err) {
+          if (btn) { btn.disabled = false; btn.innerHTML = '&#128465; Delete&hellip;'; }
+          escRowError_(id, (err && err.message ? err.message : String(err)));
+        })
+        .deleteEscalation({ id: id });
+    });
   }
 
   // C6: start work on a pending escalation (pending -> in_progress).

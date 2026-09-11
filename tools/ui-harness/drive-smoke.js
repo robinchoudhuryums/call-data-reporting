@@ -745,6 +745,11 @@ async function visibleErrorTones(page) {
       const badges = await page.locator('#escalations-btn .nav-count-badge').count();
       record(role + ': escalation badge never duplicates on reload', badges <= 1,
         'badge spans=' + badges);
+      // 2a: the admin Delete control is an admin SURFACE -- a manager's
+      // cards must not carry it at all (drive-admin exercises the admin side).
+      const delCtl = await page.locator('.esc-delete').count();
+      record(role + ': escalation Delete control ' + (role === 'admin' ? 'present for admin' : 'ABSENT for manager'),
+        role === 'admin' ? delCtl > 0 : delCtl === 0, 'controls=' + delCtl);
     }
 
     // The all-departments QCD report (its fixture payload is new in F7).

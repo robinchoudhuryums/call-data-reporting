@@ -152,12 +152,14 @@ function escSnapshotLoad_() {
  * it stores the full open set and the SERVE path re-applies the viewer's
  * dept scope. Best-effort throughout.
  */
-function escSnapshotMaybeRefresh_(conn) {
+function escSnapshotMaybeRefresh_(conn, force) {
   try {
     var props = PropertiesService.getScriptProperties();
     var meta = null;
     try { meta = JSON.parse(props.getProperty('ESC_SNAPSHOT_META') || 'null'); } catch (e) { meta = null; }
-    if (meta && meta.at) {
+    // 2a: a delete refreshes UNCONDITIONALLY, so an outage read served from
+    // the snapshot cannot resurrect a row the admin just removed.
+    if (!force && meta && meta.at) {
       var ageMin = (Date.now() - new Date(meta.at).getTime()) / 60000;
       if (isFinite(ageMin) && ageMin >= 0 && ageMin < ESC_SNAPSHOT_REFRESH_MIN) return;
     }
@@ -1107,6 +1109,68 @@ function updateEscalationComment(req) {
     throw new Error(e && e.message ? e.message : 'Could not update the comment.');
   } finally {
     try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Roadmap 2a (owner ask, 2026-09-11): an ADMIN permanently deletes an
+ * escalation that was logged by mistake or for testing.
+ *
+ * ADMIN-ONLY (`assertAdmin_`): a delete is an admin SURFACE, not data
+ * breadth, so the all-departments manager cannot reach it either (the
+ * role-model rule in CLAUDE.md). HARD delete of the row AND its
+ * escalation_activity trail in ONE transaction -- a soft delete would add a
+ * predicate to six readers, the badge, the outage snapshot and the digests to
+ * preserve rows that by definition have no value. Idempotent: an unknown id
+ * returns { deleted: 0 } rather than throwing, so a double click or a stale
+ * card is harmless. The audit that SURVIVES the deletion is a Report Usage
+ * row ('escalations:delete', the INV-01 append-only carve-out -- report code +
+ * department only, never the id or any caller / patient / trx field: PHI stays
+ * out of the usage sheet) plus a Logger line naming the id and prior status.
+ * The E2 outage snapshot is refreshed (forced) after the commit so a
+ * Neon-down read cannot resurrect the row; the client's escLoad_ then reloads
+ * the list and the badge (the F10 rule).
+ */
+function deleteEscalation(req) {
+  assertAdmin_();
+  var user = resolveUser_(Session.getActiveUser().getEmail());
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  try {
+    escEnsureTable_(conn);
+    var meta = escRowMeta_(conn, id);
+    if (!meta) {
+      Logger.log('deleteEscalation: %s -- no row with id %s; nothing deleted', user.email, id);
+      return { id: id, deleted: 0 };
+    }
+    conn.setAutoCommit(false); txn = true;
+    var a = conn.prepareStatement('DELETE FROM escalation_activity WHERE escalation_id = ?');
+    a.setString(1, id); a.execute(); a.close();
+    var d = conn.prepareStatement('DELETE FROM escalations WHERE id = ?');
+    d.setString(1, id); d.execute(); d.close();
+    conn.commit();
+    txn = false;
+    try { conn.setAutoCommit(true); } catch (ae) {}
+    Logger.log('deleteEscalation: %s deleted %s (%s, was %s) with its activity trail',
+      user.email, id, meta.department, meta.status);
+    try { logReportUsage_('escalations:delete', meta.department, user, false); } catch (eu) {}
+    try { escSnapshotMaybeRefresh_(conn, /*force=*/true); } catch (eSnap) { /* best-effort */ }
+    return { id: id, deleted: 1 };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('deleteEscalation failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not delete the escalation.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae2) {}
     try { conn.close(); } catch (ce) {}
     lock.releaseLock();
   }
