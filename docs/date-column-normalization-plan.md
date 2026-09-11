@@ -1,6 +1,6 @@
 # Historical date columns: normalization + ordering plan
 
-**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 shipped (2026-09-11), awaiting its live run. Phases 2–3 not started.
+**Status:** Phases 0 / 0b shipped and run live (2026-09-10). Phase 1 shipped and run live (2026-09-11): DQE reads CLEAN. Phases 2–3 not started.
 **Why this exists:** five historical sheets are read by windowed date queries,
 and none is reliably date-ordered. Today that is *handled* — every dashboard
 reader uses a min/max SPAN, which is correct at any row order (CLAUDE.md,
@@ -135,7 +135,7 @@ unresolved, and the fix below deliberately does not depend on knowing. CSR
 Transfer also showed three date formats across its history (`""`,
 `m/d/yyyy`, `mm/dd/yyyy`) — all Date-typed, cosmetic, sorts fine.
 
-## Phase 1 — normalize DQE col B (SHIPPED 2026-09-11, awaiting live run)
+## Phase 1 — normalize DQE col B (SHIPPED + RUN LIVE 2026-09-11)
 
 Smaller than either earlier version of this section, and the earlier
 "reset col B's number format first" step is **gone** — the cells are
@@ -172,22 +172,17 @@ display path (it used to return `String(date)`, a rendering Sheets never
 produces) — Phase 1 made that load-bearing, since the dup guard reads the
 Date-typed col B back through `getDisplayValues`.
 
-`previewDqeDateNormalize()` / `repairDqeDateNormalize()`, matching the existing
-preview/repair pair convention in that file. Canonicalize to real `Date`.
-
-Col B is **not** in the plain-text list (`setNumberFormat('@')` covers cols 4,
-11–29, 30–32, 35 — never 2), so the pipeline's `callDateStr` string is already
-coerced to a Date on write. Canonicalizing to Date therefore needs **no writer
-change, and no INV-16 two-file edit**. Text `yyyy-MM-dd` would need col B
-plain-texted plus a change in both duplicated copies, fighting that coercion.
-
-**The trap is F-8.** A numeric serial is UTC midnight of its calendar date;
-formatting it in the spreadsheet's `America/Mexico_City` renders 18:00 of the
-*previous* day. Reuse `rowDateIso_`'s serial branch verbatim — a hand-rolled
-conversion here shifts history back one day, silently.
-
-Col-B-only, block writes, idempotent, re-runnable after a partial failure. Run
-outside the import window. Then sort once.
+**Live run, 2026-09-11 (both projects pushed first).** Preview: 31,985
+rows — 22,469 already Date, 0 blank, 9,516 text `M/D/YYYY`, 0 refused (74
+more than the 2026-09-10 census: the builds in between still wrote text).
+Apply converted 9,516 cells and sorted in 16 s. Re-census: **DQE CLEAN** —
+one `date` type across all 31,985 rows, 2024-02-29..2026-09-08, zero
+inversions, formats `""` throughout (automatic — nothing to reset). QCD and
+CDR unchanged (CLEAN). CSR Transfer + Q Path still UNSORTED with the same
+three Aug 5 / 12 / 20 reprocess inversions — Phase 2's job. CSR Transfer's
+date column carries three number FORMATS (`""` / `m/d/yyyy` / `mm/dd/yyyy`)
+on one type; cosmetic, single-typed either way, not a sort hazard.
+Remaining acceptance: the next morning's build must keep DQE CLEAN.
 
 ## Phase 2 — nightly check-and-sort (NOT STARTED)
 
