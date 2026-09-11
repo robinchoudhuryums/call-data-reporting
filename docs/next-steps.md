@@ -191,7 +191,7 @@ batch is capture only, because the capture window closes daily.
 **Size.** M. **Deploy.** cdr-report + cdr-import (+ the one-time
 `backfill` over whatever `Call_Legs_*` tabs survive on deploy day).
 
-**Status (2026-09-11): SHIPPED** on the branch (block 187). What landed
+**Status (2026-09-11): SHIPPED**, merged to main in PR #308 (block 187). What landed
 beyond the design: AK is integer seconds; NULL-vs-0 is a documented
 distinction (nullable Neon ints, `NULLIF` binds, COALESCE upserts); the
 duplicate-merge repair clears AI..AK together; every full-width DQE reader's
@@ -222,7 +222,7 @@ Phase 2. Three additions from the 2026-09-11 work:
 
 **Size.** M–L. **Deploy.** cdr-report + cdr-import + dashboard.
 
-**Status (2026-09-11): SHIPPED** on the branch (block 188). As built: the
+**Status (2026-09-11): SHIPPED**, merged to main in PR #308 (block 188). As built: the
 engine is `runHistoricalSortCheck_` in `sheetRepairs.js` (flag
 `HISTORICAL_SORT_ENABLED`, CDR Tools install/uninstall/preview/run-now); it
 reuses the census scan (`hdScanOneSheet_`, now with the per-instant TZ memo
