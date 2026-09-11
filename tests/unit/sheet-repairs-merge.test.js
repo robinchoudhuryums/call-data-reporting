@@ -32,7 +32,6 @@ test('T-1: merged AD/AE/AF stay positionally paired (sorted pairs + trailing unp
   // AD = P2,P1,U1 / AE = M2,M1 / AF = 09:15:00,10:30:00.
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DQE Historical Data': [
         new Array(34).fill('h'),   // header
@@ -64,7 +63,6 @@ test('T-1: merged AD/AE/AF stay positionally paired (sorted pairs + trailing unp
 test('T-1: an all-#REBUILD group keeps the sentinel on all three columns', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DQE Historical Data': [
         new Array(34).fill('h'),
@@ -93,7 +91,6 @@ test('R8-B6: a re-run after a crashed apply deletes leftover duplicates WITHOUT 
   // recognize containment and only delete.
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DQE Historical Data': [
         new Array(34).fill('h'),
@@ -124,7 +121,6 @@ test('R8-B6: genuinely-distinct duplicate rows still MERGE (detector must not fa
   // tokens -- the detector must decline and the ordinary sum must run.
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DQE Historical Data': [
         new Array(34).fill('h'),
@@ -149,7 +145,6 @@ test('R8-B6: IDENTICAL duplicate rows (double-append) are deduped, not doubled',
   // copies, doubling the real values.
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DQE Historical Data': [
         new Array(34).fill('h'),

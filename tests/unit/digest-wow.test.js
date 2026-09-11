@@ -18,7 +18,6 @@ const ROSTER = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'] });
 function install(rows) {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
@@ -149,7 +148,6 @@ function installDigestMarkerFixture_(configRows) {
   h.state.props = { SPREADSHEET_ID: 'fake' };
   h.state.sentEmails.length = 0;
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DO NOT EDIT!': ROSTER,
       'Digest Config': [['Email', 'Department', 'Cadence', 'Active', 'Notes', 'Format']].concat(configRows),

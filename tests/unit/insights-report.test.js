@@ -39,7 +39,6 @@ function install(rows, deptConfig) {
   // cannot rebind through h.ctx.
   if (deptConfig) sheets['Dept Config'] = deptConfig;
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: sheets,
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
@@ -455,7 +454,7 @@ function installWithQcd(dqeRows, deptConfigRows, qcdRows) {
       'Call Source', 'Total Calls', 'Total Answered', 'Abandoned', 'Longest Wait',
       'Avg Answer', 'Abandoned %', 'Violations']].concat(qcdRows);
   }
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
   h.state.cache.clear();
@@ -722,7 +721,6 @@ test('RPT-3: a queueHealth error payload is NOT cached (next request retries)', 
 test('R8-C3: insightsQueueHealth_ proceeds without the QCD sheet when QCD_READ_SOURCE=neon', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': rosterGrid({ Alpha: ['Anna, 501'] }) },   // NO QCD sheet
   });
   const realCompute = h.ctx.computeQcdReport_;

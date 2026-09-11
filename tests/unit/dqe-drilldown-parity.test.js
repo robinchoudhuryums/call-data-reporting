@@ -98,7 +98,6 @@ function scenario(opts) {
   opts = opts || {};
   const rosterName = opts.rosterName || 'Anna Smith';
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')].concat(fixtureRows(opts.feedName)),
       'DQE Historical Data': [new Array(34).fill('')],

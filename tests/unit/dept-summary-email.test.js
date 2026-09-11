@@ -24,7 +24,6 @@ function install() {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.props.ADMIN_EMAILS = 'admin@x.com';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DO NOT EDIT!': ROSTER,
       'DQE Historical Data': dqeSheet([

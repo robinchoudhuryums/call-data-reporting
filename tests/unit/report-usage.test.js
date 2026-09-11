@@ -30,7 +30,7 @@ function install(withUsageSheet) {
     ]),
   };
   if (withUsageSheet) sheets['Report Usage'] = [USAGE_HEADER.slice()];
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.state.cache.clear();
 }

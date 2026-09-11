@@ -834,3 +834,46 @@ test('R40: a suite resetting one per-execution DQE memo resets the whole family'
     + offenders.join('; ') + '. Reset every memo in DQE_EXEC_MEMOS in the same '
     + 'install(), or the suite silently serves the previous fixture\'s DQE data.');
 });
+
+// ── R46 / roadmap 1a: the harness runs under the LIVE timezone split ────────
+//
+// The R46 shift (every converted DQE date cell landing at 23:00 of the previous
+// day) shipped through 1,300 green tests because CI pins the process TZ to the
+// script's AND the fake spreadsheet defaulted to that same zone, so script
+// midnight and sheet midnight coincided in every fixture. The fake's default
+// is now the live spreadsheet's zone (America/Mexico_City), which differs from
+// the shim's script zone (America/Chicago) by an hour on summer dates. These
+// two pins keep it that way: nobody may set the two zones equal again, and a
+// suite that opts back into "same zone" must say why on the line.
+
+test('R46: the fake spreadsheet\'s default timezone is NOT the shim\'s script timezone', () => {
+  const fake = read('tests/harness/fakeSheet.js');
+  const shim = read('tests/harness/shim.js');
+  const def = /const tz = opts\.timeZone \|\| '([^']+)'/.exec(fake);
+  const script = /getScriptTimeZone: function \(\) \{ return '([^']+)'; \}/.exec(shim);
+  assert.ok(def, 'fakeSheet.js: the default-timezone line was reshaped; fix this pin');
+  assert.ok(script, 'shim.js: Session.getScriptTimeZone was reshaped; fix this pin');
+  assert.notEqual(def[1], script[1],
+    'the fake spreadsheet defaults to the script timezone (' + def[1] + '): script midnight '
+    + 'and sheet midnight then coincide in every fixture and a TZ-blind date writer passes -- '
+    + 'the R46 class. Keep the default on the live spreadsheet zone.');
+  assert.equal(def[1], 'America/Mexico_City',
+    'the default should be the LIVE spreadsheet zone, not merely a different one');
+});
+
+test('R46: a suite that pins its fixture back to the script timezone says why (same-tz:)', () => {
+  const unitDir = path.join(ROOT, 'tests', 'unit');
+  const offenders = [];
+  for (const f of fs.readdirSync(unitDir).filter((x) => x.endsWith('.test.js'))) {
+    const lines = fs.readFileSync(path.join(unitDir, f), 'utf8').split('\n');
+    lines.forEach((ln, i) => {
+      if (/timeZone:\s*'America\/Chicago'/.test(ln) && !/same-tz:/.test(ln)) {
+        offenders.push(f + ':' + (i + 1));
+      }
+    });
+  }
+  assert.deepEqual(offenders, [],
+    'fixture(s) pinned to the script timezone without a `// same-tz: <reason>` on the line: '
+    + offenders.join(', ') + '. Drop the argument (the default is the live split) or state '
+    + 'why this suite needs script midnight == sheet midnight.');
+});

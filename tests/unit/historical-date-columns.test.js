@@ -24,13 +24,14 @@ const { formatDate } = require('../harness/formatDate');
 // writer's own col-B construction, which the repair and these fixtures share.
 const h = loadGas({ project: 'cdr-report', files: ['neonWrite.js', 'buildDQEHistoricalData.js', 'sheetRepairs.js'] });
 
-// R46: the fake spreadsheet sits in a timezone that is NOT the script's
+// R46: the fake spreadsheet DEFAULTS to a timezone that is NOT the script's
 // (the shim's Session.getScriptTimeZone() is America/Chicago, and CI pins the
-// process TZ to it). Mexico City is UTC-6 year round, Chicago UTC-5 in summer
-// -- the live pair, one hour apart from March to November. A script-TZ
-// midnight built for a summer date is 23:00 of the previous day here, which is
-// what the first live Phase 1 run wrote 9,516 times.
-const SS_TZ = 'America/Mexico_City';
+// process TZ to it) -- roadmap 1a; cross-file-pins pins the two apart. Mexico
+// City is UTC-6 year round, Chicago UTC-5 in summer -- the live pair, one hour
+// apart from March to November. A script-TZ midnight built for a SUMMER date
+// is 23:00 of the previous day here, which is what the first live Phase 1 run
+// wrote 9,516 times. (Winter dates cannot show the split: both zones are UTC-6.)
+const SS_TZ = makeFakeSpreadsheet({ sheets: {} }).getSpreadsheetTimeZone();
 const SCRIPT_TZ = 'America/Chicago';
 function sheetMidnight(y, m, d) { return h.call('dateAtSheetMidnight_', SS_TZ, y, m, d); }
 function inTz(v, tz) { return formatDate(v, tz, 'yyyy-MM-dd HH:mm'); }
@@ -84,7 +85,7 @@ function colCSheet(cells)  { return buildSheet(cells, 2); }
 
 function install(sheets) {
   h.state.props.SPREADSHEET_ID = 'fake';
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: SS_TZ, sheets: sheets });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
 }
 
 function scan(sheets) {
@@ -472,7 +473,7 @@ test('R46: the fake sheet renders a Date in the SPREADSHEET timezone -- the shif
   // raw value, as Sheets does. A script-TZ midnight of 9/9 renders as 9/8 in
   // a Mexico City sheet -- the exact thing the dup guard, the census and every
   // backfill read after the first live run.
-  const ss = makeFakeSpreadsheet({ timeZone: SS_TZ, sheets: { X: [
+  const ss = makeFakeSpreadsheet({ sheets: { X: [
     ['Date'], [scriptMidnightCell(2026, 9, 9).v], [sheetMidnight(2026, 9, 9)],
   ] } });
   const disp = ss.getSheetByName('X').getRange(2, 1, 2, 1).getDisplayValues().map(function (r) { return r[0]; });

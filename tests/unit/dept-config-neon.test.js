@@ -142,7 +142,6 @@ test('CORE-5: compareDeptConfigSources on unreachable Neon -> clean:false + erro
   h.ctx.assertAdmin_ = function () {};
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Dept Config': [HEADERS].concat(LOGICAL.map(sheetRow)) },
   });
   h.ctx.getDashboardNeonConn_ = function () { return null; };
@@ -154,7 +153,6 @@ test('CORE-5: compareDeptConfigSources on unreachable Neon -> clean:false + erro
   // PARITY CLEAN ([] vs coerced []).
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Dept Config': [HEADERS] },
   });
   const emptyDown = h.call('compareDeptConfigSources');
@@ -180,7 +178,6 @@ test('A-1: the C2 migration helpers carry finalDeptLabels (backfill record + par
   // was the record simply omitting the field, so the writer nulled col 11.
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Dept Config': [HEADERS].concat(LOGICAL.map(sheetRow)) },
   });
   const seen = [];

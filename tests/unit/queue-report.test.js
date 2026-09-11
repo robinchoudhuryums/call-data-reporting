@@ -69,7 +69,6 @@ test('gate: readiness -- QCD not yet at the target date -> not-ready (retry next
 test('subscribers: parses active/inactive rows, skips blank emails', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
         ['Email', 'Active', 'Notes'],
@@ -94,7 +93,6 @@ test('readiness read: queueReportQcdLatestIso_ returns the max QCD date', functi
   // QCD Historical Data: Month|Week|Date(col3)|... -- put ISO dates in col 3.
   const row = function (iso) { return ['Jul 2026', 'W28', iso, 'A_Q_X', 'Total Calls', 10, 8, 2, '', '', '', 0]; };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'QCD Historical Data': [
         ['Month Year', 'Week', 'Date', 'Call Queue', 'Call Source', 'Total Calls',
@@ -108,7 +106,7 @@ test('readiness read: queueReportQcdLatestIso_ returns the max QCD date', functi
 
 test('readiness read: no QCD sheet -> empty (not-ready)', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {} });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
   assert.equal(h.call('queueReportQcdLatestIso_', null), '');
 });
 
@@ -586,7 +584,6 @@ test('email HTML: empty day renders the no-activity note without throwing', func
 test('O-4: duplicate subscriber rows are flagged first-row-wins (no double-send)', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
         ['Email', 'Active', 'Notes'],
@@ -607,7 +604,6 @@ test('O-4: duplicate subscriber rows are flagged first-row-wins (no double-send)
 test('Round-16 To/Cc: ONE message -- To rows joined, Cc rows on cc (dedupe by shared Message-ID)', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
         ['Email', 'Active', 'Notes', 'Cc'],
@@ -633,7 +629,6 @@ test('Round-16 To/Cc: ONE message -- To rows joined, Cc rows on cc (dedupe by sh
 test('Round-16 To/Cc: a send failure fails the WHOLE message -- count 0, every recipient in failed (FAILED-ALL retry path)', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
         ['Email', 'Active', 'Notes', 'Cc'],
@@ -654,7 +649,6 @@ test('Round-16 To/Cc: a send failure fails the WHOLE message -- count 0, every r
 test('Round-16 To/Cc: all-Cc rows promote to To (an email needs a To); legacy 3-col sheet reads as all-To', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
         ['Email', 'Active', 'Notes', 'Cc'],
@@ -672,7 +666,6 @@ test('Round-16 To/Cc: all-Cc rows promote to To (an email needs a To); legacy 3-
   assert.equal(mails[0].cc, undefined, 'no cc left');
   // Legacy sheet (pre-Cc, 3 columns): bounded read -> every row is To.
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
         ['Email', 'Active', 'Notes'], ['old@x.com', 'TRUE', ''],
@@ -779,7 +772,6 @@ test('QV-4: sendQcdAllDeptEmail mails the CALLER only, for the requested range',
 test('QV-5: subscriber blast is admin-only and claims the dedupe marker ONLY for the gate target day', function () {
   qvInstall_('admin');
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['s1@x.com', 'TRUE', '']] },
   });
   const sent = [];
@@ -819,7 +811,6 @@ test('QV-5: subscriber blast is admin-only and claims the dedupe marker ONLY for
 test('O-9: no active subscribers -> noRecipients, and the report is never composed', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       // Present but every row inactive -- the same end state as an empty sheet,
       // and the one an admin reaches by toggling their own row off.
@@ -850,7 +841,6 @@ test('O-9: no active subscribers -> noRecipients, and the report is never compos
 test('O-9: a real send does NOT carry noRecipients (the flag is not sticky)', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [
         ['Email', 'Active', 'Notes'],
@@ -902,7 +892,6 @@ function gateCheckFixture(over) {
     QUEUE_REPORT_ENABLED: 'true',
   }, over.props || {});
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: Object.assign({
       'Queue Report Subscribers': over.subscribers || [
         ['Email', 'Active', 'Notes'],
@@ -1044,7 +1033,6 @@ function emptyStub_(seen) {
 test('D-1: the trigger path returns emptyReport -- nothing sent, no throw', function () {
   h.state.props = { SPREADSHEET_ID: 'fake' };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
   });
   emptyStub_();
@@ -1070,7 +1058,6 @@ test('D-1: the admin preview path THROWS on an empty report and reads FRESH (cac
   // The trigger path does not.
   h.state.props = { SPREADSHEET_ID: 'fake' };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
   });
   h.call('sendQueueReportForDate_', '2026-07-10', {});
@@ -1080,7 +1067,6 @@ test('D-1: the admin preview path THROWS on an empty report and reads FRESH (cac
 test('D-1: runDailyQueueReport_ records EMPTY <iso>, claims NO marker, and retries on the next poll', function () {
   h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com' };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']],
       'QCD Historical Data': [['Month Year', 'Week', 'Date'], ['', '', '2026-07-10']],
@@ -1115,7 +1101,6 @@ test('D-1: runDailyQueueReport_ records EMPTY <iso>, claims NO marker, and retri
 test('D-1: the manual subscriber blast surfaces the refusal instead of "0 sent"', function () {
   qvInstall_('admin');
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['s1@x.com', 'TRUE', '']] },
   });
   emptyStub_();
@@ -1172,7 +1157,6 @@ function partialStub_(seen) {
 test('R43: the trigger path refuses a PARTIAL report -- nothing sent, no throw', function () {
   h.state.props = { SPREADSHEET_ID: 'fake' };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
   });
   partialStub_();
@@ -1197,7 +1181,6 @@ test('R43: the admin preview path THROWS on a partial rather than mailing one', 
 test('R43: a partial does NOT claim the day, so the next poll retries', function () {
   h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true' };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['on@x.com', 'TRUE', '']] },
   });
   partialStub_();

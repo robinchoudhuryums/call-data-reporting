@@ -13,12 +13,14 @@ const { rosterGrid } = require('../harness/fixtures');
 const h = loadGas({ project: 'cdr-report', files: ['buildDQEHistoricalData.js'] });
 
 // Phase 1: col B is a DATE now. R46: its instant is midnight in the
-// SPREADSHEET's timezone, so the fixtures below put the sheet on Mexico City
-// (UTC-6, no DST) while the process/script TZ is Chicago (UTC-5 in summer) --
-// the live pair. On 2026-03-09 (the day after DST starts) the two differ by an
-// hour, so a script-TZ midnight (`callDateObj` itself) fails these pins.
+// SPREADSHEET's timezone. The fake spreadsheet DEFAULTS to Mexico City (UTC-6,
+// no DST) while the process/script TZ is Chicago (UTC-5 in summer) -- the live
+// pair (roadmap 1a; cross-file-pins pins the two zones apart). On 2026-03-09
+// (the day after DST starts) they differ by an hour, so a script-TZ midnight
+// (`callDateObj` itself) fails these pins. Fixture dates must be SUMMER dates
+// for that to hold -- in winter both zones are UTC-6 and the split vanishes.
 const { formatDate } = require('../harness/formatDate');
-const SS_TZ = 'America/Mexico_City';
+const SS_TZ = makeFakeSpreadsheet({ sheets: {} }).getSpreadsheetTimeZone();   // the fake's DEFAULT (1a): cross-file-pins pins it != the script zone
 function sheetStamp_(d) { return formatDate(d, SS_TZ, 'yyyy-MM-dd HH:mm'); }
 // Calendar date in the SCRIPT TZ -- must agree with the sheet's day (the R46
 // invariant: one calendar day in both zones).
@@ -70,7 +72,6 @@ function build() {
     rawRow({ callId: 'Q4', legId: 0, start: OUT, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P4', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: SS_TZ,
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],   // header only
@@ -147,7 +148,6 @@ test('F-2: AD/AE/AF are positionally paired (AF[i] time <-> AD[i] parent id)', f
     rawRow({ callId: 'QB1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'PB', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -185,7 +185,6 @@ test('INV-23 producer (Pass 4): a no-ring abandoned queue call emits ONE queue-s
     rawRow({ callId: 'QY', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'PY', callerId: 'A_Q_CSR', missed: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -228,7 +227,6 @@ test('duplicate guard: a second build for the same date is a no-op', function ()
     rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -255,7 +253,6 @@ test('IMP-7 (F2 guard): an expectedDate mismatch THROWS and writes nothing', fun
     rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -286,7 +283,6 @@ test('M2: a FORCE build (expectedDate) that produces no rows THROWS, not silent-
   // no email. With expectedDate present those doors now throw; WITHOUT it
   // (the self-deriving standalone trigger) the silent return is unchanged.
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': [new Array(26).fill('')],            // header only -> no data rows
       'DQE Historical Data': [new Array(34).fill('')],
@@ -323,7 +319,6 @@ test('REP-3: a NO-RING abandon on a CSR queue counts toward CSR Avg Abd Wait (AH
     rawRow({ callId: 'P9', legId: 0, start: IN, callTime: '0:02:00', calleeName: 'A_Q_CSR', parentCall: 'N/A', abandoned: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -368,7 +363,6 @@ test('R18e: a queue that stops stamping its name in col W is recovered via the C
              callerId: '354', parentCall: 'N/A', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -396,7 +390,6 @@ test('IMP-8: queue regex keeps &-names whole and ignores embedded A_Q_ tokens', 
     rawRow({ callId: 'PZ', legId: 0, start: IN, callTime: '0:02:00', calleeName: 'A_Q_Elig_MM&R', parentCall: 'N/A', abandoned: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -423,7 +416,6 @@ test('F-6: coercion-prone columns are plain-texted -- whole-column AND the exact
     rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],
@@ -514,7 +506,6 @@ test('I2-9: an ISO START_TIME display parses as a LOCAL date and col B is writte
     rawRow({ callId: 'Q1', legId: 0, start: '2026-03-09 7:00:00', caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
   ]);
   const ss = makeFakeSpreadsheet({
-    timeZone: SS_TZ,
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(34).fill('')],

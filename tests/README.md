@@ -1,5 +1,13 @@
 # Regression test harness
 
+**Fixture timezone (R46 / roadmap 1a).** `makeFakeSpreadsheet` DEFAULTS to the
+live spreadsheet zone, `America/Mexico_City`, while the shim's script zone is
+`America/Chicago` -- one hour apart from March to November. Leave it that way:
+a date-cell writer or reader that confuses the two midnights fails on a SUMMER
+fixture date and passes on a winter one, so date fixtures should sit between
+March and October. Pass `timeZone: 'America/Chicago'` only with a
+`// same-tz: <reason>` on the line (`cross-file-pins` enforces both rules).
+
 Node-based unit tests for the **Department Dashboard** Apps Script
 code. Zero dependencies — uses Node's built-in `node:test` + `node:assert`
 (Node ≥ 18; developed on Node 22). No `npm install` needed.

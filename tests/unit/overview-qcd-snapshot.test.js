@@ -51,7 +51,6 @@ test('F-14: MTD violations survive the snapshot-window filter', function () {
   const q = csrQueues[0];
 
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'QCD Historical Data': [QCD_HEADER,
         qcdRow(firstOfMonth, q, 3),   // current month, outside the window -> MTD must keep it
@@ -87,7 +86,6 @@ test('#1: per-day abandoned series accumulates in-window rows + excludes pre-win
   const q = h.call('getDeptQcdQueues_', 'CSR')[0];
   const since = '2026-06-01';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'QCD Historical Data': [QCD_HEADER,
         qcdRowTA('2026-06-02', q, 100, 8),    // in window
@@ -120,7 +118,6 @@ test('summary:v12: QCD snapshot carries an MTD block summing the latest month', 
   h.ctx.QCD_NEON_GRID_MEMO_ = null;
   const q = h.call('getDeptQcdQueues_', 'CSR')[0];
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       // Two days in the same month + one prior-month day. Latest day is 06-15.
       'QCD Historical Data': [QCD_HEADER,
@@ -162,7 +159,6 @@ test('R10-5: range block avgAnswer is answered-weighted; other blocks stay null'
   h.ctx.QCD_NEON_GRID_MEMO_ = null;
   const q = h.call('getDeptQcdQueues_', 'CSR')[0];
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'QCD Historical Data': [QCD_HEADER,
         qcdRowAvg('2026-06-02', q, 90, '0:00:20'),   // 90 answered @ 20s
@@ -197,7 +193,6 @@ test('R11-C1: rangePrior accumulates the prior window separately from range', fu
   h.ctx.QCD_NEON_GRID_MEMO_ = null;
   const q = h.call('getDeptQcdQueues_', 'CSR')[0];
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'QCD Historical Data': [QCD_HEADER,
         qcdRowAvg('2026-06-10', q, 50, '0:00:30'),   // current window: 30s
@@ -229,7 +224,6 @@ const CSR_TR_HEADER = ['Month Year', 'Week', 'Date', 'Agent', 'Trans %',
 test('R10-5: computeCsrTransferRange_ weights by calls, scopes to range, gates to CSR', function () {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'CSR Transfer Historical Data': [CSR_TR_HEADER,
         ['', '', '2026-06-02', 'Agent A', '10.0%', 100, 10],
@@ -249,7 +243,7 @@ test('R10-5: computeCsrTransferRange_ weights by calls, scopes to range, gates t
   // Non-CSR dept -> null (server ships the tile only for CSR).
   assert.equal(h.call('computeCsrTransferRange_', 'Sales', '2026-06-01', '2026-06-30'), null);
   // Missing sheet -> null, never a throw.
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {} });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
   assert.equal(h.call('computeCsrTransferRange_', 'CSR', '2026-06-01', '2026-06-30'), null);
 });
 

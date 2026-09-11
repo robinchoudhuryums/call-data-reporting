@@ -21,7 +21,6 @@ function installAdmin() {
   dash.state.props.ADMIN_EMAILS = 'admin@x.com';
   dash.state.props.SPREADSHEET_ID = 'fake';
   dash.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': rosterGrid({ Alpha: ['Anna, 201'] }) },
   });
   dash.state.cache.clear();

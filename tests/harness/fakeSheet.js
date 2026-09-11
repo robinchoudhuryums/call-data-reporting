@@ -240,7 +240,13 @@ function makeFakeSheet(name, data) {
  */
 function makeFakeSpreadsheet(opts) {
   opts = opts || {};
-  const tz = opts.timeZone || 'America/Chicago';
+  // R46 / roadmap 1a: the DEFAULT is the live spreadsheet's zone, which is NOT
+  // the script's (the shim's Session.getScriptTimeZone() is America/Chicago).
+  // Script midnight and sheet midnight therefore DIFFER on summer dates in
+  // every fixture unless a suite opts out with an explicit timeZone -- the
+  // condition under which the R46 shift was invisible to 1,300 tests.
+  // cross-file-pins pins that this default never equals the script zone.
+  const tz = opts.timeZone || 'America/Mexico_City';
   const sheetMap = {};
   const ss = {
     getSpreadsheetTimeZone: function () { return tz; },

@@ -125,7 +125,6 @@ function install(source) {
   if (source === 'neon') h.state.props.DQE_READ_SOURCE = 'neon';
   else delete h.state.props.DQE_READ_SOURCE;
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(DATASET.map(dqeRow)) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
@@ -221,7 +220,6 @@ test('CORE-2 (F-35): active-agents picker serves from Neon when the DQE sheet is
   // fine from dqe_history.
   install('neon');
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },   // no 'DQE Historical Data'
   });
   const res = h.call('computeActiveAgentsInRange_', 'Alpha', '2026-03-09', '2026-03-15',
@@ -253,7 +251,6 @@ test('R8-C1: Neon unreachable + NO sheet -> outage-empty shape carries meta.sour
   install('neon');
   h.ctx.getDashboardNeonConn_ = function () { return null; };   // outage
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },   // DQE sheet trimmed/retired
   });
   const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
@@ -265,7 +262,6 @@ test('R8-C1: Neon unreachable + NO sheet -> outage-empty shape carries meta.sour
 test('R8-C1: Neon REACHABLE-empty + no sheet is a real (unflagged, cacheable) empty', function () {
   install('neon');   // fake conn serves the dataset; ask outside its dates
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },
   });
   const r = h.call('computeMissedCallsReport_', 'Alpha', '2030-01-01', '2030-01-07', 'roster');
@@ -277,7 +273,6 @@ test('R8-C2: getLatestDataDate does NOT cache the negative sentinel after a fail
   install('neon');
   h.ctx.neonGetMaxDqeDate_ = function () { return null; };   // neon errored/empty
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },   // no DQE sheet to fall back to
   });
   h.state.cache.clear();
@@ -295,7 +290,6 @@ test('R8-C2: getLatestDataDate does NOT cache the negative sentinel after a fail
 test('R8-C2: the sheet source still caches its negative (empty install, no outage involved)', function () {
   install('sheet');
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },   // no DQE sheet at all
   });
   h.state.cache.clear();
@@ -358,7 +352,7 @@ test('F9: a COLD cache serves getLatestDataDate + getLatestDataDates from one sc
 test('F9: a missing DQE sheet yields empty bounds and still caches the negative', function () {
   install('sheet');
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago', sheets: { 'DO NOT EDIT!': ROSTER },
+    sheets: { 'DO NOT EDIT!': ROSTER },
   });
   h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
   h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: per-execution sheet DAL memo
@@ -438,7 +432,6 @@ test('L1: Neon unreachable + NO sheet -> computeSummary_ empty carries meta.sour
   install('neon');
   h.ctx.getDashboardNeonConn_ = function () { return null; };   // outage
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },   // DQE sheet trimmed/retired
   });
   const r = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-15', 'roster');
@@ -449,7 +442,6 @@ test('L1: Neon unreachable + NO sheet -> computeSummary_ empty carries meta.sour
 test('L1: Neon REACHABLE-empty + no sheet stays a real (unflagged) empty (LM2)', function () {
   install('neon');   // fake conn serves the dataset; ask outside its dates
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },
   });
   const r = h.call('computeSummary_', 'Alpha', '2030-01-01', '2030-01-07', 'roster');
@@ -460,7 +452,6 @@ test('L1: getDepartmentSummary does NOT cache the outage-empty payload', functio
   install('neon');
   h.ctx.getDashboardNeonConn_ = function () { return null; };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },
   });
   const r = h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15' });
@@ -473,7 +464,6 @@ test('L2: getCompanyOverview does NOT cache an empty-DQE-read blob when a latest
   install('neon');
   h.ctx.getDashboardNeonConn_ = function () { return null; };   // outage
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DO NOT EDIT!': ROSTER },   // DQE sheet trimmed/retired
   });
   // The outage shape needs a KNOWN latest date (a live read would return null
@@ -510,7 +500,6 @@ function r26Install(rows) {
   h.state.props.SPREADSHEET_ID = 'fake';
   delete h.state.props.DQE_READ_SOURCE;
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'DO NOT EDIT!': r26Roster({ Alpha: ['Ana, 201'] }),
       'DQE Historical Data': r26Sheet(rows.map(r26Row)),

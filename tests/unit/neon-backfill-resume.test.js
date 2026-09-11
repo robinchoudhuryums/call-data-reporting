@@ -67,7 +67,6 @@ function fakeConn(cap) {
 function install(rows) {
   h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'DQE Historical Data': [new Array(34).fill('h')].concat(rows) },
   });
   const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0 };
@@ -245,7 +244,6 @@ function installCdr(rows, extraProps) {
   h.state.props = Object.assign({ NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p',
                                   HMAC_SECRET: 's' }, extraProps || {});
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'CDR Historical Data': [new Array(26).fill('h')].concat(rows) },
   });
   const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0 };
@@ -323,7 +321,6 @@ function phonesConn(cap, parents) {
 function installPhones(rows, parents, extraProps) {
   h.state.props = Object.assign({ NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p', HMAC_SECRET: 's' }, extraProps || {});
   h.state.spreadsheet = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: { 'CDR Historical Data': [new Array(26).fill('h')].concat(rows) },
   });
   const cap = { statements: [], commits: 0, rollbacks: 0, closes: 0, binds: 0 };
@@ -497,7 +494,7 @@ function dqeMini(date, agent) { const r = new Array(34).fill(''); r[1] = date; r
 
 test('R37: preview lists Neon rows whose key the sheet lacks on sheet dates, touches nothing; prune deletes children-first, zero binds', function () {
   h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
     'CDR Historical Data': [new Array(26).fill('h'), cdrRow('03/10/2026', 'Anna Smith'), cdrRow('03/10/2026', 'Ben')],
     'DQE Historical Data': [new Array(34).fill('h'), dqeMini('03/10/2026', 'Anna Smith')],
   } });
@@ -533,7 +530,7 @@ test('R37: preview lists Neon rows whose key the sheet lacks on sheet dates, tou
 
 test('R37: the prune refuses past the cap (a wrong sheet read must not wipe Neon)', function () {
   h.state.props = { NEON_HOST: 'h', NEON_DB: 'd', NEON_USER: 'u', NEON_PASS: 'p' };
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
     'CDR Historical Data': [new Array(26).fill('h'), cdrRow('03/10/2026', 'Anna')],
     'DQE Historical Data': [new Array(34).fill('h')],
   } });

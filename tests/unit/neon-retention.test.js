@@ -27,7 +27,7 @@ const DASH = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboa
 function props(extra) {
   h.state.userEmail = 'admin@x.com';
   h.state.props = Object.assign({ SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' }, extra || {});
-  h.state.spreadsheet = makeFakeSpreadsheet({ timeZone: 'America/Chicago', sheets: {} });
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
   return { getProperty: function (k) { return h.state.props[k] == null ? null : h.state.props[k]; } };
 }
 

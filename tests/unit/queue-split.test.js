@@ -69,7 +69,6 @@ function crossoverGrid() {
 
 function build(rawGrid, sheetWidth) {
   const ss = makeFakeSpreadsheet({
-    timeZone: 'America/Chicago',
     sheets: {
       'Raw Data': rawGrid,
       'DQE Historical Data': [new Array(sheetWidth || 34).fill('')],
