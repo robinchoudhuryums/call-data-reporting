@@ -1,46 +1,37 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
-- **Phase 1 SHIPPED (2026-09-11), awaiting its live run** (block 184). The 0b
-  live run overturned BOTH 0b hypotheses: the 9,442 text cells are
-  AUTOMATIC-format (no format reset needed), and the boundary is 2026-03-09 —
-  the documented pipeline cutover. The old pipeline wrote Dates; the current
-  one writes `callDateStr` and the string is NOT coerced (why it coerces in
-  Direct Call History/F-3 and not here is unresolved; the fix does not depend
-  on knowing). Writer: col B written a second time as `callDateObj` after the
-  main setValues, both INV-16 copies — the CDR writer's own pattern.
-  `outputRows[1]` stays the string for Neon. Repair:
-  `previewDqeDateNormalize()` / `repairDqeDateNormalize()` (sheetRepairs.js):
-  text:mdy → `new Date(Y,M-1,D)` local midnight (the writer's construction),
-  whole-run REFUSAL on any non-Date non-M/D/YYYY cell, no format writes, no
-  Neon re-mirror, sorts once after. Harness: the fake now renders a Date cell
-  as M/D/YYYY on the display path (Sheets' rendering; `String(date)` never
-  was) — load-bearing, since the dup guard reads Date-typed col B via display.
-  **Operator next: push cdr-report, `previewDqeDateNormalize()` →
-  `repairDqeDateNormalize()` outside the import window → re-census: DQE must
-  read CLEAN. Then the next morning's build must keep it so.**
-- **Phase 0 RAN LIVE (2026-09-10); Phase 0b shipped and RAN LIVE (2026-09-10)**
-  (blocks 182, 183; results + readings in
-  `docs/date-column-normalization-plan.md`). Census: DQE MIXED-TYPE — 22,469
-  Date rows then 9,442 text rows, ZERO inversions (in order by ACCIDENT: type
-  boundary == era boundary; breaks on the first pre-boundary reprocess). QCD +
-  CDR clean. CSR Transfer + Q Path UNSORTED, 3 inversions each, the same three
-  reprocessed dates. **The current writer emits TEXT and no code path
-  plain-texts col B** — Phase 0b adds the per-type format histogram that says
-  whether the cells are '@'-formatted. **Phase 1 now needs a writer-side col-B
-  format reset in BOTH INV-16 copies** (the earlier "no writer change" claim was
-  wrong). QCD-clean RESOLVED: Pipeline Health shows 48 Aug-5 rows written on 9/3
-  (no loss); the sheet was sorted BY HAND on 9/10. Follow-on folded into the
-  Phase 2 plan: the bulk path swallows sort failures into `console.warn`
-  (invisible) — log a Pipeline Health failure row instead, same step name.
-- **Dashboard batch SHIPPED (2026-09-11, block 185): #8 Range on the QCD card
-  (Yesterday default), #6 bar sorts by `totalAnswered`, #7 "Ans / day" column
-  (`ansPerDay` per row over the EXISTING `daysActive`; `totals.daysActive` =
-  roster-active days; `summary:v22`, 8 doc sites synced), stale pill amber via
-  a new `--stale` token defined at all five `--warn` sites. 1293/1293; ci:ui
-  green locally (all 8 stages -- playwright now installed in the gitignored
-  tools/ui-harness). NOT yet PR'd/merged/deployed.** Remaining from the notes:
-  #2+#1 (help chips + tour), #5 (after-hours; 14-day clock), then Phase 2.
+- **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
+  1–5 + parallel track + follow-ons, with the why-this-order. Read it before
+  starting new work; this section carries only the per-session state.
+- **Phase 1 COMPLETE (2026-09-11; blocks 184 + the R46 fix, PRs #305/#306).**
+  The first live run exposed a TIMEZONE SHIFT: the repair (and the writer
+  change) built each Date as `new Date(Y,M-1,D)` = SCRIPT-TZ midnight, and
+  setValues converts a Date in the SPREADSHEET TZ (Mexico City, one hour
+  behind in summer), so 9,516 cells landed at 23:00 of the previous day —
+  and the census read CLEAN because "9/8/2026 23:00:00" parses as a valid
+  9/8. Fixed the same day (R46): `dateAtSheetMidnight_` (both INV-16 copies)
+  is the ONE construction for a date-only cell; the repair RE-ANCHORS
+  script-midnight cells; the census flags TZ-SPLIT; the fake sheet renders
+  Dates in the spreadsheet TZ; both suites fixture on Mexico City. Corrected
+  run matched the prediction exactly; re-census: DQE CLEAN, no TZ-SPLIT,
+  latest = latest build; none of the other four sheets TZ-splits. **Last
+  acceptance: the 2026-09-12 census after the 9/10 build.** The harness could
+  not see the bug because CI pins the process TZ to the script's and the fake
+  defaulted to the same zone — roadmap Batch 1a makes the split the default.
+- **Phase 0 / 0b RAN LIVE (2026-09-10)** (blocks 182, 183; readings in
+  `docs/date-column-normalization-plan.md`). The two findings that reshaped
+  the plan are recorded there and below; the QCD-clean puzzle was a hand sort
+  on 9/10; the bulk path's swallowed sort failures are folded into Phase 2.
+- **Dashboard batch MERGED (PR #304, 2026-09-11; block 185):** #8 Range on
+  the QCD card (Yesterday default), #6 bar sorts by `totalAnswered`, #7
+  "Ans / day" (`summary:v22`), stale pill amber via `--stale`. **Deploy of the
+  dashboard is the operator's step** (`clasp push -f` + new version), then
+  S41 / Range / bar sort / Show all columns. Remaining from the notes: #2+#1
+  (roadmap Batch 2b), #5 (Batch 3; 14-day clock).
+- **NEW owner ask (2026-09-11): Escalations admin DELETE** — roadmap Batch 2a
+  (admin-gated hard delete of row + activity in one txn, usage-row audit with
+  no PHI, snapshot refresh, `dsConfirm_` danger tone, `data-admin-only`).
 - **Owner decisions on the 2026-09-10 testing notes (#8/#6/#7/stale DONE above):**
   #8 Range button on the QCD card, Yesterday stays default. #2+#1: relabel the
   chip "How is my team doing?", DROP its last-30-days override (it defeats the
