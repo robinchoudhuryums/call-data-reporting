@@ -4,6 +4,15 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **Batches 1 + 2 SHIPPED (2026-09-11, block 186; four commits on the branch,
+  not yet PR'd):** 1a harness under the live TZ split by default (+2
+  tripwires in cross-file-pins); 1b snapshot-before-bulk-repair
+  (`hrBackupBeforeApply_`, `HR_BACKUP_SS_ID`, Operator State #59, new suite);
+  2a Escalations ADMIN delete (`deleteEscalation`, INV-55, S45); 2b the team
+  chip over the dept window + seq guard, the tour gated on
+  `onOverviewSettled_`. 1316/1316; ci:ui green twice (after 2a, after 2b).
+  **Deploys pending:** dashboard (2a+2b) and cdr-report (1b). **NEXT: Batch 3
+  (#5 after-hours capture, own PR -- the 14-day Call_Legs clock is running).**
 - **Phase 1 COMPLETE (2026-09-11; blocks 184 + the R46 fix, PRs #305/#306).**
   The first live run exposed a TIMEZONE SHIFT: the repair (and the writer
   change) built each Date as `new Date(Y,M-1,D)` = SCRIPT-TZ midnight, and
@@ -196,6 +205,29 @@
   `QUEUE_SPLIT_SCOPE=dept`, the dashboard should read **Spanish 17 rung / 15
   answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
   has confirmed the rendered page agrees.
+
+## Latest session (Batches 1+2 of the roadmap — safety nets + dashboard round, 2026-09-11)
+- Implemented 1a / 1b / 2a / 2b; summary block verbatim in
+  `.cycle/blocks/186-batch1-2-safety-nets-dashboard-round-broad-implement.md`.
+  `node --test` 1316/0; INV-16 in sync; `npm run ci:ui` all eight stages
+  green after 2a and again after 2b; 16/16 mutations fired across the four.
+- Decisions: (1) the fake spreadsheet's DEFAULT zone is the live one and a
+  pin keeps it apart from the script zone -- the 89 explicit Chicago fixture
+  args were simply removed (nothing relied on them); (2) the repair backup
+  lives in a SEPARATE workbook (cell cap) with the id self-stored, and a
+  failed copy BLOCKS the apply; (3) the escalation delete is a HARD delete of
+  row + trail, admin-only, audited as a usage row carrying the department
+  only (no id, no PHI); (4) the chip copies the dept window rather than
+  merely dropping its override, so it shares the region's cache key; (5) the
+  tour waits for the Overview to settle (cache paint / success / failure)
+  plus 250 ms.
+- Same-day context: Phase 1 of the date-column plan completed after the R46
+  timezone fix (PRs #305/#306), the roadmap landed (#307), and PR #304 (the
+  dashboard batch) merged -- all on main. Tomorrow's census after the 9/10
+  build is Phase 1's last acceptance step.
+- Where I left off: four batch commits + the roadmap status commit pushed on
+  `claude/sync-commands-kmeo99`, un-PR'd; the owner decides PR + merge, then
+  deploys dashboard + cdr-report and walks S45 / S23 / the chip.
 
 ## Latest session (Batch 2 — Health page truth + Batch 1 follow-ons, 2026-09-03)
 - Implemented the seven Batch 2 findings plus I-6 and two follow-ons;
