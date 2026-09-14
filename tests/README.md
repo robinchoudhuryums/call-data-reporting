@@ -8,6 +8,29 @@ fixture date and passes on a winter one, so date fixtures should sit between
 March and October. Pass `timeZone: 'America/Chicago'` only with a
 `// same-tz: <reason>` on the line (`cross-file-pins` enforces both rules).
 
+**Host timezone (the OTHER TZ rule -- run the suite the way CI does).** The
+note above is about the two zones the fixtures MODEL. This one is about the
+zone the PROCESS runs in. Several suites assume process TZ == script TZ, which
+is always true in Apps Script and is why `ci.yml` pins `TZ=America/Chicago`.
+That assumption is deliberate: roadmap 1a rejected a UTC matrix leg because it
+fails pins for the wrong reason. Measured across the offset range 2026-09-14:
+
+| Host TZ | Result |
+| --- | --- |
+| `America/Chicago`, `UTC`, `Europe/London` | green |
+| `America/Los_Angeles` | 2 failures |
+| `Asia/Tokyo`, `Pacific/Kiritimati` | 13-19 failures |
+
+Every one of those failures is a fixture building `new Date(y, m-1, d)` and
+comparing it against script-TZ-formatted output. None is a product defect. A
+new assertion should not add to them: where a pin needs an exact calendar day
+out of a `new Date(s)` parse, feed it an ABSOLUTE instant (a trailing `Z` or an
+explicit offset) so the host cannot move it, and assert shape only on a bare
+date string -- see the Batch 4 bare-number pin in `neon-write-mapping.test.js`.
+`scripts/deploy.sh` runs its gate under `TZ=America/Chicago` for the same
+reason: a red gate blocks the `clasp push` entirely, so the developer's locale
+must not be what decides whether a deploy is allowed.
+
 Node-based unit tests for the **Department Dashboard** Apps Script
 code. Zero dependencies — uses Node's built-in `node:test` + `node:assert`
 (Node ≥ 18; developed on Node 22). No `npm install` needed.

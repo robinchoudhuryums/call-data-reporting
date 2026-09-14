@@ -354,10 +354,25 @@ test('Batch 4: a BARE NUMBER (a serial rendered by a numeric format) is refused,
   assert.equal(f(' 45726.5 '), null);
   assert.equal(f('0'), null);
   assert.equal(f('-3'), null);
-  // The date-shaped inputs are untouched.
+  // The date-shaped inputs are untouched. The two regex branches are exact on
+  // any host (no Date object is built).
   assert.equal(f('5/19/2026'), '2026-05-19');
   assert.equal(f('2026-05-19'), '2026-05-19');
-  assert.equal(f('May 19, 2026'), '2026-05-19', 'a free-form date string still parses');
+  // The free-form fallthrough takes TWO assertions, because it is the ONE
+  // branch whose output depends on the HOST timezone: V8 parses a bare date
+  // string as LOCAL midnight and the resolver formats it in the SCRIPT zone,
+  // which the shim fixes at America/Chicago. Apps Script runs both in one
+  // zone, so production is exact -- but a host AHEAD of Chicago (a UTC CI box
+  // or Cloud Shell) renders the previous day and failed this pin for a reason
+  // that was never about the guard. So assert the two things separately:
+  // (1) SHAPE ONLY on the bare string -- what this pin is actually for is that
+  // the numeric guard does not swallow a non-numeric date string;
+  assert.match(String(f('May 19, 2026')), /^\d{4}-\d{2}-\d{2}$/,
+    'a free-form date string still parses');
+  // (2) the EXACT ISO off an absolute instant, host-independent for the same
+  // reason the 'T'-joined pin above is (the offset fixes the instant, and the
+  // format zone is the shim's, not the host's).
+  assert.equal(f('May 19, 2026 12:00:00 GMT-0500'), '2026-05-19');
 });
 
 // ── R27: the call_history_phones write gate ────────────────────────────────
