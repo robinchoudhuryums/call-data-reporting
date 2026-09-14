@@ -126,6 +126,14 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
+                              sheet-space (R47: the workbook 10M-cell
+                              cap -- the planner REFUSES rather than
+                              truncating a named range, the vetted per-tab
+                              bounds clear each tab's WIDEST WRITER reach
+                              rather than its used range, and the Health
+                              verdict's 80% threshold + most-reclaimable
+                              callout; the deleteRows/deleteColumns call
+                              itself is not harness-modelled),
                               sheet-repairs-merge,
                               sheet-repairs-backup (roadmap 1b: every bulk
                               repair apply snapshots the sheet into the

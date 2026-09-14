@@ -904,6 +904,43 @@ test('E1: with the helpers absent (suite default) both rows degrade to absent, a
   assert.equal(rowByKey(data, 'retention-risk'), undefined);
 });
 
+// ── R47: workbook cell usage (the 10M cap) ──────────────────────────────────
+// Sheet-only by design, so it renders in the FAST half during a Neon outage.
+// The fake spreadsheet's sheets report a 1000-row / 26-col default grid.
+test('R47: workbook-cells totals the ALLOCATED grid in the FAST half and warns at 80%', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  let opened = 0;
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return { close: function () {} }; };
+  const row = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'workbook-cells');
+  assert.equal(row.section, 'sheets');
+  assert.equal(row.status, 'ok', 'ten small fixture tabs are nowhere near the cap');
+  assert.match(row.value, /of 10000000 cells \(\d+%\)/);
+  assert.match(row.hint, /ALLOCATED grid, not cells with data/);
+  assert.match(row.hint, /Operator State #62/);
+  assert.equal(opened, 0, 'sheet-only: it must not open Neon (renders mid-outage)');
+
+  // A tab whose GRID dwarfs its content drives both the total and the callout.
+  const big = makeFakeSpreadsheet({ sheets: { 'QCDR Output': [['h']] } });
+  big.getSheets()[0]._maxRows = 12607;
+  big.getSheets()[0]._maxColumns = 291;
+  h.state.spreadsheet = big;
+  const r2 = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'workbook-cells');
+  assert.match(r2.value, /most reclaimable: QCDR Output/);
+  assert.match(r2.value, /^3668637 of 10000000/, 'counts grid, not the one used cell');
+});
+
+test('R47: past 80% the row warns and leads with what breaks at 100%', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const full = makeFakeSpreadsheet({ sheets: { 'Huge': [['h']] } });
+  full.getSheets()[0]._maxRows = 9983599;
+  full.getSheets()[0]._maxColumns = 1;
+  h.state.spreadsheet = full;
+  const row = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'workbook-cells');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /\(100%\)/);
+  assert.match(row.hint, /^Near the cap: at 100% every WRITE to this workbook fails/);
+});
+
 // ── Storage by table: the THIRD capacity row (roadmap parallel track) ────────
 // Rides the shared connection like retention-risk; helpers live in
 // NeonRetention.gs (not loaded here) so the row is typeof-gated and both are

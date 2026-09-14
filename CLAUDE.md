@@ -1508,11 +1508,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   has not recorded past its allowance (O-4) -- a run killed at the 6-min
   ceiling records nothing. Catches every INV-44 step in one place. Pinned by
   `system-health.test.js`.
-  This page is the PULL view; the optional **Pipeline-failure watchdog**
-  (`PipelineWatch.gs`, Operator State #32) PUSHES the same new failure rows to
-  admins by email. Three other read-only sections share the page, each with
+  This page is the PULL view; the **Pipeline-failure watchdog**
+  (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email. Three other read-only sections share the page, each with
   its own operator item: **"Report usage (last 30 days)"**
-  (`computeReportUsageSummary_`; a bounded tail read, `REPORT_USAGE_SCAN_CAP_`=5000);
+  (`computeReportUsageSummary_`; a bounded tail read, cap 5000);
   **`SmokeCheck.gs::runLiveSmoke`** -- an editor-run, admin-gated, READ-ONLY
   sweep of the live read paths that complements the unit harness by exercising
   live WIRING (properties, scopes, sheets, Neon). **Run it after every
@@ -1537,9 +1536,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   folds into `other`; EA-1 pin); the pure `neonStorageVerdict_` names the top
   5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
-  Call_Legs_* dates; sheet-only) and
-  `retention-risk` (surviving dates the per-call tables are missing;
-  #40/#43).
+  Call_Legs_* dates; sheet-only), `retention-risk` (surviving dates the
+  per-call tables are missing; #40/#43) and `workbook-cells` (the 10M
+  grid cap -- ALLOCATED, not used; warns at 80%, #62).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -2306,6 +2305,7 @@ items for anything it flags or doesn't cover.)
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
 60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the ONE-TIME backfill by force re-import of the dates whose `Call_Legs_*` tab survives (NULL = never captured, 0 = captured and empty)
 61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + the ~3 AM trigger from CDR Tools; the Health page's `historical-sort` row (needed sorting EVERY night = a writer regressing; "could not fix" = a repair, not a sort; skipped = a backfill resume pointer is set)
+62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap, not the cells holding data; the Health page's `workbook-cells` row (warns at 80%, sheet-only so it renders mid-outage) and CDR Tools -> Workbook Cell Space (audit / preview / apply trim). A named range past the keep bounds REFUSES, and a writer's reach is not derivable from the grid -- read the writers before trimming a new tab
 
 ## Cycle Workflow Config
 

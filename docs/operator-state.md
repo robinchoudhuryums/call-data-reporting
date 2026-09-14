@@ -1765,6 +1765,7 @@ When something looks wrong, before assuming a code bug, check:
     block), `neon-write-mapping.test.js`, `neon-backfill-resume.test.js`,
     `sheet-repairs-merge.test.js`, `cross-file-pins.test.js`.
 
+
 61. **Nightly historical sort check (roadmap Batch 4 / date-column plan Phase 2,
     2026-09) — `HISTORICAL_SORT_ENABLED` in the CDR REPORT project, its trigger,
     and what the Health row means.** Every night at ~3 AM script-TZ
@@ -1798,3 +1799,50 @@ When something looks wrong, before assuming a code bug, check:
     sheet IS out of order. No 1b snapshot before a sort (whole rows move, no
     cell is lost). Pinned by `tests/unit/historical-sort.test.js` +
     `system-health.test.js`.
+
+62. **Workbook cell space — the 10M cap, the Health row, and the CDR Tools
+    trim (R47, 2026-09).** Google counts a spreadsheet's **allocated grid**
+    (`getMaxRows() × getMaxColumns()` on every tab) against a hard
+    **10,000,000-cell** limit, **not** the cells that hold data. An empty
+    12,607×291 tab costs the same as a full one. Nothing measured this until
+    the CDR Report workbook reached 9,983,599 of 10,000,000 and the daily
+    import's Direct Call History write failed with *"This action would
+    increase the number of cells in the workbook above the limit of 10000000
+    cells"* — an outage with no prior warning, where **36.7% of the entire
+    cap was one tab**, `QCDR Output`, holding a 49×24 report.
+    **The signal:** the dashboard Health page's `workbook-cells` row (Sheets
+    section) totals the allocated grid, names the tab with the most
+    reclaimable space, and warns at
+    `SystemHealth.gs::WORKBOOK_CELL_WARN_PCT_` (80%). It reads sheet metadata
+    only — no cell reads, no Neon — so it renders in the page's fast half
+    during an outage. At 100% every WRITE to the workbook fails and the error
+    names the workbook, not the step, so the failing step is misleading.
+    **The tool:** CDR Report → CDR Tools → **🧮 Workbook Cell Space**
+    (`cdr-report/sheetSpace.js`): *Audit* lists every tab biggest-first;
+    *Preview trim* shows what would be freed and changes nothing; *APPLY
+    trim* shrinks the grids vetted in `SHEET_SPACE_TARGETS_`; *Conditional-
+    format ranges…* dumps a tab's rule ranges. **Take a File → Make a copy
+    first** — a grid trim is not covered by the #59 repair-backup workbook,
+    which only snapshots `repair*` cell rewrites.
+    **Three rules before trimming any NEW tab.** (1) A **named range** past
+    the keep bounds is a hard refusal, not a warning: truncating one silently
+    changes what every reader sees (the roster ranges on `DO NOT EDIT!` run
+    to row 1000 over 47 used rows, so that tab must keep all 1000). (2) A
+    **writer's reach is not derivable from the grid** — `updateQcdrOutputSheet`
+    clears `getRange(2, 10, max(agents + 20, 100), 15)` however few agents
+    exist, so trimming `QCDR Output` to its 49 used rows would convert a
+    space outage into a daily-import outage. That is why every entry in
+    `SHEET_SPACE_TARGETS_` is hand-set with a comment naming what it clears,
+    and why a new tab needs its writers read first. (3) Protections,
+    conditional formatting and charts shrink harmlessly with the grid, so
+    they are reported and never block; formula references from elsewhere in
+    the workbook are **not** detectable from code — check them with
+    `createTextFinder(tabName).matchFormulaText(true)` before a first trim,
+    because a `#REF!` is silent and no probe here would catch it.
+    **Vetted 2026-09-14** (both clean on named ranges, formula references,
+    protections and charts): `QCDR Output` → 200×30, frees 3,662,637;
+    `Daily Queue Report` → 400×20, frees 641,844 (its 13 conditional-format
+    rules all sit inside rows 1–93, cols C–G). `Raw Data`'s spare rows are
+    deliberate headroom — the importer `clearContents` then writes one day's
+    legs into a fixed range, so a busier day needs them. Pinned by
+    `tests/unit/sheet-space.test.js` + `system-health.test.js`.
