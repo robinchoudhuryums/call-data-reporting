@@ -14,14 +14,22 @@ batch, items are independent unless marked.
 
 | # | Batch | Items | Projects / deploy | Start when |
 |---|---|---|---|---|
-| 1 | **Safety nets** — SHIPPED 2026-09-11 (block 186) | 1a harness runs under the live TZ split · 1b snapshot before any bulk repair | 1a none · 1b cdr-report (deploy pending) | done |
-| 2 | **Dashboard round** — SHIPPED 2026-09-11 (block 186) | 2a Escalations: admin delete · 2b notes #2+#1 (help chip + tour) | dashboard (deploy pending) | done |
+| 1 | **Safety nets** — SHIPPED 2026-09-11 (block 186) | 1a harness runs under the live TZ split · 1b snapshot before any bulk repair | 1a none · 1b cdr-report (DEPLOYED 2026-09-14) | done |
+| 2 | **Dashboard round** — SHIPPED 2026-09-11 (block 186) | 2a Escalations: admin delete · 2b notes #2+#1 (help chip + tour) | dashboard (DEPLOYED 2026-09-14) | done |
 | 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **SHIPPED 2026-09-11** (deploy + backfill: Operator State #60) |
 | 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | **SHIPPED 2026-09-11** (install + flag: Operator State #61) |
-| ∥ | **Neon storage decision** | operator decision; Health row "Neon storage by table" **SHIPPED 2026-09-11** (block 189) | dashboard (deploy pending) | any time |
+| ∥ | **Neon storage decision** | operator decision; Health row "Neon storage by table" **SHIPPED 2026-09-11** (block 189) | dashboard (DEPLOYED 2026-09-14) | any time |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
+
+**Deploy status (2026-09-14).** All three projects are deployed through commit
+005a7b1, so Batches 1–4 and the Neon-storage Health row are LIVE. Two things
+are NOT covered by that: **R47** (the workbook cell-space tooling, block 190)
+still needs a cdr-report + dashboard push, and the Batch 4 nightly sort check
+still needs its one-time **install** from CDR Tools — a deploy ships the code,
+the flag and trigger are a separate operator step (Operator State #61), and
+Batch 5's two-week gate clock starts at that install, not at the deploy.
 
 **Why this order.** 1a is hours of work and is the only item that would have
 stopped R46 before it reached the sheet; every later batch writes or reads
@@ -114,7 +122,7 @@ self-populates; Operator State #59 carries the restore procedure. **As built:**
 
 ---
 
-## Batch 2 — dashboard round (SHIPPED 2026-09-11; one deploy pending)
+## Batch 2 — dashboard round (SHIPPED 2026-09-11; DEPLOYED 2026-09-14)
 
 ### 2a. Escalations: admin delete (owner ask, 2026-09-11)
 

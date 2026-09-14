@@ -146,6 +146,10 @@ node --test          # from repo root (or: npm test)
 # TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard) AND
 # `npm run ci:ui` (the rendered-UI gate, F-10; skips cleanly when playwright
 # isn't installed); DEPLOY_SKIP_CI=1 skips both (emergencies only).
+# Both gate commands run under TZ=America/Chicago (CI_TZ overrides), matching
+# ci.yml: parts of the harness assume process TZ == script TZ, and a red gate
+# blocks the push entirely, so the developer's locale must not decide whether
+# a deploy is allowed. tests/README.md has the per-zone measurements.
 # Batch 4: it also runs the REMOTE-ORPHAN check first -- `clasp push -f` never
 # deletes remote files (INV-17), so a file removed from the repo stays live and
 # callable until deleted by hand in the web editor. The check pulls the project
@@ -1508,11 +1512,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   has not recorded past its allowance (O-4) -- a run killed at the 6-min
   ceiling records nothing. Catches every INV-44 step in one place. Pinned by
   `system-health.test.js`.
-  This page is the PULL view; the optional **Pipeline-failure watchdog**
-  (`PipelineWatch.gs`, Operator State #32) PUSHES the same new failure rows to
-  admins by email. Three other read-only sections share the page, each with
+  This page is the PULL view; the **Pipeline-failure watchdog**
+  (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email. Three other read-only sections share the page, each with
   its own operator item: **"Report usage (last 30 days)"**
-  (`computeReportUsageSummary_`; a bounded tail read, `REPORT_USAGE_SCAN_CAP_`=5000);
+  (`computeReportUsageSummary_`; a bounded tail read, cap 5000);
   **`SmokeCheck.gs::runLiveSmoke`** -- an editor-run, admin-gated, READ-ONLY
   sweep of the live read paths that complements the unit harness by exercising
   live WIRING (properties, scopes, sheets, Neon). **Run it after every
@@ -1537,9 +1540,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   folds into `other`; EA-1 pin); the pure `neonStorageVerdict_` names the top
   5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
-  Call_Legs_* dates; sheet-only) and
-  `retention-risk` (surviving dates the per-call tables are missing;
-  #40/#43).
+  Call_Legs_* dates; sheet-only), `retention-risk` (surviving dates the
+  per-call tables are missing; #40/#43) and `workbook-cells` (the 10M
+  grid cap -- ALLOCATED, not used; warns at 80%, #62).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -2306,6 +2309,7 @@ items for anything it flags or doesn't cover.)
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
 60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the ONE-TIME backfill by force re-import of the dates whose `Call_Legs_*` tab survives (NULL = never captured, 0 = captured and empty)
 61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + the ~3 AM trigger from CDR Tools; the Health page's `historical-sort` row (needed sorting EVERY night = a writer regressing; "could not fix" = a repair, not a sort; skipped = a backfill resume pointer is set)
+62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap, not the cells holding data; the Health page's `workbook-cells` row (warns at 80%, sheet-only so it renders mid-outage) and CDR Tools -> Workbook Cell Space (audit / preview / apply trim). A named range past the keep bounds REFUSES, and a writer's reach is not derivable from the grid -- read the writers before trimming a new tab
 
 ## Cycle Workflow Config
 
@@ -2331,7 +2335,7 @@ CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js
 
 CDR Import:
   apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json

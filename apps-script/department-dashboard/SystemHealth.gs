@@ -86,6 +86,10 @@ function healthAgeMs_(stamp, nowMs) {
 // Workspace) and the app cannot read which plan it is on -- below ~50 the
 // alert channel is at risk on either.
 var MAIL_QUOTA_WARN_FLOOR_ = 50;
+// R47: Google's hard per-spreadsheet cell cap and the point this page warns.
+// Kept in step with cdr-report/sheetSpace.js's copies by cross-file-pins.
+var WORKBOOK_CELL_CAP_ = 10000000;
+var WORKBOOK_CELL_WARN_PCT_ = 80;
 
 function getSystemHealth(req) {
   assertAdmin_();
@@ -816,6 +820,42 @@ function getSystemHealth(req) {
       missing.length ? ('missing: ' + missing.join(', ')) : (expected.length + ' present'),
       missing.length ? 'Re-run setup() from the editor as an admin (Operator State #6) — writers against missing sheets silently no-op.' : '');
   } catch (e) { add('sheets', 'setup-sheets', 'setup()-managed sheets', 'warn', 'probe failed', String(e && e.message || e)); }
+
+  // R47: the workbook's 10M-CELL CAP. Google counts the ALLOCATED grid
+  // (maxRows x maxColumns per tab), not the cells holding data, so an
+  // oversized empty grid costs exactly as much as a full one. Nothing here
+  // measured it until the workbook reached 9,983,599 of 10,000,000 and the
+  // daily import's Direct write failed outright -- an outage with no prior
+  // signal, where 36.7% of the cap was one tab's empty grid. Sheet-only
+  // (metadata, no cell reads, no Neon), so it renders mid-outage in the fast
+  // half. The trim itself lives in cdr-report (sheetSpace.js, Operator State
+  // #62) because that project owns this workbook's maintenance.
+  try {
+    var wbSs = openSpreadsheet_();
+    var wbTotal = 0, wbWorst = null;
+    wbSs.getSheets().forEach(function (sh) {
+      var alloc = sh.getMaxRows() * sh.getMaxColumns();
+      var waste = alloc - (Math.max(0, sh.getLastRow()) * Math.max(0, sh.getLastColumn()));
+      wbTotal += alloc;
+      if (!wbWorst || waste > wbWorst.waste) wbWorst = { name: sh.getName(), waste: waste };
+    });
+    var wbPct = Math.round((wbTotal / WORKBOOK_CELL_CAP_) * 100);
+    var wbVal = wbTotal + ' of ' + WORKBOOK_CELL_CAP_ + ' cells (' + wbPct + '%)';
+    if (wbWorst && wbWorst.waste > 0) {
+      wbVal += ' · most reclaimable: ' + wbWorst.name + ' ' + wbWorst.waste;
+    }
+    add('sheets', 'workbook-cells', 'Workbook cell usage (10M cap)',
+      wbPct >= WORKBOOK_CELL_WARN_PCT_ ? 'warn' : 'ok', wbVal,
+      (wbPct >= WORKBOOK_CELL_WARN_PCT_
+        ? 'Near the cap: at 100% every WRITE to this workbook fails, including the '
+          + 'daily import\'s sheet writes, and the error names the workbook rather than '
+          + 'the step. '
+        : '')
+      + 'Counts the ALLOCATED grid, not cells with data — an empty 12,000-row tab costs '
+      + 'as much as a full one, so the lever is usually trimming grids, not deleting rows. '
+      + 'CDR Report → CDR Tools → Workbook Cell Space → Audit, then Preview trim '
+      + '(Operator State #62).');
+  } catch (e) { add('sheets', 'workbook-cells', 'Workbook cell usage (10M cap)', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // ── Report usage (last 30 days) ─────────────────────────────────────
   // The consolidation / un-gating EVIDENCE the Report Usage telemetry

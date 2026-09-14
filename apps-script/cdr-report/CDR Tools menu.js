@@ -42,6 +42,16 @@ function onOpen() {
     .addItem('📈 Neon Read Volume (this project)', 'showNeonEgress')
     // Read-only: does one CALL get counted by two queues? (queueOverlapAudit.js)
     .addItem('🔀 Queue Overlap Audit', 'queueOverlapAudit')
+    // R47: the 10M-cell workbook cap. Google counts the ALLOCATED grid, not
+    // the cells holding data, and an oversized grid once cost 36.7% of the cap
+    // on one tab and failed a daily write. Audit is read-only; the trim
+    // refuses when a named range or data reaches past its vetted bounds
+    // (Operator State #62). The dashboard Health page warns at 80%.
+    .addSubMenu(ui.createMenu('🧮 Workbook Cell Space')
+      .addItem('Audit (read-only)',            'auditSheetSpace')
+      .addItem('Preview trim (read-only)',     'previewTrimVettedGrids')
+      .addItem('APPLY trim (copy the file first)', 'applyTrimVettedGrids')
+      .addItem('Conditional-format ranges…',   'showConditionalFormatRanges'))
     //.addSeparator()
     //.addItem('Run Historical Transfer', 'transferDailyReportsData')
     //.addItem('Benchmark Calc Speed', 'measureCalculationSpeed')

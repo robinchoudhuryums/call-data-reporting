@@ -4,6 +4,30 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **DEPLOY STATUS (2026-09-14): all three projects are deployed through
+  005a7b1.** Batches 1-4 and the Neon-storage Health row are LIVE; the
+  "deploys pending" notes in the older entries below are SUPERSEDED. Still
+  outstanding: R47 needs a cdr-report + dashboard push, and the Batch 4
+  nightly sort check needs its one-time INSTALL from CDR Tools (Operator
+  State #61) -- the deploy shipped the code, not the flag or trigger, and
+  Batch 5's two-week gate starts at that install.
+- **R47 workbook cell space SHIPPED (2026-09-14, block 190, branch
+  `claude/gallant-meitner-mtuj55`) -- incident-driven.** The CDR Report
+  workbook hit 9,983,599/10,000,000 and the daily `processIntegratedHistory:Direct`
+  write FAILED; 36.7% of the cap was `QCDR Output`'s empty 12,607x291 grid.
+  Shipped: `cdr-report/sheetSpace.js` (pure planner that REFUSES on a named
+  range, hand-set per-tab bounds that clear each WRITER's reach, audit +
+  preview/apply trim), a CDR Tools submenu, and the dashboard Health page's
+  `workbook-cells` row (sheet-only, warns at 80%). Operator State #62.
+  1365/1365 both TZs; 6/6 mutations. **OPERATOR, in order:** copy the
+  workbook, `previewTrimVettedGrids`, `applyTrimVettedGrids` (frees
+  4,304,481 -> ~56% of cap), re-audit, Manual Export a recent date to
+  exercise the three QCDR writers, then Manual Export Sep 11 to recover the
+  lost Direct rows + their Neon mirror. **Deploys pending:** cdr-report +
+  dashboard. NOT YET DONE: `Raw Data` cols 47->44 (verified safe, ~61k,
+  deliberately deferred); the ~14 small config tabs still at 26 columns;
+  `Dashboard -- DQE Summary Data` is empty with NO code reference anywhere
+  and looks deletable after a formula check.
 - **Parallel track's code half SHIPPED (2026-09-11, block 189, branch
   `claude/gallant-meitner-mtuj55`):** the Health page's `neon-storage` row
   "Neon storage by table" -- `neonStorageByTable_` (one json round trip:
