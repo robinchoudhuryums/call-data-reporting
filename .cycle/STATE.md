@@ -4,6 +4,25 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **BATCH 6 QUEUED (2026-09-14) -- owner testing round, decisions taken, NOT
+  started.** Full design + the three owner decisions are in
+  `docs/next-steps.md` Batch 6. Headlines so nobody re-derives them:
+  **6a** in-app queue report goes worst-first with the viewer float KEPT (own
+  dept pinned, rest worst-first) -- this REVERSES the "worst-first is
+  EMAIL-ONLY" ruling in the QueueReportEmail.gs header, which must be updated
+  in the same commit; client-side, so no `qcdAll` bump; the CSV must be
+  reconciled (it already ignores the float today). **6b** Overview answered
+  volume as a plain per-dept counts overlay; the number is already computed in
+  `ovDeptChartSeries_`, so it is one series line + payload field + metric entry
+  + tab, with `companyOverview:v21`->v22. **6c** Outbound is a RELEASE, not a
+  build -- it is fully shipped behind a hard-coded admin gate and only phase 4
+  (manager un-gate) was never done; the runbook lives only here and needs a
+  numbered operator item; per-dept cards stay RULED OUT. **6d** the agent-day
+  view: **the owner's 14-day assumption is WRONG** (14d is the Call_Legs
+  REBUILD horizon, not the read horizon) -- per-call rows live 400 days,
+  journeys 90; owner chose 90-days-exact-then-degrade with NO capture-column
+  schema change, accepting that the pre-90-day window shows rang-first only
+  and can never be recovered.
 - **DEPLOY STATUS (2026-09-14): all three projects are deployed through
   005a7b1.** Batches 1-4 and the Neon-storage Health row are LIVE; the
   "deploys pending" notes in the older entries below are SUPERSEDED. Still
