@@ -185,7 +185,11 @@ function trimGrid(name, keepRows, keepCols, apply) {
     Logger.log('  NOTE: ' + prot + ' protection(s), ' + cf + ' conditional-format rule(s), '
       + ch + ' chart(s) -- these shrink with the grid; eyeball the tab afterwards.');
   }
-  if (!apply) { Logger.log('  (preview only -- nothing changed)'); return 0; }
+  // Return what WOULD be freed, not 0: `trimVettedGrids_` sums these into the
+  // rollup line, and a preview that reports "0 cell(s) would be freed" under
+  // per-tab lines each showing millions reads as "this trim is pointless" --
+  // the opposite of the decision the preview exists to inform.
+  if (!apply) { Logger.log('  (preview only -- nothing changed)'); return plan.frees; }
 
   if (s.getMaxRows() > keepRows)    s.deleteRows(keepRows + 1, s.getMaxRows() - keepRows);
   if (s.getMaxColumns() > keepCols) s.deleteColumns(keepCols + 1, s.getMaxColumns() - keepCols);

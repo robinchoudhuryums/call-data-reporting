@@ -108,3 +108,16 @@ test('R47: the dashboard Health row and this engine share one cap and threshold'
   assert.match(dash, /var WORKBOOK_CELL_CAP_ = 10000000;/);
   assert.match(dash, /var WORKBOOK_CELL_WARN_PCT_ = 80;/);
 });
+
+test('R47: a PREVIEW returns what WOULD be freed, so the rollup line is not a false zero', function () {
+  // trimVettedGrids_ sums trimGrid's return into one "N cell(s) would be
+  // freed" line. Returning 0 on the preview path made that line read 0 under
+  // per-tab lines showing 3,662,637 and 641,844 -- seen live 2026-09-14, and
+  // exactly the number an operator uses to decide whether to run the apply.
+  const src = require('node:fs').readFileSync(require('node:path').join(
+    __dirname, '..', '..', 'apps-script', 'cdr-report', 'sheetSpace.js'), 'utf8');
+  assert.match(src, /if \(!apply\) \{[^}]*return plan\.frees; \}/,
+    'the preview branch must return plan.frees, never a literal 0');
+  assert.ok(!/if \(!apply\) \{[^}]*return 0; \}/.test(src),
+    'a literal 0 on the preview path makes the rollup line lie');
+});
