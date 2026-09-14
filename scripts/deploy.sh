@@ -84,9 +84,24 @@ fi
 # INV-16 guard). The guard is only a non-blocking SessionStart hook locally,
 # so without this a same-session drift could be pushed live even though the
 # PR's CI would later go red. DEPLOY_SKIP_CI=1 skips (emergencies only).
+#
+# The gate reproduces CI, which means CI's TIMEZONE too. ci.yml pins
+# TZ=America/Chicago to match the Apps Script manifest, because parts of the
+# harness legitimately assume process TZ == script TZ (roadmap 1a made the
+# SPREADSHEET-vs-script split the fixture default; the process-vs-script one
+# is a separate assumption the suites still make by design). Without this
+# pin the gate reflects the developer's locale instead: a UTC box (Cloud
+# Shell, most CI images) or any zone far from Chicago fails pins for a reason
+# that has nothing to do with the code being shipped, and a red gate means NO
+# push happens at all (set -euo pipefail). Both commands get it -- the
+# rendered-UI gate runs the same server code to build its payloads, so it
+# must agree with the unit suite -- and it is scoped to them rather than
+# exported, so nothing downstream picks it up by accident (the build stamp
+# is `date -u` and stays UTC either way). CI_TZ overrides it.
+CI_TZ="${CI_TZ:-America/Chicago}"
 if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
-  echo "==> npm run ci   (tests + INV-16 guard; DEPLOY_SKIP_CI=1 to skip)"
-  npm run ci
+  echo "==> npm run ci   (tests + INV-16 guard; TZ=$CI_TZ, matching ci.yml; DEPLOY_SKIP_CI=1 to skip)"
+  TZ="$CI_TZ" npm run ci
   # F-10: ALSO run the rendered-UI gate -- the only automated coverage of
   # ~20K lines of script.html, and both production bugs it has caught shipped
   # through paths `node --test` structurally cannot see. ci.mjs skips cleanly
@@ -94,7 +109,7 @@ if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
   # on any machine; a machine WITH playwright gets the full gate before the
   # code goes live. Same DEPLOY_SKIP_CI escape hatch.
   echo "==> npm run ci:ui   (rendered-UI gate; skips if playwright absent)"
-  npm run ci:ui
+  TZ="$CI_TZ" npm run ci:ui
 fi
 
 # Batch 4 (Operator State #29): `clasp push -f` never DELETES remote files
