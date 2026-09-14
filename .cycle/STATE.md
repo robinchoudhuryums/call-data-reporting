@@ -4,6 +4,13 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **DEPLOY STATUS (2026-09-14): all three projects are deployed through
+  005a7b1.** Batches 1-4 and the Neon-storage Health row are LIVE; the
+  "deploys pending" notes in the older entries below are SUPERSEDED. Still
+  outstanding: R47 needs a cdr-report + dashboard push, and the Batch 4
+  nightly sort check needs its one-time INSTALL from CDR Tools (Operator
+  State #61) -- the deploy shipped the code, not the flag or trigger, and
+  Batch 5's two-week gate starts at that install.
 - **R47 workbook cell space SHIPPED (2026-09-14, block 190, branch
   `claude/gallant-meitner-mtuj55`) -- incident-driven.** The CDR Report
   workbook hit 9,983,599/10,000,000 and the daily `processIntegratedHistory:Direct`
