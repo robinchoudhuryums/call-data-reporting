@@ -1415,16 +1415,23 @@
 
   // Overview trend-chart metric views. `field` = the per-dept data array on the
   // payload; `unit` = 'pct' | 'count' (axis + tooltip format); `baseline` = a
-  // dashed reference line value (null = none). % Answered is DQE (ring
-  // answer-rate); the two Abandoned metrics are QCD (queue-level) -- so
-  // Abandoned % is NOT 100 - % Answered (different populations), hence the
-  // "(queue)" header qualifier.
+  // dashed reference line value (null = none). % Answered and Answered calls
+  // are DQE (ring answer-rate / ring answered COUNT, 6b); the two Abandoned
+  // metrics are QCD (queue-level) -- so Abandoned % is NOT 100 - % Answered
+  // (different populations), hence the "(queue)" header qualifier, and
+  // Answered calls does not reconcile against Abandoned calls either.
   const OV_CHART_METRICS_ = {
     pct: {
       field: 'trend', unit: 'pct', axisTitle: '% Answered',
       baseline: answerTarget_('global'), baselineLabel: answerTarget_('global') + '% target',
       header: 'Answer rate trend per department (rings)',
       fmt: function (v) { return v.toFixed(1) + '%'; },
+    },
+    answeredCalls: {
+      field: 'trendAnswered', unit: 'count', axisTitle: 'Answered calls',
+      baseline: null, baselineLabel: '',
+      header: 'Answered call volume per department (rings)',
+      fmt: function (v) { return Math.round(v).toLocaleString(); },
     },
     abandonedCalls: {
       field: 'trendAbandoned', unit: 'count', axisTitle: 'Abandoned calls',
@@ -1474,10 +1481,10 @@
 
   // Normalize the chart's data source to a single shape regardless of which
   // range is active: { trendLabels, trendIsoLabels, depts:[{name,parent,
-  // trend,trendAbandoned,trendAbandonedPct}], latestDate }. The 30/60/90
-  // ranges slice the payload's 90-day trendChart* fields down to the trailing
-  // N-day window; YTD returns the on-demand payload verbatim (already
-  // normalized to trend/trendAbandoned/trendAbandonedPct). Falls back to the
+  // trend,trendAnswered,trendAbandoned,trendAbandonedPct}], latestDate }. The
+  // 30/60/90 ranges slice the payload's 90-day trendChart* fields down to the
+  // trailing N-day window; YTD returns the on-demand payload verbatim (already
+  // normalized to trend/trendAnswered/trendAbandoned/trendAbandonedPct). Falls back to the
   // 90-day payload when a YTD fetch hasn't landed yet.
   function ovCurrentChartView_(data) {
     if (ovChartRange === 'ytd') {
@@ -1505,6 +1512,7 @@
       return {
         name: d.name, parent: d.parent,
         trend: (d.trendChart || []).slice(startIdx),
+        trendAnswered: (d.trendChartAnswered || []).slice(startIdx),
         trendAbandoned: (d.trendChartAbandoned || []).slice(startIdx),
         trendAbandonedPct: (d.trendChartAbandonedPct || []).slice(startIdx),
       };
@@ -1608,11 +1616,13 @@
         || colors[nextColorSlot++ % colors.length];
     });
 
-    // Metric view (% Answered / Abandoned calls / Abandoned %). The per-dept
-    // data array + axis/baseline/format all switch on this. % Answered is DQE
-    // (ring answer-rate, dept.trend); the two Abandoned metrics are QCD
-    // (dept.trendAbandoned / dept.trendAbandonedPct) -- so they are NOT
-    // 100 - answered% (different populations).
+    // Metric view (% Answered / Answered calls / Abandoned calls / Abandoned
+    // %). The per-dept data array + axis/baseline/format all switch on this.
+    // % Answered and Answered calls are DQE (dept.trend / dept.trendAnswered);
+    // the two Abandoned metrics are QCD (dept.trendAbandoned /
+    // dept.trendAbandonedPct) -- so they are NOT 100 - answered% (different
+    // populations), and an Answered count never reconciles against an
+    // Abandoned one.
     const metric = OV_CHART_METRICS_[ovChartMetric] ? ovChartMetric : 'pct';
     const mcfg = OV_CHART_METRICS_[metric];
 

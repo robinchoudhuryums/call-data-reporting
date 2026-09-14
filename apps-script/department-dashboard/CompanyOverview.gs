@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v21` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v22` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -90,7 +90,9 @@
 // read is widened to Jan 1 to source YTD). The v19 30-day `trendAbandoned` /
 // `trendAbandonedPct` are removed (superseded by the 90-day chart series).
 // v21 (R18d): per-dept `dqeSilence` (the queue-lens fallback flag) joined the blob.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v21';
+// v22 (6b): each dept carries a per-day `trendChartAnswered` series (DQE
+// answered COUNT) feeding the chart's new Answered calls metric view.
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v22';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -116,7 +118,10 @@ function overviewCacheKey_() {
 // Y active" data so those stay unchanged; YTD is fetched on demand via
 // getOverviewChartTrend (below), never in the shared blob (100KB cap).
 var OV_CHART_TREND_DAYS = 90;
-var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v1';
+// v2 (6b): the YTD payload's per-dept block gained `trendAnswered` alongside
+// trend / trendAbandoned / trendAbandonedPct -- its own prefix, because this
+// payload is cached separately from the Overview blob.
+var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v2';
 
 // F6: CacheService's documented per-value ceiling, and the tripwire below it.
 // The Overview blob is the biggest cached payload in the app and its
@@ -155,7 +160,8 @@ function ovTrendDisplayLabels_(isoLabels) {
 }
 
 /**
- * One dept's chart series (answered % + abandoned count + abandoned %) aligned
+ * One dept's chart series (answered % + answered COUNT + abandoned count +
+ * abandoned %) aligned
  * to `labels`, from a DQE per-day {rung,answered} map and a QCD per-day
  * {totalCalls,abandoned} map. Null on days with no rows (weekday gaps / unmapped
  * QCD). Shared by getCompanyOverview (90-day) and getOverviewChartTrend (YTD).
@@ -166,6 +172,15 @@ function ovDeptChartSeries_(labels, dqeDaily, qcdDaily) {
     trend: labels.map(function (iso) {
       var d = dqeDaily[iso];
       return (d && d.rung > 0) ? round1_((d.answered / d.rung) * 100) : null;
+    }),
+    // 6b (owner 2026-09-14): answered VOLUME, the same dqeDaily map the rate
+    // above already reads -- no extra scan. Null on a day with no DQE rows so
+    // a weekday gap breaks the line instead of drawing a false zero (the rule
+    // every series here follows). A day that HAS rows and zero answered is a
+    // real 0 and renders as one.
+    trendAnswered: labels.map(function (iso) {
+      var d = dqeDaily[iso];
+      return d ? (Number(d.answered) || 0) : null;
     }),
     trendAbandoned: labels.map(function (iso) {
       var q = qcdDaily[iso];
@@ -744,6 +759,7 @@ function getCompanyOverview(req) {
       qcd: snap,
       trend: trend,                                     // 30-day sparkline
       trendChart: chartSeries.trend,                    // 90-day chart (answered %)
+      trendChartAnswered: chartSeries.trendAnswered,    // 90-day chart (answered count, 6b)
       trendChartAbandoned: chartSeries.trendAbandoned,  // 90-day chart (abandoned count)
       trendChartAbandonedPct: chartSeries.trendAbandonedPct,
       // Card period slider (Yesterday / Last 30 / YTD). `latest` above stays
@@ -914,7 +930,8 @@ function getCompanyOverview(req) {
  * dept lines are, too). All depts (no admin-only fields), so no personalize.
  *
  *  -> { available, latestDate, trendIsoLabels, trendLabels,
- *       depts: [{ name, parent, trend, trendAbandoned, trendAbandonedPct }] }
+ *       depts: [{ name, parent, trend, trendAnswered, trendAbandoned,
+ *                 trendAbandonedPct }] }
  */
 function getOverviewChartTrend(req) {
   const user = resolveUser_(Session.getActiveUser().getEmail());
@@ -997,7 +1014,8 @@ function getOverviewChartTrend(req) {
       const snap = qcdSnaps[d] || null;
       const series = ovDeptChartSeries_(labels, deptDaily[d], (snap && snap.daily) || {});
       return { name: d, parent: overviewParentMap[d] || null,
-               trend: series.trend, trendAbandoned: series.trendAbandoned, trendAbandonedPct: series.trendAbandonedPct };
+               trend: series.trend, trendAnswered: series.trendAnswered,
+               trendAbandoned: series.trendAbandoned, trendAbandonedPct: series.trendAbandonedPct };
     });
 
   const data = {

@@ -284,7 +284,18 @@ tests/
                               orphan-roster-add (the New-hire flow),
                               overview-dqe-silence, overview-qcd-snapshot
                               (computeQcdSnapshots_ + the L4 prior-window
-                              read), prop-registry (the two-way Script
+                              read), overview-chart-answered (6b: the
+                              Overview chart's answered-COUNT series --
+                              the null-vs-real-zero convention, plus the
+                              source pins tying the two payloads, the two
+                              cache prefixes, the range slice, the metric
+                              registry and the tab button to one name),
+                              qcd-alldept-order (6a: in-app Daily Call
+                              Queue Report section order -- own dept
+                              pinned, then the email's worst-first
+                              comparator; the TRIPWIRE that the table and
+                              the CSV share one helper, and the
+                              cross-file pin on the email's comparator), prop-registry (the two-way Script
                               Property sweep: unregistered key / dead
                               registry entry both fail, + the tool-param
                               self-clear pins), report-usage (the INV-01

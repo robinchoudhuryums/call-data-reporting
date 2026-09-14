@@ -839,7 +839,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v21` — zero DQE rings over the trailing 7 chart days while
+  (`companyOverview:v22` — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1100,7 +1100,18 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   while a pin is active); clicking a POINT deep-links into that
   dept + date's My Department view (`ovHandlePointClick_` ->
   `ovRouteToDept_(dept, iso)`; admins, or a manager clicking their
-  own dept's line). An axis-zoom toggle button (`ov-axis-zoom-btn`)
+  own dept's line). **Metric views are a
+  registry** (`OV_CHART_METRICS_`, script-3-overview): each entry names the
+  per-dept payload field, a `pct`/`count` unit, the axis title, an optional
+  dashed baseline and a formatter; a tab button's `data-metric` is the
+  registry key, and the tab wiring is generic, so a new metric is an entry
+  plus a button. Four now: % Answered and **Answered calls (6b)** are DQE
+  ring figures; Abandoned calls and Abandoned % are QCD queue-level —
+  different populations, so Abandoned % is not 100 − % Answered and an
+  Answered count never reconciles against an Abandoned one (hence the
+  "(rings)" / "(queue)" header qualifiers). A count series is null on a day
+  with no rows so a weekday gap BREAKS the line; a real 0 renders as 0.
+  An axis-zoom toggle button (`ov-axis-zoom-btn`)
   flips the y-axis between Full (0-100%) and Fit (auto-scale to the
   data range) — **Fit is the DEFAULT since R12-8b** (owner: lines
   cluster at 85-95%, so Full rendered ~80% dead plot); the choice
@@ -1280,6 +1291,23 @@ behind the removed button.
   blocks are `flex: 0 0 auto` and wrap instead of shrinking, so it keeps the
   finer 36. Raising the email number without widening the column
   re-introduces the squeeze; `queue-report.test.js` pins the ceiling.
+- **In-app Daily Call Queue Report section ORDER (6a, owner 2026-09-14).**
+  The owner REVERSED the earlier "worst-first is email-only" ruling: the web
+  report now pins the viewer's own section first, then orders every other
+  section WORST-FIRST by the emailed report's comparator (section abandoned %
+  DESC, tie-broken by RANGE violations DESC, over a parent dept plus its
+  nested children summed). Rows WITHIN a section keep their configured queue
+  order. Two things make this more than a sort call: it is CLIENT-side
+  (`qcdAllDeptSections_`, script-11-qcd-boot), so the server payload stays
+  alphabetical and no `qcdAll:` cache bump is needed; and the TABLE and the
+  CSV both order through that one helper — the export used to rebuild its own
+  grouping and ignore even the pre-6a viewer float, so a downloaded file
+  disagreed with the screen it came from. The email keeps its own order (it
+  has no viewer to pin for). The name tiebreak is the web's alone, so the
+  order does not depend on the payload's ordering; the email reaches the same
+  result via a stable sort over an alphabetical list. ENFORCED by
+  `qcd-alldept-order.test.js`, including a tripwire on the two call sites and
+  a cross-file pin on the email's comparator.
 - **Insights Agents section**: the Cards view is HIDDEN for now (owner
   undecided; `#ins-cards-view-toggle` is `display:none` in dashboard.html and
   `insRestorePrefs_` restores only `'chart'`) and the Chart view defaults to

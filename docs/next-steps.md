@@ -248,13 +248,17 @@ State #61); Batch 5's gate clock starts at that install.
 
 ---
 
-## Batch 6 — owner testing round (2026-09-14; decisions taken, not started)
+## Batch 6 — owner testing round (2026-09-14; 6a + 6b DONE, 6c/6d queued)
 
 Four items the owner raised after the R47 trim. Each carries the design
 decision already made, so nobody re-opens it. Ordered cheapest-first; they are
 independent and can ship separately.
 
-### 6a. Queue report: worst-first in the app, own dept still pinned
+**Status 2026-09-14: 6a and 6b are IMPLEMENTED and merged** (see
+`.cycle/blocks/*-batch6a6b-broad-implement.md`). Both are dashboard-only and
+need a dashboard deploy to reach users. 6c and 6d remain as written below.
+
+### 6a. Queue report: worst-first in the app, own dept still pinned — DONE
 
 **Owner decision (2026-09-14) — this REVERSES a prior ruling.** The
 `QueueReportEmail.gs` header states "Worst-first ordering is EMAIL-ONLY (the
@@ -285,7 +289,7 @@ no ruling.
 
 **Size.** S. **Deploy.** dashboard.
 
-### 6b. Overview chart: answered call volume
+### 6b. Overview chart: answered call volume — DONE
 
 **Owner decision: plain per-dept counts overlay**, consistent with the
 existing `abandonedCalls` metric. The busiest queue dominating is the true

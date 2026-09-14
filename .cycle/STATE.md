@@ -4,17 +4,29 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
-- **BATCH 6 QUEUED (2026-09-14) -- owner testing round, decisions taken, NOT
-  started.** Full design + the three owner decisions are in
-  `docs/next-steps.md` Batch 6. Headlines so nobody re-derives them:
-  **6a** in-app queue report goes worst-first with the viewer float KEPT (own
-  dept pinned, rest worst-first) -- this REVERSES the "worst-first is
-  EMAIL-ONLY" ruling in the QueueReportEmail.gs header, which must be updated
-  in the same commit; client-side, so no `qcdAll` bump; the CSV must be
-  reconciled (it already ignores the float today). **6b** Overview answered
-  volume as a plain per-dept counts overlay; the number is already computed in
-  `ovDeptChartSeries_`, so it is one series line + payload field + metric entry
-  + tab, with `companyOverview:v21`->v22. **6c** Outbound is a RELEASE, not a
+- **BATCH 6: 6a + 6b DONE (2026-09-14, block 191, branch
+  `claude/gallant-meitner-mtuj55`); 6c + 6d STILL QUEUED.** Full design + the
+  owner decisions are in `docs/next-steps.md` Batch 6.
+  **6a SHIPPED** -- the in-app queue report now pins the viewer's own section
+  and orders the rest worst-first by the EMAIL's comparator, through ONE pure
+  helper `qcdAllDeptSections_` (script-11-qcd-boot) that the table AND the CSV
+  both call; the CSV previously rebuilt its own grouping and ignored even the
+  pre-6a viewer float, so an export disagreed with the screen it came from.
+  Client-side, so no `qcdAll` bump. The stale "worst-first is EMAIL-ONLY"
+  header comment in QueueReportEmail.gs is updated, and the ride-along landed:
+  its alert/preheader offender list sorted violations-then-pct, the reverse of
+  its own table, so the alert could name a different "worst" queue than the
+  table ranked first.
+  **6b SHIPPED** -- Overview chart "Answered calls" metric. ONE discovery
+  beyond the plan: the chart has TWO separately-cached payloads (the 90-day
+  Overview blob and the on-demand YTD fetch), so TWO prefixes were bumped,
+  `companyOverview:v21`->v22 AND `overviewChartYtd:v1`->v2. Bumping only the
+  blob would have served a warmed YTD payload with no answered series for its
+  TTL.
+  Both are dashboard-only and need a dashboard deploy (`scripts/deploy.sh .`)
+  to reach users; `npm run ci:ui` could not run in that session (no
+  playwright) and deploy.sh gates on it, so run the deploy where it can.
+  **6c** Outbound is a RELEASE, not a
   build -- it is fully shipped behind a hard-coded admin gate and only phase 4
   (manager un-gate) was never done; the runbook lives only here and needs a
   numbered operator item; per-dept cards stay RULED OUT. **6d** the agent-day
@@ -23,6 +35,12 @@
   journeys 90; owner chose 90-days-exact-then-degrade with NO capture-column
   schema change, accepting that the pre-90-day window shows rang-first only
   and can never be recovered.
+- **WHERE I LEFT OFF (2026-09-14).** 6a + 6b implemented, pinned (23 new
+  tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
+  13 mutations all caught), documented and merged; full suite green under
+  `TZ=America/Chicago` (1389/1389 + INV-16). Next: the owner is still OWED a
+  written answer to "how can the Outbound report be improved?" (design
+  discussion, deliberately out of the 6a/6b implementation scope), then 6c/6d.
 - **DEPLOY STATUS (2026-09-14): all three projects are deployed through
   005a7b1.** Batches 1-4 and the Neon-storage Health row are LIVE; the
   "deploys pending" notes in the older entries below are SUPERSEDED. Still
