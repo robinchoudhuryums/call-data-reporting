@@ -639,7 +639,7 @@ var PROP_REGISTRY_ = Object.freeze({
     AGENT_EMAIL_DOMAINS: 'operator', EMAIL_BCC: 'operator', ACCESS_WELCOME_EMAIL: 'operator',
     ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
-    NEON_EGRESS_BUDGET_MB: 'operator',
+    NEON_EGRESS_BUDGET_MB: 'operator', NEON_STORAGE_CAP_MB: 'operator',
     // operator — engine flags + tunables
     COACHING_DELIVERY_ENABLED: 'operator',
     DQE_SILENCE_WATCH_ENABLED: 'operator', DQE_SILENCE_HOUR: 'operator',

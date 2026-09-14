@@ -1506,13 +1506,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (4 days) is named in the hint, not flagged (O-3/C2-5; a recurring one stays
   red). The engine outcome rows (`*_LAST`) also warn STALE when an ARMED engine
   has not recorded past its allowance (O-4) -- a run killed at the 6-min
-  ceiling records nothing. Catches every INV-44 step in one place (sheet
-  writes, inline + deferred mirrors, the force-loss guards, the
-  `dqeUpsert`/`dqeBackfill` tally rows). Pinned by `system-health.test.js`.
+  ceiling records nothing. Catches every INV-44 step in one place. Pinned by
+  `system-health.test.js`.
   This page is the PULL view; the optional **Pipeline-failure watchdog**
   (`PipelineWatch.gs`, Operator State #32) PUSHES the same new failure rows to
-  admins by email. Three other sections share the page, each read-only and
-  each documented at its own operator item: **"Report usage (last 30 days)"**
+  admins by email. Three other read-only sections share the page, each with
+  its own operator item: **"Report usage (last 30 days)"**
   (`computeReportUsageSummary_`; a bounded tail read, `REPORT_USAGE_SCAN_CAP_`=5000);
   **`SmokeCheck.gs::runLiveSmoke`** -- an editor-run, admin-gated, READ-ONLY
   sweep of the live read paths that complements the unit harness by exercising
@@ -1520,22 +1519,23 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   deploy**; client-side surfaces still need the manual Regression Scenarios;
   and **`runNeonCoverageCheck`** (NeonCoverage.gs, Op State #35) -- per-date
   sheet-vs-Neon row-count reconciliation plus zero-row-weekday gaps on the two
-  no-sheet-primary tables (`inbound_calls`, `outbound_calls`; a not-yet-created table is a clean SKIP
-  via `ncMissingTableError_`, not a probe error); and
-  **`runSheetCoverageCheck`** (SheetCoverage.gs, Op State #52) -- the SHEET-side
-  twin: business days with ZERO rows in a dashboard-read historical sheet --
-  the interior gap every other signal misses. Opens NO Neon connection, so it
-  works mid-outage.
-  All four store
+  no-sheet-primary tables (a not-yet-created table is a clean SKIP via
+  `ncMissingTableError_`, not a probe error); and **`runSheetCoverageCheck`**
+  (SheetCoverage.gs, Op State #52) -- the SHEET-side twin: business days with
+  ZERO rows in a dashboard-read historical sheet, the interior gap every other
+  signal misses; opens NO Neon connection, so it works mid-outage. All four store
   an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, which is
   what the page's classifier reads. Pinned by `system-health.test.js` /
-  `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Two CAPACITY rows sit
-  alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47) and
-  email quota remaining -- because both fail SILENTLY and look healthy to every
-  other probe here. Read the Neon figure as a FLOOR (it counts our payloads,
-  not the wire). The row also RANKS the top consumers -- every
-  `neonNoteEgress_` callsite passes a surface label (unlabeled folds into
-  `other`; system-health.test.js EA-1 pins it). Also on the page: `build-stamp` ("unstamped" = a push
+  `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Three CAPACITY rows sit
+  alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47),
+  email quota, and Neon STORAGE by table (`NEON_STORAGE_CAP_MB`, #57) --
+  because all three fail SILENTLY and look healthy to every other probe. Both
+  Neon figures are FLOORS (egress counts our payloads, not the wire; storage
+  cannot see Neon's history retention), and a DELETE never moves the storage
+  one (disk returns only on TRUNCATE / VACUUM FULL). Each ranks its top
+  spenders: every `neonNoteEgress_` callsite passes a surface label (unlabeled
+  folds into `other`; EA-1 pin); the pure `neonStorageVerdict_` names the top
+  5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only) and
   `retention-risk` (surviving dates the per-call tables are missing;
@@ -2301,7 +2301,7 @@ items for anything it flags or doesn't cover.)
 54. Caller Lookup's one-time Neon index (`idx_inbound_calls_caller_hash`) -- create it in the Neon console; nothing auto-creates it
 55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants in `insuranceNumbers.js`, a cdr-report push, and re-running `syncInsuranceNumbersToNeon`; keep a blank header column between the dept block and it
 56. Reprocessing historical dates -- Manual Export per date (mirrors Neon inline) over the bulk path; clear `DQE_UPSERT_RESUME` before any backfill; the zero-talk scan (answered > 0 with TTT 0:00:00) is the post-rebuild check, and `repairDqeDuplicateMerge` is the remedy for same-day (date, agent) duplicates
-57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, and the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL)
+57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL), and the Health page's `neon-storage` row (`NEON_STORAGE_CAP_MB` turns it into a threshold; a DELETE never moves it)
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
 60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the ONE-TIME backfill by force re-import of the dates whose `Call_Legs_*` tab survives (NULL = never captured, 0 = captured and empty)

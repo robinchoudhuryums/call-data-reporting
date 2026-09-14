@@ -298,3 +298,97 @@ function getNeonRetentionStatus_() {
     settings: neonRetentionSettings_(props),
   };
 }
+
+// ── Storage by table (the Health page's gauge) ──────────────────────────
+//
+// The Neon console's storage gauge was a SURPRISE twice in a month (89% ->
+// reclaim -> 84%) because nothing on our side measured it: every probe on the
+// Health page said "reachable" and the prune said "ok", while the per-call
+// tables grew with call volume. One round trip answers "how big, and which
+// table" -- the two inputs the roadmap's Neon storage decision needs (pay for
+// the paid tier, or set the NEON_RETENTION_* horizons to what the free tier
+// holds). Read as a FLOOR: `pg_database_size` is the live data files only;
+// the console figure ALSO counts Neon's history retention (point-in-time
+// restore), which no query inside the database can see. And a DELETE (the
+// weekly prune included) does NOT move it -- Postgres returns disk only on
+// TRUNCATE or VACUUM FULL (Operator State #57's reclaim runbook) -- so a
+// flat line after a big prune is expected, not a prune that failed.
+
+var NEON_STORAGE_TOP_N_ = 5;
+var NEON_STORAGE_STMT_TIMEOUT_S_ = 20;
+
+/**
+ * ONE json round-trip: the database's on-disk size plus every public table's
+ * total size (heap + indexes + TOAST), largest first. Returns
+ * `{ dbBytes, tables: [{table, bytes}] }`; throws on a JDBC error so the
+ * caller's probe-failed branch renders (never a fake zero).
+ * JDBC discipline: a single `rs.getString` of one json text, never per-row
+ * iteration (the ~0.5 s/row rule in CLAUDE.md).
+ */
+function neonStorageByTable_(conn) {
+  var sql = "SELECT json_build_object("
+          + "'db', pg_database_size(current_database()),"
+          + "'tables', COALESCE((SELECT json_agg(json_build_object('t', c.relname, 'b', pg_total_relation_size(c.oid))"
+          +                     " ORDER BY pg_total_relation_size(c.oid) DESC)"
+          +                     " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+          +                     " WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')), '[]'::json)"
+          + ")::text AS j";
+  var stmt = conn.createStatement();
+  try { stmt.setQueryTimeout(NEON_STORAGE_STMT_TIMEOUT_S_); } catch (e) { /* not every driver -- the probe still runs */ }
+  var rs = stmt.executeQuery(sql);
+  var json = rs.next() ? rs.getString('j') : '';
+  rs.close(); stmt.close();
+  var parsed = JSON.parse(json || '{}') || {};
+  var tables = (parsed.tables || []).map(function (t) {
+    return { table: String(t && t.t || ''), bytes: Number(t && t.b) || 0 };
+  }).filter(function (t) { return !!t.table; });
+  // The ORDER BY inside json_agg is the contract, but a driver that ignores
+  // it must not reorder the Health row's "top" list -- sort defensively.
+  tables.sort(function (a, b) { return b.bytes - a.bytes || (a.table < b.table ? -1 : 1); });
+  return { dbBytes: Number(parsed.db) || 0, tables: tables };
+}
+
+/** Bytes -> "12.3 MB" (one decimal); the Health row's unit everywhere. */
+function neonStorageMb_(bytes) {
+  return Math.round(((Number(bytes) || 0) / (1024 * 1024)) * 10) / 10;
+}
+
+/**
+ * PURE. The Health row's verdict from a storage reading + the optional
+ * NEON_STORAGE_CAP_MB Script Property (0 / unset = no declared cap):
+ * `{ status, value, hint }`. No cap -> informational (muted): the plan's cap
+ * is a billing fact this code cannot discover, and inventing one would either
+ * cry wolf or reassure wrongly (the egress row's rule). With a cap: warn at
+ * 80%, matching the egress gauge, and the hint names the levers in #57.
+ */
+function neonStorageVerdict_(reading, capMb) {
+  var cap = Number(capMb) || 0;
+  var dbMb = neonStorageMb_(reading.dbBytes);
+  var value = dbMb + ' MB on disk';
+  var status = 'muted';
+  var pct = 0;
+  if (cap > 0) {
+    pct = Math.round((dbMb / cap) * 100);
+    value += ' — ' + pct + '% of the ' + cap + ' MB cap';
+    status = pct >= 80 ? 'warn' : 'ok';
+  }
+  var top = (reading.tables || []).slice(0, NEON_STORAGE_TOP_N_);
+  if (top.length) {
+    value += ' · top: ' + top.map(function (t) { return t.table + ' ' + neonStorageMb_(t.bytes) + ' MB'; }).join(', ');
+  }
+  var hint = (cap > 0
+      ? 'Warns at 80% of NEON_STORAGE_CAP_MB. '
+      : 'Set the NEON_STORAGE_CAP_MB Script Property to your plan\'s storage '
+        + 'allowance (the free tier is 512) to turn this into a threshold. ')
+    + 'A FLOOR: the console figure also counts Neon\'s history retention, which '
+    + 'no query inside the database can see. A DELETE (the weekly prune included) '
+    + 'does not shrink this -- Postgres returns disk only on TRUNCATE or VACUUM '
+    + 'FULL -- so a flat line after a prune is expected. Levers, in order: the '
+    + 'NEON_RETENTION_* horizons, the CDR_PHONES_MIRROR gate, and the reclaim '
+    + 'runbook (Operator State #57).';
+  if (status === 'warn') {
+    hint = 'Near the cap: at 100% every Neon WRITE fails (escalations, coaching, '
+      + 'the daily mirrors) while every read still says "reachable". ' + hint;
+  }
+  return { status: status, value: value, hint: hint, pct: pct, dbMb: dbMb };
+}

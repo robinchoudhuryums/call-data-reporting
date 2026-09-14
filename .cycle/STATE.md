@@ -4,6 +4,21 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **Parallel track's code half SHIPPED (2026-09-11, block 189, branch
+  `claude/gallant-meitner-mtuj55`):** the Health page's `neon-storage` row
+  "Neon storage by table" -- `neonStorageByTable_` (one json round trip:
+  `pg_database_size` + per-table `pg_total_relation_size`, top 5) + the pure
+  `neonStorageVerdict_` (NeonRetention.gs); informational until
+  `NEON_STORAGE_CAP_MB` is set (warn at 80%); muted when Neon is unreachable;
+  rides the shared connection (R21). Operator State #57 (d). 1357/1357 under
+  `TZ=America/Chicago`; 6/6 mutations; ci:ui not needed (no client / payload
+  change; gen-phase3 omits NeonRetention.gs so the harness row is absent).
+  **Deploy pending:** dashboard. The storage DECISION (paid tier vs shorter
+  `NEON_RETENTION_*` horizons) is still the operator's -- the row gives it
+  its inputs. NEXT: PR when the owner asks; Batch 5's design spike after the
+  Phase 2 install + 2-week gate; the unbatched follow-ons (IR `activeDays`
+  next IR change; the three REPORT modals' rendered coverage needs
+  gen-phase3 fixtures).
 - **Batches 1–4 MERGED to main in PR #308 (2026-09-11), after a /sync-docs
   pass (block 188 is Batch 4's).** Batch 4 (Phase 2): the nightly check-and-sort over the five historical
   sheets -- `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js, flag
