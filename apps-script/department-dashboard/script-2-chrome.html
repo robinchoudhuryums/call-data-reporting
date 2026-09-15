@@ -317,6 +317,7 @@
         setDeptExportOpen(false);
         var action = item.getAttribute('data-action');
         if (action === 'csv') exportTableCsv_();
+        else if (action === 'copy-table') copyTableForSheet_();   // owner 2026-09: clipboard twin of the CSV
         else if (action === 'email') deptEmailReport_();   // Round-16: EmailKit summary
         // R16c: the Insights actions, relocated from the region's own
         // (removed) Export menu. Same handlers, hoisted from script-8.

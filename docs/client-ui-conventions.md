@@ -1549,6 +1549,16 @@ behind the removed button.
   fetch fires up front now). `setPage('insights')` + the
   `/report/insights` route/share-state entries are PERMANENT compat
   surface for deep links + the Digest email links.
+- **Export-menu group labels carry a tinted band (owner 2026-09).**
+  `.ir-export-group-label` was muted grey on the menu's own background at the
+  items' left edge — which is what a DISABLED menu item looks like, so the two
+  headings read as unclickable options rather than as headings. They now sit in
+  an `--accent-soft` band with `--accent` text, full-bleed across the menu's
+  4px padding via a negative margin. Both tokens are theme-aware, so this holds
+  in dark mode and the alternate palettes; verified by screenshot in both
+  (perceptual, so no assertion owns it). Applies to every `.ir-export-menu`,
+  not just My Department's — the Queue report's menu has no group labels today
+  and is unaffected.
 - **R16c (post-N1 owner notes)**: the Team-detail heatmap + share table sit
   SIDE BY SIDE in `.ins-detail-row` (flex-wrap; managers never get the
   admin-gated heatmap, so the share table takes the full row with zero JS;

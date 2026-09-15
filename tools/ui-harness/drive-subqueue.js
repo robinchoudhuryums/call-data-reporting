@@ -59,6 +59,16 @@ async function openDeptThirtyDays(page) {
       try { blob.text().then(function (t) { window.__CSV__.push(t); }); } catch (e) {}
       return realCreate(blob);
     };
+    // Owner 2026-09: the clipboard twin. A real writeText would reject in this
+    // context (and silently, which is the failure mode the button's toast
+    // exists to prevent), so the whole object is replaced -- the point is the
+    // BYTES handed to the clipboard, which is the only place the tab-separated
+    // shape can be checked at all.
+    window.__CLIP__ = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: function (t) { window.__CLIP__.push(t); return Promise.resolve(); } },
+    });
   });
   await page.goto('file://' + path.join(__dirname, 'site', 'index-admin.html'));
   await page.waitForTimeout
@@ -248,6 +258,45 @@ async function openDeptThirtyDays(page) {
     allLines.some((l) => /All shown/.test(l)));
   record('combined CSV has NO group-header banner rows (deliberate)',
     !allLines.some((l) => /^(CSR|Spanish),?$/.test(l.trim())));
+
+  // ---- Copy for spreadsheet (the clipboard twin of the CSV) ---------------
+  // Same grid, different serialisation. The properties worth pinning are the
+  // ones a spreadsheet PASTE depends on and that nothing else can see: the
+  // separator is a TAB (comma text would land in a single column, which is
+  // the whole reason this button is not just the CSV string), and every row
+  // carries exactly as many tabs as the header -- a cell that smuggled a tab
+  // or a newline through would shift every column after it, silently, in a
+  // sheet someone then reads numbers off.
+  async function copyForSheet() {
+    await page.evaluate(() => { window.__CLIP__.length = 0; });
+    const menuBtn = page.locator('#csv-export-btn');
+    if (await menuBtn.count()) { await menuBtn.click(); await page.waitForTimeout(300); }
+    await page.evaluate(() => {
+      const hit = Array.from(document.querySelectorAll('[data-action="copy-table"]'))[0];
+      if (hit) hit.click();
+    });
+    await page.waitForTimeout(600);
+    return page.evaluate(() => (window.__CLIP__ || [])[0] || '');
+  }
+  const tsv = await copyForSheet();
+  const tsvLines = tsv.replace(/\n$/, '').split('\n');
+  record('Copy for spreadsheet reaches the clipboard at all', tsv.length > 0,
+    'chars=' + tsv.length);
+  record('the copied text is TAB-separated, not comma-separated',
+    (tsvLines[0] || '').indexOf('\t') !== -1,
+    JSON.stringify((tsvLines[0] || '').slice(0, 50)));
+  const tabsIn = (l) => (l.match(/\t/g) || []).length;
+  const headerTabs = tabsIn(tsvLines[0] || '');
+  record('every copied row has the header\'s column count (no cell breaks the grid)',
+    tsvLines.length > 1 && tsvLines.every((l) => tabsIn(l) === headerTabs),
+    'headerTabs=' + headerTabs + ' rows=' + tsvLines.length);
+  record('the copy carries the SAME rows as the CSV (one grid, two formats)',
+    tsvLines.length === allLines.length,
+    'tsv=' + tsvLines.length + ' csv=' + allLines.length);
+  record('the combined copy leads with the Department column too',
+    /^Department\t/.test(tsvLines[0] || ''));
+  record('the copy carries the subtotal + grand-total rows',
+    tsvLines.some((l) => /CSR subtotal/.test(l)) && tsvLines.some((l) => /All shown/.test(l)));
 
   // ---- the SWR store keeps more than one window, so going back is instant --
   // Reported by the owner as slow scope switching. The last-good store was ONE
