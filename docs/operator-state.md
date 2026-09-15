@@ -1896,3 +1896,61 @@ When something looks wrong, before assuming a code bug, check:
     `sendOutboundReportEmail`, where Inbound / Individual / Insights all have
     one. It is item 5 of the owner's 2026-09-15 six-point Outbound list and
     ships in that round.
+
+64. **Outbound answer quality — the MEASUREMENT step (`probeOutboundAnswerQuality`).**
+    A read-only, admin-gated, editor-run probe. It answers one question with
+    data and sets nothing: **is the ring distribution on connected outbound
+    calls bimodal?** Run it before anyone sets a voicemail threshold — it is
+    step 1 of [`docs/outbound-callback-dept-plan.md`](outbound-callback-dept-plan.md)
+    Part 2, and steps 2-3 there are not safe to start without its output.
+    - **Why it exists.** `connected` counts a voicemail pickup as a connect,
+      because the far end genuinely answers — structural in the CDR, and no
+      new capture column fixes it. So the admin-visible "Actually reached"
+      tile currently over-counts by however much voicemail there is, and
+      nobody knows how much that is. The one unused discriminator already
+      stored is `ring_seconds` on a connected call: voicemail answers only
+      after the handset rang out to the carrier's no-answer timeout, a
+      near-constant per destination, so the distribution SHOULD show a broad
+      low cluster (people) plus a tight spike (machines).
+    - **Run it.** Optionally set `OUTBOUND_PROBE_FROM` / `OUTBOUND_PROBE_TO`
+      (default: the 28 days ending yesterday in script TZ — wider than the
+      vetting check's 14, because a distribution needs more mass than a
+      parity count). Company-wide by design: a carrier timeout is a property
+      of the destination, not of a department. Run
+      `probeOutboundAnswerQuality` from the dashboard editor and read the
+      returned object / the `[outbound-probe]` log line.
+    - **Read the verdict literally**, the Operator State #19 / #63 contract
+      again. `ok bimodal` carries measured `suggested` values. **INCONCLUSIVE
+      is a RESULT, not a retry prompt** — it means the data does not support
+      a threshold, and its hint says which of the six gates refused (sample
+      size, no candidate above the 12 s floor, flat, too wide, too small a
+      share, or not bimodal). Only "only N single-attempt connected calls"
+      argues for widening the window; the rest argue for NOT building the
+      classifier. `FAILED` is Neon. **Never set `OUTBOUND_VM_RING_SEC` or
+      flip `OUTBOUND_ANSWER_QUALITY` off the back of an INCONCLUSIVE or
+      FAILED run.** A clean run self-clears its window props, so set them
+      again per run.
+    - **Two independent estimates, and you want them to agree.** The FWHM
+      spike gives one; the per-callee repeat check (the same callee answering
+      at the SAME ring length repeatedly, which is voicemail with high
+      confidence) gives another, reported as `repeat.modalRingSec` +
+      `agreesWithSpike` and spelled AGREES / DISAGREES in the verdict. A
+      DISAGREES still verdicts `ok` — it is disclosure, not a downgrade —
+      but it is the strongest reason on offer to widen the window and look
+      again before setting anything.
+    - **⚠ It measures SINGLE-ATTEMPT calls only, and that is not a
+      limitation to remove.** In `cdr-import/outboundCalls.js`, `connected`
+      is true when ANY external leg had Talk>0 Answered, while
+      `ring_seconds` is measured on the FIRST leg alone. On a multi-attempt
+      call those are two different dials, so their combination is not a fact
+      about either. The all-attempts histogram is reported beside it and the
+      by-attempts split is one of the five measurements — if the in-band
+      share climbs with attempts, that is the plan's "a 3rd-attempt connect
+      is likelier voicemail" showing up in the data.
+    - **PHI:** aggregates only. No hash, phone number or call id is selected,
+      logged or returned; the repeat check counts GROUPS and never identifies
+      one. Both queries are egress-metered under the `outbound-probe` label.
+    - `OUTBOUND_PROBE_FROM` / `OUTBOUND_PROBE_TO` are registered `tool` keys
+      (`PROP_REGISTRY_`). Pinned by `tests/unit/outbound-report.test.js`
+      (the two pure detectors gate by gate, the read-only contract, the
+      bind order, and the refusal paths).

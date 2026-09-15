@@ -2311,6 +2311,7 @@ items for anything it flags or doesn't cover.)
 61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + the ~3 AM trigger from CDR Tools; the Health page's `historical-sort` row (needed sorting EVERY night = a writer regressing; "could not fix" = a repair, not a sort; skipped = a backfill resume pointer is set)
 62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap, not the cells holding data; the Health page's `workbook-cells` row (warns at 80%, sheet-only so it renders mid-outage) and CDR Tools -> Workbook Cell Space (audit / preview / apply trim). A named range past the keep bounds REFUSES, and a writer's reach is not derivable from the grid -- read the writers before trimming a new tab
 63. Outbound report RELEASE runbook (6c) -- backfill, `runOutboundVettingCheck`, release ONLY on a CLEAN `ok parity` (INCONCLUSIVE is not a pass), then flip `OUTBOUND_VETTING_GATE_` and un-hide the menu item in ONE commit (cross-file-pins fails on either half alone) and walk S46. Per-dept cards stay ruled out
+64. Outbound answer quality -- `probeOutboundAnswerQuality`, the MEASURE-first step before any voicemail threshold: is the connected-call ring distribution bimodal? Read-only, sets nothing, SINGLE-ATTEMPT only (ring and connect describe different legs on a multi-attempt call), two independent estimates that must agree, and INCONCLUSIVE is a result meaning "no threshold is defensible" -- never set `OUTBOUND_VM_RING_SEC` off one
 
 ## Cycle Workflow Config
 

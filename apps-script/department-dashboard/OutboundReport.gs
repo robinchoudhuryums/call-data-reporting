@@ -1019,6 +1019,452 @@ function runOutboundVettingCheck() {
 }
 
 // ---------------------------------------------------------------------------
+// probeOutboundAnswerQuality -- STEP 1 of the answer-quality work
+// (docs/outbound-callback-dept-plan.md Part 2). Read-only, admin-gated,
+// editor-run, sibling of runOutboundVettingCheck. It MEASURES and reports;
+// it sets nothing, writes nothing, and changes no payload.
+//
+// WHY IT EXISTS. `connected` counts a voicemail pickup as a connect, because
+// the far end genuinely answers -- that is structural in the CDR and no new
+// capture column fixes it. The one unused discriminator already stored is
+// `ring_seconds` on a CONNECTED call: when voicemail answers, the handset
+// first rang out to the carrier's no-answer timeout, a near-CONSTANT per
+// destination. So the ring distribution on connected calls SHOULD be bimodal
+// -- a broad low cluster (people) and a tight spike at the timeout.
+//
+// That spike is the whole basis for a voicemail classifier. If it is there,
+// a threshold is defensible; if the distribution is flat or unimodal, it is
+// not, and this probe says so rather than handing over a number that merely
+// looks principled. Hence the OPS-8 verdict prefixes and the gate contract
+// they carry: **never set OUTBOUND_VM_RING_SEC from an INCONCLUSIVE or
+// FAILED run** (the same rule as Operator State #19 / #63).
+//
+// ⚠ ONE CAPTURE DETAIL THE PLAN DID NOT ACCOUNT FOR, and it changes the
+// measurement. In cdr-import/outboundCalls.js, `connected` is true when ANY
+// external leg had Talk>0 Answered, but `ring_seconds` is measured on the
+// FIRST leg only (start -> that leg's connected edge). On a MULTI-ATTEMPT
+// call those are two different legs, so the ring length and the connect need
+// not belong to the same dial. Mixing them would blur exactly the spike we
+// are looking for. The spike detection therefore runs on **attempts = 1**
+// rows, where the two provably describe one leg. The all-attempts histogram
+// is reported beside it (nothing is hidden), and the by-attempts split is
+// one of the five measurements -- if the in-band share climbs with attempts,
+// that is the plan's "a 3rd-attempt connect is likelier voicemail" showing up.
+//
+// FIVE MEASUREMENTS (the plan's list), in two round trips: the histograms
+// cannot be cut at a threshold the first query has not derived yet, so
+// query 1 measures and query 2 counts at the RESOLVED band.
+//   1. ring_seconds histogram on connected rows, 1s buckets to 60s
+//   2. talk_seconds histogram on connected rows, 5s buckets to 300s
+//   3. the joint quadrant counts (ring band x talk threshold)
+//   4. the same split by attempts (1 / 2 / 3+)
+//   5. the per-callee-hash repeat check -- the same callee answering at the
+//      SAME ring length repeatedly is voicemail with high confidence, and it
+//      is the only signal here that can VALIDATE the threshold instead of
+//      assuming it. Its modal ring is an INDEPENDENT estimate of the
+//      timeout: when it agrees with the spike peak, two different arguments
+//      reached the same number.
+//
+// PHI: aggregates only. No hash, no number, no call id is selected, logged
+// or returned -- the repeat check counts GROUPS, never identifies one.
+//
+// Config (Script Properties, both optional): OUTBOUND_PROBE_FROM /
+// OUTBOUND_PROBE_TO (default: the 28 days ending yesterday, script TZ -- the
+// P16 lesson; a wider default than the vetting check's 14 because a
+// distribution needs more mass than a parity count does). Company-wide by
+// design: a carrier timeout is a property of the destination, not of a
+// department, and dept scoping would drag the roster join in for nothing.
+// Self-clearing on a clean verdict only (the clearToolParamsAfterCleanRun_
+// rule), so a re-run after a fix re-measures the same window.
+
+// Tunables. Each gate exists to refuse a number rather than to produce one;
+// a run that trips any of them is INCONCLUSIVE, which is a legitimate
+// outcome of a measurement and not a failure of it.
+var OB_PROBE_RING_MAX_SEC_ = 60;        // 1s buckets to here; longer rings counted as overflow
+var OB_PROBE_TALK_MAX_SEC_ = 300;       // talk histogram ceiling
+var OB_PROBE_TALK_BUCKET_SEC_ = 5;      // talk bucket width
+var OB_PROBE_MIN_CONNECTED_ = 200;      // fewer single-attempt connects than this proves nothing
+var OB_PROBE_SPIKE_MIN_RATIO_ = 4;      // peak vs the MEDIAN bucket (a mean would be dragged up by the peak itself)
+var OB_PROBE_SPIKE_MIN_SHARE_ = 0.08;   // the spike must hold this share of connects to be worth a rule
+var OB_PROBE_SPIKE_MAX_WIDTH_SEC_ = 12; // a carrier timeout is TIGHT; wider is a cluster, not a timeout
+var OB_PROBE_VM_FLOOR_SEC_ = 12;        // a peak below this is the human cluster's own mode
+var OB_PROBE_MIN_LOW_SHARE_ = 0.15;     // bimodality: a real cluster must sit BELOW the spike
+var OB_PROBE_CANDIDATE_MIN_TALK_SEC_ = 10;  // the plan's candidate, used only when no trough is found
+
+/**
+ * PURE. Spike detection over the 1s ring histogram.
+ *
+ * Full-width-at-half-maximum around the modal second, then four independent
+ * gates. Returns the same shape whether or not a spike was found, with
+ * `reason` naming the FIRST gate that failed in this order: sample size ->
+ * peak position -> prominence -> width -> spike share -> bimodality. The
+ * order runs cheapest-and-most-fundamental first so the operator is told the
+ * one thing most worth acting on ("widen the window" beats "the spike is
+ * 3 seconds too wide" when there are 40 rows).
+ *
+ * `rows` is sparse ([{sec, n}]); it is densified here so the function owns
+ * its own domain and a test can hand it a literal.
+ */
+function obProbeRingSpike_(rows, total) {
+  var max = OB_PROBE_RING_MAX_SEC_;
+  var counts = [], i;
+  for (i = 0; i <= max; i++) counts.push(0);
+  (rows || []).forEach(function (r) {
+    var s = Math.round(Number(r && r.sec));
+    var n = Number(r && r.n) || 0;
+    if (!isFinite(s) || s < 0 || s > max) return;   // overflow is counted separately
+    counts[s] += n;
+  });
+  var tot = Number(total) || 0;
+  var out = {
+    spike: false, reason: '', sampled: tot, peakSec: null, peakN: 0,
+    baseline: null, ratio: null, widthSec: null, leftSec: null, rightSec: null,
+    spikeCount: 0, spikeShare: 0, belowShare: 0,
+    suggestedVmRingSec: null, suggestedToleranceSec: null,
+  };
+  if (tot < OB_PROBE_MIN_CONNECTED_) {
+    out.reason = 'too-few-rows';
+    return out;
+  }
+  // The peak is sought ONLY at or above the timeout floor, never as the
+  // global maximum. Taking the global max looks equivalent and is not: in
+  // any call centre most calls are answered by PEOPLE, so the human cluster
+  // is normally the taller mode, and a global-max search would land on it
+  // and reject every genuinely bimodal distribution as "peak too low". The
+  // human cluster's job here is to be the mass BELOW the spike (the
+  // bimodality gate), not to compete with it for the peak.
+  var peakSec = OB_PROBE_VM_FLOOR_SEC_;
+  for (i = OB_PROBE_VM_FLOOR_SEC_; i <= max; i++) if (counts[i] > counts[peakSec]) peakSec = i;
+  var peakN = counts[peakSec];
+  out.peakSec = peakSec; out.peakN = peakN;
+  if (!peakN) { out.reason = 'empty-region'; return out; }
+
+  // Baseline = the MEDIAN bucket. Robust by construction: the spike occupies
+  // a handful of buckets out of 61, so it cannot move the median, while it
+  // would inflate a mean and hide itself.
+  var sorted = counts.slice().sort(function (a, b) { return a - b; });
+  var mid = Math.floor(sorted.length / 2);
+  var baseline = (sorted.length % 2) ? sorted[mid] : ((sorted[mid - 1] + sorted[mid]) / 2);
+  out.baseline = baseline;
+  // A zero median means most seconds are empty -- itself the concentrated
+  // shape we are testing for -- so prominence is unbounded rather than
+  // undefined. Reported as null (JSON has no Infinity) with the ratio gate
+  // passed; the share and width gates still have to carry it.
+  out.ratio = baseline > 0 ? Math.round((peakN / baseline) * 100) / 100 : null;
+
+  // Full width at half maximum. The walk is deliberately NOT stopped at the
+  // floor: a "spike" that merges into the human cluster is not separable,
+  // and the width gate below is the right place to say so.
+  var half = peakN / 2;
+  var left = peakSec, right = peakSec;
+  while (left > 0 && counts[left - 1] >= half) left--;
+  while (right < max && counts[right + 1] >= half) right++;
+  out.leftSec = left; out.rightSec = right;
+  out.widthSec = right - left + 1;
+
+  var inSpike = 0, below = 0;
+  for (i = left; i <= right; i++) inSpike += counts[i];
+  for (i = 0; i < left; i++) below += counts[i];
+  out.spikeCount = inSpike;
+  out.spikeShare = Math.round((inSpike / tot) * 1000) / 1000;
+  out.belowShare = Math.round((below / tot) * 1000) / 1000;
+
+  if (baseline > 0 && (peakN / baseline) < OB_PROBE_SPIKE_MIN_RATIO_) { out.reason = 'flat'; return out; }
+  if (out.widthSec > OB_PROBE_SPIKE_MAX_WIDTH_SEC_) { out.reason = 'too-wide'; return out; }
+  if (out.spikeShare < OB_PROBE_SPIKE_MIN_SHARE_) { out.reason = 'spike-too-small'; return out; }
+  if (out.belowShare < OB_PROBE_MIN_LOW_SHARE_) { out.reason = 'unimodal'; return out; }
+
+  out.spike = true;
+  out.reason = 'ok';
+  // The plan's two parameters, read straight off the measured spike: the
+  // threshold is its LEFT edge, the tolerance its half-width.
+  out.suggestedVmRingSec = left;
+  out.suggestedToleranceSec = Math.ceil((right - left) / 2);
+  return out;
+}
+
+/**
+ * PURE. The talk-histogram trough that would justify OUTBOUND_MIN_TALK_SEC.
+ *
+ * Looks for a local minimum BELOW the modal bucket -- the dip between
+ * "hangups and misdials" and real conversations. Requires the trough to sit
+ * at or under half of both shoulders, so a gentle slope does not get read as
+ * a boundary. When there is no trough it says so and the candidate default
+ * stays what it is: arbitrary. `rows` is sparse ([{sec, n}]), sec being the
+ * bucket's LOWER edge.
+ */
+function obProbeTalkTrough_(rows, total) {
+  var w = OB_PROBE_TALK_BUCKET_SEC_;
+  var nb = Math.floor(OB_PROBE_TALK_MAX_SEC_ / w) + 1;
+  var counts = [], i;
+  for (i = 0; i < nb; i++) counts.push(0);
+  (rows || []).forEach(function (r) {
+    var s = Number(r && r.sec);
+    var n = Number(r && r.n) || 0;
+    if (!isFinite(s) || s < 0) return;
+    var idx = Math.floor(s / w);
+    if (idx >= 0 && idx < nb) counts[idx] += n;
+  });
+  var out = { trough: false, reason: '', troughSec: null, troughN: null,
+              modeSec: null, suggestedMinTalkSec: OB_PROBE_CANDIDATE_MIN_TALK_SEC_,
+              suggestedIsMeasured: false, sampled: Number(total) || 0 };
+  if (out.sampled < OB_PROBE_MIN_CONNECTED_) { out.reason = 'too-few-rows'; return out; }
+  var mode = 0;
+  for (i = 0; i < nb; i++) if (counts[i] > counts[mode]) mode = i;
+  out.modeSec = mode * w;
+  if (mode < 2) { out.reason = 'mode-at-floor'; return out; }   // no room for a dip below it
+  // The DIP first, then the shoulder behind it -- not the other way round.
+  // "Highest bucket below the mode" sounds like the low cluster's peak and
+  // is not: on any smooth distribution it is the mode's own left neighbour,
+  // which makes every histogram look monotonic. So: the minimum strictly
+  // between the floor and the mode, then the maximum at or before it.
+  var trough = 1;
+  for (i = 1; i < mode; i++) if (counts[i] < counts[trough]) trough = i;
+  var lowPeak = 0;
+  for (i = 0; i <= trough; i++) if (counts[i] > counts[lowPeak]) lowPeak = i;
+  if (lowPeak === trough) { out.reason = 'monotonic'; return out; }
+  out.troughSec = trough * w; out.troughN = counts[trough];
+  // An EMPTY bucket between the shoulders is absence of data, not a
+  // measured minimum -- and it is the shape sparse data takes, so it would
+  // otherwise read as the strongest possible trough exactly when the
+  // histogram is least trustworthy. Refuse rather than name a boundary the
+  // data never showed.
+  if (!counts[trough]) { out.reason = 'sparse'; return out; }
+  var deep = counts[trough] <= (counts[lowPeak] / 2) && counts[trough] <= (counts[mode] / 2);
+  if (!deep) { out.reason = 'shallow'; return out; }
+  out.trough = true; out.reason = 'ok';
+  out.suggestedMinTalkSec = trough * w;
+  out.suggestedIsMeasured = true;
+  return out;
+}
+
+/** PURE. The probe's window defaults + validation (shared with the tests). */
+function obProbeWindow_(props, nowMs) {
+  var msDay = 24 * 3600 * 1000;
+  var iso = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
+  var yesterday = new Date((nowMs || Date.now()) - msDay);
+  var to = String(props.getProperty('OUTBOUND_PROBE_TO') || iso(yesterday)).trim();
+  var from = String(props.getProperty('OUTBOUND_PROBE_FROM')
+    || iso(new Date(new Date(to + 'T12:00:00Z').getTime() - 27 * msDay))).trim();
+  if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) {
+    throw new Error('OUTBOUND_PROBE_FROM/_TO must be YYYY-MM-DD with from <= to (got '
+      + from + ' .. ' + to + ').');
+  }
+  return { from: from, to: to };
+}
+
+function probeOutboundAnswerQuality() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var win = obProbeWindow_(props);
+  var from = win.from, to = win.to;
+  var label = from + '..' + to + ' (all departments)';
+  var conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+
+    // ── Query 1: the distributions ───────────────────────────────────────
+    // One round trip, one getString (the JDBC discipline -- per-row
+    // rs.getXXX is ~0.5 s/row here). Bound params: the window only.
+    var base = "FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND connected ";
+    var sql =
+      'SELECT json_build_object('
+      + "'connTotal', (SELECT count(*) " + base + '), '
+      + "'conn1', (SELECT count(*) " + base + 'AND COALESCE(attempts,1) = 1), '
+      + "'conn1RingNull', (SELECT count(*) " + base + 'AND COALESCE(attempts,1) = 1 AND ring_seconds IS NULL), '
+      + "'conn1RingOver', (SELECT count(*) " + base + 'AND COALESCE(attempts,1) = 1 AND ring_seconds > '
+        + OB_PROBE_RING_MAX_SEC_ + '), '
+      // (1) the ring histogram, single-attempt -- the spike basis.
+      + "'ringHist', (SELECT COALESCE(json_agg(json_build_object('sec', sec, 'n', n) ORDER BY sec), '[]') "
+      +   'FROM (SELECT ring_seconds::int AS sec, count(*) AS n ' + base
+      +     'AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL AND ring_seconds <= '
+      +     OB_PROBE_RING_MAX_SEC_ + ' GROUP BY 1) r), '
+      // The all-attempts histogram, reported but NOT used for detection --
+      // ring and connect can describe different legs there (see the header).
+      + "'ringHistAll', (SELECT COALESCE(json_agg(json_build_object('sec', sec, 'n', n) ORDER BY sec), '[]') "
+      +   'FROM (SELECT ring_seconds::int AS sec, count(*) AS n ' + base
+      +     'AND ring_seconds IS NOT NULL AND ring_seconds <= ' + OB_PROBE_RING_MAX_SEC_
+      +     ' GROUP BY 1) r2), '
+      // (2) the talk histogram, 5s buckets.
+      + "'talkTotal', (SELECT count(*) " + base + 'AND talk_seconds IS NOT NULL), '
+      + "'talkOver', (SELECT count(*) " + base + 'AND talk_seconds > ' + OB_PROBE_TALK_MAX_SEC_ + '), '
+      + "'talkHist', (SELECT COALESCE(json_agg(json_build_object('sec', sec, 'n', n) ORDER BY sec), '[]') "
+      +   'FROM (SELECT (floor(talk_seconds::numeric / ' + OB_PROBE_TALK_BUCKET_SEC_ + ') * '
+      +     OB_PROBE_TALK_BUCKET_SEC_ + ')::int AS sec, count(*) AS n ' + base
+      +     'AND talk_seconds IS NOT NULL AND talk_seconds <= ' + OB_PROBE_TALK_MAX_SEC_
+      +     ' GROUP BY 1) k), '
+      // (5) the repeat check. GROUPS only -- no hash leaves the database.
+      + "'repeatGroups', (SELECT count(*) FROM (SELECT callee_hash, ring_seconds " + base
+      +   'AND callee_hash IS NOT NULL AND ring_seconds IS NOT NULL '
+      +   'GROUP BY 1,2 HAVING count(*) >= 2) g), '
+      + "'repeatRingHist', (SELECT COALESCE(json_agg(json_build_object('sec', sec, 'n', n) ORDER BY sec), '[]') "
+      +   'FROM (SELECT ring_seconds::int AS sec, count(*) AS n FROM ('
+      +     'SELECT callee_hash, ring_seconds ' + base
+      +     'AND callee_hash IS NOT NULL AND ring_seconds IS NOT NULL AND ring_seconds <= '
+      +     OB_PROBE_RING_MAX_SEC_ + ' GROUP BY 1,2 HAVING count(*) >= 2) gg '
+      +   'GROUP BY 1) rr)'
+      + ')::text AS j';
+    var ps = conn.prepareStatement(sql);
+    // The window is the ONLY bound input here, and every occurrence comes
+    // from `base` -- which contributes exactly (from, to) in that order --
+    // so the binds are derived from the statement rather than hand-counted
+    // against a sub-select list that changes whenever one is added.
+    var nParams = (sql.match(/\?::date/g) || []).length;
+    for (var pi = 1; pi + 1 <= nParams; pi += 2) {
+      ps.setString(pi, from); ps.setString(pi + 1, to);
+    }
+    var rs = ps.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '{}';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-probe');
+    rs.close(); ps.close();
+    var d = JSON.parse(json || '{}');
+
+    var spike = obProbeRingSpike_(d.ringHist, Number(d.conn1) || 0);
+    var trough = obProbeTalkTrough_(d.talkHist, Number(d.talkTotal) || 0);
+
+    // The repeat check's own modal ring -- an INDEPENDENT estimate. It is
+    // only meaningful as agreement or disagreement, so it is reported either
+    // way and never averaged into the suggestion.
+    var repeatMode = null, repeatModeN = 0;
+    (d.repeatRingHist || []).forEach(function (r) {
+      if ((Number(r.n) || 0) > repeatModeN) { repeatModeN = Number(r.n) || 0; repeatMode = Number(r.sec); }
+    });
+    var repeatAgrees = (spike.spike && repeatMode !== null
+      && repeatMode >= spike.leftSec && repeatMode <= spike.rightSec);
+
+    var out = {
+      window: { from: from, to: to },
+      connected: { total: Number(d.connTotal) || 0, singleAttempt: Number(d.conn1) || 0,
+                   singleAttemptRingNull: Number(d.conn1RingNull) || 0,
+                   singleAttemptRingOver60: Number(d.conn1RingOver) || 0 },
+      ringHist: d.ringHist || [],
+      ringHistAllAttempts: d.ringHistAll || [],
+      talk: { measured: Number(d.talkTotal) || 0, over300: Number(d.talkOver) || 0 },
+      talkHist: d.talkHist || [],
+      spike: spike,
+      trough: trough,
+      repeat: { groups: Number(d.repeatGroups) || 0, modalRingSec: repeatMode,
+                modalRingGroups: repeatModeN, agreesWithSpike: repeatAgrees,
+                hist: d.repeatRingHist || [] },
+    };
+
+    if (!spike.spike) {
+      // INCONCLUSIVE is a RESULT here, not an error: it says the data does
+      // not support a voicemail threshold, which is exactly what the probe
+      // was run to find out. Tool params are deliberately kept so the
+      // widen-and-re-run loop measures the same window.
+      out.result = 'INCONCLUSIVE (' + obProbeSpikeHint_(spike) + ') ' + label
+        + ' — do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY from this run.';
+      Logger.log('[outbound-probe] %s', out.result);
+      return logStatusReturn_(out);
+    }
+
+    // ── Query 2: the joint cuts, at the RESOLVED band ────────────────────
+    // Only reachable with a measured band; cutting at a candidate threshold
+    // would produce quadrant counts that look like evidence for a number
+    // nothing measured.
+    var lo = spike.suggestedVmRingSec;
+    var hi = spike.rightSec;
+    var minTalk = trough.suggestedMinTalkSec;
+    var sql2 =
+      'SELECT json_build_object('
+      + "'quadrants', (SELECT json_build_object("
+      // `total` is here so the four cells can be checked to sum: `connected`
+      // implies Talk>0 by construction upstream, so a NULL talk_seconds
+      // should not exist -- if the cells ever fall short of the total, that
+      // assumption has broken and the quadrants are not the whole picture.
+      +   "'total', count(*), "
+      +   "'bandLongTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds >= ?), "
+      +   "'bandShortTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds < ?), "
+      +   "'outLongTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
+      +     'AND talk_seconds >= ?), '
+      +   "'outShortTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
+      +     'AND talk_seconds < ?), '
+      // The half-open reading of the same band, so the tight-match and
+      // threshold-only definitions can be compared before Part 2 picks one.
+      +   "'atOrAboveThreshold', count(*) FILTER (WHERE ring_seconds >= ?)"
+      +   ') ' + base + 'AND COALESCE(attempts,1) = 1), '
+      // (4) the by-attempts split.
+      + "'attempts', (SELECT COALESCE(json_agg(json_build_object("
+      +     "'attempts', a, 'n', n, 'inBand', in_band) ORDER BY a), '[]') FROM ("
+      +   'SELECT CASE WHEN COALESCE(attempts,1) >= 3 THEN 3 ELSE COALESCE(attempts,1) END AS a, '
+      +     'count(*) AS n, count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ?) AS in_band '
+      +   base + 'GROUP BY 1) t)'
+      + ')::text AS j';
+    var ps2 = conn.prepareStatement(sql2);
+    var b = 0;
+    var bindInt = function (v) { ps2.setInt(++b, v); };
+    var bindStr = function (v) { ps2.setString(++b, v); };
+    bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandLongTalk
+    bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandShortTalk
+    bindInt(lo); bindInt(hi); bindInt(minTalk);          // outLongTalk
+    bindInt(lo); bindInt(hi); bindInt(minTalk);          // outShortTalk
+    bindInt(lo);                                          // atOrAboveThreshold
+    bindStr(from); bindStr(to);                           // quadrants window
+    bindInt(lo); bindInt(hi);                             // attempts in_band
+    bindStr(from); bindStr(to);                           // attempts window
+    var rs2 = ps2.executeQuery();
+    var json2 = rs2.next() ? rs2.getString('j') : '{}';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json2 ? json2.length : 0, 'outbound-probe');
+    rs2.close(); ps2.close();
+    var d2 = JSON.parse(json2 || '{}');
+    out.quadrants = d2.quadrants || null;
+    out.byAttempts = d2.attempts || [];
+    out.band = { vmRingSec: lo, toleranceSec: spike.suggestedToleranceSec, rightSec: hi,
+                 minTalkSec: minTalk, minTalkMeasured: trough.suggestedIsMeasured };
+
+    out.suggested = {
+      OUTBOUND_VM_RING_SEC: lo,
+      OUTBOUND_VM_RING_TOLERANCE_SEC: spike.suggestedToleranceSec,
+      OUTBOUND_MIN_TALK_SEC: minTalk,
+      OUTBOUND_ANSWER_QUALITY: 'off',
+    };
+    if (typeof clearToolParamsAfterCleanRun_ === 'function') clearToolParamsAfterCleanRun_(
+      ['OUTBOUND_PROBE_FROM', 'OUTBOUND_PROBE_TO'], 'probeOutboundAnswerQuality');
+    out.result = 'ok bimodal: ring spike at ' + spike.peakSec + 's '
+      + '(band ' + lo + '-' + hi + 's, ' + Math.round(spike.spikeShare * 100) + '% of '
+      + spike.sampled + ' single-attempt connects, ' + spike.widthSec + 's wide); '
+      + 'repeat-callee modal ring ' + (repeatMode === null ? 'n/a' : repeatMode + 's')
+      + (repeatMode === null ? '' : (repeatAgrees ? ' AGREES' : ' DISAGREES')) + '; '
+      + 'min-talk ' + minTalk + 's ' + (trough.suggestedIsMeasured ? '(measured trough)' : '(candidate — no trough found)')
+      + '. ' + label + ' — these are MEASURED values for Part 2; nothing was set. '
+      + 'OUTBOUND_ANSWER_QUALITY stays off until the classifier ships.';
+    Logger.log('[outbound-probe] %s', out.result);
+    return logStatusReturn_(out);
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
+
+/** PURE. The operator-facing sentence for a spike gate that did not pass. */
+function obProbeSpikeHint_(s) {
+  switch (s && s.reason) {
+    case 'too-few-rows':
+      return 'only ' + s.sampled + ' single-attempt connected calls, need '
+        + OB_PROBE_MIN_CONNECTED_ + ' — widen OUTBOUND_PROBE_FROM/_TO';
+    case 'empty-region':
+      return 'no connected call rang for ' + OB_PROBE_VM_FLOOR_SEC_ + 's or longer in range — '
+        + 'there is no candidate timeout to measure';
+    case 'flat':
+      return 'no prominent peak (modal bucket only ' + s.ratio + 'x the median bucket, need '
+        + OB_PROBE_SPIKE_MIN_RATIO_ + 'x) — the distribution is flat, so no threshold is defensible';
+    case 'too-wide':
+      return 'the peak is ' + s.widthSec + 's wide at half height (max '
+        + OB_PROBE_SPIKE_MAX_WIDTH_SEC_ + 's) — a broad cluster, not a fixed timeout';
+    case 'spike-too-small':
+      return 'the peak holds only ' + Math.round(s.spikeShare * 100) + '% of connects (need '
+        + Math.round(OB_PROBE_SPIKE_MIN_SHARE_ * 100) + '%) — too little to build a rule on';
+    case 'unimodal':
+      return 'only ' + Math.round(s.belowShare * 100) + '% of connects ring SHORTER than the peak '
+        + '(need ' + Math.round(OB_PROBE_MIN_LOW_SHARE_ * 100) + '%) — there is no human cluster '
+        + 'below it, so the distribution is not bimodal';
+    default:
+      return 'no voicemail spike found';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // NEON-DOWN SHEET FALLBACK (the DC-1 / heatmap-fallback pattern, applied to
 // the last big Neon-only report).
 //

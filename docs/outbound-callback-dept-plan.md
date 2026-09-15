@@ -77,10 +77,23 @@ That spike is the measurement this whole decision rests on. If it is there,
 the classifier is good; if the distribution is flat, it is not, and we should
 say so rather than ship a threshold that looks principled.
 
-### Step 1: MEASURE, then set (do not skip)
+### Step 1: MEASURE, then set (do not skip) — ✅ SHIPPED 2026-09-15
 
-A read-only, admin-gated, editor-run probe — `probeOutboundAnswerQuality()`,
-sibling of `runOutboundVettingCheck` — over a representative window:
+`probeOutboundAnswerQuality()` is implemented in `OutboundReport.gs`
+(read-only, admin-gated, editor-run, sibling of `runOutboundVettingCheck`).
+**Operator State #64 is the runbook**; what follows is the design.
+
+> **⚠ Correction to this plan, found while building it.** The measurement
+> below said "histogram of `ring_seconds` on `connected = true` rows". That
+> mixes two different legs' facts: in `cdr-import/outboundCalls.js`,
+> `connected` is true when ANY external leg had Talk>0 Answered, but
+> `ring_seconds` is measured on the FIRST leg only. On a multi-attempt call
+> the ring length and the connect need not belong to the same dial, which
+> blurs exactly the spike being looked for. **Spike detection therefore runs
+> on `attempts = 1` rows**; the all-attempts histogram is reported beside it
+> and the by-attempts split is unchanged.
+
+Over a representative window (default: the 28 days ending yesterday):
 
 - histogram of `ring_seconds` on `connected = true` rows (1s buckets to 60s),
 - histogram of `talk_seconds` on `connected = true` rows (5s buckets to 300s),
@@ -94,6 +107,34 @@ Only after reading that do the numbers below get set. The candidate defaults
 are starting points for the probe to confirm or move, **not recommendations to
 apply blind** — this repo has been bitten by plausible-looking constants
 before (the R18b tally unit was measured, not reasoned).
+
+**As built, the probe refuses rather than guesses.** It does not hand back a
+histogram for a human to eyeball a threshold off; it applies six gates and
+reports `ok bimodal` with measured values or `INCONCLUSIVE` with the gate
+that refused — sample size (<200 single-attempt connects), no candidate peak
+at or above a 12 s floor, flat (peak under 4× the median bucket), too wide
+(FWHM over 12 s, i.e. a cluster rather than a fixed timeout), too small a
+share (under 8% of connects), or not bimodal (under 15% of connects ringing
+shorter than the spike). The threshold is the spike's LEFT edge and the
+tolerance its half-width, both read off the measurement. Two of those gates
+exist because of a specific way this can go wrong:
+
+- the **floor** gate, because a peak down at 3-4 s is the human-pickup mode,
+  and reading a voicemail band off it would classify nearly every connect as
+  voicemail — the worst available failure;
+- the **bimodality** gate, because one mode is not two. The spike is
+  deliberately sought only in the at-or-above-floor region rather than as the
+  global maximum: most calls are answered by people, so the human cluster is
+  normally the TALLER mode, and a global-max search would reject every
+  genuinely bimodal distribution. That was a real bug in the first
+  implementation, caught by its own test.
+
+`OUTBOUND_MIN_TALK_SEC` is measured the same way, from a trough in the talk
+histogram deep enough to be a boundary (at or under half of both shoulders);
+when there is no such trough the probe falls back to the candidate 10 and
+flags `suggestedIsMeasured: false`, so the number cannot later be cited as
+measured. An empty bucket is treated as absence of data, not as the perfect
+trough.
 
 ### Step 2: the parameters
 
@@ -381,7 +422,10 @@ what keeps this table from rewarding dialing over connecting.
 
 ### Sequence
 
-1. `probeOutboundAnswerQuality()`, read the distributions. *(No product change.)*
+1. ✅ **DONE (2026-09-15).** `probeOutboundAnswerQuality()` built. *(No
+   product change — it measures and sets nothing.)* **The run itself is
+   still owed**: it needs live Neon, so it is an operator step (#64), and
+   step 2 cannot start until its verdict is read.
 2. Set the Part 2 parameters from what the probe shows; ship the classifier
    `off` by default, both paths, one shared pure function.
 3. Flip to `disclose` after eyeballing a window; fix or relabel the
