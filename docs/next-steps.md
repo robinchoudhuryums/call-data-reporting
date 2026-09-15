@@ -339,9 +339,21 @@ rendered-gate covered BEFORE the release rather than after.
 deferred, then RULED OUT (crossover agents hold multiple roster homes); the
 rejection is a contract in three places incl. the render site. Needs a fresh
 ruling.
+**OPEN QUESTION for the owner (raised 2026-09-15, NOT built):** a per-dept
+CALLBACK table is a different question from per-dept AGENT cards and the
+ruling above may not reach it. An abandoned call has an unambiguous dept (it
+came in on that dept's queue, via `inboundDeptPredicate_`); a crossover agent
+does not. So the unit of analysis differs and the crossover objection does
+not apply. Deliberately left unbuilt pending a ruling rather than inferred
+from a ruling about something else.
 
-**Observed gap, uncommitted:** Outbound has CSV but no `sendOutboundReportEmail`,
-where Inbound / Individual / Insights all have one.
+~~**Observed gap, uncommitted:** Outbound has CSV but no `sendOutboundReportEmail`~~
+**SHIPPED 2026-09-15** in the owner's six-point round (block 193), along with
+four data cuts: the connected-callback rate promoted to a tile, the
+time-to-callback distribution, the unconnected ring split, and callback rate
+by abandon hour. `outboundReport:v2` -> `v3`. **Point 1 of that list ("release
+it") is the operator gate above and is still pending**; the per-dept CALLBACK
+table raised alongside it is parked awaiting an owner ruling (see below).
 
 **Size.** S (code) + operator vetting. **Deploy.** dashboard.
 

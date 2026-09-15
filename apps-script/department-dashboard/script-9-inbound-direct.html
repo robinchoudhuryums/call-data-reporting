@@ -1658,6 +1658,34 @@
     if (csv) csv.addEventListener('click', outboundDownloadCsv_);
     const unc = $('outbound-uncalled-btn');
     if (unc) unc.addEventListener('click', outboundLoadUncalled_);
+    const mail = $('outbound-email-btn');
+    if (mail) mail.addEventListener('click', sendOutboundEmail_);   // (5)
+  }
+
+  /**
+   * (5) Email the CURRENT view to the caller. The server recomputes from the
+   * same params rather than trusting a client payload, so the email cannot
+   * drift from the screen; the button only has to send the window.
+   */
+  function sendOutboundEmail_() {
+    const btn = $('outbound-email-btn');
+    if (!btn || btn.disabled) return;
+    const meta = (outboundLastData && outboundLastData.meta) || {};
+    const from = meta.from || ($('outbound-from') ? $('outbound-from').value : '');
+    const to   = meta.to   || ($('outbound-to')   ? $('outbound-to').value   : '');
+    if (!from || !to) { outboundSetError('Generate the report first.'); return; }
+    const prev = btn.textContent;
+    btn.disabled = true; btn.innerHTML = DS_EQ_HTML_ + 'Sending…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false; btn.textContent = prev;
+        showToast('Report emailed to ' + ((res && res.to) || 'you') + '.', 'success');
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false; btn.textContent = prev;
+        showToast('Could not send: ' + (err && err.message ? err.message : String(err)), 'error');
+      })
+      .sendOutboundReportEmail({ from: from, to: to, department: meta.department || '' });
   }
 
   function outboundShowForm()    { $('outbound-form').style.display = ''; $('outbound-results').style.display = 'none'; outboundSetError(''); }
@@ -1767,6 +1795,15 @@
         (kp && k.obConnectRate != null && kp.obConnectRate != null)
           ? inboundDelta_(k.obConnectRate, kp.obConnectRate, 'pos', true) : ''),
       inboundKpiTile_('Talk time', fmtDuration(k.obTalkSec), 'ATT ' + fmtDuration(k.obAttSec) + ' per connected', ''),
+      // (4): the unconnected split. The CDR still cannot tell a no-answer
+      // from a voicemail -- that stays disclosed -- but ring LENGTH
+      // separates effort from noise, which is the distinction a manager can
+      // act on. Labelled a heuristic in the caption below, because it is one.
+      inboundKpiTile_('Rang out', fmtNumber(k.obUnconnectedReal),
+        'rang ' + (k.briefRingSec || 8) + 's or more — real attempts', ''),
+      inboundKpiTile_('Brief / misdial', fmtNumber(k.obUnconnectedBrief),
+        'under ' + (k.briefRingSec || 8) + 's'
+        + (k.obUnconnectedUnknown ? ' · ' + fmtNumber(k.obUnconnectedUnknown) + ' unknown' : ''), ''),
     ].join('');
 
     // Callback block ("did we call back the ones who abandoned?"). The
@@ -1780,9 +1817,18 @@
         'of ' + fmtNumber(cb.abandonedTracked) + ' trackable'
         + (cb.pendingTail ? ' · ' + fmtNumber(cb.pendingTail) + ' still in window' : ''), ''),
       inboundKpiTile_('Callback rate', cb.calledBackPct != null ? cb.calledBackPct + '%' : '—',
-        fmtNumber(cb.calledBackConnected) + ' actually connected',
+        'of trackable abandons',
         (cbp && cb.calledBackPct != null && cbp.calledBackPct != null)
           ? inboundDelta_(cb.calledBackPct, cbp.calledBackPct, 'pos', true) : ''),
+      // (2): promoted from a caption. A callback that rang out is not a save,
+      // and burying that under "Callback rate" made the softer number the
+      // headline. SAME denominator as the tile above, deliberately, so the
+      // gap between the two is readable without arithmetic.
+      inboundKpiTile_('Actually reached',
+        cb.calledBackConnectedPct != null ? cb.calledBackConnectedPct + '%' : '—',
+        fmtNumber(cb.calledBackConnected) + ' connected, same denominator',
+        (cbp && cb.calledBackConnectedPct != null && cbp.calledBackConnectedPct != null)
+          ? inboundDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, 'pos', true) : ''),
       inboundKpiTile_('Median time to callback',
         cb.medianCallbackSec != null ? fmtDuration(cb.medianCallbackSec) : '—',
         'first dial after the abandon', ''),
@@ -1790,7 +1836,9 @@
     const winEl = $('outbound-cb-window');
     if (winEl) winEl.textContent = meta.callbackWindowDays != null ? meta.callbackWindowDays : 3;
 
+    outboundRenderDelayStrip_(cb);                              // (3)
     outboundRenderCbChart_((data && data.daily) || []);
+    outboundRenderHourStrip_((data && data.callbackByHour) || []);   // (6)
     // Reset the drill panel on every fresh render (scope may have changed).
     const uncList = $('outbound-uncalled-list');
     if (uncList) { uncList.style.display = 'none'; uncList.innerHTML = ''; }
@@ -1845,6 +1893,101 @@
   // v2: daily callback-rate line (safeChart_ per the chart-callsite rule;
   // THEME colors per INV-42; per-chart datalabels OFF -- a dense daily line
   // makes labels unreadable, the Overview-trend precedent).
+  // (3) The time-to-callback distribution, as a labelled proportional bar
+  // plus a count row. Deliberately not a chart: five ordered buckets read
+  // faster as a bar than as a fifth canvas on this page, and it survives the
+  // email/print clone that a canvas does not.
+  //
+  // The ladder + its labels come from the SERVER (the same
+  // OUTBOUND_CALLBACK_BUCKETS_ that built the SQL), so the client cannot
+  // disagree with the buckets it is rendering. Only the ORDER is assumed here.
+  var OUTBOUND_DELAY_ORDER_ = ['m15', 'h1', 'h4', 'd1', 'later'];
+  var OUTBOUND_DELAY_LABELS_ = {
+    m15: 'within 15 min', h1: 'within 1 hour', h4: 'within 4 hours',
+    d1: 'within a day', later: 'later',
+  };
+  function outboundRenderDelayStrip_(cb) {
+    const el = $('outbound-delay-strip');
+    if (!el) return;
+    const b = cb && cb.delayBuckets;
+    const total = Number(cb && cb.calledBack) || 0;
+    // Nothing to distribute -> stay quiet. An all-zero strip reads as "every
+    // callback was slow" rather than "there were no callbacks".
+    if (!b || !total) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    const seg = OUTBOUND_DELAY_ORDER_.map(function (k, i) {
+      const n = Number(b[k]) || 0;
+      if (!n) return '';
+      const pct = n / total * 100;
+      // Sooner is better, so the ramp runs good -> muted -> warn across the
+      // ladder. Tokens, never raw colors (INV-42's discipline).
+      const tone = i <= 1 ? 'good' : (i === 2 ? 'accent' : (i === 3 ? 'muted' : 'warn'));
+      return '<span class="ob-delay-seg ob-delay-seg--' + tone + '" style="width:'
+        + pct.toFixed(2) + '%" title="' + escapeHtml(OUTBOUND_DELAY_LABELS_[k] + ': '
+        + n + ' of ' + total + ' (' + (Math.round(pct * 10) / 10) + '%)') + '"></span>';
+    }).join('');
+    const legend = OUTBOUND_DELAY_ORDER_.map(function (k, i) {
+      const n = Number(b[k]) || 0;
+      if (!n) return '';
+      const tone = i <= 1 ? 'good' : (i === 2 ? 'accent' : (i === 3 ? 'muted' : 'warn'));
+      return '<span class="ob-delay-key"><i class="ob-delay-dot ob-delay-dot--' + tone + '"></i>'
+        + escapeHtml(OUTBOUND_DELAY_LABELS_[k]) + ' <strong>' + fmtNumber(n) + '</strong></span>';
+    }).join('');
+    el.innerHTML = '<div class="al-section-subtitle">How fast were the callbacks?</div>'
+      + '<div class="ob-delay-bar">' + seg + '</div>'
+      + '<div class="ob-delay-legend">' + legend + '</div>'
+      + '<p class="al-hint">A median hides the tail. Sooner is better: inside 15 minutes '
+      + 'the caller is plausibly still by the phone, while a callback the next day is a '
+      + 'courtesy call rather than a recovery.</p>';
+  }
+
+  // (6) Callback rate by the ABANDON's hour.
+  //
+  // NOT the shared weekday x hour heatmap (renderAbandonHeatmap_), and the
+  // reason is worth stating so nobody "unifies" them later: that renderer is
+  // hard-wired to ABANDON rate -- its title, its drill, and above all its
+  // color polarity, where HIGH is bad. Callback rate inverts that (high is
+  // good), so reusing it would tint a great hour red. It also serves two
+  // live surfaces, which is a poor thing to generalise under a deadline.
+  // Hour-of-day alone is also the right cut here: splitting this volume
+  // across five weekdays would leave most cells under the low-signal floor.
+  function outboundRenderHourStrip_(rows) {
+    const el = $('outbound-hour-strip');
+    if (!el) return;
+    const list = (rows || []).filter(function (r) { return Number(r.tracked) > 0; });
+    if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    // call_start is raw PST (the INV-18 storage convention) -- shift to CST
+    // for display exactly as the per-call lists do, never server-side.
+    const maxTracked = list.reduce(function (m, r) { return Math.max(m, Number(r.tracked) || 0); }, 0);
+    const cells = list.map(function (r) {
+      const cstHour = ((Number(r.hour) || 0) + 2) % 24;
+      const rate = r.ratePct;
+      const tracked = Number(r.tracked) || 0;
+      const lowSignal = tracked < 3;
+      const tone = lowSignal ? 'muted'
+        : (rate >= 75 ? 'good' : (rate >= 50 ? 'accent' : 'warn'));
+      const label = heatHourLabel_(cstHour);
+      const title = label + ' CST · ' + (rate == null ? 'no trackable abandons' : rate + '% called back')
+        + ' (' + (Number(r.calledBack) || 0) + ' of ' + tracked + ')'
+        + (lowSignal ? ' · low volume' : '');
+      return '<div class="ob-hour-cell" title="' + escapeHtml(title) + '">'
+        + '<div class="ob-hour-bar"><span class="ob-hour-fill ob-hour-fill--' + tone
+        + '" style="height:' + (rate == null ? 0 : Math.max(2, rate)) + '%"></span></div>'
+        + '<div class="ob-hour-rate">' + (rate == null ? '—' : Math.round(rate) + '%') + '</div>'
+        + '<div class="ob-hour-h">' + escapeHtml(label) + '</div>'
+        + '<div class="ob-hour-n">' + fmtNumber(tracked) + '</div>'
+        + '</div>';
+    }).join('');
+    el.innerHTML = '<div class="al-section-subtitle">Which abandons fall through the cracks?</div>'
+      + '<div class="ob-hour-strip">' + cells + '</div>'
+      + '<p class="al-hint">Callback rate by the hour the caller ABANDONED (CST), over the '
+      + 'whole window — the daily trend above says whether we are keeping up, this says '
+      + 'which hours we are not. Bar height is the rate; the number underneath is how many '
+      + 'trackable abandons that hour held. Hours under 3 are muted as low signal'
+      + (maxTracked ? '' : '') + '.</p>';
+  }
+
   var outboundCbChart_ = null;
   function outboundRenderCbChart_(daily) {
     const wrap = $('outbound-cb-chart-wrap');

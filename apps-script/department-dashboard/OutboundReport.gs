@@ -60,7 +60,19 @@
 // callback.pendingTail (tracked, un-called-back abandons still inside the
 // callback window as of today), the per-day `daily` series, and the INV-28
 // prior-window blocks kpisPrior / callbackPrior (R11-M delta chips).
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v2';
+// v3 (the six-point round, owner 2026-09-15): four additions, all of them
+// changing what the SAME window MEANS, so the prefix moves rather than
+// serving a v2 blob missing half the page --
+//   (2) callback.calledBackConnectedPct, the connected-callback rate promoted
+//       beside the raw one (a callback that rang out is not a save);
+//   (3) callback.delayBuckets, the time-to-callback DISTRIBUTION (a median
+//       hides the tail, and a two-day-later callback is not the same save as
+//       a five-minute one);
+//   (4) kpis.obUnconnectedBrief / obUnconnectedReal, splitting unconnected
+//       outbound on ring seconds so "effort" and "noise" stop reading alike;
+//   (6) callbackByHour, callback rate cut by the ABANDON's hour -- "which
+//       abandons fall through the cracks", which the daily series cannot ask.
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v3';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -90,6 +102,29 @@ const OUTBOUND_CALLBACK_WINDOW_DAYS = 3;
 // test vm is unreachable from h.ctx). Apps Script treats the two
 // identically at global scope.
 var OUTBOUND_VETTING_GATE_ = true;
+
+// (3) Time-to-callback DISTRIBUTION. ONE ordered ladder, read by the SQL
+// builder AND the sheet-fallback bucketer, so the two cannot drift into
+// different buckets for the same day (the source-parity contract the
+// fallback is built on). `maxSec: null` is the open-ended final bucket.
+// Boundaries chosen to separate decisions, not to look tidy: inside 15 min
+// the caller is plausibly still by the phone; inside an hour is a same-session
+// save; past a day it is a courtesy call, not a recovery.
+var OUTBOUND_CALLBACK_BUCKETS_ = [
+  { key: 'm15',   maxSec: 900,   label: 'within 15 min' },
+  { key: 'h1',    maxSec: 3600,  label: 'within 1 hour' },
+  { key: 'h4',    maxSec: 14400, label: 'within 4 hours' },
+  { key: 'd1',    maxSec: 86400, label: 'within a day' },
+  { key: 'later', maxSec: null,  label: 'later' },
+];
+
+// (4) The ring-seconds split on UNCONNECTED outbound. The CDR cannot tell
+// no-answer from voicemail from busy -- that limitation is real and stays
+// disclosed -- but ring LENGTH separates the two cases a manager actually
+// cares about: a sub-threshold ring is a misdial or an immediate busy (noise),
+// a longer one is a genuine attempt nobody picked up (effort). A HEURISTIC,
+// labelled as one wherever it renders; it is not a new CDR fact.
+var OUTBOUND_BRIEF_RING_SEC_ = 8;
 
 // Cap on the not-called-back drill list (the heatmap cell drill's cap class).
 const OUTBOUND_UNCALLED_MAX = 200;
@@ -153,15 +188,26 @@ function emptyOutboundReport_(scope) {
     kpis: {
       agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null,
       obTalkSec: 0, obAttSec: 0, attempts: 0,
+      // (4) the unconnected split. `Unknown` is the remainder -- rows with no
+      // ring_seconds -- and is kept explicit so the three never silently
+      // stop summing to obTotal - obConnected.
+      obUnconnectedBrief: 0, obUnconnectedReal: 0, obUnconnectedUnknown: 0,
+      briefRingSec: OUTBOUND_BRIEF_RING_SEC_,
     },
     kpisPrior: null,      // v2 (R11-M): prior-window activity, roster-filtered like kpis
     callback: {
       abandonedTotal: 0, abandonedAnonymous: 0, abandonedTracked: 0,
       calledBack: 0, calledBackConnected: 0, calledBackPct: null,
+      // (2) the connected rate, over the SAME trackable denominator as
+      // calledBackPct so the two tiles are directly comparable and the gap
+      // between them is readable at a glance.
+      calledBackConnectedPct: null,
       medianCallbackSec: null, pendingTail: 0,
+      delayBuckets: null,   // (3) { m15, h1, h4, d1, later } | null
     },
     callbackPrior: null,  // v2: prior-window callback rate for the delta chip
     daily: [],            // v2: per-day {date, tracked, calledBack, ratePct}
+    callbackByHour: [],   // (6): per abandon-hour {hour, tracked, calledBack, ratePct}
     agents: [],
   };
 }
@@ -208,6 +254,77 @@ function outboundAbandonWhere_(scope, deptQueues, fromIso, toIso) {
     + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
     + ' AND ' + inboundWindowClause_(true)
     + inboundDeptPredicate_(scope.dept, deptQueues);
+}
+
+/**
+ * PURE. The `json_build_object` argument list for the delay-bucket counts,
+ * generated from OUTBOUND_CALLBACK_BUCKETS_.
+ *
+ * Generated rather than hand-written for one reason: the same ladder drives
+ * the sheet fallback's JS bucketer (`outboundBucketDelays_`), and two
+ * hand-maintained copies of a boundary list is precisely the drift this repo
+ * keeps paying for. Edit the ladder; both sides follow.
+ *
+ * Buckets are CUMULATIVE-exclusive: each counts delays at or below its own
+ * maxSec and above the previous one, so they sum to the called-back total.
+ * Negative delays cannot occur (the lateral requires the outbound at or after
+ * the abandon) but are excluded defensively, matching the median's filter.
+ */
+function outboundBucketSql_() {
+  var parts = [], prev = null;
+  OUTBOUND_CALLBACK_BUCKETS_.forEach(function (b) {
+    var cond = 'cb.delay_sec IS NOT NULL AND cb.delay_sec >= 0';
+    if (prev !== null) cond += ' AND cb.delay_sec > ' + prev;
+    if (b.maxSec !== null) cond += ' AND cb.delay_sec <= ' + b.maxSec;
+    parts.push("'" + b.key + "', count(*) FILTER (WHERE " + cond + ')');
+    prev = b.maxSec;
+  });
+  return parts.join(', ');
+}
+
+/**
+ * PURE. Classify ONE unconnected outbound call's ring length:
+ * 'brief' | 'real' | 'unknown'.
+ *
+ * The JS twin of the SQL's two FILTER clauses, extracted so the BOUNDARY is
+ * testable on both sides. It is strictly `<` the threshold for brief, so a
+ * ring of exactly OUTBOUND_BRIEF_RING_SEC_ is a REAL attempt -- matching
+ * `ring_seconds < N` / `ring_seconds >= N`. A one-character drift here
+ * (`<=`) would misfile every call sitting exactly on the boundary, and only
+ * on the Neon-down path, where nobody would look.
+ *
+ * A missing / non-numeric ring is 'unknown', never a default bucket: the
+ * shaper surfaces unknowns as the remainder so an export column that stops
+ * being written shows up as unknowns rather than as a pile of misdials.
+ */
+function outboundClassifyRing_(ringRaw) {
+  if (ringRaw === '' || ringRaw == null) return 'unknown';
+  var ring = Number(ringRaw);
+  if (!isFinite(ring)) return 'unknown';
+  return ring < OUTBOUND_BRIEF_RING_SEC_ ? 'brief' : 'real';
+}
+
+/**
+ * PURE. The JS twin of outboundBucketSql_, for the sheet fallback. Same
+ * ladder, same cumulative-exclusive rule, same non-negative filter -- the
+ * source-parity contract means these two must bucket one delay identically.
+ */
+function outboundBucketDelays_(delays) {
+  var out = {};
+  OUTBOUND_CALLBACK_BUCKETS_.forEach(function (b) { out[b.key] = 0; });
+  (delays || []).forEach(function (d) {
+    if (d == null || d < 0) return;
+    var prev = null;
+    for (var i = 0; i < OUTBOUND_CALLBACK_BUCKETS_.length; i++) {
+      var b = OUTBOUND_CALLBACK_BUCKETS_[i];
+      if ((prev === null || d > prev) && (b.maxSec === null || d <= b.maxSec)) {
+        out[b.key]++;
+        return;
+      }
+      prev = b.maxSec;
+    }
+  });
+  return out;
 }
 
 function computeOutboundReport_(scope) {
@@ -261,6 +378,14 @@ function computeOutboundReport_(scope) {
       return "(SELECT COALESCE(json_agg(t ORDER BY t.ob_total DESC, t.agent), '[]') FROM ("
         + 'SELECT agent_name AS agent, count(*) AS ob_total, '
         +   'count(*) FILTER (WHERE connected) AS ob_connected, '
+        // (4) the ring split. A NULL ring on an unconnected call is UNKNOWN,
+        // not brief -- it falls into neither bucket, and the shaper derives
+        // "real" by subtraction so the unknowns stay visible as the remainder
+        // rather than being quietly filed as effort.
+        +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
+        +     'AND ring_seconds < ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_brief, '
+        +   'count(*) FILTER (WHERE NOT connected AND ring_seconds IS NOT NULL '
+        +     'AND ring_seconds >= ' + OUTBOUND_BRIEF_RING_SEC_ + ') AS ob_unconn_real, '
         +   'COALESCE(sum(talk_seconds),0) AS ob_talk_sec, '
         +   'COALESCE(sum(attempts),0) AS attempts '
         + "FROM outbound_calls o WHERE o.call_date BETWEEN '" + f + "'::date AND '" + t + "'::date "
@@ -275,6 +400,9 @@ function computeOutboundReport_(scope) {
         + (withDetail
           ? (", 'medianCallbackSec', percentile_cont(0.5) WITHIN GROUP (ORDER BY cb.delay_sec) "
             + 'FILTER (WHERE cb.delay_sec IS NOT NULL AND cb.delay_sec >= 0)'
+            // (3) the distribution, generated FROM the shared ladder so the
+            // SQL cannot drift from the fallback's JS bucketer.
+            + ", 'delayBuckets', json_build_object(" + outboundBucketSql_() + ')'
             // pendingTail: tracked, un-called-back abandons still INSIDE the
             // callback window as of today -- "not called back YET", not a
             // verdict. Client renders it as a count, not a caption guess.
@@ -295,6 +423,18 @@ function computeOutboundReport_(scope) {
       +         'count(*) FILTER (WHERE cb.delay_sec IS NOT NULL) AS called_back '
       +       'FROM inbound_calls c ' + cbLateral + ' WHERE ' + abandonWhere
       +       ' GROUP BY c.call_date) t3), '
+      // (6) the same tracked/called-back pair cut by the ABANDON's hour
+      // rather than its date. call_start is raw PST text (the INV-18 storage
+      // convention) -- the shift to CST is the CLIENT's job, exactly as the
+      // per-call lists do it, so the server never guesses a display zone.
+      // Rows with no call_start cannot be placed on an hour axis and are
+      // excluded here; they still count in every date-scoped figure.
+      +   "'callbackByHour', (SELECT COALESCE(json_agg(t4 ORDER BY t4.h), '[]') FROM ("
+      +       "SELECT EXTRACT(HOUR FROM c.call_start::interval)::int AS h, "
+      +         'count(*) FILTER (WHERE c.caller_hash IS NOT NULL) AS tracked, '
+      +         'count(*) FILTER (WHERE cb.delay_sec IS NOT NULL) AS called_back '
+      +       'FROM inbound_calls c ' + cbLateral + ' WHERE ' + abandonWhere
+      +       ' AND c.call_start IS NOT NULL GROUP BY 1) t4), '
       + (pw
         ? ("'agentsPrior', " + agentsSel(pw.from, pw.to) + ', '
           + "'callbackPrior', " + callbackSel(priorAbandonWhere, false) + ', ')
@@ -345,6 +485,8 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
       }
       const obTotal = Number(r.ob_total) || 0;
       const obConnected = Number(r.ob_connected) || 0;
+      const obBrief = Number(r.ob_unconn_brief) || 0;
+      const obReal = Number(r.ob_unconn_real) || 0;
       const obTalkSec = Number(r.ob_talk_sec) || 0;
       list.push({
         agent: name,
@@ -355,17 +497,25 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
         obTalkSec: obTalkSec,
         obAttSec: obConnected ? Math.round(obTalkSec / obConnected) : 0,
         attempts: Number(r.attempts) || 0,
+        obUnconnectedBrief: obBrief,
+        obUnconnectedReal: obReal,
+        obUnconnectedUnknown: Math.max(0, obTotal - obConnected - obBrief - obReal),
       });
     });
     return list;
   };
   const sumKpis = function (list) {
     const k = { agents: 0, obTotal: 0, obConnected: 0, obConnectRate: null,
-                obTalkSec: 0, obAttSec: 0, attempts: 0 };
+                obTalkSec: 0, obAttSec: 0, attempts: 0,
+                obUnconnectedBrief: 0, obUnconnectedReal: 0, obUnconnectedUnknown: 0,
+                briefRingSec: OUTBOUND_BRIEF_RING_SEC_ };
     list.forEach(function (a) {
       k.agents++;
       k.obTotal += a.obTotal; k.obConnected += a.obConnected;
       k.obTalkSec += a.obTalkSec; k.attempts += a.attempts;
+      k.obUnconnectedBrief += a.obUnconnectedBrief || 0;
+      k.obUnconnectedReal += a.obUnconnectedReal || 0;
+      k.obUnconnectedUnknown += a.obUnconnectedUnknown || 0;
     });
     k.obConnectRate = k.obTotal ? Math.round(k.obConnected / k.obTotal * 1000) / 10 : null;
     k.obAttSec = k.obConnected ? Math.round(k.obTalkSec / k.obConnected) : 0;
@@ -392,6 +542,15 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
              ratePct: tracked ? Math.round(calledBack / tracked * 1000) / 10 : null };
   });
 
+  // (6): the abandon-hour cut. Same tracked/called-back pair as `daily`, so
+  // the two views of the same window always sum to the same totals.
+  out.callbackByHour = (obj.callbackByHour || []).map(function (r) {
+    const tracked = Number(r.tracked) || 0;
+    const calledBack = Number(r.called_back) || 0;
+    return { hour: Number(r.h) || 0, tracked: tracked, calledBack: calledBack,
+             ratePct: tracked ? Math.round(calledBack / tracked * 1000) / 10 : null };
+  });
+
   // v2: prior-window callback rate for the delta chip (tracked denominator,
   // same rule as the current window).
   if (obj.callbackPrior) {
@@ -401,6 +560,11 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
       abandonedTracked: pTracked,
       calledBack: Number(p.calledBack) || 0,
       calledBackPct: pTracked ? Math.round((Number(p.calledBack) || 0) / pTracked * 1000) / 10 : null,
+      // (2) the prior CONNECTED rate, so the new tile gets a real delta chip
+      // instead of a blank one. The prior select omits `withDetail`, but
+      // calledBackConnected is in the non-detail set, so this costs no SQL.
+      calledBackConnectedPct: pTracked
+        ? Math.round((Number(p.calledBackConnected) || 0) / pTracked * 1000) / 10 : null,
     };
   }
 
@@ -416,6 +580,21 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
   // punish depts for their caller-ID mix.
   cb.calledBackPct = cb.abandonedTracked
     ? Math.round(cb.calledBack / cb.abandonedTracked * 1000) / 10 : null;
+  // (2) The rate that actually reached someone. Same denominator as above --
+  // a DIFFERENT one would make the two tiles incomparable, which is the whole
+  // point of showing them side by side. calledBackConnected is a strict
+  // subset of calledBack, so this can never exceed calledBackPct.
+  cb.calledBackConnectedPct = cb.abandonedTracked
+    ? Math.round(cb.calledBackConnected / cb.abandonedTracked * 1000) / 10 : null;
+  // (3) The distribution. Null (not zeroes) when the source did not supply
+  // it, so the client can hide the strip rather than draw an all-zero chart
+  // that reads as "every callback was slow".
+  cb.delayBuckets = cbRaw.delayBuckets
+    ? OUTBOUND_CALLBACK_BUCKETS_.reduce(function (acc, b) {
+        acc[b.key] = Number(cbRaw.delayBuckets[b.key]) || 0;
+        return acc;
+      }, {})
+    : null;
   cb.medianCallbackSec = (cbRaw.medianCallbackSec == null)
     ? null : Math.round(Number(cbRaw.medianCallbackSec));
   cb.pendingTail = Number(cbRaw.pendingTail) || 0;   // v2
@@ -433,6 +612,125 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
  * unavailable payload must not pin. Same admin-only vetting gate as the
  * report (outboundResolveRequest_).
  */
+/**
+ * (5) Email the Outbound report (current view) to the CALLER.
+ *
+ * The gap this closes: Inbound, Individual and Insights all have one and
+ * Outbound did not, so the callback rate -- the number most worth noticing
+ * without being asked -- was the one you had to go and look up.
+ *
+ * Same auth + scope as getOutboundReport (it goes through the SAME resolver,
+ * so the vetting gate and the per-dept pinning apply identically) and it
+ * RECOMPUTES from the same params, so the email cannot disagree with the
+ * screen it was sent from. Charts stay in the web app -- the Insights-email
+ * precedent -- but the delay distribution ships as text, because a
+ * distribution is the part a median was hiding.
+ *
+ * R28/R30: sent through sendAppEmail_ (BCCs the first admin unless EMAIL_BCC
+ * says otherwise) and rendered through ekShellHtml_ WITH a band, like every
+ * other report email -- `app-email.test.js` and `email-kit-v2.test.js` sweep
+ * for both.
+ */
+function sendOutboundReportEmail(req) {
+  const scope = outboundResolveRequest_(req);
+  const email = (scope.user && scope.user.email) || Session.getActiveUser().getEmail();
+  const data = computeOutboundReport_(scope);
+  if (!data || data.meta.available === false) {
+    throw new Error('The Outbound report is unavailable right now — try again shortly.');
+  }
+  const meta = data.meta || {};
+  const k = data.kpis || {};
+  const cb = data.callback || {};
+  const cbp = data.callbackPrior || {};
+  const scopeLabel = meta.companyView ? 'All departments' : (meta.department || '');
+  const dateLabel = (meta.from || '') + ' – ' + (meta.to || '');
+
+  // The callback block leads, because it is the report's question. Both
+  // rates ride the SAME trackable denominator, and the email says so -- the
+  // gap between them is the point (2).
+  const cbRows =
+      inboundEmailKpiRow_('Abandoned (trackable)',
+        fmtNum_(cb.abandonedTracked) + ' of ' + fmtNum_(cb.abandonedTotal), '')
+    + inboundEmailKpiRow_('Called back',
+        fmtNum_(cb.calledBack) + (cb.calledBackPct != null ? ' (' + cb.calledBackPct + '%)' : ''),
+        inboundEmailDelta_(cb.calledBackPct, cbp.calledBackPct, true))
+    + inboundEmailKpiRow_('Actually reached',
+        fmtNum_(cb.calledBackConnected)
+        + (cb.calledBackConnectedPct != null ? ' (' + cb.calledBackConnectedPct + '%)' : ''),
+        inboundEmailDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, true))
+    + inboundEmailKpiRow_('Median time to callback',
+        cb.medianCallbackSec != null ? inboundEmailDur_(cb.medianCallbackSec) : '—', '')
+    + (cb.pendingTail
+        ? inboundEmailKpiRow_('Still inside the window', fmtNum_(cb.pendingTail), '')
+        : '');
+
+  const actRows =
+      inboundEmailKpiRow_('Outbound calls', fmtNum_(k.obTotal), '')
+    + inboundEmailKpiRow_('Connected',
+        fmtNum_(k.obConnected) + (k.obConnectRate != null ? ' (' + k.obConnectRate + '%)' : ''), '')
+    + inboundEmailKpiRow_('Rang out (real attempts)', fmtNum_(k.obUnconnectedReal), '')
+    + inboundEmailKpiRow_('Brief / misdial', fmtNum_(k.obUnconnectedBrief), '')
+    + inboundEmailKpiRow_('Talk time', inboundEmailDur_(k.obTalkSec), '');
+
+  const dashboardUrl = PropertiesService.getScriptProperties().getProperty('DASHBOARD_URL') || '';
+  const htmlBody = ekShellHtml_({
+    band: { tone: 'neutral', glyph: '&#9742;' },   // R30: uniform banded header
+    kicker: 'Call Data · Outbound calls',
+    title: scopeLabel,
+    subtitle: dateLabel,
+    preheader: scopeLabel + ': '
+      + (cb.calledBackPct != null ? cb.calledBackPct + '% of trackable abandons called back' : 'no trackable abandons')
+      + ' · ' + dateLabel,
+    rowsHtml:
+        ekRow_('<div style="font-size:13px;color:#6b7280;margin:0 0 6px;">Did we call back the callers who abandoned?</div>'
+          + '<table style="border-collapse:collapse;width:100%;max-width:460px;">' + cbRows + '</table>')
+      + ekRow_(outboundEmailDelayTable_(cb.delayBuckets, cb.calledBack), '4px 26px 6px')
+      + ekRow_('<div style="font-size:13px;color:#6b7280;margin:10px 0 6px;">Outbound activity</div>'
+          + '<table style="border-collapse:collapse;width:100%;max-width:460px;">' + actRows + '</table>',
+        '4px 26px 6px'),
+    ctaUrl: dashboardUrl,
+    ctaLabel: 'Open the Outbound report',
+    footerHtml: 'Requested from the Outbound report — sent only to you. '
+      + 'Both callback rates divide by the TRACKABLE abandons (an anonymous '
+      + 'caller cannot be called back), so a dept is never penalised for its '
+      + 'caller-ID mix. “Actually reached” is the stricter subset: the CDR '
+      + 'cannot tell a no-answer from a voicemail, so a callback that rang '
+      + 'out still counts as called back. The per-day trend, the abandon-hour '
+      + 'cut and the not-called-back list are in the web app.',
+  });
+
+  sendAppEmail_({ to: email,
+    subject: 'Outbound Calls Report: ' + dateLabel + ' (' + scopeLabel + ')',
+    htmlBody: htmlBody });
+  logReportUsage_('outbound:email', scope.dept || '(all)', scope.user, false);
+  return { to: email };
+}
+
+/**
+ * PURE. The (3) time-to-callback distribution as an email-safe table.
+ * Returns '' when there is nothing to distribute -- an all-zero table would
+ * read as "every callback was slow" rather than "there were no callbacks".
+ */
+function outboundEmailDelayTable_(buckets, calledBack) {
+  if (!buckets || !calledBack) return '';
+  const rows = OUTBOUND_CALLBACK_BUCKETS_.map(function (b) {
+    const n = Number(buckets[b.key]) || 0;
+    const pct = calledBack ? Math.round(n / calledBack * 1000) / 10 : 0;
+    return '<tr>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;font-size:13px;">'
+      +   escapeHtmlServer_(b.label) + '</td>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;">'
+      +   fmtNum_(n) + '</td>'
+      + '<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;color:#6b7280;">'
+      +   pct + '%</td>'
+      + '</tr>';
+  }).join('');
+  return '<div style="font-size:13px;color:#6b7280;margin:10px 0 6px;">'
+    + 'How fast were the callbacks? <span style="color:#9ca3af;">'
+    + '(a median hides the tail — two days later is a courtesy call, not a recovery)</span></div>'
+    + '<table style="border-collapse:collapse;width:100%;max-width:460px;">' + rows + '</table>';
+}
+
 function getOutboundUncalled(req) {
   const scope = outboundResolveRequest_(req);
   const out = {
@@ -813,9 +1111,18 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
       var agent = String(row[3] == null ? '' : row[3]).trim();
       var a = byAgent[agent] || (byAgent[agent] = {
         agent: agent, ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0,
+        ob_unconn_brief: 0, ob_unconn_real: 0,
       });
       a.ob_total++;
-      if (String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE') a.ob_connected++;
+      var connected = String(row[6] == null ? '' : row[6]).trim().toUpperCase() === 'TRUE';
+      if (connected) a.ob_connected++;
+      else {
+        // (4) SQL parity via the shared classifier -- see its docstring for
+        // why the boundary is strict.
+        var cls = outboundClassifyRing_(row[8]);
+        if (cls === 'brief') a.ob_unconn_brief++;
+        else if (cls === 'real') a.ob_unconn_real++;
+      }
       a.ob_talk_sec += Number(row[7]) || 0;
       a.attempts += Number(row[9]) || 0;
     }
@@ -865,6 +1172,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var delays = [];
     var pendingTail = 0;
     var daily = {};
+    var byHour = {};   // (6)
     for (var i = 0; i < ibGrid.length; i++) {
       var row = ibGrid[i];
       var iso = ncCellDateIso_(row[0]);
@@ -881,6 +1189,16 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
       var hash = String(row[3] == null ? '' : row[3]).trim();
       if (!hash) { agg.abandonedAnonymous++; continue; }   // anonymous: never "not called back"
       d.tracked++;
+      // (6) the hour cut. `cs` is raw-PST 'HH:MM:SS' text, the same value the
+      // SQL's EXTRACT(HOUR ...) reads -- a row with no call_start cannot be
+      // placed on an hour axis and is skipped here exactly as the SQL's
+      // `call_start IS NOT NULL` skips it.
+      var hourKey = cs ? parseInt(cs.slice(0, 2), 10) : NaN;
+      var hb = null;
+      if (isFinite(hourKey)) {
+        hb = byHour[hourKey] || (byHour[hourKey] = { h: hourKey, tracked: 0, called_back: 0 });
+        hb.tracked++;
+      }
       var abOrd = obOrdinal_(iso, cs);
       var limitIso = obDaysAfterIso_(iso, OUTBOUND_CALLBACK_WINDOW_DAYS);
       var list = byHash[hash] || [];
@@ -894,6 +1212,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
       if (match) {
         agg.calledBack++;
         d.called_back++;
+        if (hb) hb.called_back++;
         if (match.connected) agg.calledBackConnected++;
         delays.push(match.ord - abOrd);
       } else if (iso > obDaysAfterIso_(todayIso, -OUTBOUND_CALLBACK_WINDOW_DAYS)) {
@@ -902,6 +1221,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     }
     if (withDetail) {
       agg.pendingTail = pendingTail;
+      agg.delayBuckets = outboundBucketDelays_(delays);   // (3) same ladder as the SQL
       var nonNeg = delays.filter(function (x) { return x >= 0; }).sort(function (a, b) { return a - b; });
       agg.medianCallbackSec = nonNeg.length
         ? (nonNeg.length % 2
@@ -910,7 +1230,10 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
         : null;
     }
     var series = Object.keys(daily).sort().map(function (k) { return daily[k]; });
-    return { agg: agg, daily: series };
+    var hours = Object.keys(byHour)
+      .map(function (k) { return byHour[k]; })
+      .sort(function (a, b) { return a.h - b.h; });
+    return { agg: agg, daily: series, hours: hours };
   };
 
   var cur = callbackFor(scope.from, scope.to, true);
@@ -923,6 +1246,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     agents: agentsFor(scope.from, scope.to),
     callback: cur.agg,
     callbackDaily: cur.daily,
+    callbackByHour: cur.hours,      // (6)
     coverageStart: coverageStart,
   };
   if (pw) {

@@ -61,17 +61,38 @@
   explained: the degraded tier's `first_agent` arm was inline in a
   Neon-requiring function (extracted to the pure `agentDayKeepRow_`), and the
   egress pin matched its own call inside `if (false)`.
-- **WHERE I LEFT OFF (2026-09-15).** Batch 6 done bar the 6c operator gate.
-  Next: the owner approved a SIX-POINT Outbound improvement list on
-  2026-09-15 and none of it is built yet -- (1) release it [= 6c's operator
-  steps], (2) connected-callback as a first-class KPI beside the raw rate,
-  (3) time-to-callback as a distribution not a median, (4) split unconnected
-  outbound by ring seconds, (5) `sendOutboundReportEmail`, (6) callback rate
-  by abandon HOUR reusing `renderAbandonHeatmap_`. Plus one OPEN QUESTION for
-  the owner: a per-dept CALLBACK table is available without touching the
-  ruled-out per-dept AGENT cards, because an abandoned call has an
-  unambiguous dept while a crossover agent does not -- different unit of
-  analysis, so the Option C ruling does not apply. Needs their ruling.
+- **THE SIX-POINT OUTBOUND ROUND IS BUILT (2026-09-15, block 193) -- five of
+  six; point 1 is the operator gate.** `outboundReport:v2` -> `v3`.
+  (2) connected-callback rate is a tile over the SAME trackable denominator
+  as the raw rate; (3) time-to-callback is a DISTRIBUTION over the shared
+  `OUTBOUND_CALLBACK_BUCKETS_` ladder that generates BOTH the SQL FILTERs and
+  the fallback's JS bucketer; (4) unconnected outbound splits on
+  `OUTBOUND_BRIEF_RING_SEC_`=8 via `outboundClassifyRing_` -- **strict
+  boundary, `= 8` is a REAL attempt, and a NULL ring stays UNKNOWN**;
+  (5) `sendOutboundReportEmail` (same resolver, recomputed server-side,
+  sendAppEmail_ + banded shell); (6) `callbackByHour`.
+  **Correction worth carrying forward:** I told the owner point 6 would reuse
+  `renderAbandonHeatmap_`. It cannot -- that renderer is hard-wired to
+  abandon rate with HIGH = bad, and callback rate inverts the polarity, so
+  reuse would tint a great hour red. A dedicated hour strip ships instead.
+  Every addition landed in the SQL AND the sheet fallback (one shaper, and
+  outbound-fallback.test.js compares them byte for byte).
+  Three mutations survived the first pass: two real gaps (the SQL pin checked
+  only bucket UPPER bounds; the ring boundary had no fixture sitting on it)
+  now fixed and pinned, and one genuinely EQUIVALENT (the `d > prev` guard is
+  redundant under an ascending ladder -- the new test pins the sort order
+  instead of pretending otherwise).
+- **WHERE I LEFT OFF (2026-09-15).** Batch 6 + the six-point round are code-
+  complete. TWO things are owed and neither is mine to decide:
+  (a) **the 6c operator gate** -- backfill, `runOutboundVettingCheck`, release
+  only on CLEAN `ok parity` (Operator State #63). Until it runs, this whole
+  round is admin-only.
+  (b) **an owner ruling on the per-dept CALLBACK table.** Deliberately NOT
+  built. The Option C ruling was about per-dept AGENT cards and the crossover
+  objection behind it does not reach this: an abandoned call has an
+  unambiguous dept, a crossover agent does not. Different unit of analysis,
+  so it needs a ruling rather than an inference from a ruling about something
+  else. Recorded in docs/next-steps.md under 6c.
 - **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
   tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
   13 mutations all caught), documented and merged; full suite green under

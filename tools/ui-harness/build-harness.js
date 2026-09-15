@@ -155,14 +155,30 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
           available: true, vetting: true, callbackWindowDays: 3,
           coverageStart: '2026-08-15', unrosteredAgents: 1, offRosterAgents: 0,
           cacheHit: false, computeMs: 12 },
+        // v3 (the six-point round): the ring split, both callback rates, the
+        // delay distribution and the abandon-hour cut all ship now, so the
+        // driver can assert the two new strips actually RENDER.
         kpis: { agents: 2, obTotal: 61, obConnected: 44, obConnectRate: 72.1,
-          obTalkSec: 9120, obAttSec: 207, attempts: 70 },
+          obTalkSec: 9120, obAttSec: 207, attempts: 70,
+          obUnconnectedBrief: 6, obUnconnectedReal: 10, obUnconnectedUnknown: 1,
+          briefRingSec: 8 },
         kpisPrior: { agents: 2, obTotal: 50, obConnected: 35, obConnectRate: 70,
-          obTalkSec: 8000, obAttSec: 229, attempts: 60 },
+          obTalkSec: 8000, obAttSec: 229, attempts: 60,
+          obUnconnectedBrief: 5, obUnconnectedReal: 9, obUnconnectedUnknown: 1,
+          briefRingSec: 8 },
         callback: { abandonedTotal: 25, abandonedAnonymous: 5, abandonedTracked: 20,
           calledBack: 14, calledBackConnected: 9, calledBackPct: 70,
-          medianCallbackSec: 1980, pendingTail: 2 },
-        callbackPrior: { abandonedTracked: 18, calledBack: 11, calledBackPct: 61.1 },
+          calledBackConnectedPct: 45,
+          medianCallbackSec: 1980, pendingTail: 2,
+          delayBuckets: { m15: 5, h1: 4, h4: 3, d1: 1, later: 1 } },
+        callbackPrior: { abandonedTracked: 18, calledBack: 11, calledBackPct: 61.1,
+          calledBackConnectedPct: 38.9 },
+        callbackByHour: [
+          { hour: 6, tracked: 5, calledBack: 4, ratePct: 80 },
+          { hour: 7, tracked: 8, calledBack: 4, ratePct: 50 },
+          { hour: 8, tracked: 2, calledBack: 0, ratePct: 0 },
+          { hour: 11, tracked: 5, calledBack: 3, ratePct: 60 },
+        ],
         daily: [
           { date: '2026-08-17', tracked: 8, calledBack: 6, ratePct: 75 },
           { date: '2026-08-18', tracked: 7, calledBack: 5, ratePct: 71.4 },
@@ -170,9 +186,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
         ],
         agents: [
           { agent: 'Test Agent', dept: 'CSR', obTotal: 40, obConnected: 30,
-            obConnectRate: 75, obTalkSec: 6000, obAttSec: 200, attempts: 45 },
+            obConnectRate: 75, obTalkSec: 6000, obAttSec: 200, attempts: 45,
+            obUnconnectedBrief: 4, obUnconnectedReal: 6, obUnconnectedUnknown: 0 },
           { agent: 'Ghost Dialer', dept: 'Unrostered', obTotal: 21, obConnected: 14,
-            obConnectRate: 66.7, obTalkSec: 3120, obAttSec: 223, attempts: 25 },
+            obConnectRate: 66.7, obTalkSec: 3120, obAttSec: 223, attempts: 25,
+            obUnconnectedBrief: 2, obUnconnectedReal: 4, obUnconnectedUnknown: 1 },
         ],
       };
     },
@@ -227,6 +245,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
         enabled: true,
         thresholds: { windowWorkdays: 10, maxTeamRatio: 0.5, behindTeamPts: 5, minMissed: 20 } } };
     },
+    sendOutboundReportEmail: function () { return { to: 'admin@example.com' }; },
     getOutboundUncalled: function (req) {
       return { meta: { from: (req && req.from) || '2026-07-21', to: (req && req.to) || '2026-08-19',
           department: (req && req.department) || null, companyView: !(req && req.department),

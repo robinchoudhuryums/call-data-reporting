@@ -2203,6 +2203,11 @@
           </div>
           <div>
             <button class="btn btn-secondary" id="outbound-csv-btn" type="button">Download CSV</button>
+            <!-- (5): Inbound / Individual / Insights all had one; the callback
+                 rate is exactly the number worth arriving rather than being
+                 visited. Sends the CURRENT view to the caller only. -->
+            <button class="btn btn-secondary" id="outbound-email-btn" type="button"
+                    title="Email this report (the window currently on screen) to yourself">Email to me</button>
             <button class="btn btn-secondary" id="outbound-back-btn" type="button">&laquo; Back</button>
           </div>
         </div>
@@ -2219,6 +2224,11 @@
           <div class="al-section" id="outbound-callback-section">
             <div class="al-section-title">Abandoned-caller callbacks</div>
             <div id="outbound-callback-kpis" class="pr-kpi-row"></div>
+            <!-- (3): the time-to-callback DISTRIBUTION. A median hides the
+                 tail, and a two-day-later callback is not the save a
+                 five-minute one is. Hidden when there are no callbacks to
+                 distribute -- an all-zero strip would read as "all slow". -->
+            <div id="outbound-delay-strip" style="display:none;"></div>
             <!-- The two contract caveats (see OutboundReport.gs header). -->
             <p class="al-hint" id="outbound-callback-caption">
               &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
@@ -2232,6 +2242,12 @@
             <div id="outbound-cb-chart-wrap" style="display:none; max-width:100%;">
               <canvas id="outbound-cb-chart" height="110"></canvas>
             </div>
+            <!-- (6): callback rate by the ABANDON's hour. The daily series
+                 above answers "are we keeping up"; this answers "WHICH
+                 abandons fall through the cracks", which is the actionable
+                 one. Deliberately NOT the shared weekday x hour heatmap --
+                 see the note in outboundRenderHourStrip_. -->
+            <div id="outbound-hour-strip" style="display:none;"></div>
             <!-- v2: the not-called-back drill (rows reuse the heatmap cell
                  drill renderer incl. the "↳ path" journey chips). -->
             <div class="esc-resolve-actions">

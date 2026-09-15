@@ -77,6 +77,12 @@ const MODALS = [
       ['#outbound-kpi-row .ds-kpi', 'activity KPI tiles'],
       ['#outbound-callback-kpis .ds-kpi', 'callback KPI tiles'],
       ['#outbound-agent-tbody tr', 'per-agent rows'],
+      // The six-point round's two new strips. Both hide themselves when
+      // there is nothing to show, so asserting they RENDER on a populated
+      // fixture is what catches a strip that silently never appears.
+      ['#outbound-delay-strip .ob-delay-seg', 'time-to-callback distribution'],
+      ['#outbound-hour-strip .ob-hour-cell', 'callback-by-abandon-hour strip'],
+      ['#outbound-email-btn', 'the Email-to-me control'],
     ] } },
   // 6d: the agent-day view. Its RPCs (getAgentDay + getIndividualReportInit
   // for the picker) are mocked in build-harness.js. Like Outbound it opens on
