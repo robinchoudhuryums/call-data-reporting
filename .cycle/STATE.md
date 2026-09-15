@@ -107,7 +107,20 @@
   entry_queue alone -- making the table one GROUP BY over queues, folded to
   depts client-side (which also handles a double-mapped queue, where SQL
   GROUP BY cannot). Verify that claim with a test before relying on it.
-  THREE open questions for the owner are at the end of the plan.
+  **All three open questions were RULED on 2026-09-15** and the plan is
+  rewritten around them: rank by called-back; sub-queues follow
+  `queuesForDept_`; and **separate by the DEPT'S AGENTS**. That last one
+  reverses the plan's original recommendation and knowingly reintroduces the
+  crossover problem Option C avoided. **The consequence to carry forward:**
+  callbacks DIALED BY dept X's agents and abandons ON dept X's queues are
+  different populations (a CSR agent calling back a Sales abandon is normal
+  and contractual), so numerator is not a subset of denominator -- a
+  per-agent-dept percentage can exceed 100% and is not a rate. The plan
+  recommends a CROSS-TAB (rows = abandon's dept, keeping the honest rate;
+  columns = dialing agent's dept, answering the ruling) with explicit
+  Multi-home / Unrostered / No-agent columns, and names counts-only as the
+  smaller fallback if the matrix reads too dense. One decision remains before
+  build: cross-tab vs counts-only.
 - **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
   tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
   13 mutations all caught), documented and merged; full suite green under

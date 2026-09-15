@@ -350,8 +350,18 @@ as a reached caller (the far end genuinely answers, so every condition the
 flag tests is met), which the six-point round promoted into the "Actually
 reached" tile. A single scope-level rate carries that over-count as a
 constant; a dept COMPARISON turns it into a ranking that is wrong by
-different amounts per dept. Three open questions for the owner are listed at
-the end of the plan.
+different amounts per dept. **Owner rulings 2026-09-15 (all three questions closed):** rank by
+called-back with reached beside it; sub-queues follow `queuesForDept_`; and
+**separate by the DEPT'S AGENTS**, not by the abandoned call's queue. That
+third one reverses the plan's original recommendation and reintroduces the
+crossover problem Option C avoided, so the plan was rewritten around it --
+see "What ruling 3 changes, and the one thing it breaks". The short version:
+callbacks by dept X's agents and abandons on dept X's queues are DIFFERENT
+populations, so a naive per-agent-dept percentage is not a rate and can
+exceed 100%. The plan recommends a CROSS-TAB (rows = abandon's dept, columns
+= dialing agent's dept) as the only shape that satisfies the ruling and keeps
+an honest rate, with explicit Multi-home / Unrostered / No-agent columns so
+nothing is silently misfiled.
 
 ~~**Observed gap, uncommitted:** Outbound has CSV but no `sendOutboundReportEmail`~~
 **SHIPPED 2026-09-15** in the owner's six-point round (block 193), along with
