@@ -339,13 +339,19 @@ rendered-gate covered BEFORE the release rather than after.
 deferred, then RULED OUT (crossover agents hold multiple roster homes); the
 rejection is a contract in three places incl. the render site. Needs a fresh
 ruling.
-**OPEN QUESTION for the owner (raised 2026-09-15, NOT built):** a per-dept
-CALLBACK table is a different question from per-dept AGENT cards and the
-ruling above may not reach it. An abandoned call has an unambiguous dept (it
-came in on that dept's queue, via `inboundDeptPredicate_`); a crossover agent
-does not. So the unit of analysis differs and the crossover objection does
-not apply. Deliberately left unbuilt pending a ruling rather than inferred
-from a ruling about something else.
+**Per-dept CALLBACK table — PLANNED, not built.** A different question from
+per-dept AGENT cards: an abandoned call has an unambiguous dept (its entry
+queue), a crossover agent does not, so the ruling above does not reach it.
+The owner approved planning it on 2026-09-15 — full design in
+[`docs/outbound-callback-dept-plan.md`](outbound-callback-dept-plan.md),
+together with the OUTBOUND ANSWER-QUALITY work it depends on.
+**Do the answer-quality half first:** `connected` counts a voicemail pickup
+as a reached caller (the far end genuinely answers, so every condition the
+flag tests is met), which the six-point round promoted into the "Actually
+reached" tile. A single scope-level rate carries that over-count as a
+constant; a dept COMPARISON turns it into a ranking that is wrong by
+different amounts per dept. Three open questions for the owner are listed at
+the end of the plan.
 
 ~~**Observed gap, uncommitted:** Outbound has CSV but no `sendOutboundReportEmail`~~
 **SHIPPED 2026-09-15** in the owner's six-point round (block 193), along with

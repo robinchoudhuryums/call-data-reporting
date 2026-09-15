@@ -87,12 +87,27 @@
   (a) **the 6c operator gate** -- backfill, `runOutboundVettingCheck`, release
   only on CLEAN `ok parity` (Operator State #63). Until it runs, this whole
   round is admin-only.
-  (b) **an owner ruling on the per-dept CALLBACK table.** Deliberately NOT
-  built. The Option C ruling was about per-dept AGENT cards and the crossover
-  objection behind it does not reach this: an abandoned call has an
-  unambiguous dept, a crossover agent does not. Different unit of analysis,
-  so it needs a ruling rather than an inference from a ruling about something
-  else. Recorded in docs/next-steps.md under 6c.
+  (b) **the per-dept CALLBACK table is now PLANNED, not built** (owner
+  approved planning 2026-09-15) -- `docs/outbound-callback-dept-plan.md`.
+  **It is sequenced BEHIND an outbound ANSWER-QUALITY fix, and that ordering
+  is the point of the plan:** `connected` counts a voicemail pickup as a
+  reached caller -- structurally, not as a bug, because the far end genuinely
+  answers so every condition the flag tests is satisfied -- and the six-point
+  round promoted that into the "Actually reached" tile, which is live for
+  admins now. A single scope rate carries the over-count as a constant; a
+  dept COMPARISON turns it into a ranking wrong by different amounts per
+  dept. The strong unused discriminator is `ring_seconds` ON CONNECTED calls
+  (voicemail rang to the carrier timeout first, so it should spike; humans
+  are variable) -- but the plan's step 1 is a read-only probe to MEASURE
+  that before any threshold is set, not to assume it. Classification is
+  read-time, so thresholds stay tunable and old rows reclassify free.
+  A useful simplification found while planning: the callback denominator is
+  `disposition='abandoned'`, which can never satisfy the on-hold arm of
+  `inboundDeptPredicate_`, so dept attribution for THIS population reduces to
+  entry_queue alone -- making the table one GROUP BY over queues, folded to
+  depts client-side (which also handles a double-mapped queue, where SQL
+  GROUP BY cannot). Verify that claim with a test before relying on it.
+  THREE open questions for the owner are at the end of the plan.
 - **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
   tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
   13 mutations all caught), documented and merged; full suite green under
