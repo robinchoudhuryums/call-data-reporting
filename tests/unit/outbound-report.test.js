@@ -834,3 +834,421 @@ test('(5) the delay table stays QUIET when there is nothing to distribute', func
   assert.match(html, /within 15 min/);
   assert.match(html, /75%/, 'the share of callbacks, not a raw count alone');
 });
+
+// ══ probeOutboundAnswerQuality — STEP 1 of the answer-quality work ═════════
+//
+// docs/outbound-callback-dept-plan.md Part 2. The probe exists to answer ONE
+// question with data: is the ring distribution on connected calls bimodal,
+// with a tight spike at the carrier's no-answer timeout? If it is, a
+// voicemail threshold is defensible; if it is not, the probe must REFUSE to
+// hand over a number. So the tests below spend most of their effort on the
+// refusals — a probe that only knows how to say yes is worse than none,
+// because its "yes" carries no information.
+
+// ── The pure spike detector ────────────────────────────────────────────────
+
+// Builds a sparse [{sec, n}] histogram from a {sec: n} literal.
+function hist_(map) {
+  return Object.keys(map).map(function (k) { return { sec: Number(k), n: map[k] }; });
+}
+// A realistic shape: a broad human cluster over 1-10s plus a tight timeout
+// spike at 24-26s. `scale` multiplies everything so the sample-size gate can
+// be crossed or not without changing the SHAPE.
+function bimodal_(scale, peakSec) {
+  peakSec = peakSec || 25;
+  const m = {};
+  [12, 20, 26, 30, 28, 24, 18, 14, 10, 8].forEach(function (n, i) { m[i + 1] = n * scale; });
+  // The shoulders clear half of the peak, so the FWHM band is 24..26 --
+  // the multi-second case. The single-second case has its own test.
+  m[peakSec - 1] = 50 * scale; m[peakSec] = 90 * scale; m[peakSec + 1] = 48 * scale;
+  return m;
+}
+function total_(map) {
+  return Object.keys(map).reduce(function (a, k) { return a + map[k]; }, 0);
+}
+
+test('probe/spike: a real bimodal distribution yields the band off the measured spike', function () {
+  const m = bimodal_(3);
+  const s = JSON.parse(JSON.stringify(h.ctx.obProbeRingSpike_(hist_(m), total_(m))));
+  assert.equal(s.spike, true);
+  assert.equal(s.reason, 'ok');
+  assert.equal(s.peakSec, 25);
+  // FWHM: 24 and 26 both clear half of 270, so the band is 24..26.
+  assert.equal(s.leftSec, 24);
+  assert.equal(s.rightSec, 26);
+  assert.equal(s.widthSec, 3);
+  // The plan's two parameters, read straight off the spike.
+  assert.equal(s.suggestedVmRingSec, 24, 'the threshold is the LEFT edge, not the peak');
+  assert.equal(s.suggestedToleranceSec, 1, 'the tolerance is the half-width');
+  assert.ok(s.belowShare > 0.15, 'the human cluster below the spike is what makes it bimodal');
+});
+
+test('probe/spike: REFUSES a sample too small to mean anything', function () {
+  // The same SHAPE, a tenth of the mass: a textbook spike over 38 calls is
+  // still 38 calls.
+  const m = { 1: 3, 2: 5, 3: 6, 4: 5, 5: 4, 24: 5, 25: 9, 26: 4 };
+  assert.ok(total_(m) < 200, 'fixture must sit under the gate');
+  const s = h.ctx.obProbeRingSpike_(hist_(m), total_(m));
+  assert.equal(s.spike, false);
+  assert.equal(s.reason, 'too-few-rows');
+  assert.equal(s.suggestedVmRingSec, null, 'no number is offered on a refusal');
+  assert.match(h.ctx.obProbeSpikeHint_(s), /widen OUTBOUND_PROBE_FROM/);
+});
+
+test('probe/spike: REFUSES a flat distribution — the plan\'s "say so" case', function () {
+  // Every second equally likely: there is no timeout to find.
+  const m = {};
+  for (let i = 1; i <= 60; i++) m[i] = 20;
+  const s = h.ctx.obProbeRingSpike_(hist_(m), total_(m));
+  assert.equal(s.spike, false);
+  assert.equal(s.reason, 'flat');
+  assert.match(h.ctx.obProbeSpikeHint_(s), /distribution is flat, so no threshold is defensible/);
+});
+
+test('probe/spike: a human cluster TALLER than the spike is still bimodal', function () {
+  // The case that matters most in practice and that a global-max peak
+  // search gets wrong: most calls are answered by people, so the human mode
+  // (700 at 4s) towers over the timeout spike (150 at 25s). The spike is
+  // sought in the at-or-above-floor region precisely so this still reads as
+  // bimodal instead of "the modal ring is 4s".
+  const m = { 1: 40, 2: 120, 3: 300, 4: 700, 5: 260, 6: 100, 7: 40, 8: 20,
+              24: 90, 25: 150, 26: 85 };
+  const s = h.ctx.obProbeRingSpike_(hist_(m), total_(m));
+  assert.equal(s.spike, true);
+  assert.equal(s.peakSec, 25, 'the 700-call bucket at 4s must not become the peak');
+  assert.equal(s.suggestedVmRingSec, 24);
+  assert.ok(s.belowShare > 0.5, 'the human cluster is the mass below, not a competitor');
+});
+
+test('probe/spike: nothing rings past the floor → no candidate timeout', function () {
+  const m = { 1: 200, 2: 400, 3: 500, 4: 300, 5: 150 };
+  const s = h.ctx.obProbeRingSpike_(hist_(m), total_(m));
+  assert.equal(s.spike, false);
+  assert.equal(s.reason, 'empty-region');
+  assert.match(h.ctx.obProbeSpikeHint_(s), /no candidate timeout to measure/);
+});
+
+test('probe/spike: REFUSES a high peak with NO cluster below it (not bimodal)', function () {
+  // Everything piles at 25s and nothing rings short. One mode is not two;
+  // the voicemail story requires people AND machines.
+  const m = { 24: 60, 25: 900, 26: 50, 40: 5, 45: 5 };
+  const s = h.ctx.obProbeRingSpike_(hist_(m), total_(m));
+  assert.equal(s.spike, false);
+  assert.equal(s.reason, 'unimodal');
+  assert.match(h.ctx.obProbeSpikeHint_(s), /no human cluster/);
+});
+
+test('probe/spike: REFUSES a broad hump at the right place (a cluster, not a timeout)', function () {
+  // Mass spread over ~20 seconds around 30s: plausible-looking, and exactly
+  // the shape a half-open threshold would misread as a hard timeout.
+  const m = { 1: 60, 2: 80, 3: 90, 4: 70, 5: 50, 6: 40, 7: 30, 8: 20 };
+  for (let i = 20; i <= 42; i++) m[i] = 60 + (i === 31 ? 20 : 0);
+  const s = h.ctx.obProbeRingSpike_(hist_(m), total_(m));
+  assert.equal(s.spike, false);
+  assert.equal(s.reason, 'too-wide');
+  assert.match(h.ctx.obProbeSpikeHint_(s), /broad cluster, not a fixed timeout/);
+});
+
+test('probe/spike: REFUSES a tight spike too small to build a rule on', function () {
+  // A genuine narrow spike at 25s, but it is ~3% of connects. Real, and not
+  // worth reclassifying a report over.
+  const m = {};
+  for (let i = 1; i <= 10; i++) m[i] = 200;
+  m[25] = 70;
+  const s = h.ctx.obProbeRingSpike_(hist_(m), total_(m));
+  assert.equal(s.spike, false);
+  assert.equal(s.reason, 'spike-too-small');
+  assert.match(h.ctx.obProbeSpikeHint_(s), /too little to build a rule on/);
+});
+
+test('probe/spike: a zero median bucket is unbounded prominence, not a crash', function () {
+  // Concentrated data leaves most of the 61 buckets empty, so the median IS
+  // zero — the ratio gate must not divide by it, and the JSON must not carry
+  // an Infinity (JSON.stringify turns it into null silently).
+  const m = { 2: 300, 3: 200, 24: 120, 25: 400, 26: 110 };
+  const s = JSON.parse(JSON.stringify(h.ctx.obProbeRingSpike_(hist_(m), total_(m))));
+  assert.equal(s.baseline, 0);
+  assert.equal(s.ratio, null, 'reported as null, and the share/width gates carry the decision');
+  assert.equal(s.spike, true);
+  // The shoulders here sit UNDER half the peak, so the measured spike is a
+  // single second and the tolerance is 0. Reported as measured rather than
+  // padded to look safer -- a fabricated width is a fabricated parameter.
+  assert.equal(s.leftSec, 25);
+  assert.equal(s.rightSec, 25);
+  assert.equal(s.suggestedVmRingSec, 25);
+  assert.equal(s.suggestedToleranceSec, 0);
+});
+
+test('probe/spike: out-of-domain buckets are ignored, not folded into the edges', function () {
+  const m = bimodal_(3);
+  const rows = hist_(m).concat([{ sec: 90, n: 5000 }, { sec: -3, n: 5000 }, { sec: null, n: 9 }]);
+  const s = h.ctx.obProbeRingSpike_(rows, total_(m));
+  assert.equal(s.peakSec, 25, 'a 90s row must not become the peak by clamping to 60');
+  assert.equal(s.spike, true);
+});
+
+// ── The pure talk-trough detector ──────────────────────────────────────────
+
+test('probe/trough: a real dip between hangups and conversations is measured', function () {
+  // 5s buckets, DENSE: a hangup cluster at 0-5s, a dip at 15s, conversations
+  // peaking at 60s.
+  const m = { 0: 300, 5: 200, 10: 80, 15: 20, 20: 90, 25: 140, 30: 200, 35: 240,
+              40: 270, 45: 300, 50: 380, 55: 440, 60: 500, 65: 380, 70: 300 };
+  const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
+  assert.equal(t.trough, true);
+  assert.equal(t.troughSec, 15);
+  assert.equal(t.suggestedMinTalkSec, 15);
+  assert.equal(t.suggestedIsMeasured, true);
+});
+
+test('probe/trough: NO dip falls back to the candidate and says it is unmeasured', function () {
+  // Monotonically decreasing from a 0s mode: nothing separates short from long.
+  const m = { 0: 500, 5: 400, 10: 300, 15: 200, 20: 150, 30: 100, 60: 50 };
+  const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
+  assert.equal(t.trough, false);
+  assert.equal(t.suggestedMinTalkSec, 10, 'the plan\'s candidate');
+  assert.equal(t.suggestedIsMeasured, false,
+    'the caption must be able to say this number was NOT measured');
+});
+
+test('probe/trough: a SHALLOW dip is not a boundary', function () {
+  const m = { 0: 300, 5: 260, 10: 240, 15: 250, 20: 280, 25: 320, 30: 400,
+              35: 430, 40: 460, 45: 480, 50: 490, 55: 495, 60: 500 };
+  const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
+  assert.equal(t.trough, false);
+  assert.equal(t.reason, 'shallow');
+  assert.equal(t.suggestedIsMeasured, false);
+});
+
+test('probe/trough: an EMPTY bucket is absence of data, not the perfect trough', function () {
+  // Sparse data dips to zero between samples. A zero is arithmetically the
+  // deepest trough there can be, so without this guard the detector is most
+  // confident exactly where the histogram is least trustworthy.
+  const m = { 0: 400, 5: 300, 10: 0, 15: 0, 20: 120, 25: 200, 30: 300, 35: 400, 40: 500 };
+  const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
+  assert.equal(t.trough, false);
+  assert.equal(t.reason, 'sparse');
+  assert.equal(t.suggestedIsMeasured, false);
+});
+
+test('probe/trough: too few rows refuses like the spike gate', function () {
+  const m = { 0: 30, 15: 5, 60: 40 };
+  const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
+  assert.equal(t.trough, false);
+  assert.equal(t.reason, 'too-few-rows');
+});
+
+// ── The probe end to end ───────────────────────────────────────────────────
+
+function probeConn_(json1, json2) {
+  const conn = {
+    prepared: [], closed: false,
+    prepareStatement: function (s) {
+      const ps = { _p: {}, sql: s,
+        setString: function (i, v) { ps._p[i] = v; },
+        setInt: function (i, v) { ps._p[i] = v; } };
+      ps.executeQuery = function () {
+        conn.prepared.push({ sql: s, p: ps._p });
+        const j = /'quadrants'/.test(s) ? json2 : json1;
+        let n = 0;
+        return { next: function () { return n++ === 0; },
+                 getString: function () { return j; }, close: function () {} };
+      };
+      ps.close = function () {};
+      return ps;
+    },
+    close: function () { conn.closed = true; },
+  };
+  return conn;
+}
+
+const PROBE_BIMODAL_ = bimodal_(3);
+function probeJson1_(over) {
+  const m = PROBE_BIMODAL_;
+  return JSON.stringify(Object.assign({
+    connTotal: 900, conn1: total_(m), conn1RingNull: 12, conn1RingOver: 4,
+    ringHist: hist_(m), ringHistAll: hist_(m),
+    talkTotal: 700, talkOver: 30,
+    talkHist: hist_({ 0: 300, 5: 200, 10: 80, 15: 20, 20: 90, 25: 140, 30: 200,
+                      35: 240, 40: 270, 45: 300, 50: 380, 55: 440, 60: 500 }),
+    repeatGroups: 88, repeatRingHist: hist_({ 24: 3, 25: 60, 26: 5, 31: 2 }),
+  }, over || {}));
+}
+const PROBE_JSON2_ = JSON.stringify({
+  quadrants: { total: 800, bandLongTalk: 40, bandShortTalk: 260,
+               outLongTalk: 420, outShortTalk: 80, atOrAboveThreshold: 330 },
+  attempts: [{ attempts: 1, n: 600, inBand: 180 }, { attempts: 2, n: 150, inBand: 70 },
+             { attempts: 3, n: 90, inBand: 60 }],
+});
+
+function installProbe_(conn) {
+  h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+  h.state.props = { OUTBOUND_PROBE_FROM: '2026-08-01', OUTBOUND_PROBE_TO: '2026-08-28' };
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+}
+
+test('probe: a clean bimodal run reports MEASURED parameters and sets nothing', function () {
+  const conn = probeConn_(probeJson1_(), PROBE_JSON2_);
+  installProbe_(conn);
+  const out = JSON.parse(JSON.stringify(h.call('probeOutboundAnswerQuality')));
+  assert.match(out.result, /^ok bimodal: ring spike at 25s \(band 24-26s/);
+  assert.match(out.result, /nothing was set/);
+  assert.match(out.result, /OUTBOUND_ANSWER_QUALITY stays off/);
+  assert.deepEqual(out.suggested, {
+    OUTBOUND_VM_RING_SEC: 24,
+    OUTBOUND_VM_RING_TOLERANCE_SEC: 1,
+    OUTBOUND_MIN_TALK_SEC: 15,
+    OUTBOUND_ANSWER_QUALITY: 'off',
+  });
+  assert.equal(out.quadrants.bandShortTalk, 260);
+  assert.equal(out.byAttempts.length, 3);
+  assert.equal(conn.closed, true);
+  // The probe NEVER writes a Script Property other than self-clearing its
+  // own window. If it ever set the values it suggests, the "measure, then
+  // decide" separation the plan rests on would be gone.
+  assert.equal(h.state.props.OUTBOUND_VM_RING_SEC, undefined);
+  assert.equal(h.state.props.OUTBOUND_ANSWER_QUALITY, undefined);
+});
+
+test('probe: the repeat check is an INDEPENDENT estimate, reported as agreement', function () {
+  installProbe_(probeConn_(probeJson1_(), PROBE_JSON2_));
+  const ok = h.call('probeOutboundAnswerQuality');
+  assert.equal(ok.repeat.modalRingSec, 25);
+  assert.equal(ok.repeat.agreesWithSpike, true);
+  assert.match(ok.result, /repeat-callee modal ring 25s AGREES/);
+
+  // Same spike, but repeat callees answer at 40s — two methods disagreeing
+  // is exactly what the operator must see before trusting the band.
+  installProbe_(probeConn_(probeJson1_({ repeatRingHist: hist_({ 40: 70, 25: 3 }) }), PROBE_JSON2_));
+  const dis = h.call('probeOutboundAnswerQuality');
+  assert.equal(dis.repeat.agreesWithSpike, false);
+  assert.match(dis.result, /repeat-callee modal ring 40s DISAGREES/);
+  assert.match(dis.result, /^ok bimodal/, 'a disagreement is disclosed, not a verdict downgrade');
+});
+
+test('probe: no spike → INCONCLUSIVE, no second query, no suggestion, params KEPT', function () {
+  const flat = {};
+  for (let i = 1; i <= 60; i++) flat[i] = 20;
+  const conn = probeConn_(probeJson1_({ conn1: total_(flat), ringHist: hist_(flat) }), PROBE_JSON2_);
+  installProbe_(conn);
+  const out = JSON.parse(JSON.stringify(h.call('probeOutboundAnswerQuality')));
+  assert.match(out.result, /^INCONCLUSIVE /);
+  assert.match(out.result, /do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY/);
+  assert.equal(out.suggested, undefined, 'a refusal must not smuggle a number out');
+  assert.equal(out.quadrants, undefined);
+  assert.equal(conn.prepared.length, 1,
+    'the joint cut is only meaningful at a MEASURED band — no band, no second query');
+  // A refused run still carries the FWHM edges it walked before failing a
+  // gate, and they span most of a flat histogram — so an agreement check
+  // that forgets to require a spike reports the repeat-callee evidence as
+  // CONFIRMING a band that was just rejected.
+  assert.equal(out.repeat.modalRingSec, 25, 'the independent estimate is still reported');
+  assert.equal(out.repeat.agreesWithSpike, false,
+    'there is no spike to agree with — agreement is never claimed on a refusal');
+  // The self-cleaning rule: only a clean verdict clears the window, so the
+  // widen-and-re-run loop re-measures the same range.
+  assert.equal(h.state.props.OUTBOUND_PROBE_FROM, '2026-08-01');
+});
+
+test('probe: the clean run self-clears its window params (and only then)', function () {
+  installProbe_(probeConn_(probeJson1_(), PROBE_JSON2_));
+  h.call('probeOutboundAnswerQuality');
+  assert.equal(h.state.props.OUTBOUND_PROBE_FROM, undefined);
+  assert.equal(h.state.props.OUTBOUND_PROBE_TO, undefined);
+});
+
+test('probe: spike detection reads the SINGLE-ATTEMPT histogram, never all-attempts', function () {
+  // The capture detail the plan missed: `connected` can come from a later
+  // leg while `ring_seconds` describes the first, so a multi-attempt row
+  // mixes two legs' facts. Feed a clean single-attempt histogram and a
+  // deliberately corrupted all-attempts one; the verdict must follow the
+  // former.
+  const junk = {};
+  for (let i = 1; i <= 60; i++) junk[i] = 500;
+  installProbe_(probeConn_(probeJson1_({ ringHistAll: hist_(junk) }), PROBE_JSON2_));
+  const out = h.call('probeOutboundAnswerQuality');
+  assert.match(out.result, /^ok bimodal: ring spike at 25s/);
+  assert.ok(out.ringHistAllAttempts.length, 'still REPORTED — nothing is hidden');
+});
+
+test('probe: query 1 binds the window and scopes every sub-select to connected rows', function () {
+  const conn = probeConn_(probeJson1_(), PROBE_JSON2_);
+  installProbe_(conn);
+  h.call('probeOutboundAnswerQuality');
+  const q1 = conn.prepared[0];
+  const binds = (q1.sql.match(/\?::date/g) || []).length;
+  assert.ok(binds >= 20, 'every sub-select carries the window');
+  assert.equal(Object.keys(q1.p).length, binds, 'every placeholder is bound');
+  for (let i = 1; i + 1 <= binds; i += 2) {
+    assert.equal(q1.p[i], '2026-08-01');
+    assert.equal(q1.p[i + 1], '2026-08-28');
+  }
+  assert.match(q1.sql, /AND connected /, 'ring length only means anything on a connect');
+  assert.match(q1.sql, /COALESCE\(attempts,1\) = 1/);
+  // PHI: aggregates only. The repeat check groups BY the hash and returns
+  // counts; no hash, number or call id may be selected out.
+  assert.ok(!/SELECT callee_hash[^,)]*\)::text/.test(q1.sql));
+  assert.ok(!/json_agg\([^)]*callee_hash/.test(q1.sql),
+    'a hash must never reach the payload');
+});
+
+test('probe: query 2 cuts at the RESOLVED band with bound ints, in positional order', function () {
+  const conn = probeConn_(probeJson1_(), PROBE_JSON2_);
+  installProbe_(conn);
+  h.call('probeOutboundAnswerQuality');
+  assert.equal(conn.prepared.length, 2);
+  const q2 = conn.prepared[1];
+  // 19 params: 4 quadrant triples, the half-open threshold, the quadrant
+  // window, the attempts band, the attempts window.
+  assert.equal(Object.keys(q2.p).length, 19);
+  assert.equal(q2.p[1], 24); assert.equal(q2.p[2], 26); assert.equal(q2.p[3], 15);
+  assert.equal(q2.p[13], 24, 'the half-open reading uses the LEFT edge');
+  assert.equal(q2.p[14], '2026-08-01'); assert.equal(q2.p[15], '2026-08-28');
+  assert.equal(q2.p[16], 24); assert.equal(q2.p[17], 26);
+  assert.equal(q2.p[18], '2026-08-01'); assert.equal(q2.p[19], '2026-08-28');
+  // BOTH out-of-band cells, not just one: a NULL ring is counted by
+  // `NOT BETWEEN` as NULL, so a cell missing the guard drops those rows
+  // from the quadrants entirely and the four cells quietly stop summing.
+  assert.equal((q2.sql.match(/ring_seconds IS NULL OR ring_seconds NOT BETWEEN/g) || []).length, 2,
+    'a NULL ring must land OUTSIDE the band in every out-of-band cell');
+  assert.match(q2.sql, /'total', count\(\*\)/,
+    'the total is what makes a non-summing quadrant set visible');
+});
+
+test('probe: admin-gated, Neon-down is FAILED, a bad window throws', function () {
+  installProbe_(probeConn_(probeJson1_(), PROBE_JSON2_));
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.match(h.call('probeOutboundAnswerQuality').result, /^FAILED \(Neon unreachable\)/);
+
+  installProbe_(probeConn_(probeJson1_(), PROBE_JSON2_));
+  h.state.props.OUTBOUND_PROBE_FROM = '2026-09-01';
+  h.state.props.OUTBOUND_PROBE_TO = '2026-08-01';
+  assert.throws(function () { h.call('probeOutboundAnswerQuality'); }, /from <= to/);
+
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  assert.throws(function () { h.call('probeOutboundAnswerQuality'); }, /admin/i);
+  h.state.testUser = null;
+});
+
+test('probe: unset window props default to a ~28-day range ending yesterday', function () {
+  installProbe_(probeConn_(probeJson1_(), PROBE_JSON2_));
+  delete h.state.props.OUTBOUND_PROBE_FROM;
+  delete h.state.props.OUTBOUND_PROBE_TO;
+  const out = h.call('probeOutboundAnswerQuality');
+  const days = Math.round(
+    (new Date(out.window.to + 'T12:00:00Z') - new Date(out.window.from + 'T12:00:00Z')) / 86400000);
+  assert.equal(days, 27, 'a distribution needs more mass than the vetting check\'s parity count');
+  // P16: script TZ, or an evening run defaults "yesterday" to a partial,
+  // still-importing day.
+  assert.match(OB_SRC, /function obProbeWindow_[\s\S]*?Utilities\.formatDate\(d, TZ,/);
+});
+
+test('probe: the source keeps its read-only contract', function () {
+  const body = OB_SRC.slice(OB_SRC.indexOf('function probeOutboundAnswerQuality'));
+  const probe = body.slice(0, body.indexOf('\nfunction obProbeSpikeHint_'));
+  assert.ok(!/setProperty\(/.test(probe), 'the probe measures; it never sets a parameter');
+  assert.ok(!/INSERT |UPDATE |DELETE /.test(probe), 'read-only against Neon');
+  assert.match(probe, /assertAdmin_\(\);/);
+  assert.match(probe, /neonNoteEgress_\([^,]+, 'outbound-probe'\)/,
+    'every Neon read is egress-metered with a surface label (EA-1)');
+});

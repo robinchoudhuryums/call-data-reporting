@@ -247,7 +247,11 @@ tests/
                               email gating/race-safe close),
                               outbound-report (the Batch G callback report:
                               vetting gate, SQL property pins, roster
-                              attribution, getOutboundUncalled),
+                              attribution, getOutboundUncalled, and
+                              probeOutboundAnswerQuality -- the two pure
+                              detectors gate by gate, with most of the
+                              effort on the REFUSALS: a probe that only
+                              knows how to say yes carries no information),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a
