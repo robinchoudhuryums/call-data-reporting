@@ -166,8 +166,9 @@ near-empty and the surface just says so.
 **Owner rulings, 2026-09-15** (the three questions this section used to end
 with):
 
-1. **Rank by called-back**, show reached beside it. A heuristic column does
-   not drive an ordering.
+1. **Rank by called-back** — specifically the OWN-DEPT column (confirmed
+   2026-09-15), with reached beside it. A heuristic column does not drive an
+   ordering.
 2. **Sub-queues follow `queuesForDept_`** — a parent's row includes its
    children's queues, so this reconciles with every other queue rollup.
 3. **Separate by the DEPT'S AGENTS** — the table must show whether a dept
@@ -267,18 +268,34 @@ Two buckets still need naming, both from existing precedent:
 - **No agent recorded** — `outbound_calls.agent_name` is NULL when the
   capture could not resolve a name. Also `other`, also named in the expand.
 
-### What this does NOT capture (say it on the surface)
+### The clock starts at the ABANDON (owner ruling, 2026-09-15)
 
-**Time-to-callback is measured from the ABANDON, not from when the dept
-learned about it.** On a handoff, the clock starts when the customer hung up
-on dept Y, while dept X only found out when the email arrived. The
-distribution from Part 2 point 3 will read those as slow callbacks even when
-dept X responded promptly to what it actually received.
+**Time-to-callback is measured from the moment the customer hung up, not from
+when the owning dept learned about it.** Ruled explicitly, and the
+distinction matters to anyone tempted to "improve" it later.
 
-This is not fixable from call data — the email is invisible — so the honest
-move is a caption on the median/distribution, not a silent skew. It is also
-an argument for reading the own-dept RATE as the primary measure and the
-SPEED as secondary, since only the rate is unaffected.
+An earlier draft of this plan treated the handoff delay as an unfortunate
+skew to apologise for: on a handoff the clock starts when the customer
+abandoned on another dept's queue, while the owning dept only found out when
+the email arrived, so a prompt response reads as slow. **That framing was
+wrong, and the ruling corrects it.** The measurement is from the CUSTOMER's
+perspective, where the wait began when they gave up. Internal handoff time is
+part of the company's response, not an exemption from it — a two-hour
+handoff followed by an instant dial is a two-hour wait as far as the caller
+is concerned, and a metric that hid that would be measuring the org chart
+rather than the service.
+
+So this is a deliberate definition, not a limitation:
+
+- **Do NOT attempt to net out handoff time.** The email is invisible to the
+  CDR, so any such adjustment would be invented; and even if it were
+  measurable, the ruling is that it should not be subtracted.
+- The surface says what the clock measures ("elapsed since the caller hung
+  up, including any internal handoff") so the number is not mistaken for
+  agent responsiveness.
+- A dept with a slow median and a healthy own-dept RATE is a handoff-latency
+  story, not a calling-discipline one. Both numbers sit in the same row, so
+  the reader can tell those apart without the metric doing it for them.
 
 ### Attribution on the abandon side is still simple
 

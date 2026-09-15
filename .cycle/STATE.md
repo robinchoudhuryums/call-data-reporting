@@ -125,9 +125,15 @@
   back -- summing to trackable abandons, which is the invariant to pin first
   -- ranked on own; the full N x N matrix is a row EXPAND. Crossover agents
   need no Multi-home column in that shape: per row the only question is
-  "is the dialing agent a member of THIS dept?". One thing the data cannot
-  capture and the surface must caption: time-to-callback runs from the
-  ABANDON, not from when the dept learned of it via the email.
+  "is the dialing agent a member of THIS dept?". Ranked on the own-dept column
+  (confirmed), and **time-to-callback runs from the ABANDON by RULING**, not
+  as a limitation -- an earlier draft framed the handoff delay as a skew to
+  apologise for and that framing was WRONG: the clock is the customer's, and
+  internal handoff time is part of the company's response rather than an
+  exemption from it. **Do not try to net the handoff out** (it is invisible
+  anyway, but the ruling is that it should not be subtracted even if it were
+  not). A slow median with a healthy own-dept rate is a handoff-latency
+  story, and both numbers sit in the same row so a reader can tell.
 - **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
   tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
   13 mutations all caught), documented and merged; full suite green under

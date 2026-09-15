@@ -361,10 +361,10 @@ raised is WITHDRAWN. Row shape is own / another dept / not called back
 (summing to trackable abandons), ranked on the own-dept column; the full
 per-dialing-dept matrix is a row EXPAND, since the operating model predicts
 the off-diagonal is rare and therefore a SIGNAL (a skipped handoff, or a
-queue mapped to the wrong dept). One thing the data cannot capture: the
-handoff email is invisible, so time-to-callback is measured from the abandon
-rather than from when the dept learned of it -- captioned, not silently
-skewed.
+queue mapped to the wrong dept). Ranked on the own-dept column (confirmed), and
+**time-to-callback is measured from the ABANDON by ruling** -- the customer's
+clock, where internal handoff time counts as part of the company's response
+rather than an exemption from it. Do not try to net the handoff out.
 
 ~~**Observed gap, uncommitted:** Outbound has CSV but no `sendOutboundReportEmail`~~
 **SHIPPED 2026-09-15** in the owner's six-point round (block 193), along with
