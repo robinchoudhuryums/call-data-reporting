@@ -936,6 +936,9 @@ test('probe/spike: REFUSES a high peak with NO cluster below it (not bimodal)', 
   assert.equal(s.spike, false);
   assert.equal(s.reason, 'unimodal');
   assert.match(h.ctx.obProbeSpikeHint_(s), /no human cluster/);
+  // One decimal, so a refusal never reads as a contradiction (the live run
+  // printed "only 8% (need 8%)" for 7.6% vs 8.0%).
+  assert.match(h.ctx.obProbeSpikeHint_(s), /\d\.\d% of connects ring SHORTER/);
 });
 
 test('probe/spike: REFUSES a broad hump at the right place (a cluster, not a timeout)', function () {
@@ -959,6 +962,10 @@ test('probe/spike: REFUSES a tight spike too small to build a rule on', function
   assert.equal(s.spike, false);
   assert.equal(s.reason, 'spike-too-small');
   assert.match(h.ctx.obProbeSpikeHint_(s), /too little to build a rule on/);
+  // The live refusal's exact shape: 7.6% against an 8.0% floor must not both
+  // render as "8%". A refusal has to be legible as a refusal.
+  const live = h.ctx.obProbeSpikeHint_({ reason: 'spike-too-small', spikeShare: 0.076 });
+  assert.match(live, /only 7\.6% of connects \(need 8\.0%\)/);
 });
 
 test('probe/spike: a zero median bucket is unbounded prominence, not a crash', function () {
@@ -1002,13 +1009,47 @@ test('probe/trough: a real dip between hangups and conversations is measured', f
 });
 
 test('probe/trough: NO dip falls back to the candidate and says it is unmeasured', function () {
-  // Monotonically decreasing from a 0s mode: nothing separates short from long.
-  const m = { 0: 500, 5: 400, 10: 300, 15: 200, 20: 150, 30: 100, 60: 50 };
+  // Monotonically decreasing, DENSE: nothing separates short from long. (The
+  // fixture was sparse when the mode gate caught this case first; with the
+  // two-hump search it has to be dense, or the empty-bucket guard would be
+  // what refuses and this would stop testing monotonicity.)
+  const m = { 0: 500, 5: 400, 10: 300, 15: 200, 20: 150, 25: 120, 30: 100,
+              35: 80, 40: 60, 45: 50, 50: 40, 55: 30, 60: 20 };
   const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
   assert.equal(t.trough, false);
+  assert.equal(t.reason, 'unimodal');
   assert.equal(t.suggestedMinTalkSec, 10, 'the plan\'s candidate');
   assert.equal(t.suggestedIsMeasured, false,
     'the caption must be able to say this number was NOT measured');
+});
+
+test('probe/trough: a SINGLE hump has no boundary to name', function () {
+  // Rise then fall. Every bucket has a taller neighbour on ONE side only, so
+  // there is no split with hump on both — the case a below-the-mode search
+  // could not distinguish from a real two-hump distribution.
+  const m = { 0: 100, 5: 300, 10: 700, 15: 900, 20: 700, 25: 300, 30: 100 };
+  const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
+  assert.equal(t.trough, false);
+  assert.equal(t.reason, 'unimodal');
+  assert.equal(t.suggestedIsMeasured, false);
+});
+
+test('probe/trough: the LIVE 2026-09-15 histogram — the trough ABOVE the mode', function () {
+  // The regression that motivated the two-hump search. The real distribution
+  // peaks at the 5s bucket and dips at 20s, with a SECOND hump at 35-40s
+  // (where a voicemail greeting + message lands). Searching only below the
+  // mode returned 'mode-at-floor' — a wrong answer dressed as a refusal.
+  const m = { 0: 2014, 5: 4985, 10: 2713, 15: 2195, 20: 1659, 25: 2418, 30: 3332,
+              35: 3847, 40: 3485, 45: 2840, 50: 2451, 55: 2035, 60: 1735, 65: 1552,
+              70: 1377, 75: 1083, 80: 923, 85: 849, 90: 745, 95: 700, 100: 624 };
+  const t = h.ctx.obProbeTalkTrough_(hist_(m), total_(m));
+  assert.equal(t.trough, true);
+  assert.equal(t.modeSec, 5, 'the mode is the LOW cluster here');
+  assert.equal(t.troughSec, 20, 'the boundary sits ABOVE the mode');
+  assert.equal(t.leftPeakSec, 5);
+  assert.equal(t.rightPeakSec, 35, 'the second hump the trough separates');
+  assert.equal(t.suggestedMinTalkSec, 20);
+  assert.equal(t.suggestedIsMeasured, true);
 });
 
 test('probe/trough: a SHALLOW dip is not a boundary', function () {
@@ -1126,7 +1167,7 @@ test('probe: the repeat check is an INDEPENDENT estimate, reported as agreement'
   assert.match(dis.result, /^ok bimodal/, 'a disagreement is disclosed, not a verdict downgrade');
 });
 
-test('probe: no spike → INCONCLUSIVE, no second query, no suggestion, params KEPT', function () {
+test('probe: no spike → INCONCLUSIVE, EXPLORATORY cut only, no suggestion, params KEPT', function () {
   const flat = {};
   for (let i = 1; i <= 60; i++) flat[i] = 20;
   const conn = probeConn_(probeJson1_({ conn1: total_(flat), ringHist: hist_(flat) }), PROBE_JSON2_);
@@ -1134,10 +1175,19 @@ test('probe: no spike → INCONCLUSIVE, no second query, no suggestion, params K
   const out = JSON.parse(JSON.stringify(h.call('probeOutboundAnswerQuality')));
   assert.match(out.result, /^INCONCLUSIVE /);
   assert.match(out.result, /do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY/);
+  // The line that must never blur: a refusal carries the cross-tab for
+  // DIAGNOSIS, and carries no parameter anyone could set.
   assert.equal(out.suggested, undefined, 'a refusal must not smuggle a number out');
-  assert.equal(out.quadrants, undefined);
-  assert.equal(conn.prepared.length, 1,
-    'the joint cut is only meaningful at a MEASURED band — no band, no second query');
+  assert.equal(out.band, undefined, 'and no measured band either');
+  assert.equal(out.quadrants, undefined, 'the MEASURED slot stays empty on a refusal');
+  assert.ok(out.exploratory, 'but the cross-tab is still produced — the gap the live run exposed');
+  assert.match(out.exploratory.note, /^EXPLORATORY/);
+  assert.match(out.exploratory.note, /not measured parameters and must not be set as any/);
+  assert.equal(out.exploratory.refusedBecause, 'flat', 'says WHICH gate refused');
+  assert.ok(out.exploratory.quadrants, 'the cut itself');
+  assert.match(out.result, /EXPLORATORY ring×talk cut/,
+    'the verdict line says so too — the payload alone is not where a reader looks first');
+  assert.equal(conn.prepared.length, 2, 'the exploratory cut is a real second query');
   // A refused run still carries the FWHM edges it walked before failing a
   // gate, and they span most of a flat histogram — so an agreement check
   // that forgets to require a spike reports the repeat-callee evidence as
@@ -1148,6 +1198,22 @@ test('probe: no spike → INCONCLUSIVE, no second query, no suggestion, params K
   // The self-cleaning rule: only a clean verdict clears the window, so the
   // widen-and-re-run loop re-measures the same range.
   assert.equal(h.state.props.OUTBOUND_PROBE_FROM, '2026-08-01');
+});
+
+test('probe: a refusal with NO usable peak gets NO exploratory cut either', function () {
+  // A too-few-rows refusal returns before the FWHM edges are computed, so
+  // there is no observed band to cut at. Cutting at nothing would be worse
+  // than not cutting — the block must be ABSENT, not empty-but-present.
+  const tiny = { 1: 20, 2: 30, 25: 25, 26: 10 };
+  const conn = probeConn_(probeJson1_({ conn1: total_(tiny), ringHist: hist_(tiny) }), PROBE_JSON2_);
+  installProbe_(conn);
+  const out = JSON.parse(JSON.stringify(h.call('probeOutboundAnswerQuality')));
+  assert.match(out.result, /^INCONCLUSIVE /);
+  assert.equal(out.spike.reason, 'too-few-rows');
+  assert.equal(out.exploratory, undefined);
+  assert.equal(out.suggested, undefined);
+  assert.equal(conn.prepared.length, 1, 'no band, no second query — the original rule still holds');
+  assert.doesNotMatch(out.result, /EXPLORATORY/);
 });
 
 test('probe: the clean run self-clears its window params (and only then)', function () {

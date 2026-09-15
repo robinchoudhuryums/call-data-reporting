@@ -134,7 +134,17 @@ histogram deep enough to be a boundary (at or under half of both shoulders);
 when there is no such trough the probe falls back to the candidate 10 and
 flags `suggestedIsMeasured: false`, so the number cannot later be cited as
 measured. An empty bucket is treated as absence of data, not as the perfect
-trough.
+trough. **The trough is sought between TWO HUMPS wherever it sits** — the
+first version searched only below the mode, and the live distribution's mode
+turned out to BE the low cluster (5 s) with the real boundary at 20 s above
+it, so it answered "mode-at-floor": a wrong answer dressed as a refusal.
+
+**A refusal still emits the joint cut**, labelled `exploratory` and carrying
+no `suggested` block. The original "no band, no second query" rule was
+guarding against manufacturing evidence for an unmeasured number, and that
+property is intact; what it had also done, unintentionally, was leave a
+refused run with no ring×talk cross-tab at all — which is the one view that
+would say whether a multi-band rule is worth building.
 
 ### Step 2: the parameters
 

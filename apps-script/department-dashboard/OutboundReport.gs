@@ -1206,37 +1206,67 @@ function obProbeTalkTrough_(rows, total) {
     if (idx >= 0 && idx < nb) counts[idx] += n;
   });
   var out = { trough: false, reason: '', troughSec: null, troughN: null,
-              modeSec: null, suggestedMinTalkSec: OB_PROBE_CANDIDATE_MIN_TALK_SEC_,
+              modeSec: null, leftPeakSec: null, rightPeakSec: null,
+              suggestedMinTalkSec: OB_PROBE_CANDIDATE_MIN_TALK_SEC_,
               suggestedIsMeasured: false, sampled: Number(total) || 0 };
   if (out.sampled < OB_PROBE_MIN_CONNECTED_) { out.reason = 'too-few-rows'; return out; }
   var mode = 0;
   for (i = 0; i < nb; i++) if (counts[i] > counts[mode]) mode = i;
   out.modeSec = mode * w;
-  if (mode < 2) { out.reason = 'mode-at-floor'; return out; }   // no room for a dip below it
-  // The DIP first, then the shoulder behind it -- not the other way round.
-  // "Highest bucket below the mode" sounds like the low cluster's peak and
-  // is not: on any smooth distribution it is the mode's own left neighbour,
-  // which makes every histogram look monotonic. So: the minimum strictly
-  // between the floor and the mode, then the maximum at or before it.
-  var trough = 1;
-  for (i = 1; i < mode; i++) if (counts[i] < counts[trough]) trough = i;
-  var lowPeak = 0;
-  for (i = 0; i <= trough; i++) if (counts[i] > counts[lowPeak]) lowPeak = i;
-  if (lowPeak === trough) { out.reason = 'monotonic'; return out; }
-  out.troughSec = trough * w; out.troughN = counts[trough];
-  // An EMPTY bucket between the shoulders is absence of data, not a
-  // measured minimum -- and it is the shape sparse data takes, so it would
-  // otherwise read as the strongest possible trough exactly when the
-  // histogram is least trustworthy. Refuse rather than name a boundary the
-  // data never showed.
-  if (!counts[trough]) { out.reason = 'sparse'; return out; }
-  var deep = counts[trough] <= (counts[lowPeak] / 2) && counts[trough] <= (counts[mode] / 2);
+
+  // The trough is sought BETWEEN TWO HUMPS, wherever it sits -- NOT below the
+  // mode. The first version searched only below the mode, on the assumption
+  // that hangups cluster low and conversations high; the live distribution
+  // (2026-09-15) has its mode at 5s with the real dip at 20s ABOVE it,
+  // separating short calls from a second hump at 35-40s, and the detector
+  // answered "mode-at-floor" -- a wrong answer, not a refusal. Whichever
+  // side of the mode the boundary falls on, it is the same boundary.
+  //
+  // Scored by SEPARATION -- min(tallest to the left, tallest to the right)
+  // minus the bucket itself -- so the winner is the split with the most
+  // hump on BOTH sides. Scoring by depth alone would pick the emptiest
+  // bucket in the tail, where there is no second hump to separate from.
+  var leftMax = [], leftArg = [], rightMax = [], rightArg = [];
+  var run = 0, arg = 0;
+  for (i = 0; i < nb; i++) {                       // strictly BEFORE i
+    leftMax[i] = run; leftArg[i] = arg;
+    if (counts[i] > run) { run = counts[i]; arg = i; }
+  }
+  run = 0; arg = nb - 1;
+  for (i = nb - 1; i >= 0; i--) {                  // strictly AFTER i
+    rightMax[i] = run; rightArg[i] = arg;
+    if (counts[i] > run) { run = counts[i]; arg = i; }
+  }
+  var firstPop = -1, lastPop = -1;
+  for (i = 0; i < nb; i++) if (counts[i] > 0) { firstPop = i; break; }
+  for (i = nb - 1; i >= 0; i--) if (counts[i] > 0) { lastPop = i; break; }
+  if (firstPop < 0 || lastPop - firstPop < 2) { out.reason = 'unimodal'; return out; }
+  var best = -1, bestSep = 0;
+  for (i = firstPop + 1; i < lastPop; i++) {
+    var sep = Math.min(leftMax[i], rightMax[i]) - counts[i];
+    if (sep > bestSep) { bestSep = sep; best = i; }
+  }
+  // No bucket has a taller neighbourhood on BOTH sides: one hump, or a
+  // monotonic slope. Either way there is no boundary to name.
+  if (best < 0) { out.reason = 'unimodal'; return out; }
+
+  out.troughSec = best * w; out.troughN = counts[best];
+  out.leftPeakSec = leftArg[best] * w;
+  out.rightPeakSec = rightArg[best] * w;
+  // An EMPTY bucket between the humps is absence of data, not a measured
+  // minimum -- and it is the shape sparse data takes, so it would otherwise
+  // read as the strongest possible trough exactly when the histogram is
+  // least trustworthy. Refuse rather than name a boundary the data never
+  // showed.
+  if (!counts[best]) { out.reason = 'sparse'; return out; }
+  var deep = counts[best] <= (leftMax[best] / 2) && counts[best] <= (rightMax[best] / 2);
   if (!deep) { out.reason = 'shallow'; return out; }
   out.trough = true; out.reason = 'ok';
-  out.suggestedMinTalkSec = trough * w;
+  out.suggestedMinTalkSec = best * w;
   out.suggestedIsMeasured = true;
   return out;
 }
+
 
 /** PURE. The probe's window defaults + validation (shared with the tests). */
 function obProbeWindow_(props, nowMs) {
@@ -1251,6 +1281,62 @@ function obProbeWindow_(props, nowMs) {
       + from + ' .. ' + to + ').');
   }
   return { from: from, to: to };
+}
+
+/**
+ * The ring x talk cross-tab, cut at a given band. Shared by the MEASURED
+ * path and the exploratory path so the two cannot compute it differently;
+ * what differs between them is the LABEL on the result, never the SQL.
+ *
+ * Bound params only, in statement order: four quadrant triples, the
+ * half-open threshold, the quadrant window, the attempts band, the attempts
+ * window. Egress-metered like every other read here.
+ */
+function obProbeJointCut_(conn, from, to, lo, hi, minTalk) {
+  var base = "FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND connected ";
+  var sql2 =
+    'SELECT json_build_object('
+    + "'quadrants', (SELECT json_build_object("
+    // `total` is here so the four cells can be checked to sum: `connected`
+    // implies Talk>0 by construction upstream, so a NULL talk_seconds
+    // should not exist -- if the cells ever fall short of the total, that
+    // assumption has broken and the quadrants are not the whole picture.
+    +   "'total', count(*), "
+    +   "'bandLongTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds >= ?), "
+    +   "'bandShortTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds < ?), "
+    +   "'outLongTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
+    +     'AND talk_seconds >= ?), '
+    +   "'outShortTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
+    +     'AND talk_seconds < ?), '
+    // The half-open reading of the same band, so the tight-match and
+    // threshold-only definitions can be compared before Part 2 picks one.
+    +   "'atOrAboveThreshold', count(*) FILTER (WHERE ring_seconds >= ?)"
+    +   ') ' + base + 'AND COALESCE(attempts,1) = 1), '
+    // (4) the by-attempts split.
+    + "'attempts', (SELECT COALESCE(json_agg(json_build_object("
+    +     "'attempts', a, 'n', n, 'inBand', in_band) ORDER BY a), '[]') FROM ("
+    +   'SELECT CASE WHEN COALESCE(attempts,1) >= 3 THEN 3 ELSE COALESCE(attempts,1) END AS a, '
+    +     'count(*) AS n, count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ?) AS in_band '
+    +   base + 'GROUP BY 1) t)'
+    + ')::text AS j';
+  var ps2 = conn.prepareStatement(sql2);
+  var b = 0;
+  var bindInt = function (v) { ps2.setInt(++b, v); };
+  var bindStr = function (v) { ps2.setString(++b, v); };
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandLongTalk
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandShortTalk
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // outLongTalk
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // outShortTalk
+  bindInt(lo);                                          // atOrAboveThreshold
+  bindStr(from); bindStr(to);                           // quadrants window
+  bindInt(lo); bindInt(hi);                             // attempts in_band
+  bindStr(from); bindStr(to);                           // attempts window
+  var rs2 = ps2.executeQuery();
+  var json2 = rs2.next() ? rs2.getString('j') : '{}';
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json2 ? json2.length : 0, 'outbound-probe');
+  rs2.close(); ps2.close();
+  var d2 = JSON.parse(json2 || '{}');
+  return { quadrants: d2.quadrants || null, attempts: d2.attempts || [] };
 }
 
 function probeOutboundAnswerQuality() {
@@ -1354,63 +1440,51 @@ function probeOutboundAnswerQuality() {
       // not support a voicemail threshold, which is exactly what the probe
       // was run to find out. Tool params are deliberately kept so the
       // widen-and-re-run loop measures the same window.
+      //
+      // A refusal STILL gets the cross-tab, cut at the OBSERVED peak. The
+      // first live run showed why: it refused, so the joint query never ran,
+      // and the operator was left with two marginal distributions and no way
+      // to ask the question that actually decides this -- a 31s ring with 35s
+      // talk is voicemail with high confidence, a 31s ring with 240s talk is
+      // a human who took a while. The original "no band, no second query"
+      // rule was guarding against MANUFACTURING EVIDENCE for an unmeasured
+      // number, and that property is kept intact: this block is labelled
+      // exploratory, and `suggested` stays ABSENT, so nothing here can be
+      // lifted into a Script Property by mistake.
+      //
+      // Only when the FWHM edges exist at all -- a too-few-rows or
+      // empty-region refusal returns before they are computed, and cutting
+      // at nothing would be worse than not cutting.
+      if (spike.leftSec !== null && spike.rightSec !== null && spike.peakN > 0) {
+        var xcut = obProbeJointCut_(conn, from, to,
+          spike.leftSec, spike.rightSec, trough.suggestedMinTalkSec);
+        out.exploratory = {
+          note: 'EXPLORATORY — cut at the OBSERVED peak, which FAILED the gates below. '
+            + 'These are not measured parameters and must not be set as any.',
+          refusedBecause: spike.reason,
+          observedPeakSec: spike.peakSec,
+          observedBand: [spike.leftSec, spike.rightSec],
+          minTalkSec: trough.suggestedMinTalkSec,
+          minTalkMeasured: trough.suggestedIsMeasured,
+          quadrants: xcut.quadrants,
+          byAttempts: xcut.attempts,
+        };
+      }
       out.result = 'INCONCLUSIVE (' + obProbeSpikeHint_(spike) + ') ' + label
-        + ' — do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY from this run.';
+        + ' — do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY from this run.'
+        + (out.exploratory ? ' An EXPLORATORY ring×talk cut at the observed peak is included'
+            + ' for diagnosis only — it is not a measurement.' : '');
       Logger.log('[outbound-probe] %s', out.result);
       return logStatusReturn_(out);
     }
 
-    // ── Query 2: the joint cuts, at the RESOLVED band ────────────────────
-    // Only reachable with a measured band; cutting at a candidate threshold
-    // would produce quadrant counts that look like evidence for a number
-    // nothing measured.
+    // ── Query 2: the joint cuts, at the MEASURED band ────────────────────
     var lo = spike.suggestedVmRingSec;
     var hi = spike.rightSec;
     var minTalk = trough.suggestedMinTalkSec;
-    var sql2 =
-      'SELECT json_build_object('
-      + "'quadrants', (SELECT json_build_object("
-      // `total` is here so the four cells can be checked to sum: `connected`
-      // implies Talk>0 by construction upstream, so a NULL talk_seconds
-      // should not exist -- if the cells ever fall short of the total, that
-      // assumption has broken and the quadrants are not the whole picture.
-      +   "'total', count(*), "
-      +   "'bandLongTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds >= ?), "
-      +   "'bandShortTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds < ?), "
-      +   "'outLongTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
-      +     'AND talk_seconds >= ?), '
-      +   "'outShortTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
-      +     'AND talk_seconds < ?), '
-      // The half-open reading of the same band, so the tight-match and
-      // threshold-only definitions can be compared before Part 2 picks one.
-      +   "'atOrAboveThreshold', count(*) FILTER (WHERE ring_seconds >= ?)"
-      +   ') ' + base + 'AND COALESCE(attempts,1) = 1), '
-      // (4) the by-attempts split.
-      + "'attempts', (SELECT COALESCE(json_agg(json_build_object("
-      +     "'attempts', a, 'n', n, 'inBand', in_band) ORDER BY a), '[]') FROM ("
-      +   'SELECT CASE WHEN COALESCE(attempts,1) >= 3 THEN 3 ELSE COALESCE(attempts,1) END AS a, '
-      +     'count(*) AS n, count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ?) AS in_band '
-      +   base + 'GROUP BY 1) t)'
-      + ')::text AS j';
-    var ps2 = conn.prepareStatement(sql2);
-    var b = 0;
-    var bindInt = function (v) { ps2.setInt(++b, v); };
-    var bindStr = function (v) { ps2.setString(++b, v); };
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandLongTalk
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandShortTalk
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // outLongTalk
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // outShortTalk
-    bindInt(lo);                                          // atOrAboveThreshold
-    bindStr(from); bindStr(to);                           // quadrants window
-    bindInt(lo); bindInt(hi);                             // attempts in_band
-    bindStr(from); bindStr(to);                           // attempts window
-    var rs2 = ps2.executeQuery();
-    var json2 = rs2.next() ? rs2.getString('j') : '{}';
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json2 ? json2.length : 0, 'outbound-probe');
-    rs2.close(); ps2.close();
-    var d2 = JSON.parse(json2 || '{}');
-    out.quadrants = d2.quadrants || null;
-    out.byAttempts = d2.attempts || [];
+    var cut = obProbeJointCut_(conn, from, to, lo, hi, minTalk);
+    out.quadrants = cut.quadrants;
+    out.byAttempts = cut.attempts;
     out.band = { vmRingSec: lo, toleranceSec: spike.suggestedToleranceSec, rightSec: hi,
                  minTalkSec: minTalk, minTalkMeasured: trough.suggestedIsMeasured };
 
@@ -1437,6 +1511,16 @@ function probeOutboundAnswerQuality() {
   }
 }
 
+/**
+ * PURE. Shares rendered to ONE DECIMAL.
+ *
+ * The first live run refused at 7.6% against an 8% floor and the sentence
+ * read "only 8% of connects (need 8%)" -- which looks like a contradiction
+ * and invites someone to re-run rather than believe it. A refusal has to be
+ * legible AS a refusal.
+ */
+function obProbePct1_(x) { return ((Number(x) || 0) * 100).toFixed(1) + '%'; }
+
 /** PURE. The operator-facing sentence for a spike gate that did not pass. */
 function obProbeSpikeHint_(s) {
   switch (s && s.reason) {
@@ -1453,11 +1537,11 @@ function obProbeSpikeHint_(s) {
       return 'the peak is ' + s.widthSec + 's wide at half height (max '
         + OB_PROBE_SPIKE_MAX_WIDTH_SEC_ + 's) — a broad cluster, not a fixed timeout';
     case 'spike-too-small':
-      return 'the peak holds only ' + Math.round(s.spikeShare * 100) + '% of connects (need '
-        + Math.round(OB_PROBE_SPIKE_MIN_SHARE_ * 100) + '%) — too little to build a rule on';
+      return 'the peak holds only ' + obProbePct1_(s.spikeShare) + ' of connects (need '
+        + obProbePct1_(OB_PROBE_SPIKE_MIN_SHARE_) + ') — too little to build a rule on';
     case 'unimodal':
-      return 'only ' + Math.round(s.belowShare * 100) + '% of connects ring SHORTER than the peak '
-        + '(need ' + Math.round(OB_PROBE_MIN_LOW_SHARE_ * 100) + '%) — there is no human cluster '
+      return 'only ' + obProbePct1_(s.belowShare) + ' of connects ring SHORTER than the peak '
+        + '(need ' + obProbePct1_(OB_PROBE_MIN_LOW_SHARE_) + ') — there is no human cluster '
         + 'below it, so the distribution is not bimodal';
     default:
       return 'no voicemail spike found';

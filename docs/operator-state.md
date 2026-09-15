@@ -1947,6 +1947,24 @@ When something looks wrong, before assuming a code bug, check:
       by-attempts split is one of the five measurements — if the in-band
       share climbs with attempts, that is the plan's "a 3rd-attempt connect
       is likelier voicemail" showing up in the data.
+    - **An INCONCLUSIVE run still carries a cross-tab, and it is NOT a
+      measurement.** The first live run refused, so the joint query never ran
+      and the output held two marginal distributions with no way to ask the
+      question that actually decides this (a 31 s ring with 35 s talk is
+      voicemail with high confidence; a 31 s ring with 240 s talk is a human
+      who took a while). A refusal now emits an `exploratory` block cut at the
+      OBSERVED peak — labelled as exploratory, naming which gate refused, and
+      with **no `suggested` block and no `band`**, so nothing in it can be
+      lifted into a Script Property. A refusal that never reached the FWHM
+      edges at all (too few rows, nothing above the floor) still gets NO cut:
+      cutting at nothing is worse than not cutting.
+    - **The talk trough is sought BETWEEN TWO HUMPS, wherever it sits** — not
+      below the mode. The live distribution peaks at 5 s and dips at 20 s with
+      a second hump at 35–40 s, and the first version answered
+      "mode-at-floor", a wrong answer dressed as a refusal. It scores splits
+      by SEPARATION (the shorter of the two humps, minus the dip) so the
+      winner is the split with real mass on both sides rather than the
+      emptiest bucket in the tail.
     - **PHI:** aggregates only. No hash, phone number or call id is selected,
       logged or returned; the repeat check counts GROUPS and never identifies
       one. Both queries are egress-metered under the `outbound-probe` label.
