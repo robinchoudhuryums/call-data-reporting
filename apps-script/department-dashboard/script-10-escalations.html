@@ -1733,4 +1733,311 @@
          +  '</tbody></table>';
   }
 
+  // ══ 6d: Agent Day ════════════════════════════════════════════════════════
+  //
+  // "What did agent X do on day Y?" Lives HERE rather than beside the other
+  // report clients because it renders through the `cl*` card vocabulary above
+  // (clCstTime_ / clChainHtml_ / clJourneyRowHtml_ / .cl-call-card) -- reusing
+  // them beats a second set that would drift.
+  //
+  // THE ONE RULE THIS SURFACE MUST NOT BREAK: a short list is DISCLOSED, never
+  // silently served. Per-call detail is only recoverable while the capture
+  // tables hold the day (journeys ~90d, rows ~400d, then DQE missed rings
+  // only), so an un-annotated list from an old day would read as "this agent
+  // barely worked" when it means "we no longer have the detail". The server
+  // ships meta.tier + meta.degradedReason for exactly this, and adTierNote_
+  // is the only thing standing between them and a misread page.
+
+  var adLastData = null;
+
+  function adSetError_(msg) {
+    const el = $('ad-error');
+    if (!el) return;
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = msg; el.style.display = '';
+  }
+
+  function adShowOnly_(id) {
+    ['ad-empty', 'ad-results', 'ad-loading'].forEach(function (x) {
+      const el = $(x);
+      if (el) el.style.display = (x === id) ? '' : 'none';
+    });
+  }
+
+  // Dept options: the viewer's own departments. An admin / all-depts manager
+  // gets every dept; a single-dept manager gets one and the control is inert
+  // rather than absent, so the page reads the same for everyone.
+  function adEnsureDeptOptions_() {
+    const sel = $('ad-dept');
+    if (!sel || sel.options.length) return;
+    const depts = (USER && USER.departments && USER.departments.length)
+      ? USER.departments
+      : (USER && USER.department ? [USER.department] : []);
+    sel.innerHTML = depts.map(function (d) {
+      return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>';
+    }).join('');
+    if (depts.length <= 1) sel.disabled = true;
+  }
+
+  // Agent options come from the SAME roster list the Individual Report picker
+  // uses, so the names are exact (INV-04) -- the server matches on them
+  // byte-for-byte and a typed name would mostly miss.
+  function adLoadAgents_() {
+    const sel = $('ad-agent');
+    const dept = $('ad-dept') ? $('ad-dept').value : '';
+    if (!sel || !dept) return;
+    sel.innerHTML = '<option value="">Loading…</option>';
+    sel.disabled = true;
+    google.script.run
+      .withSuccessHandler(function (init) {
+        const names = (init && init.agents) || [];
+        sel.innerHTML = names.length
+          ? names.map(function (n) {
+              return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
+            }).join('')
+          : '<option value="">(no roster agents)</option>';
+        sel.disabled = !names.length;
+      })
+      .withFailureHandler(function (err) {
+        sel.innerHTML = '<option value="">(could not load)</option>';
+        sel.disabled = true;
+        adSetError_('Could not load the agent list: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getIndividualReportInit({ department: dept });
+  }
+
+  function runAgentDay_() {
+    const agentName = $('ad-agent') ? $('ad-agent').value : '';
+    const date = $('ad-date') ? $('ad-date').value : '';
+    if (!agentName) { adSetError_('Pick an agent.'); return; }
+    if (!date) { adSetError_('Pick a date.'); return; }
+    adSetError_('');
+    adShowOnly_('ad-loading');
+    const btn = $('ad-run-btn'); const prev = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = DS_EQ_HTML_ + 'Loading…'; }
+    google.script.run
+      .withSuccessHandler(function (data) {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+        adRender_(data);
+      })
+      .withFailureHandler(function (err) {
+        if (btn) { btn.disabled = false; btn.textContent = prev; }
+        adShowOnly_(null);
+        adSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+      })
+      .getAgentDay({ agentName: agentName, date: date });
+  }
+
+  /**
+   * The fidelity banner. Returns '' on a full day -- a page that apologises
+   * when nothing is wrong trains people to ignore the banner that matters.
+   */
+  function adTierNote_(meta) {
+    if (!meta || meta.tier === 'full') return '';
+    const reason = meta.degradedReason;
+    if (reason === 'neon-down') {
+      return '<strong>Call detail unavailable right now.</strong> The per-call '
+        + 'tables could not be read, so only the daily totals below are shown. '
+        + 'This is temporary — nothing has been lost.';
+    }
+    if (reason === 'before-capture') {
+      return '<strong>Before per-call capture.</strong> This day predates the '
+        + 'per-call tables (about ' + meta.captureHorizonDays + ' days of history), '
+        + 'so the daily totals and the missed-ring timestamps below are everything '
+        + 'that survives. Answered calls leave no per-ring trace this far back.';
+    }
+    if (reason === 'journey-pruned') {
+      return '<strong>Partial detail — leg-by-leg history has aged out.</strong> '
+        + 'Past about ' + meta.journeyHorizonDays + ' days the per-leg record is '
+        + 'pruned, so the inbound list shows only calls this agent rang FIRST, not '
+        + 'every call they touched. Outbound is still exact. This cannot be '
+        + 'recovered later.';
+    }
+    return '<strong>No per-call rows for this day.</strong> The daily totals below '
+      + 'stand; the capture simply holds nothing for this agent on this date.';
+  }
+
+  function adRender_(data) {
+    adLastData = data;
+    const meta = (data && data.meta) || {};
+    const counts = (data && data.counts) || {};
+    const day = (data && data.day) || null;
+
+    const title = $('ad-results-title');
+    if (title) {
+      // An unrostered name is LABELLED rather than shown bare: an admin
+      // looking at an ex-employee should see why no dept is named.
+      title.textContent = (meta.agentName || '')
+        + (meta.department ? ' · ' + meta.department
+           : (meta.unrostered ? ' · (not on any roster)' : ''));
+    }
+    const dateEl = $('ad-results-date');
+    if (dateEl) dateEl.textContent = meta.date || '';
+
+    const note = $('ad-tier-note');
+    const noteHtml = adTierNote_(meta);
+    if (note) {
+      // .ds-note already carries the warn left-rail (styles.html) -- no
+      // modifier needed, and inventing one here would be a second source of
+      // truth for the same tone.
+      note.innerHTML = noteHtml;
+      note.style.display = noteHtml ? '' : 'none';
+    }
+
+    // Header strip: the DAILY aggregate (the number My Department shows), not
+    // a count of the list beneath it. Keeping these separate is what lets the
+    // list be a subset without the header lying.
+    const kpis = $('ad-day-kpis');
+    if (kpis) {
+      kpis.innerHTML = day ? [
+        inboundKpiTile_('Rung', fmtNumber(day.rung), 'daily total', ''),
+        inboundKpiTile_('Answered', fmtNumber(day.answered), 'daily total', ''),
+        inboundKpiTile_('Missed', fmtNumber(day.missed), 'daily total', ''),
+        inboundKpiTile_('Talk time', fmtDuration(day.tttSec),
+          'ATT ' + fmtDuration(day.attSec), ''),
+      ].join('') : '<div class="ds-note">No daily totals for this agent on this date.</div>';
+    }
+
+    const rec = $('ad-reconcile-note');
+    const recData = (data && data.reconcile) || {};
+    if (rec) {
+      rec.textContent = recData.note || '';
+      rec.style.display = recData.note ? '' : 'none';
+    }
+
+    const inList = $('ad-inbound-list');
+    if (inList) {
+      inList.innerHTML = (data.inbound || []).length
+        ? (data.inbound || []).map(adInboundCardHtml_).join('')
+        : '<div class="ds-note">No inbound calls recorded for this agent on this day.</div>';
+    }
+    const outList = $('ad-outbound-list');
+    if (outList) {
+      outList.innerHTML = (data.outbound || []).length
+        ? (data.outbound || []).map(adOutboundCardHtml_).join('')
+        : '<div class="ds-note">No outbound calls recorded for this agent on this day.</div>';
+    }
+
+    // Tier 3's entire content. Shown only when there IS something to show and
+    // the per-call list could not carry it.
+    const missedSec = $('ad-missed-section');
+    const missedList = $('ad-missed-list');
+    const rings = (data && data.missedRings) || [];
+    const showRings = rings.length > 0 && meta.tier !== 'full';
+    if (missedSec) missedSec.style.display = showRings ? '' : 'none';
+    if (missedList && showRings) {
+      missedList.innerHTML = '<div class="cl-call-facts">'
+        + rings.map(function (t) { return escapeHtml(String(t)); }).join(' · ')
+        + '</div>';
+    }
+
+    if (meta.truncated) {
+      adSetError_('Showing the first ' + (data.inbound || []).length + ' inbound and '
+        + (data.outbound || []).length + ' outbound calls — this day exceeded the display cap.');
+    }
+
+    const anything = (data.inbound || []).length || (data.outbound || []).length || day;
+    adShowOnly_(anything ? 'ad-results' : 'ad-empty');
+    if (!anything) {
+      const hint = $('ad-empty-hint');
+      if (hint) hint.textContent = adTierNote_(meta).replace(/<[^>]+>/g, '')
+        || 'No calls and no daily totals for this agent on this date.';
+    }
+  }
+
+  // Role chip. The role is what this view exists to show -- "answered" is the
+  // fact a manager is looking for, and a bare call list without it would be
+  // indistinguishable from the Caller Lookup one.
+  function adRoleChip_(role) {
+    if (role === 'answered') return '<span class="cl-chip cl-chip-good">Answered</span>';
+    if (role === 'missed')   return '<span class="cl-chip cl-chip-warn">Missed</span>';
+    return '<span class="cl-chip cl-chip-muted">Rang</span>';
+  }
+
+  function adInboundCardHtml_(c) {
+    const when = escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?');
+    const facts = [];
+    if (c.entryQueue) {
+      facts.push(escapeHtml(c.entryQueue)
+        + (c.finalQueue && c.finalQueue !== c.entryQueue ? ' → ' + escapeHtml(c.finalQueue) : ''));
+    }
+    if (c.waitSeconds != null) facts.push('Caller waited ' + fmtDuration(c.waitSeconds));
+    if (c.ringSec != null)     facts.push('Rang ' + fmtDuration(c.ringSec));
+    if (c.talkSec)             facts.push('Talked ' + fmtDuration(c.talkSec));
+    if (c.holdSeconds > 0)     facts.push('Held ' + fmtDuration(c.holdSeconds));
+    if (c.numTransfers)        facts.push(c.numTransfers + ' transfer' + (c.numTransfers === 1 ? '' : 's'));
+    if (c.isInternal)          facts.push('internal');
+    return '<div class="cl-call-card">'
+         +   '<div class="cl-call-head">'
+         +     '<span class="cl-call-when">' + when + '</span>'
+         +     '<span class="cl-chip cl-chip-dir-in">Inbound</span>'
+         +     adRoleChip_(c.role)
+         +   '</div>'
+         +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
+         + '</div>';
+  }
+
+  function adOutboundCardHtml_(c) {
+    const when = escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?');
+    const outcome = c.connected
+      ? '<span class="cl-chip cl-chip-good">Connected</span>'
+      : '<span class="cl-chip cl-chip-muted">Not connected</span>';
+    const facts = [];
+    if (c.connected && c.talkSec > 0) facts.push('Talked ' + fmtDuration(c.talkSec));
+    if (!c.connected && c.ringSec != null) facts.push('Rang ' + fmtDuration(c.ringSec));
+    if (c.attempts > 1) facts.push(c.attempts + ' attempts');
+    return '<div class="cl-call-card cl-call-card--out">'
+         +   '<div class="cl-call-head">'
+         +     '<span class="cl-call-when">' + when + '</span>'
+         +     '<span class="cl-chip cl-chip-dir-out">Outbound</span>'
+         +     outcome
+         +   '</div>'
+         +   (facts.length ? '<div class="cl-call-facts">' + facts.join(' · ') + '</div>' : '')
+         + '</div>';
+  }
+
+  function initAgentDay() {
+    const btn = $('agent-day-btn');
+    const modal = $('agent-day-modal');
+    if (!btn || !modal) return;
+    const closeBtn = modal.querySelector('.modal-close');
+    const backdrop = modal.querySelector('[data-close]');
+
+    function openModal() {
+      modal.style.display = '';
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      trapFocus_(modal);
+      initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.addEventListener('keydown', onKeyDown);
+      adEnsureDeptOptions_();
+      if ($('ad-agent') && !$('ad-agent').options.length) adLoadAgents_();
+      // Default to the most recent day with data, the INV-43 rule the dept
+      // controls follow -- today's ingest has not landed while a manager is
+      // looking, so defaulting to today would open on an empty day.
+      const d = $('ad-date');
+      if (d && !d.value) d.value = latestDqeIso_ || launcherIsoDaysAgo_(1);
+      if ($('ad-agent')) $('ad-agent').focus();
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      releaseFocus_();
+      resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
+      document.body.style.overflow = '';
+      document.removeEventListener('keydown', onKeyDown);
+      btn.focus();
+    }
+    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+
+    btn.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    const deptSel = $('ad-dept');
+    if (deptSel) deptSel.addEventListener('change', adLoadAgents_);
+    const runBtn = $('ad-run-btn');
+    if (runBtn) runBtn.addEventListener('click', runAgentDay_);
+  }
+
 </script>

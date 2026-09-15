@@ -282,6 +282,13 @@ tests/
                               login-notify (P14 store-after-confirmed-send),
                               orphan-rename-race (the F-22 re-verify),
                               orphan-roster-add (the New-hire flow),
+                              agent-day (6d: the agent-day interaction view --
+                              the three-tier horizon decided by what CAME
+                              BACK rather than the calendar, the journey-LIKE
+                              superset that only an exact INV-04 match may
+                              narrow, the roster-derived auth incl. crossover
+                              homes and the admin-only unrostered case, and
+                              the subset DISCLOSURE against the daily total),
                               overview-dqe-silence, overview-qcd-snapshot
                               (computeQcdSnapshots_ + the L4 prior-window
                               read), overview-chart-answered (6b: the

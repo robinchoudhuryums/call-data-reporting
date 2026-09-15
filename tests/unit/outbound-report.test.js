@@ -107,6 +107,81 @@ test('outbound resolver: admin-only while vetted; validation; ALL → company vi
   h.state.testUser = null;
 });
 
+// 6c: the RELEASE path. The vetting gate above is the only thing standing
+// between this report and its managers, and until now nothing proved that
+// removing it actually WORKS -- the per-dept branch beneath it has been
+// unreachable dead code since the day it was written. Releasing on an
+// unexercised branch is how a runbook's last step turns into an incident.
+//
+// These flip the real switch (hence `var`, not `const`, in OutboundReport.gs)
+// and assert the latent per-dept semantics, so the operator's step 4 is a
+// flag flip over tested behavior rather than a leap.
+test('6c: with the vetting gate released, a single-dept manager is PINNED to their dept', function () {
+  const orig = h.ctx.OUTBOUND_VETTING_GATE_;
+  h.ctx.OUTBOUND_VETTING_GATE_ = false;
+  try {
+    h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+    // No dept passed -> their own, never a company view.
+    const s = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
+    assert.equal(s.dept, 'CSR');
+    assert.equal(s.companyView, false, 'a single-dept manager must never get the company view');
+    // ALL is not an escape hatch for them.
+    assert.equal(h.call('outboundResolveRequest_',
+      { from: '2026-08-01', to: '2026-08-19', department: 'ALL' }).dept, 'CSR');
+    // Another dept is refused -- the release widens WHO may read, never WHAT.
+    assert.throws(function () {
+      h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'Sales' });
+    }, /Not authorized for this department/);
+    // role 'none' stays out regardless of the gate.
+    h.state.testUser = { email: 'n@x.com', role: 'none' };
+    assert.throws(function () {
+      h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
+    }, /Not authorized/);
+  } finally {
+    h.ctx.OUTBOUND_VETTING_GATE_ = orig;
+    h.state.testUser = null;
+  }
+});
+
+test('6c: released, a MULTI-dept manager may pick any assigned dept and no other', function () {
+  const orig = h.ctx.OUTBOUND_VETTING_GATE_;
+  h.ctx.OUTBOUND_VETTING_GATE_ = false;
+  try {
+    h.state.testUser = { email: 'm2@x.com', role: 'manager', department: 'CSR', departments: ['CSR', 'Sales'] };
+    assert.equal(h.call('outboundResolveRequest_',
+      { from: '2026-08-01', to: '2026-08-19', department: 'Sales' }).dept, 'Sales');
+    // Blank falls back to their FIRST dept, not a company view (Tier C).
+    const blank = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
+    assert.equal(blank.dept, 'CSR');
+    assert.equal(blank.companyView, false);
+    // An allDepts manager takes the admin-style branch: ALL means company.
+    h.state.testUser = { email: 'all@x.com', role: 'manager', allDepts: true, departments: ['CSR', 'Sales'] };
+    const all = h.call('outboundResolveRequest_',
+      { from: '2026-08-01', to: '2026-08-19', department: 'ALL' });
+    assert.equal(all.companyView, true);
+  } finally {
+    h.ctx.OUTBOUND_VETTING_GATE_ = orig;
+    h.state.testUser = null;
+  }
+});
+
+test('6c: the gate is the ONLY thing the release flips — admins are unaffected either way', function () {
+  const orig = h.ctx.OUTBOUND_VETTING_GATE_;
+  try {
+    h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+    h.ctx.OUTBOUND_VETTING_GATE_ = true;
+    const gated = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'CSR' });
+    h.ctx.OUTBOUND_VETTING_GATE_ = false;
+    const open = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'CSR' });
+    assert.deepEqual(open, gated,
+      'flipping the release switch must not change one byte of what an ADMIN '
+      + 'resolves to -- if it does, the switch is doing more than releasing.');
+  } finally {
+    h.ctx.OUTBOUND_VETTING_GATE_ = orig;
+    h.state.testUser = null;
+  }
+});
+
 // ── The SQL (pinned properties, not literal bytes) ──────────────────────────
 
 function runCompute_(dept, blob) {

@@ -61,6 +61,37 @@ const MODALS = [
   // build-harness.js. cross-file-pins.test.js now fails if a NEW modal route
   // joins the router without joining this list or the documented exemptions.
   { name: 'Coaching',       btn: '#coaching-btn',        sel: '#coaching-modal',       adminMenu: true },
+  // 6c: the Outbound report modal. It lives under the REPORTS dropdown, not
+  // the Admin one, hence `menu`. It was on cross-file-pins' documented
+  // exemption list for "no harness fixture yet" -- stale, since
+  // build-harness.js already mocks getOutboundReport + getOutboundUncalled.
+  // The driver goes in BEFORE the manager release (Operator State #63), not
+  // after: a surface reaching managers with zero rendered coverage is the
+  // dept-selector class of bug, and a release runbook is exactly when
+  // "we'll add the driver later" gets skipped. `run` drives the report past
+  // its setup form -- a form-only visit would assert nothing about the
+  // renderer, which is the half that can break.
+  { name: 'Outbound',       btn: '#outbound-report-btn',  sel: '#outbound-modal',
+    menu: '#reports-menu-btn',
+    run: { click: '#outbound-generate-btn', wait: 2200, expect: [
+      ['#outbound-kpi-row .ds-kpi', 'activity KPI tiles'],
+      ['#outbound-callback-kpis .ds-kpi', 'callback KPI tiles'],
+      ['#outbound-agent-tbody tr', 'per-agent rows'],
+    ] } },
+  // 6d: the agent-day view. Its RPCs (getAgentDay + getIndividualReportInit
+  // for the picker) are mocked in build-harness.js. Like Outbound it opens on
+  // a setup form, so `run` drives it through to the rendered day -- the
+  // fixture is a FULL-tier day, so the tier banner must stay HIDDEN, which is
+  // the assertion that catches an over-eager "we apologise on every day"
+  // regression.
+  { name: 'Agent Day',      btn: '#agent-day-btn',        sel: '#agent-day-modal',
+    menu: '#reports-menu-btn',
+    run: { click: '#ad-run-btn', wait: 2000, expect: [
+      ['#ad-day-kpis .ds-kpi', 'daily-total KPI tiles'],
+      ['#ad-inbound-list .cl-call-card', 'inbound call cards'],
+      ['#ad-outbound-list .cl-call-card', 'outbound call cards'],
+      ['#ad-tier-note[style*="none"]', 'NO tier banner on a full-fidelity day'],
+    ] } },
 ];
 
 (async () => {
@@ -83,9 +114,23 @@ const MODALS = [
     const { ctx, page, errors } = await boot();
     const before = errors.length;
     try {
-      if (m.adminMenu) { await page.click('#admin-menu-btn'); await page.waitForTimeout(300); }
+      const menuBtn = m.menu || (m.adminMenu ? '#admin-menu-btn' : null);
+      if (menuBtn) { await page.click(menuBtn); await page.waitForTimeout(300); }
       await page.click(m.btn);
       await page.waitForTimeout(2200);
+
+      // Optional second step for a modal that opens on a SETUP FORM: run it
+      // and assert the results actually rendered. Done before the focus /
+      // Escape checks so those exercise the results view, which is the state
+      // a user spends their time in.
+      if (m.run) {
+        await page.click(m.run.click);
+        await page.waitForTimeout(m.run.wait || 2000);
+        for (const [sel, label] of m.run.expect) {
+          const n = await page.locator(m.sel + ' ' + sel).count();
+          record(m.name + ': renders ' + label, n > 0, 'count=' + n);
+        }
+      }
 
       const info = await page.evaluate((sel) => {
         const modal = document.querySelector(sel);

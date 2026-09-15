@@ -67,6 +67,30 @@ const OUTBOUND_MAX_RANGE_DAYS = 366;
 // abandon answered on Monday). Also the reason the report's newest abandons
 // can legitimately still be pending -- the client captions that.
 const OUTBOUND_CALLBACK_WINDOW_DAYS = 3;
+// ── THE RELEASE SWITCH (6c / Operator State #63) ───────────────────────────
+// The report is feature-complete; it is admin-only ONLY while the callback
+// linkage + roster attribution are being vetted against live data. Releasing
+// it to per-dept managers is a TWO-LINE change, and both lines must move
+// TOGETHER:
+//   1. here: flip OUTBOUND_VETTING_GATE_ to false
+//   2. dashboard.html #outbound-report-btn: drop `data-admin-only` and the
+//      inline `style="display:none;"`
+// A half-release is the failure mode this pairing exists to prevent -- a
+// visible menu item over a throwing server reads to a manager as a broken
+// app, and a released server behind a hidden button reaches nobody.
+// `cross-file-pins.test.js` ("6c: the outbound vetting gate and its menu
+// item are released TOGETHER") fails on either half alone.
+//
+// DO NOT flip this on judgement. Operator State #63 is the runbook: backfill,
+// then `runOutboundVettingCheck`, and release ONLY on a CLEAN `ok parity`
+// verdict. A zero-abandon window reports INCONCLUSIVE by construction, which
+// is NOT a pass.
+// `var`, not `const`, so the harness can flip it and prove the RELEASED
+// path actually works before anyone flips it for real (a `const` in the
+// test vm is unreachable from h.ctx). Apps Script treats the two
+// identically at global scope.
+var OUTBOUND_VETTING_GATE_ = true;
+
 // Cap on the not-called-back drill list (the heatmap cell drill's cap class).
 const OUTBOUND_UNCALLED_MAX = 200;
 
@@ -80,9 +104,10 @@ function outboundResolveRequest_(req) {
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
   // TEMPORARY admin-only re-scope while the callback linkage + roster
-  // attribution are vetted. The per-dept manager path below is KEPT intact
-  // so restoring manager access is a one-line removal of this gate.
-  if (user.role !== 'admin') {
+  // attribution are vetted. The per-dept manager path below is KEPT intact,
+  // so releasing is flipping OUTBOUND_VETTING_GATE_ (above) -- read its
+  // comment before you do: the menu item moves in the same commit.
+  if (OUTBOUND_VETTING_GATE_ && user.role !== 'admin') {
     throw new Error('The Outbound report is admin-only while it is being vetted.');
   }
 

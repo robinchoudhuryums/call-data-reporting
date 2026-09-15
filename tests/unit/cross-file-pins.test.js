@@ -728,13 +728,18 @@ test('S1/INV-06: the DQE drill-down\'s own window constants match the pipeline',
 // This pins every kind:'modal' route to either the driver's list or a
 // documented exemption, so a new modal route cannot join the router silently.
 const DRIVER_MODAL_EXEMPT = {
-  // The three report modals are a SEPARATE coverage question (they are
-  // admin-only while being vetted, and their payload fixtures are not built
-  // by gen-phase3.js). Listed here so the omission is deliberate and visible
-  // rather than an accident of who last edited the driver.
+  // Report modals are a SEPARATE coverage question (admin-only while being
+  // vetted, and their payload fixtures are not built by gen-phase3.js).
+  // Listed here so the omission is deliberate and visible rather than an
+  // accident of who last edited the driver.
+  //
+  // 6c: 'outbound-modal' LEFT this list. Its two RPCs were already mocked in
+  // build-harness.js, so the stated reason had gone stale -- and a release
+  // runbook whose last step is "add the driver afterwards" is how a surface
+  // reaches managers with no rendered coverage at all. The driver goes in
+  // BEFORE the release, not after it.
   'inbound-modal':     'report modal — admin-only while vetted; no harness fixture yet',
   'direct-call-modal': 'report modal — admin-only while vetted; no harness fixture yet',
-  'outbound-modal':    'report modal — admin-only while vetted; no harness fixture yet',
 };
 
 test('F1: every modal route in the router is driven by drive-admin.js or documented as exempt', function () {
@@ -932,4 +937,50 @@ test('R46: a suite that pins its fixture back to the script timezone says why (s
     'fixture(s) pinned to the script timezone without a `// same-tz: <reason>` on the line: '
     + offenders.join(', ') + '. Drop the argument (the default is the live split) or state '
     + 'why this suite needs script midnight == sheet midnight.');
+});
+
+// ── 6c: the Outbound release is a PAIR, never half of one ──────────────────
+//
+// The report is feature-complete and admin-only only while it is vetted.
+// Releasing it means two edits in two files: flip
+// OutboundReport.gs::OUTBOUND_VETTING_GATE_ to false, AND drop
+// `data-admin-only` + the inline display:none from #outbound-report-btn.
+//
+// Either half alone is a shipped defect, in opposite directions: a visible
+// menu item over a still-throwing server reads to a manager as a broken app;
+// a released server behind a hidden button reaches nobody and looks like the
+// release simply did not work. Nothing compared the two before this pin, and
+// the release runbook's own step 3 names both -- exactly the shape that gets
+// half-done at the end of a long operator session.
+test('6c: the outbound vetting gate and its menu item are released TOGETHER', function () {
+  const gs = read('OutboundReport.gs', DASH);
+  const m = gs.match(/var OUTBOUND_VETTING_GATE_ = (true|false);/);
+  assert.ok(m, 'OUTBOUND_VETTING_GATE_ is missing from OutboundReport.gs — it is '
+    + 'the documented release switch (Operator State #63); do not inline the '
+    + 'role check back into outboundResolveRequest_.');
+  const gated = m[1] === 'true';
+
+  // The throw must actually READ the switch, or flipping it does nothing.
+  assert.match(gs, /if \(OUTBOUND_VETTING_GATE_ && user\.role !== 'admin'\)/,
+    'the admin-only throw no longer reads OUTBOUND_VETTING_GATE_ — the switch '
+    + 'is decorative and the release would be a no-op.');
+
+  const html = read('dashboard.html', DASH);
+  const btn = html.match(/<button[^>]*id="outbound-report-btn"[\s\S]*?>/);
+  assert.ok(btn, '#outbound-report-btn is missing from dashboard.html');
+  const hiddenAttr = /data-admin-only/.test(btn[0]);
+  const hiddenStyle = /style="display:none;"/.test(btn[0]);
+
+  if (gated) {
+    assert.ok(hiddenAttr && hiddenStyle,
+      'OUTBOUND_VETTING_GATE_ is true (server refuses managers) but '
+      + '#outbound-report-btn is VISIBLE to them — a manager would see the '
+      + 'menu item and get "admin-only while it is being vetted". Restore '
+      + 'data-admin-only + style="display:none;", or flip the gate.');
+  } else {
+    assert.ok(!hiddenAttr && !hiddenStyle,
+      'OUTBOUND_VETTING_GATE_ is false (server serves managers) but '
+      + '#outbound-report-btn is still hidden — the release reaches nobody. '
+      + 'Drop data-admin-only + style="display:none;" from the button.');
+  }
 });

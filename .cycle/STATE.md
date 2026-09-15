@@ -35,7 +35,44 @@
   journeys 90; owner chose 90-days-exact-then-degrade with NO capture-column
   schema change, accepting that the pre-90-day window shows rang-first only
   and can never be recovered.
-- **WHERE I LEFT OFF (2026-09-14).** 6a + 6b implemented, pinned (23 new
+- **BATCH 6 IS CODE-COMPLETE (2026-09-15, block 192) -- 6c AWAITS AN OPERATOR
+  GATE.** 6c + 6d implemented on branch `claude/gallant-meitner-mtuj55`.
+  **6c did NOT un-gate the Outbound report, deliberately**: its last step
+  needs a CLEAN `ok parity` from `runOutboundVettingCheck` against live Neon,
+  which no dev session can produce, and INCONCLUSIVE is not a pass. What DID
+  ship makes that release a flag flip over tested ground: the runbook is now
+  **Operator State #63**; the gate is a named `OUTBOUND_VETTING_GATE_` switch
+  and cross-file-pins FAILS if only one of its two halves (the switch, the
+  menu item's `data-admin-only` + `display:none`) moves; the per-dept manager
+  path -- unreachable dead code since it was written -- is now behaviourally
+  pinned with the switch flipped; the modal joined `drive-admin.js` (its
+  "no harness fixture yet" exemption had gone stale); and **S46** walks both
+  sides of the gate.
+  **6d SHIPPED** as `AgentDay.gs` + the `#/report/agent-day` modal. Three
+  tiers (full / journey-pruned / dqe-only) with the boundary DISCLOSED --
+  `adTierNote_` returns '' on a full day so the banner still means something.
+  Two departures from the roadmap, both deliberate: the day header reads the
+  DQE agent-day row through the DAL (same "aggregate that does not degrade"
+  intent, and it reconciles with My Department by construction), and the tier
+  is decided by WHAT CAME BACK rather than the calendar (the prune is
+  flag-gated and tunable). Auth is roster-derived through the shared
+  `assertDeptAccess_`; unrostered names are admin-only. **S47** walks it.
+  Two mutations SURVIVED the first pass and both were real gaps, fixed not
+  explained: the degraded tier's `first_agent` arm was inline in a
+  Neon-requiring function (extracted to the pure `agentDayKeepRow_`), and the
+  egress pin matched its own call inside `if (false)`.
+- **WHERE I LEFT OFF (2026-09-15).** Batch 6 done bar the 6c operator gate.
+  Next: the owner approved a SIX-POINT Outbound improvement list on
+  2026-09-15 and none of it is built yet -- (1) release it [= 6c's operator
+  steps], (2) connected-callback as a first-class KPI beside the raw rate,
+  (3) time-to-callback as a distribution not a median, (4) split unconnected
+  outbound by ring seconds, (5) `sendOutboundReportEmail`, (6) callback rate
+  by abandon HOUR reusing `renderAbandonHeatmap_`. Plus one OPEN QUESTION for
+  the owner: a per-dept CALLBACK table is available without touching the
+  ruled-out per-dept AGENT cards, because an abandoned call has an
+  unambiguous dept while a crossover agent does not -- different unit of
+  analysis, so the Option C ruling does not apply. Needs their ruling.
+- **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
   tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
   13 mutations all caught), documented and merged; full suite green under
   `TZ=America/Chicago` (1389/1389 + INV-16). Next: the owner is still OWED a

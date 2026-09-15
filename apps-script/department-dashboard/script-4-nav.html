@@ -58,6 +58,9 @@
     '/report/inbound':     { kind: 'modal', modalId: 'inbound-modal',     buttonId: 'inbound-report-btn' },
     '/report/direct':      { kind: 'modal', modalId: 'direct-call-modal', buttonId: 'direct-call-report-btn' },
     '/report/outbound':    { kind: 'modal', modalId: 'outbound-modal',    buttonId: 'outbound-report-btn' },
+    // 6d: NOT admin-only -- the server admits a manager of the agent's
+    // roster dept, so the F11 non-admin no-op must not swallow this one.
+    '/report/agent-day':   { kind: 'modal', modalId: 'agent-day-modal',  buttonId: 'agent-day-btn' },
     '/admin/alerts':       { kind: 'modal', modalId: 'alerts-modal',      buttonId: 'alerts-btn' },
     '/admin/orphan-fix':   { kind: 'modal', modalId: 'orphan-fix-modal',  buttonId: 'orphan-fix-btn' },
     '/admin/dept-config':  { kind: 'modal', modalId: 'dept-config-modal', buttonId: 'dept-config-btn' },

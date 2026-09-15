@@ -254,9 +254,11 @@ Four items the owner raised after the R47 trim. Each carries the design
 decision already made, so nobody re-opens it. Ordered cheapest-first; they are
 independent and can ship separately.
 
-**Status 2026-09-14: 6a and 6b are IMPLEMENTED and merged** (see
-`.cycle/blocks/*-batch6a6b-broad-implement.md`). Both are dashboard-only and
-need a dashboard deploy to reach users. 6c and 6d remain as written below.
+**Status 2026-09-15: all four items are IMPLEMENTED** (blocks
+`*-batch6a6b-*` and `*-batch6c6d-*`). All are dashboard-only and need a
+dashboard deploy. **6c is code-complete but NOT released** — its last step is
+an operator gate (`runOutboundVettingCheck` must come back CLEAN) and that
+cannot be done from a dev session; the runbook is now Operator State #63.
 
 ### 6a. Queue report: worst-first in the app, own dept still pinned — DONE
 
@@ -307,7 +309,7 @@ changes and the 6 h TTL makes a stale blob sticky.
 
 **Size.** S. **Deploy.** dashboard.
 
-### 6c. Outbound report — RELEASE, not build
+### 6c. Outbound report — RELEASE, not build — CODE DONE, RELEASE PENDING
 
 The report is fully shipped (server, client, sheet fallback, tests, vetting
 instrument) and **admin-only behind a hard-coded gate** with the menu item
@@ -323,9 +325,15 @@ never done**. So "enhancing Outbound" is a release runbook:
    MISMATCH** — a zero-abandon window is inconclusive by construction.
 4. Add the ci:ui driver visit + a regression scenario in the same change.
 
-**This runbook currently lives only in `.cycle/STATE.md`** (session state),
-not in `docs/operator-state.md`. Give it a numbered operator item — it is
-exactly the "step that exists only in the operator's head" class.
+~~**This runbook currently lives only in `.cycle/STATE.md`**~~ **DONE: it is
+Operator State #63**, with the verdict contract spelled out (INCONCLUSIVE is
+not a pass) and the two-file release named as one commit.
+**Also done (2026-09-15), so the release is a flag flip over tested ground:**
+the gate is a named switch `OUTBOUND_VETTING_GATE_` whose two halves
+cross-file-pins keeps together; the latent per-dept manager path is now
+BEHAVIOURALLY pinned with the switch flipped (it had been unreachable dead
+code since it was written); and the modal joined `drive-admin.js`, so it is
+rendered-gate covered BEFORE the release rather than after.
 
 **Do NOT revive:** per-dept company cards for Outbound were considered,
 deferred, then RULED OUT (crossover agents hold multiple roster homes); the
@@ -337,7 +345,7 @@ where Inbound / Individual / Insights all have one.
 
 **Size.** S (code) + operator vetting. **Deploy.** dashboard.
 
-### 6d. Agent-day interaction view ("what did agent X do on day Y")
+### 6d. Agent-day interaction view ("what did agent X do on day Y") — DONE
 
 **The 14-day assumption is WRONG and should not shape the design.** 14 days is
 the `Call_Legs_*` day-sheet prune — the REBUILD horizon (Operator State #43),
@@ -388,6 +396,14 @@ Three tiers, disclose the boundary the way the codebase already does
   list.
 
 **Size.** L. **Deploy.** dashboard.
+**SHIPPED 2026-09-15** as `AgentDay.gs` + the `#/report/agent-day` modal (client
+beside the `cl*` renderers in script-10). Built as designed above, with two
+deliberate departures worth knowing: the day HEADER reads the DQE agent-day row
+through the DAL rather than `direct_call_history` / `call_history_dept` — same
+"an aggregate that does not degrade" intent, and it additionally reconciles
+with My Department by construction; and the tier is decided by WHAT CAME BACK
+rather than by the calendar, since the prune is flag-gated and tunable. Full
+design notes now live in `docs/per-call-capture.md`; walk S47.
 
 ## Parallel track — the Neon storage decision (operator)
 

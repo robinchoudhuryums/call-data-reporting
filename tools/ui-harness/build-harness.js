@@ -179,6 +179,40 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
     // F-e: coaching worklist (admin-only until released). Inline fixture --
     // small and stable; the payload shape itself is pinned server-side by
     // tests/unit/coaching.test.js.
+    // 6d: agent-day view. Inline fixture -- the payload shape is pinned
+    // server-side by tests/unit/agent-day.test.js. Deliberately a FULL-tier
+    // day with a role mix, so the driver exercises every card branch.
+    getAgentDay: function (req) {
+      return {
+        meta: { agentName: (req && req.agentName) || 'Test Agent', date: (req && req.date) || '2026-08-19',
+          department: 'CSR', unrostered: false, rosterHomes: ['CSR'],
+          available: true, tier: 'full', degradedReason: null,
+          journeyHorizonDays: 90, captureHorizonDays: 400, ageDays: 3,
+          truncated: false, neonAvailable: true, tzLabel: 'CST', computeMs: 18 },
+        day: { rung: 14, missed: 3, answered: 11, tttSec: 2640, attSec: 240, source: 'dqe' },
+        counts: { inboundTotal: 3, answered: 1, missed: 1, rang: 1,
+          outboundTotal: 2, outboundConnected: 1, talkSec: 300 },
+        reconcile: { checked: true, exact: false,
+          note: 'Per-call list shows 1 answered; the daily total says 11. '
+            + 'Calls outside the work window are counted by one and not the other.' },
+        inbound: [
+          { callId: 'ic-1', callStart: '07:41:00', role: 'answered', ringSec: 6, talkSec: 240,
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', disposition: 'answered',
+            abandonStage: null, waitSeconds: 31, holdSeconds: 0, isInternal: false, numTransfers: 0 },
+          { callId: 'ic-2', callStart: '08:02:00', role: 'missed', ringSec: 22, talkSec: null,
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_CSR', disposition: 'missed',
+            abandonStage: null, waitSeconds: 44, holdSeconds: 0, isInternal: false, numTransfers: 1 },
+          { callId: 'ic-3', callStart: '09:15:00', role: 'rang', ringSec: 4, talkSec: null,
+            entryQueue: 'A_Q_CSR', finalQueue: 'A_Q_Spanish', disposition: 'answered',
+            abandonStage: null, waitSeconds: 12, holdSeconds: 0, isInternal: false, numTransfers: 2 },
+        ],
+        outbound: [
+          { callId: 'oc-1', callStart: '10:05:00', connected: true, talkSec: 300, ringSec: 8, attempts: 1 },
+          { callId: 'oc-2', callStart: '11:20:00', connected: false, talkSec: 0, ringSec: 26, attempts: 3 },
+        ],
+        missedRings: [],
+      };
+    },
     getCoachingWorklist: function (req) {
       return { available: true, rows: [
         { id: 'cf-1', department: 'CSR', agent_name: 'Test Agent',
