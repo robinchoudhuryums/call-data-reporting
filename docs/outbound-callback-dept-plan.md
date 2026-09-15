@@ -170,89 +170,115 @@ with):
    not drive an ordering.
 2. **Sub-queues follow `queuesForDept_`** — a parent's row includes its
    children's queues, so this reconciles with every other queue rollup.
-3. **Separate by the DEPT'S AGENTS** — the owner wants the table keyed on who
-   DID the calling back, not on whose queue the caller abandoned from. This
-   reverses the recommendation this plan opened with, and it changes the
-   design materially rather than cosmetically. The rest of this section is
-   rewritten around it.
+3. **Separate by the DEPT'S AGENTS** — the table must show whether a dept
+   called back its OWN customers. Clarified the same day with the operating
+   model (below): depts are RESPONSIBLE for their own callbacks, and when
+   another dept takes the customer's call they email the owning dept to make
+   it. That model is what makes ruling 3 buildable as a real rate; the rest
+   of this section is written around it.
 
-### What ruling 3 changes, and the one thing it breaks
+### The operating model (owner, 2026-09-15) — this is what the table measures
 
-The original design keyed rows on **the abandoned call** (dept = its entry
-queue). That gave every row a self-contained rate: numerator ⊆ denominator,
-one dept per call, no crossover.
+The clarification that settles the design:
 
-Keying on **the dialing agent's dept** breaks that, and it is worth being
-exact about why rather than discovering it at render time:
+> **Depts are expected to be responsible for their own callbacks.** An agent
+> from another dept may take the customer's call, but they then EMAIL the
+> appropriate dept to do the callback.
 
-**A callback and the abandon it answers can belong to different depts.** A CSR
-agent calling back a caller who abandoned on the Sales queue is a normal,
-deliberate event — "callbacks count no matter who dialed" is an existing
-contract, not an accident. So:
+Three consequences, and together they simplify the plan rather than
+complicating it:
+
+**1. The rate is coherent after all.** The previous draft of this section
+worried that a per-agent-dept percentage is not a rate, because callbacks
+dialed by dept X and abandons on dept X's queues are different populations.
+Under the operating model they are the SAME population in the normal case:
+dept X owns its abandons and dept X is expected to dial them. So the headline
+becomes a strict subset of its own denominator and cannot exceed 100%:
 
 ```
-numerator   = callbacks DIALED BY dept X's agents
-denominator = abandons ON dept X's queues        <- a DIFFERENT population
+own-dept callback rate = abandons on X's queues called back BY AN X AGENT
+                         ------------------------------------------------
+                         trackable abandons on X's queues
 ```
 
-Those two are not nested. A dept whose agents help out elsewhere can exceed
-**100%**; a dept whose abandons are covered by other teams can read near 0%
-while every caller was in fact called back. **A percentage built from them is
-not a rate, and would be wrong in a way that looks plausible** — the worst
-kind, because it ranks depts confidently.
+That is the accountability number ruling 3 was reaching for, and it needed
+the operating model to be expressible. **The earlier >100% objection is
+withdrawn** — it applied to a design nobody wanted.
 
-So ruling 3 forces a choice about what the column even means. Three coherent
-shapes:
+**2. The email handoff is INVISIBLE to the CDR, and that is fine here.** A
+handoff is an email; nothing in the call data records it. It does not need
+to: the handoff exists precisely so the OWNING dept makes the call, so the
+outbound still comes from dept X and still matches dept X's abandon by hash.
+The mechanism is invisible and the outcome is exactly what the diagonal
+measures. (One cost, under "What this does not capture" below.)
 
-| | Shape | Keeps a valid rate? | Answers "which dept called back?" |
-|---|---|---|---|
-| (i) | abandon-dept rows (the original) | yes | no |
-| (ii) | agent-dept rows, **counts only** — no rate column | n/a | yes |
-| (iii) | **CROSS-TAB**: rows = abandon's dept, columns = dialing agent's dept | yes (per row) | yes |
+**3. Cross-dept callbacks should therefore be RARE, which makes them a
+signal.** If another dept dialed one of X's abandoned callers, either the
+handoff was skipped or the queue is mapped to the wrong dept. Worth seeing,
+not worth a column per dept.
 
-**Recommendation: (iii), the cross-tab.** It is the only one that satisfies
-the ruling without inventing a rate from mismatched populations. Each ROW
-still divides by its own abandons, so the rate stays honest and rankable per
-ruling 1; the COLUMNS show which dept's agents did the dialing; and the
-**diagonal** — own-dept callbacks — is the number most likely to be the real
-question, with the off-diagonal showing cross-dept help that is currently
-invisible everywhere in this app.
+### The shape: own / other / none, not an N x N matrix
 
-(ii) is the smaller build and is perfectly defensible as a pure ACTIVITY
-table — "CSR agents made 143 callbacks this window" — as long as no
-percentage appears in it. If the cross-tab reads as too dense, fall back to
-(ii) rather than to a per-agent-dept rate.
+The previous draft recommended a full cross-tab (rows = abandon's dept,
+columns = every dialing dept). Under the operating model that is more
+structure than the question needs — the off-diagonal is expected to be
+sparse, and "which OTHER dept helped" is a rare follow-up, not the headline.
 
-### The crossover problem is back, and must be handled explicitly
+**Recommended row shape:**
 
-This is exactly what the Option C ruling avoided by refusing per-dept agent
-cards. Ruling 3 opts back into it, so the handling is now a design decision
-rather than something the design sidesteps.
+| Department | Trackable abandons | Called back by US (n, %) | By another dept (n) | Not called back (n) | Reached (n, %) | Median time | Pending |
+|---|---|---|---|---|---|---|---|
 
-A dialing agent on TWO rosters (CSR + Sales) made one callback. Options:
+- **"Called back by US" is the ranked column** (ruling 1: rank by
+  called-back). It is what the dept controls and what the operating model
+  holds it to.
+- **"By another dept" is the exception count**, and the tension is worth
+  stating on the surface: the CUSTOMER was served, but the OWNING dept did
+  not do it. Ranking on own-dept slightly penalises a dept whose partner
+  covered for them — accepted deliberately, because the owner's model is
+  accountability for your own queue. The total (own + other) stays visible
+  so nobody mistakes a low own-rate for an unanswered customer.
+- The three call columns **sum to trackable abandons**, which is the
+  arithmetic property that makes the row readable at a glance.
+- **The full N x N matrix becomes a row EXPAND**, not the default layout —
+  available when someone asks "who covered for us?", absent otherwise.
 
-- **count it in BOTH** — the columns then sum to MORE than the row total, and
-  every total needs a "counted in each home" caption or it reads as a bug;
-- **count it in ONE** (first home alphabetically) — silently misattributes,
-  and the same agent's work lands in a different column than their agent-table
-  row would suggest;
-- **give crossover agents their OWN column** ("Multi-home") — honest, no
-  double-count, and the cell is small enough to ignore when it is small.
+### Crossover agents: still need handling, smaller blast radius
 
-**Recommendation: the third.** It is the only one where every number sums
-correctly AND nothing is silently misfiled. It also self-discloses: if that
-column is large, the install has more crossover than anyone assumed, which is
-itself worth knowing. `buildDeptsByAgent_` already returns the full home list,
-so the classification is free.
+An agent on two rosters (CSR + Sales) dialing a callback still has to land
+somewhere. With own/other/none the question narrows usefully: the only thing
+that matters is **is this agent a member of the ROW's dept?**
 
-Two more buckets the columns need, both from existing precedent:
+- if the dialing agent's homes INCLUDE the row dept -> **own** (correct under
+  the operating model: an agent of that dept did the callback, whatever else
+  they are);
+- otherwise -> **other**.
 
-- **Unrostered dialer** — an agent on no roster (ex-employee, orphan
-  spelling). The report already counts these for its `meta.unrosteredAgents`
-  disclosure; here they need a visible column, not a silent drop.
+That is unambiguous, needs no Multi-home column, and cannot double-count —
+each callback lands in exactly one bucket per row. The N x N expand still
+needs the Multi-home treatment described earlier, which is another reason to
+keep the matrix as a drill rather than the default.
+
+Two buckets still need naming, both from existing precedent:
+
+- **Unrostered dialer** (ex-employee, orphan spelling) — counts as `other`,
+  since they are provably not a member of the row dept, but the EXPAND should
+  name them rather than implying a peer dept did the work.
 - **No agent recorded** — `outbound_calls.agent_name` is NULL when the
-  capture could not resolve a name (a phone-shaped callee name is nulled at
-  capture). Its own bucket, never folded into a real dept.
+  capture could not resolve a name. Also `other`, also named in the expand.
+
+### What this does NOT capture (say it on the surface)
+
+**Time-to-callback is measured from the ABANDON, not from when the dept
+learned about it.** On a handoff, the clock starts when the customer hung up
+on dept Y, while dept X only found out when the email arrived. The
+distribution from Part 2 point 3 will read those as slow callbacks even when
+dept X responded promptly to what it actually received.
+
+This is not fixable from call data — the email is invisible — so the honest
+move is a caption on the median/distribution, not a silent skew. It is also
+an argument for reading the own-dept RATE as the primary measure and the
+SPEED as secondary, since only the rate is unaffected.
 
 ### Attribution on the abandon side is still simple
 
@@ -293,12 +319,18 @@ the sheet fallback iterates rows in JS so it mirrors trivially.
 ```
 callbackCells: [{ queue, callbackAgent, tracked, calledBack, reached }]
    -> shaper folds queue -> row dept (inboundQueuesForDept_, queuesForDept_
-      rollup per ruling 2) and agent -> column dept (buildDeptsByAgent_,
-      with the Multi-home / Unrostered / No-agent buckets above) ->
-callbackMatrix: { rows: [{ dept, tracked, calledBack, calledBackPct,
-                           reached, reachedPct, byCallerDept: {...} }],
-                  columns: [...] }
+      rollup per ruling 2), then per row asks only "is this dialing agent a
+      member of THIS dept?" (buildDeptsByAgent_) ->
+callbackByDept: [{ dept, tracked,
+                   ownCalledBack, ownPct, ownReached, ownReachedPct,
+                   otherCalledBack, notCalledBack,
+                   medianSec, pending,
+                   byCallerDept: {...} }]   // the EXPAND only
 ```
+
+`ownCalledBack + otherCalledBack + notCalledBack === tracked` is the
+invariant to pin first — it is what makes every row readable, and it is the
+one thing a grouping bug would quietly break.
 
 Still ONE round trip and one GROUP BY; the key is (queue x agent), which at
 this volume is a small grid. `tracked` must be summed on the QUEUE axis only —
@@ -318,9 +350,10 @@ Config gap the admin should see (the `unmappedQcd` nag precedent).
   later addition.
 - A new section between the callback KPIs and the per-agent table.
 - Rows sortable, worst-first by default (ruling 1: rank by called-back %).
-- Row columns: Department · Abandoned (trackable) · Called back (n, %) ·
-  Reached (n, %, once Part 2 lands) · Median time · Pending · then the
-  per-caller-dept breakdown.
+- Row columns: Department · Trackable abandons · Called back by US (n, %,
+  the ranked column) · By another dept (n) · Not called back (n) · Reached
+  (n, %, once Part 2 lands) · Median time · Pending. The per-dialing-dept
+  matrix is a row EXPAND, not a default column set.
 
 ### What ruling 3 makes MORE important
 
@@ -331,8 +364,6 @@ what keeps this table from rewarding dialing over connecting.
 
 ### Sequence
 
-0. Decide (iii) cross-tab vs (ii) counts-only, if the recommendation above is
-   not adopted as written. Everything below is the same either way.
 1. `probeOutboundAnswerQuality()`, read the distributions. *(No product change.)*
 2. Set the Part 2 parameters from what the probe shows; ship the classifier
    `off` by default, both paths, one shared pure function.

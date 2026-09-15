@@ -107,20 +107,27 @@
   entry_queue alone -- making the table one GROUP BY over queues, folded to
   depts client-side (which also handles a double-mapped queue, where SQL
   GROUP BY cannot). Verify that claim with a test before relying on it.
-  **All three open questions were RULED on 2026-09-15** and the plan is
-  rewritten around them: rank by called-back; sub-queues follow
-  `queuesForDept_`; and **separate by the DEPT'S AGENTS**. That last one
-  reverses the plan's original recommendation and knowingly reintroduces the
-  crossover problem Option C avoided. **The consequence to carry forward:**
-  callbacks DIALED BY dept X's agents and abandons ON dept X's queues are
-  different populations (a CSR agent calling back a Sales abandon is normal
-  and contractual), so numerator is not a subset of denominator -- a
-  per-agent-dept percentage can exceed 100% and is not a rate. The plan
-  recommends a CROSS-TAB (rows = abandon's dept, keeping the honest rate;
-  columns = dialing agent's dept, answering the ruling) with explicit
-  Multi-home / Unrostered / No-agent columns, and names counts-only as the
-  smaller fallback if the matrix reads too dense. One decision remains before
-  build: cross-tab vs counts-only.
+  **All three open questions were RULED on 2026-09-15, and a follow-up
+  clarification SETTLED the design** -- the plan is rewritten around it and
+  there is no open decision left before build. Rulings: rank by called-back;
+  sub-queues follow `queuesForDept_`; separate by the dept's agents.
+  **THE OPERATING MODEL is the load-bearing fact** (ask about it before
+  re-deriving anything here): *depts are RESPONSIBLE for their own callbacks;
+  an agent from another dept who takes the customer's call EMAILS the owning
+  dept to make the callback.* Consequences: (a) the own-dept rate is a strict
+  SUBSET of its own denominator, so an earlier draft's ">100%, not a rate"
+  objection is WITHDRAWN -- it applied to a design nobody wanted; (b) the
+  handoff is an EMAIL and therefore invisible to the CDR, which is fine,
+  because the owning dept still makes the call and still matches by hash;
+  (c) cross-dept callbacks should be RARE, making the off-diagonal a SIGNAL
+  (skipped handoff, or a queue mapped to the wrong dept) rather than a
+  reporting dimension. So the row shape is own / another dept / not called
+  back -- summing to trackable abandons, which is the invariant to pin first
+  -- ranked on own; the full N x N matrix is a row EXPAND. Crossover agents
+  need no Multi-home column in that shape: per row the only question is
+  "is the dialing agent a member of THIS dept?". One thing the data cannot
+  capture and the surface must caption: time-to-callback runs from the
+  ABANDON, not from when the dept learned of it via the email.
 - **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
   tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
   13 mutations all caught), documented and merged; full suite green under
