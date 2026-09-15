@@ -90,6 +90,15 @@ const MODALS = [
   // fixture is a FULL-tier day, so the tier banner must stay HIDDEN, which is
   // the assertion that catches an over-eager "we apologise on every day"
   // regression.
+  //
+  // R48: this entry's FOCUS check is also the live pin on trapFocus_'s
+  // focus-lost-to-<body> recovery arm, and Agent Day is the only modal here
+  // that exercises it -- its run button is the LAST focusable control, so
+  // disabling it during the RPC blurs focus out with nothing after it to
+  // catch the Tab. Every other modal has a control after its Generate
+  // button and stays inside by DOM-order luck. Do not "simplify" this entry
+  // by dropping `run`: without it the modal never reaches that state and
+  // the arm goes untested.
   { name: 'Agent Day',      btn: '#agent-day-btn',        sel: '#agent-day-modal',
     menu: '#reports-menu-btn',
     run: { click: '#ad-run-btn', wait: 2000, expect: [
