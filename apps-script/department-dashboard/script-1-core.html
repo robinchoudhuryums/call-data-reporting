@@ -808,16 +808,39 @@
     }
     function handler(e) {
       if (e.key !== 'Tab') return;
+      // Self-disarm. The listener lives on the DOCUMENT (see below), so a
+      // modal closed without its releaseFocus_ must not keep hijacking Tab
+      // for the whole page.
+      if (getComputedStyle(modal).display === 'none') return;
       var els = focusables();
       if (!els.length) return;
       var first = els[0], last = els[els.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
+      var ae = document.activeElement;
+      // R48: focus LOST to the body. Disabling the focused element blurs it
+      // to <body>, and every report modal disables its Generate button while
+      // the RPC is in flight. From <body> the next Tab walks out of the
+      // dialog -- and with the handler bound to the MODAL it never saw that
+      // keydown, so it could never wrap focus back. Hence document-level,
+      // plus this arm. The modals that never leaked were only lucky in DOM
+      // order: they have a focusable AFTER the disabled button, so the
+      // browser's sequential-navigation point kept Tab inside. Agent Day's
+      // run button is the LAST one, and it escaped on every Tab.
+      // Only <body>/<html> is pulled back: a real element outside the modal
+      // means another layer (dsConfirm_ / dsPrompt_, which run their own
+      // trap above an open modal) legitimately owns focus.
+      if (!ae || ae === document.body || ae === document.documentElement) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
+      if (!modal.contains(ae)) return;
+      if (e.shiftKey && ae === first) {
         e.preventDefault(); last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      } else if (!e.shiftKey && ae === last) {
         e.preventDefault(); first.focus();
       }
     }
-    modal.addEventListener('keydown', handler);
+    document.addEventListener('keydown', handler);
     activeFocusTrap_ = { modal: modal, handler: handler };
     setTimeout(function () {
       var els = focusables();
@@ -826,7 +849,7 @@
   }
   function releaseFocus_() {
     if (!activeFocusTrap_) return;
-    activeFocusTrap_.modal.removeEventListener('keydown', activeFocusTrap_.handler);
+    document.removeEventListener('keydown', activeFocusTrap_.handler);
     activeFocusTrap_ = null;
   }
 
