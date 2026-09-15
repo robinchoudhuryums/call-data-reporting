@@ -1273,7 +1273,7 @@ When something looks wrong, before assuming a code bug, check:
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
     Overview tile's companion surface is the per-dept `dqeSilence`
-    queue-lens badge (`companyOverview:v21`) — the PULL view to this
+    queue-lens badge (`companyOverview:v22`) — the PULL view to this
     engine's PUSH, same detector shape over the trailing 7 chart days.
 
 45. **Sign-in notifications (`notifyLoginEvent_`, Auth.gs/doGet) — ON by
@@ -1846,3 +1846,53 @@ When something looks wrong, before assuming a code bug, check:
     deliberate headroom — the importer `clearContents` then writes one day's
     legs into a fixed range, so a busier day needs them. Pinned by
     `tests/unit/sheet-space.test.js` + `system-health.test.js`.
+
+63. **Outbound report — the RELEASE runbook (6c).** The report is
+    feature-complete: server, client, sheet fallback, tests and a vetting
+    instrument all shipped. Of its five original phases only phase 4, the
+    manager un-gate, was never done — so "enhancing Outbound" is not a build,
+    it is this checklist. **It lived only in `.cycle/STATE.md` until 6c**,
+    which is the "step that exists only in the operator's head" class: session
+    state is not a runbook, and the next person to ask "why can't managers see
+    this?" would have had to reconstruct it.
+    1. **Backfill first (recommended).** `backfillOutboundCalls` (cdr-import,
+       editor-run) fills `outbound_calls` from the surviving `Call_Legs_*`
+       sheets. Do this while Neon is reachable. Without it the vetting window
+       may be thin enough to read INCONCLUSIVE for the wrong reason.
+    2. **Vet.** Set `OUTBOUND_VETTING_FROM` / `_TO` (and optionally `_DEPT`,
+       `_SAMPLE`) then run `runOutboundVettingCheck` (dashboard editor,
+       admin-gated, read-only). It does two things: a LIVE two-code-path
+       parity check that the report's abandon denominator equals the Inbound
+       report's own `kpis.abandoned` for the same scope, and a per-sample
+       re-verification of individual callback verdicts, logging the call ids
+       so you can eyeball them in Caller Lookup.
+    3. **Read the verdict literally.** Release ONLY on `ok parity`.
+       **INCONCLUSIVE is not a pass** — a window with zero abandons reports it
+       by construction, so widen the window and re-run. FAILED and MISMATCH
+       are stops. A clean run self-clears its window props
+       (`clearToolParamsAfterCleanRun_`), so set them again per run.
+    4. **Release — both halves in ONE commit.** Flip
+       `OutboundReport.gs::OUTBOUND_VETTING_GATE_` to `false` AND remove
+       `data-admin-only` + `style="display:none;"` from `#outbound-report-btn`
+       in `dashboard.html`. The per-dept manager path underneath was kept
+       intact the whole time, so nothing else changes. `cross-file-pins.test.js`
+       ("6c: the outbound vetting gate and its menu item are released
+       TOGETHER") FAILS on either half alone — a visible item over a throwing
+       server reads as a broken app, a released server behind a hidden button
+       reaches nobody.
+    5. **Verify.** Deploy, then walk **Regression Scenario S46** — it covers
+       both the pre-release state (manager sees nothing, deep link no-ops,
+       console call refused) and the post-release one (pinned dept select,
+       trackable-only callback denominator, roster-filtered agent table, no
+       caller identity in the drill). `drive-admin.js` already opens the modal
+       and asserts it RENDERS on every `npm run ci:ui` run, so a broken
+       renderer is caught before this point, not by a manager.
+    **Ruled out, do not revive without a fresh owner ruling:** per-dept
+    company cards for Outbound. Crossover agents hold multiple roster homes,
+    so per-dept agent cards would double-count or misattribute; the company
+    view is deliberately ONE FLAT TABLE (Option C, owner 2026-08-20) and the
+    rejection is recorded in three places including the render site.
+    **Known gap, deliberately not part of this item:** there is no
+    `sendOutboundReportEmail`, where Inbound / Individual / Insights all have
+    one. It is item 5 of the owner's 2026-09-15 six-point Outbound list and
+    ships in that round.

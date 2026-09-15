@@ -86,6 +86,13 @@
             <button class="header-menu-item" id="direct-call-report-btn" type="button"
                     data-route="/report/direct" data-admin-only role="menuitem" style="display:none;"
                     title="Direct-extension call metrics (admin-only while being vetted): per-agent inbound answer rate (a miss while on another call is excused), inbound ATT, and outbound activity.">Direct</button>
+            <button class="header-menu-item" id="agent-day-btn" type="button"
+                    data-route="/report/agent-day" role="menuitem"
+                    title="One agent, one day, call by call: which calls they answered, missed or merely rang on, plus their outbound activity. Managers see their own roster; fidelity degrades past the capture horizons and the view says so.">Agent day</button>
+            <!-- 6c release pairing: this item's `data-admin-only` +
+                 `style="display:none;"` come off in the SAME commit that flips
+                 OutboundReport.gs::OUTBOUND_VETTING_GATE_ to false (Operator
+                 State #63). cross-file-pins fails if only one half moves. -->
             <button class="header-menu-item" id="outbound-report-btn" type="button"
                     data-route="/report/outbound" data-admin-only role="menuitem" style="display:none;"
                     title="Outbound call analytics (admin-only while being vetted): did we call back the callers who abandoned, plus per-agent outbound activity attributed by roster department.">Outbound</button>
@@ -234,6 +241,8 @@
             <div class="ir-chart-tabs" id="ov-chart-tabs" role="group" aria-label="Trend chart metric and range">
               <button type="button" class="ir-tab active" data-metric="pct" aria-pressed="true"
                 title="% of rings answered per day (DQE)">% Answered</button>
+              <button type="button" class="ir-tab" data-metric="answeredCalls" aria-pressed="false"
+                title="Answered call volume per day (DQE rings)">Answered calls</button>
               <button type="button" class="ir-tab" data-metric="abandonedCalls" aria-pressed="false"
                 title="Abandoned call count per day (queue data)">Abandoned calls</button>
               <button type="button" class="ir-tab" data-metric="abandonedPct" aria-pressed="false"
@@ -2194,6 +2203,11 @@
           </div>
           <div>
             <button class="btn btn-secondary" id="outbound-csv-btn" type="button">Download CSV</button>
+            <!-- (5): Inbound / Individual / Insights all had one; the callback
+                 rate is exactly the number worth arriving rather than being
+                 visited. Sends the CURRENT view to the caller only. -->
+            <button class="btn btn-secondary" id="outbound-email-btn" type="button"
+                    title="Email this report (the window currently on screen) to yourself">Email to me</button>
             <button class="btn btn-secondary" id="outbound-back-btn" type="button">&laquo; Back</button>
           </div>
         </div>
@@ -2210,6 +2224,11 @@
           <div class="al-section" id="outbound-callback-section">
             <div class="al-section-title">Abandoned-caller callbacks</div>
             <div id="outbound-callback-kpis" class="pr-kpi-row"></div>
+            <!-- (3): the time-to-callback DISTRIBUTION. A median hides the
+                 tail, and a two-day-later callback is not the save a
+                 five-minute one is. Hidden when there are no callbacks to
+                 distribute -- an all-zero strip would read as "all slow". -->
+            <div id="outbound-delay-strip" style="display:none;"></div>
             <!-- The two contract caveats (see OutboundReport.gs header). -->
             <p class="al-hint" id="outbound-callback-caption">
               &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
@@ -2223,6 +2242,12 @@
             <div id="outbound-cb-chart-wrap" style="display:none; max-width:100%;">
               <canvas id="outbound-cb-chart" height="110"></canvas>
             </div>
+            <!-- (6): callback rate by the ABANDON's hour. The daily series
+                 above answers "are we keeping up"; this answers "WHICH
+                 abandons fall through the cracks", which is the actionable
+                 one. Deliberately NOT the shared weekday x hour heatmap --
+                 see the note in outboundRenderHourStrip_. -->
+            <div id="outbound-hour-strip" style="display:none;"></div>
             <!-- v2: the not-called-back drill (rows reuse the heatmap cell
                  drill renderer incl. the "↳ path" journey chips). -->
             <div class="esc-resolve-actions">
@@ -2434,6 +2459,90 @@
             </div>
           </div>
           <div id="cl-call-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6d: agent-day interaction view. Sits beside Caller Lookup on purpose --
+       it reuses that surface's card vocabulary (.cl-call-card / .cl-journey)
+       and shares its posture: per-call detail, never cached, no caller
+       identity. Unlike Caller Lookup it is NOT admin-only: the server admits a
+       manager of the agent's ROSTER dept. -->
+  <div id="agent-day-modal" class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="agent-day-modal-title" style="display:none;">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel modal-panel-wide" role="document">
+      <div class="modal-panel-header">
+        <button class="modal-open-tab-btn" type="button" data-open-tab-route="/report/agent-day"
+                aria-label="Open in new tab" title="Open this report in a new browser tab (for side-by-side viewing)">&#8599;</button>
+        <button class="modal-close" id="agent-day-close" type="button" aria-label="Close">&times;</button>
+        <div class="modal-kicker">Reports</div>
+        <h2 id="agent-day-modal-title">Agent Day</h2>
+      </div>
+      <div class="modal-panel-body">
+        <div class="ir-form-grid">
+          <div class="ir-col">
+            <label for="ad-dept">Department</label>
+            <select id="ad-dept"></select>
+          </div>
+          <div class="ir-col">
+            <label for="ad-agent">Agent</label>
+            <select id="ad-agent"></select>
+          </div>
+          <div class="ir-col">
+            <label for="ad-date">Date</label>
+            <input type="date" id="ad-date">
+          </div>
+          <div class="ir-col">
+            <label>&nbsp;</label>
+            <button class="btn" id="ad-run-btn" type="button">Show the day</button>
+          </div>
+        </div>
+        <div class="ir-hint">
+          One agent, one day, call by call. The header totals come from the
+          same daily figures My Department shows, so they always reconcile;
+          the call list beneath is the per-call detail, which is only
+          recoverable while the capture tables still hold the day.
+        </div>
+        <div id="ad-error" role="status" class="status status-error" style="display:none;"></div>
+        <div id="ad-loading" style="display:none;"></div>
+
+        <div id="ad-empty" class="empty-state" style="display:none;">
+          <div class="empty-state-icon" aria-hidden="true">&#128197;</div>
+          <div class="empty-state-title">Nothing recorded for this agent on this day</div>
+          <div class="empty-state-hint" id="ad-empty-hint"></div>
+        </div>
+
+        <div id="ad-results" style="display:none;">
+          <div class="ir-results-header">
+            <div class="ir-results-header-left">
+              <div class="ir-results-title-line">
+                <span class="ir-results-title" id="ad-results-title"></span>
+                <span class="ir-results-date" id="ad-results-date"></span>
+              </div>
+            </div>
+          </div>
+          <!-- Fidelity disclosure. Hidden on a full-fidelity day; on any
+               other it says WHICH tier this is and why, because a short list
+               that looks complete is the failure mode here. -->
+          <div id="ad-tier-note" class="ds-note" style="display:none;"></div>
+          <div id="ad-day-kpis" class="pr-kpi-row"></div>
+          <p class="al-hint" id="ad-reconcile-note" style="display:none;"></p>
+          <div class="al-section">
+            <h3 class="al-section-title">Inbound calls</h3>
+            <div id="ad-inbound-list"></div>
+          </div>
+          <div class="al-section">
+            <h3 class="al-section-title">Outbound calls</h3>
+            <div id="ad-outbound-list"></div>
+          </div>
+          <div class="al-section" id="ad-missed-section" style="display:none;">
+            <h3 class="al-section-title">Missed rings (from the daily totals)</h3>
+            <p class="al-hint">The per-call rows for this day are gone, but the
+              daily build kept the missed-ring timestamps. This is everything
+              that survives &mdash; answered calls leave no per-ring trace here.</p>
+            <div id="ad-missed-list"></div>
+          </div>
         </div>
       </div>
     </div>

@@ -85,8 +85,15 @@ function neonBlobFromFixture(dept) {
   const agentsFor = (f, t) => {
     const by = {};
     OB_ROWS.filter((r) => r[0] >= f && r[0] <= t).forEach((r) => {
-      const a = by[r[3]] || (by[r[3]] = { agent: r[3], ob_total: 0, ob_connected: 0, ob_talk_sec: 0, attempts: 0 });
-      a.ob_total++; if (r[6] === 'TRUE') a.ob_connected++;
+      const a = by[r[3]] || (by[r[3]] = { agent: r[3], ob_total: 0, ob_connected: 0,
+        ob_talk_sec: 0, attempts: 0, ob_unconn_brief: 0, ob_unconn_real: 0 });
+      a.ob_total++;
+      if (r[6] === 'TRUE') a.ob_connected++;
+      // (4) the ring split, as the SQL FILTERs would compute it. Only a
+      // PRESENT ring classifies; blank stays unknown.
+      else if (r[8] !== '' && r[8] != null) {
+        if (Number(r[8]) < 8) a.ob_unconn_brief++; else a.ob_unconn_real++;
+      }
       a.ob_talk_sec += r[7]; a.attempts += r[9];
     });
     return Object.keys(by).map((k) => by[k])
@@ -96,18 +103,24 @@ function neonBlobFromFixture(dept) {
     const abandons = IB_ROWS.filter((r) => r[0] >= f && r[0] <= t && r[5] === 'abandoned'
       && r[16] !== 'TRUE' && inWin(r) && inDept(r));
     const daily = {};
+    const byHour = {};
     let calledBack = 0, connected = 0, anon = 0;
     const delays = [];
     abandons.forEach((r) => {
       const d = daily[r[0]] || (daily[r[0]] = { d: r[0], tracked: 0, called_back: 0 });
       if (!r[3]) { anon++; return; }
       d.tracked++;
+      // (6) EXTRACT(HOUR FROM call_start), skipping rows with none.
+      const hk = r[15] ? parseInt(r[15].slice(0, 2), 10) : NaN;
+      const hb = isFinite(hk) ? (byHour[hk] || (byHour[hk] = { h: hk, tracked: 0, called_back: 0 })) : null;
+      if (hb) hb.tracked++;
       const abOrd = Date.parse(r[0] + 'T' + r[15] + 'Z') / 1000;
       const cands = OB_ROWS.filter((o) => o[2] === r[3] && o[0] >= r[0]
         && Date.parse(o[0] + 'T' + o[10] + 'Z') / 1000 >= abOrd)
         .sort((a, b) => Date.parse(a[0] + 'T' + a[10] + 'Z') - Date.parse(b[0] + 'T' + b[10] + 'Z'));
       if (cands.length) {
         calledBack++; d.called_back++;
+        if (hb) hb.called_back++;
         if (cands[0][6] === 'TRUE') connected++;
         delays.push(Date.parse(cands[0][0] + 'T' + cands[0][10] + 'Z') / 1000 - abOrd);
       }
@@ -119,14 +132,33 @@ function neonBlobFromFixture(dept) {
     if (detail) {
       agg.medianCallbackSec = delays.length ? delays.sort((a, b) => a - b)[0] : null;
       agg.pendingTail = 0;   // fixture dates are far past the 3-day tail
+      // (3) the bucket counts json_build_object would return. Built from the
+      // REAL ladder, not a hand-copied one -- the point of the parity test is
+      // that the two implementations agree, and a third hard-coded copy here
+      // would just be a fourth place to drift.
+      const ladder = h.ctx.OUTBOUND_CALLBACK_BUCKETS_;
+      agg.delayBuckets = {};
+      ladder.forEach((b) => { agg.delayBuckets[b.key] = 0; });
+      delays.forEach((dl) => {
+        if (dl == null || dl < 0) return;
+        let prev = null;
+        for (const b of ladder) {
+          if ((prev === null || dl > prev) && (b.maxSec === null || dl <= b.maxSec)) {
+            agg.delayBuckets[b.key]++; return;
+          }
+          prev = b.maxSec;
+        }
+      });
     }
-    return { agg: agg, daily: Object.keys(daily).sort().map((k) => daily[k]) };
+    return { agg: agg, daily: Object.keys(daily).sort().map((k) => daily[k]),
+             hours: Object.keys(byHour).map((k) => byHour[k]).sort((a, b) => a.h - b.h) };
   };
   const cur = cbFor(FROM, TO, true);
   return {
     agents: agentsFor(FROM, TO),
     callback: cur.agg,
     callbackDaily: cur.daily,
+    callbackByHour: cur.hours,   // (6)
     agentsPrior: agentsFor(PW.from, PW.to),
     callbackPrior: cbFor(PW.from, PW.to, false).agg,
     coverageStart: OB_ROWS.map((r) => r[0]).sort()[0],

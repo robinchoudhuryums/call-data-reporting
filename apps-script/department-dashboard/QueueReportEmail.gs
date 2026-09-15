@@ -455,8 +455,11 @@ function queueReportFlagMissedDay_(props, now, targetIso) {
  * nested role="presentation" tables, system fonts, hidden preheader, bulletproof
  * CTA. Bound entirely to the SAME server figures the web report uses
  * (`computeQcdAllDepartments_`); compute / the abandon-standard rule / the exported data are
- * unchanged. Worst-first ordering is EMAIL-ONLY (the web report keeps its
- * viewer-float + parent-grouping order; owner ruling). "Queues in violation" =
+ * unchanged. Worst-first ordering is NO LONGER email-only: the owner reversed
+ * that ruling on 2026-09-14 and the web report now sorts sections the same way
+ * (own dept pinned first, then this comparator -- `qcdAllDeptSections_` in
+ * script-11-qcd-boot.html). The EMAIL is unchanged: it has no viewer to pin
+ * for, so it stays purely worst-first. "Queues in violation" =
  * count of unique queues with abandoned % >= ABANDON_STANDARD_PCT (owner ruling), distinct from
  * the Violations column. Company figures come from `grandTotals` (F-36-deduped,
  * total-abandoned/total-offered basis) -- NOT a client-style re-sum of the
@@ -600,7 +603,11 @@ function buildQueueReportEmailHtml_(data, targetIso, isPreview) {
       }
     });
   });
-  offenders.sort(function (a, b) { return (b.viol - a.viol) || (b.pct - a.pct); });
+  // 6a ride-along: pct-then-violations, matching this email's own dept table
+  // (and now the web report). The two priorities used to be reversed here, so
+  // the alert line could name a different "worst" queue than the table below
+  // it ranked first.
+  offenders.sort(function (a, b) { return (b.pct - a.pct) || (b.viol - a.viol); });
 
   // R18 (owner): the tally unit is EMAIL-WIDE again, and the R16d per-section
   // unit is RETIRED. Per-section was a defensible trade on paper -- each

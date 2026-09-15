@@ -334,6 +334,73 @@
     };
   }
 
+  // The dept whose section is pinned first. Deliberately USER.department and
+  // NOT the view-as preview dept -- unchanged from the pre-6a float, and the
+  // admin surfaces this report sits behind are not what view-as previews.
+  function qcdViewerDept_() {
+    return (typeof USER !== 'undefined' && USER && USER.department) ? USER.department : '';
+  }
+
+  // 6a (owner 2026-09-14, reversing the earlier "worst-first is EMAIL-ONLY"
+  // ruling): section ORDER for the IN-APP report -- the viewer's own section
+  // pinned first, then every other section WORST-FIRST. "Worst" copies the
+  // emailed report's comparator verbatim (section abandoned % DESC, tie-broken
+  // by RANGE violations DESC) over the same unit the email uses: a parent dept
+  // plus its nested children, summed. Rows WITHIN a section keep their
+  // configured queue order -- only sections move.
+  //
+  // Client-side on purpose: the server payload stays alphabetical, so no
+  // `qcdAll:` cache bump is needed and a cached blob reorders on the next
+  // render. SHARED by the table and the CSV: the export used to rebuild its
+  // own grouping from data.depts and ignore even the viewer float, so a
+  // downloaded file disagreed with the screen it came from.
+  function qcdAllDeptSections_(depts, myDept) {
+    const byName = {};
+    (depts || []).forEach(function (d) { byName[d.dept] = d; });
+    const childrenOf = {};
+    const topLevel = [];
+    (depts || []).forEach(function (d) {
+      if (d.parent && byName[d.parent]) { (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d); }
+      else { topLevel.push(d); }
+    });
+    // The viewer's section: their own dept, or its PARENT when their dept is a
+    // nested child, so their queues still land in the first section. Empty for
+    // an admin with no dept, or a dept absent from this window.
+    let mySection = '';
+    if (myDept && byName[myDept]) {
+      const md = byName[myDept];
+      mySection = (md.parent && byName[md.parent]) ? md.parent : myDept;
+    }
+    const secOf = function (d) {
+      const qs = (d.queues || []).slice();
+      (childrenOf[d.dept] || []).forEach(function (c) {
+        (c.queues || []).forEach(function (q) { qs.push(q); });
+      });
+      return qcdAllDeptSectionTotal_(qs);
+    };
+    const scored = topLevel.map(function (d) { return { d: d, t: secOf(d) }; });
+    scored.sort(function (a, b) {
+      // The pin outranks the numbers: a manager opens this to find their own
+      // dept, and hunting for it is the cost the float exists to remove.
+      const pa = (a.d.dept === mySection) ? 0 : 1;
+      const pb = (b.d.dept === mySection) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      // The name tiebreak is OURS, not the email's -- the email leans on a
+      // stable sort over an alphabetical server list for the same result.
+      // Naming it makes the order independent of the payload's ordering.
+      const dp = (Number(b.t.abandonedPct) || 0) - (Number(a.t.abandonedPct) || 0);
+      if (dp) return dp;
+      const dv = (Number(b.t.violations) || 0) - (Number(a.t.violations) || 0);
+      if (dv) return dv;
+      return a.d.dept < b.d.dept ? -1 : (a.d.dept > b.d.dept ? 1 : 0);
+    });
+    return {
+      topLevel: scored.map(function (x) { return x.d; }),
+      childrenOf: childrenOf,
+      mySection: mySection,
+    };
+  }
+
   // Verdict layer (design update): a KPI band + alert callout rendered ABOVE the
   // table, derived from data.grandTotals (F-36-deduped, correct total-abandoned/
   // total-offered basis -- NOT a client re-sum of the sections, which would
@@ -535,30 +602,10 @@
     // #3: nest sub-queue depts under their parent's banner. A dept is a child
     // when its `parent` names another dept present here; otherwise it's a
     // top-level section (an orphaned child falls back to its own banner).
-    const byName = {};
-    depts.forEach(function (d) { byName[d.dept] = d; });
-    const childrenOf = {};
-    const topLevel = [];
-    depts.forEach(function (d) {
-      if (d.parent && byName[d.parent]) {
-        (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d);
-      } else {
-        topLevel.push(d);
-      }
-    });
-    // Convenience: float the VIEWER's own dept's section to the top. If their
-    // dept is a sub-queue (nested child), float its parent section instead so
-    // their dept still appears in the first section. No-op for admins with no
-    // dept / a dept absent from this window. (Array.sort is stable in V8.)
-    const myDept = (typeof USER !== 'undefined' && USER && USER.department) ? USER.department : '';
-    let mySection = '';
-    if (myDept && byName[myDept]) {
-      const md = byName[myDept];
-      mySection = (md.parent && byName[md.parent]) ? md.parent : myDept;
-      topLevel.sort(function (a, b) {
-        return (a.dept === mySection ? 0 : 1) - (b.dept === mySection ? 0 : 1);
-      });
-    }
+    const sections = qcdAllDeptSections_(depts, qcdViewerDept_());
+    const childrenOf = sections.childrenOf;
+    const topLevel = sections.topLevel;
+    const mySection = sections.mySection;
 
     // #1d: Answered / Abandoned / Abandoned % fold into ONE split-bar column
     // (shared qcdDailyBarCell_). 6 columns.
@@ -807,17 +854,12 @@
     lines.push(row(['Department', 'Queue', 'Sub-dept', 'Total Calls', 'Answered', 'Abandoned',
                     'Abandoned %', 'Longest Wait', 'Avg Answer', 'Violations (MTD)',
                     'MTD Avg/Workday', 'Vs Prior Month %']));
-    // Same grouping as the table: children nested under their parent, section
-    // total only when the section has >1 queue (#3).
-    const depts = data.depts || [];
-    const byName = {};
-    depts.forEach(function (d) { byName[d.dept] = d; });
-    const childrenOf = {};
-    const topLevel = [];
-    depts.forEach(function (d) {
-      if (d.parent && byName[d.parent]) { (childrenOf[d.parent] = childrenOf[d.parent] || []).push(d); }
-      else { topLevel.push(d); }
-    });
+    // Same grouping AND the same section ORDER as the table (6a): children
+    // nested under their parent, own section pinned first, the rest
+    // worst-first, section total only when the section has >1 queue (#3).
+    const sections = qcdAllDeptSections_(data.depts || [], qcdViewerDept_());
+    const childrenOf = sections.childrenOf;
+    const topLevel = sections.topLevel;
     topLevel.forEach(function (d) {
       const secItems = (d.queues || []).map(function (q) { return { q: q, sub: '' }; });
       (childrenOf[d.dept] || []).forEach(function (child) {

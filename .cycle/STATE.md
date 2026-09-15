@@ -4,6 +4,142 @@
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.
+- **BATCH 6: 6a + 6b DONE (2026-09-14, block 191, branch
+  `claude/gallant-meitner-mtuj55`); 6c + 6d STILL QUEUED.** Full design + the
+  owner decisions are in `docs/next-steps.md` Batch 6.
+  **6a SHIPPED** -- the in-app queue report now pins the viewer's own section
+  and orders the rest worst-first by the EMAIL's comparator, through ONE pure
+  helper `qcdAllDeptSections_` (script-11-qcd-boot) that the table AND the CSV
+  both call; the CSV previously rebuilt its own grouping and ignored even the
+  pre-6a viewer float, so an export disagreed with the screen it came from.
+  Client-side, so no `qcdAll` bump. The stale "worst-first is EMAIL-ONLY"
+  header comment in QueueReportEmail.gs is updated, and the ride-along landed:
+  its alert/preheader offender list sorted violations-then-pct, the reverse of
+  its own table, so the alert could name a different "worst" queue than the
+  table ranked first.
+  **6b SHIPPED** -- Overview chart "Answered calls" metric. ONE discovery
+  beyond the plan: the chart has TWO separately-cached payloads (the 90-day
+  Overview blob and the on-demand YTD fetch), so TWO prefixes were bumped,
+  `companyOverview:v21`->v22 AND `overviewChartYtd:v1`->v2. Bumping only the
+  blob would have served a warmed YTD payload with no answered series for its
+  TTL.
+  Both are dashboard-only and need a dashboard deploy (`scripts/deploy.sh .`)
+  to reach users; `npm run ci:ui` could not run in that session (no
+  playwright) and deploy.sh gates on it, so run the deploy where it can.
+  **6c** Outbound is a RELEASE, not a
+  build -- it is fully shipped behind a hard-coded admin gate and only phase 4
+  (manager un-gate) was never done; the runbook lives only here and needs a
+  numbered operator item; per-dept cards stay RULED OUT. **6d** the agent-day
+  view: **the owner's 14-day assumption is WRONG** (14d is the Call_Legs
+  REBUILD horizon, not the read horizon) -- per-call rows live 400 days,
+  journeys 90; owner chose 90-days-exact-then-degrade with NO capture-column
+  schema change, accepting that the pre-90-day window shows rang-first only
+  and can never be recovered.
+- **BATCH 6 IS CODE-COMPLETE (2026-09-15, block 192) -- 6c AWAITS AN OPERATOR
+  GATE.** 6c + 6d implemented on branch `claude/gallant-meitner-mtuj55`.
+  **6c did NOT un-gate the Outbound report, deliberately**: its last step
+  needs a CLEAN `ok parity` from `runOutboundVettingCheck` against live Neon,
+  which no dev session can produce, and INCONCLUSIVE is not a pass. What DID
+  ship makes that release a flag flip over tested ground: the runbook is now
+  **Operator State #63**; the gate is a named `OUTBOUND_VETTING_GATE_` switch
+  and cross-file-pins FAILS if only one of its two halves (the switch, the
+  menu item's `data-admin-only` + `display:none`) moves; the per-dept manager
+  path -- unreachable dead code since it was written -- is now behaviourally
+  pinned with the switch flipped; the modal joined `drive-admin.js` (its
+  "no harness fixture yet" exemption had gone stale); and **S46** walks both
+  sides of the gate.
+  **6d SHIPPED** as `AgentDay.gs` + the `#/report/agent-day` modal. Three
+  tiers (full / journey-pruned / dqe-only) with the boundary DISCLOSED --
+  `adTierNote_` returns '' on a full day so the banner still means something.
+  Two departures from the roadmap, both deliberate: the day header reads the
+  DQE agent-day row through the DAL (same "aggregate that does not degrade"
+  intent, and it reconciles with My Department by construction), and the tier
+  is decided by WHAT CAME BACK rather than the calendar (the prune is
+  flag-gated and tunable). Auth is roster-derived through the shared
+  `assertDeptAccess_`; unrostered names are admin-only. **S47** walks it.
+  Two mutations SURVIVED the first pass and both were real gaps, fixed not
+  explained: the degraded tier's `first_agent` arm was inline in a
+  Neon-requiring function (extracted to the pure `agentDayKeepRow_`), and the
+  egress pin matched its own call inside `if (false)`.
+- **THE SIX-POINT OUTBOUND ROUND IS BUILT (2026-09-15, block 193) -- five of
+  six; point 1 is the operator gate.** `outboundReport:v2` -> `v3`.
+  (2) connected-callback rate is a tile over the SAME trackable denominator
+  as the raw rate; (3) time-to-callback is a DISTRIBUTION over the shared
+  `OUTBOUND_CALLBACK_BUCKETS_` ladder that generates BOTH the SQL FILTERs and
+  the fallback's JS bucketer; (4) unconnected outbound splits on
+  `OUTBOUND_BRIEF_RING_SEC_`=8 via `outboundClassifyRing_` -- **strict
+  boundary, `= 8` is a REAL attempt, and a NULL ring stays UNKNOWN**;
+  (5) `sendOutboundReportEmail` (same resolver, recomputed server-side,
+  sendAppEmail_ + banded shell); (6) `callbackByHour`.
+  **Correction worth carrying forward:** I told the owner point 6 would reuse
+  `renderAbandonHeatmap_`. It cannot -- that renderer is hard-wired to
+  abandon rate with HIGH = bad, and callback rate inverts the polarity, so
+  reuse would tint a great hour red. A dedicated hour strip ships instead.
+  Every addition landed in the SQL AND the sheet fallback (one shaper, and
+  outbound-fallback.test.js compares them byte for byte).
+  Three mutations survived the first pass: two real gaps (the SQL pin checked
+  only bucket UPPER bounds; the ring boundary had no fixture sitting on it)
+  now fixed and pinned, and one genuinely EQUIVALENT (the `d > prev` guard is
+  redundant under an ascending ladder -- the new test pins the sort order
+  instead of pretending otherwise).
+- **WHERE I LEFT OFF (2026-09-15).** Batch 6 + the six-point round are code-
+  complete. TWO things are owed and neither is mine to decide:
+  (a) **the 6c operator gate** -- backfill, `runOutboundVettingCheck`, release
+  only on CLEAN `ok parity` (Operator State #63). Until it runs, this whole
+  round is admin-only.
+  (b) **the per-dept CALLBACK table is now PLANNED, not built** (owner
+  approved planning 2026-09-15) -- `docs/outbound-callback-dept-plan.md`.
+  **It is sequenced BEHIND an outbound ANSWER-QUALITY fix, and that ordering
+  is the point of the plan:** `connected` counts a voicemail pickup as a
+  reached caller -- structurally, not as a bug, because the far end genuinely
+  answers so every condition the flag tests is satisfied -- and the six-point
+  round promoted that into the "Actually reached" tile, which is live for
+  admins now. A single scope rate carries the over-count as a constant; a
+  dept COMPARISON turns it into a ranking wrong by different amounts per
+  dept. The strong unused discriminator is `ring_seconds` ON CONNECTED calls
+  (voicemail rang to the carrier timeout first, so it should spike; humans
+  are variable) -- but the plan's step 1 is a read-only probe to MEASURE
+  that before any threshold is set, not to assume it. Classification is
+  read-time, so thresholds stay tunable and old rows reclassify free.
+  A useful simplification found while planning: the callback denominator is
+  `disposition='abandoned'`, which can never satisfy the on-hold arm of
+  `inboundDeptPredicate_`, so dept attribution for THIS population reduces to
+  entry_queue alone -- making the table one GROUP BY over queues, folded to
+  depts client-side (which also handles a double-mapped queue, where SQL
+  GROUP BY cannot). Verify that claim with a test before relying on it.
+  **All three open questions were RULED on 2026-09-15, and a follow-up
+  clarification SETTLED the design** -- the plan is rewritten around it and
+  there is no open decision left before build. Rulings: rank by called-back;
+  sub-queues follow `queuesForDept_`; separate by the dept's agents.
+  **THE OPERATING MODEL is the load-bearing fact** (ask about it before
+  re-deriving anything here): *depts are RESPONSIBLE for their own callbacks;
+  an agent from another dept who takes the customer's call EMAILS the owning
+  dept to make the callback.* Consequences: (a) the own-dept rate is a strict
+  SUBSET of its own denominator, so an earlier draft's ">100%, not a rate"
+  objection is WITHDRAWN -- it applied to a design nobody wanted; (b) the
+  handoff is an EMAIL and therefore invisible to the CDR, which is fine,
+  because the owning dept still makes the call and still matches by hash;
+  (c) cross-dept callbacks should be RARE, making the off-diagonal a SIGNAL
+  (skipped handoff, or a queue mapped to the wrong dept) rather than a
+  reporting dimension. So the row shape is own / another dept / not called
+  back -- summing to trackable abandons, which is the invariant to pin first
+  -- ranked on own; the full N x N matrix is a row EXPAND. Crossover agents
+  need no Multi-home column in that shape: per row the only question is
+  "is the dialing agent a member of THIS dept?". Ranked on the own-dept column
+  (confirmed), and **time-to-callback runs from the ABANDON by RULING**, not
+  as a limitation -- an earlier draft framed the handoff delay as a skew to
+  apologise for and that framing was WRONG: the clock is the customer's, and
+  internal handoff time is part of the company's response rather than an
+  exemption from it. **Do not try to net the handoff out** (it is invisible
+  anyway, but the ruling is that it should not be subtracted even if it were
+  not). A slow median with a healthy own-dept rate is a handoff-latency
+  story, and both numbers sit in the same row so a reader can tell.
+- **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
+  tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
+  13 mutations all caught), documented and merged; full suite green under
+  `TZ=America/Chicago` (1389/1389 + INV-16). Next: the owner is still OWED a
+  written answer to "how can the Outbound report be improved?" (design
+  discussion, deliberately out of the 6a/6b implementation scope), then 6c/6d.
 - **DEPLOY STATUS (2026-09-14): all three projects are deployed through
   005a7b1.** Batches 1-4 and the Neon-storage Health row are LIVE; the
   "deploys pending" notes in the older entries below are SUPERSEDED. Still

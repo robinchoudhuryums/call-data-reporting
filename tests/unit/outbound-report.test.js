@@ -107,6 +107,81 @@ test('outbound resolver: admin-only while vetted; validation; ALL → company vi
   h.state.testUser = null;
 });
 
+// 6c: the RELEASE path. The vetting gate above is the only thing standing
+// between this report and its managers, and until now nothing proved that
+// removing it actually WORKS -- the per-dept branch beneath it has been
+// unreachable dead code since the day it was written. Releasing on an
+// unexercised branch is how a runbook's last step turns into an incident.
+//
+// These flip the real switch (hence `var`, not `const`, in OutboundReport.gs)
+// and assert the latent per-dept semantics, so the operator's step 4 is a
+// flag flip over tested behavior rather than a leap.
+test('6c: with the vetting gate released, a single-dept manager is PINNED to their dept', function () {
+  const orig = h.ctx.OUTBOUND_VETTING_GATE_;
+  h.ctx.OUTBOUND_VETTING_GATE_ = false;
+  try {
+    h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+    // No dept passed -> their own, never a company view.
+    const s = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
+    assert.equal(s.dept, 'CSR');
+    assert.equal(s.companyView, false, 'a single-dept manager must never get the company view');
+    // ALL is not an escape hatch for them.
+    assert.equal(h.call('outboundResolveRequest_',
+      { from: '2026-08-01', to: '2026-08-19', department: 'ALL' }).dept, 'CSR');
+    // Another dept is refused -- the release widens WHO may read, never WHAT.
+    assert.throws(function () {
+      h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'Sales' });
+    }, /Not authorized for this department/);
+    // role 'none' stays out regardless of the gate.
+    h.state.testUser = { email: 'n@x.com', role: 'none' };
+    assert.throws(function () {
+      h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
+    }, /Not authorized/);
+  } finally {
+    h.ctx.OUTBOUND_VETTING_GATE_ = orig;
+    h.state.testUser = null;
+  }
+});
+
+test('6c: released, a MULTI-dept manager may pick any assigned dept and no other', function () {
+  const orig = h.ctx.OUTBOUND_VETTING_GATE_;
+  h.ctx.OUTBOUND_VETTING_GATE_ = false;
+  try {
+    h.state.testUser = { email: 'm2@x.com', role: 'manager', department: 'CSR', departments: ['CSR', 'Sales'] };
+    assert.equal(h.call('outboundResolveRequest_',
+      { from: '2026-08-01', to: '2026-08-19', department: 'Sales' }).dept, 'Sales');
+    // Blank falls back to their FIRST dept, not a company view (Tier C).
+    const blank = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
+    assert.equal(blank.dept, 'CSR');
+    assert.equal(blank.companyView, false);
+    // An allDepts manager takes the admin-style branch: ALL means company.
+    h.state.testUser = { email: 'all@x.com', role: 'manager', allDepts: true, departments: ['CSR', 'Sales'] };
+    const all = h.call('outboundResolveRequest_',
+      { from: '2026-08-01', to: '2026-08-19', department: 'ALL' });
+    assert.equal(all.companyView, true);
+  } finally {
+    h.ctx.OUTBOUND_VETTING_GATE_ = orig;
+    h.state.testUser = null;
+  }
+});
+
+test('6c: the gate is the ONLY thing the release flips — admins are unaffected either way', function () {
+  const orig = h.ctx.OUTBOUND_VETTING_GATE_;
+  try {
+    h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+    h.ctx.OUTBOUND_VETTING_GATE_ = true;
+    const gated = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'CSR' });
+    h.ctx.OUTBOUND_VETTING_GATE_ = false;
+    const open = h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'CSR' });
+    assert.deepEqual(open, gated,
+      'flipping the release switch must not change one byte of what an ADMIN '
+      + 'resolves to -- if it does, the switch is doing more than releasing.');
+  } finally {
+    h.ctx.OUTBOUND_VETTING_GATE_ = orig;
+    h.state.testUser = null;
+  }
+});
+
 // ── The SQL (pinned properties, not literal bytes) ──────────────────────────
 
 function runCompute_(dept, blob) {
@@ -494,4 +569,268 @@ test('outbound: no conn → unavailable; a mid-query death → unavailable with 
   const died = JSON.parse(JSON.stringify(h.call('computeOutboundReport_', scope_('CSR'))));
   assert.equal(died.meta.available, false, 'the catch path returns the clean unavailable shape');
   assert.equal(conn.closed, true, 'finally closes the connection');
+});
+
+// ══ The owner's six-point round (2026-09-15, outboundReport:v3) ════════════
+//
+// Five code points. Point 1 ("release it") is an operator gate, not code —
+// Operator State #63 — and the per-dept CALLBACK table is parked awaiting an
+// owner ruling, so neither appears here.
+//
+// The through-line worth pinning: every one of these four data additions has
+// to land in the SQL *and* in the sheet fallback, because the two feed ONE
+// shaper and the source-parity contract (outbound-fallback.test.js) compares
+// them byte for byte. The shared ladder below is the mechanism that keeps the
+// bucket boundaries from drifting; these tests are what keep the mechanism.
+
+const plain_ = function (v) { return JSON.parse(JSON.stringify(v)); };
+
+// ── (3) the time-to-callback distribution ──────────────────────────────────
+
+test('(3) THE RULE: the SQL buckets and the fallback buckets come from ONE ladder', function () {
+  // Not "they happen to agree today" — they are generated from the same
+  // array, and this asserts the generation rather than a snapshot.
+  const ladder = h.ctx.OUTBOUND_CALLBACK_BUCKETS_;
+  const sql = h.ctx.outboundBucketSql_();
+  ladder.forEach(function (b) {
+    assert.ok(sql.indexOf("'" + b.key + "'") !== -1, 'the SQL omits bucket ' + b.key);
+    if (b.maxSec !== null) {
+      assert.ok(sql.indexOf('<= ' + b.maxSec) !== -1,
+        'the SQL omits the ' + b.key + ' upper bound');
+    }
+  });
+  assert.ok(sql.indexOf('cb.delay_sec >= 0') !== -1,
+    'negative delays must be excluded, matching the median filter');
+  // The LOWER bounds matter more than the upper ones here: SQL FILTERs are
+  // independent (unlike the JS loop, which returns on first match), so
+  // without `> prev` every bucket would also count everything below it and
+  // the strip would total several times the callbacks it describes.
+  const bounded = h.ctx.OUTBOUND_CALLBACK_BUCKETS_.slice(1);
+  let prev = h.ctx.OUTBOUND_CALLBACK_BUCKETS_[0].maxSec;
+  bounded.forEach(function (b) {
+    assert.ok(sql.indexOf('cb.delay_sec > ' + prev) !== -1,
+      'bucket ' + b.key + ' has no lower bound — the SQL buckets overlap');
+    prev = b.maxSec;
+  });
+});
+
+test('(3) the JS bucketer relies on an ASCENDING ladder — pin that it is one', function () {
+  // The `d > prev` guard in outboundBucketDelays_ is defensive: the loop
+  // returns on first match, so with a sorted ladder it is redundant (a
+  // mutation removing it is equivalent). What is NOT redundant is the sort
+  // order itself — an out-of-order ladder would silently swallow buckets.
+  const ladder = h.ctx.OUTBOUND_CALLBACK_BUCKETS_;
+  for (let i = 1; i < ladder.length; i++) {
+    const prevMax = ladder[i - 1].maxSec;
+    assert.notEqual(prevMax, null, 'only the LAST bucket may be open-ended');
+    if (ladder[i].maxSec !== null) {
+      assert.ok(ladder[i].maxSec > prevMax,
+        'ladder must ascend: ' + ladder[i].key + ' <= ' + ladder[i - 1].key);
+    }
+  }
+  assert.equal(ladder[ladder.length - 1].maxSec, null,
+    'the final bucket must be open-ended or long delays vanish');
+});
+
+test('(3) buckets are cumulative-EXCLUSIVE, so they sum to the called-back total', function () {
+  // A delay must land in exactly one bucket. If the bounds overlapped, the
+  // strip would total more than the callbacks it describes.
+  const b = h.ctx.outboundBucketDelays_([0, 899, 900, 901, 3600, 3601, 14400, 86400, 86401, 999999]);
+  assert.deepEqual(plain_(b), { m15: 3, h1: 2, h4: 2, d1: 1, later: 2 });
+  const total = Object.keys(b).reduce(function (a, k) { return a + b[k]; }, 0);
+  assert.equal(total, 10, 'every non-negative delay lands in exactly one bucket');
+});
+
+test('(3) a negative or null delay is DROPPED, never bucketed', function () {
+  const b = h.ctx.outboundBucketDelays_([-1, null, undefined, 60]);
+  assert.equal(b.m15, 1);
+  assert.equal(Object.keys(b).reduce(function (a, k) { return a + b[k]; }, 0), 1);
+});
+
+test('(3) an empty delay list yields all-zero buckets, not a missing key', function () {
+  const b = h.ctx.outboundBucketDelays_([]);
+  h.ctx.OUTBOUND_CALLBACK_BUCKETS_.forEach(function (x) {
+    assert.equal(b[x.key], 0, 'bucket ' + x.key + ' must exist even at zero');
+  });
+});
+
+// ── (2) the connected-callback rate ────────────────────────────────────────
+
+test('(2) THE RULE: both callback rates divide by the SAME trackable denominator', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [], callback: { abandonedTotal: 25, abandonedAnonymous: 5,
+        calledBack: 14, calledBackConnected: 7 } },
+    {});
+  assert.equal(out.callback.abandonedTracked, 20);
+  assert.equal(out.callback.calledBackPct, 70);          // 14/20
+  assert.equal(out.callback.calledBackConnectedPct, 35); // 7/20 — NOT 7/14
+});
+
+test('(2) the connected rate can never exceed the raw rate (it is a strict subset)', function () {
+  [[10, 10], [10, 3], [0, 0]].forEach(function (pair) {
+    const out = h.call('outboundShapeReport_',
+      { from: 'a', to: 'b', dept: '', companyView: true },
+      { agents: [], callback: { abandonedTotal: 20, abandonedAnonymous: 0,
+          calledBack: pair[0], calledBackConnected: pair[1] } },
+      {});
+    if (out.callback.calledBackPct != null) {
+      assert.ok(out.callback.calledBackConnectedPct <= out.callback.calledBackPct,
+        'connected ' + out.callback.calledBackConnectedPct + '% > raw ' + out.callback.calledBackPct + '%');
+    }
+  });
+});
+
+test('(2) an all-anonymous window yields NULL rates, not 0% — nothing was trackable', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [], callback: { abandonedTotal: 6, abandonedAnonymous: 6,
+        calledBack: 0, calledBackConnected: 0 } },
+    {});
+  assert.equal(out.callback.abandonedTracked, 0);
+  assert.equal(out.callback.calledBackPct, null, '0% would read as a failure to call back');
+  assert.equal(out.callback.calledBackConnectedPct, null);
+});
+
+test('(2) the PRIOR block carries the connected rate too, so the tile gets a real delta', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [], callback: { abandonedTotal: 10, abandonedAnonymous: 0, calledBack: 5, calledBackConnected: 2 },
+      callbackPrior: { abandonedTotal: 10, abandonedAnonymous: 0, calledBack: 4, calledBackConnected: 1 } },
+    {});
+  assert.equal(out.callbackPrior.calledBackPct, 40);
+  assert.equal(out.callbackPrior.calledBackConnectedPct, 10);
+});
+
+// ── (4) the unconnected ring split ─────────────────────────────────────────
+
+test('(4) THE RULE: an unconnected call with NO ring is UNKNOWN, never filed as brief', function () {
+  // 10 calls: 4 connected, 3 brief, 2 real, and 1 with no ring at all.
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [{ agent: 'Ann', ob_total: 10, ob_connected: 4,
+        ob_unconn_brief: 3, ob_unconn_real: 2, ob_talk_sec: 100, attempts: 12 }],
+      callback: {} },
+    { Ann: ['CSR'] });
+  const a = out.agents[0];
+  assert.equal(a.obUnconnectedBrief, 3);
+  assert.equal(a.obUnconnectedReal, 2);
+  assert.equal(a.obUnconnectedUnknown, 1,
+    'the unclassified remainder must stay visible, not be absorbed into a bucket');
+  assert.equal(a.obUnconnectedBrief + a.obUnconnectedReal + a.obUnconnectedUnknown,
+    a.obTotal - a.obConnected, 'the split must account for every unconnected call');
+});
+
+test('(4) THE BOUNDARY: a ring of exactly the threshold is a REAL attempt, not brief', function () {
+  // The SQL says `ring_seconds < N` / `>= N`. The fallback must agree
+  // EXACTLY, and only on the Neon-down path — where nobody would notice a
+  // one-character drift. This is the pin that makes the two comparable.
+  const N = h.ctx.OUTBOUND_BRIEF_RING_SEC_;
+  assert.equal(h.ctx.outboundClassifyRing_(N - 1), 'brief');
+  assert.equal(h.ctx.outboundClassifyRing_(N), 'real', 'the boundary belongs to REAL');
+  assert.equal(h.ctx.outboundClassifyRing_(N + 1), 'real');
+  assert.equal(h.ctx.outboundClassifyRing_(0), 'brief');
+});
+
+test('(4) a blank / non-numeric ring is UNKNOWN, never a default bucket', function () {
+  ['', null, undefined, 'n/a'].forEach(function (v) {
+    assert.equal(h.ctx.outboundClassifyRing_(v), 'unknown', 'input ' + JSON.stringify(v));
+  });
+});
+
+test('(4) the fallback classifies through the SAME helper the boundary pin covers', function () {
+  assert.match(OB_SRC, /var cls = outboundClassifyRing_\(row\[8\]\);/,
+    'the sheet fallback must not re-implement the ring boundary inline — that '
+    + 'is how the two paths drift on a path nobody watches');
+});
+
+test('(4) the unknown remainder can never go negative on inconsistent input', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [{ agent: 'Ann', ob_total: 2, ob_connected: 2,
+        ob_unconn_brief: 5, ob_unconn_real: 5, ob_talk_sec: 0, attempts: 2 }], callback: {} },
+    { Ann: ['CSR'] });
+  assert.equal(out.agents[0].obUnconnectedUnknown, 0);
+});
+
+test('(4) the split rolls up into the scope KPIs and carries its threshold', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [
+        { agent: 'Ann', ob_total: 6, ob_connected: 2, ob_unconn_brief: 3, ob_unconn_real: 1, ob_talk_sec: 60, attempts: 6 },
+        { agent: 'Bob', ob_total: 4, ob_connected: 1, ob_unconn_brief: 0, ob_unconn_real: 2, ob_talk_sec: 30, attempts: 4 },
+      ], callback: {} },
+    { Ann: ['CSR'], Bob: ['CSR'] });
+  assert.equal(out.kpis.obUnconnectedBrief, 3);
+  assert.equal(out.kpis.obUnconnectedReal, 3);
+  assert.equal(out.kpis.obUnconnectedUnknown, 1);
+  assert.equal(out.kpis.briefRingSec, h.ctx.OUTBOUND_BRIEF_RING_SEC_,
+    'the client labels the tiles with this threshold — it must ship, not be hardcoded there');
+});
+
+// ── (6) callback rate by abandon hour ──────────────────────────────────────
+
+test('(6) THE RULE: the hour cut and the daily series describe the SAME population', function () {
+  const blob = { agents: [], callback: {},
+    callbackDaily: [{ d: '2026-08-10', tracked: 6, called_back: 3 },
+                    { d: '2026-08-11', tracked: 4, called_back: 3 }],
+    callbackByHour: [{ h: 8, tracked: 7, called_back: 4 }, { h: 9, tracked: 3, called_back: 2 }] };
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true }, blob, {});
+  const dayTracked = out.daily.reduce(function (a, r) { return a + r.tracked; }, 0);
+  const hourTracked = out.callbackByHour.reduce(function (a, r) { return a + r.tracked; }, 0);
+  assert.equal(dayTracked, hourTracked, 'two cuts of one window must total alike');
+  assert.equal(out.callbackByHour[0].ratePct, 57.1);
+});
+
+test('(6) an hour with no trackable abandons rates NULL, not 0% ', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true },
+    { agents: [], callback: {}, callbackByHour: [{ h: 13, tracked: 0, called_back: 0 }] },
+    {});
+  assert.equal(out.callbackByHour[0].ratePct, null,
+    '0% would brand a quiet hour as a total failure to call back');
+});
+
+test('(6) a payload with no hour data yields [], so the client hides the strip', function () {
+  const out = h.call('outboundShapeReport_',
+    { from: 'a', to: 'b', dept: '', companyView: true }, { agents: [], callback: {} }, {});
+  assert.deepEqual(plain_(out.callbackByHour), []);
+});
+
+// ── (5) the email ──────────────────────────────────────────────────────────
+
+const fs_ = require('fs');
+const path_ = require('path');
+const OB_SRC = fs_.readFileSync(path_.join(__dirname, '..', '..', 'apps-script',
+  'department-dashboard', 'OutboundReport.gs'), 'utf8');
+
+test('(5) the email goes through sendAppEmail_ and the banded EmailKit shell', function () {
+  // R28 (BCC the first admin) and R30 (every shell caller passes `band`) are
+  // swept repo-wide by app-email/email-kit-v2; pinned here too so a local
+  // edit fails in the suite that owns this file.
+  assert.match(OB_SRC, /function sendOutboundReportEmail\(req\)/);
+  assert.match(OB_SRC, /sendAppEmail_\(\{ to: email,/,
+    'never MailApp.sendEmail directly — it would skip the BCC rule');
+  assert.match(OB_SRC, /ekShellHtml_\(\{\s*\n\s*band:/,
+    'R30: the shell caller must pass a band');
+});
+
+test('(5) the email RECOMPUTES through the shared resolver — it cannot drift from the screen', function () {
+  assert.match(OB_SRC,
+    /function sendOutboundReportEmail\(req\) \{\s*\n\s*const scope = outboundResolveRequest_\(req\);/,
+    'the email must inherit the vetting gate + per-dept pinning, not re-derive them');
+  assert.match(OB_SRC, /const data = computeOutboundReport_\(scope\);/,
+    'recompute, never trust a client-supplied payload');
+  assert.match(OB_SRC, /logReportUsage_\('outbound:email'/,
+    'a send is a usage event (INV-01 append-only carve-out)');
+});
+
+test('(5) the delay table stays QUIET when there is nothing to distribute', function () {
+  assert.equal(h.ctx.outboundEmailDelayTable_(null, 0), '');
+  assert.equal(h.ctx.outboundEmailDelayTable_({ m15: 0 }, 0), '',
+    'zero callbacks must not render an all-zero table reading as "all slow"');
+  const html = h.ctx.outboundEmailDelayTable_({ m15: 3, h1: 1, h4: 0, d1: 0, later: 0 }, 4);
+  assert.match(html, /within 15 min/);
+  assert.match(html, /75%/, 'the share of callbacks, not a raw count alone');
 });

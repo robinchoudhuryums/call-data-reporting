@@ -19,6 +19,7 @@ batch, items are independent unless marked.
 | 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **SHIPPED 2026-09-11** (deploy + backfill: Operator State #60) |
 | 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | **SHIPPED 2026-09-11** (install + flag: Operator State #61) |
 | ∥ | **Neon storage decision** | operator decision; Health row "Neon storage by table" **SHIPPED 2026-09-11** (block 189) | dashboard (DEPLOYED 2026-09-14) | any time |
+| 6 | **Owner testing round** — decisions taken, not started | 6a queue worst-first (own dept pinned) · 6b Overview answered volume · 6c Outbound RELEASE not build · 6d agent-day view (90d exact, then degrade) | dashboard | any time; 6a/6b are S |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
@@ -246,6 +247,194 @@ period toggle. The harness models `Range.sort` since this batch.
 State #61); Batch 5's gate clock starts at that install.
 
 ---
+
+## Batch 6 — owner testing round (2026-09-14; 6a + 6b DONE, 6c/6d queued)
+
+Four items the owner raised after the R47 trim. Each carries the design
+decision already made, so nobody re-opens it. Ordered cheapest-first; they are
+independent and can ship separately.
+
+**Status 2026-09-15: all four items are IMPLEMENTED** (blocks
+`*-batch6a6b-*` and `*-batch6c6d-*`). All are dashboard-only and need a
+dashboard deploy. **6c is code-complete but NOT released** — its last step is
+an operator gate (`runOutboundVettingCheck` must come back CLEAN) and that
+cannot be done from a dev session; the runbook is now Operator State #63.
+
+### 6a. Queue report: worst-first in the app, own dept still pinned — DONE
+
+**Owner decision (2026-09-14) — this REVERSES a prior ruling.** The
+`QueueReportEmail.gs` header states "Worst-first ordering is EMAIL-ONLY (the
+web report keeps its viewer-float + parent-grouping order; owner ruling)".
+The owner has now chosen worst-first in the app too, with the viewer float
+KEPT: **own dept pinned first, every other section below it worst-first.**
+Update that header comment in the same commit — a stale ruling is worse than
+no ruling.
+
+- "Worst" copies the email's comparator exactly: section abandoned % DESC,
+  tie-broken by range violations DESC (`QueueReportEmail.gs:700-703`). A
+  section = parent + its nested children, summed by `secTotals`.
+- Implement CLIENT-side in `qcdAllDeptRender_`
+  (`script-11-qcd-boot.html:553-560`), replacing the viewer-float comparator
+  with float-then-worst. Server order stays alphabetical, so **no `qcdAll:v6`
+  cache bump** — the order is not baked into the payload if the client does
+  the sorting. (Moving it server-side WOULD need v7, and would also make the
+  email's own sort dead code; don't.)
+- **Reconcile the CSV** (`script-11-qcd-boot.html:812-821`): it rebuilds from
+  `data.depts` and today ignores the float, so screen and CSV already differ.
+  Bring it to the same order.
+- Rows WITHIN a section stay in configured queue order, both sides. Don't sort
+  them.
+- Ride-along worth fixing while in there: the email's alert/preheader offender
+  list sorts violations-then-pct (`QueueReportEmail.gs:603`), the REVERSE
+  priority of its own table. One of the two is wrong; make them agree.
+- Pins: `queue-report.test.js:194` pins the email's worst-first; add the app's.
+
+**Size.** S. **Deploy.** dashboard.
+
+### 6b. Overview chart: answered call volume — DONE
+
+**Owner decision: plain per-dept counts overlay**, consistent with the
+existing `abandonedCalls` metric. The busiest queue dominating is the true
+picture, not a defect.
+
+The work is small because the number is already computed: `ovDeptChartSeries_`
+(`CompanyOverview.gs:163`) reads a per-day `{rung, answered}` map and emits
+only the RATE. Four pieces: one series line in that shared builder (feeds the
+90-day chart AND the YTD fetch), one payload field beside
+`trendChartAbandoned`, one `OV_CHART_METRICS_` entry
+(`script-3-overview.html:1422`), one tab button (`dashboard.html:235-239`).
+
+**Cache:** bump `companyOverview:v21` → v22 (INV-30) — the payload shape
+changes and the 6 h TTL makes a stale blob sticky.
+
+**Size.** S. **Deploy.** dashboard.
+
+### 6c. Outbound report — RELEASE, not build — CODE DONE, RELEASE PENDING
+
+The report is fully shipped (server, client, sheet fallback, tests, vetting
+instrument) and **admin-only behind a hard-coded gate** with the menu item
+hidden. Of the original five phases, only **phase 4, the manager un-gate, was
+never done**. So "enhancing Outbound" is a release runbook:
+
+1. `backfillOutboundCalls` (recommended first).
+2. `runOutboundVettingCheck` — live two-path parity of the abandon population
+   vs the Inbound report + per-sample verdict re-verification.
+3. On a CLEAN `ok parity` only: remove the admin throw
+   (`OutboundReport.gs:85-86`) and un-hide `#outbound-report-btn`
+   (`dashboard.html:89-91`). **Never un-gate on INCONCLUSIVE / FAILED /
+   MISMATCH** — a zero-abandon window is inconclusive by construction.
+4. Add the ci:ui driver visit + a regression scenario in the same change.
+
+~~**This runbook currently lives only in `.cycle/STATE.md`**~~ **DONE: it is
+Operator State #63**, with the verdict contract spelled out (INCONCLUSIVE is
+not a pass) and the two-file release named as one commit.
+**Also done (2026-09-15), so the release is a flag flip over tested ground:**
+the gate is a named switch `OUTBOUND_VETTING_GATE_` whose two halves
+cross-file-pins keeps together; the latent per-dept manager path is now
+BEHAVIOURALLY pinned with the switch flipped (it had been unreachable dead
+code since it was written); and the modal joined `drive-admin.js`, so it is
+rendered-gate covered BEFORE the release rather than after.
+
+**Do NOT revive:** per-dept company cards for Outbound were considered,
+deferred, then RULED OUT (crossover agents hold multiple roster homes); the
+rejection is a contract in three places incl. the render site. Needs a fresh
+ruling.
+**Per-dept CALLBACK table — PLANNED, not built.** A different question from
+per-dept AGENT cards: an abandoned call has an unambiguous dept (its entry
+queue), a crossover agent does not, so the ruling above does not reach it.
+The owner approved planning it on 2026-09-15 — full design in
+[`docs/outbound-callback-dept-plan.md`](outbound-callback-dept-plan.md),
+together with the OUTBOUND ANSWER-QUALITY work it depends on.
+**Do the answer-quality half first:** `connected` counts a voicemail pickup
+as a reached caller (the far end genuinely answers, so every condition the
+flag tests is met), which the six-point round promoted into the "Actually
+reached" tile. A single scope-level rate carries that over-count as a
+constant; a dept COMPARISON turns it into a ranking that is wrong by
+different amounts per dept. **Owner rulings 2026-09-15 (all three closed), plus the OPERATING MODEL that
+settles the design:** rank by called-back; sub-queues follow
+`queuesForDept_`; separate by the dept's agents. The clarification that made
+the third one buildable -- **depts are RESPONSIBLE for their own callbacks,
+and an agent from another dept who takes the customer's call EMAILS the
+owning dept to make it** -- means the own-dept rate is a strict subset of its
+own denominator, so the ">100% is not a rate" objection an earlier draft
+raised is WITHDRAWN. Row shape is own / another dept / not called back
+(summing to trackable abandons), ranked on the own-dept column; the full
+per-dialing-dept matrix is a row EXPAND, since the operating model predicts
+the off-diagonal is rare and therefore a SIGNAL (a skipped handoff, or a
+queue mapped to the wrong dept). Ranked on the own-dept column (confirmed), and
+**time-to-callback is measured from the ABANDON by ruling** -- the customer's
+clock, where internal handoff time counts as part of the company's response
+rather than an exemption from it. Do not try to net the handoff out.
+
+~~**Observed gap, uncommitted:** Outbound has CSV but no `sendOutboundReportEmail`~~
+**SHIPPED 2026-09-15** in the owner's six-point round (block 193), along with
+four data cuts: the connected-callback rate promoted to a tile, the
+time-to-callback distribution, the unconnected ring split, and callback rate
+by abandon hour. `outboundReport:v2` -> `v3`. **Point 1 of that list ("release
+it") is the operator gate above and is still pending**; the per-dept CALLBACK
+table raised alongside it is parked awaiting an owner ruling (see below).
+
+**Size.** S (code) + operator vetting. **Deploy.** dashboard.
+
+### 6d. Agent-day interaction view ("what did agent X do on day Y") — DONE
+
+**The 14-day assumption is WRONG and should not shape the design.** 14 days is
+the `Call_Legs_*` day-sheet prune — the REBUILD horizon (Operator State #43),
+not the read horizon. Per-call rows are captured out of Raw Data daily into
+Neon tables that nothing prunes for 400 days.
+
+**Owner decision (2026-09-14): 90 days exact, then degrade. No capture-column
+schema change.** Accepted cost: past 90 days the view shows who the call RANG
+FIRST rather than every agent who touched it, and that window can never be
+recovered later.
+
+Three tiers, disclose the boundary the way the codebase already does
+(`meta.coverageStart` + `coverageNoteUpsert_`, and the
+`before-capture`/`date-gap`/`not-captured` reason codes):
+
+| Horizon | Source | Fidelity |
+|---|---|---|
+| 0–90 days | `inbound_calls.journey` + `outbound_calls` | full leg-by-leg, every agent who touched the call |
+| 90–400 days | same rows, `journey` NULLed by the prune | scalars + `first_agent`; outbound stays exact (`agent_name` is a real column) |
+| 400 days – 13 months | DQE `K-AC` / `AF` slot timestamps | MISSED rings only |
+
+- **Backbone:** `outbound_calls` (easy half — `agent_name`/`agent_ext` are
+  first-class columns) + `inbound_calls` (hard half — no `answered_by`; the
+  agent set lives in `journey`). Query one day at a time on the
+  `(call_date, …)` PK, one `json_agg` round trip per section.
+- **Reuse is high:** `callerLookupShapeCall_` / `...Outbound_` are
+  hash-agnostic row shapers, and the `cl*` card renderers
+  (`script-10-escalations.html:1322-1500`) are already reused by the dept
+  call-path overlay. `getCallJourney` is the row-level drill.
+  **Closest precedent is not Caller Lookup but `AgentHome.gs::ahWaitJoin_`**,
+  which already matches journey legs by agent name for a window.
+- **Auth:** resolve the agent to a dept SERVER-side from the roster
+  (`buildDeptsByAgent_`), then run the existing dept gate. Never trust a
+  client dept. Use the ROSTER dept, never `outbound_calls.department` (the
+  raw CDR org label matches no dashboard header here). Crossover agents have
+  two homes — a manager sees the agent only if on THEIR roster; unrostered
+  names stay admin-only. This surface exposes ANSWERED calls, which the
+  existing `callIdInDeptMissedReport_` entitlement does not cover, so it needs
+  its own server-derived gate rather than reusing that one.
+- **PHI:** never store/log/cache/return a raw number (hash in memory, bind as
+  a param, responses NOT cached — the Caller Lookup model); phone-shaped names
+  are already dropped at capture; `ib_list_*`/`ob_list_*` external names are
+  initials-only for post-IMP-12 dates and RAW before, so don't render them
+  unmasked; cache keys hash the agent name (INV-36); log
+  `logReportUsage_` + a LABELLED `neonNoteEgress_`.
+- Day header totals come from `direct_call_history` / `call_history_dept`
+  (agent-day aggregates, unpruned, always reconcile) — never as the per-call
+  list.
+
+**Size.** L. **Deploy.** dashboard.
+**SHIPPED 2026-09-15** as `AgentDay.gs` + the `#/report/agent-day` modal (client
+beside the `cl*` renderers in script-10). Built as designed above, with two
+deliberate departures worth knowing: the day HEADER reads the DQE agent-day row
+through the DAL rather than `direct_call_history` / `call_history_dept` — same
+"an aggregate that does not degrade" intent, and it additionally reconciles
+with My Department by construction; and the tier is decided by WHAT CAME BACK
+rather than by the calendar, since the prune is flag-gated and tunable. Full
+design notes now live in `docs/per-call-capture.md`; walk S47.
 
 ## Parallel track — the Neon storage decision (operator)
 

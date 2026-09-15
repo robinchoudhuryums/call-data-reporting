@@ -360,7 +360,31 @@ roster homes, so per-dept cards would double-count or misattribute --
 don't "upgrade" without a new ruling. `getOutboundUncalled` is the
 not-called-back drill (same lateral as the KPI, cap 200, no caller
 identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
-`outboundReport:v2` + the freshness tag; unavailable payloads uncached.
+`outboundReport:v3` + the freshness tag; unavailable payloads uncached.
+**The owner's six-point round (2026-09-15) added four data cuts and an
+email, all of them landing in the SQL AND the sheet fallback because the two
+feed one shaper:** (2) `calledBackConnectedPct`, the CONNECTED callback rate
+promoted beside the raw one over the SAME trackable denominator -- a callback
+that rang out is not a save, and burying that in a caption made the softer
+number the headline; (3) `delayBuckets`, the time-to-callback DISTRIBUTION
+over the shared `OUTBOUND_CALLBACK_BUCKETS_` ladder, because a median hid the
+tail and a next-day callback is a courtesy call rather than a recovery -- the
+ladder drives `outboundBucketSql_` AND `outboundBucketDelays_` so the two
+cannot bucket one delay differently; (4) the unconnected ring split on
+`OUTBOUND_BRIEF_RING_SEC_` (=8) via `outboundClassifyRing_`, a LABELLED
+heuristic separating misdials from real attempts -- **the boundary is strict
+(`< N` is brief, `= N` is real) and a NULL ring stays UNKNOWN**, surfaced as
+the remainder rather than filed into either bucket, so an export column that
+stops being written reads as unknowns and not as a pile of misdials; and (6)
+`callbackByHour`, the tracked/called-back pair cut by the ABANDON's hour --
+`daily` answers "are we keeping up", this answers "WHICH abandons fall
+through the cracks". The hour strip is deliberately **NOT** the shared
+weekday x hour heatmap: `renderAbandonHeatmap_` is hard-wired to abandon rate
+with HIGH = bad, and callback rate inverts that polarity, so reusing it would
+tint a great hour red. (5) `sendOutboundReportEmail` closes the gap where
+Inbound / Individual / Insights all had one -- same resolver (so the vetting
+gate and per-dept pinning apply), recomputed server-side so it cannot drift
+from the screen, `sendAppEmail_` + a banded `ekShellHtml_` per R28/R30.
 **Neon-down degrades to the SHEET FALLBACK** (`outboundSheetFallback_`):
 the `Outbound Calls` export tab (Op State #50) + the `Inbound Calls` tab
 for the abandon denominator, fed through the SAME pure
@@ -508,3 +532,56 @@ a FIXED set, so `queueSum`/`queueUnaccounted` DISCLOSE transfers going
 anywhere else rather than letting the lists silently disagree with the
 headline. `tests/unit/csr-transfer-detail.test.js` pins all three.
 
+
+### Agent-day interaction view (6d)
+
+**`AgentDay.gs`, route `#/report/agent-day` -- "what did agent X do on day
+Y?", call by call.** The question the aggregates cannot answer: My Department
+and the Individual Report both say HOW MANY, and nothing walks a manager
+through the day itself. `getAgentDay({agentName, date})` returns a DQE-sourced
+day header plus the per-call inbound / outbound lists this agent touched.
+
+**THE HORIZON IS THREE TIERS, and the boundary is disclosed, not hidden.** The
+14-day `Call_Legs_*` prune is the REBUILD horizon (Operator State #43), NOT the
+read horizon -- the assumption that nearly shaped this surface wrongly. Per-call
+rows live ~400 days and journeys ~90 (`NEON_RETENTION_DEFAULTS_`), so:
+`full` (journeys intact -> every agent who touched a call) ·
+`degraded` (journey pruned -> only calls this agent RANG FIRST, via
+`first_agent`; outbound stays exact because `agent_name` is a real column) ·
+`dqe-only` (no capture rows -> the DQE K-AC/AF missed-ring timestamps, and
+nothing else survives). **Owner decision 2026-09-14: 90 days exact then
+degrade, NO capture-column schema change** -- the pre-90-day per-leg agent set
+is unrecoverable, so the page SAYS so (`meta.tier` + `meta.degradedReason`
+-> `adTierNote_`) rather than quietly rendering a short list that reads as "this
+agent barely worked".
+**The tier is decided by WHAT CAME BACK, never by the calendar** -- the prune is
+flag-gated and its horizons are property-tunable, so a calendar guess would
+mislabel in both directions; the horizons ride in `meta` only so the client can
+EXPLAIN a degrade it is already showing.
+
+**Two rules a future editor will be tempted to break.** (1) The SQL pre-filter
+is `journey LIKE '%name%' OR first_agent = ?` and the LIKE half is a SUPERSET
+on purpose (cheap, index-free, the `ahWaitJoin_` technique) -- `agentDayKeepRow_`
++ the exact INV-04 `ev.name` match are what narrow it, and dropping either arm
+breaks a different thing: without the exact check one agent's name inside
+another's puts someone else's call on this page; without the `first_agent` arm
+every journey-pruned day renders EMPTY instead of as a disclosed subset.
+(2) The day header comes from the **DQE agent-day row via the DAL**, never from
+counting the per-call list -- that is what lets the list be a subset without the
+header lying, and it makes the figures the SAME ones My Department shows.
+`agentDayReconcile_` states the gap rather than reconciling it away, and never
+claims `exact` on a degraded day even when the numbers coincide.
+
+**Auth is server-derived from the ROSTER** (`buildDeptsByAgent_` -> the shared
+`assertDeptAccess_`), so it inherits the R-3 allDepts and Tier C multi-dept
+fixes. A CROSSOVER agent has several homes and ANY of them entitles (the homes
+are tried in turn); an UNROSTERED name has none and is ADMIN-ONLY, because "no
+home -> allow" would make the gate bypassable by misspelling an agent. Never
+`outbound_calls.department` (the raw CDR org label). This surface exposes
+ANSWERED calls, which `callIdInDeptMissedReport_` does not cover -- hence its
+own gate. **PHI:** no hash and no number is read, returned or logged; responses
+are NOT cached (the Caller Lookup model) and the Neon read is labelled
+`agentDay` for the egress ranking. Client lives beside the `cl*` card renderers
+in `script-10-escalations.html` and reuses them. Pinned by
+`tests/unit/agent-day.test.js`; the modal is opened and driven by
+`drive-admin.js` on every `npm run ci:ui`.
