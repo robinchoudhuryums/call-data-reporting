@@ -81,6 +81,14 @@ function onOpen() {
     // every surviving Call_Legs_* sheet; results in the execution log.
     .addItem("Preview QCD row-34 overlap",           "previewRow34Overlap")
 
+    .addSeparator()
+
+    // Read-only QCD-vs-DQE reconciliation (qcdDqeDiagnostic.js): explains why a
+    // dept's QCD "Queue Calls" answered and the dashboard's per-agent answered
+    // sum differ, leg by leg. Reconciles itself against calcQcdReport AND the
+    // stored DQE rows before reporting; writes only its own detail tab.
+    .addItem("QCD vs DQE diagnostic (pick date)…", "diagnoseQcdVsDqe")
+
     // .addSeparator()
     // .addItem("Import Bulk CSVs from Drive", "importBulkCSVsFromDrive") // pending Drive permissions
 
