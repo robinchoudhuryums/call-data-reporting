@@ -252,7 +252,12 @@ tests/
                               named ahead of the window gate, or an
                               operator is sent to the wrong place), and
                               that every CSR-block leg is attributed
-                              exactly once),
+                              exactly once, and the PARENT JOIN that separates
+                              a leg-count difference from an under-credited
+                              agent -- sameAgent / otherAgent / nobody, with
+                              the root-leg `N/A` keying pinned, since keying it
+                              blank would manufacture an under-crediting
+                              finding out of every root leg),
                               escalations-snapshot (the E2 outage cache),
                               coaching (gates + the F-e delivery: diff/txn/
                               email gating/race-safe close),

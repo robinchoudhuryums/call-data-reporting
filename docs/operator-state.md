@@ -2050,6 +2050,21 @@ When something looks wrong, before assuming a code bug, check:
       mirror-image count of DQE-answered legs the CSR block does not count,
       by queue; and up to 500 rows of leg detail with the deciding fields
       (caller, caller-ID col W, direction, status, start/end).
+    - **Read the PARENT JOIN line second.** Two disjoint leg sets over the same
+      agents leave one question: same calls seen on different legs, or different
+      calls? The tool keys every leg by its CALL and reports whether each
+      CSR-block leg's call also carries a DQE-counted leg for the same agent, a
+      different agent, or nobody. **Only the `nobody` bucket can be an
+      under-credited call** — a leg-count difference and an under-credited agent
+      are different findings, and the line states which one you have.
+    - **First live run (2026-09-14):** verdict `ok`, and **0 of 414** CSR-block
+      legs were also counted by DQE — all 414 failed `no-queue-token`, while
+      DQE's 397 were `A_Q_CSR` 327 + `A_Q_Intake` 52 + `A_Q_Spanish` 17 +
+      `Backup CSR` 1. The dashboard's CSR 380 is exactly the first, third and
+      fourth of those, and its Spanish 17 the second — which also confirms
+      `QUEUE_SPLIT_SCOPE=dept` is attributing the col-AI split correctly.
+      Details: docs/known-issues.md "CSR Queue Calls vs the per-agent answered
+      sum".
     - **`no-queue-token` is the finding to expect and the one that matters.**
       The DQE build admits a leg only if col W carries an `A_Q_*` /
       `Backup CSR` token, or CALLER reads `CallQueue (ext)` (the R18e

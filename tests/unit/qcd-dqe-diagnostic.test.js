@@ -51,6 +51,7 @@ const CSR_AGENT = 'Casey Csr';
 const EXCLUDED  = 'Rajesh Patel';        // on DQE_EXCLUDED_AGENTS
 const EXC_AGENT = 'Exc Agent';           // on the csr_exceptions named range
 
+let rawSeq_ = 1;
 function raw(o) {
   const r = new Array(MAX_COLS).fill('');
   r[1]  = o.status || '';
@@ -65,6 +66,8 @@ function raw(o) {
   r[8]  = o.caller === undefined ? 'CallQueue (304)' : o.caller;
   r[10] = o.calleeExt || '201';
   r[22] = o.callerId === undefined ? 'A_Q_CSR,304' : o.callerId;
+  r[0]  = o.callId || ('call' + (rawSeq_++));
+  r[14] = o.parent === undefined ? 'N/A' : o.parent;
   r[25] = o.answered === false ? '' : 'Answered';
   return r;
 }
@@ -310,6 +313,72 @@ test('the tool writes no data sheet', () => {
   assert.ok(writes.length > 0 && inTabWriter.indexOf('insertSheet') !== -1);
   assert.ok(!/PropertiesService[\s\S]*setProperty/.test(DIAG_SRC),
     'the diagnostic must set no Script Properties');
+});
+
+// ── 6b. The parent join: same call, or a different one? ────────────────────
+
+test('a CSR-block leg on a call the agent was already credited for reads sameAgent', () => {
+  const grid = [HEADER,
+    // The queue-delivered leg DQE counts (status 1 + no talk, so the CSR block
+    // does not also claim it -- keeps this test about the JOIN, not the rows)...
+    raw({ status: '1', type: 'incoming', callId: 'legA', parent: 'P1' }),
+    // ...and a second leg of the SAME call that only the CSR block counts.
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legB', parent: 'P1',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.qcdD[36], 1);
+  assert.equal(out.parentJoin.sameAgent, 1);
+  assert.equal(out.parentJoin.none, 0);
+  assert.equal(out.detail[0].sibling, 'sameAgent');
+});
+
+test('a CSR-block leg on a call NO ONE was credited for reads none', () => {
+  const grid = [HEADER,
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legC', parent: 'P9',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.parentJoin.none, 1);
+  assert.equal(out.parentJoin.sameAgent, 0);
+  assert.equal(out.detail[0].sibling, 'none');
+  assert.deepEqual(plain(out.orphanSample[0]), { agent: CSR_AGENT, parentKey: 'P9' });
+});
+
+test('a call credited to a DIFFERENT agent is not counted as this one\'s', () => {
+  // The dept has the call; this agent does not. Collapsing the two would hide a
+  // real per-agent attribution question behind a dept-level "all accounted for".
+  const grid = [HEADER,
+    raw({ status: '4', type: 'incoming', callee: EXC_AGENT, calleeExt: '777',
+          callId: 'legD', parent: 'P2' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legE', parent: 'P2',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.parentJoin.otherAgent, 1);
+  assert.equal(out.parentJoin.sameAgent, 0);
+  assert.equal(out.parentJoin.none, 0);
+});
+
+test('a leg that IS the parent joins on its own call id', () => {
+  // parent 'N/A' means the leg is the root; keying it as blank would make every
+  // such leg an orphan and manufacture an under-crediting finding.
+  const grid = [HEADER,
+    raw({ status: '1', type: 'incoming', callId: 'P3', parent: 'N/A' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legF', parent: 'P3',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.parentJoin.sameAgent, 1);
+});
+
+test('the reading names under-crediting only when a call has no DQE leg', () => {
+  const reading = h.fn('qddParentJoinReading_');
+  assert.match(reading({ sameAgent: 5, otherAgent: 1, none: 0 }), /two VIEWS of the same calls/);
+  assert.match(reading({ sameAgent: 5, otherAgent: 1, none: 0 }), /No agent is under-credited/);
+  assert.match(reading({ sameAgent: 0, otherAgent: 0, none: 7 }), /genuinely separate/);
+  assert.match(reading({ sameAgent: 3, otherAgent: 0, none: 2 }), /^2 of 5 /);
+  assert.match(reading({ sameAgent: 0, otherAgent: 0, none: 0 }), /no CSR-block legs/);
 });
 
 // ── 7. Locating the day's legs ──────────────────────────────────────────────

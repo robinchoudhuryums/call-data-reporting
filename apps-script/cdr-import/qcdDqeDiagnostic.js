@@ -96,10 +96,22 @@ function qddAnalyzeDay_(grid, ctx) {
     detail: [],                   // QCD-counted, DQE-missed legs
     detailTruncated: 0,
     qcdAlsoDqe: 0,               // CSR-block legs DQE counts too (the agreeing set)
+    // PARENT JOIN (the 2026-09-16 finding): the two sides turned out to be
+    // DISJOINT leg sets -- 0 of 414 legs in both -- so "which calls are
+    // missing" is the wrong question until we know whether a CSR-block leg
+    // and a DQE-counted leg belong to the SAME CALL. A CDR root is a leg
+    // tree, so legs of one call share a parent key.
+    parentJoin: { sameAgent: 0, otherAgent: 0, none: 0 },
+    orphanSample: [],            // CSR-block legs whose call has no DQE leg at all
     reasons: {},                  // reason -> count
     dqeOnlyByQueue: {},           // queue name -> count (DQE counted, QCD block did not)
     dqeAnsweredAllAgents: 0
   };
+
+  // agent -> { parentKey: true } for DQE-counted legs, plus the any-agent union.
+  const dqeParentsByAgent = {};
+  const dqeParentsAny = {};
+  const qcdLegs = [];          // every CSR-block leg: { agent, parentKey, detail }
 
   const bump = function (name) {
     if (!out.byAgent[name]) {
@@ -183,9 +195,20 @@ function qddAnalyzeDay_(grid, ctx) {
     const dqeReason   = gateReason || (answered ? '' : 'not-flagged-answered');
     const key = canonical || calleeRaw;
 
+    // A leg's CALL identity: its parent's id, or its own when it IS the parent
+    // (the build excludes a literal 'N/A' parent the same way -- REP-4).
+    const parentRaw = String(row[DQE_C.PARENT_CALL]).trim();
+    const parentKey = (parentRaw && parentRaw !== 'N/A')
+      ? parentRaw : String(row[DQE_C.CALL_ID]).trim();
+
     if (dqeCountsIt) {
       out.dqeAnsweredAllAgents++;
       bump(key).dqeAnswered++;
+      if (parentKey) {
+        if (!dqeParentsByAgent[key]) dqeParentsByAgent[key] = {};
+        dqeParentsByAgent[key][parentKey] = true;
+        dqeParentsAny[parentKey] = true;
+      }
     }
 
     if (qcdRow) {
@@ -194,10 +217,11 @@ function qddAnalyzeDay_(grid, ctx) {
       a['q' + qcdRow]++;
       a.qTotal++;
       if (dqeCountsIt) out.qcdAlsoDqe++;
+      let detailRow = null;
       if (!dqeCountsIt) {
         out.reasons[dqeReason] = (out.reasons[dqeReason] || 0) + 1;
         if (out.detail.length < QDD_DETAIL_CAP_) {
-          out.detail.push({
+          detailRow = {
             sheetRow: i + 2,              // +1 header, +1 to 1-index
             qcdRow: qcdRow,
             agent: key,
@@ -210,18 +234,45 @@ function qddAnalyzeDay_(grid, ctx) {
             start: String(row[2]).trim(),
             end: String(row[4]).trim(),
             answeredFlag: String(row[DQE_C.ANSWERED]).trim(),
-            reason: dqeReason
-          });
+            reason: dqeReason,
+            sibling: ''
+          };
+          out.detail.push(detailRow);
         } else {
           out.detailTruncated++;
         }
       }
+      qcdLegs.push({ agent: key, parentKey: parentKey, detail: detailRow });
     } else if (dqeCountsIt && ctx.csrTeamSet.has(calleeLc)) {
       // The mirror image: a CSR-roster agent's answered queue leg that the CSR
       // block does NOT count. This is the term that pushes the table UP.
       const q = queueName || '(unknown)';
       out.dqeOnlyByQueue[q] = (out.dqeOnlyByQueue[q] || 0) + 1;
     }
+  }
+
+  // ── The parent join ───────────────────────────────────────────────────────
+  // For each CSR-block leg, does the CALL it belongs to also carry a leg the
+  // DQE build counted? `sameAgent` means this agent was credited for this call
+  // on its queue-delivered leg -- the CSR-block leg is a SECOND VIEW of a call
+  // already in their numbers, not a missing one. `otherAgent` means the call is
+  // in the dept's numbers under someone else. `none` means neither, and only
+  // `none` can be an under-credited call.
+  for (let n = 0; n < qcdLegs.length; n++) {
+    const leg = qcdLegs[n];
+    let cls;
+    if (leg.parentKey && dqeParentsByAgent[leg.agent] && dqeParentsByAgent[leg.agent][leg.parentKey]) {
+      cls = 'sameAgent';
+    } else if (leg.parentKey && dqeParentsAny[leg.parentKey]) {
+      cls = 'otherAgent';
+    } else {
+      cls = 'none';
+      if (out.orphanSample.length < 25) {
+        out.orphanSample.push({ agent: leg.agent, parentKey: leg.parentKey });
+      }
+    }
+    out.parentJoin[cls]++;
+    if (leg.detail) leg.detail.sibling = cls;
   }
 
   return out;
@@ -513,7 +564,8 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
     : ('ok — mirror reconciles with calcQcdReport and the stored DQE rows. '
         + 'CSR block answered=' + (res.qcdD[35] + res.qcdD[36] + res.qcdD[37])
         + ' (35/36/37 = ' + res.qcdD[35] + '/' + res.qcdD[36] + '/' + res.qcdD[37] + '); '
-        + dept + '-roster DQE answered=' + deptDqe + '.');
+        + dept + '-roster DQE answered=' + deptDqe + '. '
+        + qddParentJoinReading_(res.parentJoin));
 
   const report = {
     date: dateIso, dept: dept, rows: res.rows, verdict: verdict, source: src.source,
@@ -522,6 +574,7 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
     deptQcd: deptQcd, deptDqe: deptDqe, deptStored: deptStored,
     reasons: res.reasons, dqeOnlyByQueue: res.dqeOnlyByQueue,
     qcdAlsoDqe: res.qcdAlsoDqe, dqeAnsweredAllAgents: res.dqeAnsweredAllAgents,
+    parentJoin: res.parentJoin, orphanSample: res.orphanSample,
     detail: res.detail, detailTruncated: res.detailTruncated,
     agents: rows, tabName: 'QCD-DQE Diagnostic'
   };
@@ -547,11 +600,42 @@ function qddLogReport_(rep) {
   Logger.log('Legs the CSR block counted that DQE does NOT, by reason: %s', JSON.stringify(rep.reasons));
   Logger.log('Legs DQE counted for csr_team agents that the CSR block does NOT, by queue: %s',
     JSON.stringify(rep.dqeOnlyByQueue));
+  Logger.log('PARENT JOIN -- of the %s CSR-block legs, the CALL they belong to also has a '
+    + 'DQE-counted leg for: the SAME agent=%s, a DIFFERENT agent=%s, NOBODY=%s. %s',
+    rep.parentJoin.sameAgent + rep.parentJoin.otherAgent + rep.parentJoin.none,
+    rep.parentJoin.sameAgent, rep.parentJoin.otherAgent, rep.parentJoin.none,
+    qddParentJoinReading_(rep.parentJoin));
+  if (rep.orphanSample.length) {
+    Logger.log('Sample of calls with NO DQE leg at all (these, and only these, can be '
+      + 'under-credited): %s', JSON.stringify(rep.orphanSample));
+  }
+}
+
+/**
+ * Turn the parent join into the sentence an operator should act on. The whole
+ * point of the join is that a leg count difference and an under-credited AGENT
+ * are different findings, and only `none` is the second one.
+ */
+function qddParentJoinReading_(j) {
+  const total = j.sameAgent + j.otherAgent + j.none;
+  if (!total) return 'no CSR-block legs to join.';
+  if (j.none === 0) {
+    return 'EVERY CSR-block leg belongs to a call DQE already counted -- the two figures '
+      + 'are two VIEWS of the same calls (different legs of one call tree), not one set '
+      + 'missing the other\'s calls. No agent is under-credited by this gap.';
+  }
+  if (j.none === total) {
+    return 'NO CSR-block leg belongs to a call DQE counted -- these are genuinely separate '
+      + 'calls the per-agent numbers never see. This IS under-crediting; drill the sample.';
+  }
+  return j.none + ' of ' + total + ' CSR-block legs belong to a call with NO DQE leg -- '
+    + 'those are the only candidates for under-crediting; the rest are a second view of '
+    + 'calls already counted.';
 }
 
 /** Writes the detail tab. The ONLY sheet this tool touches; created + cleared here. */
 function qddWriteReportTab_(ss, rep) {
-  const WIDTH = 13;
+  const WIDTH = 14;
   let sheet = ss.getSheetByName(rep.tabName);
   if (!sheet) sheet = ss.insertSheet(rep.tabName);
   else sheet.clear();
@@ -584,6 +668,15 @@ function qddWriteReportTab_(ss, rep) {
   out.push(pad([]));
   out.push(pad(['CSR-block answered legs DQE also counts', rep.qcdAlsoDqe,
     'of', rep.qcdD[35] + rep.qcdD[36] + rep.qcdD[37]]));
+  out.push(pad(['PARENT JOIN -- does the CSR-block leg belong to a call DQE already counted?']));
+  out.push(pad(['  same agent (already in this agent\'s numbers)', rep.parentJoin.sameAgent]));
+  out.push(pad(['  a different agent (in the dept\'s numbers, credited elsewhere)', rep.parentJoin.otherAgent]));
+  out.push(pad(['  NOBODY -- no DQE leg on this call at all', rep.parentJoin.none]));
+  out.push(pad(['  reading', qddParentJoinReading_(rep.parentJoin)]));
+  rep.orphanSample.forEach(function (o) {
+    out.push(pad(['  no-DQE-leg sample', o.agent, o.parentKey]));
+  });
+  out.push(pad([]));
   out.push(pad(['WHY THE CSR BLOCK COUNTED A LEG DQE DOES NOT']));
   Object.keys(rep.reasons).sort().forEach(function (k) { out.push(pad(['  ' + k, rep.reasons[k]])); });
   if (!Object.keys(rep.reasons).length) out.push(pad(['  (none — every CSR-block leg is also a DQE answered leg)']));
@@ -607,10 +700,11 @@ function qddWriteReportTab_(ss, rep) {
     + (rep.detailTruncated ? ('  (+' + rep.detailTruncated + ' more, capped)') : '')]));
   out.push(pad(['Call_Legs row', 'QCD row', 'Agent (callee)', 'Raw callee', 'Caller',
     'Caller name', 'Caller-ID (col W)', 'Direction', 'Status', 'Start', 'End',
-    'Answered flag', 'DQE gate that dropped it']));
+    'Answered flag', 'DQE gate that dropped it', 'Same call already counted?']));
   rep.detail.forEach(function (d) {
     out.push(pad([d.sheetRow, d.qcdRow, d.agent, d.rawCallee, d.caller, d.callerName,
-      d.callerId, d.direction, d.status, d.start, d.end, d.answeredFlag, d.reason]));
+      d.callerId, d.direction, d.status, d.start, d.end, d.answeredFlag, d.reason,
+      d.sibling]));
   });
 
   sheet.getRange(1, 1, out.length, WIDTH).setValues(out);
