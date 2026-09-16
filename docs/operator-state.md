@@ -2017,3 +2017,48 @@ When something looks wrong, before assuming a code bug, check:
       `(external number)`, which is also how the external leg is identified);
       nothing from it is echoed. Both queries egress-metered under
       `outbound-instant`. Pinned by `tests/unit/outbound-report.test.js`.
+
+66. **The QCD-vs-DQE reconciliation diagnostic (`diagnoseQcdVsDqe`).**
+    Read-only, editor- or menu-run from **cdr-import** (CDR Tools → "QCD vs
+    DQE diagnostic (pick date)…"), file `apps-script/cdr-import/qcdDqeDiagnostic.js`.
+    - **The question it answers.** A dept's QCD "Queue Calls" answered and the
+      dashboard's per-agent answered sum are computed from the SAME raw legs
+      and keyed on the SAME person (the callee), yet they differ — for CSR on
+      2026-09-14, 414 (Call Menu 369 + Misc 9 + Internal 36) against a 380
+      CSR-roster subtotal. The whole gap is *which legs each side admits*, and
+      this tool classifies every leg against both rule sets and names, per leg,
+      the gate that decided it. Background: docs/known-issues.md "CSR Queue
+      Calls vs the per-agent answered sum".
+    - **Run it on a date whose `Call_Legs_*` tab still exists** (~14-day
+      retention). Blank date = the most recent one. Second prompt is the
+      dashboard dept column to cross-tab against (default CSR).
+    - **Read the VERDICT line first.** The tool is a fifth hand-mirror of
+      `calcQcdReport`, which is this repo's recurring defect class, so it
+      reconciles itself before reporting: its per-leg row 35/36/37 col-D tally
+      must equal the real `calcQcdReport` run on the same grid, AND its
+      per-agent DQE recomputation must equal the already-written
+      `DQE Historical Data` rows for that date. Either check failing yields
+      **INCONCLUSIVE — the gap analysis below it is then meaningless and the
+      mirror is what needs fixing, not the pipeline.**
+    - **What the report shows** (execution log + a `QCD-DQE Diagnostic` tab it
+      creates in the workbook it was run from — the only sheet it writes;
+      it sets no Script Properties and touches no data sheet): the two
+      reconciliations; per-agent QCD Call Menu / Misc / Internal against DQE
+      answered, recomputed and stored; a tally of which DQE gate dropped each
+      CSR-block leg (`no-queue-token`, `callforking-callee`, `no-agent-name`,
+      `excluded-agent`, `outside-dqe-window`, `not-flagged-answered`); the
+      mirror-image count of DQE-answered legs the CSR block does not count,
+      by queue; and up to 500 rows of leg detail with the deciding fields
+      (caller, caller-ID col W, direction, status, start/end).
+    - **`no-queue-token` is the finding to expect and the one that matters.**
+      The DQE build admits a leg only if col W carries an `A_Q_*` /
+      `Backup CSR` token, or CALLER reads `CallQueue (ext)` (the R18e
+      fallback, which this tool applies too). An internal transfer's caller is
+      the transferring party, so those legs are invisible to every per-agent
+      surface while QCD counts them. Whether they SHOULD be credited is an
+      owner ruling, not a bug on its face — and changing the gate moves every
+      dept's numbers, cannot be backfilled past the `Call_Legs` window, and is
+      an INV-16 two-file edit plus the dataFilters + DQEdrilldown mirrors.
+    - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js` (one shared fixture
+      drives the real `calcQcdReport` and the mirror; no expected numbers are
+      hardcoded).

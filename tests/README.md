@@ -242,6 +242,17 @@ tests/
                               projects in separate harnesses; + the row-34
                               total-row refusal and the previewRow34Overlap
                               probe pinned against the pipeline's own cells),
+                              qcd-dqe-diagnostic (the QCD-vs-DQE
+                              reconciliation tool: the SAME one-fixture
+                              discipline -- the real calcQcdReport and the
+                              tool's mirror must agree on rows 35/36/37
+                              col D -- plus source pins on the two pieces
+                              copied out of buildDQEHistoricalData, the
+                              gate-attribution order (the queue gate is
+                              named ahead of the window gate, or an
+                              operator is sent to the wrong place), and
+                              that every CSR-block leg is attributed
+                              exactly once),
                               escalations-snapshot (the E2 outage cache),
                               coaching (gates + the F-e delivery: diff/txn/
                               email gating/race-safe close),
