@@ -984,3 +984,67 @@ test('6c: the outbound vetting gate and its menu item are released TOGETHER', fu
       + 'Drop data-admin-only + style="display:none;" from the button.');
   }
 });
+
+// R49 (owner ruling 2026-09-16): the CSR queue family's work window floors at
+// 6:00 AM PST, half an hour before INV-06's. That makes the floor a THIRD
+// member of the INV-06 pin family, with three copies that must agree:
+//   - DQE_EARLY_WINDOW_START / DQE_EARLY_QUEUES  (the build, source of truth)
+//   - DQE_DD_EARLY_WINDOW_START / DQE_DD_EARLY_QUEUES  (DQEdrilldown's mirror)
+//   - DASHBOARD_EARLY_WINDOW  (Config.gs display strings, both zones)
+// The queue LIST matters as much as the number: a queue missing from one copy
+// makes that surface disagree with the build for exactly the half hour the
+// change exists to capture -- and only for one queue, which is the hardest
+// kind of drift to notice.
+test('S1/INV-06 (R49): the CSR-family early floor and its queue list agree across all three copies', function () {
+  const build = read('apps-script/cdr-import/buildDQEHistoricalData.js');
+  const pipe  = pipelineWindow_();
+
+  const earlyExpr = /const DQE_EARLY_WINDOW_START\s*=\s*([^;]+);/.exec(build);
+  assert.ok(earlyExpr, 'DQE_EARLY_WINDOW_START not found -- update this pin');
+  const early = windowSecs_(earlyExpr[1], 'DQE_EARLY_WINDOW_START');
+  assert.ok(early < pipe.start,
+    'the early floor must be EARLIER than the standard one, else it is not a widening');
+  assert.equal(pipe.start - early, 30 * 60,
+    'the owner ruled 8:00 AM CST: exactly one half-hour before the standard floor');
+
+  // Reads a string-array literal whether it is bound with `=` (the two
+  // pipeline copies) or is an object KEY (`queues:` in the frozen dashboard
+  // object), and whether or not it is wrapped in Object.freeze.
+  const qList = function (src, name) {
+    const bind = name.slice(-1) === ':' ? name : name + '\\s*=';
+    const m = new RegExp(bind + '\\s*(?:Object\\.freeze\\(\\s*)?\\[([^\\]]*)\\]').exec(src);
+    assert.ok(m, name + ' not found / reshaped -- update this pin');
+    return m[1].split(',').map(function (s) { return s.trim().replace(/^["']|["']$/g, ''); })
+               .filter(Boolean).sort();
+  };
+  const buildQs = qList(build, 'DQE_EARLY_QUEUES');
+  assert.ok(buildQs.length, 'DQE_EARLY_QUEUES is empty -- the change would be a no-op');
+
+  // The build's own CSR_QUEUES is a DIFFERENT list with a different job (CSR
+  // Avg Abd Wait). Pinning them APART stops a future "tidy-up" merging them,
+  // which would silently move a stored duration on every row.
+  const csrQs = qList(build, 'DQE_CSR_QUEUES');
+  assert.notDeepEqual(buildQs, csrQs,
+    'DQE_EARLY_QUEUES and DQE_CSR_QUEUES are deliberately different lists');
+
+  const dd = read('apps-script/cdr-report/DQEdrilldown.js');
+  const ddExpr = /var DQE_DD_EARLY_WINDOW_START\s*=\s*([^;]+);/.exec(dd);
+  assert.ok(ddExpr, 'DQE_DD_EARLY_WINDOW_START not found in DQEdrilldown.js -- update this pin');
+  assert.equal(windowSecs_(ddExpr[1], 'DQE_DD_EARLY_WINDOW_START'), early,
+    'the drill-down early floor drifted from the build');
+  assert.deepEqual(qList(dd, 'DQE_DD_EARLY_QUEUES'), buildQs,
+    'the drill-down early-queue LIST drifted from the build');
+
+  const blk = /const DASHBOARD_EARLY_WINDOW = Object\.freeze\(\{([\s\S]*?)\}\);/.exec(configGs);
+  assert.ok(blk, 'DASHBOARD_EARLY_WINDOW not found / reshaped -- update this pin');
+  const ampmSecs = function (h, m, ap) { let hh = (+h) % 12; if (ap === 'PM') hh += 12; return hh * 3600 + (+m) * 60; };
+  const disp  = /pst:\s*'(\d{1,2}):(\d{2}) (AM|PM) [^']*?(\d{1,2}):(\d{2}) (PM|AM) PST'/.exec(blk[1]);
+  const dispC = /cst:\s*'(\d{1,2}):(\d{2}) (AM|PM) [^']*?(\d{1,2}):(\d{2}) (PM|AM) CST'/.exec(blk[1]);
+  assert.ok(disp && dispC, 'DASHBOARD_EARLY_WINDOW.pst/.cst not found / reshaped');
+  assert.equal(ampmSecs(disp[1], disp[2], disp[3]), early, 'early display START (PST) != DQE_EARLY_WINDOW_START');
+  assert.equal(ampmSecs(disp[4], disp[5], disp[6]), pipe.end, 'early display END (PST) != DQE_WINDOW_END');
+  assert.equal(ampmSecs(dispC[1], dispC[2], dispC[3]), early + pipe.toCst, 'early display START (CST) drifted');
+  assert.equal(ampmSecs(dispC[4], dispC[5], dispC[6]), pipe.end + pipe.toCst, 'early display END (CST) drifted');
+  assert.deepEqual(qList(blk[1], 'queues:'), buildQs,
+    'the dashboard early-queue LIST drifted from the build');
+});

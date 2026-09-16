@@ -627,3 +627,37 @@ test('L3: CompanyOverview routes all three accumulation passes through queueSpli
   assert.match(src, /pRows = queueSplitNarrowedCopy_\(pRows, d\)\.rows/,
     'the periods/90-day-chart pass narrows per dept');
 });
+
+// -- R49: the early CSR-family floor flows into the split ---------------------
+// The split is computed FROM windowLegs, so it inherits the per-queue floor by
+// construction. Pinned anyway: if a future refactor gives the split its own
+// window it would stop summing back to the rollup -- silently, as a wrong
+// number rather than an error, which is the whole failure mode AI exists under.
+
+test('R49: an early CSR-family leg appears in the split AND still sums to the rollup', function () {
+  const grid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    // 6:10 AM PST -- inside the CSR family's floor, outside everyone else's.
+    rawRow({ callId: 'PE', legId: 0, start: '03/09/2026 6:10:00', talk: '0:01:00',
+             calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'QE', legId: 0, start: '03/09/2026 6:10:00', caller: 'CallQueue(103)',
+             calleeName: 'Anna', parentCall: 'PE', callerId: 'A_Q_CSR', answered: true }),
+    // Same instant on a NON-family queue -- still out, in the split as in the rollup.
+    rawRow({ callId: 'PS', legId: 0, start: '03/09/2026 6:10:00', talk: '0:04:00',
+             calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'QS', legId: 0, start: '03/09/2026 6:10:00', caller: 'CallQueue(104)',
+             calleeName: 'Anna', parentCall: 'PS', callerId: 'A_Q_Sales', answered: true }),
+  ]);
+  const row = annaRow(build(grid));
+  const s = split(row);
+  assert.equal(s.A_Q_CSR.r, 2, 'the early CSR leg is in the split');
+  assert.equal(s.A_Q_CSR.a, 2);
+  assert.equal(s.A_Q_Sales, undefined, 'the non-family queue contributes nothing at 6:10');
+  // The sum-back property, which is what actually protects the rollup.
+  const sumR = Object.keys(s).reduce(function (n, k) { return n + s[k].r; }, 0);
+  const sumA = Object.keys(s).reduce(function (n, k) { return n + s[k].a; }, 0);
+  assert.equal(sumR, row[5], 'split rung sums to F');
+  assert.equal(sumA, row[7], 'split answered sums to H');
+});

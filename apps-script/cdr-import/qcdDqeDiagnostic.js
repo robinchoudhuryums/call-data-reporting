@@ -979,7 +979,14 @@ function qddCensusScanGrid_(grid, ctx) {
     // WHICH queue it was -- and naming the queue is the whole point, since the
     // fix is adding it to a config list. Measured 2026-09-16: the first run
     // found 138 lost legs and could not say whose they were.
-    lostByExt: {},           // ext -> { legs, answered, missed, agents, buckets }
+    // `counted` is the half that matters: a leg whose queue name was lost but
+    // whose CALLEE is a pseudo-agent on DQE_EXCLUDED_AGENTS (or CallForking, or
+    // nameless) would have been dropped by the NEXT gate anyway, so losing the
+    // queue name cost nothing. Measured 2026-09-16: all 146 legs of the first
+    // run's lone finding were exactly that, and reporting them as a loss
+    // blocked a window change for a day.
+    lostByExt: {},           // ext -> { legs, counted, answered, missed, agents, buckets }
+    lostCounted: 0,          // findings that WOULD have counted -- the blocking number
     droppedAgent: 0,         // gate passed, but no usable agent name
     droppedExcluded: 0,      // DQE_EXCLUDED_AGENTS
     droppedForking: 0,
@@ -1058,11 +1065,23 @@ function qddCensusScanGrid_(grid, ctx) {
         u.samples.push(callerIdRaw);
       }
       if (lostExt) {
+        // Would this leg have COUNTED if the queue name had resolved? Run the
+        // gates the build applies after the queue check, in its order. Only a
+        // leg that survives them is a real loss; the rest are dropped either
+        // way and must not read as one.
+        const calleeK = String(row[DQE_C.CALLEE]).trim();
+        const who0    = ctx.canonicalize(String(row[DQE_C.CALLEE_NAME]).trim());
+        const wouldCount = !/^CallForking/i.test(calleeK)
+          && !!who0 && who0 !== 'N/A'
+          && ctx.excludedAgents.indexOf(who0) === -1;
+        if (wouldCount) out.lostCounted++;
         if (!out.lostByExt[lostExt]) {
-          out.lostByExt[lostExt] = { legs: 0, answered: 0, missed: 0, agents: [], buckets: {} };
+          out.lostByExt[lostExt] = { legs: 0, counted: 0, answered: 0, missed: 0,
+                                     agents: [], buckets: {} };
         }
         const e = out.lostByExt[lostExt];
         e.legs++;
+        if (wouldCount) e.counted++;
         if (String(row[DQE_C.ANSWERED]).trim() === 'Answered') e.answered++;
         if (String(row[DQE_C.MISSED]).trim() === 'Missed') e.missed++;
         e.buckets[bucket] = (e.buckets[bucket] || 0) + 1;
@@ -1106,6 +1125,7 @@ function qddCensusMerge_(acc, one) {
   acc.droppedExcluded += one.droppedExcluded;
   acc.droppedForking += one.droppedForking;
   acc.unparsedStart += one.unparsedStart;
+  acc.lostCounted += one.lostCounted;
   Object.keys(one.byQueue).forEach(function (q) {
     if (!acc.byQueue[q]) {
       acc.byQueue[q] = {};
@@ -1120,10 +1140,12 @@ function qddCensusMerge_(acc, one) {
   Object.keys(one.lostByExt).forEach(function (ext) {
     const src = one.lostByExt[ext];
     if (!acc.lostByExt[ext]) {
-      acc.lostByExt[ext] = { legs: 0, answered: 0, missed: 0, agents: [], buckets: {} };
+      acc.lostByExt[ext] = { legs: 0, counted: 0, answered: 0, missed: 0,
+                             agents: [], buckets: {} };
     }
     const dst = acc.lostByExt[ext];
-    dst.legs += src.legs; dst.answered += src.answered; dst.missed += src.missed;
+    dst.legs += src.legs; dst.counted += src.counted;
+    dst.answered += src.answered; dst.missed += src.missed;
     Object.keys(src.buckets).forEach(function (b) {
       dst.buckets[b] = (dst.buckets[b] || 0) + src.buckets[b];
     });
@@ -1225,7 +1247,8 @@ function probeWorkWindowEdges(opts) {
   const canonicalize = qddMakeCanonicalizer_(loadRosterCanonicalNames_(targetSS.getSheets()[0]));
   const ctx = { canonicalize: canonicalize, excludedAgents: DQE_EXCLUDED_AGENTS };
 
-  const acc = { rows: 0, byQueue: {}, unrecognized: {}, lostByExt: {}, droppedAgent: 0,
+  const acc = { rows: 0, byQueue: {}, unrecognized: {}, lostByExt: {}, lostCounted: 0,
+                droppedAgent: 0,
                 droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
   const scanned = [];
   const began = Date.now();
@@ -1245,6 +1268,7 @@ function probeWorkWindowEdges(opts) {
     dates: scanned, datesAvailable: found.length, partial: partial,
     rows: acc.rows, byQueue: acc.byQueue, unrecognized: acc.unrecognized,
     lostByExt: acc.lostByExt,
+    lostCounted: acc.lostCounted,
     droppedAgent: acc.droppedAgent, droppedExcluded: acc.droppedExcluded,
     droppedForking: acc.droppedForking, unparsedStart: acc.unparsedStart,
     afterHours: qddAfterHoursSize_(targetSS, scanned),
@@ -1291,7 +1315,7 @@ function qddCensusLog_(rep) {
     if (!u.legs) return;
     lost += u.legs;
     Logger.log('  QUEUE NAME LOST -- %s leg(s) in %s, shape %s. These reached an agent '
-      + 'THROUGH a queue and the build cannot tell which, so it drops them. Caller-ID '
+      + 'THROUGH a queue and the build cannot tell which. Caller-ID '
       + 'samples: %s', u.legs, u.bucket, u.shape, JSON.stringify(u.samples.map(qddLogSafe_)));
   });
   const exts = Object.keys(rep.lostByExt).sort(function (a, b) {
@@ -1299,16 +1323,33 @@ function qddCensusLog_(rep) {
   });
   exts.forEach(function (ext) {
     const e = rep.lostByExt[ext];
-    Logger.log('    -> queue EXTENSION %s: %s leg(s), %s answered / %s missed, buckets %s. '
-      + 'Agents who took them: %s. LOOK THIS EXTENSION UP in the phone system -- it names '
-      + 'the queue, and adding that name where the config expects it is the fix.',
-      ext, e.legs, e.answered, e.missed, JSON.stringify(e.buckets),
-      JSON.stringify(e.agents));
+    Logger.log('    -> queue EXTENSION %s: %s leg(s), of which %s WOULD HAVE COUNTED; '
+      + '%s answered / %s missed, buckets %s. Agents who took them: %s.%s',
+      ext, e.legs, e.counted, e.answered, e.missed, JSON.stringify(e.buckets),
+      JSON.stringify(e.agents),
+      e.counted
+        ? ' LOOK THIS EXTENSION UP in the phone system -- it names the queue, and adding '
+          + 'that name where the config expects it is the fix.'
+        : ' No action: every one of these legs goes to a pseudo-agent the build excludes '
+          + 'anyway (DQE_EXCLUDED_AGENTS / CallForking / no name), so the lost queue name '
+          + 'costs no agent any credit.');
   });
+  // The BLOCKING number is `lostCounted`, never `lost`. A lost queue name on a
+  // leg the next gate drops anyway is not a loss, and treating it as one is how
+  // this census blocked a window change over 146 legs that were never counted.
   if (!lost) {
     Logger.log('  QUEUE NAME LOST: none, in any bucket -- every queue-delivered leg resolved '
       + 'to a queue name, so the queue-name list used by a window change is COMPLETE for '
       + 'these dates.');
+  } else if (!rep.lostCounted) {
+    Logger.log('  VERDICT: %s leg(s) lost their queue name but NONE would have counted -- '
+      + 'every one goes to an excluded pseudo-agent, a CallForking leg, or no name at all. '
+      + 'The queue-name list used by a window change is COMPLETE for these dates.', lost);
+  } else {
+    Logger.log('  VERDICT: %s of %s lost leg(s) WOULD HAVE COUNTED -- real per-agent credit '
+      + 'is going missing. Name those extensions before any window change: a CSR-family '
+      + 'queue among them must join the widened set or its early legs stay on the old '
+      + 'window.', rep.lostCounted, lost);
   }
   let nonQueue = 0;
   expected.forEach(function (u) { nonQueue += u.legs; });
@@ -1393,21 +1434,27 @@ function qddCensusWriteTab_(ss, rep) {
     out.push(pad(['The ext inside "CallQueue (ext)" is the only handle left on a queue whose',
       'name the build cannot resolve. Look it up in the phone system: it names the queue,',
       'and adding that name where the config expects it is the fix. The agents column says',
-      'whose numbers are short.']));
-    out.push(pad(['Extension', 'Legs', 'Answered', 'Missed', 'Buckets', 'Agents who took them']));
+      'whose numbers are short. READ "Would have counted" FIRST -- a 0 there means the',
+      'legs go to pseudo-agents the build excludes anyway, so the lost name cost nothing.']));
+    out.push(pad(['Extension', 'Legs', 'Would have counted', 'Answered', 'Missed', 'Buckets',
+      'Agents who took them']));
     Object.keys(rep.lostByExt).sort(function (a, b) {
       return rep.lostByExt[b].legs - rep.lostByExt[a].legs;
     }).forEach(function (ext) {
       const e = rep.lostByExt[ext];
-      out.push(pad([ext, e.legs, e.answered, e.missed, JSON.stringify(e.buckets)]
+      out.push(pad([ext, e.legs, e.counted, e.answered, e.missed, JSON.stringify(e.buckets)]
         .concat(e.agents)));
     });
   }
   out.push(pad([]));
-  out.push(pad(['VERDICT', lostLegs
-    ? lostLegs + ' queue-delivered leg(s) have no resolvable queue name -- resolve these '
-      + 'before widening the window'
-    : 'no queue-delivered leg lost its name -- the queue-name list is COMPLETE for these dates']));
+  out.push(pad(['VERDICT', !lostLegs
+    ? 'no queue-delivered leg lost its name -- the queue-name list is COMPLETE for these dates'
+    : (rep.lostCounted
+        ? rep.lostCounted + ' of ' + lostLegs + ' lost leg(s) WOULD HAVE COUNTED -- real '
+          + 'per-agent credit is missing; name those extensions before widening the window'
+        : lostLegs + ' leg(s) lost their queue name but NONE would have counted (every one '
+          + 'goes to an excluded pseudo-agent / CallForking / no name) -- the queue-name '
+          + 'list is COMPLETE for these dates')]));
   out.push(pad([]));
 
   out.push(pad(['GATE DROPS (legs the DQE build never sees, so no window change can move them)']));

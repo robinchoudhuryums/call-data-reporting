@@ -21,6 +21,12 @@
 // 6:30 AM-3:00 PM PST = 8:30 AM-5:00 PM CST
 var DQE_DD_WINDOW_START = (6 * 60 + 30) * 60;
 var DQE_DD_WINDOW_END   = 15 * 60 * 60;
+// R49: the CSR queue family floors at 6:00 instead (owner ruling 2026-09-16).
+// The build's copies are DQE_EARLY_WINDOW_START / DQE_EARLY_QUEUES; both pairs
+// are pinned equal by cross-file-pins, because this sidebar exists to certify
+// the build's numbers and has contradicted them three times by drifting.
+var DQE_DD_EARLY_WINDOW_START = 6 * 60 * 60;
+var DQE_DD_EARLY_QUEUES = ["A_Q_CSR", "A_Q_Intake", "Backup CSR", "A_Q_Spanish"];
 
 
 // -- Menu installation -------------------------------------------------------
@@ -263,13 +269,18 @@ function getDQEDrilldownRows(params) {
     // matched MID-TOKEN (e.g. UDC_A_Q_Main), so this verification sidebar
     // accepted legs the build rejects -- false "Found N vs Dashboard X ✗"
     // mismatches on exactly the tool meant to certify the numbers.
-    var hasQueue = /(?:^|[^\w&])(?:A_Q_[\w&]+|Backup CSR)/.test(w);
+    // R49: capture the NAME, not just a boolean -- the work-window floor is now
+    // per queue, so the drill has to know WHICH queue delivered the leg or it
+    // contradicts the build on every CSR-family early call.
+    var qM = w.match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)/);
+    var rowQueue = qM ? qM[1] : null;
+    var hasQueue = !!rowQueue;
     // P9/R18e: col W wins when it matches; otherwise recover the
     // mislabeled-queue shape via CALLER "CallQueue (NNN)" resolved through
     // today's ext map -- both conditions must hold, same as the build.
     if (!hasQueue) {
       var cqM = String(row[8]).trim().match(/^CallQueue\s*\((\d+)\)$/i);
-      if (cqM && queueNameByExt[cqM[1]]) hasQueue = true;
+      if (cqM && queueNameByExt[cqM[1]]) { hasQueue = true; rowQueue = queueNameByExt[cqM[1]]; }
     }
     if (!hasQueue) {
       addRejected(rejected, rejectReasons, partial, 'No queue context (col W)');
@@ -317,7 +328,14 @@ function getDQEDrilldownRows(params) {
           'Unparseable start time (build excludes it from windowed metrics)');
         continue;
       }
-      if (startPST !== null && (startPST < DQE_DD_WINDOW_START || startPST >= DQE_DD_WINDOW_END)) {
+      // R49: the FLOOR is per queue, mirroring dqeWindowStartForQueue_ in the
+      // build. Keeping the flat 6:30 here would make the drill report a
+      // CSR-family early leg as a near-miss while the build counted it --
+      // the drift shape this sidebar has already produced three times.
+      var ddFloor = (rowQueue && DQE_DD_EARLY_QUEUES.indexOf(rowQueue) !== -1)
+        ? DQE_DD_EARLY_WINDOW_START
+        : DQE_DD_WINDOW_START;
+      if (startPST !== null && (startPST < ddFloor || startPST >= DQE_DD_WINDOW_END)) {
         // Near-miss: passes everything except time window
         partial._outsideWindow = true;
         nearMisses.push(partial);

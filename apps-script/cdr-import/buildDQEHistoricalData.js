@@ -49,6 +49,43 @@ const DQE_WINDOW_END   = 15 * 60 * 60;
 // (Config.gs), pinned against these two constants by cross-file-pins.
 const DQE_AFTER_HOURS_END = (15 * 60 + 30) * 60;
 
+// R49 (owner ruling 2026-09-16): the CSR queue family is expected on the
+// phones from 8:00 AM CST / 6:00 AM PST -- half an hour before INV-06's floor,
+// which was written for the departments that genuinely start at 8:30. Their
+// early legs were being discarded entirely, so an answered early call earned
+// nothing and an early miss cost nothing: the numbers were simply not about
+// that half hour. The floor is therefore PER QUEUE, not per dept -- several of
+// these agents sit on two rosters, so a dept-level rule would credit them for
+// a queue that is not staffed then. SYMMETRIC by owner ruling: the early half
+// hour counts answered AND missed exactly as the rest of the day does.
+//
+// The list is deliberately its own constant and NOT DQE_CSR_QUEUES, which
+// attributes CSR Avg Abd Wait -- widening that one would move a stored
+// duration on every row. A_Q_Spanish is here because all Spanish-queue members
+// are CSRs (owner), even though it had no early traffic in the census window;
+// the point is that it must not be the queue we silently miss.
+//
+// The EVENING edge is deliberately NOT widened. Those agents are not expected
+// to take a call after 5:00 PM CST, so a symmetric window would penalise a miss
+// that is not theirs, and an answered-only window is a rate nobody can read.
+// Cols AJ/AK already capture the 3:00-3:30 PM PST answers with no missed figure
+// at all -- the exact shape the owner asked for -- so that ask needs a READER,
+// not a window change (Operator State #67).
+const DQE_EARLY_WINDOW_START = 6 * 60 * 60;
+const DQE_EARLY_QUEUES = ["A_Q_CSR", "A_Q_Intake", "Backup CSR", "A_Q_Spanish"];
+
+/**
+ * The work-window FLOOR for one leg, by the queue that delivered it. Every
+ * queue keeps INV-06's 6:30 AM PST start except the CSR family, which starts at
+ * 6:00. A leg with no queue name never reaches here -- the build drops it
+ * earlier -- so the fallback is the standard floor, not the early one.
+ */
+function dqeWindowStartForQueue_(queueName) {
+  return (queueName && DQE_EARLY_QUEUES.indexOf(queueName) !== -1)
+    ? DQE_EARLY_WINDOW_START
+    : DQE_WINDOW_START;
+}
+
 const DQE_TIME_SLOTS = Array.from({ length: 19 }, (_, i) => ({
   start: 6 * 3600 + i * 1800,
   end:   6 * 3600 + i * 1800 + 1800
@@ -753,8 +790,14 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
 
     const queueExts = Array.from(new Set(legs.map(l => l.queueExt).filter(Boolean)));
 
+    // R49: the FLOOR is per queue (dqeWindowStartForQueue_), the ceiling is
+    // not. An agent on both a CSR-family queue and another one gets the early
+    // half hour only for the CSR-family legs, which is the whole reason this
+    // is not a per-dept rule.
     const windowLegs = legs.filter(l =>
-      l.startPST !== null && l.startPST >= DQE_WINDOW_START && l.startPST < DQE_WINDOW_END
+      l.startPST !== null
+      && l.startPST >= dqeWindowStartForQueue_(l.queueName)
+      && l.startPST < DQE_WINDOW_END
     );
     // Batch 3: the after-hours legs are DISJOINT from windowLegs (half-open on
     // both sides), so nothing here can move an in-window figure.
