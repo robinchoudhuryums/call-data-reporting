@@ -668,21 +668,41 @@ test('the census counts rung / missed / answered per queue per bucket', () => {
   assert.equal(out.byQueue['A_Q_Spanish'].early.rung, 0);
 });
 
-test('a leg with no recognisable queue is COUNTED and SAMPLED, never dropped', () => {
-  // The R18e shape and the entire point of the census: a queue that stopped
-  // prepending its name has no queue name left, so silence here would be the
-  // same silence that cost two departments two months of history.
-  const grid = [HEADER,
-    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: '354',
-                 start: '09/14/2026 06:10:00', end: '09/14/2026 06:15:00' }),
-    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: '354',
-                 start: '09/14/2026 06:12:00', end: '09/14/2026 06:15:00' }),
+test('a leg with no queue name is split by whether it is a FINDING', () => {
+  // Measured 2026-09-16: 85% of a day's legs have no queue name simply because
+  // they are not queue deliveries. Reporting that as one "unrecognized" number
+  // produced an alarming 96,683 and buried the signal. Only a leg that reached
+  // an agent THROUGH a queue whose name is unresolvable is a finding.
+  const namer = new Array(MAX_COLS).fill('');
+  namer[10] = '344'; namer[11] = 'A_Q_FieldOps_Power';
+  namer[2] = '09/14/2026 09:00:00'; namer[4] = '09/14/2026 09:01:00';
+  const grid = [HEADER, namer,
+    // R18e exactly: the queue names itself in CALLER, but ext 999 named no queue.
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354',
+                 caller: 'CallQueue (999)', start: '09/14/2026 06:10:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354',
+                 caller: 'CallQueue (999)', start: '09/14/2026 06:12:00' }),
+    // The variant the build's fallback does not cover: a BARE ext that is a
+    // known queue today, so the leg is a queue delivery the build still drops.
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: '344',
+                 start: '09/14/2026 06:13:00' }),
+    // An ordinary internal call. Expected, and no window change can touch it.
+    censusRaw_({ status: '4', type: 'internal', callerId: 'Megan Kapoor,347',
+                 caller: '347', start: '09/14/2026 06:14:00' }),
   ];
   const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
-  assert.equal(out.unrecognized['early'].legs, 2);
-  assert.deepEqual(arr(out.unrecognized['early'].samples), ['354'],
+  assert.equal(out.unrecognized['early|queue-caller-ext-unresolved'].legs, 2);
+  assert.equal(out.unrecognized['early|queue-ext-bare-caller'].legs, 1);
+  assert.equal(out.unrecognized['early|not-a-queue-leg'].legs, 1);
+  assert.deepEqual(arr(out.unrecognized['early|queue-caller-ext-unresolved'].samples), ['354'],
     'duplicate caller-IDs collapse to one sample -- eight copies of one value teaches nothing');
+  assert.deepEqual(arr(out.unrecognized['early|not-a-queue-leg'].samples), [],
+    'a sample of "not a queue leg" is a random person name -- it earns no slot');
+  // The namer row only populates the ext->name map; it carries no queue token
+  // itself, so it lands in the window bucket as not-a-queue-leg and NO leg here
+  // resolves to a queue.
   assert.equal(Object.keys(plain(out.byQueue)).length, 0);
+  assert.equal(out.unrecognized['window|not-a-queue-leg'].legs, 1);
 });
 
 test('the R18e fallback still recovers a queue whose col W lost its name', () => {
@@ -695,7 +715,7 @@ test('the R18e fallback still recovers a queue whose col W lost its name', () =>
   ];
   const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
   assert.equal(out.byQueue['A_Q_FieldOps_Power'].early.rung, 1);
-  assert.equal(out.unrecognized['early'], undefined);
+  assert.equal(out.unrecognized['early|queue-caller-ext-unresolved'], undefined);
 });
 
 test('gate drops are tallied separately, not folded into a queue', () => {
@@ -733,7 +753,8 @@ test('merging days sums the cells and keeps sample variety', () => {
                       window: {rung:0,missed:0,answered:0,talkSec:0},
                       late: {rung:0,missed:0,answered:0,talkSec:0},
                       after: {rung:0,missed:0,answered:0,talkSec:0} } },
-    unrecognized: { early: { legs: 1, samples: [sample] } },
+    unrecognized: { 'early|queue-caller-ext-unresolved':
+      { legs: 1, samples: [sample], bucket: 'early', shape: 'queue-caller-ext-unresolved' } },
   });
   const acc = { rows: 0, byQueue: {}, unrecognized: {}, droppedAgent: 0,
                 droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
@@ -744,8 +765,8 @@ test('merging days sums the cells and keeps sample variety', () => {
   merge(acc, day('A_Q_CSR', 1, '354'));
   assert.equal(acc.byQueue['A_Q_CSR'].early.rung, 6);
   assert.equal(acc.byQueue['A_Q_CSR'].early.talkSec, 15);
-  assert.equal(acc.unrecognized['early'].legs, 3);
-  assert.deepEqual(arr(acc.unrecognized['early'].samples), ['354', '377'],
+  assert.equal(acc.unrecognized['early|queue-caller-ext-unresolved'].legs, 3);
+  assert.deepEqual(arr(acc.unrecognized['early|queue-caller-ext-unresolved'].samples), ['354', '377'],
     'a second day must be able to contribute a NEW caller-ID shape');
   assert.equal(acc.rows, 3);
 });

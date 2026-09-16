@@ -973,7 +973,7 @@ function qddCensusScanGrid_(grid, ctx) {
   const out = {
     rows: body.length,
     byQueue: {},
-    unrecognized: {},        // bucket -> { legs, samples: [caller-ID, ...] }
+    unrecognized: {},        // "<bucket>|<shape>" -> { legs, samples, bucket, shape }
     droppedAgent: 0,         // gate passed, but no usable agent name
     droppedExcluded: 0,      // DQE_EXCLUDED_AGENTS
     droppedForking: 0,
@@ -1014,13 +1014,39 @@ function qddCensusScanGrid_(grid, ctx) {
     }
 
     if (!queueName) {
-      // The R18e shape. No queue name exists to report, so keep the COUNT and a
-      // few raw caller-ID values -- a queue that stopped prepending its name is
-      // recognizable by eye and by nothing else.
-      if (!out.unrecognized[bucket]) out.unrecognized[bucket] = { legs: 0, samples: [] };
-      const u = out.unrecognized[bucket];
+      // A leg with no queue name is USUALLY not a queue leg at all -- an
+      // internal call, an outbound, a direct dial. On 2026-09-16 that was 85%
+      // of the grid, and lumping it under one "unrecognized" heading produced
+      // an alarming number that hid the signal it exists to show. So classify:
+      // only the two shapes where a leg REACHED AN AGENT THROUGH A QUEUE and
+      // the queue name was lost are findings. Everything else is expected.
+      const callerRaw = String(row[DQE_C.CALLER]).trim();
+      const cqForm = callerRaw.match(/^CallQueue\s*\((\d+)\)$/i);
+      let shape;
+      if (cqForm) {
+        // The R18e incident exactly: the queue still identifies itself in
+        // CALLER, but its ext named no queue anywhere today, so the fallback
+        // cannot resolve it and the BUILD drops the leg.
+        shape = 'queue-caller-ext-unresolved';
+      } else if (/^\d+$/.test(callerRaw) && queueNameByExt[callerRaw]) {
+        // A VARIANT of the same loss the build's fallback does not cover: the
+        // caller is a bare extension that IS a known queue today, but the
+        // fallback only fires on the "CallQueue (ext)" spelling.
+        shape = 'queue-ext-bare-caller';
+      } else {
+        shape = 'not-a-queue-leg';
+      }
+      const key = bucket + '|' + shape;
+      if (!out.unrecognized[key]) {
+        out.unrecognized[key] = { legs: 0, samples: [], bucket: bucket, shape: shape };
+      }
+      const u = out.unrecognized[key];
       u.legs++;
-      if (u.samples.length < QDD_CENSUS_SAMPLE_ && u.samples.indexOf(callerIdRaw) === -1) {
+      // Samples only earn their place on the two FINDING shapes -- a sample of
+      // "not a queue leg" is a random person's name.
+      if (shape !== 'not-a-queue-leg'
+          && u.samples.length < QDD_CENSUS_SAMPLE_
+          && u.samples.indexOf(callerIdRaw) === -1) {
         u.samples.push(callerIdRaw);
       }
       continue;
@@ -1067,11 +1093,14 @@ function qddCensusMerge_(acc, one) {
       dst.answered += src.answered; dst.talkSec += src.talkSec;
     });
   });
-  Object.keys(one.unrecognized).forEach(function (b) {
-    if (!acc.unrecognized[b]) acc.unrecognized[b] = { legs: 0, samples: [] };
-    acc.unrecognized[b].legs += one.unrecognized[b].legs;
-    one.unrecognized[b].samples.forEach(function (sm) {
-      const keep = acc.unrecognized[b].samples;
+  Object.keys(one.unrecognized).forEach(function (k) {
+    const src = one.unrecognized[k];
+    if (!acc.unrecognized[k]) {
+      acc.unrecognized[k] = { legs: 0, samples: [], bucket: src.bucket, shape: src.shape };
+    }
+    acc.unrecognized[k].legs += src.legs;
+    src.samples.forEach(function (sm) {
+      const keep = acc.unrecognized[k].samples;
       if (keep.length < QDD_CENSUS_SAMPLE_ && keep.indexOf(sm) === -1) keep.push(sm);
     });
   });
@@ -1214,13 +1243,27 @@ function qddCensusLog_(rep) {
       inWindow === null ? 'n/a' : inWindow.toFixed(2),
       withEarly === null ? 'n/a' : withEarly.toFixed(2));
   });
-  QDD_CENSUS_BUCKETS_.forEach(function (bk) {
-    const u = rep.unrecognized[bk];
-    if (!u || !u.legs) return;
-    Logger.log('  UNRECOGNIZED in %s: %s leg(s) carry no queue token and no CallQueue(ext) '
-      + 'fallback -- the R18e shape. Caller-ID samples: %s', bk, u.legs,
-      JSON.stringify(u.samples.map(qddLogSafe_)));
+  const findings = [], expected = [];
+  Object.keys(rep.unrecognized).forEach(function (k) {
+    (rep.unrecognized[k].shape === 'not-a-queue-leg' ? expected : findings).push(rep.unrecognized[k]);
   });
+  let lost = 0;
+  findings.forEach(function (u) {
+    if (!u.legs) return;
+    lost += u.legs;
+    Logger.log('  QUEUE NAME LOST -- %s leg(s) in %s, shape %s. These reached an agent '
+      + 'THROUGH a queue and the build cannot tell which, so it drops them. Caller-ID '
+      + 'samples: %s', u.legs, u.bucket, u.shape, JSON.stringify(u.samples.map(qddLogSafe_)));
+  });
+  if (!lost) {
+    Logger.log('  QUEUE NAME LOST: none, in any bucket -- every queue-delivered leg resolved '
+      + 'to a queue name, so the queue-name list used by a window change is COMPLETE for '
+      + 'these dates.');
+  }
+  let nonQueue = 0;
+  expected.forEach(function (u) { nonQueue += u.legs; });
+  Logger.log('  (%s leg(s) are not queue deliveries at all -- internal, outbound, direct '
+    + 'dial. Expected, and no window change can touch them.)', nonQueue);
   Logger.log('  gate drops -- CallForking %s, no agent name %s, excluded agent %s, unparsed start %s',
     rep.droppedForking, rep.droppedAgent, rep.droppedExcluded, rep.unparsedStart);
   const ah = rep.afterHours;
@@ -1278,20 +1321,26 @@ function qddCensusWriteTab_(ss, rep) {
   });
   out.push(pad([]));
 
-  out.push(pad(['UNRECOGNIZED LEGS -- no queue token and no CallQueue(ext) fallback']));
-  out.push(pad(['This is the R18e shape: a queue that stops prepending its name to col W has no',
-    'queue name left to report, so it can only be recognised by these caller-ID samples.',
-    'Anything here that belongs to a CSR-family queue must be added to the widened set',
+  out.push(pad(['LEGS WITH NO QUEUE NAME -- split by whether that is a FINDING']));
+  out.push(pad(['A leg with no queue name is usually not a queue leg at all (internal, outbound,',
+    'direct dial) -- expected, and no window change can touch it. Only two shapes are',
+    'findings: a leg that reached an agent THROUGH a queue whose name the build cannot',
+    'resolve. Anything there belonging to a CSR-family queue must join the widened set',
     'BEFORE the window change, or its early legs stay silently on the old window.']));
-  out.push(pad(['Bucket', 'Legs', 'Caller-ID samples']));
-  let anyUnrecognized = false;
-  QDD_CENSUS_BUCKETS_.forEach(function (bk) {
-    const u = rep.unrecognized[bk];
-    if (!u || !u.legs) return;
-    anyUnrecognized = true;
-    out.push(pad([bk, u.legs].concat(u.samples)));
+  out.push(pad(['Shape', 'Bucket', 'Legs', 'Finding?', 'Caller-ID samples']));
+  let lostLegs = 0;
+  Object.keys(rep.unrecognized).sort().forEach(function (k) {
+    const u = rep.unrecognized[k];
+    if (!u.legs) return;
+    const isFinding = u.shape !== 'not-a-queue-leg';
+    if (isFinding) lostLegs += u.legs;
+    out.push(pad([u.shape, u.bucket, u.legs, isFinding ? 'YES -- queue name lost' : 'no -- expected']
+      .concat(u.samples)));
   });
-  if (!anyUnrecognized) out.push(pad(['(none -- every leg resolved to a queue name)']));
+  out.push(pad(['VERDICT', lostLegs
+    ? lostLegs + ' queue-delivered leg(s) have no resolvable queue name -- resolve these '
+      + 'before widening the window'
+    : 'no queue-delivered leg lost its name -- the queue-name list is COMPLETE for these dates']));
   out.push(pad([]));
 
   out.push(pad(['GATE DROPS (legs the DQE build never sees, so no window change can move them)']));
