@@ -257,7 +257,14 @@ tests/
                               agent -- sameAgent / otherAgent / nobody, with
                               the root-leg `N/A` keying pinned, since keying it
                               blank would manufacture an under-crediting
-                              finding out of every root leg),
+                              finding out of every root leg), the orphan
+                              cross-reference (Raw Data identity fields, the
+                              sibling legs on the same call -- a ring tree is a
+                              gate question, no siblings is a dangling
+                              reference -- and that an orphan never lists
+                              ITSELF as its own sibling, which would report a
+                              dangling call as connected), and the log PHI
+                              shaping,
                               escalations-snapshot (the E2 outage cache),
                               coaching (gates + the F-e delivery: diff/txn/
                               email gating/race-safe close),
