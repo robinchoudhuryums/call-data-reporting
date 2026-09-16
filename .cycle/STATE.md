@@ -1,6 +1,51 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **THIS SESSION (2026-09-16): the CSR "Misc" discrepancy is CLOSED, the work
+  window changed, and two Overview/My-Dept control fixes shipped. PRs
+  #319-#327, all merged; branch fast-forwarded onto main, nothing unmerged.**
+  In order:
+  - **The owner's question is ANSWERED: no agent is under-credited.** CSR's
+    QCD "Queue Calls" answered (414 on 2026-09-14) and the per-agent sum (397)
+    differ because 396 of those legs are a SECOND VIEW of calls already
+    counted; the 18 remainder are 12 pre-window + 4 internal-direct + 2
+    in-window non-queue. 396 + 12 + 6 = 414. Corroborated by a per-agent
+    cross-tab (deltas within ±2 for ten of eleven agents). The tool that
+    proved it is `diagnoseQcdVsDqe` (Operator State #66).
+  - **R49 SHIPPED: the CSR queue family's work window floors at 6:00 AM PST**
+    (`A_Q_CSR` / `A_Q_Intake` / `Backup CSR` / `A_Q_Spanish`), per queue, symmetric
+    on answered and missed, evening deliberately untouched. INV-06 carries the
+    contract and the three pinned copies. **NOT retroactive** -- see below.
+  - **The census (Operator State #67) cleared it, but only after correcting
+    ITSELF.** Its first live run reported 146 legs on ext 782 as a loss and
+    held the change for a day; the by-extension section then named the takers
+    as `Sunil Kurian` / `Rajesh Patel`, both on `DQE_EXCLUDED_AGENTS`, so the
+    build drops those legs at the next gate regardless. The census now reports
+    `counted` (would-have-counted) per extension and only THAT blocks. **Read
+    "Would have counted", never the raw leg count.**
+  - **R50 / R51 (Overview + My Department controls).** The Overview Window
+    selector gained 60d + 90d so its options cover the chart's ranges, and
+    picking a window moves the chart (one-way: the reverse would re-fetch the
+    agent table on every trend glance). `companyOverview:v22`->**v23**. The two
+    My Department side panels now list their periods in the same left-to-right
+    order, with their DIFFERENT defaults pinned so a reorder cannot move them.
+  - **`npm run ci:ui` RUNS IN THIS ENVIRONMENT** -- playwright is installed
+    (the owner installed it 2026-09-16). Several earlier blocks in this file
+    say it could not run and that deploy.sh's gate had to be run elsewhere;
+    **that is now stale**. Run the full gate before any dashboard deploy.
+  - **OPERATOR, in order:** (1) `cd apps-script/cdr-import && clasp push -f`;
+    (2) `cd apps-script/cdr-report && clasp push -f` (the INV-16 twin + the
+    drill-down); (3) dashboard `scripts/deploy.sh .` + new version.
+    (4) **Re-run the census** and confirm it now reports `Would have counted:
+    0`. (5) **Backfill R49** -- it is NOT retroactive; a stored DQE row keeps
+    its old numbers until its date is rebuilt (force re-import inside the
+    14-day `Call_Legs_*` window, source re-import first for older dates, #56).
+    Fold it into the same pass as the queue split (#40) and AJ/AK (#60).
+    (6) One optional check that would close the last open thread: confirm no
+    `Agent Alias Overrides` row rewrites `Sunil Kurian` or `Rajesh Patel` to a
+    roster name -- that is the single assumption behind the ext-782 verdict.
+  - **Next code work is unchanged:** the #64/#65 outbound 0-1s investigation
+    (below) and the 6c release gate. Nothing from this session is half-done.
 - **PROBE RUN + DETECTOR FIXES (2026-09-15, block 194).**
   `probeOutboundAnswerQuality` RAN live (2026-08-18..09-14, 66,207
   single-attempt connects) and returned **INCONCLUSIVE — correctly**. The
