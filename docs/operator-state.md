@@ -1947,6 +1947,24 @@ When something looks wrong, before assuming a code bug, check:
       by-attempts split is one of the five measurements — if the in-band
       share climbs with attempts, that is the plan's "a 3rd-attempt connect
       is likelier voicemail" showing up in the data.
+    - **An INCONCLUSIVE run still carries a cross-tab, and it is NOT a
+      measurement.** The first live run refused, so the joint query never ran
+      and the output held two marginal distributions with no way to ask the
+      question that actually decides this (a 31 s ring with 35 s talk is
+      voicemail with high confidence; a 31 s ring with 240 s talk is a human
+      who took a while). A refusal now emits an `exploratory` block cut at the
+      OBSERVED peak — labelled as exploratory, naming which gate refused, and
+      with **no `suggested` block and no `band`**, so nothing in it can be
+      lifted into a Script Property. A refusal that never reached the FWHM
+      edges at all (too few rows, nothing above the floor) still gets NO cut:
+      cutting at nothing is worse than not cutting.
+    - **The talk trough is sought BETWEEN TWO HUMPS, wherever it sits** — not
+      below the mode. The live distribution peaks at 5 s and dips at 20 s with
+      a second hump at 35–40 s, and the first version answered
+      "mode-at-floor", a wrong answer dressed as a refusal. It scores splits
+      by SEPARATION (the shorter of the two humps, minus the dip) so the
+      winner is the split with real mass on both sides rather than the
+      emptiest bucket in the tail.
     - **PHI:** aggregates only. No hash, phone number or call id is selected,
       logged or returned; the repeat check counts GROUPS and never identifies
       one. Both queries are egress-metered under the `outbound-probe` label.
@@ -1954,3 +1972,48 @@ When something looks wrong, before assuming a code bug, check:
       (`PROP_REGISTRY_`). Pinned by `tests/unit/outbound-report.test.js`
       (the two pure detectors gate by gate, the read-only contract, the
       bind order, and the refusal paths).
+
+65. **The instant-connect diagnostic (`probeOutboundInstantConnects`).**
+    Read-only, admin-gated, editor-run. Companion to #64 and it shares that
+    item's `OUTBOUND_PROBE_FROM` / `_TO` window deliberately (it does NOT
+    self-clear them — #64 owns that), so both probes read one window.
+    - **What it chases.** #64's first live run found **40.6% of connected
+      single-attempt outbound calls recording a ring of 0–1 s** — 17,197 at
+      exactly zero, with no NULL rings among them. Nobody answers in under a
+      second, so for four calls in ten `ring_seconds` measures nothing, which
+      caps any ring-based voicemail classifier at ~60% of the population
+      however the threshold is set. Part 2 of the callback plan stays parked
+      until this has an answer.
+    - **Already ruled out, so nobody re-derives it:** the "we measured the
+      agent's leg" hypothesis. `first = extLegs[0]` in
+      `cdr-import/outboundCalls.js` is the first EXTERNAL Outgoing leg, so the
+      ring is start→connected on the leg to the callee by construction. Nor is
+      it multi-attempt: 66,207 of 66,215 connects are single-attempt.
+    - **How it decides.** The `journey` blob stores every leg's own `secs`,
+      `talk` and `hold`, so the external leg's ring is DERIVABLE as
+      `secs − talk − hold` — independently of the CONNECTED timestamp that
+      `ring_seconds` came from. It samples the instant rows AND a control
+      group that provably rang (≥ 17 s), because a derived ring only means
+      something next to what the same derivation produces on calls that did
+      ring.
+    - **Read the verdict literally.** `connected-timestamp` = the stored
+      timestamp is wrong and the ring is RECOVERABLE from data already kept
+      (a capture fix; the classifier gets its full population back).
+      `carrier-instant` = the calls genuinely connect instantly (early media
+      / auto-answer), `ring_seconds` is truthful, and a classifier must
+      EXCLUDE them and disclose the smaller reachable population.
+      **`mixed` is a REFUSAL, not a middling answer** — both causes present,
+      needing opposite fixes, so split the population further before choosing.
+    - **Three supporting cuts**, each killing a different explanation:
+      per-agent concentration (few agents = a device or softphone setting;
+      spread = the trunk — judged against the EVEN-SPREAD baseline, since a
+      top-5 share is meaningless on a six-agent roster, and the actionable
+      list is ranked by RATE while the measure uses VOLUME), per-day rate (a
+      step change on one date = a config change), and the per-bucket talk
+      profile (instant rows that talk like everyone else are real calls being
+      mis-timed, not junk).
+    - **PHI:** aggregates and derived seconds only. The journey blob is
+      PHI-safe at capture (`icBuildJourney_` rewrites any phone-shaped name to
+      `(external number)`, which is also how the external leg is identified);
+      nothing from it is echoed. Both queries egress-metered under
+      `outbound-instant`. Pinned by `tests/unit/outbound-report.test.js`.

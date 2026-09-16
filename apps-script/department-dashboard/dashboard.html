@@ -375,6 +375,14 @@
               <div class="ir-export-menu" id="dept-export-menu" role="menu" style="display:none;">
                 <div class="ir-export-group-label">Agent table</div>
                 <button type="button" role="menuitem" data-action="csv">Download CSV</button>
+                <!-- Owner 2026-09: the same table straight to the clipboard,
+                     for pasting into a sheet instead of downloading a file.
+                     TAB-separated (see deptGridToTsv_) because that is what a
+                     spreadsheet paste splits on -- comma text lands in one
+                     column. Labelled by DESTINATION rather than by format, so
+                     the label does not promise commas it does not send. -->
+                <button type="button" role="menuitem" data-action="copy-table"
+                        title="Copies the table as tab-separated text &mdash; pastes straight into Google Sheets or Excel columns">Copy for spreadsheet</button>
                 <!-- Round-16 (owner): styled EmailKit summary, caller-recipient
                      only (sendDepartmentSummaryEmail). -->
                 <button type="button" role="menuitem" data-action="email">Email me this report</button>

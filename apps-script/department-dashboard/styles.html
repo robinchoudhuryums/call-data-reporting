@@ -2872,11 +2872,23 @@
   #ir-export-btn.open .ir-export-caret { transform: rotate(180deg); }
   /* R16c: labeled groups inside the consolidated dept Export menu
      ("Agent table" / "Insights"). */
+  /* Owner 2026-09: the group labels read as dimmer MENU ITEMS rather than as
+     headings -- same left edge, same transparent background, and muted grey
+     is what a DISABLED item looks like. So they get a tinted band: the accent
+     hue at soft strength, full-bleed inside the menu's 4px padding, which
+     separates "what this group is" from "what you can click" without adding
+     a second type size or an icon. Accent-soft/accent are both theme-aware,
+     so this holds in dark mode and in the alternate palettes. */
   .ir-export-group-label {
     font: 600 9.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--muted); padding: 7px 12px 3px; border-top: 1px solid var(--line);
+    color: var(--accent); padding: 5px 12px; border-top: 1px solid var(--line);
+    background: var(--accent-soft);
+    margin: 4px -4px 2px;   /* full-bleed across the menu's own padding */
+    border-radius: 2px;
   }
-  .ir-export-menu .ir-export-group-label:first-child { border-top: none; padding-top: 5px; }
+  .ir-export-menu .ir-export-group-label:first-child {
+    border-top: none; margin-top: -4px; border-radius: 2px 2px 0 0;
+  }
   .ir-export-menu {
     position: absolute;
     top: calc(100% + 4px);

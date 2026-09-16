@@ -303,6 +303,11 @@ test('S8: every tabular cell writer routes through csvSafeCell_', function () {
   const WRITERS = [
     // csvEscape is a local inside exportTableCsv_ (script-5), not a core fn.
     ['script-5-dept',   /csvEscape = function[\s\S]{0,200}?csvSafeCell_/,     'exportTableCsv_\'s csvEscape must wrap csvSafeCell_'],
+    // Owner 2026-09: the clipboard twin. Its destination is a spreadsheet
+    // PASTE, so the injection rule applies exactly as it does to the .csv --
+    // this is the "CSV or not" clause, and the reason the writer count is
+    // eight rather than seven.
+    ['script-5-dept',   /function deptGridToTsv_[\s\S]{0,400}?csvSafeCell_/, 'deptGridToTsv_ (Copy for spreadsheet)'],
     ['script-8-insights', /function insDownloadCsv_[\s\S]*?csvSafeCell_/,    'insDownloadCsv_'],
     ['script-9-inbound-direct', /function inboundDownloadCsv_[\s\S]*?csvSafeCell_/, 'inboundDownloadCsv_'],
     ['script-9-inbound-direct', /function directCallDownloadCsv_[\s\S]*?csvSafeCell_/, 'directCallDownloadCsv_'],

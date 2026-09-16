@@ -134,7 +134,17 @@ histogram deep enough to be a boundary (at or under half of both shoulders);
 when there is no such trough the probe falls back to the candidate 10 and
 flags `suggestedIsMeasured: false`, so the number cannot later be cited as
 measured. An empty bucket is treated as absence of data, not as the perfect
-trough.
+trough. **The trough is sought between TWO HUMPS wherever it sits** — the
+first version searched only below the mode, and the live distribution's mode
+turned out to BE the low cluster (5 s) with the real boundary at 20 s above
+it, so it answered "mode-at-floor": a wrong answer dressed as a refusal.
+
+**A refusal still emits the joint cut**, labelled `exploratory` and carrying
+no `suggested` block. The original "no band, no second query" rule was
+guarding against manufacturing evidence for an unmeasured number, and that
+property is intact; what it had also done, unintentionally, was leave a
+refused run with no ring×talk cross-tab at all — which is the one view that
+would say whether a multi-band rule is worth building.
 
 ### Step 2: the parameters
 
@@ -422,10 +432,26 @@ what keeps this table from rewarding dialing over connecting.
 
 ### Sequence
 
-1. ✅ **DONE (2026-09-15).** `probeOutboundAnswerQuality()` built. *(No
-   product change — it measures and sets nothing.)* **The run itself is
-   still owed**: it needs live Neon, so it is an operator step (#64), and
-   step 2 cannot start until its verdict is read.
+1. ✅ **DONE (2026-09-15), and RUN (2026-09-15).**
+   `probeOutboundAnswerQuality()` built and run over 2026-08-18..09-14
+   (66,207 single-attempt connects). Verdict: **INCONCLUSIVE, correctly.**
+   What the data actually shows, none of which the plan anticipated:
+   - the voicemail signal is **four spikes** (17 s / 21 s / 27 s / 31 s,
+     ~5–6 s apart — ring-cadence harmonics, i.e. destinations handing to
+     voicemail after a different NUMBER of rings), not one tight spike. FWHM
+     around the tallest holds 7.6%, which is why the share gate refused;
+   - a **hard cliff at 32→33 s** (1,224 → 115). 99.3% of connects ring ≤ 32 s;
+   - **40.6% of connects ring 0–1 s** (17,197 at exactly 0, no NULL rings).
+     The repeat-callee check corroborates: its largest cluster is 3,446
+     callee-groups connecting at 0 s *repeatedly*.
+
+   **Step 1b (2026-09-16): `probeOutboundInstantConnects()`** built to settle
+   that last point — see Operator State #65. **Its run is owed, and step 2
+   cannot start until its verdict is read**, because the 0–1 s population
+   caps any ring-based classifier at ~60% of calls regardless of threshold.
+   If the verdict is `connected-timestamp` the ring is recoverable and the
+   population comes back; if it is `carrier-instant` the ceiling is permanent
+   and the classifier must exclude and disclose those calls.
 2. Set the Part 2 parameters from what the probe shows; ship the classifier
    `off` by default, both paths, one shared pure function.
 3. Flip to `disclose` after eyeballing a window; fix or relabel the

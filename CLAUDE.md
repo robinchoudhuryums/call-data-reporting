@@ -1015,9 +1015,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   quote-escaping -- CSV or not: the IR copy-as-TSV button (E-3) feeds the
   same spreadsheet paste target. ENFORCED (S8):
   `tests/unit/html-include-structure.test.js` pins the routing for all
-  seven current writers (`exportTableCsv_`/`csvEscape`, `insDownloadCsv_`,
-  `inboundDownloadCsv_`, `directCallDownloadCsv_`, `outboundDownloadCsv_`,
-  `qcdAllDeptCsv_`, the E-3 TSV handler).
+  eight current writers (`exportTableCsv_`/`csvEscape`, `deptGridToTsv_`,
+  `insDownloadCsv_`, `inboundDownloadCsv_`, `directCallDownloadCsv_`,
+  `outboundDownloadCsv_`, `qcdAllDeptCsv_`, the E-3 TSV handler).
 - **Chart.js v4 + chartjs-plugin-datalabels needs explicit
   registration.** v4 dropped the auto-register-on-script-tag
   behavior the plugin relied on, and the plugin itself defaults
@@ -2187,13 +2187,25 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   contains at least one floater. INV-53 is the underlying contract; INV-26 is
   the separate `TEAM_AVG_EXCLUDES` path, which composes with the floater gate
   in IR.
-- **My Department CSV export.** The agent table has an "Export ▾" menu
-  (R9-2: the Insights-toolbar dropdown convention replaced the old
-  one-click download icon; the wrap keeps the `#csv-export-btn` id so
-  the hidden-until-data gating is unchanged, and it sits horizontally
-  beside Refresh in `.control-btn-row`) whose "Download CSV" item
-  exports the current view (respecting scope, date range, and sort
-  order) as a client-side CSV download. No server round-trip.
+- **My Department export: ONE grid, two serialisations.** The agent table's
+  "Export ▾" menu (R9-2: the Insights-toolbar dropdown convention replaced the
+  old one-click download icon; the wrap keeps the `#csv-export-btn` id so the
+  hidden-until-data gating is unchanged, and it sits horizontally beside
+  Refresh in `.control-btn-row`) offers **Download CSV** and **Copy for
+  spreadsheet**, both rendering the current view (scope, date range, sort
+  order) client-side with no server round-trip. Both read `deptTableGrid_`,
+  which returns RAW cells plus the combined-view Department column and
+  subtotal rows -- **a new column must be added there, not per format**, or
+  the file and the clipboard drift. The clipboard copy is TAB-separated
+  (`deptGridToTsv_`), because a spreadsheet PASTE splits on tabs and comma
+  text lands in a single column; the downloaded file stays real CSV. Cells go
+  through `csvSafeCell_` in BOTH (the injection rule's "CSV or not" clause --
+  the paste target is a spreadsheet), and the TSV additionally FLATTENS any
+  tab/newline inside a cell, since a paste has no quoting convention to escape
+  into and one stray tab shifts every column after it silently. ENFORCED:
+  `html-include-structure.test.js` pins both writers' `csvSafeCell_` routing,
+  and `drive-subqueue.js` asserts the real clipboard bytes (tab-separated,
+  every row carrying the header's column count, same row set as the CSV).
 - **Draggable / resizable modals.** All modals can be
   repositioned via header drag and resized via a bottom-right
   corner handle. Position and size reset on close so the next
@@ -2312,6 +2324,7 @@ items for anything it flags or doesn't cover.)
 62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap, not the cells holding data; the Health page's `workbook-cells` row (warns at 80%, sheet-only so it renders mid-outage) and CDR Tools -> Workbook Cell Space (audit / preview / apply trim). A named range past the keep bounds REFUSES, and a writer's reach is not derivable from the grid -- read the writers before trimming a new tab
 63. Outbound report RELEASE runbook (6c) -- backfill, `runOutboundVettingCheck`, release ONLY on a CLEAN `ok parity` (INCONCLUSIVE is not a pass), then flip `OUTBOUND_VETTING_GATE_` and un-hide the menu item in ONE commit (cross-file-pins fails on either half alone) and walk S46. Per-dept cards stay ruled out
 64. Outbound answer quality -- `probeOutboundAnswerQuality`, the MEASURE-first step before any voicemail threshold: is the connected-call ring distribution bimodal? Read-only, sets nothing, SINGLE-ATTEMPT only (ring and connect describe different legs on a multi-attempt call), two independent estimates that must agree, and INCONCLUSIVE is a result meaning "no threshold is defensible" -- never set `OUTBOUND_VM_RING_SEC` off one
+65. Outbound INSTANT connects -- `probeOutboundInstantConnects`, the #64 follow-up: 40.6% of connected single-attempt calls ring 0-1s, capping any ring-based classifier at ~60% of calls. Cross-checks the stored ring against one DERIVED from the journey (`secs - talk - hold` on the external leg) plus a control group that provably rang, to separate a wrong CONNECTED timestamp (recoverable) from genuinely instant connects (permanent) -- `mixed` is a REFUSAL, since the two need opposite fixes. Shares #64's window props
 
 ## Cycle Workflow Config
 

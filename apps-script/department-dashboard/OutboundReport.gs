@@ -1206,37 +1206,67 @@ function obProbeTalkTrough_(rows, total) {
     if (idx >= 0 && idx < nb) counts[idx] += n;
   });
   var out = { trough: false, reason: '', troughSec: null, troughN: null,
-              modeSec: null, suggestedMinTalkSec: OB_PROBE_CANDIDATE_MIN_TALK_SEC_,
+              modeSec: null, leftPeakSec: null, rightPeakSec: null,
+              suggestedMinTalkSec: OB_PROBE_CANDIDATE_MIN_TALK_SEC_,
               suggestedIsMeasured: false, sampled: Number(total) || 0 };
   if (out.sampled < OB_PROBE_MIN_CONNECTED_) { out.reason = 'too-few-rows'; return out; }
   var mode = 0;
   for (i = 0; i < nb; i++) if (counts[i] > counts[mode]) mode = i;
   out.modeSec = mode * w;
-  if (mode < 2) { out.reason = 'mode-at-floor'; return out; }   // no room for a dip below it
-  // The DIP first, then the shoulder behind it -- not the other way round.
-  // "Highest bucket below the mode" sounds like the low cluster's peak and
-  // is not: on any smooth distribution it is the mode's own left neighbour,
-  // which makes every histogram look monotonic. So: the minimum strictly
-  // between the floor and the mode, then the maximum at or before it.
-  var trough = 1;
-  for (i = 1; i < mode; i++) if (counts[i] < counts[trough]) trough = i;
-  var lowPeak = 0;
-  for (i = 0; i <= trough; i++) if (counts[i] > counts[lowPeak]) lowPeak = i;
-  if (lowPeak === trough) { out.reason = 'monotonic'; return out; }
-  out.troughSec = trough * w; out.troughN = counts[trough];
-  // An EMPTY bucket between the shoulders is absence of data, not a
-  // measured minimum -- and it is the shape sparse data takes, so it would
-  // otherwise read as the strongest possible trough exactly when the
-  // histogram is least trustworthy. Refuse rather than name a boundary the
-  // data never showed.
-  if (!counts[trough]) { out.reason = 'sparse'; return out; }
-  var deep = counts[trough] <= (counts[lowPeak] / 2) && counts[trough] <= (counts[mode] / 2);
+
+  // The trough is sought BETWEEN TWO HUMPS, wherever it sits -- NOT below the
+  // mode. The first version searched only below the mode, on the assumption
+  // that hangups cluster low and conversations high; the live distribution
+  // (2026-09-15) has its mode at 5s with the real dip at 20s ABOVE it,
+  // separating short calls from a second hump at 35-40s, and the detector
+  // answered "mode-at-floor" -- a wrong answer, not a refusal. Whichever
+  // side of the mode the boundary falls on, it is the same boundary.
+  //
+  // Scored by SEPARATION -- min(tallest to the left, tallest to the right)
+  // minus the bucket itself -- so the winner is the split with the most
+  // hump on BOTH sides. Scoring by depth alone would pick the emptiest
+  // bucket in the tail, where there is no second hump to separate from.
+  var leftMax = [], leftArg = [], rightMax = [], rightArg = [];
+  var run = 0, arg = 0;
+  for (i = 0; i < nb; i++) {                       // strictly BEFORE i
+    leftMax[i] = run; leftArg[i] = arg;
+    if (counts[i] > run) { run = counts[i]; arg = i; }
+  }
+  run = 0; arg = nb - 1;
+  for (i = nb - 1; i >= 0; i--) {                  // strictly AFTER i
+    rightMax[i] = run; rightArg[i] = arg;
+    if (counts[i] > run) { run = counts[i]; arg = i; }
+  }
+  var firstPop = -1, lastPop = -1;
+  for (i = 0; i < nb; i++) if (counts[i] > 0) { firstPop = i; break; }
+  for (i = nb - 1; i >= 0; i--) if (counts[i] > 0) { lastPop = i; break; }
+  if (firstPop < 0 || lastPop - firstPop < 2) { out.reason = 'unimodal'; return out; }
+  var best = -1, bestSep = 0;
+  for (i = firstPop + 1; i < lastPop; i++) {
+    var sep = Math.min(leftMax[i], rightMax[i]) - counts[i];
+    if (sep > bestSep) { bestSep = sep; best = i; }
+  }
+  // No bucket has a taller neighbourhood on BOTH sides: one hump, or a
+  // monotonic slope. Either way there is no boundary to name.
+  if (best < 0) { out.reason = 'unimodal'; return out; }
+
+  out.troughSec = best * w; out.troughN = counts[best];
+  out.leftPeakSec = leftArg[best] * w;
+  out.rightPeakSec = rightArg[best] * w;
+  // An EMPTY bucket between the humps is absence of data, not a measured
+  // minimum -- and it is the shape sparse data takes, so it would otherwise
+  // read as the strongest possible trough exactly when the histogram is
+  // least trustworthy. Refuse rather than name a boundary the data never
+  // showed.
+  if (!counts[best]) { out.reason = 'sparse'; return out; }
+  var deep = counts[best] <= (leftMax[best] / 2) && counts[best] <= (rightMax[best] / 2);
   if (!deep) { out.reason = 'shallow'; return out; }
   out.trough = true; out.reason = 'ok';
-  out.suggestedMinTalkSec = trough * w;
+  out.suggestedMinTalkSec = best * w;
   out.suggestedIsMeasured = true;
   return out;
 }
+
 
 /** PURE. The probe's window defaults + validation (shared with the tests). */
 function obProbeWindow_(props, nowMs) {
@@ -1251,6 +1281,62 @@ function obProbeWindow_(props, nowMs) {
       + from + ' .. ' + to + ').');
   }
   return { from: from, to: to };
+}
+
+/**
+ * The ring x talk cross-tab, cut at a given band. Shared by the MEASURED
+ * path and the exploratory path so the two cannot compute it differently;
+ * what differs between them is the LABEL on the result, never the SQL.
+ *
+ * Bound params only, in statement order: four quadrant triples, the
+ * half-open threshold, the quadrant window, the attempts band, the attempts
+ * window. Egress-metered like every other read here.
+ */
+function obProbeJointCut_(conn, from, to, lo, hi, minTalk) {
+  var base = "FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND connected ";
+  var sql2 =
+    'SELECT json_build_object('
+    + "'quadrants', (SELECT json_build_object("
+    // `total` is here so the four cells can be checked to sum: `connected`
+    // implies Talk>0 by construction upstream, so a NULL talk_seconds
+    // should not exist -- if the cells ever fall short of the total, that
+    // assumption has broken and the quadrants are not the whole picture.
+    +   "'total', count(*), "
+    +   "'bandLongTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds >= ?), "
+    +   "'bandShortTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds < ?), "
+    +   "'outLongTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
+    +     'AND talk_seconds >= ?), '
+    +   "'outShortTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
+    +     'AND talk_seconds < ?), '
+    // The half-open reading of the same band, so the tight-match and
+    // threshold-only definitions can be compared before Part 2 picks one.
+    +   "'atOrAboveThreshold', count(*) FILTER (WHERE ring_seconds >= ?)"
+    +   ') ' + base + 'AND COALESCE(attempts,1) = 1), '
+    // (4) the by-attempts split.
+    + "'attempts', (SELECT COALESCE(json_agg(json_build_object("
+    +     "'attempts', a, 'n', n, 'inBand', in_band) ORDER BY a), '[]') FROM ("
+    +   'SELECT CASE WHEN COALESCE(attempts,1) >= 3 THEN 3 ELSE COALESCE(attempts,1) END AS a, '
+    +     'count(*) AS n, count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ?) AS in_band '
+    +   base + 'GROUP BY 1) t)'
+    + ')::text AS j';
+  var ps2 = conn.prepareStatement(sql2);
+  var b = 0;
+  var bindInt = function (v) { ps2.setInt(++b, v); };
+  var bindStr = function (v) { ps2.setString(++b, v); };
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandLongTalk
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandShortTalk
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // outLongTalk
+  bindInt(lo); bindInt(hi); bindInt(minTalk);          // outShortTalk
+  bindInt(lo);                                          // atOrAboveThreshold
+  bindStr(from); bindStr(to);                           // quadrants window
+  bindInt(lo); bindInt(hi);                             // attempts in_band
+  bindStr(from); bindStr(to);                           // attempts window
+  var rs2 = ps2.executeQuery();
+  var json2 = rs2.next() ? rs2.getString('j') : '{}';
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json2 ? json2.length : 0, 'outbound-probe');
+  rs2.close(); ps2.close();
+  var d2 = JSON.parse(json2 || '{}');
+  return { quadrants: d2.quadrants || null, attempts: d2.attempts || [] };
 }
 
 function probeOutboundAnswerQuality() {
@@ -1354,63 +1440,51 @@ function probeOutboundAnswerQuality() {
       // not support a voicemail threshold, which is exactly what the probe
       // was run to find out. Tool params are deliberately kept so the
       // widen-and-re-run loop measures the same window.
+      //
+      // A refusal STILL gets the cross-tab, cut at the OBSERVED peak. The
+      // first live run showed why: it refused, so the joint query never ran,
+      // and the operator was left with two marginal distributions and no way
+      // to ask the question that actually decides this -- a 31s ring with 35s
+      // talk is voicemail with high confidence, a 31s ring with 240s talk is
+      // a human who took a while. The original "no band, no second query"
+      // rule was guarding against MANUFACTURING EVIDENCE for an unmeasured
+      // number, and that property is kept intact: this block is labelled
+      // exploratory, and `suggested` stays ABSENT, so nothing here can be
+      // lifted into a Script Property by mistake.
+      //
+      // Only when the FWHM edges exist at all -- a too-few-rows or
+      // empty-region refusal returns before they are computed, and cutting
+      // at nothing would be worse than not cutting.
+      if (spike.leftSec !== null && spike.rightSec !== null && spike.peakN > 0) {
+        var xcut = obProbeJointCut_(conn, from, to,
+          spike.leftSec, spike.rightSec, trough.suggestedMinTalkSec);
+        out.exploratory = {
+          note: 'EXPLORATORY — cut at the OBSERVED peak, which FAILED the gates below. '
+            + 'These are not measured parameters and must not be set as any.',
+          refusedBecause: spike.reason,
+          observedPeakSec: spike.peakSec,
+          observedBand: [spike.leftSec, spike.rightSec],
+          minTalkSec: trough.suggestedMinTalkSec,
+          minTalkMeasured: trough.suggestedIsMeasured,
+          quadrants: xcut.quadrants,
+          byAttempts: xcut.attempts,
+        };
+      }
       out.result = 'INCONCLUSIVE (' + obProbeSpikeHint_(spike) + ') ' + label
-        + ' — do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY from this run.';
+        + ' — do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY from this run.'
+        + (out.exploratory ? ' An EXPLORATORY ring×talk cut at the observed peak is included'
+            + ' for diagnosis only — it is not a measurement.' : '');
       Logger.log('[outbound-probe] %s', out.result);
       return logStatusReturn_(out);
     }
 
-    // ── Query 2: the joint cuts, at the RESOLVED band ────────────────────
-    // Only reachable with a measured band; cutting at a candidate threshold
-    // would produce quadrant counts that look like evidence for a number
-    // nothing measured.
+    // ── Query 2: the joint cuts, at the MEASURED band ────────────────────
     var lo = spike.suggestedVmRingSec;
     var hi = spike.rightSec;
     var minTalk = trough.suggestedMinTalkSec;
-    var sql2 =
-      'SELECT json_build_object('
-      + "'quadrants', (SELECT json_build_object("
-      // `total` is here so the four cells can be checked to sum: `connected`
-      // implies Talk>0 by construction upstream, so a NULL talk_seconds
-      // should not exist -- if the cells ever fall short of the total, that
-      // assumption has broken and the quadrants are not the whole picture.
-      +   "'total', count(*), "
-      +   "'bandLongTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds >= ?), "
-      +   "'bandShortTalk', count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ? AND talk_seconds < ?), "
-      +   "'outLongTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
-      +     'AND talk_seconds >= ?), '
-      +   "'outShortTalk', count(*) FILTER (WHERE (ring_seconds IS NULL OR ring_seconds NOT BETWEEN ? AND ?) "
-      +     'AND talk_seconds < ?), '
-      // The half-open reading of the same band, so the tight-match and
-      // threshold-only definitions can be compared before Part 2 picks one.
-      +   "'atOrAboveThreshold', count(*) FILTER (WHERE ring_seconds >= ?)"
-      +   ') ' + base + 'AND COALESCE(attempts,1) = 1), '
-      // (4) the by-attempts split.
-      + "'attempts', (SELECT COALESCE(json_agg(json_build_object("
-      +     "'attempts', a, 'n', n, 'inBand', in_band) ORDER BY a), '[]') FROM ("
-      +   'SELECT CASE WHEN COALESCE(attempts,1) >= 3 THEN 3 ELSE COALESCE(attempts,1) END AS a, '
-      +     'count(*) AS n, count(*) FILTER (WHERE ring_seconds BETWEEN ? AND ?) AS in_band '
-      +   base + 'GROUP BY 1) t)'
-      + ')::text AS j';
-    var ps2 = conn.prepareStatement(sql2);
-    var b = 0;
-    var bindInt = function (v) { ps2.setInt(++b, v); };
-    var bindStr = function (v) { ps2.setString(++b, v); };
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandLongTalk
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // bandShortTalk
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // outLongTalk
-    bindInt(lo); bindInt(hi); bindInt(minTalk);          // outShortTalk
-    bindInt(lo);                                          // atOrAboveThreshold
-    bindStr(from); bindStr(to);                           // quadrants window
-    bindInt(lo); bindInt(hi);                             // attempts in_band
-    bindStr(from); bindStr(to);                           // attempts window
-    var rs2 = ps2.executeQuery();
-    var json2 = rs2.next() ? rs2.getString('j') : '{}';
-    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json2 ? json2.length : 0, 'outbound-probe');
-    rs2.close(); ps2.close();
-    var d2 = JSON.parse(json2 || '{}');
-    out.quadrants = d2.quadrants || null;
-    out.byAttempts = d2.attempts || [];
+    var cut = obProbeJointCut_(conn, from, to, lo, hi, minTalk);
+    out.quadrants = cut.quadrants;
+    out.byAttempts = cut.attempts;
     out.band = { vmRingSec: lo, toleranceSec: spike.suggestedToleranceSec, rightSec: hi,
                  minTalkSec: minTalk, minTalkMeasured: trough.suggestedIsMeasured };
 
@@ -1437,6 +1511,16 @@ function probeOutboundAnswerQuality() {
   }
 }
 
+/**
+ * PURE. Shares rendered to ONE DECIMAL.
+ *
+ * The first live run refused at 7.6% against an 8% floor and the sentence
+ * read "only 8% of connects (need 8%)" -- which looks like a contradiction
+ * and invites someone to re-run rather than believe it. A refusal has to be
+ * legible AS a refusal.
+ */
+function obProbePct1_(x) { return ((Number(x) || 0) * 100).toFixed(1) + '%'; }
+
 /** PURE. The operator-facing sentence for a spike gate that did not pass. */
 function obProbeSpikeHint_(s) {
   switch (s && s.reason) {
@@ -1453,14 +1537,322 @@ function obProbeSpikeHint_(s) {
       return 'the peak is ' + s.widthSec + 's wide at half height (max '
         + OB_PROBE_SPIKE_MAX_WIDTH_SEC_ + 's) — a broad cluster, not a fixed timeout';
     case 'spike-too-small':
-      return 'the peak holds only ' + Math.round(s.spikeShare * 100) + '% of connects (need '
-        + Math.round(OB_PROBE_SPIKE_MIN_SHARE_ * 100) + '%) — too little to build a rule on';
+      return 'the peak holds only ' + obProbePct1_(s.spikeShare) + ' of connects (need '
+        + obProbePct1_(OB_PROBE_SPIKE_MIN_SHARE_) + ') — too little to build a rule on';
     case 'unimodal':
-      return 'only ' + Math.round(s.belowShare * 100) + '% of connects ring SHORTER than the peak '
-        + '(need ' + Math.round(OB_PROBE_MIN_LOW_SHARE_ * 100) + '%) — there is no human cluster '
+      return 'only ' + obProbePct1_(s.belowShare) + ' of connects ring SHORTER than the peak '
+        + '(need ' + obProbePct1_(OB_PROBE_MIN_LOW_SHARE_) + ') — there is no human cluster '
         + 'below it, so the distribution is not bimodal';
     default:
       return 'no voicemail spike found';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// probeOutboundInstantConnects -- (c), the follow-up the first answer-quality
+// run made unavoidable. Read-only, admin-gated, editor-run.
+//
+// THE FINDING IT CHASES. 40.6% of connected single-attempt outbound calls in
+// 2026-08-18..09-14 recorded a ring of 0 or 1 second -- 17,197 at EXACTLY
+// zero, with not one NULL ring among them. Nobody answers a phone in under a
+// second, so for four calls in ten `ring_seconds` is not measuring a ring.
+// That caps ANY ring-based voicemail classifier at ~60% of the population
+// however the threshold is chosen, which is why Part 2 of
+// docs/outbound-callback-dept-plan.md is parked until this has an answer.
+//
+// WHAT IS ALREADY RULED OUT, so nobody re-derives it: the "we measured the
+// agent's leg, not the callee's" hypothesis. In cdr-import/outboundCalls.js
+// `first = extLegs[0]` -- the first EXTERNAL Outgoing leg -- so `ring_seconds`
+// is start -> connected on the leg to the callee by construction. It is also
+// not a multi-attempt artefact: 66,207 of 66,215 connects are single-attempt.
+//
+// THE DECISIVE MEASUREMENT is a cross-check the stored column cannot argue
+// with. The `journey` blob holds every leg with its own `secs` (start->stop),
+// `talk` and `hold`, so for the external leg the ring is DERIVABLE as
+// secs - talk - hold, independently of the CONNECTED timestamp that
+// `ring_seconds` was computed from. Two outcomes, and they point at
+// completely different remedies:
+//
+//   - the derived ring is ALSO ~0  -> the calls genuinely connect instantly
+//     (early media / 200-OK-on-dial trunks, or auto-answer devices).
+//     `ring_seconds` is telling the truth and simply cannot discriminate
+//     these; a voicemail classifier must EXCLUDE them and say so, and the
+//     reachable population is ~60%, permanently.
+//   - the derived ring is HEALTHY  -> the stored CONNECTED timestamp is
+//     wrong for these rows and `ring_seconds` is RECOVERABLE from the
+//     journey we already keep. That is a capture fix, and the classifier
+//     gets its full population back.
+//
+// Three supporting cuts, because each kills a different explanation:
+// per-agent concentration (a handful of agents = a device or softphone
+// setting; uniform = the trunk), per-day rate (a step change on one date = a
+// config change, a flat line = how it has always been), and per-bucket talk
+// profile (if the instant rows talk like everyone else, they are real calls
+// being mis-timed, not junk).
+//
+// Window: the SAME OUTBOUND_PROBE_FROM / _TO as probeOutboundAnswerQuality,
+// deliberately -- the two are companion tools and should be read against one
+// window. It does NOT self-clear them; the answer-quality probe owns that.
+//
+// PHI: aggregates and derived seconds only. The journey blob is already
+// PHI-safe at capture (icBuildJourney_ rewrites any phone-shaped name to
+// '(external number)'), and nothing from it is echoed -- only counts and
+// durations. No hash, number or call id is selected, logged or returned.
+
+var OB_INSTANT_RING_SEC_ = 1;        // "instant" = a stored ring at or under this
+var OB_INSTANT_RUNG_SEC_ = 17;       // the comparison group: rings in the spike region
+var OB_INSTANT_SAMPLE_ = 300;        // journey rows fetched per group
+var OB_INSTANT_MIN_ROWS_ = 200;      // below this the run is INCONCLUSIVE
+var OB_INSTANT_REAL_RING_SEC_ = 3;   // a derived ring at or above this is a REAL ring
+var OB_INSTANT_TIMESTAMP_SHARE_ = 0.5;   // share of instant rows with a real derived ring
+var OB_INSTANT_CARRIER_SHARE_ = 0.2;     // below this, the instant rows really are instant
+var OB_INSTANT_AGENT_MIN_CALLS_ = 25;    // an agent needs this many to be rated
+var OB_INSTANT_CONCENTRATION_ = 0.75;    // top-5 share of instant rows = concentrated
+var OB_INSTANT_LOPSIDED_ = 1.5;          // ...and this much MORE lopsided than an even spread
+
+/**
+ * PURE. The external leg's ring, derived from the journey instead of from the
+ * stored CONNECTED timestamp.
+ *
+ * The external leg is the first event the capture rewrote to
+ * '(external number)' -- every other event is an internal agent or queue, so
+ * the marker identifies it exactly rather than by position (an outbound group
+ * can carry the agent's own leg first). Returns null when the blob has no
+ * external leg or no duration to work from: absent evidence, never a zero.
+ */
+function obInstantDerivedRing_(journeyJson) {
+  var ev;
+  try { ev = JSON.parse(journeyJson || 'null'); } catch (e) { return null; }
+  if (!ev || !ev.length) return null;
+  for (var i = 0; i < ev.length; i++) {
+    if (ev[i] && ev[i].name === '(external number)') {
+      if (ev[i].secs == null) return null;
+      var secs = Number(ev[i].secs) || 0;
+      var talk = Number(ev[i].talk) || 0;
+      var hold = Number(ev[i].hold) || 0;
+      return Math.max(0, secs - talk - hold);
+    }
+  }
+  return null;
+}
+
+/** PURE. Median of a numeric array (null on empty). */
+function obInstantMedian_(xs) {
+  var a = (xs || []).filter(function (x) { return typeof x === 'number' && isFinite(x); })
+    .sort(function (p, q) { return p - q; });
+  if (!a.length) return null;
+  var m = Math.floor(a.length / 2);
+  return (a.length % 2) ? a[m] : Math.round((a[m - 1] + a[m]) / 2 * 10) / 10;
+}
+
+/**
+ * PURE. Name the hypothesis the numbers support -- or refuse to.
+ *
+ * The two primary verdicts are mutually exclusive and carry DIFFERENT
+ * remedies, so the gap between them is deliberately left as 'mixed' rather
+ * than split down the middle: a 40%-real-ring result means some rows are
+ * mis-timed and others genuinely instant, and averaging that into one answer
+ * would send the fix in one direction for calls that need the other.
+ */
+function obInstantVerdict_(stats) {
+  var inst = (stats && stats.instant) || {};
+  var sampled = Number(inst.sampled) || 0;
+  if (sampled < 1) {
+    return { code: 'INCONCLUSIVE', reason: 'no-journeys',
+      text: 'no journey blobs on the instant rows — nothing to cross-check against' };
+  }
+  var share = Number(inst.realRingShare) || 0;
+  if (share >= OB_INSTANT_TIMESTAMP_SHARE_) {
+    return { code: 'ok', reason: 'connected-timestamp',
+      text: obProbePct1_(share) + ' of instant rows have a REAL ring in the journey (median '
+        + inst.medianDerived + 's) — the stored CONNECTED timestamp is wrong for them and '
+        + 'ring_seconds is RECOVERABLE from the journey we already keep. This is a capture '
+        + 'fix, and the classifier gets its full population back.' };
+  }
+  if (share <= OB_INSTANT_CARRIER_SHARE_) {
+    return { code: 'ok', reason: 'carrier-instant',
+      text: 'only ' + obProbePct1_(share) + ' of instant rows show any ring in the journey '
+        + '(median ' + inst.medianDerived + 's) — these calls really do connect instantly '
+        + '(early media / auto-answer). ring_seconds is telling the truth and simply cannot '
+        + 'discriminate them: a voicemail classifier must EXCLUDE them and disclose that its '
+        + 'reachable population is the remainder.' };
+  }
+  return { code: 'INCONCLUSIVE', reason: 'mixed',
+    text: obProbePct1_(share) + ' of instant rows have a real ring — BOTH causes are present, '
+      + 'and they need opposite fixes. Split the population further (by agent or by trunk) '
+      + 'before choosing one.' };
+}
+
+/** PURE. Is the instant population concentrated in a few agents? */
+function obInstantConcentration_(agents) {
+  var rows = (agents || []).filter(function (a) {
+    return (Number(a.n) || 0) >= OB_INSTANT_AGENT_MIN_CALLS_;
+  });
+  var totalInstant = rows.reduce(function (s, a) { return s + (Number(a.instant) || 0); }, 0);
+  if (!totalInstant || rows.length < 3) return { concentrated: null, agents: rows.length };
+  // TWO different orderings, because they answer two different questions and
+  // conflating them misleads in the direction of the busiest agent.
+  //   - CONCENTRATION is a share of VOLUME: do a handful of agents account
+  //     for most of the instant rows? That is what "a device setting rather
+  //     than the trunk" means.
+  //   - The ACTIONABLE list is by RATE: an agent doing 2,000 calls with 300
+  //     instant has a normal rate and a big volume, and would head a
+  //     volume-sorted list while being the wrong phone to go and look at.
+  var byVolume = rows.slice().sort(function (p, q) {
+    return (Number(q.instant) || 0) - (Number(p.instant) || 0);
+  }).slice(0, 5);
+  var topInstant = byVolume.reduce(function (s, a) { return s + (Number(a.instant) || 0); }, 0);
+  var topShare = topInstant / totalInstant;
+  var rateOf = function (a) {
+    return (Number(a.instant) || 0) / (Number(a.n) || 1);
+  };
+  var byRate = rows.slice().sort(function (p, q) { return rateOf(q) - rateOf(p); }).slice(0, 5);
+  // A top-5 share means nothing on its own when there are barely more than
+  // five agents: an EVEN spread over six already puts 83% in the top five.
+  // So it is measured against what uniform would give (5/N) -- "concentrated"
+  // has to mean meaningfully more lopsided than uniform, at any roster size.
+  var evenBaseline = Math.min(1, 5 / rows.length);
+  return {
+    concentrated: topShare >= OB_INSTANT_CONCENTRATION_
+      && topShare >= evenBaseline * OB_INSTANT_LOPSIDED_,
+    topShare: Math.round(topShare * 1000) / 1000,
+    evenBaseline: Math.round(evenBaseline * 1000) / 1000,
+    agents: rows.length,
+    // Names ride along because per-agent figures are ordinary dashboard data,
+    // and "which agents" IS the remedy when the answer is a device setting.
+    top: byRate.map(function (a) {
+      return { agent: a.agent, calls: Number(a.n) || 0, instant: Number(a.instant) || 0,
+               rate: Math.round(rateOf(a) * 1000) / 1000 };
+    }),
+  };
+}
+
+function probeOutboundInstantConnects() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var win = obProbeWindow_(props);
+  var from = win.from, to = win.to;
+  var label = from + '..' + to + ' (all departments)';
+  var conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+
+    var base = 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
+      + 'AND connected AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL ';
+
+    // ── Query 1: the shape of the population ─────────────────────────────
+    var sql1 =
+      'SELECT json_build_object('
+      + "'buckets', (SELECT COALESCE(json_agg(json_build_object("
+      +     "'ring', b, 'n', n, 'talkMedian', tm, 'talkAvg', ta) ORDER BY b), '[]') FROM ("
+      +   'SELECT CASE WHEN ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ' THEN 0 '
+      +          'WHEN ring_seconds < ' + OB_INSTANT_RUNG_SEC_ + ' THEN 2 '
+      +          'WHEN ring_seconds <= 32 THEN 17 ELSE 33 END AS b, count(*) AS n, '
+      +     'percentile_cont(0.5) WITHIN GROUP (ORDER BY talk_seconds) AS tm, '
+      +     'round(avg(talk_seconds)) AS ta '
+      +   base + 'GROUP BY 1) q), '
+      + "'agents', (SELECT COALESCE(json_agg(json_build_object("
+      +     "'agent', a, 'n', n, 'instant', z) ORDER BY z DESC), '[]') FROM ("
+      +   "SELECT COALESCE(agent_name, '(unattributed)') AS a, count(*) AS n, "
+      +     'count(*) FILTER (WHERE ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ') AS z '
+      +   base + 'GROUP BY 1) g), '
+      + "'days', (SELECT COALESCE(json_agg(json_build_object("
+      +     "'d', d, 'n', n, 'instant', z) ORDER BY d), '[]') FROM ("
+      +   'SELECT call_date::text AS d, count(*) AS n, '
+      +     'count(*) FILTER (WHERE ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ') AS z '
+      +   base + 'GROUP BY 1) dd)'
+      + ')::text AS j';
+    var ps1 = conn.prepareStatement(sql1);
+    var n1 = (sql1.match(/\?::date/g) || []).length;
+    for (var pi = 1; pi + 1 <= n1; pi += 2) { ps1.setString(pi, from); ps1.setString(pi + 1, to); }
+    var rs1 = ps1.executeQuery();
+    var j1 = rs1.next() ? rs1.getString('j') : '{}';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j1 ? j1.length : 0, 'outbound-instant');
+    rs1.close(); ps1.close();
+    var d1 = JSON.parse(j1 || '{}');
+
+    var buckets = d1.buckets || [];
+    var totalRows = buckets.reduce(function (s, b) { return s + (Number(b.n) || 0); }, 0);
+    var instantRows = buckets.reduce(function (s, b) {
+      return s + (Number(b.ring) === 0 ? (Number(b.n) || 0) : 0);
+    }, 0);
+    var out = {
+      window: { from: from, to: to },
+      totalConnected: totalRows,
+      instantCount: instantRows,
+      instantShare: totalRows ? Math.round(instantRows / totalRows * 1000) / 1000 : 0,
+      buckets: buckets,
+      byDay: d1.days || [],
+      concentration: obInstantConcentration_(d1.agents),
+    };
+    if (totalRows < OB_INSTANT_MIN_ROWS_) {
+      out.result = 'INCONCLUSIVE (only ' + totalRows + ' connected single-attempt calls with a '
+        + 'ring, need ' + OB_INSTANT_MIN_ROWS_ + ' — widen OUTBOUND_PROBE_FROM/_TO) ' + label;
+      Logger.log('[outbound-instant] %s', out.result);
+      return logStatusReturn_(out);
+    }
+
+    // ── Query 2: the journey cross-check ─────────────────────────────────
+    // Two matched samples, newest first: the instant rows and a control group
+    // from the spike region. The control is what makes the instant number
+    // mean anything -- a derived ring is only "healthy" or "absent" relative
+    // to what this same derivation produces on calls that provably rang.
+    var sql2 =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + "(SELECT 'instant' AS grp, journey " + base
+      +   'AND ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ' AND journey IS NOT NULL '
+      +   'ORDER BY call_date DESC, call_start DESC NULLS LAST LIMIT ' + OB_INSTANT_SAMPLE_ + ') '
+      + 'UNION ALL '
+      + "(SELECT 'rung' AS grp, journey " + base
+      +   'AND ring_seconds >= ' + OB_INSTANT_RUNG_SEC_ + ' AND journey IS NOT NULL '
+      +   'ORDER BY call_date DESC, call_start DESC NULLS LAST LIMIT ' + OB_INSTANT_SAMPLE_ + ')'
+      + ') t';
+    var ps2 = conn.prepareStatement(sql2);
+    var n2 = (sql2.match(/\?::date/g) || []).length;
+    for (var pj = 1; pj + 1 <= n2; pj += 2) { ps2.setString(pj, from); ps2.setString(pj + 1, to); }
+    var rs2 = ps2.executeQuery();
+    var j2 = rs2.next() ? rs2.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j2 ? j2.length : 0, 'outbound-instant');
+    rs2.close(); ps2.close();
+
+    var groups = { instant: [], rung: [] };
+    var noExternalLeg = { instant: 0, rung: 0 };
+    JSON.parse(j2 || '[]').forEach(function (r) {
+      var g = (r && r.grp === 'rung') ? 'rung' : 'instant';
+      var derived = obInstantDerivedRing_(r && r.journey);
+      if (derived === null) { noExternalLeg[g]++; return; }
+      groups[g].push(derived);
+    });
+    var summarize = function (xs, missing) {
+      var real = xs.filter(function (x) { return x >= OB_INSTANT_REAL_RING_SEC_; }).length;
+      return {
+        sampled: xs.length,
+        noExternalLeg: missing,
+        medianDerived: obInstantMedian_(xs),
+        realRing: real,
+        realRingShare: xs.length ? Math.round(real / xs.length * 1000) / 1000 : 0,
+      };
+    };
+    out.instant = summarize(groups.instant, noExternalLeg.instant);
+    out.rung = summarize(groups.rung, noExternalLeg.rung);
+
+    var v = obInstantVerdict_(out);
+    out.verdict = v.reason;
+    out.result = v.code + ' (' + v.reason + ') ' + label + ' — '
+      + obProbePct1_(out.instantShare) + ' of connected single-attempt calls ring <= '
+      + OB_INSTANT_RING_SEC_ + 's. ' + v.text
+      + ' CONTROL: calls that provably rang (>= ' + OB_INSTANT_RUNG_SEC_ + 's) derive a median '
+      + out.rung.medianDerived + 's from the same journey field, '
+      + obProbePct1_(out.rung.realRingShare) + ' of them a real ring.'
+      + (out.concentration.concentrated === true
+          ? ' NB the instant rows are CONCENTRATED in a few agents ('
+            + obProbePct1_(out.concentration.topShare) + ' in the top 5) — look at their devices.'
+          : '');
+    Logger.log('[outbound-instant] %s', out.result);
+    return logStatusReturn_(out);
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
   }
 }
 

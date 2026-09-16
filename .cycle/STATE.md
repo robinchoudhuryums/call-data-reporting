@@ -1,6 +1,21 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **PROBE RUN + DETECTOR FIXES (2026-09-15, block 194).**
+  `probeOutboundAnswerQuality` RAN live (2026-08-18..09-14, 66,207
+  single-attempt connects) and returned **INCONCLUSIVE — correctly**. The
+  distribution is not the single tight spike the plan hypothesised: FOUR
+  spikes (17s / 21s / 27s / 31s, ~5–6s apart = ring-cadence harmonics), a
+  hard cliff at 32→33s (99.3% of connects ring ≤32s), and **40.6% of
+  connects ringing 0–1s** (17,197 at exactly 0s; the repeat check's biggest
+  cluster is 3,446 callee-groups connecting at 0s repeatedly). Block 194
+  fixed two real defects the run exposed — the talk-trough detector searched
+  only below the mode and so answered 'mode-at-floor' on a distribution with
+  a genuine 20s trough, and a refusal produced no ring×talk cross-tab at all
+  — plus a rounding bug that printed "only 8% (need 8%)".
+  **NEXT, and it is (c): investigate the 0–1s population.** No ring-based
+  classifier can exceed ~60% of calls until that is understood, so Part 2
+  step 2 stays parked. The gates were NOT loosened and must not be.
 - **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
   1–5 + parallel track + follow-ons, with the why-this-order. Read it before
   starting new work; this section carries only the per-session state.

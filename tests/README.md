@@ -251,7 +251,13 @@ tests/
                               probeOutboundAnswerQuality -- the two pure
                               detectors gate by gate, with most of the
                               effort on the REFUSALS: a probe that only
-                              knows how to say yes carries no information),
+                              knows how to say yes carries no information --
+                              and probeOutboundInstantConnects, whose pins
+                              guard the DANGEROUS DEFAULTS: a missing
+                              journey must read as null not zero, zero
+                              samples must not read as "genuinely instant",
+                              and the mixed case must refuse rather than
+                              average two opposite remedies),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a
