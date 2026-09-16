@@ -974,6 +974,12 @@ function qddCensusScanGrid_(grid, ctx) {
     rows: body.length,
     byQueue: {},
     unrecognized: {},        // "<bucket>|<shape>" -> { legs, samples, bucket, shape }
+    // The FINDING shapes rolled up by the queue's EXTENSION. When a queue's
+    // name is lost, the ext in "CallQueue (ext)" is the only handle left on
+    // WHICH queue it was -- and naming the queue is the whole point, since the
+    // fix is adding it to a config list. Measured 2026-09-16: the first run
+    // found 138 lost legs and could not say whose they were.
+    lostByExt: {},           // ext -> { legs, answered, missed, agents, buckets }
     droppedAgent: 0,         // gate passed, but no usable agent name
     droppedExcluded: 0,      // DQE_EXCLUDED_AGENTS
     droppedForking: 0,
@@ -1022,17 +1028,19 @@ function qddCensusScanGrid_(grid, ctx) {
       // the queue name was lost are findings. Everything else is expected.
       const callerRaw = String(row[DQE_C.CALLER]).trim();
       const cqForm = callerRaw.match(/^CallQueue\s*\((\d+)\)$/i);
-      let shape;
+      let shape, lostExt = '';
       if (cqForm) {
         // The R18e incident exactly: the queue still identifies itself in
         // CALLER, but its ext named no queue anywhere today, so the fallback
         // cannot resolve it and the BUILD drops the leg.
         shape = 'queue-caller-ext-unresolved';
+        lostExt = cqForm[1];
       } else if (/^\d+$/.test(callerRaw) && queueNameByExt[callerRaw]) {
         // A VARIANT of the same loss the build's fallback does not cover: the
         // caller is a bare extension that IS a known queue today, but the
         // fallback only fires on the "CallQueue (ext)" spelling.
         shape = 'queue-ext-bare-caller';
+        lostExt = callerRaw;
       } else {
         shape = 'not-a-queue-leg';
       }
@@ -1048,6 +1056,22 @@ function qddCensusScanGrid_(grid, ctx) {
           && u.samples.length < QDD_CENSUS_SAMPLE_
           && u.samples.indexOf(callerIdRaw) === -1) {
         u.samples.push(callerIdRaw);
+      }
+      if (lostExt) {
+        if (!out.lostByExt[lostExt]) {
+          out.lostByExt[lostExt] = { legs: 0, answered: 0, missed: 0, agents: [], buckets: {} };
+        }
+        const e = out.lostByExt[lostExt];
+        e.legs++;
+        if (String(row[DQE_C.ANSWERED]).trim() === 'Answered') e.answered++;
+        if (String(row[DQE_C.MISSED]).trim() === 'Missed') e.missed++;
+        e.buckets[bucket] = (e.buckets[bucket] || 0) + 1;
+        // The AGENT names say which dept's numbers are short -- the thing an
+        // owner needs to judge whether this is theirs to care about.
+        const who = String(row[DQE_C.CALLEE_NAME]).trim();
+        if (who && e.agents.length < QDD_CENSUS_SAMPLE_ && e.agents.indexOf(who) === -1) {
+          e.agents.push(who);
+        }
       }
       continue;
     }
@@ -1091,6 +1115,20 @@ function qddCensusMerge_(acc, one) {
       const src = one.byQueue[q][b], dst = acc.byQueue[q][b];
       dst.rung += src.rung; dst.missed += src.missed;
       dst.answered += src.answered; dst.talkSec += src.talkSec;
+    });
+  });
+  Object.keys(one.lostByExt).forEach(function (ext) {
+    const src = one.lostByExt[ext];
+    if (!acc.lostByExt[ext]) {
+      acc.lostByExt[ext] = { legs: 0, answered: 0, missed: 0, agents: [], buckets: {} };
+    }
+    const dst = acc.lostByExt[ext];
+    dst.legs += src.legs; dst.answered += src.answered; dst.missed += src.missed;
+    Object.keys(src.buckets).forEach(function (b) {
+      dst.buckets[b] = (dst.buckets[b] || 0) + src.buckets[b];
+    });
+    src.agents.forEach(function (a) {
+      if (dst.agents.length < QDD_CENSUS_SAMPLE_ && dst.agents.indexOf(a) === -1) dst.agents.push(a);
     });
   });
   Object.keys(one.unrecognized).forEach(function (k) {
@@ -1187,7 +1225,7 @@ function probeWorkWindowEdges(opts) {
   const canonicalize = qddMakeCanonicalizer_(loadRosterCanonicalNames_(targetSS.getSheets()[0]));
   const ctx = { canonicalize: canonicalize, excludedAgents: DQE_EXCLUDED_AGENTS };
 
-  const acc = { rows: 0, byQueue: {}, unrecognized: {}, droppedAgent: 0,
+  const acc = { rows: 0, byQueue: {}, unrecognized: {}, lostByExt: {}, droppedAgent: 0,
                 droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
   const scanned = [];
   const began = Date.now();
@@ -1206,6 +1244,7 @@ function probeWorkWindowEdges(opts) {
   const report = {
     dates: scanned, datesAvailable: found.length, partial: partial,
     rows: acc.rows, byQueue: acc.byQueue, unrecognized: acc.unrecognized,
+    lostByExt: acc.lostByExt,
     droppedAgent: acc.droppedAgent, droppedExcluded: acc.droppedExcluded,
     droppedForking: acc.droppedForking, unparsedStart: acc.unparsedStart,
     afterHours: qddAfterHoursSize_(targetSS, scanned),
@@ -1254,6 +1293,17 @@ function qddCensusLog_(rep) {
     Logger.log('  QUEUE NAME LOST -- %s leg(s) in %s, shape %s. These reached an agent '
       + 'THROUGH a queue and the build cannot tell which, so it drops them. Caller-ID '
       + 'samples: %s', u.legs, u.bucket, u.shape, JSON.stringify(u.samples.map(qddLogSafe_)));
+  });
+  const exts = Object.keys(rep.lostByExt).sort(function (a, b) {
+    return rep.lostByExt[b].legs - rep.lostByExt[a].legs;
+  });
+  exts.forEach(function (ext) {
+    const e = rep.lostByExt[ext];
+    Logger.log('    -> queue EXTENSION %s: %s leg(s), %s answered / %s missed, buckets %s. '
+      + 'Agents who took them: %s. LOOK THIS EXTENSION UP in the phone system -- it names '
+      + 'the queue, and adding that name where the config expects it is the fix.',
+      ext, e.legs, e.answered, e.missed, JSON.stringify(e.buckets),
+      JSON.stringify(e.agents));
   });
   if (!lost) {
     Logger.log('  QUEUE NAME LOST: none, in any bucket -- every queue-delivered leg resolved '
@@ -1337,6 +1387,23 @@ function qddCensusWriteTab_(ss, rep) {
     out.push(pad([u.shape, u.bucket, u.legs, isFinding ? 'YES -- queue name lost' : 'no -- expected']
       .concat(u.samples)));
   });
+  if (Object.keys(rep.lostByExt).length) {
+    out.push(pad([]));
+    out.push(pad(['WHICH QUEUE LOST ITS NAME -- by extension']));
+    out.push(pad(['The ext inside "CallQueue (ext)" is the only handle left on a queue whose',
+      'name the build cannot resolve. Look it up in the phone system: it names the queue,',
+      'and adding that name where the config expects it is the fix. The agents column says',
+      'whose numbers are short.']));
+    out.push(pad(['Extension', 'Legs', 'Answered', 'Missed', 'Buckets', 'Agents who took them']));
+    Object.keys(rep.lostByExt).sort(function (a, b) {
+      return rep.lostByExt[b].legs - rep.lostByExt[a].legs;
+    }).forEach(function (ext) {
+      const e = rep.lostByExt[ext];
+      out.push(pad([ext, e.legs, e.answered, e.missed, JSON.stringify(e.buckets)]
+        .concat(e.agents)));
+    });
+  }
+  out.push(pad([]));
   out.push(pad(['VERDICT', lostLegs
     ? lostLegs + ' queue-delivered leg(s) have no resolvable queue name -- resolve these '
       + 'before widening the window'

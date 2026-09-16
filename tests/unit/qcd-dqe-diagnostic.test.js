@@ -551,6 +551,45 @@ test('an internal leg outside the window is reported as a window difference', ()
   assert.deepEqual(plain(out.orphanCauses), { 'starts-before-dqe-window': 1 });
 });
 
+test('a lost queue is reported BY EXTENSION, with who took the calls', () => {
+  // The first live run found 138 lost legs and could not say whose queue they
+  // were -- the caller-ID it sampled was a phone number. The ext inside
+  // "CallQueue (ext)" is the only handle left, and the agent names say whose
+  // numbers are short.
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: '18005551212',
+                 caller: 'CallQueue (911)', callee: 'Casey Csr',
+                 start: '09/14/2026 10:00:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: '18005551212',
+                 caller: 'CallQueue (911)', callee: 'Una Gurung', missed: true,
+                 answered: false, start: '09/14/2026 06:10:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: '18005551212',
+                 caller: 'CallQueue (912)', callee: 'Casey Csr',
+                 start: '09/14/2026 10:05:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  const e911 = plain(out.lostByExt['911']);
+  assert.equal(e911.legs, 2);
+  assert.equal(e911.answered, 1);
+  assert.equal(e911.missed, 1);
+  assert.deepEqual(plain(e911.buckets), { window: 1, early: 1 },
+    'the bucket split says whether a window change would even touch them');
+  assert.deepEqual(arr(e911.agents), ['Casey Csr', 'Una Gurung']);
+  assert.equal(out.lostByExt['912'].legs, 1, 'two lost queues stay separate');
+});
+
+test('an expected non-queue leg contributes no extension', () => {
+  // Only the finding shapes name an extension; a person-to-person call has no
+  // queue to name, and listing its caller as a "lost queue" would send an
+  // operator looking up an extension that is simply someone is desk phone.
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'internal', callerId: 'Megan Kapoor,347',
+                 caller: '347', start: '09/14/2026 10:00:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.deepEqual(plain(out.lostByExt), {});
+});
+
 // ── 7. Locating the day's legs ──────────────────────────────────────────────
 
 function fakeBook_(id, sheets) {
@@ -755,8 +794,9 @@ test('merging days sums the cells and keeps sample variety', () => {
                       after: {rung:0,missed:0,answered:0,talkSec:0} } },
     unrecognized: { 'early|queue-caller-ext-unresolved':
       { legs: 1, samples: [sample], bucket: 'early', shape: 'queue-caller-ext-unresolved' } },
+    lostByExt: { '344': { legs: 2, answered: 1, missed: 1, agents: [q], buckets: { early: 2 } } },
   });
-  const acc = { rows: 0, byQueue: {}, unrecognized: {}, droppedAgent: 0,
+  const acc = { rows: 0, byQueue: {}, unrecognized: {}, lostByExt: {}, droppedAgent: 0,
                 droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
   merge(acc, day('A_Q_CSR', 2, '354'));
   merge(acc, day('A_Q_CSR', 3, '377'));
@@ -769,6 +809,13 @@ test('merging days sums the cells and keeps sample variety', () => {
   assert.deepEqual(arr(acc.unrecognized['early|queue-caller-ext-unresolved'].samples), ['354', '377'],
     'a second day must be able to contribute a NEW caller-ID shape');
   assert.equal(acc.rows, 3);
+  // The per-extension roll-up must survive the fold too -- it is what names the
+  // queue, and a day-boundary is exactly where a naive merge would drop it.
+  assert.equal(acc.lostByExt['344'].legs, 6);
+  assert.equal(acc.lostByExt['344'].answered, 3);
+  assert.equal(acc.lostByExt['344'].missed, 3, 'missed folds too -- a lost queue that only '
+    + 'MISSES is still a dept short of calls, and a merge that drops it hides that');
+  assert.deepEqual(plain(acc.lostByExt['344'].buckets), { early: 6 });
 });
 
 test('talk parses H:MM:SS and refuses anything else rather than guessing', () => {
