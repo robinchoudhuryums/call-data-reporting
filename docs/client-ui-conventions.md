@@ -839,7 +839,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v22` — zero DQE rings over the trailing 7 chart days while
+  (`companyOverview:v23` — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1015,6 +1015,31 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   all three pieces (write + SWR + fail-fallback) together.
 
 ## Overview page
+
+- **The Window selector and the chart's range control are ONE option set now
+  (R50).** Window (`#ov-period-bar`) drives the dept CARDS and the agent table
+  below; Chart (`#ov-chart-range`) drives the trend. They were built apart and
+  their option sets diverged -- the chart could show 90 days while the cards
+  offered only Yesterday / 30 / YTD, so a manager looking at a 90-day trend had
+  no way to ask the cards the same question. Window now offers
+  **Yesterday / 30 / 60 / 90 / YTD**, a superset of the chart's
+  **30 / 60 / 90 / YTD**.
+  **The sync is ONE-WAY, Window → Chart.** Picking a window moves the chart to
+  the matching range via `OV_CARD_PERIODS_[p].chartRange`; `Yesterday` maps to
+  `null` and leaves the chart alone, because a single day has no trend to draw.
+  The reverse is deliberately NOT wired: `ovRenderUserTable_` re-FETCHES per
+  window, so a chart→window sync would turn every look at a longer trend into a
+  server round-trip. Both paths go through **`ovApplyChartRange_`**, the single
+  owner of a range change -- a second copy would have to reproduce YTD's
+  on-demand fetch, and dropping it would leave a YTD window charting 90 days.
+  Server side, `periods` carries a bucket per option, each an INCLUSIVE N-day
+  window ending on the latest date (`last60` = latest-59d..latest). The 60/90
+  buckets cost NO extra read -- the DQE fetch already spans the 90-day chart
+  window. **A client option with no server bucket falls back to `latest` (ONE
+  day) in `ovPeriodStats_`** -- a plausible-looking number, not an error -- so
+  `overview-chart-answered.test.js` pins the two sets equal (and the markup's
+  buttons against both), and `company-overview.test.js` drives the window
+  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v23`.
 
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a

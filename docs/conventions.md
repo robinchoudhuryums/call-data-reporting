@@ -513,7 +513,7 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v22` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v23` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v10` |
 | `InsightsReport.gs` | `insights:vN:` | `v23` |

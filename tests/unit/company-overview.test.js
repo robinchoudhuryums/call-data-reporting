@@ -67,7 +67,7 @@ function install(opts) {
   };
   h.ctx.getLatestDataDate = function () { return LATEST; };
   h.ctx.getDqeReadSource_ = function () { return 'sheet'; };
-  h.ctx.sheetFetchDqeRows_ = function () { return fixtureRows(); };
+  h.ctx.sheetFetchDqeRows_ = function () { return opts.rows ? opts.rows() : fixtureRows(); };
   h.ctx.inboundQueuesForDept_ = function (d) {
     return { CSR: ['A_Q_CSR'], Spanish: ['A_Q_Spanish'] }[d] || [];
   };
@@ -141,3 +141,55 @@ test('E2E: trend series carries the latest day for both modes (the axis the tile
   const dept = h.call('getCompanyOverview', {});
   assert.ok(Array.isArray(deptTile(dept, 'CSR').trend), 'sparkline present when narrowed');
 });
+
+// ── R50: the card Window selector's 60- and 90-day periods ─────────────────
+//
+// THE RULE: `periods` carries a bucket per Window option, each an INCLUSIVE
+// N-day window ending on the latest date -- so `last60` spans latest-59d..
+// latest, exactly like `last30` spans latest-29d. The boundary is the part
+// worth driving: an off-by-one here is invisible (every figure still looks
+// plausible) and would make the cards disagree with the chart by one day,
+// which is the divergence R50 exists to close.
+
+const R50_ROWS = function () {
+  return [
+    dalRow({ agent: 'Bob', date: '2026-07-20', r: 10, m: 0, a: 10 }),  // latest
+    dalRow({ agent: 'Bob', date: '2026-06-05', r: 100, m: 0, a: 100 }), // -45d: in 60/90/ytd
+    dalRow({ agent: 'Bob', date: '2026-05-22', r: 1000, m: 0, a: 1000 }), // -59d: the last60 EDGE
+    dalRow({ agent: 'Bob', date: '2026-05-21', r: 10000, m: 0, a: 10000 }), // -60d: out of last60
+    dalRow({ agent: 'Bob', date: '2026-04-22', r: 100000, m: 0, a: 100000 }), // -89d: the last90 EDGE
+    dalRow({ agent: 'Bob', date: '2026-04-21', r: 1000000, m: 0, a: 1000000 }), // -90d: out of last90
+  ];
+};
+
+test('R50: each period is an INCLUSIVE N-day window ending on the latest date', function () {
+  install({ rows: R50_ROWS });
+  const p = deptTile(h.call('getCompanyOverview', {}), 'CSR').periods;
+  // Powers of ten, so the sum NAMES exactly which days landed in each bucket.
+  assert.equal(p.yesterday.rung, 10,      'yesterday = the latest day alone');
+  assert.equal(p.last30.rung,    10,      'last30 = latest only (nothing else is within 29d)');
+  assert.equal(p.last60.rung,    1110,    'last60 includes the -59d EDGE day, excludes -60d');
+  assert.equal(p.last90.rung,    111110,  'last90 includes the -89d EDGE day, excludes -90d');
+  assert.equal(p.ytd.rung,       1111110, 'ytd takes every row (all in the same year)');
+});
+
+test('R50: the new periods carry the same shape as the old ones', function () {
+  install({ rows: R50_ROWS });
+  const p = deptTile(h.call('getCompanyOverview', {}), 'CSR').periods;
+  Object.keys(plain_(p)).forEach(function (k) {
+    ['rung', 'missed', 'answered', 'pctFormatted', 'attFormatted'].forEach(function (f) {
+      assert.ok(Object.prototype.hasOwnProperty.call(p[k], f),
+        'period ' + k + ' is missing ' + f + ' -- the card renderer reads every one');
+    });
+  });
+});
+
+test('R50: every Window option the client offers has a bucket here', function () {
+  install({ rows: R50_ROWS });
+  const p = deptTile(h.call('getCompanyOverview', {}), 'CSR').periods;
+  ['yesterday', 'last30', 'last60', 'last90', 'ytd'].forEach(function (k) {
+    assert.ok(p[k], 'no `' + k + '` period -- that Window silently renders ONE day');
+  });
+});
+
+function plain_(o) { return Object.assign({}, o); }

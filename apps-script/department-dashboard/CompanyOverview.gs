@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v22` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v23` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -92,7 +92,7 @@
 // v21 (R18d): per-dept `dqeSilence` (the queue-lens fallback flag) joined the blob.
 // v22 (6b): each dept carries a per-day `trendChartAnswered` series (DQE
 // answered COUNT) feeding the chart's new Answered calls metric view.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v22';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v23';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -392,6 +392,19 @@ function getCompanyOverview(req) {
   const ytdStartIso = Utilities.formatDate(
     new Date(latestDateObj.getFullYear(), 0, 1), TZ, 'yyyy-MM-dd');
   const readFromIso = [ytdStartIso, chartTrendStartIso].sort()[0];
+  // R50: the card Window selector offers 60 and 90 days too, so its option set
+  // matches the chart's range control (they were built apart and diverged --
+  // the chart could show 90 days while the cards could not). These cost NO
+  // extra read: the DQE fetch above already spans readFromIso, which is never
+  // later than the 90-day chart start, so the rows are in memory either way.
+  // Derived from the SAME arithmetic as the 30- and 90-day starts rather than
+  // restated, so a change to one window shape cannot leave these behind.
+  const periodStartIso_ = function (days) {
+    return Utilities.formatDate(
+      new Date(latestDateObj.getTime() - (days - 1) * 86400000), TZ, 'yyyy-MM-dd');
+  };
+  const last60StartIso = periodStartIso_(60);
+  const last90StartIso = periodStartIso_(OV_CHART_TREND_DAYS);
 
   // Load every dept's roster up front. Build a name->dept lookup so
   // we can attribute each row to the right dept(s) in O(1) inside
@@ -629,6 +642,8 @@ function getCompanyOverview(req) {
     deptPeriodAcc[d] = {
       yesterday: { rung: 0, missed: 0, answered: 0, att_sum: 0 },
       last30:    { rung: 0, missed: 0, answered: 0, att_sum: 0 },
+      last60:    { rung: 0, missed: 0, answered: 0, att_sum: 0 },   // R50
+      last90:    { rung: 0, missed: 0, answered: 0, att_sum: 0 },   // R50
       ytd:       { rung: 0, missed: 0, answered: 0, att_sum: 0 },
     };
     deptChartDaily[d] = {};
@@ -666,6 +681,8 @@ function getCompanyOverview(req) {
       if (pa) {
         const bump = function (b) { b.rung += pRung; b.missed += pMissed; b.answered += pAnswered; b.att_sum += pAttTotal; };
         if (pDate >= ytdStartIso)      bump(pa.ytd);
+        if (pDate >= last90StartIso)   bump(pa.last90);   // R50
+        if (pDate >= last60StartIso)   bump(pa.last60);   // R50
         if (pDate >= trendStartIso)    bump(pa.last30);
         if (pDate === latestDate)      bump(pa.yesterday);
       }
@@ -762,11 +779,15 @@ function getCompanyOverview(req) {
       trendChartAnswered: chartSeries.trendAnswered,    // 90-day chart (answered count, 6b)
       trendChartAbandoned: chartSeries.trendAbandoned,  // 90-day chart (abandoned count)
       trendChartAbandonedPct: chartSeries.trendAbandonedPct,
-      // Card period slider (Yesterday / Last 30 / YTD). `latest` above stays
-      // the Yesterday view for back-compat; the client picks a block here.
+      // Card period slider (Yesterday / Last 30 / 60 / 90 / YTD -- R50 added
+      // the middle two so this set covers the chart's range control). `latest`
+      // above stays the Yesterday view for back-compat; the client picks a
+      // block here.
       periods: {
         yesterday: fmtPeriod_(deptPeriodAcc[d].yesterday),
         last30:    fmtPeriod_(deptPeriodAcc[d].last30),
+        last60:    fmtPeriod_(deptPeriodAcc[d].last60),
+        last90:    fmtPeriod_(deptPeriodAcc[d].last90),
         ytd:       fmtPeriod_(deptPeriodAcc[d].ytd),
       },
     };

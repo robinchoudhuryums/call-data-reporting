@@ -94,8 +94,20 @@ test('both payloads ship the series: the 90-day blob and the separately-cached Y
 
 test('both cache prefixes were bumped -- the two payloads are cached independently', function () {
   const gs = read('CompanyOverview.gs');
-  assert.match(gs, /COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v22'/);
-  assert.match(gs, /OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v2'/,
+  // FLOORS, not equalities. 6b shipped `trendAnswered` in BOTH payloads and
+  // bumped both prefixes (companyOverview v21->v22, overviewChartYtd v1->v2);
+  // what must never regress is that either sits BELOW those. Pinning the exact
+  // numbers made this fail on the next unrelated bump (R50 moved the blob to
+  // v23 for the card `periods` and broke it), which teaches "re-pin the
+  // literal" -- a ritual edit that would happily accept a REVERT too.
+  const ver = function (re, name) {
+    const m = re.exec(gs);
+    assert.ok(m, name + ' not found / reshaped -- update this pin');
+    return Number(m[1]);
+  };
+  assert.ok(ver(/COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v(\d+)'/, 'COMPANY_OVERVIEW_CACHE_KEY') >= 22,
+    'companyOverview must not regress below the v22 that shipped trendAnswered');
+  assert.ok(ver(/OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v(\d+)'/, 'OVERVIEW_CHART_TREND_CACHE_PREFIX') >= 2,
     'the YTD payload has its own prefix; bumping only the blob would serve a '
     + 'warmed YTD payload with no trendAnswered for its TTL');
 });
@@ -120,4 +132,85 @@ test('the metric name the tab sends is the key the registry answers to', functio
     assert.ok(new RegExp('\\n    ' + k + ': \\{').test(frag),
       'tab data-metric="' + k + '" has no OV_CHART_METRICS_ entry -- the click is a no-op');
   });
+});
+
+// ── R50: the Window selector's option set covers the chart's ranges ─────────
+//
+// THE RULE: the dept cards' Window selector offers 60- and 90-day windows, so
+// a manager who puts the trend on 90 days can ask the cards the same question.
+// The two controls were built apart and their option sets diverged; the fix is
+// only useful if the SERVER ships a period block for every option the CLIENT
+// offers -- a missing key falls back to `latest` (ONE day) in ovPeriodStats_,
+// which renders as a plausible number rather than an error. So the pin below
+// compares the two sets rather than either alone.
+
+test('R50: every client Window option has a server period block, and vice versa', function () {
+  const gs = read('CompanyOverview.gs');
+  const frag = read('script-3-overview.html');
+
+  const periodsBlk = /periods: \{([\s\S]*?)\},/.exec(gs);
+  assert.ok(periodsBlk, 'the `periods` block was not found / reshaped -- update this pin');
+  const serverKeys = (periodsBlk[1].match(/^\s*(\w+):/gm) || [])
+    .map(function (s) { return s.trim().replace(':', ''); }).sort();
+
+  const clientBlk = /const OV_CARD_PERIODS_ = \{([\s\S]*?)\n  \};/.exec(frag);
+  assert.ok(clientBlk, 'OV_CARD_PERIODS_ was not found / reshaped -- update this pin');
+  const clientKeys = (clientBlk[1].match(/^\s*(\w+):/gm) || [])
+    .map(function (s) { return s.trim().replace(':', ''); }).sort();
+
+  assert.deepEqual(clientKeys, serverKeys,
+    'the Window options and the server `periods` block must name the same '
+    + 'windows -- a client-only key silently renders ONE day');
+  assert.ok(clientKeys.indexOf('last60') !== -1 && clientKeys.indexOf('last90') !== -1,
+    'R50 added the 60- and 90-day windows');
+});
+
+test('R50: each Window option maps to a real chart range, or to none on purpose', function () {
+  const frag = read('script-3-overview.html');
+  const ranges = /const OV_CHART_RANGES_ = \{([\s\S]*?)\};/.exec(frag);
+  assert.ok(ranges, 'OV_CHART_RANGES_ not found / reshaped -- update this pin');
+
+  const clientBlk = /const OV_CARD_PERIODS_ = \{([\s\S]*?)\n  \};/.exec(frag);
+  const mapped = (clientBlk[1].match(/chartRange: (null|'[^']+')/g) || [])
+    .map(function (s) { return s.replace("chartRange: ", '').replace(/'/g, ''); });
+  assert.ok(mapped.length >= 5, 'every Window option declares a chartRange (null counts)');
+
+  mapped.forEach(function (r) {
+    if (r === 'null') return;   // Yesterday: a single day has no trend equivalent
+    assert.ok(new RegExp("'?" + r + "'?:").test(ranges[1]),
+      'Window maps to chart range "' + r + '" but OV_CHART_RANGES_ has no such key');
+  });
+  assert.equal(mapped.filter(function (r) { return r === 'null'; }).length, 1,
+    'exactly one window (Yesterday) has no chart equivalent');
+});
+
+test('R50: the sync runs through the SAME helper the range buttons use', function () {
+  const frag = read('script-3-overview.html');
+  // A second copy of the range-change logic would have to reproduce YTD's
+  // on-demand fetch -- and would drop it, leaving a YTD window charting 90d.
+  assert.match(frag, /function ovApplyChartRange_\(r\) \{/,
+    'the range change is factored into ovApplyChartRange_');
+  assert.match(frag, /if \(cr\) ovApplyChartRange_\(cr\);/,
+    'the Window bar syncs the chart through that helper');
+  const applyBody = /function ovApplyChartRange_\(r\) \{([\s\S]*?)\n  \}/.exec(frag);
+  assert.ok(applyBody, 'ovApplyChartRange_ not found / reshaped');
+  assert.match(applyBody[1], /ovLoadYtdChart_\(\)/,
+    'the shared helper still owns the YTD on-demand fetch');
+});
+
+test('R50: the buttons the markup offers are exactly the windows the client knows', function () {
+  const html = fs.readFileSync(path.join(DASH, 'dashboard.html'), 'utf8');
+  const bar = /<div id="ov-period-bar"[\s\S]*?<\/div>/.exec(html);
+  assert.ok(bar, '#ov-period-bar not found / reshaped -- update this pin');
+  const btns = (bar[0].match(/data-period="(\w+)"/g) || [])
+    .map(function (s) { return s.replace(/data-period="|"/g, ''); }).sort();
+
+  const frag = read('script-3-overview.html');
+  const clientBlk = /const OV_CARD_PERIODS_ = \{([\s\S]*?)\n  \};/.exec(frag);
+  const clientKeys = (clientBlk[1].match(/^\s*(\w+):/gm) || [])
+    .map(function (s) { return s.trim().replace(':', ''); }).sort();
+
+  assert.deepEqual(btns, clientKeys,
+    'a button with no OV_CARD_PERIODS_ entry is inert (the handler rejects it); '
+    + 'an entry with no button is unreachable');
 });
