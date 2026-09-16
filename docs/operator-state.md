@@ -2125,9 +2125,27 @@ When something looks wrong, before assuming a code bug, check:
       the build's fallback does not cover). Anything there belonging to a
       CSR-family queue must join the widened set BEFORE the change ships, or
       its early legs stay silently on the old window. A zero verdict says the
-      queue-name list is COMPLETE for the dates scanned.
-    - **First live run (8 dates, 113,357 legs, 2026-09-16):** zero legs in
-      either finding shape. CSR-family early traffic (6:00–6:30) is
+      queue-name list is COMPLETE for the dates scanned; **a NON-ZERO verdict
+      BLOCKS the window change** until each extension is named, because a
+      queue the build cannot see cannot be on any list.
+    - **Then "WHICH QUEUE LOST ITS NAME — by extension".** The verdict alone
+      cannot name the queue: the caller field on these legs is a PHONE NUMBER,
+      so the only identifying token is the extension inside `CallQueue (ext)`
+      (or the bare extension itself). That section rolls the finding legs up
+      per extension — legs, answered, missed, which buckets they fall in, and
+      a sample of the agents who took them — so the extension can be looked up
+      in the phone system and the queue named. **Sampling the caller ID
+      instead is useless here and was the census's own first mistake.**
+    - **First live run (8 dates, 113,357 legs, 2026-09-16):** 138 legs in
+      `queue-caller-ext-unresolved` (132 `window`, 4 `early`, 2 `late`;
+      ~17/day) and zero in `queue-ext-bare-caller` — the R18e shape, alive
+      today, and LARGER than the 99-leg CSR-family early edge the census was
+      pre-flighting. The window change is HELD on it: 4 of those legs sit in
+      the early window itself, so until the extension(s) are named it is
+      unknown whether a CSR-family queue is among them. The by-extension
+      section was added for exactly this run; re-run the census after
+      deploying it and read that section first. CSR-family early traffic
+      (6:00–6:30) is
       `A_Q_CSR` 87 rung / 13 missed / 74 answered and `A_Q_Intake` 12/0/12;
       `A_Q_Spanish` and `Backup CSR` had NONE. Widening moves the family's
       answer rate 91.15% → 91.03%. The per-queue design is what keeps that
