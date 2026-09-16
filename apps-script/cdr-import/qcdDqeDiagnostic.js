@@ -105,6 +105,7 @@ function qddAnalyzeDay_(grid, ctx) {
     // and a DQE-counted leg belong to the SAME CALL. A CDR root is a leg
     // tree, so legs of one call share a parent key.
     parentJoin: { sameAgent: 0, otherAgent: 0, none: 0 },
+    orphanCauses: {},            // why each no-DQE-leg call has none
     orphanSample: [],            // CSR-block legs whose call has no DQE leg at all
     reasons: {},                  // reason -> count
     dqeOnlyByQueue: {},           // queue name -> count (DQE counted, QCD block did not)
@@ -255,7 +256,7 @@ function qddAnalyzeDay_(grid, ctx) {
       qcdLegs.push({
         agent: key, parentKey: parentKey, detail: detailRow,
         parentRaw: parentRaw, callId: ownCallId, sheetRow: i + 2,
-        qcdRow: qcdRow, status: status, direction: type,
+        qcdRow: qcdRow, status: status, direction: type, startPST: startPST,
         start: String(row[2]).trim(), end: String(row[4]).trim(),
         caller: String(row[DQE_C.CALLER]).trim(),
         callerName: String(row[9]).trim(),
@@ -292,10 +293,22 @@ function qddAnalyzeDay_(grid, ctx) {
       cls = 'otherAgent';
     } else {
       cls = 'none';
+      // WHY this call has no DQE leg. The work window comes FIRST: a call that
+      // started before 6:30 PST is outside the per-agent window by design
+      // (INV-06) while QCD's CSR block floors at 6:00, so it is a window
+      // difference, not a lost call -- and reading it as one would put a
+      // deliberate design decision on the under-credited pile.
+      const cause = (leg.startPST === null) ? 'unparsed-start'
+        : (leg.startPST < DQE_WINDOW_START) ? 'starts-before-dqe-window'
+        : (leg.startPST >= DQE_WINDOW_END) ? 'starts-after-dqe-window'
+        : (leg.direction === 'internal') ? 'internal-direct-to-agent'
+        : 'in-window-non-queue';
+      out.orphanCauses[cause] = (out.orphanCauses[cause] || 0) + 1;
       if (out.orphanSample.length < 25) {
         out.orphanSample.push({
           agent: leg.agent, parentKey: leg.parentKey,
           // 'N/A' means the leg IS the call root, so its key is its own id.
+          cause: cause,
           parentRaw: leg.parentRaw, callId: leg.callId, sheetRow: leg.sheetRow,
           qcdRow: leg.qcdRow, status: leg.status, direction: leg.direction,
           start: leg.start, end: leg.end,
@@ -333,7 +346,12 @@ function qddAnalyzeDay_(grid, ctx) {
       const ownId = String(row[DQE_C.CALL_ID]).trim();
       for (let w = 0; w < wanted[pk].length; w++) {
         const o = wanted[pk][w];
-        if (ownId && ownId === o.callId) continue;          // the orphan leg itself
+        // Exclude the orphan leg BY ROW. Legs of one call SHARE DQE_C.CALL_ID,
+        // so it is not a per-leg identity: excluding by it silently drops every
+        // sibling, and a call with a full ring tree reports as dangling --
+        // measured on 2026-09-14, where legsOnCall read 3..10 while siblings
+        // read 0. The sheet row is the only always-unique per-leg identity.
+        if (i + 2 === o.sheetRow) continue;
         if (o.siblings.length >= QDD_SIBLING_CAP_) continue;
         o.siblings.push({
           sheetRow: i + 2,
@@ -693,6 +711,7 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
     reasons: res.reasons, dqeOnlyByQueue: res.dqeOnlyByQueue,
     qcdAlsoDqe: res.qcdAlsoDqe, dqeAnsweredAllAgents: res.dqeAnsweredAllAgents,
     parentJoin: res.parentJoin, orphanSample: res.orphanSample, idRange: res.idRange,
+    orphanCauses: res.orphanCauses,
     detail: res.detail, detailTruncated: res.detailTruncated,
     agents: rows, tabName: 'QCD-DQE Diagnostic'
   };
@@ -723,6 +742,10 @@ function qddLogReport_(rep) {
     rep.parentJoin.sameAgent + rep.parentJoin.otherAgent + rep.parentJoin.none,
     rep.parentJoin.sameAgent, rep.parentJoin.otherAgent, rep.parentJoin.none,
     qddParentJoinReading_(rep.parentJoin));
+  if (rep.parentJoin.none) {
+    Logger.log('Why those %s calls have no DQE leg: %s', rep.parentJoin.none,
+      JSON.stringify(rep.orphanCauses));
+  }
   if (rep.orphanSample.length) {
     Logger.log('Call-id range -- DQE-counted calls %s..%s, orphan calls %s..%s '
       + '(ids look like epoch ms; an orphan range far from the day\'s own is a '
@@ -807,16 +830,19 @@ function qddWriteReportTab_(ss, rep) {
   out.push(pad(['  a different agent (in the dept\'s numbers, credited elsewhere)', rep.parentJoin.otherAgent]));
   out.push(pad(['  NOBODY -- no DQE leg on this call at all', rep.parentJoin.none]));
   out.push(pad(['  reading', qddParentJoinReading_(rep.parentJoin)]));
+  Object.keys(rep.orphanCauses).sort().forEach(function (k) {
+    out.push(pad(['    no-DQE-leg cause: ' + k, rep.orphanCauses[k]]));
+  });
   out.push(pad(['  call-id range', 'DQE ' + rep.idRange.dqeMin + '..' + rep.idRange.dqeMax,
     'orphans ' + rep.idRange.orphanMin + '..' + rep.idRange.orphanMax]));
   if (rep.orphanSample.length) {
     out.push(pad(['  no-DQE-leg', 'Agent', 'Call key', 'Parent cell', 'Own call id',
-      'Sheet row', 'QCD row', 'Status', 'Direction', 'Start', 'End',
+      'Sheet row', 'QCD row', 'Status', 'Direction', 'Start', 'Cause',
       'Key seen as a call id today?', 'Legs on this call']));
   }
   rep.orphanSample.forEach(function (o) {
     out.push(pad(['  no-DQE-leg', o.agent, o.parentKey, o.parentRaw, o.callId,
-      o.sheetRow, o.qcdRow, o.status, o.direction, o.start, o.end,
+      o.sheetRow, o.qcdRow, o.status, o.direction, o.start, o.cause,
       o.callIdSeenToday ? 'yes' : 'NO', o.legsOnThisCall]));
     out.push(pad(['    identity', 'caller: ' + o.caller, 'caller name: ' + o.callerName,
       'caller-ID (col W): ' + o.callerId, 'callee: ' + o.calleeName + ' (' + o.calleeExt + ')',

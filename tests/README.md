@@ -264,7 +264,12 @@ tests/
                               reference -- and that an orphan never lists
                               ITSELF as its own sibling, which would report a
                               dangling call as connected), and the log PHI
-                              shaping,
+                              shaping, and the no-DQE-leg CAUSE tally (window
+                              before direction, or a deliberate work-window
+                              decision reads as a content finding). Its fixture
+                              models the real shared-call-id shape -- giving
+                              each leg its own call id once hid a live
+                              sibling-matching bug,
                               escalations-snapshot (the E2 outage cache),
                               coaching (gates + the F-e delivery: diff/txn/
                               email gating/race-safe close),

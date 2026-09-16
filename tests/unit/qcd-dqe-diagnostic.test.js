@@ -66,6 +66,12 @@ function raw(o) {
   r[8]  = o.caller === undefined ? 'CallQueue (304)' : o.caller;
   r[10] = o.calleeExt || '201';
   r[22] = o.callerId === undefined ? 'A_Q_CSR,304' : o.callerId;
+  // Col 0 is the CALL id and every leg of one call SHARES it, so it is not a
+  // per-leg identity. Modelling that faithfully is load-bearing: a fixture that
+  // gave each leg its own col-0 hid a real sibling-matching bug (2026-09-14:
+  // legsOnCall read 3..10 while siblings read 0). NB col 1 is `status` to
+  // calcQcdReport and `LEG_ID` to the DQE build -- one column, two names -- so
+  // the fixtures set it as status and nothing here may overwrite it.
   r[0]  = o.callId || ('call' + (rawSeq_++));
   r[14] = o.parent === undefined ? 'N/A' : o.parent;
   r[25] = o.answered === false ? '' : 'Answered';
@@ -445,14 +451,17 @@ test('an orphan carries the Raw Data identity fields for cross-referencing', () 
 
 test('an orphan lists the OTHER legs of its call, and says so when there are none', () => {
   const grid = [HEADER,
-    // Orphan 1: its call has a ring tree DQE simply did not count.
-    raw({ status: '1', type: 'incoming', callId: 'P10', parent: 'N/A', answered: false,
-          callee: 'A_Q_CSR', calleeExt: '304' }),
-    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legL', parent: 'P10',
-          callerId: '5551234', caller: '5551234' }),
-    // Orphan 2: its call id appears nowhere else.
-    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legM', parent: 'GHOST',
-          callerId: '5551234', caller: '5551234' }),
+    // Orphan 1: a ROOT leg plus a child of the same call. Production shape --
+    // both legs carry the SAME col-0 call id and differ only by leg id, so a
+    // sibling match keyed on the call id finds nothing and the call reads as
+    // dangling when its ring tree is right there.
+    raw({ status: '1', type: 'incoming', callId: 'P10', parent: 'N/A',
+          answered: false, callee: 'A_Q_CSR', calleeExt: '304' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'P10',
+          parent: 'P10', callerId: '5551234', caller: '5551234' }),
+    // Orphan 2: its parent id appears nowhere else.
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legM',
+          parent: 'GHOST', callerId: '5551234', caller: '5551234' }),
   ];
   const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
   assert.equal(out.parentJoin.none, 2);
@@ -464,6 +473,8 @@ test('an orphan lists the OTHER legs of its call, and says so when there are non
   assert.equal(withTree.siblings[0].callee, 'A_Q_CSR');
   assert.equal(withTree.siblings[0].sheetRow, 2);
   assert.equal(withTree.siblings[0].answeredFlag, '');
+  assert.equal(withTree.legsOnThisCall, 2,
+    'and the count agrees with the list -- a count of N with 0 siblings is the bug');
 
   const dangling = byKey['GHOST'];
   assert.equal(dangling.siblings.length, 0,
@@ -473,10 +484,11 @@ test('an orphan lists the OTHER legs of its call, and says so when there are non
 
 test('the orphan leg never lists ITSELF as a sibling', () => {
   // A root leg keys on its own call id, so a naive second pass matches it and
-  // reports a dangling call as having one leg -- the opposite conclusion.
+  // reports a dangling call as having one leg -- the opposite conclusion. The
+  // exclusion is by ROW, the only always-unique per-leg identity here.
   const grid = [HEADER,
-    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'SELF', parent: 'N/A',
-          callerId: '5551234', caller: '5551234' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'SELF',
+          parent: 'N/A', callerId: '5551234', caller: '5551234' }),
   ];
   const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
   assert.equal(out.orphanSample[0].parentKey, 'SELF');
@@ -494,6 +506,47 @@ test('log-shaping hides a phone number but leaves a queue token readable', () =>
   assert.equal(safe('CallQueue (304)'), 'CallQueue (304)');
   assert.equal(safe('Call Menu'), 'Call Menu');
   assert.equal(safe(''), '');
+});
+
+test('each no-DQE-leg call is given a cause, window first', () => {
+  const grid = [HEADER,
+    // 6:15 AM -- inside QCD's 6:00 floor, outside DQE's 6:30 one. A window
+    // difference by design (INV-06), NOT a lost call.
+    raw({ status: '4', type: 'incoming', callId: 'E1', parent: 'N/A',
+          callerId: '5551234', caller: '5551234',
+          start: '09/14/2026 06:15:00', end: '09/14/2026 06:20:00' }),
+    // Mid-window, but internal: another extension rang the agent directly, so
+    // no queue ever delivered it.
+    raw({ status: '1', type: 'internal', talk: '0:00:30', callId: 'E2', parent: 'N/A',
+          callerId: 'Megan Kapoor,347', caller: '347' }),
+    // Mid-window, external, and still no queue leg.
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'E3', parent: 'N/A',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.parentJoin.none, 3);
+  assert.deepEqual(plain(out.orphanCauses), {
+    'starts-before-dqe-window': 1,
+    'internal-direct-to-agent': 1,
+    'in-window-non-queue': 1,
+  });
+  const byKey = {};
+  out.orphanSample.forEach((o) => { byKey[o.callId] = o.cause; });
+  assert.equal(byKey['E1'], 'starts-before-dqe-window');
+  assert.equal(byKey['E2'], 'internal-direct-to-agent');
+  assert.equal(byKey['E3'], 'in-window-non-queue');
+});
+
+test('an internal leg outside the window is reported as a window difference', () => {
+  // Window before direction: an early internal call is out of window for the
+  // same reason every early call is, and calling it "internal" would hide that.
+  const grid = [HEADER,
+    raw({ status: '1', type: 'internal', talk: '0:00:30', callId: 'E4', parent: 'N/A',
+          callerId: 'Megan Kapoor,347', caller: '347',
+          start: '09/14/2026 06:15:00', end: '09/14/2026 06:20:00' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.deepEqual(plain(out.orphanCauses), { 'starts-before-dqe-window': 1 });
 });
 
 // ── 7. Locating the day's legs ──────────────────────────────────────────────

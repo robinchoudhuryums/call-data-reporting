@@ -2065,18 +2065,16 @@ When something looks wrong, before assuming a code bug, check:
       `QUEUE_SPLIT_SCOPE=dept` is attributing the col-AI split correctly.
       Details: docs/known-issues.md "CSR Queue Calls vs the per-agent answered
       sum".
-    - **Second run (parent join, same date): 396 same agent / 0 other agent /
-      18 nobody.** So 396 of 414 are a second VIEW of calls already counted and
-      nobody is under-credited by that difference. The 18 are OPEN and must not
-      be read as 18 under-credited calls yet: 13 of them sit inside a 447 ms
-      span of call-id space across eight agents, and the ids decode as epoch ms
-      to 2026-07-13 on a 2026-09-14 sheet. Read the orphan sample's `Parent
-      cell`, `Key seen as a call id today?`, the Raw Data identity line and —
-      the discriminator — the **other legs on that same call** listed beneath
-      each orphan. A call with a full ring tree is a GATE question; one with no
-      other legs is a DANGLING REFERENCE and nobody lost a call. PHI: those
-      caller fields are on the detail tab only (same workbook as Raw Data); the
-      execution log reduces a phone-shaped value to `(N-digit number)`.
+    - **Runs 2-3 (same date) CLOSED the question.** Parent join: 396 sameAgent /
+      0 otherAgent / 18 nobody -- so 396 of 414 are a second VIEW of calls
+      already counted. The 18 cross-referenced to 12 legs starting 6:03-6:29 AM
+      PST (inside QCD's 6:00 floor, outside DQE's 6:30 one), 4 internal calls
+      rung straight to the agent from another extension, and 2 in-window
+      external calls with no queue leg (direct-DID shape). None is a lost call:
+      396 + 12 + 6 = 414. The tool assigns each one a cause and tallies them,
+      WINDOW FIRST -- an early internal call is out of window for the same
+      reason every early call is. Details: docs/known-issues.md "CSR Queue Calls
+      vs the per-agent answered sum".
     - **`no-queue-token` is the finding to expect and the one that matters.**
       The DQE build admits a leg only if col W carries an `A_Q_*` /
       `Backup CSR` token, or CALLER reads `CallQueue (ext)` (the R18e
