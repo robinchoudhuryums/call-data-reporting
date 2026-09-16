@@ -432,10 +432,26 @@ what keeps this table from rewarding dialing over connecting.
 
 ### Sequence
 
-1. ✅ **DONE (2026-09-15).** `probeOutboundAnswerQuality()` built. *(No
-   product change — it measures and sets nothing.)* **The run itself is
-   still owed**: it needs live Neon, so it is an operator step (#64), and
-   step 2 cannot start until its verdict is read.
+1. ✅ **DONE (2026-09-15), and RUN (2026-09-15).**
+   `probeOutboundAnswerQuality()` built and run over 2026-08-18..09-14
+   (66,207 single-attempt connects). Verdict: **INCONCLUSIVE, correctly.**
+   What the data actually shows, none of which the plan anticipated:
+   - the voicemail signal is **four spikes** (17 s / 21 s / 27 s / 31 s,
+     ~5–6 s apart — ring-cadence harmonics, i.e. destinations handing to
+     voicemail after a different NUMBER of rings), not one tight spike. FWHM
+     around the tallest holds 7.6%, which is why the share gate refused;
+   - a **hard cliff at 32→33 s** (1,224 → 115). 99.3% of connects ring ≤ 32 s;
+   - **40.6% of connects ring 0–1 s** (17,197 at exactly 0, no NULL rings).
+     The repeat-callee check corroborates: its largest cluster is 3,446
+     callee-groups connecting at 0 s *repeatedly*.
+
+   **Step 1b (2026-09-16): `probeOutboundInstantConnects()`** built to settle
+   that last point — see Operator State #65. **Its run is owed, and step 2
+   cannot start until its verdict is read**, because the 0–1 s population
+   caps any ring-based classifier at ~60% of calls regardless of threshold.
+   If the verdict is `connected-timestamp` the ring is recoverable and the
+   population comes back; if it is `carrier-instant` the ceiling is permanent
+   and the classifier must exclude and disclose those calls.
 2. Set the Part 2 parameters from what the probe shows; ship the classifier
    `off` by default, both paths, one shared pure function.
 3. Flip to `disclose` after eyeballing a window; fix or relabel the

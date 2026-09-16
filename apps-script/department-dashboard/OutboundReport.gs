@@ -1549,6 +1549,314 @@ function obProbeSpikeHint_(s) {
 }
 
 // ---------------------------------------------------------------------------
+// probeOutboundInstantConnects -- (c), the follow-up the first answer-quality
+// run made unavoidable. Read-only, admin-gated, editor-run.
+//
+// THE FINDING IT CHASES. 40.6% of connected single-attempt outbound calls in
+// 2026-08-18..09-14 recorded a ring of 0 or 1 second -- 17,197 at EXACTLY
+// zero, with not one NULL ring among them. Nobody answers a phone in under a
+// second, so for four calls in ten `ring_seconds` is not measuring a ring.
+// That caps ANY ring-based voicemail classifier at ~60% of the population
+// however the threshold is chosen, which is why Part 2 of
+// docs/outbound-callback-dept-plan.md is parked until this has an answer.
+//
+// WHAT IS ALREADY RULED OUT, so nobody re-derives it: the "we measured the
+// agent's leg, not the callee's" hypothesis. In cdr-import/outboundCalls.js
+// `first = extLegs[0]` -- the first EXTERNAL Outgoing leg -- so `ring_seconds`
+// is start -> connected on the leg to the callee by construction. It is also
+// not a multi-attempt artefact: 66,207 of 66,215 connects are single-attempt.
+//
+// THE DECISIVE MEASUREMENT is a cross-check the stored column cannot argue
+// with. The `journey` blob holds every leg with its own `secs` (start->stop),
+// `talk` and `hold`, so for the external leg the ring is DERIVABLE as
+// secs - talk - hold, independently of the CONNECTED timestamp that
+// `ring_seconds` was computed from. Two outcomes, and they point at
+// completely different remedies:
+//
+//   - the derived ring is ALSO ~0  -> the calls genuinely connect instantly
+//     (early media / 200-OK-on-dial trunks, or auto-answer devices).
+//     `ring_seconds` is telling the truth and simply cannot discriminate
+//     these; a voicemail classifier must EXCLUDE them and say so, and the
+//     reachable population is ~60%, permanently.
+//   - the derived ring is HEALTHY  -> the stored CONNECTED timestamp is
+//     wrong for these rows and `ring_seconds` is RECOVERABLE from the
+//     journey we already keep. That is a capture fix, and the classifier
+//     gets its full population back.
+//
+// Three supporting cuts, because each kills a different explanation:
+// per-agent concentration (a handful of agents = a device or softphone
+// setting; uniform = the trunk), per-day rate (a step change on one date = a
+// config change, a flat line = how it has always been), and per-bucket talk
+// profile (if the instant rows talk like everyone else, they are real calls
+// being mis-timed, not junk).
+//
+// Window: the SAME OUTBOUND_PROBE_FROM / _TO as probeOutboundAnswerQuality,
+// deliberately -- the two are companion tools and should be read against one
+// window. It does NOT self-clear them; the answer-quality probe owns that.
+//
+// PHI: aggregates and derived seconds only. The journey blob is already
+// PHI-safe at capture (icBuildJourney_ rewrites any phone-shaped name to
+// '(external number)'), and nothing from it is echoed -- only counts and
+// durations. No hash, number or call id is selected, logged or returned.
+
+var OB_INSTANT_RING_SEC_ = 1;        // "instant" = a stored ring at or under this
+var OB_INSTANT_RUNG_SEC_ = 17;       // the comparison group: rings in the spike region
+var OB_INSTANT_SAMPLE_ = 300;        // journey rows fetched per group
+var OB_INSTANT_MIN_ROWS_ = 200;      // below this the run is INCONCLUSIVE
+var OB_INSTANT_REAL_RING_SEC_ = 3;   // a derived ring at or above this is a REAL ring
+var OB_INSTANT_TIMESTAMP_SHARE_ = 0.5;   // share of instant rows with a real derived ring
+var OB_INSTANT_CARRIER_SHARE_ = 0.2;     // below this, the instant rows really are instant
+var OB_INSTANT_AGENT_MIN_CALLS_ = 25;    // an agent needs this many to be rated
+var OB_INSTANT_CONCENTRATION_ = 0.75;    // top-5 share of instant rows = concentrated
+var OB_INSTANT_LOPSIDED_ = 1.5;          // ...and this much MORE lopsided than an even spread
+
+/**
+ * PURE. The external leg's ring, derived from the journey instead of from the
+ * stored CONNECTED timestamp.
+ *
+ * The external leg is the first event the capture rewrote to
+ * '(external number)' -- every other event is an internal agent or queue, so
+ * the marker identifies it exactly rather than by position (an outbound group
+ * can carry the agent's own leg first). Returns null when the blob has no
+ * external leg or no duration to work from: absent evidence, never a zero.
+ */
+function obInstantDerivedRing_(journeyJson) {
+  var ev;
+  try { ev = JSON.parse(journeyJson || 'null'); } catch (e) { return null; }
+  if (!ev || !ev.length) return null;
+  for (var i = 0; i < ev.length; i++) {
+    if (ev[i] && ev[i].name === '(external number)') {
+      if (ev[i].secs == null) return null;
+      var secs = Number(ev[i].secs) || 0;
+      var talk = Number(ev[i].talk) || 0;
+      var hold = Number(ev[i].hold) || 0;
+      return Math.max(0, secs - talk - hold);
+    }
+  }
+  return null;
+}
+
+/** PURE. Median of a numeric array (null on empty). */
+function obInstantMedian_(xs) {
+  var a = (xs || []).filter(function (x) { return typeof x === 'number' && isFinite(x); })
+    .sort(function (p, q) { return p - q; });
+  if (!a.length) return null;
+  var m = Math.floor(a.length / 2);
+  return (a.length % 2) ? a[m] : Math.round((a[m - 1] + a[m]) / 2 * 10) / 10;
+}
+
+/**
+ * PURE. Name the hypothesis the numbers support -- or refuse to.
+ *
+ * The two primary verdicts are mutually exclusive and carry DIFFERENT
+ * remedies, so the gap between them is deliberately left as 'mixed' rather
+ * than split down the middle: a 40%-real-ring result means some rows are
+ * mis-timed and others genuinely instant, and averaging that into one answer
+ * would send the fix in one direction for calls that need the other.
+ */
+function obInstantVerdict_(stats) {
+  var inst = (stats && stats.instant) || {};
+  var sampled = Number(inst.sampled) || 0;
+  if (sampled < 1) {
+    return { code: 'INCONCLUSIVE', reason: 'no-journeys',
+      text: 'no journey blobs on the instant rows — nothing to cross-check against' };
+  }
+  var share = Number(inst.realRingShare) || 0;
+  if (share >= OB_INSTANT_TIMESTAMP_SHARE_) {
+    return { code: 'ok', reason: 'connected-timestamp',
+      text: obProbePct1_(share) + ' of instant rows have a REAL ring in the journey (median '
+        + inst.medianDerived + 's) — the stored CONNECTED timestamp is wrong for them and '
+        + 'ring_seconds is RECOVERABLE from the journey we already keep. This is a capture '
+        + 'fix, and the classifier gets its full population back.' };
+  }
+  if (share <= OB_INSTANT_CARRIER_SHARE_) {
+    return { code: 'ok', reason: 'carrier-instant',
+      text: 'only ' + obProbePct1_(share) + ' of instant rows show any ring in the journey '
+        + '(median ' + inst.medianDerived + 's) — these calls really do connect instantly '
+        + '(early media / auto-answer). ring_seconds is telling the truth and simply cannot '
+        + 'discriminate them: a voicemail classifier must EXCLUDE them and disclose that its '
+        + 'reachable population is the remainder.' };
+  }
+  return { code: 'INCONCLUSIVE', reason: 'mixed',
+    text: obProbePct1_(share) + ' of instant rows have a real ring — BOTH causes are present, '
+      + 'and they need opposite fixes. Split the population further (by agent or by trunk) '
+      + 'before choosing one.' };
+}
+
+/** PURE. Is the instant population concentrated in a few agents? */
+function obInstantConcentration_(agents) {
+  var rows = (agents || []).filter(function (a) {
+    return (Number(a.n) || 0) >= OB_INSTANT_AGENT_MIN_CALLS_;
+  });
+  var totalInstant = rows.reduce(function (s, a) { return s + (Number(a.instant) || 0); }, 0);
+  if (!totalInstant || rows.length < 3) return { concentrated: null, agents: rows.length };
+  // TWO different orderings, because they answer two different questions and
+  // conflating them misleads in the direction of the busiest agent.
+  //   - CONCENTRATION is a share of VOLUME: do a handful of agents account
+  //     for most of the instant rows? That is what "a device setting rather
+  //     than the trunk" means.
+  //   - The ACTIONABLE list is by RATE: an agent doing 2,000 calls with 300
+  //     instant has a normal rate and a big volume, and would head a
+  //     volume-sorted list while being the wrong phone to go and look at.
+  var byVolume = rows.slice().sort(function (p, q) {
+    return (Number(q.instant) || 0) - (Number(p.instant) || 0);
+  }).slice(0, 5);
+  var topInstant = byVolume.reduce(function (s, a) { return s + (Number(a.instant) || 0); }, 0);
+  var topShare = topInstant / totalInstant;
+  var rateOf = function (a) {
+    return (Number(a.instant) || 0) / (Number(a.n) || 1);
+  };
+  var byRate = rows.slice().sort(function (p, q) { return rateOf(q) - rateOf(p); }).slice(0, 5);
+  // A top-5 share means nothing on its own when there are barely more than
+  // five agents: an EVEN spread over six already puts 83% in the top five.
+  // So it is measured against what uniform would give (5/N) -- "concentrated"
+  // has to mean meaningfully more lopsided than uniform, at any roster size.
+  var evenBaseline = Math.min(1, 5 / rows.length);
+  return {
+    concentrated: topShare >= OB_INSTANT_CONCENTRATION_
+      && topShare >= evenBaseline * OB_INSTANT_LOPSIDED_,
+    topShare: Math.round(topShare * 1000) / 1000,
+    evenBaseline: Math.round(evenBaseline * 1000) / 1000,
+    agents: rows.length,
+    // Names ride along because per-agent figures are ordinary dashboard data,
+    // and "which agents" IS the remedy when the answer is a device setting.
+    top: byRate.map(function (a) {
+      return { agent: a.agent, calls: Number(a.n) || 0, instant: Number(a.instant) || 0,
+               rate: Math.round(rateOf(a) * 1000) / 1000 };
+    }),
+  };
+}
+
+function probeOutboundInstantConnects() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var win = obProbeWindow_(props);
+  var from = win.from, to = win.to;
+  var label = from + '..' + to + ' (all departments)';
+  var conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+
+    var base = 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
+      + 'AND connected AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL ';
+
+    // ── Query 1: the shape of the population ─────────────────────────────
+    var sql1 =
+      'SELECT json_build_object('
+      + "'buckets', (SELECT COALESCE(json_agg(json_build_object("
+      +     "'ring', b, 'n', n, 'talkMedian', tm, 'talkAvg', ta) ORDER BY b), '[]') FROM ("
+      +   'SELECT CASE WHEN ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ' THEN 0 '
+      +          'WHEN ring_seconds < ' + OB_INSTANT_RUNG_SEC_ + ' THEN 2 '
+      +          'WHEN ring_seconds <= 32 THEN 17 ELSE 33 END AS b, count(*) AS n, '
+      +     'percentile_cont(0.5) WITHIN GROUP (ORDER BY talk_seconds) AS tm, '
+      +     'round(avg(talk_seconds)) AS ta '
+      +   base + 'GROUP BY 1) q), '
+      + "'agents', (SELECT COALESCE(json_agg(json_build_object("
+      +     "'agent', a, 'n', n, 'instant', z) ORDER BY z DESC), '[]') FROM ("
+      +   "SELECT COALESCE(agent_name, '(unattributed)') AS a, count(*) AS n, "
+      +     'count(*) FILTER (WHERE ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ') AS z '
+      +   base + 'GROUP BY 1) g), '
+      + "'days', (SELECT COALESCE(json_agg(json_build_object("
+      +     "'d', d, 'n', n, 'instant', z) ORDER BY d), '[]') FROM ("
+      +   'SELECT call_date::text AS d, count(*) AS n, '
+      +     'count(*) FILTER (WHERE ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ') AS z '
+      +   base + 'GROUP BY 1) dd)'
+      + ')::text AS j';
+    var ps1 = conn.prepareStatement(sql1);
+    var n1 = (sql1.match(/\?::date/g) || []).length;
+    for (var pi = 1; pi + 1 <= n1; pi += 2) { ps1.setString(pi, from); ps1.setString(pi + 1, to); }
+    var rs1 = ps1.executeQuery();
+    var j1 = rs1.next() ? rs1.getString('j') : '{}';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j1 ? j1.length : 0, 'outbound-instant');
+    rs1.close(); ps1.close();
+    var d1 = JSON.parse(j1 || '{}');
+
+    var buckets = d1.buckets || [];
+    var totalRows = buckets.reduce(function (s, b) { return s + (Number(b.n) || 0); }, 0);
+    var instantRows = buckets.reduce(function (s, b) {
+      return s + (Number(b.ring) === 0 ? (Number(b.n) || 0) : 0);
+    }, 0);
+    var out = {
+      window: { from: from, to: to },
+      totalConnected: totalRows,
+      instantCount: instantRows,
+      instantShare: totalRows ? Math.round(instantRows / totalRows * 1000) / 1000 : 0,
+      buckets: buckets,
+      byDay: d1.days || [],
+      concentration: obInstantConcentration_(d1.agents),
+    };
+    if (totalRows < OB_INSTANT_MIN_ROWS_) {
+      out.result = 'INCONCLUSIVE (only ' + totalRows + ' connected single-attempt calls with a '
+        + 'ring, need ' + OB_INSTANT_MIN_ROWS_ + ' — widen OUTBOUND_PROBE_FROM/_TO) ' + label;
+      Logger.log('[outbound-instant] %s', out.result);
+      return logStatusReturn_(out);
+    }
+
+    // ── Query 2: the journey cross-check ─────────────────────────────────
+    // Two matched samples, newest first: the instant rows and a control group
+    // from the spike region. The control is what makes the instant number
+    // mean anything -- a derived ring is only "healthy" or "absent" relative
+    // to what this same derivation produces on calls that provably rang.
+    var sql2 =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + "(SELECT 'instant' AS grp, journey " + base
+      +   'AND ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ' AND journey IS NOT NULL '
+      +   'ORDER BY call_date DESC, call_start DESC NULLS LAST LIMIT ' + OB_INSTANT_SAMPLE_ + ') '
+      + 'UNION ALL '
+      + "(SELECT 'rung' AS grp, journey " + base
+      +   'AND ring_seconds >= ' + OB_INSTANT_RUNG_SEC_ + ' AND journey IS NOT NULL '
+      +   'ORDER BY call_date DESC, call_start DESC NULLS LAST LIMIT ' + OB_INSTANT_SAMPLE_ + ')'
+      + ') t';
+    var ps2 = conn.prepareStatement(sql2);
+    var n2 = (sql2.match(/\?::date/g) || []).length;
+    for (var pj = 1; pj + 1 <= n2; pj += 2) { ps2.setString(pj, from); ps2.setString(pj + 1, to); }
+    var rs2 = ps2.executeQuery();
+    var j2 = rs2.next() ? rs2.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j2 ? j2.length : 0, 'outbound-instant');
+    rs2.close(); ps2.close();
+
+    var groups = { instant: [], rung: [] };
+    var noExternalLeg = { instant: 0, rung: 0 };
+    JSON.parse(j2 || '[]').forEach(function (r) {
+      var g = (r && r.grp === 'rung') ? 'rung' : 'instant';
+      var derived = obInstantDerivedRing_(r && r.journey);
+      if (derived === null) { noExternalLeg[g]++; return; }
+      groups[g].push(derived);
+    });
+    var summarize = function (xs, missing) {
+      var real = xs.filter(function (x) { return x >= OB_INSTANT_REAL_RING_SEC_; }).length;
+      return {
+        sampled: xs.length,
+        noExternalLeg: missing,
+        medianDerived: obInstantMedian_(xs),
+        realRing: real,
+        realRingShare: xs.length ? Math.round(real / xs.length * 1000) / 1000 : 0,
+      };
+    };
+    out.instant = summarize(groups.instant, noExternalLeg.instant);
+    out.rung = summarize(groups.rung, noExternalLeg.rung);
+
+    var v = obInstantVerdict_(out);
+    out.verdict = v.reason;
+    out.result = v.code + ' (' + v.reason + ') ' + label + ' — '
+      + obProbePct1_(out.instantShare) + ' of connected single-attempt calls ring <= '
+      + OB_INSTANT_RING_SEC_ + 's. ' + v.text
+      + ' CONTROL: calls that provably rang (>= ' + OB_INSTANT_RUNG_SEC_ + 's) derive a median '
+      + out.rung.medianDerived + 's from the same journey field, '
+      + obProbePct1_(out.rung.realRingShare) + ' of them a real ring.'
+      + (out.concentration.concentrated === true
+          ? ' NB the instant rows are CONCENTRATED in a few agents ('
+            + obProbePct1_(out.concentration.topShare) + ' in the top 5) — look at their devices.'
+          : '');
+    Logger.log('[outbound-instant] %s', out.result);
+    return logStatusReturn_(out);
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // NEON-DOWN SHEET FALLBACK (the DC-1 / heatmap-fallback pattern, applied to
 // the last big Neon-only report).
 //

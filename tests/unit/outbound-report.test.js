@@ -1318,3 +1318,332 @@ test('probe: the source keeps its read-only contract', function () {
   assert.match(probe, /neonNoteEgress_\([^,]+, 'outbound-probe'\)/,
     'every Neon read is egress-metered with a surface label (EA-1)');
 });
+
+// ══ probeOutboundInstantConnects — (c), the 0-1s population ════════════════
+//
+// The first answer-quality run found 40.6% of connected single-attempt calls
+// recording a ring of 0-1s, which caps any ring-based classifier at ~60% of
+// the population. This probe's job is to say WHICH of two causes it is, since
+// they need opposite fixes: a wrong CONNECTED timestamp (recoverable from the
+// journey we already store) or genuinely instant connects (permanent, and the
+// classifier must exclude and disclose them). The tests below spend their
+// effort on that fork and on the refusal between them.
+
+// ── The pure derivation ────────────────────────────────────────────────────
+
+test('instant/derive: the EXTERNAL leg is found by its marker, not by position', function () {
+  // An outbound group can carry the agent's own leg first, so position is not
+  // the identifier — '(external number)' is (the capture rewrites every
+  // phone-shaped name to it, which is also why no number can leak here).
+  const j = JSON.stringify([
+    { t: '09:00:00', name: 'Ann Agent', kind: 'leg', secs: 30, talk: 25 },
+    { t: '09:00:01', name: '(external number)', kind: 'answer', secs: 40, talk: 18, hold: 2 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 20, 'secs 40 − talk 18 − hold 2');
+});
+
+test('instant/derive: absent evidence is null, never a zero', function () {
+  // A zero here would read as "connected instantly" and land in the very
+  // bucket under investigation — the one place a default is most harmful.
+  assert.equal(h.ctx.obInstantDerivedRing_(null), null);
+  assert.equal(h.ctx.obInstantDerivedRing_('not json'), null);
+  assert.equal(h.ctx.obInstantDerivedRing_('[]'), null);
+  assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
+    { name: 'Ann Agent', secs: 10 }])), null, 'no external leg at all');
+  assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
+    { name: '(external number)', talk: 5 }])), null, 'external leg with no duration');
+});
+
+test('instant/derive: never negative, and missing talk/hold count as zero', function () {
+  assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
+    { name: '(external number)', secs: 5, talk: 90 }])), 0, 'clamped, not negative');
+  assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
+    { name: '(external number)', secs: 12 }])), 12);
+});
+
+// ── The pure verdict ───────────────────────────────────────────────────────
+
+const instStats_ = (share, median, rungMedian) => ({
+  instant: { sampled: 300, realRingShare: share, medianDerived: median },
+  rung: { sampled: 300, realRingShare: 0.95, medianDerived: rungMedian == null ? 21 : rungMedian },
+});
+
+test('instant/verdict: a healthy derived ring means the TIMESTAMP is wrong (recoverable)', function () {
+  const v = h.ctx.obInstantVerdict_(instStats_(0.82, 19));
+  assert.equal(v.code, 'ok');
+  assert.equal(v.reason, 'connected-timestamp');
+  assert.match(v.text, /RECOVERABLE from the journey/);
+  assert.match(v.text, /82\.0%/, 'one decimal, like every other share here');
+});
+
+test('instant/verdict: no derived ring either means the calls really ARE instant', function () {
+  const v = h.ctx.obInstantVerdict_(instStats_(0.04, 0));
+  assert.equal(v.code, 'ok');
+  assert.equal(v.reason, 'carrier-instant');
+  assert.match(v.text, /must EXCLUDE them/);
+  assert.match(v.text, /reachable population is the remainder/);
+});
+
+test('instant/verdict: the middle is REFUSED, not split down the middle', function () {
+  // The two causes need opposite fixes, so averaging them would send the
+  // remedy in one direction for calls that need the other.
+  const v = h.ctx.obInstantVerdict_(instStats_(0.4, 6));
+  assert.equal(v.code, 'INCONCLUSIVE');
+  assert.equal(v.reason, 'mixed');
+  assert.match(v.text, /BOTH causes are present, and they need opposite fixes/);
+});
+
+test('instant/verdict: no journeys to cross-check is INCONCLUSIVE, not carrier-instant', function () {
+  // The dangerous default: zero samples gives share 0, which without this
+  // guard reads as the strongest possible "genuinely instant" evidence.
+  const v = h.ctx.obInstantVerdict_({ instant: { sampled: 0, realRingShare: 0 } });
+  assert.equal(v.code, 'INCONCLUSIVE');
+  assert.equal(v.reason, 'no-journeys');
+});
+
+// ── Concentration ──────────────────────────────────────────────────────────
+
+test('instant/concentration: a few agents carrying the instant rows is flagged', function () {
+  const agents = [];
+  for (let i = 0; i < 12; i++) {
+    agents.push({ agent: 'A' + i, n: 200, instant: i < 5 ? 160 : 4 });
+  }
+  const c = h.ctx.obInstantConcentration_(agents);
+  assert.equal(c.concentrated, true);
+  assert.equal(c.top.length, 5);
+  assert.equal(c.top[0].rate, 0.8);
+});
+
+test('instant/concentration: the ACTIONABLE list is by RATE, the measure is by VOLUME', function () {
+  // The trap this separation exists for: a very busy agent with a NORMAL
+  // instant rate out-volumes everyone and would head a volume-sorted list —
+  // sending someone to inspect the wrong phone. Zed has the most instant
+  // calls; Ann has the anomalous rate.
+  const agents = [
+    { agent: 'Zed', n: 4000, instant: 600 },   // rate 0.15, top volume
+    { agent: 'Ann', n: 200, instant: 180 },    // rate 0.90, the anomaly
+    { agent: 'Bob', n: 200, instant: 20 },
+    { agent: 'Cid', n: 200, instant: 20 },
+    { agent: 'Dee', n: 200, instant: 20 },
+    { agent: 'Eve', n: 200, instant: 20 },
+    { agent: 'Fay', n: 200, instant: 20 },
+  ];
+  const c = h.ctx.obInstantConcentration_(agents);
+  assert.equal(c.top[0].agent, 'Ann', 'the actionable list leads with the RATE outlier');
+  assert.ok(c.topShare > 0.8, 'while the concentration MEASURE still counts Zed\'s volume');
+});
+
+test('instant/concentration: thin agents cannot swing the verdict', function () {
+  // Six evenly-spread real agents plus five tiny all-instant ones. Without
+  // the minimum-calls filter the tiny ones own the top 5 and the whole
+  // population reads as "concentrated" on agents with 5 calls each.
+  const agents = [];
+  for (let i = 0; i < 6; i++) agents.push({ agent: 'Real' + i, n: 400, instant: 150 });
+  for (let i = 0; i < 5; i++) agents.push({ agent: 'Thin' + i, n: 5, instant: 5 });
+  const c = h.ctx.obInstantConcentration_(agents);
+  assert.equal(c.concentrated, false);
+  assert.equal(c.agents, 6, 'the five 5-call agents are not rated at all');
+});
+
+test('instant/concentration: a SMALL roster is judged against an even spread', function () {
+  // Six agents sharing the instant rows EVENLY already put 83% in the top
+  // five — a raw top-5 threshold calls that concentrated, which is an
+  // artefact of the roster size and not a finding.
+  const even = [];
+  for (let i = 0; i < 6; i++) even.push({ agent: 'E' + i, n: 400, instant: 150 });
+  const c = h.ctx.obInstantConcentration_(even);
+  assert.equal(c.concentrated, false, 'even is never concentrated, however few agents');
+  assert.ok(c.topShare > 0.8, 'even though the raw top-5 share is high');
+  assert.equal(c.evenBaseline, 0.833, 'and the baseline it was judged against is reported');
+});
+
+test('instant/concentration: too few RATED agents is null, not a verdict', function () {
+  // Two agents clear the minimum. Two agents cannot establish whether a
+  // population is concentrated — there is nothing for them to be concentrated
+  // against.
+  const agents = [{ agent: 'A', n: 400, instant: 300 }, { agent: 'B', n: 400, instant: 250 },
+                  { agent: 'C', n: 4, instant: 4 }];
+  assert.equal(h.ctx.obInstantConcentration_(agents).concentrated, null);
+});
+
+test('instant/concentration: an even spread is not flagged', function () {
+  const agents = [];
+  for (let i = 0; i < 12; i++) agents.push({ agent: 'A' + i, n: 200, instant: 80 });
+  assert.equal(h.ctx.obInstantConcentration_(agents).concentrated, false);
+});
+
+test('instant/concentration: thin agents are excluded, and too few to judge is null', function () {
+  const thin = [{ agent: 'A', n: 5, instant: 5 }, { agent: 'B', n: 3, instant: 3 }];
+  assert.equal(h.ctx.obInstantConcentration_(thin).concentrated, null,
+    'an agent with 5 calls cannot carry a verdict');
+  assert.equal(h.ctx.obInstantConcentration_([]).concentrated, null);
+});
+
+// ── End to end ─────────────────────────────────────────────────────────────
+
+function instConn_(j1, j2) {
+  const conn = {
+    prepared: [], closed: false,
+    prepareStatement: function (s) {
+      const ps = { _p: {}, sql: s, setString: function (i, v) { ps._p[i] = v; },
+                   setInt: function (i, v) { ps._p[i] = v; } };
+      ps.executeQuery = function () {
+        conn.prepared.push({ sql: s, p: ps._p });
+        const j = /'buckets'/.test(s) ? j1 : j2;
+        let n = 0;
+        return { next: function () { return n++ === 0; },
+                 getString: function () { return j; }, close: function () {} };
+      };
+      ps.close = function () {};
+      return ps;
+    },
+    close: function () { conn.closed = true; },
+  };
+  return conn;
+}
+
+// Shaped on the live 2026-09-15 population: ~40% instant, a long human decay,
+// the 17-32s spike region, and almost nothing past 32s.
+const INST_J1_ = JSON.stringify({
+  buckets: [{ ring: 0, n: 26854, talkMedian: 41, talkAvg: 96 },
+            { ring: 2, n: 21609, talkMedian: 55, talkAvg: 120 },
+            { ring: 17, n: 17280, talkMedian: 38, talkAvg: 88 },
+            { ring: 33, n: 464, talkMedian: 60, talkAvg: 140 }],
+  agents: [{ agent: 'Ann', n: 900, instant: 380 }, { agent: 'Bob', n: 800, instant: 300 },
+           { agent: 'Cid', n: 700, instant: 260 }, { agent: 'Dee', n: 600, instant: 240 },
+           { agent: 'Eve', n: 500, instant: 200 }, { agent: 'Fay', n: 400, instant: 150 },
+           { agent: 'Gil', n: 300, instant: 120 }, { agent: 'Hal', n: 6, instant: 6 }],
+  days: [{ d: '2026-09-01', n: 2400, instant: 980 }, { d: '2026-09-02', n: 2300, instant: 940 }],
+});
+function instJourneys_(instantDerived, rungDerived) {
+  const mk = (grp, secs) => ({ grp: grp,
+    journey: JSON.stringify([{ name: 'Ann Agent', secs: 5 },
+                             { name: '(external number)', secs: secs + 30, talk: 30 }]) });
+  return JSON.stringify(
+    instantDerived.map((s) => mk('instant', s)).concat(rungDerived.map((s) => mk('rung', s))));
+}
+
+function installInstant_(conn) {
+  h.state.testUser = { email: 'a@x.com', role: 'admin', departments: ['CSR', 'Sales'] };
+  h.state.props = { OUTBOUND_PROBE_FROM: '2026-08-18', OUTBOUND_PROBE_TO: '2026-09-14' };
+  h.ctx.getDashboardNeonConn_ = function () { return conn; };
+}
+
+test('instant: a wrong-timestamp population is diagnosed, with the control group quoted', function () {
+  const conn = instConn_(INST_J1_, instJourneys_([18, 19, 20, 21, 22], [20, 21, 22, 23, 24]));
+  installInstant_(conn);
+  const out = JSON.parse(JSON.stringify(h.call('probeOutboundInstantConnects')));
+  assert.equal(out.verdict, 'connected-timestamp');
+  assert.match(out.result, /^ok \(connected-timestamp\)/);
+  assert.match(out.result, /40\.6% of connected single-attempt calls ring <= 1s/);
+  assert.match(out.result, /CONTROL: calls that provably rang/,
+    'the derived number means nothing without the group that provably rang');
+  assert.equal(out.instant.realRingShare, 1);
+  assert.equal(out.instant.medianDerived, 20);
+  assert.equal(out.rung.medianDerived, 22);
+  assert.equal(conn.closed, true);
+});
+
+test('instant: a genuinely-instant population is diagnosed as permanent', function () {
+  const conn = instConn_(INST_J1_, instJourneys_([0, 0, 0, 1, 0], [20, 21, 22, 23, 24]));
+  installInstant_(conn);
+  const out = h.call('probeOutboundInstantConnects');
+  assert.equal(out.verdict, 'carrier-instant');
+  assert.match(out.result, /^ok \(carrier-instant\)/);
+  assert.match(out.result, /must EXCLUDE them/);
+});
+
+test('instant: the mixed case refuses rather than averaging two opposite remedies', function () {
+  // 4 real rings out of 10 = 0.4, strictly inside the refusal band (0.2, 0.5).
+  const conn = instConn_(INST_J1_, instJourneys_([0, 0, 0, 20, 21, 0, 22, 0, 23, 0],
+                                                 [20, 21, 22, 23, 24]));
+  installInstant_(conn);
+  const out = h.call('probeOutboundInstantConnects');
+  assert.equal(out.verdict, 'mixed');
+  assert.match(out.result, /^INCONCLUSIVE \(mixed\)/);
+});
+
+test('instant: too thin a window refuses BEFORE fetching any journey', function () {
+  const thin = JSON.stringify({ buckets: [{ ring: 0, n: 40 }, { ring: 2, n: 30 }],
+                                agents: [], days: [] });
+  const conn = instConn_(thin, instJourneys_([20], [20]));
+  installInstant_(conn);
+  const out = h.call('probeOutboundInstantConnects');
+  assert.match(out.result, /^INCONCLUSIVE \(only 70 connected single-attempt calls/);
+  assert.match(out.result, /widen OUTBOUND_PROBE_FROM/);
+  assert.equal(out.verdict, undefined);
+  assert.equal(conn.prepared.length, 1, 'no point sampling journeys from a window this thin');
+});
+
+test('instant: query 1 scopes to CONNECTED single-attempt rows with a ring, window bound', function () {
+  const conn = instConn_(INST_J1_, instJourneys_([20], [20]));
+  installInstant_(conn);
+  h.call('probeOutboundInstantConnects');
+  const q1 = conn.prepared[0].sql;
+  assert.match(q1, /AND connected AND COALESCE\(attempts,1\) = 1 AND ring_seconds IS NOT NULL/);
+  const binds = (q1.match(/\?::date/g) || []).length;
+  assert.ok(binds >= 6, 'every sub-select carries the window');
+  assert.equal(Object.keys(conn.prepared[0].p).length, binds, 'every placeholder is bound');
+  assert.equal(conn.prepared[0].p[1], '2026-08-18');
+  assert.equal(conn.prepared[0].p[2], '2026-09-14');
+  // PHI: aggregates only. The journey sample is fetched, but no phone, hash
+  // or call id may be selected in either statement.
+  const all = conn.prepared.map((x) => x.sql).join('\n');
+  assert.ok(!/callee_hash/.test(all), 'no hash leaves the database');
+  assert.ok(!/call_id/.test(all), 'no call id either');
+});
+
+test('instant: the journey sample takes a matched CONTROL group, newest first', function () {
+  const conn = instConn_(INST_J1_, instJourneys_([20], [20]));
+  installInstant_(conn);
+  h.call('probeOutboundInstantConnects');
+  const q2 = conn.prepared[1].sql;
+  assert.match(q2, /'instant' AS grp/);
+  // Anchored on the real second SELECT, not on the words appearing anywhere:
+  // a pin that a commented-out clause still satisfies is not a pin.
+  assert.match(q2, /UNION ALL \(SELECT 'rung' AS grp/,
+    'the control group is what makes the number mean anything');
+  assert.match(q2, /ring_seconds <= 1 AND journey IS NOT NULL/);
+  assert.match(q2, /ring_seconds >= 17 AND journey IS NOT NULL/);
+  assert.equal((q2.match(/ORDER BY call_date DESC/g) || []).length, 2, 'newest first, both groups');
+  assert.equal((q2.match(/LIMIT 300/g) || []).length, 2);
+});
+
+test('instant: a journey with no external leg is counted, not silently dropped', function () {
+  const rows = JSON.stringify([
+    { grp: 'instant', journey: JSON.stringify([{ name: 'Ann Agent', secs: 9 }]) },
+    { grp: 'instant', journey: JSON.stringify([{ name: '(external number)', secs: 50, talk: 30 }]) },
+    { grp: 'rung', journey: JSON.stringify([{ name: '(external number)', secs: 51, talk: 30 }]) },
+  ]);
+  const conn = instConn_(INST_J1_, rows);
+  installInstant_(conn);
+  const out = h.call('probeOutboundInstantConnects');
+  assert.equal(out.instant.noExternalLeg, 1,
+    'an unusable blob is reported — a silently smaller sample is a quietly weaker claim');
+  assert.equal(out.instant.sampled, 1);
+});
+
+test('instant: admin-gated, Neon-down is FAILED, a bad window throws', function () {
+  installInstant_(instConn_(INST_J1_, instJourneys_([20], [20])));
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  assert.match(h.call('probeOutboundInstantConnects').result, /^FAILED \(Neon unreachable\)/);
+
+  installInstant_(instConn_(INST_J1_, instJourneys_([20], [20])));
+  h.state.props.OUTBOUND_PROBE_FROM = '2026-09-20';
+  assert.throws(function () { h.call('probeOutboundInstantConnects'); }, /from <= to/);
+
+  h.state.testUser = { email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'] };
+  assert.throws(function () { h.call('probeOutboundInstantConnects'); }, /admin/i);
+  h.state.testUser = null;
+});
+
+test('instant: the source keeps its read-only contract', function () {
+  const body = OB_SRC.slice(OB_SRC.indexOf('function probeOutboundInstantConnects'));
+  const probe = body.slice(0, body.indexOf('\n// ------'));
+  assert.ok(!/setProperty\(/.test(probe), 'it measures; it never sets a parameter');
+  assert.ok(!/clearToolParamsAfterCleanRun_/.test(probe),
+    'and it does not clear the window either — the answer-quality probe owns those props');
+  assert.ok(!/INSERT |UPDATE |DELETE /.test(probe), 'read-only against Neon');
+  assert.match(probe, /assertAdmin_\(\);/);
+  assert.match(probe, /neonNoteEgress_\([^,]+, 'outbound-instant'\)/);
+});
