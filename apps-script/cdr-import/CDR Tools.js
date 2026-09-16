@@ -89,6 +89,11 @@ function onOpen() {
     // stored DQE rows before reporting; writes only its own detail tab.
     .addItem("QCD vs DQE diagnostic (pick date)…", "diagnoseQcdVsDqe")
 
+    // Read-only work-window edge census (qcdDqeDiagnostic.js): per-queue traffic
+    // at each window edge, the legs whose queue the DQE gate cannot recognise
+    // (the R18e shape), and the size of the existing AJ/AK after-hours capture.
+    .addItem("Work-window edge census", "runWorkWindowCensus")
+
     // .addSeparator()
     // .addItem("Import Bulk CSVs from Drive", "importBulkCSVsFromDrive") // pending Drive permissions
 

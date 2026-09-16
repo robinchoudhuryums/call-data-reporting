@@ -105,6 +105,7 @@ function qddAnalyzeDay_(grid, ctx) {
     // and a DQE-counted leg belong to the SAME CALL. A CDR root is a leg
     // tree, so legs of one call share a parent key.
     parentJoin: { sameAgent: 0, otherAgent: 0, none: 0 },
+    orphanCauses: {},            // why each no-DQE-leg call has none
     orphanSample: [],            // CSR-block legs whose call has no DQE leg at all
     reasons: {},                  // reason -> count
     dqeOnlyByQueue: {},           // queue name -> count (DQE counted, QCD block did not)
@@ -255,7 +256,7 @@ function qddAnalyzeDay_(grid, ctx) {
       qcdLegs.push({
         agent: key, parentKey: parentKey, detail: detailRow,
         parentRaw: parentRaw, callId: ownCallId, sheetRow: i + 2,
-        qcdRow: qcdRow, status: status, direction: type,
+        qcdRow: qcdRow, status: status, direction: type, startPST: startPST,
         start: String(row[2]).trim(), end: String(row[4]).trim(),
         caller: String(row[DQE_C.CALLER]).trim(),
         callerName: String(row[9]).trim(),
@@ -292,10 +293,22 @@ function qddAnalyzeDay_(grid, ctx) {
       cls = 'otherAgent';
     } else {
       cls = 'none';
+      // WHY this call has no DQE leg. The work window comes FIRST: a call that
+      // started before 6:30 PST is outside the per-agent window by design
+      // (INV-06) while QCD's CSR block floors at 6:00, so it is a window
+      // difference, not a lost call -- and reading it as one would put a
+      // deliberate design decision on the under-credited pile.
+      const cause = (leg.startPST === null) ? 'unparsed-start'
+        : (leg.startPST < DQE_WINDOW_START) ? 'starts-before-dqe-window'
+        : (leg.startPST >= DQE_WINDOW_END) ? 'starts-after-dqe-window'
+        : (leg.direction === 'internal') ? 'internal-direct-to-agent'
+        : 'in-window-non-queue';
+      out.orphanCauses[cause] = (out.orphanCauses[cause] || 0) + 1;
       if (out.orphanSample.length < 25) {
         out.orphanSample.push({
           agent: leg.agent, parentKey: leg.parentKey,
           // 'N/A' means the leg IS the call root, so its key is its own id.
+          cause: cause,
           parentRaw: leg.parentRaw, callId: leg.callId, sheetRow: leg.sheetRow,
           qcdRow: leg.qcdRow, status: leg.status, direction: leg.direction,
           start: leg.start, end: leg.end,
@@ -333,7 +346,12 @@ function qddAnalyzeDay_(grid, ctx) {
       const ownId = String(row[DQE_C.CALL_ID]).trim();
       for (let w = 0; w < wanted[pk].length; w++) {
         const o = wanted[pk][w];
-        if (ownId && ownId === o.callId) continue;          // the orphan leg itself
+        // Exclude the orphan leg BY ROW. Legs of one call SHARE DQE_C.CALL_ID,
+        // so it is not a per-leg identity: excluding by it silently drops every
+        // sibling, and a call with a full ring tree reports as dangling --
+        // measured on 2026-09-14, where legsOnCall read 3..10 while siblings
+        // read 0. The sheet row is the only always-unique per-leg identity.
+        if (i + 2 === o.sheetRow) continue;
         if (o.siblings.length >= QDD_SIBLING_CAP_) continue;
         o.siblings.push({
           sheetRow: i + 2,
@@ -693,6 +711,7 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
     reasons: res.reasons, dqeOnlyByQueue: res.dqeOnlyByQueue,
     qcdAlsoDqe: res.qcdAlsoDqe, dqeAnsweredAllAgents: res.dqeAnsweredAllAgents,
     parentJoin: res.parentJoin, orphanSample: res.orphanSample, idRange: res.idRange,
+    orphanCauses: res.orphanCauses,
     detail: res.detail, detailTruncated: res.detailTruncated,
     agents: rows, tabName: 'QCD-DQE Diagnostic'
   };
@@ -723,6 +742,10 @@ function qddLogReport_(rep) {
     rep.parentJoin.sameAgent + rep.parentJoin.otherAgent + rep.parentJoin.none,
     rep.parentJoin.sameAgent, rep.parentJoin.otherAgent, rep.parentJoin.none,
     qddParentJoinReading_(rep.parentJoin));
+  if (rep.parentJoin.none) {
+    Logger.log('Why those %s calls have no DQE leg: %s', rep.parentJoin.none,
+      JSON.stringify(rep.orphanCauses));
+  }
   if (rep.orphanSample.length) {
     Logger.log('Call-id range -- DQE-counted calls %s..%s, orphan calls %s..%s '
       + '(ids look like epoch ms; an orphan range far from the day\'s own is a '
@@ -807,16 +830,19 @@ function qddWriteReportTab_(ss, rep) {
   out.push(pad(['  a different agent (in the dept\'s numbers, credited elsewhere)', rep.parentJoin.otherAgent]));
   out.push(pad(['  NOBODY -- no DQE leg on this call at all', rep.parentJoin.none]));
   out.push(pad(['  reading', qddParentJoinReading_(rep.parentJoin)]));
+  Object.keys(rep.orphanCauses).sort().forEach(function (k) {
+    out.push(pad(['    no-DQE-leg cause: ' + k, rep.orphanCauses[k]]));
+  });
   out.push(pad(['  call-id range', 'DQE ' + rep.idRange.dqeMin + '..' + rep.idRange.dqeMax,
     'orphans ' + rep.idRange.orphanMin + '..' + rep.idRange.orphanMax]));
   if (rep.orphanSample.length) {
     out.push(pad(['  no-DQE-leg', 'Agent', 'Call key', 'Parent cell', 'Own call id',
-      'Sheet row', 'QCD row', 'Status', 'Direction', 'Start', 'End',
+      'Sheet row', 'QCD row', 'Status', 'Direction', 'Start', 'Cause',
       'Key seen as a call id today?', 'Legs on this call']));
   }
   rep.orphanSample.forEach(function (o) {
     out.push(pad(['  no-DQE-leg', o.agent, o.parentKey, o.parentRaw, o.callId,
-      o.sheetRow, o.qcdRow, o.status, o.direction, o.start, o.end,
+      o.sheetRow, o.qcdRow, o.status, o.direction, o.start, o.cause,
       o.callIdSeenToday ? 'yes' : 'NO', o.legsOnThisCall]));
     out.push(pad(['    identity', 'caller: ' + o.caller, 'caller name: ' + o.callerName,
       'caller-ID (col W): ' + o.callerId, 'callee: ' + o.calleeName + ' (' + o.calleeExt + ')',
@@ -869,5 +895,425 @@ function qddWriteReportTab_(ss, rep) {
 
   sheet.getRange(1, 1, out.length, WIDTH).setValues(out);
   sheet.setFrozenRows(2);
+  return sheet;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORK-WINDOW EDGE CENSUS
+//
+// The pre-flight for widening the work window for the CSR queue family (owner
+// ruling 2026-09-16: CSRs -- including the Spanish queue, whose members are all
+// CSRs -- are expected on the phones from 8:00 AM CST / 6:00 AM PST, half an
+// hour before INV-06's floor).
+//
+// The owner has already ruled that the accurate number is wanted whichever way
+// the answer rate moves, so this does NOT exist to decide the change. It exists
+// because the change keys on a LIST OF RAW QUEUE NAMES, and this repo's
+// signature failure is a queue whose raw name is on no list: R18e (a queue
+// stopped prepending its name to col W and two departments lost two months of
+// per-agent history, with no error anywhere) and B-1 (the raw-vs-canonical
+// bridge is admin-populated and nothing verifies it is complete). Widening
+// three queues and silently missing a fourth is exactly that shape.
+//
+// So the census answers two questions before a line of the change is written:
+//   1. WHICH raw queue names have traffic at each window edge?
+//   2. How many edge legs does the DQE queue gate not recognize AT ALL, and
+//      what do their caller-ID values look like? (The R18e detector: a queue
+//      that lost its name has no queue name to report, only a shape.)
+// It also sizes the existing AJ/AK after-hours capture, so the evening credit
+// can be judged from a number rather than an expectation.
+//
+// READ-ONLY: writes only its own tab, sets no Script Properties.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 6:00 AM PST -- the proposed early floor, and QCD's CSR-block floor today. */
+const QDD_EARLY_WINDOW_START_ = 6 * 3600;
+
+/** Stop on a DATE boundary once this is spent; a half-scanned date would skew
+ *  every per-queue figure it touched. Mirrors the R43 budget pattern. */
+const QDD_CENSUS_BUDGET_MS_ = 4 * 60 * 1000;
+
+/** Caller-ID samples kept per unrecognized bucket -- enough to spot a pattern. */
+const QDD_CENSUS_SAMPLE_ = 8;
+
+const QDD_CENSUS_TAB_ = 'Work Window Census';
+
+/** The edge buckets, in the order they are reported. */
+const QDD_CENSUS_BUCKETS_ = ['pre-6am', 'early', 'window', 'late', 'after'];
+
+/**
+ * Which edge bucket a leg's start falls in. `early` is the half hour the change
+ * would move; `late` is the half hour AJ/AK already captures.
+ */
+function qddCensusBucket_(startPST) {
+  if (startPST === null) return '';
+  if (startPST < QDD_EARLY_WINDOW_START_) return 'pre-6am';
+  if (startPST < DQE_WINDOW_START) return 'early';
+  if (startPST < DQE_WINDOW_END) return 'window';
+  if (startPST < DQE_AFTER_HOURS_END) return 'late';
+  return 'after';
+}
+
+function qddCensusCell_() {
+  return { rung: 0, missed: 0, answered: 0, talkSec: 0 };
+}
+
+/**
+ * PURE core: one day's grid -> per-queue, per-bucket counts, plus the legs the
+ * DQE queue gate does not recognize.
+ *
+ * Applies the SAME gate chain as buildDQEHistoricalData (queue token or the
+ * R18e CallQueue-ext fallback, CallForking skip, agent name, excluded agents),
+ * because a leg the build cannot see is a leg no window change can move. The
+ * legs it drops are not discarded silently -- they are counted and sampled.
+ */
+function qddCensusScanGrid_(grid, ctx) {
+  const body = grid.slice(1);
+  const out = {
+    rows: body.length,
+    byQueue: {},
+    unrecognized: {},        // bucket -> { legs, samples: [caller-ID, ...] }
+    droppedAgent: 0,         // gate passed, but no usable agent name
+    droppedExcluded: 0,      // DQE_EXCLUDED_AGENTS
+    droppedForking: 0,
+    unparsedStart: 0
+  };
+
+  const queueNameByExt = {};
+  for (let i = 0; i < body.length; i++) {
+    const ext = String(body[i][DQE_C.CALLEE]).trim();
+    const nm  = String(body[i][DQE_C.CALLEE_NAME]).trim();
+    if (!/^\d+$/.test(ext)) continue;
+    if (!/^(A_Q_[\w&]+|Backup CSR)$/.test(nm)) continue;
+    queueNameByExt[ext] = nm;
+  }
+
+  const cellFor = function (queue, bucket) {
+    if (!out.byQueue[queue]) {
+      out.byQueue[queue] = {};
+      for (let b = 0; b < QDD_CENSUS_BUCKETS_.length; b++) {
+        out.byQueue[queue][QDD_CENSUS_BUCKETS_[b]] = qddCensusCell_();
+      }
+    }
+    return out.byQueue[queue][bucket];
+  };
+
+  for (let i = 0; i < body.length; i++) {
+    const row = body[i];
+    const startPST = qddDisplayToTimeSec_(row[DQE_C.START_TIME]);
+    if (startPST === null) { out.unparsedStart++; continue; }
+    const bucket = qddCensusBucket_(startPST);
+
+    const callerIdRaw = String(row[DQE_C.CALLER_ID]).trim();
+    const qnMatch = callerIdRaw.match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)/);
+    let queueName = qnMatch ? qnMatch[1] : null;
+    if (!queueName) {
+      const cq = String(row[DQE_C.CALLER]).trim().match(/^CallQueue\s*\((\d+)\)$/i);
+      if (cq) queueName = queueNameByExt[cq[1]] || null;
+    }
+
+    if (!queueName) {
+      // The R18e shape. No queue name exists to report, so keep the COUNT and a
+      // few raw caller-ID values -- a queue that stopped prepending its name is
+      // recognizable by eye and by nothing else.
+      if (!out.unrecognized[bucket]) out.unrecognized[bucket] = { legs: 0, samples: [] };
+      const u = out.unrecognized[bucket];
+      u.legs++;
+      if (u.samples.length < QDD_CENSUS_SAMPLE_ && u.samples.indexOf(callerIdRaw) === -1) {
+        u.samples.push(callerIdRaw);
+      }
+      continue;
+    }
+
+    if (/^CallForking/i.test(String(row[DQE_C.CALLEE]).trim())) { out.droppedForking++; continue; }
+    const agent = ctx.canonicalize(String(row[DQE_C.CALLEE_NAME]).trim());
+    if (!agent || agent === 'N/A') { out.droppedAgent++; continue; }
+    if (ctx.excludedAgents.indexOf(agent) !== -1) { out.droppedExcluded++; continue; }
+
+    const cell = cellFor(queueName, bucket);
+    cell.rung++;
+    if (String(row[DQE_C.MISSED]).trim() === 'Missed') cell.missed++;
+    if (String(row[DQE_C.ANSWERED]).trim() === 'Answered') cell.answered++;
+    cell.talkSec += qddHmsToSec_(row[DQE_C.TALK_TIME]);
+  }
+  return out;
+}
+
+/** H:MM:SS -> seconds. Raw per-leg talk, NOT the INV-08 own-talk TTT. */
+function qddHmsToSec_(v) {
+  const parts = String(v == null ? '' : v).trim().split(':');
+  if (parts.length < 2) return 0;
+  return (parseInt(parts[0], 10) || 0) * 3600
+       + (parseInt(parts[1], 10) || 0) * 60
+       + (parseInt(parts[2], 10) || 0);
+}
+
+/** Fold one day's scan into the running total. */
+function qddCensusMerge_(acc, one) {
+  acc.rows += one.rows;
+  acc.droppedAgent += one.droppedAgent;
+  acc.droppedExcluded += one.droppedExcluded;
+  acc.droppedForking += one.droppedForking;
+  acc.unparsedStart += one.unparsedStart;
+  Object.keys(one.byQueue).forEach(function (q) {
+    if (!acc.byQueue[q]) {
+      acc.byQueue[q] = {};
+      QDD_CENSUS_BUCKETS_.forEach(function (b) { acc.byQueue[q][b] = qddCensusCell_(); });
+    }
+    QDD_CENSUS_BUCKETS_.forEach(function (b) {
+      const src = one.byQueue[q][b], dst = acc.byQueue[q][b];
+      dst.rung += src.rung; dst.missed += src.missed;
+      dst.answered += src.answered; dst.talkSec += src.talkSec;
+    });
+  });
+  Object.keys(one.unrecognized).forEach(function (b) {
+    if (!acc.unrecognized[b]) acc.unrecognized[b] = { legs: 0, samples: [] };
+    acc.unrecognized[b].legs += one.unrecognized[b].legs;
+    one.unrecognized[b].samples.forEach(function (sm) {
+      const keep = acc.unrecognized[b].samples;
+      if (keep.length < QDD_CENSUS_SAMPLE_ && keep.indexOf(sm) === -1) keep.push(sm);
+    });
+  });
+  return acc;
+}
+
+/**
+ * Answer rate over a set of buckets, as the dashboard computes it:
+ * answered / (answered + missed). Returns null when nothing rang, so an empty
+ * bucket reads as "no calls" rather than 0%.
+ */
+function qddCensusRate_(cells) {
+  let a = 0, m = 0;
+  for (let i = 0; i < cells.length; i++) { a += cells[i].answered; m += cells[i].missed; }
+  return (a + m) === 0 ? null : (a / (a + m)) * 100;
+}
+
+/**
+ * Size the EXISTING after-hours capture (DQE cols AJ/AK, Batch 3) over the
+ * scanned dates. Relevant because the owner's evening ask -- credit a call
+ * accepted 5:00-5:30 PM CST without letting a miss in that half hour count
+ * against the agent -- is ALREADY the shape of this data: AJ counts answered
+ * legs only and no missed figure is stored at all. It needs a reader, not a
+ * pipeline change.
+ *
+ * NULL and 0 are different facts here (INV: a pre-Batch-3 row was never
+ * captured; a 0 was captured and empty), so they are counted separately -- a
+ * reader that conflates them would report "no after-hours work" for every
+ * historical row.
+ */
+function qddAfterHoursSize_(targetSS, isoDates) {
+  const out = { rows: 0, captured: 0, neverCaptured: 0, answered: 0, tttSec: 0, agentsWithAny: 0 };
+  const sheet = targetSS.getSheetByName('DQE Historical Data');
+  if (!sheet) return out;
+  const lastRow = sheet.getLastRow(), lastCol = sheet.getMaxColumns();
+  if (lastRow < 2 || lastCol < 37) return out;      // pre-Batch-3 sheet width
+
+  const want = {};
+  isoDates.forEach(function (d) { want[qddNormalizeDateStr_(d)] = true; });
+  const grid = sheet.getRange(2, 2, lastRow - 1, 36).getDisplayValues();  // B..AK
+  for (let i = 0; i < grid.length; i++) {
+    if (!want[qddNormalizeDateStr_(grid[i][0])]) continue;
+    out.rows++;
+    const aj = String(grid[i][34] || '').trim();    // AJ = col 36 -> offset 34 from B
+    const ak = String(grid[i][35] || '').trim();
+    if (aj === '') { out.neverCaptured++; continue; }
+    out.captured++;
+    const n = Number(aj) || 0;
+    out.answered += n;
+    if (n > 0) out.agentsWithAny++;
+    out.tttSec += Number(ak) || 0;
+  }
+  return out;
+}
+
+/**
+ * EDITOR / MENU entry. Scans every surviving `Call_Legs_*` sheet (or the dates
+ * given) and reports the per-queue edge census, the unrecognized-leg shapes,
+ * and the AJ/AK sizing. Writes only the `Work Window Census` tab.
+ *
+ * @param {Object} [opts] { dates: ['YYYY-MM-DD', ...], toSheet: true }
+ */
+function probeWorkWindowEdges(opts) {
+  opts = opts || {};
+  const sourceSS = SpreadsheetApp.getActiveSpreadsheet();
+  const targetSS = SpreadsheetApp.openById(getTargetSsId_());
+
+  const found = [];
+  const wantDates = {};
+  (opts.dates || []).forEach(function (d) { wantDates[String(d).trim()] = true; });
+  const anyWanted = Object.keys(wantDates).length > 0;
+  [sourceSS, targetSS].forEach(function (ss, idx) {
+    if (idx === 1 && targetSS.getId() === sourceSS.getId()) return;
+    ss.getSheets().forEach(function (sh) {
+      const m = /^Call_Legs_(\d{4}-\d{2}-\d{2})$/i.exec(sh.getName());
+      if (!m) return;
+      if (anyWanted && !wantDates[m[1]]) return;
+      found.push({ iso: m[1], sheet: sh });
+    });
+  });
+  if (!found.length) throw new Error('probeWorkWindowEdges: no matching Call_Legs_* sheets survive.');
+  found.sort(function (a, b) { return a.iso < b.iso ? 1 : -1; });   // newest first
+
+  const canonicalize = qddMakeCanonicalizer_(loadRosterCanonicalNames_(targetSS.getSheets()[0]));
+  const ctx = { canonicalize: canonicalize, excludedAgents: DQE_EXCLUDED_AGENTS };
+
+  const acc = { rows: 0, byQueue: {}, unrecognized: {}, droppedAgent: 0,
+                droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
+  const scanned = [];
+  const began = Date.now();
+  let partial = false;
+  for (let i = 0; i < found.length; i++) {
+    // Budget is checked on a DATE boundary: a half-scanned date would skew
+    // every per-queue figure it touched, which is worse than scanning fewer.
+    if (i > 0 && (Date.now() - began) > QDD_CENSUS_BUDGET_MS_) { partial = true; break; }
+    const grid = found[i].sheet.getDataRange().getDisplayValues()
+                     .map(function (r) { return r.slice(0, MAX_COLS); });
+    if (grid.length < 2) continue;
+    qddCensusMerge_(acc, qddCensusScanGrid_(grid, ctx));
+    scanned.push(found[i].iso);
+  }
+
+  const report = {
+    dates: scanned, datesAvailable: found.length, partial: partial,
+    rows: acc.rows, byQueue: acc.byQueue, unrecognized: acc.unrecognized,
+    droppedAgent: acc.droppedAgent, droppedExcluded: acc.droppedExcluded,
+    droppedForking: acc.droppedForking, unparsedStart: acc.unparsedStart,
+    afterHours: qddAfterHoursSize_(targetSS, scanned),
+    tabName: QDD_CENSUS_TAB_
+  };
+  qddCensusLog_(report);
+  if (opts.toSheet !== false) qddCensusWriteTab_(sourceSS, report);
+  return report;
+}
+
+/** Menu wrapper: no prompt, scans everything that survives. */
+function runWorkWindowCensus() {
+  const res = probeWorkWindowEdges({ toSheet: true });
+  SpreadsheetApp.getUi().alert('Work-window edge census',
+    'Scanned ' + res.dates.length + ' of ' + res.datesAvailable + ' surviving date(s)'
+      + (res.partial ? ' (stopped on the time budget)' : '')
+      + '.\n\nFull detail: the "' + res.tabName + '" tab (and the execution log).',
+    SpreadsheetApp.getUi().ButtonSet.OK);
+  return res;
+}
+
+function qddCensusLog_(rep) {
+  Logger.log('Work-window edge census -- %s date(s) of %s%s, %s legs',
+    rep.dates.length, rep.datesAvailable, rep.partial ? ' (BUDGET STOP)' : '', rep.rows);
+  Object.keys(rep.byQueue).sort().forEach(function (q) {
+    const b = rep.byQueue[q];
+    const withEarly = qddCensusRate_([b.window, b.early]);
+    const inWindow  = qddCensusRate_([b.window]);
+    Logger.log('  %s | early(6:00-6:30) r/m/a %s/%s/%s | window %s/%s/%s | late(3:00-3:30) %s/%s/%s'
+      + ' | after %s/%s/%s | answer%% window %s -> with early %s',
+      q, b.early.rung, b.early.missed, b.early.answered,
+      b.window.rung, b.window.missed, b.window.answered,
+      b.late.rung, b.late.missed, b.late.answered,
+      b.after.rung, b.after.missed, b.after.answered,
+      inWindow === null ? 'n/a' : inWindow.toFixed(2),
+      withEarly === null ? 'n/a' : withEarly.toFixed(2));
+  });
+  QDD_CENSUS_BUCKETS_.forEach(function (bk) {
+    const u = rep.unrecognized[bk];
+    if (!u || !u.legs) return;
+    Logger.log('  UNRECOGNIZED in %s: %s leg(s) carry no queue token and no CallQueue(ext) '
+      + 'fallback -- the R18e shape. Caller-ID samples: %s', bk, u.legs,
+      JSON.stringify(u.samples.map(qddLogSafe_)));
+  });
+  Logger.log('  gate drops -- CallForking %s, no agent name %s, excluded agent %s, unparsed start %s',
+    rep.droppedForking, rep.droppedAgent, rep.droppedExcluded, rep.unparsedStart);
+  const ah = rep.afterHours;
+  Logger.log('  AJ/AK after-hours capture over these dates: %s row(s), %s captured / %s never '
+    + 'captured (blank = pre-Batch-3, NOT zero), %s answered across %s agent-day(s), talk %ss',
+    ah.rows, ah.captured, ah.neverCaptured, ah.answered, ah.agentsWithAny, ah.tttSec);
+}
+
+/** Writes the census tab. The only sheet this probe touches. */
+function qddCensusWriteTab_(ss, rep) {
+  const WIDTH = 16;
+  let sheet = ss.getSheetByName(rep.tabName);
+  if (!sheet) sheet = ss.insertSheet(rep.tabName);
+  else sheet.clear();
+
+  const pad = function (arr) {
+    const r = arr.slice(0, WIDTH);
+    while (r.length < WIDTH) r.push('');
+    return r.map(function (v) { return v === null || v === undefined ? '' : v; });
+  };
+  const pct = function (v) { return v === null ? 'n/a' : (Math.round(v * 100) / 100) + '%'; };
+  const out = [];
+
+  out.push(pad(['Work-window edge census', rep.dates.length + ' of ' + rep.datesAvailable
+    + ' surviving date(s)', rep.rows + ' legs',
+    rep.partial ? 'PARTIAL -- stopped on the time budget' : '']));
+  out.push(pad(['dates scanned', rep.dates.join(', ')]));
+  out.push(pad(['windows', 'pre-6am = before 6:00 PST', 'early = 6:00-6:30 PST (8:00-8:30 CST)',
+    'window = 6:30-3:00 PST (INV-06)', 'late = 3:00-3:30 PST (5:00-5:30 CST, the AJ/AK capture)',
+    'after = from 3:30 PST']));
+  out.push(pad([]));
+
+  out.push(pad(['PER-QUEUE EDGE CENSUS', '', '', 'talk is the RAW per-leg sum, NOT the INV-08 own-talk TTT']));
+  out.push(pad(['Queue', 'Bucket', 'Rung', 'Missed', 'Answered', 'Talk (s)']));
+  Object.keys(rep.byQueue).sort().forEach(function (q) {
+    QDD_CENSUS_BUCKETS_.forEach(function (bk) {
+      const c = rep.byQueue[q][bk];
+      if (!c.rung) return;
+      out.push(pad([q, bk, c.rung, c.missed, c.answered, c.talkSec]));
+    });
+  });
+  out.push(pad([]));
+
+  out.push(pad(['ANSWER RATE -- what widening the EARLY half hour would do']));
+  out.push(pad(['Queue', 'Answer % (window only)', 'Answer % (window + early)', 'Change (pts)',
+    'Early rung', 'Early missed', 'Early answered']));
+  Object.keys(rep.byQueue).sort().forEach(function (q) {
+    const b = rep.byQueue[q];
+    if (!b.early.rung) return;
+    const before = qddCensusRate_([b.window]);
+    const after  = qddCensusRate_([b.window, b.early]);
+    out.push(pad([q, pct(before), pct(after),
+      (before === null || after === null) ? 'n/a' : (Math.round((after - before) * 100) / 100),
+      b.early.rung, b.early.missed, b.early.answered]));
+  });
+  out.push(pad([]));
+
+  out.push(pad(['UNRECOGNIZED LEGS -- no queue token and no CallQueue(ext) fallback']));
+  out.push(pad(['This is the R18e shape: a queue that stops prepending its name to col W has no',
+    'queue name left to report, so it can only be recognised by these caller-ID samples.',
+    'Anything here that belongs to a CSR-family queue must be added to the widened set',
+    'BEFORE the window change, or its early legs stay silently on the old window.']));
+  out.push(pad(['Bucket', 'Legs', 'Caller-ID samples']));
+  let anyUnrecognized = false;
+  QDD_CENSUS_BUCKETS_.forEach(function (bk) {
+    const u = rep.unrecognized[bk];
+    if (!u || !u.legs) return;
+    anyUnrecognized = true;
+    out.push(pad([bk, u.legs].concat(u.samples)));
+  });
+  if (!anyUnrecognized) out.push(pad(['(none -- every leg resolved to a queue name)']));
+  out.push(pad([]));
+
+  out.push(pad(['GATE DROPS (legs the DQE build never sees, so no window change can move them)']));
+  out.push(pad(['  CallForking callee', rep.droppedForking]));
+  out.push(pad(['  no usable agent name', rep.droppedAgent]));
+  out.push(pad(['  DQE_EXCLUDED_AGENTS', rep.droppedExcluded]));
+  out.push(pad(['  unparsed start time', rep.unparsedStart]));
+  out.push(pad([]));
+
+  const ah = rep.afterHours;
+  out.push(pad(['AJ/AK AFTER-HOURS CAPTURE over these dates (the 5:00-5:30 PM CST half hour)']));
+  out.push(pad(['  DQE rows for these dates', ah.rows]));
+  out.push(pad(['  captured (AJ non-blank)', ah.captured]));
+  out.push(pad(['  never captured (AJ blank = pre-Batch-3, NOT a zero)', ah.neverCaptured]));
+  out.push(pad(['  after-hours answered', ah.answered]));
+  out.push(pad(['  agent-days with any after-hours answer', ah.agentsWithAny]));
+  out.push(pad(['  after-hours talk (s)', ah.tttSec]));
+  out.push(pad(['  note', 'AJ counts ANSWERED legs only and no missed figure is stored at all --',
+    'already the shape the owner asked for (credit the answer, never penalise the miss).',
+    'It needs a READER, not a pipeline change.']));
+
+  sheet.getRange(1, 1, out.length, WIDTH).setValues(out);
+  sheet.setFrozenRows(3);
   return sheet;
 }

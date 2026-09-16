@@ -1042,18 +1042,27 @@ When something looks wrong, before assuming a code bug, check:
     Admins and all-departments managers are unaffected (they already hold every
     dept). A department with no children is unaffected -- 11 of 14 here.
 
-40. **Per-queue split backfill -- a ONE-TIME step whose window CLOSES (do this
-    right after deploying sub-queue Phase 1).**
+40. **Per-queue split backfill -- cheap inside the 14-day window, an operator
+    job outside it (do this right after deploying sub-queue Phase 1).**
 
     The DQE per-queue breakdown (col AI / `dqe_history.queue_split`) is computed
     from `Call_Legs_*`, and `DeleteOldSheets.js` prunes those sheets at **14
-    days**. The per-leg queue identity exists nowhere else, so:
+    days** (#43). The per-leg queue identity exists nowhere else in the
+    workbook, so:
 
-    > **Any date not rebuilt inside that 14-day window can NEVER be split.**
+    > **A date whose `Call_Legs_*` tab still exists is a force re-import away
+    > from being split. A date past the prune needs its SOURCE re-imported
+    > first (item #56), then the same force re-import.**
 
-    There is no repair for it later -- not a backfill, not a re-import, not a
-    Neon fix. Phase 2 falls back to all-queue figures for those dates and says
-    so in the UI, which is correct behavior but permanent.
+    **Owner correction (2026-09-16):** this item previously said such a date
+    could NEVER be split and that no backfill or re-import would recover it.
+    That was wrong. The 14 days bound what the CDR Import workbook can HOLD at
+    once, not what is available to re-import — so a missed date costs operator
+    time, not the data. Until a date is rebuilt, Phase 2 correctly falls back to
+    all-queue figures for it and says so in the UI.
+
+    The urgency is real but it is COST, not permanence: in-window is one force
+    re-import per date, out-of-window adds a source re-import to each.
 
     **Order matters.** Deploy `cdr-import` and `cdr-report` FIRST, let one build
     run, then force a re-import for each surviving date (the normal force
@@ -1067,10 +1076,9 @@ When something looks wrong, before assuming a code bug, check:
     auto-expand columns -- so a 34-wide sheet after a successful build means the
     build did not actually run against it.
 
-    **No new Script Property or trigger.** This item exists purely because the
-    step EXPIRES. Nothing in the code will tell you that you missed it: the
-    dashboard looks correct while quietly serving all-queue numbers for every
-    date you did not reach.
+    **No new Script Property or trigger.** This item exists because nothing in
+    the code will tell you that you missed a date: the dashboard looks correct
+    while quietly serving all-queue numbers for every date you did not reach.
 
 41. **"A department's totals changed after a re-import" -- the queue-split
     attribution audit.**
@@ -1734,7 +1742,7 @@ When something looks wrong, before assuming a code bug, check:
     CDR Report when done. Pinned by `tests/unit/sheet-repairs-backup.test.js`.
 
 60. **After-hours capture (roadmap Batch 3, 2026-09) — verifying the deploy,
-    and the one-time backfill whose window CLOSES.** The daily build now
+    and the backfill, cheapest inside the Call_Legs window.** The daily build now
     writes two additive DQE columns, `AJ After-Hrs Answered` / `AK After-Hrs
     TTT (sec)` (INV-10), over the 3:00–3:30 PM PST half hour after the work
     window (INV-06). Deploy BOTH `cdr-report` and `cdr-import` (the INV-16
@@ -1755,6 +1763,8 @@ When something looks wrong, before assuming a code bug, check:
     **Backfill (one-time, do it the week of the deploy):** the pair can only
     be computed while a date's `Call_Legs_*` tab still exists (#43 prunes at
     ~14 days), so force re-import each surviving date — Manual Export per date
+    (A pruned date is not lost -- re-import its source first, item #56 --
+    but that is a per-date operator job, so do the surviving dates now.)
     (#56), which rebuilds DQE and mirrors inline. Older dates stay NULL
     forever; that is the documented "never captured" state, distinct from 0.
     Do NOT reach for `backfillDQEHistoryUpsert` here: it re-mirrors the SHEET,
@@ -2030,7 +2040,7 @@ When something looks wrong, before assuming a code bug, check:
       the gate that decided it. Background: docs/known-issues.md "CSR Queue
       Calls vs the per-agent answered sum".
     - **Run it on a date whose `Call_Legs_*` tab still exists** (~14-day
-      retention). Blank date = the most recent one. Second prompt is the
+      retention; an older date can be re-imported first, item #56). Blank date = the most recent one. Second prompt is the
       dashboard dept column to cross-tab against (default CSR).
     - **Read the VERDICT line first.** The tool is a fifth hand-mirror of
       `calcQcdReport`, which is this repo's recurring defect class, so it
@@ -2065,18 +2075,16 @@ When something looks wrong, before assuming a code bug, check:
       `QUEUE_SPLIT_SCOPE=dept` is attributing the col-AI split correctly.
       Details: docs/known-issues.md "CSR Queue Calls vs the per-agent answered
       sum".
-    - **Second run (parent join, same date): 396 same agent / 0 other agent /
-      18 nobody.** So 396 of 414 are a second VIEW of calls already counted and
-      nobody is under-credited by that difference. The 18 are OPEN and must not
-      be read as 18 under-credited calls yet: 13 of them sit inside a 447 ms
-      span of call-id space across eight agents, and the ids decode as epoch ms
-      to 2026-07-13 on a 2026-09-14 sheet. Read the orphan sample's `Parent
-      cell`, `Key seen as a call id today?`, the Raw Data identity line and —
-      the discriminator — the **other legs on that same call** listed beneath
-      each orphan. A call with a full ring tree is a GATE question; one with no
-      other legs is a DANGLING REFERENCE and nobody lost a call. PHI: those
-      caller fields are on the detail tab only (same workbook as Raw Data); the
-      execution log reduces a phone-shaped value to `(N-digit number)`.
+    - **Runs 2-3 (same date) CLOSED the question.** Parent join: 396 sameAgent /
+      0 otherAgent / 18 nobody -- so 396 of 414 are a second VIEW of calls
+      already counted. The 18 cross-referenced to 12 legs starting 6:03-6:29 AM
+      PST (inside QCD's 6:00 floor, outside DQE's 6:30 one), 4 internal calls
+      rung straight to the agent from another extension, and 2 in-window
+      external calls with no queue leg (direct-DID shape). None is a lost call:
+      396 + 12 + 6 = 414. The tool assigns each one a cause and tallies them,
+      WINDOW FIRST -- an early internal call is out of window for the same
+      reason every early call is. Details: docs/known-issues.md "CSR Queue Calls
+      vs the per-agent answered sum".
     - **`no-queue-token` is the finding to expect and the one that matters.**
       The DQE build admits a leg only if col W carries an `A_Q_*` /
       `Backup CSR` token, or CALLER reads `CallQueue (ext)` (the R18e
@@ -2089,3 +2097,42 @@ When something looks wrong, before assuming a code bug, check:
     - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js` (one shared fixture
       drives the real `calcQcdReport` and the mirror; no expected numbers are
       hardcoded).
+
+67. **Work-window edge census (`runWorkWindowCensus` / `probeWorkWindowEdges`).**
+    Read-only, cdr-import → CDR Tools → "Work-window edge census", file
+    `apps-script/cdr-import/qcdDqeDiagnostic.js`. Writes only its own
+    `Work Window Census` tab; sets no Script Properties.
+    - **Why it exists.** It is the PRE-FLIGHT for widening the work window for
+      the CSR queue family (owner ruling 2026-09-16: CSRs — including the
+      Spanish queue, whose members are all CSRs — are expected on the phones
+      from 8:00 AM CST / 6:00 AM PST, half an hour before INV-06's floor).
+      **It does NOT exist to decide the change** — the owner ruled the accurate
+      number is wanted whichever way the answer rate moves. It exists because
+      the change keys on a LIST OF RAW QUEUE NAMES, and this repo's signature
+      failure is a queue whose raw name is on no list (R18e: a queue stopped
+      prepending its name to col W and two departments lost two months of
+      per-agent history with no error anywhere; B-1: the raw-vs-canonical
+      bridge is admin-populated and nothing verifies it is complete). Widening
+      three queues and silently missing a fourth is that shape exactly.
+    - **Read the UNRECOGNIZED section first.** Those legs carry no queue token
+      and no `CallQueue (ext)` fallback, so there is no queue name left to
+      report — only their caller-ID samples. Anything there belonging to a
+      CSR-family queue must join the widened set BEFORE the change ships, or
+      its early legs stay silently on the old window.
+    - **Then the per-queue edge table.** Five buckets per queue —
+      `pre-6am` / `early` (6:00–6:30 PST) / `window` (INV-06) / `late`
+      (3:00–3:30 PST, the AJ/AK half hour) / `after` — with rung, missed,
+      answered and raw leg talk (NOT the INV-08 own-talk TTT), plus the answer
+      rate with and without the early edge. It also answers a business
+      question worth knowing independently: whether any OTHER dept has early
+      traffic, i.e. whether "nobody is expected before 8:30 CST" holds.
+    - **AJ/AK sizing.** The last section measures the existing after-hours
+      capture over the scanned dates. AJ counts ANSWERED legs only and no
+      missed figure is stored at all, which is already the shape the owner
+      asked for on the evening half hour (credit the answer, never penalise the
+      miss) — so that ask needs a READER, not a pipeline change. Blank AJ means
+      pre-Batch-3 and NOT zero; the census counts the two separately.
+    - **Budget.** Stops on a DATE boundary once `QDD_CENSUS_BUDGET_MS_` (4 min)
+      is spent and marks the report `partial` — a half-scanned date would skew
+      every per-queue figure it touched. Pass `{dates:[...]}` to scope it.
+    - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js`.

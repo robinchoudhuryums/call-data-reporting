@@ -31,6 +31,8 @@ const { loadGas } = require('../harness/loadGas');
 // the host's Object.prototype and deepStrictEqual rejects them on identity.
 // Re-key into a host object before comparing shapes.
 const plain = (o) => Object.assign({}, o);
+// Same realm problem for arrays: copy into a host array before comparing.
+const arr = (a) => Array.from(a || []);
 
 const IMPORT_DIR = path.resolve(__dirname, '../../apps-script/cdr-import');
 const DIAG_SRC = fs.readFileSync(path.join(IMPORT_DIR, 'qcdDqeDiagnostic.js'), 'utf8');
@@ -66,6 +68,12 @@ function raw(o) {
   r[8]  = o.caller === undefined ? 'CallQueue (304)' : o.caller;
   r[10] = o.calleeExt || '201';
   r[22] = o.callerId === undefined ? 'A_Q_CSR,304' : o.callerId;
+  // Col 0 is the CALL id and every leg of one call SHARES it, so it is not a
+  // per-leg identity. Modelling that faithfully is load-bearing: a fixture that
+  // gave each leg its own col-0 hid a real sibling-matching bug (2026-09-14:
+  // legsOnCall read 3..10 while siblings read 0). NB col 1 is `status` to
+  // calcQcdReport and `LEG_ID` to the DQE build -- one column, two names -- so
+  // the fixtures set it as status and nothing here may overwrite it.
   r[0]  = o.callId || ('call' + (rawSeq_++));
   r[14] = o.parent === undefined ? 'N/A' : o.parent;
   r[25] = o.answered === false ? '' : 'Answered';
@@ -445,14 +453,17 @@ test('an orphan carries the Raw Data identity fields for cross-referencing', () 
 
 test('an orphan lists the OTHER legs of its call, and says so when there are none', () => {
   const grid = [HEADER,
-    // Orphan 1: its call has a ring tree DQE simply did not count.
-    raw({ status: '1', type: 'incoming', callId: 'P10', parent: 'N/A', answered: false,
-          callee: 'A_Q_CSR', calleeExt: '304' }),
-    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legL', parent: 'P10',
-          callerId: '5551234', caller: '5551234' }),
-    // Orphan 2: its call id appears nowhere else.
-    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legM', parent: 'GHOST',
-          callerId: '5551234', caller: '5551234' }),
+    // Orphan 1: a ROOT leg plus a child of the same call. Production shape --
+    // both legs carry the SAME col-0 call id and differ only by leg id, so a
+    // sibling match keyed on the call id finds nothing and the call reads as
+    // dangling when its ring tree is right there.
+    raw({ status: '1', type: 'incoming', callId: 'P10', parent: 'N/A',
+          answered: false, callee: 'A_Q_CSR', calleeExt: '304' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'P10',
+          parent: 'P10', callerId: '5551234', caller: '5551234' }),
+    // Orphan 2: its parent id appears nowhere else.
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legM',
+          parent: 'GHOST', callerId: '5551234', caller: '5551234' }),
   ];
   const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
   assert.equal(out.parentJoin.none, 2);
@@ -464,6 +475,8 @@ test('an orphan lists the OTHER legs of its call, and says so when there are non
   assert.equal(withTree.siblings[0].callee, 'A_Q_CSR');
   assert.equal(withTree.siblings[0].sheetRow, 2);
   assert.equal(withTree.siblings[0].answeredFlag, '');
+  assert.equal(withTree.legsOnThisCall, 2,
+    'and the count agrees with the list -- a count of N with 0 siblings is the bug');
 
   const dangling = byKey['GHOST'];
   assert.equal(dangling.siblings.length, 0,
@@ -473,10 +486,11 @@ test('an orphan lists the OTHER legs of its call, and says so when there are non
 
 test('the orphan leg never lists ITSELF as a sibling', () => {
   // A root leg keys on its own call id, so a naive second pass matches it and
-  // reports a dangling call as having one leg -- the opposite conclusion.
+  // reports a dangling call as having one leg -- the opposite conclusion. The
+  // exclusion is by ROW, the only always-unique per-leg identity here.
   const grid = [HEADER,
-    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'SELF', parent: 'N/A',
-          callerId: '5551234', caller: '5551234' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'SELF',
+          parent: 'N/A', callerId: '5551234', caller: '5551234' }),
   ];
   const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
   assert.equal(out.orphanSample[0].parentKey, 'SELF');
@@ -494,6 +508,47 @@ test('log-shaping hides a phone number but leaves a queue token readable', () =>
   assert.equal(safe('CallQueue (304)'), 'CallQueue (304)');
   assert.equal(safe('Call Menu'), 'Call Menu');
   assert.equal(safe(''), '');
+});
+
+test('each no-DQE-leg call is given a cause, window first', () => {
+  const grid = [HEADER,
+    // 6:15 AM -- inside QCD's 6:00 floor, outside DQE's 6:30 one. A window
+    // difference by design (INV-06), NOT a lost call.
+    raw({ status: '4', type: 'incoming', callId: 'E1', parent: 'N/A',
+          callerId: '5551234', caller: '5551234',
+          start: '09/14/2026 06:15:00', end: '09/14/2026 06:20:00' }),
+    // Mid-window, but internal: another extension rang the agent directly, so
+    // no queue ever delivered it.
+    raw({ status: '1', type: 'internal', talk: '0:00:30', callId: 'E2', parent: 'N/A',
+          callerId: 'Megan Kapoor,347', caller: '347' }),
+    // Mid-window, external, and still no queue leg.
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'E3', parent: 'N/A',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.parentJoin.none, 3);
+  assert.deepEqual(plain(out.orphanCauses), {
+    'starts-before-dqe-window': 1,
+    'internal-direct-to-agent': 1,
+    'in-window-non-queue': 1,
+  });
+  const byKey = {};
+  out.orphanSample.forEach((o) => { byKey[o.callId] = o.cause; });
+  assert.equal(byKey['E1'], 'starts-before-dqe-window');
+  assert.equal(byKey['E2'], 'internal-direct-to-agent');
+  assert.equal(byKey['E3'], 'in-window-non-queue');
+});
+
+test('an internal leg outside the window is reported as a window difference', () => {
+  // Window before direction: an early internal call is out of window for the
+  // same reason every early call is, and calling it "internal" would hide that.
+  const grid = [HEADER,
+    raw({ status: '1', type: 'internal', talk: '0:00:30', callId: 'E4', parent: 'N/A',
+          callerId: 'Megan Kapoor,347', caller: '347',
+          start: '09/14/2026 06:15:00', end: '09/14/2026 06:20:00' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.deepEqual(plain(out.orphanCauses), { 'starts-before-dqe-window': 1 });
 });
 
 // ── 7. Locating the day's legs ──────────────────────────────────────────────
@@ -559,4 +614,148 @@ test('an empty Raw Data and no tabs is an explicit refusal, not a crash', () => 
   const src = fakeBook_('A', {});
   const tgt = fakeBook_('B', { 'Raw Data': fakeTab_('Raw Data', { lastRow: 1 }) });
   assert.throws(() => resolve(src, tgt, '2026-09-14'), /neither a Call_Legs tab/);
+});
+
+// ── 8. The work-window edge census ─────────────────────────────────────────
+//
+// The census exists to de-risk the CSR-family window change, and its whole
+// value is catching a queue whose raw name is on no list. So the pins are
+// mostly about what it must NOT quietly drop.
+
+const CENSUS_CTX = {
+  canonicalize: (n) => n,
+  excludedAgents: ['Rajesh Patel'],
+};
+
+function censusRaw_(o) {
+  const r = raw(o);
+  r[23] = o.missed ? 'Missed' : '';
+  if (o.answered === false) r[25] = '';
+  return r;
+}
+
+test('edge buckets split on the real window boundaries, half-open', () => {
+  const b = h.fn('qddCensusBucket_');
+  assert.equal(b(6 * 3600 - 1), 'pre-6am');
+  assert.equal(b(6 * 3600), 'early');
+  assert.equal(b(6 * 3600 + 29 * 60 + 59), 'early');
+  assert.equal(b(6 * 3600 + 30 * 60), 'window', '6:30 belongs to the window, not the early edge');
+  assert.equal(b(15 * 3600 - 1), 'window');
+  assert.equal(b(15 * 3600), 'late', '3:00 PM starts the AJ/AK half hour');
+  assert.equal(b(15 * 3600 + 30 * 60 - 1), 'late');
+  assert.equal(b(15 * 3600 + 30 * 60), 'after');
+  assert.equal(b(null), '');
+});
+
+test('the census counts rung / missed / answered per queue per bucket', () => {
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 start: '09/14/2026 06:10:00', end: '09/14/2026 06:15:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304', missed: true,
+                 answered: false, start: '09/14/2026 06:20:00', end: '09/14/2026 06:21:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304', talk: '0:02:00',
+                 start: '09/14/2026 10:00:00', end: '09/14/2026 10:05:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_Spanish,310',
+                 start: '09/14/2026 15:10:00', end: '09/14/2026 15:12:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.byQueue['A_Q_CSR'].early.rung, 2);
+  assert.equal(out.byQueue['A_Q_CSR'].early.answered, 1);
+  assert.equal(out.byQueue['A_Q_CSR'].early.missed, 1);
+  assert.equal(out.byQueue['A_Q_CSR'].window.rung, 1);
+  assert.equal(out.byQueue['A_Q_CSR'].window.talkSec, 120);
+  assert.equal(out.byQueue['A_Q_Spanish'].late.rung, 1);
+  assert.equal(out.byQueue['A_Q_Spanish'].early.rung, 0);
+});
+
+test('a leg with no recognisable queue is COUNTED and SAMPLED, never dropped', () => {
+  // The R18e shape and the entire point of the census: a queue that stopped
+  // prepending its name has no queue name left, so silence here would be the
+  // same silence that cost two departments two months of history.
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: '354',
+                 start: '09/14/2026 06:10:00', end: '09/14/2026 06:15:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: '354',
+                 start: '09/14/2026 06:12:00', end: '09/14/2026 06:15:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.unrecognized['early'].legs, 2);
+  assert.deepEqual(arr(out.unrecognized['early'].samples), ['354'],
+    'duplicate caller-IDs collapse to one sample -- eight copies of one value teaches nothing');
+  assert.equal(Object.keys(plain(out.byQueue)).length, 0);
+});
+
+test('the R18e fallback still recovers a queue whose col W lost its name', () => {
+  const namer = new Array(MAX_COLS).fill('');
+  namer[10] = '344'; namer[11] = 'A_Q_FieldOps_Power';
+  namer[2] = '09/14/2026 09:00:00'; namer[4] = '09/14/2026 09:01:00';
+  const grid = [HEADER, namer,
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: 'CallQueue (344)',
+                 start: '09/14/2026 06:10:00', end: '09/14/2026 06:15:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.byQueue['A_Q_FieldOps_Power'].early.rung, 1);
+  assert.equal(out.unrecognized['early'], undefined);
+});
+
+test('gate drops are tallied separately, not folded into a queue', () => {
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 callee: 'Rajesh Patel', start: '09/14/2026 06:10:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 calleeExt: 'CallForking9', start: '09/14/2026 06:11:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 callee: 'N/A', start: '09/14/2026 06:12:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304', start: 'n/a' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.droppedExcluded, 1);
+  assert.equal(out.droppedForking, 1);
+  assert.equal(out.droppedAgent, 1);
+  assert.equal(out.unparsedStart, 1);
+  assert.equal(plain(out.byQueue)['A_Q_CSR'], undefined, 'none of them reached a queue cell');
+});
+
+test('the answer rate is answered/(answered+missed), and null when nothing rang', () => {
+  const rate = h.fn('qddCensusRate_');
+  assert.equal(rate([{ answered: 9, missed: 1 }]), 90);
+  assert.equal(rate([{ answered: 9, missed: 1 }, { answered: 1, missed: 9 }]), 50);
+  assert.equal(rate([{ answered: 0, missed: 0 }]), null,
+    'an empty bucket must read as "no calls", never as 0%');
+});
+
+test('merging days sums the cells and keeps sample variety', () => {
+  const merge = h.fn('qddCensusMerge_');
+  const day = (q, rung, sample) => ({
+    rows: 1, droppedAgent: 0, droppedExcluded: 0, droppedForking: 0, unparsedStart: 0,
+    byQueue: { [q]: { 'pre-6am': {rung:0,missed:0,answered:0,talkSec:0},
+                      early: {rung: rung, missed: 0, answered: rung, talkSec: 5},
+                      window: {rung:0,missed:0,answered:0,talkSec:0},
+                      late: {rung:0,missed:0,answered:0,talkSec:0},
+                      after: {rung:0,missed:0,answered:0,talkSec:0} } },
+    unrecognized: { early: { legs: 1, samples: [sample] } },
+  });
+  const acc = { rows: 0, byQueue: {}, unrecognized: {}, droppedAgent: 0,
+                droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
+  merge(acc, day('A_Q_CSR', 2, '354'));
+  merge(acc, day('A_Q_CSR', 3, '377'));
+  // A third day repeating a shape already seen must not re-add it -- the sample
+  // slots are few, and eight copies of one value crowds out the one that differs.
+  merge(acc, day('A_Q_CSR', 1, '354'));
+  assert.equal(acc.byQueue['A_Q_CSR'].early.rung, 6);
+  assert.equal(acc.byQueue['A_Q_CSR'].early.talkSec, 15);
+  assert.equal(acc.unrecognized['early'].legs, 3);
+  assert.deepEqual(arr(acc.unrecognized['early'].samples), ['354', '377'],
+    'a second day must be able to contribute a NEW caller-ID shape');
+  assert.equal(acc.rows, 3);
+});
+
+test('talk parses H:MM:SS and refuses anything else rather than guessing', () => {
+  const sec = h.fn('qddHmsToSec_');
+  assert.equal(sec('0:02:00'), 120);
+  assert.equal(sec('1:00:01'), 3601);
+  assert.equal(sec('12:07:00'), 43620);
+  assert.equal(sec(''), 0);
+  assert.equal(sec('120'), 0, 'a bare number is not a duration here');
+  assert.equal(sec(null), 0);
 });

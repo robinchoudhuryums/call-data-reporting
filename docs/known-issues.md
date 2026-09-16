@@ -1896,44 +1896,61 @@ calls**, and no agent is under-credited by the 414-vs-397 difference. The two
 figures are different units and must not be differenced or shown side by side
 without saying so — the same rule as "QCD Abandoned vs inbound_calls abandons".
 
-### The 18, which are NOT explained yet (OPEN)
+### The 18, resolved (CLOSED) — a window difference plus non-queue calls
 
-The remaining 18 legs (17 distinct calls) belong to calls with no DQE-counted
-leg at all, and they do not look like ordinary traffic:
+The third run cross-referenced them against Raw Data. **All 18 are ROOT legs**
+(`parentCell = N/A`), every call id resolves inside the day's own range, and the
+start times split them cleanly:
 
-- their per-agent counts match the positive per-agent deltas exactly (they sum
-  to 18, against a net 17 once Anne Garcia's −1 is applied);
-- **13 of the 18 fall inside a 447 ms span of call-id space**, across eight
-  different agents;
-- the ids decode as epoch milliseconds to **2026-07-13**, on a 2026-09-14
-  sheet — roughly two months stale.
+| Cause | Legs | What it is |
+| --- | --- | --- |
+| starts before the DQE window | 12 | 6:03–6:29 AM PST. Inside QCD's 6:00 floor, outside DQE's 6:30 one (INV-06). |
+| internal, direct to the agent | 4 | Another extension rang the agent (callers `347`, `125`, `120`, `172`), no queue involved. |
+| in-window, external, no queue leg | 2 | Most likely direct-DID calls — the `Direct Call History` subsystem's territory, not DQE's. |
 
-Thirteen calls to eight agents inside half a second is not a call pattern, so
-either the ids are not epoch timestamps or these legs carry a dangling /
-carried-over parent reference. **Do not read them as 18 under-credited calls
-until that is settled** — an id that resolves to nothing is a data-shape
-finding, not a missing call.
+**None of them is a lost call.** The first group is the work window doing exactly
+what it is defined to do; the other two are calls that never reached the agent
+through a queue, which is what the per-agent DQE metrics measure. So the whole
+414-vs-397 difference is now accounted for: **396 second-view legs + 12 pre-window
++ 6 non-queue = 414.** No agent is under-credited on this date.
 
-The tool now carries what is needed to settle it. Per orphan the detail tab
-reports: the raw parent cell (so a root leg's `N/A` is visible), the leg's own
-call id, sheet row, status, direction, start/end, the full Raw Data identity
-line (caller, caller name, caller-ID col W, callee + ext, talk, wait, the
-Answered/Missed/Abandoned flags), whether the key appears **as a call id in this
-day's sheet at all**, and the call-id RANGE of DQE-counted calls beside the
-orphans' range. Under each orphan it then lists **the other legs sitting on that
-same call** — callee, ext, caller, caller-ID, direction, status, start, talk,
-Answered/Missed — or says explicitly that there are none.
+The tool now assigns each no-DQE-leg call one of those causes and tallies them,
+**window first** — an early internal call is out of window for the same reason
+every early call is, and labelling it "internal" would hide a deliberate design
+decision behind a content-sounding one.
 
-That last list is the discriminator. An orphan whose call carries a full ring
-tree is a GATE question (the call is here; DQE counted none of its legs). One
-with no other legs at all is a DANGLING REFERENCE — the id resolves to nothing,
-and no agent lost a call. The two need opposite follow-ups, so the report must
-never blur them.
+### Two tool bugs this investigation exposed
 
-**PHI:** the caller fields are written to the detail tab, which lives in the
-same workbook as Raw Data, so nothing new is exposed there. The execution LOG
-reduces any phone-shaped value to its shape (`(11-digit number)`) because logs
-get copied into tickets and chats — `qddLogSafe_`, pinned. Do not widen that.
+1. **Sibling matching keyed on the call id.** Legs of one call SHARE
+   `DQE_C.CALL_ID`, so excluding "the orphan itself" by call id dropped every
+   sibling: `legsOnCall` read 3–10 while `siblings` read 0, making calls with a
+   full ring tree look like dangling references. Now excluded by SHEET ROW, the
+   only always-unique per-leg identity here. The unit fixture had hidden it by
+   giving every leg its own call id; it now models the shared-id shape.
+2. **Call ids are not per-day.** The ids decode as epoch ms to 2026-07-13 on a
+   2026-09-14 sheet, which briefly read as a stale reference. It is not — the
+   DQE-counted calls occupy the same range (`1783983816232..1783983864149` vs
+   the orphans' `1783983815644..1783983852598`). Treat these ids as opaque; do
+   not read a date out of them.
+
+### RULED (owner, 2026-09-16): col 1 is the LEG NUMBER, under two names
+
+`DQE_C.LEG_ID` (the DQE build, read as an integer) and `calcQcdReport`'s
+`status` (read as a string) are **the same column**, and the owner has confirmed
+it holds the **leg number of the call** — which is why the observed values are
+small integers.
+
+So QCD's "Call Menu = status 4" means **"the 4th leg of the call"**, and the CSR
+block's row predicates are keyed on leg POSITION, not on any call state. That is
+the structural reason the CSR block and the DQE build count different legs of
+the same call, and why the two figures were measured as disjoint.
+
+**The trap:** the name `status` invites reading those predicates as call states,
+so `status !== '4'` looks like "not answered" when it means "not the 4th leg".
+Anyone tuning a row 35/36/37 predicate — or adding one — is choosing a leg
+position. The predicates are pinned behaviourally by `qcd-sidebar-parity.test.js`
+and `qcd-dqe-diagnostic.test.js`; neither pins the MEANING, which is what this
+note is for.
 
 ### Side observation, unmeasured
 
