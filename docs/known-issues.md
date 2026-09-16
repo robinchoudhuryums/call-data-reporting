@@ -1835,80 +1835,69 @@ never-cache rule as the heatmap fallback.
 
 ---
 
-## CSR Queue Calls vs the per-agent answered sum (OPEN — measurement pending, 2026-09-16)
+## CSR Queue Calls vs the per-agent answered sum (MEASURED 2026-09-16 — the two figures are DISJOINT leg sets)
 
 Owner observation: for **2026-09-14** the CSR dept view showed `Queue Calls`
 answered **414** while the agent table read **397** (CSR subtotal 380 + Spanish
 subtotal 17). `QCDR Output` showed **Call Menu 369 · Misc 9 · Internal 36**. The
-initial reading was "the agent sum is missing the Misc calls".
+initial reading was "the agent sum is missing the Misc calls". It is not.
 
-### What is established from the code
+### What the first live run found
 
-**The Misc row IS inside the 414.** Row 34 is the `totalRowMap` SUM of rows
-35+36+37 (the 2026-08-20 owner ruling, see "QCDR Output row 34" above), and the
-dashboard's QCD tile sums only `Call Source === 'Total Calls'` rows (INV-50), so
-it reads row 34. 369 + 9 + 36 = 414.
+`diagnoseQcdVsDqe` (Operator State #66) on 2026-09-14, 13,894 legs, verdict
+`ok` — the mirror reconciled against both the real `calcQcdReport`
+(369/9/36) and the stored `DQE Historical Data` rows (397):
 
-**But 414 − 397 = 17, and Misc = 9**, so "the gap is the Misc calls" does not
-hold arithmetically — something else moves in both directions.
+```
+CSR-block answered legs DQE ALSO counts: 0 of 414
+Legs the CSR block counted that DQE does NOT: {"no-queue-token": 414}
+Legs DQE counted that the CSR block does NOT, by queue:
+  A_Q_CSR 327 · A_Q_Intake 52 · A_Q_Spanish 17 · Backup CSR 1   (= 397)
+```
 
-**The two figures are computed from the same raw legs and keyed on the same
-person** (the CALLEE — `isCsrQ = csrTeamSet.has(calleeName)` on the QCD side,
-`agentName = canonicalizeAgentName(CALLEE_NAME)` on the DQE side), so the entire
-gap is *which legs each side admits*:
+**Zero overlap.** These are not one set missing some of the other's calls —
+they are two disjoint sets of LEGS. Every one of the 414 fails DQE's queue
+gate; every one of the 397 falls outside the CSR block's status/type
+predicates. "Which calls are missing" was the wrong question.
 
-| | QCD rows 35–37 (`calcQcdReport`) | DQE per-agent (`buildDQEHistoricalData`) |
-| --- | --- | --- |
-| agent identity | callee ∈ `csr_team` (= `DO NOT EDIT!` F2:F1000) | canonicalized callee, any dept roster |
-| queue gate | **none** — status/type predicates only | col W must carry `A_Q_*` / `Backup CSR`, **or** CALLER must read `CallQueue (ext)` (R18e); otherwise the leg is dropped before anything else |
-| "answered" | r35: status 4 (or 5 on a `csr_exceptions` callee); r36/r37: talk > 0 | col Z === `Answered` |
-| direction | 35/36 incoming, 37 internal (caller off the team) | any (the queue gate effectively keeps queue-delivered legs) |
-| window | start > 6:00, per-row `start < 15:00` / `end < 15:00` / `end < 15:30` | start ∈ [6:30, 15:00), **no end clause** |
-| queue scope | one queue block | every queue the agent worked (`QUEUE_SPLIT_SCOPE` defaults `off`) |
+### The dashboard side is fully explained, exactly
 
-Note rows 35–37 use the 6:00 AM floor **directly**, not the `is630to1500` guard
-the per-queue rows use.
+- **380** (the CSR subtotal) = 327 `A_Q_CSR` + 52 `A_Q_Intake` + 1 `Backup CSR`
+  — CSR's own mapped queues, to the call.
+- **17** = the `A_Q_Spanish` answers by those same CSR-roster agents, attributed
+  to the Spanish sub-queue.
 
-### Why the comparison as posed is not like-for-like
+That identity only holds when `QUEUE_SPLIT_SCOPE` is **`dept`** (Operator State
+#42), and it confirms the col-AI queue split is attributing correctly: the same
+agents' work is split across the queues they actually worked. The combined
+view's 397 is the un-narrowed total. **Read the gate before comparing any dept's
+table against a queue figure** — with the gate `off`, CSR's subtotal would read
+397 and the Spanish group 0 from these same rows.
 
-- `csr_team` is column F of `DO NOT EDIT!` — CSR only. So **414 is CSR-roster
-  agents; 397 includes Spanish's 17.** The comparable pair is **380 vs 414**,
-  a gap of **34**, unless Spanish's own queue block is also inside the tile's
-  rollup (`queuesForDept_` rolls child queues into a parent — verify against the
-  effective `getDeptQcdQueues_('CSR')` before trusting either number).
-- The agent table is not queue-narrowed with `QUEUE_SPLIT_SCOPE=off`, so each
-  CSR agent's total includes calls they answered on other queues. That pushes
-  the table UP.
+### The open question, and what answers it
 
-**Do not lock onto the arithmetic coincidence that the gap (17) equals the
-Spanish subtotal (17).** A decomposition that is at least self-consistent —
-Call Menu 369 → table 380 is +11 from other queues / window edges, while Misc 9
-+ Internal 36 = 45 are legs DQE cannot see — remains a HYPOTHESIS until measured.
+Two disjoint leg sets over the same agents on the same day leaves exactly one
+question: **are they different LEGS OF THE SAME CALLS, or different calls?**
 
-### Owner measurement (2026-09-16)
+- Same calls → the 414 and the 397 are two views of one population (a CDR root
+  is a leg tree: the call-menu/IVR leg and the queue-delivered agent leg are
+  different rows of one call). Nobody is under-credited; the two numbers simply
+  are not the same unit and must never be differenced.
+- Different calls → CSR handled ~811 answered calls and the per-agent numbers
+  never saw 414 of them. That would be large-scale under-crediting.
 
-Drilling row 37 confirmed all 36 Internal calls have a caller from a different
-dept, matching the `!isCSR` predicate. That confirms the predicate, not yet
-whether DQE sees those legs.
+`diagnoseQcdVsDqe` now answers this directly: it keys every leg by its CALL
+(`parentCallId`, or its own `callId` when the leg IS the root — the REP-4 `N/A`
+rule) and reports, for each CSR-block leg, whether that call also carries a
+DQE-counted leg for **the same agent**, **a different agent**, or **nobody**.
+Only the `nobody` bucket can be an under-credited call, and the report says so
+in a sentence rather than leaving the reader to difference two numbers. Re-run
+it on a surviving date and read the PARENT JOIN line.
 
-### Next step
+### Side observation, unmeasured
 
-`diagnoseQcdVsDqe` (Operator State #66, cdr-import → CDR Tools) answers this
-empirically for one date: it classifies every leg against both rule sets, names
-the DQE gate that dropped each CSR-block leg, and reconciles itself against the
-real `calcQcdReport` and the stored DQE rows before reporting. The expected
-finding is `no-queue-token` on the Internal and Misc legs — an internal
-transfer's caller is the transferring party, not a queue, so the leg never
-enters the DQE build's universe. **Whether such a call should be credited to
-the agent is an owner ruling**: QCD says yes (row 37 is in the total), DQE says
-no by construction (its universe is queue-delivered legs). Changing the gate
-would move every dept's per-agent numbers, cannot be backfilled past the
-`Call_Legs` retention window, and is an INV-16 two-file edit plus matching
-changes in the `dataFilters.js` and `DQEdrilldown.js` mirrors.
-
-**Side observation, unmeasured:** the two time parsers disagree on 12-hour
-input. `simulateSplitCol2` (QCD) handles an `AM`/`PM` suffix; the DQE build's
-`displayToTimeSec` does not and would read `02:50:00 PM` as 2:50 AM. Production
-numbers imply the feed emits 24-hour times, so this is latent — but a feed
-format change would silently push every afternoon leg out of the DQE window
-while QCD kept counting it.
+The two time parsers disagree on 12-hour input: `simulateSplitCol2` (QCD)
+handles an `AM`/`PM` suffix; the DQE build's `displayToTimeSec` does not and
+would read `02:50:00 PM` as 2:50 AM. Production numbers imply the feed emits
+24-hour times, so this is latent — but a feed format change would silently push
+every afternoon leg out of the DQE window while QCD kept counting it.
