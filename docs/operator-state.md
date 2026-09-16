@@ -1042,18 +1042,27 @@ When something looks wrong, before assuming a code bug, check:
     Admins and all-departments managers are unaffected (they already hold every
     dept). A department with no children is unaffected -- 11 of 14 here.
 
-40. **Per-queue split backfill -- a ONE-TIME step whose window CLOSES (do this
-    right after deploying sub-queue Phase 1).**
+40. **Per-queue split backfill -- cheap inside the 14-day window, an operator
+    job outside it (do this right after deploying sub-queue Phase 1).**
 
     The DQE per-queue breakdown (col AI / `dqe_history.queue_split`) is computed
     from `Call_Legs_*`, and `DeleteOldSheets.js` prunes those sheets at **14
-    days**. The per-leg queue identity exists nowhere else, so:
+    days** (#43). The per-leg queue identity exists nowhere else in the
+    workbook, so:
 
-    > **Any date not rebuilt inside that 14-day window can NEVER be split.**
+    > **A date whose `Call_Legs_*` tab still exists is a force re-import away
+    > from being split. A date past the prune needs its SOURCE re-imported
+    > first (item #56), then the same force re-import.**
 
-    There is no repair for it later -- not a backfill, not a re-import, not a
-    Neon fix. Phase 2 falls back to all-queue figures for those dates and says
-    so in the UI, which is correct behavior but permanent.
+    **Owner correction (2026-09-16):** this item previously said such a date
+    could NEVER be split and that no backfill or re-import would recover it.
+    That was wrong. The 14 days bound what the CDR Import workbook can HOLD at
+    once, not what is available to re-import — so a missed date costs operator
+    time, not the data. Until a date is rebuilt, Phase 2 correctly falls back to
+    all-queue figures for it and says so in the UI.
+
+    The urgency is real but it is COST, not permanence: in-window is one force
+    re-import per date, out-of-window adds a source re-import to each.
 
     **Order matters.** Deploy `cdr-import` and `cdr-report` FIRST, let one build
     run, then force a re-import for each surviving date (the normal force
@@ -1067,10 +1076,9 @@ When something looks wrong, before assuming a code bug, check:
     auto-expand columns -- so a 34-wide sheet after a successful build means the
     build did not actually run against it.
 
-    **No new Script Property or trigger.** This item exists purely because the
-    step EXPIRES. Nothing in the code will tell you that you missed it: the
-    dashboard looks correct while quietly serving all-queue numbers for every
-    date you did not reach.
+    **No new Script Property or trigger.** This item exists because nothing in
+    the code will tell you that you missed a date: the dashboard looks correct
+    while quietly serving all-queue numbers for every date you did not reach.
 
 41. **"A department's totals changed after a re-import" -- the queue-split
     attribution audit.**
@@ -1734,7 +1742,7 @@ When something looks wrong, before assuming a code bug, check:
     CDR Report when done. Pinned by `tests/unit/sheet-repairs-backup.test.js`.
 
 60. **After-hours capture (roadmap Batch 3, 2026-09) — verifying the deploy,
-    and the one-time backfill whose window CLOSES.** The daily build now
+    and the backfill, cheapest inside the Call_Legs window.** The daily build now
     writes two additive DQE columns, `AJ After-Hrs Answered` / `AK After-Hrs
     TTT (sec)` (INV-10), over the 3:00–3:30 PM PST half hour after the work
     window (INV-06). Deploy BOTH `cdr-report` and `cdr-import` (the INV-16
@@ -1755,6 +1763,8 @@ When something looks wrong, before assuming a code bug, check:
     **Backfill (one-time, do it the week of the deploy):** the pair can only
     be computed while a date's `Call_Legs_*` tab still exists (#43 prunes at
     ~14 days), so force re-import each surviving date — Manual Export per date
+    (A pruned date is not lost -- re-import its source first, item #56 --
+    but that is a per-date operator job, so do the surviving dates now.)
     (#56), which rebuilds DQE and mirrors inline. Older dates stay NULL
     forever; that is the documented "never captured" state, distinct from 0.
     Do NOT reach for `backfillDQEHistoryUpsert` here: it re-mirrors the SHEET,
@@ -2030,7 +2040,7 @@ When something looks wrong, before assuming a code bug, check:
       the gate that decided it. Background: docs/known-issues.md "CSR Queue
       Calls vs the per-agent answered sum".
     - **Run it on a date whose `Call_Legs_*` tab still exists** (~14-day
-      retention). Blank date = the most recent one. Second prompt is the
+      retention; an older date can be re-imported first, item #56). Blank date = the most recent one. Second prompt is the
       dashboard dept column to cross-tab against (default CSR).
     - **Read the VERDICT line first.** The tool is a fifth hand-mirror of
       `calcQcdReport`, which is this repo's recurring defect class, so it

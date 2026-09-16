@@ -1933,16 +1933,24 @@ decision behind a content-sounding one.
    the orphans' `1783983815644..1783983852598`). Treat these ids as opaque; do
    not read a date out of them.
 
-### Observation worth an owner ruling: col 1 has two names
+### RULED (owner, 2026-09-16): col 1 is the LEG NUMBER, under two names
 
-`DQE_C.LEG_ID` (the DQE build, read as an integer leg index) and
-`calcQcdReport`'s `status` (read as a string) are **the same column**, and the
-observed values are small integers (1–7). If that column is a leg SEQUENCE
-number, then QCD's "Call Menu = status 4" is really "the 4th leg of the call",
-which would explain structurally why the CSR block and DQE count different legs
-of the same call. Not verified, and nothing here depends on it — but a rule
-written against `status` is a rule written against leg position, and that is
-worth knowing before anyone tunes one.
+`DQE_C.LEG_ID` (the DQE build, read as an integer) and `calcQcdReport`'s
+`status` (read as a string) are **the same column**, and the owner has confirmed
+it holds the **leg number of the call** — which is why the observed values are
+small integers.
+
+So QCD's "Call Menu = status 4" means **"the 4th leg of the call"**, and the CSR
+block's row predicates are keyed on leg POSITION, not on any call state. That is
+the structural reason the CSR block and the DQE build count different legs of
+the same call, and why the two figures were measured as disjoint.
+
+**The trap:** the name `status` invites reading those predicates as call states,
+so `status !== '4'` looks like "not answered" when it means "not the 4th leg".
+Anyone tuning a row 35/36/37 predicate — or adding one — is choosing a leg
+position. The predicates are pinned behaviourally by `qcd-sidebar-parity.test.js`
+and `qcd-dqe-diagnostic.test.js`; neither pins the MEANING, which is what this
+note is for.
 
 ### Side observation, unmeasured
 

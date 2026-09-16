@@ -69,14 +69,22 @@ raw-name→dept job (R8-1).
 `DeleteOldSheets.js` prunes `Call_Legs_*` at **14 days**. The per-leg queue
 identity exists only there. So:
 
-> **A per-queue split can only ever cover dates built after the pipeline change
-> ships, plus whatever part of the trailing 14-day window is backfilled
-> immediately.** Every earlier date is permanently unsplittable.
+> **A per-queue split covers dates built after the pipeline change ships, plus
+> the trailing 14-day window, at the cost of one force re-import per date.**
+> An earlier date is not lost: its source can be re-imported (Operator State
+> #56) and then split the same way — but that is a per-date operator job, so
+> the in-window dates are far cheaper.
+
+**Owner correction (2026-09-16):** this section previously said every earlier
+date was *permanently unsplittable*. That was wrong — the 14 days bound what the
+CDR Import workbook can HOLD at once, not what is available to re-import. The
+urgency below is real, but it is COST, not permanence.
 
 Three consequences that shape the whole design:
 
 1. **Shipping the pipeline half early has standing value even with no reader
-   consuming it.** Each day of delay is one more permanently unsplittable day.
+   consuming it.** Each day of delay is one more date that will need a source
+   re-import rather than a plain force re-import.
    This is the same argument as the F1b queue-recognition fix.
 2. **Readers need a defined, visible behavior for pre-split dates.** A range
    spanning the cutover mixes split and unsplit rows. Showing them
@@ -180,7 +188,8 @@ only currently-wrong *total*:
 | 4 | IR / Insights (`insights:v23`, `individual:v*`) | yes |
 
 Phase 1 should deploy as soon as it is ready even though nothing consumes it:
-until it ships, every day becomes permanently unsplittable (§3).
+until it ships, every day becomes one more date that can only be split by
+re-importing its source first (§3).
 
 ## 7. Risks
 

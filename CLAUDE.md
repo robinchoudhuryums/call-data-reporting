@@ -732,9 +732,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the rollup: leg-level figures partition by each leg's own queue, parent-level
   ones (unique, talk) go to the queue of that parent's EARLIEST leg, so an
   overflow call that rang the agent through two queues is not counted twice.
-  **`Call_Legs` is pruned at 14 days and the per-leg queue identity exists
-  nowhere else, so history before the deploy is permanently unsplittable** --
-  every day this is not deployed is another one. Two traps: it embeds
+  **The per-leg queue identity exists ONLY in `Call_Legs_*`, which #43 prunes at
+  14 days -- so splitting a date is cheap inside that window and an operator job
+  outside it** (owner correction 2026-09-16: the 14 days bound what the workbook
+  HOLDS, not what is recoverable; an older date's source can be re-imported,
+  Operator State #56). Rebuild promptly; nothing is lost for good. Two traps: it embeds
   comma-joined times, so col 35 is plain-texted like AD-AF / K-AC; and Sheets
   does NOT auto-expand columns, so the writer WIDENS a narrower sheet first
   (`DQE_WRITE_WIDTH`, 37 since Batch 3; a getRange past `getMaxColumns` throws
@@ -768,8 +770,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   with its display mirror `DASHBOARD_AFTER_HOURS_WINDOW`. One refactor trap
   caught on the way in: the queue-split call sits in a try/catch, so a rename
   that unbinds anything it reads blanks AI SILENTLY -- `queue-split.test.js`
-  fails on it. **Backfill = force re-import of the dates whose `Call_Legs_*`
-  tab survives** (Operator State #60). Pinned by `pipeline-build.test.js`
+  fails on it. **Backfill = force re-import; a date whose `Call_Legs_*` tab
+  has been pruned needs its source re-imported first** (Operator State #60). Pinned by `pipeline-build.test.js`
   (Batch 3 block), `neon-write-mapping.test.js`, `neon-backfill-resume.test.js`,
   `sheet-repairs-merge.test.js`.
 - **The Extraction Sidebar mirrors the pipeline's QCD rules BY HAND -- a THIRD
@@ -2299,7 +2301,7 @@ items for anything it flags or doesn't cover.)
 37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` -- the admin-tunable DISPLAY standards (R23: global answer target seed 80 + 10-pt amber band; CSR seed 92/2; CSR transfer tiers 25/30/35)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
-40. Per-queue split backfill -- a ONE-TIME step whose 14-day window CLOSES; miss it and those dates can never be split
+40. Per-queue split backfill -- do it inside the 14-day `Call_Legs_*` window, where it is a force re-import; outside it the date's source must be re-imported first (Op State #56), so a missed date is an operator job, not a loss
 41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
 42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`); the ship list is COMPLETE -- the flip checklist, and what each mode makes the numbers mean
 43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` (CDR Tools menu; logs `retentionPrune` Pipeline Health rows) and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window everything assumes rests on it
@@ -2319,7 +2321,7 @@ items for anything it flags or doesn't cover.)
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL), and the Health page's `neon-storage` row (`NEON_STORAGE_CAP_MB` turns it into a threshold; a DELETE never moves it)
 58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
-60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the ONE-TIME backfill by force re-import of the dates whose `Call_Legs_*` tab survives (NULL = never captured, 0 = captured and empty)
+60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the backfill by force re-import (a pruned date needs its source re-imported first, #56; NULL = never captured, 0 = captured and empty)
 61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + the ~3 AM trigger from CDR Tools; the Health page's `historical-sort` row (needed sorting EVERY night = a writer regressing; "could not fix" = a repair, not a sort; skipped = a backfill resume pointer is set)
 62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap, not the cells holding data; the Health page's `workbook-cells` row (warns at 80%, sheet-only so it renders mid-outage) and CDR Tools -> Workbook Cell Space (audit / preview / apply trim). A named range past the keep bounds REFUSES, and a writer's reach is not derivable from the grid -- read the writers before trimming a new tab
 63. Outbound report RELEASE runbook (6c) -- backfill, `runOutboundVettingCheck`, release ONLY on a CLEAN `ok parity` (INCONCLUSIVE is not a pass), then flip `OUTBOUND_VETTING_GATE_` and un-hide the menu item in ONE commit (cross-file-pins fails on either half alone) and walk S46. Per-dept cards stay ruled out
@@ -2355,7 +2357,7 @@ CDR Reporting Tools:
   apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js
 
 CDR Import:
-  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
+  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/qcdDqeDiagnostic.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
 
 DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json
