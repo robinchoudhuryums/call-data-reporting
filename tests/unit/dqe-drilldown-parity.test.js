@@ -266,3 +266,48 @@ test('every slot column maps to `missed`, and non-drillable columns refuse', fun
     assert.equal(toMetric(c), null, 'col ' + c + ' must not be drillable');
   });
 });
+
+// ── R49: the drill must inherit the PER-QUEUE early floor ───────────────────
+//
+// The build floors the CSR queue family at 6:00 AM PST instead of 6:30 (owner
+// ruling 2026-09-16). cross-file-pins pins the drill's CONSTANTS equal to the
+// build's, but a constant the drill never consults is worth nothing -- so this
+// drives both over a fixture straddling the new floor. Without it, a drill
+// left on the flat 6:30 reports every early CSR call as a near-miss while the
+// dashboard counts it: the sidebar contradicting the build during exactly the
+// investigation it exists to serve, for the fourth time.
+
+test('R49: the drill counts an early CSR-family leg, and still excludes an early non-family one', function () {
+  const EARLY = DATE + ' 6:10:00';    // inside [6:00, 6:30) -- CSR family only
+  const rows = [
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna Smith', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna Smith',
+             parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    // Early, on a CSR-family queue -> the build counts it, so the drill must find it.
+    rawRow({ callId: 'PE', legId: 0, start: EARLY, talk: '0:01:00', calleeName: 'Anna Smith', parentCall: 'N/A' }),
+    rawRow({ callId: 'QE', legId: 0, start: EARLY, caller: 'CallQueue(103)', calleeName: 'Anna Smith',
+             parentCall: 'PE', callerId: 'A_Q_CSR', answered: true }),
+    // Early, on a NON-family queue -> still out, in both.
+    rawRow({ callId: 'PS', legId: 0, start: EARLY, talk: '0:04:00', calleeName: 'Anna Smith', parentCall: 'N/A' }),
+    rawRow({ callId: 'QS', legId: 0, start: EARLY, caller: 'CallQueue(104)', calleeName: 'Anna Smith',
+             parentCall: 'PS', callerId: 'A_Q_Sales', answered: true }),
+  ];
+  const ss = makeFakeSpreadsheet({
+    sheets: {
+      'Raw Data': [new Array(26).fill('')].concat(rows),
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna Smith, 103'] }),
+    },
+  });
+  h.state.spreadsheet = ss;
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const built = ss._sheet('DQE Historical Data')._data.slice(1)
+    .filter(function (r) { return r[2] === 'Anna Smith'; })[0];
+  assert.equal(built[7], 2, 'fixture guard: the build counts the early CSR leg and not the Sales one');
+
+  const out = h.fn('getDQEDrilldownRows')({ dateStr: DATE, agentName: 'Anna Smith', column: 8 });
+  assert.ok(!out.error, 'drill col 8: ' + out.error);
+  assert.equal(out.rowCount, built[7],
+    'the drill\'s Found-N must equal the stored Answered cell -- a flat 6:30 floor here '
+    + 'reports 1 against a cell of 2');
+});

@@ -827,3 +827,64 @@ test('talk parses H:MM:SS and refuses anything else rather than guessing', () =>
   assert.equal(sec('120'), 0, 'a bare number is not a duration here');
   assert.equal(sec(null), 0);
 });
+
+// ── 8b. A lost queue name is only a LOSS if the leg would have counted ──────
+//
+// The first live run reported 146 lost legs on one extension and blocked the
+// window change on them. Every one went to a pseudo-agent on
+// DQE_EXCLUDED_AGENTS -- the build drops those at the NEXT gate regardless, so
+// the lost queue name cost nobody any credit. The census now says so itself;
+// treating "lost" as "lost credit" is what made it mislead.
+
+test('a lost leg whose callee is EXCLUDED would not have counted', () => {
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: '18005551212',
+                 caller: 'CallQueue (782)', callee: 'Rajesh Patel',
+                 start: '09/14/2026 10:00:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.lostByExt['782'].legs, 1, 'still reported -- the name IS lost');
+  assert.equal(out.lostByExt['782'].counted, 0, 'but it would never have counted');
+  assert.equal(out.lostCounted, 0, 'so it does not block a window change');
+});
+
+test('a lost leg whose callee is a REAL agent is a genuine loss', () => {
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: '18005551212',
+                 caller: 'CallQueue (782)', callee: 'Casey Csr',
+                 start: '09/14/2026 10:00:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.lostByExt['782'].counted, 1);
+  assert.equal(out.lostCounted, 1, 'this one DOES block');
+});
+
+test('a lost CallForking leg would not have counted either', () => {
+  const grid = [HEADER,
+    // NB CallForking is matched on CALLEE (the ext column), not CALLEE_NAME --
+    // `calleeExt` here, and getting that wrong is how this pin first passed
+    // against the wrong column.
+    censusRaw_({ status: '4', type: 'incoming', callerId: '18005551212',
+                 caller: 'CallQueue (782)', calleeExt: 'CallForking-9',
+                 callee: 'Casey Csr', start: '09/14/2026 10:00:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.lostCounted, 0);
+});
+
+test('counted and legs are BOTH folded across days', () => {
+  const merge = h.fn('qddCensusMerge_');
+  const acc = { rows: 0, byQueue: {}, unrecognized: {}, lostByExt: {}, lostCounted: 0,
+                droppedAgent: 0, droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
+  const one = {
+    rows: 1, byQueue: {}, unrecognized: {}, droppedAgent: 0, droppedExcluded: 0,
+    droppedForking: 0, unparsedStart: 0, lostCounted: 1,
+    lostByExt: { '782': { legs: 3, counted: 1, answered: 2, missed: 1,
+                          agents: ['Casey Csr'], buckets: { early: 3 } } },
+  };
+  merge(acc, one);
+  merge(acc, one);
+  assert.equal(acc.lostByExt['782'].legs, 6);
+  assert.equal(acc.lostByExt['782'].counted, 2, 'the blocking half folds too');
+  assert.equal(acc.lostCounted, 2);
+});

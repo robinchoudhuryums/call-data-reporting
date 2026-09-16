@@ -459,6 +459,20 @@ const DASHBOARD_AFTER_HOURS_WINDOW = Object.freeze({
   pst: '3:00 PM – 3:30 PM PST',
   cst: '5:00 PM – 5:30 PM CST',
 });
+// R49: the CSR queue family starts HALF AN HOUR EARLIER (owner ruling
+// 2026-09-16) -- the pipeline's DQE_EARLY_WINDOW_START..DQE_WINDOW_END, for
+// the queues in DQE_EARLY_QUEUES only. Pinned against those constants by
+// cross-file-pins (the INV-06 family). NO SURFACE RENDERS IT YET: the work-
+// window pill (#work-window-pill) still shows the standard window for every
+// viewer, which is right for 10 of 14 depts and understates the CSR family's
+// by 30 minutes. Making the pill queue-aware is a follow-on -- a dept can
+// draw on several queues, so it is a per-dept question the pill cannot answer
+// from one constant.
+const DASHBOARD_EARLY_WINDOW = Object.freeze({
+  pst: '6:00 AM – 3:00 PM PST',
+  cst: '8:00 AM – 5:00 PM CST',
+  queues: Object.freeze(['A_Q_CSR', 'A_Q_Intake', 'Backup CSR', 'A_Q_Spanish']),
+});
 
 /**
  * The SAME window as the strings above, in the machine-comparable form

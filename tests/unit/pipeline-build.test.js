@@ -674,3 +674,113 @@ test('I2-9: an ISO START_TIME display parses as a LOCAL date and col B is writte
   assert.equal(localIso_(rows[0][1]), '2026-03-09', 'col B canonicalized -- the ISO-shaped display is a LOCAL date, never UTC-shifted');
   assert.equal(rows[0][7], 1);   // H answered
 });
+
+// ── R49: the CSR-family early window (6:00 AM PST floor) ────────────────────
+// Owner ruling 2026-09-16. The floor is PER QUEUE, not per dept, because
+// several of these agents are on two rosters -- a dept-level rule would credit
+// them for a queue that is not staffed at 6:00. Symmetric: answered AND missed.
+
+const EARLY = '03/09/2026 6:10:00';   // 22200s PST -> inside [6:00, 6:30)
+
+// One agent, one early leg on the queue named by `queue`, plus one ordinary
+// in-window leg so the row always exists and the early leg is the ONLY variable.
+function buildEarly_(queue, opts) {
+  const o = opts || {};
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    rawRow({ callId: 'PE', legId: 0, start: EARLY, talk: '0:01:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'QE', legId: 0, start: EARLY, caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'PE', callerId: queue,
+             answered: !o.missed, missed: !!o.missed }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  return ss._sheet('DQE Historical Data')._data.slice(1)
+           .filter(function (r) { return r[2] === 'Anna'; })[0];
+}
+
+test('R49: a 6:10 AM leg on a CSR-family queue COUNTS (answered)', function () {
+  ['A_Q_CSR', 'A_Q_Intake', 'Backup CSR', 'A_Q_Spanish'].forEach(function (q) {
+    const row = buildEarly_(q);
+    assert.equal(row[5], 2, q + ': F rung counts the early leg');
+    assert.equal(row[7], 2, q + ': H answered counts the early leg');
+    assert.equal(row[4], 2, q + ': E unique counts the early parent');
+  });
+});
+
+test('R49: the early window is SYMMETRIC -- an early MISS counts too', function () {
+  const row = buildEarly_('A_Q_CSR', { missed: true });
+  assert.equal(row[5], 2, 'F rung');
+  assert.equal(row[6], 1, 'G missed -- the early miss is not forgiven');
+  assert.equal(row[7], 1, 'H answered unchanged');
+});
+
+test('R49: a NON-family queue keeps the 6:30 floor -- its early leg is still dropped', function () {
+  ['A_Q_Sales', 'A_Q_Resupply', 'A_Q_BackUp_FieldOps'].forEach(function (q) {
+    const row = buildEarly_(q);
+    assert.equal(row[5], 1, q + ': F rung -- early leg excluded');
+    assert.equal(row[7], 1, q + ': H answered -- early leg excluded');
+    assert.equal(row[4], 1, q + ': E unique -- early parent excluded');
+  });
+});
+
+test('R49: the floor is per QUEUE, not per agent -- a crossover agent gets it only on the CSR leg', function () {
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'PA', legId: 0, start: EARLY, talk: '0:01:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'QA', legId: 0, start: EARLY, caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'PA', callerId: 'A_Q_CSR', answered: true }),
+    rawRow({ callId: 'PB', legId: 0, start: EARLY, talk: '0:02:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'QB', legId: 0, start: EARLY, caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'PB', callerId: 'A_Q_Sales', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const row = ss._sheet('DQE Historical Data')._data.slice(1)
+                .filter(function (r) { return r[2] === 'Anna'; })[0];
+  assert.equal(row[5], 1, 'F rung -- the CSR leg only');
+  assert.equal(row[7], 1, 'H answered -- the Sales leg at the same instant is still out');
+});
+
+test('R49: an early CSR miss lands in slot K (6:00-6:30), the bucket that was always empty', function () {
+  const row = buildEarly_('A_Q_CSR', { missed: true });
+  // INV-20: slots store CST (PST + 2h). Col K is index 10, slot 0 = 6:00-6:30 PST.
+  assert.equal(row[10], '8:10:00', 'K holds the early miss as CST (6:10 PST + 2h)');
+});
+
+test('R49: the after-hours capture (AJ/AK) is untouched by the floor change', function () {
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna',
+             parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+    rawRow({ callId: 'PL', legId: 0, start: '03/09/2026 15:10:00', talk: '0:02:00',
+             calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'QL', legId: 0, start: '03/09/2026 15:10:00', caller: 'CallQueue(103)',
+             calleeName: 'Anna', parentCall: 'PL', callerId: 'A_Q_CSR', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const row = ss._sheet('DQE Historical Data')._data.slice(1)
+                .filter(function (r) { return r[2] === 'Anna'; })[0];
+  assert.equal(row[5], 1, 'F rung -- the 3:10 PM leg is still out of the window');
+  assert.equal(row[35], 1, 'AJ after-hours answered still captures it');
+});

@@ -748,6 +748,28 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   State #42). So keep deploying and backfilling the split on its own urgency
   (the 14-day window closes regardless); the reader gate does not slow that
   down, and turning the gate on later costs nothing extra.
+- **The work-window FLOOR is per QUEUE, the ceiling is not (R49).** The CSR
+  family -- `DQE_EARLY_QUEUES` = `A_Q_CSR` / `A_Q_Intake` / `Backup CSR` /
+  `A_Q_Spanish` -- starts at 6:00 AM PST (8:00 CST); every other queue keeps
+  INV-06's 6:30. One helper owns it, `dqeWindowStartForQueue_`, called from the
+  `windowLegs` filter, so every figure downstream (E/F/G/H, TTT/ATT, the K..AC
+  slots, the AI split) inherits it and nothing recomputes a window. Four rules:
+  (1) PER QUEUE, never per dept -- several of these agents are on two rosters,
+  so a dept rule would credit them for a queue that is not staffed at 6:00;
+  (2) SYMMETRIC -- the early half hour counts answered AND missed, by owner
+  ruling, because a one-sided rate is not a rate; (3) the EVENING edge is
+  deliberately NOT widened (cols AJ/AK already store the 3:00-3:30 PST answers
+  with no missed figure, which is the asked-for shape -- it needs a READER, not
+  a window change); (4) `DQE_EARLY_QUEUES` is NOT `DQE_CSR_QUEUES`, which
+  attributes CSR Avg Abd Wait -- merging them moves a stored duration on every
+  row, and cross-file-pins fails if the two lists ever match. The floor and its
+  QUEUE LIST are mirrored in `DQEdrilldown.js` and `DASHBOARD_EARLY_WINDOW`
+  (Config.gs); both are pinned, and the drill's is pinned BEHAVIOURALLY
+  (`dqe-drilldown-parity.test.js`) because a constant the drill never consults
+  buys nothing. NOT retroactive: a stored row keeps its old numbers until the
+  date is rebuilt (Operator State #67). The work-window pill still shows 8:30
+  for everyone -- a known 30-minute understatement for the CSR family.
+
 - **DQE cols AJ/AK (`After-Hrs Answered` / `After-Hrs TTT (sec)`) capture the
   half hour AFTER the work window -- ADDITIVE, capture-only, on AI's 14-day
   clock (Batch 3).** `HISTORICAL_COLS.AFTER_HOURS_ANSWERED`=36 /
@@ -2328,7 +2350,7 @@ items for anything it flags or doesn't cover.)
 64. Outbound answer quality -- `probeOutboundAnswerQuality`, the MEASURE-first step before any voicemail threshold: is the connected-call ring distribution bimodal? Read-only, sets nothing, SINGLE-ATTEMPT only (ring and connect describe different legs on a multi-attempt call), two independent estimates that must agree, and INCONCLUSIVE is a result meaning "no threshold is defensible" -- never set `OUTBOUND_VM_RING_SEC` off one
 65. Outbound INSTANT connects -- `probeOutboundInstantConnects`, the #64 follow-up: 40.6% of connected single-attempt calls ring 0-1s, capping any ring-based classifier at ~60% of calls. Cross-checks the stored ring against one DERIVED from the journey (`secs - talk - hold` on the external leg) plus a control group that provably rang, to separate a wrong CONNECTED timestamp (recoverable) from genuinely instant connects (permanent) -- `mixed` is a REFUSAL, since the two need opposite fixes. Shares #64's window props
 66. QCD vs DQE reconciliation -- `diagnoseQcdVsDqe` (cdr-import, CDR Tools menu), the read-only tool that explains why a dept's QCD "Queue Calls" answered and its per-agent answered sum differ: it classifies every leg of one date against BOTH rule sets and names the gate that dropped each one. Read its VERDICT first -- it is a fifth hand-mirror of calcQcdReport, so it reconciles against the real function AND the stored DQE rows before reporting, and refuses (INCONCLUSIVE) when either check fails
-67. Work-window edge census -- `runWorkWindowCensus` (cdr-import, CDR Tools menu), the read-only PRE-FLIGHT for widening the work window for the CSR queue family: per-queue traffic at each window edge, the size of the existing AJ/AK after-hours capture, and -- read this first -- the legs whose queue the DQE gate cannot recognise at all (the R18e shape, where the change's queue-name list is the thing that can silently miss a queue). A NON-ZERO verdict BLOCKS the window change; the "by extension" section names the lost queue (the caller field is a phone number, so the extension is the only identifying token). The first live run found 138 such legs, and the change is held on them
+67. Work-window edge census -- `runWorkWindowCensus` (cdr-import, CDR Tools menu), the read-only PRE-FLIGHT that cleared the R49 window change: per-queue traffic at each window edge, the size of the existing AJ/AK after-hours capture, and -- read this first -- the legs whose queue the DQE gate cannot recognise at all (the R18e shape, where the change's queue-name list is the thing that can silently miss a queue). Read "Would have counted", never the raw leg count: a lost queue name on a leg the NEXT gate drops anyway is not a loss, and the first live run's lone finding (146 legs on ext 782) was exactly that -- every one bound for a `DQE_EXCLUDED_AGENTS` pseudo-agent. Also carries the backfill note for R49
 
 ## Cycle Workflow Config
 
@@ -2374,7 +2396,7 @@ INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDi
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard
 INV-05 | Dashboard per-agent ATT is the SIMPLE MEAN of stored ATT values, not TTT/Answered weighted | Subsystem: Department Dashboard
-INV-06 | Work window is 6:30 AM-3:00 PM PST (8:30 AM-5:00 PM CST); the pipeline constants are the source of truth and THREE mirrors must agree (dashboard display, inbound query strings, the DQE drill-down's own copy) -- pinned by `cross-file-pins.test.js` | Subsystem: CDR DQE Pipeline + Department Dashboard
+INV-06 | Work window is 6:30 AM-3:00 PM PST (8:30 AM-5:00 PM CST) -- EXCEPT the CSR queue family, which floors half an hour earlier (R49); the pipeline constants are the source of truth and every mirror must agree (dashboard display, inbound query strings, the DQE drill-down's own copy, and the early floor's own three copies incl. its QUEUE LIST) -- pinned by `cross-file-pins.test.js` | Subsystem: CDR DQE Pipeline + Department Dashboard
 INV-07 | The TTT/ATT loop iterates `windowLegs`, not all-day `legs`, so it shares Answered's denominator | Subsystem: CDR DQE Pipeline
 INV-08 | TTT attribution uses each agent's OWN `leg.talkSec` via `findAgentTalkOnParent`, never `parent.talkSec` | Subsystem: CDR DQE Pipeline
 INV-09 | The Data.gs cache key is versioned (`summary:vN:`); bump on any aggregation-rule change | Subsystem: Department Dashboard

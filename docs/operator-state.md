@@ -2136,16 +2136,37 @@ When something looks wrong, before assuming a code bug, check:
       a sample of the agents who took them — so the extension can be looked up
       in the phone system and the queue named. **Sampling the caller ID
       instead is useless here and was the census's own first mistake.**
-    - **First live run (8 dates, 113,357 legs, 2026-09-16):** 138 legs in
-      `queue-caller-ext-unresolved` (132 `window`, 4 `early`, 2 `late`;
-      ~17/day) and zero in `queue-ext-bare-caller` — the R18e shape, alive
-      today, and LARGER than the 99-leg CSR-family early edge the census was
-      pre-flighting. The window change is HELD on it: 4 of those legs sit in
-      the early window itself, so until the extension(s) are named it is
-      unknown whether a CSR-family queue is among them. The by-extension
-      section was added for exactly this run; re-run the census after
-      deploying it and read that section first. CSR-family early traffic
-      (6:00–6:30) is
+    - **First live run, and how it RESOLVED (8 dates, 113,357 legs,
+      2026-09-16).** The run reported 146 legs on ONE extension — 782 — in
+      `queue-caller-ext-unresolved` (132 `window`, 8 `pre-6am`, 4 `early`,
+      2 `late`), and zero in `queue-ext-bare-caller`. That held the window
+      change for a day. Then the by-extension section named who took them:
+      `Sunil Kurian` and `Rajesh Patel`, and BOTH are on
+      `DQE_EXCLUDED_AGENTS` — pseudo-agents the build drops at the gate
+      AFTER the queue check. So every one of those legs was discarded either
+      way and the lost queue name cost nobody any credit; the list was
+      complete all along. **Two lessons are now built into the tool:** the
+      agent sample is what resolved it (the caller field is a phone number),
+      and the verdict counts only legs that WOULD HAVE COUNTED — a lost name
+      on a leg the next gate drops is not a loss, and reporting it as one is
+      how this census blocked a correct change. Read "Would have counted"
+      before anything else; a 0 there is a clean run however large "Legs" is.
+      **The residual check, if you want it:** the exclusion is matched on the
+      CANONICALIZED name, so an `Agent Alias Overrides` row rewriting either
+      name to a roster agent would change this conclusion. Nothing suggests
+      one exists.
+    - **The change it was pre-flighting has SHIPPED (R49).** The CSR family
+      (`A_Q_CSR` / `A_Q_Intake` / `Backup CSR` / `A_Q_Spanish`) now floors at
+      6:00 AM PST in `buildDQEHistoricalData.js`, per queue and symmetric on
+      answered and missed; INV-06 has the contract and the three pinned
+      copies. **It is not retroactive**: a stored DQE row keeps the numbers it
+      was built with until that date is rebuilt. Backfill is a force re-import
+      per date inside the 14-day `Call_Legs_*` window, and a source re-import
+      first for anything older (#56) — the same runbook as the queue split
+      (#40) and AJ/AK (#60), so do all three on a date in one pass. Until a
+      date is rebuilt its CSR-family answer rate reads ~0.1 pt high and its
+      early answered calls are missing entirely.
+    - CSR-family early traffic (6:00–6:30) is
       `A_Q_CSR` 87 rung / 13 missed / 74 answered and `A_Q_Intake` 12/0/12;
       `A_Q_Spanish` and `Backup CSR` had NONE. Widening moves the family's
       answer rate 91.15% → 91.03%. The per-queue design is what keeps that
