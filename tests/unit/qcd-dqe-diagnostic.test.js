@@ -342,7 +342,18 @@ test('a CSR-block leg on a call NO ONE was credited for reads none', () => {
   assert.equal(out.parentJoin.none, 1);
   assert.equal(out.parentJoin.sameAgent, 0);
   assert.equal(out.detail[0].sibling, 'none');
-  assert.deepEqual(plain(out.orphanSample[0]), { agent: CSR_AGENT, parentKey: 'P9' });
+  const o = plain(out.orphanSample[0]);
+  assert.equal(o.agent, CSR_AGENT);
+  assert.equal(o.parentKey, 'P9');
+  assert.equal(o.parentRaw, 'P9');
+  assert.equal(o.callId, 'legC');
+  assert.equal(o.sheetRow, 2);
+  assert.equal(o.qcdRow, 36);
+  // The call it names is nowhere in this day's sheet -- a dangling reference,
+  // which is a different finding from "the call is here but DQE skipped its
+  // other legs". The report must not blur the two.
+  assert.equal(o.callIdSeenToday, false);
+  assert.equal(o.legsOnThisCall, 1);
 });
 
 test('a call credited to a DIFFERENT agent is not counted as this one\'s', () => {
@@ -379,6 +390,38 @@ test('the reading names under-crediting only when a call has no DQE leg', () => 
   assert.match(reading({ sameAgent: 0, otherAgent: 0, none: 7 }), /genuinely separate/);
   assert.match(reading({ sameAgent: 3, otherAgent: 0, none: 2 }), /^2 of 5 /);
   assert.match(reading({ sameAgent: 0, otherAgent: 0, none: 0 }), /no CSR-block legs/);
+});
+
+test('an orphan whose call IS present today is distinguished from a dangling one', () => {
+  const grid = [HEADER,
+    // The call root exists and has other legs -- DQE just counted none of them
+    // (this leg is not flagged Answered), so the call is present but uncredited.
+    raw({ status: '1', type: 'incoming', callId: 'P7', parent: 'N/A', answered: false }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legG', parent: 'P7',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.parentJoin.none, 1);
+  const o = plain(out.orphanSample[0]);
+  assert.equal(o.callIdSeenToday, true, 'P7 is a real call id in this grid');
+  assert.equal(o.legsOnThisCall, 2, 'the root plus this leg');
+});
+
+test('the id range separates the day\'s own calls from carried-over ones', () => {
+  const grid = [HEADER,
+    raw({ status: '1', type: 'incoming', callId: 'legH', parent: '900' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legI', parent: '100',
+          callerId: '5551234', caller: '5551234' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legJ', parent: '300',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.idRange.dqeMin, '900');
+  assert.equal(out.idRange.dqeMax, '900');
+  // Both ends, or a swapped min/max reads as a single-point range and the
+  // "far from the day's own ids" judgement silently loses its width.
+  assert.equal(out.idRange.orphanMin, '100');
+  assert.equal(out.idRange.orphanMax, '300');
 });
 
 // ── 7. Locating the day's legs ──────────────────────────────────────────────

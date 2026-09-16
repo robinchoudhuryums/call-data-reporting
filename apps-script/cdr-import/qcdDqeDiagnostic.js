@@ -111,7 +111,13 @@ function qddAnalyzeDay_(grid, ctx) {
   // agent -> { parentKey: true } for DQE-counted legs, plus the any-agent union.
   const dqeParentsByAgent = {};
   const dqeParentsAny = {};
-  const qcdLegs = [];          // every CSR-block leg: { agent, parentKey, detail }
+  const qcdLegs = [];          // every CSR-block leg: { agent, parentKey, detail, ... }
+  // Every call id and every parent key SEEN AT ALL, DQE-counted or not. An
+  // orphan whose call is absent from this day's sheet entirely is a different
+  // finding from one whose call is present but whose other legs DQE skipped --
+  // the first is a dangling reference, the second is a gate question.
+  const allCallIds = {};
+  const legsPerParentKey = {};
 
   const bump = function (name) {
     if (!out.byAgent[name]) {
@@ -201,6 +207,10 @@ function qddAnalyzeDay_(grid, ctx) {
     const parentKey = (parentRaw && parentRaw !== 'N/A')
       ? parentRaw : String(row[DQE_C.CALL_ID]).trim();
 
+    const ownCallId = String(row[DQE_C.CALL_ID]).trim();
+    if (ownCallId) allCallIds[ownCallId] = true;
+    if (parentKey) legsPerParentKey[parentKey] = (legsPerParentKey[parentKey] || 0) + 1;
+
     if (dqeCountsIt) {
       out.dqeAnsweredAllAgents++;
       bump(key).dqeAnswered++;
@@ -242,7 +252,12 @@ function qddAnalyzeDay_(grid, ctx) {
           out.detailTruncated++;
         }
       }
-      qcdLegs.push({ agent: key, parentKey: parentKey, detail: detailRow });
+      qcdLegs.push({
+        agent: key, parentKey: parentKey, detail: detailRow,
+        parentRaw: parentRaw, callId: ownCallId, sheetRow: i + 2,
+        qcdRow: qcdRow, status: status, direction: type,
+        start: String(row[2]).trim(), end: String(row[4]).trim()
+      });
     } else if (dqeCountsIt && ctx.csrTeamSet.has(calleeLc)) {
       // The mirror image: a CSR-roster agent's answered queue leg that the CSR
       // block does NOT count. This is the term that pushes the table UP.
@@ -268,11 +283,38 @@ function qddAnalyzeDay_(grid, ctx) {
     } else {
       cls = 'none';
       if (out.orphanSample.length < 25) {
-        out.orphanSample.push({ agent: leg.agent, parentKey: leg.parentKey });
+        out.orphanSample.push({
+          agent: leg.agent, parentKey: leg.parentKey,
+          // 'N/A' means the leg IS the call root, so its key is its own id.
+          parentRaw: leg.parentRaw, callId: leg.callId, sheetRow: leg.sheetRow,
+          qcdRow: leg.qcdRow, status: leg.status, direction: leg.direction,
+          start: leg.start, end: leg.end,
+          // Is the call it names present in THIS day's sheet at all?
+          callIdSeenToday: !!allCallIds[leg.parentKey],
+          legsOnThisCall: legsPerParentKey[leg.parentKey] || 0
+        });
       }
     }
     out.parentJoin[cls]++;
     if (leg.detail) leg.detail.sibling = cls;
+  }
+
+  // Id-space comparison. Call ids here look like epoch milliseconds, so a set
+  // of orphans whose ids sit far from the day's own range is a DANGLING or
+  // carried-over reference, not a call this day mislaid.
+  out.idRange = {
+    dqeMin: '', dqeMax: '', orphanMin: '', orphanMax: ''
+  };
+  const anyKeys = Object.keys(dqeParentsAny).sort();
+  if (anyKeys.length) {
+    out.idRange.dqeMin = anyKeys[0];
+    out.idRange.dqeMax = anyKeys[anyKeys.length - 1];
+  }
+  const orphKeys = out.orphanSample.map(function (o) { return o.parentKey; })
+                                   .filter(Boolean).sort();
+  if (orphKeys.length) {
+    out.idRange.orphanMin = orphKeys[0];
+    out.idRange.orphanMax = orphKeys[orphKeys.length - 1];
   }
 
   return out;
@@ -574,7 +616,7 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
     deptQcd: deptQcd, deptDqe: deptDqe, deptStored: deptStored,
     reasons: res.reasons, dqeOnlyByQueue: res.dqeOnlyByQueue,
     qcdAlsoDqe: res.qcdAlsoDqe, dqeAnsweredAllAgents: res.dqeAnsweredAllAgents,
-    parentJoin: res.parentJoin, orphanSample: res.orphanSample,
+    parentJoin: res.parentJoin, orphanSample: res.orphanSample, idRange: res.idRange,
     detail: res.detail, detailTruncated: res.detailTruncated,
     agents: rows, tabName: 'QCD-DQE Diagnostic'
   };
@@ -606,7 +648,11 @@ function qddLogReport_(rep) {
     rep.parentJoin.sameAgent, rep.parentJoin.otherAgent, rep.parentJoin.none,
     qddParentJoinReading_(rep.parentJoin));
   if (rep.orphanSample.length) {
-    Logger.log('Sample of calls with NO DQE leg at all (these, and only these, can be '
+    Logger.log('Call-id range -- DQE-counted calls %s..%s, orphan calls %s..%s '
+      + '(ids look like epoch ms; an orphan range far from the day\'s own is a '
+      + 'carried-over reference, not a call this day mislaid)',
+      rep.idRange.dqeMin, rep.idRange.dqeMax, rep.idRange.orphanMin, rep.idRange.orphanMax);
+    Logger.log('Calls with NO DQE leg at all (these, and only these, can be '
       + 'under-credited): %s', JSON.stringify(rep.orphanSample));
   }
 }
@@ -673,8 +719,17 @@ function qddWriteReportTab_(ss, rep) {
   out.push(pad(['  a different agent (in the dept\'s numbers, credited elsewhere)', rep.parentJoin.otherAgent]));
   out.push(pad(['  NOBODY -- no DQE leg on this call at all', rep.parentJoin.none]));
   out.push(pad(['  reading', qddParentJoinReading_(rep.parentJoin)]));
+  out.push(pad(['  call-id range', 'DQE ' + rep.idRange.dqeMin + '..' + rep.idRange.dqeMax,
+    'orphans ' + rep.idRange.orphanMin + '..' + rep.idRange.orphanMax]));
+  if (rep.orphanSample.length) {
+    out.push(pad(['  no-DQE-leg', 'Agent', 'Call key', 'Parent cell', 'Own call id',
+      'Sheet row', 'QCD row', 'Status', 'Direction', 'Start', 'End',
+      'Key seen as a call id today?', 'Legs on this call']));
+  }
   rep.orphanSample.forEach(function (o) {
-    out.push(pad(['  no-DQE-leg sample', o.agent, o.parentKey]));
+    out.push(pad(['  no-DQE-leg', o.agent, o.parentKey, o.parentRaw, o.callId,
+      o.sheetRow, o.qcdRow, o.status, o.direction, o.start, o.end,
+      o.callIdSeenToday ? 'yes' : 'NO', o.legsOnThisCall]));
   });
   out.push(pad([]));
   out.push(pad(['WHY THE CSR BLOCK COUNTED A LEG DQE DOES NOT']));

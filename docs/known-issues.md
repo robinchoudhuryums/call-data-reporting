@@ -1874,25 +1874,52 @@ view's 397 is the un-narrowed total. **Read the gate before comparing any dept's
 table against a queue figure** — with the gate `off`, CSR's subtotal would read
 397 and the Spanish group 0 from these same rows.
 
-### The open question, and what answers it
+### The parent join: 396 same agent, 0 other agent, 18 nobody
 
-Two disjoint leg sets over the same agents on the same day leaves exactly one
-question: **are they different LEGS OF THE SAME CALLS, or different calls?**
+Two disjoint leg sets over the same agents left one question — different LEGS of
+the same calls, or different calls? The join (every leg keyed by `parentCallId`,
+or its own `callId` when it IS the root — the REP-4 `N/A` rule) answered it on
+the same date:
 
-- Same calls → the 414 and the 397 are two views of one population (a CDR root
-  is a leg tree: the call-menu/IVR leg and the queue-delivered agent leg are
-  different rows of one call). Nobody is under-credited; the two numbers simply
-  are not the same unit and must never be differenced.
-- Different calls → CSR handled ~811 answered calls and the per-agent numbers
-  never saw 414 of them. That would be large-scale under-crediting.
+```
+PARENT JOIN -- of the 414 CSR-block legs, the CALL they belong to also has a
+DQE-counted leg for: the SAME agent=396, a DIFFERENT agent=0, NOBODY=18
+```
 
-`diagnoseQcdVsDqe` now answers this directly: it keys every leg by its CALL
-(`parentCallId`, or its own `callId` when the leg IS the root — the REP-4 `N/A`
-rule) and reports, for each CSR-block leg, whether that call also carries a
-DQE-counted leg for **the same agent**, **a different agent**, or **nobody**.
-Only the `nobody` bucket can be an under-credited call, and the report says so
-in a sentence rather than leaving the reader to difference two numbers. Re-run
-it on a surviving date and read the PARENT JOIN line.
+**396 of 414 are a second view of calls already in that agent's numbers.** The
+per-agent cross-tab says the same thing independently: the two columns track
+within ±2 for ten of eleven agents, and Anne Garcia reads **−1** (DQE counted
+one MORE than the CSR block), which a "DQE is missing calls" theory cannot
+produce. Margie Ingay carries 11 Internal legs and a delta of +1; Julienne
+Inaanuran 5 and a delta of 0. **The Internal and Misc legs are not extra
+calls**, and no agent is under-credited by the 414-vs-397 difference. The two
+figures are different units and must not be differenced or shown side by side
+without saying so — the same rule as "QCD Abandoned vs inbound_calls abandons".
+
+### The 18, which are NOT explained yet (OPEN)
+
+The remaining 18 legs (17 distinct calls) belong to calls with no DQE-counted
+leg at all, and they do not look like ordinary traffic:
+
+- their per-agent counts match the positive per-agent deltas exactly (they sum
+  to 18, against a net 17 once Anne Garcia's −1 is applied);
+- **13 of the 18 fall inside a 447 ms span of call-id space**, across eight
+  different agents;
+- the ids decode as epoch milliseconds to **2026-07-13**, on a 2026-09-14
+  sheet — roughly two months stale.
+
+Thirteen calls to eight agents inside half a second is not a call pattern, so
+either the ids are not epoch timestamps or these legs carry a dangling /
+carried-over parent reference. **Do not read them as 18 under-credited calls
+until that is settled** — an id that resolves to nothing is a data-shape
+finding, not a missing call.
+
+The tool now carries what is needed to settle it: the orphan sample reports the
+raw parent cell (so a root leg's `N/A` is visible), the leg's own call id, its
+sheet row, status, direction and start/end, whether the key appears **as a call
+id in this day's sheet at all**, how many legs sit on it, and the call-id RANGE
+of DQE-counted calls beside the orphans' range. Re-run and read those columns
+before drawing any conclusion about the 18.
 
 ### Side observation, unmeasured
 
