@@ -413,3 +413,40 @@ test('F3: the legacy window.confirm backlog only shrinks', function () {
     + 'WINDOW_CONFIRM_MAX to ' + sites.length + ' in this commit so the ratchet '
     + 'holds the ground you just took.');
 });
+
+// R51 (owner): the two My Department side panels list their period options in
+// the SAME left-to-right order, so the stacked controls read alike. Their
+// SELECTIONS stay independent -- each panel answers a different question --
+// which is exactly what makes the reorder risky: panel 2's default (Range, the
+// one period that reconciles with the agent table) is no longer its first
+// button, so a future "tidy-up" that assumes first == default would silently
+// change which numbers a manager sees on load. Both facts are pinned together.
+test('R51: both side panels order their period buttons the same way, and each keeps its own default', function () {
+  const html = fs.readFileSync(path.join(DIR, 'dashboard.html'), 'utf8');
+  const bar = function (id, attr) {
+    const m = new RegExp('<div id="' + id + '"[\\s\\S]*?</div>').exec(html);
+    assert.ok(m, '#' + id + ' not found / reshaped -- update this pin');
+    const order = (m[0].match(new RegExp(attr + '="(\\w+)"', 'g')) || [])
+      .map(function (s) { return s.replace(new RegExp(attr + '="|"', 'g'), ''); });
+    const activeM = new RegExp('class="dept-qcd-period-btn active" ' + attr + '="(\\w+)"').exec(m[0]);
+    return { order: order, active: activeM ? activeM[1] : null };
+  };
+  const p1 = bar('dept-qcd-period', 'data-period');
+  const p2 = bar('trp-period', 'data-trp-period');
+
+  assert.deepEqual(p2.order, p1.order,
+    'the two panels must list the same options left to right (R51) -- '
+    + 'panel 1 ' + JSON.stringify(p1.order) + ' vs panel 2 ' + JSON.stringify(p2.order));
+  assert.deepEqual(p1.order, ['yesterday', 'mtd', 'range'], 'the agreed order');
+
+  // The defaults DIFFER on purpose and must survive any reorder.
+  assert.equal(p1.active, 'yesterday', 'panel 1 (Queue Call Data) defaults to Yesterday (owner)');
+  assert.equal(p2.active, 'range',
+    'panel 2 (Team Rings Data) defaults to Range -- the window that reconciles '
+    + 'with the agent table; moving it out of first position must not move the default');
+
+  // And the client agrees: panel 2 resolves its default independently of order.
+  const dept = fs.readFileSync(path.join(DIR, 'script-5-dept.html'), 'utf8');
+  assert.ok(/return \(v === 'yesterday' \|\| v === 'mtd'\) \? v : 'range';/.test(dept),
+    "trpPeriod falls back to 'range', so the stored-pref path keeps panel 2's default too");
+});
