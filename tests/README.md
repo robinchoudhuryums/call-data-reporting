@@ -273,10 +273,11 @@ tests/
                               CENSUS (Op State #67): half-open bucket
                               boundaries, per-queue rung/missed/answered, the
                               cross-day merge, and -- the reason it exists --
-                              that a leg whose queue cannot be recognised is
-                              COUNTED and SAMPLED rather than dropped, since
-                              silence there is the same silence that cost two
-                              departments two months of history,
+                              that a leg with no queue name is SPLIT by whether
+                              it is a finding -- ~85% of a grid is simply not a
+                              queue leg, and reporting that as one number buried
+                              the two shapes that mean a queue-delivered leg
+                              lost its name,
                               escalations-snapshot (the E2 outage cache),
                               coaching (gates + the F-e delivery: diff/txn/
                               email gating/race-safe close),

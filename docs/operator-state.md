@@ -2114,11 +2114,30 @@ When something looks wrong, before assuming a code bug, check:
       per-agent history with no error anywhere; B-1: the raw-vs-canonical
       bridge is admin-populated and nothing verifies it is complete). Widening
       three queues and silently missing a fourth is that shape exactly.
-    - **Read the UNRECOGNIZED section first.** Those legs carry no queue token
-      and no `CallQueue (ext)` fallback, so there is no queue name left to
-      report — only their caller-ID samples. Anything there belonging to a
+    - **Read the "LEGS WITH NO QUEUE NAME" verdict first.** A leg with no queue
+      name is USUALLY not a queue leg at all — internal, outbound, direct dial.
+      Measured 2026-09-16: that is ~85% of a day's grid, so the section splits
+      by shape and only two are FINDINGS, both meaning a leg reached an agent
+      THROUGH a queue whose name the build cannot resolve:
+      `queue-caller-ext-unresolved` (the R18e incident exactly — CALLER reads
+      `CallQueue (ext)` but that ext named no queue today) and
+      `queue-ext-bare-caller` (a bare extension that IS a known queue, a form
+      the build's fallback does not cover). Anything there belonging to a
       CSR-family queue must join the widened set BEFORE the change ships, or
-      its early legs stay silently on the old window.
+      its early legs stay silently on the old window. A zero verdict says the
+      queue-name list is COMPLETE for the dates scanned.
+    - **First live run (8 dates, 113,357 legs, 2026-09-16):** zero legs in
+      either finding shape. CSR-family early traffic (6:00–6:30) is
+      `A_Q_CSR` 87 rung / 13 missed / 74 answered and `A_Q_Intake` 12/0/12;
+      `A_Q_Spanish` and `Backup CSR` had NONE. Widening moves the family's
+      answer rate 91.15% → 91.03%. The per-queue design is what keeps that
+      small: a GLOBAL widening would cost `A_Q_Resupply` 6 pts and
+      `A_Q_BackUp_FieldOps` 16 pts, on queues that genuinely are not staffed
+      then (their early legs are 48/49 and 7/7 MISSED).
+    - **The evening half-hour is measured and thin.** Across the same 8 dates
+      the 3:00–3:30 PM PST bucket holds ~7 answered queue legs in total, and
+      AJ/AK carries 2 answered across 143 captured agent-days. A reader would
+      print 0 on most days — build it for principle if wanted, not for volume.
     - **Then the per-queue edge table.** Five buckets per queue —
       `pre-6am` / `early` (6:00–6:30 PST) / `window` (INV-06) / `late`
       (3:00–3:30 PST, the AJ/AK half hour) / `after` — with rung, missed,
