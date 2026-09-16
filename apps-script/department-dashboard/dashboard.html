@@ -219,12 +219,16 @@
         <div class="ov-grid-trend">
           <div class="ov-grid-col">
             <!-- Card period slider: swaps which window the dept CARDS' headline
-                 stats show (Yesterday / Last 30 days / YTD). Chart + sparklines
-                 + active-count stay period-independent. -->
+                 stats show (Yesterday / 30 / 60 / 90 days / YTD -- R50 added
+                 60 and 90 so the set covers the chart's ranges). Sparklines +
+                 active-count stay period-independent; the chart FOLLOWS this
+                 selector for every window that has a trend equivalent. -->
             <div id="ov-period-bar" class="ov-period-bar" role="group" aria-label="Overview window">
-              <span class="ov-period-lbl" title="One window for the department cards AND the agent table below. The trend chart keeps its own range control.">Window:</span>
+              <span class="ov-period-lbl" title="One window for the department cards AND the agent table below. The trend chart follows it too, except on Yesterday — a single day has no trend to draw.">Window:</span>
               <button type="button" class="ov-period-btn active" data-period="yesterday" aria-pressed="true">Yesterday</button>
               <button type="button" class="ov-period-btn" data-period="last30" aria-pressed="false">Last 30 days</button>
+              <button type="button" class="ov-period-btn" data-period="last60" aria-pressed="false">Last 60 days</button>
+              <button type="button" class="ov-period-btn" data-period="last90" aria-pressed="false">Last 90 days</button>
               <button type="button" class="ov-period-btn" data-period="ytd" aria-pressed="false">YTD</button>
             </div>
             <div id="ov-dept-grid" class="ov-dept-grid"></div>
@@ -256,7 +260,7 @@
                    fetches the year-to-date series on demand. All three metrics
                    follow the selected range. -->
               <span id="ov-chart-range" class="ov-chart-range" role="group" aria-label="Chart range">
-                <span class="ov-period-lbl" title="Chart-only range — the trend needs multiple days, so it doesn't follow the Window selector.">Chart:</span>
+                <span class="ov-period-lbl" title="The trend's own range. Picking a Window above moves it to match; changing it here leaves the cards alone, so you can look further back without re-loading the table.">Chart:</span>
                 <button type="button" class="ov-range-btn active" data-range="30" aria-pressed="true" title="Last 30 days">30d</button>
                 <button type="button" class="ov-range-btn" data-range="60" aria-pressed="false" title="Last 60 days">60d</button>
                 <button type="button" class="ov-range-btn" data-range="90" aria-pressed="false" title="Last 90 days">90d</button>

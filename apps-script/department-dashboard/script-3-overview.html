@@ -606,10 +606,21 @@
   // period-independent (INV-40).
   const OV_WINDOW_KEY_ = 'cdr.ov.window';
   const OV_CARD_PERIOD_KEY_ = 'cdr.ov.cardperiod';
+  // R50: 60d + 90d joined the set so the Window options cover the chart's
+  // range control (30/60/90/YTD) -- the two were built apart and a manager
+  // could put the trend on 90 days with no way to ask the cards the same
+  // question. `chartRange` is the chart range this window corresponds to, or
+  // null where there is none: a one-day snapshot has no trend equivalent, so
+  // picking Yesterday leaves the chart where it is rather than inventing a
+  // range for it. Server-side `periods` must carry every key here -- an
+  // unknown one silently falls back to `latest` (one day) in ovPeriodStats_,
+  // which reads as a plausible number rather than an error.
   const OV_CARD_PERIODS_ = {
-    yesterday: { label: 'Yesterday',    cap: 'answered (yesterday)' },
-    last30:    { label: 'Last 30 days', cap: 'answered (last 30 days)' },
-    ytd:       { label: 'YTD',          cap: 'answered (year to date)' },
+    yesterday: { label: 'Yesterday',    cap: 'answered (yesterday)',      chartRange: null },
+    last30:    { label: 'Last 30 days', cap: 'answered (last 30 days)',   chartRange: '30' },
+    last60:    { label: 'Last 60 days', cap: 'answered (last 60 days)',   chartRange: '60' },
+    last90:    { label: 'Last 90 days', cap: 'answered (last 90 days)',   chartRange: '90' },
+    ytd:       { label: 'YTD',          cap: 'answered (year to date)',   chartRange: 'ytd' },
   };
   let ovCardPeriod = (function () {
     try {
@@ -654,7 +665,11 @@
     var p = String(latestIso).split('-');
     var y = +p[0], mo = (+p[1]) - 1, d = +p[2];
     if (ovTablePeriod === 'ytd') return { from: y + '-01-01', to: latestIso };
-    var start = new Date(Date.UTC(y, mo, d - 29));   // last30: latest - 29d inclusive
+    // R50: inclusive day counts -- last30 is latest-29d, so the span is N days
+    // INCLUDING the latest. Derived from the period key so a new window cannot
+    // land here defaulting to 30 days and silently mislabel its own range.
+    var days = ovTablePeriod === 'last90' ? 90 : (ovTablePeriod === 'last60' ? 60 : 30);
+    var start = new Date(Date.UTC(y, mo, d - (days - 1)));
     var iso = function (dt) {
       return dt.getUTCFullYear() + '-' + String(dt.getUTCMonth() + 1).padStart(2, '0')
         + '-' + String(dt.getUTCDate()).padStart(2, '0');
@@ -709,6 +724,12 @@
       ovCardPeriod = p;
       ovTablePeriod = p;   // R12-19: one window, both surfaces
       try { localStorage.setItem(OV_WINDOW_KEY_, p); } catch (e2) { /* best-effort */ }
+      // R50: carry the chart along when this window HAS a trend equivalent.
+      // One-way on purpose -- the reverse would make every chart-range click
+      // re-fetch the agent table (ovRenderUserTable_ hits the server per
+      // window), turning a cheap look at the trend into a heavy request.
+      var cr = OV_CARD_PERIODS_[p].chartRange;
+      if (cr) ovApplyChartRange_(cr);
       if (ovLastData) {
         ovRenderUserHero_(ovLastData); ovRenderTiles_(ovLastData);
         ovRenderUserTable_(ovLastData);
@@ -1809,16 +1830,24 @@
     grp.addEventListener('click', function (e) {
       const b = e.target.closest('.ov-range-btn');
       if (!b) return;
-      const r = b.getAttribute('data-range');
-      if (!OV_CHART_RANGES_.hasOwnProperty(r) || r === ovChartRange) return;
-      ovChartRange = r;
-      try { localStorage.setItem(OV_CHART_RANGE_KEY_, r); } catch (e2) { /* best-effort */ }
-      if (r === 'ytd' && !(ovYtdData && ovYtdData.available)) {
-        ovLoadYtdChart_();
-        return;                       // ovLoadYtdChart_ re-renders when it lands
-      }
-      if (ovLastData) ovRenderChart_(ovLastData);
+      ovApplyChartRange_(b.getAttribute('data-range'));
     });
+  }
+
+  // The ONE way the chart range changes, so the Window selector's R50 sync
+  // takes the identical path -- including YTD's on-demand fetch, which a
+  // second copy would have had to reproduce (and would have dropped, leaving
+  // a YTD window charting 90 days).
+  function ovApplyChartRange_(r) {
+    if (!OV_CHART_RANGES_.hasOwnProperty(r) || r === ovChartRange) return;
+    ovChartRange = r;
+    try { localStorage.setItem(OV_CHART_RANGE_KEY_, r); } catch (e2) { /* best-effort */ }
+    ovWireChartRange_();              // repaint the buttons (a synced change has no click to do it)
+    if (r === 'ytd' && !(ovYtdData && ovYtdData.available)) {
+      ovLoadYtdChart_();
+      return;                         // ovLoadYtdChart_ re-renders when it lands
+    }
+    if (ovLastData) ovRenderChart_(ovLastData);
   }
 
   // Fetch the YTD chart series on demand (kept out of the shared Overview
