@@ -2071,8 +2071,12 @@ When something looks wrong, before assuming a code bug, check:
       be read as 18 under-credited calls yet: 13 of them sit inside a 447 ms
       span of call-id space across eight agents, and the ids decode as epoch ms
       to 2026-07-13 on a 2026-09-14 sheet. Read the orphan sample's `Parent
-      cell`, `Key seen as a call id today?` and the call-id range line before
-      concluding anything about them.
+      cell`, `Key seen as a call id today?`, the Raw Data identity line and —
+      the discriminator — the **other legs on that same call** listed beneath
+      each orphan. A call with a full ring tree is a GATE question; one with no
+      other legs is a DANGLING REFERENCE and nobody lost a call. PHI: those
+      caller fields are on the detail tab only (same workbook as Raw Data); the
+      execution log reduces a phone-shaped value to `(N-digit number)`.
     - **`no-queue-token` is the finding to expect and the one that matters.**
       The DQE build admits a leg only if col W carries an `A_Q_*` /
       `Backup CSR` token, or CALLER reads `CallQueue (ext)` (the R18e

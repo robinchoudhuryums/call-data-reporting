@@ -55,6 +55,9 @@ const QDD_DEPT_FIRST_COL_ = 6;
 /** Detail rows are capped so a pathological day cannot blow the cell budget. */
 const QDD_DETAIL_CAP_ = 500;
 
+/** Per-orphan sibling legs listed on the detail tab. */
+const QDD_SIBLING_CAP_ = 8;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PURE CORE  (unit-tested in tests/unit/qcd-dqe-diagnostic.test.js)
@@ -201,11 +204,8 @@ function qddAnalyzeDay_(grid, ctx) {
     const dqeReason   = gateReason || (answered ? '' : 'not-flagged-answered');
     const key = canonical || calleeRaw;
 
-    // A leg's CALL identity: its parent's id, or its own when it IS the parent
-    // (the build excludes a literal 'N/A' parent the same way -- REP-4).
     const parentRaw = String(row[DQE_C.PARENT_CALL]).trim();
-    const parentKey = (parentRaw && parentRaw !== 'N/A')
-      ? parentRaw : String(row[DQE_C.CALL_ID]).trim();
+    const parentKey = qddParentKeyOf_(row);
 
     const ownCallId = String(row[DQE_C.CALL_ID]).trim();
     if (ownCallId) allCallIds[ownCallId] = true;
@@ -256,7 +256,17 @@ function qddAnalyzeDay_(grid, ctx) {
         agent: key, parentKey: parentKey, detail: detailRow,
         parentRaw: parentRaw, callId: ownCallId, sheetRow: i + 2,
         qcdRow: qcdRow, status: status, direction: type,
-        start: String(row[2]).trim(), end: String(row[4]).trim()
+        start: String(row[2]).trim(), end: String(row[4]).trim(),
+        caller: String(row[DQE_C.CALLER]).trim(),
+        callerName: String(row[9]).trim(),
+        callerId: callerIdRaw,
+        calleeName: calleeRaw,
+        calleeExt: String(row[DQE_C.CALLEE]).trim(),
+        talk: String(row[DQE_C.TALK_TIME]).trim(),
+        wait: String(row[DQE_C.CALL_TIME]).trim(),
+        missedFlag: String(row[DQE_C.MISSED]).trim(),
+        abandonedFlag: String(row[DQE_C.ABANDONED]).trim(),
+        answeredFlag: String(row[DQE_C.ANSWERED]).trim()
       });
     } else if (dqeCountsIt && ctx.csrTeamSet.has(calleeLc)) {
       // The mirror image: a CSR-roster agent's answered queue leg that the CSR
@@ -289,6 +299,12 @@ function qddAnalyzeDay_(grid, ctx) {
           parentRaw: leg.parentRaw, callId: leg.callId, sheetRow: leg.sheetRow,
           qcdRow: leg.qcdRow, status: leg.status, direction: leg.direction,
           start: leg.start, end: leg.end,
+          caller: leg.caller, callerName: leg.callerName, callerId: leg.callerId,
+          calleeName: leg.calleeName, calleeExt: leg.calleeExt,
+          talk: leg.talk, wait: leg.wait,
+          missedFlag: leg.missedFlag, abandonedFlag: leg.abandonedFlag,
+          answeredFlag: leg.answeredFlag,
+          siblings: [],
           // Is the call it names present in THIS day's sheet at all?
           callIdSeenToday: !!allCallIds[leg.parentKey],
           legsOnThisCall: legsPerParentKey[leg.parentKey] || 0
@@ -297,6 +313,44 @@ function qddAnalyzeDay_(grid, ctx) {
     }
     out.parentJoin[cls]++;
     if (leg.detail) leg.detail.sibling = cls;
+  }
+
+  // SECOND PASS -- the other legs of each orphaned call. "The call is present
+  // but DQE counted none of its legs" and "the call does not exist today" need
+  // opposite follow-ups, and only the leg list tells them apart: an orphan whose
+  // call has a full ring tree is a gate question, one with no siblings at all is
+  // a dangling reference.
+  const wanted = {};
+  for (let q = 0; q < out.orphanSample.length; q++) {
+    const k = out.orphanSample[q].parentKey;
+    if (k) { if (!wanted[k]) wanted[k] = []; wanted[k].push(out.orphanSample[q]); }
+  }
+  if (Object.keys(wanted).length) {
+    for (let i = 0; i < body.length; i++) {
+      const row = body[i];
+      const pk = qddParentKeyOf_(row);
+      if (!wanted[pk]) continue;
+      const ownId = String(row[DQE_C.CALL_ID]).trim();
+      for (let w = 0; w < wanted[pk].length; w++) {
+        const o = wanted[pk][w];
+        if (ownId && ownId === o.callId) continue;          // the orphan leg itself
+        if (o.siblings.length >= QDD_SIBLING_CAP_) continue;
+        o.siblings.push({
+          sheetRow: i + 2,
+          callee: String(row[DQE_C.CALLEE_NAME]).trim(),
+          calleeExt: String(row[DQE_C.CALLEE]).trim(),
+          caller: String(row[DQE_C.CALLER]).trim(),
+          callerName: String(row[9]).trim(),
+          callerId: String(row[DQE_C.CALLER_ID]).trim(),
+          direction: String(row[5]).trim(),
+          status: String(row[1]).trim(),
+          start: String(row[2]).trim(),
+          talk: String(row[DQE_C.TALK_TIME]).trim(),
+          answeredFlag: String(row[DQE_C.ANSWERED]).trim(),
+          missedFlag: String(row[DQE_C.MISSED]).trim()
+        });
+      }
+    }
   }
 
   // Id-space comparison. Call ids here look like epoch milliseconds, so a set
@@ -318,6 +372,28 @@ function qddAnalyzeDay_(grid, ctx) {
   }
 
   return out;
+}
+
+/**
+ * A leg's CALL identity: its parent's id, or its own when it IS the root. The
+ * build excludes a literal 'N/A' parent the same way (REP-4). Both passes go
+ * through here so a root leg can never key differently between them.
+ */
+function qddParentKeyOf_(row) {
+  const p = String(row[DQE_C.PARENT_CALL]).trim();
+  return (p && p !== 'N/A') ? p : String(row[DQE_C.CALL_ID]).trim();
+}
+
+/**
+ * PHI: the orphan rows carry the raw caller fields, which is safe on the DETAIL
+ * TAB -- it lives in the same workbook as Raw Data, so nothing new is exposed.
+ * The execution LOG is different: it gets copied into tickets and chats, so a
+ * phone-shaped value is reduced to its shape there. Never widen this.
+ */
+function qddLogSafe_(v) {
+  const str = String(v == null ? '' : v);
+  const digits = str.replace(/\D/g, '');
+  return digits.length >= 7 ? '(' + digits.length + '-digit number)' : str;
 }
 
 /**
@@ -653,7 +729,19 @@ function qddLogReport_(rep) {
       + 'carried-over reference, not a call this day mislaid)',
       rep.idRange.dqeMin, rep.idRange.dqeMax, rep.idRange.orphanMin, rep.idRange.orphanMax);
     Logger.log('Calls with NO DQE leg at all (these, and only these, can be '
-      + 'under-credited): %s', JSON.stringify(rep.orphanSample));
+      + 'under-credited) -- caller fields reduced to their SHAPE here, the full '
+      + 'values are on the detail tab: %s',
+      JSON.stringify(rep.orphanSample.map(function (o) {
+        return {
+          agent: o.agent, key: o.parentKey, parentCell: o.parentRaw, callId: o.callId,
+          row: o.sheetRow, qcdRow: o.qcdRow, status: o.status, dir: o.direction,
+          start: o.start, talk: o.talk,
+          caller: qddLogSafe_(o.caller), callerName: qddLogSafe_(o.callerName),
+          callerId: qddLogSafe_(o.callerId),
+          keySeenToday: o.callIdSeenToday, legsOnCall: o.legsOnThisCall,
+          siblings: o.siblings.length
+        };
+      })));
   }
 }
 
@@ -730,6 +818,23 @@ function qddWriteReportTab_(ss, rep) {
     out.push(pad(['  no-DQE-leg', o.agent, o.parentKey, o.parentRaw, o.callId,
       o.sheetRow, o.qcdRow, o.status, o.direction, o.start, o.end,
       o.callIdSeenToday ? 'yes' : 'NO', o.legsOnThisCall]));
+    out.push(pad(['    identity', 'caller: ' + o.caller, 'caller name: ' + o.callerName,
+      'caller-ID (col W): ' + o.callerId, 'callee: ' + o.calleeName + ' (' + o.calleeExt + ')',
+      'talk: ' + o.talk, 'wait: ' + o.wait,
+      'flags: ' + [o.answeredFlag, o.missedFlag, o.abandonedFlag].join('/')]));
+    if (!o.siblings.length) {
+      out.push(pad(['    other legs on this call', 'NONE -- the call id resolves to '
+        + 'nothing else in this sheet (a dangling reference, not a mislaid call)']));
+    } else {
+      out.push(pad(['    other legs on this call', 'Sheet row', 'Callee', 'Ext',
+        'Caller', 'Caller name', 'Caller-ID (col W)', 'Direction', 'Status', 'Start',
+        'Talk', 'Answered', 'Missed']));
+      o.siblings.forEach(function (sib) {
+        out.push(pad(['      leg', sib.sheetRow, sib.callee, sib.calleeExt, sib.caller,
+          sib.callerName, sib.callerId, sib.direction, sib.status, sib.start, sib.talk,
+          sib.answeredFlag, sib.missedFlag]));
+      });
+    }
   });
   out.push(pad([]));
   out.push(pad(['WHY THE CSR BLOCK COUNTED A LEG DQE DOES NOT']));

@@ -424,6 +424,78 @@ test('the id range separates the day\'s own calls from carried-over ones', () =>
   assert.equal(out.idRange.orphanMax, '300');
 });
 
+// ── 6c. Cross-referencing an orphan against Raw Data ───────────────────────
+
+test('an orphan carries the Raw Data identity fields for cross-referencing', () => {
+  const grid = [HEADER,
+    raw({ status: '2', type: 'incoming', talk: '0:01:30', wait: '0:00:12',
+          callId: 'legK', parent: 'P8', callerId: 'Call Menu', caller: '18005551212',
+          callerName: 'ACME Supply' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  const o = plain(out.orphanSample[0]);
+  assert.equal(o.caller, '18005551212');
+  assert.equal(o.callerName, 'ACME Supply');
+  assert.equal(o.callerId, 'Call Menu');
+  assert.equal(o.calleeName, CSR_AGENT);
+  assert.equal(o.talk, '0:01:30');
+  assert.equal(o.wait, '0:00:12');
+  assert.equal(o.answeredFlag, 'Answered');
+});
+
+test('an orphan lists the OTHER legs of its call, and says so when there are none', () => {
+  const grid = [HEADER,
+    // Orphan 1: its call has a ring tree DQE simply did not count.
+    raw({ status: '1', type: 'incoming', callId: 'P10', parent: 'N/A', answered: false,
+          callee: 'A_Q_CSR', calleeExt: '304' }),
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legL', parent: 'P10',
+          callerId: '5551234', caller: '5551234' }),
+    // Orphan 2: its call id appears nowhere else.
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'legM', parent: 'GHOST',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.parentJoin.none, 2);
+  const byKey = {};
+  out.orphanSample.forEach((o) => { byKey[o.parentKey] = o; });
+
+  const withTree = byKey['P10'];
+  assert.equal(withTree.siblings.length, 1, 'the root leg is listed');
+  assert.equal(withTree.siblings[0].callee, 'A_Q_CSR');
+  assert.equal(withTree.siblings[0].sheetRow, 2);
+  assert.equal(withTree.siblings[0].answeredFlag, '');
+
+  const dangling = byKey['GHOST'];
+  assert.equal(dangling.siblings.length, 0,
+    'nothing else sits on this call -- the report must be able to say so');
+  assert.equal(dangling.callIdSeenToday, false);
+});
+
+test('the orphan leg never lists ITSELF as a sibling', () => {
+  // A root leg keys on its own call id, so a naive second pass matches it and
+  // reports a dangling call as having one leg -- the opposite conclusion.
+  const grid = [HEADER,
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', callId: 'SELF', parent: 'N/A',
+          callerId: '5551234', caller: '5551234' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.orphanSample[0].parentKey, 'SELF');
+  assert.equal(out.orphanSample[0].siblings.length, 0);
+  assert.equal(out.orphanSample[0].legsOnThisCall, 1, 'the count still sees the one leg');
+});
+
+test('log-shaping hides a phone number but leaves a queue token readable', () => {
+  // The detail tab sits in the workbook that already holds Raw Data, so it
+  // carries the real values; the execution log gets copied elsewhere.
+  const safe = h.fn('qddLogSafe_');
+  assert.equal(safe('18005551212'), '(11-digit number)');
+  assert.equal(safe('+1 (800) 555-1212'), '(11-digit number)');
+  assert.equal(safe('A_Q_CSR,304'), 'A_Q_CSR,304');
+  assert.equal(safe('CallQueue (304)'), 'CallQueue (304)');
+  assert.equal(safe('Call Menu'), 'Call Menu');
+  assert.equal(safe(''), '');
+});
+
 // ── 7. Locating the day's legs ──────────────────────────────────────────────
 
 function fakeBook_(id, sheets) {

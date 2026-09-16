@@ -1914,12 +1914,26 @@ carried-over parent reference. **Do not read them as 18 under-credited calls
 until that is settled** — an id that resolves to nothing is a data-shape
 finding, not a missing call.
 
-The tool now carries what is needed to settle it: the orphan sample reports the
-raw parent cell (so a root leg's `N/A` is visible), the leg's own call id, its
-sheet row, status, direction and start/end, whether the key appears **as a call
-id in this day's sheet at all**, how many legs sit on it, and the call-id RANGE
-of DQE-counted calls beside the orphans' range. Re-run and read those columns
-before drawing any conclusion about the 18.
+The tool now carries what is needed to settle it. Per orphan the detail tab
+reports: the raw parent cell (so a root leg's `N/A` is visible), the leg's own
+call id, sheet row, status, direction, start/end, the full Raw Data identity
+line (caller, caller name, caller-ID col W, callee + ext, talk, wait, the
+Answered/Missed/Abandoned flags), whether the key appears **as a call id in this
+day's sheet at all**, and the call-id RANGE of DQE-counted calls beside the
+orphans' range. Under each orphan it then lists **the other legs sitting on that
+same call** — callee, ext, caller, caller-ID, direction, status, start, talk,
+Answered/Missed — or says explicitly that there are none.
+
+That last list is the discriminator. An orphan whose call carries a full ring
+tree is a GATE question (the call is here; DQE counted none of its legs). One
+with no other legs at all is a DANGLING REFERENCE — the id resolves to nothing,
+and no agent lost a call. The two need opposite follow-ups, so the report must
+never blur them.
+
+**PHI:** the caller fields are written to the detail tab, which lives in the
+same workbook as Raw Data, so nothing new is exposed there. The execution LOG
+reduces any phone-shaped value to its shape (`(11-digit number)`) because logs
+get copied into tickets and chats — `qddLogSafe_`, pinned. Do not widen that.
 
 ### Side observation, unmeasured
 
