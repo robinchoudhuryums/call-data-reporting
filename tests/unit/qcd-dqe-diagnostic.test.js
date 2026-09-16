@@ -31,6 +31,8 @@ const { loadGas } = require('../harness/loadGas');
 // the host's Object.prototype and deepStrictEqual rejects them on identity.
 // Re-key into a host object before comparing shapes.
 const plain = (o) => Object.assign({}, o);
+// Same realm problem for arrays: copy into a host array before comparing.
+const arr = (a) => Array.from(a || []);
 
 const IMPORT_DIR = path.resolve(__dirname, '../../apps-script/cdr-import');
 const DIAG_SRC = fs.readFileSync(path.join(IMPORT_DIR, 'qcdDqeDiagnostic.js'), 'utf8');
@@ -612,4 +614,148 @@ test('an empty Raw Data and no tabs is an explicit refusal, not a crash', () => 
   const src = fakeBook_('A', {});
   const tgt = fakeBook_('B', { 'Raw Data': fakeTab_('Raw Data', { lastRow: 1 }) });
   assert.throws(() => resolve(src, tgt, '2026-09-14'), /neither a Call_Legs tab/);
+});
+
+// ── 8. The work-window edge census ─────────────────────────────────────────
+//
+// The census exists to de-risk the CSR-family window change, and its whole
+// value is catching a queue whose raw name is on no list. So the pins are
+// mostly about what it must NOT quietly drop.
+
+const CENSUS_CTX = {
+  canonicalize: (n) => n,
+  excludedAgents: ['Rajesh Patel'],
+};
+
+function censusRaw_(o) {
+  const r = raw(o);
+  r[23] = o.missed ? 'Missed' : '';
+  if (o.answered === false) r[25] = '';
+  return r;
+}
+
+test('edge buckets split on the real window boundaries, half-open', () => {
+  const b = h.fn('qddCensusBucket_');
+  assert.equal(b(6 * 3600 - 1), 'pre-6am');
+  assert.equal(b(6 * 3600), 'early');
+  assert.equal(b(6 * 3600 + 29 * 60 + 59), 'early');
+  assert.equal(b(6 * 3600 + 30 * 60), 'window', '6:30 belongs to the window, not the early edge');
+  assert.equal(b(15 * 3600 - 1), 'window');
+  assert.equal(b(15 * 3600), 'late', '3:00 PM starts the AJ/AK half hour');
+  assert.equal(b(15 * 3600 + 30 * 60 - 1), 'late');
+  assert.equal(b(15 * 3600 + 30 * 60), 'after');
+  assert.equal(b(null), '');
+});
+
+test('the census counts rung / missed / answered per queue per bucket', () => {
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 start: '09/14/2026 06:10:00', end: '09/14/2026 06:15:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304', missed: true,
+                 answered: false, start: '09/14/2026 06:20:00', end: '09/14/2026 06:21:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304', talk: '0:02:00',
+                 start: '09/14/2026 10:00:00', end: '09/14/2026 10:05:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_Spanish,310',
+                 start: '09/14/2026 15:10:00', end: '09/14/2026 15:12:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.byQueue['A_Q_CSR'].early.rung, 2);
+  assert.equal(out.byQueue['A_Q_CSR'].early.answered, 1);
+  assert.equal(out.byQueue['A_Q_CSR'].early.missed, 1);
+  assert.equal(out.byQueue['A_Q_CSR'].window.rung, 1);
+  assert.equal(out.byQueue['A_Q_CSR'].window.talkSec, 120);
+  assert.equal(out.byQueue['A_Q_Spanish'].late.rung, 1);
+  assert.equal(out.byQueue['A_Q_Spanish'].early.rung, 0);
+});
+
+test('a leg with no recognisable queue is COUNTED and SAMPLED, never dropped', () => {
+  // The R18e shape and the entire point of the census: a queue that stopped
+  // prepending its name has no queue name left, so silence here would be the
+  // same silence that cost two departments two months of history.
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: '354',
+                 start: '09/14/2026 06:10:00', end: '09/14/2026 06:15:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: '354',
+                 start: '09/14/2026 06:12:00', end: '09/14/2026 06:15:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.unrecognized['early'].legs, 2);
+  assert.deepEqual(arr(out.unrecognized['early'].samples), ['354'],
+    'duplicate caller-IDs collapse to one sample -- eight copies of one value teaches nothing');
+  assert.equal(Object.keys(plain(out.byQueue)).length, 0);
+});
+
+test('the R18e fallback still recovers a queue whose col W lost its name', () => {
+  const namer = new Array(MAX_COLS).fill('');
+  namer[10] = '344'; namer[11] = 'A_Q_FieldOps_Power';
+  namer[2] = '09/14/2026 09:00:00'; namer[4] = '09/14/2026 09:01:00';
+  const grid = [HEADER, namer,
+    censusRaw_({ status: '4', type: 'incoming', callerId: '354', caller: 'CallQueue (344)',
+                 start: '09/14/2026 06:10:00', end: '09/14/2026 06:15:00' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.byQueue['A_Q_FieldOps_Power'].early.rung, 1);
+  assert.equal(out.unrecognized['early'], undefined);
+});
+
+test('gate drops are tallied separately, not folded into a queue', () => {
+  const grid = [HEADER,
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 callee: 'Rajesh Patel', start: '09/14/2026 06:10:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 calleeExt: 'CallForking9', start: '09/14/2026 06:11:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304',
+                 callee: 'N/A', start: '09/14/2026 06:12:00' }),
+    censusRaw_({ status: '4', type: 'incoming', callerId: 'A_Q_CSR,304', start: 'n/a' }),
+  ];
+  const out = h.fn('qddCensusScanGrid_')(grid, CENSUS_CTX);
+  assert.equal(out.droppedExcluded, 1);
+  assert.equal(out.droppedForking, 1);
+  assert.equal(out.droppedAgent, 1);
+  assert.equal(out.unparsedStart, 1);
+  assert.equal(plain(out.byQueue)['A_Q_CSR'], undefined, 'none of them reached a queue cell');
+});
+
+test('the answer rate is answered/(answered+missed), and null when nothing rang', () => {
+  const rate = h.fn('qddCensusRate_');
+  assert.equal(rate([{ answered: 9, missed: 1 }]), 90);
+  assert.equal(rate([{ answered: 9, missed: 1 }, { answered: 1, missed: 9 }]), 50);
+  assert.equal(rate([{ answered: 0, missed: 0 }]), null,
+    'an empty bucket must read as "no calls", never as 0%');
+});
+
+test('merging days sums the cells and keeps sample variety', () => {
+  const merge = h.fn('qddCensusMerge_');
+  const day = (q, rung, sample) => ({
+    rows: 1, droppedAgent: 0, droppedExcluded: 0, droppedForking: 0, unparsedStart: 0,
+    byQueue: { [q]: { 'pre-6am': {rung:0,missed:0,answered:0,talkSec:0},
+                      early: {rung: rung, missed: 0, answered: rung, talkSec: 5},
+                      window: {rung:0,missed:0,answered:0,talkSec:0},
+                      late: {rung:0,missed:0,answered:0,talkSec:0},
+                      after: {rung:0,missed:0,answered:0,talkSec:0} } },
+    unrecognized: { early: { legs: 1, samples: [sample] } },
+  });
+  const acc = { rows: 0, byQueue: {}, unrecognized: {}, droppedAgent: 0,
+                droppedExcluded: 0, droppedForking: 0, unparsedStart: 0 };
+  merge(acc, day('A_Q_CSR', 2, '354'));
+  merge(acc, day('A_Q_CSR', 3, '377'));
+  // A third day repeating a shape already seen must not re-add it -- the sample
+  // slots are few, and eight copies of one value crowds out the one that differs.
+  merge(acc, day('A_Q_CSR', 1, '354'));
+  assert.equal(acc.byQueue['A_Q_CSR'].early.rung, 6);
+  assert.equal(acc.byQueue['A_Q_CSR'].early.talkSec, 15);
+  assert.equal(acc.unrecognized['early'].legs, 3);
+  assert.deepEqual(arr(acc.unrecognized['early'].samples), ['354', '377'],
+    'a second day must be able to contribute a NEW caller-ID shape');
+  assert.equal(acc.rows, 3);
+});
+
+test('talk parses H:MM:SS and refuses anything else rather than guessing', () => {
+  const sec = h.fn('qddHmsToSec_');
+  assert.equal(sec('0:02:00'), 120);
+  assert.equal(sec('1:00:01'), 3601);
+  assert.equal(sec('12:07:00'), 43620);
+  assert.equal(sec(''), 0);
+  assert.equal(sec('120'), 0, 'a bare number is not a duration here');
+  assert.equal(sec(null), 0);
 });

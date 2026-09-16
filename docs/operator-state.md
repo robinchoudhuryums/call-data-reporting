@@ -2087,3 +2087,42 @@ When something looks wrong, before assuming a code bug, check:
     - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js` (one shared fixture
       drives the real `calcQcdReport` and the mirror; no expected numbers are
       hardcoded).
+
+67. **Work-window edge census (`runWorkWindowCensus` / `probeWorkWindowEdges`).**
+    Read-only, cdr-import → CDR Tools → "Work-window edge census", file
+    `apps-script/cdr-import/qcdDqeDiagnostic.js`. Writes only its own
+    `Work Window Census` tab; sets no Script Properties.
+    - **Why it exists.** It is the PRE-FLIGHT for widening the work window for
+      the CSR queue family (owner ruling 2026-09-16: CSRs — including the
+      Spanish queue, whose members are all CSRs — are expected on the phones
+      from 8:00 AM CST / 6:00 AM PST, half an hour before INV-06's floor).
+      **It does NOT exist to decide the change** — the owner ruled the accurate
+      number is wanted whichever way the answer rate moves. It exists because
+      the change keys on a LIST OF RAW QUEUE NAMES, and this repo's signature
+      failure is a queue whose raw name is on no list (R18e: a queue stopped
+      prepending its name to col W and two departments lost two months of
+      per-agent history with no error anywhere; B-1: the raw-vs-canonical
+      bridge is admin-populated and nothing verifies it is complete). Widening
+      three queues and silently missing a fourth is that shape exactly.
+    - **Read the UNRECOGNIZED section first.** Those legs carry no queue token
+      and no `CallQueue (ext)` fallback, so there is no queue name left to
+      report — only their caller-ID samples. Anything there belonging to a
+      CSR-family queue must join the widened set BEFORE the change ships, or
+      its early legs stay silently on the old window.
+    - **Then the per-queue edge table.** Five buckets per queue —
+      `pre-6am` / `early` (6:00–6:30 PST) / `window` (INV-06) / `late`
+      (3:00–3:30 PST, the AJ/AK half hour) / `after` — with rung, missed,
+      answered and raw leg talk (NOT the INV-08 own-talk TTT), plus the answer
+      rate with and without the early edge. It also answers a business
+      question worth knowing independently: whether any OTHER dept has early
+      traffic, i.e. whether "nobody is expected before 8:30 CST" holds.
+    - **AJ/AK sizing.** The last section measures the existing after-hours
+      capture over the scanned dates. AJ counts ANSWERED legs only and no
+      missed figure is stored at all, which is already the shape the owner
+      asked for on the evening half hour (credit the answer, never penalise the
+      miss) — so that ask needs a READER, not a pipeline change. Blank AJ means
+      pre-Batch-3 and NOT zero; the census counts the two separately.
+    - **Budget.** Stops on a DATE boundary once `QDD_CENSUS_BUDGET_MS_` (4 min)
+      is spent and marks the report `partial` — a half-scanned date would skew
+      every per-queue figure it touched. Pass `{dates:[...]}` to scope it.
+    - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js`.
