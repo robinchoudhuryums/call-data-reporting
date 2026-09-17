@@ -194,7 +194,12 @@ function saveAnswerTargets(req) {
   } finally {
     lock.releaseLock();
   }
-  return { effective: getAnswerTargets_(), raw: propStr, standards: getStandardsBundle_() };
+  // H2: republish the resolved standards for external readers (team-tools
+  // tints the same rate against this sheet). Best-effort -- the property
+  // save above already succeeded; a failed publish is returned, not thrown,
+  // and the Health page's dashboard-standards row flags the drift.
+  const published = publishDashboardStandards_();
+  return { effective: getAnswerTargets_(), raw: propStr, standards: getStandardsBundle_(), published: published };
 }
 
 /**

@@ -906,6 +906,32 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   resolvers and had already drifted (`last30` fixed everywhere, the rest not);
   ENFORCED by `tests/unit/date-presets.test.js`, whose tripwire fails if any
   fragment computes preset dates locally again.
+- **team-tools is an EXTERNAL READER of this workbook, and its answer rate
+  must mean what ours means (H2).** The CSR team app (a separate repo) reads
+  `DQE Historical Data` and tints the same per-agent rate the manager sees
+  here, so a formula or standard is a TWO-REPO edit: Answer % is
+  `answered / (answered + missed)` on both sides (rung counts every window
+  leg, so `answered / rung` is a DIFFERENT number -- the drift H2 closed);
+  the tint is three-tier against `getAnswerStandardFor_(dept)` (target +
+  amber band, Operator State #37); and team-average benchmarks subtract
+  `getTeamAvgExcludes_(dept)` (INV-26) while dept totals keep everyone. Those
+  three inputs live in Script Properties + seeds + the Dept Config sheet,
+  none of which team-tools can see, so the dashboard PUBLISHES its
+  resolution: `publishDashboardStandards_` (Util.gs) rewrites the
+  `Dashboard Standards` sheet (one row per roster dept + a `*` global row)
+  from the three admin write paths that can change an input -- `setup()`,
+  `saveAnswerTargets`, the Dept Config save/remove -- all INV-01 carve-outs,
+  so no new public write; the dashboard itself never reads that sheet.
+  Best-effort: a failed publish never fails the save, and the Health page's
+  `dashboard-standards` row (config section) reads STALE / empty / not
+  published by comparing the sheet to the live resolution. Two rules that
+  follow: edit standards from the Alerts modal, not the editor (a hand-set
+  property is not republished until the next save or `setup()`); and a
+  change to the rate formula, the standard's shape or the excludes rule is
+  not done until team-tools' mirror (its `cdrAnswerPct_` + `Dashboard
+  Standards` reader) moves with it -- Operator State #68 lists every tab it
+  reads. Pinned by `answer-targets.test.js` (the pure rows), `setup.test.js`
+  (publish + the text pin) and `system-health.test.js` (the row).
 - **Emailing an Individual Report TO the agent it is about (owner ruling
   2026-09).** The IR Export menu's "Email to agent…" sends the rendered
   report to its subject instead of the manager mailing it to themselves and
@@ -2295,7 +2321,7 @@ items for anything it flags or doesn't cover.)
 3. Did the user actually have access? (`Access Control` rows are case-sensitive on email)
 4. Is the cache stale? (per-report prefix, INV-30; 6 h reports w/ freshness tag / 5 min freshness)
 5. Were the source-pipeline bugs re-introduced? (spot-check Sonia 2026-03-09: TTT `0:15:03`, ATT `0:03:01`)
-6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, eleven sheets)
+6. Was `setup()` re-run after a pull that adds sheets? (admin-gated, idempotent, twelve sheets -- and it REPUBLISHES the Dashboard Standards sheet, #37)
 7. Is `DASHBOARD_URL` set? (alert-email links + every report's "Open in new tab")
 8. Are all three trigger families installed? (daily alerts / the integrated DQE build / daily+weekly+monthly digests)
 9. Did the latest push add an OAuth SCOPE? (Run any function once in the editor to consent)
@@ -2326,7 +2352,7 @@ items for anything it flags or doesn't cover.)
 34. `UI_FLAGS` -- admin toggles that HIDE a UI surface for all viewers
 35. Neon coverage check -- per-date sheet-vs-Neon reconciliation + zero-row weekday gaps
 36. `EMAIL_ALIASES` -- alias sign-in addresses resolving to one identity (+ the multi-dept manager note)
-37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` -- the admin-tunable DISPLAY standards (R23: global answer target seed 80 + 10-pt amber band; CSR seed 92/2; CSR transfer tiers 25/30/35)
+37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` -- the admin-tunable DISPLAY standards (R23: global answer target seed 80 + 10-pt amber band; CSR seed 92/2; CSR transfer tiers 25/30/35); since H2 the RESOLVED per-dept answer target / band / team-avg excludes are PUBLISHED to the `Dashboard Standards` sheet for team-tools (rewritten by setup(), the standards save and the Dept Config verbs; the Health page's `dashboard-standards` row flags a stale sheet -- edit standards from the Alerts modal, never the editor)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
 40. Per-queue split backfill -- do it inside the 14-day `Call_Legs_*` window, where it is a force re-import; outside it the date's source must be re-imported first (Op State #56), so a missed date is an operator job, not a loss
@@ -2357,7 +2383,7 @@ items for anything it flags or doesn't cover.)
 65. Outbound INSTANT connects -- `probeOutboundInstantConnects`, the #64 follow-up: 40.6% of connected single-attempt calls ring 0-1s, capping any ring-based classifier at ~60% of calls. Cross-checks the stored ring against one DERIVED from the journey (`secs - talk - hold` on the external leg) plus a control group that provably rang, to separate a wrong CONNECTED timestamp (recoverable) from genuinely instant connects (permanent) -- `mixed` is a REFUSAL, since the two need opposite fixes. Shares #64's window props
 66. QCD vs DQE reconciliation -- `diagnoseQcdVsDqe` (cdr-import, CDR Tools menu), the read-only tool that explains why a dept's QCD "Queue Calls" answered and its per-agent answered sum differ: it classifies every leg of one date against BOTH rule sets and names the gate that dropped each one. Read its VERDICT first -- it is a fifth hand-mirror of calcQcdReport, so it reconciles against the real function AND the stored DQE rows before reporting, and refuses (INCONCLUSIVE) when either check fails
 67. Work-window edge census -- `runWorkWindowCensus` (cdr-import, CDR Tools menu), the read-only PRE-FLIGHT that cleared the R49 window change: per-queue traffic at each window edge, the size of the existing AJ/AK after-hours capture, and -- read this first -- the legs whose queue the DQE gate cannot recognise at all (the R18e shape, where the change's queue-name list is the thing that can silently miss a queue). Read "Would have counted", never the raw leg count: a lost queue name on a leg the NEXT gate drops anyway is not a loss, and the first live run's lone finding (146 legs on ext 782) was exactly that -- every one bound for a `DQE_EXCLUDED_AGENTS` pseudo-agent. Also carries the backfill note for R49
-68. External READERS of the CDR Report workbook -- team-tools (the CSR team app, a separate repo) reads `DQE Historical Data`, `CSR Transfer Historical Data`, `Agent Alias Overrides`, `Inbound Calls` and, since H1, `Company Holidays` read-only via its `CDR_SS_ID`; nothing in this repo's tests knows it exists, so a rename, a column move, a retention trim or a holiday-grammar change on one of those tabs is a TWO-REPO edit -- read the item before touching any of them
+68. External READERS of the CDR Report workbook -- team-tools (the CSR team app, a separate repo) reads `DQE Historical Data`, `CSR Transfer Historical Data`, `Agent Alias Overrides`, `Inbound Calls` and, since H1/H2, `Company Holidays` + `Dashboard Standards` read-only via its `CDR_SS_ID`; nothing in this repo's tests knows it exists, so a rename, a column move, a retention trim or a holiday-grammar change on one of those tabs is a TWO-REPO edit -- read the item before touching any of them
 
 ## Cycle Workflow Config
 
@@ -2409,7 +2435,7 @@ INV-08 | TTT attribution uses each agent's OWN `leg.talkSec` via `findAgentTalkO
 INV-09 | The Data.gs cache key is versioned (`summary:vN:`); bump on any aggregation-rule change | Subsystem: Department Dashboard
 INV-10 | `HISTORICAL_COLS` must match the real DQE Historical Data column positions (full map in the entry) | Subsystem: Department Dashboard
 INV-11 | ROSTER layout pins: HEADER_ROW=1, DATA_START_ROW=2, DEPT_FIRST_COL=6 | Subsystem: Department Dashboard
-INV-12 | `setup()` is idempotent and admin-gated; it creates the eleven dashboard-managed sheets if missing (incl. `Company Holidays`, H1) and never overwrites rows | Subsystem: Department Dashboard
+INV-12 | `setup()` is idempotent and admin-gated; it creates the twelve dashboard-managed sheets if missing (incl. `Company Holidays`, H1, and `Dashboard Standards`, H2 -- which it also republishes) and never overwrites rows | Subsystem: Department Dashboard
 INV-13 | Deployed as "Execute as: Me" + "Anyone within domain" -- the deployer's permissions back the script | Subsystem: Department Dashboard
 INV-14 | `SPREADSHEET_ID` comes from Script Properties, never hardcoded | Subsystem: Department Dashboard
 INV-15 | Per-project `.clasp.json` files are gitignored at any depth; scriptIds stay out of the repo | Subsystem: operational/cross-cutting

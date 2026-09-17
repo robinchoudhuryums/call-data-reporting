@@ -1043,6 +1043,110 @@ function getStandardsBundle_() {
   };
 }
 
+// -- H2: publish the resolved display standards for external readers --------
+//
+// The answer target / amber band live in Script Properties layered over
+// Config.gs seeds, and the team-avg exclusions in the Dept Config sheet
+// layered over a constant -- three sources an external reader cannot see.
+// team-tools tinted the same DQE rate against a single hand-carried 85 where
+// the CSR manager's dashboard tints against 92/2 (the H2 finding). So the
+// dashboard PUBLISHES its resolution into the `Dashboard Standards` sheet:
+// one row per roster dept + a `*` global row. Rewritten from the three admin
+// write paths that can change an input (setup, saveAnswerTargets, the Dept
+// Config save/remove) -- all INV-01 carve-outs, so the publish never adds a
+// public write. Best-effort by design: a failed publish must not fail the
+// save that triggered it; it is REPORTED instead, by the return value and by
+// the Health page's `dashboard-standards` row, which compares the sheet to
+// the live resolution on every Health load.
+
+/** PURE over its inputs: the rows the sheet should hold (no timestamps). */
+function dashboardStandardsRows_(depts, standardFor, excludesFor) {
+  const rows = [];
+  const seen = {};
+  (depts || []).forEach(function (d) {
+    const dept = String(d == null ? '' : d).trim();
+    if (!dept || seen[dept]) return;
+    seen[dept] = true;
+    const std = standardFor(dept) || {};
+    const ex = excludesFor(dept) || [];
+    rows.push([dept, Number(std.target), Number(std.band), ex.join(', ')]);
+  });
+  const g = standardFor(null) || {};
+  rows.push(['*', Number(g.target), Number(g.band), '']);
+  return rows;
+}
+
+/** The live resolution, as rows -- what the sheet SHOULD say right now. */
+function dashboardStandardsLiveRows_() {
+  return dashboardStandardsRows_(getAllDepartments_(), getAnswerStandardFor_, getTeamAvgExcludes_);
+}
+
+/**
+ * Rewrites the `Dashboard Standards` sheet from the live resolution. Returns
+ * { ok, rows, error }; never throws. A missing sheet (a pre-H2 install that
+ * has not re-run setup()) is reported as ok:false with a hint, not created
+ * here -- sheet creation is setup()'s job (INV-12).
+ */
+function publishDashboardStandards_() {
+  const out = { ok: false, rows: 0, error: '' };
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.DASHBOARD_STANDARDS);
+    if (!sheet) { out.error = 'sheet "' + SHEETS.DASHBOARD_STANDARDS + '" is missing -- re-run setup()'; return out; }
+    const live = dashboardStandardsLiveRows_();
+    let by = '';
+    try { by = Session.getActiveUser().getEmail() || ''; } catch (eU) { by = ''; }
+    const at = Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd'T'HH:mm:ss");
+    const width = DASHBOARD_STANDARDS_HEADERS.length;
+    const body = live.map(function (r) { return r.concat([at, by]); });
+    const lastRow = sheet.getLastRow();
+    if (lastRow >= 2) sheet.getRange(2, 1, lastRow - 1, width).clearContent();
+    // The excludes column is comma-joined names: pin the exact write range
+    // plain-text before writing (the K-AC / AD-AF discipline), so a row that
+    // spills past the creation-time pin is protected too.
+    sheet.getRange(2, 4, body.length, 1).setNumberFormat('@');
+    sheet.getRange(2, 1, body.length, width).setValues(body);
+    out.ok = true;
+    out.rows = body.length;
+  } catch (e) {
+    out.error = String(e && e.message ? e.message : e);
+    try { Logger.log('[dashboard-standards] publish failed: ' + out.error); } catch (eL) {}
+  }
+  return out;
+}
+
+/**
+ * Health-page probe: does the published sheet match the live resolution?
+ * { status: 'ok'|'warn'|'muted', value, hint }. Compares the four value
+ * columns only (timestamps differ by construction).
+ */
+function dashboardStandardsStatus_() {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.DASHBOARD_STANDARDS);
+  if (!sheet) {
+    return { status: 'muted', value: 'not published',
+      hint: 'The Dashboard Standards sheet does not exist -- re-run setup() (Operator State #37). team-tools falls back to no target until it does.' };
+  }
+  const live = dashboardStandardsLiveRows_();
+  const lastRow = sheet.getLastRow();
+  const got = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 4).getValues() : [];
+  const norm = function (rows) {
+    return rows.map(function (r) {
+      return [String(r[0] == null ? '' : r[0]).trim(), Number(r[1]), Number(r[2]),
+              String(r[3] == null ? '' : r[3]).trim()].join('|');
+    }).filter(function (k) { return k.split('|')[0] !== ''; }).sort().join('\n');
+  };
+  if (!got.length) {
+    return { status: 'warn', value: 'sheet is empty',
+      hint: 'Nothing has been published yet -- re-run setup() or re-save the Display standards (Operator State #37).' };
+  }
+  if (norm(got) !== norm(live)) {
+    return { status: 'warn', value: got.length + ' row' + (got.length === 1 ? '' : 's') + ' -- STALE',
+      hint: 'The published standards differ from the live resolution (a property edited outside the Alerts modal, or a roster dept added since the last publish). Re-save the Display standards or re-run setup() to republish; team-tools reads the SHEET.' };
+  }
+  return { status: 'ok', value: got.length + ' row' + (got.length === 1 ? '' : 's') + ' -- current', hint: '' };
+}
+
 /**
  * PURE. Canonical ANSWER_TARGETS property string from a save request
  * ({global, direct, inbound} -- blank/null = unset that surface). THROWS

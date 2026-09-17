@@ -942,6 +942,10 @@ function saveDeptConfig(req) {
       admin:             admin,
     });
     dcBustCaches_();
+    // H2: Team Avg Excludes is one of the published standards -- republish
+    // (best-effort; the Health row reports a failure, the save stands). The
+    // typeof guard is for suites that load DeptConfig.gs without Util.gs.
+    if (typeof publishDashboardStandards_ === 'function') publishDashboardStandards_();
   } finally {
     lock.releaseLock();
   }
@@ -964,6 +968,7 @@ function removeDeptConfig(req) {
   try {
     removed = deactivateDeptConfig_(dept);
     dcBustCaches_();
+    if (typeof publishDashboardStandards_ === 'function') publishDashboardStandards_();   // H2 -- see saveDeptConfig
   } finally {
     lock.releaseLock();
   }

@@ -128,6 +128,7 @@ const SHEETS = Object.freeze({
   REPORT_USAGE: 'Report Usage',
   QUEUE_REPORT_SUBSCRIBERS: 'Queue Report Subscribers',
   COMPANY_HOLIDAYS: 'Company Holidays',
+  DASHBOARD_STANDARDS: 'Dashboard Standards',
 });
 
 // Phase A (agent role, docs/agent-role-plan.md): Role + Agent Name are
@@ -190,6 +191,23 @@ const QUEUE_REPORT_SUBSCRIBERS_HEADERS = Object.freeze([
 // by formatting it in the SPREADSHEET's tz (INV-02 twin).
 const COMPANY_HOLIDAYS_HEADERS = Object.freeze([
   'Dates', 'Label', 'Active', 'Notes',
+]);
+// Dashboard Standards (H2): the dashboard's RESOLVED display standards,
+// PUBLISHED for external readers -- one row per roster dept plus a `*` row
+// carrying the global standard: the answer target + amber band every
+// dept-context tint resolves through (`getAnswerStandardFor_`, Operator
+// State #37) and the effective `TEAM_AVG_EXCLUDES` list (INV-26). The
+// dashboard NEVER reads this sheet -- the Script Properties + seeds stay the
+// truth; the sheet is a serialization rewritten by `publishDashboardStandards_`
+// from setup(), `saveAnswerTargets` and the Dept Config save/remove verbs, so
+// a reader that only sees the workbook (team-tools, Operator State #68) can
+// tint the same rate against the same number. The Health page's
+// `dashboard-standards` row warns when the sheet has drifted from the live
+// resolution (a property edited by hand in the editor, or a dept added to the
+// roster since the last publish). Team Avg Excludes is comma-joined and
+// plain-text pinned at creation (the coerced-cell class).
+const DASHBOARD_STANDARDS_HEADERS = Object.freeze([
+  'Department', 'Answer Target', 'Amber Band', 'Team Avg Excludes', 'Published At', 'Published By',
 ]);
 // Agent Alias Overrides: persistent rename map used by the CDR
 // pipeline's loadRosterCanonicalNames_ on every build. Each row

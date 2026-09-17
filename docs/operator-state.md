@@ -971,6 +971,24 @@ When something looks wrong, before assuming a code bug, check:
     reference) and the per-dept ALERT thresholds (Alert Config, INV-34).
     Pinned by `tests/unit/answer-targets.test.js` + the R23 fallback pin in
     `cross-file-pins.test.js`.
+    **H2 (2026-09-17) -- the resolution is PUBLISHED for team-tools.** The
+    `Dashboard Standards` sheet (setup()-managed) holds one row per roster
+    dept plus a `*` global row: `Department | Answer Target | Amber Band |
+    Team Avg Excludes | Published At | Published By`, each the value
+    `getAnswerStandardFor_(dept)` / `getTeamAvgExcludes_(dept)` resolves to
+    right now. It is rewritten by `setup()`, by the Alerts modal's Display
+    standards save, and by the Dept Config modal's save/remove (the three
+    admin write paths that can change an input); the dashboard NEVER reads
+    it. team-tools reads it (#68) so its Metrics tint the same answer rate
+    against the same target/band and exclude the same names from its team
+    benchmark. **Edit standards from the Alerts modal, never the editor** --
+    a hand-set `ANSWER_TARGETS` / `DEPT_ANSWER_TARGETS` property is not
+    republished until the next modal save or `setup()`; the Health page's
+    `dashboard-standards` row (config section) reads `STALE` in that window,
+    `sheet is empty` on an install that has never published, and `not
+    published` before `setup()` has created the sheet. A failed publish
+    never fails the save that triggered it (best-effort, logged, and the
+    row shows the drift).
 38. **Diagnosing "a queue's inbound calls are missing" (F1/F1b runbook).**
     A queue whose raw name `icIsQueueName_` doesn't recognize gets
     `entry_queue = NULL` and attributes to NO dept. **Do NOT probe with
@@ -2221,11 +2239,16 @@ When something looks wrong, before assuming a code bug, check:
     position, full-sheet scans at 34 columns wide -- the appended AI/AJ/AK
     columns are invisible to it), `CSR Transfer Historical Data` (by header
     name), `Agent Alias Overrides` (positional: Old / Canonical / Active),
-    `Inbound Calls` (by header name, the #49 export tab), and since H1
+    `Inbound Calls` (by header name, the #49 export tab), since H1
     `Company Holidays` (by header name: `Dates` / `Label` / `Active`, the #27
-    grammar) -- the last one so its Metrics "previous workday" and every
-    business-day walk sit on the SAME calendar as this dashboard instead of a
-    weekends-only rule or a hard-coded US-federal list. Nothing in this
+    grammar) -- so its Metrics "previous workday" and every business-day walk
+    sit on the SAME calendar as this dashboard instead of a weekends-only rule
+    or a hard-coded US-federal list -- and since H2 `Dashboard Standards` (by
+    header name: `Department` / `Answer Target` / `Amber Band` / `Team Avg
+    Excludes`; its own dept row, else the `*` row), so it tints the same
+    answer rate against the same target + band and subtracts the same names
+    from its team benchmark. H2 also aligned the rate FORMULA: both apps
+    compute Answer % as `answered / (answered + missed)`. Nothing in this
     repo's tests knows that reader exists (cross-file-pins covers this repo's
     own mirrors only), so **any of the following is a TWO-REPO change, and
     team-tools' CI is the only thing that can notice on its side**: renaming
@@ -2238,6 +2261,7 @@ When something looks wrong, before assuming a code bug, check:
     divergences at the time of writing, tracked in team-tools: its Answer %
     divides by rung where this dashboard divides by answered+missed; its
     warn threshold is a single constant where this dashboard has per-dept
-    `ANSWER_TARGETS`; it does not apply `TEAM_AVG_EXCLUDES`. When those are
-    reconciled, the plan is a small published contract tab rather than more
-    hand-mirrors.
+    `ANSWER_TARGETS`; it does not apply `TEAM_AVG_EXCLUDES` -- ALL THREE
+    CLOSED by H2 (2026-09-17) via the published `Dashboard Standards` tab
+    (#37). A new rate rule or standard on this side is not done until that
+    tab carries it and team-tools' reader consumes it.

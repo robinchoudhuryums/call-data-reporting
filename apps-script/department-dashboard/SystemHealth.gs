@@ -783,6 +783,16 @@ function getSystemHealth(req) {
           holRanges.length + ' range' + (holRanges.length === 1 ? '' : 's') + ' from ' + (holSrc || 'unknown'), holHint);
       }
     } catch (eH) { add('config', 'company-holidays', 'Company holidays (source)', 'warn', 'probe failed', String(eH && eH.message || eH)); }
+    // H2: the published display standards vs the live resolution. team-tools
+    // reads the SHEET, so a stale sheet means the two apps tint the same
+    // answer rate against different numbers -- the drift H2 closed.
+    try {
+      if (typeof dashboardStandardsStatus_ === 'function') {
+        var dsStatus = dashboardStandardsStatus_();
+        add('config', 'dashboard-standards', 'Published display standards (Dashboard Standards sheet)',
+          dsStatus.status, dsStatus.value, dsStatus.hint);
+      }
+    } catch (eS) { add('config', 'dashboard-standards', 'Published display standards (Dashboard Standards sheet)', 'warn', 'probe failed', String(eS && eS.message || eS)); }
   } catch (e) { add('config', 'prop-probe', 'Script Properties', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // ── All Script Properties (inventory) ───────────────────────────────
@@ -838,7 +848,8 @@ function getSystemHealth(req) {
                     'Digest Config', 'Agent Alias Overrides', 'Orphan Fix Log',
                     'Dept Config', 'Report Usage',
                     'Queue Report Subscribers',    // O-5: the tenth setup() sheet (INV-12)
-                    'Company Holidays'];           // H1: the eleventh (the holiday source, Operator State #27)
+                    'Company Holidays',            // H1: the eleventh (the holiday source, Operator State #27)
+                    'Dashboard Standards'];        // H2: the twelfth (the published standards, Operator State #37)
     var missing = expected.filter(function (n) { return !ss.getSheetByName(n); });
     add('sheets', 'setup-sheets', 'setup()-managed sheets',
       missing.length ? 'warn' : 'ok',

@@ -30,6 +30,12 @@
  *                            behind getCompanyHolidayRanges_, with the
  *                            COMPANY_HOLIDAYS Script Property as fallback;
  *                            also read by team-tools -- Operator State #27/#68)
+ * *   - Dashboard Standards   (H2: the dashboard's RESOLVED answer target /
+ *                            amber band / team-avg excludes per dept, a
+ *                            PUBLISHED serialization for external readers
+ *                            (team-tools) that the dashboard never reads
+ *                            itself; rewritten here and by the standards /
+ *                            Dept Config editors -- Operator State #37/#68)
  *
  * Safe to re-run; existing sheets are left untouched (no data
  * overwritten).
@@ -68,6 +74,8 @@ function setup() {
     // value, the comma-joined-cell class from Common Gotchas. The reader
     // tolerates a coerced cell too, but a pinned column never produces one.
     [SHEETS.COMPANY_HOLIDAYS,      COMPANY_HOLIDAYS_HEADERS, [1]],
+    // H2: Team Avg Excludes is comma-joined names -- text-pinned like col A above.
+    [SHEETS.DASHBOARD_STANDARDS,   DASHBOARD_STANDARDS_HEADERS, [4]],
   ];
   const failed = [];
   specs.forEach(function (spec) {
@@ -80,6 +88,16 @@ function setup() {
         spec[0], (e && e.message) ? e.message : e);
     }
   });
+  // H2: (re)publish the resolved display standards into the sheet just
+  // ensured -- setup() is the one write path an operator re-runs after a
+  // pull, so a roster dept added since the last publish lands here.
+  // Best-effort: a publish failure is logged, never fails setup.
+  const pub = publishDashboardStandards_();
+  if (!pub.ok) {
+    Logger.log('Setup: Dashboard Standards NOT published: %s (the Health page dashboard-standards row will say so).', pub.error);
+  } else {
+    Logger.log('Setup: Dashboard Standards published (%s rows).', pub.rows);
+  }
   if (failed.length) {
     Logger.log('Setup finished WITH ERRORS on: %s. Re-run setup() to create the rest.', failed.join(', '));
   } else {

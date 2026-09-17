@@ -12,7 +12,7 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 // and that a failing probe degrades to its own warn row.
 
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'SystemHealth.gs', 'NeonBackup.gs'],
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'SystemHealth.gs', 'NeonBackup.gs'],   // H2: DeptConfig for the standards probe
 });
 
 // -- NeonBackup pure helpers --------------------------------------------------
@@ -65,14 +65,27 @@ function installHealth(opts) {
   ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health', 'Digest Config',
    'Agent Alias Overrides', 'Orphan Fix Log', 'Dept Config', 'Report Usage',
    'Queue Report Subscribers',   // O-5: the tenth setup() sheet
-   'Company Holidays']           // H1: the eleventh
+   'Company Holidays',           // H1: the eleventh
+   'Dashboard Standards']        // H2: the twelfth
     .forEach(function (n) { if (!(opts.missingSheets || []).length || (opts.missingSheets || []).indexOf(n) === -1) sheets[n] = [['h']]; });
   if (opts.holidayRows) sheets['Company Holidays'] = [['Dates', 'Label', 'Active', 'Notes']].concat(opts.holidayRows);
+  // H2: with no roster in the fixture the live resolution is the lone `*`
+  // global row (80/10 seeds); publish it so the default install reads CURRENT.
+  if (sheets['Dashboard Standards'] && !opts.standardsRows && !opts.standardsEmpty) {
+    sheets['Dashboard Standards'] = [['Department', 'Answer Target', 'Amber Band', 'Team Avg Excludes', 'Published At', 'Published By'],
+      ['*', 80, 10, '', '2026-09-17T00:00:00', 'admin@x.com']];
+  } else if (opts.standardsRows) {
+    sheets['Dashboard Standards'] = [['Department', 'Answer Target', 'Amber Band', 'Team Avg Excludes', 'Published At', 'Published By']].concat(opts.standardsRows);
+  }
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   // H1: the holiday list is memoized per execution (Util.gs); the suite shares
   // one vm, so reset it per install or a prior test's source leaks in.
   h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
   h.ctx.COMPANY_HOLIDAYS_SOURCE_ = '';
+  // H2: the standards resolution is memoized per execution too.
+  h.ctx.ANSWER_TARGETS_MEMO_ = null;
+  h.ctx.DEPT_ANSWER_TARGETS_MEMO_ = null;
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
 }
 
 function rowByKey(data, key) {
@@ -1259,4 +1272,35 @@ test('health H1: company-holidays row names the live source -- none / sheet / a 
   row = rowByKey(data, 'company-holidays');
   assert.equal(row.status, 'ok');
   assert.equal(row.value, '2 ranges from property');
+});
+
+// -- H2: the published-standards row ------------------------------------------
+
+test('health H2: dashboard-standards row -- current / empty / stale / not published', function () {
+  installHealth();
+  let row = rowByKey(h.call('getSystemHealth'), 'dashboard-standards');
+  assert.equal(row.status, 'ok', 'the fixture publishes exactly the live resolution');
+  assert.equal(row.value, '1 row -- current');
+
+  installHealth({ standardsEmpty: true });
+  row = rowByKey(h.call('getSystemHealth'), 'dashboard-standards');
+  assert.equal(row.status, 'warn');
+  assert.equal(row.value, 'sheet is empty');
+
+  // A property edited by hand (bypassing the Alerts modal) leaves the sheet
+  // saying 80/10 while the dashboard now tints against 85/5 -- STALE.
+  installHealth({ props: { ANSWER_TARGETS: 'global=85, band=5' } });
+  h.ctx.ANSWER_TARGETS_MEMO_ = null;
+  row = rowByKey(h.call('getSystemHealth'), 'dashboard-standards');
+  assert.equal(row.status, 'warn');
+  assert.ok(/STALE/.test(row.value) && /team-tools reads the SHEET/.test(row.hint), row.hint);
+  h.ctx.ANSWER_TARGETS_MEMO_ = null;
+
+  installHealth({ missingSheets: ['Dashboard Standards'] });
+  const data = h.call('getSystemHealth');
+  row = rowByKey(data, 'dashboard-standards');
+  assert.equal(row.status, 'muted');
+  assert.equal(row.value, 'not published');
+  assert.equal(rowByKey(data, 'setup-sheets').status, 'warn', 'the twelfth sheet is a setup() sheet');
+  assert.ok(/Dashboard Standards/.test(rowByKey(data, 'setup-sheets').value));
 });

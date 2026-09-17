@@ -6,12 +6,12 @@ const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 // F-7: Setup.gs had ZERO test coverage while INV-12 asserts it is idempotent,
-// admin-gated, creates the eleven dashboard-managed sheets, and never overwrites
+// admin-gated, creates the twelve dashboard-managed sheets, and never overwrites
 // existing rows. These pins make the claim enforced rather than asserted.
 
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Setup.gs'],
-  capture: ['SHEETS', 'ACCESS_CONTROL_HEADERS', 'COMPANY_HOLIDAYS_HEADERS'],
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'Setup.gs'],
+  capture: ['SHEETS', 'ACCESS_CONTROL_HEADERS', 'COMPANY_HOLIDAYS_HEADERS', 'DASHBOARD_STANDARDS_HEADERS'],
 });
 
 function install() {
@@ -20,14 +20,15 @@ function install() {
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
 }
 
-// The eleven managed sheet names, from the captured constants (not re-typed --
-// the pin must follow the code's own list). H1 added Company Holidays.
+// The twelve managed sheet names, from the captured constants (not re-typed --
+// the pin must follow the code's own list). H1 added Company Holidays, H2
+// Dashboard Standards.
 const TEN = [
   'ACCESS_CONTROL', 'ALERT_CONFIG', 'ALERT_LOG', 'PIPELINE_HEALTH',
   'DIGEST_CONFIG', 'AGENT_ALIAS_OVERRIDES', 'ORPHAN_FIX_LOG', 'DEPT_CONFIG',
-  'REPORT_USAGE', 'QUEUE_REPORT_SUBSCRIBERS', 'COMPANY_HOLIDAYS',
+  'REPORT_USAGE', 'QUEUE_REPORT_SUBSCRIBERS', 'COMPANY_HOLIDAYS', 'DASHBOARD_STANDARDS',
 ].map(function (k) { return h.consts.SHEETS[k]; });
-assert.equal(TEN.length, 11, 'INV-12 says eleven');
+assert.equal(TEN.length, 12, 'INV-12 says twelve');
 
 test('INV-12: setup() is admin-gated', function () {
   install();
@@ -35,7 +36,7 @@ test('INV-12: setup() is admin-gated', function () {
   assert.throws(function () { h.call('setup'); }, /admin/i);
 });
 
-test('INV-12: setup() creates all eleven managed sheets with header rows', function () {
+test('INV-12: setup() creates all twelve managed sheets with header rows', function () {
   install();
   h.call('setup');
   TEN.forEach(function (name) {
@@ -91,3 +92,36 @@ test('H1: setup() plain-text pins the Company Holidays Dates column at creation,
   const ac = h.state.spreadsheet.getSheetByName(h.consts.SHEETS.ACCESS_CONTROL);
   assert.equal((ac._numberFormats || []).length, 0);
 });
+
+test('H2: setup() publishes the Dashboard Standards sheet (text-pinned excludes column) from the live resolution', function () {
+  install();
+  // A roster with two dept columns (INV-11: headers from col F) and a Dept
+  // Config row overriding CSR's excludes -- the three inputs the publish folds.
+  const rosterHeader = ['', '', '', '', '', 'CSR', 'Sales'];
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DO NOT EDIT!': [rosterHeader, ['', '', '', '', '', 'Robin Choudhury, 139', 'Sam Seller, 201']],
+    'Dept Config': [['Department', 'QCD Queues', 'Overview Parent', 'Team Avg Excludes', 'Queue Ext Overrides', 'Active', 'Updated By', 'Updated At', 'Notes', 'Inbound Queue Aliases', 'Final Dept Labels'],
+                    ['CSR', '', '', 'Robin Choudhury, Pat Lead', '', 'TRUE', '', '', '', '', '']],
+  } });
+  h.state.props.DEPT_ANSWER_TARGETS = 'Sales=88/4';
+  h.ctx.ANSWER_TARGETS_MEMO_ = null; h.ctx.DEPT_ANSWER_TARGETS_MEMO_ = null; h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.call('setup');
+  const sh = h.state.spreadsheet.getSheetByName(h.consts.SHEETS.DASHBOARD_STANDARDS);
+  assert.ok(sh, 'created');
+  assert.deepEqual(Array.from(sh._data[0]), Array.from(h.consts.DASHBOARD_STANDARDS_HEADERS));
+  const rows = sh._data.slice(1).map(function (r) { return r.slice(0, 4).join('|'); });
+  assert.deepEqual(rows, [
+    'CSR|92|2|Robin Choudhury, Pat Lead',   // CSR seed 92/2 + the Dept Config excludes override
+    'Sales|88|4|',                          // the DEPT_ANSWER_TARGETS property override
+    '*|80|10|',                             // the global standard (seeds)
+  ]);
+  assert.ok(String(sh._data[1][4]).length && String(sh._data[1][5]).length, 'Published At / By stamped');
+  const pins = (sh._numberFormats || []).filter(function (f) { return f.format === '@'; });
+  assert.ok(pins.some(function (f) { return f.startCol === 4; }), 'the excludes column is plain-text pinned');
+  // Re-running setup() republishes in place: same rows, no duplicates.
+  h.call('setup');
+  assert.equal(sh._data.length, 4, 'header + 3 rows, rewritten not appended');
+  delete h.state.props.DEPT_ANSWER_TARGETS;
+  h.ctx.ANSWER_TARGETS_MEMO_ = null; h.ctx.DEPT_ANSWER_TARGETS_MEMO_ = null; h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+});
+
