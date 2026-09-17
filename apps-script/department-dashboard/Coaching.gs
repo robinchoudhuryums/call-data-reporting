@@ -139,9 +139,11 @@ function previewCoachingFlags() {
 
 /**
  * Gate-free core shared by the admin preview RPC above and the Phase-3
- * delivery trigger (runCoachingDelivery_ -- a time trigger has no meaningful
- * Session user to assert against; its callers gate themselves). Underscore =
- * RPC-unreachable.
+ * delivery trigger (runCoachingDelivery_; its callers gate themselves. O-3: a
+ * time trigger DOES run as its installing owner -- CacheWarm calls the gated
+ * public functions from a trigger by design -- so this split is about not
+ * coupling an engine to an RPC gate, not about a missing identity).
+ * Underscore = RPC-unreachable.
  */
 function computeCoachingPreview_() {
   var latest = getLatestDataDate();

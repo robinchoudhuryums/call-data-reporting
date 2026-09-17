@@ -474,8 +474,18 @@ test('R19 beacon: rolling-window cap stops emails but keeps accepting reports; e
   h.state.cache.set('cissue:count', '15');   // window cap reached
   const out = h.call('reportClientIssue', { kind: 'uncaught', message: 'some new error' });
   assert.equal(out.ok, true);
-  assert.equal(out.emailed, false, 'cap reached -> no email');
-  assert.equal(h.state.sentEmails.length, 0);
+  assert.equal(out.emailed, false, 'cap reached -> the report itself is not emailed');
+  // O-11: the cap closing is announced ONCE per window (the marker shares the
+  // count's TTL); the report that hit it is still not emailed, and further
+  // reports inside the window send nothing more.
+  assert.equal(h.state.sentEmails.length, 1, 'exactly one cap-reached note');
+  assert.match(h.state.sentEmails[0].subject, /beacon cap reached/i);
+  assert.ok(h.state.cache.get('cissue:capat'), 'the cap marker is set');
+  h.call('reportClientIssue', { kind: 'uncaught', message: 'another new error' });
+  assert.equal(h.state.sentEmails.length, 1, 'no second note inside the window');
+  // The Health page reads the same marker.
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'client-beacon').status, 'warn');
+  assert.match(rowByKey(h.call('getSystemHealth'), 'client-beacon').value, /CAP REACHED/);
 
   assert.equal(h.call('reportClientIssue', { kind: 'uncaught', message: '' }).ok, false, 'empty message is a no-op');
 
@@ -1323,3 +1333,103 @@ test('H3: the trg-quota row counts installed triggers against the 20 cap and war
   // The empty inventory (the shim default) is a clean 0 -- no false warn on a fresh install.
   assert.equal(rowByKey(h.call('getSystemHealth'), 'trg-quota').value, '0 of 20 installed');
 });
+
+// ── O-9 (broad-scan 2026-09-17): the outcome classifier is ONE table-driven contract ──
+
+test('O-9: healthOutcomeIsBad_ -- ok prefix is healthy; failure words and every engine prefix are bad', function () {
+  const bad = [
+    'FAILED-ALL (0 warmed, 16 failed, 900ms)',          // O-1: CacheWarm all-failed
+    'FAILED (threw before assessing): boom',           // O-4: a watchdog's own throw
+    'stale (alert sent)', 'stale (already alerted)',   // O-9: the ingest watchdog's own verdict
+    'UNPARSEABLE 2 failure row(s) have no readable Timestamp',   // OD-7
+    'SKIPPED-LOCK: daily digests skipped',             // O-5
+    'FAILED-PARTIAL 2026-09-16: 1 dept error(s)',      // O-5 alerts
+    'FAILED-PROBE 1 table probe error(s) over x',      // OD-1
+    'MISSED 2026-07-09 ...', 'LATE 2026-07-09 ...', 'EMPTY 2026-07-09 ...', 'PARTIAL 2026-07-09 ...',
+    'NO-SUBSCRIBERS 2026-07-09 ...', 'GAPS 3 finding(s)', 'SILENT 1 dept(s)', 'INCONCLUSIVE — source unreadable',
+    'skipped (no latest date)', 'ERROR: x', '3 failure(s) -- email send FAILED', 'unreachable',
+  ];
+  bad.forEach(function (r) { assert.equal(h.call('healthOutcomeIsBad_', r), true, 'bad: ' + r); });
+  const good = [
+    'ok (12 warmed, 3 insights skipped on budget)',   // designed-normal partial work
+    'ok (no new failures)', 'ok clean over 2026-01-01..2026-09-01', 'OK 2026-09-16: sent 3 of 3',
+    'fresh', 'Sent 2026-07-09 to 4',
+  ];
+  good.forEach(function (r) { assert.equal(h.call('healthOutcomeIsBad_', r), false, 'good: ' + r); });
+  assert.equal(h.call('healthOutcomeIsBad_', ''), false);
+});
+
+test('O-9: the ingest watchdog\'s own stale verdict paints its outcome row amber', function () {
+  installHealth({ props: { INGEST_WATCHDOG_LAST: new Date().toISOString(),
+                           INGEST_WATCHDOG_LAST_RESULT: 'stale (alert sent)' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-ingestwatch').status, 'warn');
+});
+
+// ── O-5: the two REQUIRED engines have outcome rows ──────────────────────
+
+test('O-5: daily alerts + the three digest cadences render outcome rows, amber on a bad prefix', function () {
+  installHealth({ props: {
+    ALERTS_LAST: new Date().toISOString(), ALERTS_LAST_RESULT: 'ok 2026-09-16: 14 dept(s) assessed, 2 fired',
+    DIGEST_LAST_RESULT_daily: 'ok 2026-09-16: sent 3 of 3',
+    DIGEST_LAST_RESULT_weekly: 'FAILED-ALL 2026-09-12: 0 of 2 digests sent',
+    DIGEST_LAST_RESULT_monthly: 'SKIPPED-LOCK: monthly digests skipped -- another run held the script lock',
+  } });
+  const data = h.call('getSystemHealth');
+  assert.equal(rowByKey(data, 'out-alerts').status, 'ok');
+  assert.equal(rowByKey(data, 'out-digest-daily').status, 'ok');
+  assert.equal(rowByKey(data, 'out-digest-weekly').status, 'warn');
+  assert.equal(rowByKey(data, 'out-digest-monthly').status, 'warn');
+  installHealth({ props: { ALERTS_LAST: new Date().toISOString(),
+                           ALERTS_LAST_RESULT: 'FAILED-PARTIAL 2026-09-16: 1 dept error(s); 14 dept(s) assessed' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-alerts').status, 'warn');
+  installHealth({});
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-alerts').value, 'never run');
+});
+
+// ── OD-2: retention-risk never reads ok on a probe error ─────────────────
+
+test('OD-2: a retention probe error is a warn, not "every surviving date is mirrored"', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  h.ctx.ncSurvivingCallLegsDates_ = function () { return ['2026-08-10', '2026-08-11']; };
+  h.ctx.getDashboardNeonConn_ = function () { return { close: function () {} }; };
+  h.ctx.ncRetentionRisk_ = function () {
+    return { tables: [
+      { table: 'inbound_calls', atRisk: [], error: 'canceling statement due to statement timeout' },
+      { table: 'outbound_calls', atRisk: [] },
+    ] };
+  };
+  const row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'retention-risk');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /could not check 1 table\(s\): inbound_calls: canceling statement/);
+  assert.doesNotMatch(row.value, /every surviving/);
+});
+
+// ── O-11: the beacon row is ok while the cap is not reached ──────────────
+
+test('O-11: client-beacon row reads the window count and is ok below the cap', function () {
+  installHealth({});
+  h.state.cache.set('cissue:count', '3');
+  const row = rowByKey(h.call('getSystemHealth'), 'client-beacon');
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /^3 of 15 emails used/);
+});
+
+test('O-9: a company holiday inside the gap extends a daily engine\'s STALE allowance by a day', function () {
+  // 4.5 days old = Fri 10:00 -> Wed 22:00: past the 4-day allowance. With a
+  // Monday holiday in the gap the engine legitimately did not run that day.
+  const at = new Date(Date.now() - 4.5 * 86400000).toISOString();
+  const holidayIso = Utilities_fmt_(new Date(Date.now() - 2.5 * 86400000));
+  installHealth({ props: { NEON_HOST: 'h', INGEST_WATCHDOG_ENABLED: 'true',
+                           INGEST_WATCHDOG_LAST: at, INGEST_WATCHDOG_LAST_RESULT: 'fresh' } });
+  delete h.ctx.isCompanyHoliday_;
+  let row = withTriggers_(['runIngestWatchdog_'], function () { return rowByKey(h.call('getSystemHealth'), 'out-ingestwatch'); });
+  assert.equal(row.status, 'warn', 'no holiday: 4.5 d > 4 d allowance -> STALE');
+  h.ctx.isCompanyHoliday_ = function (iso) { return iso === holidayIso; };
+  try {
+    row = withTriggers_(['runIngestWatchdog_'], function () { return rowByKey(h.call('getSystemHealth'), 'out-ingestwatch'); });
+    assert.equal(row.status, 'ok', 'one holiday in the gap: 4.5 d <= 5 d allowance');
+  } finally { delete h.ctx.isCompanyHoliday_; }
+});
+function Utilities_fmt_(d) {
+  return h.ctx.Utilities.formatDate(d, h.ctx.TZ, 'yyyy-MM-dd');
+}

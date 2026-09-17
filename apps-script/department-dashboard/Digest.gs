@@ -322,6 +322,14 @@ function sendDigestsForCadence_(cadence, runOpts) {
     // run holding the shared lock through its send window) -- notify the
     // admins so the "digest didn't arrive -> check admin inbox" runbook
     // (Operator State #12d) actually finds something.
+    // O-5 (broad-scan 2026-09-17): ALSO record it -- the previous day's
+    // "ok" stayed in DIGEST_LAST_RESULT_<cadence> (the modal's "Last runs"
+    // line and, since O-5, the Health page) while nothing went out.
+    try {
+      PropertiesService.getScriptProperties().setProperty('DIGEST_LAST_RESULT_' + cadence,
+        'SKIPPED-LOCK: ' + cadence + ' digests skipped -- another run held the script lock; '
+        + 're-send via sendDigestsForCadence_ or wait for the next trigger. At ' + new Date());
+    } catch (e) { /* best-effort */ }
     try {
       notifyDigestFailure_(cadence, new Error(
         'script lock contention -- ' + cadence + ' digests were SKIPPED this '
@@ -506,9 +514,12 @@ function notifyDigestRecipientFailures_(cadence, failures) {
 
 /**
  * Computes dept totals for [fromIso, toIso] using the same summary
- * shape getDepartmentSummary returns. Direct private-helper call
- * because the trigger context has no Session.getActiveUser identity
- * to feed the public function's auth gates.
+ * shape getDepartmentSummary returns. Direct private-helper call so the
+ * trigger path does not depend on the public function's auth gate at all
+ * (O-3: a time trigger DOES run as its installing owner -- CacheWarm calls
+ * the gated public functions from a trigger by design, and F-27 measured
+ * warm runs attributed to the installing admin -- but a private core is
+ * still the cleaner shape for an engine).
  */
 function computeDigestStats_(dept, fromIso, toIso) {
   const summary = computeSummary_(dept, fromIso, toIso, 'roster');

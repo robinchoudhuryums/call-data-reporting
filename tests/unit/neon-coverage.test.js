@@ -249,3 +249,33 @@ test('R36: opts.days overrides NEON_COVERAGE_DAYS for one run; the wrappers pin 
     assert.deepEqual(JSON.parse(JSON.stringify(seen)), [{ days: 366 }, { days: 90 }]);
   } finally { h.ctx.runNeonCoverageCheck = real; }
 });
+
+// OD-1 (broad-scan 2026-09-17): a missing sheet used to be a silent skip and
+// the outcome still read "ok clean" -- the check had simply stopped covering
+// that table (a renamed tab, or a SPREADSHEET_ID copy without it). It is now a
+// probe error, so the outcome leads FAILED-PROBE like any other failed table.
+test('OD-1: a missing sheet is a probe error, never part of an "ok clean" run', function () {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com', SPREADSHEET_ID: 'fake' };
+  const saved = {};
+  const stub = function (name, fn) { saved[name] = h.ctx[name]; h.ctx[name] = fn; };
+  stub('getDashboardNeonConn_', function () { return { close: function () {} }; });
+  stub('openSpreadsheet_', function () { return { getSheetByName: function () { return null; } }; });
+  stub('ncNeonDateCounts_', function () { return {}; });
+  stub('ncNeonMinDate_', function () { return null; });
+  stub('ncExpectedWeekdayGaps_', function () { return []; });
+  stub('ncEmailResult_', function () {});
+  stub('ncSheetDateCounts_', function (ss, sheetName) { return sheetName === 'Direct Call History' ? null : {}; });
+  try {
+    const out = h.call('runNeonCoverageCheck', { days: 7 });
+    assert.equal(out.errors.length, 1);
+    assert.match(out.errors[0], /direct_call_history: sheet "Direct Call History" is missing -- table NOT checked/);
+    assert.match(h.state.props.NEON_COVERAGE_LAST_RESULT, /^FAILED-PROBE 1 table probe error\(s\)/);
+    // Every sheet present -> genuinely clean.
+    h.ctx.ncSheetDateCounts_ = function () { return {}; };
+    h.call('runNeonCoverageCheck', { days: 7 });
+    assert.match(h.state.props.NEON_COVERAGE_LAST_RESULT, /^ok clean/);
+  } finally {
+    Object.keys(saved).forEach(function (k) { if (saved[k] === undefined) delete h.ctx[k]; else h.ctx[k] = saved[k]; });
+  }
+});

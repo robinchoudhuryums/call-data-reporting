@@ -29,7 +29,7 @@ test('a healthy dept (DQE rows present) never enters the streak map', function (
 test('silence day 1 starts a streak but does NOT alert (one day can be legitimate)', function () {
   const r = call([{ dept: 'Field Ops Power', qcdCalls: 25, dqeRows: 0 }], {});
   assert.deepEqual(r.streaks, {
-    'Field Ops Power': { since: '2026-08-14', days: 1, calls: 25, alerted: false },
+    'Field Ops Power': { since: '2026-08-14', days: 1, calls: 25, alerted: false, lastIso: '2026-08-14' },
   });
   assert.deepEqual(r.alerts, []);
 });
@@ -41,9 +41,31 @@ test('day 2 over both thresholds alerts ONCE, and the streak marks itself alerte
   assert.deepEqual(r.alerts[0], { dept: 'Field Ops Power', since: '2026-08-13', days: 2, calls: 45 });
   assert.equal(r.streaks['Field Ops Power'].alerted, true);
   // Day 3: the episode keeps growing but never re-mails.
-  const r3 = call([{ dept: 'Field Ops Power', qcdCalls: 30, dqeRows: 0 }], r.streaks);
+  const r3 = call([{ dept: 'Field Ops Power', qcdCalls: 30, dqeRows: 0 }], r.streaks, '2026-08-15');
   assert.deepEqual(r3.alerts, []);
   assert.equal(r3.streaks['Field Ops Power'].days, 3);
+});
+
+// O-8 (broad-scan 2026-09-17): a per-DATE claim. Re-assessing the SAME date
+// (an editor re-run of the handler, a re-install inside the trigger hour)
+// used to count the day twice -- one silent day read as days=2, crossing the
+// default threshold and emailing a one-day episode the header says must not
+// alert. The streak now carries `lastIso`; the same date carries it forward.
+test('O-8: re-assessing the same date does not grow the streak or alert', function () {
+  const d1 = call([{ dept: 'Field Ops Power', qcdCalls: 25, dqeRows: 0 }], {}, '2026-08-14');
+  assert.equal(d1.streaks['Field Ops Power'].days, 1);
+  const again = call([{ dept: 'Field Ops Power', qcdCalls: 25, dqeRows: 0 }], d1.streaks, '2026-08-14');
+  assert.equal(again.streaks['Field Ops Power'].days, 1, 'same date: days unchanged');
+  assert.equal(again.streaks['Field Ops Power'].calls, 25, 'same date: calls unchanged');
+  assert.deepEqual(again.alerts, [], 'a one-day episode never alerts, however often it is re-run');
+  // The next real day still advances and alerts.
+  const d2 = call([{ dept: 'Field Ops Power', qcdCalls: 20, dqeRows: 0 }], again.streaks, '2026-08-15');
+  assert.equal(d2.streaks['Field Ops Power'].days, 2);
+  assert.equal(d2.alerts.length, 1);
+  // Pre-O-8 streaks (no lastIso) still grow on the next assessment.
+  const legacy = call([{ dept: 'Denials', qcdCalls: 3, dqeRows: 0 }],
+    { 'Denials': { since: '2026-08-12', days: 2, calls: 4, alerted: false } }, '2026-08-14');
+  assert.equal(legacy.streaks['Denials'].days, 3);
 });
 
 test('the call-volume floor is CUMULATIVE, so a 1-2-call dept (Denials) still alerts eventually', function () {

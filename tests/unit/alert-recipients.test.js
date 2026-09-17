@@ -74,3 +74,19 @@ test('P1: a legacy 3-column Access Control sheet still resolves managers (width-
   assert.deepEqual(JSON.parse(JSON.stringify(h.call('lookupDeptManagers_', 'CSR'))),
     ['old.mgr@x.com']);
 });
+
+// O-5 (broad-scan 2026-09-17): the daily alerts engine records an OPS-8
+// prefix-coded outcome (ALERTS_LAST / ALERTS_LAST_RESULT) so the Health page's
+// outcome table can show it; `ok` only when no department errored.
+test('O-5: alertsOutcomeString_ is ok with no errors and FAILED-PARTIAL with any', function () {
+  const ok = h.call('alertsOutcomeString_', '2026-09-16',
+    [{ status: 'sent' }, { status: 'above-threshold' }, { status: 'skipped' }]);
+  assert.match(ok, /^ok 2026-09-16: 3 dept\(s\) assessed, 1 fired \(1 above-threshold, 1 sent, 1 skipped\)/);
+  const bad = h.call('alertsOutcomeString_', '2026-09-16', [{ status: 'sent' }, { status: 'error' }]);
+  assert.match(bad, /^FAILED-PARTIAL 2026-09-16: 1 dept error\(s\); 2 dept\(s\) assessed, 1 fired/);
+  assert.match(h.call('alertsOutcomeString_', '2026-09-16', []), /^ok 2026-09-16: 0 dept\(s\) assessed, 0 fired/);
+  h.state.props = h.state.props || {};
+  h.call('recordAlertsOutcome_', 'ok 2026-09-16: x');
+  assert.equal(h.state.props.ALERTS_LAST_RESULT, 'ok 2026-09-16: x');
+  assert.ok(h.state.props.ALERTS_LAST);
+});

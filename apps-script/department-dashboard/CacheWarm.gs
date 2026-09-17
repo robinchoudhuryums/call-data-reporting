@@ -190,7 +190,14 @@ function warmReportCaches_() {
   var ms = Date.now() - start;
   Logger.log('warmReportCaches_: warmed=' + warmed + ' failed=' + failed
     + ' for ' + latest + ' in ' + ms + 'ms');
-  recordCacheWarm_('ok (' + warmed + ' warmed'
+  // O-1 (broad-scan 2026-09-17): the OPS-8 contract is prefix-coded and the
+  // Health classifier paints an `ok` prefix green -- so a run in which EVERY
+  // warm threw recorded "ok (0 warmed, 16 failed …)" and rendered healthy. A
+  // run that warmed nothing while something failed is FAILED-ALL (the
+  // QueueReport / Digest rule); partial failures stay ok (the detail names
+  // them) because the caches that DID warm are real work.
+  var warmPrefix = (warmed === 0 && failed > 0) ? 'FAILED-ALL' : 'ok';
+  recordCacheWarm_(warmPrefix + ' (' + warmed + ' warmed'
     + (failed ? ', ' + failed + ' failed' : '')
     + (sumSkipped ? ', ' + sumSkipped + ' summaries skipped on budget' : '')
     + (qcdSkipped ? ', qcdAll skipped on budget' : '')

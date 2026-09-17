@@ -312,10 +312,12 @@ function qcdAllDeptCachedData_(from, to, opts) {
 /**
  * D-1: the qcdAll cache key's freshness anchor -- the latest QCD date, read
  * source-aware (getLatestDataDates honors QCD_READ_SOURCE and is on the 5-min
- * freshness tier). That RPC carries a signed-in gate, so in a TRIGGER context
- * (the automated queue-report send has no Session user) it throws and the
+ * freshness tier). That RPC carries a signed-in gate; the try/catch keeps
+ * the anchor independent of it (O-3: a time trigger runs as its installing
+ * owner and DOES pass that gate -- CacheWarm relies on exactly that -- but a
+ * gate change must never cost the queue report its anchor), and the
  * trigger-safe sheet scan (queueReportQcdLatestIso_, QueueReportEmail.gs)
- * answers instead. Two anchors for one blob merely cost a cache miss.
+ * answers on a throw. Two anchors for one blob merely cost a cache miss.
  * 'na' when neither can answer -- the empty-payload guard still holds then.
  */
 function qcdAllFreshnessAnchor_() {

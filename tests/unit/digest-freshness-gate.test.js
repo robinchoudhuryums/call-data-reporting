@@ -260,3 +260,20 @@ test('R32: a quiet window with FRESH data explains its zero tiles; a stale send 
   const html = h.call('digestSummaryHtml_', 'Alpha', '2026-09-03', '2026-09-03', { stale: true });
   assert.ok(!/No calls recorded/.test(html), 'the stale callout (added by the sender) already explains the zeros');
 });
+
+// O-5 (broad-scan 2026-09-17): the lock-contention skip emailed the admins but
+// recorded nothing, so the previous day's "ok" stood in DIGEST_LAST_RESULT_<c>
+// (the modal's "Last runs" line and the Health page's outcome row).
+test('O-5: a lock-contention skip records SKIPPED-LOCK for the cadence', function () {
+  h.ctx.sendDigestsForCadence_ = REAL_SEND;
+  h.state.props.DIGEST_LAST_RESULT_daily = 'ok 2026-09-15: sent 3 of 3';
+  const realLock = h.ctx.LockService;
+  const realNotify = h.ctx.notifyDigestFailure_;
+  h.ctx.LockService = { getScriptLock: function () {
+    return { tryLock: function () { return false; }, releaseLock: function () {} };
+  } };
+  h.ctx.notifyDigestFailure_ = function () {};
+  try { h.call('sendDigestsForCadence_', 'daily'); }
+  finally { h.ctx.LockService = realLock; h.ctx.notifyDigestFailure_ = realNotify; }
+  assert.match(h.state.props.DIGEST_LAST_RESULT_daily, /^SKIPPED-LOCK: daily digests skipped/);
+});

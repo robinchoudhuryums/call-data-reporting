@@ -70,6 +70,55 @@ function healthFailureOnlyStep_(step) {
  * time -- the Apps Script runtime IS the script TZ) and ISO instants (the
  * engines' `*_LAST` properties, `new Date().toISOString()`).
  */
+/**
+ * O-9 (broad-scan 2026-09-17): the OPS-8 outcome-string contract, in ONE place.
+ * An outcome is HEALTHY iff it starts with `ok`. Otherwise it is BAD when it
+ * carries a failure word anywhere, or LEADS with one of the engine-specific
+ * prefixes below. A did-nothing run must never produce an `ok` prefix (O-1:
+ * CacheWarm's all-failed run said "ok (0 warmed, 16 failed)" and rendered
+ * green); an engine that adds a new not-ok state adds its prefix HERE and to
+ * the table test in system-health.test.js, never a bespoke regex at a row.
+ *   MISSED / LATE / EMPTY / PARTIAL / NO-SUBSCRIBERS -- the queue report
+ *   GAPS / FAILED-PROBE -- the coverage checks   SILENT / INCONCLUSIVE -- watchdogs
+ *   stale -- the ingest watchdog's own verdict ("stale (alert sent)") read GREEN
+ *   UNPARSEABLE -- PipelineWatch could not dedup a failure row (OD-7)
+ *   SKIPPED-LOCK -- a digest cadence dropped on lock contention (O-5)
+ */
+var HEALTH_BAD_PREFIXES_ = Object.freeze([
+  'MISSED', 'LATE', 'EMPTY', 'PARTIAL', 'NO-SUBSCRIBERS', 'GAPS', 'FAILED-PROBE',
+  'SILENT', 'INCONCLUSIVE', 'UNPARSEABLE', 'SKIPPED-LOCK', 'stale',
+]);
+function healthOutcomeIsBad_(res) {
+  var r = String(res || '');
+  if (/^ok\b/i.test(r)) return false;
+  if (/fail|error|unreachable|skipped/i.test(r)) return true;
+  for (var i = 0; i < HEALTH_BAD_PREFIXES_.length; i++) {
+    var p = HEALTH_BAD_PREFIXES_[i];
+    if (new RegExp('^' + p + '\\b', p === 'stale' ? 'i' : '').test(r)) return true;
+  }
+  return false;
+}
+
+/**
+ * O-9: extra allowance for company holidays between a recorded outcome and
+ * now -- one day per holiday, bounded to a 14-day scan. 0 when the holiday
+ * layer is not loaded or the stamp is unreadable.
+ */
+function healthHolidayCreditMs_(atIso, nowMs) {
+  try {
+    if (typeof isCompanyHoliday_ !== 'function') return 0;
+    var atMs = Date.parse(String(atIso || ''));
+    if (!isFinite(atMs)) return 0;
+    var credit = 0;
+    for (var d = 1; d <= 14; d++) {
+      var t = atMs + d * 86400000;
+      if (t > nowMs) break;
+      if (isCompanyHoliday_(Utilities.formatDate(new Date(t), TZ, 'yyyy-MM-dd'))) credit += 86400000;
+    }
+    return credit;
+  } catch (e) { return 0; }
+}
+
 function healthAgeMs_(stamp, nowMs) {
   var s = String(stamp || '').trim();
   if (!s) return null;
@@ -480,18 +529,31 @@ function getSystemHealth(req) {
           });
           var atRisk = [];
           var notes = [];
+          var probeErrors = [];   // OD-2: a table that could not be checked is not "mirrored"
           (risk.tables || []).forEach(function (t) {
             if (t.missingTable) { notes.push(t.table + ': table not created yet'); return; }
-            if (t.error) { notes.push(t.table + ': ' + t.error); return; }
+            if (t.error) { probeErrors.push(t.table + ': ' + t.error); return; }
             t.atRisk.forEach(function (a) { atRisk.push(t.table + ' ' + a.date + ' (until ~' + a.lastDay + ')'); });
           });
-          if (atRisk.length) {
+          if (!atRisk.length && probeErrors.length) {
+            // OD-2 (broad-scan 2026-09-17): a statement timeout on a cold
+            // compute used to render "ok -- every surviving date is mirrored
+            // (inbound_calls: <error>)" -- green for a check that checked
+            // nothing, inside the 14-day window the row exists to guard.
+            add('neon', 'retention-risk', 'Per-call tables vs retention window', 'warn',
+              'could not check ' + probeErrors.length + ' table(s): ' + probeErrors.join('; '),
+              'The retention check itself failed for these tables, so "mirrored" is unknown. '
+              + 'Re-open the page (a cold Neon compute usually answers the second time); if it '
+              + 'persists, run runNeonCoverageCheck from the editor.'
+              + (notes.length ? ' Also: ' + notes.join('; ') + '.' : ''));
+          } else if (atRisk.length) {
             add('neon', 'retention-risk', 'Per-call tables vs retention window', 'warn',
               atRisk.length + ' surviving date(s) unmirrored: '
               + atRisk.slice(0, 6).join(', ') + (atRisk.length > 6 ? ' …' : ''),
               'Run backfillInboundCalls / backfillOutboundCalls (cdr-import editor) '
               + 'BEFORE the listed last day — when the date\'s Call_Legs sheet prunes '
               + 'there is no other source (Operator State #40/#43).'
+              + (probeErrors.length ? ' Could not check: ' + probeErrors.join('; ') + '.' : '')
               + (notes.length ? ' Also: ' + notes.join('; ') + '.' : ''));
           } else {
             add('neon', 'retention-risk', 'Per-call tables vs retention window', 'ok',
@@ -661,6 +723,17 @@ function getSystemHealth(req) {
     // (smoke, coverage) engines carry no age.
     var DAY_ = 86400000;
     var outcomes = [
+      // O-5 (broad-scan 2026-09-17): the two REQUIRED engines had no outcome
+      // row at all -- a daily alerts run throwing every morning, or a digest
+      // cadence sending nothing, was invisible on the page CLAUDE.md calls the
+      // single trustworthy signal. Alerts: 'ok <date>: …' / 'FAILED-PARTIAL …'
+      // / 'FAILED (threw) …' (Alerts.gs). Digests: per cadence, the result
+      // string carries its own timestamp (no *_LAST prop), 'ok …' /
+      // 'FAILED-ALL …' / 'NO-SUBSCRIBERS …' / 'SKIPPED-LOCK …'.
+      ['out-alerts',   'Daily alerts — last run',     'ALERTS_LAST',        'ALERTS_LAST_RESULT',        'runDailyAlerts_', null, 4 * DAY_],
+      ['out-digest-daily',   'Daily digest — last outcome',   null, 'DIGEST_LAST_RESULT_daily',   'runDailyDigests_',   null, null],
+      ['out-digest-weekly',  'Weekly digest — last outcome',  null, 'DIGEST_LAST_RESULT_weekly',  'runWeeklyDigests_',  null, null],
+      ['out-digest-monthly', 'Monthly digest — last outcome', null, 'DIGEST_LAST_RESULT_monthly', 'runMonthlyDigests_', null, null],
       ['out-warm',     'Cache warm — last outcome',   'CACHE_WARM_LAST',    'CACHE_WARM_LAST_RESULT',    'warmReportCaches_', null, 4 * DAY_],
       ['out-keepwarm', 'Keep-warm — last ping',       'NEON_KEEPWARM_LAST', 'NEON_KEEPWARM_LAST_RESULT', 'keepNeonWarm_', 'NEON_KEEPWARM_ENABLED', null],
       ['out-backup',   'Neon backup — last run',      'NEON_BACKUP_LAST',   'NEON_BACKUP_LAST_RESULT',   'runNeonBackup_', null, 9 * DAY_],
@@ -722,20 +795,10 @@ function getSystemHealth(req) {
       // O-7: and "INCONCLUSIVE ..." -- a watchdog whose SOURCE was unreadable
       // used to write "ok (inconclusive ...)", i.e. green for a check that
       // could not check anything.
-      var bad = !/^ok\b/i.test(res || '')
-        && (/fail|error|unreachable|skipped/i.test(res || '')
-            || /^MISSED\b/.test(res || '') || /^GAPS\b/.test(res || '')
-            || /^NO-SUBSCRIBERS\b/.test(res || '') || /^SILENT\b/.test(res || '')
-            // D-1: "EMPTY <iso> ..." -- the queue report refused to send an
-            // empty payload; the next poll retries, but it is not a success.
-            || /^EMPTY\b/.test(res || '')
-            // R43: and "PARTIAL <iso> ..." -- the all-dept compute ran out of
-            // budget, so the report was refused with departments missing. None
-            // of the bad-words above match the word "partial", so without this
-            // prefix the row renders GREEN for a report that never went out --
-            // the same hole O-5 / D-1 / O-9 each had to patch by hand.
-            || /^PARTIAL\b/.test(res || '')
-            || /^LATE\b/.test(res || '') || /^INCONCLUSIVE\b/.test(res || ''));
+      // O-9 (broad-scan 2026-09-17): the classifier is the pure
+      // healthOutcomeIsBad_ below -- ONE table-driven contract instead of a
+      // regex that every new prefix had to be patched into by hand.
+      var bad = healthOutcomeIsBad_(res);
       // O-4: a live engine whose last RECORDED outcome is older than its
       // allowance. Only when the trigger is installed and (if flag-gated) the
       // flag is on -- a disabled engine is already reported by its svc row.
@@ -744,6 +807,10 @@ function getSystemHealth(req) {
       if (!bad && fn && maxAge && at && installedMap[fn]
           && (!flag || String(props.getProperty(flag) || '') === 'true')) {
         var ageMs = healthAgeMs_(at, Date.now());
+        // O-9: the daily allowance (4 d) is exactly Fri -> Tue; a company
+        // holiday inside the gap (a Monday holiday) is one more non-run day,
+        // so credit it -- the weekday-only engines skip holidays by design.
+        maxAge += healthHolidayCreditMs_(at, Date.now());
         if (ageMs != null && ageMs > maxAge) {
           stale = ' — STALE: last recorded outcome is ' + (Math.round(ageMs / DAY_ * 10) / 10)
             + ' day(s) old but the trigger is armed. Runs that never record an outcome are '
@@ -755,6 +822,21 @@ function getSystemHealth(req) {
         (res || '') + (at ? (' @ ' + at) : '') + stale);
     }
   } catch (e) { add('triggers', 'out-probe', 'Service outcomes', 'warn', 'probe failed', String(e && e.message || e)); }
+
+  // O-11: the client-error beacon's window state (CacheService-only, like the
+  // presence map). A reached cap is a real signal -- errors are being
+  // suppressed, not absent.
+  try {
+    var beaconCache = CacheService.getScriptCache();
+    var beaconCount = parseInt(beaconCache.get('cissue:count') || '0', 10) || 0;
+    var beaconCapAt = beaconCache.get('cissue:capat') || '';
+    add('usage', 'client-beacon', 'Client-error beacon (6 h window)',
+      beaconCapAt ? 'warn' : 'ok',
+      beaconCapAt
+        ? ('CAP REACHED at ' + beaconCapAt + ' — new client errors are logged but not emailed until the window expires')
+        : (beaconCount + ' of ' + CLIENT_ISSUE_WINDOW_CAP_ + ' emails used'),
+      beaconCapAt ? 'A burst this size is usually one broken deploy; read the Executions log (reportClientIssue) for the tail.' : '');
+  } catch (e) { add('usage', 'client-beacon', 'Client-error beacon (6 h window)', 'muted', 'probe failed', String(e && e.message || e)); }
 
   // ── Script Properties presence ──────────────────────────────────────
   try {
@@ -1149,6 +1231,39 @@ function reportClientIssue(payload) {
   try {
     var seen = cache.get(sigKey);
     var count = parseInt(cache.get('cissue:count') || '0', 10) || 0;
+    if (!seen && count >= CLIENT_ISSUE_WINDOW_CAP_ && !cache.get('cissue:capat')) {
+      // O-11 (broad-scan 2026-09-17): the cap used to close silently -- a
+      // broken deploy hits 15 distinct signatures in minutes, and every NEW
+      // signature after that was Logger-only for 6 h with nothing telling the
+      // admin the window was suppressed rather than quiet. ONE "cap reached"
+      // note per window (the marker shares the count's TTL), and the Health
+      // page's client-beacon row reads the same marker.
+      var capAt = new Date().toISOString();
+      cache.put('cissue:capat', capAt, 21600);
+      try {
+        var capTo = getAdminEmails_().join(',');
+        if (capTo) {
+          sendAppEmail_({
+            to: capTo,
+            subject: '[Dashboard] Client-issue beacon cap reached — further errors suppressed for ~6 h',
+            notice: {
+              tone: 'warn', kicker: 'Admin notice · Client issue', title: 'Beacon cap reached',
+              subtitle: CLIENT_ISSUE_WINDOW_CAP_ + ' distinct client errors emailed in one 6 h window',
+              tiles: [{ label: 'Cap', value: String(CLIENT_ISSUE_WINDOW_CAP_), sub: 'emails per 6 h' },
+                      { label: 'Reached at', value: capAt },
+                      { label: 'Latest', value: kind, sub: user.email, tone: 'warn' }],
+              callout: { kicker: 'What it means', html: 'New client errors are now logged but NOT emailed until the window '
+                + 'expires. A burst this size usually means one broken deploy, not fifteen bugs -- check the '
+                + 'Executions log (reportClientIssue) for the tail and the Health page\'s client-beacon row.', tone: 'warn' },
+              ctaUrl: appDashUrl_('#/admin/health'), ctaLabel: 'Open System Health',
+              footerHtml: 'Sent once per window by the client-error beacon (R19 / O-11).',
+            },
+            body: 'The client-issue beacon reached its cap of ' + CLIENT_ISSUE_WINDOW_CAP_ + ' emails per 6 h at '
+              + capAt + '. Further client errors are logged (reportClientIssue) but not emailed until the window expires.',
+          });
+        }
+      } catch (ce) { /* best-effort */ }
+    }
     if (!seen && count < CLIENT_ISSUE_WINDOW_CAP_) {
       var to = getAdminEmails_().join(',');
       if (to) {

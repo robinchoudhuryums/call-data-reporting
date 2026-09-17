@@ -9,6 +9,15 @@
 
 // -- Auth (was Alerts.gs) -------------------------------------------------
 
+// Trigger identity (O-3, broad-scan 2026-09-17): an installable time trigger
+// runs as the user who INSTALLED it, and Session.getActiveUser() resolves that
+// owner inside the trigger -- CacheWarm.gs calls these gated public functions
+// from its trigger by design, and F-27 measured warm runs attributed to the
+// installing admin. Engines that split out a gate-free `_` core do so to
+// decouple from the RPC gate, not because the identity is missing. Every
+// installer is assertAdmin_-gated, so the trigger owner is an admin at
+// install time; an owner later removed from ADMIN_EMAILS surfaces as a
+// recorded FAILED outcome on the Health page, never a silent no-op.
 function assertAdmin_() {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);

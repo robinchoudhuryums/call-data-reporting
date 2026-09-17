@@ -57,3 +57,27 @@ test('O-4: a slow run stops warming at the budget and STILL records its outcome'
 test('O-4: the budget is below the platform ceiling', function () {
   assert.ok(h.ctx.CACHE_WARM_TOTAL_BUDGET_MS < 6 * 60 * 1000);
 });
+
+// O-1 (broad-scan 2026-09-17): the OPS-8 contract is prefix-coded and the Health
+// classifier paints an `ok` prefix green, so a run in which EVERY warm threw
+// recorded "ok (0 warmed, 16 failed …)" and rendered healthy. A run that warmed
+// nothing while something failed is FAILED-ALL.
+test('O-1: a run that warmed nothing and failed something records FAILED-ALL, never ok', function () {
+  const realNow = Date.now;
+  h.state.props = {};
+  h.ctx.getLatestDataDate = function () { return '2026-08-31'; };
+  h.ctx.getAllDepartments_ = function () { return ['A', 'B']; };
+  const boom = function () { throw new Error('Service Spreadsheets timed out'); };
+  h.ctx.getCompanyOverview = boom;
+  h.ctx.getDepartmentSummary = boom;
+  h.ctx.getQcdAllDepartments = boom;
+  h.ctx.getInsightsReport = boom;
+  try { h.call('warmReportCaches_'); } finally { Date.now = realNow; }
+  assert.match(h.state.props.CACHE_WARM_LAST_RESULT, /^FAILED-ALL \(0 warmed, \d+ failed/);
+  assert.ok(h.state.props.CACHE_WARM_LAST, 'still stamped');
+  // A PARTIAL failure stays ok -- the caches that did warm are real work.
+  h.state.props = {};
+  h.ctx.getCompanyOverview = function () {};
+  try { h.call('warmReportCaches_'); } finally { Date.now = realNow; }
+  assert.match(h.state.props.CACHE_WARM_LAST_RESULT, /^ok \(1 warmed, \d+ failed/);
+});

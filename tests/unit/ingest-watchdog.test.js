@@ -90,3 +90,16 @@ test('O-7: an unreadable Pipeline Health RECORDS an INCONCLUSIVE outcome instead
   assert.equal(h.state.props.INGEST_WATCHDOG_ALERTED, undefined, 'no episode armed, no alarm');
   assert.equal(h.state.sentEmails.length, 0);
 });
+
+// O-4 (broad-scan 2026-09-17): the watchdog's own throw used to be Logger-only,
+// leaving the previous "fresh" on the Health page for up to the 4-day STALE
+// allowance while an hourly engine pushed nothing.
+test('O-4: a throw before assessing records a FAILED outcome instead of keeping the old verdict', function (t) {
+  if (isRealWeekend_()) { t.diagnostic('weekend -- watchdog run-gate active, skipping'); return; }
+  install({ hoursSinceFresh: 2, latestTimestamp: '2026-06-01 07:00' });
+  h.state.props.INGEST_WATCHDOG_LAST_RESULT = 'fresh';
+  h.ctx.computeOverviewPipelineFreshness_ = function () { throw new Error('Service Spreadsheets timed out'); };
+  h.call('runIngestWatchdog_');
+  assert.match(h.state.props.INGEST_WATCHDOG_LAST_RESULT, /^FAILED \(threw before assessing\): Service Spreadsheets timed out/);
+  assert.ok(h.state.props.INGEST_WATCHDOG_LAST, 'stamped');
+});

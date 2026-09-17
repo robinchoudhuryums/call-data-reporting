@@ -754,7 +754,9 @@ function loginNotifyOutcomeKey_(user) {
 
 function notifyLoginEvent_(email, user) {
   var props = PropertiesService.getScriptProperties();
-  if (String(props.getProperty('LOGIN_NOTIFY_ENABLED') || 'true') === 'false') return;
+  // O-10: case-insensitive, like ACCESS_WELCOME_EMAIL -- Operator State #45 says
+  // "set it to false", and a Sheets-habit FALSE must silence it too.
+  if (String(props.getProperty('LOGIN_NOTIFY_ENABLED') || 'true').toLowerCase() === 'false') return;
   var emailLower = String(email || '').trim().toLowerCase();
   if (!emailLower) return;   // no identity resolved -- nothing meaningful to report
 

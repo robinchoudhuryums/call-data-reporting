@@ -151,7 +151,16 @@ function runPipelineWatch_() {
       // Advance past the examined rows so they aren't rescanned; no email. "ok "
       // prefix so the healthy "no new failures" line doesn't read as a warning
       // via the OPS-8 "failures" substring.
-      pipelineWatchRecord_(props, Math.max(sinceMs, scan.maxTsMs), 'ok (no new failures)');
+      // OD-7 (broad-scan 2026-09-17): a FAILURE row whose Timestamp cannot be
+      // parsed can be neither deduped nor emailed, and used to vanish behind
+      // "ok (no new failures)". It is a real state (a reformatted / pasted
+      // Timestamp column), so it leads the outcome with its own prefix and the
+      // Health classifier paints it amber until the column is fixed.
+      pipelineWatchRecord_(props, Math.max(sinceMs, scan.maxTsMs),
+        scan.unparseableFailures
+          ? ('UNPARSEABLE ' + scan.unparseableFailures + ' failure row(s) have no readable Timestamp '
+             + '-- cannot dedup or alert on them; fix the Pipeline Health Timestamp column (OD-7)')
+          : 'ok (no new failures)');
       pipelineWatchAuxDispatch_(props, aux);   // R7 (G-1): aux signals still fire
       return;
     }
@@ -173,6 +182,15 @@ function runPipelineWatch_() {
     }
   } catch (e) {
     Logger.log('runPipelineWatch_ failed: ' + (e && e.message ? e.message : e));
+    // O-4 (broad-scan 2026-09-17): record the throw -- see IngestWatchdog.gs.
+    // The watermark is NOT touched (nothing was examined), so the next run
+    // still sees every failure this one missed.
+    try {
+      var propsErr = PropertiesService.getScriptProperties();
+      propsErr.setProperty('PIPELINE_WATCH_LAST', new Date().toISOString());
+      propsErr.setProperty('PIPELINE_WATCH_LAST_RESULT',
+        'FAILED (threw before scanning): ' + (e && e.message ? e.message : e));
+    } catch (pe) { /* best-effort */ }
   }
 }
 
@@ -220,17 +238,21 @@ function pipelineWatchTailClipped_(rows, requestedRows, sinceMs) {
 function pipelineWatchScan_(rows, sinceMs) {
   var maxTsMs = (sinceMs == null) ? 0 : sinceMs;
   var newFailures = [];
+  var unparseableFailures = 0;   // OD-7: failure rows with no usable timestamp
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     var ts = r.tsMs;
     if (ts != null && isFinite(ts) && ts > maxTsMs) maxTsMs = ts;
     if (sinceMs == null) continue;   // baseline run: never flag failures
-    if (ts == null || !isFinite(ts)) continue;   // no usable timestamp -> can't dedup
+    if (ts == null || !isFinite(ts)) {   // no usable timestamp -> can't dedup
+      if (String(r.status || '').toLowerCase() === 'failure') unparseableFailures++;
+      continue;
+    }
     if (ts <= sinceMs) continue;
     if (String(r.status || '').toLowerCase() === 'failure') newFailures.push(r);
   }
   newFailures.sort(function (a, b) { return (a.tsMs || 0) - (b.tsMs || 0); });
-  return { newFailures: newFailures, maxTsMs: maxTsMs };
+  return { newFailures: newFailures, maxTsMs: maxTsMs, unparseableFailures: unparseableFailures };
 }
 
 /**

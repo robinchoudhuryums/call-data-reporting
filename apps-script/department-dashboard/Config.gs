@@ -711,6 +711,7 @@ var PROP_REGISTRY_ = Object.freeze({
     QCD_ALLDEPT_BUDGET_MS: 'operator',
     // engine — outcome/state the code writes itself
     CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
+    ALERTS_LAST: 'engine', ALERTS_LAST_RESULT: 'engine',   // O-5: the daily alerts outcome
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
     COACHING_NOTIFY_PENDING: 'engine',
     DQE_SILENCE_WATCH_LAST: 'engine', DQE_SILENCE_WATCH_LAST_RESULT: 'engine',

@@ -120,7 +120,13 @@ function runNeonCoverageCheck(opts) {
       try {
         var sheetCounts = ncSheetDateCounts_(ss, spec.sheet, spec.dateCol, fromIso, toIso);
         if (sheetCounts == null) {
+          // OD-1 (broad-scan 2026-09-17): a missing sheet is NOT a clean table
+          // -- the check silently stopped covering it and the summary still
+          // read "ok clean" (a renamed tab, or a SPREADSHEET_ID copy without
+          // it). Count it as a probe error so the outcome leads FAILED-PROBE,
+          // the way SheetCoverage counts the same case as a finding.
           out.tables.push({ table: spec.table, sheet: spec.sheet, skipped: 'sheet missing' });
+          out.errors.push(spec.table + ': sheet "' + spec.sheet + '" is missing -- table NOT checked');
           continue;
         }
         var neonCounts = ncNeonDateCounts_(conn, spec.table, fromIso, toIso);

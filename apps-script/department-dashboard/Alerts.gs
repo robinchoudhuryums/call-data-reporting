@@ -302,9 +302,16 @@ function runDailyAlerts_() {
   // the F-6 behavior: Mon -> Fri, else yesterday).
   const dateIso = prevBusinessDayIso_(now);
   try {
-    runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger');
+    const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger') || [];
+    // O-5 (broad-scan 2026-09-17): the alerts engine is REQUIRED yet had no
+    // outcome on the Health page (its outcomes lived only in the Alert Log +
+    // the failure email). Record an OPS-8 prefix-coded outcome: ok only when
+    // no department errored; a per-dept error leads FAILED-PARTIAL so the
+    // classifier paints it amber.
+    recordAlertsOutcome_(alertsOutcomeString_(dateIso, results));
   } catch (e) {
     Logger.log('runDailyAlerts_ failed: %s', e);
+    recordAlertsOutcome_('FAILED (threw): ' + (e && e.message ? e.message : String(e)) + ' -- assessing ' + dateIso);
     // Surface to admins via email so a silent trigger failure
     // doesn't go unnoticed.
     try {
@@ -330,6 +337,34 @@ function runDailyAlerts_() {
       });
     } catch (e2) { /* best-effort */ }
   }
+}
+
+/**
+ * O-5: pure outcome string for the daily run (tests/unit/alerts*.test.js).
+ * `ok <date>: N assessed, K fired, …` or `FAILED-PARTIAL <date>: E error(s) …`.
+ */
+function alertsOutcomeString_(dateIso, results) {
+  var counts = {};
+  (results || []).forEach(function (r) {
+    var st = String((r && r.status) || 'unknown');
+    counts[st] = (counts[st] || 0) + 1;
+  });
+  var errors = counts.error || 0;
+  var fired = counts.sent || 0;
+  var detail = Object.keys(counts).sort().map(function (k) { return counts[k] + ' ' + k; }).join(', ');
+  var head = (errors ? ('FAILED-PARTIAL ' + dateIso + ': ' + errors + ' dept error(s); ') : ('ok ' + dateIso + ': '))
+    + (results || []).length + ' dept(s) assessed, ' + fired + ' fired'
+    + (detail ? ' (' + detail + ')' : '');
+  return head + '. At ' + new Date();
+}
+
+/** O-5: the *_LAST / *_LAST_RESULT pair the Health page's outcome table reads. */
+function recordAlertsOutcome_(outcome) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty('ALERTS_LAST', new Date().toISOString());
+    props.setProperty('ALERTS_LAST_RESULT', outcome);
+  } catch (e) { /* best-effort */ }
 }
 
 /**
