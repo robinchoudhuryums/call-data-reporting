@@ -6,7 +6,7 @@
   "scripts": {
     "test": "node --test",
     "check:dups": "bash scripts/check-duplicated-files.sh",
-    "ci": "node --test && bash scripts/check-duplicated-files.sh",
+    "ci": "node --test && bash scripts/check-duplicated-files.sh && node scripts/module-deps.mjs --check",
     "lint:gas": "node scripts/lint-gas.mjs",
     "ci:ui": "node tools/ui-harness/ci.mjs"
   },

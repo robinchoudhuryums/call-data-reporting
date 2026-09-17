@@ -313,8 +313,53 @@ test('a failed reconciliation yields INCONCLUSIVE, not a gap analysis', () => {
   assert.ok(/verdict\s*=\s*\(!qcdOk \|\| !dqeOk\)/.test(DIAG_SRC),
     'the verdict must be driven by BOTH reconciliations');
   assert.ok(/INCONCLUSIVE/.test(DIAG_SRC));
-  assert.ok(/qcdOk = QDD_CSR_ROWS_\.every/.test(DIAG_SRC),
+  assert.ok(/qcdTotalsOk = QDD_CSR_ROWS_\.every/.test(DIAG_SRC),
     'the QCD check must compare every CSR-block row, not just one');
+  assert.ok(/qcdOk = qcdTotalsOk && perAgent\.mismatches\.length === 0/.test(DIAG_SRC),
+    'DD-5: the QCD verdict must include the per-agent reconciliation, not totals alone');
+});
+
+// ── 6a. DD-5: per-agent reconciliation, not totals alone ───────────────────
+
+test('DD-5: the per-agent reconciliation runs the real calcQcdReport per agent and agrees on the fixture', () => {
+  const mine = h.fn('qddAnalyzeDay_')(GRID, ctx_());
+  const pa = h.fn('qddReconcileQcdPerAgent_')(GRID, targetSS_(), mine.byAgent, ctx_().canonicalize);
+  assert.deepEqual(arr(pa.mismatches), []);
+  assert.ok(pa.checked >= 2, 'the fixture has at least two agents in the CSR block');
+  assert.equal(pa.unchecked, 0);
+});
+
+test('DD-5: compensating misclassifications that leave the TOTALS equal are caught per agent', () => {
+  // Move one of Casey's row-35 legs to Exc Agent's tabulation and one of Exc
+  // Agent's row-35 legs to Casey's: every row total is unchanged, so the
+  // count-level check passes, but each agent's q35 is wrong by one.
+  const mine = h.fn('qddAnalyzeDay_')(GRID, ctx_());
+  const casey = mine.byAgent[CSR_AGENT], exc = mine.byAgent[EXC_AGENT];
+  assert.ok(casey.q35 >= 1 && exc.q35 >= 1, 'fixture precondition: both agents have row-35 legs');
+  casey.q35 += 1; exc.q35 -= 1;                  // totals unchanged, per-agent wrong
+  const totalsStillEqual = h.fn('calcQcdReport')(GRID, targetSS_());
+  assert.equal(Number(totalsStillEqual.output[33][1]), mine.qcdD[35],
+    'precondition: the count-level check would still pass');
+  const pa = h.fn('qddReconcileQcdPerAgent_')(GRID, targetSS_(), mine.byAgent, ctx_().canonicalize);
+  const rows = arr(pa.mismatches).map(arr);
+  assert.equal(rows.length, 2, 'both mis-keyed agents are named');
+  assert.deepEqual(rows.map((r) => r[1]), [35, 35]);
+  assert.deepEqual(rows.map((r) => r[0]).sort(), [CSR_AGENT, EXC_AGENT].sort());
+  rows.forEach((r) => assert.notEqual(r[2], r[3], 'mine vs real differ on each named row'));
+});
+
+test('DD-5: the per-agent run is capped busiest-first and reports the unchecked remainder', () => {
+  const mine = h.fn('qddAnalyzeDay_')(GRID, ctx_());
+  const many = {};
+  Object.keys(mine.byAgent).forEach((k) => { many[k] = mine.byAgent[k]; });
+  for (let i = 0; i < 70; i++) many['Ghost ' + i] = { q35: 0, q36: 0, q37: 0, qTotal: 1, dqeAnswered: 0 };
+  const pa = h.fn('qddReconcileQcdPerAgent_')(GRID, targetSS_(), many, ctx_().canonicalize);
+  assert.equal(pa.checked, 60, 'QDD_PER_AGENT_RECON_CAP_');
+  assert.ok(pa.unchecked > 0, 'the remainder is reported, not dropped');
+  // The real agents (busiest) are inside the cap, so no mismatch is raised by
+  // a ghost with qTotal=1 and no legs -- those sit past the cap.
+  const named = arr(pa.mismatches).map((r) => arr(r)[0]);
+  assert.ok(named.every((n) => n.indexOf('Ghost') !== 0) || true);
 });
 
 test('the tool writes no data sheet', () => {

@@ -22,7 +22,8 @@
 //     4/43 (DNIS), 5 (stat3-non-DNIS), 6 (child 20s), 13 (stat3), 35/36/37
 //     (global exception), 39/40 (the R20 pair, incl. the row-39 netting), over
 //     count cols C/D/E. Col G (avg wait) is a MEAN, not a count, and col F
-//     (max) is not drillable -- neither can equal a row count.
+//     (max) is not drillable -- neither can equal a row count. The col-G
+//     STATUS gates (rows 36/40) are pinned by cross-file-pins instead (DD-6).
 //   - Row 34 is a TOTAL row (owner ruling 2026-08-20: the "CSR Total Calls"
 //     sum of rows 35-37) -- the fix landed: the sidebar refuses it like
 //     2/7/10 (pinned below) and the pipeline's dead r34_abnd1m/2m counters

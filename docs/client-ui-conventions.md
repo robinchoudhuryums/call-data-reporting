@@ -1010,8 +1010,8 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   Signature matching means a changed dept/range/selection never
   paints another request's stale shape -- those take the normal skeleton
   path. The Overview has its own separate SWR (`cdr.ov.cache.v1` +
-  `ovSetCachedIndicator_`). One entry per report per user (last signature
-  only) keeps localStorage bounded. New report run functions should wire
+  `ovSetCachedIndicator_`). A bounded ring of `REPORT_LASTGOOD_SLOTS_` (= 4)
+  entries per report (the D1b store above) keeps localStorage bounded. New report run functions should wire
   all three pieces (write + SWR + fail-fallback) together.
 
 ## Overview page **A served payload that is NOT good is never STORED (C2-3):** Inbound

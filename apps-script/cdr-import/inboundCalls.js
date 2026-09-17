@@ -1213,8 +1213,10 @@ function icBackfillTimeLimitMs_() {
  * Coverage note: this can only backfill dates whose Call_Legs_* sheet
  * still exists. A date pruned by DeleteOldSheets is gone from the
  * SPREADSHEET, which is not the same as gone: `importBulkCSVsFromDrive`
- * recreates the `Call_Legs_YYYY-MM-DD` sheet from the source CSV archive in
- * Drive, and this backfill then covers it. So the real recovery horizon is
+ * (editor-run -- its CDR Tools menu item is commented out pending Drive
+ * permissions, so it is NOT a one-click path) recreates the
+ * `Call_Legs_YYYY-MM-DD` sheet from the source CSV archive in Drive, and this
+ * backfill then covers it. So the real recovery horizon is
  * the CSV archive's retention, not the 14-day sheet prune -- and if no such
  * archive exists, the pruned dates ARE unrecoverable. Restore in small
  * batches; a wide window recreated at once can approach the workbook's

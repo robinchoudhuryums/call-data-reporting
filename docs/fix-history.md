@@ -80,6 +80,7 @@ rule; leave the history entry as-is (it's an archive).
 | `F-2` | `buildDQEHistoricalData` emits AD/AE/AF from ONE chronologically-sorted missed-leg list; unpairable abandoned parents appended to AD (no AE/AF partner) so the id SET is unchanged | "DQE cols AD/AE/AF are POSITIONALLY PAIRED" gotcha; INV-16 |
 | `F-3` | `Direct Call History` refresh-in-window: date-string coercion made the delete a silent no-op → fixed via `dcDateIso_` + `getDisplayValues` | number-coercion gotcha (date-shaped strings) |
 | `F-4` | `getCallJourney` manager fallback gated server-side by `callIdInDeptMissedReport_` (dept entitlement re-derived from the manager's own Missed report) | inbound-capture gotcha; INV-55-adjacent |
+| `F-13` | `DQEdrilldown.js` windowed only rung/missed/answered, so drilling Unique/TTT/ATT listed all-day legs and flagged false mismatches against the windowed build (INV-07); the drill now windows every metric the build windows, and its waitSec is the ABANDONED leg's. The third of the drill's three drifts (F24, R8-D4, F-13) | DQE Drill-Down gotcha; `dqe-drilldown-parity.test.js` |
 | `F-5` | (a) `computeThresholdDrift_` counts only ASSESSED days; (b) `computeOverviewPipelineFreshness_` requires `rows>0` (no-op build ≠ fresh) | threshold-drift gotcha; Operator State #11; INV-44 |
 | `F-6` | Daily alerts/digests assess the previous BUSINESS day (old check tested the DATA date's dow → fired Friday's on Saturday, skipped Monday) | INV-33, INV-45 |
 | `F-10` | `inboundCallsExport` refresh-in-window uses `ic_cellDateIso_` ISO-display compare (same coercion class as F-3) | number-coercion gotcha |
@@ -564,10 +565,12 @@ Findings from the 2026-07-27 three-stage broad scan, implemented across two
 passes. **NB this is a THIRD `F`-shaped family**, distinct from both dashed
 `F-#` (dashboard fixes) and bare `F#` (Neon read-back / feature flags) — the
 same collision class the taxonomy table warns about. These are numbered by
-SCAN FINDING, not by subsystem.
+SCAN FINDING, not by subsystem. The Low tail of the same scan ran past 13 --
+`F24` below is its one code that reached a live rule.
 
 | Code | What it fixed | Where the live rule lives |
 |---|---|---|
+| `F24` | `DQEdrilldown.js` matched Raw Data's UN-canonicalized callee name against the DQE row's CANONICAL roster name (INV-24), so aliased / paren agents drilled to "no matching rows" -- the first of the drill's three drifts (F24, R8-D4, F-13). The drill canonicalizes through its own `canonicalize_` (which R8-D4 then completed) | DQE Drill-Down gotcha; `dqe-drilldown-parity.test.js` |
 | `F1` | Inbound queue recognition (`icIsQueueName_`) was a hardcoded pattern, so a queue named outside it captured with `entry_queue=NULL` → attributable to no dept → invisible in every dept's Inbound report. Self-concealing: `scanInboundQueueNames_` and the QCD-parity unattributed list both filter `COALESCE(entry_queue,'') <> ''`, so there was no row to discover. Recognition now ALSO reads the `Dept Config` sheet (QCD Queues + Inbound Queue Aliases) via `icLoadConfiguredQueueNames_`. Strictly additive; `buildInboundCallRecords_` stays pure | Inbound-capture bullet (queue-name recognition), CLAUDE.md; INV-54 |
 | `F1b` | The measured half of F1: `^A_Q_` was ANCHORED, so the brand-prefixed queues `UDC_A_Q_Main` (Universal Dialysis Center) and `UUC_A_Q_Main` (Universal Urgent Care) never matched — a journey leg-name histogram over abandoned NULL-`entry_queue` calls found `UDC_A_Q_Main` on 38 abandons in one ~8-week window, still accruing, while the DQE pipeline had listed BOTH in `DQE_EXCLUDED_AGENTS` all along (the two pipelines disagreed about what a queue is). The `A_Q_` arm now matches at start OR after an underscore. Config alone could NOT have fixed this — an admin can only alias a queue they know is missing | Inbound-capture bullet, CLAUDE.md; Operator State #38 |
 | `F2` | `writeInboundCallsToNeon` / `writeOutboundCallsToNeon` returned BEFORE the authoritative per-date DELETE on an empty record set, so a date whose LEGITIMATE count is zero kept its phantoms forever (neither table has a sheet primary). New `icDeleteDateOnly_`, gated on a NON-EMPTY source so an unreadable grid can't destroy data (the P-3 discipline), reporting `unreachable` so a deferred-mirror date stays queued. The old CLAUDE.md rationale ("an empty payload carries no date to delete") had been stale since P-1 | Neon write discipline rule (4) / P-1 paragraph, CLAUDE.md |
@@ -893,6 +896,21 @@ bullets; this is the why.
 | `Batch 3` | After-hours capture (testing note #5) had a clock: `Call_Legs` is pruned at 14 days, so every undeployed day was a day AJ/AK could never be filled. Two decisions beyond the design: AK is INTEGER SECONDS (an integer cell sidesteps INV-02), and NULL ≠ 0 (nullable Neon ints, `NULLIF` binds, COALESCE upserts — a pre-Batch-3 row mirrors NULL, a captured-empty row writes 0). One real bug found on the way in: refactoring the own-talk loop into `talkForLegs` unbound `agentTalkPerParent`, which the queue-split call reads INSIDE a try/catch — AI went blank silently and only `queue-split.test.js` noticed. The duplicate-merge repair clears AI..AK together (summing would double a double-append). | AJ/AK bullet, CLAUDE.md; INV-06 / INV-10; Operator State #60; `pipeline-build.test.js` |
 | `Batch 4` | Phase 2 of the date-column plan. The bulk path's post-write sort failed inside `catch (e) { console.warn(...) }` — Cloud Logging, nowhere an operator looks — so a CSR / Q Path left unsorted was seen nowhere; it now logs a `historicalSort:<sheet>` failure row. `parseDateForNeon('45726')` was the YEAR 45726 through the `new Date(s)` fallback (a valid-looking ISO every sheet-fed caller would have keyed on); the census had guarded it privately, the resolver now refuses it for all ~30 callers. The census's per-row TZ-SPLIT `formatDate` pair cost ~49 s on DQE (2026-09-11 measurement) and is memoized per instant (~600 instants, not 32k rows). The harness had stubbed `Range.sort` as a no-op, which made sort+re-check unpinnable; it is MODELLED now (numbers/Dates, then text, blanks last), and one R46 expectation that had encoded the no-op moved to date order. | "re-checked for date order NIGHTLY" bullet; INV-44; Operator State #61; `historical-sort.test.js` |
 
+## `R27`–`R30` — the email chokepoint rounds, and an `R27` that means two things (2026-09-03/04)
+
+Four owner rounds cited by code in CLAUDE.md's Common Gotchas that had no
+entry here (T-4, the 2026-09-17 scan). **`R27` COLLIDES with itself:** the
+same label names two unrelated changes made two days apart, and both are
+live rules. Read the bullet that cites it, not the number.
+
+| Code | What happened / why the rule exists | Live rule |
+|---|---|---|
+| `R27` (a) | The Neon storage cap: `call_history_phones` was the largest table and its per-call children were being written on every import. Commit a4d0db1 (2026-09-03) gated the phones write behind `CDR_PHONES_MIRROR` (OFF by default), added the weekly `NEON_RETENTION_ENABLED` prune and capped the CDR backfill (`CDR_BACKFILL_BEFORE`). | Neon write discipline rule (5); Operator State #57 |
+| `R27` (b) | `sheetScanDqeDateBounds_` cost ~0.5 ms per row in `Utilities.formatDate` — 33 s on a cache-HIT queue report over 31.7k rows. `rowDateIso_` memoizes its Date branch per execution (the `DEPT_CONFIG_ROWS_MEMO_` discipline), so a new dated-sheet reader routes through it rather than formatting per row. Pinned by `data-parsing.test.js`. | Header freshness pill bullet ("Date cells resolve through `rowDateIso_`") |
+| `R28` | Owner ruling: a wrong recipient or a silent non-send must be SEEN the day it happens. Commit cbac8e9 (2026-09-04): every dashboard email goes through ONE chokepoint, `Config.gs::sendAppEmail_`, which BCCs the first admin by default (`EMAIL_BCC` overrides; `none` disables) and dedups an address already in to/cc; `app-email.test.js` sweeps for a direct `MailApp.sendEmail`. The same commit added the Access Control welcome email (`ACCESS_WELCOME_EMAIL`). | Every-email bullet; Operator State #58; INV-31 |
+| `R29` | Admin notices were plain text beside styled reports. Commit 0af8d16 (2026-09-04): `sendAppEmail_` takes a `notice:` spec rendered by `EmailKit.gs::ekNoticeHtml_` (banded shell, tiles, steps, callout, mono) as the HTML alternative, `body` kept as the fallback; senders never call the kit directly (suites load files selectively — use `appEsc_` / `appDashUrl_` inside a spec). | Every-email bullet |
+| `R30` | Owner ruling: the family is UNIFORM. Commit 825e2ea (2026-09-04): every `ekShellHtml_` caller passes `band` (the dark header); only the Daily Call Queue Report keeps its own pinned local shell. `email-kit-v2.test.js` sweeps every `body:` sender for a spec and every shell caller for `band`. | Every-email bullet |
+
 ## `R47` — the workbook cell cap (2026-09-14)
 
 | Code | What happened / why the rule exists | Live rule |
@@ -919,9 +937,9 @@ Findings from the 2026-09-17 three-stage broad scan (110 findings; the plan
 ran in batches, blocks `.cycle/blocks/101`–`104`). **Every code family here
 COLLIDES with the 2026-09-03 section above** (`A-1`, `D-1`, `D-4`,
 `O-1`…`O-7`, `C2-5`, `T-8` all reused) — code comments carry the date for
-that reason. Batches 5–9 of the plan (interface / a11y `C1-13`…`C2-13`,
-pipeline `P-#`, tooling `T-#`) were not yet implemented when this section
-was written.
+that reason. Batches 8–9 of the plan (deploy/test hygiene `T-5`…`T-9`,
+interface / a11y `C1-13`…`C2-13`, `UD-#`) were not yet implemented when this
+section was last extended (Batch 7, 2026-09-17).
 
 | Code | What happened / why the rule exists | Live rule |
 |---|---|---|
@@ -973,6 +991,22 @@ was written.
 | `OD-3` (2026-09-17) | The egress meter missed the largest reads (the monthly backup, coverage, escalations, the Missed enrich, audits, config-source), so a backup month ranked `dqe` while the backup tripped the cap. Batch 6: every dashboard `executeQuery` metered; `neon-egress-coverage.test.js` sweeps for it with a listed set of scalar probes. | Operator State #47; System Health bullet |
 | `OD-5` (2026-09-17) | A found call whose journey the retention prune had removed was shaped like a pre-capture row, so the drill said capture predated the feature. Batch 6: `journeyPrunedMeta_` (age > `journeyDays`) → `journeyPruned` on the response; the drill discloses the prune. | `docs/per-call-capture.md` retention note; `journey-fallback.test.js` |
 | `OD-6` (2026-09-17) | NeonCoverage's `ncCellDateIso_` accepted two renders (ISO, M/D/YYYY) where the readers' `rowDateIso_` accepts more, and returned null silently -- the date then surfaced as "extra-in-neon: phantom rows -- force re-import", the wrong remedy. Batch 5: delegates to `rowDateIso_`; unparsed cells tallied as a probe error naming the repair. | Operator State #35; `neon-coverage.test.js` |
+| `P-5` (2026-09-17) | `queueSplitSample.js` was an UNCOUNTED sixth hand-mirror of the build's `queueLegs` gate: a flat 6:30 floor (R49 made it per queue) and no R18e `CallQueue (ext)` fallback, so its own self-check read MISMATCH for every CSR-family agent with a 6:00-6:30 leg and skipped the legs the build recovers. Batch 7: `dqeWindowStartForQueue_` + the copied `queueNameByExt` fallback; joined the R49 pin in `cross-file-pins` (a bare `DQE_WINDOW_START` floor or a missing fallback fails). | Work-window floor bullet ("SIXTH") |
+| `DD-6` (2026-09-17) | The Extraction Sidebar's col-G (avg wait) predicates for rows 36 and 40 lacked the pipeline's STATUS gates (`status !== "3"` under row 36's `isAQ && type !== "internal"` block; row 40's mean accumulates only under `status === "1"`), listing waits the pipeline's mean excluded -- and col G is a MEAN, so the parity suite could not see it. Batch 7: gates added; pinned on both sides by `cross-file-pins` ("DD-6 col-G status gates"). | Extraction Sidebar bullet |
+| `DD-5` (2026-09-17) | `qcdDqeDiagnostic` reconciled against `calcQcdReport` at COUNT level only, so two agents misclassified in compensating directions passed while the per-agent rows and per-leg reasons -- the part an operator reads -- were wrong. Batch 7: `qddReconcileQcdPerAgent_` runs the REAL function per agent (that agent's legs alone; rows 35/36/37 are per-leg counts, so the partition sums back), busiest-first, capped at `QDD_PER_AGENT_RECON_CAP_`=60 with the remainder reported; a per-agent mismatch is INCONCLUSIVE like a totals one. `qddAgentKeyOf_` is the one agent-key rule for the analyzer and the check. | Operator State #66; `qcd-dqe-diagnostic.test.js` |
+| `A-7` (2026-09-17) | `expandDeptsWithSubQueues_` claimed to FAIL CLOSED on an unreadable parent map, but the sheet reader never throws -- it logs, sets `DEPT_CONFIG_READ_FAILED_` and serves the seed constant -- so a transient 'Service Spreadsheets timed out' expanded from the CONSTANT map (the seeded PAP→Sales edge) instead of conferring nothing. Batch 7: the flag is consulted; an errored read is not a config. | Sub-queue nesting decision (INV-38); `subqueue-access.test.js` |
+| `OD-8` (2026-09-17) | `setup()` wrote headers on CREATE only, so a column appended to a schema after the sheet existed (Access Control's Role / Agent Name, Dept Config's Inbound queue aliases / Final dept labels) stayed header-less forever while the Health page checked presence only. Batch 7: `healSheetHeaders_` fills BLANK header cells (widening first, REP-10) and never rewrites a non-blank one. | INV-12 |
+| `DD-8` (2026-09-17) | "Previews never write" was assumed of the slot-timestamp PREVIEW, which sets a numeric NUMBER FORMAT on K-AC/AF to read serials and restores the originals (F-52) -- a preview killed mid-scan leaves a group in the numeric lens. Batch 7: documented on the preview itself. | `previewDqeSlotTimestampRepair` docblock |
+| `T-3` (2026-09-17) | `docs/module-dependencies.md` was stale and its own `--check` said so (OutboundReport.gs 47 → 109 symbols unrecorded); `--check` was deliberately not in CI. Batch 7: regenerated; `--check` runs in the CI `test` job and `npm run ci`. | Read-first section (module-dependencies) |
+| `T-6` (2026-09-17) | CLAUDE.md stood at 97% of its 200 KB cliff with no warning tier and stale size figures ("current ~152 KB"). Batch 7: incident prose trimmed from the five largest bullets into this file (below), figures corrected, `claude-md-split` emits a diagnostic past 90%. | Common Gotchas preamble; `claude-md-split.test.js` |
+| `T-1` / `T-2` / `T-4` / `T-10` / `C1-11` / `C1-12` / `A-8` / `P-10` / `O-7` (2026-09-17) | Doc truth: `renderDeptDigestEmail_` → `computeDigestStats_`; ci.yml runs THREE jobs (+ `lint`), ci.mjs asserts eight stages; the `F24` / `F-13` / `R27`(×2) / `R28` / `R29` / `R30` entries this file lacked; ~115 suites / "+103 more"; the SWR store keeps four slots; the freshness pill is AMBER and the sub-queues toggle is ON by default; `sendOutboundReportEmail` exists (#63), INV-01's Department column can carry an agent name / `(unrostered)` / `ALL`, #46's allowlist claim names its gates; INV-44 gains `outboundExport` and the inbound-history horizon says the Drive route is editor-run; INV-31 names `sendAppEmail_`. | the corrected docs |
+
+**T-6 relocations** (facts cut from CLAUDE.md that were nowhere else): the
+Apps Script JDBC bridge rejects SQL strings around ~44 KB, which is why
+`NEON_INLINE_STMT_CHARS_` packs at 30 KB (R38); and the last recurrence
+vector for the comma-joined coercion class was rows that spilled past the
+prior `getMaxRows()` when the sheet auto-expanded, closed in commit a350042
+by re-formatting the EXACT write range after every write.
 
 ## `H1` — the holiday list moved to a sheet so the other app sees it (2026-09-17)
 

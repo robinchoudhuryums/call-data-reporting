@@ -32,6 +32,12 @@ jobs:
         run: node --test
       - name: INV-16 duplicated-file guard
         run: bash scripts/check-duplicated-files.sh
+      # T-3 (2026-09-17): docs/module-dependencies.md is GENERATED and was found
+      # stale by its own checker (OutboundReport.gs 47 -> 109 symbols unrecorded).
+      # The fix is one command (`node scripts/module-deps.mjs --write`), so the
+      # gate is cheap; a stale map is silent.
+      - name: Module-dependency map is current (node scripts/module-deps.mjs --check)
+        run: node scripts/module-deps.mjs --check
 
   # H3: the undeclared-identifier net (ported from team-tools' lint-server).
   # SEPARATE job because it needs eslint (`npm ci`), while `test` above stays

@@ -40,7 +40,11 @@ IF NOT EXISTS` upgrades pre-extension tables in place, and the insert chunks SIZ
 fixed row count overran the JDBC cap). **There is NO sheet primary for this data** -- the
 "Inbound Calls" tab (`cdr-report/inboundCallsExport.js::exportInboundCalls`)
 is a fallback COPY of Neon, not a source. History: editor-run `backfillInboundCalls`
-(cdr-import) reaches at most the ~14-day `Call_Legs_*` retention window.
+(cdr-import) reaches at most the ~14-day `Call_Legs_*` retention window --
+beyond it a date's `Call_Legs_*` tab must first be recreated from the source
+CSV archive with `importBulkCSVsFromDrive` (editor-run: its CDR Tools menu
+item is commented out pending Drive permissions, Operator State #35), and
+with no such archive the pruned dates are unrecoverable.
 **Queue-name recognition is config-fed AND brand-prefix aware (F1/F1b) -- do
 NOT re-hardcode it.** `icIsQueueName_` decides what counts as a queue leg and
 feeds `entry_queue` / `final_queue` / `num_queues` / `abandon_stage`. A name

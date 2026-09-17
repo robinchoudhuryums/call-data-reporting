@@ -2280,8 +2280,9 @@
     });
   }
 
-  // P2.4: "+ sub-queues" toggle in the ov-chart-tabs row. Off by default so
-  // the chart shows only top-level depts; on adds the dashed child lines.
+  // P2.4: "+ sub-queues" toggle in the ov-chart-tabs row. ON by default
+  // (`ovShowSubQueues_ = true` above): the dashed child lines render unless
+  // the viewer unticks it; off shows only the top-level depts.
   // Re-renders from ovLastData (grid tiles are untouched). Wired once.
   let ovSubqWired = false;
   function ovWireSubqToggle_() {

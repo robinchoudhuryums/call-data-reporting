@@ -149,12 +149,26 @@ test('F8 split: the Operator State index matches docs/operator-state.md', functi
 
 // The tripwire F8 actually needs. CLAUDE.md regrew from 357 KB to 372 KB over a
 // single cycle, one reasonable-looking paragraph at a time, and nothing noticed.
-// The cap is generous (current ~152 KB) so ordinary rule additions never trip
-// it; crossing it means it is time to split again, not to raise the number
-// reflexively.
-test('F8 split: CLAUDE.md stays under the size budget', function () {
-  const MAX = 200 * 1024;
+// The cap was generous when set (~152 KB at the split); by the 2026-09-17 T-6
+// pass the file stood at ~199 KB, 97% of it, with no warning tier -- so the
+// test below ALSO emits a diagnostic past 90%. Crossing the cap means it is
+// time to split again (or trim per the per-bullet ratchet), not to raise the
+// number reflexively.
+const CLAUDE_MD_MAX_BYTES = 200 * 1024;
+const CLAUDE_MD_WARN_RATIO = 0.9;
+test('F8 split: CLAUDE.md stays under the size budget', function (t) {
+  const MAX = CLAUDE_MD_MAX_BYTES;
   const bytes = Buffer.byteLength(CLAUDE, 'utf8');
+  // T-6 warning tier: a DIAGNOSTIC (never a failure) past 90% of the cap, so
+  // the approach is visible in every run's output before the cliff fires on
+  // whoever adds the last paragraph.
+  if (bytes > MAX * CLAUDE_MD_WARN_RATIO) {
+    t.diagnostic('CLAUDE.md is ' + Math.round(bytes / 1024) + ' KB = '
+      + Math.round(100 * bytes / MAX) + '% of the ' + (MAX / 1024) + ' KB cap ('
+      + Math.round((MAX - bytes) / 1024) + ' KB headroom). Trim incident prose into '
+      + 'docs/fix-history.md (the T-6 pass) or split a section (the F8 pattern) '
+      + 'before the next bullet lands.');
+  }
   assert.ok(bytes <= MAX,
     'CLAUDE.md is ' + Math.round(bytes / 1024) + ' KB, over the ' + (MAX / 1024)
     + ' KB budget. It is injected into EVERY session\'s context, so size is a '

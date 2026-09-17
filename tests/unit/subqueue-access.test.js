@@ -63,6 +63,7 @@ function install(acRows, parents) {
   });
   if (h.state.cache && h.state.cache.clear) h.state.cache.clear();
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DEPT_CONFIG_READ_FAILED_ = false;
 }
 
 // -- the happy path ----------------------------------------------------------
@@ -154,6 +155,29 @@ test('FAIL CLOSED: an unreadable parent map leaves the assignment unchanged', fu
   const u = h.call('resolveUser_', 'm@x.com');
   deepEqual(u.departments, ['Parent'],
     'auth must never widen -- or break -- because a config read failed');
+});
+
+// A-7 (broad-scan 2026-09-17): the sheet reader never THROWS on a failed read
+// -- it logs, flags DEPT_CONFIG_READ_FAILED_ and serves the seed CONSTANT -- so
+// the try/catch above was the only "fail closed" and it never fired: a
+// transient 'Service Spreadsheets timed out' expanded from the constant map
+// instead. The seeded PAP -> Sales edge makes the difference observable.
+test('A-7 FAIL CLOSED: a Dept Config read that ERRORS confers no expansion, even from the seed constant', function () {
+  install([['m@x.com', 'Sales', '']], {});
+  const roster = h.state.spreadsheet.getSheetByName('DO NOT EDIT!');
+  roster._data[0] = roster._data[0].concat(['Sales', 'PAP']);
+  // Control: a healthy read of an EMPTY sheet falls back to the constant, which expands.
+  deepEqual(h.call('resolveUser_', 'm@x.com').departments, ['Sales', 'PAP'],
+    'control: the seeded edge expands on a healthy read');
+  // Now the read ERRORS (the R8-C4 shape), and the memo + auth cache are cold.
+  h.state.cache.clear();
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const dc = h.state.spreadsheet.getSheetByName('Dept Config');
+  dc.getLastRow = function () { throw new Error('Service Spreadsheets timed out'); };
+  const u = h.call('resolveUser_', 'm@x.com');
+  assert.equal(h.ctx.DEPT_CONFIG_READ_FAILED_, true, 'precondition: the read did fail');
+  deepEqual(u.departments, ['Sales'], 'an errored config read is not a config: no expansion');
+  deepEqual(u.assignedDepartments, ['Sales']);
 });
 
 // -- roles that must not change ---------------------------------------------

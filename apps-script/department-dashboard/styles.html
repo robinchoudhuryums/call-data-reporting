@@ -323,8 +323,9 @@
   }
 
   /* Data-freshness pill: sits in .header-meta showing "Data through
-     Mon May 19 · 14h ago".  Color cools when data is stale relative
-     to a normal daily-ingest cadence (24h+).  Hidden by default
+     Mon May 19 · 14h ago".  Tints amber (`.is-stale`, `--stale`) when data
+     is stale relative to a normal daily-ingest cadence (36h+, with the
+     weekend/holiday credit).  Hidden by default
      until the client knows the latest data date; see
      setFreshnessPill_ in script.html. */
   .freshness-pill {

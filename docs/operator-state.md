@@ -921,8 +921,9 @@ When something looks wrong, before assuming a code bug, check:
     not deployed -- is a clean skip, not a probe error; days past the
     ~14-day Call_Legs retention are unrecoverable FROM THE SHEETS, IMP-11 --
     recoverable in practice by re-importing those dates' source CSVs with
-    `importBulkCSVsFromDrive` (cdr-import) to recreate the `Call_Legs_*`
-    sheets, then re-running the backfill; do it in small batches, since
+    `importBulkCSVsFromDrive` (cdr-import; EDITOR-run -- its CDR Tools menu
+    item is commented out pending Drive permissions) to recreate the
+    `Call_Legs_*` sheets, then re-running the backfill; do it in small batches, since
     restoring a wide window at once strains the workbook's cell ceiling. The
     true horizon is the CSV ARCHIVE's retention -- with no archive, the
     original claim holds).
@@ -1369,8 +1370,11 @@ When something looks wrong, before assuming a code bug, check:
     an Access Control row whose Role is `agent` resolves to role `none` —
     exactly the pre-agent behavior, so the deployed code is dark until you
     flip it. Set to `true` and `resolveUser_` resolves agent rows to the
-    fail-closed agent identity (`agentDept`/`agentName` only; every
-    pre-agent gate refuses the role by allowlist). **Since Phase B an agent
+    fail-closed agent identity (`agentDept`/`agentName` only; the per-dept
+    and no-dept gates -- `assertDeptAccess_`, `escAssertRowAccess_`,
+    `assertManagerOrAdmin_` -- refuse it by ALLOWLIST, and since A-1 the
+    Inbound / Direct / Outbound resolvers go through `assertManagerOrAdmin_`
+    too, so no resolver denylists on `role === 'none'` any more). **Since Phase B an agent
     with the flag on lands on the "My Performance" app** (agent.html — own
     numbers + team aggregates; rank line ships hidden). **Go-live for the
     CSR pilot:** deploy → add the CSR agent rows in the Access modal's
@@ -1973,10 +1977,10 @@ When something looks wrong, before assuming a code bug, check:
     so per-dept agent cards would double-count or misattribute; the company
     view is deliberately ONE FLAT TABLE (Option C, owner 2026-08-20) and the
     rejection is recorded in three places including the render site.
-    **Known gap, deliberately not part of this item:** there is no
-    `sendOutboundReportEmail`, where Inbound / Individual / Insights all have
-    one. It is item 5 of the owner's 2026-09-15 six-point Outbound list and
-    ships in that round.
+    `sendOutboundReportEmail` (OutboundReport.gs) exists since the owner's
+    2026-09-15 six-point Outbound round, gated exactly like the report
+    (the vetting gate + `outboundResolveRequest_`), so the email cannot
+    reach a manager before the report does.
 
 64. **Outbound answer quality — the MEASUREMENT step (`probeOutboundAnswerQuality`).**
     A read-only, admin-gated, editor-run probe. It answers one question with

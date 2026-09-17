@@ -55,6 +55,13 @@ const QDD_DEPT_FIRST_COL_ = 6;
 /** Detail rows are capped so a pathological day cannot blow the cell budget. */
 const QDD_DETAIL_CAP_ = 500;
 
+/**
+ * DD-5: the per-AGENT QCD reconciliation re-runs the real calcQcdReport once
+ * per agent (on that agent's legs alone), so it is bounded -- busiest agents
+ * first; the rest are reported as unchecked, never silently skipped.
+ */
+const QDD_PER_AGENT_RECON_CAP_ = 60;
+
 /** Per-orphan sibling legs listed on the detail tab. */
 const QDD_SIBLING_CAP_ = 8;
 
@@ -76,6 +83,17 @@ const QDD_SIBLING_CAP_ = 8;
  *        - excludedAgents {Array<string>}  DQE_EXCLUDED_AGENTS
  * @return {Object} tallies, per-agent cross-tab and per-leg detail.
  */
+/**
+ * The agent KEY a leg is tabulated under: the canonicalized callee name, or
+ * the raw callee when canonicalization yields nothing. ONE helper for the
+ * analyzer and the per-agent reconciliation (DD-5), so the two cannot key the
+ * same leg differently.
+ */
+function qddAgentKeyOf_(row, canonicalize) {
+  const calleeRaw = String(row[DQE_C.CALLEE_NAME]).trim();
+  return canonicalize(calleeRaw) || calleeRaw;
+}
+
 function qddAnalyzeDay_(grid, ctx) {
   const body = grid.slice(1);
   const time600AM = 6 / 24, time300PM = 15 / 24, time330PM = 15.5 / 24;
@@ -210,7 +228,7 @@ function qddAnalyzeDay_(grid, ctx) {
 
     const dqeCountsIt = !gateReason && answered;
     const dqeReason   = gateReason || (answered ? '' : 'not-flagged-answered');
-    const key = canonical || calleeRaw;
+    const key = qddAgentKeyOf_(row, ctx.canonicalize);
 
     const parentRaw = String(row[DQE_C.PARENT_CALL]).trim();
     const parentKey = qddParentKeyOf_(row);
@@ -668,7 +686,15 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
   const real = calcQcdReport(grid, targetSS);
   const realD = {};
   QDD_CSR_ROWS_.forEach(function (r) { realD[r] = Number(real.output[r - 2][1]) || 0; });
-  const qcdOk = QDD_CSR_ROWS_.every(function (r) { return realD[r] === res.qcdD[r]; });
+  const qcdTotalsOk = QDD_CSR_ROWS_.every(function (r) { return realD[r] === res.qcdD[r]; });
+  // DD-5: the totals above can agree while two agents are MISCLASSIFIED in
+  // compensating directions -- and the per-agent rows and per-leg reasons are
+  // exactly the output an operator reads. So the real function is also run
+  // per agent, on that agent's legs alone (rows 35/36/37 are per-leg counts,
+  // so the partition sums back to the totals), and compared to the mirror's
+  // per-agent q35/q36/q37.
+  const perAgent = qddReconcileQcdPerAgent_(grid, targetSS, res.byAgent, canonicalize);
+  const qcdOk = qcdTotalsOk && perAgent.mismatches.length === 0;
 
   // --- RECONCILIATION 2: the stored DQE Historical Data rows -----------------
   const stored = qddStoredDqeAnswered_(targetSS, dateIso);
@@ -717,6 +743,7 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
   const report = {
     date: dateIso, dept: dept, rows: res.rows, verdict: verdict, source: src.source,
     qcdReconciled: qcdOk, dqeReconciled: dqeOk,
+    qcdTotalsReconciled: qcdTotalsOk, qcdPerAgent: perAgent,
     qcdD: res.qcdD, realD: realD, dqeMismatches: dqeMismatches,
     deptQcd: deptQcd, deptDqe: deptDqe, deptStored: deptStored,
     reasons: res.reasons, dqeOnlyByQueue: res.dqeOnlyByQueue,
@@ -732,12 +759,47 @@ function diagnoseQcdVsDqeForDate(iso, opts) {
   return report;
 }
 
+/**
+ * DD-5: runs the REAL calcQcdReport on each agent's legs alone and compares
+ * rows 35/36/37 col D to the mirror's per-agent tabulation. Busiest agents
+ * first, capped at QDD_PER_AGENT_RECON_CAP_ (each run re-reads the named
+ * ranges); the uncounted remainder is reported, never dropped. Returns
+ * { checked, unchecked, mismatches: [[agent, row, mine, real], ...] }.
+ */
+function qddReconcileQcdPerAgent_(grid, targetSS, byAgent, canonicalize) {
+  const header = grid[0];
+  const body = grid.slice(1);
+  const names = Object.keys(byAgent)
+    .filter(function (n) { return byAgent[n].qTotal > 0; })
+    .sort(function (a, b) { return (byAgent[b].qTotal - byAgent[a].qTotal) || (a < b ? -1 : 1); });
+  const checked = names.slice(0, QDD_PER_AGENT_RECON_CAP_);
+  const mismatches = [];
+  checked.forEach(function (name) {
+    const mine = [header].concat(body.filter(function (row) {
+      return qddAgentKeyOf_(row, canonicalize) === name;
+    }));
+    const real = calcQcdReport(mine, targetSS);
+    QDD_CSR_ROWS_.forEach(function (r) {
+      const theirs = Number(real.output[r - 2][1]) || 0;
+      const ours = byAgent[name]['q' + r];
+      if (ours !== theirs) mismatches.push([name, r, ours, theirs]);
+    });
+  });
+  return { checked: checked.length, unchecked: names.length - checked.length, mismatches: mismatches };
+}
+
 function qddLogReport_(rep) {
   Logger.log('QCD vs DQE diagnostic — %s (dept %s, %s legs, read from "%s")',
     rep.date, rep.dept, rep.rows, rep.source);
   Logger.log('VERDICT: %s', rep.verdict);
   Logger.log('QCD row-D mirror vs calcQcdReport: mine=%s real=%s -> %s',
-    JSON.stringify(rep.qcdD), JSON.stringify(rep.realD), rep.qcdReconciled ? 'OK' : 'MISMATCH');
+    JSON.stringify(rep.qcdD), JSON.stringify(rep.realD), rep.qcdTotalsReconciled ? 'OK' : 'MISMATCH');
+  const pa = rep.qcdPerAgent || { checked: 0, unchecked: 0, mismatches: [] };
+  Logger.log('QCD per-AGENT mirror vs calcQcdReport (DD-5): %s agent(s) checked, %s unchecked (cap %s) -> %s',
+    pa.checked, pa.unchecked, QDD_PER_AGENT_RECON_CAP_,
+    pa.mismatches.length === 0 ? 'OK'
+      : ('MISMATCH on ' + pa.mismatches.length + ' [agent,row,mine,real]: '
+        + JSON.stringify(pa.mismatches.slice(0, 10))));
   Logger.log('DQE per-agent mirror vs stored DQE Historical Data: %s',
     rep.dqeReconciled ? 'OK' : ('MISMATCH on ' + rep.dqeMismatches.length + ' agent(s): '
       + JSON.stringify(rep.dqeMismatches.slice(0, 10))));

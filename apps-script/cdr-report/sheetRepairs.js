@@ -106,7 +106,17 @@ function hrBackupBeforeApply_(ss, sheet, label, cellCount) {
   return { url: backupSs.getUrl(), tab: tabName, cells: cellCount };
 }
 
-/** Preview only: report what WOULD change; no writes. */
+/**
+ * Preview only: report what WOULD change; no cell VALUES are written. ONE
+ * exception to "previews never write" (DD-8 / F-52): to read a coerced
+ * time-VALUE cell as its serial number the scan must set a numeric NUMBER
+ * FORMAT on the K-AC / AF ranges, and it does so on the dry run too, then
+ * restores the ORIGINAL formats (`priorFormats`) before returning. A preview
+ * killed mid-scan (the execution ceiling, Operator State #70) can therefore
+ * leave a column group in the numeric lens -- still-coerced cells display as
+ * bare serials to every getDisplayValues reader until the preview or the
+ * apply is re-run to completion. Values are never touched by the preview.
+ */
 function previewDqeSlotTimestampRepair() {
   return repairDqeSlotTimestamps_(/*dryRun=*/true);
 }
