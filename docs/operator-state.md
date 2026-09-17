@@ -2049,7 +2049,16 @@ When something looks wrong, before assuming a code bug, check:
       per-agent DQE recomputation must equal the already-written
       `DQE Historical Data` rows for that date. Either check failing yields
       **INCONCLUSIVE — the gap analysis below it is then meaningless and the
-      mirror is what needs fixing, not the pipeline.**
+      mirror is what needs fixing, not the pipeline.** That refusal has fired
+      for real once: the day after R49 deployed (2026-09-17) the DQE mirror
+      still floored at 6:30 while the stored rows floored the CSR family at
+      6:00, and it read five agents exactly +2 — the ten early calls it was
+      flooring out. The mirror now takes its floor from the build's own
+      `dqeWindowStartForQueue_` (never a copy), cross-file-pins fails on a
+      bare `DQE_WINDOW_START` in it, and its suite drives the REAL build
+      against the mirror — source pins on copied text could not see a rule
+      the build had GAINED. If it reads INCONCLUSIVE with a uniform per-agent
+      offset again, suspect a new per-agent rule in the build first.
     - **What the report shows** (execution log + a `QCD-DQE Diagnostic` tab it
       creates in the workbook it was run from — the only sheet it writes;
       it sets no Script Properties and touches no data sheet): the two

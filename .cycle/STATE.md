@@ -44,6 +44,17 @@
     (6) One optional check that would close the last open thread: confirm no
     `Agent Alias Overrides` row rewrites `Sunil Kurian` or `Rajesh Patel` to a
     roster name -- that is the single assumption behind the ext-782 verdict.
+  - **R49 CONFIRMED LIVE (2026-09-17), via a bug in my own tool.** The first
+    `diagnoseQcdVsDqe` run after deploy read INCONCLUSIVE: five agents exactly
+    +2 stored vs mirror, and the ten "orphans" were all 6:03-6:27 AM on the
+    CSR family -- the stored rows had R49, the diagnostic's DQE mirror still
+    floored at 6:30. The FIFTH hand-mirror, drifting like the other four, one
+    day after I shipped the rule. Fixed: it now floors through the build's
+    `dqeWindowStartForQueue_` (no copy), cross-file-pins fails on a bare
+    `DQE_WINDOW_START` in it, and its suite drives the REAL build against the
+    mirror (source pins on copied text cannot see a rule the build GAINED).
+    396 + 10 = 406 stored; for 2026-09-16 the QCD-block-vs-DQE gap is 407 vs
+    406. The census read clean (`Would have counted: 0`).
   - **Next code work is unchanged:** the #64/#65 outbound 0-1s investigation
     (below) and the 6c release gate. Nothing from this session is half-done.
 - **PROBE RUN + DETECTOR FIXES (2026-09-15, block 194).**
