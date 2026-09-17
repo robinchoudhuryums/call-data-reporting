@@ -472,3 +472,36 @@ test('D-9: the single-part path grafts the REQUESTED dept\'s qcd / csrTransfer /
   assert.equal(r.diagnostics, parent.diagnostics);
   assert.equal(r.totals.totalRung, 2, 'the child\'s own rows/totals are untouched');
 });
+
+test('D-9: getDepartmentSummary in subs scope ships the REQUESTED dept\'s qcd, not the child\'s', function () {
+  const ctx = hData.ctx;
+  const saved = {};
+  ['resolveUser_', 'assertDeptAccess_', 'subQueueChildMap_', 'computeSummary_',
+   'getOverviewParentMap_', 'logReportUsage_', 'reportFreshnessTag_'].forEach(function (k) { saved[k] = ctx[k]; });
+  try {
+    hData.state.userEmail = 'admin@x.com';
+    hData.state.props.SPREADSHEET_ID = 'fake';
+    hData.state.cache.clear();
+    ctx.resolveUser_ = function () { return { role: 'admin', email: 'admin@x.com', departments: ['Parent', 'Child'] }; };
+    ctx.assertDeptAccess_ = function () {};
+    ctx.subQueueChildMap_ = function () { return { Parent: ['Child'] }; };
+    ctx.getOverviewParentMap_ = function () { return { Child: 'Parent' }; };
+    ctx.logReportUsage_ = function () {};
+    ctx.reportFreshnessTag_ = function () { return 'na'; };
+    const computed = [];
+    ctx.computeSummary_ = function (d) {
+      computed.push(d);
+      return part(d, [{ agent: d + '-agent', matchedViaRoster: true }], { totalRung: 1, rosterAgentCount: 1, daysActive: 1 });
+    };
+    const r = hData.call('getDepartmentSummary', { department: 'Parent', subScope: 'subs', from: '2026-09-01', to: '2026-09-02' });
+    assert.equal(r.meta.department, 'Parent', 'the requested dept stays the payload identity');
+    assert.equal(r.meta.subScope, 'subs');
+    assert.equal(r.rows.length, 1);
+    assert.equal(r.rows[0].agent, 'Child-agent', 'subs scope lists ONLY the sub-queues\' rows');
+    assert.equal(r.qcd.tag, 'Parent', 'the QCD snapshot is the requested dept\'s (the child\'s used to ship under the parent\'s name)');
+    assert.equal(computed.join(','), 'Child,Parent', 'the parent is computed separately for its qcd -- one extra compute on a scope the client never sends');
+  } finally {
+    Object.keys(saved).forEach(function (k) { ctx[k] = saved[k]; });
+    hData.state.cache.clear();
+  }
+});
