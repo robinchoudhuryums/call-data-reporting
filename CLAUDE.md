@@ -456,10 +456,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   R42 folded `sheetFetchDqeRows_`'s own copy in too, so there is now exactly
   ONE span implementation and a bug in it fails pins in BOTH suites.
 - **A span bounds a dated read's WIDTH; only a per-execution MEMO bounds the
-  COUNT (R40/R44).** `sheetFetchDqeRows_` is DEPT-INDEPENDENT, so every dept asking the same question for the same window
-  re-read the same span. It now memoizes per EXECUTION in
-  `DQE_SHEET_ROWS_MEMO_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped
-  at `DQE_SHEET_ROWS_MEMO_MAX_`. **It returns a SHALLOW CLONE per call, and
+  COUNT (R40/R44).** Both DAL primitives -- `sheetFetchDqeRows_` and, since
+  D-4 (Batch 6), `neonFetchDqeRows_` -- are DEPT-INDEPENDENT, so every dept
+  asking the same question for the same window re-read the same span (or
+  re-issued the same json_agg). Both memoize per EXECUTION in
+  `DQE_SHEET_ROWS_MEMO_`, keyed by SOURCE + `(from, to, includeMissedDetail)`
+  (the Neon key also carries the split + agent filter), FIFO-capped at
+  `DQE_SHEET_ROWS_MEMO_MAX_`; a failed Neon read is never memoized. **It returns a SHALLOW CLONE per call, and
   that is load-bearing:** six readers hand the result straight to
   `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an un-cloned memo
   leaks dept A's narrowing into dept B. Shallow suffices only because `slots`
@@ -1604,9 +1607,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   log a success row, so a failure older than `HEALTH_FAILURE_ONLY_MAX_AGE_MS_`
   (4 days) is named in the hint, not flagged (O-3/C2-5; a recurring one stays
   red). The engine outcome rows (`*_LAST`) also warn STALE when an ARMED engine
-  has not recorded past its allowance (O-4) -- a run killed at the 6-min
-  ceiling records nothing. Catches every INV-44 step in one place. Pinned by
-  `system-health.test.js`.
+  has not recorded past its allowance (O-4) -- a killed run records nothing.
+  Pinned by `system-health.test.js`.
   This page is the PULL view; the **Pipeline-failure watchdog**
   (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email. Three other read-only sections share the page, each with
   its own operator item: **"Report usage (last 30 days)"**
@@ -1631,9 +1633,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   because all three fail SILENTLY and look healthy to every other probe. Both
   Neon figures are FLOORS (#47 / #57 say why), and a DELETE never moves the
   storage one (disk returns only on TRUNCATE / VACUUM FULL). Each ranks its top
-  spenders: every `neonNoteEgress_` callsite passes a surface label (unlabeled
-  folds into `other`; EA-1 pin); the pure `neonStorageVerdict_` names the top
-  5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
+  spenders: EVERY dashboard Neon read is metered with a surface label
+  (`neonNoteEgress_`; OD-3 sweep `neon-egress-coverage.test.js` + the EA-1
+  label pin; unlabeled folds into `other`); `neonStorageVerdict_` names the
+  top 5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only), `retention-risk` (surviving dates the
   per-call tables are missing; #40/#43) and `workbook-cells` (the 10M
@@ -1728,7 +1731,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (4) Even on the Neon path, `getDeptQueueExts_`'s all-history ext
   derivation comes from `deptQueueExtsForNeonReader_` /
   `neonGetAgentExtPairs_` (cached DISTINCT pairs fetch), sheet-scan
-  fallback.
+  fallback -- OD-4: that set is bounded by the 25-month `dqe_history`
+  retention (#57) while the sheet scan sees all history, so a >2-year-idle
+  extension is recognized on one source and not the other.
   Every cutover reader emits a `[dqe-read] <label> source=<neon|sheet>
   rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`) for cost comparison.
   Reuses the dashboard `NEON_*` props + `script.external_request` scope
@@ -1918,7 +1923,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bound. Its key carries the freshness tag AND a `hashAgents_` of the dept
   ROSTER, because the tag does not move when the roster is edited and a stale
   ext set silently changes which floaters are recognized (INV-53). Only the
-  SET is cached; the grid is ~128k cells, past the per-value cap.
+  SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
+  (Batch 6) the `summary:v22` and `individual_active:v2` keys carry the same
+  roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
+  reason.
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
   (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
   with each group's heading row as its collapse toggle; the three-way scope
@@ -1953,8 +1961,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   would move every combined view's number).
   Server side is `combineSummaries_` calling `computeSummary_` once per
   dept: every INV-02/04/05/23/53 + S35 + E5 rule inside that function is
-  untouched, and its duration means are agent-count-WEIGHTED (never a mean
-  of means). **`qcd` is the PRIMARY dept's only** -- `queuesForDept_`
+  untouched, and its duration means are weighted by each dept's NON-ZERO
+  count for that duration (D-3; never a mean of means). **`qcd` is the PRIMARY dept's only** -- `queuesForDept_`
   already rolls sub-queue queues into a parent's QCD snapshot, so merging
   it would double-count. **Phase 3:** the missed section shows ONE
   dept and does NOT merge (a parent's queue-only abandoned section already

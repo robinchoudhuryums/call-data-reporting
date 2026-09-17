@@ -1399,8 +1399,14 @@ When something looks wrong, before assuming a code bug, check:
     page reported Neon as REACHABLE throughout, because a Neon that has
     spent its allowance IS reachable. **Read it as a FLOOR, not a meter.**
     `neonNoteEgress_` (NeonRead.gs) counts the payload bytes this project
-    pulls at all 14 bulk `json_agg` fetch sites; wire framing, TLS overhead
-    and any uninstrumented query are not in it, and the counter is a
+    pulls at EVERY Neon read (OD-3, Batch 6: the monthly backup, the coverage
+    check, escalations, the Missed enrich, the inbound audits and the
+    config-source reads included -- `neon-egress-coverage.test.js` fails on
+    an unmetered `executeQuery`; before OD-3 only the 14 bulk report fetches
+    were counted, so a backup month ranked `dqe` while the backup was what
+    tripped the cap -- expect the gauge to read HIGHER from the first backup
+    after that deploy and re-tune the budget on a month of honest figures);
+    wire framing and TLS overhead are not in it, and the counter is a
     deliberately lock-free read-modify-write (the presence-map discipline)
     so concurrent executions can lose an increment. Over budget is proof of
     a problem; under budget is NOT proof of headroom. The counters live in
@@ -1666,10 +1672,16 @@ When something looks wrong, before assuming a code bug, check:
     strictly above the coverage checks' 366-day max window, so a pruned date
     can never read as a coverage gap), and deletes `dqe_history` /
     `qcd_history` rows older than `NEON_RETENTION_HISTORY_MONTHS` (default
-    13, floor 13 — the sheet is the authority for both and every DQE/QCD
-    reader is bounded by the INV-29 12-month window; a DQE/QCD parity gate
-    over a pruned range will report the pruned dates as missing on the Neon
-    side, which is expected). It NEVER touches `call_history_phones`,
+    25, floor 25 — OD-4, Batch 6: the sheet is the authority for both, but a
+    DQE reader on the Neon path asks for MORE than the INV-29 12-month
+    window: a 12-month window's trend reaches 12 months before its END and
+    its INV-28 prior window ~24 months back, and at 13 months both were
+    silently truncated (LM2 trusts a reachable-empty read, so no sheet
+    fallback ran); a window ending N months ago still reaches 24+N back --
+    the documented limit. Expect the Health page's `neon-storage` floor to
+    rise over the following weeks and revisit `NEON_STORAGE_CAP_MB`. A DQE/QCD
+    parity gate over a pruned range will report the pruned dates as missing
+    on the Neon side, which is expected). It NEVER touches `call_history_phones`,
     `call_history_dept`, `direct_call_history`, escalations or coaching.
     Statements are ctid-batched (5000 rows) under a 4-minute run budget; a
     first-run backlog drains over a few runs and reports `ok ... budget hit`

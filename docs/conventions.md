@@ -464,7 +464,10 @@ From/To default (which must snap to DQE specifically).
 - **Overview tile chips**: when QCD data exists for a dept, an
   "Aban N (P%)" chip always renders; warn-tinted when P >= the 4% abandon standard
   (the pipeline's violation threshold). A "X viol MTD" chip
-  renders only when month-to-date violations > 0. Visible to
+  renders only when month-to-date violations > 0 (the CURRENT calendar
+  month -- it is a tile; Insights' "Violations (MTD)" tile is instead
+  month-to-date THROUGH THE WINDOW END, D-8, the R12-24 rule the
+  all-departments queue report already follows). Visible to
   everyone -- managers see all depts' chips on Overview, same as
   the rest of the cross-dept landing.
 - **My Department "Yesterday's QCD"**: tile row under the agent

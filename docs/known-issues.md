@@ -1640,7 +1640,8 @@ existing per-dept dropdown):
   legend spotlight unchanged).
 - **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
   data exists (warn-tinted when P >= the 4% abandon standard), and a "X viol MTD" chip
-  when month-to-date violations > 0. Powered by
+  when month-to-date violations > 0 (the current calendar month; Insights'
+  Violations (MTD) tile follows the WINDOW END since D-8). Powered by
   `CompanyOverview.gs::computeQcdSnapshots_`.
 - **My Department "Yesterday's QCD"**: tile row below the agent
   table showing the dept's most-recent QCD day. Powered by
