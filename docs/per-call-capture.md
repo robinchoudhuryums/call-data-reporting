@@ -318,7 +318,9 @@ unconnected side, matching the Direct report's activity-only outbound
 semantics), talk/ring seconds, attempts, `call_start` (raw PST
 'HH:MM:SS'; clients shift +2h to CST via `clCstTime_`, the INV-18
 convention), and the masked leg-by-leg journey (a phone-shaped callee
-name renders '(external number)' -- no raw number in Neon). The writer
+name renders '(external number)', and -- P-11, Batch 5 -- a leg whose CALLEE
+NUMBER is external carries that party's CNAM as INITIALS, the IMP-12 rule;
+internal callees keep their names; no raw number or external name in Neon). The writer
 auto-creates the table AND `idx_outbound_calls_callee_hash` (no operator
 console step). Best-effort + isolated: failures log a
 `processIntegratedHistory:Outbound` Pipeline Health row + email (the F9

@@ -383,7 +383,7 @@ When something looks wrong, before assuming a code bug, check:
     (cdr-import, default 3000) is the window knob. A date that HARD-errors
     (throws -- not Neon-unreachable, which retries forever) is retried at
     bounded per run by `NEON_MIRROR_BUDGET_MS` (Script Property, default
-    4 min of Apps Script's ~6-min ceiling): the drain stops cleanly at the
+    4 min; the ceiling itself is MEASURED, #70): the drain stops cleanly at the
     budget, leaves the untried dates queued with their attempt counts
     UNCHANGED, and logs a `neonMirror:budget` row naming what was left.
     Without it a multi-day outage grew the queue until one pass exceeded the
@@ -397,11 +397,21 @@ When something looks wrong, before assuming a code bug, check:
     then DROPPED with a `neonMirror:gave-up` Pipeline Health failure row +
     one final email -- re-enqueue it (append a row to the Neon Mirror Queue
     tab) after fixing the cause, or run the per-type backfills (IMP-6;
-    a date whose `Call_Legs_*` sheet was PRUNED before it drained hard-fails
-    the same way -- its inbound_calls rows are unrecoverable and the gave-up
-    email says so rather than silently dequeuing, IMP-11;
     duplicate-conflict-key rows, the known poison-pill cause, are now
     deduped last-write-wins inside the writers so they no longer throw).
+    **Two P-2 rules (Batch 5, 2026-09-17):** (a) a date whose `Call_Legs_*`
+    sheet was PRUNED before it drained is a per-TYPE terminal, not a date
+    failure -- the Inbound / Outbound step logs a `neonMirror:Inbound|Outbound`
+    failure row reading `SOURCE PRUNED … (terminal; not retried)`, the
+    sheet-derivable CDR / QCD / DQE steps still complete and dequeue the date,
+    and ONE `runNeonMirror_ SOURCE PRUNED` email names the loss at completion
+    (re-import the date's source, #56, then the per-type backfill). Before
+    P-2 that case threw on every run, hit the retry cap and DROPPED the whole
+    date, sheet-derivable mirrors included (IMP-11 had made the loss loud but
+    date-wide). (b) A hard error thrown while Neon was UNREACHABLE in the same
+    run (`err.neonUnreachable`) leaves the date queued WITHOUT counting an
+    attempt or emailing -- an outage is not a poison pill; only a failure
+    Neon actually rejected walks a date toward `gave-up`.
     **Step order + no-skip (F12):** `neonMirrorDate_` runs the five types
     **least-recoverable FIRST** -- Inbound, Outbound, then CDR, QCD, DQE --
     and every step is attempted even when an earlier one hard-errors (errors
@@ -901,7 +911,10 @@ When something looks wrong, before assuming a code bug, check:
     findings in both modes),
     each emailed with its runbook fix (force re-import /
     `backfillDQEHistoryUpsert` / `backfillCDRHistory` /
-    `backfillDirectCallToNeon`) -- and flags zero-row WEEKDAYS on the two
+    `backfillDirectCallToNeon`); a sheet date cell NO reader can key (OD-6,
+    Batch 5) is tallied as its own probe error naming
+    `previewHistoricalDateColumns()` -- never as an extra-in-neon phantom, whose
+    remedy (force re-import) would be the wrong one -- and flags zero-row WEEKDAYS on the two
     no-sheet-primary per-call tables, `inbound_calls` AND `outbound_calls`
     (holiday-aware, each floored at its own capture-start MIN(call_date);
     an outbound_calls table that doesn't exist yet -- the Option B capture
@@ -1290,6 +1303,9 @@ When something looks wrong, before assuming a code bug, check:
     drifted mirror only mis-dates the warning; recoverability itself is
     derived from which sheets actually survive.
 
+    P-2 (Batch 5): a queued deferred-mirror date whose sheet the prune already
+    removed no longer parks at the retry cap -- its Inbound/Outbound mirror is a
+    per-type terminal and ONE `SOURCE PRUNED` email names it (#22).
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1828,7 +1844,9 @@ When something looks wrong, before assuming a code bug, check:
     sorts on the date column, re-checks, `success` row "sorted -- N
     inversion(s)"; MIXED-TYPE / TZ-SPLIT / UNPARSED → REFUSED, `failure` row —
     a sort cannot fix those (Sheets orders numbers-then-text and the result
-    LOOKS sorted), so run `previewHistoricalDateColumns()` and the matching
+    LOOKS sorted) — and so is an all-TEXT column (`UNSORTED+TEXT-TYPED`, DD-7:
+    single-typed but Sheets sorts text LEXICALLY, '10/1' before '9/1'); run
+    `previewHistoricalDateColumns()` and the matching
     repair (Phase 1's `repairDqeDateNormalize` for a text/Date era split on
     DQE). **Install:** CDR Report → CDR Tools → ⏰ Nightly Historical Sort
     Check → Install — creates the trigger AND sets the flag (Uninstall clears
@@ -2307,3 +2325,33 @@ When something looks wrong, before assuming a code bug, check:
     for the TTL. Reversible by clearing the property. Memoized per execution.
     Pinned by `tests/unit/answer-rate-formula.test.js` (the switch, the probe,
     and a tripwire that fails on any bare `answered / rung` outside the helper).
+70. **Execution ceiling + the cdr-import time budgets (P-3, Batch 5,
+    2026-09-17) -- and the cdr-import Script Property registry.** The repo
+    carried two beliefs about the per-execution ceiling (30 min in the bulk /
+    inbound-backfill comments, 6 min in the dashboard docs and an OBSERVED
+    kill). A wrong budget is not a tuning problem: a run killed at the ceiling
+    dies PAST its catch blocks, so the bulk pause never fires and the in-flight
+    date's failure row is never written. MEASURE it once per account: CDR
+    Import -> CDR Tools -> **Measure execution ceiling (one-shot probe)**
+    installs a one-shot time trigger that runs `runExecCeilingProbe_` in ~1 min
+    (a TRIGGER, the ceiling the daily import lives under) and sleeps in 10 s
+    steps writing `EXEC_CEILING_PROBE_LAST_MS` until the platform kills it (or
+    40 min pass); ~45 min later **Read execution-ceiling probe result** says
+    `KILLED at ~N s` with a recommended budget (ceiling minus ~2 min for the
+    in-flight date + the final archive), `ABOVE-MAX`, `RUNNING` or `NO-DATA`.
+    Then set the cdr-import Script Properties `BULK_TIME_LIMIT_MS` (the bulk
+    per-click budget, default 15 min) and `IC_BACKFILL_TIME_LIMIT_MS` (the
+    inbound / outbound backfill budget, default 15 min) -- both bounded to
+    1-40 min, no redeploy. If the ceiling reads ~6 min, the deferred mirror's
+    `NEON_MIRROR_BUDGET_MS` (default ~4 min, #22) is already right. Nothing
+    else changes: a kill mid-date is recoverable either way (`bulkIndex`
+    advances only after a date completes, so Resume re-runs the in-flight
+    date, and since P-1 the non-destructive Raw Data / output-sheet writes
+    precede the five-sheet delete). The probe's three `EXEC_CEILING_PROBE_*`
+    keys are engine-written. **Registry:** every Script Property this project
+    reads or writes is registered in `propRegistry.js::CDR_IMPORT_PROP_REGISTRY_`
+    (operator / engine / tool), enforced two ways by
+    `tests/unit/cdr-import-prop-registry.test.js` -- adding one means
+    registering it in the same commit -- and the editor-run
+    `listCdrImportScriptProperties()` prints the live store's keys classified
+    with UNRECOGNIZED first (a typo of a real key), values never shown.

@@ -636,7 +636,8 @@ keep it fresh, in order of preference:
    rebuilt dates into `dqe_history` with `DO UPDATE` (so
    re-calculated values overwrite stale rows). The bulk-complete
    alert reminds you. Tip: rebuild in ~10-date ranges so the final
-   batch-archive step stays well under the 30-min ceiling.
+   batch-archive step stays well under the execution ceiling (measure it
+   once with the probe and set `BULK_TIME_LIMIT_MS` -- Operator State #70).
 3. **Standalone safety-net trigger (transitional)** — the
    cdr-report project's `runDailyDQEBuild_` time trigger
    (originally the only DQE refresh mechanism) is preserved
