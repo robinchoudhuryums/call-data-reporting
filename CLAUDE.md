@@ -1191,10 +1191,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   constant for membership checks**; always go through
   `getAdminEmails_()`.
 - **Script Properties are REGISTERED — adding one means registering it in
-  `Config.gs::PROP_REGISTRY_` in the same commit (cdr-import: its own
-  `propRegistry.js::CDR_IMPORT_PROP_REGISTRY_`, pinned two ways by
-  `cdr-import-prop-registry.test.js`; `listCdrImportScriptProperties()` is
-  its inventory).** The dashboard store holds
+  `Config.gs::PROP_REGISTRY_` in the same commit (cdr-import and cdr-report
+  each have their own `propRegistry.js`, pinned two ways by
+  `cdr-import-prop-registry.test.js` / `cdr-report-prop-registry.test.js`;
+  `listCdrImportScriptProperties()` / `listCdrReportScriptProperties()` are
+  their inventories).** The dashboard store holds
   ~100 keys, past the settings page's 50-row display cap, so the Health page's
   folded "All Script Properties (inventory)" section is the complete view: it
   classifies the LIVE store against the registry (operator config / engine
@@ -2428,7 +2429,7 @@ items for anything it flags or doesn't cover.)
 67. Work-window edge census -- `runWorkWindowCensus` (cdr-import, CDR Tools menu), the read-only PRE-FLIGHT that cleared the R49 window change: per-queue traffic at each window edge, the size of the existing AJ/AK after-hours capture, and -- read this first -- the legs whose queue the DQE gate cannot recognise at all (the R18e shape, where the change's queue-name list is the thing that can silently miss a queue). Read "Would have counted", never the raw leg count: a lost queue name on a leg the NEXT gate drops anyway is not a loss, and the first live run's lone finding (146 legs on ext 782) was exactly that -- every one bound for a `DQE_EXCLUDED_AGENTS` pseudo-agent. Also carries the backfill note for R49
 68. External READERS of the CDR Report workbook -- team-tools (the CSR team app, a separate repo) reads `DQE Historical Data`, `CSR Transfer Historical Data`, `Agent Alias Overrides`, `Inbound Calls` and, since H1/H2, `Company Holidays` + `Dashboard Standards` read-only via its `CDR_SS_ID`; nothing in this repo's tests knows it exists, so a rename, a column move, a retention trim or a holiday-grammar change on one of those tabs is a TWO-REPO edit -- read the item before touching any of them
 69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2): `rung` (default, `answered / rung`) or `answerable` (`answered / (answered + missed)`, the H2 standard the table, the agent app and team-tools already use); run `probeAnswerRateFormulas()` first to see both rates per dept and which standard verdicts flip, then set the property -- no redeploy, every rate cache carries the `rf-` suffix
-70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the one-shot probe (CDR Tools, `execCeilingProbe.js`), then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`; `listCdrImportScriptProperties()` is that project's registry-backed inventory
+70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the one-shot probe (CDR Tools, `execCeilingProbe.js`), then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`; `listCdrImportScriptProperties()` / `listCdrReportScriptProperties()` are the sibling projects' registry-backed inventories
 
 ## Cycle Workflow Config
 
@@ -2454,7 +2455,7 @@ CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js, apps-script/cdr-report/propRegistry.js
 
 CDR Import:
   apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/qcdDqeDiagnostic.js, apps-script/cdr-import/execCeilingProbe.js, apps-script/cdr-import/propRegistry.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json

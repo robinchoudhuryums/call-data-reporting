@@ -2355,3 +2355,9 @@ When something looks wrong, before assuming a code bug, check:
     registering it in the same commit -- and the editor-run
     `listCdrImportScriptProperties()` prints the live store's keys classified
     with UNRECOGNIZED first (a typo of a real key), values never shown.
+    cdr-report has the same: `cdr-report/propRegistry.js::CDR_REPORT_PROP_REGISTRY_`
+    (the backfill `*_RESUME` pointers and `*_LAST` tallies are engine keys --
+    clearing a pointer restarts that backfill from 0), pinned by
+    `tests/unit/cdr-report-prop-registry.test.js` (which also sweeps the
+    `nbResumeRead_` / `nbResumeWrite_` key arguments), listed by
+    `listCdrReportScriptProperties()`.
