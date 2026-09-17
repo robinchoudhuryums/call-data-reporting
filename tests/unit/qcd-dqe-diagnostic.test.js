@@ -89,8 +89,12 @@ const ROWS = [
   // 3. Internal (r37): talked, callee on csr_team, caller NOT on it, no token.
   raw({ type: 'internal', status: '1', talk: '0:02:00',
         callerId: 'Dana Sales,410', caller: '410' }),
-  // 4. Call Menu at 6:15 -- inside QCD's 6:00 floor, outside DQE's 6:30 one.
-  raw({ status: '4', type: 'incoming',
+  // 4. Call Menu at 6:15 on a NON-family queue -- inside QCD's 6:00 floor
+  //    (the block is roster-based: any queue, a csr_team callee), outside
+  //    DQE's, because A_Q_Sales keeps INV-06's 6:30 floor. Before R49 this
+  //    leg sat on A_Q_CSR and was outside for everyone; the CSR family now
+  //    floors at 6:00, so it moved queues to stay the window-difference case.
+  raw({ status: '4', type: 'incoming', callerId: 'A_Q_Sales,410', caller: 'CallQueue (410)',
         start: '09/14/2026 06:15:00', end: '09/14/2026 06:20:00' }),
   // 5. Call Menu for a DQE-excluded pseudo-agent that sits on csr_team.
   raw({ status: '4', type: 'incoming', callee: EXCLUDED }),
@@ -131,6 +135,10 @@ const ROWS = [
   //     before any row counter; without that guard row 36's `end < 3:30 PM`
   //     reads the -1 sentinel as "early" and counts it.
   raw({ status: '2', type: 'incoming', talk: '0:01:00', end: 'n/a' }),
+  // 16. R49: Call Menu at 6:15 on A_Q_CSR. Inside QCD's 6:00 floor AND, since
+  //     the CSR family floors at 6:00, inside DQE's -- both sides count it.
+  raw({ status: '4', type: 'incoming',
+        start: '09/14/2026 06:15:00', end: '09/14/2026 06:20:00' }),
 ];
 const GRID = [HEADER].concat(ROWS);
 
@@ -215,7 +223,7 @@ test('each CSR-block leg DQE misses names the gate that fired first', () => {
   const out = h.fn('qddAnalyzeDay_')(GRID, ctx_());
   assert.equal(out.reasons['no-queue-token'], 2,       // the Misc + Internal rows
     'expected the two token-less legs: ' + JSON.stringify(out.reasons));
-  assert.equal(out.reasons['outside-dqe-window'], 2);   // the 6:15 leg and the 3:00 PM boundary
+  assert.equal(out.reasons['outside-dqe-window'], 2);   // the 6:15 Sales leg (row 4) and the 3:00 PM boundary
   assert.equal(out.reasons['excluded-agent'], 1);
   assert.equal(out.reasons['not-flagged-answered'], 1);
   assert.equal(out.reasons['callforking-callee'], 1);
@@ -262,11 +270,11 @@ test('DQE-counted legs outside the CSR block are bucketed by queue', () => {
 test('per-agent cross-tab separates the three CSR rows from DQE answered', () => {
   const out = h.fn('qddAnalyzeDay_')(GRID, ctx_());
   const casey = out.byAgent[CSR_AGENT];
-  assert.equal(casey.q35, 3);           // rows 1, 4 and 14
+  assert.equal(casey.q35, 4);           // rows 1, 4, 14 and 16
   assert.equal(casey.q36, 4);           // rows 2, 6, 9 and 11
   assert.equal(casey.q37, 1);           // row 3
-  assert.equal(casey.qTotal, 8);
-  assert.equal(casey.dqeAnswered, 5);   // rows 1, 7, 8, 9 and 15
+  assert.equal(casey.qTotal, 9);
+  assert.equal(casey.dqeAnswered, 6);   // rows 1, 7, 8, 9, 15 and 16 (R49: the early CSR leg)
   assert.deepEqual(casey.depts, ['CSR']);
   assert.equal(out.byAgent[EXCLUDED].dqeAnswered, 0);
   assert.equal(out.byAgent[EXC_AGENT].q35, 1, 'the csr_exceptions status-5 arm of row 35');
@@ -887,4 +895,105 @@ test('counted and legs are BOTH folded across days', () => {
   assert.equal(acc.lostByExt['782'].legs, 6);
   assert.equal(acc.lostByExt['782'].counted, 2, 'the blocking half folds too');
   assert.equal(acc.lostCounted, 2);
+});
+
+// ── 9. R49: the mirror floors per QUEUE, like the build it certifies ────────
+//
+// This mirror shipped with a flat 6:30 the day R49 moved the CSR family to
+// 6:00, and its first live run afterwards read INCONCLUSIVE against the stored
+// rows it exists to check -- five agents exactly +2, the ten early calls it
+// was flooring out (2026-09-17). The fifth hand-mirror of the build, drifting
+// the way the other four have. Section 2's SOURCE pins could not see it: they
+// pin copied text, and a rule the build GAINED has no copy to compare. So the
+// last test here drives the REAL build and the mirror over one grid.
+
+test('R49: an early leg on a CSR-family queue is IN the mirror\'s window and reads sameAgent', () => {
+  const grid = [HEADER,
+    // 6:10 on A_Q_CSR: the CSR block claims it (status 4, csr_team callee) AND,
+    // since R49, so does DQE -- one leg, both sides, no orphan.
+    raw({ status: '4', type: 'incoming', callId: 'E5', parent: 'N/A',
+          start: '09/14/2026 06:10:00', end: '09/14/2026 06:14:00' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.dqeAnsweredAllAgents, 1, 'the mirror counts the early CSR-family leg');
+  assert.equal(out.byAgent[CSR_AGENT].dqeAnswered, 1);
+  assert.equal(out.qcdAlsoDqe, 1, 'and it is the SAME leg the CSR block counted');
+  assert.equal(out.parentJoin.none, 0, 'so nothing reads as under-credited');
+  assert.equal(out.reasons['outside-dqe-window'] || 0, 0);
+});
+
+test('R49: the same early leg on a NON-family queue stays outside, and the cause says why', () => {
+  const grid = [HEADER,
+    // 6:10 on A_Q_Sales, taken by a CSR: the block still claims it (roster-
+    // based), but Sales keeps INV-06's 6:30 floor, so DQE does not.
+    raw({ status: '4', type: 'incoming', callId: 'E6', parent: 'N/A',
+          callerId: 'A_Q_Sales,410', caller: 'CallQueue (410)',
+          start: '09/14/2026 06:10:00', end: '09/14/2026 06:14:00' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.dqeAnsweredAllAgents, 0, 'a non-family queue keeps the 6:30 floor');
+  assert.equal(out.reasons['outside-dqe-window'], 1);
+  assert.equal(out.parentJoin.none, 1);
+  assert.deepEqual(plain(out.orphanCauses), { 'starts-before-dqe-window': 1 },
+    'and the orphan cause floors per queue too -- a window difference, not a lost call');
+});
+
+test('R49 PARITY: the mirror\'s per-agent answered equals what the REAL build stores', () => {
+  // The pin that would have caught the live INCONCLUSIVE: one grid, the real
+  // buildDQEHistoricalData on one side, qddAnalyzeDay_ on the other. If the
+  // build gains a per-agent rule the mirror lacks, these two numbers part.
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const { rosterGrid } = require('../harness/fixtures');
+  h.ctx.writeDQERowsToNeon = function () { return { skipped: 0 }; };
+  h.ctx.notifyNeonWriteFailure = function () {};
+
+  const grid = [HEADER,
+    raw({ status: '4', type: 'incoming', callId: 'P1', parent: 'N/A' }),                 // in window
+    raw({ status: '4', type: 'incoming', callId: 'P2', parent: 'N/A',                    // early, CSR family -> counted
+          start: '09/14/2026 06:10:00', end: '09/14/2026 06:14:00' }),
+    raw({ status: '4', type: 'incoming', callId: 'P3', parent: 'N/A',                    // early, Sales -> not counted
+          callerId: 'A_Q_Sales,410', caller: 'CallQueue (410)',
+          start: '09/14/2026 06:12:00', end: '09/14/2026 06:16:00' }),
+    raw({ status: '4', type: 'incoming', callId: 'P4', parent: 'N/A',                    // before 6:00 -> nobody
+          start: '09/14/2026 05:50:00', end: '09/14/2026 05:55:00' }),
+  ];
+  const ss = makeFakeSpreadsheet({ sheets: {
+    'Raw Data': grid,
+    'DQE Historical Data': [new Array(34).fill('')],
+    'DO NOT EDIT!': rosterGrid({ CSR: [CSR_AGENT + ', 201'] }),
+  } });
+  h.state.spreadsheet = ss;
+  h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'));
+  const stored = ss._sheet('DQE Historical Data')._data.slice(1)
+    .filter((r) => r[2] === CSR_AGENT)[0];
+  assert.ok(stored, 'the real build wrote a row for ' + CSR_AGENT);
+
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.byAgent[CSR_AGENT].dqeAnswered, stored[7],
+    'mirror answered != stored col H -- the mirror has drifted from the build '
+    + '(this is the shape of the 2026-09-17 INCONCLUSIVE: mirror ' + out.byAgent[CSR_AGENT].dqeAnswered
+    + ' vs stored ' + stored[7] + ')');
+  assert.equal(stored[7], 2, 'fixture guard: exactly the in-window + early-CSR legs count');
+});
+
+test('R49: an early CSR-family leg DQE skipped for ANOTHER reason is not called a window difference', () => {
+  // 6:10 on A_Q_CSR, talked, but the feed never flagged it Answered: the CSR
+  // block (row 36) counts it, DQE does not -- and the reason is the flag, not
+  // the clock. A cause that floors at a flat 6:30 files this under
+  // 'starts-before-dqe-window', the "deliberate design decision" pile, and a
+  // genuinely unexplained miss disappears into it. Since R49 the CSR family's
+  // floor is 6:00, so 6:10 is IN window and the cause must say so.
+  const grid = [HEADER,
+    raw({ status: '2', type: 'incoming', talk: '0:01:00', answered: false,
+          callId: 'E7', parent: 'N/A',
+          start: '09/14/2026 06:10:00', end: '09/14/2026 06:14:00' }),
+  ];
+  const out = h.fn('qddAnalyzeDay_')(grid, ctx_());
+  assert.equal(out.qcdD[36], 1, 'fixture guard: the CSR block claims it');
+  assert.equal(out.reasons['not-flagged-answered'], 1, 'fixture guard: DQE skips it for the FLAG');
+  assert.equal(out.parentJoin.none, 1);
+  assert.equal(out.orphanCauses['starts-before-dqe-window'] || 0, 0,
+    'the cause must floor per queue: at 6:10 a CSR-family leg is inside DQE\'s window');
+  assert.equal(out.orphanCauses['in-window-non-queue'], 1,
+    'it lands in the in-window bucket (the vocabulary\'s fallback for a non-window miss)');
 });

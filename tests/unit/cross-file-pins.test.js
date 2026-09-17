@@ -1047,4 +1047,20 @@ test('S1/INV-06 (R49): the CSR-family early floor and its queue list agree acros
   assert.equal(ampmSecs(dispC[4], dispC[5], dispC[6]), pipe.end + pipe.toCst, 'early display END (CST) drifted');
   assert.deepEqual(qList(blk[1], 'queues:'), buildQs,
     'the dashboard early-queue LIST drifted from the build');
+
+  // The FIFTH mirror, qcdDqeDiagnostic.js (cdr-import, same project as the
+  // build), takes the floor from the build's helper rather than keeping a copy
+  // -- so there is no constant to pin equal, only a way of doing it wrong: a
+  // bare comparison against DQE_WINDOW_START in its DQE-side gate or its
+  // orphan cause, which is exactly the flat 6:30 that read INCONCLUSIVE
+  // against the stored rows the day after R49 deployed (2026-09-17).
+  const diag = read('apps-script/cdr-import/qcdDqeDiagnostic.js');
+  assert.match(diag, /startPST >= dqeWindowStartForQueue_\(queueName\)/,
+    'the diagnostic DQE-side gate must floor through dqeWindowStartForQueue_');
+  assert.match(diag, /leg\.startPST < dqeWindowStartForQueue_\(leg\.queueName\)/,
+    'the diagnostic orphan cause must floor through dqeWindowStartForQueue_');
+  assert.doesNotMatch(diag, /startPST >= DQE_WINDOW_START\b/,
+    'a bare DQE_WINDOW_START floor in the diagnostic is the drift that already happened once');
+  assert.match(diag, /const QDD_EARLY_WINDOW_START_ = DQE_EARLY_WINDOW_START;/,
+    'the census early edge derives from the build constant, not a third 6:00');
 });

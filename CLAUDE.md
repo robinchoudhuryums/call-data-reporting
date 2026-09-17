@@ -766,7 +766,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   QUEUE LIST are mirrored in `DQEdrilldown.js` and `DASHBOARD_EARLY_WINDOW`
   (Config.gs); both are pinned, and the drill's is pinned BEHAVIOURALLY
   (`dqe-drilldown-parity.test.js`) because a constant the drill never consults
-  buys nothing. NOT retroactive: a stored row keeps its old numbers until the
+  buys nothing. **`qcdDqeDiagnostic.js` is the FIFTH mirror and takes the
+  floor from `dqeWindowStartForQueue_` itself** -- it shipped flat and read
+  INCONCLUSIVE the day after R49 deployed; cross-file-pins now fails on a bare
+  `DQE_WINDOW_START` floor there, and `qcd-dqe-diagnostic.test.js` drives the
+  REAL build against the mirror (source pins on copied text cannot see a rule
+  the build GAINED). NOT retroactive: a stored row keeps its old numbers until the
   date is rebuilt (Operator State #67). The work-window pill still shows 8:30
   for everyone -- a known 30-minute understatement for the CSR family.
 

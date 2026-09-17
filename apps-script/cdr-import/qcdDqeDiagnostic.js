@@ -187,8 +187,15 @@ function qddAnalyzeDay_(grid, ctx) {
     const canonical = ctx.canonicalize(String(row[DQE_C.CALLEE_NAME]).trim());
     const answered  = String(row[DQE_C.ANSWERED]).trim() === 'Answered';
     const startPST  = qddDisplayToTimeSec_(row[DQE_C.START_TIME]);
+    // R49: the FLOOR is per queue, and it comes from the build's own helper --
+    // never a restated constant. This mirror shipped with a flat 6:30 the day
+    // R49 moved the CSR family to 6:00, and its first live run afterwards read
+    // INCONCLUSIVE against the stored rows it exists to certify: five agents
+    // exactly +2, the ten early calls it was flooring out. The fifth
+    // hand-mirror of the build, drifting the same way as the other four.
     const inWindow  = startPST !== null
-                   && startPST >= DQE_WINDOW_START && startPST < DQE_WINDOW_END;
+                   && startPST >= dqeWindowStartForQueue_(queueName)
+                   && startPST < DQE_WINDOW_END;
 
     // WHY a leg the QCD block counted is absent from DQE — evaluated in the
     // build's own short-circuit order, so the reason named is the gate that
@@ -257,6 +264,7 @@ function qddAnalyzeDay_(grid, ctx) {
         agent: key, parentKey: parentKey, detail: detailRow,
         parentRaw: parentRaw, callId: ownCallId, sheetRow: i + 2,
         qcdRow: qcdRow, status: status, direction: type, startPST: startPST,
+        queueName: queueName,           // R49: the orphan cause floors per queue
         start: String(row[2]).trim(), end: String(row[4]).trim(),
         caller: String(row[DQE_C.CALLER]).trim(),
         callerName: String(row[9]).trim(),
@@ -294,12 +302,15 @@ function qddAnalyzeDay_(grid, ctx) {
     } else {
       cls = 'none';
       // WHY this call has no DQE leg. The work window comes FIRST: a call that
-      // started before 6:30 PST is outside the per-agent window by design
-      // (INV-06) while QCD's CSR block floors at 6:00, so it is a window
-      // difference, not a lost call -- and reading it as one would put a
-      // deliberate design decision on the under-credited pile.
+      // started before its queue's DQE floor is outside the per-agent window
+      // by design (INV-06 / R49) while QCD's CSR block floors at 6:00, so it
+      // is a window difference, not a lost call -- and reading it as one
+      // would put a deliberate design decision on the under-credited pile.
+      // The floor is PER QUEUE since R49 (the CSR family at 6:00, the rest at
+      // 6:30); a leg with no queue token gets the standard floor, exactly as
+      // the build would if it ever reached the window check for one.
       const cause = (leg.startPST === null) ? 'unparsed-start'
-        : (leg.startPST < DQE_WINDOW_START) ? 'starts-before-dqe-window'
+        : (leg.startPST < dqeWindowStartForQueue_(leg.queueName)) ? 'starts-before-dqe-window'
         : (leg.startPST >= DQE_WINDOW_END) ? 'starts-after-dqe-window'
         : (leg.direction === 'internal') ? 'internal-direct-to-agent'
         : 'in-window-non-queue';
@@ -927,8 +938,11 @@ function qddWriteReportTab_(ss, rep) {
 // READ-ONLY: writes only its own tab, sets no Script Properties.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 6:00 AM PST -- the proposed early floor, and QCD's CSR-block floor today. */
-const QDD_EARLY_WINDOW_START_ = 6 * 3600;
+/** 6:00 AM PST -- the CSR family's DQE floor since R49, and QCD's CSR-block
+ *  floor. Derived from the build's constant, not restated: the census buckets
+ *  `early` = [this, DQE_WINDOW_START) so it can still measure the edge the
+ *  change moved, and a restated 6:00 would be a third copy nothing pins. */
+const QDD_EARLY_WINDOW_START_ = DQE_EARLY_WINDOW_START;
 
 /** Stop on a DATE boundary once this is spent; a half-scanned date would skew
  *  every per-queue figure it touched. Mirrors the R43 budget pattern. */
