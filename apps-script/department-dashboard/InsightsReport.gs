@@ -185,7 +185,7 @@ function getInsightsReport(req) {
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INSIGHTS_CACHE_KEY_PREFIX + ':' + dept + ':' + from + ':' + to
                  + ':' + agentsKey + ':' + priorKey + ':' + dqeReadSrc + ':' + qsScopeKey
-                 + ':' + reportFreshnessTag_();
+                 + ':' + reportFreshnessTag_() + ':' + answerRateCacheTag_();   // DD-2
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -597,8 +597,8 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   }
 
   // --- Team stats with deltas (reuse deltaBlock_) --------------------
-  const currPct = teamCurr.rung     > 0 ? (teamCurr.answered / teamCurr.rung)   * 100 : 0;
-  const prevPct = teamPrev.rung     > 0 ? (teamPrev.answered / teamPrev.rung)   * 100 : 0;
+  const currPct = answerRatePct_(teamCurr.answered, teamCurr.missed, teamCurr.rung);   // DD-2: one formula
+  const prevPct = answerRatePct_(teamPrev.answered, teamPrev.missed, teamPrev.rung);
   const currAtt = teamCurr.answered > 0 ? (teamCurr.att_sum  / teamCurr.answered)     : 0;
   const prevAtt = teamPrev.answered > 0 ? (teamPrev.att_sum  / teamPrev.answered)     : 0;
   const teamStats = {
@@ -633,8 +633,8 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   }
   const agentData = visibleAgents.map(function (agent) {
     const c = perAgentCurr[agent], p = perAgentPrior[agent];
-    const cPct = c.rung     > 0 ? (c.answered / c.rung)   * 100 : 0;
-    const pPct = p.rung     > 0 ? (p.answered / p.rung)   * 100 : 0;
+    const cPct = answerRatePct_(c.answered, c.missed, c.rung);   // DD-2
+    const pPct = answerRatePct_(p.answered, p.missed, p.rung);
     const cAtt = c.answered > 0 ? (c.att_sum  / c.answered)     : 0;
     const pAtt = p.answered > 0 ? (p.att_sum  / p.answered)     : 0;
     const matchedViaRoster = !!agentMatchedViaRoster[agent];
@@ -665,7 +665,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       trendMonthly: monthKeys.map(function (m) {
         const b = (perAgentMonthly[agent] || {})[m];
         if (!b) return null;
-        const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
+        const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
         return { rung: b.rung, answered: b.answered, missed: b.missed, pct: round1_(pct) };
       }),
     };
@@ -690,7 +690,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   });
   const trendSeries = monthKeys.map(function (m) {
     const b = monthlyTeam[m];
-    const pct = b.rung     > 0 ? (b.answered / b.rung)   * 100 : 0;
+    const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
     const att = b.answered > 0 ? (b.att_sum  / b.answered)     : 0;
     return {
       rung:     b.rung,
@@ -708,7 +708,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   const trendDailyLabels = dailyKeys.map(function (iso) { return iso.slice(5); });
   const trendDailySeries = dailyKeys.map(function (iso) {
     const b = dailyTeam[iso];
-    const pct = b.rung     > 0 ? (b.answered / b.rung)   * 100 : 0;
+    const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
     const att = b.answered > 0 ? (b.att_sum  / b.answered)     : 0;
     return { rung: b.rung, missed: b.missed, answered: b.answered, pct: pct, ttt: b.ttt, att: att };
   });
@@ -724,7 +724,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
     labels: ytdKeys.map(function (iso) { return iso.slice(5); }),
     series: ytdKeys.map(function (iso) {
       const b = ytdTeam[iso];
-      const pct = b.rung     > 0 ? (b.answered / b.rung)   * 100 : 0;
+      const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
       const att = b.answered > 0 ? (b.att_sum  / b.answered)     : 0;
       return { rung: b.rung, missed: b.missed, answered: b.answered, pct: pct, ttt: b.ttt, att: att };
     }),
@@ -743,7 +743,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // teamStats -- a rate over a different population is a different rate.
   const activeRosterAvgCount = Object.keys(activeRosterAvg).length;
   const avgPct = teamAvgBase.rung     > 0
-    ? (teamAvgBase.answered / teamAvgBase.rung) * 100 : 0;
+    ? answerRatePct_(teamAvgBase.answered, teamAvgBase.missed, teamAvgBase.rung) : 0;   // DD-2
   const avgAtt = teamAvgBase.answered > 0
     ? (teamAvgBase.att_sum / teamAvgBase.answered) : 0;
   const teamAvgBasis = {

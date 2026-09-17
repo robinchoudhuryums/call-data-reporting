@@ -694,13 +694,12 @@ When something looks wrong, before assuming a code bug, check:
     gate, the `computeDigestStats_` convention). Needs `script.send_mail` +
     `script.scriptapp` (both present); best-effort (a run failure emails admins
     via `notifyQueueReportFailure_` + records `FAILED` in LAST_RESULT, and the
-    next poll retries). **Send-loop reliability (O-1/O-4/O-7):** sends are
-    per-recipient isolated -- one malformed address / mid-list quota failure
-    no longer aborts the loop. Partial success CLAIMS the `LAST_SENT` marker
-    (delivered recipients are never re-blasted; failures are batched to admins
-    via `notifyQueueReportSendFailures_` and NOT auto-retried); a TOTAL failure
-    leaves the marker unset (`FAILED-ALL` in LAST_RESULT) so the next poll
-    retries safely. The single-address preview still throws so the admin sees
+    next poll retries). **Send reliability (Round-16, O-6 correction):** the report goes out as
+    ONE message (every subscriber in To); a send failure fails the whole
+    message into the `FAILED-ALL` retry path -- the marker is left unset and
+    the next poll retries. (The earlier per-recipient-isolated loop, whose
+    partial failures were NOT auto-retried, is gone; this paragraph used to
+    describe it.) The single-address preview still throws so the admin sees
     the error. Duplicate subscriber rows (hand-edited sheet) are deduped
     first-row-wins (`duplicateRow` flag + "⚠ duplicate" chip in the modal;
     Remove deletes all copies). A day whose data never lands before the window
@@ -2277,3 +2276,32 @@ When something looks wrong, before assuming a code bug, check:
     CLOSED by H2 (2026-09-17) via the published `Dashboard Standards` tab
     (#37). A new rate rule or standard on this side is not done until that
     tab carries it and team-tools' reader consumes it.
+
+69. **`ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server
+    surface (DD-2, broad-scan 2026-09-17), and the probe that shows what a flip
+    moves.** Two formulas were live: the My Department table, the agent app and
+    team-tools (H2) compute Answer % as `answered / (answered + missed)`; IR,
+    Insights, the Overview tiles/trends/WoW drivers, the low-answer-rate Alerts
+    and the Digest computed `answered / rung`. The build flags a window leg
+    Missed or Answered INDEPENDENTLY, so `rung` can exceed `answered + missed`
+    and the two rates differ -- an alert could fire on a rate the manager's
+    table did not show. Every server surface now routes through
+    `Config.gs::answerRatePct_`, whose denominator is this property:
+    - unset / `rung` (DEFAULT): `answered / rung` -- the deploy changes NO
+      number.
+    - `answerable`: `answered / (answered + missed)` -- the H2 standard, so IR,
+      Insights, Overview, Alerts and the Digest agree with the table, the
+      agent app and team-tools.
+    Runbook: (1) deploy; (2) run `probeAnswerRateFormulas()` (Diagnostics.gs,
+    editor, admin) -- per dept it prints rung / answered / missed / the
+    "neither" legs, both rates, the gap in points, the worst per-agent gap, the
+    display standard and whether the standard verdict FLIPS; window from
+    `ANSWER_RATE_PROBE_FROM` / `_TO` (ISO) or the 30 days ending yesterday;
+    read-only, the params are not cleared; (3) if a dept's gap exceeds its
+    alert band, re-tune that Alert Config threshold first; (4) set
+    `ANSWER_RATE_FORMULA=answerable` -- no redeploy; every rate-carrying cache
+    (individual / insights / companyOverview / overviewChartYtd) carries an
+    `rf-<formula>` suffix, so the flip cannot serve the other formula's payload
+    for the TTL. Reversible by clearing the property. Memoized per execution.
+    Pinned by `tests/unit/answer-rate-formula.test.js` (the switch, the probe,
+    and a tripwire that fails on any bare `answered / rung` outside the helper).

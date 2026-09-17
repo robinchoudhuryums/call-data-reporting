@@ -86,7 +86,8 @@
     if ($('inbound-from') && $('inbound-from').value) return;
     const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
     if ($('inbound-from')) $('inbound-from').value = inboundIsoOf_(s);
-    if ($('inbound-to'))   $('inbound-to').value   = inboundIsoOf_(today);
+    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
+    if ($('inbound-to'))   $('inbound-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : inboundIsoOf_(today);
   }
   function inboundApplyPreset() {
     const v = $('inbound-preset').value;
@@ -1289,7 +1290,8 @@
     if ($('direct-call-from') && $('direct-call-from').value) return;
     const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
     if ($('direct-call-from')) $('direct-call-from').value = directCallIsoOf_(s);
-    if ($('direct-call-to'))   $('direct-call-to').value   = directCallIsoOf_(today);
+    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
+    if ($('direct-call-to'))   $('direct-call-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : directCallIsoOf_(today);
   }
   function directCallApplyPreset() {
     const v = $('direct-call-preset').value;
@@ -1699,7 +1701,8 @@
     if ($('outbound-from') && $('outbound-from').value) return;
     const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
     if ($('outbound-from')) $('outbound-from').value = directCallIsoOf_(s);
-    if ($('outbound-to'))   $('outbound-to').value   = directCallIsoOf_(today);
+    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
+    if ($('outbound-to'))   $('outbound-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : directCallIsoOf_(today);
   }
   function outboundApplyPreset() {
     const v = $('outbound-preset').value;

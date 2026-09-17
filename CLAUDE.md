@@ -930,7 +930,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ENFORCED by `tests/unit/date-presets.test.js`, whose tripwire fails if any
   fragment computes preset dates locally again.
 - **team-tools is an EXTERNAL READER of this workbook, and its answer rate
-  must mean what ours means (H2).** The CSR team app (a separate repo) reads
+  must mean what ours means (H2) -- and since DD-2 every SERVER surface reads
+  ONE formula, `Config.gs::answerRatePct_`, switched by `ANSWER_RATE_FORMULA`
+  (Operator State #69; `answer-rate-formula.test.js` fails on a bare
+  `answered / rung`).** The CSR team app (a separate repo) reads
   `DQE Historical Data` and tints the same per-agent rate the manager sees
   here, so a formula or standard is a TWO-REPO edit: Answer % is
   `answered / (answered + missed)` on both sides, rounded to a WHOLE percent
@@ -2412,6 +2415,7 @@ items for anything it flags or doesn't cover.)
 66. QCD vs DQE reconciliation -- `diagnoseQcdVsDqe` (cdr-import, CDR Tools menu), the read-only tool that explains why a dept's QCD "Queue Calls" answered and its per-agent answered sum differ: it classifies every leg of one date against BOTH rule sets and names the gate that dropped each one. Read its VERDICT first -- it is a fifth hand-mirror of calcQcdReport, so it reconciles against the real function AND the stored DQE rows before reporting, and refuses (INCONCLUSIVE) when either check fails
 67. Work-window edge census -- `runWorkWindowCensus` (cdr-import, CDR Tools menu), the read-only PRE-FLIGHT that cleared the R49 window change: per-queue traffic at each window edge, the size of the existing AJ/AK after-hours capture, and -- read this first -- the legs whose queue the DQE gate cannot recognise at all (the R18e shape, where the change's queue-name list is the thing that can silently miss a queue). Read "Would have counted", never the raw leg count: a lost queue name on a leg the NEXT gate drops anyway is not a loss, and the first live run's lone finding (146 legs on ext 782) was exactly that -- every one bound for a `DQE_EXCLUDED_AGENTS` pseudo-agent. Also carries the backfill note for R49
 68. External READERS of the CDR Report workbook -- team-tools (the CSR team app, a separate repo) reads `DQE Historical Data`, `CSR Transfer Historical Data`, `Agent Alias Overrides`, `Inbound Calls` and, since H1/H2, `Company Holidays` + `Dashboard Standards` read-only via its `CDR_SS_ID`; nothing in this repo's tests knows it exists, so a rename, a column move, a retention trim or a holiday-grammar change on one of those tabs is a TWO-REPO edit -- read the item before touching any of them
+69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2): `rung` (default, `answered / rung`) or `answerable` (`answered / (answered + missed)`, the H2 standard the table, the agent app and team-tools already use); run `probeAnswerRateFormulas()` first to see both rates per dept and which standard verdicts flip, then set the property -- no redeploy, every rate cache carries the `rf-` suffix
 
 ## Cycle Workflow Config
 

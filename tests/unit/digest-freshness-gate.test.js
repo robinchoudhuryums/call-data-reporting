@@ -277,3 +277,50 @@ test('O-5: a lock-contention skip records SKIPPED-LOCK for the cadence', functio
   finally { h.ctx.LockService = realLock; h.ctx.notifyDigestFailure_ = realNotify; }
   assert.match(h.state.props.DIGEST_LAST_RESULT_daily, /^SKIPPED-LOCK: daily digests skipped/);
 });
+
+// O-2 (broad-scan 2026-09-17): the freshness gate compares against the last
+// BUSINESS day of the window, never its calendar end. A zero-activity day
+// writes no DQE rows, so a month ending on a Saturday (Oct 31 2026) or a week
+// ending on a Friday holiday (Christmas 2026) is complete once Friday's /
+// Thursday's data landed -- the old gate deferred all morning and then sent a
+// "data not yet available" stale copy of a complete window.
+test('O-2: lastBusinessDayOnOrBeforeIso_ walks back over weekends and company holidays', function () {
+  delete h.ctx.isCompanyHoliday_;
+  assert.equal(h.call('lastBusinessDayOnOrBeforeIso_', '2026-10-31'), '2026-10-30', 'Sat -> Fri');
+  assert.equal(h.call('lastBusinessDayOnOrBeforeIso_', '2026-11-01'), '2026-10-30', 'Sun -> Fri');
+  assert.equal(h.call('lastBusinessDayOnOrBeforeIso_', '2026-10-30'), '2026-10-30', 'a weekday is itself');
+  h.ctx.isCompanyHoliday_ = function (iso) { return iso === '2026-12-25'; };
+  try {
+    assert.equal(h.call('lastBusinessDayOnOrBeforeIso_', '2026-12-25'), '2026-12-24', 'Friday holiday -> Thursday');
+  } finally { delete h.ctx.isCompanyHoliday_; }
+});
+
+test('O-2: the monthly digest for a month ending on a Saturday SENDS once Friday landed (no false stale)', function () {
+  // Mon 2026-11-02 08:05 Central; window = Oct 1..31 (Sat); data through Fri Oct 30.
+  install({ dates: ['2026-10-29', '2026-10-30'] });
+  const calls = stubSend();
+  const r = h.call('digestGatedAttempt_', 'monthly', new Date('2026-11-02T08:05:00-06:00'), 'trigger');
+  assert.equal(r.decision, 'send', 'Oct 30 is the last business day of October');
+  assert.equal(calls[0].cadence, 'monthly');
+  assert.equal(calls[0].runOpts.window.toIso, '2026-10-31');
+  assert.equal(calls[0].runOpts.staleLatest, undefined, 'no stale note on a complete window');
+  // Still defers when the last business day itself is missing.
+  install({ dates: ['2026-10-29'] });
+  const calls2 = stubSend();
+  const r2 = h.call('digestGatedAttempt_', 'monthly', new Date('2026-11-02T08:05:00-06:00'), 'trigger');
+  assert.equal(r2.decision, 'defer');
+  assert.equal(calls2.length, 0);
+});
+
+test('O-2: the weekly digest after a Friday holiday sends on Thursday\'s data', function () {
+  // Mon 2026-12-28 08:05 Central; window = Dec 21..25 (Christmas, a Friday).
+  install({ dates: ['2026-12-23', '2026-12-24'] });
+  h.ctx.isCompanyHoliday_ = function (iso) { return iso === '2026-12-25'; };
+  try {
+    const calls = stubSend();
+    const r = h.call('digestGatedAttempt_', 'weekly', new Date('2026-12-28T08:05:00-06:00'), 'trigger');
+    assert.equal(r.decision, 'send');
+    assert.equal(calls[0].runOpts.window.toIso, '2026-12-25');
+    assert.equal(calls[0].runOpts.staleLatest, undefined);
+  } finally { delete h.ctx.isCompanyHoliday_; }
+});

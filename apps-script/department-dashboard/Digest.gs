@@ -231,7 +231,15 @@ function digestGatedAttempt_(cadence, now, source) {
     const alreadySent = props.getProperty('DIGEST_RUN_MARKER_' + cadence) === window.toIso;
     const hour = Number(Utilities.formatDate(now, TZ, 'H')) || 0;
     const latest = digestLatestDqeIso_();
-    const fresh = !!latest && latest >= window.toIso;
+    // O-2 (broad-scan 2026-09-17): a window is complete once the LAST
+    // BUSINESS day's data landed -- a month ending on a Saturday, or a week
+    // ending on a Friday holiday, has no DQE rows for its calendar end date
+    // (a zero-activity day writes none), so comparing against toIso deferred
+    // all morning and then sent a "data not yet available" stale copy of a
+    // complete window (next: Mon 2026-11-02 for October; Christmas 2026 is
+    // a Friday).
+    const expectedIso = lastBusinessDayOnOrBeforeIso_(window.toIso);
+    const fresh = !!latest && latest >= expectedIso;
     const decision = digestDailyDecision_(hour, fresh, alreadySent);
     Logger.log('digestGatedAttempt_(%s, %s): window=%s..%s latestDqe=%s hour=%s -> %s',
       cadence, source, window.fromIso, window.toIso, latest || '(none)', hour, decision);
@@ -723,9 +731,10 @@ function digestSummaryHtml_(dept, fromIso, toIso, opts) {
   const stats   = computeDigestStats_(dept, fromIso, toIso);
   const totals  = stats.totals || {};
   const rung = Number(totals.totalRung) || 0;
-  const pct = rung > 0
-    ? ((Number(totals.totalAnswered) || 0) / rung) * 100
-    : 0;
+  // DD-2: one formula (ANSWER_RATE_FORMULA); the tile shows '—' when the
+  // active denominator is empty.
+  const rateDenom = answerRateDenom_(totals.totalAnswered, totals.totalMissed, rung);
+  const pct = answerRatePct_(totals.totalAnswered, totals.totalMissed, rung);
   const pctStr     = pct.toFixed(1) + '%';
   const rungStr    = ekFmtInt_(Number(totals.totalRung)     || 0);
   const ansStr     = ekFmtInt_(Number(totals.totalAnswered) || 0);
@@ -734,8 +743,8 @@ function digestSummaryHtml_(dept, fromIso, toIso, opts) {
   const target     = digestAnswerTarget_(dept);
 
   const kpis = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
-    + ekKpiTd_('% answered', rung > 0 ? pctStr : '—', {
-        tone: rung > 0 ? (pct >= target ? 'good' : 'bad') : 'neutral',
+    + ekKpiTd_('% answered', rateDenom > 0 ? pctStr : '—', {
+        tone: rateDenom > 0 ? (pct >= target ? 'good' : 'bad') : 'neutral',
         subHtml: ekKpiSub_(ekEsc_(target + '% goal')),
         pad: 'padding-right:6px;' })
     + ekKpiTd_('Rung', rungStr, { pad: 'padding:0 3px;' })

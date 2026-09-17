@@ -496,13 +496,20 @@
   // controls row is the only consumer now.) onPick receives { from, to }.
   function buildDatePresetChips_(wrap, onPick) {
     if (!wrap) return;
+    // C1-3 (broad-scan 2026-09-17): the chips resolve through the ONE shared
+    // resolver (datePresetRange_, script-1-core) like every other preset
+    // surface -- this strip was a seventh local copy whose "This month" ended
+    // TODAY, the empty-day dilution the rule exists to prevent, and the
+    // date-presets tripwire did not watch this fragment. It does now.
     var presets = [
-      { label: 'Yesterday', fn: function () { var d = daysAgo_(1); return { from: d, to: d }; } },
-      { label: 'Last 7 days', fn: function () { return { from: daysAgo_(7), to: daysAgo_(1) }; } },
-      { label: 'Last 30 days', fn: function () { return { from: daysAgo_(30), to: daysAgo_(1) }; } },
-      { label: 'This month', fn: function () { var t = new Date(); return { from: isoDate_(new Date(t.getFullYear(), t.getMonth(), 1)), to: isoDate_(t) }; } },
-      { label: 'Last month', fn: function () { var t = new Date(); var f = new Date(t.getFullYear(), t.getMonth() - 1, 1); var l = new Date(t.getFullYear(), t.getMonth(), 0); return { from: isoDate_(f), to: isoDate_(l) }; } },
-    ];
+      { label: 'Yesterday',    key: 'yesterday' },
+      { label: 'Last 7 days',  key: 'last7' },
+      { label: 'Last 30 days', key: 'last30' },
+      { label: 'This month',   key: 'thisMonth' },
+      { label: 'Last month',   key: 'lastMonth' },
+    ].map(function (p) {
+      return { label: p.label, fn: function () { return datePresetRange_(p.key); } };
+    });
     presets.forEach(function (p) {
       var chip = document.createElement('button');
       chip.type = 'button';

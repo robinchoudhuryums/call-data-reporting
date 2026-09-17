@@ -739,8 +739,8 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
 
     rung += aRung; answered += aAnswered; missed += aMissed;
 
-    if (aRung > 0) {
-      const aPct = (aAnswered / aRung) * 100;
+    if (answerRateDenom_(aAnswered, aMissed, aRung) > 0) {
+      const aPct = answerRatePct_(aAnswered, aMissed, aRung);   // DD-2: one formula
       if (aPct < ALERT_LOW_AGENT_THRESHOLD) {
         lowAgents.push({
           name: r.agent, rung: aRung, answered: aAnswered, missed: aMissed,
@@ -752,7 +752,7 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
   lowAgents.sort(function (a, b) { return a.pct - b.pct; });
   return {
     rung: rung, answered: answered, missed: missed,
-    pct: rung > 0 ? (answered / rung) * 100 : 0,
+    pct: answerRatePct_(answered, missed, rung),   // DD-2: one formula (ANSWER_RATE_FORMULA)
     lowAgents: lowAgents,
   };
 }

@@ -389,6 +389,27 @@ function prevBusinessDayIso_(now) {
 }
 
 /**
+ * O-2 (broad-scan 2026-09-17): the last BUSINESS day on or before `iso`
+ * (weekends + company holidays walked back, bounded at 14 steps). A
+ * zero-activity day writes no DQE rows, so a window that ENDS on a Saturday
+ * (a month ending on a weekend) or a Friday holiday is complete once the
+ * last business day's data landed -- the digest freshness gate compares
+ * against this, never the calendar end date.
+ */
+function lastBusinessDayOnOrBeforeIso_(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return String(iso || '');
+  let d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+  for (let i = 0; i < 14; i++) {
+    const dow = d.getDay();
+    const cur = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    if (dow !== 0 && dow !== 6 && !isCompanyHoliday_(cur)) return cur;
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, 12);
+  }
+  return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+}
+
+/**
  * Parses a skip/holiday spec into an array of {from, to} ISO ranges.
  * Accepts single dates (`2026-12-25`), inclusive `..` ranges, comma
  * lists of either, and whitespace anywhere. Malformed tokens are

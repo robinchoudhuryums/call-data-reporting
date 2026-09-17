@@ -208,7 +208,8 @@ function getIndividualReport(req) {
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
                  + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey
-                 + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+                 + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_()
+                 + ':' + answerRateCacheTag_();   // DD-2: the rate formula is a cache dimension
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -553,7 +554,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     rung:     Math.round(teamTotal.rung     / activeAgentCount),
     missed:   Math.round(teamTotal.missed   / activeAgentCount),
     answered: Math.round(teamTotal.answered / activeAgentCount),
-    pctAnswered: teamTotal.rung     > 0 ? (teamTotal.answered / teamTotal.rung)    * 100 : 0,
+    pctAnswered: answerRatePct_(teamTotal.answered, teamTotal.missed, teamTotal.rung),   // DD-2
     tttPerCall:  teamTotal.answered > 0 ? (teamTotal.ttt       / teamTotal.answered)     : 0,
     att:         teamTotal.answered > 0 ? (teamTotal.attTotal  / teamTotal.answered)     : 0,
   };
@@ -582,7 +583,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     dailyRung:     (deptTotal.rung     / dayCount).toFixed(1),
     dailyMissed:   (deptTotal.missed   / dayCount).toFixed(1),
     dailyAnswered: (deptTotal.answered / dayCount).toFixed(1),
-    ansPct:        (deptTotal.rung > 0 ? (deptTotal.answered / deptTotal.rung) * 100 : 0).toFixed(1) + '%',
+    ansPct:        answerRatePct_(deptTotal.answered, deptTotal.missed, deptTotal.rung).toFixed(1) + '%',   // DD-2
     activeDays:    dayCount,
   };
 
@@ -608,7 +609,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   visibleAgents.forEach(function (agent) {
     chartDatasets[agent] = masterMonthKeys.map(function (m) {
       const b = aggregatedStats[agent][m] || { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
-      const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
+      const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
       const att = b.answered > 0 ? (b.attTotal / b.answered) : 0;
       return {
         rung: b.rung, missed: b.missed, answered: b.answered,
@@ -639,7 +640,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   }
   const summaryData = visibleAgents.map(function (agent) {
     const s = summaryStats[agent];
-    const agPct = s.rung > 0 ? (s.answered / s.rung) * 100 : 0;
+    const agPct = answerRatePct_(s.answered, s.missed, s.rung);   // DD-2
     const agTtt = s.answered > 0 ? s.ttt      / s.answered : 0;
     const agAtt = s.answered > 0 ? s.attTotal / s.answered : 0;
     // D-2: share of the WHOLE dept's volume (deptTotal), so the roster's shares
@@ -659,7 +660,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     let priorRaw   = null;
     if (hasPrior) {
       const p = priorSummaryStats[agent];
-      const pPct = p.rung > 0 ? (p.answered / p.rung) * 100 : 0;
+      const pPct = answerRatePct_(p.answered, p.missed, p.rung);   // DD-2
       const pTtt = p.answered > 0 ? p.ttt      / p.answered : 0;
       const pAtt = p.answered > 0 ? p.attTotal / p.answered : 0;
       priorStats = {

@@ -193,3 +193,22 @@ test('R50: every Window option the client offers has a bucket here', function ()
 });
 
 function plain_(o) { return Object.assign({}, o); }
+
+// DD-2 (broad-scan 2026-09-17): the Overview trend series carries `missed` and
+// rates through answerRatePct_, so the chart line follows ANSWER_RATE_FORMULA.
+test('DD-2: ovDeptChartSeries_ rates follow the formula switch; an empty denominator breaks the line', function () {
+  const labels = ['2026-09-01', '2026-09-02'];
+  const daily = { '2026-09-01': { rung: 10, answered: 6, missed: 2 }, '2026-09-02': { rung: 0, answered: 0, missed: 0 } };
+  h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  delete h.state.props.ANSWER_RATE_FORMULA;
+  assert.deepEqual(h.call('ovDeptChartSeries_', labels, daily, {}).trend, [60, null]);
+  try {
+    h.state.props.ANSWER_RATE_FORMULA = 'answerable';
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    assert.deepEqual(h.call('ovDeptChartSeries_', labels, daily, {}).trend, [75, null]);
+    assert.match(h.call('overviewCacheKey_'), /:rf-answerable$/, 'the blob key carries the formula');
+  } finally {
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  }
+});

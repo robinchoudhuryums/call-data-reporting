@@ -244,3 +244,28 @@ test('DD-3: activeDays counts only days with a call event', function () {
   assert.equal(data.deptStats.activeDays, 1, 'the idle day is not an active day');
   assert.equal(data.deptStats.dailyRung, '10.0', 'per-day figures divide by the active day only');
 });
+
+// DD-2 (broad-scan 2026-09-17): every server rate routes through
+// answerRatePct_; under ANSWER_RATE_FORMULA=answerable IR's % Answered is the
+// H2 formula the My Department table shows, and the cache key changes with it.
+test('DD-2: IR % Answered follows ANSWER_RATE_FORMULA (rung by default, answerable on the flip)', function () {
+  // Anna: rung 10, answered 6, missed 2 -> 60.0% (rung) vs 75.0% (answerable).
+  install([dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, answered: 6, missed: 2, att: '0:03:00' })]);
+  const req = { department: 'Alpha', from: '2026-03-09', to: '2026-03-09', agents: ['Anna'] };
+  h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  let data = h.call('getIndividualReport', req);
+  assert.equal(Math.round(entry(data, 'Anna').raw.pct), 60);
+  assert.equal(data.teamAvg.pct, '60.0%');
+  assert.equal(data.deptStats.ansPct, '60.0%');
+  try {
+    h.state.props.ANSWER_RATE_FORMULA = 'answerable';
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    data = h.call('getIndividualReport', req);
+    assert.equal(Math.round(entry(data, 'Anna').raw.pct), 75, 'the flip is not served from the rung cache');
+    assert.equal(data.teamAvg.pct, '75.0%');
+    assert.equal(data.deptStats.ansPct, '75.0%');
+  } finally {
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  }
+});

@@ -228,7 +228,7 @@ tests/
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
-                              setup (INV-12), alert-recipients (B-5),
+                              setup (INV-12), alert-recipients (B-5), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
                               agent-role / agent-home (the deny wall +
                               the no-teammate-identity payload pin),
                               company-overview (getCompanyOverview
