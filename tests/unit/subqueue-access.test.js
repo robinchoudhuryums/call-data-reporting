@@ -429,3 +429,46 @@ test('picker: an unreadable parent map yields no groups rather than throwing', f
   hUtil.ctx.subQueueChildMap_ = function () { throw new Error('boom'); };
   deepEqual(hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08'), []);
 });
+
+// ---- Batch 4 (broad-scan 2026-09-17): D-6 + D-9 ---------------------------
+
+test('D-6: the combined grand total UNIONS active days and carries ansPerDay', function () {
+  function withDays(p, days) {
+    Object.defineProperty(p.totals, 'activeDayKeys', { value: days, enumerable: false });
+    return p;
+  }
+  const a = withDays(part('Sales', [{ agent: 'A', totalRung: 10, totalMissed: 2, totalAnswered: 8, totalUnique: 9, tttSeconds: 100, matchedViaRoster: true }],
+    { totalRung: 10, totalMissed: 2, totalAnswered: 8, totalUnique: 9, tttSeconds: 100,
+      rosterAgentCount: 1, queueOnlyAgentCount: 0, daysActive: 2, ansPerDay: 4 }),
+    ['2026-09-01', '2026-09-02']);
+  const b = withDays(part('PAP', [{ agent: 'C', totalRung: 4, totalMissed: 1, totalAnswered: 3, totalUnique: 4, tttSeconds: 40, matchedViaRoster: true }],
+    { totalRung: 4, totalMissed: 1, totalAnswered: 3, totalUnique: 4, tttSeconds: 40,
+      rosterAgentCount: 1, queueOnlyAgentCount: 0, daysActive: 2, ansPerDay: 1.5 }),
+    ['2026-09-02', '2026-09-03']);
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.daysActive, 3, 'a day both depts were active on is ONE day (union), not two (sum)');
+  assert.equal(r.totals.ansPerDay, 3.7, '11 answered / 3 days, 1 dp -- no longer a dash on the combined total row');
+  assert.equal(r.deptGroups[0].totals.daysActive, 2, 'per-dept subtotals keep their own count');
+  assert.ok(!Object.keys(r.totals).some(function (k) { return k === 'activeDayKeys'; }),
+    'the day set never becomes an enumerable payload field');
+});
+
+test('D-6: parts built without the day set fall back to the largest per-dept count', function () {
+  const a = part('Sales', [], { totalAnswered: 8, rosterAgentCount: 1, daysActive: 2 });
+  const b = part('PAP', [], { totalAnswered: 3, rosterAgentCount: 1, daysActive: 5 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.daysActive, 5, 'a union can never be below the largest part');
+  assert.equal(r.totals.ansPerDay, 2.2);
+});
+
+test('D-9: the single-part path grafts the REQUESTED dept\'s qcd / csrTransfer / diagnostics', function () {
+  const parent = part('Sales', [{ agent: 'P' }], { totalRung: 1 });
+  parent.csrTransfer = { pctStr: '10%' };
+  const child = part('PAP', [{ agent: 'C' }], { totalRung: 2 });
+  const r = hData.call('combineSummaries_', parent, [child]);
+  assert.equal(r, child, 'identity path is kept (no merge overhead)');
+  assert.equal(r.qcd.tag, 'Sales', 'a child\'s QCD snapshot must not ship under the parent\'s identity');
+  assert.equal(r.csrTransfer.pctStr, '10%');
+  assert.equal(r.diagnostics, parent.diagnostics);
+  assert.equal(r.totals.totalRung, 2, 'the child\'s own rows/totals are untouched');
+});

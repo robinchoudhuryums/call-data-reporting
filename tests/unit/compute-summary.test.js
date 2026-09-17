@@ -251,3 +251,19 @@ test('v22: a dept with no active days carries totals.ansPerDay=null, never 0.0',
   assert.equal(data.totals.daysActive, 0);
   assert.equal(data.totals.ansPerDay, null);
 });
+
+// ---- Batch 4 (broad-scan 2026-09-17): D-6 ---------------------------------
+
+test('D-6: computeSummary_ attaches the active-day SET non-enumerably (never serialized)', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1 }),
+    dqeRow({ date: '2026-03-10', agent: 'Ben',  ext: '501', rung: 2, answered: 2, missed: 0 }),
+  ]);
+  const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'roster');
+  assert.equal(data.totals.daysActive, 2);
+  assert.equal(data.totals.activeDayKeys.slice().sort().join(','), '2026-03-09,2026-03-10',
+    'combineSummaries_ unions this set for the combined grand total');
+  assert.ok(!Object.prototype.propertyIsEnumerable.call(data.totals, 'activeDayKeys'));
+  assert.ok(!('activeDayKeys' in JSON.parse(JSON.stringify(data.totals))),
+    'the set must not reach the cache put or the client payload');
+});

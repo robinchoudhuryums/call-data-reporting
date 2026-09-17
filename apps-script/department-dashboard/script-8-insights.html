@@ -950,6 +950,25 @@
     if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
     el.textContent = msg; el.style.display = '';
   }
+  // C2-1 (broad-scan 2026-09-17): a refusal must land on the surface the user
+  // can SEE. runInsReport used to write every refusal to #ins-form-error --
+  // inside the setup form, which insShowResults() hides -- so a parent-dept
+  // manager whose "Comparison & agents" pick spanned depts saw "Refreshing
+  // report…" forever, on every window change, and again on the next visit's
+  // first-entry auto-run (the prefs restore the mixed selection). Results
+  // visible -> the results status line; otherwise the hidden form comes back
+  // as the failure fallback (its documented role) with the message on it.
+  // Either way the launcher's loading pane is dismissed.
+  function insRefuse_(msg) {
+    launcherHideLoading_('ins-launcher-loading');
+    const results = $('insights-results');
+    if (results && results.style.display !== 'none') {
+      insSetResultsStatus_('error', msg);
+    } else {
+      insShowForm();
+      insSetFormError(msg);
+    }
+  }
 
   function insIsoOf_(d) {
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
@@ -1246,7 +1265,7 @@
   }
 
   function runInsReport() {
-    const dept = getRequestedDept(); if (!dept) { insSetFormError('No department selected.'); return; }
+    const dept = getRequestedDept(); if (!dept) { insRefuse_('No department selected.'); return; }
     // R30: clamp HERE, the single chokepoint every Insights entry path funnels
     // through -- typed dates, the "Comparison & agents" popover, the presets
     // and the trend drill all end up reading ins-from/ins-to right below.
@@ -1263,24 +1282,24 @@
     // controls is in range and clamps to nothing.
     if (insClampNote && typeof deptClampNoteSet_ === 'function') deptClampNoteSet_(insClampNote);
     const from = $('ins-from').value, to = $('ins-to').value;
-    if (!from || !to) { insSetFormError('Pick a start and end date.'); return; }
-    if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
+    if (!from || !to) { insRefuse_('Pick a start and end date.'); return; }
+    if (from > to) { insRefuse_('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ins-agent-list'));
     // Agent-free run: an empty selection is allowed -- the server defaults to
     // the full department roster (the QCD-replacement queue / dept view).
     // Resolve the comparison window. prevPeriod -> null (server's
     // INV-28 auto-adjacent default); yoy/custom -> explicit dates.
     const prior = insResolvePriorRange_(from, to);
-    if (prior && prior.error) { insSetFormError(prior.error); return; }
+    if (prior && prior.error) { insRefuse_(prior.error); return; }
     // Sub-queue Phase 2: same one-dept-per-run rule as the Individual Report.
     // Insights' team rollup + per-agent-vs-team comparisons are all per-dept
     // (INV-25/27), so a selection spanning depts is refused, and a selection
     // confined to a sub-queue group runs against THAT department.
     const __sq = subqPickerScope_($('ins-agent-list'));
     if (__sq.mixed) {
-      insSetFormError('Pick agents from one department at a time — the team '
+      insRefuse_('Pick agents from one department at a time — the team '
         + 'rollup is per-department, so a mixed selection would compare agents '
-        + 'against the wrong team.');
+        + 'against the wrong team. Open "Comparison & agents" and narrow the pick.');
       return;
     }
     const reportDept = __sq.dept || dept;
@@ -1321,7 +1340,14 @@
         // handler restores it). Render was already guarded; the button wasn't.
         if (__rtok !== reportReqSeq_.ins) return;
         gen.disabled = false; gen.textContent = prev;
-        reportLastGoodWrite_('ins', __sig, data);
+        // C2-3 (broad-scan 2026-09-17): a payload whose queue-health leg
+        // errored is served (the rest of the report is fine) but is NOT
+        // last-good -- the server skips its cache put for the same reason,
+        // and the SWR store should not pin an "unavailable" queue section
+        // over the last complete report.
+        if (!(data && data.queueHealth && data.queueHealth.error)) {
+          reportLastGoodWrite_('ins', __sig, data);
+        }
         insSavePrefs_(); __insRepaint(data);
       })
       .withFailureHandler(function (err) {

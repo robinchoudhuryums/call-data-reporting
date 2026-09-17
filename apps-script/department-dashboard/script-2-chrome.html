@@ -212,9 +212,11 @@
     // clamp runs BEFORE the debounced refresh so the fetch already carries
     // the corrected window (clamping after would fire two requests).
     $('from-date').addEventListener('change', function () {
+      datesTouched_ = true;   // C1-2: the init latest-date snap must not undo a user pick
       clearActivePreset_(); clampDeptToDate_(); refreshOnDateEdit_();
     });
     $('to-date').addEventListener('change', function () {
+      datesTouched_ = true;
       clearActivePreset_(); clampDeptToDate_(); refreshOnDateEdit_();
     });
 
@@ -466,8 +468,15 @@
         const dqe = dates && dates.dqe ? dates.dqe : null;
         if (dqe) {
           latestDqeIso_ = dqe;   // the Overview question-launcher reuses this
-          $('from-date').value = dqe;
-          $('to-date').value = dqe;
+          // C1-2 (broad-scan 2026-09-17): this snap is async and can land
+          // AFTER the user has already picked a window (a preset chip, a typed
+          // date, a chart-point deep link) -- overwriting it with the latest
+          // day and re-fetching a range they did not ask for. Snap only while
+          // the controls still hold the untouched default.
+          if (!datesTouched_) {
+            $('from-date').value = dqe;
+            $('to-date').value = dqe;
+          }
         }
         // Latest QCD day drives the Daily Call Queue Report's default
         // date, so a Monday/holiday open lands on real data instead of
@@ -480,7 +489,18 @@
         setFreshnessPill_(dates || null);
         refresh();
       })
-      .withFailureHandler(function () { refresh(); })
+      .withFailureHandler(function (err) {
+        // C1-9 (broad-scan 2026-09-17): this failure used to be SILENT -- the
+        // page just loaded on today's range with no freshness pill and no
+        // clamp, which reads as "no calls today" rather than "the date lookup
+        // failed". Say so once; the range fallback is unchanged.
+        showToast('Couldn\u2019t read the latest data date \u2014 showing today\u2019s range. '
+          + 'Pick a date to continue.' , 'error', 8000);
+        if (typeof reportClientIssue_ === 'function') {
+          reportClientIssue_('load-failure', 'getLatestDataDates failed: ' + (err && err.message ? err.message : String(err)));
+        }
+        refresh();
+      })
       .getLatestDataDates();
 
     // Default landing page is the Overview. Calling setPage here
@@ -632,8 +652,13 @@
       }, 6000);
     }
   }
+  // C1-2: true once the user has picked a window by any means (typed dates,
+  // a preset chip, an Overview chart-point deep link). The async init
+  // latest-date snap checks it before writing the From/To defaults.
+  var datesTouched_ = false;
   function initDatePresets_() {
     buildDatePresetChips_($('date-presets'), function (r) {
+      datesTouched_ = true;
       $('from-date').value = r.from;
       $('to-date').value = r.to;
       clampDeptToDate_();

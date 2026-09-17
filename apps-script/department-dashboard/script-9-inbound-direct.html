@@ -136,7 +136,13 @@
       .withSuccessHandler(function (data) {
         if (__rtok !== reportReqSeq_.inb) return;   // superseded by a newer request
         gen.disabled = false; gen.textContent = prev;
-        reportLastGoodWrite_('inbound', __sig, data);
+        // C2-3 (broad-scan 2026-09-17): an UNAVAILABLE payload (Neon down /
+        // table missing) is not a good result -- storing it evicted the real
+        // last-good one, so the next SWR pre-paint (and the fail-fallback)
+        // showed the empty state instead of the last real report.
+        if (!(data && data.meta && data.meta.available === false)) {
+          reportLastGoodWrite_('inbound', __sig, data);
+        }
         __inboundRepaint(data);
       })
       .withFailureHandler(function (err) {

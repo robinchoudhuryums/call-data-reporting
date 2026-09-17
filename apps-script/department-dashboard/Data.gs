@@ -649,7 +649,18 @@ function queueSplitNarrowedCopy_(rows, dept, opts) {
  * carousel, so combining across depts here would double-count sub-queue calls.
  */
 function combineSummaries_(primary, parts) {
-  if (parts.length === 1) return parts[0];
+  if (parts.length === 1) {
+    // D-9 (broad-scan 2026-09-17): the requested dept is the payload's
+    // identity even when it is not among the parts ('subs' scope), so its
+    // qcd / csrTransfer / diagnostics are the ones shipped -- a child's QCD
+    // snapshot under the parent's name read as the parent's numbers.
+    if (primary && primary !== parts[0]) {
+      parts[0].qcd = primary.qcd;
+      parts[0].csrTransfer = primary.csrTransfer;
+      parts[0].diagnostics = primary.diagnostics;
+    }
+    return parts[0];
+  }
   const base = parts[0];
   const rows = [];
   const groups = [];
@@ -743,6 +754,24 @@ function combineSummaries_(primary, parts) {
     });
   });
   grand.crossoverAgentCount = crossoverAgentCount;
+  // D-6 (broad-scan 2026-09-17): daysActive is the UNION of the parts' active
+  // days (computeSummary_ attaches the set non-enumerably), and ansPerDay is
+  // the deduped grand answered over it -- so the combined total row carries
+  // the same two figures a single-dept view does instead of a dash. A part
+  // built without the set (a hand-built fixture) falls back to the largest
+  // per-dept count, which a union can never be below.
+  const dayUnion = {};
+  let sawDayKeys = false, maxDays = 0;
+  parts.forEach(function (p) {
+    const t = p.totals || {};
+    maxDays = Math.max(maxDays, Number(t.daysActive) || 0);
+    if (Array.isArray(t.activeDayKeys)) {
+      sawDayKeys = true;
+      t.activeDayKeys.forEach(function (d) { dayUnion[d] = true; });
+    }
+  });
+  grand.daysActive = sawDayKeys ? Object.keys(dayUnion).length : maxDays;
+  grand.ansPerDay = grand.daysActive ? round1_(grand.totalAnswered / grand.daysActive) : null;
   // The three DURATION means are per-agent averages, so the grand total is the
   // agent-count-weighted mean of each dept's mean -- NOT a mean of means, which
   // would over-weight a small dept. Depts contributing no non-zero agents drop
@@ -905,8 +934,13 @@ function getDepartmentSummary(req) {
 
   const t0 = Date.now();
   const parts = deptSet.map(function (d) { return computeSummary_(d, from, to, scope); });
-  const primary = (subScope === 'subs') ? parts[0]
-    : parts[Math.max(0, deptSet.indexOf(dept))];
+  // D-9 (broad-scan 2026-09-17): `primary` is ALWAYS the requested dept. In
+  // 'subs' scope it is not among the parts, so it is computed separately --
+  // one extra per-dept compute on a scope the client never sends -- rather
+  // than letting a child's qcd / csrTransfer / diagnostics ship under the
+  // parent's identity (meta.department stays the requested dept below).
+  const primaryIdx = deptSet.indexOf(dept);
+  const primary = primaryIdx >= 0 ? parts[primaryIdx] : computeSummary_(dept, from, to, scope);
   const data = combineSummaries_(primary, parts);
   // The requested dept stays the payload's identity even in 'subs' scope, so
   // the client header and the dept selector don't jump.
@@ -1376,6 +1410,12 @@ function computeSummary_(dept, from, to, scope) {
   // totals.totalAnswered rather than averaging the per-agent rates.
   totals.daysActive = Object.keys(deptDays).length;
   totals.ansPerDay = totals.daysActive ? round1_(totals.totalAnswered / totals.daysActive) : null;
+  // D-6 (broad-scan 2026-09-17): the day SET rides along NON-ENUMERABLE so
+  // combineSummaries_ can UNION it across depts for the combined grand total
+  // (two depts active on the same day are one day, not two -- a count cannot
+  // be summed). Non-enumerable means it never serializes into the cache or a
+  // payload and never shows up in a test's deep-equal of `totals`.
+  Object.defineProperty(totals, 'activeDayKeys', { value: Object.keys(deptDays), enumerable: false });
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
   // Sub-queue Phase 1: every row names its OWN department, so a combined
   // parent+child table can group and label rows without inferring ownership.

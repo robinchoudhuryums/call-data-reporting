@@ -1682,6 +1682,14 @@
       if (missedSec) missedSec.style.display = 'none';
       var missedDetail = $('dept-missed-detail');
       if (missedDetail) missedDetail.style.display = 'none';
+      // C1-6 (broad-scan 2026-09-17): the CSR transfer detail (R25) renders
+      // from the summary payload too, and stayed up -- the PREVIOUS dept's
+      // per-agent transfer rows under the new dept's title -- until the new
+      // payload landed (or forever, for a non-CSR dept whose payload carries
+      // no csrTransfer: deptRenderTransferDetail_ then hides it, but only
+      // once onData runs). Hide it with the rest.
+      var transferSec = $('dept-transfer-section');
+      if (transferSec) transferSec.style.display = 'none';
     }
 
     // R7 (M-1): frost the Missed Calls section from the MOMENT the summary
@@ -1742,7 +1750,11 @@
   var refreshOnDateEdit_ = debounce_(refresh, 350);
 
   function onData(data, opts) {
-    $('refresh-btn').disabled = false;
+    // C1-5 (broad-scan 2026-09-17): the SWR pre-paint is NOT the end of the
+    // request -- re-enabling Refresh here let a second click dispatch while
+    // the live fetch was still in flight (the token guards then discard one
+    // response, the server pays for both). Only the live paint re-enables.
+    if (!(opts && opts.swr)) $('refresh-btn').disabled = false;
     // M3: clear the frost on the LIVE repaint (not the SWR pre-paint, which is
     // still "loading").
     if (!(opts && opts.swr)) {

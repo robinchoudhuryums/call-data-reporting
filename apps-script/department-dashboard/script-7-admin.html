@@ -7,6 +7,41 @@
 
   let alLastPreview = null;     // last preview result, used to gate Send
 
+  // C2-6 (broad-scan 2026-09-17): one in-flight guard for the mutation
+  // verbs that are invoked from a rendered row (no button element to
+  // disable). A second click while the first RPC is in flight used to
+  // dispatch a second remove/save; the server rejected or double-applied it
+  // and the reload raced. `mutationBusy_(key)` returns true (caller bails)
+  // while `key` is in flight, else marks it; both handlers call
+  // `mutationDone_(key)`.
+  var mutationInFlight_ = {};
+  function mutationBusy_(key) {
+    if (mutationInFlight_[key]) return true;
+    mutationInFlight_[key] = true;
+    return false;
+  }
+  function mutationDone_(key) { delete mutationInFlight_[key]; }
+
+  // C2-7 (broad-scan 2026-09-17): an admin modal's init failure used to
+  // overwrite its loader text with the error and offer nothing -- the only
+  // way out was close + reopen (and the loader kept saying "Error" until
+  // the next success). Render the message beside a Retry that restores the
+  // loader's own markup and re-runs the init.
+  function adminInitError_(elId, err, retryFn) {
+    var el = $(elId);
+    if (!el) return;
+    if (el.dataset.origHtml === undefined) el.dataset.origHtml = el.innerHTML;
+    var msg = (err && err.message ? err.message : String(err));
+    el.style.display = '';
+    el.innerHTML = '<div class="ds-note" role="alert">Error: ' + escapeHtml(msg)
+      + ' <button type="button" class="link-btn">Retry</button></div>';
+    var btn = el.querySelector('button');
+    if (btn) btn.addEventListener('click', function () {
+      el.innerHTML = el.dataset.origHtml;
+      retryFn();
+    });
+  }
+
   // -- C3 Alert/Digest Config editors (admin write surfaces) -----------
   // Loaded rows for prefill; populated by the render functions above.
   var alCfgRows_ = [];
@@ -82,10 +117,11 @@
     const c = alCfgRows_[idx];
     if (!c) return;
     if (!window.confirm('Remove alert config for "' + c.department + '"? It will stop receiving low-answer-rate alerts.')) return;
+    if (mutationBusy_('alCfgRemove')) return;   // C2-6
     alCfgStatus_('loading', 'Removing ' + c.department + '…');
     google.script.run
-      .withSuccessHandler(function () { showToast('Removed alert config for ' + c.department, 'success'); alLoadInit_(); })
-      .withFailureHandler(function (err) { alCfgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .withSuccessHandler(function () { mutationDone_('alCfgRemove'); showToast('Removed alert config for ' + c.department, 'success'); alLoadInit_(); })
+      .withFailureHandler(function (err) { mutationDone_('alCfgRemove'); alCfgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
       .removeAlertConfigRow({ department: c.department });
   }
 
@@ -286,10 +322,11 @@
     const c = alDgRows_[idx];
     if (!c) return;
     if (!window.confirm('Remove digest subscription for "' + c.email + '" (' + c.department + ')?')) return;
+    if (mutationBusy_('alDgRemove')) return;   // C2-6
     alDgStatus_('loading', 'Removing ' + c.email + '…');
     google.script.run
-      .withSuccessHandler(function () { showToast('Removed digest subscriber ' + c.email, 'success'); alLoadInit_(); })
-      .withFailureHandler(function (err) { alDgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .withSuccessHandler(function () { mutationDone_('alDgRemove'); showToast('Removed digest subscriber ' + c.email, 'success'); alLoadInit_(); })
+      .withFailureHandler(function (err) { mutationDone_('alDgRemove'); alDgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
       .removeDigestConfigRow({ email: c.email, department: c.department });
   }
 
@@ -512,8 +549,7 @@
           .getQueueReportInit();
       })
       .withFailureHandler(function (err) {
-        $('al-loading').textContent = 'Error: '
-          + (err && err.message ? err.message : String(err));
+        adminInitError_('al-loading', err, alLoadInit_);   // C2-7
       })
       .getAlertsInit();
   }
@@ -753,9 +789,11 @@
   function alQrRemove_(idx) {
     const s = alQrRows_[idx]; if (!s) return;
     if (!window.confirm('Remove ' + s.email + ' from the Daily Call Queue Report?')) return;
+    if (mutationBusy_('alQrRemove')) return;   // C2-6
+    alQrSetStatus_('loading', 'Removing ' + s.email + '…');
     google.script.run
-      .withSuccessHandler(function () { alQrReload_(); })
-      .withFailureHandler(function (err) { alQrSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .withSuccessHandler(function () { mutationDone_('alQrRemove'); alQrSetStatus_('success', 'Removed ' + s.email + '.'); alQrReload_(); })
+      .withFailureHandler(function (err) { mutationDone_('alQrRemove'); alQrSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
       .removeQueueReportSubscriber({ email: s.email });
   }
   function alQrPreview_() {
@@ -1527,8 +1565,7 @@
         ofRender_(ofLastInit);
       })
       .withFailureHandler(function (err) {
-        $('of-loading').textContent = 'Error: '
-          + (err && err.message ? err.message : String(err));
+        adminInitError_('of-loading', err, function () { ofLoadInit_(preserveStatus); });   // C2-7
       })
       .getOrphanFixInit();
   }
@@ -2158,7 +2195,7 @@
         acClearForm_();
       })
       .withFailureHandler(function (err) {
-        $('ac-loading').textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+        adminInitError_('ac-loading', err, acLoadInit_);   // C2-7
       })
       .getAccessControlInit();
   }
@@ -2303,14 +2340,17 @@
       confirmLabel: 'Remove access', cancelLabel: 'Cancel',
     }).then(function (ok) {
       if (!ok) return;
+      if (mutationBusy_('acRemove')) return;   // C2-6
       acSetStatus_('loading', 'Removing ' + a.email + '…');
       google.script.run
         .withSuccessHandler(function () {
+          mutationDone_('acRemove');
           acSetStatus_('success', 'Removed ' + a.email + '.');
           showToast('Removed agent access for ' + a.email, 'success');
           acLoadInit_();
         })
         .withFailureHandler(function (err) {
+          mutationDone_('acRemove');
           acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
         })
         .removeAccessControlRow({ email: a.email });
@@ -2381,14 +2421,17 @@
       confirmLabel: 'Remove access', cancelLabel: 'Cancel',
     }).then(function (ok) {
       if (!ok) return;
+      if (mutationBusy_('acRemove')) return;   // C2-6 (shared key: same server row set)
       acSetStatus_('loading', 'Removing ' + r.email + '…');
       google.script.run
         .withSuccessHandler(function () {
+          mutationDone_('acRemove');
           acSetStatus_('success', 'Removed ' + r.email + '. Takes effect within ~60 s.');
           showToast('Removed access for ' + r.email, 'success');
           acLoadInit_();
         })
         .withFailureHandler(function (err) {
+          mutationDone_('acRemove');
           acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
         })
         .removeAccessControlRow({ email: r.email });
@@ -2450,8 +2493,7 @@
         dcRender_(dcLastInit);
       })
       .withFailureHandler(function (err) {
-        $('dc-loading').textContent = 'Error: '
-          + (err && err.message ? err.message : String(err));
+        adminInitError_('dc-loading', err, dcLoadInit_);   // C2-7
       })
       .getDeptConfigInit();
   }

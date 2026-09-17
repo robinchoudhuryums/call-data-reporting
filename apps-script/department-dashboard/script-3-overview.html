@@ -134,6 +134,11 @@
   function applyViewAs_(dept) {
     viewAsDept_ = dept || null;
     var sel = $('dept-selector');
+    // C1-4 (broad-scan 2026-09-17): the Overview escalation strip narrows to
+    // the previewed dept inside escApplyBadge_, but nothing re-ran it on
+    // enter/exit -- the strip kept the scope it was last painted with until
+    // the next worklist load. Re-fetch the badge so the strip re-scopes now.
+    if (typeof loadEscBadge_ === 'function') loadEscBadge_();
     if (viewAsDept_) {
       document.body.setAttribute('data-view-as', 'manager');
       // Pin the dept selector to the previewed dept (managers can't switch).
@@ -242,6 +247,7 @@
         paintedFromCache = true;
         ovMarkSettled_();   // 2b: content is on screen
       } else {
+        ovClearLoadError_();   // C1-1: a fresh load shows the skeleton, not the last error
         $('ov-loading').style.display = '';
         $('ov-body').style.display = 'none';
       }
@@ -264,9 +270,11 @@
           reportClientIssue_('load-failure', 'Overview load failed: ' + (err && err.message ? err.message : String(err)));
         }
         if (!silent && !paintedFromCache) {
-          // No cached content to fall back on -- show the hard error.
-          $('ov-loading').textContent = 'Error loading overview: '
-            + (err && err.message ? err.message : String(err));
+          // No cached content to fall back on -- show the hard error. C1-1
+          // (broad-scan 2026-09-17): as a block BESIDE the skeleton with a
+          // Retry, never by overwriting the loader's markup -- that left the
+          // error text as the "loading" state of every later ovLoad_.
+          ovShowLoadError_(err && err.message ? err.message : String(err));
         } else {
           // Keep the cached / last-loaded data on screen; surface a muted
           // "refresh failing" badge instead of discarding good data.
@@ -279,6 +287,42 @@
       // R19: auto:true on the silent paths (5-min auto-refresh, banner Retry)
       // so server-side landing telemetry counts deliberate visits only.
       .getCompanyOverview({ viewAsDept: viewAsDept_ || '', auto: !!silent });
+  }
+
+  // C1-1: the hard-error state of the Overview loader. The skeleton children
+  // are hidden (not destroyed) and one `.ds-note` with a Retry is shown in
+  // their place; ovClearLoadError_ reverses it on the next non-silent load so
+  // the loader is a loader again.
+  function ovShowLoadError_(msg) {
+    var loader = $('ov-loading');
+    if (!loader) return;
+    Array.prototype.forEach.call(loader.children, function (c) {
+      if (c.id !== 'ov-load-error') c.style.display = 'none';
+    });
+    var box = $('ov-load-error');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'ov-load-error';
+      box.className = 'ds-note';
+      box.setAttribute('role', 'alert');
+      loader.appendChild(box);
+    }
+    box.innerHTML = '<strong>Couldn\u2019t load the Overview.</strong> ' + escapeHtml(msg || '')
+      + ' <button type="button" class="link-btn" id="ov-load-retry">Retry</button>';
+    box.style.display = '';
+    var btn = $('ov-load-retry');
+    if (btn) btn.addEventListener('click', function () { ovLoad_(false); });
+    loader.style.display = '';
+    $('ov-body').style.display = 'none';
+  }
+  function ovClearLoadError_() {
+    var loader = $('ov-loading');
+    if (!loader) return;
+    var box = $('ov-load-error');
+    if (box) box.style.display = 'none';
+    Array.prototype.forEach.call(loader.children, function (c) {
+      if (c.id !== 'ov-load-error') c.style.display = '';
+    });
   }
 
   // Muted "auto-refresh failing" badge at the top of the Overview body.
@@ -1181,7 +1225,14 @@
            +   '<div class="ov-subq-cards" role="group" aria-label="Sub-queues of ' + escapeHtml(g.parent.name) + '">' + cards + '</div>'
            + '</div>';
     }).join('');
-    $('ov-dept-grid').innerHTML = html;
+    // C1-8 (broad-scan 2026-09-17): an empty dept list rendered a blank grid
+    // -- indistinguishable from "still loading". Say what it means.
+    $('ov-dept-grid').innerHTML = depts.length ? html : ovEmptyStateHtml_();
+    // C1-7: every tile re-render (period bar, dept switch, view-as pre-paint)
+    // rebuilt the tiles WITHOUT the chart's solo markers, so a pinned dept's
+    // tile lost its `.ov-tile-soloed` until the next chart click. Re-sync from
+    // the chart's pin set on every render.
+    if (ovChartInstance) ovSyncTilePins_(ovChartInstance);
 
     // Sub-queue mini-card strip: the strip button expands/collapses the
     // card's detail IN PLACE with a smooth height transition (the strip
@@ -1236,23 +1287,39 @@
     });
   }
 
+  // C1-8: the Overview's empty state (no depts in the payload).
+  function ovEmptyStateHtml_() {
+    var admin = (typeof USER !== 'undefined' && USER && USER.role === 'admin');
+    return '<div class="ds-note ov-empty-state" role="status">No department data to show yet. '
+      + (admin
+          ? 'The daily import may not have run \u2014 check Admin \u25be Health, or the Pipeline Health panel in Alerts.'
+          : 'Yesterday\u2019s data usually lands by mid-morning Central. If this persists, let your admin know.')
+      + '</div>';
+  }
+
   // Admin-only: switch the main dashboard to a different dept and
   // navigate to the My Department page so the new dept's full
   // detail is visible.
   function ovRouteToDept_(deptName, isoDate) {
     const sel = $('dept-selector');
+    // C1-10 (broad-scan 2026-09-17): set the window FIRST, so the selector's
+    // change handler (which calls refresh()) already fetches the clicked day
+    // -- the old order fetched the previous window, then the clicked day, then
+    // let setPage's guard consider a third. One fetch per click now.
+    const datesSet = !!(isoDate && $('from-date') && $('to-date'));
+    if (datesSet) {
+      $('from-date').value = isoDate;
+      $('to-date').value = isoDate;
+      datesTouched_ = true;   // C1-2: the init snap must not undo the deep link
+      clearActivePreset_();
+    }
     if (sel && sel.value !== deptName) {
       sel.value = deptName;
       // Trigger the same 'change' handler the manual dropdown uses
       // -- wipes stale roster caches and re-fetches the summary.
       sel.dispatchEvent(new Event('change'));
-    }
-    // Point-click deep-link: snap the From/To range to the clicked day
-    // and re-fetch (this wins over any change-driven latest-date load).
-    if (isoDate && $('from-date') && $('to-date')) {
-      $('from-date').value = isoDate;
-      $('to-date').value = isoDate;
-      refresh();
+    } else if (datesSet) {
+      refresh();   // same dept, new window: nothing else fetches it
     }
     // setPage runs LAST: its stale-dept guard loads the table when neither of
     // the above kicked off a load (selector already on this dept + no isoDate,

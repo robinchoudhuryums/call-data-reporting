@@ -910,10 +910,12 @@
 
   function escSaveComment_(id) {
     const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
+    const busyKey = 'escComment:' + id;
+    if (mutationBusy_(busyKey)) return;   // C2-6: one save per row in flight
     escRowError_(id, '');
     google.script.run
-      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
-      .withFailureHandler(function (err) { escRowError_(id, (err && err.message ? err.message : String(err))); })
+      .withSuccessHandler(function () { mutationDone_(busyKey); showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) { mutationDone_(busyKey); escRowError_(id, (err && err.message ? err.message : String(err))); })
       .updateEscalationComment({ id: id, comments: comm ? comm.value.trim() : '' });
   }
 
