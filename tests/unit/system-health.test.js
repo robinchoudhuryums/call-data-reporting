@@ -1304,3 +1304,22 @@ test('health H2: dashboard-standards row -- current / empty / stale / not publis
   assert.equal(rowByKey(data, 'setup-sheets').status, 'warn', 'the twelfth sheet is a setup() sheet');
   assert.ok(/Dashboard Standards/.test(rowByKey(data, 'setup-sheets').value));
 });
+
+// H3: the trigger-quota row (ported from team-tools' pre-flight). 20 is the
+// platform cap; the row warns at 17 so an operator has three installs of
+// headroom before the 21st throws at install time.
+test('H3: the trg-quota row counts installed triggers against the 20 cap and warns at 17', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const few = ['a_', 'b_', 'c_'];
+  let row = withTriggers_(few, function () { return rowByKey(h.call('getSystemHealth'), 'trg-quota'); });
+  assert.equal(row.status, 'ok');
+  assert.equal(row.value, '3 of 20 installed');
+  assert.equal(row.hint, '');
+  const many = []; for (let i = 0; i < 17; i++) many.push('fn' + i + '_');
+  row = withTriggers_(many, function () { return rowByKey(h.call('getSystemHealth'), 'trg-quota'); });
+  assert.equal(row.status, 'warn');
+  assert.equal(row.value, '17 of 20 installed');
+  assert.ok(/21st trigger/.test(row.hint) && /dispatcher/.test(row.hint), row.hint);
+  // The empty inventory (the shim default) is a clean 0 -- no false warn on a fresh install.
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'trg-quota').value, '0 of 20 installed');
+});

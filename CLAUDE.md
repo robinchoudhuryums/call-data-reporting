@@ -109,6 +109,24 @@ cd apps-script/dqe-report  && clasp push -f   # frozen — cleanup deploys only
 # (.claude/settings.json).
 bash scripts/check-duplicated-files.sh
 
+# H3 (ported from team-tools): the UNDECLARED-IDENTIFIER net. Lints each Apps
+# Script project as ONE concatenation -- the one global scope the platform
+# loads -- so a name that reads fine and throws ReferenceError at runtime is
+# caught statically (no selective-load suite or shape pin can see it; it
+# caught a live one in team-tools the week it landed). Needs eslint (`npm ci`,
+# a devDependency -- `npm run ci` stays zero-dep); with eslint absent it SKIPS
+# and exits 0, EXCEPT under CI=true, where absence FAILS (the F-9 rule). Runs
+# in CI as the `lint` job. Its zero-dep twin, the duplicate-top-level-name pin
+# in cross-file-pins.test.js, catches the other half (a name declared TWICE in
+# one project -- the onOpen collision).
+npm run lint:gas
+
+# H3 (ported from team-tools): BITE-CHECK a pin -- mutate a committed file,
+# run `node --test`, assert the named test goes red, restore the file. A pin
+# that has never been shown to bite has never been shown to work. Refuses a
+# file with uncommitted changes (it ends in `git checkout -- <file>`).
+#   scripts/bite.sh "<label>" <file> "<python mutation on s>" "<test-name substring>"
+
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
@@ -1120,6 +1138,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the last-loaded file's definition wins. If a project needs more
   than one menu, build them all from one `onOpen` (see
   `cdr-report/CDR Tools menu.js` calling `installDQEDrilldownMenu_`).
+  ENFORCED (H3): `cross-file-pins.test.js` fails on a top-level name declared
+  in two files of the same project, and `npm run lint:gas` fails on a name
+  declared in none (the ReferenceError class no selective-load suite sees).
 - **`<?!= JSON.stringify(x) ?>` is not script-tag safe.** Apps
   Script's force-print scriptlet doesn't HTML-escape, and
   `JSON.stringify` does not escape `</script>` inside string

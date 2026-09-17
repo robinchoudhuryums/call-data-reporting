@@ -633,6 +633,19 @@ function getSystemHealth(req) {
         ? 'Each flagged row above says what to do. A row reading "installed but DISABLED" is the '
           + 'dangerous one -- it looks scheduled and does nothing.'
         : '');
+    // H3 (ported from team-tools' trigger-quota pre-flight): Apps Script caps
+    // installable triggers at 20 per user per script and REFUSES the 21st
+    // with a bare exception -- team-tools fell off that cliff on 2026-09-11.
+    // This project has fifteen newTrigger sites across its engines, so the
+    // count is worth a row; warn with three of headroom, since an install
+    // that fails is discovered only by the operator reading the throw.
+    add('triggers', 'trg-quota', 'Trigger quota (20 per script)',
+      trig.length >= TRIGGER_QUOTA_WARN_AT_ ? 'warn' : 'ok',
+      trig.length + ' of ' + TRIGGER_QUOTA_ + ' installed',
+      trig.length >= TRIGGER_QUOTA_WARN_AT_
+        ? 'The platform refuses the 21st trigger with an exception at install time. Uninstall an '
+          + 'optional engine or fold engines onto one dispatcher trigger before installing another.'
+        : '');
   } catch (e) { add('triggers', 'trg-probe', 'Trigger inventory', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // Last outcomes of the optional services (property-backed, cheap).
@@ -1188,6 +1201,11 @@ function reportClientIssue(payload) {
 // Gate: any signed-in role (agents included -- the rollout-timing question
 // covers the agent app too), mirroring reportClientIssue's signed-in gate;
 // role 'none' is rejected.
+
+// H3: the Apps Script installable-trigger cap (per user per script) and the
+// Health row's warn threshold (three of headroom -- see the trg-quota row).
+var TRIGGER_QUOTA_ = 20;
+var TRIGGER_QUOTA_WARN_AT_ = 17;
 
 var PRESENCE_CACHE_KEY_ = 'presence:v1';
 var PRESENCE_CACHE_TTL_SEC_ = 1800;   // the map itself survives 30 min of total silence
