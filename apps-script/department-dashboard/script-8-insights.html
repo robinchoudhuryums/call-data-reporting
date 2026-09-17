@@ -2183,7 +2183,9 @@
       inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
         p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : '',
         benchValueCls_('abandoned %', t.abandonedPctStr, true)),
-      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the ' + ABANDON_STANDARD_ + '% threshold this month', '',
+      // D-8: month-to-date THROUGH THE WINDOW END (a past window shows ITS
+      // month), the same rule the all-departments queue report follows.
+      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the ' + ABANDON_STANDARD_ + '% threshold, month-to-date through the window end', '',
         violValCls),
     ];
     // R16e (owner): Avg answer + Longest wait are PROMOTED from the muted

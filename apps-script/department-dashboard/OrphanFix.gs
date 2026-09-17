@@ -730,6 +730,7 @@ function renameAgentInNeon_(fromName, toName) {
       var srs = skipStmt.executeQuery();
       var skipped = srs.next() ? srs.getInt(1) : 0;
       srs.close(); skipStmt.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'orphan-rename');   // OD-3: a count row
 
       conn.commit();
       Logger.log('renameAgentInNeon_: %s -> %s | renamed %s, conflict-skipped %s',

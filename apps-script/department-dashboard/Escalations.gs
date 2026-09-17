@@ -367,6 +367,7 @@ function getEscalationsBadge() {
       }
     }
     rs.close(); stmt.close();
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(out).length, 'escalations');   // OD-3
     out.byDept.sort(function (a, b) { return b.open - a.open || (a.dept < b.dept ? -1 : 1); });
     return out;
   } catch (e) {
@@ -499,6 +500,7 @@ function getEscalations(req) {
         oldestOpen = ars.getString('oldest_open') || null;
       }
       ars.close(); astmt.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(counts).length + 40, 'escalations');   // OD-3
     } catch (ce2) { /* best-effort: band + chip just hide */ }
     // E2: keep the outage snapshot warm (age-gated to one bounded query per
     // ESC_SNAPSHOT_REFRESH_MIN; same connection; best-effort).
@@ -1280,6 +1282,7 @@ function escRowDepartment_(conn, id) {
   var rs = stmt.executeQuery();
   var dept = rs.next() ? rs.getString('department') : null;
   rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(String(dept || '').length + 8, 'escalations');   // OD-3
   return dept;
 }
 
@@ -1290,6 +1293,7 @@ function escRowMeta_(conn, id) {
   var rs = stmt.executeQuery();
   var out = rs.next() ? { status: rs.getString('status'), department: rs.getString('department') } : null;
   rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(out ? JSON.stringify(out).length : 8, 'escalations');   // OD-3
   return out;
 }
 
@@ -1324,6 +1328,7 @@ function escRowFull_(conn, id) {
     };
   }
   rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(row ? JSON.stringify(row).length : 8, 'escalations');   // OD-3
   return row;
 }
 
@@ -1420,6 +1425,7 @@ function escPendingReviewPing_() {
         depts = rs.getString('depts') || '';
       }
       rs.close(); stmt.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(maxts.length + depts.length + 8, 'escalations');   // OD-3
       if (!n) return;
       var to = getAdminEmails_().join(',');
       if (!to) return;   // no recipients -- leave the watermark; retry later

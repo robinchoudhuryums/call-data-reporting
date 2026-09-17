@@ -331,3 +331,20 @@ test('OUTBOUND fallback classifies a date past the copy ceiling as fallback-gap'
   assert.equal(res.reason, 'fallback-gap');
   assert.equal(res.fallbackThrough, '2026-08-10');
 });
+
+// ---- OD-5 (broad-scan 2026-09-17): a pruned journey is disclosed as pruned ------
+
+test('OD-5: journeyPrunedMeta_ flags a NULL journey on a call older than the retention horizon, and nothing else', function () {
+  const f = h.ctx.journeyPrunedMeta_;
+  const now = Date.UTC(2026, 8, 17);   // 2026-09-17
+  h.ctx.neonRetentionSettings_ = function () { return { journeyDays: 90, callDays: 400, historyMonths: 25 }; };
+  const old = f({ journey: null }, '2026-05-01', now);
+  assert.equal(old.journeyPruned, true);
+  assert.equal(old.journeyHorizonDays, 90);
+  assert.ok(old.ageDays > 90);
+  assert.deepEqual(JSON.parse(JSON.stringify(f({ journey: null }, '2026-09-10', now))), {}, 'a recent call with no journey is NOT pruned (pre-extension / not captured)');
+  assert.deepEqual(JSON.parse(JSON.stringify(f({ journey: [{ t: '09:00:00' }] }, '2026-05-01', now))), {}, 'a call WITH a journey is never flagged');
+  assert.deepEqual(JSON.parse(JSON.stringify(f(null, '2026-05-01', now))), {});
+  delete h.ctx.neonRetentionSettings_;
+  assert.equal(f({ journey: null }, '2026-05-01', now).journeyHorizonDays, 90, 'default horizon when NeonRetention.gs is not in scope');
+});

@@ -143,7 +143,7 @@ function mtdStartIso_(todayIso) {
  * mapped queues, including sub-queue rollup). Used for the
  * "Violations (current month)" KPI tile.
  */
-function computeMtdViolations_(dept, values, ssTZ, qOpts, dates) {
+function computeMtdViolations_(dept, values, ssTZ, qOpts, dates, anchorIso) {
   const queues = queuesForDept_(dept, qOpts);
   if (queues.length === 0) return 0;
   const queueSet = {};
@@ -158,7 +158,10 @@ function computeMtdViolations_(dept, values, ssTZ, qOpts, dates) {
   // read-side twin of the R46 write-side rule; `tz` still resolves the ROW
   // dates (a Date cell renders in the spreadsheet's zone). Pinned by
   // overview-qcd-snapshot.test.js (D-1).
-  const mtdStart = mtdStartIso_();
+  // D-8: `anchorIso` (the window end, when it is in the past) bounds BOTH
+  // ends: the month is the anchor's, and days after the anchor are excluded.
+  const mtdStart = mtdStartIso_(anchorIso);
+  const mtdEnd = anchorIso || null;
   let total = 0;
   for (let i = 0; i < values.length; i++) {
     const r = values[i];
@@ -168,6 +171,7 @@ function computeMtdViolations_(dept, values, ssTZ, qOpts, dates) {
     if (!queueSet[q]) continue;
     const dateIso = dates ? dates[i] : rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
     if (!dateIso || dateIso < mtdStart) continue;
+    if (mtdEnd && dateIso > mtdEnd) continue;   // D-8
     total += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1]) || 0;
   }
   return total;
@@ -898,7 +902,13 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   // so read [min(mainFrom, mtdStart), max(to, today)]. On the sheet path
   // readQcdGrid_ ignores the window and returns the whole sheet (unchanged).
   const todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
-  const mtdStartIso = mtdStartIso_(todayIso);   // D-1: one month-start resolver
+  // D-8 (broad-scan 2026-09-17): "MTD" is month-to-date THROUGH THE WINDOW END
+  // (the R12-24 rule the all-departments report already follows), not the
+  // current calendar month regardless of the selected window -- a January
+  // review in March used to show March's violations under a January window.
+  // A window ending today (or later) is unchanged.
+  const mtdAnchorIso = (to && to < todayIso) ? to : todayIso;
+  const mtdStartIso = mtdStartIso_(mtdAnchorIso);   // D-1: one month-start resolver
   const mainFrom = rangeOnly ? from : trendStartIso;
   const readFrom = (mainFrom < mtdStartIso) ? mainFrom : mtdStartIso;
   const readTo   = (to > todayIso) ? to : todayIso;
@@ -1163,7 +1173,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   // available per-queue in queueBreakdown[].violations.
   const tMtd = Date.now();
   const violationsMtd = computeMtdViolations_(dept, values, ssTZ,
-    separate ? { includeChildren: false } : qOpts, dates);
+    separate ? { includeChildren: false } : qOpts, dates, mtdAnchorIso);   // D-8
   Logger.log('[qcd-report] dept=' + dept + ' window=' + from + '..' + to
     + (rangeOnly ? ' rangeOnly' : '') + ' gridMs=' + gridMs + ' loopMs=' + loopMs
     + ' mtdPassMs=' + (Date.now() - tMtd) + ' rows=' + values.length);

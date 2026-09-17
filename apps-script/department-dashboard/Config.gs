@@ -719,6 +719,22 @@ const CSR_TRANSFER_DATE_COL_ = 3;           // C (1-indexed) -- the window filte
 // SECRET keys must never have their VALUES rendered on any surface — the
 // inventory shows key names only, and prop-registry.test.js pins that the
 // Health payload never contains a secret's value.
+// D-5 (broad-scan 2026-09-17; lives in Config.gs so every selective-load suite sees it): per-execution flag set by the two QCD snapshot
+// helpers when their read THREW (both swallow the throw and return a partial /
+// null snapshot so the page still renders). The cache puts that embed a
+// snapshot -- companyOverview, overviewChartYtd, summary -- check it and SKIP
+// the put, the `deptConfigReadFailed_` pattern: a transient throw in the
+// 23k-row QCD read otherwise pinned an Overview with no QCD chips and a My
+// Department with no Queue panel for the 6 h TTL. `var` so a harness can
+// reset it between fixture swaps.
+var QCD_SNAPSHOT_READ_FAILED_ = false;
+function noteQcdSnapshotReadFailed_(where, e) {
+  QCD_SNAPSHOT_READ_FAILED_ = true;
+  Logger.log('%s failed (snapshot degraded; caches that embed it will NOT be written this execution): %s',
+    where, (e && e.message) ? e.message : e);
+}
+function qcdSnapshotReadFailed_() { return !!QCD_SNAPSHOT_READ_FAILED_; }
+
 var PROP_REGISTRY_ = Object.freeze({
   secret: Object.freeze({ NEON_PASS: true, HMAC_SECRET: true }),
   exact: Object.freeze({

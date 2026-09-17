@@ -33,13 +33,13 @@ function props(extra) {
 
 test('R27: horizons default, honor overrides, and are floored', function () {
   const d = h.call('neonRetentionSettings_', props());
-  assert.deepEqual(JSON.parse(JSON.stringify(d)), { journeyDays: 90, callDays: 400, historyMonths: 13 });
+  assert.deepEqual(JSON.parse(JSON.stringify(d)), { journeyDays: 90, callDays: 400, historyMonths: 25 });
   const o = h.call('neonRetentionSettings_', props({
-    NEON_RETENTION_JOURNEY_DAYS: '120', NEON_RETENTION_CALL_DAYS: '500', NEON_RETENTION_HISTORY_MONTHS: '18' }));
-  assert.deepEqual(JSON.parse(JSON.stringify(o)), { journeyDays: 120, callDays: 500, historyMonths: 18 });
+    NEON_RETENTION_JOURNEY_DAYS: '120', NEON_RETENTION_CALL_DAYS: '500', NEON_RETENTION_HISTORY_MONTHS: '30' }));
+  assert.deepEqual(JSON.parse(JSON.stringify(o)), { journeyDays: 120, callDays: 500, historyMonths: 30 });
   const f = h.call('neonRetentionSettings_', props({
     NEON_RETENTION_JOURNEY_DAYS: '5', NEON_RETENTION_CALL_DAYS: '30', NEON_RETENTION_HISTORY_MONTHS: '2' }));
-  assert.deepEqual(JSON.parse(JSON.stringify(f)), { journeyDays: 30, callDays: 367, historyMonths: 13 },
+  assert.deepEqual(JSON.parse(JSON.stringify(f)), { journeyDays: 30, callDays: 367, historyMonths: 25 },
     'an operator cannot set a horizon below the floors');
   const junk = h.call('neonRetentionSettings_', props({ NEON_RETENTION_CALL_DAYS: 'lots' }));
   assert.equal(junk.callDays, 400, 'unparseable -> default');
@@ -55,12 +55,13 @@ test('R27: the call-row floor is strictly above the coverage checks\' max window
       f + ' can look back ' + m[1] + ' days; a retention floor of ' + floors.callDays
       + ' must exceed it or a pruned date reads as a coverage gap');
   });
-  // 13 months is also past the 366-day coverage window and the INV-29 12-month trend.
-  assert.ok(floors.historyMonths >= 13);
+  // OD-4: 25 months covers the INV-29 12-month trend AND its same-length INV-28
+  // prior window (~24 months back) for a window ending today; 13 truncated both.
+  assert.ok(floors.historyMonths >= 25);
 });
 
 test('R27: the plan is six ctid-batched statements over exactly the retained tables', function () {
-  const plan = h.call('neonRetentionPlan_', { journeyDays: 90, callDays: 400, historyMonths: 13 }, 5000);
+  const plan = h.call('neonRetentionPlan_', { journeyDays: 90, callDays: 400, historyMonths: 25 }, 5000);
   assert.deepEqual(JSON.parse(JSON.stringify(plan.map(function (s) { return s.key; }))),
     ['inbound_calls:journey', 'outbound_calls:journey', 'inbound_calls:rows',
      'outbound_calls:rows', 'dqe_history:rows', 'qcd_history:rows']);
@@ -71,9 +72,9 @@ test('R27: the plan is six ctid-batched statements over exactly the retained tab
   });
   assert.match(plan[0].sql, /^UPDATE inbound_calls SET journey = NULL .*journey IS NOT NULL AND call_date < CURRENT_DATE - 90 /);
   assert.match(plan[2].sql, /^DELETE FROM inbound_calls .*call_date < CURRENT_DATE - 400 /);
-  assert.match(plan[4].sql, /^DELETE FROM dqe_history .*call_date < \(CURRENT_DATE - INTERVAL '13 months'\)::date /);
+  assert.match(plan[4].sql, /^DELETE FROM dqe_history .*call_date < \(CURRENT_DATE - INTERVAL '25 months'\)::date /);
   // Operator input reaches the SQL only as integers.
-  const evil = h.call('neonRetentionPlan_', { journeyDays: '90; DROP TABLE x', callDays: 400, historyMonths: 13 }, 10);
+  const evil = h.call('neonRetentionPlan_', { journeyDays: '90; DROP TABLE x', callDays: 400, historyMonths: 25 }, 10);
   assert.match(evil[0].sql, /CURRENT_DATE - 90 LIMIT 10\)$/);
 });
 
@@ -102,7 +103,7 @@ function conn(counts, throws) {
 }
 
 function plan(batch) {
-  return h.call('neonRetentionPlan_', { journeyDays: 90, callDays: 400, historyMonths: 13 }, batch);
+  return h.call('neonRetentionPlan_', { journeyDays: 90, callDays: 400, historyMonths: 25 }, batch);
 }
 
 test('R27: a step keeps batching until a batch comes back short', function () {
@@ -125,7 +126,7 @@ test('R27: the run budget stops batching and is reported ok (it continues next r
   assert.equal(res.budgetHit, true);
   assert.ok(res.steps[0].rows > 0 && res.steps[0].done === false, 'first step left unfinished');
   assert.equal(res.steps[1].batches, 0, 'later steps not attempted this run');
-  const s = h.call('neonRetentionSummary_', { journeyDays: 90, callDays: 400, historyMonths: 13 }, res);
+  const s = h.call('neonRetentionSummary_', { journeyDays: 90, callDays: 400, historyMonths: 25 }, res);
   assert.match(s, /^ok pruned \d+ row\(s\), budget hit/);
   assert.match(s, /inbound_calls:journey=\d+\+/, 'an unfinished step is marked with +');
 });
@@ -139,7 +140,7 @@ test('R27: a not-yet-created table is a clean per-step skip; a throwing step is 
   assert.equal(res.steps[2].error, 'deadlock detected');
   assert.equal(res.steps[4].rows, 2, 'steps after the throw still run');
   assert.deepEqual(JSON.parse(JSON.stringify(res.errors)), ['inbound_calls:rows: deadlock detected']);
-  const s = h.call('neonRetentionSummary_', { journeyDays: 90, callDays: 400, historyMonths: 13 }, res);
+  const s = h.call('neonRetentionSummary_', { journeyDays: 90, callDays: 400, historyMonths: 25 }, res);
   assert.match(s, /^FAILED 1 step\(s\) threw/);
   assert.match(s, /outbound_calls:journey=n\/a/);
   assert.match(s, /inbound_calls:rows=ERR/);

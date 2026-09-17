@@ -227,8 +227,11 @@ test('CORE-2 (F-35): active-agents picker serves from Neon when the DQE sheet is
   assert.ok(res.agents.indexOf('Anna') !== -1, 'Anna active from dqe_history despite no sheet');
   assert.ok(res.agents.indexOf('Ben') !== -1);
 
-  // Neon down + no sheet -> clean empty shape, no crash.
+  // Neon down + no sheet -> clean empty shape, no crash. D-4: the first call
+  // memoized its Neon rows for THIS execution, so drop the memo to simulate a
+  // fresh request (in one execution a memo hit is the intended behaviour).
   h.ctx.getDashboardNeonConn_ = function () { return null; };
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
   h.state.cache.clear();
   const empty = h.call('computeActiveAgentsInRange_', 'Alpha', '2026-03-09', '2026-03-15',
     { names: ['Anna', 'Ben'] });
@@ -775,4 +778,40 @@ test('R40: retention is bounded -- the memo cannot grow without limit', function
   assert.equal(h.ctx.DQE_SHEET_ROWS_MEMO_.order.length, max, 'FIFO evicts past the cap');
   assert.equal(Object.keys(h.ctx.DQE_SHEET_ROWS_MEMO_.byKey).length, max,
     'and the evicted rows are released, not just unlisted');
+});
+
+// ---- D-4 (broad-scan 2026-09-17): the Neon DAL fetch is memoized per execution --
+
+test('D-4: a repeat Neon fetch of the same window is served from the per-execution memo (one json_agg, cloned per caller)', function () {
+  install('neon');
+  let opens = 0;
+  const realConn = h.ctx.getDashboardNeonConn_;
+  h.ctx.getDashboardNeonConn_ = function () { opens++; return realConn.apply(this, arguments); };
+  const a = h.call('neonFetchDqeRows_', '2026-03-09', '2026-03-15', {});
+  const b = h.call('neonFetchDqeRows_', '2026-03-09', '2026-03-15', {});
+  assert.equal(opens, 1, 'the second identical read never touched Neon (a Sales+PAP combined view issued one per dept)');
+  assert.ok(a.length > 0 && a.length === b.length);
+  assert.equal(b._neonReachable, true, 'the LM2 marker rides on the memo hit (a reachable-empty read stays trusted)');
+  assert.notEqual(a, b, 'each caller owns its own array');
+  assert.notEqual(a[0], b[0], 'and its own row objects (the R40 shallow-clone contract)');
+  a[0].totalRung = 999;
+  assert.notEqual(b[0].totalRung, 999, 'a caller\'s in-place rewrite never leaks into another\'s copy');
+  const c = h.call('neonFetchDqeRows_', '2026-03-09', '2026-03-15', { includeMissedDetail: true });
+  assert.equal(opens, 2, 'a different shape is a different key');
+  assert.ok(Array.isArray(c[0].slots));
+  h.ctx.getDashboardNeonConn_ = realConn;
+});
+
+test('D-4: an unreachable / failed read is NOT memoized -- the next caller retries', function () {
+  install('neon');
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  const down = h.call('neonFetchDqeRows_', '2026-03-09', '2026-03-15', {});
+  assert.equal(down.length, 0);
+  assert.ok(!down._neonReachable);
+  assert.ok(!h.ctx.DQE_SHEET_ROWS_MEMO_ || !Object.keys(h.ctx.DQE_SHEET_ROWS_MEMO_.byKey).some(function (k) { return k.indexOf('neon|') === 0; }),
+    'nothing memoized for the failed read');
+  h.ctx.getDashboardNeonConn_ = fakeNeonConn;
+  const up = h.call('neonFetchDqeRows_', '2026-03-09', '2026-03-15', {});
+  assert.ok(up.length > 0 && up._neonReachable, 'the retry in the same execution reaches Neon');
 });

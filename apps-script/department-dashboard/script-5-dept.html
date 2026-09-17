@@ -733,6 +733,13 @@
         body.innerHTML = ((resp.kind === 'outbound')
           ? outboundJourneyHtml_(resp.call)
           : callJourneyHtml_(resp.call))
+          // OD-5: a NULL journey on a call older than the retention horizon is
+          // a PRUNED journey, not a pre-capture one -- say which.
+          + (resp.journeyPruned
+              ? '<div class="ds-note">Leg-by-leg detail for this call was pruned — journeys are retained '
+                + escapeHtml(String(resp.journeyHorizonDays || 90)) + ' days and this call is '
+                + escapeHtml(String(resp.ageDays || '')) + ' days old. The summary above is what remains.</div>'
+              : '')
           + (resp.fallbackSource
               ? '<div class="ds-note">Served from the sheet fallback copy — Neon is unreachable'
                 + (resp.fallbackThrough ? ' · coverage through ' + escapeHtml(isoDateShort_(resp.fallbackThrough)) : '')

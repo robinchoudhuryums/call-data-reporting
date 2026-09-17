@@ -877,6 +877,7 @@ function neonAlertConfigRawValues_() {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'config');   // OD-3
     rs.close(); stmt.close();
     return JSON.parse(json || '[]').map(function (r) {
       return [r.department || '', r.threshold == null ? '' : r.threshold,

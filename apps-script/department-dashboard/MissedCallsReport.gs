@@ -320,6 +320,9 @@ function missedEnrichQueueOnlyFromInbound_(queueOnly) {
         };
       }
       rs.close(); st.close();
+      // OD-3: the per-row enrich (up to MISSED_ENRICH_MAX_CALLS_ calls per My
+      // Department open) was unmetered; the facts map is what it pulled.
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(facts).length, 'missed-enrich');
       queueOnly.forEach(function (q) {
         (q.entries || []).forEach(function (e) {
           const hit = e.parentId && facts[e.date + '|' + e.parentId];

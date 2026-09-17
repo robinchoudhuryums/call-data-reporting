@@ -477,7 +477,7 @@ test('D-9: getDepartmentSummary in subs scope ships the REQUESTED dept\'s qcd, n
   const ctx = hData.ctx;
   const saved = {};
   ['resolveUser_', 'assertDeptAccess_', 'subQueueChildMap_', 'computeSummary_',
-   'getOverviewParentMap_', 'logReportUsage_', 'reportFreshnessTag_'].forEach(function (k) { saved[k] = ctx[k]; });
+   'getOverviewParentMap_', 'logReportUsage_', 'reportFreshnessTag_', 'getRosterForDepartment_'].forEach(function (k) { saved[k] = ctx[k]; });
   try {
     hData.state.userEmail = 'admin@x.com';
     hData.state.props.SPREADSHEET_ID = 'fake';
@@ -488,6 +488,7 @@ test('D-9: getDepartmentSummary in subs scope ships the REQUESTED dept\'s qcd, n
     ctx.getOverviewParentMap_ = function () { return { Child: 'Parent' }; };
     ctx.logReportUsage_ = function () {};
     ctx.reportFreshnessTag_ = function () { return 'na'; };
+    ctx.getRosterForDepartment_ = function () { return { names: ['P'], byAgent: {}, allExtensions: {} }; };   // D-7: the key hashes the roster
     const computed = [];
     ctx.computeSummary_ = function (d) {
       computed.push(d);
@@ -504,4 +505,21 @@ test('D-9: getDepartmentSummary in subs scope ships the REQUESTED dept\'s qcd, n
     Object.keys(saved).forEach(function (k) { ctx[k] = saved[k]; });
     hData.state.cache.clear();
   }
+});
+
+// ---- D-3 (broad-scan 2026-09-17): duration means weighted by NON-ZERO counts --
+
+test('D-3: combined duration means weight each dept by the agents that CONTRIBUTED (avgNonzero_\'s denominator), not roster size', function () {
+  // Sales: 12 rostered, ONE agent with talk time (ATT 60s). PAP: 1 rostered, 3
+  // contributing agents? (a floater-free dept with 3 non-zero rows) ATT 120s.
+  const a = part('Sales', [], { rosterAgentCount: 12, attSeconds: 60, attNonzeroCount: 1 });
+  const b = part('PAP', [], { rosterAgentCount: 3, attSeconds: 120, attNonzeroCount: 3 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  // (60*1 + 120*3) / 4 = 105 -- the avgNonzero_ over the union. Roster weighting
+  // gave (60*12 + 120*3) / 15 = 72, over-weighting Sales's eleven zero-talk agents.
+  assert.equal(r.totals.attSeconds, 105);
+  // A part built without the count (a hand-built fixture / an older shape) falls back to roster weighting.
+  const c = part('Sales', [], { rosterAgentCount: 2, attSeconds: 60 });
+  const d = part('PAP', [], { rosterAgentCount: 1, attSeconds: 120 });
+  assert.equal(hData.call('combineSummaries_', c, [c, d]).totals.attSeconds, 80, 'fallback: (60*2+120*1)/3');
 });

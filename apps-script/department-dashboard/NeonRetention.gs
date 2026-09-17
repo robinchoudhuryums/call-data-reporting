@@ -38,7 +38,8 @@
  * horizon must stay ABOVE that so a pruned date can never read as a coverage
  * gap -- neon-retention.test.js pins the floor against NeonCoverage's cap.
  * The journey floor keeps the call-path drill's recent window intact; the
- * history floor keeps every 12-month trend whole on the Neon read path.
+ * history floor (25 months, OD-4) keeps a 12-month trend AND its same-length
+ * INV-28 prior window whole on the Neon read path for windows ending recently.
  *
  * Interaction with the Neon backup (NeonBackup.gs): closed months of the two
  * per-call tables are written ONCE and then skipped, and every horizon here
@@ -54,9 +55,21 @@
  * FAILED run. Editor-run: `runNeonRetentionPrune()` (admin-gated).
  */
 
-var NEON_RETENTION_DEFAULTS_ = Object.freeze({ journeyDays: 90, callDays: 400, historyMonths: 13 });
+// OD-4 (broad-scan 2026-09-17): historyMonths 25, not 13. The Neon read path
+// asks for MORE than 12 months: a 12-month window's INV-29 trend reaches 12
+// months before its END, and its INV-28 prior window (same length, ending the
+// day before the window starts) reaches ~24 months back for a window ending
+// today. At 13 months a `DQE_READ_SOURCE=neon` trend was silently truncated
+// and the prior window read "no prior data" (LM2 trusts a reachable-empty
+// read, so no sheet fallback ran). 25 covers every window that ends within
+// the last month; a window ending N months ago still reaches 24+N months
+// back -- the documented limit. `neonGetAgentExtPairs_` (NeonRead.gs) shares
+// the horizon: an ext last used before it is absent from the Neon-derived
+// set while the sheet path still sees all history (INV-53 floater
+// recognition can differ by source on a >2-year-idle extension).
+var NEON_RETENTION_DEFAULTS_ = Object.freeze({ journeyDays: 90, callDays: 400, historyMonths: 25 });
 // callDays floor 367 = strictly above the coverage checks' 366-day max window.
-var NEON_RETENTION_FLOORS_   = Object.freeze({ journeyDays: 30, callDays: 367, historyMonths: 13 });
+var NEON_RETENTION_FLOORS_   = Object.freeze({ journeyDays: 30, callDays: 367, historyMonths: 25 });
 var NEON_RETENTION_BATCH_ROWS_ = 5000;
 var NEON_RETENTION_BUDGET_MS_  = 4 * 60 * 1000;   // under the 6-min ceiling with margin
 var NEON_RETENTION_STMT_TIMEOUT_S_ = 120;
@@ -338,6 +351,7 @@ function neonStorageByTable_(conn) {
   var rs = stmt.executeQuery(sql);
   var json = rs.next() ? rs.getString('j') : '';
   rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'neon-storage');   // OD-3
   var parsed = JSON.parse(json || '{}') || {};
   var tables = (parsed.tables || []).map(function (t) {
     return { table: String(t && t.t || ''), bytes: Number(t && t.b) || 0 };

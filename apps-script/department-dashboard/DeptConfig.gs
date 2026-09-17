@@ -207,6 +207,7 @@ function neonReadDeptConfigRows_() {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'config');   // OD-3
     rs.close(); stmt.close();
     const arr = JSON.parse(json || '[]');
     return arr.map(function (r) {

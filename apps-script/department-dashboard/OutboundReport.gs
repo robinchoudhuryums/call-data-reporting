@@ -967,6 +967,7 @@ function runOutboundVettingCheck() {
       const vr = v.executeQuery();
       const n = vr.next() ? Number(vr.getString('n')) : 0;
       vr.close(); v.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'outbound-vetting');   // OD-3: a count row
       const ok = n === 1;
       if (!ok) failures.push('called-back ' + p.a_id + '@' + p.a_date + ' -> ' + p.o_id + '@' + p.o_date);
       Logger.log('sample called-back: abandon %s @ %s %s -> outbound %s @ %s %s : %s',
@@ -990,6 +991,7 @@ function runOutboundVettingCheck() {
       const vr = v.executeQuery();
       const n = vr.next() ? Number(vr.getString('n')) : 0;
       vr.close(); v.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'outbound-vetting');   // OD-3: a count row
       const ok = n === 0;
       if (!ok) failures.push('not-called-back ' + p.a_id + '@' + p.a_date + ' has ' + n + ' match(es)');
       Logger.log('sample not-called-back: abandon %s @ %s %s : %s',

@@ -909,6 +909,10 @@ function getCompanyOverview(req) {
     // R8-C4: config read errored -> QCD snapshots / parent map may be
     // constant-only this request; don't pin the shared blob for the TTL.
     Logger.log('getCompanyOverview: Dept Config read errored -- skipping cache put.');
+  } else if (typeof qcdSnapshotReadFailed_ === 'function' && qcdSnapshotReadFailed_()) {
+    // D-5: the QCD snapshot read threw and the payload carries a partial /
+    // empty snapshot map -- serve it, never pin it.
+    Logger.log('getCompanyOverview: QCD snapshot read errored -- skipping cache put (degraded QCD must not pin).');
   } else if (dqeRows.length === 0) {
     // L2 (the B-3 argument, ported from getOverviewChartTrend): latestDate is
     // non-null here (the null case early-returns above), so the read window
@@ -1061,10 +1065,11 @@ function getOverviewChartTrend(req) {
   // window; caching it would serve an all-null trend to every viewer for
   // the TTL (6h since R24) with no meta flag distinguishing it from real data.
   const configDegraded = (typeof deptConfigReadFailed_ === 'function') && deptConfigReadFailed_();
+  const qcdDegraded = (typeof qcdSnapshotReadFailed_ === 'function') && qcdSnapshotReadFailed_();   // D-5
   const outageEmpty = dqeRows.length === 0;
-  if (configDegraded || outageEmpty) {
+  if (configDegraded || qcdDegraded || outageEmpty) {
     Logger.log('overviewChartTrend: skipping cache put (%s) -- degraded payload must not pin.',
-      configDegraded ? 'Dept Config read errored' : 'empty DQE read despite a known latest date');
+      configDegraded ? 'Dept Config read errored' : (qcdDegraded ? 'QCD snapshot read errored' : 'empty DQE read despite a known latest date'));
     logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
     return data;
   }
@@ -1604,7 +1609,9 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     });
 
   } catch (e) {
-    Logger.log('computeQcdSnapshots_ failed: %s', e);
+    // D-5: mark the execution so the Overview / trend puts skip (see QCDReport.gs).
+    if (typeof noteQcdSnapshotReadFailed_ === 'function') noteQcdSnapshotReadFailed_('computeQcdSnapshots_', e);
+    else Logger.log('computeQcdSnapshots_ failed: %s', e);
   }
   return out;
 }

@@ -351,6 +351,7 @@ function ncNeonDateCounts_(conn, table, fromIso, toIso) {
   var rs = stmt.executeQuery();
   var json = rs.next() ? rs.getString('j') : '[]';
   rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'coverage');   // OD-3
   var counts = {};
   (JSON.parse(json || '[]') || []).forEach(function (r) {
     if (r && r.d) counts[String(r.d).trim()] = Number(r.n) || 0;

@@ -641,7 +641,10 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
   // mid-backfill, and vice versa right after a rebuild).
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to + ':' + dqeSource + ':' + reportFreshnessTag_();
+  // D-7 (broad-scan 2026-09-17): the roster joins the key (R45's rule) -- an
+  // Orphan-Fix "add to roster" was invisible to the pickers for up to 6 h.
+  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to + ':' + dqeSource + ':' + reportFreshnessTag_()
+                 + ':' + hashAgents_((roster && roster.names) || []);
   const cached = cache.get(cacheKey);
   if (cached) {
     try { return JSON.parse(cached); } catch (e) { /* recompute */ }

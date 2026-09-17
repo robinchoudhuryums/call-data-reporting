@@ -35,6 +35,13 @@ function install(rows) {
     },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;     // reset per-execution memo
+  // R40 family (the documented "known hole"): a fixture swap must drop every
+  // per-execution DQE memo or the next test silently reads the previous rows.
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null;
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;
+  h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false;   // D-5 per-execution flag
   h.state.cache.clear();
 }
 
@@ -266,4 +273,52 @@ test('D-6: computeSummary_ attaches the active-day SET non-enumerably (never ser
   assert.ok(!Object.prototype.propertyIsEnumerable.call(data.totals, 'activeDayKeys'));
   assert.ok(!('activeDayKeys' in JSON.parse(JSON.stringify(data.totals))),
     'the set must not reach the cache put or the client payload');
+});
+
+// ---- Batch 6 (broad-scan 2026-09-17): D-3 counts, D-5 no-pin, D-7 roster key --
+
+test('D-3: computeSummary_ emits the non-zero count each duration mean was taken over', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1, att: '0:02:00' }),
+    dqeRow({ date: '2026-03-09', agent: 'Ben',  ext: '501', rung: 2, answered: 0, missed: 2, att: '' }),
+  ]);
+  const data = h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-09', 'roster');
+  assert.equal(data.totals.attNonzeroCount, 1, 'Ben\'s zero ATT is not in the mean, so not in its denominator');
+  assert.equal(data.totals.attSeconds, 120);
+  assert.equal(data.totals.rosterAgentCount, 2);
+  assert.equal(data.totals.avgAbdWaitNonzeroCount, 0);
+});
+
+test('D-5: a QCD snapshot read that THROWS is served (qcd:null) but never pinned in the summary cache', function () {
+  install([dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1 })]);
+  h.state.userEmail = 'admin@x.com'; h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false;
+  const realQ = h.ctx.queuesForDept_;
+  h.ctx.queuesForDept_ = function () { throw new Error('QCD sheet read exploded'); };
+  try {
+    const data = h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09' });
+    assert.equal(data.qcd, null, 'the table is still served');
+    assert.equal(data.meta.qcdReadFailed, true, 'and says its Queue panel is degraded');
+    assert.ok(!Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:') === 0; }),
+      'a degraded payload is never cached (it would pin a panel-less table for the 6 h TTL)');
+  } finally { h.ctx.queuesForDept_ = realQ; h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false; }
+  // Control: the same request with a healthy snapshot path IS cached.
+  h.state.cache.clear();
+  h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09' });
+  assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:') === 0; }));
+});
+
+test('D-7: the summary cache key carries the ROSTER, so an Orphan-Fix add is not invisible for the TTL', function () {
+  install([dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1 })]);
+  h.state.userEmail = 'admin@x.com'; h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false;
+  h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09' });
+  const keys1 = Array.from(h.state.cache.keys()).filter(function (k) { return k.indexOf('summary:') === 0; });
+  assert.equal(keys1.length, 1);
+  // Add an agent to Alpha's roster (the Orphan Fix "add to roster" effect); same window, same freshness tag.
+  h.state.spreadsheet.getSheetByName('DO NOT EDIT!')._data = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202', 'Cara, 203'], Beta: ['Cara, 301'] });
+  h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09' });
+  const keys2 = Array.from(h.state.cache.keys()).filter(function (k) { return k.indexOf('summary:') === 0; });
+  assert.equal(keys2.length, 2, 'a roster change mints a NEW key instead of serving the old table');
+  assert.ok(keys1[0] !== keys2[1] && /:[0-9a-f]{32}$/.test(keys2[0]), 'the roster hash is the key\'s last segment');
 });
