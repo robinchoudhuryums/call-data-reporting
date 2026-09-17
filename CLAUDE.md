@@ -910,8 +910,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   must mean what ours means (H2).** The CSR team app (a separate repo) reads
   `DQE Historical Data` and tints the same per-agent rate the manager sees
   here, so a formula or standard is a TWO-REPO edit: Answer % is
-  `answered / (answered + missed)` on both sides (rung counts every window
-  leg, so `answered / rung` is a DIFFERENT number -- the drift H2 closed);
+  `answered / (answered + missed)` on both sides, rounded to a WHOLE percent
+  as the Answer % cell prints it (rung counts every window leg, so
+  `answered / rung` is a DIFFERENT number, and a 91.7 beside a 92 tints
+  amber beside green -- the two drifts H2 closed);
   the tint is three-tier against `getAnswerStandardFor_(dept)` (target +
   amber band, Operator State #37); and team-average benchmarks subtract
   `getTeamAvgExcludes_(dept)` (INV-26) while dept totals keep everyone. Those
