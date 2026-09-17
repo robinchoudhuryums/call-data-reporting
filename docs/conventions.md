@@ -508,7 +508,7 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `Data.gs` (main table) | `summary:vN:` | `v22` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
-| `IndividualReport.gs` | `individual:vN:` | `v11` |
+| `IndividualReport.gs` | `individual:vN:` | `v12` |
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |

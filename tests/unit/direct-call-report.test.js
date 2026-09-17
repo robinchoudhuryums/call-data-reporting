@@ -70,6 +70,25 @@ function installAdmin(conn) {
 
 const REQ = { from: '2026-06-01', to: '2026-06-07', department: '' };
 
+test('A-1: the agent role is refused by the allowlist, not the vetting message', function () {
+  // The agent role's fail-closed shape is neither 'none' nor 'manager'; a
+  // role-none denylist passed it to the admin-style dept branch. It must be
+  // refused by assertManagerOrAdmin_ BEFORE the temporary vetting throw, so
+  // releasing the report (removing that throw) cannot widen it to agents.
+  // Real Auth.gs resolution: an agent row + the Phase A flag.
+  installAdmin();
+  h.state.props.AGENT_ROLE_ENABLED = 'true';
+  h.state.spreadsheet.getSheetByName('Access Control')
+    .appendRow(['agent@x.com', 'CSR', '', 'agent', 'Anna']);
+  if (h.state.cache && h.state.cache.clear) h.state.cache.clear();
+  h.state.userEmail = 'agent@x.com';
+  assert.throws(function () { h.call('getDirectCallReport', REQ); }, /^Error: Not authorized\.$/);
+  assert.throws(function () {
+    h.call('getDirectCallReport', Object.assign({}, REQ, { department: 'ALL' }));
+  }, /^Error: Not authorized\.$/);
+  delete h.state.props.AGENT_ROLE_ENABLED;
+});
+
 test('admin-only while vetted: a manager is rejected', function () {
   installAdmin();
   h.state.userEmail = 'manager@x.com';   // not an admin

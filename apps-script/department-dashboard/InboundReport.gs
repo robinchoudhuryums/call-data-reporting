@@ -84,7 +84,11 @@ const INBOUND_MAX_RANGE_DAYS = 366;
 function inboundResolveRequest_(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  // A-1 (broad-scan 2026-09-17): ALLOWLIST, never a `role === 'none'`
+  // denylist -- the agent role (fail-closed shape, departments:[]) is
+  // neither 'none' nor 'manager', so a denylist let it fall through to the
+  // admin-style dept branch below the moment the vetting gate is released.
+  assertManagerOrAdmin_(user);
   // TEMPORARY admin-only re-scope: the report is being vetted (data
   // discrepancies vs QCD's abandonment numbers -- different source +
   // definitions -- are noted and parked) before release to managers.

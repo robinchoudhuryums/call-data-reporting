@@ -70,7 +70,7 @@
 // agent name still received that agent's real 12-month monthly series
 // -- the F-1 authorization gap). Bumped so cached responses computed
 // with the unfiltered trend invalidate on deploy.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v11';
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v12';   // v12 (D-2/DD-3): deptStats + share over the whole roster; activeDays activity-gated
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -403,6 +403,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     priorSummaryStats[a]  = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
   });
   const teamTotal = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
+  const deptTotal = { rung: 0, missed: 0, answered: 0 };   // D-2: whole-roster totals (INV-26 R18)
   const activeDaySet  = {};   // ISO day -> true; for dept "per day" stats
   // Track which roster agents actually had ANY activity in range,
   // so the team-avg denominator only counts agents who took calls
@@ -478,18 +479,29 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     // so unanswered/abandoned days don't drag down the weighted ATT.
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
-    // Team totals (dept-wide, over user's selected range). Excludes
-    // configured managers; only counts agents with at least one call
-    // event so zero-call roster members don't dilute the average.
-    if (inUserRange && rosterSet[agent] && !excludedAgents[agent]) {
-      teamTotal.rung     += rung;
-      teamTotal.missed   += missed;
-      teamTotal.answered += answered;
-      teamTotal.ttt      += tttSec;
-      teamTotal.attTotal += attTotal;
-      activeDaySet[dateIso] = true;
-      if (rung > 0 || answered > 0 || missed > 0) {
-        activeAgentSet[agent] = true;
+    // D-2 (broad-scan 2026-09-17, INV-26 R18 scope): TWO dept accumulators.
+    // `deptTotal` is EVERY roster agent -- it feeds the dept per-day stats and
+    // each card's share-of-dept, which are dept TOTALS and RATES and keep the
+    // excluded manager's volume. `teamTotal` drops the TEAM_AVG_EXCLUDES agents
+    // and feeds ONLY the per-agent team-average benchmark. One accumulator
+    // used to feed all three, so IR's dept total disagreed with Insights'
+    // teamStats for the same window and the cards' shares summed past 100%.
+    // DD-3: a day is ACTIVE only when some roster agent had a call event on it
+    // (the same gate as activeAgentSet) -- a 0/0/0 row must not add a day to
+    // the per-day denominator.
+    if (inUserRange && rosterSet[agent]) {
+      const hadActivity = rung > 0 || answered > 0 || missed > 0;
+      deptTotal.rung     += rung;
+      deptTotal.missed   += missed;
+      deptTotal.answered += answered;
+      if (hadActivity) activeDaySet[dateIso] = true;
+      if (!excludedAgents[agent]) {
+        teamTotal.rung     += rung;
+        teamTotal.missed   += missed;
+        teamTotal.answered += answered;
+        teamTotal.ttt      += tttSec;
+        teamTotal.attTotal += attTotal;
+        if (hadActivity) activeAgentSet[agent] = true;
       }
     }
 
@@ -563,13 +575,14 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     },
   };
 
-  // Dept per-day stats (denominator = days with any activity).
+  // Dept per-day stats (denominator = days with any activity). D-2: over the
+  // WHOLE roster (deptTotal), never the excluded-manager basis -- INV-26 R18.
   const dayCount = Object.keys(activeDaySet).length || 1;
   const deptStats = {
-    dailyRung:     (teamTotal.rung     / dayCount).toFixed(1),
-    dailyMissed:   (teamTotal.missed   / dayCount).toFixed(1),
-    dailyAnswered: (teamTotal.answered / dayCount).toFixed(1),
-    ansPct:        (teamTotal.rung > 0 ? (teamTotal.answered / teamTotal.rung) * 100 : 0).toFixed(1) + '%',
+    dailyRung:     (deptTotal.rung     / dayCount).toFixed(1),
+    dailyMissed:   (deptTotal.missed   / dayCount).toFixed(1),
+    dailyAnswered: (deptTotal.answered / dayCount).toFixed(1),
+    ansPct:        (deptTotal.rung > 0 ? (deptTotal.answered / deptTotal.rung) * 100 : 0).toFixed(1) + '%',
     activeDays:    dayCount,
   };
 
@@ -629,10 +642,13 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     const agPct = s.rung > 0 ? (s.answered / s.rung) * 100 : 0;
     const agTtt = s.answered > 0 ? s.ttt      / s.answered : 0;
     const agAtt = s.answered > 0 ? s.attTotal / s.answered : 0;
+    // D-2: share of the WHOLE dept's volume (deptTotal), so the roster's shares
+    // sum to 100% and the excluded manager's own card is a share of the dept,
+    // not of the dept-minus-self.
     const share = {
-      rung:     teamTotal.rung     > 0 ? (s.rung     / teamTotal.rung)     * 100 : 0,
-      answered: teamTotal.answered > 0 ? (s.answered / teamTotal.answered) * 100 : 0,
-      missed:   teamTotal.missed   > 0 ? (s.missed   / teamTotal.missed)   * 100 : 0,
+      rung:     deptTotal.rung     > 0 ? (s.rung     / deptTotal.rung)     * 100 : 0,
+      answered: deptTotal.answered > 0 ? (s.answered / deptTotal.answered) * 100 : 0,
+      missed:   deptTotal.missed   > 0 ? (s.missed   / deptTotal.missed)   * 100 : 0,
     };
     const agentRaw = {
       rung: s.rung, missed: s.missed, answered: s.answered,

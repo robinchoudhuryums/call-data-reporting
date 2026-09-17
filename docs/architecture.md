@@ -258,7 +258,7 @@ is canonical and reflects current code.
 |---|---|---|---|---|
 | Main per-agent table | `Data.gs` | `getDepartmentSummary` | `summary:v22:` | no |
 | Missed Calls Report | `MissedCallsReport.gs` | `getMissedCallsReport` | `missed:v17:` | no |
-| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v11:`, `individual_active:v2:` | no |
+| Individual / Peer Comparison | `IndividualReport.gs` | `getIndividualReportInit`, `getIndividualReport`, `sendIndividualReportEmail` | `individual:v12:`, `individual_active:v2:` | no |
 | Performance Report | RETIRED (PR->Insights consolidation; `PerformanceReport.gs` deleted -- `deltaBlock_` moved to `Util.gs`; legacy `#/report/performance` deep links land on Insights) | — | — | — |
 | Compare Ranges | RETIRED (CR->Insights consolidation; `CompareRangesReport.gs` deleted -- Insights custom-prior mode + the vs-Prior chart basis replace it; legacy `#/report/compare` deep links land on Insights) | — | — | — |
 | Company Overview | `CompanyOverview.gs` | `getCompanyOverview` | `companyOverview:v23` | partial (admin-only `companyAggregate`, `pipelineFreshness`, `orphanNag`, `unmappedQcd` fields) |

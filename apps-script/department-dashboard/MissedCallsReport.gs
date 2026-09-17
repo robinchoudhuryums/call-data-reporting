@@ -948,8 +948,20 @@ function normTimeKey_(s) {
   const isAM = /\bAM\b/.test(str);
   str = str.replace(/\s*(AM|PM)\s*/, '').trim();
 
+  // DD-1 (broad-scan 2026-09-17): the SHEET path hands K..AC / AF cells through
+  // unsanitized, and a still-coerced cell renders as "12/30/1899 10:23:33" (the
+  // 1899-epoch time serial, CLAUDE.md's comma-joined coercion gotcha).
+  // `parseInt("12/30/1899 10")` is 12, so that ring keyed at 12:23 -- shown at
+  // noon on the sheet path and at 10 AM on the Neon path (sanitized on write).
+  // Recover the lossless single-value date-render the way
+  // sanitizeSlotCellForNeon_ does (keep the time part), and refuse any other
+  // non-numeric hour token rather than mis-key it.
+  const dateRender = str.match(/^\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}:\d{2}(?::\d{2})?)$/);
+  if (dateRender) str = dateRender[1];
+
   const parts = str.split(':');
   if (parts.length < 2) return '';
+  if (!/^\d{1,2}$/.test(parts[0].trim())) return '';
   let h = parseInt(parts[0]) || 0;
   const m = parseInt(parts[1]) || 0;
   const sec = parts.length >= 3 ? (parseInt(parts[2]) || 0) : 0;

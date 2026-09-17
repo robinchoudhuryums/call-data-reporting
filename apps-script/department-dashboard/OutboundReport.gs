@@ -137,7 +137,11 @@ const OUTBOUND_UNCALLED_MAX = 200;
 function outboundResolveRequest_(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  // A-1 (broad-scan 2026-09-17): ALLOWLIST, never a `role === 'none'`
+  // denylist -- the agent role (fail-closed shape, departments:[]) is
+  // neither 'none' nor 'manager', so a denylist let it fall through to the
+  // admin-style dept branch below the moment the vetting gate is released.
+  assertManagerOrAdmin_(user);
   // TEMPORARY admin-only re-scope while the callback linkage + roster
   // attribution are vetted. The per-dept manager path below is KEPT intact,
   // so releasing is flipping OUTBOUND_VETTING_GATE_ (above) -- read its

@@ -128,6 +128,17 @@ function deptHasSubQueues_(dept) {
 }
 
 /**
+ * D-1: the ONE month-start resolver for every "current month" figure. Today's
+ * date in the SCRIPT TZ as a calendar string, first-of-month. Takes an optional
+ * pre-formatted todayIso so callers that already formatted `now` reuse it.
+ * Never build a `new Date(y, m, 1)` and format it in another zone (D-1).
+ */
+function mtdStartIso_(todayIso) {
+  const t = todayIso || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  return String(t).slice(0, 7) + '-01';
+}
+
+/**
  * Month-to-date violations count for the dept (sum across its
  * mapped queues, including sub-queue rollup). Used for the
  * "Violations (current month)" KPI tile.
@@ -138,9 +149,16 @@ function computeMtdViolations_(dept, values, ssTZ, qOpts, dates) {
   const queueSet = {};
   queues.forEach(function (q) { queueSet[q] = true; });
   const tz = ssTZ || TZ;
-  const now = new Date();
-  const mtdStart = Utilities.formatDate(
-    new Date(now.getFullYear(), now.getMonth(), 1), tz, 'yyyy-MM-dd');
+  // D-1 (broad-scan 2026-09-17): the month start is a CALENDAR string derived
+  // from today's date in the SCRIPT TZ -- never `new Date(y, m, 1)` (a
+  // script-TZ midnight instant) formatted in the SPREADSHEET TZ. Chicago is
+  // CDT (UTC-5) March-November while Mexico City is UTC-6 year-round, so
+  // that instant formatted in the sheet's zone read as the LAST day of the
+  // previous month and every MTD figure on the sheet path included it. The
+  // read-side twin of the R46 write-side rule; `tz` still resolves the ROW
+  // dates (a Date cell renders in the spreadsheet's zone). Pinned by
+  // overview-qcd-snapshot.test.js (D-1).
+  const mtdStart = mtdStartIso_();
   let total = 0;
   for (let i = 0; i < values.length; i++) {
     const r = values[i];
@@ -877,10 +895,8 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   //     `new Date()`, independent of from/to)
   // so read [min(mainFrom, mtdStart), max(to, today)]. On the sheet path
   // readQcdGrid_ ignores the window and returns the whole sheet (unchanged).
-  const _now = new Date();
-  const mtdStartIso = Utilities.formatDate(
-    new Date(_now.getFullYear(), _now.getMonth(), 1), TZ, 'yyyy-MM-dd');
-  const todayIso = Utilities.formatDate(_now, TZ, 'yyyy-MM-dd');
+  const todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const mtdStartIso = mtdStartIso_(todayIso);   // D-1: one month-start resolver
   const mainFrom = rangeOnly ? from : trendStartIso;
   const readFrom = (mainFrom < mtdStartIso) ? mainFrom : mtdStartIso;
   const readTo   = (to > todayIso) ? to : todayIso;

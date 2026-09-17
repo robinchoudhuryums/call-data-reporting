@@ -1449,12 +1449,12 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // [min(sinceIso, mtdStart), today] is equivalent to the old whole-sheet
     // scan; the sheet path still reads the whole sheet (unchanged, and now
     // memo-shared with the other QCD readers).
-    const _tzWin = ssTZ || TZ;
-    const _nowWin = new Date();
-    const _mtdStartWin = Utilities.formatDate(
-      new Date(_nowWin.getFullYear(), _nowWin.getMonth(), 1), _tzWin, 'yyyy-MM-dd');
+    // D-1: month start + today are script-TZ CALENDAR strings (mtdStartIso_,
+    // QCDReport.gs) -- a script-midnight instant formatted in the sheet's
+    // zone read as the previous month's last day during US DST.
+    const _readTo = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+    const _mtdStartWin = mtdStartIso_(_readTo);
     const _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
-    const _readTo = Utilities.formatDate(_nowWin, _tzWin, 'yyyy-MM-dd');
     const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
     if (!grid || grid.missing || grid.empty) return out;
 
@@ -1487,10 +1487,10 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // First pass: track the latest date per dept (so we can grab
     // the right "latest day" totals in a second pass).
     const latestDateByDept = {};   // dept -> isoDate
-    // Month-to-date cutoff: 1st of the current month.
-    const now = new Date();
-    const mtdStart = Utilities.formatDate(
-      new Date(now.getFullYear(), now.getMonth(), 1), tz, 'yyyy-MM-dd');
+    // Month-to-date cutoff: 1st of the current month -- a script-TZ calendar
+    // string (D-1; see mtdStartIso_), NOT a script-midnight instant formatted
+    // in `tz`, which is the SPREADSHEET's zone and read a day early Mar-Nov.
+    const mtdStart = mtdStartIso_();
 
     // Single pass accumulating both latestDay and MTD violations.
     const acc = {};   // dept -> { latestDay: {date, total, abandoned, violations}, mtdViolations }

@@ -137,6 +137,24 @@ test('6c: with the vetting gate released, a single-dept manager is PINNED to the
     assert.throws(function () {
       h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
     }, /Not authorized/);
+    // A-1: the AGENT role (fail-closed shape: department null, departments
+    // []) is neither 'none' nor 'manager'. A role-none DENYLIST let it fall
+    // through to the admin-style branch -- company view, any dept -- the
+    // day the gate flips. The allowlist refuses it before the dept branch.
+    h.state.testUser = { email: 'a@x.com', role: 'agent', department: null, departments: [],
+                         agentDept: 'CSR', agentName: 'Agent One' };
+    assert.throws(function () {
+      h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19' });
+    }, /Not authorized/);
+    assert.throws(function () {
+      h.call('outboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'ALL' });
+    }, /Not authorized/);
+    // Same allowlist on the Inbound resolver (loaded in this suite), with its
+    // own vetting gate still standing: the agent must be refused by the
+    // allowlist, never by the "admin-only while vetted" message.
+    assert.throws(function () {
+      h.call('inboundResolveRequest_', { from: '2026-08-01', to: '2026-08-19', department: 'ALL' });
+    }, /^Error: Not authorized\.$/);
   } finally {
     h.ctx.OUTBOUND_VETTING_GATE_ = orig;
     h.state.testUser = null;
