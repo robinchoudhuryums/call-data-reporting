@@ -1014,8 +1014,37 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   only) keeps localStorage bounded. New report run functions should wire
   all three pieces (write + SWR + fail-fallback) together.
 
-## Overview page
-
+## Overview page **A served payload that is NOT good is never STORED (C2-3):** Inbound
+  with `meta.available === false` and Insights whose `queueHealth.error` is
+  set render (the empty state / the unavailable note) but skip
+  `reportLastGoodWrite_`, so the last REAL report stays the SWR pre-paint and
+  the fail-fallback.
+- **Dead-end rules (broad-scan Batch 4, 2026-09-17; source-pinned by
+  `tests/unit/client-dead-ends.test.js`).** A page that stops telling the
+  truth is a bug even when nothing throws. The rules, each with its helper:
+  (1) every validation early-return in `runInsReport` / `runIrReport` goes
+  through `insRefuse_` / `irRefuse_`, which clear the launcher / drill loader
+  and land the message where the user is looking (results status when results
+  are up, the form otherwise) -- never a direct `*SetFormError` from an early
+  return; the IR edit popover runs the same `subqPickerScope_` one-dept gate
+  as the form. (2) An Overview hard error is `ovShowLoadError_` (a `.ds-note`
+  + Retry beside the hidden skeleton, reset by `ovClearLoadError_` on the next
+  load) -- never text written into `#ov-loading`; an empty `depts` renders
+  `ovEmptyStateHtml_`. (3) `datesTouched_` (script-2) is set by every
+  user-driven window write (typed dates, preset chips, the chart-point deep
+  link) and the async init latest-date snap yields to it; `ovRouteToDept_`
+  sets the window BEFORE dispatching the selector change so one fetch
+  carries the clicked day. (4) `ovRenderTiles_` re-syncs the chart's solo
+  markers itself, so every tile re-render keeps them. (5) The My Department
+  SWR pre-paint (`opts.swr`) never re-enables Refresh; a dept switch hides
+  the Transfer detail with the other side panels. (6) A row-invoked mutation
+  verb (no button element to disable) takes the `mutationBusy_(key)` /
+  `mutationDone_(key)` in-flight guard, released on BOTH handlers. (7) An
+  admin modal's init failure renders through `adminInitError_(elId, err,
+  retryFn)` (escaped message + Retry that restores the loader markup) --
+  never `loader.textContent = 'Error: …'`. (8) A `getLatestDataDates` failure
+  is toasted and beaconed before the today-range fallback. New surfaces of
+  the same shape adopt the helper, not the pattern it replaced.
 - **The Window selector and the chart's range control are ONE option set now
   (R50).** Window (`#ov-period-bar`) drives the dept CARDS and the agent table
   below; Chart (`#ov-chart-range`) drives the trend. They were built apart and

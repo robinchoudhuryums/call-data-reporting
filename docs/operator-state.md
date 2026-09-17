@@ -137,9 +137,11 @@ When something looks wrong, before assuming a code bug, check:
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
     (h) **R31/R32 -- every digest cadence is FRESHNESS-GATED.** The 8 AM run
-    sends only once the window's last day (daily: the previous business day;
-    weekly: last Friday; monthly: the month's last day) exists on the active
-    DQE read source; otherwise it records `DEFERRED <date>: DQE data is
+    sends only once the last BUSINESS day on or before the window's end
+    (`lastBusinessDayOnOrBeforeIso_`; daily: the previous business day;
+    weekly: that week's last workday; monthly: the month's last workday -- O-2,
+    so a month ending on a weekend or holiday no longer waits for a day that
+    will never land) exists on the active DQE read source; otherwise it records `DEFERRED <date>: DQE data is
     through …` in the same "Last runs" line (warn-tinted in the modal),
     schedules a one-shot retry (`run<Cadence>DigestRetry_`, +60 min) and
     repeats until the 12:00 cutoff, when

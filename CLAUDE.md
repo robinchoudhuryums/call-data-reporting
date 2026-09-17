@@ -916,7 +916,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Date-range presets NEVER include today, and the rule lives in ONE place.**
   `datePresetRange_` (script-1-core) is the single resolver behind every
   "Quick select" dropdown (IR, Insights, Inbound, Direct, Outbound, the
-  all-dept Queue report). Every OPEN-ENDED preset (`yesterday` / `last7` /
+  all-dept Queue report) AND the My Department chips. Every OPEN-ENDED preset (`yesterday` / `last7` /
   `thisWeek` / `thisMonth` / `last30` / `last3Months` / `last12Months`) ends
   YESTERDAY: today's ingest has not landed while a manager is looking (the
   pipeline builds the PREVIOUS day), so including today tacks an empty day
@@ -925,10 +925,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   already excluded it. The ONE exception is the Queue report's explicit
   `today`, which the user picked by name. Degenerate edges CLAMP rather than
   invert (a "This month" on the 1st, "This week" on a Monday -> that single
-  day), since the server rejects from > to. The rule was hand-mirrored in SIX
-  resolvers and had already drifted (`last30` fixed everywhere, the rest not);
-  ENFORCED by `tests/unit/date-presets.test.js`, whose tripwire fails if any
-  fragment computes preset dates locally again.
+  day), since the server rejects from > to. Seven surfaces once mirrored it by
+  hand and drifted (C1-3 in fix-history); ENFORCED by
+  `tests/unit/date-presets.test.js`, whose tripwire fails if any fragment
+  computes preset dates locally again.
 - **team-tools is an EXTERNAL READER of this workbook, and its answer rate
   must mean what ours means (H2) -- and since DD-2 every SERVER surface reads
   ONE formula, `Config.gs::answerRatePct_`, switched by `ANSWER_RATE_FORMULA`
@@ -1301,7 +1301,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `escAssertRowAccess_` admit exactly admin|manager (the old checks passed
   unrecognized roles UNPINNED), and `assertManagerOrAdmin_` (Util.gs) guards
   the no-dept-argument surfaces (Overview, YTD trend, all-dept QCD + its
-  email, escalations init/badge, getCallJourney). **A new public endpoint
+  email, escalations init/badge, getCallJourney) and -- A-1 -- the Inbound /
+  Direct / Outbound report resolvers. **A new public endpoint
   must pick its gate from that set — never a bare `role === 'none'` check.**
   Agents deliberately CAN reach `getLatestDataDate(s)` + `reportClientIssue`.
   `doGet` routes agents to `agent.html`/`agentApp.html` (small separate
@@ -1324,7 +1325,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   button) are marked by a `preview:` prefix on the Triggered By
   column and use the `would-send` status (real fires use `sent`).
   Filter on `triggeredBy NOT LIKE 'preview:%'` to scope to real
-  runs. The `Sent` boolean is `TRUE` only for `sent` outcomes.
+  runs. The `Sent` boolean is `TRUE` only for `sent` outcomes. Each run's
+  outcome (a throw included) also lands in `ALERTS_LAST(_RESULT)` for the
+  Health page's `out-alerts` row, as each digest cadence's does in
+  `out-digest-<cadence>` (O-5).
 - **Header freshness pill goes orange past 36h.** The "Data through
   Mon May 19 · 14h ago" badge in `.header-meta` computes hours
   since end-of-day on the most recent date returned by
@@ -1373,16 +1377,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
   memo resets the whole family" (the eight-test breakage that made it a pin:
   R40 in fix-history). A third memo over this sheet joins `DQE_EXEC_MEMOS`.
-- **Count badges must be idempotent, not append-only (F10).** The
-  escalations nav badge was rendered behind an
-  `if (!tab.querySelector('.nav-count-badge'))` guard and fetched
-  ONCE at init, so it could neither update nor disappear: a manager
-  who resolved their last escalation kept a stale non-zero badge for
-  the whole session and the Overview strip never hid.
-  `escApplyBadge_(counts)` (script.html) updates the span IN PLACE,
-  REMOVES it at zero, and hides + empties the Overview strip;
-  `escLoad_` calls `loadEscBadge_()` on every list load, and since
-  every mutation reloads the list the badge follows every change.
+- **Count badges must be idempotent, not append-only (F10).**
+  `escApplyBadge_(counts)` (script.html) updates the escalations nav badge
+  IN PLACE, REMOVES it at zero, and hides + empties the Overview strip;
+  `escLoad_` calls `loadEscBadge_()` on every list load (every mutation
+  reloads the list, so the badge follows every change) and `applyViewAs_`
+  calls it on every preview enter/exit so the strip re-scopes (C1-4).
   **It fetches `getEscalationsBadge()` fresh rather than deriving
   from the list's `meta.statusCounts`** -- the list can be filtered
   to one dept (admin pick / view-as) while the badge is viewer-FULL
@@ -1614,15 +1614,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (SheetCoverage.gs, Op State #52) -- the SHEET-side twin: business days with
   ZERO rows in a dashboard-read historical sheet, the interior gap every other
   signal misses; opens NO Neon connection, so it works mid-outage. All four store
-  an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, which is
-  what the page's classifier reads. Pinned by `system-health.test.js` /
+  an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, classified
+  by the ONE table `healthOutcomeIsBad_` / `HEALTH_BAD_PREFIXES_` (O-9: a new
+  bad prefix goes there, nowhere else). Pinned by `system-health.test.js` /
   `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Three CAPACITY rows sit
   alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47),
   email quota, and Neon STORAGE by table (`NEON_STORAGE_CAP_MB`, #57) --
   because all three fail SILENTLY and look healthy to every other probe. Both
-  Neon figures are FLOORS (egress counts our payloads, not the wire; storage
-  cannot see Neon's history retention), and a DELETE never moves the storage
-  one (disk returns only on TRUNCATE / VACUUM FULL). Each ranks its top
+  Neon figures are FLOORS (#47 / #57 say why), and a DELETE never moves the
+  storage one (disk returns only on TRUNCATE / VACUUM FULL). Each ranks its top
   spenders: every `neonNoteEgress_` callsite passes a surface label (unlabeled
   folds into `other`; EA-1 pin); the pure `neonStorageVerdict_` names the top
   5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
@@ -2180,7 +2180,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; the `answerRate`
   sort key and the default landing) · Ans / day (owner 2026-09: answered per
-  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`) · Unique ·
+  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`; the combined
+  total row divides by the UNION of the depts' active days, D-6) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The six `hideable:true`
   columns (Source / Ans / day / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
   AWAY by default behind the **"Show all columns"** toggle
