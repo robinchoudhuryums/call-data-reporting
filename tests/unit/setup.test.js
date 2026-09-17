@@ -6,12 +6,12 @@ const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 // F-7: Setup.gs had ZERO test coverage while INV-12 asserts it is idempotent,
-// admin-gated, creates the ten dashboard-managed sheets, and never overwrites
+// admin-gated, creates the eleven dashboard-managed sheets, and never overwrites
 // existing rows. These pins make the claim enforced rather than asserted.
 
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Setup.gs'],
-  capture: ['SHEETS', 'ACCESS_CONTROL_HEADERS'],
+  capture: ['SHEETS', 'ACCESS_CONTROL_HEADERS', 'COMPANY_HOLIDAYS_HEADERS'],
 });
 
 function install() {
@@ -20,13 +20,14 @@ function install() {
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
 }
 
-// The ten managed sheet names, from the captured constants (not re-typed --
-// the pin must follow the code's own list).
+// The eleven managed sheet names, from the captured constants (not re-typed --
+// the pin must follow the code's own list). H1 added Company Holidays.
 const TEN = [
   'ACCESS_CONTROL', 'ALERT_CONFIG', 'ALERT_LOG', 'PIPELINE_HEALTH',
   'DIGEST_CONFIG', 'AGENT_ALIAS_OVERRIDES', 'ORPHAN_FIX_LOG', 'DEPT_CONFIG',
-  'REPORT_USAGE', 'QUEUE_REPORT_SUBSCRIBERS',
+  'REPORT_USAGE', 'QUEUE_REPORT_SUBSCRIBERS', 'COMPANY_HOLIDAYS',
 ].map(function (k) { return h.consts.SHEETS[k]; });
+assert.equal(TEN.length, 11, 'INV-12 says eleven');
 
 test('INV-12: setup() is admin-gated', function () {
   install();
@@ -34,7 +35,7 @@ test('INV-12: setup() is admin-gated', function () {
   assert.throws(function () { h.call('setup'); }, /admin/i);
 });
 
-test('INV-12: setup() creates all ten managed sheets with header rows', function () {
+test('INV-12: setup() creates all eleven managed sheets with header rows', function () {
   install();
   h.call('setup');
   TEN.forEach(function (name) {
@@ -75,4 +76,18 @@ test('setup(): a failing sheet does not abort the rest (partial-run recovery)', 
   assert.equal(missing.length, 1, 'exactly the one failed sheet is missing');
   h.call('setup');   // re-run heals
   assert.equal(TEN.filter(function (n) { return !ss.getSheetByName(n); }).length, 0);
+});
+
+test('H1: setup() plain-text pins the Company Holidays Dates column at creation, and only that column', function () {
+  install();
+  h.call('setup');
+  const sh = h.state.spreadsheet.getSheetByName(h.consts.SHEETS.COMPANY_HOLIDAYS);
+  assert.deepEqual(Array.from(sh._data[0].slice(0, 4)), Array.from(h.consts.COMPANY_HOLIDAYS_HEADERS), 'header row from the constant');
+  const fmts = (sh._numberFormats || []).filter(function (f) { return f.format === '@'; });
+  assert.ok(fmts.length >= 1, 'a setNumberFormat("@") was recorded (F-6 harness rule)');
+  assert.ok(fmts.every(function (f) { return f.startCol === 1 && f.startRow === 2; }),
+    'the pin covers the Dates column below the header, nothing else');
+  // No other managed sheet gained a text pin (the spec is per-sheet).
+  const ac = h.state.spreadsheet.getSheetByName(h.consts.SHEETS.ACCESS_CONTROL);
+  assert.equal((ac._numberFormats || []).length, 0);
 });

@@ -25,6 +25,11 @@
  *   - Queue Report Subscribers (opt-in list for the automated Daily
  *                            Call Queue Report email -- QueueReportEmail.gs,
  *                            Operator State #31)
+ *   - Company Holidays      (H1: the operator-curated "company is closed"
+ *                            list, one range per row; the PRIMARY source
+ *                            behind getCompanyHolidayRanges_, with the
+ *                            COMPANY_HOLIDAYS Script Property as fallback;
+ *                            also read by team-tools -- Operator State #27/#68)
  *
  * Safe to re-run; existing sheets are left untouched (no data
  * overwritten).
@@ -58,11 +63,16 @@ function setup() {
     [SHEETS.DEPT_CONFIG,           DEPT_CONFIG_HEADERS],
     [SHEETS.REPORT_USAGE,          REPORT_USAGE_HEADERS],
     [SHEETS.QUEUE_REPORT_SUBSCRIBERS, QUEUE_REPORT_SUBSCRIBERS_HEADERS],
+    // H1: the Dates column is plain-text pinned AT CREATION (third element =
+    // 1-based text columns) -- Sheets coerces a lone `2026-12-25` to a Date
+    // value, the comma-joined-cell class from Common Gotchas. The reader
+    // tolerates a coerced cell too, but a pinned column never produces one.
+    [SHEETS.COMPANY_HOLIDAYS,      COMPANY_HOLIDAYS_HEADERS, [1]],
   ];
   const failed = [];
   specs.forEach(function (spec) {
     try {
-      ensureSheet_(ss, spec[0], spec[1]);
+      ensureSheet_(ss, spec[0], spec[1], spec[2]);
       SpreadsheetApp.flush();
     } catch (e) {
       failed.push(spec[0]);
@@ -80,8 +90,12 @@ function setup() {
 /**
  * Creates a sheet with the given headers if missing. No-op if the
  * sheet already exists (we never overwrite existing rows).
+ * `textCols` (optional, 1-based) are plain-text (`@`) pinned below the header
+ * ONCE, at creation -- the team-tools getOrCreateQaSheet_ shape: a column that
+ * holds date-shaped or comma-joined strings must never be coerced on entry,
+ * and pinning at creation is cheaper than re-formatting before every write.
  */
-function ensureSheet_(ss, name, headers) {
+function ensureSheet_(ss, name, headers, textCols) {
   let sheet = ss.getSheetByName(name);
   if (sheet) {
     Logger.log('Sheet "%s" already exists, skipping.', name);
@@ -94,6 +108,10 @@ function ensureSheet_(ss, name, headers) {
     .setBackground('#f3f4f6');
   sheet.setFrozenRows(1);
   sheet.autoResizeColumns(1, headers.length);
+  (textCols || []).forEach(function (col) {
+    const rows = Math.max(sheet.getMaxRows() - 1, 1);
+    sheet.getRange(2, col, rows, 1).setNumberFormat('@');
+  });
   Logger.log('Created sheet "%s".', name);
   return sheet;
 }

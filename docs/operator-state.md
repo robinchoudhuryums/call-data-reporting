@@ -523,22 +523,41 @@ When something looks wrong, before assuming a code bug, check:
     inline, so this is ONLY for the bulk path. Recommended only after the busy
     carve-out numbers are spot-checked (the report stays admin-only while
     vetted, and this writes Direct history across all backfilled dates).
-27. `COMPANY_HOLIDAYS` Script Property (dashboard) -- the S5 global
-    holiday list (comma-separated ISO dates and/or `YYYY-MM-DD..YYYY-MM-DD`
-    inclusive ranges; same tolerant grammar as the Alert Config Skip Dates
-    cell). Feeds: INV-35 working-day counts (CR + Insights length-mismatch,
-    server AND the client form hints via `window.__COMPANY_HOLIDAYS__`),
-    the daily alerts + daily digest trigger runs (skipped on a holiday,
-    like weekends), the previous-business-day walk-back
-    (`prevBusinessDayIso_` -- the Tuesday after a Monday holiday assesses /
-    covers Friday), AND (R11-L) the OVERVIEW CHART AXES -- `trendIsoLabels`
-    + `ovWeekdayIsoLabels_` drop weekday holidays like weekends via
-    `isCompanyHoliday_`, so a weekday holiday no longer draws a false dip
-    in the dept sparklines/arrows + the trend chart (no cache bump; unset
-    property = no dates dropped). Unset = no holidays = pre-S5 behavior. Maintain it
-    yearly (e.g. `2026-01-01, 2026-05-25, 2026-07-03, 2026-11-26..2026-11-27,
-    2026-12-25`); it is GLOBAL -- per-dept exceptions stay in Alert Config
-    Skip Dates. No redeploy needed to edit.
+27. Company holidays -- the `Company Holidays` SHEET (dashboard-managed,
+    created by `setup()`; H1) is the global "the company is closed" list, and
+    the `COMPANY_HOLIDAYS` Script Property is now only its FALLBACK. One range
+    per row in column A (`Dates`): a single ISO date (`2026-12-25`), an
+    inclusive range (`2026-11-26..2026-11-27`), or a comma list in one cell --
+    the same tolerant grammar as the Alert Config Skip Dates cell. `Label` and
+    `Notes` are free text; `Active` blank/TRUE counts, FALSE parks a row
+    without deleting it. Column A is plain-text pinned at creation so Sheets
+    cannot coerce a lone date to a Date value (the reader tolerates a coerced
+    cell anyway by formatting it in the SPREADSHEET's tz). **Precedence:** the
+    sheet WINS the moment it holds one active range; the property is consulted
+    only while the sheet is absent, unreadable, or has no active row. The two
+    are NEVER merged -- a property left set beside a populated sheet is
+    ignored, and the Health page's `company-holidays` row (config section)
+    warns about it, because team-tools (#68) reads ONLY the sheet and a date
+    that lives only in the property would put the two apps on different
+    calendars. **Migration from a pre-H1 install:** re-run `setup()` (creates
+    the tab), copy every property token into its own row, confirm the Health
+    row reads `N ranges from sheet`, then delete the property.
+    Feeds: INV-35 working-day counts (Insights length-mismatch, server AND the
+    client form hints via `window.__COMPANY_HOLIDAYS__`), the daily alerts +
+    daily digest trigger runs (skipped on a holiday, like weekends), the
+    previous-business-day walk-back (`prevBusinessDayIso_` -- the Tuesday
+    after a Monday holiday assesses / covers Friday), the INV-28 prior window,
+    the coaching window, both coverage checks, the ingest-watchdog + freshness
+    credit, AND (R11-L) the OVERVIEW CHART AXES -- `trendIsoLabels` +
+    `ovWeekdayIsoLabels_` drop weekday holidays like weekends via
+    `isCompanyHoliday_`, so a weekday holiday no longer draws a false dip in
+    the dept sparklines/arrows + the trend chart (no cache bump; an empty list
+    = no dates dropped). Empty on both sources = no holidays = pre-S5 behavior.
+    Maintain it yearly (e.g. rows for `2026-01-01`, `2026-05-25`, `2026-07-03`,
+    `2026-11-26..2026-11-27`, `2026-12-25`); it is GLOBAL -- per-dept
+    exceptions stay in Alert Config Skip Dates. No redeploy needed to edit.
+    Pinned by `util.test.js` (precedence, failed-read fallback, coerced-cell
+    tz), `setup.test.js` (the text pin) and `system-health.test.js` (the row).
 28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard; trigger handler `runNeonBackup_`).
     Weekly Drive export of the tables with NO sheet fallback --
     `escalations`, `escalation_activity`, `inbound_calls` (incl. journey
@@ -2194,3 +2213,31 @@ When something looks wrong, before assuming a code bug, check:
       is spent and marks the report `partial` — a half-scanned date would skew
       every per-queue figure it touched. Pass `{dates:[...]}` to scope it.
     - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js`.
+
+68. **External readers of the CDR Report workbook (team-tools).** The CSR
+    team's other app, `team-tools` (a separate repo, one Apps Script project
+    deployed to the whole team), reads this workbook READ-ONLY through its
+    `CDR_SS_ID` Script Property: `DQE Historical Data` (cols 2-10 by fixed
+    position, full-sheet scans at 34 columns wide -- the appended AI/AJ/AK
+    columns are invisible to it), `CSR Transfer Historical Data` (by header
+    name), `Agent Alias Overrides` (positional: Old / Canonical / Active),
+    `Inbound Calls` (by header name, the #49 export tab), and since H1
+    `Company Holidays` (by header name: `Dates` / `Label` / `Active`, the #27
+    grammar) -- the last one so its Metrics "previous workday" and every
+    business-day walk sit on the SAME calendar as this dashboard instead of a
+    weekends-only rule or a hard-coded US-federal list. Nothing in this
+    repo's tests knows that reader exists (cross-file-pins covers this repo's
+    own mirrors only), so **any of the following is a TWO-REPO change, and
+    team-tools' CI is the only thing that can notice on its side**: renaming
+    one of those tabs or a `Company Holidays` header, moving a DQE column
+    below AH, changing the holiday grammar, trimming or archiving rows out of
+    `DQE Historical Data` (team-tools has no Neon path and would silently lose
+    history), or retiring the Inbound Calls export. Rules it does NOT mirror
+    and does not need to: the work window (it consumes windowed aggregates),
+    `DQE_EXCLUDED_AGENTS` (those names never get rows). Known semantic
+    divergences at the time of writing, tracked in team-tools: its Answer %
+    divides by rung where this dashboard divides by answered+missed; its
+    warn threshold is a single constant where this dashboard has per-dept
+    `ANSWER_TARGETS`; it does not apply `TEAM_AVG_EXCLUDES`. When those are
+    reconciled, the plan is a small published contract tab rather than more
+    hand-mirrors.

@@ -64,9 +64,15 @@ function installHealth(opts) {
   const sheets = {};
   ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health', 'Digest Config',
    'Agent Alias Overrides', 'Orphan Fix Log', 'Dept Config', 'Report Usage',
-   'Queue Report Subscribers']   // O-5: the tenth setup() sheet
+   'Queue Report Subscribers',   // O-5: the tenth setup() sheet
+   'Company Holidays']           // H1: the eleventh
     .forEach(function (n) { if (!(opts.missingSheets || []).length || (opts.missingSheets || []).indexOf(n) === -1) sheets[n] = [['h']]; });
+  if (opts.holidayRows) sheets['Company Holidays'] = [['Dates', 'Label', 'Active', 'Notes']].concat(opts.holidayRows);
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
+  // H1: the holiday list is memoized per execution (Util.gs); the suite shares
+  // one vm, so reset it per install or a prior test's source leaks in.
+  h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
+  h.ctx.COMPANY_HOLIDAYS_SOURCE_ = '';
 }
 
 function rowByKey(data, key) {
@@ -1219,4 +1225,38 @@ test('R43: a PARTIAL queue-report outcome paints the row amber (the classifier i
   } });
   assert.equal(rowByKey(h.call('getSystemHealth'), 'out-queuereport').status, 'warn',
     'a refused partial must never read as a successful send');
+});
+
+// -- H1: the company-holidays SOURCE row ---------------------------------------
+
+test('health H1: company-holidays row names the live source -- none / sheet / a shadowed property', function () {
+  installHealth();
+  let data = h.call('getSystemHealth');
+  let row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'muted', 'nothing configured -> muted, with a hint');
+  assert.ok(/0 ranges from none/.test(row.value), row.value);
+  assert.ok(/Company Holidays sheet/.test(row.hint));
+
+  installHealth({ holidayRows: [['2026-12-25', 'Christmas', '', '']] });
+  data = h.call('getSystemHealth');
+  row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'ok');
+  assert.equal(row.value, '1 range from sheet');
+  assert.equal(row.hint, '');
+
+  // Property still set beside a populated sheet: IGNORED, and the row says so
+  // (a silently-shadowed list is how a date hides from the external reader).
+  installHealth({ holidayRows: [['2026-12-25', 'Christmas', '', '']], props: { COMPANY_HOLIDAYS: '2026-07-03' } });
+  data = h.call('getSystemHealth');
+  row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'warn');
+  assert.ok(/IGNORED/.test(row.hint) && /clear the property/.test(row.hint), row.hint);
+  assert.equal(rowByKey(data, 'prop-COMPANY_HOLIDAYS').status, 'ok', 'the presence row is unchanged');
+
+  // Property only (a pre-H1 install that has not moved its dates yet): ok, from property.
+  installHealth({ props: { COMPANY_HOLIDAYS: '2026-07-03, 2026-12-25' } });
+  data = h.call('getSystemHealth');
+  row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'ok');
+  assert.equal(row.value, '2 ranges from property');
 });

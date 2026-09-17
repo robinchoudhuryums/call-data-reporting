@@ -261,26 +261,98 @@ function countWorkingDays_(fromIso, toIso) {
 
 // -- S5: company-holiday awareness ------------------------------------------
 //
-// A GLOBAL holiday list from the `COMPANY_HOLIDAYS` Script Property
-// (dashboard project): comma-separated ISO dates and inclusive
-// `YYYY-MM-DD..YYYY-MM-DD` ranges -- the SAME tolerant grammar as the Alert
-// Config Skip Dates cell (parseSkipDateRanges_ below parses both). Distinct
-// from the per-dept Skip Dates: this is "the company is closed", not "skip
-// this dept's alert". Unset/empty => no holidays => every consumer behaves
-// byte-identically to pre-S5 (the INV-54 regression-safety pattern).
+// A GLOBAL holiday list: "the company is closed", distinct from the per-dept
+// Alert Config Skip Dates. Two sources, ONE accessor (H1):
+//   1. the `Company Holidays` sheet (SHEETS.COMPANY_HOLIDAYS, created by
+//      setup()) -- the PRIMARY source since H1: one range per row in the
+//      Skip Dates grammar (`2026-12-25`, `2026-11-26..2026-11-27`, or a comma
+//      list in one cell), Active blank/TRUE, FALSE parks a row. It moved to a
+//      sheet so an EXTERNAL reader sees the same calendar: team-tools reads
+//      this tab from the same workbook for its "previous workday" math
+//      (Operator State #68), where it used to walk weekends only.
+//   2. the `COMPANY_HOLIDAYS` Script Property -- the FALLBACK, consulted only
+//      while the sheet is absent, unreadable, or has no ACTIVE row. The same
+//      tolerant grammar (parseSkipDateRanges_ parses both).
+// The sheet WINS as soon as it holds one active range: the two sources are not
+// unioned, so a half-migrated property cannot hide a date the external reader
+// never sees (the Health page's company-holidays row says which source is
+// live and flags a property that the sheet now shadows). Unset/empty on both
+// => no holidays => every consumer behaves byte-identically to pre-S5 (the
+// INV-54 regression-safety pattern).
 // Consumers: countWorkingDays_ (INV-35 length-mismatch), prevBusinessDayIso_
-// (alerts + daily digest walk-back), and the trigger-run holiday skips in
-// runDailyAlerts_ / runDailyDigests_. The client form hints read the same
-// ranges via window.__COMPANY_HOLIDAYS__ (renderDashboard_).
+// (alerts + daily digest walk-back), the trigger-run holiday skips in
+// runDailyAlerts_ / runDailyDigests_, the Overview axes, the coverage checks,
+// the coaching window. The client form hints read the same ranges via
+// window.__COMPANY_HOLIDAYS__ (renderDashboard_).
 
-var COMPANY_HOLIDAYS_MEMO_ = null;   // per-execution (tests reset it)
+var COMPANY_HOLIDAYS_MEMO_ = null;      // per-execution (tests reset it)
+var COMPANY_HOLIDAYS_SOURCE_ = '';      // 'sheet' | 'property' | 'none'; '-shadowed' / 'sheet-error' suffixes (Health row)
 
 function getCompanyHolidayRanges_() {
   if (COMPANY_HOLIDAYS_MEMO_) return COMPANY_HOLIDAYS_MEMO_;
   let raw = null;
   try { raw = PropertiesService.getScriptProperties().getProperty('COMPANY_HOLIDAYS'); } catch (e) {}
+  const sheetRead = sheetReadCompanyHolidayRanges_();   // { ranges, error }
+  if (sheetRead.ranges && sheetRead.ranges.length) {
+    COMPANY_HOLIDAYS_MEMO_ = sheetRead.ranges;
+    // A property still set beside a populated sheet is IGNORED, not merged --
+    // say so (the Health row reads this) rather than silently shadowing it.
+    COMPANY_HOLIDAYS_SOURCE_ = raw ? 'sheet-shadowed' : 'sheet';
+    return COMPANY_HOLIDAYS_MEMO_;
+  }
   COMPANY_HOLIDAYS_MEMO_ = raw ? parseSkipDateRanges_(raw) : [];
+  COMPANY_HOLIDAYS_SOURCE_ = (raw ? 'property' : 'none') + (sheetRead.error ? '+sheet-error' : '');
   return COMPANY_HOLIDAYS_MEMO_;
+}
+
+/** Health-page accessor: which source the memoized list came from. */
+function companyHolidaySource_() {
+  getCompanyHolidayRanges_();
+  return COMPANY_HOLIDAYS_SOURCE_;
+}
+
+/**
+ * Reads the `Company Holidays` sheet into [{from, to}] ranges (H1). Positional
+ * per COMPANY_HOLIDAYS_HEADERS (Dates = col 1, Active = col 3), the INV-46
+ * convention for the dashboard-managed config sheets. Returns
+ * { ranges: [], error: false } for an absent or empty sheet (the documented
+ * property fallback) and { ranges: [], error: true } when the READ threw (a
+ * transient "Service Spreadsheets timed out"), so the caller can tell
+ * "nothing configured" from "could not read" -- the deptConfigReadFailed_
+ * distinction. A Dates cell that Sheets coerced to a Date is formatted in
+ * the SPREADSHEET's tz (the sheet is on America/Mexico_City, the script on
+ * America/Chicago -- INV-02's twin), never via toISOString.
+ */
+function sheetReadCompanyHolidayRanges_() {
+  const out = { ranges: [], error: false };
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.COMPANY_HOLIDAYS);
+    if (!sheet) return out;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return out;
+    const width = Math.min(Math.max(sheet.getMaxColumns(), 1), COMPANY_HOLIDAYS_HEADERS.length);
+    const rows = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    let tz = null;
+    try { tz = ss.getSpreadsheetTimeZone(); } catch (eTz) { tz = null; }
+    for (let i = 0; i < rows.length; i++) {
+      const active = rows[i][2];
+      if (active === false || String(active).trim().toLowerCase() === 'false') continue;
+      let cell = rows[i][0];
+      if (cell instanceof Date) {
+        if (isNaN(cell.getTime())) continue;
+        cell = Utilities.formatDate(cell, tz || Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      }
+      const spec = String(cell == null ? '' : cell).trim();
+      if (!spec) continue;
+      const parsed = parseSkipDateRanges_(spec);
+      for (let j = 0; j < parsed.length; j++) out.ranges.push(parsed[j]);
+    }
+  } catch (e) {
+    out.error = true;
+    try { Logger.log('[company-holidays] sheet read failed, falling back to the COMPANY_HOLIDAYS property: ' + (e && e.message ? e.message : e)); } catch (eL) {}
+  }
+  return out;
 }
 
 function isCompanyHoliday_(dateIso) {

@@ -749,7 +749,7 @@ function getSystemHealth(req) {
       ['DASHBOARD_URL',    true,  'Alert-email links + "Open in new tab" buttons hide without it (Operator State #7).'],
       ['ADMIN_EMAILS',     true,  'Falls back to the ADMIN_EMAILS_FALLBACK constant — editing admins then needs a redeploy (Operator State #13).'],
       ['HMAC_SECRET',      true,  'Caller Lookup + phone-hash mirrors degrade without it (Operator State #17).'],
-      ['COMPANY_HOLIDAYS', false, 'Optional: holiday-aware working-day counts + alert/digest skips (Operator State #27).'],
+      ['COMPANY_HOLIDAYS', false, 'Optional FALLBACK since H1: the `Company Holidays` sheet is the primary holiday source; the property is consulted only while that sheet has no active row (Operator State #27).'],
       ['SPREADSHEET_ID',   true,  'REQUIRED — every sheet read fails without it (Operator State: setup).'],
     ];
     for (var p = 0; p < propSpecs.length; p++) {
@@ -759,6 +759,30 @@ function getSystemHealth(req) {
       add('config', 'prop-' + name, name, set ? 'ok' : (required ? 'warn' : 'muted'),
         set ? 'set' : 'not set', set ? '' : propSpecs[p][2]);
     }
+    // H1: which holiday SOURCE is live. The sheet wins over the property the
+    // moment it holds one active range, so a property left set beside a
+    // populated sheet is SHADOWED (ignored, never merged) -- the row names
+    // that, because a silently-ignored list is the shape that hides a date
+    // from the external reader (team-tools) that only sees the sheet.
+    try {
+      if (typeof getCompanyHolidayRanges_ === 'function') {
+        var holRanges = getCompanyHolidayRanges_() || [];
+        var holSrc = (typeof companyHolidaySource_ === 'function') ? companyHolidaySource_() : '';
+        var holStatus = holRanges.length ? 'ok' : 'muted';
+        var holHint = '';
+        if (holSrc.indexOf('sheet-shadowed') === 0) {
+          holStatus = 'warn';
+          holHint = 'The COMPANY_HOLIDAYS Script Property is still set but IGNORED -- the Company Holidays sheet wins. Move any dates the sheet is missing into the sheet, then clear the property (Operator State #27).';
+        } else if (holSrc.indexOf('sheet-error') >= 0) {
+          holStatus = 'warn';
+          holHint = 'The Company Holidays sheet could not be read this request; serving the COMPANY_HOLIDAYS property (or nothing). Transient unless it repeats.';
+        } else if (!holRanges.length) {
+          holHint = 'No company holidays configured -- every weekday counts as a working day. Add rows to the Company Holidays sheet (setup() creates it; Operator State #27).';
+        }
+        add('config', 'company-holidays', 'Company holidays (source)', holStatus,
+          holRanges.length + ' range' + (holRanges.length === 1 ? '' : 's') + ' from ' + (holSrc || 'unknown'), holHint);
+      }
+    } catch (eH) { add('config', 'company-holidays', 'Company holidays (source)', 'warn', 'probe failed', String(eH && eH.message || eH)); }
   } catch (e) { add('config', 'prop-probe', 'Script Properties', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // ── All Script Properties (inventory) ───────────────────────────────
@@ -813,7 +837,8 @@ function getSystemHealth(req) {
     var expected = ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health',
                     'Digest Config', 'Agent Alias Overrides', 'Orphan Fix Log',
                     'Dept Config', 'Report Usage',
-                    'Queue Report Subscribers'];   // O-5: the tenth setup() sheet (INV-12)
+                    'Queue Report Subscribers',    // O-5: the tenth setup() sheet (INV-12)
+                    'Company Holidays'];           // H1: the eleventh (the holiday source, Operator State #27)
     var missing = expected.filter(function (n) { return !ss.getSheetByName(n); });
     add('sheets', 'setup-sheets', 'setup()-managed sheets',
       missing.length ? 'warn' : 'ok',
