@@ -149,7 +149,7 @@ S22 | setup() creates all dashboard-managed sheets idempotently | Subsystem: Dep
   Steps:
     - In a fresh spreadsheet without any of those sheets, run setup() once.
     - Run setup() again.
-  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers (each with their header row + frozen first row); second run logs "already exists, skipping" for all ten -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
+  Expected: first run creates Access Control + Alert Config + Alert Log + Pipeline Health + Digest Config + Agent Alias Overrides + Orphan Fix Log + Dept Config + Report Usage + Queue Report Subscribers + Company Holidays + Dashboard Standards (each with their header row + frozen first row; Company Holidays col A and Dashboard Standards col D plain-text formatted; Dashboard Standards is also POPULATED -- one row per roster dept plus a `*` row, CSR reading 92 / 2 on a seed install); second run logs "already exists, skipping" for all twelve and rewrites the Dashboard Standards rows in place -- no data overwritten on either run. New columns added in a later code change to an existing sheet are NOT applied by setup() -- the sheet's existence short-circuits ensureSheet_.
 
 S23 | Overview is the default landing + tile click solos the trend line | Subsystem: Department Dashboard
   Steps:

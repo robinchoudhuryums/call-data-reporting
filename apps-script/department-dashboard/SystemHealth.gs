@@ -633,6 +633,19 @@ function getSystemHealth(req) {
         ? 'Each flagged row above says what to do. A row reading "installed but DISABLED" is the '
           + 'dangerous one -- it looks scheduled and does nothing.'
         : '');
+    // H3 (ported from team-tools' trigger-quota pre-flight): Apps Script caps
+    // installable triggers at 20 per user per script and REFUSES the 21st
+    // with a bare exception -- team-tools fell off that cliff on 2026-09-11.
+    // This project has fifteen newTrigger sites across its engines, so the
+    // count is worth a row; warn with three of headroom, since an install
+    // that fails is discovered only by the operator reading the throw.
+    add('triggers', 'trg-quota', 'Trigger quota (20 per script)',
+      trig.length >= TRIGGER_QUOTA_WARN_AT_ ? 'warn' : 'ok',
+      trig.length + ' of ' + TRIGGER_QUOTA_ + ' installed',
+      trig.length >= TRIGGER_QUOTA_WARN_AT_
+        ? 'The platform refuses the 21st trigger with an exception at install time. Uninstall an '
+          + 'optional engine or fold engines onto one dispatcher trigger before installing another.'
+        : '');
   } catch (e) { add('triggers', 'trg-probe', 'Trigger inventory', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // Last outcomes of the optional services (property-backed, cheap).
@@ -749,7 +762,7 @@ function getSystemHealth(req) {
       ['DASHBOARD_URL',    true,  'Alert-email links + "Open in new tab" buttons hide without it (Operator State #7).'],
       ['ADMIN_EMAILS',     true,  'Falls back to the ADMIN_EMAILS_FALLBACK constant — editing admins then needs a redeploy (Operator State #13).'],
       ['HMAC_SECRET',      true,  'Caller Lookup + phone-hash mirrors degrade without it (Operator State #17).'],
-      ['COMPANY_HOLIDAYS', false, 'Optional: holiday-aware working-day counts + alert/digest skips (Operator State #27).'],
+      ['COMPANY_HOLIDAYS', false, 'Optional FALLBACK since H1: the `Company Holidays` sheet is the primary holiday source; the property is consulted only while that sheet has no active row (Operator State #27).'],
       ['SPREADSHEET_ID',   true,  'REQUIRED — every sheet read fails without it (Operator State: setup).'],
     ];
     for (var p = 0; p < propSpecs.length; p++) {
@@ -759,6 +772,40 @@ function getSystemHealth(req) {
       add('config', 'prop-' + name, name, set ? 'ok' : (required ? 'warn' : 'muted'),
         set ? 'set' : 'not set', set ? '' : propSpecs[p][2]);
     }
+    // H1: which holiday SOURCE is live. The sheet wins over the property the
+    // moment it holds one active range, so a property left set beside a
+    // populated sheet is SHADOWED (ignored, never merged) -- the row names
+    // that, because a silently-ignored list is the shape that hides a date
+    // from the external reader (team-tools) that only sees the sheet.
+    try {
+      if (typeof getCompanyHolidayRanges_ === 'function') {
+        var holRanges = getCompanyHolidayRanges_() || [];
+        var holSrc = (typeof companyHolidaySource_ === 'function') ? companyHolidaySource_() : '';
+        var holStatus = holRanges.length ? 'ok' : 'muted';
+        var holHint = '';
+        if (holSrc.indexOf('sheet-shadowed') === 0) {
+          holStatus = 'warn';
+          holHint = 'The COMPANY_HOLIDAYS Script Property is still set but IGNORED -- the Company Holidays sheet wins. Move any dates the sheet is missing into the sheet, then clear the property (Operator State #27).';
+        } else if (holSrc.indexOf('sheet-error') >= 0) {
+          holStatus = 'warn';
+          holHint = 'The Company Holidays sheet could not be read this request; serving the COMPANY_HOLIDAYS property (or nothing). Transient unless it repeats.';
+        } else if (!holRanges.length) {
+          holHint = 'No company holidays configured -- every weekday counts as a working day. Add rows to the Company Holidays sheet (setup() creates it; Operator State #27).';
+        }
+        add('config', 'company-holidays', 'Company holidays (source)', holStatus,
+          holRanges.length + ' range' + (holRanges.length === 1 ? '' : 's') + ' from ' + (holSrc || 'unknown'), holHint);
+      }
+    } catch (eH) { add('config', 'company-holidays', 'Company holidays (source)', 'warn', 'probe failed', String(eH && eH.message || eH)); }
+    // H2: the published display standards vs the live resolution. team-tools
+    // reads the SHEET, so a stale sheet means the two apps tint the same
+    // answer rate against different numbers -- the drift H2 closed.
+    try {
+      if (typeof dashboardStandardsStatus_ === 'function') {
+        var dsStatus = dashboardStandardsStatus_();
+        add('config', 'dashboard-standards', 'Published display standards (Dashboard Standards sheet)',
+          dsStatus.status, dsStatus.value, dsStatus.hint);
+      }
+    } catch (eS) { add('config', 'dashboard-standards', 'Published display standards (Dashboard Standards sheet)', 'warn', 'probe failed', String(eS && eS.message || eS)); }
   } catch (e) { add('config', 'prop-probe', 'Script Properties', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // ── All Script Properties (inventory) ───────────────────────────────
@@ -813,7 +860,9 @@ function getSystemHealth(req) {
     var expected = ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health',
                     'Digest Config', 'Agent Alias Overrides', 'Orphan Fix Log',
                     'Dept Config', 'Report Usage',
-                    'Queue Report Subscribers'];   // O-5: the tenth setup() sheet (INV-12)
+                    'Queue Report Subscribers',    // O-5: the tenth setup() sheet (INV-12)
+                    'Company Holidays',            // H1: the eleventh (the holiday source, Operator State #27)
+                    'Dashboard Standards'];        // H2: the twelfth (the published standards, Operator State #37)
     var missing = expected.filter(function (n) { return !ss.getSheetByName(n); });
     add('sheets', 'setup-sheets', 'setup()-managed sheets',
       missing.length ? 'warn' : 'ok',
@@ -1152,6 +1201,11 @@ function reportClientIssue(payload) {
 // Gate: any signed-in role (agents included -- the rollout-timing question
 // covers the agent app too), mirroring reportClientIssue's signed-in gate;
 // role 'none' is rejected.
+
+// H3: the Apps Script installable-trigger cap (per user per script) and the
+// Health row's warn threshold (three of headroom -- see the trg-quota row).
+var TRIGGER_QUOTA_ = 20;
+var TRIGGER_QUOTA_WARN_AT_ = 17;
 
 var PRESENCE_CACHE_KEY_ = 'presence:v1';
 var PRESENCE_CACHE_TTL_SEC_ = 1800;   // the map itself survives 30 min of total silence

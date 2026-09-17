@@ -33,6 +33,26 @@ jobs:
       - name: INV-16 duplicated-file guard
         run: bash scripts/check-duplicated-files.sh
 
+  # H3: the undeclared-identifier net (ported from team-tools' lint-server).
+  # SEPARATE job because it needs eslint (`npm ci`), while `test` above stays
+  # deliberately zero-dep. It lints each Apps Script project as ONE
+  # concatenation -- the one global scope the platform actually loads -- so a
+  # name that reads fine and throws ReferenceError at runtime is caught
+  # statically, which no selective-load suite and no shape pin can do. Under
+  # CI=true the script FAILS when eslint is absent (the F-9 rule), so a
+  # workflow refactor that loses the install step cannot turn it silently green.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install eslint (devDependency)
+        run: npm ci --no-audit --no-fund
+      - name: Undeclared-identifier net (npm run lint:gas)
+        run: npm run lint:gas
+
   # F7: the rendered-UI gate. SEPARATE job because it needs playwright + a
   # browser download, while the unit suite above is deliberately zero-dep. It
   # boots the REAL client (dashboard.html + script.html + styles.html) in

@@ -523,22 +523,41 @@ When something looks wrong, before assuming a code bug, check:
     inline, so this is ONLY for the bulk path. Recommended only after the busy
     carve-out numbers are spot-checked (the report stays admin-only while
     vetted, and this writes Direct history across all backfilled dates).
-27. `COMPANY_HOLIDAYS` Script Property (dashboard) -- the S5 global
-    holiday list (comma-separated ISO dates and/or `YYYY-MM-DD..YYYY-MM-DD`
-    inclusive ranges; same tolerant grammar as the Alert Config Skip Dates
-    cell). Feeds: INV-35 working-day counts (CR + Insights length-mismatch,
-    server AND the client form hints via `window.__COMPANY_HOLIDAYS__`),
-    the daily alerts + daily digest trigger runs (skipped on a holiday,
-    like weekends), the previous-business-day walk-back
-    (`prevBusinessDayIso_` -- the Tuesday after a Monday holiday assesses /
-    covers Friday), AND (R11-L) the OVERVIEW CHART AXES -- `trendIsoLabels`
-    + `ovWeekdayIsoLabels_` drop weekday holidays like weekends via
-    `isCompanyHoliday_`, so a weekday holiday no longer draws a false dip
-    in the dept sparklines/arrows + the trend chart (no cache bump; unset
-    property = no dates dropped). Unset = no holidays = pre-S5 behavior. Maintain it
-    yearly (e.g. `2026-01-01, 2026-05-25, 2026-07-03, 2026-11-26..2026-11-27,
-    2026-12-25`); it is GLOBAL -- per-dept exceptions stay in Alert Config
-    Skip Dates. No redeploy needed to edit.
+27. Company holidays -- the `Company Holidays` SHEET (dashboard-managed,
+    created by `setup()`; H1) is the global "the company is closed" list, and
+    the `COMPANY_HOLIDAYS` Script Property is now only its FALLBACK. One range
+    per row in column A (`Dates`): a single ISO date (`2026-12-25`), an
+    inclusive range (`2026-11-26..2026-11-27`), or a comma list in one cell --
+    the same tolerant grammar as the Alert Config Skip Dates cell. `Label` and
+    `Notes` are free text; `Active` blank/TRUE counts, FALSE parks a row
+    without deleting it. Column A is plain-text pinned at creation so Sheets
+    cannot coerce a lone date to a Date value (the reader tolerates a coerced
+    cell anyway by formatting it in the SPREADSHEET's tz). **Precedence:** the
+    sheet WINS the moment it holds one active range; the property is consulted
+    only while the sheet is absent, unreadable, or has no active row. The two
+    are NEVER merged -- a property left set beside a populated sheet is
+    ignored, and the Health page's `company-holidays` row (config section)
+    warns about it, because team-tools (#68) reads ONLY the sheet and a date
+    that lives only in the property would put the two apps on different
+    calendars. **Migration from a pre-H1 install:** re-run `setup()` (creates
+    the tab), copy every property token into its own row, confirm the Health
+    row reads `N ranges from sheet`, then delete the property.
+    Feeds: INV-35 working-day counts (Insights length-mismatch, server AND the
+    client form hints via `window.__COMPANY_HOLIDAYS__`), the daily alerts +
+    daily digest trigger runs (skipped on a holiday, like weekends), the
+    previous-business-day walk-back (`prevBusinessDayIso_` -- the Tuesday
+    after a Monday holiday assesses / covers Friday), the INV-28 prior window,
+    the coaching window, both coverage checks, the ingest-watchdog + freshness
+    credit, AND (R11-L) the OVERVIEW CHART AXES -- `trendIsoLabels` +
+    `ovWeekdayIsoLabels_` drop weekday holidays like weekends via
+    `isCompanyHoliday_`, so a weekday holiday no longer draws a false dip in
+    the dept sparklines/arrows + the trend chart (no cache bump; an empty list
+    = no dates dropped). Empty on both sources = no holidays = pre-S5 behavior.
+    Maintain it yearly (e.g. rows for `2026-01-01`, `2026-05-25`, `2026-07-03`,
+    `2026-11-26..2026-11-27`, `2026-12-25`); it is GLOBAL -- per-dept
+    exceptions stay in Alert Config Skip Dates. No redeploy needed to edit.
+    Pinned by `util.test.js` (precedence, failed-read fallback, coerced-cell
+    tz), `setup.test.js` (the text pin) and `system-health.test.js` (the row).
 28. Neon backup (optional but recommended; `NeonBackup.gs`, dashboard; trigger handler `runNeonBackup_`).
     Weekly Drive export of the tables with NO sheet fallback --
     `escalations`, `escalation_activity`, `inbound_calls` (incl. journey
@@ -816,11 +835,14 @@ When something looks wrong, before assuming a code bug, check:
     `runPipelineWatch_` ALSO dispatches `escPendingReviewPing_` (Escalations.gs)
     on every hourly run, BEFORE its own early returns -- a COUNT-ONLY, PII-free
     admin email when new `pending_review` escalation submissions have appeared
-    (team-tools INSERTs directly into Neon, so no dashboard event fires at
-    submission time; this poll is the push complement to the worklist's
-    "N awaiting review" chip). Gated by its OWN `NOTIFY_PENDING_REVIEW` Script
-    Property ('true' to enable; default OFF -- and it only runs at all while
-    the PipelineWatch trigger is installed). OPS-1 watermark
+    (the designed external writer INSERTs directly into Neon, so no dashboard
+    event would fire at submission time; this poll is the push complement to
+    the worklist's "N awaiting review" chip). Gated by its OWN
+    `NOTIFY_PENDING_REVIEW` Script Property ('true' to enable; default OFF --
+    and it only runs at all while the PipelineWatch trigger is installed).
+    **H3 (2026-09): NO external writer exists yet** -- team-tools has no Neon
+    connection and no escalations writer (INV-55) -- so leave the flag unset
+    until one ships; enabled early it only baselines and never emails. OPS-1 watermark
     (`ESC_REVIEW_PING_WATERMARK`): first run baselines silently, later runs
     email once per new batch and advance only on a confirmed send. The email
     carries count + dept names ONLY (never caller/patient/reason), so it
@@ -952,6 +974,24 @@ When something looks wrong, before assuming a code bug, check:
     reference) and the per-dept ALERT thresholds (Alert Config, INV-34).
     Pinned by `tests/unit/answer-targets.test.js` + the R23 fallback pin in
     `cross-file-pins.test.js`.
+    **H2 (2026-09-17) -- the resolution is PUBLISHED for team-tools.** The
+    `Dashboard Standards` sheet (setup()-managed) holds one row per roster
+    dept plus a `*` global row: `Department | Answer Target | Amber Band |
+    Team Avg Excludes | Published At | Published By`, each the value
+    `getAnswerStandardFor_(dept)` / `getTeamAvgExcludes_(dept)` resolves to
+    right now. It is rewritten by `setup()`, by the Alerts modal's Display
+    standards save, and by the Dept Config modal's save/remove (the three
+    admin write paths that can change an input); the dashboard NEVER reads
+    it. team-tools reads it (#68) so its Metrics tint the same answer rate
+    against the same target/band and exclude the same names from its team
+    benchmark. **Edit standards from the Alerts modal, never the editor** --
+    a hand-set `ANSWER_TARGETS` / `DEPT_ANSWER_TARGETS` property is not
+    republished until the next modal save or `setup()`; the Health page's
+    `dashboard-standards` row (config section) reads `STALE` in that window,
+    `sheet is empty` on an install that has never published, and `not
+    published` before `setup()` has created the sheet. A failed publish
+    never fails the save that triggered it (best-effort, logged, and the
+    row shows the drift).
 38. **Diagnosing "a queue's inbound calls are missing" (F1/F1b runbook).**
     A queue whose raw name `icIsQueueName_` doesn't recognize gets
     `entry_queue = NULL` and attributes to NO dept. **Do NOT probe with
@@ -2203,3 +2243,37 @@ When something looks wrong, before assuming a code bug, check:
       is spent and marks the report `partial` — a half-scanned date would skew
       every per-queue figure it touched. Pass `{dates:[...]}` to scope it.
     - Pinned by `tests/unit/qcd-dqe-diagnostic.test.js`.
+
+68. **External readers of the CDR Report workbook (team-tools).** The CSR
+    team's other app, `team-tools` (a separate repo, one Apps Script project
+    deployed to the whole team), reads this workbook READ-ONLY through its
+    `CDR_SS_ID` Script Property: `DQE Historical Data` (cols 2-10 by fixed
+    position, full-sheet scans at 34 columns wide -- the appended AI/AJ/AK
+    columns are invisible to it), `CSR Transfer Historical Data` (by header
+    name), `Agent Alias Overrides` (positional: Old / Canonical / Active),
+    `Inbound Calls` (by header name, the #49 export tab), since H1
+    `Company Holidays` (by header name: `Dates` / `Label` / `Active`, the #27
+    grammar) -- so its Metrics "previous workday" and every business-day walk
+    sit on the SAME calendar as this dashboard instead of a weekends-only rule
+    or a hard-coded US-federal list -- and since H2 `Dashboard Standards` (by
+    header name: `Department` / `Answer Target` / `Amber Band` / `Team Avg
+    Excludes`; its own dept row, else the `*` row), so it tints the same
+    answer rate against the same target + band and subtracts the same names
+    from its team benchmark. H2 also aligned the rate FORMULA: both apps
+    compute Answer % as `answered / (answered + missed)`. Nothing in this
+    repo's tests knows that reader exists (cross-file-pins covers this repo's
+    own mirrors only), so **any of the following is a TWO-REPO change, and
+    team-tools' CI is the only thing that can notice on its side**: renaming
+    one of those tabs or a `Company Holidays` header, moving a DQE column
+    below AH, changing the holiday grammar, trimming or archiving rows out of
+    `DQE Historical Data` (team-tools has no Neon path and would silently lose
+    history), or retiring the Inbound Calls export. Rules it does NOT mirror
+    and does not need to: the work window (it consumes windowed aggregates),
+    `DQE_EXCLUDED_AGENTS` (those names never get rows). Known semantic
+    divergences at the time of writing, tracked in team-tools: its Answer %
+    divides by rung where this dashboard divides by answered+missed; its
+    warn threshold is a single constant where this dashboard has per-dept
+    `ANSWER_TARGETS`; it does not apply `TEAM_AVG_EXCLUDES` -- ALL THREE
+    CLOSED by H2 (2026-09-17) via the published `Dashboard Standards` tab
+    (#37). A new rate rule or standard on this side is not done until that
+    tab carries it and team-tools' reader consumes it.

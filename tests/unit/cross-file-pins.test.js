@@ -1064,3 +1064,34 @@ test('S1/INV-06 (R49): the CSR-family early floor and its queue list agree acros
   assert.match(diag, /const QDD_EARLY_WINDOW_START_ = DQE_EARLY_WINDOW_START;/,
     'the census early edge derives from the build constant, not a third 6:00');
 });
+
+// ── H3 (2026-09-17): one global scope per project, so a top-level name
+// declared in two files of the SAME project silently resolves to whichever
+// file loads last -- the `onOpen` collision CLAUDE.md warns about, and the
+// class no selective-load suite can see (each loadGas call reads a subset).
+// Ported from team-tools' F2c pin. `npm run lint:gas` is the companion net
+// for the other half (a name declared NOWHERE); this one needs no eslint.
+test('H3: no top-level name is declared in two files of the same Apps Script project', function () {
+  const projects = [
+    ['apps-script/department-dashboard', /\.gs$/],
+    ['apps-script/cdr-report', /\.js$/],
+    ['apps-script/cdr-import', /\.js$/],
+  ];
+  const DECL = /^(?:function\s+([A-Za-z_$][\w$]*)|(?:var|let|const)\s+([A-Za-z_$][\w$]*))/gm;
+  projects.forEach(function (pr) {
+    const dir = path.join(ROOT, pr[0]);
+    const seen = {};
+    fs.readdirSync(dir).filter(function (f) { return pr[1].test(f); }).sort().forEach(function (f) {
+      const src = read(f, dir);
+      let m;
+      DECL.lastIndex = 0;
+      while ((m = DECL.exec(src))) {
+        const name = m[1] || m[2];
+        (seen[name] = seen[name] || []).push(f);
+      }
+    });
+    const dups = Object.keys(seen).filter(function (n) { return new Set(seen[n]).size > 1; });
+    assert.deepEqual(dups, [], pr[0] + ': declared in two files -- the last-loaded file wins silently: '
+      + dups.map(function (n) { return n + ' (' + Array.from(new Set(seen[n])).join(', ') + ')'; }).join('; '));
+  });
+});

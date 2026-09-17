@@ -283,7 +283,7 @@
     if (!all.length) {
       escSetFilterCount_('');
       const st = (escLastResp_.meta && escLastResp_.meta.status) || 'pending';
-      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉 New ones appear here when an admin logs one or a team-tools submission is approved.'
+      escShowEmpty_(st === 'pending' ? 'No pending escalations. 🎉 New ones appear here when an admin logs one or an externally submitted one is approved.'
         : st === 'pending_review' ? 'No submissions awaiting review. 🎉'
         : 'No escalations to show for this filter.');
       return;

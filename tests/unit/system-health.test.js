@@ -12,7 +12,7 @@ const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 // and that a failing probe degrades to its own warn row.
 
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'SystemHealth.gs', 'NeonBackup.gs'],
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'SystemHealth.gs', 'NeonBackup.gs'],   // H2: DeptConfig for the standards probe
 });
 
 // -- NeonBackup pure helpers --------------------------------------------------
@@ -64,9 +64,28 @@ function installHealth(opts) {
   const sheets = {};
   ['Access Control', 'Alert Config', 'Alert Log', 'Pipeline Health', 'Digest Config',
    'Agent Alias Overrides', 'Orphan Fix Log', 'Dept Config', 'Report Usage',
-   'Queue Report Subscribers']   // O-5: the tenth setup() sheet
+   'Queue Report Subscribers',   // O-5: the tenth setup() sheet
+   'Company Holidays',           // H1: the eleventh
+   'Dashboard Standards']        // H2: the twelfth
     .forEach(function (n) { if (!(opts.missingSheets || []).length || (opts.missingSheets || []).indexOf(n) === -1) sheets[n] = [['h']]; });
+  if (opts.holidayRows) sheets['Company Holidays'] = [['Dates', 'Label', 'Active', 'Notes']].concat(opts.holidayRows);
+  // H2: with no roster in the fixture the live resolution is the lone `*`
+  // global row (80/10 seeds); publish it so the default install reads CURRENT.
+  if (sheets['Dashboard Standards'] && !opts.standardsRows && !opts.standardsEmpty) {
+    sheets['Dashboard Standards'] = [['Department', 'Answer Target', 'Amber Band', 'Team Avg Excludes', 'Published At', 'Published By'],
+      ['*', 80, 10, '', '2026-09-17T00:00:00', 'admin@x.com']];
+  } else if (opts.standardsRows) {
+    sheets['Dashboard Standards'] = [['Department', 'Answer Target', 'Amber Band', 'Team Avg Excludes', 'Published At', 'Published By']].concat(opts.standardsRows);
+  }
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
+  // H1: the holiday list is memoized per execution (Util.gs); the suite shares
+  // one vm, so reset it per install or a prior test's source leaks in.
+  h.ctx.COMPANY_HOLIDAYS_MEMO_ = null;
+  h.ctx.COMPANY_HOLIDAYS_SOURCE_ = '';
+  // H2: the standards resolution is memoized per execution too.
+  h.ctx.ANSWER_TARGETS_MEMO_ = null;
+  h.ctx.DEPT_ANSWER_TARGETS_MEMO_ = null;
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
 }
 
 function rowByKey(data, key) {
@@ -1219,4 +1238,88 @@ test('R43: a PARTIAL queue-report outcome paints the row amber (the classifier i
   } });
   assert.equal(rowByKey(h.call('getSystemHealth'), 'out-queuereport').status, 'warn',
     'a refused partial must never read as a successful send');
+});
+
+// -- H1: the company-holidays SOURCE row ---------------------------------------
+
+test('health H1: company-holidays row names the live source -- none / sheet / a shadowed property', function () {
+  installHealth();
+  let data = h.call('getSystemHealth');
+  let row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'muted', 'nothing configured -> muted, with a hint');
+  assert.ok(/0 ranges from none/.test(row.value), row.value);
+  assert.ok(/Company Holidays sheet/.test(row.hint));
+
+  installHealth({ holidayRows: [['2026-12-25', 'Christmas', '', '']] });
+  data = h.call('getSystemHealth');
+  row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'ok');
+  assert.equal(row.value, '1 range from sheet');
+  assert.equal(row.hint, '');
+
+  // Property still set beside a populated sheet: IGNORED, and the row says so
+  // (a silently-shadowed list is how a date hides from the external reader).
+  installHealth({ holidayRows: [['2026-12-25', 'Christmas', '', '']], props: { COMPANY_HOLIDAYS: '2026-07-03' } });
+  data = h.call('getSystemHealth');
+  row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'warn');
+  assert.ok(/IGNORED/.test(row.hint) && /clear the property/.test(row.hint), row.hint);
+  assert.equal(rowByKey(data, 'prop-COMPANY_HOLIDAYS').status, 'ok', 'the presence row is unchanged');
+
+  // Property only (a pre-H1 install that has not moved its dates yet): ok, from property.
+  installHealth({ props: { COMPANY_HOLIDAYS: '2026-07-03, 2026-12-25' } });
+  data = h.call('getSystemHealth');
+  row = rowByKey(data, 'company-holidays');
+  assert.equal(row.status, 'ok');
+  assert.equal(row.value, '2 ranges from property');
+});
+
+// -- H2: the published-standards row ------------------------------------------
+
+test('health H2: dashboard-standards row -- current / empty / stale / not published', function () {
+  installHealth();
+  let row = rowByKey(h.call('getSystemHealth'), 'dashboard-standards');
+  assert.equal(row.status, 'ok', 'the fixture publishes exactly the live resolution');
+  assert.equal(row.value, '1 row -- current');
+
+  installHealth({ standardsEmpty: true });
+  row = rowByKey(h.call('getSystemHealth'), 'dashboard-standards');
+  assert.equal(row.status, 'warn');
+  assert.equal(row.value, 'sheet is empty');
+
+  // A property edited by hand (bypassing the Alerts modal) leaves the sheet
+  // saying 80/10 while the dashboard now tints against 85/5 -- STALE.
+  installHealth({ props: { ANSWER_TARGETS: 'global=85, band=5' } });
+  h.ctx.ANSWER_TARGETS_MEMO_ = null;
+  row = rowByKey(h.call('getSystemHealth'), 'dashboard-standards');
+  assert.equal(row.status, 'warn');
+  assert.ok(/STALE/.test(row.value) && /team-tools reads the SHEET/.test(row.hint), row.hint);
+  h.ctx.ANSWER_TARGETS_MEMO_ = null;
+
+  installHealth({ missingSheets: ['Dashboard Standards'] });
+  const data = h.call('getSystemHealth');
+  row = rowByKey(data, 'dashboard-standards');
+  assert.equal(row.status, 'muted');
+  assert.equal(row.value, 'not published');
+  assert.equal(rowByKey(data, 'setup-sheets').status, 'warn', 'the twelfth sheet is a setup() sheet');
+  assert.ok(/Dashboard Standards/.test(rowByKey(data, 'setup-sheets').value));
+});
+
+// H3: the trigger-quota row (ported from team-tools' pre-flight). 20 is the
+// platform cap; the row warns at 17 so an operator has three installs of
+// headroom before the 21st throws at install time.
+test('H3: the trg-quota row counts installed triggers against the 20 cap and warns at 17', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const few = ['a_', 'b_', 'c_'];
+  let row = withTriggers_(few, function () { return rowByKey(h.call('getSystemHealth'), 'trg-quota'); });
+  assert.equal(row.status, 'ok');
+  assert.equal(row.value, '3 of 20 installed');
+  assert.equal(row.hint, '');
+  const many = []; for (let i = 0; i < 17; i++) many.push('fn' + i + '_');
+  row = withTriggers_(many, function () { return rowByKey(h.call('getSystemHealth'), 'trg-quota'); });
+  assert.equal(row.status, 'warn');
+  assert.equal(row.value, '17 of 20 installed');
+  assert.ok(/21st trigger/.test(row.hint) && /dispatcher/.test(row.hint), row.hint);
+  // The empty inventory (the shim default) is a clean 0 -- no false warn on a fresh install.
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'trg-quota').value, '0 of 20 installed');
 });

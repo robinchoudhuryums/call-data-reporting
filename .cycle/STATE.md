@@ -1,6 +1,7 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-17 (cross-repo H1/H2/H3 sessions, branch `claude/inspiring-volta-7u9szs`, NOT yet merged):** H1 the `Company Holidays` sheet (#27), H2 the published `Dashboard Standards` sheet for team-tools (#37/#68), H3 the Escalations Phase-2 "live" claim retired (designed, unbuilt) and four infrastructure ports from team-tools (`npm run lint:gas` + the CI `lint` job, the duplicate-top-level-name pin, `scripts/bite.sh`, the Health `trg-quota` row). Block: `.cycle/blocks/100-h3-bridge-infra-broad-implement.md`. Deploy the dashboard (Setup/Util/Alerts/DeptConfig/SystemHealth/Escalations changed) and re-run `setup()` once to create + publish the two new sheets. Where to resume: the queue/dept vocabulary publish (the H2 pattern) is the last mirrored config between the repos; the M-sized infrastructure items are listed in the block's Follow-on section.
 - **THIS SESSION (2026-09-16): the CSR "Misc" discrepancy is CLOSED, the work
   window changed, and two Overview/My-Dept control fixes shipped. PRs
   #319-#327, all merged; branch fast-forwarded onto main, nothing unmerged.**

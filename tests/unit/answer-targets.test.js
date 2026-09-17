@@ -160,3 +160,28 @@ test('R23 bundle: getStandardsBundle_ carries answer + depts + transfer + the ab
   assert.equal(b.transfer.light, 30);
   assert.equal(b.abandon, 4);
 });
+
+// -- H2: the published standards ----------------------------------------------
+
+test('H2 dashboardStandardsRows_ (pure): one row per dept + the `*` global row; excludes comma-joined; dups dropped', function () {
+  const stdFor = function (d) { return d === 'CSR' ? { target: 92, band: 2 } : { target: 80, band: 10 }; };
+  const exFor = function (d) { return d === 'CSR' ? ['Robin Choudhury', 'Pat Lead'] : []; };
+  const rows = h.call('dashboardStandardsRows_', ['CSR', 'Sales', ' CSR ', ''], stdFor, exFor);
+  assert.equal(rows.map(function (r) { return Array.from(r).join('|'); }).join('\n'),
+    ['CSR|92|2|Robin Choudhury, Pat Lead', 'Sales|80|10|', '*|80|10|'].join('\n'));   // string compare: vm-realm arrays
+  assert.equal(h.call('dashboardStandardsRows_', [], stdFor, exFor).map(function (r) { return Array.from(r).join('|'); }).join('\n'), '*|80|10|',
+    'no roster -> the global row alone');
+});
+
+test('H2 publishDashboardStandards_: never throws -- a missing sheet is reported with the setup() hint', function () {
+  h.state.props = h.state.props || {};
+  h.state.props.SPREADSHEET_ID = 'fake';
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
+  // Util.gs alone lacks getAllDepartments_/getTeamAvgExcludes_ (Auth/DeptConfig);
+  // the missing-sheet branch returns BEFORE they are needed.
+  const out = h.call('publishDashboardStandards_');
+  assert.equal(out.ok, false);
+  assert.ok(/re-run setup\(\)/.test(out.error), out.error);
+  delete h.state.spreadsheet;
+});

@@ -261,26 +261,98 @@ function countWorkingDays_(fromIso, toIso) {
 
 // -- S5: company-holiday awareness ------------------------------------------
 //
-// A GLOBAL holiday list from the `COMPANY_HOLIDAYS` Script Property
-// (dashboard project): comma-separated ISO dates and inclusive
-// `YYYY-MM-DD..YYYY-MM-DD` ranges -- the SAME tolerant grammar as the Alert
-// Config Skip Dates cell (parseSkipDateRanges_ below parses both). Distinct
-// from the per-dept Skip Dates: this is "the company is closed", not "skip
-// this dept's alert". Unset/empty => no holidays => every consumer behaves
-// byte-identically to pre-S5 (the INV-54 regression-safety pattern).
+// A GLOBAL holiday list: "the company is closed", distinct from the per-dept
+// Alert Config Skip Dates. Two sources, ONE accessor (H1):
+//   1. the `Company Holidays` sheet (SHEETS.COMPANY_HOLIDAYS, created by
+//      setup()) -- the PRIMARY source since H1: one range per row in the
+//      Skip Dates grammar (`2026-12-25`, `2026-11-26..2026-11-27`, or a comma
+//      list in one cell), Active blank/TRUE, FALSE parks a row. It moved to a
+//      sheet so an EXTERNAL reader sees the same calendar: team-tools reads
+//      this tab from the same workbook for its "previous workday" math
+//      (Operator State #68), where it used to walk weekends only.
+//   2. the `COMPANY_HOLIDAYS` Script Property -- the FALLBACK, consulted only
+//      while the sheet is absent, unreadable, or has no ACTIVE row. The same
+//      tolerant grammar (parseSkipDateRanges_ parses both).
+// The sheet WINS as soon as it holds one active range: the two sources are not
+// unioned, so a half-migrated property cannot hide a date the external reader
+// never sees (the Health page's company-holidays row says which source is
+// live and flags a property that the sheet now shadows). Unset/empty on both
+// => no holidays => every consumer behaves byte-identically to pre-S5 (the
+// INV-54 regression-safety pattern).
 // Consumers: countWorkingDays_ (INV-35 length-mismatch), prevBusinessDayIso_
-// (alerts + daily digest walk-back), and the trigger-run holiday skips in
-// runDailyAlerts_ / runDailyDigests_. The client form hints read the same
-// ranges via window.__COMPANY_HOLIDAYS__ (renderDashboard_).
+// (alerts + daily digest walk-back), the trigger-run holiday skips in
+// runDailyAlerts_ / runDailyDigests_, the Overview axes, the coverage checks,
+// the coaching window. The client form hints read the same ranges via
+// window.__COMPANY_HOLIDAYS__ (renderDashboard_).
 
-var COMPANY_HOLIDAYS_MEMO_ = null;   // per-execution (tests reset it)
+var COMPANY_HOLIDAYS_MEMO_ = null;      // per-execution (tests reset it)
+var COMPANY_HOLIDAYS_SOURCE_ = '';      // 'sheet' | 'property' | 'none'; '-shadowed' / 'sheet-error' suffixes (Health row)
 
 function getCompanyHolidayRanges_() {
   if (COMPANY_HOLIDAYS_MEMO_) return COMPANY_HOLIDAYS_MEMO_;
   let raw = null;
   try { raw = PropertiesService.getScriptProperties().getProperty('COMPANY_HOLIDAYS'); } catch (e) {}
+  const sheetRead = sheetReadCompanyHolidayRanges_();   // { ranges, error }
+  if (sheetRead.ranges && sheetRead.ranges.length) {
+    COMPANY_HOLIDAYS_MEMO_ = sheetRead.ranges;
+    // A property still set beside a populated sheet is IGNORED, not merged --
+    // say so (the Health row reads this) rather than silently shadowing it.
+    COMPANY_HOLIDAYS_SOURCE_ = raw ? 'sheet-shadowed' : 'sheet';
+    return COMPANY_HOLIDAYS_MEMO_;
+  }
   COMPANY_HOLIDAYS_MEMO_ = raw ? parseSkipDateRanges_(raw) : [];
+  COMPANY_HOLIDAYS_SOURCE_ = (raw ? 'property' : 'none') + (sheetRead.error ? '+sheet-error' : '');
   return COMPANY_HOLIDAYS_MEMO_;
+}
+
+/** Health-page accessor: which source the memoized list came from. */
+function companyHolidaySource_() {
+  getCompanyHolidayRanges_();
+  return COMPANY_HOLIDAYS_SOURCE_;
+}
+
+/**
+ * Reads the `Company Holidays` sheet into [{from, to}] ranges (H1). Positional
+ * per COMPANY_HOLIDAYS_HEADERS (Dates = col 1, Active = col 3), the INV-46
+ * convention for the dashboard-managed config sheets. Returns
+ * { ranges: [], error: false } for an absent or empty sheet (the documented
+ * property fallback) and { ranges: [], error: true } when the READ threw (a
+ * transient "Service Spreadsheets timed out"), so the caller can tell
+ * "nothing configured" from "could not read" -- the deptConfigReadFailed_
+ * distinction. A Dates cell that Sheets coerced to a Date is formatted in
+ * the SPREADSHEET's tz (the sheet is on America/Mexico_City, the script on
+ * America/Chicago -- INV-02's twin), never via toISOString.
+ */
+function sheetReadCompanyHolidayRanges_() {
+  const out = { ranges: [], error: false };
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.COMPANY_HOLIDAYS);
+    if (!sheet) return out;
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return out;
+    const width = Math.min(Math.max(sheet.getMaxColumns(), 1), COMPANY_HOLIDAYS_HEADERS.length);
+    const rows = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    let tz = null;
+    try { tz = ss.getSpreadsheetTimeZone(); } catch (eTz) { tz = null; }
+    for (let i = 0; i < rows.length; i++) {
+      const active = rows[i][2];
+      if (active === false || String(active).trim().toLowerCase() === 'false') continue;
+      let cell = rows[i][0];
+      if (cell instanceof Date) {
+        if (isNaN(cell.getTime())) continue;
+        cell = Utilities.formatDate(cell, tz || Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      }
+      const spec = String(cell == null ? '' : cell).trim();
+      if (!spec) continue;
+      const parsed = parseSkipDateRanges_(spec);
+      for (let j = 0; j < parsed.length; j++) out.ranges.push(parsed[j]);
+    }
+  } catch (e) {
+    out.error = true;
+    try { Logger.log('[company-holidays] sheet read failed, falling back to the COMPANY_HOLIDAYS property: ' + (e && e.message ? e.message : e)); } catch (eL) {}
+  }
+  return out;
 }
 
 function isCompanyHoliday_(dateIso) {
@@ -969,6 +1041,110 @@ function getStandardsBundle_() {
     transfer: getTransferTiers_(),
     abandon: ABANDON_STANDARD_PCT,
   };
+}
+
+// -- H2: publish the resolved display standards for external readers --------
+//
+// The answer target / amber band live in Script Properties layered over
+// Config.gs seeds, and the team-avg exclusions in the Dept Config sheet
+// layered over a constant -- three sources an external reader cannot see.
+// team-tools tinted the same DQE rate against a single hand-carried 85 where
+// the CSR manager's dashboard tints against 92/2 (the H2 finding). So the
+// dashboard PUBLISHES its resolution into the `Dashboard Standards` sheet:
+// one row per roster dept + a `*` global row. Rewritten from the three admin
+// write paths that can change an input (setup, saveAnswerTargets, the Dept
+// Config save/remove) -- all INV-01 carve-outs, so the publish never adds a
+// public write. Best-effort by design: a failed publish must not fail the
+// save that triggered it; it is REPORTED instead, by the return value and by
+// the Health page's `dashboard-standards` row, which compares the sheet to
+// the live resolution on every Health load.
+
+/** PURE over its inputs: the rows the sheet should hold (no timestamps). */
+function dashboardStandardsRows_(depts, standardFor, excludesFor) {
+  const rows = [];
+  const seen = {};
+  (depts || []).forEach(function (d) {
+    const dept = String(d == null ? '' : d).trim();
+    if (!dept || seen[dept]) return;
+    seen[dept] = true;
+    const std = standardFor(dept) || {};
+    const ex = excludesFor(dept) || [];
+    rows.push([dept, Number(std.target), Number(std.band), ex.join(', ')]);
+  });
+  const g = standardFor(null) || {};
+  rows.push(['*', Number(g.target), Number(g.band), '']);
+  return rows;
+}
+
+/** The live resolution, as rows -- what the sheet SHOULD say right now. */
+function dashboardStandardsLiveRows_() {
+  return dashboardStandardsRows_(getAllDepartments_(), getAnswerStandardFor_, getTeamAvgExcludes_);
+}
+
+/**
+ * Rewrites the `Dashboard Standards` sheet from the live resolution. Returns
+ * { ok, rows, error }; never throws. A missing sheet (a pre-H2 install that
+ * has not re-run setup()) is reported as ok:false with a hint, not created
+ * here -- sheet creation is setup()'s job (INV-12).
+ */
+function publishDashboardStandards_() {
+  const out = { ok: false, rows: 0, error: '' };
+  try {
+    const ss = openSpreadsheet_();
+    const sheet = ss.getSheetByName(SHEETS.DASHBOARD_STANDARDS);
+    if (!sheet) { out.error = 'sheet "' + SHEETS.DASHBOARD_STANDARDS + '" is missing -- re-run setup()'; return out; }
+    const live = dashboardStandardsLiveRows_();
+    let by = '';
+    try { by = Session.getActiveUser().getEmail() || ''; } catch (eU) { by = ''; }
+    const at = Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd'T'HH:mm:ss");
+    const width = DASHBOARD_STANDARDS_HEADERS.length;
+    const body = live.map(function (r) { return r.concat([at, by]); });
+    const lastRow = sheet.getLastRow();
+    if (lastRow >= 2) sheet.getRange(2, 1, lastRow - 1, width).clearContent();
+    // The excludes column is comma-joined names: pin the exact write range
+    // plain-text before writing (the K-AC / AD-AF discipline), so a row that
+    // spills past the creation-time pin is protected too.
+    sheet.getRange(2, 4, body.length, 1).setNumberFormat('@');
+    sheet.getRange(2, 1, body.length, width).setValues(body);
+    out.ok = true;
+    out.rows = body.length;
+  } catch (e) {
+    out.error = String(e && e.message ? e.message : e);
+    try { Logger.log('[dashboard-standards] publish failed: ' + out.error); } catch (eL) {}
+  }
+  return out;
+}
+
+/**
+ * Health-page probe: does the published sheet match the live resolution?
+ * { status: 'ok'|'warn'|'muted', value, hint }. Compares the four value
+ * columns only (timestamps differ by construction).
+ */
+function dashboardStandardsStatus_() {
+  const ss = openSpreadsheet_();
+  const sheet = ss.getSheetByName(SHEETS.DASHBOARD_STANDARDS);
+  if (!sheet) {
+    return { status: 'muted', value: 'not published',
+      hint: 'The Dashboard Standards sheet does not exist -- re-run setup() (Operator State #37). team-tools falls back to no target until it does.' };
+  }
+  const live = dashboardStandardsLiveRows_();
+  const lastRow = sheet.getLastRow();
+  const got = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 4).getValues() : [];
+  const norm = function (rows) {
+    return rows.map(function (r) {
+      return [String(r[0] == null ? '' : r[0]).trim(), Number(r[1]), Number(r[2]),
+              String(r[3] == null ? '' : r[3]).trim()].join('|');
+    }).filter(function (k) { return k.split('|')[0] !== ''; }).sort().join('\n');
+  };
+  if (!got.length) {
+    return { status: 'warn', value: 'sheet is empty',
+      hint: 'Nothing has been published yet -- re-run setup() or re-save the Display standards (Operator State #37).' };
+  }
+  if (norm(got) !== norm(live)) {
+    return { status: 'warn', value: got.length + ' row' + (got.length === 1 ? '' : 's') + ' -- STALE',
+      hint: 'The published standards differ from the live resolution (a property edited outside the Alerts modal, or a roster dept added since the last publish). Re-save the Display standards or re-run setup() to republish; team-tools reads the SHEET.' };
+  }
+  return { status: 'ok', value: got.length + ' row' + (got.length === 1 ? '' : 's') + ' -- current', hint: '' };
 }
 
 /**

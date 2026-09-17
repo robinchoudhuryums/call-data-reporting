@@ -510,6 +510,12 @@ tripwire. Revisit only after Batch 5 has held.
 - ~~The census's per-instant memo.~~ DONE in Batch 4 (`hdScanOneSheet_`).
 - Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
   instead of C+D; the all-dept QCD budget being per-run.
+- Escalations Phase 2's EXTERNAL WRITER is designed, unbuilt (H3, 2026-09):
+  the review queue, the INSERT contract and the pending-review ping exist on
+  this side; team-tools has no Neon connection and no writer. Building it is
+  a team-tools change (its first PHI write outside its own stores + a Neon
+  dependency + the `external_request` scope) -- an owner decision, not a
+  ride-along. Until then `pending_review` rows come only from a hand INSERT.
 
 ## Process note
 
