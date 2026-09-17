@@ -264,6 +264,8 @@ test('P-12: the history-date resolvers key the SPREADSHEET-TZ day from display v
   } });
   const tz = ss.getSpreadsheetTimeZone();
   assert.equal(h.call('historyDateKey_', new Date(2026, 7, 20, 12), tz), '2026-08-20', 'a noon importer date keys its own day in any zone');
+  assert.equal(h.call('historyDateKey_', new Date(2026, 7, 21, 0, 30), tz), '2026-08-20',
+    'the key is the SHEET-TZ day: 00:30 Chicago is still Aug 20 in Mexico City (a script-TZ key would say Aug 21)');
   assert.equal(h.call('historyCellIso_', '8/20/2026', tz), '2026-08-20');
   assert.equal(h.call('historyCellIso_', '2026-08-21', tz), '2026-08-21');
   assert.equal(h.call('historyCellIso_', '8/20/2026 23:00:00', tz), '2026-08-20', 'a trailing time part is tolerated');
