@@ -5,9 +5,13 @@
  * Managers view and "manage" (resolve + comment on) escalation calls for
  * their own department; an admin manually logs new escalations (and sees
  * every department). Backed by the Neon `escalations` table (NOT a sheet).
- * PHASE 2 (live): the external team-tools app INSERTs `pending_review` rows
- * into the SAME table (see the external-app INSERT contract below); the
- * dashboard surfaces them as a review queue — `approveEscalation` promotes a
+ * PHASE 2 (DESIGNED, UNBUILT — H3, 2026-09): the design has an external app
+ * (team-tools) INSERT `pending_review` rows into the SAME table under the
+ * INSERT contract below, and the dashboard's review queue is BUILT for that
+ * inflow — but NO external writer exists yet: as of 2026-09 team-tools has
+ * no Neon connection and no escalations writer, so `pending_review` rows can
+ * only come from a hand INSERT. The contract stays as the spec any future
+ * writer must meet. The queue side is live — `approveEscalation` promotes a
  * submission into the dept worklist (re-validating it as untrusted input at
  * that trust boundary), `rejectEscalation` reviews it out (data retained,
  * terminal, reason required). There is no sheet fallback (like inbound_calls /
@@ -247,11 +251,14 @@ var ESC_STATUS_IN_PROGRESS = 'in_progress';
 var ESC_OVERDUE_DAYS = 3;
 var ESC_OVERDUE_SQL_ = "(CURRENT_DATE - occurred_at::date) >= " + ESC_OVERDUE_DAYS;
 
-// ── Phase 2: the external-app INSERT contract ─────────────────────────────
+// ── Phase 2: the external-app INSERT contract (SPEC -- no writer yet, H3) ──
 //
-// The team-tools app submits escalations by INSERTing DIRECTLY into the
-// Neon `escalations` table (the shared substrate -- see escEnsureTable_ for
-// the DDL). Contract for external writers:
+// DESIGN: an external app (team-tools) submits escalations by INSERTing
+// DIRECTLY into the Neon `escalations` table (the shared substrate -- see
+// escEnsureTable_ for the DDL). As of 2026-09 that writer is UNBUILT --
+// team-tools has no Neon connection -- so this block is the contract a
+// future writer must meet, not a description of live traffic. Contract for
+// external writers:
 //
 //   INSERT INTO escalations
 //     (id, department, occurred_at, caller, patient_name, trx, area,
@@ -973,8 +980,10 @@ function approveEscalation(req) {
     conn.commit();
     Logger.log('approveEscalation: %s approved %s (%s)', user.email, id, row.department);
     // §1: an approved pending_review is a NEW escalation ENTERING the dept
-    // worklist -- the event managers care about in Phase 2 (external inflow
-    // arrives as pending_review, not createEscalation). Capture the notify
+    // worklist -- the event managers care about once Phase 2's external
+    // inflow exists (it arrives as pending_review, not createEscalation --
+    // H3: no writer yet, so today this fires only for hand-inserted rows).
+    // Capture the notify
     // record here; fire it AFTER the lock releases (below), same as
     // createEscalation. Flag-gated + best-effort inside the helper.
     notifyRec = {
@@ -1085,7 +1094,7 @@ function updateEscalationComment(req) {
     escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
     // NEO-2: comments are for rows IN the worklist (pending or resolved).
     // A pending_review row is immutable external input until the approve/
-    // reject trust boundary runs (the team-tools INSERT contract); a
+    // reject trust boundary runs (the external INSERT contract); a
     // rejected row is terminal.
     if (meta.status === ESC_STATUS_PENDING_REVIEW) {
       throw new Error('This escalation is still awaiting review — approve or reject it first.');
@@ -1359,8 +1368,8 @@ function escAppendActivity_(conn, escId, action, actor, detail) {
  */
 /**
  * Gap #3: count-only admin ping for NEW `pending_review` submissions.
- * team-tools INSERTs directly into Neon, so no dashboard code runs at
- * submission time -- the review queue is pull-only, and with
+ * The designed external writer INSERTs directly into Neon, so no dashboard
+ * code would run at submission time -- the review queue is pull-only, and with
  * NOTIFY_ON_NEW_ESCALATION off (the PII default) external submissions can
  * sit unseen until an admin happens to open Escalations. This is the
  * POLLED complement: called from runPipelineWatch_'s hourly run (the
@@ -1374,6 +1383,10 @@ function escAppendActivity_(conn, escId, action, actor, detail) {
  * later runs email once per new batch and advance the watermark only on a
  * CONFIRMED send (a mail failure retries next hour). Best-effort: never
  * throws into the caller; Neon-unreachable is a silent skip.
+ *
+ * H3 (2026-09): no external writer exists yet (see the contract block), so
+ * the flag has nothing to wait on -- leave `NOTIFY_PENDING_REVIEW` unset
+ * until a writer ships; enabled early it only ever baselines.
  */
 function escPendingReviewPing_() {
   try {

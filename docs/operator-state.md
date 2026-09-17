@@ -835,11 +835,14 @@ When something looks wrong, before assuming a code bug, check:
     `runPipelineWatch_` ALSO dispatches `escPendingReviewPing_` (Escalations.gs)
     on every hourly run, BEFORE its own early returns -- a COUNT-ONLY, PII-free
     admin email when new `pending_review` escalation submissions have appeared
-    (team-tools INSERTs directly into Neon, so no dashboard event fires at
-    submission time; this poll is the push complement to the worklist's
-    "N awaiting review" chip). Gated by its OWN `NOTIFY_PENDING_REVIEW` Script
-    Property ('true' to enable; default OFF -- and it only runs at all while
-    the PipelineWatch trigger is installed). OPS-1 watermark
+    (the designed external writer INSERTs directly into Neon, so no dashboard
+    event would fire at submission time; this poll is the push complement to
+    the worklist's "N awaiting review" chip). Gated by its OWN
+    `NOTIFY_PENDING_REVIEW` Script Property ('true' to enable; default OFF --
+    and it only runs at all while the PipelineWatch trigger is installed).
+    **H3 (2026-09): NO external writer exists yet** -- team-tools has no Neon
+    connection and no escalations writer (INV-55) -- so leave the flag unset
+    until one ships; enabled early it only baselines and never emails. OPS-1 watermark
     (`ESC_REVIEW_PING_WATERMARK`): first run baselines silently, later runs
     email once per new batch and advance only on a confirmed send. The email
     carries count + dept names ONLY (never caller/patient/reason), so it
