@@ -214,6 +214,20 @@ function saveBulkReport_(props, report) {
   }
 }
 
+/**
+ * P-3: the per-invocation bulk budget. `BULK_TIME_LIMIT_MS` Script Property
+ * (cdr-import project), default 15 min. Bounded to [1 min, 40 min] so a typo
+ * can neither spin every click into a one-date pause nor exceed any ceiling.
+ */
+var BULK_TIME_LIMIT_MS_DEFAULT = 900000;
+function bulkTimeLimitMs_() {
+  var raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty('BULK_TIME_LIMIT_MS'); } catch (e) {}
+  var n = parseInt(raw, 10);
+  if (!isFinite(n) || n <= 0) return BULK_TIME_LIMIT_MS_DEFAULT;
+  return Math.min(Math.max(n, 60000), 40 * 60000);
+}
+
 function processBulkQueue() {
   const ui    = SpreadsheetApp.getUi();
   const props = PropertiesService.getScriptProperties();
@@ -246,12 +260,20 @@ function processBulkQueue() {
   // Per-invocation budget before pausing for "Resume Bulk Processing".
   // Raised from 4 min so each click processes several dates instead of ~1
   // (a force-rebuild date costs ~4-5 min: full-sheet delete + DQE build +
-  // Neon mirror). 15 min leaves comfortable margin under the 30-min Apps
-  // Script ceiling for the in-flight date + the final processBatchArchive.
+  // Neon mirror). P-3 (broad-scan 2026-09-17): the repo carried TWO
+  // execution-ceiling beliefs (30 min here, 6 min in the dashboard docs and an
+  // observed kill). The budget is now the `BULK_TIME_LIMIT_MS` Script Property
+  // (default 15 min) so it can be aligned to the MEASURED ceiling without a
+  // redeploy -- run "Measure execution ceiling" (execCeilingProbe.js) once and
+  // set the property to ceiling minus ~2 min for the in-flight date + the
+  // final processBatchArchive. A kill mid-date is recoverable either way:
+  // `bulkIndex` advances only AFTER a date completes, so Resume re-runs the
+  // in-flight date (force), and since P-1 the non-destructive Raw Data /
+  // output-sheet writes precede the five-sheet delete.
   // KEEP BULK RANGES SMALL (~10-15 dates): the final archive writes + sorts
   // the whole accumulated Pending Archive once at the end, so a huge range
   // makes that last step heavy. Split big rebuilds into ~10-date chunks.
-  const TIME_LIMIT     = 900000;  // 15 min (was 240000 / 4 min)
+  const TIME_LIMIT     = bulkTimeLimitMs_();
 
   let targetSS = null;
   try {
@@ -429,7 +451,13 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
 
     if (!rawDataSheet || !outputSheet || !configSheet) throw new Error("Target Sheets missing.");
 
-    const dateKey     = dateObj.toDateString();
+    // P-12 (broad-scan 2026-09-17): the history-date key is the calendar day
+    // in the SPREADSHEET's TZ, derived from DISPLAY values (historyDateKey_ /
+    // historyCellIso_), so the force-delete, the exists-check and the bulk
+    // cache all key a row the way the writer, the dup-guard and the census
+    // do. The old script-TZ toDateString agreed with them only while
+    // Mexico-City midnight happened to fall on the same Chicago day.
+    const dateKey     = historyDateKey_(dateObj, targetSS.getSpreadsheetTimeZone());
     let existsInCDR   = histDateCache ? histDateCache.cdr.has(dateKey)   : checkHistoryForDate(targetSS, "CDR Historical Data",    dateObj);
     let existsInQPath = histDateCache ? histDateCache.qpath.has(dateKey) : checkHistoryForDate(targetSS, "Q Path Historical Data", dateObj);
     let existsInQCD   = histDateCache ? histDateCache.qcd.has(dateKey)   : checkHistoryForDate(targetSS, "QCD Historical Data",    dateObj);
@@ -478,6 +506,38 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     // DQE email) for deletions that never happened. A guard now fires only
     // when force AND that sheet's date rows were really deleted.
     const forceDeleted = { qcd: false, csr: false, dqe: false };
+
+    // P-1 (broad-scan 2026-09-17): every write that does NOT depend on the
+    // five-sheet delete runs BEFORE it -- the Raw Data staging rewrite and the
+    // two output-sheet writes. They used to sit between the delete and the
+    // historical writes, so a throw in them (a quota, a widened sheet) left
+    // the date GONE from all five sheets with only a failure row to show for
+    // it. `force` stands in for the post-delete "exists" flags: a force
+    // rebuild always rebuilds DQE + Direct, so Raw Data is always needed.
+    const isHistoricalBackfill = silent && specificDateStr;
+    const willBuildDQE = !!force || !existsInDQE;
+    const willBuildDirect = !!force || !existsInDirect;
+    const needsRawDataWrite = !isHistoricalBackfill || willBuildDQE || willBuildDirect;
+
+    if (needsRawDataWrite) {
+      if (!silent) sourceSS.toast("Transferring...", "Step 4/7", -1);
+      const valueData = cleanData.map(row => row.map(stageRawDataCell_));
+      rawDataSheet.clearContents();
+      const CHUNK_SIZE = 5000;
+      for (let i = 0; i < valueData.length; i += CHUNK_SIZE) {
+        const chunk = valueData.slice(i, i + CHUNK_SIZE);
+        rawDataSheet.getRange(i + 1, 1, chunk.length, MAX_COLS).setValues(chunk);
+      }
+      SpreadsheetApp.flush();
+    }
+
+    if (!isHistoricalBackfill) {
+      if (!silent) sourceSS.toast("Updating Reports...", "Step 5/7", -1);
+      updateOutputSheet(outputSheet, results.Agents, dateObj);
+      updateQcdrOutputSheet(targetSS, results.qcdData, results.csrData);
+      SpreadsheetApp.flush();
+    }
+
     if (force) {
       forceDeleted.qcd = !!existsInQCD;
       forceDeleted.csr = !!existsInCSR;
@@ -515,41 +575,12 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
       SpreadsheetApp.flush();
     }
 
-    const isHistoricalBackfill = silent && specificDateStr;
-    // Even in bulk-backfill mode we write Raw Data when DQE OR Direct still
-    // needs building for this date -- buildDQEHistoricalData /
-    // buildDirectCallFromRaw_ both read Raw Data directly. CDR / QPath / QCD /
-    // CSR all flow through Pending Archive (in-memory results), so they don't
-    // need the sheet write. willBuildDirect is its OWN gate (not willBuildDQE):
-    // the primary backfill case is old dates that already have DQE but no
-    // Direct rows, where willBuildDQE is false yet Raw Data must still be
-    // written for the Direct build to consume.
-    const willBuildDQE = !existsInDQE;
-    const willBuildDirect = !existsInDirect;
-    const needsRawDataWrite = !isHistoricalBackfill || willBuildDQE || willBuildDirect;
-
-    if (needsRawDataWrite) {
-      if (!silent) sourceSS.toast("Transferring...", "Step 4/7", -1);
-      const valueData = cleanData.map(row => row.map(cell => {
-        if (cell === "" || cell === null) return "";
-        const num = Number(cell);
-        return isNaN(num) ? cell : num;
-      }));
-      rawDataSheet.clearContents();
-      const CHUNK_SIZE = 5000;
-      for (let i = 0; i < valueData.length; i += CHUNK_SIZE) {
-        const chunk = valueData.slice(i, i + CHUNK_SIZE);
-        rawDataSheet.getRange(i + 1, 1, chunk.length, MAX_COLS).setValues(chunk);
-      }
-      SpreadsheetApp.flush();
-    }
-
-    if (!isHistoricalBackfill) {
-      if (!silent) sourceSS.toast("Updating Reports...", "Step 5/7", -1);
-      updateOutputSheet(outputSheet, results.Agents, dateObj);
-      updateQcdrOutputSheet(targetSS, results.qcdData, results.csrData);
-      SpreadsheetApp.flush();
-    }
+    // (Raw Data + output-sheet writes moved ABOVE the force block -- P-1.
+    // Even in bulk-backfill mode Raw Data is written when DQE OR Direct still
+    // needs building: buildDQEHistoricalData / buildDirectCallFromRaw_ both
+    // read it directly, while CDR / QPath / QCD / CSR flow through Pending
+    // Archive. willBuildDirect is its OWN gate: old dates that already have
+    // DQE but no Direct rows still need the staging write.)
 
     let historyReport = [];
     if (!isHistoricalBackfill) {
@@ -1390,13 +1421,70 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
   }
 }
 
+/**
+ * P-13 (broad-scan 2026-09-17). PURE: which queued (date, type) pairs have NO
+ * rows in their history sheet -- Pending Archive is their ONLY copy, because
+ * the bulk path force-deleted the date from history and parked the rebuild
+ * here for the final archive. `pendingMeta` = [[dateCell, type], ...] from the
+ * sheet; `histSets` = { CDR, QPATH, QCD, CSR_TRANSFER } of ISO-keyed Sets
+ * (buildHistoryDateSet); `tz` keys a legacy Date cell the sheet's way.
+ */
+function pendingOnlyCopyDates_(pendingMeta, histSets, tz) {
+  const onlyCopy = {};
+  const allDates = {};
+  (pendingMeta || []).forEach(function (row) {
+    const d = row[0], type = String(row[1] || '').trim();
+    let iso = null;
+    if (d && typeof d.getTime === 'function') iso = historyDateKey_(d, tz);
+    else iso = historyCellIso_(d, tz);
+    if (!iso) return;
+    allDates[iso] = true;
+    const set = histSets && histSets[type];
+    if (set && !set.has(iso)) onlyCopy[iso] = true;
+  });
+  return { dates: Object.keys(allDates).sort(), onlyCopy: Object.keys(onlyCopy).sort() };
+}
+
 function clearPendingArchive() {
   const ui     = SpreadsheetApp.getUi();
-  const result = ui.alert("Clear Pending Archive?", "This will delete all pending archive data.\n\nAre you sure?", ui.ButtonSet.YES_NO);
+  const props  = PropertiesService.getScriptProperties();
+  // P-13: a paused / in-flight bulk run owns the Pending Archive -- its queued
+  // dates are the rebuild of rows the run already force-deleted. Refuse until
+  // it finishes (Resume Bulk Processing) or is cleared by the final archive.
+  if (props.getProperty("bulkIndex") !== null) {
+    ui.alert("⛔ Bulk run in progress",
+      "A bulk run is paused or in flight (bulkIndex is set). Its queued dates are the ONLY "
+      + "copy of rows it already deleted from history.\n\nClick 'Resume Bulk Processing' to "
+      + "finish it (the final archive clears Pending Archive itself) before clearing by hand.",
+      ui.ButtonSet.OK);
+    return;
+  }
+  const targetSS     = SpreadsheetApp.openById(getTargetSsId_());
+  const pendingSheet = targetSS.getSheetByName("Pending Archive");
+  let detail = "This will delete all pending archive data.";
+  if (pendingSheet && pendingSheet.getLastRow() > 1) {
+    const tz = targetSS.getSpreadsheetTimeZone();
+    const meta = pendingSheet.getRange(2, 1, pendingSheet.getLastRow() - 1, 2).getDisplayValues();
+    const histSets = {
+      CDR:          buildHistoryDateSet(targetSS, "CDR Historical Data"),
+      QPATH:        buildHistoryDateSet(targetSS, "Q Path Historical Data"),
+      QCD:          buildHistoryDateSet(targetSS, "QCD Historical Data"),
+      CSR_TRANSFER: buildHistoryDateSet(targetSS, "CSR Transfer Historical Data"),
+    };
+    const oc = pendingOnlyCopyDates_(meta, histSets, tz);
+    detail = "Pending Archive holds " + meta.length + " row(s) for " + oc.dates.length + " date(s).";
+    if (oc.onlyCopy.length) {
+      detail += "\n\n⚠ " + oc.onlyCopy.length + " of those dates have NO rows in their history sheet -- "
+        + "Pending Archive is their ONLY copy (a bulk run deleted them and parked the rebuild here). "
+        + "Clearing loses them until each date is re-imported from its source:\n"
+        + oc.onlyCopy.slice(0, 12).join(", ") + (oc.onlyCopy.length > 12 ? ", …" : "");
+    } else {
+      detail += "\nEvery queued date already has rows in its history sheet (nothing is lost by clearing).";
+    }
+  }
+  const result = ui.alert("Clear Pending Archive?", detail + "\n\nAre you sure?", ui.ButtonSet.YES_NO);
 
   if (result == ui.Button.YES) {
-    const targetSS    = SpreadsheetApp.openById(getTargetSsId_());
-    const pendingSheet = targetSS.getSheetByName("Pending Archive");
     if (pendingSheet) targetSS.deleteSheet(pendingSheet);
     ui.alert("✅ Cleared", "Pending Archive sheet deleted.", ui.ButtonSet.OK);
   }
@@ -2630,6 +2718,21 @@ function parsePendingDate(val) {
  * shapes get a LOCAL-noon construction; everything else keeps the legacy
  * `new Date(v)` parse (M/D/YYYY strings already parse local).
  */
+/**
+ * P-8 (broad-scan 2026-09-17): Raw Data staging coercion. Only a cell that
+ * LOOKS numeric (an optional sign, digits, an optional decimal part) becomes
+ * a Number; whitespace-only is empty (`Number(" ")` used to stage as 0, a
+ * phantom zero in a duration or count column); everything else stays text.
+ */
+function stageRawDataCell_(cell) {
+  if (cell === "" || cell === null || cell === undefined) return "";
+  if (typeof cell === 'number') return cell;
+  const s = String(cell);
+  const t = s.trim();
+  if (!t) return "";
+  return /^[-+]?\d+(\.\d+)?$/.test(t) ? Number(t) : cell;
+}
+
 function parseHistoryDateCell_(v) {
   const s = String(v == null ? '' : v).trim();
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -2637,18 +2740,50 @@ function parseHistoryDateCell_(v) {
   return new Date(v);
 }
 
+// P-12 (broad-scan 2026-09-17): ONE date resolver for the history sheets.
+// The key is the calendar day in the SPREADSHEET's TZ ('yyyy-MM-dd'), read
+// from DISPLAY values -- what the writer (dateAtSheetMidnight_), the DQE
+// dup-guard and the census all key on. The previous getValues()+toDateString
+// (script TZ) agreed with them only while a Mexico-City midnight landed on the
+// same Chicago day, which an R46-shaped cell breaks: the force-delete and the
+// dup-guard would then key DIFFERENT rows for the same date.
+function historyDateKey_(dateObj, tz) {
+  return Utilities.formatDate(dateObj, tz || Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+// Display string -> ISO day. Accepts the two sheet renders (ISO / M/D/YYYY, a
+// trailing time part tolerated), M/D/YY, and -- for a raw Date render such as
+// a fixture's -- anything Date can parse, keyed in the sheet's TZ. Null = unparsed.
+function historyCellIso_(disp, tz) {
+  const s = String(disp == null ? '' : disp).trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T].*)?$/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  const p2 = function (n) { return (Number(n) < 10 ? '0' : '') + Number(n); };
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ ,].*)?$/);
+  if (m) return m[3] + '-' + p2(m[1]) + '-' + p2(m[2]);
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (m) { const yy = Number(m[3]); return (yy < 70 ? 2000 + yy : 1900 + yy) + '-' + p2(m[1]) + '-' + p2(m[2]); }
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return historyDateKey_(d, tz);
+  return null;
+}
+function historySheetTz_(sheetOrSs) {
+  try {
+    if (sheetOrSs && typeof sheetOrSs.getSpreadsheetTimeZone === 'function') return sheetOrSs.getSpreadsheetTimeZone();
+    const p = sheetOrSs && typeof sheetOrSs.getParent === 'function' ? sheetOrSs.getParent() : null;
+    if (p && typeof p.getSpreadsheetTimeZone === 'function') return p.getSpreadsheetTimeZone();
+  } catch (e) {}
+  return Session.getScriptTimeZone();
+}
+
 function checkHistoryForDate(targetSS, sheetName, importDateObj, dateColIndex) {
   const col = dateColIndex || 3;
   const histSheet = targetSS.getSheetByName(sheetName);
   if (!histSheet || histSheet.getLastRow() < 2) return false;
-  const dates     = histSheet.getRange(2, col, histSheet.getLastRow() - 1, 1).getValues().flat();
-  const targetStr = importDateObj.toDateString();
-  return dates.some(d => {
-    if (d instanceof Date) return d.toDateString() === targetStr;
-    const parsed = parseHistoryDateCell_(d);   // P-8
-    if (!isNaN(parsed.getTime())) return parsed.toDateString() === targetStr;
-    return false;
-  });
+  const tz = historySheetTz_(targetSS);
+  const dates     = histSheet.getRange(2, col, histSheet.getLastRow() - 1, 1).getDisplayValues().flat();
+  const targetKey = historyDateKey_(importDateObj, tz);
+  return dates.some(d => historyCellIso_(d, tz) === targetKey);
 }
 
 function buildHistoryDateSet(targetSS, sheetName, dateColIndex) {
@@ -2656,15 +2791,11 @@ function buildHistoryDateSet(targetSS, sheetName, dateColIndex) {
   const sheet  = targetSS.getSheetByName(sheetName);
   const result = new Set();
   if (!sheet || sheet.getLastRow() < 2) return result;
-
-  const dates = sheet.getRange(2, col, sheet.getLastRow() - 1, 1).getValues().flat();
+  const tz = historySheetTz_(targetSS);
+  const dates = sheet.getRange(2, col, sheet.getLastRow() - 1, 1).getDisplayValues().flat();
   dates.forEach(d => {
-    if (d instanceof Date && !isNaN(d.getTime())) {
-      result.add(d.toDateString());
-    } else {
-      const parsed = parseHistoryDateCell_(d);   // P-8
-      if (!isNaN(parsed.getTime())) result.add(parsed.toDateString());
-    }
+    const iso = historyCellIso_(d, tz);
+    if (iso) result.add(iso);
   });
   return result;
 }
@@ -2686,9 +2817,12 @@ function dedupeAlreadyArchived_(targetSS, batch, sheetName) {
   if (!batch || !batch.length) return batch || [];
   const seen = buildHistoryDateSet(targetSS, sheetName, 3);
   if (!seen.size) return batch;
+  const tz = historySheetTz_(targetSS);
   const kept = batch.filter(function (r) {
     const d = r[2];
-    const key = (d instanceof Date) ? d.toDateString() : parseHistoryDateCell_(d).toDateString();   // P-8
+    // P-12: same ISO / sheet-TZ key as the set (a Date batch cell keyed the
+    // sheet's way; a text cell through the display parser).
+    const key = (d && typeof d.getTime === 'function') ? historyDateKey_(d, tz) : historyCellIso_(d, tz);
     return !seen.has(key);
   });
   if (kept.length !== batch.length) {
@@ -2713,20 +2847,15 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
   // getMaxRows so the post-state is indistinguishable from the old padded
   // rewrite for any downstream reader. The removed count (which the P26
   // loss guards key on) and the log line keep their shape.
-  const targetStr = dateObj.toDateString();
-  const dates = sheet.getRange(2, dateColIndex, lastRow - 1, 1).getValues();
+  // P-12: DISPLAY values keyed in the sheet's TZ -- the same resolver as the
+  // exists-check and the bulk cache (historyCellIso_ / historyDateKey_).
+  const tz = historySheetTz_(sheet);
+  const targetKey = historyDateKey_(dateObj, tz);
+  const dates = sheet.getRange(2, dateColIndex, lastRow - 1, 1).getDisplayValues();
 
   const matchRows = [];   // 1-based sheet row numbers
   for (let i = 0; i < dates.length; i++) {
-    const d = dates[i][0];
-    let match = false;
-    if (d instanceof Date) {
-      match = d.toDateString() === targetStr;
-    } else if (d) {
-      const parsed = parseHistoryDateCell_(d);   // P-8
-      if (!isNaN(parsed.getTime())) match = parsed.toDateString() === targetStr;
-    }
-    if (match) matchRows.push(i + 2);
+    if (historyCellIso_(dates[i][0], tz) === targetKey) matchRows.push(i + 2);
   }
   if (matchRows.length === 0) return 0;
 
@@ -2741,7 +2870,7 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
 
   console.log(
     `deleteHistoricalRowsForDate [${sheet.getName()}]: ` +
-    `removing ${matchRows.length} rows for ${targetStr} in ${blocks.length} block(s), ` +
+    `removing ${matchRows.length} rows for ${targetKey} in ${blocks.length} block(s), ` +
     `keeping ${lastRow - 1 - matchRows.length} rows.`
   );
 

@@ -94,6 +94,13 @@ function onOpen() {
     // (the R18e shape), and the size of the existing AJ/AK after-hours capture.
     .addItem("Work-window edge census", "runWorkWindowCensus")
 
+    .addSeparator()
+
+    // P-3: measure the execution ceiling ONCE (execCeilingProbe.js), then align
+    // BULK_TIME_LIMIT_MS / IC_BACKFILL_TIME_LIMIT_MS to it (Script Properties).
+    .addItem("Measure execution ceiling (one-shot probe)", "installExecCeilingProbeTrigger")
+    .addItem("Read execution-ceiling probe result",        "readExecCeilingProbe")
+
     // .addSeparator()
     // .addItem("Import Bulk CSVs from Drive", "importBulkCSVsFromDrive") // pending Drive permissions
 

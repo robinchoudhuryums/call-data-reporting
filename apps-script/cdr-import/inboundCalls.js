@@ -221,6 +221,14 @@ function icBuildJourney_(legs) {
     var isQueue = icIsQueueName_(rawName);
     var name = rawName;
     if (/^\+?[\d\s\-().]{7,}$/.test(name)) name = '(external number)';
+    else if (!isQueue && name && icExternalNumber_(l[IC_COL.CALLEE])) {
+      // P-11 (broad-scan 2026-09-17): a leg whose CALLEE is an external number
+      // carries the external party's CNAM as its name (a forward / transfer
+      // out) -- the IMP-12 initials rule applies to it exactly as it does to
+      // the caller-side name the phones mirror stores. Internal callees (an
+      // agent, a queue, an IVR node) keep their names.
+      name = (typeof cdrMaskExternalName_ === 'function' ? cdrMaskExternalName_(name) : null) || '(external caller)';
+    }
     if (!name || name.toUpperCase() === 'N/A') name = '(unknown)';
     var talk = icTimeToSec_(l[IC_COL.TALK]);
     var hold = icTimeToSec_(l[IC_COL.CALLEE_HOLD_DURATION]);
@@ -1035,8 +1043,14 @@ function writeInboundCallsToNeon(rawRows, opts) {
       Logger.log('writeInboundCallsToNeon: Neon unreachable — skipping %s records.', records.length);
       return { inserted: 0, skipped: records.length };
     }
-    conn.setAutoCommit(false);
     try {
+      // P-9 (broad-scan 2026-09-17): the self-upgrade DDL runs in AUTOCOMMIT,
+      // BEFORE the write transaction opens. `ADD COLUMN IF NOT EXISTS` takes
+      // ACCESS EXCLUSIVE even when the column exists and, inside the
+      // transaction, held it to COMMIT -- so with DQE_READ_SOURCE=neon every
+      // dashboard read of the table queued behind the whole DELETE + INSERT
+      // (and each 15-min deferred drain), and a long read queued the import.
+      // Each DDL statement now commits on its own and releases the lock at once.
       var ddl = conn.createStatement();
       ddl.execute(
         'CREATE TABLE IF NOT EXISTS inbound_calls (' +
@@ -1069,6 +1083,7 @@ function writeInboundCallsToNeon(rawRows, opts) {
       // must COALESCE rather than treat NULL as unknown.
       ddl.execute('ALTER TABLE inbound_calls ADD COLUMN IF NOT EXISTS related_call_kind text');
       ddl.close();
+      conn.setAutoCommit(false);   // P-9: the transaction opens AFTER the DDL
 
       // L2: authoritative per-date replace. Delete the payload's distinct dates
       // first (same txn -> atomic with the upsert below; a throw rolls back
@@ -1159,6 +1174,17 @@ function writeInboundCallsToNeon(rawRows, opts) {
 // timeout can't leave a half-written date behind). 15 min mirrors the
 // bulk-rebuild budget, leaving margin under the 30-min execution ceiling.
 var IC_BACKFILL_TIME_LIMIT_MS = 15 * 60 * 1000;
+// P-3 (broad-scan 2026-09-17): overridable via the `IC_BACKFILL_TIME_LIMIT_MS`
+// Script Property (cdr-import) so the budget can be aligned to the MEASURED
+// execution ceiling (execCeilingProbe.js) without a redeploy. Bounded like
+// the bulk budget (1-40 min).
+function icBackfillTimeLimitMs_() {
+  var raw = null;
+  try { raw = PropertiesService.getScriptProperties().getProperty('IC_BACKFILL_TIME_LIMIT_MS'); } catch (e) {}
+  var n = parseInt(raw, 10);
+  if (!isFinite(n) || n <= 0) return IC_BACKFILL_TIME_LIMIT_MS;
+  return Math.min(Math.max(n, 60000), 40 * 60000);
+}
 
 /**
  * EDITOR-RUN. Backfills Neon's `inbound_calls` from the per-day
@@ -1243,8 +1269,9 @@ function backfillInboundCalls(fromIso, toIso, force) {
   var stoppedEarly = null;
   var unreachable = false;   // F1: set when a per-date write reports Neon unreachable
 
+  var budgetMs = icBackfillTimeLimitMs_();
   for (var i = 0; i < candidates.length; i++) {
-    if (Date.now() - startMs > IC_BACKFILL_TIME_LIMIT_MS) {
+    if (Date.now() - startMs > budgetMs) {
       stoppedEarly = 'time budget reached at ' + candidates[i].iso
         + ' (' + (candidates.length - i) + ' sheets left) — run again to continue';
       break;
@@ -1409,7 +1436,14 @@ function previewInternalTransferPaths(dateIso) {
     var entry = '', caller = '';
     g.forEach(function (l) {
       if (!entry && icIsQueueName_(l[IC_COL.CALLEE_NAME])) entry = String(l[IC_COL.CALLEE_NAME]).trim();
-      if (!caller && icExternalNumber_(l[IC_COL.CALLER])) caller = String(l[IC_COL.CALLER_NAME] || '').trim();
+      // P-6 (broad-scan 2026-09-17): the caller's CNAM is reduced to INITIALS
+      // (the IMP-12 rule) BEFORE it can reach a log line -- this preview wrote
+      // a patient-shaped name to Cloud Logging per match; its sibling
+      // previewInternalTransferChains already masked the same field.
+      if (!caller && icExternalNumber_(l[IC_COL.CALLER])) {
+        var cn = String(l[IC_COL.CALLER_NAME] || '').trim();
+        caller = cn ? ((typeof cdrMaskExternalName_ === 'function' ? cdrMaskExternalName_(cn) : null) || '(external caller)') : '';
+      }
     });
     g.forEach(function (l) {
       if (String(l[IC_COL.ANSWERED] || '').trim() !== 'Answered') return;

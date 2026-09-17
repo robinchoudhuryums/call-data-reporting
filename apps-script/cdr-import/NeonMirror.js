@@ -168,10 +168,21 @@ function runNeonMirror_() {
         if (neonMirrorDate_(ss, iso)) done[iso] = true;
         else Logger.log('runNeonMirror_: %s incomplete (Neon unreachable?), leaving queued.', iso);
       } catch (e) {
-        hardFailed[iso] = (e && e.message) ? e.message : String(e);
-        Logger.log('runNeonMirror_: %s failed, leaving queued: %s', iso, e);
-        try { notifyNeonWriteFailure('runNeonMirror_ (' + iso + ')', hardFailed[iso]); }
-        catch (ne) { /* best-effort */ }
+        var emsg = (e && e.message) ? e.message : String(e);
+        if (e && e.neonUnreachable) {
+          // P-2 (broad-scan 2026-09-17): a hard error thrown while Neon was
+          // UNREACHABLE in the same run is not evidence the date is a poison
+          // pill -- it is (most likely) the outage itself. Leave the date
+          // queued WITHOUT counting an attempt or emailing, exactly as a plain
+          // unreachable step is treated; the retry cap counts only failures
+          // Neon actually rejected.
+          Logger.log('runNeonMirror_: %s failed while Neon was unreachable -- attempt NOT counted, leaving queued: %s', iso, emsg);
+        } else {
+          hardFailed[iso] = emsg;
+          Logger.log('runNeonMirror_: %s failed, leaving queued: %s', iso, e);
+          try { notifyNeonWriteFailure('runNeonMirror_ (' + iso + ')', hardFailed[iso]); }
+          catch (ne) { /* best-effort */ }
+        }
       }
     }
     if (unbudgeted.length) {
@@ -266,6 +277,8 @@ function runNeonMirrorNow() { runNeonMirror_(); }
 function neonMirrorDate_(ss, iso) {
   var allOk = true;
   var hardErrors = [];
+  var unreachableSeen = false;
+  var pruned = [];   // P-2: per-type TERMINAL losses (source pruned), not retried
   var step = function (label, fn) {
     var t0 = Date.now();
     var res;
@@ -289,7 +302,21 @@ function neonMirrorDate_(ss, iso) {
     }
     if (res && res.unreachable) {
       allOk = false;
+      unreachableSeen = true;
       neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0, iso + ' | Neon unreachable');
+    } else if (res && res.pruned) {
+      // P-2 (broad-scan 2026-09-17): the type's SOURCE is gone (Call_Legs_<iso>
+      // pruned past the ~14-day retention), so no retry can ever succeed.
+      // That is a per-TYPE terminal, not a date-level hard failure: the old
+      // throw counted it toward the IMP-6 cap on every run and, at the cap,
+      // dropped the WHOLE date -- so the CDR / QCD / DQE mirrors, still
+      // derivable from their sheets forever, were never retried either.
+      // Log the loss as a failure row; the date completes once the other
+      // steps succeed, and the loss is emailed ONCE at that point.
+      pruned.push(label);
+      neonMirrorLog_(ss, 'neonMirror:' + label, 'failure', null, t0,
+        iso + ' | SOURCE PRUNED: ' + (res.note || 'Call_Legs_' + iso + ' no longer exists')
+        + ' -- ' + label.toLowerCase() + ' rows for this date cannot be re-derived (terminal; not retried)');
     } else {
       // F6: writers may attach a `note` (e.g. CDR's phone-child count) so a
       // secondary-mirror outcome is visible in the Pipeline Health row.
@@ -310,8 +337,28 @@ function neonMirrorDate_(ss, iso) {
   step('DQE', function () { return mirrorDqeForDate_(ss, iso); });
 
   // Surface the hard failure(s) upstream exactly as before -- one throw after
-  // every step has had its turn.
-  if (hardErrors.length) throw new Error(hardErrors.join(' | '));
+  // every step has had its turn. P-2: the error carries whether Neon was
+  // unreachable during this date, so the caller can leave the attempt count
+  // alone (an outage is not a poison pill).
+  if (hardErrors.length) {
+    var err = new Error(hardErrors.join(' | '));
+    err.neonUnreachable = unreachableSeen;
+    throw err;
+  }
+
+  // P-2: the date is COMPLETE (every retriable step succeeded) but one or
+  // more per-call types are lost for good -- say so once, loudly, now that
+  // no further run will revisit the date.
+  if (allOk && pruned.length) {
+    try {
+      notifyNeonWriteFailure('runNeonMirror_ SOURCE PRUNED: ' + iso,
+        'The deferred mirror completed ' + iso + ' for every sheet-derivable type, but the '
+        + pruned.join(' + ') + ' mirror(s) had NO source left: Call_Legs_' + iso
+        + ' was pruned (~14-day retention) before the date drained. Those rows cannot be '
+        + 're-derived; re-import the date\'s source (Operator State #56) and run the per-type '
+        + 'backfill if they matter. This is the only email for this date.');
+    } catch (ne) { /* best-effort */ }
+  }
 
   return allOk;
 }
@@ -602,12 +649,13 @@ function mirrorInboundForDate_(iso) {
   // Call_Legs_<iso> sheet was PRUNED before this date drained" (a >14-day
   // backlog). The old path returned rows:0 success and dequeued the date,
   // silently accepting that its inbound_calls rows (NO sheet primary) were
-  // lost. Throw instead: the failure row + IMP-6 retry cap make the loss
-  // LOUD (one final gave-up email) rather than invisible.
+  // lost. P-2: report it as a PRUNED terminal (a failure row + one email when
+  // the date completes) rather than a throw -- a throw counted toward the
+  // IMP-6 cap on every run and eventually dropped the sheet-derivable
+  // CDR / QCD / DQE mirrors with it.
   if (res && res.sheetsFound === 0) {
-    throw new Error('Call_Legs_' + iso + ' no longer exists (pruned ~14d retention) -- '
-      + 'inbound_calls rows for this date cannot be re-derived and are lost. '
-      + 'Acknowledge via the gave-up email; do not re-enqueue unless the sheet is restored.');
+    return { pruned: true, rows: 0,
+             note: 'Call_Legs_' + iso + ' no longer exists (pruned ~14d retention); inbound_calls rows lost' };
   }
   if (res && res.failures) {
     // A hard write error (not reachability) -- throw so neonMirrorDate_'s step
@@ -629,9 +677,9 @@ function mirrorOutboundForDate_(iso) {
   var res = backfillOutboundCalls(iso, iso, true);
   if (res && res.unreachable) return { unreachable: true, rows: 0 };
   if (res && res.sheetsFound === 0) {
-    throw new Error('Call_Legs_' + iso + ' no longer exists (pruned ~14d retention) -- '
-      + 'outbound_calls rows for this date cannot be re-derived and are lost. '
-      + 'Acknowledge via the gave-up email; do not re-enqueue unless the sheet is restored.');
+    // P-2: per-type terminal, see mirrorInboundForDate_.
+    return { pruned: true, rows: 0,
+             note: 'Call_Legs_' + iso + ' no longer exists (pruned ~14d retention); outbound_calls rows lost' };
   }
   if (res && res.failures) {
     throw new Error('outbound mirror failed for ' + iso + ' (' + res.failures + ' write failure(s))');

@@ -1188,3 +1188,49 @@ test('shared root: a sibling leg\'s hold/disc-on-hold no longer leaks onto the a
   // there descends from the one caller) -- pinned by the earlier
   // 'abandoned IN QUEUE while held' test above.
 });
+
+
+// ---- Batch 5 (broad-scan 2026-09-17): P-6 / P-9 / P-11 ----------------------
+
+test('P-11: a leg whose CALLEE is an external number carries its CNAM as INITIALS in the journey', function () {
+  const impNw = loadGas({ project: 'cdr-import', files: ['neonWrite.js'] });
+  h.ctx.cdrMaskExternalName_ = impNw.ctx.cdrMaskExternalName_;   // the IMP-12 rule, same project
+  const legs = [
+    leg({ callId: '700001', legId: 1, start: '06/04/2026 10:36:07', stop: '06/04/2026 10:36:25', direction: 'Incoming', caller: '12159998888', callerName: 'DOE JANE', callee: '108', calleeName: 'A_Q_Intake' }),
+    leg({ callId: '700001', legId: 2, start: '06/04/2026 10:37:06', stop: '06/04/2026 10:39:24', direction: 'Incoming', caller: '12159998888', callee: '12145550199', calleeName: 'SMITH JOHN', talk: '0:02:00', answered: 'Answered' }),
+    leg({ callId: '700001', legId: 3, start: '06/04/2026 10:39:30', stop: '06/04/2026 10:40:00', direction: 'Incoming', caller: '12159998888', callee: '214', calleeName: 'Maria G', talk: '0:00:20', answered: 'Answered' }),
+  ];
+  const j = h.call('icBuildJourney_', legs);
+  assert.equal(j[0].name, 'A_Q_Intake', 'a queue keeps its name');
+  assert.equal(j[1].name, 'S.J.', 'an external callee\'s CNAM is reduced to initials (a forward / transfer out)');
+  assert.equal(j[2].name, 'Maria G', 'an internal callee (an agent) keeps their name');
+  assert.ok(!JSON.stringify(j).includes('SMITH'), 'no raw external name reaches the journey JSON');
+});
+
+test('P-9: the inbound writer runs its DDL in AUTOCOMMIT before the transaction opens', function () {
+  const seq = [];
+  h.ctx.getReachableNeonConn_ = function () {
+    return {
+      setAutoCommit: function (v) { seq.push('AUTOCOMMIT:' + v); },
+      createStatement: function () { return { execute: function (sql) { seq.push(sql.slice(0, 30)); return true; }, close: function () {} }; },
+      commit: function () { seq.push('COMMIT'); }, rollback: function () {}, close: function () {},
+    };
+  };
+  h.call('writeInboundCallsToNeon', L2_ROWS, { authoritative: true });
+  const iAuto = seq.indexOf('AUTOCOMMIT:false');
+  const ddl = seq.map(function (s, i) { return /^(CREATE TABLE|ALTER TABLE)/.test(s) ? i : -1; }).filter(function (i) { return i >= 0; });
+  const iDel = seq.findIndex(function (s) { return /^DELETE FROM inbound_calls/.test(s); });
+  assert.ok(ddl.length >= 8 && ddl.every(function (i) { return i < iAuto; }), 'CREATE TABLE + every ADD COLUMN precede setAutoCommit(false)');
+  assert.ok(iAuto < iDel, 'the authoritative DELETE + INSERT stay inside the transaction');
+});
+
+test('P-6: the transfer-path preview masks the caller CNAM before it reaches a log line', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'inboundCalls.js'), 'utf8');
+  const i = src.indexOf('// P-6 (broad-scan 2026-09-17)');
+  assert.ok(i > 0, 'the P-6 block exists');
+  const block = src.slice(i, i + 700);
+  assert.ok(/cdrMaskExternalName_\(cn\)/.test(block), 'the caller name goes through the IMP-12 initials rule');
+  assert.ok(!/caller = String\(l\[IC_COL\.CALLER_NAME\] \|\| ''\)\.trim\(\);/.test(src), 'the verbatim capture is gone');
+});

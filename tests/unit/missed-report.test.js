@@ -274,3 +274,19 @@ test('DD-1: a coerced K..AC / AF pair renders at its TRUE hour on the sheet path
   assert.equal(anna.missedTimes[0].abandoned, true, 'the AF twin still pairs at the same (true) second');
   assert.equal(anna.missedTimes[0].parentId, 'P1');
 });
+
+
+test('DD-4 (broad-scan 2026-09-17): a sentinel ring outside the 8 AM-5 PM chart range is counted AND disclosed as outOfRange', function () {
+  const slots = new Array(19).fill('');
+  slots[2] = '9:05:00 AM';      // in the 9:00-9:30 bucket
+  slots[18] = '5:10:00 PM';     // the 19th stored slot (5:00-5:30 PM) -- no chart bucket
+  install([
+    { date: '2026-03-10', agent: 'A_Q_Alpha', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: slots, abdIds: 'P1,P2', abdTimes: '9:05:00 AM,5:10:00 PM' },
+  ]);
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'both');
+  assert.equal(r.queueOnly.length, 1);
+  assert.equal(r.queueOnly[0].total, 2, 'both ring events count (the card\'s "N abandoned")');
+  assert.equal(r.queueOnly[0].outOfRange, 1, 'one of them lands in no bar -- carried so the card can say so');
+  assert.equal(r.chart.counts.reduce(function (s, n) { return s + n; }, 0), 1, 'the bars sum to the in-range rings only');
+});

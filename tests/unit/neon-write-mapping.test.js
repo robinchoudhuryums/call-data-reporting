@@ -514,3 +514,43 @@ test('R38: an oversize row falls back to the bound statement; the rest stay inli
   assert.deepEqual(tuplesOf(cap.inline[0])[0].slice(2, 3), ['A']);
   assert.deepEqual(tuplesOf(cap.inline[1])[0].slice(2, 3), ['C']);
 });
+
+
+// ---- Batch 5 (broad-scan 2026-09-17): P-4 / P-9 ---------------------------
+
+test('P-4: a value that ENDS with the tag gets a longer tag (the trailing-tag case)', function () {
+  const lit = h.fn('neonSqlLit_');
+  assert.equal(lit('price $nq'), '$nqx$price $nq$nqx$',
+    "'$nq' + the closing '$' would have read as '$nq$' and broken the literal");
+  assert.equal(lit('$nq'), '$nqx$$nq$nqx$');
+  assert.equal(lit('price $nqx'), '$nq$price $nqx$nq$', "a trailing '$nqx' never forms '$nq$', so the short tag is still safe");
+  assert.equal(lit('a $nq$ b $nqx'), '$nqxx$a $nq$ b $nqx$nqxx$', 'the longer tag is checked the same way (trailing $nqx + closing $ = $nqx$)');
+  assert.equal(lit('plain'), '$nq$plain$nq$', 'the common path is unchanged');
+});
+
+test('P-9: the DQE writer runs its self-upgrade DDL in AUTOCOMMIT, before the transaction opens', function () {
+  const seq = [];
+  h.ctx.getReachableNeonConn_ = function () {
+    return {
+      setAutoCommit: function (v) { seq.push('AUTOCOMMIT:' + v); },
+      createStatement: function () { return { execute: function (sql) { seq.push(sql.slice(0, 40)); return true; }, close: function () {} }; },
+      prepareStatement: function () { return { setString: function () {}, setInt: function () {}, setDouble: function () {}, execute: function () { return true; }, close: function () {} }; },
+      commit: function () { seq.push('COMMIT'); }, rollback: function () { seq.push('ROLLBACK'); }, close: function () {},
+    };
+  };
+  h.ctx.DQE_QUEUE_SPLIT_COLUMN_READY_ = false;
+  h.ctx.DQE_AFTER_HOURS_COLUMNS_READY_ = false;
+  h.fn('writeDQERowsToNeon')([{
+    monthYear: 'June 2026', callDate: '06/22/2026', agentName: 'Anna', queueExtensions: '103',
+    totalUnique: 1, totalRung: 1, totalMissed: 0, totalAnswered: 1, ttt: '0:01:00', att: '0:01:00',
+    slots: [], abParentIds: '', abMissedIds: '', abMissedTimes: '', avgAbdWait: '', csrAvgAbdWait: '',
+    queueSplit: '{}', afterHoursAnswered: 0, afterHoursTtt: 0,
+  }]);
+  const iAuto = seq.indexOf('AUTOCOMMIT:false');
+  const ddlIdx = seq.map(function (s, i) { return /^ALTER TABLE/.test(s) ? i : -1; }).filter(function (i) { return i >= 0; });
+  const iIns = seq.findIndex(function (s) { return /^INSERT INTO dqe_history/.test(s); });
+  assert.equal(ddlIdx.length, 3, 'three idempotent ADD COLUMNs');
+  assert.ok(ddlIdx.every(function (i) { return i < iAuto; }),
+    'every DDL statement precedes setAutoCommit(false): ACCESS EXCLUSIVE is released at once, not held to COMMIT');
+  assert.ok(iAuto < iIns && seq.indexOf('COMMIT') > iIns, 'the write itself is still one transaction');
+});

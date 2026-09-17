@@ -755,6 +755,11 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         bucket: bucketIdx,
       };
 
+      // DD-4 (broad-scan 2026-09-17): a ring outside the 8 AM-5 PM chart
+      // range still counts toward `total` (it IS a ring event) but lands in
+      // no bar -- carry the overflow so the card can say why its count
+      // exceeds the sum of the bars instead of leaving the mismatch unexplained.
+      if (bucketIdx === -1) target.outOfRange = (target.outOfRange || 0) + 1;
       if (isSentinel) {
         target.entries.push(entry);
       } else {
@@ -834,6 +839,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         queue: queueName,
         entries: list,
         total: queueOnlyMap[queueName].total,
+        outOfRange: queueOnlyMap[queueName].outOfRange || 0,   // DD-4: rings in the count but in no chart bar
       };
     });
 

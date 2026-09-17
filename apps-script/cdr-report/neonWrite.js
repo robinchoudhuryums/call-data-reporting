@@ -235,7 +235,10 @@ function neonSqlLit_(v) {
   if (v === null || v === undefined) return 'NULL';
   var s = String(v).replace(/\u0000/g, '');
   var tag = 'nq';
-  while (s.indexOf('$' + tag + '$') !== -1) tag += 'x';
+  // P-4 (broad-scan 2026-09-17): test against the value PLUS the closing '$'
+  // -- a value that merely ENDS with '$nq' would otherwise render as
+  // `$nq$...$nq$nq$` (a syntax error -> rollback + failure row).
+  while ((s + '$').indexOf('$' + tag + '$') !== -1) tag += 'x';
   return '$' + tag + '$' + s + '$' + tag + '$';
 }
 function neonSqlInt_(v) { var n = parseInt(v, 10); if (isFinite(n)) return String(n); NEON_COERCED_++; return '0'; }
@@ -416,13 +419,14 @@ function writeDQERowsToNeon(rows, opts) {
     Logger.log('writeDQERowsToNeon: Neon unreachable — skipping %s rows.', rows.length);
     return { inserted: 0, skipped: rows.length };
   }
-  conn.setAutoCommit(false);
-
   try {
     // Sub-queue Phase 1: self-upgrade a pre-Phase-1 dqe_history in place, the
     // same idempotent pattern inbound_calls uses. Memoized so the DDL costs one
-    // statement per execution, not one per write call. Postgres DDL is
-    // transactional, so it commits or rolls back with the batch below.
+    // statement per execution, not one per write call. P-9 (broad-scan
+    // 2026-09-17): it runs in AUTOCOMMIT, BEFORE the transaction opens --
+    // `ADD COLUMN IF NOT EXISTS` takes ACCESS EXCLUSIVE even when the column
+    // exists, and inside the transaction that lock rode to COMMIT, queueing
+    // every DQE_READ_SOURCE=neon dashboard read behind the whole mirror.
     if (!DQE_QUEUE_SPLIT_COLUMN_READY_) {
       var ddl = conn.createStatement();
       ddl.execute('ALTER TABLE dqe_history ADD COLUMN IF NOT EXISTS queue_split text');
@@ -437,6 +441,7 @@ function writeDQERowsToNeon(rows, opts) {
       ddl2.close();
       DQE_AFTER_HOURS_COLUMNS_READY_ = true;
     }
+    conn.setAutoCommit(false);   // P-9: the transaction opens AFTER the DDL
     // IMP-5: authoritative per-date replace (see neonAuthoritativeDateDelete_).
     if (opts && opts.authoritative) {
       neonAuthoritativeDateDelete_(conn, 'dqe_history',

@@ -784,3 +784,37 @@ test('R49: the after-hours capture (AJ/AK) is untouched by the floor change', fu
   assert.equal(row[5], 1, 'F rung -- the 3:10 PM leg is still out of the window');
   assert.equal(row[35], 1, 'AJ after-hours answered still captures it');
 });
+
+
+test('P-7 (broad-scan 2026-09-17): a D-1 carry-over leg is DROPPED, not written -- and does not pick the build date', function () {
+  // The stray sorts FIRST chronologically. Under the old first-row rule the
+  // whole grid resolved to 03/08 and the F2 guard refused a 99%-correct grid;
+  // and without expectedDate the stray's abandoned parent entered AD.
+  const rawGrid = [new Array(26).fill('')].concat([
+    rawRow({ callId: 'P0', legId: 0, start: '03/08/2026 14:00:00', callTime: '0:00:30', calleeName: 'A_Q_CSR', parentCall: 'N/A', abandoned: true }),
+    rawRow({ callId: 'Q0', legId: 0, start: '03/08/2026 14:00:00', caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P0', callerId: 'A_Q_CSR', missed: true }),
+    rawRow({ callId: 'P1', legId: 0, start: IN, talk: '0:03:00', calleeName: 'Anna', parentCall: 'N/A' }),
+    rawRow({ callId: 'Q1', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna', parentCall: 'P1', callerId: 'A_Q_CSR', answered: true }),
+  ]);
+  const ss = makeFakeSpreadsheet({
+    sheets: {
+      'Raw Data': rawGrid,
+      'DQE Historical Data': [new Array(34).fill('')],
+      'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    },
+  });
+  const logs = [];
+  const realLog = h.ctx.Logger.log;
+  h.ctx.Logger.log = function () { logs.push(Array.prototype.slice.call(arguments).join(' ')); };
+  try {
+    h.fn('buildDQEHistoricalData')(ss._sheet('Raw Data'), ss._sheet('DQE Historical Data'),
+      { expectedDate: new Date(2026, 2, 9) });
+  } finally { h.ctx.Logger.log = realLog; }
+  const rows = ss._sheet('DQE Historical Data')._data.slice(1).filter(function (r) { return String(r[2] || '') !== ''; });
+  const anna = rows.filter(function (r) { return r[2] === 'Anna'; })[0];
+  assert.ok(anna, 'the expected day builds despite the stray sorting first');
+  assert.equal(anna[6], 0, 'the stray missed ring is not Anna\'s missed count');
+  assert.equal(String(anna[29] || ''), '', 'the stray\'s abandoned parent never reaches AD');
+  assert.ok(!rows.some(function (r) { return String(r[2]).indexOf('A_Q_CSR') === 0; }), 'no sentinel row from the stray');
+  assert.ok(logs.some(function (l) { return /P-7.*dropped 2 stray leg/.test(l); }), 'the drop is logged with its count');
+});

@@ -142,6 +142,15 @@ function runNeonCoverageCheck(opts) {
           src = getQcdReadSource_();
         }
         cmp.readSource = src;
+        // OD-6: an unparsed date cell is a finding of its own -- the row
+        // exists but no reader can key it, so it must not read as a Neon
+        // phantom. Named here and in the summary so the remedy is the
+        // date-normalize repair, not a force re-import.
+        cmp.unparsedSheetCells = sheetCounts._unparsed || 0;
+        if (cmp.unparsedSheetCells) {
+          out.errors.push(spec.table + ': ' + cmp.unparsedSheetCells + ' unparsed date cell(s) in "'
+            + spec.sheet + '" -- not counted; run previewHistoricalDateColumns() (Operator State #61)');
+        }
         ncReclassifyTrimmed_(cmp, src);
         out.findings += cmp.missingInNeon.length + cmp.countMismatch.length + cmp.extraInNeon.length;
         out.tables.push(cmp);
@@ -231,16 +240,23 @@ function ncMissingTableError_(msg) {
   return /relation "[^"]*" does not exist/i.test(String(msg || ''));
 }
 
-function ncCellDateIso_(s) {
-  var str = String(s == null ? '' : s).trim();
+// OD-6 (broad-scan 2026-09-17): ONE date resolver with the readers.
+// Delegates to `Data.gs::rowDateIso_` (Date / serial / the text renders),
+// so a cell the readers accept is a cell the coverage check counts -- the
+// old two-shape parser returned null on anything else and the date then
+// surfaced as "extra-in-neon: phantom rows -- force re-import", the wrong
+// remedy for a cell that merely needs the date-normalize repair.
+function ncCellDateIso_(s, tz) {
+  if (s == null || s === '') return null;
+  if (typeof rowDateIso_ === 'function') return rowDateIso_(s, tz || TZ) || null;
+  // Data.gs not in scope (a selective-load suite): the two sheet renders only,
+  // the pre-OD-6 behaviour. Production always has rowDateIso_.
+  var str = String(s).trim();
   if (!str) return null;
   var m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m) return str;
   m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) {
-    var mo = ('0' + m[1]).slice(-2), da = ('0' + m[2]).slice(-2);
-    return m[3] + '-' + mo + '-' + da;
-  }
+  if (m) return m[3] + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2);
   return null;
 }
 
@@ -303,12 +319,24 @@ function ncSheetDateCounts_(ss, sheetName, dateCol, fromIso, toIso) {
   if (!sheet) return null;
   var lastRow = sheet.getLastRow();
   var counts = {};
-  if (lastRow < 2) return counts;
-  var vals = sheet.getRange(2, dateCol, lastRow - 1, 1).getDisplayValues();
-  for (var i = 0; i < vals.length; i++) {
-    var iso = ncCellDateIso_(vals[i][0]);
-    if (iso && iso >= fromIso && iso <= toIso) counts[iso] = (counts[iso] || 0) + 1;
+  var unparsed = 0;
+  // OD-6: DISPLAY values through the readers' resolver (ncCellDateIso_ ->
+  // rowDateIso_), keyed in the SPREADSHEET's TZ, so every render the readers
+  // accept is a render this check counts; a cell NO reader can key is tallied
+  // (non-enumerable, so the counts map stays a map) and reported as its own
+  // finding instead of surfacing as a Neon phantom.
+  var tz = (typeof ss.getSpreadsheetTimeZone === 'function') ? ss.getSpreadsheetTimeZone() : TZ;
+  if (lastRow >= 2) {
+    var vals = sheet.getRange(2, dateCol, lastRow - 1, 1).getDisplayValues();
+    for (var i = 0; i < vals.length; i++) {
+      var v = vals[i][0];
+      if (v === '' || v === null || v === undefined || !String(v).trim()) continue;
+      var iso = ncCellDateIso_(v, tz);
+      if (!iso) { unparsed++; continue; }
+      if (iso >= fromIso && iso <= toIso) counts[iso] = (counts[iso] || 0) + 1;
+    }
   }
+  Object.defineProperty(counts, '_unparsed', { value: unparsed, enumerable: false });
   return counts;
 }
 

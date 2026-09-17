@@ -1124,6 +1124,13 @@ function hdScanOneSheet_(ss, spec, opts) {
 
   var presentTypes = Object.keys(res.types).filter(function (t) { return t !== 'blank'; });
   res.singleTyped = presentTypes.length <= 1;
+  // DD-7 (broad-scan 2026-09-17): single-typed is NOT enough for a sort -- an
+  // all-TEXT date column is single-typed and Sheets sorts it LEXICALLY
+  // ('10/1/2026' before '9/1/2026'), so the nightly sort would reorder it
+  // wrongly, the re-scan would catch it AFTER the fact, and it would repeat
+  // every night. Only a Date / serial column is chronologically sortable.
+  res.dateTyped = res.singleTyped
+    && (presentTypes.length === 0 || presentTypes[0] === 'date' || presentTypes[0] === 'serial');
   res.ordered = res.inversions === 0;
   res.verdict = hdVerdict_(res);
   res.ms = Date.now() - t0;
@@ -1471,7 +1478,17 @@ function historicalSortCheck_(opts) {
           entry.notes = res.verdict.toLowerCase() + ' -- nothing to check';
         } else if (res.verdict === 'CLEAN') {
           entry.notes = 'clean -- ' + res.rows + ' rows single-typed and in date order';
-        } else if (res.singleTyped && !res.tzSplit && !res.unparsed && !res.ordered) {
+        } else if (res.singleTyped && !res.dateTyped && !res.tzSplit && !res.unparsed && !res.ordered) {
+          // DD-7: an out-of-order column whose every cell is TEXT is REFUSED --
+          // a sort would order it lexically and then read as sorted.
+          entry.action = 'refused';
+          entry.status = 'failure';
+          entry.verdict = res.verdict + '+TEXT-TYPED';
+          entry.notes = 'UNSORTED+TEXT-TYPED -- every date cell is TEXT, which Sheets sorts LEXICALLY '
+            + '(\'10/1/2026\' before \'9/1/2026\'), so a sort would put it in the WRONG order and then '
+            + 'look sorted; run previewHistoricalDateColumns() and the date-normalize repair first '
+            + '(Operator State #61)';
+        } else if (res.singleTyped && res.dateTyped && !res.tzSplit && !res.unparsed && !res.ordered) {
           var first = res.inversionSamples[0];
           var where = first ? ' (first at row ' + first.row + ': ' + first.prev + ' then ' + first.cur + ')' : '';
           if (!apply) {

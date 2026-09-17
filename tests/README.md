@@ -230,6 +230,7 @@ tests/
                               (index↔file sync + the size/bullet ratchets),
                               setup (INV-12), alert-recipients (B-5), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry),
+                              exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
                               agent-role / agent-home (the deny wall +
                               the no-teammate-identity payload pin),
                               company-overview (getCompanyOverview

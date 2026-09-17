@@ -217,3 +217,91 @@ test('I-6: processNewImport COMPUTES before the force-delete block (a compute th
   assert.ok(iCompute < iForce && iQcd < iForce && iCsr < iForce,
     'all three compute stages run BEFORE the force-delete (I-6)');
 });
+
+
+// ---- Batch 5 (broad-scan 2026-09-17): P-1 / P-8 / P-12 / P-13 ---------------
+
+test('P-1: the Raw Data rewrite + output-sheet writes run BEFORE the five-sheet force-delete', function () {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const iRaw = src.indexOf('rawDataSheet.clearContents();');
+  const iOut = src.indexOf('updateOutputSheet(outputSheet, results.Agents, dateObj);');
+  const iQcdr = src.indexOf('updateQcdrOutputSheet(targetSS, results.qcdData, results.csrData);');
+  const iDelete = src.indexOf('forceDeleted.qcd = !!existsInQCD;');
+  const iHist = src.indexOf('historyReport = processIntegratedHistory(targetSS, outputSheet, results, dateObj,');
+  assert.ok(iRaw > 0 && iOut > 0 && iQcdr > 0 && iDelete > 0 && iHist > 0, 'anchors present');
+  assert.ok(iRaw < iDelete && iOut < iDelete && iQcdr < iDelete,
+    'nothing those writes need depends on the delete, so a throw in them can no longer leave the date gone from five sheets');
+  assert.ok(iDelete < iHist, 'the historical writes still follow the delete');
+});
+
+test('P-8: Raw Data staging coerces only numeric-LOOKING cells; whitespace is empty, never 0', function () {
+  const f = h.fn('stageRawDataCell_');
+  assert.equal(f('42'), 42);
+  assert.equal(f(' 42 '), 42);
+  assert.equal(f('-3.5'), -3.5);
+  assert.equal(f('1762242202191'), 1762242202191, 'a 13-digit call id is still a number (unchanged)');
+  assert.equal(f(''), '');
+  assert.equal(f(null), '');
+  assert.equal(f(' '), '', 'Number(" ") used to stage as 0 -- a phantom zero');
+  assert.equal(f('\t'), '');
+  assert.equal(f('0:03:01'), '0:03:01', 'durations stay text');
+  assert.equal(f('1e3'), '1e3', 'only plain decimals coerce');
+  assert.equal(f('N/A'), 'N/A');
+  assert.equal(f(7), 7);
+});
+
+test('P-12: the history-date resolvers key the SPREADSHEET-TZ day from display values (one resolver, R46-safe)', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  // Fake default TZ is America/Mexico_City (UTC-6, no DST); the script is Chicago.
+  const sheetMidnightAug20 = new Date(Date.UTC(2026, 7, 20, 6));    // 00:00 Mexico City -> displays 8/20/2026
+  const scriptMidnightAug20 = new Date(2026, 7, 20);                // 00:00 Chicago (CDT) = 23:00 Aug 19 Mexico City (the R46 shape)
+  const ss = makeFakeSpreadsheet({ sheets: {
+    'CDR Historical Data': [['A', 'B', 'Date', 'D'],
+      ['a', 'b', sheetMidnightAug20, 'd'], ['a', 'b', '8/20/2026', 'd'], ['a', 'b', '2026-08-21', 'd'],
+      ['a', 'b', scriptMidnightAug20, 'd']],
+  } });
+  const tz = ss.getSpreadsheetTimeZone();
+  assert.equal(h.call('historyDateKey_', new Date(2026, 7, 20, 12), tz), '2026-08-20', 'a noon importer date keys its own day in any zone');
+  assert.equal(h.call('historyCellIso_', '8/20/2026', tz), '2026-08-20');
+  assert.equal(h.call('historyCellIso_', '2026-08-21', tz), '2026-08-21');
+  assert.equal(h.call('historyCellIso_', '8/20/2026 23:00:00', tz), '2026-08-20', 'a trailing time part is tolerated');
+  assert.equal(h.call('historyCellIso_', 'garbage', tz), null);
+  assert.equal(h.call('checkHistoryForDate', ss, 'CDR Historical Data', new Date(2026, 7, 20, 12)), true);
+  assert.equal(h.call('checkHistoryForDate', ss, 'CDR Historical Data', new Date(2026, 7, 22, 12)), false);
+  const set = h.call('buildHistoryDateSet', ss, 'CDR Historical Data');
+  assert.ok(set.has('2026-08-20') && set.has('2026-08-21'));
+  // The R46 shape: a script-midnight Date DISPLAYS as the previous day in the
+  // sheet, and that is the day every reader keys it under -- the delete and
+  // the exists-check now agree with them instead of with the script clock.
+  assert.ok(set.has('2026-08-19'), 'the TZ-split cell is keyed the way the sheet shows it (Aug 19), not the script way (Aug 20)');
+  const removed = h.call('deleteHistoricalRowsForDate', ss.getSheetByName('CDR Historical Data'), new Date(2026, 7, 20, 12), 3);
+  assert.equal(removed, 2, 'the sheet-midnight Date cell + the M/D/YYYY text cell; the TZ-split cell is NOT Aug 20');
+});
+
+test('P-13: pendingOnlyCopyDates_ names the queued dates whose history rows are already gone', function () {
+  const meta = [['2026-08-10', 'CDR'], ['2026-08-10', 'QCD'], ['2026-08-11', 'CDR'], ['2026-08-12', 'CSR_TRANSFER'], ['junk', 'CDR']];
+  const hist = { CDR: new Set(['2026-08-11']), QPATH: new Set(), QCD: new Set(['2026-08-10']), CSR_TRANSFER: new Set() };
+  const r = h.call('pendingOnlyCopyDates_', meta, hist, 'America/Mexico_City');
+  assert.equal(r.dates.join(','), '2026-08-10,2026-08-11,2026-08-12');
+  assert.equal(r.onlyCopy.join(','), '2026-08-10,2026-08-12',
+    'Aug 10: CDR rows gone (QCD present is not enough); Aug 12: CSR gone; Aug 11: CDR present');
+});
+
+test('P-13: clearPendingArchive REFUSES while a bulk run is paused (bulkIndex set)', function () {
+  const alerts = [];
+  const realUi = h.ctx.SpreadsheetApp.getUi;
+  h.ctx.SpreadsheetApp.getUi = function () {
+    return { alert: function (t, m) { alerts.push(String(t) + ' | ' + String(m)); return 'NO'; }, ButtonSet: { OK: 'OK', YES_NO: 'YES_NO' }, Button: { YES: 'YES' } };
+  };
+  try {
+    h.state.props.bulkIndex = '3';
+    h.call('clearPendingArchive');
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /Bulk run in progress/);
+  } finally {
+    delete h.state.props.bulkIndex;
+    h.ctx.SpreadsheetApp.getUi = realUi;
+  }
+});

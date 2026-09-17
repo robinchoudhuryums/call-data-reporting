@@ -233,8 +233,10 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       Logger.log('writeOutboundCallsToNeon: Neon unreachable — skipping %s records.', records.length);
       return { inserted: 0, skipped: records.length };
     }
-    conn.setAutoCommit(false);
     try {
+      // P-9: DDL in AUTOCOMMIT before the transaction opens (see the inbound
+      // writer) -- the CREATE INDEX / CREATE TABLE locks release immediately
+      // instead of riding to the write's COMMIT.
       var ddl = conn.createStatement();
       ddl.execute(
         'CREATE TABLE IF NOT EXISTS outbound_calls (' +
@@ -249,6 +251,7 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       ddl.execute('CREATE INDEX IF NOT EXISTS idx_outbound_calls_callee_hash '
         + 'ON outbound_calls (callee_hash, call_date)');
       ddl.close();
+      conn.setAutoCommit(false);   // P-9: the transaction opens AFTER the DDL
 
       if (authoritative) {
         var dateSet = {};
