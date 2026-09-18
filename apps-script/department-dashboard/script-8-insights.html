@@ -494,6 +494,16 @@
       if (e.target === editBtn) return;
       insCloseEditPopover_();
     });
+    // C2-12: Escape closes the open popover (a role=dialog with no other
+    // keyboard exit) and hands focus back to the button that opened it.
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      const pop = $('ins-edit-popover');
+      if (!pop || pop.style.display === 'none') return;
+      e.preventDefault();
+      insCloseEditPopover_();
+      if (editBtn) editBtn.focus();
+    });
 
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
@@ -826,6 +836,9 @@
         viewsBtn.addEventListener('click', function () {
           setViewsOpen(viewsMenu.style.display === 'none');
         });
+        // C2-12: role=menu announces arrow-key semantics -- deliver them
+        // through the shared helper (the I3 / E-10 rule).
+        wireMenuKeys_(viewsBtn, viewsMenu, setViewsOpen);
         document.addEventListener('click', function (e) {
           if (viewsMenu.style.display === 'none') return;
           if (viewsBtn.contains(e.target) || viewsMenu.contains(e.target)) return;
@@ -2395,15 +2408,11 @@
             insQhDayToggle_(dayRow);
           }
         });
-        // F13: Enter/Space expands a day too -- the per-queue rows behind
-        // the day toggle have no other route.
-        dailyWrap.addEventListener('keydown', function (e) {
-          if (e.key !== 'Enter' && e.key !== ' ') return;
-          var dayRow = e.target.closest && e.target.closest('tr.ins-daily-day-row');
-          if (!dayRow || !dailyWrap.contains(dayRow)) return;
-          e.preventDefault();
-          insQhDayToggle_(dayRow);
-        });
+        // F13 / C2-9: Enter/Space expands a day too -- the per-queue rows
+        // behind the day toggle have no other route. The keyboard path now
+        // rides the row's inner <button> (native Enter/Space -> click ->
+        // the delegated click handler above), so no row keydown handler:
+        // one here would toggle the same day TWICE per keypress.
         // R16f (owner): a <details> collapse is natively INSTANT -- so when
         // the summary is clicked while open, intercept, play the fold-out on
         // the card, then close for real. Opening keeps the native flip (the
@@ -2460,10 +2469,14 @@
     let html = '';
     insQhDailyAll_.forEach(function (d) {
       const dViol = Number(d.violations) || 0;
+      // C2-9 (the E-8 house rule): the disclosure is a real <button> inside
+      // the date cell, not role=button on the <tr> (which un-rows the row
+      // for screen readers). The whole row stays the click target.
       html += '<tr class="ins-daily-day-row" data-date="' + escapeHtml(d.date) + '"'
-           +   ' tabindex="0" role="button" aria-expanded="false"'
            +   ' title="Show this day’s per-queue breakdown">'
-           +   '<td><span class="ins-daily-caret" aria-hidden="true">&#9656;</span>' + escapeHtml(d.date) + '</td>'
+           +   '<td><button type="button" class="ins-daily-toggle" aria-expanded="false">'
+           +     '<span class="ins-daily-caret" aria-hidden="true">&#9656;</span>' + escapeHtml(d.date)
+           +   '</button></td>'
            +   '<td class="ins-qh-daily-queue-cell">All queues</td>'
            +   '<td class="num">' + fmtNumber(d.totalCalls) + '</td>'
            +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(d, null) + '</td>'
@@ -2501,9 +2514,11 @@
     const tbody = $('ins-qh-daily-tbody');
     if (!tbody || !dayRow) return;
     const iso = dayRow.getAttribute('data-date') || '';
+    // C2-9: the expanded state lives on the row's inner toggle button.
+    const toggleBtn = dayRow.querySelector('.ins-daily-toggle') || dayRow;
     const open = typeof force === 'boolean'
-      ? force : dayRow.getAttribute('aria-expanded') !== 'true';
-    dayRow.setAttribute('aria-expanded', open ? 'true' : 'false');
+      ? force : toggleBtn.getAttribute('aria-expanded') !== 'true';
+    toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     dayRow.classList.toggle('is-open', open);
     // (R16g: the per-date detail row rides the day group's open/close too.)
     const subs = tbody.querySelectorAll(

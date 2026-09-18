@@ -368,6 +368,8 @@
     $('agent-history-page').style.display = home ? 'none' : '';
     $('agent-tab-home').classList.toggle('on', home);
     $('agent-tab-history').classList.toggle('on', !home);
+    $('agent-tab-home').setAttribute('aria-selected', home ? 'true' : 'false');
+    $('agent-tab-history').setAttribute('aria-selected', home ? 'false' : 'true');
     $('agent-kicker').textContent = home ? 'My Performance' : 'My History';
     if (!home && !histLoaded_) loadHistory_();
   }

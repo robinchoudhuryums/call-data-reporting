@@ -32,7 +32,7 @@
     <header class="dash-header">
       <div>
         <div class="dash-kicker" id="page-kicker">Department Dashboard</div>
-        <h1 id="page-title">Loading…</h1>
+        <h1 id="page-title" tabindex="-1">Loading…</h1>
       </div>
       <!-- Top-tab nav (Phase C). Flattened from the prior Reports +
            Admin dropdowns into a single row of explicit tab buttons.
@@ -335,8 +335,8 @@
           <input type="date" id="to-date">
         </div>
         <div class="control">
-          <label>Quick select</label>
-          <div class="date-presets" id="date-presets"></div>
+          <span class="ctl-label" id="date-presets-label">Quick select</span>
+          <div class="date-presets" id="date-presets" role="group" aria-labelledby="date-presets-label"></div>
         </div>
         <!-- R17g (owner): the workday count for the selected window lives
              HERE on the sticky strip -- the Insights header's date
@@ -347,9 +347,9 @@
         <!-- R18: states a To-date correction when the requested range ran
              past the data (clampDeptToDate_). Silence would leave the user
              looking at a window they did not pick. -->
-        <div class="dept-clamp-note" id="dept-clamp-note" style="display:none;"></div>
+        <div class="dept-clamp-note" id="dept-clamp-note" role="status" style="display:none;"></div>
         <div class="control" id="dept-workdays-wrap" style="display:none;">
-          <label>&nbsp;</label>
+          <span class="ctl-label" aria-hidden="true">&nbsp;</span>
           <span class="dept-workdays-pill" id="dept-workdays"
                 title="Mon–Fri minus company holidays, across the selected From–To window"></span>
         </div>
@@ -357,7 +357,7 @@
              toggle. The Insights section is open inline below and loads
              with the page, so there is nothing to switch to.) -->
         <div class="control">
-          <label>&nbsp;</label>
+          <span class="ctl-label" aria-hidden="true">&nbsp;</span>
           <!-- R9-2: Refresh + Export sit side by side (Insights-toolbar
                convention). Export is the same .ir-export-wrap dropdown the
                Insights page uses; hidden until data loads (the old
@@ -904,7 +904,7 @@
              wiring stay inert; un-hiding = drop the display:none pair. The
              prior-window deltas + sparklines these cards carried live on in
              the per-agent cards, the emails and the CSV. -->
-        <div class="al-section-title" style="display:none;">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></div>
+        <h3 class="al-section-title" style="display:none;">Department rollup <span class="ins-rollup-cap" id="ins-rollup-cap"></span></h3>
         <div id="ins-kpi-row" class="pr-kpi-row" style="display:none;"></div>
 
         <!-- A2: Team detail (progressive disclosure). Queue health, heatmap,
@@ -970,7 +970,7 @@
              "no queues mapped" hint here; a missing QCD sheet hides the
              section. -->
         <div id="ins-queue-health" style="display:none;">
-          <div class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span>
+          <h3 class="al-section-title">Queue health <span class="ins-rollup-cap" id="ins-qh-cap"></span>
             <!-- Drilldown hand-off: the abandoned/violation numbers here roll
                  up the queue; the call-by-call detail (who rang, when, the
                  abandoned 🚨 timestamps with the "↳ path" journey) lives in the
@@ -978,7 +978,7 @@
                  same dept + range (handoffToMyDept_, scrolls to the section). -->
             <button class="ins-handoff-link" id="ins-qh-missed-link" type="button"
                     title="Open the My Department Missed Calls detail for this department and date range.">See missed calls &#8594;</button>
-          </div>
+          </h3>
           <div id="ins-qh-forecast" class="qcd-forecast" style="display:none;"></div>
           <!-- R16d (owner): the KPI tiles STACK in a left column beside the
                per-queue table (two-thirds right) -- the 3 tiles filled only
@@ -1060,7 +1060,7 @@
         <!-- A3: Agents zone. (Round-16: the D3 Simple-only caption is gone
              with the density mode.) -->
         <div class="ds-zone"><span class="ds-zone-label">Agents</span></div>
-        <div class="al-section-title">Per-agent comparison (vs prior period)</div>
+        <h3 class="al-section-title">Per-agent comparison (vs prior period)</h3>
         <div class="ir-cards-toolbar" id="ins-cards-toolbar">
           <label class="ir-sort-control">
             <span class="ir-sort-label">Sort agents:</span>
@@ -1271,7 +1271,7 @@
             <strong id="dept-qcd-title">Queue Call Data</strong>
             <!-- R17c (owner): the explainer is a HOVER tooltip on the ⓘ, not
                  visible text -- both side panels must fit one viewport. -->
-            <span class="side-hint-i" tabindex="0" title="Daily roll-up across this dept's mapped queues from QCD Historical Data. For a date range, open the Insights report — its Queue health section is the range view.">&#9432;</span>
+            <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Daily roll-up across this dept's mapped queues from QCD Historical Data. For a date range, open the Insights report — its Queue health section is the range view.">&#9432;</span>
             <span class="dept-qcd-date" id="dept-qcd-date"></span>
           </div>
           <!-- Period toggle: Yesterday (latest queue day) / MTD (month to date) /
@@ -1297,7 +1297,7 @@
           <div class="dept-qcd-header">
             <strong>Team Rings Data</strong>
             <!-- R17c (owner): explainer on hover, same as panel 1. -->
-            <span class="side-hint-i" tabindex="0" title="Ring-level rollup + the agent table at a glance. Range follows the page's dates and reconciles with the table above; Yesterday and MTD are fixed windows off the latest data day, independent of the page.">&#9432;</span>
+            <span class="side-hint-i gloss" tabindex="0" role="note" aria-label="About this panel" title="Ring-level rollup + the agent table at a glance. Range follows the page's dates and reconciles with the table above; Yesterday and MTD are fixed windows off the latest data day, independent of the page.">&#9432;</span>
             <span class="dept-qcd-date" id="trp-date"></span>
           </div>
           <!-- R18 (owner, item 1): period toggle, panel 1's control with a
@@ -2012,7 +2012,7 @@
           <div id="inbound-kpi-row" class="pr-kpi-row"></div>
 
           <div class="al-section">
-            <div class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only &middot; click a row for its daily trend)</span></div>
+            <h3 class="al-section-title">By insurer <span class="ins-rollup-cap">(labeled inbound numbers only &middot; click a row for its daily trend)</span></h3>
             <table class="qcd-source-table">
               <thead><tr><th data-sort="label">Insurer</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th><th class="num" data-sort="__abdPct">Aband. %</th><th class="num" data-sort="on_hold">On-hold abandon</th><th class="num" data-sort="avg_wait">Avg wait</th></tr></thead>
               <tbody id="inbound-insurer-tbody"></tbody>
@@ -2020,7 +2020,7 @@
           </div>
 
           <div class="al-section">
-            <div class="al-section-title">By advertised line (dial-in)</div>
+            <h3 class="al-section-title">By advertised line (dial-in)</h3>
             <table class="qcd-source-table">
               <thead><tr><th data-sort="label">Dial-in number</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th><th class="num" data-sort="__abdPct">Aband. %</th><th class="num" data-sort="avg_wait">Avg wait</th></tr></thead>
               <tbody id="inbound-dialin-tbody"></tbody>
@@ -2028,7 +2028,7 @@
           </div>
 
           <div class="al-section">
-            <div class="al-section-title">By entry queue</div>
+            <h3 class="al-section-title">By entry queue</h3>
             <table class="qcd-source-table">
               <thead><tr><th data-sort="label">Entry queue</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th><th class="num" data-sort="__abdPct">Aband. %</th><th class="num" data-sort="avg_wait">Avg wait</th></tr></thead>
               <tbody id="inbound-queue-tbody"></tbody>
@@ -2036,7 +2036,7 @@
           </div>
 
           <div class="al-section">
-            <div class="al-section-title">By dial-in &times; insurer <span class="ins-rollup-cap">(marketing-line attribution; labeled callers only)</span></div>
+            <h3 class="al-section-title">By dial-in &times; insurer <span class="ins-rollup-cap">(marketing-line attribution; labeled callers only)</span></h3>
             <table class="qcd-source-table">
               <thead><tr><th data-sort="dial_in">Dial-in number</th><th data-sort="insurer">Insurer</th><th class="num" data-sort="calls">Calls</th><th class="num" data-sort="answered">Answered</th><th class="num" data-sort="abandoned">Abandoned</th></tr></thead>
               <tbody id="inbound-dialin-insurer-tbody"></tbody>
@@ -2047,7 +2047,7 @@
         <div id="inbound-heatmap" class="ds-heatmap-panel" style="display:none;"></div>
 
           <div class="al-section" id="inbound-outside-section" style="display:none;">
-            <div class="al-section-title">Outside business hours <span class="ins-rollup-cap">(research only &mdash; NOT counted in any figure above, and not a department metric)</span></div>
+            <h3 class="al-section-title">Outside business hours <span class="ins-rollup-cap">(research only &mdash; NOT counted in any figure above, and not a department metric)</span></h3>
             <div id="inbound-outside-body"></div>
           </div>
       </div>
@@ -2139,7 +2139,7 @@
                renders per-dept cards into #direct-call-dept-cards instead;
                single-dept view keeps this table. -->
           <div class="al-section" id="direct-call-agent-section">
-            <div class="al-section-title">Per agent <span class="ins-rollup-cap">(inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></div>
+            <h3 class="al-section-title">Per agent <span class="ins-rollup-cap">(inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></h3>
             <table class="qcd-source-table">
               <thead><tr>
                 <th data-sort="agent">Agent</th>
@@ -2242,7 +2242,7 @@
         <div id="outbound-body">
           <div id="outbound-kpi-row" class="pr-kpi-row"></div>
           <div class="al-section" id="outbound-callback-section">
-            <div class="al-section-title">Abandoned-caller callbacks</div>
+            <h3 class="al-section-title">Abandoned-caller callbacks</h3>
             <div id="outbound-callback-kpis" class="pr-kpi-row"></div>
             <!-- (3): the time-to-callback DISTRIBUTION. A median hides the
                  tail, and a two-day-later callback is not the save a
@@ -2277,7 +2277,7 @@
             <div id="outbound-uncalled-list" style="display:none;"></div>
           </div>
           <div class="al-section" id="outbound-agent-section">
-            <div class="al-section-title">Per-agent outbound activity</div>
+            <h3 class="al-section-title">Per-agent outbound activity</h3>
             <p class="al-hint" id="outbound-attribution-note"></p>
             <div style="overflow-x:auto;">
               <table class="al-config-table" id="outbound-agent-table">
@@ -2326,7 +2326,7 @@
              Checked = hidden for ALL viewers; presentation-only escape hatch
              while a surface is being fixed/investigated. -->
         <div class="al-section" id="health-uiflags-section" style="display:none;">
-          <div class="al-section-title">UI surface toggles</div>
+          <h3 class="al-section-title">UI surface toggles</h3>
           <p class="al-hint">
             Hide a dashboard surface for <strong>all users</strong> while it's being
             fixed or investigated. Presentation-only — data, endpoints, and caches
@@ -2339,7 +2339,7 @@
           </div>
         </div>
         <div class="al-section" id="health-backup-section" style="display:none;">
-          <div class="al-section-title">Neon backup</div>
+          <h3 class="al-section-title">Neon backup</h3>
           <p class="al-hint">
             Weekly Drive export of the tables with <strong>no sheet fallback</strong>
             (<code>escalations</code>, <code>escalation_activity</code>, <code>inbound_calls</code> incl. journeys).
@@ -2391,7 +2391,7 @@
         </table>
         <!-- Delivery engine controls (the Neon-backup section shape). -->
         <div class="al-section" id="coaching-delivery-section">
-          <div class="al-section-title">Weekly delivery</div>
+          <h3 class="al-section-title">Weekly delivery</h3>
           <p class="al-hint">
             Monday-morning check: recomputes the flags, refreshes this worklist, and
             emails <strong>admins only</strong> when NEW flags appear (owner ruling —
@@ -2435,7 +2435,7 @@
             <input type="date" id="cl-to">
           </div>
           <div class="ir-col">
-            <label>&nbsp;</label>
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
             <button class="btn" id="cl-lookup-btn" type="button">Look up</button>
           </div>
         </div>
@@ -2514,7 +2514,7 @@
             <input type="date" id="ad-date">
           </div>
           <div class="ir-col">
-            <label>&nbsp;</label>
+            <span class="ctl-label" aria-hidden="true">&nbsp;</span>
             <button class="btn" id="ad-run-btn" type="button">Show the day</button>
           </div>
         </div>
@@ -2583,7 +2583,7 @@
 
       <div id="al-body" style="display:none;">
         <div class="al-section">
-          <div class="al-section-title">Configuration</div>
+          <h3 class="al-section-title">Configuration</h3>
           <p class="al-hint">
             Threshold (%) and Extra Recipients are configured in the
             <strong>Alert Config</strong> sheet in the dashboard spreadsheet.
@@ -2648,7 +2648,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Run alerts</div>
+          <h3 class="al-section-title">Run alerts</h3>
           <div class="al-run-row">
             <label for="al-date">Date to check</label>
             <input type="date" id="al-date">
@@ -2673,7 +2673,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Display standards</div>
+          <h3 class="al-section-title">Display standards</h3>
           <p class="al-hint">
             The answer-% target + amber band that drive the benchmark tints, the
             &ldquo;On track / Watch&rdquo; headlines, the Overview goal lines, and the
@@ -2730,7 +2730,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Daily trigger <span class="al-state-pill" id="al-trigger-pill"></span></div>
+          <h3 class="al-section-title">Daily trigger <span class="al-state-pill" id="al-trigger-pill"></span></h3>
           <p class="al-hint" id="al-trigger-status"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-trigger-btn" type="button">Install daily trigger (8 AM)</button>
@@ -2744,7 +2744,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Neon keep-warm <span class="al-state-pill" id="al-keepwarm-pill"></span></div>
+          <h3 class="al-section-title">Neon keep-warm <span class="al-state-pill" id="al-keepwarm-pill"></span></h3>
           <p class="al-hint" id="al-keepwarm-status"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-keepwarm-btn"   type="button">Enable keep-warm</button>
@@ -2760,7 +2760,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Report cache warming <span class="al-state-pill" id="al-cachewarm-pill"></span></div>
+          <h3 class="al-section-title">Report cache warming <span class="al-state-pill" id="al-cachewarm-pill"></span></h3>
           <p class="al-hint" id="al-cachewarm-status"></p>
           <div class="al-trigger-actions">
             <button class="btn btn-secondary" id="al-install-cachewarm-btn"   type="button">Enable cache warming</button>
@@ -2776,7 +2776,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Recent log</div>
+          <h3 class="al-section-title">Recent log</h3>
           <p class="al-hint">Last 20 entries from the Alert Log sheet (most recent first).</p>
           <table class="al-log-table">
             <thead><tr>
@@ -2794,7 +2794,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Report Subscribers</div>
+          <h3 class="al-section-title">Report Subscribers</h3>
           <p class="al-hint">
             One place to manage who receives which scheduled report. Two report types:
             <strong>Manager Digest</strong> (a per-manager email &mdash; daily, weekly, or
@@ -2824,11 +2824,13 @@
                per-report sheets/RPCs unchanged. -->
           <div class="ir-form-grid" id="al-rs-form" style="margin-top:10px; align-items:flex-end;">
             <div class="ir-col" style="flex:1 1 100%;">
-              <label>Report type</label>
-              <div class="al-rs-types">
-                <label class="al-inline-check"><input type="checkbox" id="al-rs-type-digest" checked> Manager Digest</label>
-                <label class="al-inline-check"><input type="checkbox" id="al-rs-type-queue"> Daily Call Queue Report</label>
-              </div>
+              <fieldset class="ctl-fieldset">
+                <legend class="ctl-label">Report type</legend>
+                <div class="al-rs-types">
+                  <label class="al-inline-check"><input type="checkbox" id="al-rs-type-digest" checked> Manager Digest</label>
+                  <label class="al-inline-check"><input type="checkbox" id="al-rs-type-queue"> Daily Call Queue Report</label>
+                </div>
+              </fieldset>
             </div>
             <div class="ir-col" style="flex:1 1 220px;">
               <label for="al-rs-email">Email</label>
@@ -2899,7 +2901,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Pipeline Health</div>
+          <h3 class="al-section-title">Pipeline Health</h3>
           <p class="al-hint">Last 20 entries from the Pipeline Health sheet (most recent first). Failures are highlighted; a long quiet stretch on `autoImport` or `buildDQE` is a sign the daily ingest or rebuild hasn't run.</p>
           <!-- F2 divergence detector: sheet-vs-Neon DQE max-date comparison.
                Hidden unless Neon is configured on this project. -->
@@ -2953,7 +2955,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Outliers (last 180 days)</div>
+          <h3 class="al-section-title">Outliers (last 180 days)</h3>
           <div id="of-batch-bar" class="of-batch-bar" style="display:none;">
             <button type="button" class="btn of-batch-apply" id="of-batch-apply" disabled>Apply selected</button>
             <span class="al-hint of-batch-hint">Tick the rows you&rsquo;ve mapped to a roster name <em>or</em> filled in as a New Assignment, then apply them in one pass. Or use each row&rsquo;s own button.</span>
@@ -2976,7 +2978,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Current aliases</div>
+          <h3 class="al-section-title">Current aliases</h3>
           <p class="al-hint">
             Persistent alias overrides read by the daily DQE build. Each row
             here means "if the CDR feed produces 'Old Name', the pipeline
@@ -2997,7 +2999,7 @@
         </div>
 
         <div class="al-section">
-          <div class="al-section-title">Recent fix log</div>
+          <h3 class="al-section-title">Recent fix log</h3>
           <p class="al-hint">Last 20 entries from the Orphan Fix Log sheet (most recent first).</p>
           <table class="al-log-table">
             <thead><tr>
@@ -3180,7 +3182,7 @@
             <div id="ac-run-status" role="status" class="status" style="display:none;"></div>
           </div>
           <div class="al-section">
-            <div class="al-section-title" id="ac-form-title">Add manager access</div>
+            <h3 class="al-section-title" id="ac-form-title">Add manager access</h3>
             <div class="ir-form-grid">
               <div class="ir-col" style="flex:1 1 260px;">
                 <label for="ac-email">Manager email</label>
@@ -3205,7 +3207,7 @@
             </div>
           </div>
           <div class="al-section">
-            <div class="al-section-title">Current managers (<span id="ac-count">0</span>)</div>
+            <h3 class="al-section-title">Current managers (<span id="ac-count">0</span>)</h3>
             <table class="al-config-table">
               <thead><tr><th>Email</th><th>Department(s)</th><th>Notes</th><th>Actions</th></tr></thead>
               <tbody id="ac-tbody"></tbody>
@@ -3215,7 +3217,7 @@
                The section explains the flag state so an admin adding rows
                before AGENT_ROLE_ENABLED is on isn't surprised by no-ops. -->
           <div class="al-section">
-            <div class="al-section-title">Agent access (<span id="ac-agent-count">0</span>)</div>
+            <h3 class="al-section-title">Agent access (<span id="ac-agent-count">0</span>)</h3>
             <p class="al-hint" id="ac-agent-hint"></p>
             <div class="ir-form-grid">
               <div class="ir-col" style="flex:1 1 260px;">
@@ -3276,7 +3278,7 @@
              unmapped ones surfaced first so the admin knows what still
              needs a dept. -->
         <div class="al-section">
-          <div class="al-section-title">Discovered queues <span id="dc-unmapped-badge" class="al-active al-active-no" style="display:none;"></span></div>
+          <h3 class="al-section-title">Discovered queues <span id="dc-unmapped-badge" class="al-active al-active-no" style="display:none;"></span></h3>
           <p class="al-hint">
             Distinct <code>Call Queue</code> values seen in QCD Historical Data
             (last 180 days). <strong>Unmapped</strong> queues surface in no dept's
@@ -3299,7 +3301,7 @@
              QCD-canonical names above); a raw name attributed to no dept
              falls out of every dept's Inbound report. Neon-backed. -->
         <div class="al-section">
-          <div class="al-section-title">Discovered inbound queues <span id="dc-inbound-badge" class="al-active al-active-no" style="display:none;"></span></div>
+          <h3 class="al-section-title">Discovered inbound queues <span id="dc-inbound-badge" class="al-active al-active-no" style="display:none;"></span></h3>
           <p class="al-hint">
             Raw <code>entry_queue</code> / <code>final_queue</code> names seen in Neon
             <code>inbound_calls</code> (last 180 days). These are the phone system's
@@ -3322,7 +3324,7 @@
         <!-- Editor: one row per dept showing the effective config; an
              inline edit form populates from the selected dept. -->
         <div class="al-section">
-          <div class="al-section-title">Per-department config</div>
+          <h3 class="al-section-title">Per-department config</h3>
           <table class="al-config-table">
             <thead><tr>
               <th>Department</th>
@@ -3340,7 +3342,7 @@
         </div>
 
         <div class="al-section" id="dc-edit-section" style="display:none;">
-          <div class="al-section-title">Edit <span id="dc-edit-dept-name"></span></div>
+          <h3 class="al-section-title">Edit <span id="dc-edit-dept-name"></span></h3>
           <div class="controls">
             <div class="control" style="flex:1 1 240px;">
               <label for="dc-edit-qcd">QCD queues (comma-separated)</label>

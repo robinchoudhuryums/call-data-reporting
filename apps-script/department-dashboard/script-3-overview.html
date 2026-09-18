@@ -63,6 +63,7 @@
         el = document.createElement('div');
         el.id = 'ov-cached-pill';
         el.className = 'ov-cached-pill';
+        el.setAttribute('role', 'status');   // C1-16: a transient notice is a live region
         el.textContent = 'Showing saved snapshot · refreshing…';
         var body = $('ov-body');
         if (body) body.insertBefore(el, body.firstChild);
@@ -334,6 +335,7 @@
       if (!el) {
         el = document.createElement('div');
         el.id = id;
+        el.setAttribute('role', 'status');   // C1-16: a transient notice is a live region
         // E-1: theme tokens, not hardcoded light-palette hex -- this badge
       // renders during FAILURE states, exactly when a dark-mode user is
       // squinting at it; the raw hex made it a glaring light box there.
@@ -1268,6 +1270,13 @@
     // POINT click (ovHandlePointClick_) + the dept-selector dropdown, so the
     // "jarring page load on a card click" is gone for every role. Hover still
     // spotlights (no-op once a pin is active).
+    if (!$('ov-tile-action-desc')) {
+      const desc = document.createElement('span');
+      desc.id = 'ov-tile-action-desc';
+      desc.className = 'sr-only';
+      desc.textContent = 'Activate to isolate this department in the trend chart; hold Shift to add it to the comparison.';
+      document.body.appendChild(desc);
+    }
     $('ov-dept-grid').querySelectorAll('.ov-dept-tile').forEach(function (tile) {
       const target = tile.getAttribute('data-dept');
       if (!target) return;
@@ -1281,7 +1290,10 @@
       // Overview -- the default landing page. Shift/Cmd/Ctrl+Enter still adds
       // to the pinned set, since `solo` reads the modifiers off the event.
       makeActivatable_(tile, solo);
-      tile.setAttribute('aria-label', 'Isolate ' + target + ' in the trend chart');
+      // C1-14: describe the ACTION; never aria-label the tile -- a label
+      // replaces its accessible content, so a screen reader would hear only
+      // "Isolate X in the trend chart" and none of the tile's numbers.
+      tile.setAttribute('aria-describedby', 'ov-tile-action-desc');
       tile.addEventListener('mouseenter', function () { ovSpotlightDept_(target); });
       tile.addEventListener('mouseleave', function () { ovSpotlightDept_(null); });
     });

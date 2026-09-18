@@ -834,6 +834,7 @@
   function initGlossTooltip_() {
     const tip = document.createElement('div');
     tip.className = 'ds-tooltip';
+    tip.id = 'ds-gloss-tip';
     tip.setAttribute('role', 'tooltip');
     tip.style.display = 'none';
     document.body.appendChild(tip);
@@ -858,6 +859,9 @@
         el.removeAttribute('title');
       }
       current = el;
+      // UD-6: while the styled tooltip stands in for the (stashed) title,
+      // point the trigger at it so the description is not lost to AT.
+      if (!el.hasAttribute('aria-describedby')) { el.setAttribute('aria-describedby', tip.id); el.setAttribute('data-gloss-desc', '1'); }
       // Rich entries render developer-authored HTML (titled def + benchmark
       // chip); everything else stays plain text.
       if (rich) { tip.innerHTML = rich; tip.classList.add('ds-tooltip--rich'); }
@@ -869,6 +873,10 @@
       if (current && current.hasAttribute('data-gloss')) {
         current.setAttribute('title', current.getAttribute('data-gloss'));
         current.removeAttribute('data-gloss');
+      }
+      if (current && current.hasAttribute('data-gloss-desc')) {
+        current.removeAttribute('aria-describedby');
+        current.removeAttribute('data-gloss-desc');
       }
       current = null;
       tip.style.display = 'none';
@@ -942,9 +950,16 @@
     var pop = null;
     var opener = null;   // E-7: return focus to the ? button on close
     var close = function () {
-      if (pop) { pop.remove(); pop = null; }
+      if (!pop) return;
+      // C1-18: release the popover's trap, then re-arm whatever trap the
+      // opener's modal held (the IR modal has a chart-help button; without
+      // this its Tab loop would be gone after the tips closed).
+      releaseFocus_();
+      pop.remove(); pop = null;
+      if (outerTrap) { document.addEventListener('keydown', outerTrap.handler); activeFocusTrap_ = outerTrap; outerTrap = null; }
       if (opener) { try { opener.focus(); } catch (e) { /* gone */ } opener = null; }
     };
+    var outerTrap = null;
     document.addEventListener('click', function (e) {
       var btn = e.target.closest && e.target.closest('.chart-help-btn');
       if (!btn) {
@@ -964,14 +979,25 @@
       pop.setAttribute('aria-label', 'Chart tips');
       pop.setAttribute('tabindex', '-1');
       pop.innerHTML = '<div class="chp-title">Chart tips</div><ul>'
-        + lines.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>';
+        + lines.map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul>'
+        // C1-18: a dialog needs a control INSIDE it for Tab to cycle on
+        // (trapFocus_ traps between focusables; a popover with none let Tab
+        // walk out) -- and a visible way out besides Escape.
+        + '<div class="chp-actions"><button type="button" class="btn btn-secondary chp-close">Close</button></div>';
       document.body.appendChild(pop);
+      pop.querySelector('.chp-close').addEventListener('click', function (ev) { ev.stopPropagation(); close(); });
       var r = btn.getBoundingClientRect();
       var w = Math.min(340, window.innerWidth - 24);
       pop.style.width = w + 'px';
       pop.style.top = (r.bottom + 6) + 'px';
       pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
       pop.focus();   // E-7: announce + put Escape in reach
+      // C1-18: trap Tab inside the dialog (trapFocus_ releases any trap
+      // first, so remember the modal's to restore on close).
+      outerTrap = activeFocusTrap_;
+      if (outerTrap) document.removeEventListener('keydown', outerTrap.handler);
+      activeFocusTrap_ = null;
+      trapFocus_(pop);
     });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') close();

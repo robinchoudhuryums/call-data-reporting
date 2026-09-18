@@ -65,6 +65,7 @@
     body.agent-app { background: var(--paper); }
     /* Phase C: tabs, history, glossary, preview banner */
     .agent-tabs { margin-left: auto; display: flex; gap: 6px; }
+    .agent-tablist { display: inline-flex; gap: 6px; }
     .agent-tab { font-size: 12px; color: var(--muted); border: 1px solid transparent; border-radius: 999px;
       padding: 3px 12px; cursor: pointer; background: none; font-family: inherit; }
     .agent-tab.on { background: var(--paper-2); color: var(--ink); font-weight: 600; }
@@ -95,8 +96,10 @@
     <span class="agent-dept-tag" id="agent-dept"></span>
     <span class="agent-fresh" id="agent-fresh"></span>
     <div class="agent-tabs">
-      <button type="button" class="agent-tab on" id="agent-tab-home">My Performance</button>
-      <button type="button" class="agent-tab" id="agent-tab-history">My History</button>
+      <span role="tablist" aria-label="Pages" class="agent-tablist">
+        <button type="button" class="agent-tab on" id="agent-tab-home" role="tab" aria-selected="true" aria-controls="agent-home-page">My Performance</button>
+        <button type="button" class="agent-tab" id="agent-tab-history" role="tab" aria-selected="false" aria-controls="agent-history-page">My History</button>
+      </span>
       <button type="button" class="agent-chip" id="agent-mode-btn" aria-label="Switch color mode" title="Switch color mode">◐</button>
     </div>
   </div>
@@ -108,7 +111,7 @@
       <button type="button" class="agent-chip" data-preset="yday">Yesterday</button>
       <button type="button" class="agent-chip" data-preset="custom">Custom…</button>
       <span class="agent-custom" id="agent-custom">
-        <input type="date" id="agent-from"> – <input type="date" id="agent-to">
+        <input type="date" id="agent-from" aria-label="From date"> – <input type="date" id="agent-to" aria-label="To date">
         <button type="button" class="agent-chip" id="agent-apply">Apply</button>
       </span>
       <span class="agent-dates" id="agent-dates"></span>

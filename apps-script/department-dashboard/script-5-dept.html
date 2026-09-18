@@ -97,11 +97,14 @@
   // this?" and "what else happened in this half-hour?" are the two questions
   // a drill row raises. These helpers answer both without leaving the page.
   //
-  // The affordance is a LINK-STYLED SPAN, deliberately not a <button>: a day
-  // slice runs to hundreds of rings, and that many tab stops would bury the
-  // page's real controls. Nothing becomes keyboard-unreachable -- both
-  // destinations (the agent cards, the chart's bucket bars) are themselves in
-  // the tab order on the same page; the links are a shortcut, not the route.
+  // UD-4: the affordance is a link-styled <button> kept OUT of the sequential
+  // tab order (tabindex=-1): a day slice runs to hundreds of rings, and that
+  // many tab stops would bury the page's real controls -- but a bare span was
+  // mouse-only, with no role for assistive tech to announce or activate. A
+  // button announces, takes a virtual-cursor click and programmatic focus.
+  // Nothing is keyboard-unreachable -- both destinations (the agent cards,
+  // the chart's bucket bars) are themselves in the tab order on the same
+  // page; the links are a shortcut, not the route.
   function missedAgentCardEl_(name) {
     var host = $('dept-missed-detail');
     if (!host || !name) return null;
@@ -958,8 +961,8 @@
         const lbl = escapeHtml(m.label);
         const b = Number(m.bucket);
         if (!(b >= 0)) return lbl;
-        return '<span class="ms-bucket-link" data-ms-bucket="' + b
-             + '" title="Show every agent rung in this half-hour">' + lbl + '</span>';
+        return '<button type="button" class="ms-bucket-link" tabindex="-1" data-ms-bucket="' + b
+             + '" title="Show every agent rung in this half-hour">' + lbl + '</button>';
       };
       const singleLi = function (m) {
         return '<li class="' + (m.abandoned ? 'abandoned' : '') + '">'
@@ -1001,8 +1004,10 @@
       }
 
       // R11-C4: per-card chart-scope toggle -- scopes the hour-of-day chart
-      // above to this agent's own rings (client rebucket; the button never
-      // toggles the <details>, stopPropagation in the delegated handler).
+      // above to this agent's own rings (client rebucket). UD-5: it renders
+      // as the card's first BODY child, not inside <summary> -- interactive
+      // content inside a summary is invalid HTML and the button was read as
+      // part of the disclosure; CSS pulls it up onto the header row.
       const scoped = deptMissedAgentScope_ === a.name;
       // R17h (Option B): data-agent-card is the cross-link ANCHOR -- a drill
       // row's agent name resolves to this element (missedAgentCardEl_).
@@ -1012,13 +1017,15 @@
            +     '<span class="agent-name">' + escapeHtml(a.name) + '</span>'
            +     '<span class="agent-card-meta">' + tierChip
            +       '<span class="agent-total">' + a.total + ' missed</span>'
-           +       '<button type="button" class="agent-scope-btn' + (scoped ? ' is-on' : '') + '"'
-           +         ' data-scope-agent="' + escapeHtml(a.name) + '"'
-           +         ' title="' + (scoped ? 'Show the whole department on the chart again'
-                                         : 'Scope the hour-of-day chart above to this agent') + '">'
-           +         (scoped ? '&#10005; chart' : '&#9632; chart') + '</button>'
            +     '</span>'
            +   '</summary>'
+           +   '<div class="agent-card-tools">'
+           +     '<button type="button" class="agent-scope-btn' + (scoped ? ' is-on' : '') + '"'
+           +       ' data-scope-agent="' + escapeHtml(a.name) + '"'
+           +       ' title="' + (scoped ? 'Show the whole department on the chart again'
+                                       : 'Scope the hour-of-day chart above to this agent') + '">'
+           +       (scoped ? '&#10005; chart' : '&#9632; chart') + '</button>'
+           +   '</div>'
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
            + '</details>';
     }).join('');

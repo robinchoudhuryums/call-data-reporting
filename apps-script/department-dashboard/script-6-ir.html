@@ -238,13 +238,16 @@
       // If we drilled in from the Insights page, ANY close (Back / X /
       // Escape) reveals it again -- the page sat behind the IR overlay all
       // along, so there's nothing to re-show and no scroll lock to keep;
-      // just restore the Back buttons (#2/#7). Focus deliberately stays put
-      // (the launcher button lives in the admin-only Reports dropdown).
+      // just restore the Back buttons (#2/#7). UD-9: the launcher button
+      // lives in the admin-only Reports dropdown (hidden for a manager), so
+      // focus goes to the page's h1 -- never left on the hidden modal.
       if (irCameFromInsights_) {
         irCameFromInsights_ = false;
         const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = 'none';
         const gb = $('ir-back-btn'); if (gb) gb.style.display = '';   // restore the generic Back
         document.body.style.overflow = '';
+        const h1 = $('page-title');
+        if (h1) { try { h1.focus(); } catch (e) { /* ignore */ } }
       } else {
         document.body.style.overflow = '';
         btn.focus();
@@ -258,7 +261,20 @@
         setTimeout(function () { setRoute_(basePageRoute_()); }, 0);
       }
     }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    // C2-12: Escape closes the edit popover FIRST when it is open (it is a
+    // role=dialog layered over the modal) and returns focus to its opener;
+    // a second Escape closes the modal as before.
+    function onKeyDown(e) {
+      if (e.key !== 'Escape') return;
+      const pop = $('ir-edit-popover');
+      if (pop && pop.style.display !== 'none') {
+        e.preventDefault();
+        irCloseEditPopover_();
+        const eb = $('ir-edit-selection-btn'); if (eb) eb.focus();
+        return;
+      }
+      closeModal();
+    }
 
     btn.addEventListener('click', openModal);
     if (closeBtn) closeBtn.addEventListener('click', closeModal);

@@ -164,3 +164,137 @@ test('C2-7: the four admin modal init failures render a Retry, not a dead "Error
   assert.ok(/origHtml/.test(helper) && /retryFn\(\)/.test(helper), 'Retry restores the loader markup and re-runs the init');
   assert.ok(/escapeHtml\(msg\)/.test(helper), 'the server message is escaped before innerHTML');
 });
+
+// ---------------------------------------------------------------------------
+// Batch 9 (interface structural): the keyboard / ARIA / theme rules. Same
+// reasoning as above -- each lives in the assembled client and needs a key
+// press or a screen reader to observe, so these pin the SOURCE of the rule;
+// drive-subqueue.js exercises the C1-13 keypress for real.
+// ---------------------------------------------------------------------------
+
+test('C1-13: Enter/Space on the sub-queue group header re-dispatches the click toggle', function () {
+  const s2 = src('script-2-chrome.html');
+  const kd = between(s2, /agentsTbody\.addEventListener\('keydown'/, /\n      \}\);/);
+  assert.ok(/closest\('tr\.subq-group-head'\)/.test(kd) && /ghead\.click\(\)/.test(kd),
+    'the tbody keydown handler knows the group-head row and fires its one toggle path');
+});
+
+test('C2-10: srtApply_ wires Enter/Space + tabIndex + aria-sort on every report sort header', function () {
+  const s9 = src('script-9-inbound-direct.html');
+  const fn = between(s9, /function srtApply_\(/, /\n  function (?!srtApply_)/);
+  assert.ok(/thead\.addEventListener\('keydown'/.test(fn), 'a keydown delegate sits beside the click delegate');
+  assert.ok(/th\.tabIndex = 0/.test(fn), 'headers are focusable');
+  assert.ok(/setAttribute\('aria-sort', st\.dir === 'asc' \? 'ascending' : 'descending'\)/.test(fn)
+    && /removeAttribute\('aria-sort'\)/.test(fn), 'aria-sort follows the active key and is cleared elsewhere');
+});
+
+test('C2-9 (the E-8 house rule): no fragment puts role="button" on a <tr>', function () {
+  const frags = fs.readdirSync(DIR).filter(function (f) { return /^script-\d+-.*\.html$/.test(f); });
+  frags.forEach(function (f) {
+    const s = src(f);
+    // A row opener and a role=button on the same rendered line (the two
+    // shapes that shipped: the Insights day row and the Health fold head).
+    const bad = s.split('\n').filter(function (l) { return !/^\s*\/\//.test(l) && /<tr\b/.test(l) && /role="button"/.test(l); });
+    assert.deepEqual(bad, [], f + ': role=button belongs on an inner control, never the <tr>');
+  });
+  const s8 = src('script-8-insights.html');
+  assert.ok(/class="ins-daily-toggle" aria-expanded=/.test(s8), 'the Insights day row carries its disclosure as an inner <button>');
+  const s9 = src('script-9-inbound-direct.html');
+  assert.ok(/class="sh-fold-btn" aria-expanded=/.test(s9), 'the Health fold head carries its disclosure as an inner <button>');
+  assert.ok(!/head\.addEventListener\('keydown'/.test(between(s9, /function healthRender_\(/, /\n  function (?!healthRender_)/)),
+    'no row keydown beside the native button (it would toggle twice per keypress)');
+});
+
+test('C2-11: the guided tour traps focus, returns it, and scopes the document-level Enter', function () {
+  const s10 = src('script-10-escalations.html');
+  assert.ok(/trapFocus_\(\$\('tour-tip'\)\)/.test(s10), 'startTour_ traps Tab inside the tip');
+  const finish = between(s10, /function tourFinish_\(/, /\n  function (?!tourFinish_)/);
+  assert.ok(/releaseFocus_\(\)/.test(finish) && /tourOpener_/.test(finish), 'finishing releases the trap and returns focus to the opener');
+  const key = between(s10, /function tourKey_\(/, /\n  function (?!tourKey_)/);
+  assert.ok(/onTipButton/.test(key) && /e\.key === 'Enter' && !onTipButton/.test(key),
+    'Enter is the document shortcut only when focus is NOT on a tip button (a focused button fires natively)');
+});
+
+test('C1-14 / C1-15 / C1-16: tiles are described (not labelled), the dialogs are named, the notices are live', function () {
+  const s3 = src('script-3-overview.html');
+  assert.ok(!/tile\.setAttribute\('aria-label'/.test(s3), 'no aria-label on the tile -- it would replace every KPI in it');
+  assert.ok(/tile\.setAttribute\('aria-describedby', 'ov-tile-action-desc'\)/.test(s3), 'the isolate action is a description');
+  assert.ok(/setAttribute\('role', 'status'\)/.test(between(s3, /function ovSetCachedIndicator_\(/, /\n  function /)), 'the cached pill is a live region');
+  assert.ok(/setAttribute\('role', 'status'\)/.test(between(s3, /function ovSetRefreshWarn_\(/, /\n  function /)), 'the refresh warning is a live region');
+  const s1 = src('script-1-core.html');
+  assert.ok(/role="alertdialog" aria-modal="true"'\s*\+\s*' aria-labelledby="ds-confirm-title" aria-describedby="ds-confirm-body"/.test(s1), 'dsConfirm_ is named + described');
+  assert.ok(/role="dialog" aria-modal="true" aria-labelledby="ds-prompt-title"/.test(s1), 'dsPrompt_ is named');
+  const dash = src('dashboard.html');
+  assert.ok(/id="dept-clamp-note" role="status"/.test(dash), 'the clamp note is a live region');
+});
+
+test('C1-18: the chart-tips dialog traps focus and restores the modal\'s trap on close', function () {
+  const s4 = src('script-4-nav.html');
+  const fn = between(s4, /function initChartHelp_\(/, /\n  \/\/ -- R10-3/);
+  assert.ok(/trapFocus_\(pop\)/.test(fn), 'the popover is trapped');
+  assert.ok(/class="btn btn-secondary chp-close"/.test(fn), 'it carries a real control for Tab to cycle on');
+  assert.ok(/outerTrap/.test(fn) && /activeFocusTrap_ = outerTrap/.test(fn), 'the opener modal\'s trap is re-armed on close');
+});
+
+test('C2-12: the Views menu has the shared key wiring; Escape closes an open edit popover before the modal', function () {
+  const s8 = src('script-8-insights.html');
+  assert.ok(/wireMenuKeys_\(viewsBtn, viewsMenu, setViewsOpen\)/.test(s8), 'Views menu');
+  assert.ok(/insCloseEditPopover_\(\);\s*\n\s*if \(editBtn\) editBtn\.focus\(\);/.test(s8), 'Insights popover Escape returns focus');
+  const s6 = src('script-6-ir.html');
+  const kd = between(s6, /function onKeyDown\(e\) \{/, /\n    \}\n/);
+  assert.ok(/ir-edit-popover/.test(kd) && /irCloseEditPopover_\(\)/.test(kd) && /closeModal\(\)/.test(kd),
+    'IR: the popover closes first, the modal on the next Escape');
+  const s1 = src('script-1-core.html');
+  assert.ok(/INPUT\|TEXTAREA\|SELECT/.test(between(s1, /function wireMenuKeys_\(/, /\n  function (?!wireMenuKeys_)/)),
+    'a text field inside a menu keeps its caret keys');
+});
+
+test('UD-3 / C1-17: one global :focus-visible ring, no outline:none on a :focus rule, on-fill text tokens', function () {
+  const css = src('styles.html');
+  assert.ok(/\n\s*:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/.test(css), 'the global ring exists');
+  const offenders = css.split('\n').map(function (l, i) { return { l: l, n: i + 1 }; })
+    .filter(function (x) { return /outline:\s*none\s*[;}]/.test(x.l); });   // a declaration, not the prose about it
+  assert.deepEqual(offenders.map(function (x) { return x.n + ': ' + x.l.trim(); }), [],
+    'no `outline: none` anywhere in styles.html (a :focus rule dropping the ring with no replacement)');
+  assert.ok(/--on-good:\s*#ffffff/.test(css) && /--on-warn:\s*#ffffff/.test(css), 'light on-fill tokens');
+  assert.ok(/--on-good: #101418/.test(css) && /--on-warn: #101418/.test(css), 'dark on-fill tokens');
+  assert.ok(/\.toast-success \{ background: var\(--good\); color: var\(--on-good, #fff\); \}/.test(css), 'toast-success reads the token');
+  assert.ok(/\.toast-error\s+\{ background: var\(--warn\); color: var\(--on-warn, #fff\); \}/.test(css), 'toast-error reads the token');
+  assert.ok(/\.ds-confirm--danger \{ background: var\(--warn\); color: var\(--on-warn, #fff\); \}/.test(css), 'the danger confirm reads the token');
+  assert.ok(!/color:\s*#fff;?\s*\}/.test(between(css, /\.toast-success/, /\n\n/)), 'no hardcoded white left on the toasts');
+});
+
+test('UD-1 / UD-2 / UD-7 / UD-8: the phone breakpoints, the retired print CSS gone, the global print hides', function () {
+  const css = src('styles.html');
+  assert.ok(/@media \(max-width: 700px\) \{ \.ir-row \{ grid-template-columns: 1fr; \} \}/.test(css), 'UD-1');
+  assert.ok(/#ins-heatmap \{\s*flex: 1 1 420px; min-width: min\(360px, 100%\)/.test(css), 'UD-2 heatmap floor');
+  assert.ok(/\.ins-qh-table-card \{ flex: 1 1 420px; min-width: min\(340px, 100%\)/.test(css), 'UD-2 table-card floor');
+  assert.ok(!/body\.(pr|cr)-printing/.test(css) && !/\.pr-th-sortable\s*[{:]/.test(css), 'UD-7: the retired Performance / Compare Ranges print + sort rules are gone');
+  const print = between(css, /@media print \{/, /\n  \}\n/);
+  ['#help-fab', '#ins-ab-panel', '#dev-overlay', '.toast-container', '.tour-overlay', '.ds-confirm-overlay', '.modal-backdrop']
+    .forEach(function (sel) { assert.ok(print.indexOf(sel) >= 0, 'UD-8 print hides ' + sel); });
+});
+
+test('UD-4 / UD-5 / UD-6 / UD-9 / UD-10 / C2-13: the markup-level fixes', function () {
+  const s5 = src('script-5-dept.html');
+  assert.ok(/<button type="button" class="ms-bucket-link" tabindex="-1"/.test(s5), 'UD-4: the ring-time cross-link is a button (out of the tab order)');
+  const s9 = src('script-9-inbound-direct.html');
+  assert.ok(/<button type="button" class="ms-agent-link" tabindex="-1"/.test(s9), 'UD-4: the agent-name cross-link is a button');
+  const card = between(s5, /return '<details class="agent-card'/, /\}\)\.join\(''\);/);
+  const summaryEnd = card.indexOf("'</summary>'");
+  assert.ok(summaryEnd > 0 && card.indexOf('agent-scope-btn') > summaryEnd, 'UD-5: the scope button renders AFTER </summary>, not inside it');
+  const dash = src('dashboard.html');
+  assert.equal((dash.match(/class="side-hint-i gloss" tabindex="0" role="note"/g) || []).length, 2, 'UD-6: both side hints are notes on the styled tooltip layer');
+  assert.ok(/<h1 id="page-title" tabindex="-1">/.test(dash), 'UD-9: the page h1 can take focus');
+  const s6 = src('script-6-ir.html');
+  assert.ok(/const h1 = \$\('page-title'\);\s*\n\s*if \(h1\) \{ try \{ h1\.focus\(\); \}/.test(s6), 'UD-9: the from-Insights close focuses the h1');
+  assert.ok(!/<div class="al-section-title"/.test(dash) && (dash.match(/<h3 class="al-section-title"/g) || []).length >= 30, 'UD-10: section titles are h3');
+  assert.ok(!/<div class="al-section-title"/.test(s9), 'UD-10: the Direct per-dept title is an h3 too');
+  assert.ok(!/<label>&nbsp;<\/label>/.test(dash) && !/<label>Quick select<\/label>/.test(dash), 'C2-13: no label element that labels nothing');
+  assert.ok(/<legend class="ctl-label">Report type<\/legend>/.test(dash), 'C2-13: the checkbox group is a fieldset');
+  const agent = src('agent.html');
+  assert.ok(/id="agent-from" aria-label="From date"/.test(agent) && /id="agent-to" aria-label="To date"/.test(agent), 'C2-13: agent date inputs are labelled');
+  assert.ok(/role="tablist" aria-label="Pages"/.test(agent) && /role="tab" aria-selected="true"/.test(agent), 'C2-13: the agent tabs are a tablist');
+  assert.ok(/setAttribute\('aria-selected', home \? 'true' : 'false'\)/.test(src('agentApp.html')), 'C2-13: aria-selected follows the tab switch');
+  assert.ok(/role="tab" aria-selected="' \+ \(inboundDrillMetric === 'calls'\)/.test(s9), 'C2-13: the inbound drill tabs carry aria-selected');
+});
