@@ -251,3 +251,23 @@ test('F2: an EMPTY source never deletes outbound rows', function () {
   assert.equal(res.cleared, undefined, 'no cleanup attempted');
   assert.equal((cap.executed || []).length, 0, 'no statement ran at all');
 });
+
+
+test('P-9 (broad-scan 2026-09-17): the outbound writer runs its DDL in AUTOCOMMIT before the transaction opens', function () {
+  const seq = [];
+  h.ctx.getReachableNeonConn_ = function () {
+    return {
+      setAutoCommit: function (v) { seq.push('AUTOCOMMIT:' + v); },
+      createStatement: function () { return { execute: function (sql) { seq.push(sql.slice(0, 30)); return true; }, close: function () {} }; },
+      commit: function () { seq.push('COMMIT'); }, rollback: function () {}, close: function () {},
+    };
+  };
+  delete h.state.props.HMAC_SECRET;
+  h.call('writeOutboundCallsToNeon', OB_ROWS, { authoritative: true, expectedDateIso: '2026-07-22' });
+  const iAuto = seq.indexOf('AUTOCOMMIT:false');
+  const ddl = seq.map(function (s, i) { return /^(CREATE TABLE|CREATE INDEX)/.test(s) ? i : -1; }).filter(function (i) { return i >= 0; });
+  const iDel = seq.findIndex(function (s) { return /^DELETE FROM outbound_calls/.test(s); });
+  assert.equal(ddl.length, 2);
+  assert.ok(ddl.every(function (i) { return i < iAuto; }), 'CREATE TABLE + CREATE INDEX precede setAutoCommit(false)');
+  assert.ok(iAuto < iDel, 'the DELETE + INSERT stay inside the transaction');
+});

@@ -231,7 +231,15 @@ function digestGatedAttempt_(cadence, now, source) {
     const alreadySent = props.getProperty('DIGEST_RUN_MARKER_' + cadence) === window.toIso;
     const hour = Number(Utilities.formatDate(now, TZ, 'H')) || 0;
     const latest = digestLatestDqeIso_();
-    const fresh = !!latest && latest >= window.toIso;
+    // O-2 (broad-scan 2026-09-17): a window is complete once the LAST
+    // BUSINESS day's data landed -- a month ending on a Saturday, or a week
+    // ending on a Friday holiday, has no DQE rows for its calendar end date
+    // (a zero-activity day writes none), so comparing against toIso deferred
+    // all morning and then sent a "data not yet available" stale copy of a
+    // complete window (next: Mon 2026-11-02 for October; Christmas 2026 is
+    // a Friday).
+    const expectedIso = lastBusinessDayOnOrBeforeIso_(window.toIso);
+    const fresh = !!latest && latest >= expectedIso;
     const decision = digestDailyDecision_(hour, fresh, alreadySent);
     Logger.log('digestGatedAttempt_(%s, %s): window=%s..%s latestDqe=%s hour=%s -> %s',
       cadence, source, window.fromIso, window.toIso, latest || '(none)', hour, decision);
@@ -322,6 +330,14 @@ function sendDigestsForCadence_(cadence, runOpts) {
     // run holding the shared lock through its send window) -- notify the
     // admins so the "digest didn't arrive -> check admin inbox" runbook
     // (Operator State #12d) actually finds something.
+    // O-5 (broad-scan 2026-09-17): ALSO record it -- the previous day's
+    // "ok" stayed in DIGEST_LAST_RESULT_<cadence> (the modal's "Last runs"
+    // line and, since O-5, the Health page) while nothing went out.
+    try {
+      PropertiesService.getScriptProperties().setProperty('DIGEST_LAST_RESULT_' + cadence,
+        'SKIPPED-LOCK: ' + cadence + ' digests skipped -- another run held the script lock; '
+        + 're-send via sendDigestsForCadence_ or wait for the next trigger. At ' + new Date());
+    } catch (e) { /* best-effort */ }
     try {
       notifyDigestFailure_(cadence, new Error(
         'script lock contention -- ' + cadence + ' digests were SKIPPED this '
@@ -506,9 +522,12 @@ function notifyDigestRecipientFailures_(cadence, failures) {
 
 /**
  * Computes dept totals for [fromIso, toIso] using the same summary
- * shape getDepartmentSummary returns. Direct private-helper call
- * because the trigger context has no Session.getActiveUser identity
- * to feed the public function's auth gates.
+ * shape getDepartmentSummary returns. Direct private-helper call so the
+ * trigger path does not depend on the public function's auth gate at all
+ * (O-3: a time trigger DOES run as its installing owner -- CacheWarm calls
+ * the gated public functions from a trigger by design, and F-27 measured
+ * warm runs attributed to the installing admin -- but a private core is
+ * still the cleaner shape for an engine).
  */
 function computeDigestStats_(dept, fromIso, toIso) {
   const summary = computeSummary_(dept, fromIso, toIso, 'roster');
@@ -712,9 +731,10 @@ function digestSummaryHtml_(dept, fromIso, toIso, opts) {
   const stats   = computeDigestStats_(dept, fromIso, toIso);
   const totals  = stats.totals || {};
   const rung = Number(totals.totalRung) || 0;
-  const pct = rung > 0
-    ? ((Number(totals.totalAnswered) || 0) / rung) * 100
-    : 0;
+  // DD-2: one formula (ANSWER_RATE_FORMULA); the tile shows '—' when the
+  // active denominator is empty.
+  const rateDenom = answerRateDenom_(totals.totalAnswered, totals.totalMissed, rung);
+  const pct = answerRatePct_(totals.totalAnswered, totals.totalMissed, rung);
   const pctStr     = pct.toFixed(1) + '%';
   const rungStr    = ekFmtInt_(Number(totals.totalRung)     || 0);
   const ansStr     = ekFmtInt_(Number(totals.totalAnswered) || 0);
@@ -723,8 +743,8 @@ function digestSummaryHtml_(dept, fromIso, toIso, opts) {
   const target     = digestAnswerTarget_(dept);
 
   const kpis = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
-    + ekKpiTd_('% answered', rung > 0 ? pctStr : '—', {
-        tone: rung > 0 ? (pct >= target ? 'good' : 'bad') : 'neutral',
+    + ekKpiTd_('% answered', rateDenom > 0 ? pctStr : '—', {
+        tone: rateDenom > 0 ? (pct >= target ? 'good' : 'bad') : 'neutral',
         subHtml: ekKpiSub_(ekEsc_(target + '% goal')),
         pad: 'padding-right:6px;' })
     + ekKpiTd_('Rung', rungStr, { pad: 'padding:0 3px;' })
@@ -999,6 +1019,7 @@ function neonDigestConfigRawValues_() {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'config');   // OD-3
     rs.close(); stmt.close();
     return JSON.parse(json || '[]').map(function (r) {
       return [r.email || '', r.department || '', r.cadence || '',
@@ -1192,7 +1213,9 @@ function sheetUpsertDigestConfigRow_(rec) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.DIGEST_CONFIG);
   if (!sheet) throw new Error('Digest Config sheet missing -- run setup().');
-  const row = [rec.email, rec.department, rec.cadence, rec.active ? 'TRUE' : 'FALSE', rec.notes || '', rec.format || ''];
+  // A-4: email + notes are admin free text (the regex admits a formula-leading
+  // address); dept / cadence / format are validated enums.
+  const row = [sheetSafeCell_(rec.email), rec.department, rec.cadence, rec.active ? 'TRUE' : 'FALSE', sheetSafeCell_(rec.notes || ''), rec.format || ''];
   const lastRow = sheet.getLastRow();
   let found = -1;
   if (lastRow >= 2) {

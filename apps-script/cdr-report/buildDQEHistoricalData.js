@@ -474,30 +474,49 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
   const lastRow = rawSheet.getLastRow();
   if (lastRow < 2) { Logger.log('DQE: Raw Data is empty.'); refuseIfForce_('Raw Data is empty'); return; }
 
-  const data     = rawSheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
-  const timeVals = rawSheet.getRange(2, 7, lastRow - 1, 2).getDisplayValues();
+  let data     = rawSheet.getRange(2, 1, lastRow - 1, 26).getDisplayValues();
+  let timeVals = rawSheet.getRange(2, 7, lastRow - 1, 2).getDisplayValues();
 
 
   // ── Detect call date ───────────────────────────────────────────────────────
+  // P-7 (broad-scan 2026-09-17): when the caller says which date it expects,
+  // the build's date is the FIRST row on THAT day, not the first parseable
+  // row -- a D-1 carry-over leg sorts first chronologically, so the old
+  // first-row rule resolved the whole grid to D-1 and the F2 guard refused a
+  // grid that was 99% correct. A grid with NO row on the expected day still
+  // refuses below (the F2 protection for a wholly wrong-day grid is kept).
 
   let callDateStr = null;
   let callDateObj = null;
+  const expDay = (opts && opts.expectedDate && typeof opts.expectedDate.toDateString === 'function'
+                  && !isNaN(opts.expectedDate.getTime())) ? opts.expectedDate.toDateString() : null;
+  let firstSeenStr = null, firstSeenObj = null;   // the first parseable row, for the refusal message
 
   for (let i = 0; i < data.length; i++) {
     const val = data[i][DQE_C.START_TIME];
     if (val && val.trim()) {
-      callDateStr = displayToDateStr(val);
-      callDateObj = displayToDate(val);
+      let str = displayToDateStr(val);
+      const obj = displayToDate(val);
+      if (!obj) continue;
       // I2-9: an ISO-shaped START_TIME parses now (displayToDate), but col B
       // must never RECEIVE ISO text -- that is the exact cell shape the
       // number-coercion / one-day-early traps grow from. Canonicalize the
       // written string to the M/D/YYYY display every other row carries.
-      if (callDateObj && /^\d{4}-\d{2}-\d{2}$/.test(callDateStr || '')) {
-        callDateStr = (callDateObj.getMonth() + 1) + '/' + callDateObj.getDate()
-          + '/' + callDateObj.getFullYear();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str || '')) {
+        str = (obj.getMonth() + 1) + '/' + obj.getDate() + '/' + obj.getFullYear();
       }
-      if (callDateObj) break;
+      if (!firstSeenObj) { firstSeenStr = str; firstSeenObj = obj; }
+      if (expDay && obj.toDateString() !== expDay) continue;   // P-7: a stray day, keep looking
+      callDateStr = str;
+      callDateObj = obj;
+      break;
     }
+  }
+  if (!callDateObj && firstSeenObj) {
+    // No row on the expected day: fall through to the F2 refusal with the
+    // grid's actual (first) date in the message.
+    callDateStr = firstSeenStr;
+    callDateObj = firstSeenObj;
   }
 
   if (!callDateObj || !callDateStr) {
@@ -552,6 +571,41 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
         + callDateStr + ' -- no rows written. If this was a force re-import, the expected '
         + 'date\'s DQE rows were already cleared: fix Raw Data (stray carry-over leg?) and '
         + 'force re-import that date to rebuild it.');
+    }
+  }
+
+
+  // ── P-7: drop STRAY legs (another calendar day) ────────────────────────────
+  // The build never date-filtered its legs: a D-1 carry-over leg entered the
+  // parent tree and -- when its parent was abandoned -- cols AD/AE/AF, where
+  // the Missed report counted it in the headline abandoned-call count while
+  // nothing could render it (no K..AC twin). Every downstream pass now sees
+  // only legs on the build's date; strays are logged, never written. `data`
+  // and `timeVals` are parallel (row i <-> row i), so they are filtered in
+  // lockstep.
+  {
+    const keepIdx = [];
+    const strayByDay = {};
+    let strayCount = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = data[i][DQE_C.START_TIME];
+      if (v && String(v).trim()) {
+        const d = displayToDate(v);
+        if (d && d.toDateString() !== callDateObj.toDateString()) {
+          strayCount++;
+          const k = displayToDateStr(v) || '?';
+          strayByDay[k] = (strayByDay[k] || 0) + 1;
+          continue;
+        }
+      }
+      keepIdx.push(i);
+    }
+    if (strayCount) {
+      data = keepIdx.map(function (i) { return data[i]; });
+      timeVals = keepIdx.map(function (i) { return timeVals[i]; });
+      Logger.log('DQE (P-7): dropped ' + strayCount + ' stray leg(s) not on ' + callDateStr + ': '
+        + Object.keys(strayByDay).map(function (k) { return k + '=' + strayByDay[k]; }).join(', ')
+        + ' -- a carry-over from an adjacent day; not written.');
     }
   }
 

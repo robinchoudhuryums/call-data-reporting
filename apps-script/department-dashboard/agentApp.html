@@ -368,6 +368,8 @@
     $('agent-history-page').style.display = home ? 'none' : '';
     $('agent-tab-home').classList.toggle('on', home);
     $('agent-tab-history').classList.toggle('on', !home);
+    $('agent-tab-home').setAttribute('aria-selected', home ? 'true' : 'false');
+    $('agent-tab-history').setAttribute('aria-selected', home ? 'false' : 'true');
     $('agent-kicker').textContent = home ? 'My Performance' : 'My History';
     if (!home && !histLoaded_) loadHistory_();
   }
@@ -465,6 +467,23 @@
     el.textContent = msg;
     el.style.display = '';
   }
+  // C2-8 (broad-scan 2026-09-17): a VALIDATION message must not wipe the
+  // numbers the agent was reading -- it is inline, and clears on the next load.
+  function showInlineError(msg) {
+    var el = $('agent-error');
+    el.textContent = msg;
+    el.style.display = '';
+  }
+  // C2-8: the "Yesterday" chip anchors to the latest DQE date, which on a
+  // Monday is Friday. Say so on the chip instead of calling Friday yesterday.
+  function relabelYesterdayChip_() {
+    var chip = document.querySelector('.agent-chip[data-preset="yday"]');
+    if (!chip || !latestIso) return;
+    var t = new Date(); var pad = function (x) { return x < 10 ? '0' + x : String(x); };
+    var y = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1, 12);
+    var yIso = y.getFullYear() + '-' + pad(y.getMonth() + 1) + '-' + pad(y.getDate());
+    chip.textContent = (latestIso === yIso) ? 'Yesterday' : ('Latest day (' + latestIso + ')');
+  }
 
   // ── Boot ──────────────────────────────────────────────────────────────
   $('agent-name').textContent = USER.agentName || USER.email || '';
@@ -498,7 +517,7 @@
   $('agent-apply').addEventListener('click', function () {
     var f = $('agent-from').value, t = $('agent-to').value;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f > t) {
-      showError('Pick a valid date range (from on or before to).');
+      showInlineError('Pick a valid date range (from on or before to).');
       return;
     }
     win.preset = 'custom'; win.from = f; win.to = t;
@@ -510,6 +529,7 @@
   google.script.run
     .withSuccessHandler(function (iso) {
       latestIso = (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)) ? iso : null;
+      relabelYesterdayChip_();   // C2-8
       if (latestIso) $('agent-fresh').textContent = 'Data through ' + isoToLabel(latestIso, true);
       applyPreset('mtd');
       load();

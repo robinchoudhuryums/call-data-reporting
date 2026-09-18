@@ -203,3 +203,69 @@ test('R8-D3: explicit priorFrom/priorTo win over a stray priorMode (no silent ov
   assert.ok(String(data.priorDateLabel || '').indexOf('2025') !== -1,
     'explicit dates used, priorMode ignored');
 });
+
+// D-2 (broad-scan 2026-09-17, INV-26 R18 scope): the TEAM_AVG_EXCLUDES
+// exclusion applies to the per-agent team-average BENCHMARK only. The dept
+// per-day stats and each card's share-of-dept are dept TOTALS and RATES and
+// keep the excluded manager's volume -- Insights' teamStats already does, and
+// one shared accumulator made IR disagree with it for the same window.
+test('D-2: deptStats + share keep the excluded manager\'s volume; only teamAvg drops it', function () {
+  const dcRow = ['Alpha', '', '', 'Ben', '', 'TRUE', 'admin@x.com', '', ''];
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, answered: 8, missed: 2, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-09', agent: 'Ben',  ext: '502', rung: 10, answered: 6, missed: 4, att: '0:04:00' }),
+  ], [dcRow]);
+  const data = h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09', agents: ['Anna', 'Ben'] });
+  assert.ok(data.meta.excludedAgents.indexOf('Ben') !== -1, 'Ben is the excluded manager');
+  // Benchmark: Anna alone (rung 10, answered 8) -- unchanged INV-26 behaviour.
+  assert.equal(data.teamAvg.raw.rung, 10);
+  assert.equal(data.teamAvg.raw.answered, 8);
+  // Dept totals + rate: BOTH agents (rung 20, answered 14 -> 70.0%).
+  assert.equal(data.deptStats.dailyRung, '20.0');
+  assert.equal(data.deptStats.dailyAnswered, '14.0');
+  assert.equal(data.deptStats.ansPct, '70.0%');
+  // Shares sum to 100% across the roster; Ben's card is a share of the dept,
+  // not of the dept-minus-Ben (which read 100% for him before).
+  const anna = entry(data, 'Anna'), ben = entry(data, 'Ben');
+  const pctNum = function (s) { return parseFloat(String(s)); };   // share is pre-formatted "50.0%"
+  assert.equal(Math.round(pctNum(anna.share.rung) + pctNum(ben.share.rung)), 100);
+  assert.equal(Math.round(pctNum(ben.share.rung)), 50);
+});
+
+// DD-3: a 0/0/0 roster row (an agent whose only legs fell outside the
+// window) must not add a day to the per-day denominator -- the same
+// activity gate activeAgentSet already applies.
+test('DD-3: activeDays counts only days with a call event', function () {
+  install([
+    dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, answered: 8, missed: 2, att: '0:03:00' }),
+    dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 0,  answered: 0, missed: 0 }),
+  ]);
+  const data = h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'] });
+  assert.equal(data.deptStats.activeDays, 1, 'the idle day is not an active day');
+  assert.equal(data.deptStats.dailyRung, '10.0', 'per-day figures divide by the active day only');
+});
+
+// DD-2 (broad-scan 2026-09-17): every server rate routes through
+// answerRatePct_; under ANSWER_RATE_FORMULA=answerable IR's % Answered is the
+// H2 formula the My Department table shows, and the cache key changes with it.
+test('DD-2: IR % Answered follows ANSWER_RATE_FORMULA (rung by default, answerable on the flip)', function () {
+  // Anna: rung 10, answered 6, missed 2 -> 60.0% (rung) vs 75.0% (answerable).
+  install([dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 10, answered: 6, missed: 2, att: '0:03:00' })]);
+  const req = { department: 'Alpha', from: '2026-03-09', to: '2026-03-09', agents: ['Anna'] };
+  h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  let data = h.call('getIndividualReport', req);
+  assert.equal(Math.round(entry(data, 'Anna').raw.pct), 60);
+  assert.equal(data.teamAvg.pct, '60.0%');
+  assert.equal(data.deptStats.ansPct, '60.0%');
+  try {
+    h.state.props.ANSWER_RATE_FORMULA = 'answerable';
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    data = h.call('getIndividualReport', req);
+    assert.equal(Math.round(entry(data, 'Anna').raw.pct), 75, 'the flip is not served from the rung cache');
+    assert.equal(data.teamAvg.pct, '75.0%');
+    assert.equal(data.deptStats.ansPct, '75.0%');
+  } finally {
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  }
+});

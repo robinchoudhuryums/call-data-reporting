@@ -84,7 +84,11 @@ const INBOUND_MAX_RANGE_DAYS = 366;
 function inboundResolveRequest_(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  // A-1 (broad-scan 2026-09-17): ALLOWLIST, never a `role === 'none'`
+  // denylist -- the agent role (fail-closed shape, departments:[]) is
+  // neither 'none' nor 'manager', so a denylist let it fall through to the
+  // admin-style dept branch below the moment the vetting gate is released.
+  assertManagerOrAdmin_(user);
   // TEMPORARY admin-only re-scope: the report is being vetted (data
   // discrepancies vs QCD's abandonment numbers -- different source +
   // definitions -- are noted and parked) before release to managers.
@@ -403,14 +407,41 @@ function getOutboundCallJourney_(callId, date, dept, user) {
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'journey-outbound');
     rs.close(); stmt.close();
     if (!json) return { available: true, found: false, reason: 'not-captured' };
-    return { available: true, found: true, kind: 'outbound',
-             call: callerLookupShapeOutbound_(JSON.parse(json)) };
+    const ocall = callerLookupShapeOutbound_(JSON.parse(json));
+    return Object.assign({ available: true, found: true, kind: 'outbound', call: ocall },
+                         journeyPrunedMeta_(ocall, date));   // OD-5
   } catch (e) {
     Logger.log('getOutboundCallJourney_ failed: ' + (e && e.message ? e.message : e));
     return outboundCallJourneySheetFallback_(callId, date, dept, user);
   } finally {
     try { conn.close(); } catch (ce) {}
   }
+}
+
+/**
+ * OD-5 (broad-scan 2026-09-17). PURE. A found call whose `journey` is NULL is
+ * shaped exactly like a pre-capture row, so the drill told the operator
+ * "capture predates the feature" for a 91+-day call whose journey the weekly
+ * retention prune had REMOVED (NeonRetention.gs journeyDays, default 90). When
+ * the call's age exceeds the journey horizon the response carries
+ * `journeyPruned: true` + `journeyHorizonDays` so the client can say so
+ * (AgentDay's `journey-pruned` reason, applied to the drill). Empty object
+ * otherwise. `nowMs` is injectable for tests.
+ */
+function journeyPrunedMeta_(call, dateIso, nowMs) {
+  try {
+    if (!call || (call.journey && call.journey.length)) return {};
+    var horizon = 90;
+    if (typeof neonRetentionSettings_ === 'function') {
+      horizon = Number(neonRetentionSettings_(PropertiesService.getScriptProperties()).journeyDays) || 90;
+    }
+    var p = String(dateIso || '').split('-');
+    if (p.length !== 3) return {};
+    var dayMs = Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    var ageDays = Math.floor(((nowMs != null ? nowMs : Date.now()) - dayMs) / 86400000);
+    if (!(ageDays > horizon)) return {};
+    return { journeyPruned: true, journeyHorizonDays: horizon, ageDays: ageDays };
+  } catch (e) { return {}; }
 }
 
 function getCallJourney(req) {
@@ -532,6 +563,7 @@ function getCallJourney(req) {
             + 'FROM inbound_calls');
           ps.setString(1, date);
           const prs = ps.executeQuery();
+          if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(16, 'callJourney');   // OD-3: a two-column probe row
           if (prs.next()) {
             const minD = prs.getString('min_d');
             let dayHas = false;
@@ -562,7 +594,9 @@ function getCallJourney(req) {
       Logger.log('getCallJourney: dept-scoped lookup missed (queue-name space), '
         + 'resolved via exact-id fallback. call_id=%s date=%s dept=%s', callId, date, dept || '(all)');
     }
-    return { available: true, found: true, call: callerLookupShapeCall_(JSON.parse(json)) };
+    const icall = callerLookupShapeCall_(JSON.parse(json));
+    return Object.assign({ available: true, found: true, call: icall },
+                         journeyPrunedMeta_(icall, date));   // OD-5
   } catch (e) {
     // A mid-query failure (connection died, table missing) degrades the same
     // way as no-conn: try the sheet copy before reporting unavailable.
@@ -1667,6 +1701,7 @@ function runInboundQcdParityCheck() {
     const uRs = uStmt.executeQuery();
     const uJson = uRs.next() ? uRs.getString('j') : '[]';
     uRs.close(); uStmt.close();
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(uJson ? uJson.length : 0, 'inbound-audit');   // OD-3
     JSON.parse(uJson || '[]').forEach(function (r) {
       if (!attributed[String(r.q)]) uq.push({ queue: String(r.q), calls: Number(r.n) || 0 });
     });
@@ -1704,6 +1739,7 @@ function runInboundQcdParityCheck() {
       var nqRs = nqStmt.executeQuery();
       var nqJson = nqRs.next() ? nqRs.getString('j') : '[]';
       nqRs.close(); nqStmt.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(nqJson ? nqJson.length : 0, 'inbound-audit');   // OD-3
       JSON.parse(nqJson || '[]').forEach(function (r) {
         noQueue.push({ disposition: String(r.disposition), stage: String(r.stage),
                        calls: Number(r.n) || 0 });

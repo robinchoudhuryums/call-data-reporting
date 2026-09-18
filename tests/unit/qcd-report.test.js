@@ -815,3 +815,21 @@ test('R43: the budget is Script-Property tunable, with a sane default', function
   assert.equal(h.call('qcdAllDeptBudgetMs_'), def, 'a negative would skip every dept -- refused');
   delete h.state.props.QCD_ALLDEPT_BUDGET_MS;
 });
+
+// ---- D-8 (broad-scan 2026-09-17): MTD violations follow the WINDOW END --------
+
+test('D-8: computeMtdViolations_ anchored to a past window end counts THAT month through the anchor only', function () {
+  const hc = loadGas({ files: ['Config.gs', 'Util.gs', 'QCDReport.gs'], capture: ['QCD_HISTORICAL_COLS', 'QCD_TOTAL_CALLS_SOURCE'] });
+  const C = hc.consts.QCD_HISTORICAL_COLS;
+  const src = hc.consts.QCD_TOTAL_CALLS_SOURCE;
+  const row = function (iso, v) { const r = new Array(12).fill(''); r[C.DATE - 1] = iso; r[C.CALL_QUEUE - 1] = 'A_Q_X'; r[C.CALL_SOURCE - 1] = src; r[C.VIOLATIONS - 1] = v; return r; };
+  const values = [row('2026-01-05', 1), row('2026-01-20', 1), row('2026-01-28', 1), row('2026-02-03', 1), row('2026-03-02', 1)];
+  const dates = values.map(function (r) { return r[C.DATE - 1]; });
+  const realQ = h.ctx.queuesForDept_;
+  h.ctx.queuesForDept_ = function () { return ['A_Q_X']; };
+  try {
+    assert.equal(h.call('computeMtdViolations_', 'X', values, 'America/Chicago', {}, dates, '2026-01-22'), 2,
+      'January window ending the 22nd: Jan 5 + Jan 20, not the 28th, not February');
+    assert.equal(h.call('computeMtdViolations_', 'X', values, 'America/Chicago', {}, dates, '2026-02-28'), 1, 'February through its end');
+  } finally { h.ctx.queuesForDept_ = realQ; }
+});

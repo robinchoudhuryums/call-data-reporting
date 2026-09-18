@@ -56,7 +56,11 @@ const DIRECT_CALL_MAX_RANGE_DAYS = 366;
 function directCallResolveRequest_(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  // A-1 (broad-scan 2026-09-17): ALLOWLIST, never a `role === 'none'`
+  // denylist -- the agent role (fail-closed shape, departments:[]) is
+  // neither 'none' nor 'manager', so a denylist let it fall through to the
+  // admin-style dept branch below the moment the vetting gate is released.
+  assertManagerOrAdmin_(user);
   // TEMPORARY admin-only re-scope while the busy carve-out + answer-rate
   // numbers are vetted against Raw Data. The per-dept manager path below is
   // KEPT intact so restoring manager access is a one-line removal.

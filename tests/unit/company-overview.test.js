@@ -193,3 +193,48 @@ test('R50: every Window option the client offers has a bucket here', function ()
 });
 
 function plain_(o) { return Object.assign({}, o); }
+
+// DD-2 (broad-scan 2026-09-17): the Overview trend series carries `missed` and
+// rates through answerRatePct_, so the chart line follows ANSWER_RATE_FORMULA.
+test('DD-2: ovDeptChartSeries_ rates follow the formula switch; an empty denominator breaks the line', function () {
+  const labels = ['2026-09-01', '2026-09-02'];
+  const daily = { '2026-09-01': { rung: 10, answered: 6, missed: 2 }, '2026-09-02': { rung: 0, answered: 0, missed: 0 } };
+  h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  delete h.state.props.ANSWER_RATE_FORMULA;
+  assert.deepEqual(h.call('ovDeptChartSeries_', labels, daily, {}).trend, [60, null]);
+  try {
+    h.state.props.ANSWER_RATE_FORMULA = 'answerable';
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    assert.deepEqual(h.call('ovDeptChartSeries_', labels, daily, {}).trend, [75, null]);
+    assert.match(h.call('overviewCacheKey_'), /:rf-answerable$/, 'the blob key carries the formula');
+  } finally {
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  }
+});
+
+// ---- D-5 (broad-scan 2026-09-17): a thrown QCD snapshot read never pins the Overview --
+
+test('D-5: a QCD snapshot read that THROWS is served but never cached (no companyOverview put)', function () {
+  install();
+  h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false;
+  // install() stubs computeQcdSnapshots_ (QCDReport.gs is not loaded here);
+  // emulate its real catch, which calls noteQcdSnapshotReadFailed_ -- the
+  // wiring itself is pinned by source below and by compute-summary's D-5 test.
+  h.ctx.computeQcdSnapshots_ = function () { h.ctx.noteQcdSnapshotReadFailed_('computeQcdSnapshots_', new Error('QCD sheet read exploded')); return {}; };
+  try {
+    const data = h.call('getCompanyOverview', {});
+    assert.ok(data && data.depts && data.depts.length, 'the Overview still renders');
+    assert.ok(!Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('companyOverview:') === 0; }),
+      'a payload with no QCD chips / abandon series is never pinned for the 6 h TTL');
+  } finally { h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false; }
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'CompanyOverview.gs'), 'utf8');
+  const catchIdx = src.indexOf("noteQcdSnapshotReadFailed_('computeQcdSnapshots_', e)");
+  assert.ok(catchIdx > 0, 'the real computeQcdSnapshots_ catch notes the failure');
+  assert.ok(/qcdSnapshotReadFailed_\(\)\) \{[^}]*skipping cache put/.test(src), 'getCompanyOverview gates its put on it');
+  h.state.cache.clear();
+  h.ctx.computeQcdSnapshots_ = function () { return {}; };   // the healthy stub install() uses
+  h.call('getCompanyOverview', {});
+  assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('companyOverview:') === 0; }),
+    'control: a healthy snapshot path IS cached');
+});

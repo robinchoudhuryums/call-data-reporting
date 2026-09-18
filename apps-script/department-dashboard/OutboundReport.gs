@@ -137,7 +137,11 @@ const OUTBOUND_UNCALLED_MAX = 200;
 function outboundResolveRequest_(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  // A-1 (broad-scan 2026-09-17): ALLOWLIST, never a `role === 'none'`
+  // denylist -- the agent role (fail-closed shape, departments:[]) is
+  // neither 'none' nor 'manager', so a denylist let it fall through to the
+  // admin-style dept branch below the moment the vetting gate is released.
+  assertManagerOrAdmin_(user);
   // TEMPORARY admin-only re-scope while the callback linkage + roster
   // attribution are vetted. The per-dept manager path below is KEPT intact,
   // so releasing is flipping OUTBOUND_VETTING_GATE_ (above) -- read its
@@ -963,6 +967,7 @@ function runOutboundVettingCheck() {
       const vr = v.executeQuery();
       const n = vr.next() ? Number(vr.getString('n')) : 0;
       vr.close(); v.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'outbound-vetting');   // OD-3: a count row
       const ok = n === 1;
       if (!ok) failures.push('called-back ' + p.a_id + '@' + p.a_date + ' -> ' + p.o_id + '@' + p.o_date);
       Logger.log('sample called-back: abandon %s @ %s %s -> outbound %s @ %s %s : %s',
@@ -986,6 +991,7 @@ function runOutboundVettingCheck() {
       const vr = v.executeQuery();
       const n = vr.next() ? Number(vr.getString('n')) : 0;
       vr.close(); v.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'outbound-vetting');   // OD-3: a count row
       const ok = n === 0;
       if (!ok) failures.push('not-called-back ' + p.a_id + '@' + p.a_date + ' has ' + n + ' match(es)');
       Logger.log('sample not-called-back: abandon %s @ %s %s : %s',

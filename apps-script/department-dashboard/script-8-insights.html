@@ -494,6 +494,16 @@
       if (e.target === editBtn) return;
       insCloseEditPopover_();
     });
+    // C2-12: Escape closes the open popover (a role=dialog with no other
+    // keyboard exit) and hands focus back to the button that opened it.
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      const pop = $('ins-edit-popover');
+      if (!pop || pop.style.display === 'none') return;
+      e.preventDefault();
+      insCloseEditPopover_();
+      if (editBtn) editBtn.focus();
+    });
 
     const genBtn = $('ins-generate-btn');
     if (genBtn) genBtn.addEventListener('click', runInsReport);
@@ -826,6 +836,9 @@
         viewsBtn.addEventListener('click', function () {
           setViewsOpen(viewsMenu.style.display === 'none');
         });
+        // C2-12: role=menu announces arrow-key semantics -- deliver them
+        // through the shared helper (the I3 / E-10 rule).
+        wireMenuKeys_(viewsBtn, viewsMenu, setViewsOpen);
         document.addEventListener('click', function (e) {
           if (viewsMenu.style.display === 'none') return;
           if (viewsBtn.contains(e.target) || viewsMenu.contains(e.target)) return;
@@ -949,6 +962,25 @@
     const el = $('ins-form-error'); if (!el) return;
     if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
     el.textContent = msg; el.style.display = '';
+  }
+  // C2-1 (broad-scan 2026-09-17): a refusal must land on the surface the user
+  // can SEE. runInsReport used to write every refusal to #ins-form-error --
+  // inside the setup form, which insShowResults() hides -- so a parent-dept
+  // manager whose "Comparison & agents" pick spanned depts saw "Refreshing
+  // report…" forever, on every window change, and again on the next visit's
+  // first-entry auto-run (the prefs restore the mixed selection). Results
+  // visible -> the results status line; otherwise the hidden form comes back
+  // as the failure fallback (its documented role) with the message on it.
+  // Either way the launcher's loading pane is dismissed.
+  function insRefuse_(msg) {
+    launcherHideLoading_('ins-launcher-loading');
+    const results = $('insights-results');
+    if (results && results.style.display !== 'none') {
+      insSetResultsStatus_('error', msg);
+    } else {
+      insShowForm();
+      insSetFormError(msg);
+    }
   }
 
   function insIsoOf_(d) {
@@ -1246,7 +1278,7 @@
   }
 
   function runInsReport() {
-    const dept = getRequestedDept(); if (!dept) { insSetFormError('No department selected.'); return; }
+    const dept = getRequestedDept(); if (!dept) { insRefuse_('No department selected.'); return; }
     // R30: clamp HERE, the single chokepoint every Insights entry path funnels
     // through -- typed dates, the "Comparison & agents" popover, the presets
     // and the trend drill all end up reading ins-from/ins-to right below.
@@ -1263,24 +1295,24 @@
     // controls is in range and clamps to nothing.
     if (insClampNote && typeof deptClampNoteSet_ === 'function') deptClampNoteSet_(insClampNote);
     const from = $('ins-from').value, to = $('ins-to').value;
-    if (!from || !to) { insSetFormError('Pick a start and end date.'); return; }
-    if (from > to) { insSetFormError('Start date must be on or before end date.'); return; }
+    if (!from || !to) { insRefuse_('Pick a start and end date.'); return; }
+    if (from > to) { insRefuse_('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ins-agent-list'));
     // Agent-free run: an empty selection is allowed -- the server defaults to
     // the full department roster (the QCD-replacement queue / dept view).
     // Resolve the comparison window. prevPeriod -> null (server's
     // INV-28 auto-adjacent default); yoy/custom -> explicit dates.
     const prior = insResolvePriorRange_(from, to);
-    if (prior && prior.error) { insSetFormError(prior.error); return; }
+    if (prior && prior.error) { insRefuse_(prior.error); return; }
     // Sub-queue Phase 2: same one-dept-per-run rule as the Individual Report.
     // Insights' team rollup + per-agent-vs-team comparisons are all per-dept
     // (INV-25/27), so a selection spanning depts is refused, and a selection
     // confined to a sub-queue group runs against THAT department.
     const __sq = subqPickerScope_($('ins-agent-list'));
     if (__sq.mixed) {
-      insSetFormError('Pick agents from one department at a time — the team '
+      insRefuse_('Pick agents from one department at a time — the team '
         + 'rollup is per-department, so a mixed selection would compare agents '
-        + 'against the wrong team.');
+        + 'against the wrong team. Open "Comparison & agents" and narrow the pick.');
       return;
     }
     const reportDept = __sq.dept || dept;
@@ -1321,7 +1353,14 @@
         // handler restores it). Render was already guarded; the button wasn't.
         if (__rtok !== reportReqSeq_.ins) return;
         gen.disabled = false; gen.textContent = prev;
-        reportLastGoodWrite_('ins', __sig, data);
+        // C2-3 (broad-scan 2026-09-17): a payload whose queue-health leg
+        // errored is served (the rest of the report is fine) but is NOT
+        // last-good -- the server skips its cache put for the same reason,
+        // and the SWR store should not pin an "unavailable" queue section
+        // over the last complete report.
+        if (!(data && data.queueHealth && data.queueHealth.error)) {
+          reportLastGoodWrite_('ins', __sig, data);
+        }
         insSavePrefs_(); __insRepaint(data);
       })
       .withFailureHandler(function (err) {
@@ -2157,7 +2196,9 @@
       inboundKpiTile_('Abandoned %', t.abandonedPctStr, fmtNumber(t.abandoned) + ' abandoned',
         p ? inboundDelta_(t.abandonedPct, p.abandonedPct, 'neg', true) : '',
         benchValueCls_('abandoned %', t.abandonedPctStr, true)),
-      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the ' + ABANDON_STANDARD_ + '% threshold this month', '',
+      // D-8: month-to-date THROUGH THE WINDOW END (a past window shows ITS
+      // month), the same rule the all-departments queue report follows.
+      inboundKpiTile_('Violations (MTD)', fmtNumber(qh.violationsMtd), 'days over the ' + ABANDON_STANDARD_ + '% threshold, month-to-date through the window end', '',
         violValCls),
     ];
     // R16e (owner): Avg answer + Longest wait are PROMOTED from the muted
@@ -2367,15 +2408,11 @@
             insQhDayToggle_(dayRow);
           }
         });
-        // F13: Enter/Space expands a day too -- the per-queue rows behind
-        // the day toggle have no other route.
-        dailyWrap.addEventListener('keydown', function (e) {
-          if (e.key !== 'Enter' && e.key !== ' ') return;
-          var dayRow = e.target.closest && e.target.closest('tr.ins-daily-day-row');
-          if (!dayRow || !dailyWrap.contains(dayRow)) return;
-          e.preventDefault();
-          insQhDayToggle_(dayRow);
-        });
+        // F13 / C2-9: Enter/Space expands a day too -- the per-queue rows
+        // behind the day toggle have no other route. The keyboard path now
+        // rides the row's inner <button> (native Enter/Space -> click ->
+        // the delegated click handler above), so no row keydown handler:
+        // one here would toggle the same day TWICE per keypress.
         // R16f (owner): a <details> collapse is natively INSTANT -- so when
         // the summary is clicked while open, intercept, play the fold-out on
         // the card, then close for real. Opening keeps the native flip (the
@@ -2432,10 +2469,14 @@
     let html = '';
     insQhDailyAll_.forEach(function (d) {
       const dViol = Number(d.violations) || 0;
+      // C2-9 (the E-8 house rule): the disclosure is a real <button> inside
+      // the date cell, not role=button on the <tr> (which un-rows the row
+      // for screen readers). The whole row stays the click target.
       html += '<tr class="ins-daily-day-row" data-date="' + escapeHtml(d.date) + '"'
-           +   ' tabindex="0" role="button" aria-expanded="false"'
            +   ' title="Show this day’s per-queue breakdown">'
-           +   '<td><span class="ins-daily-caret" aria-hidden="true">&#9656;</span>' + escapeHtml(d.date) + '</td>'
+           +   '<td><button type="button" class="ins-daily-toggle" aria-expanded="false">'
+           +     '<span class="ins-daily-caret" aria-hidden="true">&#9656;</span>' + escapeHtml(d.date)
+           +   '</button></td>'
            +   '<td class="ins-qh-daily-queue-cell">All queues</td>'
            +   '<td class="num">' + fmtNumber(d.totalCalls) + '</td>'
            +   '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(d, null) + '</td>'
@@ -2473,9 +2514,11 @@
     const tbody = $('ins-qh-daily-tbody');
     if (!tbody || !dayRow) return;
     const iso = dayRow.getAttribute('data-date') || '';
+    // C2-9: the expanded state lives on the row's inner toggle button.
+    const toggleBtn = dayRow.querySelector('.ins-daily-toggle') || dayRow;
     const open = typeof force === 'boolean'
-      ? force : dayRow.getAttribute('aria-expanded') !== 'true';
-    dayRow.setAttribute('aria-expanded', open ? 'true' : 'false');
+      ? force : toggleBtn.getAttribute('aria-expanded') !== 'true';
+    toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     dayRow.classList.toggle('is-open', open);
     // (R16g: the per-date detail row rides the day group's open/close too.)
     const subs = tbody.querySelectorAll(

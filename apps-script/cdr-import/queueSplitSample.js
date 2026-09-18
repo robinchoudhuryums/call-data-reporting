@@ -17,6 +17,15 @@
  * drifted from the build's, or the sheet is stale relative to Raw Data. Only
  * agents marked OK can be sampled with confidence.
  *
+ * THE SIXTH HAND-MIRROR (P-5). The leg gate above IS a copy of the build's
+ * `queueLegs` filter -- the queue-token regex, the R18e `CallQueue (ext)`
+ * fallback and the R49 per-queue window floor (`dqeWindowStartForQueue_`) --
+ * and it drifted exactly the way the drill-down and the QCD diagnostic did
+ * (it shipped with a flat 6:30 floor and no ext fallback, so every CSR-family
+ * agent with a 6:00-6:30 leg read MISMATCH). A change to that gate in the
+ * build is a change HERE too; `cross-file-pins.test.js` (R49) fails on a bare
+ * `DQE_WINDOW_START` floor or a missing fallback in this file.
+ *
  * SCOPE: reads the `Raw Data` tab, which holds the MOST RECENTLY IMPORTED
  * date. To sample an older date, re-import it first (its Call_Legs source must
  * still exist -- pruned at 14 days).
@@ -79,14 +88,36 @@ function sampleQueueSplitCallIds() {
     return t;                                        // unrecognized: compare as-is
   }
 
+  // R18e fallback map: queue EXTENSION -> queue NAME, from the same day's
+  // queue-callee legs -- copied from buildDQEHistoricalData's own builder so a
+  // leg whose col W lost its queue token (the Field Ops Power shape) is
+  // recovered here exactly as the build recovers it. P-5 (2026-09-17): this
+  // tool is the SIXTH hand-mirror of the build's queueLegs gate; it shipped
+  // without this fallback and with a flat window floor, so its self-check
+  // read MISMATCH on precisely the days it exists to explain.
+  var queueNameByExt = {};
+  for (var q = 0; q < body.length; q++) {
+    var qCalleeExt  = String(body[q][DQE_C.CALLEE]).trim();
+    var qCalleeName = String(body[q][DQE_C.CALLEE_NAME]).trim();
+    if (!/^\d+$/.test(qCalleeExt)) continue;
+    if (!/^(A_Q_[\w&]+|Backup CSR)$/.test(qCalleeName)) continue;
+    queueNameByExt[qCalleeExt] = qCalleeName;
+  }
+
   var legsByAgent = {};
   var dateSeen = {};
-  var skippedNoQueue = 0, skippedExcluded = 0;
+  var skippedNoQueue = 0, skippedExcluded = 0, recoveredByExt = 0;
   for (var i = 0; i < body.length; i++) {
     var row = body[i];
     var callerIdRaw = String(row[DQE_C.CALLER_ID]).trim();
     var qn = callerIdRaw.match(/(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)/);
-    if (!qn) { skippedNoQueue++; continue; }
+    var queueName = qn ? qn[1] : null;
+    if (!queueName) {
+      var cqMatch = String(row[DQE_C.CALLER]).trim().match(/^CallQueue\s*\((\d+)\)$/i);
+      if (cqMatch) queueName = queueNameByExt[cqMatch[1]] || null;
+      if (queueName) recoveredByExt++;
+    }
+    if (!queueName) { skippedNoQueue++; continue; }
     if (/^CallForking/i.test(String(row[DQE_C.CALLEE]).trim())) continue;
     // NOTE: no canonicalizeAgentName here -- it is nested in the build and
     // needs the roster. A paren-variant name therefore groups under its RAW
@@ -102,7 +133,7 @@ function sampleQueueSplitCallIds() {
 
     (legsByAgent[agent] = legsByAgent[agent] || []).push({
       agentName: agent,
-      queueName: qn[1],
+      queueName: queueName,
       parentCallId: String(row[DQE_C.PARENT_CALL]).trim(),
       callId: String(row[DQE_C.CALL_ID]).trim(),
       missed: String(row[DQE_C.MISSED]).trim() === 'Missed',
@@ -115,18 +146,28 @@ function sampleQueueSplitCallIds() {
   var dates = Object.keys(dateSeen).sort();
   Logger.log('=== Queue-split call-id sample ===');
   Logger.log('Raw Data rows: %s   queue legs: %s   (skipped: no queue in caller-id %s, '
-    + 'pseudo-agent %s)', body.length,
+    + 'pseudo-agent %s; recovered via the R18e CallQueue-ext fallback %s)', body.length,
     Object.keys(legsByAgent).reduce(function (n, k) { return n + legsByAgent[k].length; }, 0),
-    skippedNoQueue, skippedExcluded);
+    skippedNoQueue, skippedExcluded, recoveredByExt);
   Logger.log('Date(s) present in Raw Data: %s', dates.join(', ') || '(none)');
   if (dates.length > 1) {
     Logger.log('!! More than one date in Raw Data -- the build stamps ONE date per run, '
       + 'so these totals will not line up with a single DQE row set.');
   }
-  Logger.log('Work window: legs from %s to %s PST count toward the totals; '
-    + 'anything outside is listed as (out-of-window) and is EXCLUDED by INV-07.',
-    Math.floor(DQE_WINDOW_START / 3600) + ':' + ('0' + ((DQE_WINDOW_START % 3600) / 60)).slice(-2),
-    Math.floor(DQE_WINDOW_END / 3600) + ':00');
+  // R49: the FLOOR is per queue (the CSR family starts half an hour earlier),
+  // and it comes from the build's own helper -- never a restated constant.
+  var hhmm = function (secs) {
+    return Math.floor(secs / 3600) + ':' + ('0' + Math.floor((secs % 3600) / 60)).slice(-2);
+  };
+  var inWindow = function (l) {
+    return l.startPST !== null
+      && l.startPST >= dqeWindowStartForQueue_(l.queueName)
+      && l.startPST < DQE_WINDOW_END;
+  };
+  Logger.log('Work window: legs from %s (%s for the %s family) to %s PST count toward '
+    + 'the totals; anything outside is listed as (out-of-window) and is EXCLUDED by INV-07.',
+    hhmm(DQE_WINDOW_START), hhmm(DQE_EARLY_WINDOW_START), DQE_EARLY_QUEUES.join('/'),
+    hhmm(DQE_WINDOW_END));
 
   // --- stored split, for the self-check ------------------------------------
   var storedByAgent = {};
@@ -154,9 +195,7 @@ function sampleQueueSplitCallIds() {
   var unmatched = [];
   agents.forEach(function (agent) {
     var all = legsByAgent[agent];
-    var inWin = all.filter(function (l) {
-      return l.startPST !== null && l.startPST >= DQE_WINDOW_START && l.startPST < DQE_WINDOW_END;
-    });
+    var inWin = all.filter(inWindow);
 
     // Recompute through the REAL function the build uses, so the numbers below
     // are the build's own arithmetic and not a paraphrase of it.
@@ -213,9 +252,7 @@ function sampleQueueSplitCallIds() {
       }
     });
 
-    var out = all.filter(function (l) {
-      return !(l.startPST !== null && l.startPST >= DQE_WINDOW_START && l.startPST < DQE_WINDOW_END);
-    });
+    var out = all.filter(function (l) { return !inWindow(l); });
     if (out.length && !wantQueue) {
       Logger.log('    (out-of-window: %s leg(s) EXCLUDED from every total -- INV-07)', out.length);
       out.slice(0, Math.min(5, maxIds)).forEach(function (l) {

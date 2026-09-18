@@ -58,7 +58,8 @@ drift apart, and caps this file's size.
   **inter-module dependency map**: which dashboard `.gs` files are reachable
   from which, and the cross-project seams. Apps Script's single global scope
   hides this (no imports to read), so it is COMPUTED — regenerate with
-  `node scripts/module-deps.mjs --write` after adding or renaming a `.gs`.
+  `node scripts/module-deps.mjs --write` after adding or renaming a `.gs`
+  (CI's `test` job runs `--check`, T-3).
   Read it before touching `Config.gs` / `Util.gs` / `Auth.gs` / `NeonRead.gs` /
   `Data.gs`, which 61-95% of the project depends on.
 - [`docs/known-issues.md`](docs/known-issues.md) — institutional memory.
@@ -130,7 +131,7 @@ npm run lint:gas
 # Unit tests (regression harness). Zero deps -- Node's built-in test
 # runner loads the real .gs/.js files into a vm with mocked Apps Script
 # globals (dashboard + the sibling cdr-report / cdr-import projects).
-# Non-zero exit on failure. ~100 suites pin the invariants, the report
+# Non-zero exit on failure. ~115 suites pin the invariants, the report
 # builders, the pipeline build, the Neon writers/readers, and every
 # flag-gated engine -- THE SUITE-BY-SUITE COVERAGE MAP LIVES IN
 # tests/README.md (its designated home; this block stopped enumerating
@@ -153,17 +154,19 @@ npm run lint:gas
 #   body -- see docs/client-ui-conventions.md "The assembled client".
 node --test          # from repo root (or: npm test)
 
-# CI: .github/workflows/ci.yml runs TWO jobs on push-to-main + every PR --
-# `test` (`node --test` + the INV-16 guard; = `npm run ci` locally) and
-# `ui-harness` (the rendered-UI gate; = `npm run ci:ui`, see below).
+# CI: .github/workflows/ci.yml runs THREE jobs on push-to-main + every PR --
+# `test` (`node --test` + the INV-16 guard + the module-deps `--check`, T-3;
+# = `npm run ci` locally), `lint` (`npm run lint:gas`, H3) and `ui-harness`
+# (the rendered-UI gate; = `npm run ci:ui`, see below).
 
 # Deploy helper: push AND roll a project's web-app deployment to a new
 # version in one step (avoids the manual "Manage deployments -> New
 # version" stale-deploy footgun, Operator State #2). The deployment id
 # comes from `clasp deployments` in that dir (one-time lookup).
-# TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard) AND
-# `npm run ci:ui` (the rendered-UI gate, F-10; skips cleanly when playwright
-# isn't installed); DEPLOY_SKIP_CI=1 skips both (emergencies only).
+# TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard), `npm run
+# lint:gas` AND `npm run ci:ui` -- the same three jobs ci.yml runs -- with
+# CI=1 set, so a MISSING eslint / playwright FAILS the gate (T-5; it used to
+# skip); DEPLOY_SKIP_CI=1 skips all three (emergencies only).
 # Both gate commands run under TZ=America/Chicago (CI_TZ overrides), matching
 # ci.yml: parts of the harness assume process TZ == script TZ, and a red gate
 # blocks the push entirely, so the developer's locale must not decide whether
@@ -269,9 +272,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 >
 > **How to write one (this section is the file's main growth surface).**
 > CLAUDE.md is injected into EVERY session's context, so size is a real and
-> recurring cost: it hit 372 KB once and was split to 150 KB, then grew back to
-> 178 KB in a week — and ~77% of that regrowth was EXISTING bullets accreting
-> prose, not new subjects. Three habits keep it flat:
+> recurring cost: it hit 372 KB once and was split to 150 KB, grew back to
+> 178 KB in a week — ~77% of that regrowth EXISTING bullets accreting prose,
+> not new subjects — and stood at 97% of the 200 KB cap by the 2026-09-17 T-6
+> trim (`claude-md-split` now warns past 90%). Three habits keep it flat:
 >
 > 1. **One bullet states a RULE and the trap it prevents. The incident that
 >    taught it goes to `docs/fix-history.md` under its fix code**, with a
@@ -331,13 +335,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   coerces these on write/paste: a SLOT cell with a single timestamp becomes a
   1899-epoch time serial; a multi-value AD/AF cell becomes a single Number
   (the comma read as a thousands group) that loses precision past 2^53 and
-  re-renders as `"17,622,419,789,481,700,000,000,000"`, which downstream then
-  mis-splits on the separator commas. **Single-value AD/AF cells survive**
+  re-renders with thousands separators, which downstream then mis-splits on.
+  **Single-value AD/AF cells survive**
   (< 2^53); **multi-value cells are genuinely lost.** Protections + recovery:
   (1) `buildDQEHistoricalData.js` plain-texts cols 4 / 11-29 / 30-32 before
   every write AND re-formats the EXACT write range, so rows that spill past the
-  prior `getMaxRows()` when the sheet auto-expands are protected too (the lone
-  remaining recurrence vector before commit a350042; INV-16, both copies).
+  prior `getMaxRows()` when the sheet auto-expands are protected too (INV-16,
+  both copies; the last recurrence vector is in fix-history under T-6).
   (2) Old corrupted rows: `repairDqeSlotTimestamps()` (K-AC **+ AF**, TZ-safe
   serial recovery -- AF holds the same comma-joined H:MM:SS time strings as the
   slots and coerces identically, so it's recovered HERE, not by the ID repair)
@@ -374,7 +378,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Date value, so a later `getValues()` + `String()` comparison never
   matches the original string (F-3 / F-10 in fix-history). New writer-side
   date comparisons must compare ISO-NORMALIZED DISPLAY values, never
-  `String(getValues())`.
+  `String(getValues())` -- cdr-import's `historyDateKey_` / `historyCellIso_`
+  (P-12, Batch 5) ARE that rule for the history sheets, keyed in the
+  SPREADSHEET's TZ; reuse them, never a second `toDateString`.
 - **DQE cols AD/AE/AF are POSITIONALLY PAIRED (lockstep contract).**
   The Missed Calls report pairs `AF[i]` (abandoned missed-ring time) with
   `AD[i]` (its parent call id) to hang a parent id on each 🚨 timestamp --
@@ -454,10 +460,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   R42 folded `sheetFetchDqeRows_`'s own copy in too, so there is now exactly
   ONE span implementation and a bug in it fails pins in BOTH suites.
 - **A span bounds a dated read's WIDTH; only a per-execution MEMO bounds the
-  COUNT (R40/R44).** `sheetFetchDqeRows_` is DEPT-INDEPENDENT, so every dept asking the same question for the same window
-  re-read the same span. It now memoizes per EXECUTION in
-  `DQE_SHEET_ROWS_MEMO_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped
-  at `DQE_SHEET_ROWS_MEMO_MAX_`. **It returns a SHALLOW CLONE per call, and
+  COUNT (R40/R44).** Both DAL primitives -- `sheetFetchDqeRows_` and, since
+  D-4 (Batch 6), `neonFetchDqeRows_` -- are DEPT-INDEPENDENT, so every dept
+  asking the same question for the same window re-read the same span (or
+  re-issued the same json_agg). Both memoize per EXECUTION in
+  `DQE_SHEET_ROWS_MEMO_`, keyed by SOURCE + `(from, to, includeMissedDetail)`
+  (the Neon key also carries the split + agent filter), FIFO-capped at
+  `DQE_SHEET_ROWS_MEMO_MAX_`; a failed Neon read is never memoized. **It returns a SHALLOW CLONE per call, and
   that is load-bearing:** six readers hand the result straight to
   `applyQueueSplitToRows_`, which rewrites rows IN PLACE, so an un-cloned memo
   leaks dept A's narrowing into dept B. Shallow suffices only because `slots`
@@ -476,10 +485,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   check is "single-typed AND ordered AND no TZ split", never just ordered
   (Batch 4 / Phase 2).** `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js,
   flag `HISTORICAL_SORT_ENABLED`, installed from CDR Tools) runs the census
-  scan per sheet and SORTS only a single-typed column that is out of order; a
-  MIXED-TYPE / TZ-SPLIT / UNPARSED column is REFUSED with a failure row,
-  because Sheets sorts numbers-then-text and the result LOOKS sorted while
-  being wrong. Outcome = `historicalSort:<sheet>` Pipeline Health rows
+  scan per sheet and SORTS only a single-typed DATE/serial column that is out
+  of order; a MIXED-TYPE / TZ-SPLIT / UNPARSED column is REFUSED with a
+  failure row, because Sheets sorts numbers-then-text and the result LOOKS
+  sorted while being wrong -- and so is an all-TEXT one (DD-7, Batch 5:
+  single-typed, but a text sort is lexical). Outcome = `historicalSort:<sheet>` Pipeline Health rows
   (INV-44) -> the Health page's `historical-sort` row; a sheet that needs
   sorting EVERY night is a writer appending out of order, not a job to tune.
   It DEFERS while any backfill `*_RESUME` pointer is set (a sort resets the
@@ -687,15 +697,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   under 3 missed) so a 1-missed agent is never branded worst; in
   that case cards render sorted but untiered. Styles
   (`.agent-tier`, `.agent-card--tier-*`) live in `styles.html`.
-  **Agent-scoped chart (R11-C4):** each card's summary carries a
-  "■ chart" button (`.agent-scope-btn`) that rebuckets the 18-slot
+  **Agent-scoped chart (R11-C4):** each card carries a "■ chart"
+  button (`.agent-scope-btn`; rendered AFTER `</summary>` and pulled onto
+  the header row by CSS -- UD-5) that rebuckets the 18-slot
   hour-of-day chart above from THAT agent's own timeline entries
   (pure client rebucket via `missedTimeBucketIdx_` -- the times are
   already in the payload, no fetch); a toolbar chip
   (`#dept-missed-scope-chip`) names the active scope with an ✕
-  clear. Clicks are intercepted in the delegated document handler
-  with preventDefault so the button never toggles the card's
-  `<details>`. The bucket drill panel stays DEPT-WIDE by design;
+  clear. The bucket drill panel stays DEPT-WIDE by design;
   scope resets on every fresh fetch (`deptMissedRender_`).
 - **Threshold-drift surface (E10, commit b3a5a51).** The Alerts
   modal config table renders a "Last 30 days" chip per dept
@@ -789,8 +798,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   INCONCLUSIVE the day after R49 deployed; cross-file-pins now fails on a bare
   `DQE_WINDOW_START` floor there, and `qcd-dqe-diagnostic.test.js` drives the
   REAL build against the mirror (source pins on copied text cannot see a rule
-  the build GAINED). NOT retroactive: a stored row keeps its old numbers until the
-  date is rebuilt (Operator State #67). The work-window pill still shows 8:30
+  the build GAINED). **`queueSplitSample.js` is the SIXTH** (P-5): same
+  helper, same R18e ext fallback, same pin, and `queue-split-sample.test.js`
+  drives it against the REAL build too. NOT retroactive: a stored row keeps
+  its old numbers until the date is rebuilt (Operator State #67). The work-window pill still shows 8:30
   for everyone -- a known 30-minute understatement for the CSR family.
 
 - **DQE cols AJ/AK (`After-Hrs Answered` / `After-Hrs TTT (sec)`) capture the
@@ -835,8 +846,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   are pinned BEHAVIORALLY by `qcd-sidebar-parity.test.js` (one shared fixture
   drives both implementations; sidebar row count must equal the pipeline's
   cell value) -- with two honest exclusions: cols F and G (a MAX and a MEAN,
-  which no row set can equal -- and where the row-36/row-40 col-G predicates
-  have since drifted, T-1) and window-edge shapes beyond the fixed row-35 one. Row 34 was RULED (2026-08-20) the "CSR Total Calls" SUM
+  which no row set can equal -- so the row-36/row-40 col-G STATUS gates,
+  which had drifted, are pinned by cross-file-pins instead, DD-6) and
+  window-edge shapes beyond the fixed row-35 one. Row 34 was RULED (2026-08-20) the "CSR Total Calls" SUM
   row: the sidebar now refuses it like every total row (parity-pinned), and
   the read-only `previewRow34Overlap` (cdr-import, CDR Tools menu) measures
   the latent 35+37 double-count -- see docs/known-issues.md "QCDR Output
@@ -916,7 +928,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Date-range presets NEVER include today, and the rule lives in ONE place.**
   `datePresetRange_` (script-1-core) is the single resolver behind every
   "Quick select" dropdown (IR, Insights, Inbound, Direct, Outbound, the
-  all-dept Queue report). Every OPEN-ENDED preset (`yesterday` / `last7` /
+  all-dept Queue report) AND the My Department chips. Every OPEN-ENDED preset (`yesterday` / `last7` /
   `thisWeek` / `thisMonth` / `last30` / `last3Months` / `last12Months`) ends
   YESTERDAY: today's ingest has not landed while a manager is looking (the
   pipeline builds the PREVIOUS day), so including today tacks an empty day
@@ -925,12 +937,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   already excluded it. The ONE exception is the Queue report's explicit
   `today`, which the user picked by name. Degenerate edges CLAMP rather than
   invert (a "This month" on the 1st, "This week" on a Monday -> that single
-  day), since the server rejects from > to. The rule was hand-mirrored in SIX
-  resolvers and had already drifted (`last30` fixed everywhere, the rest not);
-  ENFORCED by `tests/unit/date-presets.test.js`, whose tripwire fails if any
-  fragment computes preset dates locally again.
+  day), since the server rejects from > to. Seven surfaces once mirrored it by
+  hand and drifted (C1-3 in fix-history); ENFORCED by
+  `tests/unit/date-presets.test.js`, whose tripwire fails if any fragment
+  computes preset dates locally again.
 - **team-tools is an EXTERNAL READER of this workbook, and its answer rate
-  must mean what ours means (H2).** The CSR team app (a separate repo) reads
+  must mean what ours means (H2) -- and since DD-2 every SERVER surface reads
+  ONE formula, `Config.gs::answerRatePct_`, switched by `ANSWER_RATE_FORMULA`
+  (Operator State #69; `answer-rate-formula.test.js` fails on a bare
+  `answered / rung`).** The CSR team app (a separate repo) reads
   `DQE Historical Data` and tints the same per-agent rate the manager sees
   here, so a formula or standard is a TWO-REPO edit: Answer % is
   `answered / (answered + missed)` on both sides, rounded to a WHOLE percent
@@ -1001,7 +1016,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   auto-refresh -- trend arrows, axis zoom) · the top-tab ROUTER (Phase C:
   every tab/menu item's `data-route`+id pair, `__DASHBOARD_URL__` -- NEVER
   `window.location` inside the Apps Script iframe -- deep links + state-in-URL
-  via `SHARE_STATE_`, the F11 non-admin no-op).
+  via `SHARE_STATE_`, the F11 non-admin no-op) · the client ACCESSIBILITY +
+  PRINT contract (keyboard parity, the ARIA shapes, the focus ring, the
+  on-fill tokens, what never reaches paper).
   **The client traps that CAN bite you without warning stayed HERE** and are
   not repeated there: `safeChart_`, `dsConfirm_`, `csvSafeCell_`, the
   datalabels registration, the OKLCH/datalabels fillStyle rule, and the
@@ -1185,7 +1202,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   constant for membership checks**; always go through
   `getAdminEmails_()`.
 - **Script Properties are REGISTERED — adding one means registering it in
-  `Config.gs::PROP_REGISTRY_` in the same commit.** The dashboard store holds
+  `Config.gs::PROP_REGISTRY_` in the same commit (cdr-import and cdr-report
+  each have their own `propRegistry.js`, pinned two ways by
+  `cdr-import-prop-registry.test.js` / `cdr-report-prop-registry.test.js`;
+  `listCdrImportScriptProperties()` / `listCdrReportScriptProperties()` are
+  their inventories).** The dashboard store holds
   ~100 keys, past the settings page's 50-row display cap, so the Health page's
   folded "All Script Properties (inventory)" section is the complete view: it
   classifies the LIVE store against the registry (operator config / engine
@@ -1298,7 +1319,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `escAssertRowAccess_` admit exactly admin|manager (the old checks passed
   unrecognized roles UNPINNED), and `assertManagerOrAdmin_` (Util.gs) guards
   the no-dept-argument surfaces (Overview, YTD trend, all-dept QCD + its
-  email, escalations init/badge, getCallJourney). **A new public endpoint
+  email, escalations init/badge, getCallJourney) and -- A-1 -- the Inbound /
+  Direct / Outbound report resolvers. **A new public endpoint
   must pick its gate from that set — never a bare `role === 'none'` check.**
   Agents deliberately CAN reach `getLatestDataDate(s)` + `reportClientIssue`.
   `doGet` routes agents to `agent.html`/`agentApp.html` (small separate
@@ -1321,8 +1343,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   button) are marked by a `preview:` prefix on the Triggered By
   column and use the `would-send` status (real fires use `sent`).
   Filter on `triggeredBy NOT LIKE 'preview:%'` to scope to real
-  runs. The `Sent` boolean is `TRUE` only for `sent` outcomes.
-- **Header freshness pill goes orange past 36h.** The "Data through
+  runs. The `Sent` boolean is `TRUE` only for `sent` outcomes. Each run's
+  outcome (a throw included) also lands in `ALERTS_LAST(_RESULT)` for the
+  Health page's `out-alerts` row, as each digest cadence's does in
+  `out-digest-<cadence>` (O-5).
+- **Header freshness pill goes amber (`--stale`) past 36h.** The "Data through
   Mon May 19 · 14h ago" badge in `.header-meta` computes hours
   since end-of-day on the most recent date returned by
   `getLatestDataDates` (plural) -- which scans both DQE Historical
@@ -1358,9 +1383,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   deliberately NOT cached across requests, so each caller keeps its own
   R8-C2 negative-cache semantics. **Date cells resolve through `rowDateIso_`,
   which memoizes its Date branch per execution (R27)** -- the per-row
-  `Utilities.formatDate` was the whole cost of that scan (~0.5 ms x 31.7k rows;
-  33 s on a cache-HIT queue report), so a new dated-sheet reader must route
-  through it rather than format per row (data-parsing.test.js pins the memo).
+  `Utilities.formatDate` was the whole cost of that scan (R27 in fix-history),
+  so a new dated-sheet reader must route through it rather than format per
+  row (data-parsing.test.js pins the memo).
   **Test-side trap:** a suite that swaps the DQE fixture must reset EVERY
   per-execution DQE memo in its `install()` or it serves the previous test's
   data -- silently, as a wrong number rather than an error. There are now four
@@ -1368,18 +1393,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `DQE_DATE_COL_MEMO_` / `DQE_EXT_GRID_MEMO_`) and they reset TOGETHER:
   their scope is identical, so no suite legitimately resets only half.
   ENFORCED by cross-file-pins' "R40: a suite resetting one per-execution DQE
-  memo resets the whole family" (the eight-test breakage that made it a pin:
-  R40 in fix-history). A third memo over this sheet joins `DQE_EXEC_MEMOS`.
-- **Count badges must be idempotent, not append-only (F10).** The
-  escalations nav badge was rendered behind an
-  `if (!tab.querySelector('.nav-count-badge'))` guard and fetched
-  ONCE at init, so it could neither update nor disappear: a manager
-  who resolved their last escalation kept a stale non-zero badge for
-  the whole session and the Overview strip never hid.
-  `escApplyBadge_(counts)` (script.html) updates the span IN PLACE,
-  REMOVES it at zero, and hides + empties the Overview strip;
-  `escLoad_` calls `loadEscBadge_()` on every list load, and since
-  every mutation reloads the list the badge follows every change.
+  memo resets the whole family" (R40 in fix-history). A third memo over this
+  sheet joins `DQE_EXEC_MEMOS`.
+- **Count badges must be idempotent, not append-only (F10).**
+  `escApplyBadge_(counts)` (script.html) updates the escalations nav badge
+  IN PLACE, REMOVES it at zero, and hides + empties the Overview strip;
+  `escLoad_` calls `loadEscBadge_()` on every list load (every mutation
+  reloads the list, so the badge follows every change) and `applyViewAs_`
+  calls it on every preview enter/exit so the strip re-scopes (C1-4).
   **It fetches `getEscalationsBadge()` fresh rather than deriving
   from the list's `meta.statusCounts`** -- the list can be filtered
   to one dept (admin pick / view-as) while the badge is viewer-FULL
@@ -1479,7 +1500,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   their own 15-25s failed handshake in one Neon-down request; a fresh
   execution probes again, so recovery is never masked;
   neon-conn-memo.test.js). **The hanging-connect problem is therefore still OPEN**: a connect
-  that hangs can still burn the 6-min ceiling, whose kill SKIPS catch blocks,
+  that hangs can still burn the execution ceiling (measure it, #70), whose kill SKIPS catch blocks,
   so none of the designed "fall back on error" paths run (the class that
   silently ate a Daily Queue Report day). Any future attempt needs a
   platform-supported mechanism, not URL properties.
@@ -1487,22 +1508,20 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   timeout).** The Neon mirror is the dominant cost of the daily import,
   and these rules live in `neonWrite.js` (duplicated, INV-16) -- plus the
   cdr-import-ONLY `directCallMetrics.js`, which has NO twin. (1) **Hash phone numbers through the per-run memo
-  `CDR_HMAC_CACHE_`, never raw per-occurrence** — `Utilities.computeHmacSha256Signature`
-  is slow and the same outbound numbers recur thousands of times per day;
-  the cache is reset at the top of `writeCDRRowsToNeon`. (2) **Inline-literal
+  `CDR_HMAC_CACHE_`, never raw per-occurrence** (slow, and the same numbers
+  recur thousands of times per day); the cache is reset at the top of
+  `writeCDRRowsToNeon`. (2) **Inline-literal
   VALUES, size-packed, commit ONCE (R38)** — every daily writer (DQE / QCD /
   CDR parents + the cdr-import-only Direct writer, all via
   `neonInsertInline_`, plus the phones children) emits dollar-quoted literals
-  with ZERO bound params, packed to `NEON_INLINE_STMT_CHARS_` (30 KB; the
-  bridge rejects ~44 KB SQL strings); a lone oversize tuple falls back to the ORIGINAL
+  with ZERO bound params, packed to `NEON_INLINE_STMT_CHARS_` (30 KB -- R38
+  in fix-history has the bridge's cap); a lone oversize tuple falls back to the ORIGINAL
   bound insert (`dqeBoundInsert_` / `qcdBoundInsert_` / `cdrBoundInsert_` /
   `dcBoundUpsert_`); the writer suites pin inline == bound value-for-value. One
   `conn.commit()` after the loop: smaller commits add round-trips AND leave
   partial rows behind on a mid-loop timeout. (3) **One probed connection per
   writer** via `getReachableNeonConn_()` (above), not a separate probe +
-  write connection. (4) **Authoritative per-date replace (IMP-5)** --
-  upsert-only mirrors leave PHANTOM rows when a force re-import's rebuilt
-  set SHRINKS. Callers whose payload is provably the COMPLETE
+  write connection. (4) **Authoritative per-date replace (IMP-5).** Callers whose payload is provably the COMPLETE
   set for its date(s) pass `{ authoritative: true }` (an in-transaction
   DELETE of those dates before the insert): the daily DQE build + dup-guard
   re-mirror (both INV-16 copies), the daily QCD mirror, the deferred
@@ -1513,19 +1532,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   parents, same txn; and **`writeInboundCallsToNeon({authoritative:true,
   expectedDateIso})` (L2 + P-1)** so a shrinking re-import can't leave a
   phantom in `inbound_calls` (NO sheet primary). **P-1 -- every caller MUST
-  pass `expectedDateIso`**: records are dated from their OWN first leg, so
-  a stray D-1 carry-over leg would otherwise put D-1 in the payload's date
-  set and the authoritative DELETE would wipe ALL of D-1 (stray-dated
-  records are dropped with a log line; the DELETE can only touch the
-  expected date). **F2 -- an empty record set still runs a delete-only
+  pass `expectedDateIso`** (records are dated from their own first leg;
+  stray-dated records are dropped with a log line and the DELETE can only
+  touch the expected date). **F2 -- an empty record set still runs a delete-only
   pass** (`icDeleteDateOnly_`) so a legitimately-zero date sheds its
-  phantoms -- GATED on a NON-EMPTY source grid (the P-3 validate-before-
-  delete discipline) AND on zero stray-dated/date-less records (C-1
-  all-stray = wrong-day grid; C-6 all-unparsed = format drift; refused with
-  `allStray`/`allUnparsed` + a failure row + email). It reports
+  phantoms -- GATED on a NON-EMPTY source grid (P-3) AND on zero
+  stray-dated/date-less records (C-1 / C-6: all-stray or all-unparsed means a
+  wrong grid, refused with `allStray`/`allUnparsed` + a failure row + email). It reports
   `unreachable` when Neon is down so a deferred-mirror date stays queued.
-  Pinned by the inbound-/outbound-calls suites. (P-2 PHI healing of old
-  `ib_list_*` rows: fix-history.)
+  Pinned by the inbound-/outbound-calls suites.
   Partial-set callers -- the bulk archive after `dedupeAlreadyArchived_`,
   the row-batched backfills (`backfillDQEHistory*`,
   `backfillDirectCallToNeon`) -- must NOT pass authoritative. Duplicate
@@ -1540,6 +1555,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   when `CDR_PHONES_MIRROR` is `on` (both copies), and the weekly
   `NeonRetention.gs` prune bounds storage (`NEON_RETENTION_ENABLED`).
   Operator State #57 has the why, the runbook and the tests.
+  (6) **DDL runs in AUTOCOMMIT, before `setAutoCommit(false)` (P-9 in
+  fix-history: `ADD COLUMN IF NOT EXISTS` takes ACCESS EXCLUSIVE even when the
+  column exists); the three writer suites pin the order.**
 - **Force-path data-loss guard convention (M2 generalized).** A FORCE
   re-import DELETES a date's rows for EVERY historical sheet (CDR / QPath /
   QCD / CSR / DQE) before rebuilding (`processNewImport`'s `if (force)`
@@ -1556,8 +1574,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   Pipeline Health row (no throw, so the already-written sheets stand), which
   the System Health **"Recent pipeline step failures"** row + the Alerts
   Pipeline Health panel both surface. **QCD and CSR Transfer are both
-  guarded** (S2-2: CSR joined when R10-5 made `computeCsrTransferRange_`
-  dashboard-read -- the story is in fix-history), on BOTH paths: the daily
+  guarded** (S2-2), on BOTH paths: the daily
   writes (`processIntegratedHistory:QCD`/`:CSR`) and, since P8, the bulk
   queue (`bulkBackfill:QCD`/`:CSR`, counted at `queueToPendingArchive`).
   **P26: every guard -- `refuseIfForce_`'s `opts.force` included -- fires
@@ -1575,13 +1592,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the date column and removes matching rows as contiguous BLOCKS, re-padded
   to the prior `getMaxRows` (R38; `force-delete-rows.test.js` pins the match,
   count and post-state) -- never rewrite the whole sheet again. **P-3 (ordering):** `processNewImport` reads + validates the SOURCE
-  sheet ("Source sheet empty." throw) BEFORE the force-delete block -- a force
-  re-run against an existing-but-empty/corrupt `Call_Legs` sheet used to
-  destroy the date across all five historical sheets and THEN throw; it is now
-  a clean no-op -- and since I-6 (Batch 2) the three compute stages
+  sheet ("Source sheet empty." throw) BEFORE the force-delete block, and
+  since I-6 (Batch 2) the three compute stages
   (`calculateMetricsInMemory` / `calcQcdReport` / `calcCsrReport`) run before
-  the delete too, so a compute throw is likewise a no-op (`csr-transfer.test.js`
-  pins the order). New force-path writers must keep source validation ahead of
+  the delete too, so a compute throw is likewise a no-op, and since P-1
+  (Batch 5) the Raw Data staging rewrite + the two output-sheet writes run
+  before it as well (`csr-transfer.test.js` pins the order). New force-path
+  writers must keep source validation and every delete-independent write ahead of
   any delete. Pinned by `csr-transfer.test.js` (the helper) + `pipeline-build.test.js` (M2).
 - **System Health "Recent pipeline step failures" is the single trustworthy
   pipeline signal.** `SystemHealth.gs::getSystemHealth` scans the last
@@ -1593,40 +1610,38 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   log a success row, so a failure older than `HEALTH_FAILURE_ONLY_MAX_AGE_MS_`
   (4 days) is named in the hint, not flagged (O-3/C2-5; a recurring one stays
   red). The engine outcome rows (`*_LAST`) also warn STALE when an ARMED engine
-  has not recorded past its allowance (O-4) -- a run killed at the 6-min
-  ceiling records nothing. Catches every INV-44 step in one place. Pinned by
-  `system-health.test.js`.
+  has not recorded past its allowance (O-4) -- a killed run records nothing.
+  Pinned by `system-health.test.js`.
   This page is the PULL view; the **Pipeline-failure watchdog**
-  (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email. Three other read-only sections share the page, each with
-  its own operator item: **"Report usage (last 30 days)"**
-  (`computeReportUsageSummary_`; a bounded tail read, cap 5000);
-  **`SmokeCheck.gs::runLiveSmoke`** -- an editor-run, admin-gated, READ-ONLY
-  sweep of the live read paths that complements the unit harness by exercising
-  live WIRING (properties, scopes, sheets, Neon). **Run it after every
-  deploy**; client-side surfaces still need the manual Regression Scenarios;
-  and **`runNeonCoverageCheck`** (NeonCoverage.gs, Op State #35) -- per-date
-  sheet-vs-Neon row-count reconciliation plus zero-row-weekday gaps on the two
-  no-sheet-primary tables (a not-yet-created table is a clean SKIP via
-  `ncMissingTableError_`, not a probe error); and **`runSheetCoverageCheck`**
-  (SheetCoverage.gs, Op State #52) -- the SHEET-side twin: business days with
-  ZERO rows in a dashboard-read historical sheet, the interior gap every other
-  signal misses; opens NO Neon connection, so it works mid-outage. All four store
-  an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, which is
-  what the page's classifier reads. Pinned by `system-health.test.js` /
+  (`PipelineWatch.gs`, #32) PUSHES the same failure rows to admins by email.
+  Three other read-only sections share the page, each with its own operator
+  item: **"Report usage (last 30 days)"** (`computeReportUsageSummary_`; a
+  bounded tail read, cap 5000); **`SmokeCheck.gs::runLiveSmoke`** (editor-run,
+  admin-gated, READ-ONLY sweep of the live WIRING -- properties, scopes,
+  sheets, Neon; **run it after every deploy**, then walk the client-side
+  Regression Scenarios by hand); **`runNeonCoverageCheck`** (NeonCoverage.gs,
+  Op State #35: per-date sheet-vs-Neon row counts + zero-row-weekday gaps on
+  the no-sheet-primary tables; a not-yet-created table is a clean SKIP via
+  `ncMissingTableError_`); **`runSheetCoverageCheck`** (SheetCoverage.gs, Op
+  State #52: the SHEET-side twin, business days with ZERO rows in a
+  dashboard-read sheet; no Neon connection, so it works mid-outage). All four store
+  an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, classified
+  by the ONE table `healthOutcomeIsBad_` / `HEALTH_BAD_PREFIXES_` (O-9: a new
+  bad prefix goes there, nowhere else). Pinned by `system-health.test.js` /
   `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Three CAPACITY rows sit
   alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47),
   email quota, and Neon STORAGE by table (`NEON_STORAGE_CAP_MB`, #57) --
   because all three fail SILENTLY and look healthy to every other probe. Both
-  Neon figures are FLOORS (egress counts our payloads, not the wire; storage
-  cannot see Neon's history retention), and a DELETE never moves the storage
-  one (disk returns only on TRUNCATE / VACUUM FULL). Each ranks its top
-  spenders: every `neonNoteEgress_` callsite passes a surface label (unlabeled
-  folds into `other`; EA-1 pin); the pure `neonStorageVerdict_` names the top
-  5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
+  Neon figures are FLOORS (#47 / #57 say why), and a DELETE never moves the
+  storage one (#57 has the reclaim runbook). Each ranks its top
+  spenders: EVERY dashboard Neon read is metered with a surface label
+  (`neonNoteEgress_`; OD-3 sweep `neon-egress-coverage.test.js` + the EA-1
+  label pin; unlabeled folds into `other`); `neonStorageVerdict_` names the
+  top 5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only), `retention-risk` (surviving dates the
   per-call tables are missing; #40/#43) and `workbook-cells` (the 10M
-  grid cap -- ALLOCATED, not used; warns at 80%, #62).
+  grid cap, ALLOCATED not used; #62).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,
@@ -1697,8 +1712,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   representative range.** Rules that hold for every reader:
   (1) **`neonFetchDqeRows_` aggregates the whole result set into ONE json
   string server-side (`json_agg`) fetched with one `rs.getString` -- do NOT
-  regress to per-row `rs.getXXX` iteration: Apps Script JDBC is ~0.5s/row,
-  which turned a 12-month trend read into 20+ minutes.**
+  regress to per-row `rs.getXXX` iteration (Apps Script JDBC is ~0.5 s/row;
+  F1 in fix-history).**
   (2) Every reader is `getDqeReadSource_()`-gated and falls back to the
   sheet on ERROR only -- LM2: a REACHABLE-but-empty read (the
   `out._neonReachable` marker, gated via the shared `neonDqeRowsUsable_`)
@@ -1717,7 +1732,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (4) Even on the Neon path, `getDeptQueueExts_`'s all-history ext
   derivation comes from `deptQueueExtsForNeonReader_` /
   `neonGetAgentExtPairs_` (cached DISTINCT pairs fetch), sheet-scan
-  fallback.
+  fallback -- OD-4: that set is bounded by the 25-month `dqe_history`
+  retention (#57) while the sheet scan sees all history, so a >2-year-idle
+  extension is recognized on one source and not the other.
   Every cutover reader emits a `[dqe-read] <label> source=<neon|sheet>
   rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`) for cost comparison.
   Reuses the dashboard `NEON_*` props + `script.external_request` scope
@@ -1730,10 +1747,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   for any outage lasting more than a few hours: the per-execution memo
   (`NEON_CONN_DOWN_MEMO_`) bounds the failed handshakes to one, but each of
   the ~20 cut-over readers still falls back with its OWN whole-sheet scan,
-  which measured 730s+ on the all-departments queue report (vs ~54s when the
-  same function was merely paying handshakes) -- and a run that hits the
-  6-min ceiling is KILLED PAST its catch blocks, so the designed fallbacks
-  never run (the class that once ate a Daily Queue Report day). **That run now
+  which measured 730 s+ on the all-departments queue report (R43 in
+  fix-history) -- and a run killed at the execution ceiling (#70) skips its
+  catch blocks, so the designed fallbacks never run. **That run now
   bounds itself (R43):** `computeQcdAllDepartments_` stops its dept loop on a
   DEPT BOUNDARY once `QCD_ALLDEPT_BUDGET_MS` (default 4 min) is spent -- a
   half-computed dept would corrupt the company grand totals it feeds -- and
@@ -1822,7 +1838,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a date is LEFT QUEUED on any unreachable/failed step rather than dequeued --
   `mirrorInboundForDate_` honors `backfillInboundCalls`'s status object for
   exactly this reason, since `inbound_calls` has no sheet primary and a silent
-  dequeue lost the rows for good. Only affects the daily/manual
+  dequeue lost the rows for good. **P-2 (Batch 5): a PRUNED per-call source
+  is a per-TYPE terminal, not a date failure** (`{pruned:true}`: a failure row,
+  the sheet-derivable types still complete, ONE email at completion), and a
+  hard error thrown while Neon was unreachable in the same run
+  (`err.neonUnreachable`) never counts toward the retry cap. Only affects the daily/manual
   path (`!isHistoricalBackfill`); the bulk backfill already defers DQE via
   `skipNeon` + `backfillDQEHistoryUpsert`. In deferred mode the cdr-report
   `runDailyDQEBuild_` safety-net trigger (if still installed) re-mirrors DQE
@@ -1903,7 +1923,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   bound. Its key carries the freshness tag AND a `hashAgents_` of the dept
   ROSTER, because the tag does not move when the roster is edited and a stale
   ext set silently changes which floaters are recognized (INV-53). Only the
-  SET is cached; the grid is ~128k cells, past the per-value cap.
+  SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
+  (Batch 6) the `summary:v22` and `individual_active:v2` keys carry the same
+  roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
+  reason.
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
   (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
   with each group's heading row as its collapse toggle; the three-way scope
@@ -1911,20 +1934,19 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   missed-calls button: `docs/client-ui-conventions.md`). Depts with no
   sub-queues get no control and no behavior change. **The client no longer sends `subScope`, but the SERVER
   still honors it** -- it drives the CSV's Department column and the combined
-  default -- so don't "restore" the parameter thinking it was dropped, and
-  don't hardcode that default in a second place. `subScope` is a cache-key
+  default -- so don't "restore" it or hardcode that default in a second
+  place. `subScope` is a cache-key
   dimension (`summary:v22`); `cdr.dept.subscope` is now an orphan key.
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
   familiar own-dept figure stays on screen and every number reconciles against
-  that dept's own view. Team averages / benchmark tints stay PER-DEPT
-  (two teams' call profiles differ; one blended average is a worse number).
+  that dept's own view. Team averages / benchmark tints stay PER-DEPT.
   **CROSSOVER AGENTS are the one exception to "every number reconciles"
   (sub-queue Phase 0).** A DQE row is keyed on (date, agent) with NO queue
   dimension, so an agent on TWO depts' rosters is returned by BOTH depts'
-  `computeSummary_` calls carrying the SAME whole-day figures -- they show as
-  two rows and their calls were counted TWICE in the grand total.
+  `computeSummary_` calls carrying the SAME whole-day figures -- two rows,
+  counted TWICE in the grand total.
   `combineSummaries_` now SUBTRACTS each repeat appearance whose figures
   MATCH the first (a correction pass over the untouched accumulation, so a
   no-crossover combine is byte-identical BY CONSTRUCTION; L7: a
@@ -1934,12 +1956,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   so **the grand total can now be LESS than the sum of the subtotals**, and
   both the totals-row caption and the CSV total row say why (an unexplained
   shortfall would read as a bug). The three DURATION means are deliberately NOT
-  deduped (a mean weighting one agent twice stays in range; recomputing
-  would move every combined view's number).
+  deduped (a mean weighting one agent twice stays in range).
   Server side is `combineSummaries_` calling `computeSummary_` once per
   dept: every INV-02/04/05/23/53 + S35 + E5 rule inside that function is
-  untouched, and its duration means are agent-count-WEIGHTED (never a mean
-  of means). **`qcd` is the PRIMARY dept's only** -- `queuesForDept_`
+  untouched, and its duration means are weighted by each dept's NON-ZERO
+  count for that duration (D-3; never a mean of means). **`qcd` is the PRIMARY dept's only** -- `queuesForDept_`
   already rolls sub-queue queues into a parent's QCD snapshot, so merging
   it would double-count. **Phase 3:** the missed section shows ONE
   dept and does NOT merge (a parent's queue-only abandoned section already
@@ -2022,7 +2043,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   State #14 -- the QCD Queues field only accepts canonical names
   seen in QCD col D). **The internal
   `computeSummary_(dept, from, to, scope)` arg is preserved** --
-  `Digest.gs::renderDeptDigestEmail_` also passes `'roster'`, and
+  `Digest.gs::computeDigestStats_` also passes `'roster'`, and
   a caller wanting the legacy floater-inclusive view can still
   pass `'both'`. `scope` is in every cache key, so the flip can't
   serve stale rows.
@@ -2177,7 +2198,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   cell = answered/(answered+missed), the R23 dept-standard tint, always visible so the
   rate the bar folds in is readable without decoding it; the `answerRate`
   sort key and the default landing) · Ans / day (owner 2026-09: answered per
-  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`) · Unique ·
+  `daysActive`, 1 dp, day count in the tooltip; `summary:v22`; the combined
+  total row divides by the UNION of the depts' active days, D-6) · Unique ·
   TTT · ATT · Avg Abd Wait · CSR Avg Abd Wait. The six `hideable:true`
   columns (Source / Ans / day / Unique / TTT / Avg Abd Wait / CSR Avg Abd Wait) FOLD
   AWAY by default behind the **"Show all columns"** toggle
@@ -2193,7 +2215,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   row renders from `totals` (never part of the sort).
   CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
   and renders the bar as `answered / missed (rate%)` text + the Answer %
-  column via `pctCsv`. **In a sub-queue COMBINED view it also prepends a
+  column via `pctCell`. **In a sub-queue COMBINED view it also prepends a
   `Department` column and emits per-dept subtotals + an `All shown` grand
   total** (single-dept exports are byte-identical to before) -- see the
   sub-queue combined-view decision above, and S43. `drive-subqueue.js` is the
@@ -2330,7 +2352,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > undocumented operator state. The COMPLETE classified view of the live store
 > (the settings page caps at 50 rows) is the Health page's folded "All Script
 > Properties (inventory)" section, backed by `Config.gs::PROP_REGISTRY_` —
-> see the registry bullet in Common Gotchas.
+> see the registry bullet in Common Gotchas (cdr-import: #70's lister).
 
 The numbered items now live in full in
 [`docs/operator-state.md`](docs/operator-state.md) (F8 split). Cited elsewhere
@@ -2412,6 +2434,8 @@ items for anything it flags or doesn't cover.)
 66. QCD vs DQE reconciliation -- `diagnoseQcdVsDqe` (cdr-import, CDR Tools menu), the read-only tool that explains why a dept's QCD "Queue Calls" answered and its per-agent answered sum differ: it classifies every leg of one date against BOTH rule sets and names the gate that dropped each one. Read its VERDICT first -- it is a fifth hand-mirror of calcQcdReport, so it reconciles against the real function AND the stored DQE rows before reporting, and refuses (INCONCLUSIVE) when either check fails
 67. Work-window edge census -- `runWorkWindowCensus` (cdr-import, CDR Tools menu), the read-only PRE-FLIGHT that cleared the R49 window change: per-queue traffic at each window edge, the size of the existing AJ/AK after-hours capture, and -- read this first -- the legs whose queue the DQE gate cannot recognise at all (the R18e shape, where the change's queue-name list is the thing that can silently miss a queue). Read "Would have counted", never the raw leg count: a lost queue name on a leg the NEXT gate drops anyway is not a loss, and the first live run's lone finding (146 legs on ext 782) was exactly that -- every one bound for a `DQE_EXCLUDED_AGENTS` pseudo-agent. Also carries the backfill note for R49
 68. External READERS of the CDR Report workbook -- team-tools (the CSR team app, a separate repo) reads `DQE Historical Data`, `CSR Transfer Historical Data`, `Agent Alias Overrides`, `Inbound Calls` and, since H1/H2, `Company Holidays` + `Dashboard Standards` read-only via its `CDR_SS_ID`; nothing in this repo's tests knows it exists, so a rename, a column move, a retention trim or a holiday-grammar change on one of those tabs is a TWO-REPO edit -- read the item before touching any of them
+69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2): `rung` (default, `answered / rung`) or `answerable` (`answered / (answered + missed)`, the H2 standard the table, the agent app and team-tools already use); run `probeAnswerRateFormulas()` first to see both rates per dept and which standard verdicts flip, then set the property -- no redeploy, every rate cache carries the `rf-` suffix
+70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the one-shot probe (CDR Tools, `execCeilingProbe.js`), then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`; `listCdrImportScriptProperties()` / `listCdrReportScriptProperties()` are the sibling projects' registry-backed inventories
 
 ## Cycle Workflow Config
 
@@ -2437,10 +2461,10 @@ CDR DQE Pipeline:
   apps-script/cdr-report/buildDQEHistoricalData.js, apps-script/cdr-report/DQEdrilldown.js, apps-script/cdr-report/DQEDrilldownSidebar.html, apps-script/cdr-report/dataFilters.js, apps-script/cdr-report/CDR Tools menu.js, apps-script/cdr-report/appsscript.json
 
 CDR Reporting Tools:
-  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js
+  apps-script/cdr-report/dashboardCDR.js, apps-script/cdr-report/dbHistorical.js, apps-script/cdr-report/dbReporting.js, apps-script/cdr-report/emailDailyReport.js, apps-script/cdr-report/neonbackfill.js, apps-script/cdr-report/neonEgress.js, apps-script/cdr-report/queueOverlapAudit.js, apps-script/cdr-report/neonWrite.js, apps-script/cdr-report/buildStamp.js, apps-script/cdr-report/inboundCallsExport.js, apps-script/cdr-report/outboundCallsExport.js, apps-script/cdr-report/insuranceNumbers.js, apps-script/cdr-report/sheetRepairs.js, apps-script/cdr-report/sheetSpace.js, apps-script/cdr-report/propRegistry.js
 
 CDR Import:
-  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/qcdDqeDiagnostic.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
+  apps-script/cdr-import/AbandonedFilter.js, apps-script/cdr-import/CDR Tools.js, apps-script/cdr-import/DeleteOldSheets.js, apps-script/cdr-import/autoImport.js, apps-script/cdr-import/buildDQEHistoricalData.js, apps-script/cdr-import/importBulkCSVsFromDrive.js, apps-script/cdr-import/inboundCalls.js, apps-script/cdr-import/outboundCalls.js, apps-script/cdr-import/NeonMirror.js, apps-script/cdr-import/directCallMetrics.js, apps-script/cdr-import/queueSplitSample.js, apps-script/cdr-import/qcdDqeDiagnostic.js, apps-script/cdr-import/execCeilingProbe.js, apps-script/cdr-import/propRegistry.js, apps-script/cdr-import/neonWrite.js, apps-script/cdr-import/buildStamp.js, apps-script/cdr-import/appsscript.json
 
 DQE Report Legacy:
   apps-script/dqe-report/DQEdashboard.js, apps-script/dqe-report/FAQGuide.html, apps-script/dqe-report/IndividualReport.js, apps-script/dqe-report/IndividualReportModal.html, apps-script/dqe-report/MissedCallsReport.js, apps-script/dqe-report/MissedReportModal.html, apps-script/dqe-report/MultiCompModal.html, apps-script/dqe-report/MultiComparisonTool.js, apps-script/dqe-report/SingleRangeReport.js, apps-script/dqe-report/SingleReportModal.html, apps-script/dqe-report/menu DQE Tools.js, apps-script/dqe-report/sendManualAlert.js, apps-script/dqe-report/showFAQ.js, apps-script/dqe-report/appsscript.json

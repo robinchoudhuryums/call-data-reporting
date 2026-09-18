@@ -1063,6 +1063,67 @@ test('S1/INV-06 (R49): the CSR-family early floor and its queue list agree acros
     'a bare DQE_WINDOW_START floor in the diagnostic is the drift that already happened once');
   assert.match(diag, /const QDD_EARLY_WINDOW_START_ = DQE_EARLY_WINDOW_START;/,
     'the census early edge derives from the build constant, not a third 6:00');
+
+  // The SIXTH mirror (P-5, 2026-09-17): queueSplitSample.js re-derives the
+  // build's queueLegs gate to list the call ids behind col AI, and it shipped
+  // with the same flat floor the diagnostic had (plus no R18e fallback), so its
+  // self-check read MISMATCH for every CSR-family agent with an early leg. Same
+  // shape of pin: the floor must come from the helper, never the constant, and
+  // the CallQueue-ext fallback must be present.
+  const sample = read('apps-script/cdr-import/queueSplitSample.js');
+  assert.match(sample, /startPST >= dqeWindowStartForQueue_\(l\.queueName\)/,
+    'the queue-split sample must floor through dqeWindowStartForQueue_');
+  assert.doesNotMatch(sample, /startPST >= DQE_WINDOW_START\b/,
+    'a bare DQE_WINDOW_START floor in the queue-split sample is the P-5 drift');
+  assert.match(sample, /queueNameByExt\[cqMatch\[1\]\]/,
+    'the queue-split sample must carry the R18e CallQueue-ext fallback');
+  assert.match(sample, /\/\^CallQueue\\s\*\\\(\(\\d\+\)\\\)\$\/i/,
+    'the fallback must match the CALLER field shape the build matches');
+});
+
+// DD-6 (2026-09-17): the sidebar's col-G (avg wait) rows are the one place the
+// parity suite cannot reach -- col G is a MEAN, so no row set equals the cell
+// -- and both remaining drifts lived exactly there: the pipeline's row-36
+// mean is accumulated under `status !== "3"` and its row-40 mean under
+// `status === "1"`, gates the sidebar's row-36 / row-40 col-7 predicates
+// lacked. Pin the gate on BOTH sides, so a change to either shows up here.
+test('DD-6 col-G status gates: the sidebar rows 36/40 carry the pipeline\'s status gates', function () {
+  const pipe = read('apps-script/cdr-import/autoImport.js');
+  const side = read('apps-script/cdr-report/dataFilters.js');
+
+  // Pipeline row 36 col G: the r36_G accumulation sits inside a status !== "3" gate.
+  const r36Gate = 'if (startDec > time600AM && startDec < time300PM && endDec < time300PM && isAQ && type !== "internal" && status !== "3") {';
+  const r36Block = q40Block_(pipe, r36Gate, 'pipeline row-36 gate');
+  assert.match(r36Block, /r36_G_sum \+= waitDec/, 'r36_G accumulates inside the status !== "3" gate');
+  // Pipeline row 40 col G: nonCsrWaitSumDec accumulates inside the status === "1" branch.
+  const s1Block = q40Block_(pipe, 'if (status === "1") {', 'pipeline status-1 branch');
+  assert.match(s1Block, /nonCsrWaitSumDec \+= waitDec/, 'row-40 col G accumulates inside status === "1"');
+  assert.match(pipe, /res40\.nonCsrWaitSumDec \/ res40\.nonCsrWaitCount/, 'row 40 col G is the nonCsr mean');
+
+  // Sidebar row 36 col 7 carries status !== "3"; row 40 col 7 carries status === "1".
+  const side36 = q40Block_(side, 'if (targetRow === 36) {', 'sidebar row-36 block');
+  assert.match(side36,
+    /targetCol === 7 && [^\n]*queueName === "a_q_csr" && type === "incoming" && status !== "3" && abandoned !== "abandoned" && waitDec >= 0/,
+    'sidebar row 36 col G must carry the pipeline\'s status !== "3" gate');
+  const side40 = q40Block_(side, 'if (targetRow === 40 && is630to1500 && queueName === q40_name) {', 'sidebar row-40 block');
+  assert.match(side40, /targetCol === 7 && status === "1" && !isCSR && abandoned !== "abandoned" && waitDec >= 0/,
+    'sidebar row 40 col G must carry the pipeline\'s status === "1" gate');
+});
+
+// T-5 (2026-09-18): deploy.sh gates the LIVE push on the same three jobs
+// ci.yml runs, with CI=1 so a missing eslint / playwright FAILS the gate (the
+// F-9 rule) instead of skipping. Without the lint gate a box without eslint
+// could push live what the PR's blocking `lint` job would reject.
+test('T-5: deploy.sh runs npm run ci, lint:gas and ci:ui with CI=1 inside the DEPLOY_SKIP_CI gate', function () {
+  const sh = read('scripts/deploy.sh');
+  const gate = /if \[ "\$\{DEPLOY_SKIP_CI:-\}" != "1" \]; then([\s\S]*?)\nfi\n/.exec(sh);
+  assert.ok(gate, 'the DEPLOY_SKIP_CI gate block is missing or reshaped');
+  assert.match(gate[1], /TZ="\$CI_TZ" npm run ci\b/, 'npm run ci inside the gate');
+  assert.match(gate[1], /CI=1 TZ="\$CI_TZ" npm run lint:gas/, 'lint:gas inside the gate, with CI=1 (absence must FAIL)');
+  assert.match(gate[1], /CI=1 TZ="\$CI_TZ" npm run ci:ui/, 'ci:ui inside the gate, with CI=1 (absence must FAIL)');
+  // The two skip-or-fail switches the gate relies on must still exist.
+  assert.match(read('scripts/lint-gas.mjs'), /process\.env\.CI/, 'lint-gas keeps its CI=true absence-fails branch');
+  assert.match(read('tools/ui-harness/ci.mjs'), /process\.env\.CI/, 'ci.mjs keeps its CI=true absence-fails branch');
 });
 
 // ── H3 (2026-09-17): one global scope per project, so a top-level name

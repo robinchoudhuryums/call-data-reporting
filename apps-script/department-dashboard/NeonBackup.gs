@@ -272,6 +272,10 @@ function nbFetchAgg_(conn, sql, params) {
   var rs = stmt.executeQuery();
   var out = rs.next() ? (rs.getString('j') || '') : '';
   rs.close(); stmt.close();
+  // OD-3 (broad-scan 2026-09-17): the monthly backup is the LARGEST read of the
+  // month (whole tables incl. journeys) and was unmetered -- in a backup month
+  // the egress ranking named `dqe` while the backup was what tripped the cap.
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(out.length, 'backup');
   return out;
 }
 

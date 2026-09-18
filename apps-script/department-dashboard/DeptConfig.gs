@@ -207,6 +207,7 @@ function neonReadDeptConfigRows_() {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'config');   // OD-3
     rs.close(); stmt.close();
     const arr = JSON.parse(json || '[]');
     return arr.map(function (r) {
@@ -346,7 +347,12 @@ function subQueueChildMap_() {
  *   - FAIL CLOSED. Any error reading the map returns the assigned list
  *     unchanged. Auth must never widen -- or break -- because a config read
  *     failed, so this is wrapped rather than allowed to throw into
- *     `resolveUser_`.
+ *     `resolveUser_`. A-7 (2026-09-17): the sheet reader does not THROW on a
+ *     failed read -- it logs, sets `DEPT_CONFIG_READ_FAILED_` and serves the
+ *     seed CONSTANT -- so the try/catch alone never fired and a transient
+ *     read error silently expanded from the constant map instead. The flag
+ *     is consulted too, so "unreadable" means no expansion either way (the
+ *     AUTH_CACHE_TTL_SECONDS window then re-resolves on the next request).
  *
  * Admins and all-departments managers never reach this: they already resolve to
  * `getAllDepartments_()`.
@@ -361,6 +367,14 @@ function expandDeptsWithSubQueues_(depts) {
     Logger.log('expandDeptsWithSubQueues_: parent map unavailable, no expansion ('
       + (e && e.message ? e.message : e) + ')');
     return assigned;   // fail closed: assigned depts only
+  }
+  if (deptConfigReadFailed_()) {
+    // A-7: the map above came from the seed constant because the Dept Config
+    // read ERRORED (not because the sheet is absent). A config typo is the
+    // over-grant this guard exists to stop; a config read that failed is not
+    // a config, so it confers nothing.
+    Logger.log('expandDeptsWithSubQueues_: Dept Config read failed, no expansion (fail closed)');
+    return assigned;
   }
   const out = assigned.slice();
   const seen = {};

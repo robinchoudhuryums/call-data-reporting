@@ -95,7 +95,7 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 81 more (this file is the coverage map —
+    ...                       + 105 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
                               trim pass): dal-cutover parity (+ the R40
@@ -135,6 +135,18 @@ tests/
                               callout; the deleteRows/deleteColumns call
                               itself is not harness-modelled),
                               sheet-repairs-merge,
+                              manifest-scopes (T-7: each project's
+                              appsscript.json declares EXACTLY the OAuth
+                              scopes its service calls need -- derived from
+                              the source, so a new DriveApp call without a
+                              manifest edit fails here, not in production;
+                              dqe-report stays on auto-detection, frozen),
+                              queue-split-sample (P-5: the SIXTH mirror of the
+                              build's queueLegs gate driven against the REAL
+                              build -- the early-family floor counts, the same
+                              minute on a non-early queue does not, the R18e
+                              ext-recovered leg lands, every agent reads OK,
+                              and the self-check BITES on a flat floor),
                               sheet-repairs-backup (roadmap 1b: every bulk
                               repair apply snapshots the sheet into the
                               standing backup workbook BEFORE its first write
@@ -228,7 +240,11 @@ tests/
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
-                              setup (INV-12), alert-recipients (B-5),
+                              setup (INV-12), alert-recipients (B-5), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
+                              client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
+                              exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
+                              cdr-import-prop-registry / cdr-report-prop-registry (the sibling projects' Script Property registries, swept two ways like prop-registry),
+                              neon-egress-coverage (OD-3: every dashboard Neon read is metered by neonNoteEgress_ or is a listed scalar probe),
                               agent-role / agent-home (the deny wall +
                               the no-teammate-identity payload pin),
                               company-overview (getCompanyOverview

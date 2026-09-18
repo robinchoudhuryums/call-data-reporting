@@ -150,6 +150,15 @@ on the Health page, and the sibling projects' stamps ride the `autoImport` /
 `buildDQE` success rows in Pipeline Health — a note reading "unstamped"
 means the last push bypassed the helper and its CI gates.
 
+Those gates are the same three jobs CI runs, and the helper runs all three
+with `CI=1` before it pushes anything: `npm run ci` (the zero-dep suite + the
+INV-16 duplication guard + the module-deps check), `npm run lint:gas` and
+`npm run ci:ui` (the rendered-UI gate). `CI=1` is deliberate — it makes a
+MISSING tool fail the gate rather than skip it, so a fresh clone needs
+`npm ci` and a playwright install (`cd tools/ui-harness && npm i playwright`)
+before it can deploy. `DEPLOY_SKIP_CI=1 scripts/deploy.sh …` skips all three,
+for emergencies only.
+
 **One-time, in the Apps Script project:**
 
 - Project Settings -> Script Properties -> add `SPREADSHEET_ID`
@@ -157,8 +166,12 @@ means the last push bypassed the helper and its CI gates.
 - Run the `setup` function once to create the dashboard-managed
   sheets: `Access Control`, `Alert Config`, `Alert Log`,
   `Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-  `Orphan Fix Log`, `Dept Config`, `Report Usage`, and
-  `Queue Report Subscribers` (ten total; created only if missing).
+  `Orphan Fix Log`, `Dept Config`, `Report Usage`,
+  `Queue Report Subscribers`, `Company Holidays` (the H1 closure
+  calendar every business-day rule reads) and `Dashboard Standards`
+  (the H2 published answer target / band / team-avg excludes that the
+  external team-tools reader consumes) — twelve total, created only if
+  missing; `setup()` also REPUBLISHES Dashboard Standards on every run.
   Requires admin auth — run from the Apps Script editor while
   logged in as an admin listed in `ADMIN_EMAILS` Script Property
   (or `ADMIN_EMAILS_FALLBACK`).
@@ -636,7 +649,8 @@ keep it fresh, in order of preference:
    rebuilt dates into `dqe_history` with `DO UPDATE` (so
    re-calculated values overwrite stale rows). The bulk-complete
    alert reminds you. Tip: rebuild in ~10-date ranges so the final
-   batch-archive step stays well under the 30-min ceiling.
+   batch-archive step stays well under the execution ceiling (measure it
+   once with the probe and set `BULK_TIME_LIMIT_MS` -- Operator State #70).
 3. **Standalone safety-net trigger (transitional)** — the
    cdr-report project's `runDailyDQEBuild_` time trigger
    (originally the only DQE refresh mechanism) is preserved

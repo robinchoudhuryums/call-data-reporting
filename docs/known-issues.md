@@ -849,12 +849,15 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 ### `setup()` is idempotent
 
-`setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
-`Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-`Orphan Fix Log`, `Dept Config`, `Report Usage`, and
-`Queue Report Subscribers` sheets if they
-don't exist (each with a frozen header row). It never overwrites
-existing rows on any of the ten. Safe to re-run as many
+`setup()` creates the twelve managed sheets (`Access Control`, `Alert
+Config`, `Alert Log`, `Pipeline Health`, `Digest Config`, `Agent Alias
+Overrides`, `Orphan Fix Log`, `Dept Config`, `Report Usage`, `Queue Report
+Subscribers`, `Company Holidays`, `Dashboard Standards`) if they don't exist
+(each with a frozen header row). It never overwrites existing rows on any
+of them; since OD-8 (2026-09-17) it does HEAL an existing sheet's header row
+-- a BLANK header cell (a column appended to the schema after the sheet was
+created) is filled from the schema, a non-blank one is never touched
+(`healSheetHeaders_`, INV-12). Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 
@@ -876,7 +879,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `Data.gs` (main table) | `summary:vN:` | `v22` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
-| `IndividualReport.gs` | `individual:vN:` | `v11` |
+| `IndividualReport.gs` | `individual:vN:` | `v12` |
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
@@ -884,7 +887,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `CompanyOverview.gs` | `companyOverview:vN` | `v23` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v10` |
-| `InsightsReport.gs` | `insights:vN:` | `v23` |
+| `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
@@ -1640,7 +1643,8 @@ existing per-dept dropdown):
   legend spotlight unchanged).
 - **Overview tile chips**: an "Aban N (P%)" chip whenever QCD
   data exists (warn-tinted when P >= the 4% abandon standard), and a "X viol MTD" chip
-  when month-to-date violations > 0. Powered by
+  when month-to-date violations > 0 (the current calendar month; Insights'
+  Violations (MTD) tile follows the WINDOW END since D-8). Powered by
   `CompanyOverview.gs::computeQcdSnapshots_`.
 - **My Department "Yesterday's QCD"**: tile row below the agent
   table showing the dept's most-recent QCD day. Powered by
@@ -1740,7 +1744,7 @@ behavior byte-identical to pre-OrphanFix.
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
 constant -- currently `companyOverview:v23`) on success. Per-(dept,
-range) caches (`summary:v22`, `individual:v11`,
+range) caches (`summary:v22`, `individual:v12`,
 etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
 the Overview updates immediately and other views may lag up to the

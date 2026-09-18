@@ -649,7 +649,18 @@ function queueSplitNarrowedCopy_(rows, dept, opts) {
  * carousel, so combining across depts here would double-count sub-queue calls.
  */
 function combineSummaries_(primary, parts) {
-  if (parts.length === 1) return parts[0];
+  if (parts.length === 1) {
+    // D-9 (broad-scan 2026-09-17): the requested dept is the payload's
+    // identity even when it is not among the parts ('subs' scope), so its
+    // qcd / csrTransfer / diagnostics are the ones shipped -- a child's QCD
+    // snapshot under the parent's name read as the parent's numbers.
+    if (primary && primary !== parts[0]) {
+      parts[0].qcd = primary.qcd;
+      parts[0].csrTransfer = primary.csrTransfer;
+      parts[0].diagnostics = primary.diagnostics;
+    }
+    return parts[0];
+  }
   const base = parts[0];
   const rows = [];
   const groups = [];
@@ -743,24 +754,45 @@ function combineSummaries_(primary, parts) {
     });
   });
   grand.crossoverAgentCount = crossoverAgentCount;
+  // D-6 (broad-scan 2026-09-17): daysActive is the UNION of the parts' active
+  // days (computeSummary_ attaches the set non-enumerably), and ansPerDay is
+  // the deduped grand answered over it -- so the combined total row carries
+  // the same two figures a single-dept view does instead of a dash. A part
+  // built without the set (a hand-built fixture) falls back to the largest
+  // per-dept count, which a union can never be below.
+  const dayUnion = {};
+  let sawDayKeys = false, maxDays = 0;
+  parts.forEach(function (p) {
+    const t = p.totals || {};
+    maxDays = Math.max(maxDays, Number(t.daysActive) || 0);
+    if (Array.isArray(t.activeDayKeys)) {
+      sawDayKeys = true;
+      t.activeDayKeys.forEach(function (d) { dayUnion[d] = true; });
+    }
+  });
+  grand.daysActive = sawDayKeys ? Object.keys(dayUnion).length : maxDays;
+  grand.ansPerDay = grand.daysActive ? round1_(grand.totalAnswered / grand.daysActive) : null;
   // The three DURATION means are per-agent averages, so the grand total is the
-  // agent-count-weighted mean of each dept's mean -- NOT a mean of means, which
-  // would over-weight a small dept. Depts contributing no non-zero agents drop
-  // out of both sides, matching avgNonzero_'s own semantics (v11 / F-29).
+  // weighted mean of each dept's mean -- NOT a mean of means, which would
+  // over-weight a small dept. D-3 (broad-scan 2026-09-17): the weight is the
+  // dept's NON-ZERO count for that duration (`<k>NonzeroCount`, the
+  // denominator avgNonzero_ actually divided by), so the combined mean equals
+  // avgNonzero_ over the union of contributing agents; a part built without
+  // the count (a hand-built fixture) falls back to rosterAgentCount, which
+  // over-weighted a dept with many zero-talk rostered agents up to 6x.
   //
-  // Phase 0 deliberately leaves this formula ALONE, crossover agents included.
-  // A doubled SUM is arithmetically wrong and had to be fixed; a mean that
-  // weights one agent in two depts stays in range. Recomputing it from the
-  // deduped rows would move the number for EVERY combined view -- crossover or
-  // not -- because a weighted mean of per-dept `avgNonzero_` results is not
-  // `avgNonzero_` over the union, and that is a wider behavior change than
-  // this mitigation warrants. Phase 2 dissolves the question: with per-queue
-  // slices there is no duplicate row left to weight twice.
-  ['attSeconds', 'avgAbdWaitSeconds', 'csrAvgAbdWaitSeconds'].forEach(function (k) {
+  // Phase 0 deliberately leaves crossover agents in this formula: a doubled
+  // SUM is arithmetically wrong and had to be fixed; a mean that weights one
+  // agent in two depts stays in range. Phase 2 dissolves the question: with
+  // per-queue slices there is no duplicate row left to weight twice.
+  [['attSeconds', 'attNonzeroCount'], ['avgAbdWaitSeconds', 'avgAbdWaitNonzeroCount'],
+   ['csrAvgAbdWaitSeconds', 'csrAvgAbdWaitNonzeroCount']].forEach(function (pair) {
+    const k = pair[0], ck = pair[1];
     let num = 0, den = 0;
     parts.forEach(function (p) {
-      const v = Number((p.totals || {})[k]) || 0;
-      const n = Number((p.totals || {}).rosterAgentCount) || 0;
+      const t = p.totals || {};
+      const v = Number(t[k]) || 0;
+      const n = (t[ck] != null) ? (Number(t[ck]) || 0) : (Number(t.rosterAgentCount) || 0);
       if (v > 0 && n > 0) { num += v * n; den += n; }
     });
     grand[k] = den ? Math.round(num / den) : 0;
@@ -887,9 +919,15 @@ function getDepartmentSummary(req) {
   // rather than a version bump: the version tracks aggregation-RULE changes
   // (INV-30) and both modes are the same rule under a different scope.
   const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
+  // D-7 (broad-scan 2026-09-17): the ROSTER joins the key (the R45 rule that
+  // gave deptExts:v1 its hash): the freshness tag does not move when the
+  // Orphan Fix modal adds an agent or `DO NOT EDIT!` is edited, so a roster
+  // change was invisible to this table for up to the 6 h TTL. One extra
+  // roster read per request; the compute reads the same sheet anyway.
+  const rosterHash = hashAgents_(((getRosterForDepartment_(dept) || {}).names) || []);
   const cacheKey = 'summary:v22:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
-                 + ':' + reportFreshnessTag_();
+                 + ':' + reportFreshnessTag_() + ':' + rosterHash;
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -905,8 +943,13 @@ function getDepartmentSummary(req) {
 
   const t0 = Date.now();
   const parts = deptSet.map(function (d) { return computeSummary_(d, from, to, scope); });
-  const primary = (subScope === 'subs') ? parts[0]
-    : parts[Math.max(0, deptSet.indexOf(dept))];
+  // D-9 (broad-scan 2026-09-17): `primary` is ALWAYS the requested dept. In
+  // 'subs' scope it is not among the parts, so it is computed separately --
+  // one extra per-dept compute on a scope the client never sends -- rather
+  // than letting a child's qcd / csrTransfer / diagnostics ship under the
+  // parent's identity (meta.department stays the requested dept below).
+  const primaryIdx = deptSet.indexOf(dept);
+  const primary = primaryIdx >= 0 ? parts[primaryIdx] : computeSummary_(dept, from, to, scope);
   const data = combineSummaries_(primary, parts);
   // The requested dept stays the payload's identity even in 'subs' scope, so
   // the client header and the dept selector don't jump.
@@ -934,6 +977,11 @@ function getDepartmentSummary(req) {
     // TTL (REPORT_CACHE_TTL_SECONDS, 6h since R24); the next request
     // re-reads config.
     Logger.log('getDepartmentSummary: Dept Config read errored -- skipping cache put.');
+  } else if (typeof qcdSnapshotReadFailed_ === 'function' && qcdSnapshotReadFailed_()) {
+    // D-5: the Queue panel's snapshot threw (qcd:null on a dept that HAS
+    // queues) -- serve the table, never pin the panel-less payload.
+    data.meta.qcdReadFailed = true;
+    Logger.log('getDepartmentSummary: QCD snapshot read errored -- skipping cache put (degraded QCD must not pin).');
   } else if (data.meta.sourceUnavailable) {
     // L1 (R8-C1 discipline): the payload is an OUTAGE empty, not a real
     // quiet window -- caching it would pin an empty agent table for every
@@ -1370,12 +1418,24 @@ function computeSummary_(dept, from, to, scope) {
   totals.attSeconds = avgNonzero_(rosterRows, 'attSeconds');
   totals.avgAbdWaitSeconds = avgNonzero_(rosterRows, 'avgAbdWaitSeconds');
   totals.csrAvgAbdWaitSeconds = avgNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
+  // D-3 (broad-scan 2026-09-17): the DENOMINATOR each mean was taken over,
+  // so combineSummaries_ can weight per-dept means by the agents that
+  // actually contributed (avgNonzero_ skips zeros) instead of by roster size.
+  totals.attNonzeroCount = countNonzero_(rosterRows, 'attSeconds');
+  totals.avgAbdWaitNonzeroCount = countNonzero_(rosterRows, 'avgAbdWaitSeconds');
+  totals.csrAvgAbdWaitNonzeroCount = countNonzero_(rosterRows, 'csrAvgAbdWaitSeconds');
   totals.rosterAgentCount = rosterRows.length;
   // Owner (2026-09): team answered per roster-active day (distinct days on
   // which ANY roster agent had a row), so the totals figure reconciles with
   // totals.totalAnswered rather than averaging the per-agent rates.
   totals.daysActive = Object.keys(deptDays).length;
   totals.ansPerDay = totals.daysActive ? round1_(totals.totalAnswered / totals.daysActive) : null;
+  // D-6 (broad-scan 2026-09-17): the day SET rides along NON-ENUMERABLE so
+  // combineSummaries_ can UNION it across depts for the combined grand total
+  // (two depts active on the same day are one day, not two -- a count cannot
+  // be summed). Non-enumerable means it never serializes into the cache or a
+  // payload and never shows up in a test's deep-equal of `totals`.
+  Object.defineProperty(totals, 'activeDayKeys', { value: Object.keys(deptDays), enumerable: false });
   totals.queueOnlyAgentCount = rows.length - rosterRows.length;
   // Sub-queue Phase 1: every row names its OWN department, so a combined
   // parent+child table can group and label rows without inferring ownership.
@@ -1657,6 +1717,7 @@ function emptySummary_(dept, from, to, scope, rosterSize, rowsScanned, deptQueue
       // CORE-8: mirror the populated path's INV-53 count fields so client
       // code reading them never sees undefined on a no-data day.
       daysActive: 0, ansPerDay: null,   // v22: same shape as the populated totals
+      attNonzeroCount: 0, avgAbdWaitNonzeroCount: 0, csrAvgAbdWaitNonzeroCount: 0,   // D-3
       rosterAgentCount: 0, queueOnlyAgentCount: 0,
     },
     qcd: null,
@@ -1954,7 +2015,9 @@ function computeDeptQcdSnapshot_(dept, ssTZ, opts) {
       rangePrior: (pFrom && pTo) ? Object.assign(buildBlock_(byQueueRangePrior, null), { from: pFrom, to: pTo }) : null,
     });
   } catch (e) {
-    Logger.log('computeDeptQcdSnapshot_ failed: %s', e);
+    // D-5: mark the execution so getDepartmentSummary's put skips (see QCDReport.gs).
+    if (typeof noteQcdSnapshotReadFailed_ === 'function') noteQcdSnapshotReadFailed_('computeDeptQcdSnapshot_', e);
+    else Logger.log('computeDeptQcdSnapshot_ failed: %s', e);
     return null;
   }
 }
@@ -2433,6 +2496,13 @@ function toSeconds_(v) {
 // agents -- whose ATT / abd-wait is 0 -- must not drag the totals-row
 // means down, which also makes the totals use the SAME skip-zero method
 // the per-agent accumulators use when averaging one agent's days.
+// D-3: how many rows avgNonzero_ averaged over (its denominator).
+function countNonzero_(arr, key) {
+  let n = 0;
+  for (let i = 0; i < arr.length; i++) if ((Number(arr[i][key]) || 0) !== 0) n++;
+  return n;
+}
+
 function avgNonzero_(arr, key) {
   if (!arr.length) return 0;
   let s = 0, n = 0;

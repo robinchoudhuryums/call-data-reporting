@@ -107,7 +107,9 @@ test('tripwire: every preset resolver delegates -- none computes its own dates',
   // The six resolvers drifted BECAUSE each owned a copy of the rule. If a new
   // one appears (or an old one is "fixed" locally), this fails: a preset
   // handler that mentions a preset key must reach the shared resolver.
-  const FRAGMENTS = ['script-6-ir.html', 'script-8-insights.html',
+  // C1-3: script-2's Quick-select chip strip joined the watched set after it
+  // was found computing its own dates (a seventh copy, "This month" to TODAY).
+  const FRAGMENTS = ['script-2-chrome.html', 'script-6-ir.html', 'script-8-insights.html',
                      'script-9-inbound-direct.html', 'script-11-qcd-boot.html'];
   FRAGMENTS.forEach(function (f) {
     const text = fs.readFileSync(path.join(DIR, f), 'utf8');

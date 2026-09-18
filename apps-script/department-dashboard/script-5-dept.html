@@ -97,11 +97,14 @@
   // this?" and "what else happened in this half-hour?" are the two questions
   // a drill row raises. These helpers answer both without leaving the page.
   //
-  // The affordance is a LINK-STYLED SPAN, deliberately not a <button>: a day
-  // slice runs to hundreds of rings, and that many tab stops would bury the
-  // page's real controls. Nothing becomes keyboard-unreachable -- both
-  // destinations (the agent cards, the chart's bucket bars) are themselves in
-  // the tab order on the same page; the links are a shortcut, not the route.
+  // UD-4: the affordance is a link-styled <button> kept OUT of the sequential
+  // tab order (tabindex=-1): a day slice runs to hundreds of rings, and that
+  // many tab stops would bury the page's real controls -- but a bare span was
+  // mouse-only, with no role for assistive tech to announce or activate. A
+  // button announces, takes a virtual-cursor click and programmatic focus.
+  // Nothing is keyboard-unreachable -- both destinations (the agent cards,
+  // the chart's bucket bars) are themselves in the tab order on the same
+  // page; the links are a shortcut, not the route.
   function missedAgentCardEl_(name) {
     var host = $('dept-missed-detail');
     if (!host || !name) return null;
@@ -733,6 +736,13 @@
         body.innerHTML = ((resp.kind === 'outbound')
           ? outboundJourneyHtml_(resp.call)
           : callJourneyHtml_(resp.call))
+          // OD-5: a NULL journey on a call older than the retention horizon is
+          // a PRUNED journey, not a pre-capture one -- say which.
+          + (resp.journeyPruned
+              ? '<div class="ds-note">Leg-by-leg detail for this call was pruned — journeys are retained '
+                + escapeHtml(String(resp.journeyHorizonDays || 90)) + ' days and this call is '
+                + escapeHtml(String(resp.ageDays || '')) + ' days old. The summary above is what remains.</div>'
+              : '')
           + (resp.fallbackSource
               ? '<div class="ds-note">Served from the sheet fallback copy — Neon is unreachable'
                 + (resp.fallbackThrough ? ' · coverage through ' + escapeHtml(isoDateShort_(resp.fallbackThrough)) : '')
@@ -891,7 +901,11 @@
       }).join('');
       return '<details class="queue-only-card"' + (cardsOpen ? ' open' : '') + '>'
            +   '<summary class="qname">' + escapeHtml(q.queue) + ' &middot; '
-           +     q.total + ' abandoned</summary>'
+           +     q.total + ' abandoned'
+           // DD-4: rings outside the chart's 8 AM-5 PM range are in the count
+           // but in no bar -- say so rather than let the card exceed the bars.
+           +     (q.outOfRange ? ' <span class="muted">(' + q.outOfRange + ' outside 8 AM\u20135 PM, not charted)</span>' : '')
+           +   '</summary>'
            +   '<ul class="queue-only-list">' + itemsHtml + '</ul>'
            + '</details>';
     }).join('');
@@ -947,8 +961,8 @@
         const lbl = escapeHtml(m.label);
         const b = Number(m.bucket);
         if (!(b >= 0)) return lbl;
-        return '<span class="ms-bucket-link" data-ms-bucket="' + b
-             + '" title="Show every agent rung in this half-hour">' + lbl + '</span>';
+        return '<button type="button" class="ms-bucket-link" tabindex="-1" data-ms-bucket="' + b
+             + '" title="Show every agent rung in this half-hour">' + lbl + '</button>';
       };
       const singleLi = function (m) {
         return '<li class="' + (m.abandoned ? 'abandoned' : '') + '">'
@@ -990,8 +1004,10 @@
       }
 
       // R11-C4: per-card chart-scope toggle -- scopes the hour-of-day chart
-      // above to this agent's own rings (client rebucket; the button never
-      // toggles the <details>, stopPropagation in the delegated handler).
+      // above to this agent's own rings (client rebucket). UD-5: it renders
+      // as the card's first BODY child, not inside <summary> -- interactive
+      // content inside a summary is invalid HTML and the button was read as
+      // part of the disclosure; CSS pulls it up onto the header row.
       const scoped = deptMissedAgentScope_ === a.name;
       // R17h (Option B): data-agent-card is the cross-link ANCHOR -- a drill
       // row's agent name resolves to this element (missedAgentCardEl_).
@@ -1001,13 +1017,15 @@
            +     '<span class="agent-name">' + escapeHtml(a.name) + '</span>'
            +     '<span class="agent-card-meta">' + tierChip
            +       '<span class="agent-total">' + a.total + ' missed</span>'
-           +       '<button type="button" class="agent-scope-btn' + (scoped ? ' is-on' : '') + '"'
-           +         ' data-scope-agent="' + escapeHtml(a.name) + '"'
-           +         ' title="' + (scoped ? 'Show the whole department on the chart again'
-                                         : 'Scope the hour-of-day chart above to this agent') + '">'
-           +         (scoped ? '&#10005; chart' : '&#9632; chart') + '</button>'
            +     '</span>'
            +   '</summary>'
+           +   '<div class="agent-card-tools">'
+           +     '<button type="button" class="agent-scope-btn' + (scoped ? ' is-on' : '') + '"'
+           +       ' data-scope-agent="' + escapeHtml(a.name) + '"'
+           +       ' title="' + (scoped ? 'Show the whole department on the chart again'
+                                       : 'Scope the hour-of-day chart above to this agent') + '">'
+           +       (scoped ? '&#10005; chart' : '&#9632; chart') + '</button>'
+           +   '</div>'
            +   '<ul class="missed-list">' + itemsHtml + '</ul>'
            + '</details>';
     }).join('');
@@ -1682,6 +1700,14 @@
       if (missedSec) missedSec.style.display = 'none';
       var missedDetail = $('dept-missed-detail');
       if (missedDetail) missedDetail.style.display = 'none';
+      // C1-6 (broad-scan 2026-09-17): the CSR transfer detail (R25) renders
+      // from the summary payload too, and stayed up -- the PREVIOUS dept's
+      // per-agent transfer rows under the new dept's title -- until the new
+      // payload landed (or forever, for a non-CSR dept whose payload carries
+      // no csrTransfer: deptRenderTransferDetail_ then hides it, but only
+      // once onData runs). Hide it with the rest.
+      var transferSec = $('dept-transfer-section');
+      if (transferSec) transferSec.style.display = 'none';
     }
 
     // R7 (M-1): frost the Missed Calls section from the MOMENT the summary
@@ -1742,7 +1768,11 @@
   var refreshOnDateEdit_ = debounce_(refresh, 350);
 
   function onData(data, opts) {
-    $('refresh-btn').disabled = false;
+    // C1-5 (broad-scan 2026-09-17): the SWR pre-paint is NOT the end of the
+    // request -- re-enabling Refresh here let a second click dispatch while
+    // the live fetch was still in flight (the token guards then discard one
+    // response, the server pays for both). Only the live paint re-enables.
+    if (!(opts && opts.swr)) $('refresh-btn').disabled = false;
     // M3: clear the frost on the LIVE repaint (not the SWR pre-paint, which is
     // still "loading").
     if (!(opts && opts.swr)) {

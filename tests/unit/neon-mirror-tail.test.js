@@ -87,20 +87,22 @@ test('F-20: default window applies when the property is unset (parity with a ful
   deepEqual(tailRead(sheet, '2026-07-08').map(function (r) { return r[2]; }), ['a', 'b']);
 });
 
-test('IMP-11: a queued date whose Call_Legs sheet was pruned HARD-fails instead of silently dequeuing', function () {
+test('IMP-11 / P-2: a queued date whose Call_Legs sheet was pruned is a PRUNED terminal, never a silent dequeue', function () {
   // inbound_calls has NO sheet primary: once Call_Legs_<iso> is pruned
   // (~14d retention) the date's inbound rows are unrecoverable. The old
   // path returned rows:0 success and dequeued -- an invisible permanent
-  // loss. Now it throws (-> neonMirror:Inbound failure row; the IMP-6
-  // retry cap parks it with one final gave-up email).
+  // loss (IMP-11 then made it a THROW, which P-2 found counted toward the
+  // IMP-6 cap on every run and eventually dropped the sheet-derivable
+  // mirrors with it). It is now a per-type terminal: { pruned: true }.
   const realBackfill = h.ctx.backfillInboundCalls;
   try {
     h.ctx.backfillInboundCalls = function () {
       return { inserted: 0, processed: 0, skippedDone: 0, skippedEmpty: 0,
                failures: 0, unreachable: false, stoppedEarly: null, sheetsFound: 0 };
     };
-    assert.throws(function () { h.call('mirrorInboundForDate_', '2026-06-01'); },
-      /no longer exists .*unrecoverable|cannot be re-derived/i);
+    const pr = h.call('mirrorInboundForDate_', '2026-06-01');
+    assert.equal(pr.pruned, true, 'source gone -> pruned terminal');
+    assert.match(pr.note, /Call_Legs_2026-06-01 no longer exists/);
 
     // Sheet present but empty (zero legs) is a legitimate nothing-to-mirror.
     h.ctx.backfillInboundCalls = function () {
@@ -354,4 +356,82 @@ test('B1: a generous budget drains everything (default path unchanged)', functio
   assert.deepEqual(queuedDates_(sheet), [], 'the whole queue drained');
   assert.equal(logged.indexOf('neonMirror:budget'), -1,
     'no budget row when the budget was never hit');
+});
+
+
+// ---- P-2 (broad-scan 2026-09-17): the retry cap counts only failures Neon
+// actually rejected, and "source pruned" is a per-TYPE terminal, never a
+// date-level failure. -------------------------------------------------------
+
+const REAL_MIRROR_DATE_ = h.ctx.neonMirrorDate_;   // the B1 tests above replace it in-place
+function stubMirrorsP2_(outcomes, logged) {
+  h.ctx.neonMirrorDate_ = REAL_MIRROR_DATE_;
+  const mk = (label) => function () {
+    const o = outcomes[label];
+    if (o instanceof Error) throw o;
+    return o || { rows: 1 };
+  };
+  h.ctx.mirrorInboundForDate_  = mk('Inbound');
+  h.ctx.mirrorOutboundForDate_ = mk('Outbound');
+  h.ctx.mirrorCdrForDate_      = mk('CDR');
+  h.ctx.mirrorQcdForDate_      = mk('QCD');
+  h.ctx.mirrorDqeForDate_      = mk('DQE');
+  h.ctx.logPipelineHealthWithFallback_ = function () {};
+  h.ctx.neonMirrorLog_ = function (ss, step, status, rows, t0, notes) {
+    logged.push({ step: step, status: status, notes: String(notes || '') });
+  };
+}
+
+test('P-2: a PRUNED per-call type does not fail the date -- the sheet-derivable mirrors complete and the loss is emailed ONCE', function () {
+  const logged = [], mails = [];
+  stubMirrorsP2_({ Inbound: { pruned: true, rows: 0, note: 'Call_Legs_2026-08-01 no longer exists' } }, logged);
+  h.ctx.notifyNeonWriteFailure = function (subj, body) { mails.push({ subj: subj, body: body }); };
+  const ok = h.call('neonMirrorDate_', makeFakeSpreadsheet({ sheets: {} }), '2026-08-01');
+  assert.equal(ok, true, 'the date COMPLETES (dequeued): nothing left to retry');
+  const inb = logged.filter(function (l) { return l.step === 'neonMirror:Inbound'; })[0];
+  assert.equal(inb.status, 'failure', 'the loss is a durable failure row');
+  assert.match(inb.notes, /SOURCE PRUNED/);
+  assert.match(inb.notes, /terminal; not retried/);
+  assert.equal(logged.filter(function (l) { return l.step === 'neonMirror:CDR' && l.status === 'success'; }).length, 1,
+    'CDR / QCD / DQE still mirrored');
+  assert.equal(mails.length, 1, 'one email, at completion');
+  assert.match(mails[0].subj, /SOURCE PRUNED: 2026-08-01/);
+});
+
+test('P-2: a pruned type + an UNREACHABLE type keeps the date queued and does NOT email yet', function () {
+  const logged = [], mails = [];
+  stubMirrorsP2_({ Inbound: { pruned: true, rows: 0 }, CDR: { unreachable: true, rows: 0 } }, logged);
+  h.ctx.notifyNeonWriteFailure = function (subj) { mails.push(subj); };
+  const ok = h.call('neonMirrorDate_', makeFakeSpreadsheet({ sheets: {} }), '2026-08-02');
+  assert.equal(ok, false, 'left queued for the retriable step');
+  assert.equal(mails.length, 0, 'the pruned email waits for completion, so an outage cannot repeat it every 15 min');
+});
+
+test('P-2: a hard error thrown while Neon was UNREACHABLE is flagged on the error and does NOT count an attempt', function () {
+  const logged = [];
+  stubMirrorsP2_({ CDR: { unreachable: true, rows: 0 }, DQE: new Error('DQE exploded') }, logged);
+  let caught = null;
+  try { h.call('neonMirrorDate_', makeFakeSpreadsheet({ sheets: {} }), '2026-08-03'); }
+  catch (e) { caught = e; }
+  assert.ok(caught, 'the hard error still propagates');
+  assert.equal(caught.neonUnreachable, true, 'and says Neon was unreachable in the same run');
+
+  // The drain honours the flag: attempts stay put, no per-date email.
+  const sheet = installQueue_(['2026-08-03'], 3);
+  h.state.props.NEON_MIRROR_BUDGET_MS = '';
+  const mails = [];
+  h.ctx.notifyNeonWriteFailure = function (subj) { mails.push(subj); };
+  h.ctx.neonMirrorDate_ = function () { const e = new Error('DQE exploded'); e.neonUnreachable = true; throw e; };
+  h.call('runNeonMirror_');
+  const left = queuedDates_(sheet);
+  assert.equal(left.length, 1, 'still queued');
+  assert.equal(left[0].attempts, 3, 'attempt NOT counted -- an outage is not a poison pill');
+  assert.equal(mails.length, 0, 'no email for an outage-shaped failure');
+
+  // Control: the same throw WITHOUT the flag counts, as before.
+  const sheet2 = installQueue_(['2026-08-04'], 3);
+  h.ctx.neonMirrorDate_ = function () { throw new Error('DQE exploded'); };
+  h.call('runNeonMirror_');
+  assert.equal(queuedDates_(sheet2)[0].attempts, 4, 'a failure Neon rejected still counts');
+  assert.equal(mails.length, 1);
 });

@@ -40,7 +40,11 @@ IF NOT EXISTS` upgrades pre-extension tables in place, and the insert chunks SIZ
 fixed row count overran the JDBC cap). **There is NO sheet primary for this data** -- the
 "Inbound Calls" tab (`cdr-report/inboundCallsExport.js::exportInboundCalls`)
 is a fallback COPY of Neon, not a source. History: editor-run `backfillInboundCalls`
-(cdr-import) reaches at most the ~14-day `Call_Legs_*` retention window.
+(cdr-import) reaches at most the ~14-day `Call_Legs_*` retention window --
+beyond it a date's `Call_Legs_*` tab must first be recreated from the source
+CSV archive with `importBulkCSVsFromDrive` (editor-run: its CDR Tools menu
+item is commented out pending Drive permissions, Operator State #35), and
+with no such archive the pruned dates are unrecoverable.
 **Queue-name recognition is config-fed AND brand-prefix aware (F1/F1b) -- do
 NOT re-hardcode it.** `icIsQueueName_` decides what counts as a queue leg and
 feeds `entry_queue` / `final_queue` / `num_queues` / `abandon_stage`. A name
@@ -318,7 +322,9 @@ unconnected side, matching the Direct report's activity-only outbound
 semantics), talk/ring seconds, attempts, `call_start` (raw PST
 'HH:MM:SS'; clients shift +2h to CST via `clCstTime_`, the INV-18
 convention), and the masked leg-by-leg journey (a phone-shaped callee
-name renders '(external number)' -- no raw number in Neon). The writer
+name renders '(external number)', and -- P-11, Batch 5 -- a leg whose CALLEE
+NUMBER is external carries that party's CNAM as INITIALS, the IMP-12 rule;
+internal callees keep their names; no raw number or external name in Neon). The writer
 auto-creates the table AND `idx_outbound_calls_callee_hash` (no operator
 console step). Best-effort + isolated: failures log a
 `processIntegratedHistory:Outbound` Pipeline Health row + email (the F9

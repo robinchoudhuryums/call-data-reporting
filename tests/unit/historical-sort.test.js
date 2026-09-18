@@ -338,3 +338,17 @@ test('Phase 2 (source pins): the CDR Tools menu wires all four entry points, and
   const health = fs.readFileSync(path.join(root, 'department-dashboard', 'SystemHealth.gs'), 'utf8');
   assert.ok(/var hsPrefix = 'historicalSort:'/.test(health), 'the Health page reads the same prefix');
 });
+
+
+test('DD-7 (broad-scan 2026-09-17): an all-TEXT date column is single-typed but NOT sortable -- refused, never sorted', function () {
+  const ss = install(fiveSheets({
+    'DQE Historical Data': dqeSheet([textCell('6/3/2026'), textCell('6/1/2026'), textCell('6/2/2026')]),
+  }), { HISTORICAL_SORT_ENABLED: 'true' });
+  const res = h.call('runHistoricalSortCheck_');
+  const dqe = res.sheets.filter(function (e) { return e.label === 'DQE'; })[0];
+  assert.equal(dqe.action, 'refused');
+  assert.equal(dqe.status, 'failure');
+  assert.match(dqe.verdict, /TEXT-TYPED/);
+  assert.match(dqe.notes, /sorts LEXICALLY/);
+  assert.equal(sortCalls(ss, 'DQE Historical Data'), 0, 'a lexical sort would reorder it WRONGLY and then read as sorted');
+});

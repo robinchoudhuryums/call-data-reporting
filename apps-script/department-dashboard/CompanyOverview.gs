@@ -110,7 +110,8 @@ function overviewCacheKey_() {
   // R24 (6h TTL): + the latest-data date, so the morning ingest mints a new
   // key within getLatestDataDate's 5-min tier instead of waiting out the TTL.
   var fresh = (typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na';
-  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh;
+  var rf = (typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung';   // DD-2
+  return COMPANY_OVERVIEW_CACHE_KEY + ':' + tag + ':' + qs + ':' + fresh + ':' + rf;
 }
 
 // Chart-range slider (hybrid). The multi-dept chart ships a 90-day series
@@ -171,7 +172,9 @@ function ovDeptChartSeries_(labels, dqeDaily, qcdDaily) {
   return {
     trend: labels.map(function (iso) {
       var d = dqeDaily[iso];
-      return (d && d.rung > 0) ? round1_((d.answered / d.rung) * 100) : null;
+      // DD-2: one formula; null (a line break) when the active denominator is 0.
+      return (d && answerRateDenom_(d.answered, d.missed, d.rung) > 0)
+        ? round1_(answerRatePct_(d.answered, d.missed, d.rung)) : null;
     }),
     // 6b (owner 2026-09-14): answered VOLUME, the same dqeDaily map the rate
     // above already reads -- no extra scan. Null on a day with no DQE rows so
@@ -550,11 +553,12 @@ function getCompanyOverview(req) {
     if (companyRosterUnion[agent]) {
       let cTrend = companyTrendByDate[dateIso];
       if (!cTrend) {
-        cTrend = { rung: 0, answered: 0 };
+        cTrend = { rung: 0, answered: 0, missed: 0 };   // DD-2: missed feeds the rate
         companyTrendByDate[dateIso] = cTrend;
       }
       cTrend.rung     += rung;
       cTrend.answered += answered;
+      cTrend.missed   += missed;
       if (dateIso === latestDate) {
         companyLatest.rung     += rung;
         companyLatest.missed   += missed;
@@ -594,11 +598,12 @@ function getCompanyOverview(req) {
 
       let trendDay = stats.trendByDate[dateIso];
       if (!trendDay) {
-        trendDay = { rung: 0, answered: 0 };
+        trendDay = { rung: 0, answered: 0, missed: 0 };   // DD-2
         stats.trendByDate[dateIso] = trendDay;
       }
       trendDay.rung     += rung;
       trendDay.answered += answered;
+      trendDay.missed   += missed;
       if (hadActivity) stats.recentlyActiveAgents[agent] = true;
 
       // Per-agent per-day breakdown -- only kept inside the trend
@@ -688,14 +693,15 @@ function getCompanyOverview(req) {
       }
       if (pDate >= chartTrendStartIso) {
         let cday = cd[pDate];
-        if (!cday) { cday = { rung: 0, answered: 0 }; cd[pDate] = cday; }
+        if (!cday) { cday = { rung: 0, answered: 0, missed: 0 }; cd[pDate] = cday; }   // DD-2
         cday.rung     += pRung;
         cday.answered += pAnswered;
+        cday.missed   += pMissed;
       }
     }
   });
   const fmtPeriod_ = function (b) {
-    const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
+    const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
     const att = b.answered > 0 ? b.att_sum / b.answered : 0;
     return {
       rung: b.rung, missed: b.missed, answered: b.answered,
@@ -723,13 +729,13 @@ function getCompanyOverview(req) {
   const formatDept = function (d) {
     const stats = deptStats[d];
     const ld = stats.latestDay;
-    const pct = ld.rung > 0 ? (ld.answered / ld.rung) * 100 : 0;
+    const pct = answerRatePct_(ld.answered, ld.missed, ld.rung);   // DD-2
     const att = ld.answered > 0 ? ld.att_sum / ld.answered : 0;
     // 30-day sparkline series (answered %) -- card sparklines only.
     const trend = trendIsoLabels.map(function (iso) {
       const day = stats.trendByDate[iso];
-      if (!day || day.rung <= 0) return null;
-      return round1_((day.answered / day.rung) * 100);
+      if (!day || answerRateDenom_(day.answered, day.missed, day.rung) <= 0) return null;
+      return round1_(answerRatePct_(day.answered, day.missed, day.rung));
     });
     // 90-day CHART series (client-sliced to 30/60/90): answered % from the
     // per-day DQE map + abandoned count/% from the QCD snapshot's `daily` map,
@@ -851,8 +857,7 @@ function getCompanyOverview(req) {
   Object.keys(companyRecentlyActive).forEach(function (a) {
     if (companyRosterUnion[a]) recentlyActiveFiltered[a] = true;
   });
-  const cPct = companyLatest.rung > 0
-    ? (companyLatest.answered / companyLatest.rung) * 100 : 0;
+  const cPct = answerRatePct_(companyLatest.answered, companyLatest.missed, companyLatest.rung);   // DD-2
   const cAtt = companyLatest.answered > 0
     ? companyLatest.att_sum / companyLatest.answered : 0;
   // Company trend series in the same shape as per-dept trend
@@ -860,8 +865,8 @@ function getCompanyOverview(req) {
   // aggregate tile's sparkline.
   const companyTrend = trendIsoLabels.map(function (iso) {
     const day = companyTrendByDate[iso];
-    if (!day || day.rung <= 0) return null;
-    return round1_((day.answered / day.rung) * 100);
+    if (!day || answerRateDenom_(day.answered, day.missed, day.rung) <= 0) return null;
+    return round1_(answerRatePct_(day.answered, day.missed, day.rung));
   });
 
   const companyAggregate = {
@@ -904,6 +909,10 @@ function getCompanyOverview(req) {
     // R8-C4: config read errored -> QCD snapshots / parent map may be
     // constant-only this request; don't pin the shared blob for the TTL.
     Logger.log('getCompanyOverview: Dept Config read errored -- skipping cache put.');
+  } else if (typeof qcdSnapshotReadFailed_ === 'function' && qcdSnapshotReadFailed_()) {
+    // D-5: the QCD snapshot read threw and the payload carries a partial /
+    // empty snapshot map -- serve it, never pin it.
+    Logger.log('getCompanyOverview: QCD snapshot read errored -- skipping cache put (degraded QCD must not pin).');
   } else if (dqeRows.length === 0) {
     // L2 (the B-3 argument, ported from getOverviewChartTrend): latestDate is
     // non-null here (the null case early-returns above), so the read window
@@ -963,7 +972,8 @@ function getOverviewChartTrend(req) {
 
   const cache = CacheService.getScriptCache();
   const tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
-  const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off');
+  const cacheKey = OVERVIEW_CHART_TREND_CACHE_PREFIX + ':' + latestDate + ':' + tag + ':' + ((typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off')
+                 + ':' + ((typeof answerRateCacheTag_ === 'function') ? answerRateCacheTag_() : 'rf-rung');   // DD-2
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -1020,9 +1030,10 @@ function getOverviewChartTrend(req) {
     deptRows.forEach(function (r) {
       const iso = r.dateIso;
       let day = cd[iso];
-      if (!day) { day = { rung: 0, answered: 0 }; cd[iso] = day; }
+      if (!day) { day = { rung: 0, answered: 0, missed: 0 }; cd[iso] = day; }   // DD-2
       day.rung += Number(r.totalRung) || 0;
       day.answered += Number(r.totalAnswered) || 0;
+      day.missed += Number(r.totalMissed) || 0;
     });
   });
 
@@ -1054,10 +1065,11 @@ function getOverviewChartTrend(req) {
   // window; caching it would serve an all-null trend to every viewer for
   // the TTL (6h since R24) with no meta flag distinguishing it from real data.
   const configDegraded = (typeof deptConfigReadFailed_ === 'function') && deptConfigReadFailed_();
+  const qcdDegraded = (typeof qcdSnapshotReadFailed_ === 'function') && qcdSnapshotReadFailed_();   // D-5
   const outageEmpty = dqeRows.length === 0;
-  if (configDegraded || outageEmpty) {
+  if (configDegraded || qcdDegraded || outageEmpty) {
     Logger.log('overviewChartTrend: skipping cache put (%s) -- degraded payload must not pin.',
-      configDegraded ? 'Dept Config read errored' : 'empty DQE read despite a known latest date');
+      configDegraded ? 'Dept Config read errored' : (qcdDegraded ? 'QCD snapshot read errored' : 'empty DQE read despite a known latest date'));
     logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
     return data;
   }
@@ -1313,8 +1325,8 @@ function computeWowDelta_(stats, latestDate) {
   const latestObj = parseIsoNoon_(latestDate);
   const curIsoSet  = {};
   const prevIsoSet = {};
-  const cur  = { rung: 0, answered: 0 };
-  const prev = { rung: 0, answered: 0 };
+  const cur  = { rung: 0, answered: 0, missed: 0 };   // DD-2
+  const prev = { rung: 0, answered: 0, missed: 0 };
   for (let i = 0; i < 7; i++) {
     const isoCur = Utilities.formatDate(
       new Date(latestObj.getTime() - i * 86400000), TZ, 'yyyy-MM-dd');
@@ -1323,13 +1335,13 @@ function computeWowDelta_(stats, latestDate) {
     curIsoSet[isoCur]   = true;
     prevIsoSet[isoPrev] = true;
     const dC = stats.trendByDate[isoCur];
-    if (dC) { cur.rung += dC.rung; cur.answered += dC.answered; }
+    if (dC) { cur.rung += dC.rung; cur.answered += dC.answered; cur.missed += (dC.missed || 0); }
     const dP = stats.trendByDate[isoPrev];
-    if (dP) { prev.rung += dP.rung; prev.answered += dP.answered; }
+    if (dP) { prev.rung += dP.rung; prev.answered += dP.answered; prev.missed += (dP.missed || 0); }
   }
   if (cur.rung === 0 || prev.rung === 0) return null;
-  const curPct  = (cur.answered  / cur.rung)  * 100;
-  const prevPct = (prev.answered / prev.rung) * 100;
+  const curPct  = answerRatePct_(cur.answered,  cur.missed,  cur.rung);    // DD-2
+  const prevPct = answerRatePct_(prev.answered, prev.missed, prev.rung);
   const deltaPct = curPct - prevPct;
   const out = {
     curPct:   round1_(curPct),
@@ -1449,12 +1461,12 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // [min(sinceIso, mtdStart), today] is equivalent to the old whole-sheet
     // scan; the sheet path still reads the whole sheet (unchanged, and now
     // memo-shared with the other QCD readers).
-    const _tzWin = ssTZ || TZ;
-    const _nowWin = new Date();
-    const _mtdStartWin = Utilities.formatDate(
-      new Date(_nowWin.getFullYear(), _nowWin.getMonth(), 1), _tzWin, 'yyyy-MM-dd');
+    // D-1: month start + today are script-TZ CALENDAR strings (mtdStartIso_,
+    // QCDReport.gs) -- a script-midnight instant formatted in the sheet's
+    // zone read as the previous month's last day during US DST.
+    const _readTo = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+    const _mtdStartWin = mtdStartIso_(_readTo);
     const _readFrom = (sinceIso && sinceIso < _mtdStartWin) ? sinceIso : _mtdStartWin;
-    const _readTo = Utilities.formatDate(_nowWin, _tzWin, 'yyyy-MM-dd');
     const grid = (typeof readQcdGrid_ === 'function') ? readQcdGrid_(_readFrom, _readTo) : null;
     if (!grid || grid.missing || grid.empty) return out;
 
@@ -1487,10 +1499,10 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     // First pass: track the latest date per dept (so we can grab
     // the right "latest day" totals in a second pass).
     const latestDateByDept = {};   // dept -> isoDate
-    // Month-to-date cutoff: 1st of the current month.
-    const now = new Date();
-    const mtdStart = Utilities.formatDate(
-      new Date(now.getFullYear(), now.getMonth(), 1), tz, 'yyyy-MM-dd');
+    // Month-to-date cutoff: 1st of the current month -- a script-TZ calendar
+    // string (D-1; see mtdStartIso_), NOT a script-midnight instant formatted
+    // in `tz`, which is the SPREADSHEET's zone and read a day early Mar-Nov.
+    const mtdStart = mtdStartIso_();
 
     // Single pass accumulating both latestDay and MTD violations.
     const acc = {};   // dept -> { latestDay: {date, total, abandoned, violations}, mtdViolations }
@@ -1597,7 +1609,9 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
     });
 
   } catch (e) {
-    Logger.log('computeQcdSnapshots_ failed: %s', e);
+    // D-5: mark the execution so the Overview / trend puts skip (see QCDReport.gs).
+    if (typeof noteQcdSnapshotReadFailed_ === 'function') noteQcdSnapshotReadFailed_('computeQcdSnapshots_', e);
+    else Logger.log('computeQcdSnapshots_ failed: %s', e);
   }
   return out;
 }

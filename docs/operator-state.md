@@ -101,7 +101,19 @@ When something looks wrong, before assuming a code bug, check:
    editor → Run → any function → grant the new permission. Scope-
    gated calls (trigger install, mail send) otherwise throw
    permission errors at runtime even though the dashboard page
-   loads fine.
+   loads fine. **Since T-7 (2026-09-18) all three live projects declare
+   their scopes EXPLICITLY in `appsscript.json`** (dqe-report, frozen, stays
+   on auto-detection): the dashboard dropped the unused
+   `script.container.ui`, and cdr-report / cdr-import gained explicit lists
+   (cdr-report includes `drive.readonly` for the daily PDF export, which
+   fetches the sheet's `/export` URL with the script's own token -- a scope
+   auto-detection cannot see). **The first push of each after T-7 changes
+   the consent set, so re-run one function in each editor and re-consent**;
+   until then a trigger run may fail with "Insufficient permissions".
+   `manifest-scopes.test.js` derives the required set from the service calls
+   in each project and fails when a manifest omits or over-declares one, so a
+   new `DriveApp` / `UrlFetchApp` / `MailApp` call needs its manifest edit in
+   the same commit.
 10. After adding a sub-queue to `OVERVIEW_PARENT_OF`, verify the
     key matches the `DO NOT EDIT!` column header byte-for-byte
     (case, spaces, and any ` Q` suffix). Mismatches show up as a
@@ -137,9 +149,11 @@ When something looks wrong, before assuming a code bug, check:
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
     (h) **R31/R32 -- every digest cadence is FRESHNESS-GATED.** The 8 AM run
-    sends only once the window's last day (daily: the previous business day;
-    weekly: last Friday; monthly: the month's last day) exists on the active
-    DQE read source; otherwise it records `DEFERRED <date>: DQE data is
+    sends only once the last BUSINESS day on or before the window's end
+    (`lastBusinessDayOnOrBeforeIso_`; daily: the previous business day;
+    weekly: that week's last workday; monthly: the month's last workday -- O-2,
+    so a month ending on a weekend or holiday no longer waits for a day that
+    will never land) exists on the active DQE read source; otherwise it records `DEFERRED <date>: DQE data is
     through …` in the same "Last runs" line (warn-tinted in the modal),
     schedules a one-shot retry (`run<Cadence>DigestRetry_`, +60 min) and
     repeats until the 12:00 cutoff, when
@@ -381,7 +395,7 @@ When something looks wrong, before assuming a code bug, check:
     (cdr-import, default 3000) is the window knob. A date that HARD-errors
     (throws -- not Neon-unreachable, which retries forever) is retried at
     bounded per run by `NEON_MIRROR_BUDGET_MS` (Script Property, default
-    4 min of Apps Script's ~6-min ceiling): the drain stops cleanly at the
+    4 min; the ceiling itself is MEASURED, #70): the drain stops cleanly at the
     budget, leaves the untried dates queued with their attempt counts
     UNCHANGED, and logs a `neonMirror:budget` row naming what was left.
     Without it a multi-day outage grew the queue until one pass exceeded the
@@ -395,11 +409,21 @@ When something looks wrong, before assuming a code bug, check:
     then DROPPED with a `neonMirror:gave-up` Pipeline Health failure row +
     one final email -- re-enqueue it (append a row to the Neon Mirror Queue
     tab) after fixing the cause, or run the per-type backfills (IMP-6;
-    a date whose `Call_Legs_*` sheet was PRUNED before it drained hard-fails
-    the same way -- its inbound_calls rows are unrecoverable and the gave-up
-    email says so rather than silently dequeuing, IMP-11;
     duplicate-conflict-key rows, the known poison-pill cause, are now
     deduped last-write-wins inside the writers so they no longer throw).
+    **Two P-2 rules (Batch 5, 2026-09-17):** (a) a date whose `Call_Legs_*`
+    sheet was PRUNED before it drained is a per-TYPE terminal, not a date
+    failure -- the Inbound / Outbound step logs a `neonMirror:Inbound|Outbound`
+    failure row reading `SOURCE PRUNED … (terminal; not retried)`, the
+    sheet-derivable CDR / QCD / DQE steps still complete and dequeue the date,
+    and ONE `runNeonMirror_ SOURCE PRUNED` email names the loss at completion
+    (re-import the date's source, #56, then the per-type backfill). Before
+    P-2 that case threw on every run, hit the retry cap and DROPPED the whole
+    date, sheet-derivable mirrors included (IMP-11 had made the loss loud but
+    date-wide). (b) A hard error thrown while Neon was UNREACHABLE in the same
+    run (`err.neonUnreachable`) leaves the date queued WITHOUT counting an
+    attempt or emailing -- an outage is not a poison pill; only a failure
+    Neon actually rejected walks a date toward `gave-up`.
     **Step order + no-skip (F12):** `neonMirrorDate_` runs the five types
     **least-recoverable FIRST** -- Inbound, Outbound, then CDR, QCD, DQE --
     and every step is attempted even when an earlier one hard-errors (errors
@@ -694,13 +718,12 @@ When something looks wrong, before assuming a code bug, check:
     gate, the `computeDigestStats_` convention). Needs `script.send_mail` +
     `script.scriptapp` (both present); best-effort (a run failure emails admins
     via `notifyQueueReportFailure_` + records `FAILED` in LAST_RESULT, and the
-    next poll retries). **Send-loop reliability (O-1/O-4/O-7):** sends are
-    per-recipient isolated -- one malformed address / mid-list quota failure
-    no longer aborts the loop. Partial success CLAIMS the `LAST_SENT` marker
-    (delivered recipients are never re-blasted; failures are batched to admins
-    via `notifyQueueReportSendFailures_` and NOT auto-retried); a TOTAL failure
-    leaves the marker unset (`FAILED-ALL` in LAST_RESULT) so the next poll
-    retries safely. The single-address preview still throws so the admin sees
+    next poll retries). **Send reliability (Round-16, O-6 correction):** the report goes out as
+    ONE message (every subscriber in To); a send failure fails the whole
+    message into the `FAILED-ALL` retry path -- the marker is left unset and
+    the next poll retries. (The earlier per-recipient-isolated loop, whose
+    partial failures were NOT auto-retried, is gone; this paragraph used to
+    describe it.) The single-address preview still throws so the admin sees
     the error. Duplicate subscriber rows (hand-edited sheet) are deduped
     first-row-wins (`duplicateRow` flag + "⚠ duplicate" chip in the modal;
     Remove deletes all copies). A day whose data never lands before the window
@@ -900,15 +923,19 @@ When something looks wrong, before assuming a code bug, check:
     findings in both modes),
     each emailed with its runbook fix (force re-import /
     `backfillDQEHistoryUpsert` / `backfillCDRHistory` /
-    `backfillDirectCallToNeon`) -- and flags zero-row WEEKDAYS on the two
+    `backfillDirectCallToNeon`); a sheet date cell NO reader can key (OD-6,
+    Batch 5) is tallied as its own probe error naming
+    `previewHistoricalDateColumns()` -- never as an extra-in-neon phantom, whose
+    remedy (force re-import) would be the wrong one -- and flags zero-row WEEKDAYS on the two
     no-sheet-primary per-call tables, `inbound_calls` AND `outbound_calls`
     (holiday-aware, each floored at its own capture-start MIN(call_date);
     an outbound_calls table that doesn't exist yet -- the Option B capture
     not deployed -- is a clean skip, not a probe error; days past the
     ~14-day Call_Legs retention are unrecoverable FROM THE SHEETS, IMP-11 --
     recoverable in practice by re-importing those dates' source CSVs with
-    `importBulkCSVsFromDrive` (cdr-import) to recreate the `Call_Legs_*`
-    sheets, then re-running the backfill; do it in small batches, since
+    `importBulkCSVsFromDrive` (cdr-import; EDITOR-run -- its CDR Tools menu
+    item is commented out pending Drive permissions) to recreate the
+    `Call_Legs_*` sheets, then re-running the backfill; do it in small batches, since
     restoring a wide window at once strains the workbook's cell ceiling. The
     true horizon is the CSV ARCHIVE's retention -- with no archive, the
     original claim holds).
@@ -1289,6 +1316,9 @@ When something looks wrong, before assuming a code bug, check:
     drifted mirror only mis-dates the warning; recoverability itself is
     derived from which sheets actually survive.
 
+    P-2 (Batch 5): a queued deferred-mirror date whose sheet the prune already
+    removed no longer parks at the retry cap -- its Inbound/Outbound mirror is a
+    per-type terminal and ONE `SOURCE PRUNED` email names it (#22).
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1352,8 +1382,11 @@ When something looks wrong, before assuming a code bug, check:
     an Access Control row whose Role is `agent` resolves to role `none` —
     exactly the pre-agent behavior, so the deployed code is dark until you
     flip it. Set to `true` and `resolveUser_` resolves agent rows to the
-    fail-closed agent identity (`agentDept`/`agentName` only; every
-    pre-agent gate refuses the role by allowlist). **Since Phase B an agent
+    fail-closed agent identity (`agentDept`/`agentName` only; the per-dept
+    and no-dept gates -- `assertDeptAccess_`, `escAssertRowAccess_`,
+    `assertManagerOrAdmin_` -- refuse it by ALLOWLIST, and since A-1 the
+    Inbound / Direct / Outbound resolvers go through `assertManagerOrAdmin_`
+    too, so no resolver denylists on `role === 'none'` any more). **Since Phase B an agent
     with the flag on lands on the "My Performance" app** (agent.html — own
     numbers + team aggregates; rank line ships hidden). **Go-live for the
     CSR pilot:** deploy → add the CSR agent rows in the Access modal's
@@ -1382,8 +1415,14 @@ When something looks wrong, before assuming a code bug, check:
     page reported Neon as REACHABLE throughout, because a Neon that has
     spent its allowance IS reachable. **Read it as a FLOOR, not a meter.**
     `neonNoteEgress_` (NeonRead.gs) counts the payload bytes this project
-    pulls at all 14 bulk `json_agg` fetch sites; wire framing, TLS overhead
-    and any uninstrumented query are not in it, and the counter is a
+    pulls at EVERY Neon read (OD-3, Batch 6: the monthly backup, the coverage
+    check, escalations, the Missed enrich, the inbound audits and the
+    config-source reads included -- `neon-egress-coverage.test.js` fails on
+    an unmetered `executeQuery`; before OD-3 only the 14 bulk report fetches
+    were counted, so a backup month ranked `dqe` while the backup was what
+    tripped the cap -- expect the gauge to read HIGHER from the first backup
+    after that deploy and re-tune the budget on a month of honest figures);
+    wire framing and TLS overhead are not in it, and the counter is a
     deliberately lock-free read-modify-write (the presence-map discipline)
     so concurrent executions can lose an increment. Over budget is proof of
     a problem; under budget is NOT proof of headroom. The counters live in
@@ -1649,10 +1688,16 @@ When something looks wrong, before assuming a code bug, check:
     strictly above the coverage checks' 366-day max window, so a pruned date
     can never read as a coverage gap), and deletes `dqe_history` /
     `qcd_history` rows older than `NEON_RETENTION_HISTORY_MONTHS` (default
-    13, floor 13 — the sheet is the authority for both and every DQE/QCD
-    reader is bounded by the INV-29 12-month window; a DQE/QCD parity gate
-    over a pruned range will report the pruned dates as missing on the Neon
-    side, which is expected). It NEVER touches `call_history_phones`,
+    25, floor 25 — OD-4, Batch 6: the sheet is the authority for both, but a
+    DQE reader on the Neon path asks for MORE than the INV-29 12-month
+    window: a 12-month window's trend reaches 12 months before its END and
+    its INV-28 prior window ~24 months back, and at 13 months both were
+    silently truncated (LM2 trusts a reachable-empty read, so no sheet
+    fallback ran); a window ending N months ago still reaches 24+N back --
+    the documented limit. Expect the Health page's `neon-storage` floor to
+    rise over the following weeks and revisit `NEON_STORAGE_CAP_MB`. A DQE/QCD
+    parity gate over a pruned range will report the pruned dates as missing
+    on the Neon side, which is expected). It NEVER touches `call_history_phones`,
     `call_history_dept`, `direct_call_history`, escalations or coaching.
     Statements are ctid-batched (5000 rows) under a 4-minute run budget; a
     first-run backlog drains over a few runs and reports `ok ... budget hit`
@@ -1827,7 +1872,9 @@ When something looks wrong, before assuming a code bug, check:
     sorts on the date column, re-checks, `success` row "sorted -- N
     inversion(s)"; MIXED-TYPE / TZ-SPLIT / UNPARSED → REFUSED, `failure` row —
     a sort cannot fix those (Sheets orders numbers-then-text and the result
-    LOOKS sorted), so run `previewHistoricalDateColumns()` and the matching
+    LOOKS sorted) — and so is an all-TEXT column (`UNSORTED+TEXT-TYPED`, DD-7:
+    single-typed but Sheets sorts text LEXICALLY, '10/1' before '9/1'); run
+    `previewHistoricalDateColumns()` and the matching
     repair (Phase 1's `repairDqeDateNormalize` for a text/Date era split on
     DQE). **Install:** CDR Report → CDR Tools → ⏰ Nightly Historical Sort
     Check → Install — creates the trigger AND sets the flag (Uninstall clears
@@ -1942,10 +1989,10 @@ When something looks wrong, before assuming a code bug, check:
     so per-dept agent cards would double-count or misattribute; the company
     view is deliberately ONE FLAT TABLE (Option C, owner 2026-08-20) and the
     rejection is recorded in three places including the render site.
-    **Known gap, deliberately not part of this item:** there is no
-    `sendOutboundReportEmail`, where Inbound / Individual / Insights all have
-    one. It is item 5 of the owner's 2026-09-15 six-point Outbound list and
-    ships in that round.
+    `sendOutboundReportEmail` (OutboundReport.gs) exists since the owner's
+    2026-09-15 six-point Outbound round, gated exactly like the report
+    (the vetting gate + `outboundResolveRequest_`), so the email cannot
+    reach a manager before the report does.
 
 64. **Outbound answer quality — the MEASUREMENT step (`probeOutboundAnswerQuality`).**
     A read-only, admin-gated, editor-run probe. It answers one question with
@@ -2085,7 +2132,11 @@ When something looks wrong, before assuming a code bug, check:
     - **Read the VERDICT line first.** The tool is a fifth hand-mirror of
       `calcQcdReport`, which is this repo's recurring defect class, so it
       reconciles itself before reporting: its per-leg row 35/36/37 col-D tally
-      must equal the real `calcQcdReport` run on the same grid, AND its
+      must equal the real `calcQcdReport` run on the same grid -- in TOTAL and,
+      since DD-5 (Batch 7), PER AGENT (the real function re-run on each
+      agent's legs alone, busiest-first, capped at 60 with the remainder
+      reported as unchecked; two agents misclassified in compensating
+      directions used to pass) -- AND its
       per-agent DQE recomputation must equal the already-written
       `DQE Historical Data` rows for that date. Either check failing yields
       **INCONCLUSIVE — the gap analysis below it is then meaningless and the
@@ -2277,3 +2328,68 @@ When something looks wrong, before assuming a code bug, check:
     CLOSED by H2 (2026-09-17) via the published `Dashboard Standards` tab
     (#37). A new rate rule or standard on this side is not done until that
     tab carries it and team-tools' reader consumes it.
+
+69. **`ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server
+    surface (DD-2, broad-scan 2026-09-17), and the probe that shows what a flip
+    moves.** Two formulas were live: the My Department table, the agent app and
+    team-tools (H2) compute Answer % as `answered / (answered + missed)`; IR,
+    Insights, the Overview tiles/trends/WoW drivers, the low-answer-rate Alerts
+    and the Digest computed `answered / rung`. The build flags a window leg
+    Missed or Answered INDEPENDENTLY, so `rung` can exceed `answered + missed`
+    and the two rates differ -- an alert could fire on a rate the manager's
+    table did not show. Every server surface now routes through
+    `Config.gs::answerRatePct_`, whose denominator is this property:
+    - unset / `rung` (DEFAULT): `answered / rung` -- the deploy changes NO
+      number.
+    - `answerable`: `answered / (answered + missed)` -- the H2 standard, so IR,
+      Insights, Overview, Alerts and the Digest agree with the table, the
+      agent app and team-tools.
+    Runbook: (1) deploy; (2) run `probeAnswerRateFormulas()` (Diagnostics.gs,
+    editor, admin) -- per dept it prints rung / answered / missed / the
+    "neither" legs, both rates, the gap in points, the worst per-agent gap, the
+    display standard and whether the standard verdict FLIPS; window from
+    `ANSWER_RATE_PROBE_FROM` / `_TO` (ISO) or the 30 days ending yesterday;
+    read-only, the params are not cleared; (3) if a dept's gap exceeds its
+    alert band, re-tune that Alert Config threshold first; (4) set
+    `ANSWER_RATE_FORMULA=answerable` -- no redeploy; every rate-carrying cache
+    (individual / insights / companyOverview / overviewChartYtd) carries an
+    `rf-<formula>` suffix, so the flip cannot serve the other formula's payload
+    for the TTL. Reversible by clearing the property. Memoized per execution.
+    Pinned by `tests/unit/answer-rate-formula.test.js` (the switch, the probe,
+    and a tripwire that fails on any bare `answered / rung` outside the helper).
+70. **Execution ceiling + the cdr-import time budgets (P-3, Batch 5,
+    2026-09-17) -- and the cdr-import Script Property registry.** The repo
+    carried two beliefs about the per-execution ceiling (30 min in the bulk /
+    inbound-backfill comments, 6 min in the dashboard docs and an OBSERVED
+    kill). A wrong budget is not a tuning problem: a run killed at the ceiling
+    dies PAST its catch blocks, so the bulk pause never fires and the in-flight
+    date's failure row is never written. MEASURE it once per account: CDR
+    Import -> CDR Tools -> **Measure execution ceiling (one-shot probe)**
+    installs a one-shot time trigger that runs `runExecCeilingProbe_` in ~1 min
+    (a TRIGGER, the ceiling the daily import lives under) and sleeps in 10 s
+    steps writing `EXEC_CEILING_PROBE_LAST_MS` until the platform kills it (or
+    40 min pass); ~45 min later **Read execution-ceiling probe result** says
+    `KILLED at ~N s` with a recommended budget (ceiling minus ~2 min for the
+    in-flight date + the final archive), `ABOVE-MAX`, `RUNNING` or `NO-DATA`.
+    Then set the cdr-import Script Properties `BULK_TIME_LIMIT_MS` (the bulk
+    per-click budget, default 15 min) and `IC_BACKFILL_TIME_LIMIT_MS` (the
+    inbound / outbound backfill budget, default 15 min) -- both bounded to
+    1-40 min, no redeploy. If the ceiling reads ~6 min, the deferred mirror's
+    `NEON_MIRROR_BUDGET_MS` (default ~4 min, #22) is already right. Nothing
+    else changes: a kill mid-date is recoverable either way (`bulkIndex`
+    advances only after a date completes, so Resume re-runs the in-flight
+    date, and since P-1 the non-destructive Raw Data / output-sheet writes
+    precede the five-sheet delete). The probe's three `EXEC_CEILING_PROBE_*`
+    keys are engine-written. **Registry:** every Script Property this project
+    reads or writes is registered in `propRegistry.js::CDR_IMPORT_PROP_REGISTRY_`
+    (operator / engine / tool), enforced two ways by
+    `tests/unit/cdr-import-prop-registry.test.js` -- adding one means
+    registering it in the same commit -- and the editor-run
+    `listCdrImportScriptProperties()` prints the live store's keys classified
+    with UNRECOGNIZED first (a typo of a real key), values never shown.
+    cdr-report has the same: `cdr-report/propRegistry.js::CDR_REPORT_PROP_REGISTRY_`
+    (the backfill `*_RESUME` pointers and `*_LAST` tallies are engine keys --
+    clearing a pointer restarts that backfill from 0), pinned by
+    `tests/unit/cdr-report-prop-registry.test.js` (which also sweeps the
+    `nbResumeRead_` / `nbResumeWrite_` key arguments), listed by
+    `listCdrReportScriptProperties()`.

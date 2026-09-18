@@ -86,7 +86,8 @@
     if ($('inbound-from') && $('inbound-from').value) return;
     const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
     if ($('inbound-from')) $('inbound-from').value = inboundIsoOf_(s);
-    if ($('inbound-to'))   $('inbound-to').value   = inboundIsoOf_(today);
+    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
+    if ($('inbound-to'))   $('inbound-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : inboundIsoOf_(today);
   }
   function inboundApplyPreset() {
     const v = $('inbound-preset').value;
@@ -135,7 +136,13 @@
       .withSuccessHandler(function (data) {
         if (__rtok !== reportReqSeq_.inb) return;   // superseded by a newer request
         gen.disabled = false; gen.textContent = prev;
-        reportLastGoodWrite_('inbound', __sig, data);
+        // C2-3 (broad-scan 2026-09-17): an UNAVAILABLE payload (Neon down /
+        // table missing) is not a good result -- storing it evicted the real
+        // last-good one, so the next SWR pre-paint (and the fail-fallback)
+        // showed the empty state instead of the last real report.
+        if (!(data && data.meta && data.meta.available === false)) {
+          reportLastGoodWrite_('inbound', __sig, data);
+        }
         __inboundRepaint(data);
       })
       .withFailureHandler(function (err) {
@@ -242,9 +249,7 @@
     var thead = table.querySelector('thead'); if (!thead) return;
     if (!srtWired_[tbodyId]) {
       srtWired_[tbodyId] = true;
-      thead.addEventListener('click', function (e) {
-        var th = e.target.closest('th[data-sort]');
-        if (!th) return;
+      var sortBy = function (th) {
         var key = th.getAttribute('data-sort');
         var cur = srtState_[tbodyId];
         if (cur.key === key) { cur.dir = cur.dir === 'asc' ? 'desc' : 'asc'; }
@@ -255,13 +260,31 @@
         }
         var reg = srtRegistry_[tbodyId];
         if (reg) srtApply_(tbodyId, reg.rows, reg.paint, reg.impact);
+      };
+      thead.addEventListener('click', function (e) {
+        var th = e.target.closest('th[data-sort]');
+        if (th) sortBy(th);
+      });
+      // C2-10: the 41 report-table headers were click-only (the dashboard /
+      // Overview tables wire Enter/Space + aria-sort at runtime, R12-5 --
+      // this is the same discipline on the shared sorter, so every table
+      // that sorts through srtApply_ inherits it).
+      thead.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var th = e.target.closest && e.target.closest('th[data-sort]');
+        if (!th) return;
+        e.preventDefault();
+        sortBy(th);
       });
     }
     thead.querySelectorAll('th[data-sort]').forEach(function (th) {
       var on = st.key === th.getAttribute('data-sort');
       th.classList.add('sortable');
+      th.tabIndex = 0;
       th.classList.toggle('srt-asc', on && st.dir === 'asc');
       th.classList.toggle('srt-desc', on && st.dir === 'desc');
+      if (on) th.setAttribute('aria-sort', st.dir === 'asc' ? 'ascending' : 'descending');
+      else th.removeAttribute('aria-sort');
     });
   }
 
@@ -364,8 +387,8 @@
     drill.className = 'inbound-drill-row';
     drill.innerHTML = '<td colspan="7">'
       + '<div class="pr-trend-subtabs inbound-drill-tabs" role="tablist">'
-      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab">Volume</button>'
-      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab">Abandon %</button>'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'calls' ? ' active' : '') + '" data-metric="calls" role="tab" aria-selected="' + (inboundDrillMetric === 'calls') + '">Volume</button>'
+      +   '<button type="button" class="pr-trend-subtab' + (inboundDrillMetric === 'rate' ? ' active' : '') + '" data-metric="rate" role="tab" aria-selected="' + (inboundDrillMetric === 'rate') + '">Abandon %</button>'
       + '</div>'
       + '<div class="inbound-drill-canvas-wrap"><canvas id="inbound-drill-chart"></canvas></div>'
       + '<div class="inbound-drill-status pr-delta-cap">Loading daily trend…</div>'
@@ -378,6 +401,7 @@
       inboundDrillMetric = tab.getAttribute('data-metric') || 'calls';
       drill.querySelectorAll('.pr-trend-subtab').forEach(function (b) {
         b.classList.toggle('active', b === tab);
+        b.setAttribute('aria-selected', b === tab ? 'true' : 'false');   // C2-13
       });
       const cached = inboundDrillCache[insurer];
       if (cached) inboundRenderDrillChart_(drill, cached);
@@ -1134,16 +1158,16 @@
    * row ("A_Q_CSR (no agent rang)"), an agent outside the rendered section,
    * and the Inbound report's own heatmap drill (a page with no missed
    * section at all) all degrade silently to plain text rather than offering
-   * a dead click. Deliberately a link-styled SPAN, not a button -- see the
-   * tab-stop reasoning on missedAgentCardEl_.
+   * a dead click. A link-styled <button> kept out of the tab order
+   * (tabindex=-1, UD-4) -- see the tab-stop reasoning on missedAgentCardEl_.
    */
   function missedSliceWhoHtml_(who) {
     var name = String(who || '');
     if (!name) return '';
     var safe = escapeHtml(name);
     if (typeof missedAgentCardExists_ !== 'function' || !missedAgentCardExists_(name)) return safe;
-    return '<span class="ms-agent-link" data-ms-agent="' + safe
-      + '" title="Show this agent’s missed-call card">' + safe + '</span>';
+    return '<button type="button" class="ms-agent-link" tabindex="-1" data-ms-agent="' + safe
+      + '" title="Show this agent’s missed-call card">' + safe + '</button>';
   }
 
   // "HH:MM" from minutes-past-midnight (CST), for the slice hour window.
@@ -1289,7 +1313,8 @@
     if ($('direct-call-from') && $('direct-call-from').value) return;
     const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
     if ($('direct-call-from')) $('direct-call-from').value = directCallIsoOf_(s);
-    if ($('direct-call-to'))   $('direct-call-to').value   = directCallIsoOf_(today);
+    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
+    if ($('direct-call-to'))   $('direct-call-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : directCallIsoOf_(today);
   }
   function directCallApplyPreset() {
     const v = $('direct-call-preset').value;
@@ -1525,8 +1550,8 @@
       }
     });
     const groups = directCallDeptGroups_(agents);
-    wrap.innerHTML = '<div class="al-section-title">Per department'
-      + ' <span class="ins-rollup-cap">(click a card for its agents; inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></div>'
+    wrap.innerHTML = '<h3 class="al-section-title">Per department'
+      + ' <span class="ins-rollup-cap">(click a card for its agents; inbound answer rate excludes &ldquo;missed (busy)&rdquo;)</span></h3>'
       + groups.map(function (g, i) {
         const rateStr = g.ibAnswerRate != null ? g.ibAnswerRate + '%' : '—';
         const rateCls = g.ibAnswerRate != null
@@ -1699,7 +1724,8 @@
     if ($('outbound-from') && $('outbound-from').value) return;
     const today = new Date(); const s = new Date(today); s.setDate(today.getDate() - 30);
     if ($('outbound-from')) $('outbound-from').value = directCallIsoOf_(s);
-    if ($('outbound-to'))   $('outbound-to').value   = directCallIsoOf_(today);
+    // C2-5 (R30 rule): default To = the latest date WITH data, not today.
+    if ($('outbound-to'))   $('outbound-to').value   = (typeof latestDqeIso_ !== 'undefined' && latestDqeIso_) ? latestDqeIso_ : directCallIsoOf_(today);
   }
   function outboundApplyPreset() {
     const v = $('outbound-preset').value;
@@ -2330,10 +2356,15 @@
         lastSection = r.section;
         if (folded) {
           const n = rows.filter(function (x) { return x.section === r.section; }).length;
-          html += '<tr class="sh-section sh-fold-head" data-fold="' + escapeHtml(r.section) + '" tabindex="0" role="button" aria-expanded="false">'
-            + '<td colspan="3"><span class="sh-fold-arrow">▸</span> '
+          // C2-9 (the E-8 house rule): the toggle is a real <button> INSIDE
+          // the cell, never role=button on the <tr> -- that overrides the
+          // implicit row role and the table stops being a grid for screen
+          // readers. The row stays the click target via bubbling.
+          html += '<tr class="sh-section sh-fold-head" data-fold="' + escapeHtml(r.section) + '">'
+            + '<td colspan="3"><button type="button" class="sh-fold-btn" aria-expanded="false">'
+            + '<span class="sh-fold-arrow" aria-hidden="true">▸</span> '
             + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section)
-            + ' <span class="sh-fold-count">(' + n + ' — click to expand)</span></td></tr>';
+            + ' <span class="sh-fold-count">(' + n + ' — click to expand)</span></button></td></tr>';
         } else {
           html += '<tr class="sh-section"><td colspan="3">'
             + escapeHtml(HEALTH_SECTIONS_[r.section] || r.section) + '</td></tr>';
@@ -2349,20 +2380,20 @@
     tbody.innerHTML = html || '<tr><td colspan="3" class="al-empty">No checks returned.</td></tr>';
     // Fold toggles (delegated per render; innerHTML replaced the old rows).
     Array.prototype.forEach.call(tbody.querySelectorAll('.sh-fold-head'), function (head) {
+      const btn = head.querySelector('.sh-fold-btn');
       const toggle = function () {
         const key = head.getAttribute('data-fold');
-        const open = head.getAttribute('aria-expanded') === 'true';
-        head.setAttribute('aria-expanded', open ? 'false' : 'true');
+        const open = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', open ? 'false' : 'true');
         const arrow = head.querySelector('.sh-fold-arrow');
         if (arrow) arrow.textContent = open ? '▸' : '▾';
         Array.prototype.forEach.call(
           tbody.querySelectorAll('.sh-fold-row[data-fold-of="' + key + '"]'),
           function (tr) { tr.style.display = open ? 'none' : ''; });
       };
+      // The inner <button> owns Enter/Space natively (C2-9); a row keydown
+      // handler here would fire a SECOND toggle on the same keypress.
       head.addEventListener('click', toggle);
-      head.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
-      });
     });
     if ($('health-table')) $('health-table').style.display = '';
     const sum = $('health-summary');

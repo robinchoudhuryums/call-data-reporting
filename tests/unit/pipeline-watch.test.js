@@ -232,3 +232,42 @@ test('R8-A6: pipelineWatchRecord_ refuses watermark 0 (keeps the next run in bas
   h.fn('pipelineWatchRecord_')(props, 1234, 'ok (no new failures)');
   assert.equal(set.PIPELINE_WATCH_LAST_TS, '1234', 'real watermark stored');
 });
+
+// O-4 (broad-scan 2026-09-17): record the engine's own throw; the watermark is untouched.
+test('O-4: a throw before scanning records FAILED and leaves the watermark alone', function () {
+  resetState();
+  h.state.props.PIPELINE_WATCH_ENABLED = 'true';
+  h.state.props.PIPELINE_WATCH_LAST_TS = '2000';
+  h.state.props.PIPELINE_WATCH_LAST_RESULT = 'ok (no new failures)';
+  const real = h.ctx.pipelineWatchReadRows_;
+  h.ctx.pipelineWatchReadRows_ = function () { throw new Error('openById failed'); };
+  try { h.call('runPipelineWatch_'); } finally { h.ctx.pipelineWatchReadRows_ = real; }
+  assert.match(h.state.props.PIPELINE_WATCH_LAST_RESULT, /^FAILED \(threw before scanning\): openById failed/);
+  assert.equal(h.state.props.PIPELINE_WATCH_LAST_TS, '2000', 'watermark untouched');
+});
+
+// OD-7 (broad-scan 2026-09-17): a failure row with no readable Timestamp can be
+// neither deduped nor emailed; it used to vanish behind "ok (no new failures)".
+test('OD-7: unparseable-timestamp failure rows are counted and lead the outcome', function () {
+  const r = h.call('pipelineWatchScan_', [
+    { tsMs: 3000, status: 'success', step: 'a' },
+    { tsMs: NaN, status: 'failure', step: 'b' },
+    { tsMs: undefined, status: 'failure', step: 'c' },
+    { tsMs: undefined, status: 'success', step: 'd' },
+  ], 2000);
+  assert.equal(r.unparseableFailures, 2);
+  assert.equal(r.newFailures.length, 0);
+  assert.equal(h.call('pipelineWatchScan_', [{ tsMs: NaN, status: 'failure' }], null).unparseableFailures, 0,
+    'a baseline run never flags');
+
+  resetState();
+  h.state.props.PIPELINE_WATCH_ENABLED = 'true';
+  h.state.props.PIPELINE_WATCH_LAST_TS = '2000';
+  setRows([
+    phRow(3000, 'autoImport', 'success', ''),
+    ['pasted last week', 'buildDQE', 'failure', null, null, 'a Timestamp cell that is not a date'],
+  ]);
+  h.call('runPipelineWatch_');
+  assert.match(h.state.props.PIPELINE_WATCH_LAST_RESULT, /^UNPARSEABLE 1 failure row\(s\)/);
+  assert.equal(h.state.sentEmails.length, 0, 'nothing to email -- it cannot be deduped');
+});

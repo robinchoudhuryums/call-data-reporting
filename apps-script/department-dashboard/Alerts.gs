@@ -302,9 +302,16 @@ function runDailyAlerts_() {
   // the F-6 behavior: Mon -> Fri, else yesterday).
   const dateIso = prevBusinessDayIso_(now);
   try {
-    runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger');
+    const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger') || [];
+    // O-5 (broad-scan 2026-09-17): the alerts engine is REQUIRED yet had no
+    // outcome on the Health page (its outcomes lived only in the Alert Log +
+    // the failure email). Record an OPS-8 prefix-coded outcome: ok only when
+    // no department errored; a per-dept error leads FAILED-PARTIAL so the
+    // classifier paints it amber.
+    recordAlertsOutcome_(alertsOutcomeString_(dateIso, results));
   } catch (e) {
     Logger.log('runDailyAlerts_ failed: %s', e);
+    recordAlertsOutcome_('FAILED (threw): ' + (e && e.message ? e.message : String(e)) + ' -- assessing ' + dateIso);
     // Surface to admins via email so a silent trigger failure
     // doesn't go unnoticed.
     try {
@@ -330,6 +337,34 @@ function runDailyAlerts_() {
       });
     } catch (e2) { /* best-effort */ }
   }
+}
+
+/**
+ * O-5: pure outcome string for the daily run (tests/unit/alerts*.test.js).
+ * `ok <date>: N assessed, K fired, …` or `FAILED-PARTIAL <date>: E error(s) …`.
+ */
+function alertsOutcomeString_(dateIso, results) {
+  var counts = {};
+  (results || []).forEach(function (r) {
+    var st = String((r && r.status) || 'unknown');
+    counts[st] = (counts[st] || 0) + 1;
+  });
+  var errors = counts.error || 0;
+  var fired = counts.sent || 0;
+  var detail = Object.keys(counts).sort().map(function (k) { return counts[k] + ' ' + k; }).join(', ');
+  var head = (errors ? ('FAILED-PARTIAL ' + dateIso + ': ' + errors + ' dept error(s); ') : ('ok ' + dateIso + ': '))
+    + (results || []).length + ' dept(s) assessed, ' + fired + ' fired'
+    + (detail ? ' (' + detail + ')' : '');
+  return head + '. At ' + new Date();
+}
+
+/** O-5: the *_LAST / *_LAST_RESULT pair the Health page's outcome table reads. */
+function recordAlertsOutcome_(outcome) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty('ALERTS_LAST', new Date().toISOString());
+    props.setProperty('ALERTS_LAST_RESULT', outcome);
+  } catch (e) { /* best-effort */ }
 }
 
 /**
@@ -704,8 +739,8 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
 
     rung += aRung; answered += aAnswered; missed += aMissed;
 
-    if (aRung > 0) {
-      const aPct = (aAnswered / aRung) * 100;
+    if (answerRateDenom_(aAnswered, aMissed, aRung) > 0) {
+      const aPct = answerRatePct_(aAnswered, aMissed, aRung);   // DD-2: one formula
       if (aPct < ALERT_LOW_AGENT_THRESHOLD) {
         lowAgents.push({
           name: r.agent, rung: aRung, answered: aAnswered, missed: aMissed,
@@ -717,7 +752,7 @@ function computeDeptAnswerRateForDate_(dept, dateIso, roster) {
   lowAgents.sort(function (a, b) { return a.pct - b.pct; });
   return {
     rung: rung, answered: answered, missed: missed,
-    pct: rung > 0 ? (answered / rung) * 100 : 0,
+    pct: answerRatePct_(answered, missed, rung),   // DD-2: one formula (ANSWER_RATE_FORMULA)
     lowAgents: lowAgents,
   };
 }
@@ -842,6 +877,7 @@ function neonAlertConfigRawValues_() {
     const stmt = conn.createStatement();
     const rs = stmt.executeQuery(sql);
     const json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'config');   // OD-3
     rs.close(); stmt.close();
     return JSON.parse(json || '[]').map(function (r) {
       return [r.department || '', r.threshold == null ? '' : r.threshold,
@@ -1046,8 +1082,11 @@ function sheetUpsertAlertConfigRow_(rec) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
   if (!sheet) throw new Error('Alert Config sheet missing -- run setup().');
-  const row = [rec.department, rec.thresholdRaw, (rec.extraRecipients || []).join(', '),
-               rec.active ? 'TRUE' : 'FALSE', rec.notes || '', rec.skipDatesRaw || ''];
+  // A-4: the department is a validated roster header and the threshold a
+  // validated number; the recipients, notes and skip-dates are admin free
+  // text and go through sheetSafeCell_ like every other config writer.
+  const row = [rec.department, rec.thresholdRaw, sheetSafeCell_((rec.extraRecipients || []).join(', ')),
+               rec.active ? 'TRUE' : 'FALSE', sheetSafeCell_(rec.notes || ''), sheetSafeCell_(rec.skipDatesRaw || '')];
   const lastRow = sheet.getLastRow();
   let found = -1;
   if (lastRow >= 2) {
@@ -1120,9 +1159,11 @@ function appendAlertLog_(rec, triggeredBy, dateChecked) {
     rec.threshold,
     rec.answerRate == null ? '' : rec.answerRate,
     rec.status === 'sent' ? 'TRUE' : 'FALSE',
-    (rec.recipients || []).join(', '),
-    triggeredBy || '',
-    rec.notes || '',
+    // A-4: recipients come from config free text, triggeredBy carries the
+    // previewing admin's email, notes carry error text -- all neutralized.
+    sheetSafeCell_((rec.recipients || []).join(', ')),
+    sheetSafeCell_(triggeredBy || ''),
+    sheetSafeCell_(rec.notes || ''),
     rec.status,
   ]);
 }

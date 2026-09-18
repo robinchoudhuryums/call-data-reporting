@@ -9,6 +9,15 @@
 
 // -- Auth (was Alerts.gs) -------------------------------------------------
 
+// Trigger identity (O-3, broad-scan 2026-09-17): an installable time trigger
+// runs as the user who INSTALLED it, and Session.getActiveUser() resolves that
+// owner inside the trigger -- CacheWarm.gs calls these gated public functions
+// from its trigger by design, and F-27 measured warm runs attributed to the
+// installing admin. Engines that split out a gate-free `_` core do so to
+// decouple from the RPC gate, not because the identity is missing. Every
+// installer is assertAdmin_-gated, so the trigger owner is an admin at
+// install time; an owner later removed from ADMIN_EMAILS surfaces as a
+// recorded FAILED outcome on the Health page, never a silent no-op.
 function assertAdmin_() {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
@@ -380,6 +389,27 @@ function prevBusinessDayIso_(now) {
 }
 
 /**
+ * O-2 (broad-scan 2026-09-17): the last BUSINESS day on or before `iso`
+ * (weekends + company holidays walked back, bounded at 14 steps). A
+ * zero-activity day writes no DQE rows, so a window that ENDS on a Saturday
+ * (a month ending on a weekend) or a Friday holiday is complete once the
+ * last business day's data landed -- the digest freshness gate compares
+ * against this, never the calendar end date.
+ */
+function lastBusinessDayOnOrBeforeIso_(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return String(iso || '');
+  let d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+  for (let i = 0; i < 14; i++) {
+    const dow = d.getDay();
+    const cur = Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+    if (dow !== 0 && dow !== 6 && !isCompanyHoliday_(cur)) return cur;
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, 12);
+  }
+  return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+}
+
+/**
  * Parses a skip/holiday spec into an array of {from, to} ISO ranges.
  * Accepts single dates (`2026-12-25`), inclusive `..` ranges, comma
  * lists of either, and whitespace anywhere. Malformed tokens are
@@ -611,7 +641,10 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
   // mid-backfill, and vice versa right after a rebuild).
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to + ':' + dqeSource + ':' + reportFreshnessTag_();
+  // D-7 (broad-scan 2026-09-17): the roster joins the key (R45's rule) -- an
+  // Orphan-Fix "add to roster" was invisible to the pickers for up to 6 h.
+  const cacheKey = 'individual_active:v2:' + dept + ':' + from + ':' + to + ':' + dqeSource + ':' + reportFreshnessTag_()
+                 + ':' + hashAgents_((roster && roster.names) || []);
   const cached = cache.get(cacheKey);
   if (cached) {
     try { return JSON.parse(cached); } catch (e) { /* recompute */ }

@@ -109,6 +109,52 @@ function appEmailBcc_(msg) {
   return out.join(',');
 }
 
+// ── DD-2 (broad-scan 2026-09-17): ONE answer-rate formula ──────────────────
+//
+// Two formulas were live. The My Department table, the agent app and
+// team-tools (H2) compute Answer % as answered / (answered + missed); IR,
+// Insights, the Overview tiles/trends/WoW, the low-answer-rate Alerts and
+// the Digest computed answered / rung. The build flags a window leg Missed
+// or Answered INDEPENDENTLY, so rung can exceed answered + missed and the
+// two rates differ -- an alert could fire on a rate the manager's table did
+// not show. Every server surface now routes through answerRatePct_, whose
+// denominator is chosen by ONE switch:
+//
+//   ANSWER_RATE_FORMULA  (Script Property, Operator State #69)
+//     'rung'        -- answered / rung            (default: today's behaviour)
+//     'answerable'  -- answered / (answered+missed) (the H2 standard)
+//
+// The default is 'rung' so this deploy changes NO number; run
+// probeAnswerRateFormulas() (Diagnostics.gs) to see both rates per dept over
+// a window, then flip the property. The table and the agent app already ARE
+// the H2 standard and are not switched. Memoized per execution (a suite that
+// sets the property must reset ANSWER_RATE_FORMULA_MEMO_). Every cache that
+// embeds a rate carries answerRateCacheTag_() so a flip cannot serve the
+// other formula's payload for the TTL (the CORE-3 pattern).
+var ANSWER_RATE_FORMULA_MEMO_ = null;
+function getAnswerRateFormula_() {
+  if (ANSWER_RATE_FORMULA_MEMO_) return ANSWER_RATE_FORMULA_MEMO_;
+  var v = 'rung';
+  try {
+    var raw = String(PropertiesService.getScriptProperties().getProperty('ANSWER_RATE_FORMULA') || '').toLowerCase().trim();
+    if (raw === 'answerable') v = 'answerable';
+  } catch (e) { v = 'rung'; }
+  ANSWER_RATE_FORMULA_MEMO_ = v;
+  return v;
+}
+/** The denominator the active formula uses (0 when there is nothing to rate). */
+function answerRateDenom_(answered, missed, rung) {
+  var a = Number(answered) || 0, m = Number(missed) || 0, r = Number(rung) || 0;
+  return getAnswerRateFormula_() === 'answerable' ? (a + m) : r;
+}
+/** Answer % (0-100, unrounded) under the active formula; 0 when the denominator is 0. */
+function answerRatePct_(answered, missed, rung) {
+  var d = answerRateDenom_(answered, missed, rung);
+  return d > 0 ? ((Number(answered) || 0) / d) * 100 : 0;
+}
+/** Cache-key suffix for every payload that embeds a rate. */
+function answerRateCacheTag_() { return 'rf-' + getAnswerRateFormula_(); }
+
 // Sheet names. Roster sheet is the existing "DO NOT EDIT!" tab; the
 // Access Control sheet is auto-created by setup_() on first run if
 // missing. Queue extensions are parsed inline from the roster cells
@@ -673,6 +719,22 @@ const CSR_TRANSFER_DATE_COL_ = 3;           // C (1-indexed) -- the window filte
 // SECRET keys must never have their VALUES rendered on any surface — the
 // inventory shows key names only, and prop-registry.test.js pins that the
 // Health payload never contains a secret's value.
+// D-5 (broad-scan 2026-09-17; lives in Config.gs so every selective-load suite sees it): per-execution flag set by the two QCD snapshot
+// helpers when their read THREW (both swallow the throw and return a partial /
+// null snapshot so the page still renders). The cache puts that embed a
+// snapshot -- companyOverview, overviewChartYtd, summary -- check it and SKIP
+// the put, the `deptConfigReadFailed_` pattern: a transient throw in the
+// 23k-row QCD read otherwise pinned an Overview with no QCD chips and a My
+// Department with no Queue panel for the 6 h TTL. `var` so a harness can
+// reset it between fixture swaps.
+var QCD_SNAPSHOT_READ_FAILED_ = false;
+function noteQcdSnapshotReadFailed_(where, e) {
+  QCD_SNAPSHOT_READ_FAILED_ = true;
+  Logger.log('%s failed (snapshot degraded; caches that embed it will NOT be written this execution): %s',
+    where, (e && e.message) ? e.message : e);
+}
+function qcdSnapshotReadFailed_() { return !!QCD_SNAPSHOT_READ_FAILED_; }
+
 var PROP_REGISTRY_ = Object.freeze({
   secret: Object.freeze({ NEON_PASS: true, HMAC_SECRET: true }),
   exact: Object.freeze({
@@ -711,6 +773,9 @@ var PROP_REGISTRY_ = Object.freeze({
     QCD_ALLDEPT_BUDGET_MS: 'operator',
     // engine — outcome/state the code writes itself
     CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
+    ALERTS_LAST: 'engine', ALERTS_LAST_RESULT: 'engine',   // O-5: the daily alerts outcome
+    ANSWER_RATE_FORMULA: 'config',                          // DD-2: 'rung' (default) | 'answerable' (H2)
+    ANSWER_RATE_PROBE_FROM: 'tool', ANSWER_RATE_PROBE_TO: 'tool',   // DD-2: probeAnswerRateFormulas window
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
     COACHING_NOTIFY_PENDING: 'engine',
     DQE_SILENCE_WATCH_LAST: 'engine', DQE_SILENCE_WATCH_LAST_RESULT: 'engine',

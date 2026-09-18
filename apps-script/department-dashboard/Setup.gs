@@ -37,8 +37,8 @@
  *                            itself; rewritten here and by the standards /
  *                            Dept Config editors -- Operator State #37/#68)
  *
- * Safe to re-run; existing sheets are left untouched (no data
- * overwritten).
+ * Safe to re-run; existing sheets keep every row (no data overwritten);
+ * only BLANK header cells are filled in (OD-8, `healSheetHeaders_` below).
  *
  * After running, populate Access Control with manager emails and
  * Alert Config with one row per dept that should receive alerts.
@@ -106,8 +106,16 @@ function setup() {
 }
 
 /**
- * Creates a sheet with the given headers if missing. No-op if the
- * sheet already exists (we never overwrite existing rows).
+ * Creates a sheet with the given headers if missing. If the sheet already
+ * exists its ROWS are never touched, but its HEADER row is HEALED (OD-8,
+ * 2026-09-17): a column appended to a schema after the sheet was created
+ * (Access Control's Role / Agent Name, Dept Config's Inbound queue aliases /
+ * Final dept labels) used to stay header-less forever, because setup() only
+ * wrote headers on CREATE and the Health page checks presence only. Healing
+ * = widen the grid if narrower (REP-10) and fill BLANK header cells from the
+ * schema; a NON-blank cell that differs from the schema is left alone and
+ * logged (an operator relabel is not a defect, and INV-12 says setup() never
+ * overwrites). The `acEnsureSchema_` pattern (Auth.gs), generalized.
  * `textCols` (optional, 1-based) are plain-text (`@`) pinned below the header
  * ONCE, at creation -- the team-tools getOrCreateQaSheet_ shape: a column that
  * holds date-shaped or comma-joined strings must never be coerced on entry,
@@ -116,7 +124,10 @@ function setup() {
 function ensureSheet_(ss, name, headers, textCols) {
   let sheet = ss.getSheetByName(name);
   if (sheet) {
-    Logger.log('Sheet "%s" already exists, skipping.', name);
+    const heal = healSheetHeaders_(sheet, headers);
+    Logger.log('Sheet "%s" already exists, skipping%s%s.', name,
+      heal.healed.length ? ' (healed blank header(s): ' + heal.healed.join(', ') + ')' : '',
+      heal.differing.length ? ' (left as-is, differs from schema: ' + heal.differing.join(', ') + ')' : '');
     return sheet;
   }
   sheet = ss.insertSheet(name);
@@ -132,4 +143,29 @@ function ensureSheet_(ss, name, headers, textCols) {
   });
   Logger.log('Created sheet "%s".', name);
   return sheet;
+}
+
+/**
+ * OD-8: fills BLANK header cells of an existing managed sheet from `headers`
+ * (widening the grid first when it is narrower than the schema). Non-blank
+ * cells are never rewritten -- they are reported in `differing` when they do
+ * not match the schema. Idempotent. Returns { healed: [...], differing: [...] }.
+ */
+function healSheetHeaders_(sheet, headers) {
+  const want = headers.length;
+  const out = { healed: [], differing: [] };
+  if (sheet.getMaxColumns() < want) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), want - sheet.getMaxColumns());
+  }
+  const have = sheet.getRange(1, 1, 1, want).getValues()[0];
+  for (let i = 0; i < want; i++) {
+    const cur = String(have[i] == null ? '' : have[i]).trim();
+    if (cur === '') {
+      sheet.getRange(1, i + 1).setValue(headers[i]);
+      out.healed.push(headers[i]);
+    } else if (cur !== headers[i]) {
+      out.differing.push('col ' + (i + 1) + ' "' + cur + '" (schema: "' + headers[i] + '")');
+    }
+  }
+  return out;
 }

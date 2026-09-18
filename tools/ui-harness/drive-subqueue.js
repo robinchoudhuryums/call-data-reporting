@@ -156,6 +156,31 @@ async function openDeptThirtyDays(page) {
   record('re-expanding restores every agent row', reExpanded === beforeRows,
     beforeRows + ' -> ' + reExpanded);
 
+  // C1-13: the header row announces itself as a button (role + tabindex),
+  // so Enter must collapse it exactly as a click does -- it did nothing
+  // until the tbody keydown handler learned the group-head row.
+  await page.evaluate(() => {
+    const h = document.querySelector('#agents-tbody tr.subq-group-head');
+    if (h) h.focus();
+  });
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  const keyCollapsed = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#agents-tbody tr[data-agent]').length,
+    collapsed: document.querySelectorAll('#agents-tbody tr.subq-group-head[aria-expanded="false"]').length,
+  }));
+  record('Enter on a focused group header collapses it (keyboard parity with the click)',
+    keyCollapsed.rows < beforeRows && keyCollapsed.collapsed === 1, JSON.stringify(keyCollapsed));
+  await page.evaluate(() => {
+    const h = document.querySelector('#agents-tbody tr.subq-group-head[aria-expanded="false"]');
+    if (h) h.focus();
+  });
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(400);
+  const keyReExpanded = await page.evaluate(() =>
+    document.querySelectorAll('#agents-tbody tr[data-agent]').length);
+  record('Space re-expands it', keyReExpanded === beforeRows, beforeRows + ' -> ' + keyReExpanded);
+
   // ---- aggregate rows must be visually DISTINCT from agent rows -----------
   // Owner round: the totals and per-dept subtotals read like another agent row.
   // Asserting the rendered font-size/bar-height rather than a class, because a

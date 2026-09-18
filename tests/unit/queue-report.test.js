@@ -1125,7 +1125,10 @@ test('D-1: the Health classifier treats EMPTY as needs-attention (the O-9 NO-SUB
   assert.equal(classify('Sent 2026-07-10 to 3 subscribers at Fri Jul 10'), false);
   const src = require('fs').readFileSync(
     require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'SystemHealth.gs'), 'utf8');
-  assert.ok(src.indexOf("/^EMPTY\\b/.test(res || '')") !== -1, 'SystemHealth.gs carries the EMPTY arm');
+  // O-9 (broad-scan 2026-09-17): the classifier is now the table-driven
+  // healthOutcomeIsBad_; the EMPTY arm lives in HEALTH_BAD_PREFIXES_.
+  const tbl = src.slice(src.indexOf('HEALTH_BAD_PREFIXES_ = '), src.indexOf(']', src.indexOf('HEALTH_BAD_PREFIXES_ = ')));
+  assert.ok(/'EMPTY'/.test(tbl), 'SystemHealth.gs HEALTH_BAD_PREFIXES_ carries EMPTY');
 });
 
 // ── R43: a PARTIAL all-dept compute never reaches a subscriber ─────────────

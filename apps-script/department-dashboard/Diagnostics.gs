@@ -722,3 +722,85 @@ function auditQueueSplitAttribution() {
       + 'another dept\'s calls, which is the fix working.');
   }
 }
+
+
+// ── DD-2: the answer-rate formula probe ──────────────────────────────────────
+//
+// Editor-run, admin-gated, READ-ONLY. Two Answer % formulas were live (see
+// Config.gs::getAnswerRateFormula_): answered / rung on IR, Insights, the
+// Overview, Alerts and the Digest; answered / (answered + missed) on the My
+// Department table, the agent app and team-tools (the H2 standard). This
+// prints BOTH per department over a window -- the totals, the legs that are
+// neither Answered nor Missed (the difference), the two rates, the gap in
+// points, the worst per-agent gap, and whether the dept's display standard
+// verdict would change -- so the owner can flip ANSWER_RATE_FORMULA (Operator
+// State #69) knowing what moves. Window: ANSWER_RATE_PROBE_FROM/_TO (ISO), or
+// the 30 days ending yesterday. Writes nothing; the params are not cleared.
+
+/** Pure row (tests/unit/answer-rate-formula.test.js). */
+function answerRateProbeRow_(dept, totals, rows, target) {
+  var rung = Number(totals && totals.totalRung) || 0;
+  var answered = Number(totals && totals.totalAnswered) || 0;
+  var missed = Number(totals && totals.totalMissed) || 0;
+  var rateRung = rung > 0 ? (answered / rung) * 100 : 0;
+  var rateAns = (answered + missed) > 0 ? (answered / (answered + missed)) * 100 : 0;
+  var worst = null;
+  (rows || []).forEach(function (r) {
+    var aR = Number(r.totalRung) || 0, aA = Number(r.totalAnswered) || 0, aM = Number(r.totalMissed) || 0;
+    if (aR <= 0 || (aA + aM) <= 0) return;
+    var d = ((aA / (aA + aM)) - (aA / aR)) * 100;
+    if (!worst || Math.abs(d) > Math.abs(worst.deltaPts)) worst = { agent: r.agent, deltaPts: Math.round(d * 10) / 10 };
+  });
+  var tgt = (target == null) ? null : Number(target);
+  return {
+    dept: dept, rung: rung, answered: answered, missed: missed,
+    neither: Math.max(0, rung - answered - missed),
+    rateRung: Math.round(rateRung * 10) / 10,
+    rateAnswerable: Math.round(rateAns * 10) / 10,
+    deltaPts: Math.round((rateAns - rateRung) * 10) / 10,
+    worstAgent: worst,
+    target: tgt,
+    meetsTargetRung: tgt == null ? null : rateRung >= tgt,
+    meetsTargetAnswerable: tgt == null ? null : rateAns >= tgt,
+    verdictChanges: tgt != null && ((rateRung >= tgt) !== (rateAns >= tgt)),
+  };
+}
+
+function probeAnswerRateFormulas() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var to = String(props.getProperty('ANSWER_RATE_PROBE_TO') || '').trim();
+  var from = String(props.getProperty('ANSWER_RATE_PROBE_FROM') || '').trim();
+  if (!isIsoDate_(to)) to = Utilities.formatDate(new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
+  if (!isIsoDate_(from) || from > to) {
+    var p = to.split('-');
+    var f = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) - 29, 12);
+    from = Utilities.formatDate(f, TZ, 'yyyy-MM-dd');
+  }
+  var out = { from: from, to: to, active: getAnswerRateFormula_(), depts: [], verdictChanges: [], maxDeltaPts: 0 };
+  getAllDepartments_().forEach(function (dept) {
+    var summary;
+    try { summary = computeSummary_(dept, from, to, 'roster'); }
+    catch (e) { out.depts.push({ dept: dept, error: String(e && e.message || e) }); return; }
+    var target = null;
+    try { target = getAnswerStandardFor_(dept).target; } catch (e) { target = null; }
+    var row = answerRateProbeRow_(dept, summary.totals || {}, summary.rows || [], target);
+    out.depts.push(row);
+    if (Math.abs(row.deltaPts) > Math.abs(out.maxDeltaPts)) out.maxDeltaPts = row.deltaPts;
+    if (row.verdictChanges) out.verdictChanges.push(dept);
+  });
+  Logger.log('probeAnswerRateFormulas %s..%s (active formula: %s)', from, to, out.active);
+  Logger.log('dept | rung | answered | missed | neither | %%(rung) | %%(answerable) | delta pts | worst agent | target | verdict changes?');
+  out.depts.forEach(function (r) {
+    if (r.error) { Logger.log('%s | ERROR %s', r.dept, r.error); return; }
+    Logger.log('%s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s',
+      r.dept, r.rung, r.answered, r.missed, r.neither, r.rateRung, r.rateAnswerable, r.deltaPts,
+      r.worstAgent ? (r.worstAgent.agent + ' ' + r.worstAgent.deltaPts) : '-',
+      r.target == null ? '-' : r.target, r.verdictChanges ? 'YES' : 'no');
+  });
+  Logger.log('Largest dept gap: %s pts. Depts whose standard verdict flips: %s. '
+    + 'To adopt the H2 formula set ANSWER_RATE_FORMULA=answerable (Operator State #69); '
+    + 'if a gap here is bigger than the alert band, re-tune that dept\'s threshold first.',
+    out.maxDeltaPts, out.verdictChanges.length ? out.verdictChanges.join(', ') : 'none');
+  return logStatusReturn_(out);
+}

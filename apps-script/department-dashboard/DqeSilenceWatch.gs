@@ -191,9 +191,20 @@ function dqeSilenceAssess_(perDept, prevStreaks, opts, dateIso) {
       if (prev) streaks[d.dept] = prev;
       return;
     }
-    var s = prev
-      ? { since: prev.since, days: prev.days + 1, calls: prev.calls + d.qcdCalls, alerted: !!prev.alerted }
-      : { since: dateIso, days: 1, calls: d.qcdCalls, alerted: false };
+    // O-8 (broad-scan 2026-09-17): a per-DATE claim. Each streak carries the
+    // last assessed date; re-assessing the SAME date (an editor re-run of the
+    // handler, or a re-install inside the trigger hour) carries the streak
+    // forward unchanged instead of counting the day twice -- which crossed the
+    // default 2-day threshold on a one-day episode and emailed an alert the
+    // header says must not fire.
+    var s;
+    if (prev && prev.lastIso === dateIso) {
+      s = { since: prev.since, days: prev.days, calls: prev.calls, alerted: !!prev.alerted, lastIso: dateIso };
+    } else {
+      s = prev
+        ? { since: prev.since, days: prev.days + 1, calls: prev.calls + d.qcdCalls, alerted: !!prev.alerted, lastIso: dateIso }
+        : { since: dateIso, days: 1, calls: d.qcdCalls, alerted: false, lastIso: dateIso };
+    }
     if (!s.alerted && s.days >= opts.minDays && s.calls >= opts.minCalls) {
       s.alerted = true;
       alerts.push({ dept: d.dept, since: s.since, days: s.days, calls: s.calls });

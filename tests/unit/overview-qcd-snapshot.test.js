@@ -269,3 +269,56 @@ test('L4: the snapshot read window starts at priorFrom when it precedes from and
       'the read starts at priorFrom, not min(from, 180d lookback)');
   } finally { h.ctx.readQcdGrid_ = realGrid; }
 });
+
+// D-1 (broad-scan 2026-09-17): the month start was `new Date(y, m, 1)` -- a
+// SCRIPT-TZ midnight instant -- formatted in the SPREADSHEET's TZ. Chicago is
+// CDT (UTC-5) from March to November while Mexico City stays UTC-6, so that
+// instant rendered as the previous month's LAST day and every "viol MTD" chip
+// and Insights violationsMtd on the sheet path counted it. The F-14 test above
+// passed 'America/Chicago' as ssTZ (same-tz) and so could not see it. This
+// pins the live pair under a DST-month clock.
+function atInstant_(isoUtc, fn) {
+  const RealDate = h.ctx.Date;
+  const fixed = RealDate.parse(isoUtc);
+  function FakeDate() {
+    if (arguments.length === 0) return new RealDate(fixed);
+    return new RealDate(...arguments);
+  }
+  FakeDate.prototype = RealDate.prototype;
+  FakeDate.UTC = RealDate.UTC;
+  FakeDate.parse = RealDate.parse;
+  FakeDate.now = function () { return fixed; };
+  h.ctx.Date = FakeDate;
+  try { return fn(); } finally { h.ctx.Date = RealDate; }
+}
+
+test('D-1: MTD violations start on the 1st in the SCRIPT TZ, never the sheet-TZ render of a script-midnight instant', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: {
+      'QCD Historical Data': [QCD_HEADER,
+        qcdRow('2026-08-31', q, 7),   // last day of the PREVIOUS month -- must NOT count
+        qcdRow('2026-09-01', q, 3),   // first of the current month -- must count
+        qcdRow('2026-09-10', q, 2),
+      ],
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  // Sept 15 2026, 18:00 UTC = 13:00 CDT = 12:00 Mexico City: a DST-split day.
+  atInstant_('2026-09-15T18:00:00Z', function () {
+    assert.equal(h.call('mtdStartIso_'), '2026-09-01', 'the shared resolver is a script-TZ calendar string');
+    // The live pair: script America/Chicago (shim), spreadsheet America/Mexico_City.
+    const out = h.call('computeQcdSnapshots_', ['CSR'], '2026-09-16', 'America/Mexico_City');
+    assert.ok(out.CSR, 'CSR snapshot exists');
+    assert.equal(out.CSR.violationsMtd, 5, 'Sep 1 + Sep 10 only; Aug 31 (7) must not leak in');
+    // The same rule through the Insights / QCD-report helper.
+    const grid = [qcdRow('2026-08-31', q, 7), qcdRow('2026-09-01', q, 3), qcdRow('2026-09-10', q, 2)];
+    assert.equal(h.call('computeMtdViolations_', 'CSR', grid, 'America/Mexico_City'), 5);
+  });
+});

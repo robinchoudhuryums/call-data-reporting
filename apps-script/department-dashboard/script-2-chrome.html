@@ -212,9 +212,11 @@
     // clamp runs BEFORE the debounced refresh so the fetch already carries
     // the corrected window (clamping after would fire two requests).
     $('from-date').addEventListener('change', function () {
+      datesTouched_ = true;   // C1-2: the init latest-date snap must not undo a user pick
       clearActivePreset_(); clampDeptToDate_(); refreshOnDateEdit_();
     });
     $('to-date').addEventListener('change', function () {
+      datesTouched_ = true;
       clearActivePreset_(); clampDeptToDate_(); refreshOnDateEdit_();
     });
 
@@ -396,6 +398,12 @@
       // markup), so it is wired exactly once like the click handler above.
       agentsTbody.addEventListener('keydown', function (e) {
         if (e.key !== 'Enter' && e.key !== ' ') return;
+        // C1-13: the sub-queue GROUP header row carries role=button +
+        // tabindex too, but only the document-delegated CLICK handler
+        // (script-5) toggles it -- so Enter/Space announced a button that
+        // did nothing. Re-dispatch as a click so the one toggle path runs.
+        const ghead = e.target.closest('tr.subq-group-head');
+        if (ghead) { e.preventDefault(); ghead.click(); return; }
         if (!e.target.closest('tr[data-agent]')) return;
         e.preventDefault();
         agentRowDrill_(e);
@@ -466,8 +474,15 @@
         const dqe = dates && dates.dqe ? dates.dqe : null;
         if (dqe) {
           latestDqeIso_ = dqe;   // the Overview question-launcher reuses this
-          $('from-date').value = dqe;
-          $('to-date').value = dqe;
+          // C1-2 (broad-scan 2026-09-17): this snap is async and can land
+          // AFTER the user has already picked a window (a preset chip, a typed
+          // date, a chart-point deep link) -- overwriting it with the latest
+          // day and re-fetching a range they did not ask for. Snap only while
+          // the controls still hold the untouched default.
+          if (!datesTouched_) {
+            $('from-date').value = dqe;
+            $('to-date').value = dqe;
+          }
         }
         // Latest QCD day drives the Daily Call Queue Report's default
         // date, so a Monday/holiday open lands on real data instead of
@@ -480,7 +495,18 @@
         setFreshnessPill_(dates || null);
         refresh();
       })
-      .withFailureHandler(function () { refresh(); })
+      .withFailureHandler(function (err) {
+        // C1-9 (broad-scan 2026-09-17): this failure used to be SILENT -- the
+        // page just loaded on today's range with no freshness pill and no
+        // clamp, which reads as "no calls today" rather than "the date lookup
+        // failed". Say so once; the range fallback is unchanged.
+        showToast('Couldn\u2019t read the latest data date \u2014 showing today\u2019s range. '
+          + 'Pick a date to continue.' , 'error', 8000);
+        if (typeof reportClientIssue_ === 'function') {
+          reportClientIssue_('load-failure', 'getLatestDataDates failed: ' + (err && err.message ? err.message : String(err)));
+        }
+        refresh();
+      })
       .getLatestDataDates();
 
     // Default landing page is the Overview. Calling setPage here
@@ -496,13 +522,20 @@
   // controls row is the only consumer now.) onPick receives { from, to }.
   function buildDatePresetChips_(wrap, onPick) {
     if (!wrap) return;
+    // C1-3 (broad-scan 2026-09-17): the chips resolve through the ONE shared
+    // resolver (datePresetRange_, script-1-core) like every other preset
+    // surface -- this strip was a seventh local copy whose "This month" ended
+    // TODAY, the empty-day dilution the rule exists to prevent, and the
+    // date-presets tripwire did not watch this fragment. It does now.
     var presets = [
-      { label: 'Yesterday', fn: function () { var d = daysAgo_(1); return { from: d, to: d }; } },
-      { label: 'Last 7 days', fn: function () { return { from: daysAgo_(7), to: daysAgo_(1) }; } },
-      { label: 'Last 30 days', fn: function () { return { from: daysAgo_(30), to: daysAgo_(1) }; } },
-      { label: 'This month', fn: function () { var t = new Date(); return { from: isoDate_(new Date(t.getFullYear(), t.getMonth(), 1)), to: isoDate_(t) }; } },
-      { label: 'Last month', fn: function () { var t = new Date(); var f = new Date(t.getFullYear(), t.getMonth() - 1, 1); var l = new Date(t.getFullYear(), t.getMonth(), 0); return { from: isoDate_(f), to: isoDate_(l) }; } },
-    ];
+      { label: 'Yesterday',    key: 'yesterday' },
+      { label: 'Last 7 days',  key: 'last7' },
+      { label: 'Last 30 days', key: 'last30' },
+      { label: 'This month',   key: 'thisMonth' },
+      { label: 'Last month',   key: 'lastMonth' },
+    ].map(function (p) {
+      return { label: p.label, fn: function () { return datePresetRange_(p.key); } };
+    });
     presets.forEach(function (p) {
       var chip = document.createElement('button');
       chip.type = 'button';
@@ -625,8 +658,13 @@
       }, 6000);
     }
   }
+  // C1-2: true once the user has picked a window by any means (typed dates,
+  // a preset chip, an Overview chart-point deep link). The async init
+  // latest-date snap checks it before writing the From/To defaults.
+  var datesTouched_ = false;
   function initDatePresets_() {
     buildDatePresetChips_($('date-presets'), function (r) {
+      datesTouched_ = true;
       $('from-date').value = r.from;
       $('to-date').value = r.to;
       clampDeptToDate_();

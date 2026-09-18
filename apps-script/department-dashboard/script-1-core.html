@@ -1002,6 +1002,10 @@
       if (items.length) items[0].focus();
     });
     menu.addEventListener('keydown', function (e) {
+      // C2-12: a menu that carries a text field (the Insights Views save
+      // row) must keep Home/End/arrows for the caret; only Escape applies.
+      var t = e.target;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && e.key !== 'Escape') return;
       var items = items_();
       if (!items.length) return;
       var idx = items.indexOf(document.activeElement);
@@ -1162,9 +1166,10 @@
       var overlay = document.createElement('div');
       overlay.className = 'ds-confirm-overlay';
       overlay.innerHTML =
-          '<div class="ds-confirm' + toneCls + '" role="alertdialog" aria-modal="true">'
-        +   '<div class="ds-confirm-title">' + escapeHtml(o.title || 'Please confirm') + '</div>'
-        +   '<div class="ds-confirm-body">' + (o.messageHtml || escapeHtml(o.message || '')) + '</div>'
+          '<div class="ds-confirm' + toneCls + '" role="alertdialog" aria-modal="true"'
+        +     ' aria-labelledby="ds-confirm-title" aria-describedby="ds-confirm-body">'
+        +   '<div class="ds-confirm-title" id="ds-confirm-title">' + escapeHtml(o.title || 'Please confirm') + '</div>'
+        +   '<div class="ds-confirm-body" id="ds-confirm-body">' + (o.messageHtml || escapeHtml(o.message || '')) + '</div>'
         +   '<div class="ds-confirm-actions">'
         +     '<button type="button" class="btn btn-secondary ds-confirm-cancel">' + escapeHtml(o.cancelLabel || 'Cancel') + '</button>'
         +     '<button type="button" class="btn ds-confirm-ok' + toneCls + '">' + escapeHtml(o.confirmLabel || 'Confirm') + '</button>'
@@ -1230,7 +1235,7 @@
       var overlay = document.createElement('div');
       overlay.className = 'ds-confirm-overlay';
       overlay.innerHTML =
-          '<div class="ds-confirm' + toneCls + '" role="dialog" aria-modal="true">'
+          '<div class="ds-confirm' + toneCls + '" role="dialog" aria-modal="true" aria-labelledby="ds-prompt-title">'
         +   '<div class="ds-confirm-title" id="ds-prompt-title">' + escapeHtml(o.title || 'Enter a value') + '</div>'
         +   '<div class="ds-confirm-body">' + (o.messageHtml || escapeHtml(o.message || '')) + '</div>'
         +   '<label class="ds-prompt-label" for="ds-prompt-input">' + escapeHtml(o.label || '') + '</label>'
@@ -1313,7 +1318,7 @@
    * "Xh ago" is computed from end-of-day on the latest date in the
    * user's local TZ (close enough -- the ingest typically lands
    * the morning after the calendar day it covers).  Pill goes
-   * orange when 36h+ have passed since the latest date's end-of-
+   * amber (`.is-stale`, the `--stale` token) when 36h+ have passed since the latest date's end-of-
    * day, which is the empirical threshold above which the operator
    * usually wants to investigate.
    */

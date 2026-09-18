@@ -63,6 +63,7 @@ function install(acRows, parents) {
   });
   if (h.state.cache && h.state.cache.clear) h.state.cache.clear();
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DEPT_CONFIG_READ_FAILED_ = false;
 }
 
 // -- the happy path ----------------------------------------------------------
@@ -154,6 +155,29 @@ test('FAIL CLOSED: an unreadable parent map leaves the assignment unchanged', fu
   const u = h.call('resolveUser_', 'm@x.com');
   deepEqual(u.departments, ['Parent'],
     'auth must never widen -- or break -- because a config read failed');
+});
+
+// A-7 (broad-scan 2026-09-17): the sheet reader never THROWS on a failed read
+// -- it logs, flags DEPT_CONFIG_READ_FAILED_ and serves the seed CONSTANT -- so
+// the try/catch above was the only "fail closed" and it never fired: a
+// transient 'Service Spreadsheets timed out' expanded from the constant map
+// instead. The seeded PAP -> Sales edge makes the difference observable.
+test('A-7 FAIL CLOSED: a Dept Config read that ERRORS confers no expansion, even from the seed constant', function () {
+  install([['m@x.com', 'Sales', '']], {});
+  const roster = h.state.spreadsheet.getSheetByName('DO NOT EDIT!');
+  roster._data[0] = roster._data[0].concat(['Sales', 'PAP']);
+  // Control: a healthy read of an EMPTY sheet falls back to the constant, which expands.
+  deepEqual(h.call('resolveUser_', 'm@x.com').departments, ['Sales', 'PAP'],
+    'control: the seeded edge expands on a healthy read');
+  // Now the read ERRORS (the R8-C4 shape), and the memo + auth cache are cold.
+  h.state.cache.clear();
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const dc = h.state.spreadsheet.getSheetByName('Dept Config');
+  dc.getLastRow = function () { throw new Error('Service Spreadsheets timed out'); };
+  const u = h.call('resolveUser_', 'm@x.com');
+  assert.equal(h.ctx.DEPT_CONFIG_READ_FAILED_, true, 'precondition: the read did fail');
+  deepEqual(u.departments, ['Sales'], 'an errored config read is not a config: no expansion');
+  deepEqual(u.assignedDepartments, ['Sales']);
 });
 
 // -- roles that must not change ---------------------------------------------
@@ -428,4 +452,98 @@ test('picker: an unreadable parent map yields no groups rather than throwing', f
   installPicker({}, {}, {});
   hUtil.ctx.subQueueChildMap_ = function () { throw new Error('boom'); };
   deepEqual(hUtil.call('computeSubQueuePickerGroups_', 'Sales', '2026-06-01', '2026-06-08'), []);
+});
+
+// ---- Batch 4 (broad-scan 2026-09-17): D-6 + D-9 ---------------------------
+
+test('D-6: the combined grand total UNIONS active days and carries ansPerDay', function () {
+  function withDays(p, days) {
+    Object.defineProperty(p.totals, 'activeDayKeys', { value: days, enumerable: false });
+    return p;
+  }
+  const a = withDays(part('Sales', [{ agent: 'A', totalRung: 10, totalMissed: 2, totalAnswered: 8, totalUnique: 9, tttSeconds: 100, matchedViaRoster: true }],
+    { totalRung: 10, totalMissed: 2, totalAnswered: 8, totalUnique: 9, tttSeconds: 100,
+      rosterAgentCount: 1, queueOnlyAgentCount: 0, daysActive: 2, ansPerDay: 4 }),
+    ['2026-09-01', '2026-09-02']);
+  const b = withDays(part('PAP', [{ agent: 'C', totalRung: 4, totalMissed: 1, totalAnswered: 3, totalUnique: 4, tttSeconds: 40, matchedViaRoster: true }],
+    { totalRung: 4, totalMissed: 1, totalAnswered: 3, totalUnique: 4, tttSeconds: 40,
+      rosterAgentCount: 1, queueOnlyAgentCount: 0, daysActive: 2, ansPerDay: 1.5 }),
+    ['2026-09-02', '2026-09-03']);
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.daysActive, 3, 'a day both depts were active on is ONE day (union), not two (sum)');
+  assert.equal(r.totals.ansPerDay, 3.7, '11 answered / 3 days, 1 dp -- no longer a dash on the combined total row');
+  assert.equal(r.deptGroups[0].totals.daysActive, 2, 'per-dept subtotals keep their own count');
+  assert.ok(!Object.keys(r.totals).some(function (k) { return k === 'activeDayKeys'; }),
+    'the day set never becomes an enumerable payload field');
+});
+
+test('D-6: parts built without the day set fall back to the largest per-dept count', function () {
+  const a = part('Sales', [], { totalAnswered: 8, rosterAgentCount: 1, daysActive: 2 });
+  const b = part('PAP', [], { totalAnswered: 3, rosterAgentCount: 1, daysActive: 5 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  assert.equal(r.totals.daysActive, 5, 'a union can never be below the largest part');
+  assert.equal(r.totals.ansPerDay, 2.2);
+});
+
+test('D-9: the single-part path grafts the REQUESTED dept\'s qcd / csrTransfer / diagnostics', function () {
+  const parent = part('Sales', [{ agent: 'P' }], { totalRung: 1 });
+  parent.csrTransfer = { pctStr: '10%' };
+  const child = part('PAP', [{ agent: 'C' }], { totalRung: 2 });
+  const r = hData.call('combineSummaries_', parent, [child]);
+  assert.equal(r, child, 'identity path is kept (no merge overhead)');
+  assert.equal(r.qcd.tag, 'Sales', 'a child\'s QCD snapshot must not ship under the parent\'s identity');
+  assert.equal(r.csrTransfer.pctStr, '10%');
+  assert.equal(r.diagnostics, parent.diagnostics);
+  assert.equal(r.totals.totalRung, 2, 'the child\'s own rows/totals are untouched');
+});
+
+test('D-9: getDepartmentSummary in subs scope ships the REQUESTED dept\'s qcd, not the child\'s', function () {
+  const ctx = hData.ctx;
+  const saved = {};
+  ['resolveUser_', 'assertDeptAccess_', 'subQueueChildMap_', 'computeSummary_',
+   'getOverviewParentMap_', 'logReportUsage_', 'reportFreshnessTag_', 'getRosterForDepartment_'].forEach(function (k) { saved[k] = ctx[k]; });
+  try {
+    hData.state.userEmail = 'admin@x.com';
+    hData.state.props.SPREADSHEET_ID = 'fake';
+    hData.state.cache.clear();
+    ctx.resolveUser_ = function () { return { role: 'admin', email: 'admin@x.com', departments: ['Parent', 'Child'] }; };
+    ctx.assertDeptAccess_ = function () {};
+    ctx.subQueueChildMap_ = function () { return { Parent: ['Child'] }; };
+    ctx.getOverviewParentMap_ = function () { return { Child: 'Parent' }; };
+    ctx.logReportUsage_ = function () {};
+    ctx.reportFreshnessTag_ = function () { return 'na'; };
+    ctx.getRosterForDepartment_ = function () { return { names: ['P'], byAgent: {}, allExtensions: {} }; };   // D-7: the key hashes the roster
+    const computed = [];
+    ctx.computeSummary_ = function (d) {
+      computed.push(d);
+      return part(d, [{ agent: d + '-agent', matchedViaRoster: true }], { totalRung: 1, rosterAgentCount: 1, daysActive: 1 });
+    };
+    const r = hData.call('getDepartmentSummary', { department: 'Parent', subScope: 'subs', from: '2026-09-01', to: '2026-09-02' });
+    assert.equal(r.meta.department, 'Parent', 'the requested dept stays the payload identity');
+    assert.equal(r.meta.subScope, 'subs');
+    assert.equal(r.rows.length, 1);
+    assert.equal(r.rows[0].agent, 'Child-agent', 'subs scope lists ONLY the sub-queues\' rows');
+    assert.equal(r.qcd.tag, 'Parent', 'the QCD snapshot is the requested dept\'s (the child\'s used to ship under the parent\'s name)');
+    assert.equal(computed.join(','), 'Child,Parent', 'the parent is computed separately for its qcd -- one extra compute on a scope the client never sends');
+  } finally {
+    Object.keys(saved).forEach(function (k) { ctx[k] = saved[k]; });
+    hData.state.cache.clear();
+  }
+});
+
+// ---- D-3 (broad-scan 2026-09-17): duration means weighted by NON-ZERO counts --
+
+test('D-3: combined duration means weight each dept by the agents that CONTRIBUTED (avgNonzero_\'s denominator), not roster size', function () {
+  // Sales: 12 rostered, ONE agent with talk time (ATT 60s). PAP: 1 rostered, 3
+  // contributing agents? (a floater-free dept with 3 non-zero rows) ATT 120s.
+  const a = part('Sales', [], { rosterAgentCount: 12, attSeconds: 60, attNonzeroCount: 1 });
+  const b = part('PAP', [], { rosterAgentCount: 3, attSeconds: 120, attNonzeroCount: 3 });
+  const r = hData.call('combineSummaries_', a, [a, b]);
+  // (60*1 + 120*3) / 4 = 105 -- the avgNonzero_ over the union. Roster weighting
+  // gave (60*12 + 120*3) / 15 = 72, over-weighting Sales's eleven zero-talk agents.
+  assert.equal(r.totals.attSeconds, 105);
+  // A part built without the count (a hand-built fixture / an older shape) falls back to roster weighting.
+  const c = part('Sales', [], { rosterAgentCount: 2, attSeconds: 60 });
+  const d = part('PAP', [], { rosterAgentCount: 1, attSeconds: 120 });
+  assert.equal(hData.call('combineSummaries_', c, [c, d]).totals.attSeconds, 80, 'fallback: (60*2+120*1)/3');
 });

@@ -32,9 +32,11 @@
  *   node scripts/module-deps.mjs --write    # regenerate docs/module-dependencies.md
  *   node scripts/module-deps.mjs --check    # exit 1 if that doc is out of date
  *
- * --check is NOT wired into CI on purpose: adding one .gs file legitimately
- * shifts every count, and a gate that fails on ordinary work trains people to
- * ignore it. Run it when you want to know, or after touching the .gs set.
+ * --check runs in CI (the `test` job, T-3 2026-09-17) and in `npm run ci`. It
+ * was deliberately NOT wired in at first -- adding one .gs file shifts every
+ * count -- but the map went stale within a week and its own checker was the
+ * only thing that noticed. The fix is the one `--write` command above, so the
+ * gate costs a commit, not a decision.
  */
 
 import fs from 'node:fs';

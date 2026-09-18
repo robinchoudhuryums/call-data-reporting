@@ -128,19 +128,40 @@ function deptHasSubQueues_(dept) {
 }
 
 /**
+ * D-1: the ONE month-start resolver for every "current month" figure. Today's
+ * date in the SCRIPT TZ as a calendar string, first-of-month. Takes an optional
+ * pre-formatted todayIso so callers that already formatted `now` reuse it.
+ * Never build a `new Date(y, m, 1)` and format it in another zone (D-1).
+ */
+function mtdStartIso_(todayIso) {
+  const t = todayIso || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  return String(t).slice(0, 7) + '-01';
+}
+
+/**
  * Month-to-date violations count for the dept (sum across its
  * mapped queues, including sub-queue rollup). Used for the
  * "Violations (current month)" KPI tile.
  */
-function computeMtdViolations_(dept, values, ssTZ, qOpts, dates) {
+function computeMtdViolations_(dept, values, ssTZ, qOpts, dates, anchorIso) {
   const queues = queuesForDept_(dept, qOpts);
   if (queues.length === 0) return 0;
   const queueSet = {};
   queues.forEach(function (q) { queueSet[q] = true; });
   const tz = ssTZ || TZ;
-  const now = new Date();
-  const mtdStart = Utilities.formatDate(
-    new Date(now.getFullYear(), now.getMonth(), 1), tz, 'yyyy-MM-dd');
+  // D-1 (broad-scan 2026-09-17): the month start is a CALENDAR string derived
+  // from today's date in the SCRIPT TZ -- never `new Date(y, m, 1)` (a
+  // script-TZ midnight instant) formatted in the SPREADSHEET TZ. Chicago is
+  // CDT (UTC-5) March-November while Mexico City is UTC-6 year-round, so
+  // that instant formatted in the sheet's zone read as the LAST day of the
+  // previous month and every MTD figure on the sheet path included it. The
+  // read-side twin of the R46 write-side rule; `tz` still resolves the ROW
+  // dates (a Date cell renders in the spreadsheet's zone). Pinned by
+  // overview-qcd-snapshot.test.js (D-1).
+  // D-8: `anchorIso` (the window end, when it is in the past) bounds BOTH
+  // ends: the month is the anchor's, and days after the anchor are excluded.
+  const mtdStart = mtdStartIso_(anchorIso);
+  const mtdEnd = anchorIso || null;
   let total = 0;
   for (let i = 0; i < values.length; i++) {
     const r = values[i];
@@ -150,6 +171,7 @@ function computeMtdViolations_(dept, values, ssTZ, qOpts, dates) {
     if (!queueSet[q]) continue;
     const dateIso = dates ? dates[i] : rowDateIso_(r[QCD_HISTORICAL_COLS.DATE - 1], tz);
     if (!dateIso || dateIso < mtdStart) continue;
+    if (mtdEnd && dateIso > mtdEnd) continue;   // D-8
     total += Number(r[QCD_HISTORICAL_COLS.VIOLATIONS - 1]) || 0;
   }
   return total;
@@ -294,10 +316,12 @@ function qcdAllDeptCachedData_(from, to, opts) {
 /**
  * D-1: the qcdAll cache key's freshness anchor -- the latest QCD date, read
  * source-aware (getLatestDataDates honors QCD_READ_SOURCE and is on the 5-min
- * freshness tier). That RPC carries a signed-in gate, so in a TRIGGER context
- * (the automated queue-report send has no Session user) it throws and the
+ * freshness tier). That RPC carries a signed-in gate; the try/catch keeps
+ * the anchor independent of it (O-3: a time trigger runs as its installing
+ * owner and DOES pass that gate -- CacheWarm relies on exactly that -- but a
+ * gate change must never cost the queue report its anchor), and the
  * trigger-safe sheet scan (queueReportQcdLatestIso_, QueueReportEmail.gs)
- * answers instead. Two anchors for one blob merely cost a cache miss.
+ * answers on a throw. Two anchors for one blob merely cost a cache miss.
  * 'na' when neither can answer -- the empty-payload guard still holds then.
  */
 function qcdAllFreshnessAnchor_() {
@@ -877,10 +901,14 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   //     `new Date()`, independent of from/to)
   // so read [min(mainFrom, mtdStart), max(to, today)]. On the sheet path
   // readQcdGrid_ ignores the window and returns the whole sheet (unchanged).
-  const _now = new Date();
-  const mtdStartIso = Utilities.formatDate(
-    new Date(_now.getFullYear(), _now.getMonth(), 1), TZ, 'yyyy-MM-dd');
-  const todayIso = Utilities.formatDate(_now, TZ, 'yyyy-MM-dd');
+  const todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  // D-8 (broad-scan 2026-09-17): "MTD" is month-to-date THROUGH THE WINDOW END
+  // (the R12-24 rule the all-departments report already follows), not the
+  // current calendar month regardless of the selected window -- a January
+  // review in March used to show March's violations under a January window.
+  // A window ending today (or later) is unchanged.
+  const mtdAnchorIso = (to && to < todayIso) ? to : todayIso;
+  const mtdStartIso = mtdStartIso_(mtdAnchorIso);   // D-1: one month-start resolver
   const mainFrom = rangeOnly ? from : trendStartIso;
   const readFrom = (mainFrom < mtdStartIso) ? mainFrom : mtdStartIso;
   const readTo   = (to > todayIso) ? to : todayIso;
@@ -1145,7 +1173,7 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   // available per-queue in queueBreakdown[].violations.
   const tMtd = Date.now();
   const violationsMtd = computeMtdViolations_(dept, values, ssTZ,
-    separate ? { includeChildren: false } : qOpts, dates);
+    separate ? { includeChildren: false } : qOpts, dates, mtdAnchorIso);   // D-8
   Logger.log('[qcd-report] dept=' + dept + ' window=' + from + '..' + to
     + (rangeOnly ? ' rangeOnly' : '') + ' gridMs=' + gridMs + ' loopMs=' + loopMs
     + ' mtdPassMs=' + (Date.now() - tMtd) + ' rows=' + values.length);

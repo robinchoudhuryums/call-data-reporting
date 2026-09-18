@@ -910,10 +910,12 @@
 
   function escSaveComment_(id) {
     const comm = document.querySelector('.esc-comments-text[data-id="' + escCssId_(id) + '"]');
+    const busyKey = 'escComment:' + id;
+    if (mutationBusy_(busyKey)) return;   // C2-6: one save per row in flight
     escRowError_(id, '');
     google.script.run
-      .withSuccessHandler(function () { showToast('Saved \u2713', 'success'); escLoad_(); })
-      .withFailureHandler(function (err) { escRowError_(id, (err && err.message ? err.message : String(err))); })
+      .withSuccessHandler(function () { mutationDone_(busyKey); showToast('Saved \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (err) { mutationDone_(busyKey); escRowError_(id, (err && err.message ? err.message : String(err))); })
       .updateEscalationComment({ id: id, comments: comm ? comm.value.trim() : '' });
   }
 
@@ -1027,9 +1029,21 @@
     tourSteps_ = tourVisibleSteps_();
     if (!tourSteps_.length) return;
     tourIdx_ = 0;
+    // C2-11: remember where focus was so Skip / Done / Escape can hand it
+    // back (the Settings replay button, or whatever the first-time visitor
+    // had focused) instead of leaving it on a hidden overlay.
+    tourOpener_ = document.activeElement;
     tourEnsureEls_();
     tourShow_();
+    // The tip is a role=dialog with aria-modal: keep Tab inside it (the
+    // shared trapFocus_ discipline) and put the primary action under
+    // focus. trapFocus_ lands on the FIRST button (Skip) on its own tick;
+    // the second tick moves to Next so Enter continues the tour rather
+    // than abandoning it -- the same key the document handler maps.
+    trapFocus_($('tour-tip'));
+    setTimeout(function () { var n = $('tour-next'); if (n) n.focus(); }, 0);
   }
+  var tourOpener_ = null;
   function tourEnsureEls_() {
     if ($('tour-overlay')) return;
     var ov = document.createElement('div');
@@ -1059,9 +1073,17 @@
   function tourKey_(e) {
     var ov = $('tour-overlay');
     if (!ov || ov.style.display === 'none') return;
-    if (e.key === 'Escape') tourFinish_();
-    else if (e.key === 'ArrowRight' || e.key === 'Enter') $('tour-next').click();
-    else if (e.key === 'ArrowLeft') $('tour-back').click();
+    if (e.key === 'Escape') { e.preventDefault(); tourFinish_(); return; }
+    // C2-11: Enter on a FOCUSED tip button already activates that button
+    // natively (Skip / Back / Next). Firing Next here too double-stepped
+    // the tour (Enter on Next advanced two steps; Enter on Skip closed the
+    // tour AND clicked a detached Next) -- so Enter is only the document-
+    // level shortcut when focus sits outside the tip's buttons.
+    var tip = $('tour-tip');
+    var onTipButton = tip && document.activeElement
+      && document.activeElement.tagName === 'BUTTON' && tip.contains(document.activeElement);
+    if (e.key === 'ArrowRight' || (e.key === 'Enter' && !onTipButton)) { e.preventDefault(); $('tour-next').click(); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); $('tour-back').click(); }
   }
   function tourShow_() {
     var step = tourSteps_[tourIdx_];
@@ -1073,6 +1095,13 @@
     $('tour-back').style.visibility = tourIdx_ === 0 ? 'hidden' : '';
     $('tour-next').textContent = (tourIdx_ === tourSteps_.length - 1) ? 'Done' : 'Next';
     tourReposition_();
+    // C2-11: Back hides itself on step 1 (visibility:hidden keeps the
+    // footer's width) -- if it held focus, focus would vanish into a hidden
+    // control, so hand it to Next.
+    var tip = $('tour-tip');
+    if (tip && (!tip.contains(document.activeElement) || document.activeElement === $('tour-back') && tourIdx_ === 0)) {
+      $('tour-next').focus();
+    }
   }
   function tourReposition_() {
     var ov = $('tour-overlay');
@@ -1095,8 +1124,22 @@
   }
   function tourFinish_() {
     var ov = $('tour-overlay');
+    var wasOpen = !!(ov && ov.style.display !== 'none');
     if (ov) ov.style.display = 'none';
     try { localStorage.setItem(TOUR_KEY_, '1'); } catch (e) {}
+    if (!wasOpen) return;
+    // C2-11: release the tip's focus trap and return focus to the opener
+    // (only if it is still on the page and not hidden -- the Settings
+    // replay button closed its modal before starting the tour, so the
+    // page's main heading is the fallback).
+    releaseFocus_();
+    var back = tourOpener_;
+    tourOpener_ = null;
+    if (back && back !== document.body && document.contains(back) && back.offsetParent !== null) {
+      try { back.focus(); return; } catch (e) { /* fall through */ }
+    }
+    var h1 = $('page-title');
+    if (h1) { try { h1.focus(); } catch (e) { /* ignore */ } }
   }
   function initTour_() {
     var replay = $('tour-replay-btn');

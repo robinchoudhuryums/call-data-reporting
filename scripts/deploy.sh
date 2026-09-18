@@ -100,16 +100,24 @@ fi
 # is `date -u` and stays UTC either way). CI_TZ overrides it.
 CI_TZ="${CI_TZ:-America/Chicago}"
 if [ "${DEPLOY_SKIP_CI:-}" != "1" ]; then
-  echo "==> npm run ci   (tests + INV-16 guard; TZ=$CI_TZ, matching ci.yml; DEPLOY_SKIP_CI=1 to skip)"
+  echo "==> npm run ci   (tests + INV-16 guard + module-deps --check; TZ=$CI_TZ, matching ci.yml; DEPLOY_SKIP_CI=1 to skip)"
   TZ="$CI_TZ" npm run ci
-  # F-10: ALSO run the rendered-UI gate -- the only automated coverage of
-  # ~20K lines of script.html, and both production bugs it has caught shipped
-  # through paths `node --test` structurally cannot see. ci.mjs skips cleanly
-  # (exit 0, with a message) when playwright isn't installed, so this is safe
-  # on any machine; a machine WITH playwright gets the full gate before the
-  # code goes live. Same DEPLOY_SKIP_CI escape hatch.
-  echo "==> npm run ci:ui   (rendered-UI gate; skips if playwright absent)"
-  TZ="$CI_TZ" npm run ci:ui
+  # T-5 (2026-09-18): the LIVE push runs the SAME THREE jobs ci.yml runs, and
+  # a missing tool FAILS the gate instead of skipping it. lint:gas and ci:ui
+  # both exit 0 when eslint / playwright are absent so they are safe to run
+  # anywhere -- EXCEPT under CI=true, where absence FAILS (the F-9 rule). A
+  # developer box without either tool could therefore push live through this
+  # "gated" path while the PR's blocking `lint` and `ui-harness` jobs would
+  # have gone red. CI=1 here makes the gate mean what CI means; the one
+  # escape hatch stays DEPLOY_SKIP_CI=1 (emergencies only). Install the tools
+  # with `npm ci` and `cd tools/ui-harness && npm i playwright`.
+  echo "==> npm run lint:gas   (undeclared-identifier net, H3; eslint REQUIRED -- CI=1)"
+  CI=1 TZ="$CI_TZ" npm run lint:gas
+  # F-10: the rendered-UI gate -- the only automated coverage of ~20K lines
+  # of script.html; both production bugs it has caught shipped through paths
+  # `node --test` structurally cannot see.
+  echo "==> npm run ci:ui   (rendered-UI gate, F-10; playwright REQUIRED -- CI=1)"
+  CI=1 TZ="$CI_TZ" npm run ci:ui
 fi
 
 # Batch 4 (Operator State #29): `clasp push -f` never DELETES remote files

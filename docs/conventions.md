@@ -464,7 +464,10 @@ From/To default (which must snap to DQE specifically).
 - **Overview tile chips**: when QCD data exists for a dept, an
   "Aban N (P%)" chip always renders; warn-tinted when P >= the 4% abandon standard
   (the pipeline's violation threshold). A "X viol MTD" chip
-  renders only when month-to-date violations > 0. Visible to
+  renders only when month-to-date violations > 0 (the CURRENT calendar
+  month -- it is a tile; Insights' "Violations (MTD)" tile is instead
+  month-to-date THROUGH THE WINDOW END, D-8, the R12-24 rule the
+  all-departments queue report already follows). Visible to
   everyone -- managers see all depts' chips on Overview, same as
   the rest of the cross-dept landing.
 - **My Department "Yesterday's QCD"**: tile row under the agent
@@ -508,7 +511,7 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `Data.gs` (main table) | `summary:vN:` | `v22` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
-| `IndividualReport.gs` | `individual:vN:` | `v11` |
+| `IndividualReport.gs` | `individual:vN:` | `v12` |
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
@@ -516,7 +519,7 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `CompanyOverview.gs` | `companyOverview:vN` | `v23` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v10` |
-| `InsightsReport.gs` | `insights:vN:` | `v23` |
+| `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |

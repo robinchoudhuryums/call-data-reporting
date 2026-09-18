@@ -41,6 +41,8 @@
     --good:        #3d9476;
     --good-soft:   #e0efe6;
     --warn:        #c66b4b;
+    --on-good:     #ffffff;   /* C1-17: text on a --good fill */
+    --on-warn:     #ffffff;   /* C1-17: text on a --warn fill */
     --warn-soft:   #f6e2d4;
     /* --bad is a step deeper than --warn for hard error / critical states
        (irrecoverable failures, validation errors). --warn stays the default
@@ -144,6 +146,8 @@
     --accent: #7ba3df;
     --good:   #5cb494;
     --warn:   #e08a63;
+    --on-good: #101418;   /* C1-17: dark ink on the lightened fills (~7:1) */
+    --on-warn: #101418;
     --bad:    #e06a56;
     --stale:  #e2b04e;
   }
@@ -323,8 +327,9 @@
   }
 
   /* Data-freshness pill: sits in .header-meta showing "Data through
-     Mon May 19 · 14h ago".  Color cools when data is stale relative
-     to a normal daily-ingest cadence (24h+).  Hidden by default
+     Mon May 19 · 14h ago".  Tints amber (`.is-stale`, `--stale`) when data
+     is stale relative to a normal daily-ingest cadence (36h+, with the
+     weekend/holiday credit).  Hidden by default
      until the client knows the latest data date; see
      setFreshnessPill_ in script.html. */
   .freshness-pill {
@@ -657,7 +662,9 @@
     margin-bottom: 18px;
   }
   .control { display: flex; flex-direction: column; gap: 6px; }
-  .control label {
+  /* C2-13: `.ctl-label` is the SAME style for a caption that labels no
+     single control (a chip group, a spacer) -- a <label> there mislabels. */
+  .control label, .control .ctl-label {
     font-family: var(--mono);
     font-size: 10px;
     font-weight: 500;
@@ -2351,11 +2358,14 @@
   }
   /* R17h (Option B): the missed-slice cross-links -- a drill row's agent name
      jumps to that agent's card, an agent card's ring time jumps to the
-     dept-wide hour-bucket drill. Link-styled SPANS, not buttons (see the
-     tab-stop reasoning at missedAgentCardEl_), so the affordance is the
-     dotted underline + the pointer + the hover tint. */
+     dept-wide hour-bucket drill. Link-styled BUTTONS kept out of the tab
+     order (UD-4; see the tab-stop reasoning at missedAgentCardEl_), reset
+     to inline text so the affordance is the dotted underline + the pointer +
+     the hover tint. */
   .ms-agent-link, .ms-bucket-link {
     cursor: pointer;
+    font: inherit; color: inherit; background: none;
+    border: 0; padding: 0; margin: 0; text-align: inherit;
     border-bottom: 1px dotted color-mix(in srgb, var(--accent) 55%, transparent);
   }
   .ms-agent-link:hover, .ms-bucket-link:hover { color: var(--accent); border-bottom-style: solid; }
@@ -2529,8 +2539,13 @@
   .agent-tier--low  { background: var(--good-soft); color: var(--good); }
 
   /* R11-C4: per-card chart-scope button (■ chart / ✕ chart) + the toolbar
-     chip that names the active scope. The button sits inside the card's
-     <summary>; its clicks are intercepted before the <details> toggle. */
+     chip that names the active scope. UD-5: the button is the card's first
+     BODY child (a <button> inside <summary> is invalid), pulled up onto the
+     header row by absolute positioning so the look is unchanged; the
+     summary reserves the room. Visible while the card is open or closed. */
+  .agent-card { position: relative; }
+  .agent-card > summary.agent-card-head { padding-right: 78px; }
+  .agent-card-tools { position: absolute; top: 9px; right: 10px; line-height: 1; }
   .agent-scope-btn {
     font-family: var(--mono);
     font-size: 9px;
@@ -2633,6 +2648,9 @@
     gap: 14px;
     margin-bottom: 4px;
   }
+  /* UD-1: date inputs can't shrink below ~140px, so three columns overflow a
+     phone-width modal body sideways; stack them. */
+  @media (max-width: 700px) { .ir-row { grid-template-columns: 1fr; } }
   /* Round-16 (owner cleanup): .ir-form-grid was referenced by five admin
      forms (Alert Config, Report Subscribers, ...) but never DEFINED, so
      their .ir-col children -- each carrying flex-basis inline styles that
@@ -2640,7 +2658,8 @@
      Department dropdown). One rule restores the intended compact wrap. */
   .ir-form-grid { display: flex; flex-wrap: wrap; gap: 10px 12px;
     align-items: flex-end; }
-  .ir-col label {
+  .ctl-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+  .ir-col label, .ir-col .ctl-label {
     display: block;
     font-family: var(--mono);
     font-weight: 500;
@@ -2809,7 +2828,6 @@
     box-sizing: border-box;
   }
   .ir-search-row input[type="search"]:focus {
-    outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px var(--accent-soft);
   }
@@ -3115,7 +3133,6 @@
   /* R12-7: keep a visible focus indicator (the bare outline:none removed the
      ring with no replacement -- the .ir-search-row accent-ring pattern). */
   .ir-sort-control select:focus {
-    outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px var(--accent-soft);
   }
@@ -3592,15 +3609,6 @@
   }
   .pr-agent-table tbody tr:last-child td { border-bottom: 0; }
   .pr-agent-table tbody tr:hover { background: var(--paper-2); }
-
-  /* Sortable headers: cursor + hover affordance + active-sort
-     highlight when this column is the current sort key. */
-  .pr-th-sortable {
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-  }
-  .pr-th-sortable:hover { background: var(--paper-2) !important; color: var(--ink) !important; }
 
   /* Sub-tabs inside the 12-Month Trend chart panel: switches the
      metric shown on the line chart (Answered / % Answered / ATT). */
@@ -4590,13 +4598,16 @@
     border-top: 1px solid var(--line);
     padding-top: 20px;
   }
+  /* UD-10: a real <h3> (screen readers navigate modals by heading); the
+     margins/size are pinned so the heading default can't shift the layout. */
   .al-section-title {
     font-weight: 600;
     color: var(--accent);
     border-bottom: 2px solid var(--line);
     padding-bottom: 4px;
-    margin-bottom: 10px;
+    margin: 0 0 10px;
     font-size: 14px;
+    line-height: 1.35;
   }
   /* #6: ON/OFF state pill next to a toggle section's title. */
   .al-state-pill {
@@ -4920,6 +4931,11 @@
   .ins-qh-daily-queue-cell { white-space: nowrap; }
   .ins-daily-q-sub { color: var(--muted); font-size: 11px; font-weight: 400; }
   .ins-daily-day-row td { font-weight: 600; background: var(--paper-2); cursor: pointer; }
+  /* C2-9: the day's disclosure is a real <button> in the date cell. */
+  .ins-daily-toggle {
+    font: inherit; font-weight: inherit; color: inherit; background: none;
+    border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center;
+  }
   .ins-daily-day-row:hover td { background: var(--accent-soft); }
   .ins-daily-day-row.is-open td { border-bottom: none; }
   .ins-daily-caret {
@@ -5007,7 +5023,7 @@
      26px floor, so a tall neighbour makes them taller, never shorter. */
   .ins-detail-row { display: flex; gap: 16px; align-items: stretch; flex-wrap: wrap; }
   .ins-detail-row > #ins-heatmap {
-    flex: 1 1 420px; min-width: 360px; margin: 0;
+    flex: 1 1 420px; min-width: min(360px, 100%); margin: 0;   /* UD-2: never wider than the phone content box */
     display: flex; flex-direction: column;
   }
   .ins-detail-row > #ins-heatmap .ds-heatmap-wrap { flex: 1 1 auto; display: flex; flex-direction: column; }
@@ -5087,7 +5103,7 @@
      half width rather than a single tall stack -- 6 cards read as 3 compact
      rows beside a 4-5 row table instead of towering over it. */
   .ins-qh-cols > .ins-qh-left { flex: 1 1 340px; min-width: 280px; max-width: 400px; }
-  .ins-qh-cols > .ins-qh-table-card { flex: 1 1 420px; min-width: 340px; margin: 0; }
+  .ins-qh-cols > .ins-qh-table-card { flex: 1 1 420px; min-width: min(340px, 100%); margin: 0; }   /* UD-2 */
   .ins-qh-left > .pr-kpi-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
   .ins-qh-left > .ins-qh-secondary { margin: 0; }
   /* R16e (owner): these cards CENTER -- label, value and foot. Scoped to the
@@ -5450,6 +5466,17 @@
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    /* UD-8: a plain Ctrl+P on ANY page (not just the two scripted report
+       prints) must not put the floating chrome on paper: the Help FAB, the
+       A/B remote, the dev overlay, toasts, the update notice, the tour, the
+       confirm/tooltip layers and the modal backdrop are screen-only; the
+       sticky strips print in flow (a fixed/sticky band repeats on every
+       page or covers content). */
+    #help-fab, #ins-ab-panel, #dev-overlay, .toast-container, .update-notice,
+    .tour-overlay, .ds-confirm-overlay, .ds-tooltip, .chart-help-pop,
+    .modal-backdrop, [data-close] { display: none !important; }
+    .dash-header, #dept-page .controls, .ir-results-header, .esc-sidebar,
+    .dept-side { position: static !important; box-shadow: none !important; }
     body.ir-printing > .container { display: none !important; }
     body.ir-printing .modal-backdrop { display: none !important; }
     body.ir-printing #individual-modal {
@@ -5486,75 +5513,8 @@
     body.ir-printing .ir-chart-wrap { page-break-inside: avoid; }
     body.ir-printing .ir-summary-card { page-break-inside: avoid; }
 
-    body.pr-printing > .container { display: none !important; }
-    body.pr-printing .modal-backdrop { display: none !important; }
-    body.pr-printing #performance-modal {
-      position: static !important;
-      background: transparent !important;
-    }
-    body.pr-printing #performance-modal .modal-panel {
-      box-shadow: none !important;
-      border-radius: 0 !important;
-      max-width: 100% !important;
-      width: 100% !important;
-      max-height: none !important;
-      padding: 0 !important;
-      overflow: visible !important;
-    }
-    body.pr-printing #performance-form,
-    body.pr-printing #performance-modal .modal-close,
-    body.pr-printing #performance-results .ir-action-buttons,
-    body.pr-printing #pr-chart-tabs,
-    body.pr-printing #pr-trend-subtabs,
-    body.pr-printing #pr-datalabels-box,
-    body.pr-printing #pr-results-status {
-      display: none !important;
-    }
-    body.pr-printing #pr-charts-container [data-panel] {
-      display: flex !important;
-      margin-bottom: 14px !important;
-    }
-    body.pr-printing .ir-chart-wrap,
-    body.pr-printing .ds-kpi,
-    body.pr-printing .pr-agent-table { page-break-inside: avoid; }
-
-    body.cr-printing > .container { display: none !important; }
-    body.cr-printing .modal-backdrop { display: none !important; }
-    body.cr-printing #compare-modal {
-      position: static !important;
-      background: transparent !important;
-    }
-    body.cr-printing #compare-modal .modal-panel {
-      box-shadow: none !important;
-      border-radius: 0 !important;
-      max-width: 100% !important;
-      width: 100% !important;
-      max-height: none !important;
-      padding: 0 !important;
-      overflow: visible !important;
-    }
-    body.cr-printing #compare-form,
-    body.cr-printing #compare-modal .modal-close,
-    body.cr-printing #compare-results .ir-action-buttons,
-    body.cr-printing .ir-editing-edit,
-    body.cr-printing #cr-edit-popover,
-    body.cr-printing #cr-chart-tabs,
-    body.cr-printing #cr-cards-toolbar,
-    body.cr-printing #cr-datalabels-box,
-    body.cr-printing .ir-copy-tsv,
-    body.cr-printing #cr-results-status {
-      display: none !important;
-    }
-    /* Open the quiet-agents section for print so the full
-       comparison is on the page. */
-    body.cr-printing .cr-quiet-details > .cr-quiet-summary {
-      display: none !important;
-    }
-    body.cr-printing .cr-quiet-details { border-top: 0 !important; padding-top: 0 !important; }
-    body.cr-printing .cr-quiet-details > #cr-quiet-cards { display: grid !important; }
-    body.cr-printing .cr-chart-wrap,
-    body.cr-printing .ds-kpi,
-    body.cr-printing .cr-agent-card { page-break-inside: avoid; }
+    /* (UD-7: the pr-printing / cr-printing blocks for the retired Performance
+       + Compare Ranges modals were deleted -- both reports live in Insights.) */
 
     /* M1 (Insights merge): Insights prints from the region ON the dept page
        (body[data-page="dept"]) -- the Export menu lives inside the open
@@ -6614,8 +6574,12 @@
     transition: opacity 0.25s, transform 0.25s;
   }
   .toast.toast-visible { opacity: 1; transform: translateY(0); }
-  .toast-success { background: var(--good); color: #fff; }
-  .toast-error   { background: var(--warn); color: #fff; }
+  /* C1-17: text ON a good/warn fill reads the --on-good/--on-warn tokens --
+     white in light mode; dark ink in dark mode, where the fills lighten to
+     text-grade tints (#5cb494 / #e08a63) and white on them is ~2.3:1. The
+     S2-5 date-chip trap, closed at the token instead of per surface. */
+  .toast-success { background: var(--good); color: var(--on-good, #fff); }
+  .toast-error   { background: var(--warn); color: var(--on-warn, #fff); }
 
   /* -------- Update notice ("new version — refresh at your convenience").
      Persistent + dismissible, unlike the auto-expiring .toast, so it sits in
@@ -6690,7 +6654,7 @@
     display: flex; justify-content: flex-end; gap: 8px;
   }
   /* Danger confirm button = warn-filled (destructive intent). */
-  .btn.ds-confirm-ok.ds-confirm--danger { background: var(--warn); color: #fff; }
+  .btn.ds-confirm-ok.ds-confirm--danger { background: var(--warn); color: var(--on-warn, #fff); }   /* C1-17 */
   /* dsPrompt_ shares the confirm shell and adds a labelled input + inline
      error (the thing window.prompt could not do -- validate without losing
      what was typed). */
@@ -6708,7 +6672,7 @@
     border: 1px solid var(--line); border-radius: var(--r);
   }
   .ds-prompt-input:focus {
-    outline: none; border-color: var(--accent);
+    border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
   }
   .ds-prompt-error {
@@ -7436,6 +7400,7 @@
   }
   .chart-help-pop ul { margin: 0; padding-left: 16px; }
   .chart-help-pop li { margin: 4px 0; line-height: 1.45; }
+  .chart-help-pop .chp-actions { margin-top: 8px; text-align: right; }   /* C1-18 */
 
   /* Drilldown hand-off link (Insights Queue health -> My Department Missed). */
   .ins-handoff-link { background: none; border: 0; padding: 0 0 0 8px; cursor: pointer;
@@ -7605,6 +7570,12 @@
   /* R19: collapsible Health sections (currently User activity) */
   .sh-fold-head { cursor: pointer; user-select: none; }
   .sh-fold-head:hover td { background: var(--paper-card); }
+  /* C2-9: the fold toggle is a real <button> in the cell, reset to read as
+     the section row it used to be (the row is still the click target). */
+  .sh-fold-btn {
+    font: inherit; color: inherit; background: none; border: 0; padding: 0;
+    text-align: left; cursor: pointer; width: 100%; display: block;
+  }
   .sh-fold-arrow { display: inline-block; width: 1em; color: var(--muted); }
   .sh-fold-count { font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--muted); }
   .esc-review-chip {
@@ -7740,6 +7711,17 @@
      same accent outline the existing focus-visible rules use
      (.ov-subq-strip, .ds-heatmap__cell--drill). Rows use a NEGATIVE
      outline-offset so the ring isn't clipped by the table's overflow wrapper. */
+  /* UD-3: ONE global keyboard-focus ring. The custom :focus rings elsewhere
+     (accent-soft box-shadow, ~1.1:1 on white) are a hover-grade tint, not a
+     focus indicator, and `outline: none` beside them removed the only visible
+     one. `:focus-visible` matches keyboard focus only, so mouse clicks stay
+     clean; the per-surface rules below still override where a negative
+     offset is needed. Never re-add `outline: none` to a :focus rule. */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
   #agents-tbody tr[data-agent]:focus-visible,
   tr.qcd-expandable:focus-visible {
     outline: 2px solid var(--accent); outline-offset: -2px;

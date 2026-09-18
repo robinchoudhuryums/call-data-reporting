@@ -241,3 +241,52 @@ test('L6: ids outnumbering rendered rings at a time-key drop the pairing, never 
   // ids carry no queue identity) -- only the per-ring pairing is dropped.
   assert.equal(data.meta.abandonedCallCount, 3, 'P1+P2+P9 still counted');
 });
+
+// DD-1 (broad-scan 2026-09-17): the SHEET path hands K..AC / AF cells through
+// unsanitized, so a still-coerced slot cell renders as "12/30/1899 10:23:33"
+// (the 1899-epoch time serial). normTimeKey_ split on ':' and parseInt'd
+// "12/30/1899 10" -> 12, so a 10 AM ring keyed -- and rendered -- at 12:23,
+// while the Neon path (sanitized on write) showed 10:23. Recover the
+// lossless single-value date-render like sanitizeSlotCellForNeon_ does, and
+// refuse any other non-numeric hour token instead of mis-keying it.
+test('DD-1: normTimeKey_ recovers a coerced date-render and refuses garbage', function () {
+  assert.equal(h.call('normTimeKey_', '12/30/1899 10:23:33'), '10:23:33');
+  assert.equal(h.call('normTimeKey_', '12/30/1899 9:05:11'), '9:05:11');
+  assert.equal(h.call('normTimeKey_', '12/30/1899 10:23:33 AM'), '10:23:33');
+  assert.equal(h.call('normTimeKey_', '0.43301'), '', 'a bare serial decimal is unparseable');
+  assert.equal(h.call('normTimeKey_', 'abc:12'), '', 'a non-numeric hour is refused, not parsed as 0');
+  assert.equal(h.call('normTimeKey_', '9:15:23 AM'), '9:15:23', 'clean cells are unchanged');
+});
+
+test('DD-1: a coerced K..AC / AF pair renders at its TRUE hour on the sheet path', function () {
+  install([
+    { date: '2026-03-10', agent: 'Anna', ext: '501', rung: 4, missed: 1, answered: 3,
+      slots: ['', '', '', '', '12/30/1899 10:23:33'],
+      abdIds: 'P1', abdTimes: '12/30/1899 10:23:33' },
+  ]);
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'both');
+  const anna = r.agents.filter(function (a) { return a.name === 'Anna'; })[0];
+  assert.ok(anna, 'Anna has a timeline');
+  assert.equal(anna.missedTimes.length, 1);
+  assert.equal(anna.missedTimes[0].label, '10:23:33 AM', 'labelled at 10:23, not 12:23');
+  assert.equal(anna.missedTimes[0].sortKey, 10 * 3600 + 23 * 60 + 33, 'keyed at 10:23:33');
+  assert.equal(anna.missedTimes[0].bucket, 4, '10:00-10:30 CST bucket, not 12:00');
+  assert.equal(anna.missedTimes[0].abandoned, true, 'the AF twin still pairs at the same (true) second');
+  assert.equal(anna.missedTimes[0].parentId, 'P1');
+});
+
+
+test('DD-4 (broad-scan 2026-09-17): a sentinel ring outside the 8 AM-5 PM chart range is counted AND disclosed as outOfRange', function () {
+  const slots = new Array(19).fill('');
+  slots[2] = '9:05:00 AM';      // in the 9:00-9:30 bucket
+  slots[18] = '5:10:00 PM';     // the 19th stored slot (5:00-5:30 PM) -- no chart bucket
+  install([
+    { date: '2026-03-10', agent: 'A_Q_Alpha', ext: '501', rung: 0, missed: 0, answered: 0,
+      slots: slots, abdIds: 'P1,P2', abdTimes: '9:05:00 AM,5:10:00 PM' },
+  ]);
+  const r = h.call('computeMissedCallsReport_', 'Alpha', '2026-03-09', '2026-03-15', 'both');
+  assert.equal(r.queueOnly.length, 1);
+  assert.equal(r.queueOnly[0].total, 2, 'both ring events count (the card\'s "N abandoned")');
+  assert.equal(r.queueOnly[0].outOfRange, 1, 'one of them lands in no bar -- carried so the card can say so');
+  assert.equal(r.chart.counts.reduce(function (s, n) { return s + n; }, 0), 1, 'the bars sum to the in-range rings only');
+});

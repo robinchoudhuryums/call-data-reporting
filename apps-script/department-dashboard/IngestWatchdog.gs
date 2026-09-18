@@ -144,6 +144,17 @@ function runIngestWatchdog_() {
     } catch (pe) { /* best-effort */ }
   } catch (e) {
     Logger.log('runIngestWatchdog_ failed: ' + (e && e.message ? e.message : e));
+    // O-4 (broad-scan 2026-09-17): record the throw. Logger-only meant the
+    // previous "fresh" stayed on the Health page for up to the 4-day STALE
+    // allowance while an hourly watchdog pushed nothing -- and the STALE hint
+    // then blamed the 6-minute kill, not the caught throw. The sibling
+    // engines (SheetCoverage, NeonRetention, DqeSilence) already do this.
+    try {
+      var propsErr = PropertiesService.getScriptProperties();
+      propsErr.setProperty('INGEST_WATCHDOG_LAST', new Date().toISOString());
+      propsErr.setProperty('INGEST_WATCHDOG_LAST_RESULT',
+        'FAILED (threw before assessing): ' + (e && e.message ? e.message : e));
+    } catch (pe) { /* best-effort */ }
   }
 }
 

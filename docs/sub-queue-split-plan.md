@@ -185,7 +185,7 @@ only currently-wrong *total*:
 | 1 | pipeline writes the breakdown + backfill the ~14-day window | no |
 | 2 | My Department consumes it (`summary:v18`) | yes — the reported bug |
 | 3 | Missed report (`missed:v18`) | yes |
-| 4 | IR / Insights (`insights:v23`, `individual:v*`) | yes |
+| 4 | IR / Insights (`insights:v24`, `individual:v*`) | yes |
 
 Phase 1 should deploy as soon as it is ready even though nothing consumes it:
 until it ships, every day becomes one more date that can only be split by

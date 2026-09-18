@@ -128,3 +128,20 @@ test('P14: an empty admin list leaves the sighting unburned too', function () {
   assert.equal(h.state.props.LOGIN_NOTIFY_SEEN, undefined);
   assert.equal(h.state.sentEmails.length, 0);
 });
+
+// O-10 (broad-scan 2026-09-17): the switch is case-insensitive, like
+// ACCESS_WELCOME_EMAIL -- Operator State #45 says "set it to false", and a
+// Sheets-habit FALSE must silence it too.
+test('O-10: LOGIN_NOTIFY_ENABLED=FALSE (any case) silences the notifier; anything else runs it', function () {
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com', LOGIN_NOTIFY_ENABLED: 'FALSE' };
+  h.state.sentEmails.length = 0;
+  h.call('notifyLoginEvent_', 'new@x.com', { role: 'none' });
+  assert.equal(h.state.sentEmails.length, 0, 'FALSE silences');
+  assert.equal(h.state.props.LOGIN_NOTIFY_SEEN, undefined, 'nothing recorded either');
+  h.state.props.LOGIN_NOTIFY_ENABLED = 'False';
+  h.call('notifyLoginEvent_', 'new@x.com', { role: 'none' });
+  assert.equal(h.state.sentEmails.length, 0, 'False silences');
+  delete h.state.props.LOGIN_NOTIFY_ENABLED;
+  h.call('notifyLoginEvent_', 'new@x.com', { role: 'none' });
+  assert.equal(h.state.sentEmails.length, 1, 'unset = on');
+});

@@ -70,7 +70,7 @@
 // agent name still received that agent's real 12-month monthly series
 // -- the F-1 authorization gap). Bumped so cached responses computed
 // with the unfiltered trend invalidate on deploy.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v11';
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v12';   // v12 (D-2/DD-3): deptStats + share over the whole roster; activeDays activity-gated
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -208,7 +208,8 @@ function getIndividualReport(req) {
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
   const cacheKey = INDIVIDUAL_CACHE_KEY_PREFIX + ':'
                  + dept + ':' + from + ':' + to + ':' + agentsKey + ':' + priorKey
-                 + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+                 + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_()
+                 + ':' + answerRateCacheTag_();   // DD-2: the rate formula is a cache dimension
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -403,6 +404,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     priorSummaryStats[a]  = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
   });
   const teamTotal = { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
+  const deptTotal = { rung: 0, missed: 0, answered: 0 };   // D-2: whole-roster totals (INV-26 R18)
   const activeDaySet  = {};   // ISO day -> true; for dept "per day" stats
   // Track which roster agents actually had ANY activity in range,
   // so the team-avg denominator only counts agents who took calls
@@ -478,18 +480,29 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     // so unanswered/abandoned days don't drag down the weighted ATT.
     const attTotal = answered > 0 ? attAvg * answered : 0;
 
-    // Team totals (dept-wide, over user's selected range). Excludes
-    // configured managers; only counts agents with at least one call
-    // event so zero-call roster members don't dilute the average.
-    if (inUserRange && rosterSet[agent] && !excludedAgents[agent]) {
-      teamTotal.rung     += rung;
-      teamTotal.missed   += missed;
-      teamTotal.answered += answered;
-      teamTotal.ttt      += tttSec;
-      teamTotal.attTotal += attTotal;
-      activeDaySet[dateIso] = true;
-      if (rung > 0 || answered > 0 || missed > 0) {
-        activeAgentSet[agent] = true;
+    // D-2 (broad-scan 2026-09-17, INV-26 R18 scope): TWO dept accumulators.
+    // `deptTotal` is EVERY roster agent -- it feeds the dept per-day stats and
+    // each card's share-of-dept, which are dept TOTALS and RATES and keep the
+    // excluded manager's volume. `teamTotal` drops the TEAM_AVG_EXCLUDES agents
+    // and feeds ONLY the per-agent team-average benchmark. One accumulator
+    // used to feed all three, so IR's dept total disagreed with Insights'
+    // teamStats for the same window and the cards' shares summed past 100%.
+    // DD-3: a day is ACTIVE only when some roster agent had a call event on it
+    // (the same gate as activeAgentSet) -- a 0/0/0 row must not add a day to
+    // the per-day denominator.
+    if (inUserRange && rosterSet[agent]) {
+      const hadActivity = rung > 0 || answered > 0 || missed > 0;
+      deptTotal.rung     += rung;
+      deptTotal.missed   += missed;
+      deptTotal.answered += answered;
+      if (hadActivity) activeDaySet[dateIso] = true;
+      if (!excludedAgents[agent]) {
+        teamTotal.rung     += rung;
+        teamTotal.missed   += missed;
+        teamTotal.answered += answered;
+        teamTotal.ttt      += tttSec;
+        teamTotal.attTotal += attTotal;
+        if (hadActivity) activeAgentSet[agent] = true;
       }
     }
 
@@ -541,7 +554,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     rung:     Math.round(teamTotal.rung     / activeAgentCount),
     missed:   Math.round(teamTotal.missed   / activeAgentCount),
     answered: Math.round(teamTotal.answered / activeAgentCount),
-    pctAnswered: teamTotal.rung     > 0 ? (teamTotal.answered / teamTotal.rung)    * 100 : 0,
+    pctAnswered: answerRatePct_(teamTotal.answered, teamTotal.missed, teamTotal.rung),   // DD-2
     tttPerCall:  teamTotal.answered > 0 ? (teamTotal.ttt       / teamTotal.answered)     : 0,
     att:         teamTotal.answered > 0 ? (teamTotal.attTotal  / teamTotal.answered)     : 0,
   };
@@ -563,13 +576,14 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     },
   };
 
-  // Dept per-day stats (denominator = days with any activity).
+  // Dept per-day stats (denominator = days with any activity). D-2: over the
+  // WHOLE roster (deptTotal), never the excluded-manager basis -- INV-26 R18.
   const dayCount = Object.keys(activeDaySet).length || 1;
   const deptStats = {
-    dailyRung:     (teamTotal.rung     / dayCount).toFixed(1),
-    dailyMissed:   (teamTotal.missed   / dayCount).toFixed(1),
-    dailyAnswered: (teamTotal.answered / dayCount).toFixed(1),
-    ansPct:        (teamTotal.rung > 0 ? (teamTotal.answered / teamTotal.rung) * 100 : 0).toFixed(1) + '%',
+    dailyRung:     (deptTotal.rung     / dayCount).toFixed(1),
+    dailyMissed:   (deptTotal.missed   / dayCount).toFixed(1),
+    dailyAnswered: (deptTotal.answered / dayCount).toFixed(1),
+    ansPct:        answerRatePct_(deptTotal.answered, deptTotal.missed, deptTotal.rung).toFixed(1) + '%',   // DD-2
     activeDays:    dayCount,
   };
 
@@ -595,7 +609,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   visibleAgents.forEach(function (agent) {
     chartDatasets[agent] = masterMonthKeys.map(function (m) {
       const b = aggregatedStats[agent][m] || { rung: 0, missed: 0, answered: 0, ttt: 0, attTotal: 0 };
-      const pct = b.rung > 0 ? (b.answered / b.rung) * 100 : 0;
+      const pct = answerRatePct_(b.answered, b.missed, b.rung);   // DD-2
       const att = b.answered > 0 ? (b.attTotal / b.answered) : 0;
       return {
         rung: b.rung, missed: b.missed, answered: b.answered,
@@ -626,13 +640,16 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   }
   const summaryData = visibleAgents.map(function (agent) {
     const s = summaryStats[agent];
-    const agPct = s.rung > 0 ? (s.answered / s.rung) * 100 : 0;
+    const agPct = answerRatePct_(s.answered, s.missed, s.rung);   // DD-2
     const agTtt = s.answered > 0 ? s.ttt      / s.answered : 0;
     const agAtt = s.answered > 0 ? s.attTotal / s.answered : 0;
+    // D-2: share of the WHOLE dept's volume (deptTotal), so the roster's shares
+    // sum to 100% and the excluded manager's own card is a share of the dept,
+    // not of the dept-minus-self.
     const share = {
-      rung:     teamTotal.rung     > 0 ? (s.rung     / teamTotal.rung)     * 100 : 0,
-      answered: teamTotal.answered > 0 ? (s.answered / teamTotal.answered) * 100 : 0,
-      missed:   teamTotal.missed   > 0 ? (s.missed   / teamTotal.missed)   * 100 : 0,
+      rung:     deptTotal.rung     > 0 ? (s.rung     / deptTotal.rung)     * 100 : 0,
+      answered: deptTotal.answered > 0 ? (s.answered / deptTotal.answered) * 100 : 0,
+      missed:   deptTotal.missed   > 0 ? (s.missed   / deptTotal.missed)   * 100 : 0,
     };
     const agentRaw = {
       rung: s.rung, missed: s.missed, answered: s.answered,
@@ -643,7 +660,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
     let priorRaw   = null;
     if (hasPrior) {
       const p = priorSummaryStats[agent];
-      const pPct = p.rung > 0 ? (p.answered / p.rung) * 100 : 0;
+      const pPct = answerRatePct_(p.answered, p.missed, p.rung);   // DD-2
       const pTtt = p.answered > 0 ? p.ttt      / p.answered : 0;
       const pAtt = p.answered > 0 ? p.attTotal / p.answered : 0;
       priorStats = {
@@ -949,12 +966,23 @@ function sendIndividualReportEmail(req) {
     sentToAgent = resolved.agentName;
   }
 
+  // A-5 (broad-scan 2026-09-17): the client supplies the image AND the
+  // subject, and either can reach an AGENT's inbox (sendToAgent). Neither is
+  // trusted: the payload must be a base64 PNG data URL (the only thing the
+  // canvas export produces) under IR_EMAIL_IMAGE_MAX_BYTES_, and the subject
+  // label is one line of printable text, capped -- a header-injection or a
+  // multi-line "subject" is refused, not sent.
   const dataUrl = String((req && req.imageBase64) || '');
-  const dateLabel = String((req && req.dateLabel) || 'Individual Report');
+  const dateLabel = irSanitizeDateLabel_(req && req.dateLabel);
   if (!dataUrl) throw new Error('No image payload.');
-  const commaIdx = dataUrl.indexOf(',');
-  if (commaIdx === -1) throw new Error('Malformed image payload.');
-  const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl);
+  if (!m) throw new Error('Malformed image payload (expected a base64 PNG data URL).');
+  const b64 = m[1].replace(/\s+/g, '');
+  if (b64.length * 0.75 > IR_EMAIL_IMAGE_MAX_BYTES_) {
+    throw new Error('Image payload too large (over ' + Math.round(IR_EMAIL_IMAGE_MAX_BYTES_ / 1048576) + ' MB).');
+  }
+  const decoded = Utilities.base64Decode(b64);
+  if (!irLooksLikePng_(decoded)) throw new Error('Image payload is not a PNG.');
   const blob = Utilities.newBlob(decoded, 'image/png', 'Individual_Report.png');
 
   // Round-16 (owner): the snapshot rides inside the EmailKit shell so this
@@ -1054,6 +1082,23 @@ function irResolveAgentRecipient_(user, req) {
   return { to: typed, agentName: agentName, source: 'typed' };
 }
 
+/** A-5: the inline-image cap for the IR email (a rendered report is ~0.3-2 MB). */
+const IR_EMAIL_IMAGE_MAX_BYTES_ = 8 * 1024 * 1024;
+
+/** A-5: the client's date label becomes the email SUBJECT -- one printable line, capped. */
+function irSanitizeDateLabel_(raw) {
+  const s = String(raw == null ? '' : raw).replace(/[\r\n\t\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 120);
+  return s || 'Individual Report';
+}
+
+/** A-5: PNG magic bytes (\x89PNG\r\n\x1a\n) on the decoded payload. */
+function irLooksLikePng_(bytes) {
+  if (!bytes || bytes.length < 8) return false;
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  for (let i = 0; i < 8; i++) if (((bytes[i] + 256) % 256) !== sig[i]) return false;
+  return true;
+}
+
 /**
  * The address recorded for (dept, agentName) in Access Control -- i.e. the
  * account that agent signs into the agent app with. Scans the sheet ONCE
@@ -1077,8 +1122,12 @@ function irRegisteredAgentEmail_(dept, agentName) {
       if (addr) return addr;
     }
   } catch (e) {
-    Logger.log('irRegisteredAgentEmail_ failed (treated as no address): '
-      + (e && e.message ? e.message : e));
+    // A-5: a registered address WINS over a typed one, so a read that fails
+    // must not read as "no address on file" -- that would let a typed
+    // address through for an agent the sheet does know how to reach.
+    // Surface it; the manager retries.
+    throw new Error('Could not read Access Control to resolve the agent\'s registered address ('
+      + (e && e.message ? e.message : e) + '). Try again.');
   }
   return '';
 }

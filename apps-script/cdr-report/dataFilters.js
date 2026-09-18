@@ -629,7 +629,13 @@ function getExtractionDataJSON() {
       if (targetCol === 3 && (p1 || p2 || p3))  includeRow = true;
       if (targetCol === 4 && (dp2 || dp3))        includeRow = true;
       if (targetCol === 5 && p1)                  includeRow = true;
-      if (targetCol === 7 && startDec > time600AM && startDec < time300PM && endDec < time300PM && queueName === "a_q_csr" && type === "incoming" && abandoned !== "abandoned" && waitDec >= 0) includeRow = true;
+      // DD-6 (2026-09-17): the pipeline's r36_G counter sits inside a
+      // `status !== "3"` gate (autoImport.js, the `isAQ && type !== "internal"
+      // && status !== "3"` block) -- a status-3 A_Q_CSR wait was listed here
+      // while the pipeline's mean excluded it. Col G is a MEAN, so the parity
+      // suite cannot equate a row COUNT to the cell; the predicate is pinned
+      // by cross-file-pins ("DD-6 col-G status gates") instead.
+      if (targetCol === 7 && startDec > time600AM && startDec < time300PM && endDec < time300PM && queueName === "a_q_csr" && type === "incoming" && status !== "3" && abandoned !== "abandoned" && waitDec >= 0) includeRow = true;
     }
 
     if (targetRow === 37) {
@@ -665,7 +671,11 @@ function getExtractionDataJSON() {
       if (targetCol === 3 && (t1 || t2 || t3 || t4) && !(isRow39Match && (transfer === "transfer" || (abandoned === "abandoned" && waitDec > time1Min)))) includeRow = true;
       if (targetCol === 4 && (t1 || t3) && !(isRow39Match && transfer === "transfer")) includeRow = true;
       if (targetCol === 5 && (t5 || t6) && !(isRow39Match && abandoned === "abandoned" && waitDec > time1Min)) includeRow = true;
-      if (targetCol === 7 && !isCSR && abandoned !== "abandoned" && waitDec >= 0) includeRow = true;
+      // DD-6: the pipeline's row-40 col G is `nonCsrWaitSumDec / nonCsrWaitCount`,
+      // accumulated ONLY inside its `status === "1"` branch (the `!isCSR` block
+      // under `if (status === "1")`), so a non-status-1 non-CSR wait was listed
+      // here while the pipeline's mean excluded it. Pinned by cross-file-pins.
+      if (targetCol === 7 && status === "1" && !isCSR && abandoned !== "abandoned" && waitDec >= 0) includeRow = true;
     }
 
     if (includeRow) extractedRows.push(dispRow);

@@ -194,6 +194,10 @@ function neonGetAgentExtPairs_() {
   // their extensions take up to 6 h to reach the IR floater group +
   // Diagnostics. typeof-guarded like every cross-file call in this file; the
   // 'na' fallback is reportFreshnessTag_'s own documented failure value.
+  // OD-4: this DISTINCT set is bounded by the dqe_history retention horizon
+  // (NEON_RETENTION_HISTORY_MONTHS, 25 months); the sheet-scan fallback
+  // (`deptQueueExtsFromSheet_`) sees ALL history, so an extension last used
+  // before the horizon is recognized on one source and not the other.
   var KEY = 'neonAgentExts:v1:'
     + ((typeof reportFreshnessTag_ === 'function') ? reportFreshnessTag_() : 'na');
   var hit = cache.get(KEY);
@@ -258,6 +262,32 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
   var includeMissedDetail = !!(opts && opts.includeMissedDetail);
   var agentFilter = (opts && Array.isArray(opts.agents) && opts.agents.length > 0
                      && opts.agents.length <= 300) ? opts.agents : null;
+  // (queue_split selection is resolved up front so it can be part of the memo key.)
+  var wantSplit = !!(opts && opts.withQueueSplit);
+  try {
+    if (!wantSplit && typeof getQueueSplitScope_ === 'function') {
+      wantSplit = getQueueSplitScope_() === 'dept';
+    }
+  } catch (eQs) { wantSplit = true; }   // unreadable scope -> fetch it (never lose data)
+  // D-4 (broad-scan 2026-09-17): the R40 per-execution memo, applied to the
+  // NEON path too. This primitive is DEPT-INDEPENDENT, so a combined sub-queue
+  // view issued one identical json_agg per dept and metered the egress each
+  // time (the cheapest remaining win after the R24 cap). Same memo object as
+  // the sheet path (`DQE_SHEET_ROWS_MEMO_`, keyed by source), same shallow-clone
+  // contract, same harness reset. Only a SUCCESSFUL read is memoized (the
+  // `_neonReachable` marker rides on the clone), so an outage is retried by the
+  // next caller exactly as before.
+  var memoKey = 'neon|' + String(fromIso) + '|' + String(toIso) + '|' + (includeMissedDetail ? '1' : '0')
+    + '|' + (wantSplit ? '1' : '0') + '|' + (agentFilter ? agentFilter.slice().sort().join('\u0001') : '');
+  if (DQE_SHEET_ROWS_MEMO_ && Object.prototype.hasOwnProperty.call(DQE_SHEET_ROWS_MEMO_.byKey, memoKey)) {
+    var _tHit = Date.now();
+    var hitCopy = dqeRowsShallowCopy_(DQE_SHEET_ROWS_MEMO_.byKey[memoKey]);
+    hitCopy._neonReachable = true;
+    if (typeof logDqeReadTiming_ === 'function') {
+      logDqeReadTiming_('neonFetchDqeRows_:memo-hit', 'neon-memo', _tHit, hitCopy.length);
+    }
+    return hitCopy;
+  }
   var conn = getDashboardNeonConn_({ recordReadHealth: true });   // NEO-3: DQE reader
   if (!conn) return [];
   var out = [];
@@ -288,12 +318,6 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
     // (compareDqeSources_ passes withQueueSplit so the parity gate always
     // certifies the real column). COALESCE so a pre-Phase-1 NULL reads as ''
     // and takes the fail-open path either way.
-    var wantSplit = !!(opts && opts.withQueueSplit);
-    try {
-      if (!wantSplit && typeof getQueueSplitScope_ === 'function') {
-        wantSplit = getQueueSplitScope_() === 'dept';
-      }
-    } catch (eQs) { wantSplit = true; }   // unreadable scope -> fetch it (never lose data)
     var splitExpr = wantSplit ? "COALESCE(queue_split, '')" : "''";
     var sql = "SELECT COALESCE(json_agg(json_build_array("
             + "month_year, call_date::text, agent_name, queue_extensions, "
@@ -377,6 +401,19 @@ function neonFetchDqeRows_(fromIso, toIso, opts) {
   } finally {
     try { conn.close(); } catch (ce) {}
   }
+  if (out._neonReachable) {
+    // D-4: memoize the canonical set; every caller -- this first one included --
+    // gets its own shallow copy (the R40 ownership contract).
+    if (!DQE_SHEET_ROWS_MEMO_) DQE_SHEET_ROWS_MEMO_ = { order: [], byKey: {} };
+    DQE_SHEET_ROWS_MEMO_.byKey[memoKey] = out;
+    DQE_SHEET_ROWS_MEMO_.order.push(memoKey);
+    while (DQE_SHEET_ROWS_MEMO_.order.length > DQE_SHEET_ROWS_MEMO_MAX_) {
+      delete DQE_SHEET_ROWS_MEMO_.byKey[DQE_SHEET_ROWS_MEMO_.order.shift()];
+    }
+    var firstCopy = dqeRowsShallowCopy_(out);
+    firstCopy._neonReachable = true;
+    return firstCopy;
+  }
   return out;
 }
 
@@ -411,7 +448,7 @@ function neonDqeRowsUsable_(rows) {
 // does that job for the report caches is keyed per report, not per DAL read.
 // Per-execution is the whole scope that is provably safe -- the dashboard never
 // writes DQE Historical Data, so the sheet cannot change under one request.
-var DQE_SHEET_ROWS_MEMO_ = null;          // { order: [key...], byKey: { key: rows } }
+var DQE_SHEET_ROWS_MEMO_ = null;          // { order: [key...], byKey: { key: rows } } -- D-4: keys are source-prefixed ('neon|…' for the Neon path)
 
 // Bounds the memo's retention. A request realistically asks for at most a
 // handful of distinct windows (a report's own window + the INV-28 prior, or a

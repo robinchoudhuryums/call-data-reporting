@@ -61,6 +61,52 @@ test('INV-12: setup() is idempotent -- re-run never overwrites existing rows', f
   assert.equal(ac._data[0][2], 'Custom Notes Label', 'existing header untouched (no overwrite)');
 });
 
+// OD-8 (broad-scan 2026-09-17): a schema that GAINED columns after the sheet
+// was created stayed header-less forever -- setup() wrote headers on CREATE
+// only. Healing fills BLANK header cells (widening first) and never rewrites a
+// non-blank one, so the idempotence pin above (a hand-edited label survives)
+// still holds.
+test('OD-8: setup() heals BLANK header cells of a pre-existing managed sheet', function () {
+  install();
+  const full = h.consts.ACCESS_CONTROL_HEADERS;
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Access Control': [full.slice(0, 3), ['m@x.com', 'CSR', 'note']],   // the pre-agent 3-header shape
+  } });
+  h.call('setup');
+  const ac = h.state.spreadsheet.getSheetByName(h.consts.SHEETS.ACCESS_CONTROL);
+  assert.equal(ac._data[0].slice(0, full.length).join('|'), full.join('|'),
+    'the appended Role / Agent Name headers are filled in');
+  assert.equal(ac._data[1][0], 'm@x.com', 'data row untouched');
+  assert.equal(ac.getLastRow(), 2, 'no rows added');
+  h.call('setup');
+  assert.equal(ac._data[0].slice(0, full.length).join('|'), full.join('|'), 'idempotent');
+});
+
+test('OD-8: healing widens a sheet narrower than its schema before writing (REP-10)', function () {
+  install();
+  const full = h.consts.ACCESS_CONTROL_HEADERS;
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'Access Control': [full.slice(0, 3)] } });
+  const ac = h.state.spreadsheet.getSheetByName(h.consts.SHEETS.ACCESS_CONTROL);
+  ac._maxColumns = 3;
+  h.call('setup');
+  assert.ok(ac.getMaxColumns() >= full.length, 'grid widened');
+  assert.equal(ac._data[0].slice(0, full.length).join('|'), full.join('|'));
+});
+
+test('OD-8: a NON-blank header that differs from the schema is left alone (INV-12 never overwrites)', function () {
+  install();
+  const full = h.consts.ACCESS_CONTROL_HEADERS;
+  const hdr = full.slice(); hdr[1] = 'Dept (custom)';
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'Access Control': [hdr] } });
+  h.call('setup');
+  const ac = h.state.spreadsheet.getSheetByName(h.consts.SHEETS.ACCESS_CONTROL);
+  assert.equal(ac._data[0][1], 'Dept (custom)');
+  const r = h.call('healSheetHeaders_', ac, full);
+  assert.deepEqual(Array.from(r.healed), []);
+  assert.equal(r.differing.length, 1);
+  assert.match(String(r.differing[0]), /Dept \(custom\)/);
+});
+
 test('setup(): a failing sheet does not abort the rest (partial-run recovery)', function () {
   install();
   // First insertSheet throws once (the operator's transient "Service

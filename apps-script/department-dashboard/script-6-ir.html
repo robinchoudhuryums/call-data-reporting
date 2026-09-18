@@ -238,13 +238,16 @@
       // If we drilled in from the Insights page, ANY close (Back / X /
       // Escape) reveals it again -- the page sat behind the IR overlay all
       // along, so there's nothing to re-show and no scroll lock to keep;
-      // just restore the Back buttons (#2/#7). Focus deliberately stays put
-      // (the launcher button lives in the admin-only Reports dropdown).
+      // just restore the Back buttons (#2/#7). UD-9: the launcher button
+      // lives in the admin-only Reports dropdown (hidden for a manager), so
+      // focus goes to the page's h1 -- never left on the hidden modal.
       if (irCameFromInsights_) {
         irCameFromInsights_ = false;
         const bk = $('ir-back-to-insights-btn'); if (bk) bk.style.display = 'none';
         const gb = $('ir-back-btn'); if (gb) gb.style.display = '';   // restore the generic Back
         document.body.style.overflow = '';
+        const h1 = $('page-title');
+        if (h1) { try { h1.focus(); } catch (e) { /* ignore */ } }
       } else {
         document.body.style.overflow = '';
         btn.focus();
@@ -258,7 +261,20 @@
         setTimeout(function () { setRoute_(basePageRoute_()); }, 0);
       }
     }
-    function onKeyDown(e) { if (e.key === 'Escape') closeModal(); }
+    // C2-12: Escape closes the edit popover FIRST when it is open (it is a
+    // role=dialog layered over the modal) and returns focus to its opener;
+    // a second Escape closes the modal as before.
+    function onKeyDown(e) {
+      if (e.key !== 'Escape') return;
+      const pop = $('ir-edit-popover');
+      if (pop && pop.style.display !== 'none') {
+        e.preventDefault();
+        irCloseEditPopover_();
+        const eb = $('ir-edit-selection-btn'); if (eb) eb.focus();
+        return;
+      }
+      closeModal();
+    }
 
     btn.addEventListener('click', openModal);
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
@@ -535,6 +551,20 @@
     const l = $('ir-drill-loader'); if (l) l.style.display = '';
     $('individual-form').style.display = 'none';
     $('individual-results').style.display = 'none';
+  }
+  // C2-4 (broad-scan 2026-09-17): a VALIDATION refusal inside runIrReport
+  // (no agent in the fetched roster, a bad prior range, a mixed-dept pick)
+  // used to write the form's error line while the drill loader still hid
+  // the form -- the "can never get stuck on the loader" promise held for
+  // fetch failures only. Every early return now lands on the visible form.
+  // C2-1 / C2-4 (broad-scan 2026-09-17): every validation early-return in
+  // runIrReport lands here, so the drill loader shown by the IR drill-through
+  // is ALWAYS cleared (it stranded on a refusal that happened while the form
+  // was already visible, since only showIrForm hid it).
+  function irRefuse_(msg) {
+    hideIrDrillLoading_();
+    if ($('individual-form').style.display === 'none') showIrForm();
+    irSetFormError(msg);
   }
   function hideIrDrillLoading_() {
     const l = $('ir-drill-loader'); if (l) l.style.display = 'none';
@@ -975,17 +1005,17 @@
     if (irClampNote) irSetFormNote_(irClampNote);
     const from = $('ir-from').value;
     const to   = $('ir-to').value;
-    if (!from || !to) { irSetFormError('Pick a start and end date.'); return; }
-    if (from > to)    { irSetFormError('Start date must be on or before end date.'); return; }
+    if (!from || !to) { irRefuse_('Pick a start and end date.'); return; }
+    if (from > to)    { irRefuse_('Start date must be on or before end date.'); return; }
     const agents = irGetCheckedAgents_($('ir-agent-list'));
-    if (!agents.length) { irSetFormError('Select at least one agent.'); return; }
+    if (!agents.length) { irRefuse_('Select at least one agent.'); return; }
     // Sub-queue Phase 2: one report run is ONE department, because the team
     // average is per-dept (INV-27). A pick confined to a sub-queue group runs
     // against THAT dept; a pick spanning depts is refused with a reason rather
     // than silently averaging two teams together.
     const __sq = subqPickerScope_($('ir-agent-list'));
     if (__sq.mixed) {
-      irSetFormError('Pick agents from one department at a time — the team '
+      irRefuse_('Pick agents from one department at a time — the team '
         + 'average is per-department, so a mixed selection would compare '
         + 'agents against the wrong team.');
       return;
@@ -993,7 +1023,7 @@
     const reportDept = __sq.dept || dept;
 
     const prior = irResolvePriorRange_(from, to);
-    if (prior && prior.error) { irSetFormError(prior.error); return; }
+    if (prior && prior.error) { irRefuse_(prior.error); return; }
 
     const btn = $('ir-generate-btn');
     btn.disabled = true;
@@ -1321,10 +1351,23 @@
       $('ir-compare-mode').value = popMode;
       $('ir-compare-mode').dispatchEvent(new Event('change'));
     }
+    // C2-2 (broad-scan 2026-09-17): the same one-dept-per-run rule runIrReport
+    // applies (INV-27: the team average is per-dept). The popover renders the
+    // same sub-queue groups, so without this a manager could run PAP agents
+    // against Sales' team average, or mix depts with no refusal. The picker
+    // is synced first so the scope reads the NEW pick; a refusal stays on
+    // the results status line and leaves the report on screen.
     irApplyCheckedAgents_($('ir-agent-list'), newAgents);
+    const __sqEdit = subqPickerScope_($('ir-agent-list'));
+    if (__sqEdit.mixed) {
+      irSetResultsStatus('error', 'Pick agents from one department at a time — the team '
+        + 'average is per-department, so a mixed selection would compare agents '
+        + 'against the wrong team.');
+      return;
+    }
     irCloseEditPopover_();
 
-    const dept = getRequestedDept();
+    const dept = __sqEdit.dept || getRequestedDept();
 
     const btn = $('ir-edit-apply-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }

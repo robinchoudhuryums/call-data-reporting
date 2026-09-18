@@ -320,6 +320,9 @@ function missedEnrichQueueOnlyFromInbound_(queueOnly) {
         };
       }
       rs.close(); st.close();
+      // OD-3: the per-row enrich (up to MISSED_ENRICH_MAX_CALLS_ calls per My
+      // Department open) was unmetered; the facts map is what it pulled.
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(facts).length, 'missed-enrich');
       queueOnly.forEach(function (q) {
         (q.entries || []).forEach(function (e) {
           const hit = e.parentId && facts[e.date + '|' + e.parentId];
@@ -755,6 +758,11 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         bucket: bucketIdx,
       };
 
+      // DD-4 (broad-scan 2026-09-17): a ring outside the 8 AM-5 PM chart
+      // range still counts toward `total` (it IS a ring event) but lands in
+      // no bar -- carry the overflow so the card can say why its count
+      // exceeds the sum of the bars instead of leaving the mismatch unexplained.
+      if (bucketIdx === -1) target.outOfRange = (target.outOfRange || 0) + 1;
       if (isSentinel) {
         target.entries.push(entry);
       } else {
@@ -834,6 +842,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
         queue: queueName,
         entries: list,
         total: queueOnlyMap[queueName].total,
+        outOfRange: queueOnlyMap[queueName].outOfRange || 0,   // DD-4: rings in the count but in no chart bar
       };
     });
 
@@ -948,8 +957,20 @@ function normTimeKey_(s) {
   const isAM = /\bAM\b/.test(str);
   str = str.replace(/\s*(AM|PM)\s*/, '').trim();
 
+  // DD-1 (broad-scan 2026-09-17): the SHEET path hands K..AC / AF cells through
+  // unsanitized, and a still-coerced cell renders as "12/30/1899 10:23:33" (the
+  // 1899-epoch time serial, CLAUDE.md's comma-joined coercion gotcha).
+  // `parseInt("12/30/1899 10")` is 12, so that ring keyed at 12:23 -- shown at
+  // noon on the sheet path and at 10 AM on the Neon path (sanitized on write).
+  // Recover the lossless single-value date-render the way
+  // sanitizeSlotCellForNeon_ does (keep the time part), and refuse any other
+  // non-numeric hour token rather than mis-key it.
+  const dateRender = str.match(/^\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}:\d{2}(?::\d{2})?)$/);
+  if (dateRender) str = dateRender[1];
+
   const parts = str.split(':');
   if (parts.length < 2) return '';
+  if (!/^\d{1,2}$/.test(parts[0].trim())) return '';
   let h = parseInt(parts[0]) || 0;
   const m = parseInt(parts[1]) || 0;
   const sec = parts.length >= 3 ? (parseInt(parts[2]) || 0) : 0;

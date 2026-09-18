@@ -244,6 +244,11 @@ function makeFakeSheet(name, data) {
       this._maxColumns = target;
       return this;
     },
+    // The used grid (rows x columns holding data), as the real API returns it;
+    // an empty sheet yields the 1x1 A1 range like the real one.
+    getDataRange: function () {
+      return this.getRange(1, 1, Math.max(this.getLastRow(), 1), Math.max(this.getLastColumn(), 1));
+    },
     getRange: function (startRow, startCol, numRows, numCols) {
       // F-5: real Sheets THROWS on a getRange past getMaxColumns (columns
       // never auto-expand -- the REP-10 production failure class). Without
