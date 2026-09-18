@@ -2413,6 +2413,31 @@ When something looks wrong, before assuming a code bug, check:
     for the TTL. Reversible by clearing the property. Memoized per execution.
     Pinned by `tests/unit/answer-rate-formula.test.js` (the switch, the probe,
     and a tripwire that fails on any bare `answered / rung` outside the helper).
+    - **FIRST LIVE RUN, 2026-09-18 -- the flip is SAFE and changes NO number.**
+      `2026-08-19..2026-09-17`, all 16 depts on the sheet source: largest dept
+      gap **0.0 pts**, no standard verdict flips, worst per-agent gap 0.2 pts
+      (Sales). So step (3) above had nothing to re-tune. **Adopt `answerable`
+      for CONSISTENCY, not correction** -- it aligns the dashboard with
+      team-tools by construction instead of by coincidence.
+    - **Why the two agreed, and why that is not a reason to skip the flip.**
+      `rung` equalled `answered + missed` on every leg but ONE (a single Sales
+      leg, reported in the probe's `neither` column). That equality is
+      **EMPIRICAL, not structural**: `rung` is `windowLegs.length`, while
+      `answered` / `missed` are set from two INDEPENDENT CDR columns
+      (`=== 'Answered'` / `=== 'Missed'`, buildDQEHistoricalData.js ~781), so
+      nothing guarantees a leg carries exactly one. If a third disposition
+      ever appears in the feed, `answered / rung` silently dilutes every rate
+      downward while `answerable` stays correct -- which is the strongest
+      argument for the flip. **Re-run this probe after any feed change**, and
+      treat a non-trivial `neither` column as the signal.
+    - **The H2 "91.7 beside a 92" drift was ROUNDING, not the denominator**
+      (CLAUDE.md's team-tools bullet is corrected accordingly). The two
+      denominators agree to within 0.007 pts here. The run demonstrates the
+      real mechanism in its own table: Sales prints 28.9 under `rung` and 29.0
+      under `answerable`, which reads as a tenth of a point, but the values are
+      28.949 and 28.956 -- they straddle 28.95 and round apart. A whole-percent
+      surface beside a one-decimal one manufactures exactly that gap with no
+      difference underneath.
 70. **Execution ceiling + the cdr-import time budgets (P-3, Batch 5,
     2026-09-17) -- and the cdr-import Script Property registry.** The repo
     carried two beliefs about the per-execution ceiling (30 min in the bulk /

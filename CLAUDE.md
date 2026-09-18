@@ -966,9 +966,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `DQE Historical Data` and tints the same per-agent rate the manager sees
   here, so a formula or standard is a TWO-REPO edit: Answer % is
   `answered / (answered + missed)` on both sides, rounded to a WHOLE percent
-  as the Answer % cell prints it (rung counts every window leg, so
-  `answered / rung` is a DIFFERENT number, and a 91.7 beside a 92 tints
-  amber beside green -- the two drifts H2 closed);
+  as the Answer % cell prints it -- **and ROUNDING, not the denominator, is
+  what actually drifts** (measured 2026-09-18, Operator State #69): across 16
+  depts x 30 days the two denominators agreed to within 0.007 pts, because
+  every window leg carried exactly one disposition. That equality is
+  EMPIRICAL, not structural -- `rung` is `windowLegs.length` while
+  answered/missed come from two INDEPENDENT CDR columns -- so a third
+  disposition appearing in the feed would silently dilute `answered / rung`
+  and leave `answerable` correct;
   the tint is three-tier against `getAnswerStandardFor_(dept)` (target +
   amber band, Operator State #37); and team-average benchmarks subtract
   `getTeamAvgExcludes_(dept)` (INV-26) while dept totals keep everyone. Those
