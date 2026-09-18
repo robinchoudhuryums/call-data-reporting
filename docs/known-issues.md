@@ -849,12 +849,15 @@ through a public function that explicitly checks `resolveUser_(email).role
 
 ### `setup()` is idempotent
 
-`setup()` creates `Access Control`, `Alert Config`, `Alert Log`,
-`Pipeline Health`, `Digest Config`, `Agent Alias Overrides`,
-`Orphan Fix Log`, `Dept Config`, `Report Usage`, and
-`Queue Report Subscribers` sheets if they
-don't exist (each with a frozen header row). It never overwrites
-existing rows on any of the ten. Safe to re-run as many
+`setup()` creates the twelve managed sheets (`Access Control`, `Alert
+Config`, `Alert Log`, `Pipeline Health`, `Digest Config`, `Agent Alias
+Overrides`, `Orphan Fix Log`, `Dept Config`, `Report Usage`, `Queue Report
+Subscribers`, `Company Holidays`, `Dashboard Standards`) if they don't exist
+(each with a frozen header row). It never overwrites existing rows on any
+of them; since OD-8 (2026-09-17) it does HEAL an existing sheet's header row
+-- a BLANK header cell (a column appended to the schema after the sheet was
+created) is filled from the schema, a non-blank one is never touched
+(`healSheetHeaders_`, INV-12). Safe to re-run as many
 times as you want. Keep it that way; the alerts engine assumes
 `appendAlertLog_` can blindly append without coordinating reads.
 

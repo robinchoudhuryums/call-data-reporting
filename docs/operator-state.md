@@ -2120,7 +2120,11 @@ When something looks wrong, before assuming a code bug, check:
     - **Read the VERDICT line first.** The tool is a fifth hand-mirror of
       `calcQcdReport`, which is this repo's recurring defect class, so it
       reconciles itself before reporting: its per-leg row 35/36/37 col-D tally
-      must equal the real `calcQcdReport` run on the same grid, AND its
+      must equal the real `calcQcdReport` run on the same grid -- in TOTAL and,
+      since DD-5 (Batch 7), PER AGENT (the real function re-run on each
+      agent's legs alone, busiest-first, capped at 60 with the remainder
+      reported as unchecked; two agents misclassified in compensating
+      directions used to pass) -- AND its
       per-agent DQE recomputation must equal the already-written
       `DQE Historical Data` rows for that date. Either check failing yields
       **INCONCLUSIVE — the gap analysis below it is then meaningless and the

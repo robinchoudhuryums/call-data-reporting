@@ -799,7 +799,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `DQE_WINDOW_START` floor there, and `qcd-dqe-diagnostic.test.js` drives the
   REAL build against the mirror (source pins on copied text cannot see a rule
   the build GAINED). **`queueSplitSample.js` is the SIXTH** (P-5): same
-  helper, same R18e ext fallback, same pin. NOT retroactive: a stored row keeps
+  helper, same R18e ext fallback, same pin, and `queue-split-sample.test.js`
+  drives it against the REAL build too. NOT retroactive: a stored row keeps
   its old numbers until the date is rebuilt (Operator State #67). The work-window pill still shows 8:30
   for everyone -- a known 30-minute understatement for the CSR family.
 

@@ -95,7 +95,7 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 103 more (this file is the coverage map —
+    ...                       + 104 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
                               trim pass): dal-cutover parity (+ the R40
@@ -135,6 +135,12 @@ tests/
                               callout; the deleteRows/deleteColumns call
                               itself is not harness-modelled),
                               sheet-repairs-merge,
+                              queue-split-sample (P-5: the SIXTH mirror of the
+                              build's queueLegs gate driven against the REAL
+                              build -- the early-family floor counts, the same
+                              minute on a non-early queue does not, the R18e
+                              ext-recovered leg lands, every agent reads OK,
+                              and the self-check BITES on a flat floor),
                               sheet-repairs-backup (roadmap 1b: every bulk
                               repair apply snapshots the sheet into the
                               standing backup workbook BEFORE its first write
