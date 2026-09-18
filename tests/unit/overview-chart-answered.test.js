@@ -214,3 +214,71 @@ test('R50: the buttons the markup offers are exactly the windows the client know
     'a button with no OV_CARD_PERIODS_ entry is inert (the handler rejects it); '
     + 'an entry with no button is unreachable');
 });
+
+// --- the COMPANY aggregate line (owner request 2026-09-18) ------------------
+// Pinned HERE because this suite already owns the "both payloads, both
+// prefixes" property, and the company line has the same two-payload shape --
+// plus one the answered count did not: it is ADMIN-ONLY, and the two payloads
+// enforce that by different mechanisms.
+
+test('both payloads ship the company series, by their own admin-gate mechanism', function () {
+  const gs = read('CompanyOverview.gs');
+  // The 90-day blob puts it INSIDE companyAggregate, which
+  // personalizeOverview_ deletes wholesale -- no new strip-list entry to
+  // forget, which is the reason for that placement.
+  assert.match(gs, /trendChart: chartTrendIsoLabels\.map/,
+    'the 90-day blob carries the company rate series');
+  assert.match(gs, /trendChartAbandonedPct: chartTrendIsoLabels\.map/,
+    'the 90-day blob carries the company abandon series');
+  // The YTD endpoint is manager-or-admin with a SHARED cache, so it computes
+  // once and strips on serve.
+  assert.match(gs, /function ovStripChartTrend_/,
+    'the YTD payload needs its own strip -- it is a separate, manager-reachable endpoint');
+  assert.match(gs, /if \(user && user\.role === 'admin'\) return payload;/,
+    'and it fails CLOSED: anything but a resolved admin loses the field');
+  // Every return path must go through it, or a cache hit leaks.
+  const fn = gs.slice(gs.indexOf('function getOverviewChartTrend'), gs.indexOf('function ovStripChartTrend_'));
+  const returns = (fn.match(/return (data|hit);/g) || []);
+  assert.equal(returns.length, 0,
+    'no raw `return data/hit` may bypass the strip -- found: ' + JSON.stringify(returns));
+  assert.equal((fn.match(/ovStripChartTrend_\(/g) || []).length, 3,
+    'all three return paths (cache hit, degraded, fresh) are stripped');
+});
+
+test('the company aggregate is counted ONCE per row, never summed from the dept maps', function () {
+  const gs = read('CompanyOverview.gs');
+  // The 90-day arm reuses companyTrendByDate, which the main loop already
+  // accumulates once per (date, agent) row.
+  assert.match(gs, /const day = companyTrendByDate\[iso\];/,
+    'the 90-day company rate reads the once-per-row map');
+  // The YTD arm has no such map, so it builds its own pass -- summing
+  // `deptDaily` there would double-count every crossover agent.
+  assert.match(gs, /const companyDailyYtd = \{\};/,
+    'the YTD company rate gets its OWN pass over the rows');
+  assert.ok(!/companyDailyYtd\[[^\]]*\]\s*=\s*deptDaily/.test(gs),
+    'and never derives itself from the per-dept maps');
+  // The abandon arm is accumulated once per QUEUE ROW inside the snapshot
+  // builder, outside the per-dept fan-out.
+  assert.match(gs, /out\._companyDaily = companyQcdDaily;/,
+    'the QCD snapshot builder returns the company map it accumulated per queue row');
+});
+
+test('the client treats it as a reference series on PERCENTAGE metrics only', function () {
+  const ov = read('script-3-overview.html');
+  // Only the two pct metrics name a company field; the count metrics must not,
+  // or a company "answered calls" line would just restate the dept sum.
+  const reg = ov.slice(ov.indexOf('const OV_CHART_METRICS_ = {'), ov.indexOf('const OV_CHART_METRIC_KEY_'));
+  assert.equal((reg.match(/companyField:/g) || []).length, 2, 'exactly two metrics carry a company line');
+  assert.match(reg, /companyField: 'trend'/);
+  assert.match(reg, /companyField: 'trendAbandonedPct'/);
+  // It must not take a dept hue: IR_CHART_COLORS carries dept IDENTITY.
+  const ds = ov.slice(ov.indexOf('const companySeries ='), ov.indexOf('// Metric-specific dashed reference baseline'));
+  assert.ok(!/IR_CHART_COLORS/.test(ds) && !/colorByDept/.test(ds),
+    'the company line takes no categorical dept hue');
+  assert.match(ds, /borderColor: \(THEME && THEME\.text\)/, 'it wears neutral ink');
+  assert.ok(!/_deptName/.test(ds.replace(/\/\/[^\n]*/g, '')),
+    'and carries no _deptName -- the tile-hover and point-click handlers map a dataset to a DEPT');
+  // Pinning a dept must not hide the aggregate it is being compared against.
+  assert.match(ov, /skipLabel: \[mcfg\.baselineLabel \|\| '__ov_no_baseline__', OV_COMPANY_LABEL_\]/,
+    'the company line is exempt from spotlight dimming');
+});

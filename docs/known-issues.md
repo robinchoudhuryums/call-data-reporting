@@ -884,7 +884,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
 | `MissedCallsReport.gs` | `missed:vN:` | `v17` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v23` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v24` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v10` |
 | `InsightsReport.gs` | `insights:vN:` | `v24` |
@@ -1743,7 +1743,7 @@ behavior byte-identical to pre-OrphanFix.
 
 **Cache invalidation.** `applyOrphanRename` removes the single
 fixed-key Overview cache entry (via the `COMPANY_OVERVIEW_CACHE_KEY`
-constant -- currently `companyOverview:v23`) on success. Per-(dept,
+constant -- currently `companyOverview:v24`) on success. Per-(dept,
 range) caches (`summary:v22`, `individual:v12`,
 etc.) are left to TTL out within the report TTL (6 h since R24; the freshness tag re-keys them when a new data day lands)
 (`REPORT_CACHE_TTL_SECONDS`). The Orphan Fix modal tells the user
@@ -1794,7 +1794,7 @@ queue-level history for the gap is intact. After a Neon-read cutover,
 finish with `backfillDQEHistoryUpsert()`.
 
 **Detection if it recurs.** The DQE-silence watchdog (Operator State #44)
-and the Overview queue-lens badge (companyOverview:v23) both exist because
+and the Overview queue-lens badge (companyOverview:v24) both exist because
 of this incident — the watchdog would have emailed on day 2. The INBOUND
 capture's recognizer (`icIsQueueName_`) reads leg NAMES, not col W, and was
 unaffected — the two recognizers diverge on purpose (see the CLAUDE.md

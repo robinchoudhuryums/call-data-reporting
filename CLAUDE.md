@@ -1983,7 +1983,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
-  stripped by `personalizeOverview_` (`companyOverview:v23`).
+  stripped by `personalizeOverview_` (`companyOverview:v24`).
 - **Agent table column model (My Department).** The table is rendered
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table

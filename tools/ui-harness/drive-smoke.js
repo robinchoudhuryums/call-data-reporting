@@ -572,6 +572,58 @@ async function visibleErrorTones(page) {
     }
 
     // R18b (owner): the all-departments report shares ONE tally scale, the
+    // THE COMPANY AGGREGATE LINE (owner request 2026-09-18). Both halves are
+    // asserted for BOTH roles, because the interesting property is the
+    // asymmetry: the company rate is admin-only data (INV-39, and it rides
+    // inside `companyAggregate` so personalizeOverview_ strips it wholesale),
+    // and a manager who could see it would be a real leak, not a cosmetic bug.
+    // Also asserted: it takes NO dept hue -- it is a reference series, and a
+    // cycled 15th categorical hue would collide with a department's identity.
+    {
+      const co = await page.evaluate(() => {
+        const ch = (window.Chart && window.Chart.getChart)
+          ? window.Chart.getChart('ov-trend-chart') : null;
+        if (!ch) return { chart: false };
+        const sets = ch.data.datasets || [];
+        const c = sets.find((d) => d.label === 'Company') || null;
+        const deptColors = sets.filter((d) => d._deptName)
+          .map((d) => String(d._origBorder || d.borderColor));
+        return {
+          chart: true,
+          present: !!c,
+          points: c ? c.data.filter((v) => v != null).length : 0,
+          width: c ? c.borderWidth : null,
+          dash: c ? JSON.stringify(c.borderDash || []) : null,
+          hasDeptName: c ? !!c._deptName : null,
+          sharesDeptHue: c ? deptColors.indexOf(String(c.borderColor)) !== -1 : null,
+          inRange: c ? (function () {
+            // A weighted mean can never sit outside the dept spread, so a
+            // point that does means the arithmetic is wrong.
+            const i = c.data.findIndex((v) => v != null);
+            if (i < 0) return null;
+            const dept = sets.filter((d) => d._deptName)
+              .map((d) => d.data[i]).filter((v) => v != null);
+            if (!dept.length) return null;
+            return c.data[i] >= Math.min.apply(null, dept) - 0.05
+                && c.data[i] <= Math.max.apply(null, dept) + 0.05;
+          })() : null,
+        };
+      });
+      if (role === 'admin') {
+        record('admin: the Company aggregate line is on the % chart',
+          co.chart && co.present && co.points > 0, JSON.stringify(co));
+        record('admin: the Company line is a REFERENCE series, not a 15th dept',
+          co.present && co.width === 3 && co.dash === '[]'
+            && co.hasDeptName === false && co.sharesDeptHue === false,
+          JSON.stringify(co));
+        record('admin: the Company point sits inside the dept spread (weighted, not stray)',
+          co.inRange === true, 'inRange=' + co.inRange);
+      } else {
+        record('manager: NO Company aggregate line (INV-39 -- admin-only data)',
+          co.chart && !co.present, JSON.stringify(co));
+      }
+    }
+
     // same fix the email got in R18 -- a per-section unit made bar length
     // incomparable between departments, which is the same misread whether the
     // rows sit in an inbox or on a page. Asserted as the PROPERTY (monotonic

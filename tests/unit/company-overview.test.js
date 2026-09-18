@@ -238,3 +238,84 @@ test('D-5: a QCD snapshot read that THROWS is served but never cached (no compan
   assert.ok(Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('companyOverview:') === 0; }),
     'control: a healthy snapshot path IS cached');
 });
+
+// THE CHART'S COMPANY LINE (owner request 2026-09-18). Two properties are
+// worth pinning and neither is visible by eye on a chart: the rate is
+// VOLUME-WEIGHTED (a mean of dept percentages would let a tiny queue swing the
+// company number as hard as CSR), and each row is counted ONCE (summing the
+// per-dept series would double-count every crossover agent -- Anna is on two
+// rosters here, which is exactly the shape that would expose it).
+
+test('chart company line: volume-weighted, NOT a mean of the dept percentages', function () {
+  install({});
+  const data = h.call('getCompanyOverview', {});
+  const ca = data.companyAggregate;
+  const idx = (data.chartTrendIsoLabels || []).indexOf(LATEST);
+  assert.ok(idx >= 0, 'the latest date is on the chart axis');
+  const company = ca.trendChart[idx];
+
+  // Truth: Anna 10 rung / 7 answered / 3 missed + Bob 5 / 4 / 1, each ONCE.
+  const csr = deptTile(data, 'CSR');
+  const spa = deptTile(data, 'Spanish');
+  const weighted = h.ctx.round1_(h.ctx.answerRatePct_(11, 4, 15));
+  assert.equal(company, weighted, 'the company point is the weighted company rate');
+
+  // And it is NOT the average of the two dept lines, which double-count Anna.
+  const csrPt = csr.trendChart[idx], spaPt = spa.trendChart[idx];
+  const mean = h.ctx.round1_((csrPt + spaPt) / 2);
+  assert.notEqual(company, mean,
+    'a mean of the dept points (' + csrPt + ', ' + spaPt + ' -> ' + mean + ') is a different number');
+  // Sanity: the weighted value sits between the two dept rates, never outside.
+  assert.ok(company <= Math.max(csrPt, spaPt) && company >= Math.min(csrPt, spaPt),
+    'a weighted mean stays inside the dept range');
+});
+
+test('chart company line: the abandon arm is counted once per QUEUE row, not per dept', function () {
+  // A queue listed by TWO depts (and a parent rolling up a child) would be
+  // double-counted by any per-dept sum. computeQcdSnapshots_ returns the
+  // company map alongside the per-dept ones for exactly that reason.
+  install({});
+  h.ctx.computeQcdSnapshots_ = function () {
+    return {
+      CSR:     { daily: { [LATEST]: { totalCalls: 100, abandoned: 10 } } },
+      Spanish: { daily: { [LATEST]: { totalCalls: 100, abandoned: 10 } } },
+      // The company map: ONE queue row, not the sum of the two tiles above.
+      _companyDaily: { [LATEST]: { totalCalls: 100, abandoned: 10 } },
+    };
+  };
+  const data = h.call('getCompanyOverview', {});
+  const idx = (data.chartTrendIsoLabels || []).indexOf(LATEST);
+  assert.equal(data.companyAggregate.trendChartAbandonedPct[idx], 10,
+    '10/100 from the company map, not 20/200 or 10/200 from summing tiles');
+});
+
+test('chart company line: a day with no rows is null, so the line BREAKS rather than plotting a zero', function () {
+  install({});
+  const data = h.call('getCompanyOverview', {});
+  const labels = data.chartTrendIsoLabels || [];
+  const series = data.companyAggregate.trendChart;
+  assert.equal(series.length, labels.length, 'aligned to the axis');
+  const idx = labels.indexOf(LATEST);
+  labels.forEach(function (iso, i) {
+    if (i === idx) return;
+    assert.equal(series[i], null, iso + ' has no rows -> null, never 0');
+  });
+});
+
+test('chart company line: rides companyAggregate, so INV-39 strips it for a manager', function () {
+  install({});
+  const data = h.call('getCompanyOverview', {});
+  assert.ok(data.companyAggregate.trendChart, 'admin sees it');
+  // personalizeOverview_ deletes the whole object -- that is the point of
+  // putting the series inside it rather than beside it.
+  const mgr = h.ctx.personalizeOverview_(data, {
+    email: 'm@x.com', role: 'manager', department: 'CSR', departments: ['CSR'], allDepts: false,
+  });
+  assert.equal(mgr.companyAggregate, undefined, 'a manager gets no company aggregate at all');
+  // NB `trendChartAbandonedPct` is ALSO a per-DEPT field name, so searching
+  // the whole payload for it proves nothing -- the company copy is identified
+  // by its location, not its name. (An earlier draft of this assertion did
+  // exactly that and failed on the legitimate dept series.)
+  assert.ok((mgr.depts || []).every(function (d) { return Array.isArray(d.trendChartAbandonedPct); }),
+    'the per-dept series are untouched -- only the company aggregate is stripped');
+});

@@ -1522,6 +1522,11 @@
   // Answered calls does not reconcile against Abandoned calls either.
   const OV_CHART_METRICS_ = {
     pct: {
+      // `companyField` = the aggregate series on view.company for this metric.
+      // Only the PERCENTAGE views have one: a company "answered calls" line is
+      // just the visual sum of the dept lines, whereas a company RATE is the
+      // one number no dept line can show (owner request 2026-09-18).
+      companyField: 'trend',
       field: 'trend', unit: 'pct', axisTitle: '% Answered',
       baseline: answerTarget_('global'), baselineLabel: answerTarget_('global') + '% target',
       header: 'Answer rate trend per department (rings)',
@@ -1540,6 +1545,7 @@
       fmt: function (v) { return Math.round(v).toLocaleString(); },
     },
     abandonedPct: {
+      companyField: 'trendAbandonedPct',
       field: 'trendAbandonedPct', unit: 'pct', axisTitle: 'Abandoned %',
       baseline: ABANDON_STANDARD_, baselineLabel: ABANDON_STANDARD_ + '% threshold',
       header: 'Abandoned % per department (queue)',
@@ -1594,6 +1600,8 @@
           trendIsoLabels: ovYtdData.trendIsoLabels || [],
           depts: ovYtdData.depts || [],
           latestDate: ovYtdData.latestDate || (data && data.latestDate),
+          // Admin-only, and absent for a manager (the server strips it).
+          company: ovYtdData.company || null,
         };
       }
       // YTD not loaded yet -> show the full 90-day window meanwhile.
@@ -1617,11 +1625,20 @@
         trendAbandonedPct: (d.trendChartAbandonedPct || []).slice(startIdx),
       };
     });
+    // The company reference line rides `companyAggregate`, which
+    // personalizeOverview_ deletes wholesale for non-admins -- so a manager's
+    // payload simply has no company series and the line does not draw.
+    const ca = data.companyAggregate || null;
+    const company = ca ? {
+      trend: (ca.trendChart || []).slice(startIdx),
+      trendAbandonedPct: (ca.trendChartAbandonedPct || []).slice(startIdx),
+    } : null;
     return {
       trendLabels: lab.slice(startIdx),
       trendIsoLabels: iso.slice(startIdx),
       depts: depts,
       latestDate: data.latestDate,
+      company: company,
     };
   }
 
@@ -1765,6 +1782,43 @@
       };
     });
 
+    // THE COMPANY AGGREGATE LINE (owner request 2026-09-18). A REFERENCE
+    // series, not a 15th department: it deliberately takes no hue from
+    // IR_CHART_COLORS (that ramp carries dept IDENTITY, and a cycled 15th hue
+    // would collide with an existing dept), so it reads by WEIGHT and LABEL in
+    // neutral ink instead -- the same family as the dashed baseline above,
+    // one step louder because it is real data rather than a fixed goal.
+    // Percentage metrics only, and admin-only by construction (the payload
+    // field is stripped for everyone else).
+    const companySeries = (mcfg.companyField && view.company)
+      ? (view.company[mcfg.companyField] || null) : null;
+    const OV_COMPANY_LABEL_ = 'Company';
+    if (companySeries && companySeries.some(function (v) { return v != null; })) {
+      datasets.push({
+        label: OV_COMPANY_LABEL_,
+        data: companySeries,
+        borderColor: (THEME && THEME.text) || '#1a1d21',
+        _origBorder: (THEME && THEME.text) || '#1a1d21',
+        _origWidth: 3,
+        // No _deptName: the tile-hover spotlight and the point-click deep link
+        // both map a dataset back to a DEPT, and there is no "/dept/Company".
+        backgroundColor: 'rgba(0,0,0,0)',
+        fill: false,
+        tension: 0.4,
+        borderWidth: 3,
+        borderDash: [],
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointBackgroundColor: (THEME && THEME.text) || '#1a1d21',
+        pointBorderColor: THEME.paperCard,
+        pointBorderWidth: 1.5,
+        spanGaps: false,
+        // In front of the dept lines: it is the line you read the others
+        // against. Chart.js draws higher `order` first, so 0 is on top.
+        order: 0,
+      });
+    }
+
     // Metric-specific dashed reference baseline drawn behind the dept series
     // (92% answer-rate goal for % Answered; the abandon standard for
     // Abandoned %; none for the raw Abandoned-calls count). Excluded from the
@@ -1845,7 +1899,11 @@
     // still paints with the inline "chart unavailable" note. ovWireAxisZoom_
     // self-guards (it early-returns on a null instance).
     if (ovChartInstance) {
-      chartSpotlightStash_(ovChartInstance, { skipLabel: mcfg.baselineLabel || '__ov_no_baseline__' });
+      // Two exemptions: the fixed reference baseline and the Company
+      // aggregate (see chartSpotSkips_).
+      chartSpotlightStash_(ovChartInstance, {
+        skipLabel: [mcfg.baselineLabel || '__ov_no_baseline__', OV_COMPANY_LABEL_],
+      });
       ovChartInstance._trendIso = view.trendIsoLabels || [];
       ovChartInstance._viewerDept = ovViewerDept_(data);
       // O1: stash the metric config + baseline labels so chartSpotlightAfterHide_
@@ -1979,6 +2037,20 @@
   // when present (survives re-render), else the series label (e.g. QCD queues).
   function chartSpotKey_(ds) { return (ds && (ds._deptName || ds.label)) || null; }
 
+  // Is this dataset exempt from dimming? `skipLabel` accepts one label or a
+  // LIST: the Overview needs two exemptions now (the reference baseline and
+  // the Company aggregate), and pinning one dept must not hide the aggregate
+  // you pinned it to compare against.
+  function chartSpotSkips_(chart) {
+    var sk = chart && chart._spotlightSkip;
+    if (!sk) return [];
+    return Array.isArray(sk) ? sk : [sk];
+  }
+  function chartSpotSkipped_(chart, ds) {
+    if (!ds) return false;
+    return chartSpotSkips_(chart).indexOf(ds.label) !== -1;
+  }
+
   function chartSpotlightStash_(chart, opts) {
     if (!chart || !chart.data) return;
     chart._spotlightSkip = (opts && opts.skipLabel) || null;
@@ -2014,10 +2086,10 @@
       }
       return;
     }
-    var skip = chart._spotlightSkip, lo = Infinity, hi = -Infinity;
+    var lo = Infinity, hi = -Infinity;
     chart.data.datasets.forEach(function (ds) {
       if (ds.hidden) return;
-      if (skip && ds.label === skip) return;
+      if (chartSpotSkipped_(chart, ds)) return;
       var key = chartSpotKey_(ds);
       if (!key || !pins[key]) return;                 // pinned only
       (ds.data || []).forEach(function (v) {
@@ -2060,7 +2132,7 @@
   function chartSpotlightApply_(chart, activeIndex) {
     if (!chart || !chart.data) return;
     chart.data.datasets.forEach(function (ds, i) {
-      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (chartSpotSkipped_(chart, ds)) return;
       if (i === activeIndex) {
         ds.borderColor = ds._origBorder;
         ds.borderWidth = (ds._origWidth || 2) + 0.8;
@@ -2075,7 +2147,7 @@
   function chartSpotlightClear_(chart, animate) {
     if (!chart || !chart.data) return;
     chart.data.datasets.forEach(function (ds) {
-      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (chartSpotSkipped_(chart, ds)) return;
       if (ds._origBorder != null) ds.borderColor = ds._origBorder;
       if (ds._origWidth != null) ds.borderWidth = ds._origWidth;
     });
@@ -2101,7 +2173,7 @@
     }
     const pins = chart._spotlightPins;
     chart.data.datasets.forEach(function (ds) {
-      if (chart._spotlightSkip && ds.label === chart._spotlightSkip) return;
+      if (chartSpotSkipped_(chart, ds)) return;
       const k = chartSpotKey_(ds);
       if (k && pins[k]) {
         ds.borderColor = ds._origBorder;

@@ -850,7 +850,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v23` — zero DQE rings over the trailing 7 chart days while
+  (`companyOverview:v24` — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1079,7 +1079,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   day) in `ovPeriodStats_`** -- a plausible-looking number, not an error -- so
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
-  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v23`.
+  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v24`.
 
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a
@@ -1165,7 +1165,42 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   while a pin is active); clicking a POINT deep-links into that
   dept + date's My Department view (`ovHandlePointClick_` ->
   `ovRouteToDept_(dept, iso)`; admins, or a manager clicking their
-  own dept's line). **Metric views are a
+  own dept's line). **THE COMPANY AGGREGATE LINE
+  (owner request 2026-09-18) is a REFERENCE series, not a 15th department.**
+  Percentage metrics only -- each registry entry names a `companyField`, and
+  only `pct` and `abandonedPct` have one, because a company "answered calls"
+  line would just restate the visual sum of the dept lines while a company
+  RATE is the one number no dept line can show. It wears neutral ink
+  (`THEME.text`) at 3px solid, `order: 0` so it draws in front, and
+  deliberately takes NO hue from `IR_CHART_COLORS` -- that ramp carries dept
+  IDENTITY and a cycled 15th hue would collide with a real dept. It carries no
+  `_deptName`, so the tile-hover spotlight and the point-click deep link both
+  skip it (there is no `/dept/Company`), and it joins the spotlight's skip set
+  so PINNING A DEPT KEEPS IT VISIBLE -- that comparison is the whole point,
+  which is why `chartSpotlightStash_`'s `skipLabel` now takes a LIST
+  (`chartSpotSkips_`). It is NOT in the y-axis skip list: a weighted mean
+  always sits inside the dept spread, so it can never pin the range, and
+  excluding it would leave the axis empty if it were ever the only series.
+  **Both figures are VOLUME-WEIGHTED and counted ONCE**, which is the part no
+  chart can show you is wrong: the rate arm reuses `companyTrendByDate` (the
+  main loop's once-per-(date,agent) map) on the 90-day blob and takes its OWN
+  pass on the YTD endpoint, because summing the per-dept maps would
+  double-count every crossover agent; the abandon arm is accumulated once per
+  QCD QUEUE ROW inside `computeQcdSnapshots_` (returned as `_companyDaily`),
+  outside the per-dept fan-out, because a queue listed by two depts and a
+  parent rolling up its children would each double-count. It stays all-queue
+  under `QUEUE_SPLIT_SCOPE=dept`, matching the hero. **ADMIN-ONLY (INV-39)**,
+  by two different mechanisms: on the 90-day blob it rides INSIDE
+  `companyAggregate`, which `personalizeOverview_` deletes wholesale (so there
+  is no new strip-list entry to forget); the YTD endpoint is
+  manager-or-admin with a shared cache, so it computes once and strips on
+  serve via `ovStripChartTrend_`, failing closed on every return path
+  (cache hit, degraded, fresh). Pinned by `company-overview.test.js`
+  (weighting, per-queue dedup, nulls, the strip),
+  `overview-chart-answered.test.js` (both payloads, both gates, the client
+  treatment) and `drive-smoke.js` (it RENDERS for an admin, is absent for a
+  manager, takes no dept hue, and its point sits inside the dept spread).
+  **Metric views are a
   registry** (`OV_CHART_METRICS_`, script-3-overview): each entry names the
   per-dept payload field, a `pct`/`count` unit, the axis title, an optional
   dashed baseline and a formatter; a tab button's `data-metric` is the

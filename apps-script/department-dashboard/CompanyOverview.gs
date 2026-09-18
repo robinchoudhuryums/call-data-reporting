@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v23` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v24` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -92,7 +92,7 @@
 // v21 (R18d): per-dept `dqeSilence` (the queue-lens fallback flag) joined the blob.
 // v22 (6b): each dept carries a per-day `trendChartAnswered` series (DQE
 // answered COUNT) feeding the chart's new Answered calls metric view.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v23';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v24';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -122,7 +122,7 @@ var OV_CHART_TREND_DAYS = 90;
 // v2 (6b): the YTD payload's per-dept block gained `trendAnswered` alongside
 // trend / trendAbandoned / trendAbandonedPct -- its own prefix, because this
 // payload is cached separately from the Overview blob.
-var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v2';
+var OVERVIEW_CHART_TREND_CACHE_PREFIX = 'overviewChartYtd:v3';
 
 // F6: CacheService's documented per-value ceiling, and the tripwire below it.
 // The Overview blob is the biggest cached payload in the app and its
@@ -288,6 +288,11 @@ const OVERVIEW_PARENT_OF = Object.freeze({
  * department worth surfacing at a glance).
  */
 const OVERVIEW_HIDDEN_DEPTS = Object.freeze(['CSR Backup', 'Sales MWC']);
+
+/** PURE. Does this dept count toward the COMPANY aggregate? (Not hidden.) */
+function ovDeptVisibleForCompany_(dept) {
+  return OVERVIEW_HIDDEN_DEPTS.indexOf(dept) === -1;
+}
 
 function getCompanyOverview(req) {
   const email = Session.getActiveUser().getEmail();
@@ -726,6 +731,10 @@ function getCompanyOverview(req) {
   // `daily` map covers the full chart series (the tile-chip latest/MTD fields
   // are date-gated and unaffected by the wider window).
   const qcdSnapshotsByDept = computeQcdSnapshots_(allDepts, chartTrendStartIso, ssTZ);
+  // The company-wide per-day QCD map that came back alongside the per-dept
+  // snapshots, for the chart's Company line. `{}` when the QCD read failed --
+  // the series then goes all-null and the line simply does not draw.
+  const companyQcdDaily = qcdSnapshotsByDept._companyDaily || {};
   const formatDept = function (d) {
     const stats = deptStats[d];
     const ld = stats.latestDay;
@@ -883,6 +892,32 @@ function getCompanyOverview(req) {
     recentlyActiveCount: Object.keys(recentlyActiveFiltered).length,
     rosterSize:          Object.keys(companyRosterUnion).length,
     trend:               companyTrend,
+    // The chart's COMPANY reference line (owner request 2026-09-18), on the
+    // 90-day chart axis, for the two PERCENTAGE metric views only -- a company
+    // "answered calls" line would just be the visual sum of the dept lines,
+    // while a company RATE is the thing no dept line can show you.
+    //
+    // Both are VOLUME-WEIGHTED, which is the whole point: a mean of dept
+    // percentages would let a five-call queue swing the company number as hard
+    // as CSR. `companyTrendByDate` already counts each (date, agent) row ONCE
+    // regardless of how many rosters claim the agent, so the rate arm needs no
+    // de-duplication of its own; the abandon arm is accumulated once per QCD
+    // queue row (see computeQcdSnapshots_).
+    //
+    // Rides INSIDE companyAggregate deliberately: personalizeOverview_ deletes
+    // that whole object for non-admins, so the INV-39 gate covers these two
+    // without a new strip-list entry to forget.
+    trendChart: chartTrendIsoLabels.map(function (iso) {
+      const day = companyTrendByDate[iso];
+      // DD-2: one formula, and a null (line break) when the denominator is 0 --
+      // the same no-data rule every other series on this axis follows.
+      return (day && answerRateDenom_(day.answered, day.missed, day.rung) > 0)
+        ? round1_(answerRatePct_(day.answered, day.missed, day.rung)) : null;
+    }),
+    trendChartAbandonedPct: chartTrendIsoLabels.map(function (iso) {
+      const q = companyQcdDaily[iso];
+      return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
+    }),
   };
 
   const result = {
@@ -979,7 +1014,7 @@ function getOverviewChartTrend(req) {
     try {
       const hit = JSON.parse(cached);
       logReportUsage_('overviewChartYtd', '(all)', user, true);   // B-8
-      return hit;
+      return ovStripChartTrend_(hit, user);
     } catch (e) { /* recompute */ }
   }
 
@@ -1040,6 +1075,25 @@ function getOverviewChartTrend(req) {
   // QCD per-day (abandoned) over the YTD window (reuses the snapshot's `daily`).
   const qcdSnaps = computeQcdSnapshots_(allDepts, ytdStartIso, ssTZ);
 
+  // The chart's COMPANY reference line over the YTD window. Accumulated in its
+  // OWN pass so each (date, agent) row counts ONCE -- summing `deptDaily`
+  // would double-count every agent who sits on two rosters. Read from the
+  // UN-narrowed rows on purpose: the company figure stays all-queue under
+  // QUEUE_SPLIT_SCOPE=dept, matching the hero, while the dept lines narrow.
+  const companyDailyYtd = {};
+  for (let ci = 0; ci < dqeRows.length; ci++) {
+    const cr = dqeRows[ci];
+    if (!cr.dateIso || cr.dateIso < ytdStartIso || !cr.agent) continue;
+    const cOwners = deptsForAgent[cr.agent];
+    if (!cOwners || !cOwners.some(ovDeptVisibleForCompany_)) continue;
+    let cDay = companyDailyYtd[cr.dateIso];
+    if (!cDay) { cDay = { rung: 0, answered: 0, missed: 0 }; companyDailyYtd[cr.dateIso] = cDay; }
+    cDay.rung     += Number(cr.totalRung)     || 0;
+    cDay.answered += Number(cr.totalAnswered) || 0;
+    cDay.missed   += Number(cr.totalMissed)   || 0;
+  }
+  const companyQcdYtd = qcdSnaps._companyDaily || {};
+
   const depts = allDepts
     .filter(function (d) { return OVERVIEW_HIDDEN_DEPTS.indexOf(d) === -1; })
     .map(function (d) {
@@ -1053,6 +1107,20 @@ function getOverviewChartTrend(req) {
   const data = {
     available: true, latestDate: latestDate,
     trendIsoLabels: labels, trendLabels: displayLabels, depts: depts,
+    // ADMIN-ONLY, stripped on serve by ovStripChartTrend_ below -- the same
+    // compute-once / personalize-post-cache split personalizeOverview_ uses,
+    // so one warmed blob serves both roles.
+    company: {
+      trend: labels.map(function (iso) {
+        const day = companyDailyYtd[iso];
+        return (day && answerRateDenom_(day.answered, day.missed, day.rung) > 0)
+          ? round1_(answerRatePct_(day.answered, day.missed, day.rung)) : null;
+      }),
+      trendAbandonedPct: labels.map(function (iso) {
+        const q = companyQcdYtd[iso];
+        return (q && q.totalCalls > 0) ? round1_((q.abandoned / q.totalCalls) * 100) : null;
+      }),
+    },
   };
   const json = JSON.stringify(data);
   // B-3: the R8-C1/R8-C4 cache-put discipline the sibling endpoints follow.
@@ -1071,7 +1139,7 @@ function getOverviewChartTrend(req) {
     Logger.log('overviewChartTrend: skipping cache put (%s) -- degraded payload must not pin.',
       configDegraded ? 'Dept Config read errored' : (qcdDegraded ? 'QCD snapshot read errored' : 'empty DQE read despite a known latest date'));
     logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
-    return data;
+    return ovStripChartTrend_(data, user);
   }
   // Size guard: skip caching an oversized blob (CacheService ~100KB cap) rather
   // than silently failing the put; the YTD fetch is on-demand + rare, so an
@@ -1081,7 +1149,21 @@ function getOverviewChartTrend(req) {
     catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
   }
   logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
-  return data;
+  return ovStripChartTrend_(data, user);
+}
+
+/**
+ * INV-39 for the YTD chart payload: the company reference line is admin-only,
+ * exactly as `companyAggregate` is on the main Overview, and this endpoint is
+ * manager-or-admin with a SHARED cache -- so the strip happens on serve, never
+ * on compute. Fails CLOSED: anything but a resolved admin loses the field.
+ */
+function ovStripChartTrend_(payload, user) {
+  if (!payload || !payload.company) return payload;
+  if (user && user.role === 'admin') return payload;
+  const out = JSON.parse(JSON.stringify(payload));
+  delete out.company;
+  return out;
 }
 
 /**
@@ -1506,6 +1588,7 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
 
     // Single pass accumulating both latestDay and MTD violations.
     const acc = {};   // dept -> { latestDay: {date, total, abandoned, violations}, mtdViolations }
+    const companyQcdDaily = {};   // iso -> { totalCalls, abandoned }, once per queue row
     for (let i = 0; i < values.length; i++) {
       const r = values[i];
       const source = String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
@@ -1527,6 +1610,20 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
       const totalCalls = Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1]) || 0;
       const abandoned  = Number(r[QCD_HISTORICAL_COLS.ABANDONED   - 1]) || 0;
       const violations = Number(r[QCD_HISTORICAL_COLS.VIOLATIONS  - 1]) || 0;
+
+      // COMPANY per-day QCD, accumulated ONCE PER QUEUE ROW -- deliberately
+      // OUTSIDE the per-dept fan-out below. Summing the per-dept `daily` maps
+      // would double-count twice over: a queue (mis)configured into two depts
+      // is attributed to both, and a parent's QCD rolls up its sub-queues'
+      // queues. Per queue-row there is no such thing. Hidden depts are
+      // excluded to match the DQE company aggregate, which is scoped to the
+      // non-hidden on-roster union.
+      if (dateIso >= sinceIso && depts.some(ovDeptVisibleForCompany_)) {
+        let cq = companyQcdDaily[dateIso];
+        if (!cq) { cq = { totalCalls: 0, abandoned: 0 }; companyQcdDaily[dateIso] = cq; }
+        cq.totalCalls += totalCalls;
+        cq.abandoned  += abandoned;
+      }
 
       depts.forEach(function (dept) {
         let a = acc[dept];
@@ -1607,6 +1704,11 @@ function computeQcdSnapshots_(allDepts, sinceIso, ssTZ) {
         daily:            a.daily,   // consumed by formatDept -> trendAbandoned/Pct; stripped before the tile-chip payload ships
       };
     });
+    // The company-wide per-day map, under a `_`-prefixed key so it cannot
+    // collide with a dept name (the `records._unparsedDropped` precedent).
+    // Every caller looks this object up BY DEPT NAME -- nothing iterates its
+    // keys -- so an extra key is safe.
+    out._companyDaily = companyQcdDaily;
 
   } catch (e) {
     // D-5: mark the execution so the Overview / trend puts skip (see QCDReport.gs).
