@@ -149,15 +149,30 @@ test('OPS-1: send confirms true on success, false on empty recipients, false on 
 });
 
 
-test('O-7: an inconclusive read records a prefix-coded INCONCLUSIVE outcome, not "ok (inconclusive)"', function (t) {
-  const dow = new Date().getDay();
-  if (dow === 0 || dow === 6) { t.skip('weekend: the trigger body self-skips'); return; }
+// T-8 (broad-scan 2026-09-17): the trigger body reads the weekday from
+// `new Date()`, and this test used to SKIP on real weekends. The clock is
+// pinned to a weekday instead (the ingest-watchdog suite's shape).
+function atWeekday(fn) {
+  const RealDate = h.ctx.Date;
+  const fixed = new RealDate('2026-06-03T15:00:00Z');   // Wednesday, 10:00 Chicago
+  function FakeDate() {
+    if (arguments.length === 0) return new RealDate(fixed.getTime());
+    return new RealDate(...arguments);
+  }
+  FakeDate.prototype = RealDate.prototype;
+  FakeDate.UTC = RealDate.UTC; FakeDate.parse = RealDate.parse;
+  FakeDate.now = function () { return fixed.getTime(); };
+  h.ctx.Date = FakeDate;
+  try { return fn(); } finally { h.ctx.Date = RealDate; }
+}
+
+test('O-7: an inconclusive read records a prefix-coded INCONCLUSIVE outcome, not "ok (inconclusive)"', function () {
   h.state.props = { DQE_SILENCE_WATCH_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com', DQE_SILENCE_STREAKS: '{"CSR":{"days":1}}' };
   h.ctx.prevBusinessDayIso_ = function () { return '2026-08-31'; };
   h.ctx.isCompanyHoliday_ = function () { return false; };
   h.ctx.dqeSilenceReadDay_ = function () { return { inconclusive: true, reason: 'QCD read failed' }; };
   try {
-    h.call('runDqeSilenceWatch_');
+    atWeekday(function () { h.call('runDqeSilenceWatch_'); });
   } finally {
     delete h.ctx.prevBusinessDayIso_; delete h.ctx.isCompanyHoliday_; delete h.ctx.dqeSilenceReadDay_;
   }

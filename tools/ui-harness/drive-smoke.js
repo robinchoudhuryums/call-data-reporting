@@ -85,6 +85,39 @@ async function blankCanvases(page) {
   }, Array.from(BLANK_OK));
 }
 
+/**
+ * T-9: the count of canvases that are visible, laid out AND drawn (varied
+ * pixels). blankCanvases() above is VACUOUS when no canvas rendered at all --
+ * "chart never created" and "canvas hidden by chartUnavailable_" both pass
+ * it -- so each page also asserts a POSITIVE floor of drawn canvases.
+ */
+async function drawnCanvasCount(page, within) {
+  return page.evaluate((scope) => {
+    const root = scope ? document.querySelector(scope) : document;
+    if (!root) return 0;
+    let n = 0;
+    root.querySelectorAll('canvas').forEach((c) => {
+      if (!c.offsetParent) return;
+      if (c.closest('details:not([open])')) return;
+      const r = c.getBoundingClientRect();
+      if (r.width < 40 || r.height < 40) return;
+      let ctx, data;
+      try { ctx = c.getContext('2d'); data = ctx && ctx.getImageData(0, 0, c.width, c.height).data; } catch (e) { return; }
+      if (!data || !data.length) return;
+      const first = [data[0], data[1], data[2], data[3]].join(',');
+      for (let i = 0; i < data.length; i += 800) {
+        if ([data[i], data[i + 1], data[i + 2], data[i + 3]].join(',') !== first) { n++; return; }
+      }
+    });
+    return n;
+  }, within || null);
+}
+
+// T-9: the drawn-canvas FLOOR per page. Overview = the 30-day trend chart;
+// dept = the missed hour-of-day chart + the Insights region's charts (which
+// render open inline); escalations has none (a worklist, no chart).
+const MIN_DRAWN = { overview: 1, dept: 2, escalations: 0 };
+
 async function horizontalOverflow(page) {
   return page.evaluate(() => {
     const d = document.documentElement;
@@ -149,6 +182,11 @@ async function visibleErrorTones(page) {
 
       const blanks = await blankCanvases(page);
       record(role + '/' + name + ': no blank chart canvases', blanks.length === 0, blanks.join(', '));
+      // T-9: the check above passes vacuously when nothing rendered; this one
+      // cannot.
+      const drawn = await drawnCanvasCount(page);
+      record(role + '/' + name + ': at least ' + MIN_DRAWN[name] + ' chart canvas(es) actually drew',
+        drawn >= MIN_DRAWN[name], 'drawn=' + drawn);
 
       const overflow = await horizontalOverflow(page);
       record(role + '/' + name + ': no horizontal page overflow', overflow <= 0, 'scrollWidth-clientWidth=' + overflow);
@@ -232,6 +270,12 @@ async function visibleErrorTones(page) {
               const irReds = await visibleErrorTones(page);
               record(role + ': generating an Individual Report shows no error tone',
                 irReds.length === 0, irReds.join(' | '));
+              // T-9: the generated report must DRAW at least one chart inside
+              // the modal (blankCanvases alone cannot tell "drew" from "never
+              // created").
+              const irDrawn = await drawnCanvasCount(page, '#individual-modal');
+              record(role + ': the generated Individual Report drew at least one chart canvas',
+                irDrawn >= 1, 'drawn=' + irDrawn);
             } else {
               record(role + ': the IR Generate button enables after picking an agent',
                 false, 'still disabled/hidden -- the tone check cannot run');

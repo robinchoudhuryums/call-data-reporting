@@ -1213,7 +1213,9 @@ function sheetUpsertDigestConfigRow_(rec) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.DIGEST_CONFIG);
   if (!sheet) throw new Error('Digest Config sheet missing -- run setup().');
-  const row = [rec.email, rec.department, rec.cadence, rec.active ? 'TRUE' : 'FALSE', rec.notes || '', rec.format || ''];
+  // A-4: email + notes are admin free text (the regex admits a formula-leading
+  // address); dept / cadence / format are validated enums.
+  const row = [sheetSafeCell_(rec.email), rec.department, rec.cadence, rec.active ? 'TRUE' : 'FALSE', sheetSafeCell_(rec.notes || ''), rec.format || ''];
   const lastRow = sheet.getLastRow();
   let found = -1;
   if (lastRow >= 2) {

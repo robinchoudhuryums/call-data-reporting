@@ -966,12 +966,23 @@ function sendIndividualReportEmail(req) {
     sentToAgent = resolved.agentName;
   }
 
+  // A-5 (broad-scan 2026-09-17): the client supplies the image AND the
+  // subject, and either can reach an AGENT's inbox (sendToAgent). Neither is
+  // trusted: the payload must be a base64 PNG data URL (the only thing the
+  // canvas export produces) under IR_EMAIL_IMAGE_MAX_BYTES_, and the subject
+  // label is one line of printable text, capped -- a header-injection or a
+  // multi-line "subject" is refused, not sent.
   const dataUrl = String((req && req.imageBase64) || '');
-  const dateLabel = String((req && req.dateLabel) || 'Individual Report');
+  const dateLabel = irSanitizeDateLabel_(req && req.dateLabel);
   if (!dataUrl) throw new Error('No image payload.');
-  const commaIdx = dataUrl.indexOf(',');
-  if (commaIdx === -1) throw new Error('Malformed image payload.');
-  const decoded = Utilities.base64Decode(dataUrl.slice(commaIdx + 1));
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl);
+  if (!m) throw new Error('Malformed image payload (expected a base64 PNG data URL).');
+  const b64 = m[1].replace(/\s+/g, '');
+  if (b64.length * 0.75 > IR_EMAIL_IMAGE_MAX_BYTES_) {
+    throw new Error('Image payload too large (over ' + Math.round(IR_EMAIL_IMAGE_MAX_BYTES_ / 1048576) + ' MB).');
+  }
+  const decoded = Utilities.base64Decode(b64);
+  if (!irLooksLikePng_(decoded)) throw new Error('Image payload is not a PNG.');
   const blob = Utilities.newBlob(decoded, 'image/png', 'Individual_Report.png');
 
   // Round-16 (owner): the snapshot rides inside the EmailKit shell so this
@@ -1071,6 +1082,23 @@ function irResolveAgentRecipient_(user, req) {
   return { to: typed, agentName: agentName, source: 'typed' };
 }
 
+/** A-5: the inline-image cap for the IR email (a rendered report is ~0.3-2 MB). */
+const IR_EMAIL_IMAGE_MAX_BYTES_ = 8 * 1024 * 1024;
+
+/** A-5: the client's date label becomes the email SUBJECT -- one printable line, capped. */
+function irSanitizeDateLabel_(raw) {
+  const s = String(raw == null ? '' : raw).replace(/[\r\n\t\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 120);
+  return s || 'Individual Report';
+}
+
+/** A-5: PNG magic bytes (\x89PNG\r\n\x1a\n) on the decoded payload. */
+function irLooksLikePng_(bytes) {
+  if (!bytes || bytes.length < 8) return false;
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  for (let i = 0; i < 8; i++) if (((bytes[i] + 256) % 256) !== sig[i]) return false;
+  return true;
+}
+
 /**
  * The address recorded for (dept, agentName) in Access Control -- i.e. the
  * account that agent signs into the agent app with. Scans the sheet ONCE
@@ -1094,8 +1122,12 @@ function irRegisteredAgentEmail_(dept, agentName) {
       if (addr) return addr;
     }
   } catch (e) {
-    Logger.log('irRegisteredAgentEmail_ failed (treated as no address): '
-      + (e && e.message ? e.message : e));
+    // A-5: a registered address WINS over a typed one, so a read that fails
+    // must not read as "no address on file" -- that would let a typed
+    // address through for an agent the sheet does know how to reach.
+    // Surface it; the manager retries.
+    throw new Error('Could not read Access Control to resolve the agent\'s registered address ('
+      + (e && e.message ? e.message : e) + '). Try again.');
   }
   return '';
 }

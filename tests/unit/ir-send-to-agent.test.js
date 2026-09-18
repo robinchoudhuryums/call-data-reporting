@@ -24,7 +24,9 @@ const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'EmailKit.gs', 'IndividualReport.gs'],
 });
 
-const PNG = 'data:image/png;base64,' + Buffer.from('x').toString('base64');
+// A-5: the payload must now BE a PNG (magic bytes), not merely a data URL.
+const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('x')]);
+const PNG = 'data:image/png;base64,' + PNG_BYTES.toString('base64');
 
 // Access Control rows: [email, dept, notes, role, agentName]
 const AC_ROWS = [
@@ -166,4 +168,57 @@ test('a pre-migration Access Control sheet (no Agent Name column) falls back to 
   install({ acWidth: 3, acRows: [['mgr@co.com', 'CSR', '']] });
   assert.equal(send({ sendToAgent: true, department: 'CSR', agentName: 'Anna Smith',
                       toEmail: 'anna@co.com' }).to, 'anna@co.com');
+});
+
+
+// ---- A-5 (broad-scan 2026-09-17): the image and the subject are client-supplied ----
+
+test('A-5: a non-PNG payload is refused even when it is a well-formed data URL', function () {
+  install();
+  assert.throws(function () {
+    h.call('sendIndividualReportEmail', { imageBase64: 'data:image/png;base64,' + Buffer.from('not a png').toString('base64'), dateLabel: 'x' });
+  }, /not a PNG/);
+  assert.throws(function () {
+    h.call('sendIndividualReportEmail', { imageBase64: 'data:text/html;base64,' + Buffer.from('<b>').toString('base64'), dateLabel: 'x' });
+  }, /Malformed image payload/);
+  assert.equal(h.state.sentEmails.length, 0);
+});
+
+test('A-5: an oversize payload is refused before decoding', function () {
+  install();
+  const big = 'data:image/png;base64,' + 'A'.repeat(Math.ceil((8 * 1024 * 1024 + 4096) / 0.75));
+  assert.throws(function () {
+    h.call('sendIndividualReportEmail', { imageBase64: big, dateLabel: 'x' });
+  }, /too large/);
+  assert.equal(h.state.sentEmails.length, 0);
+});
+
+test('A-5: the subject is one printable line, capped -- a header-injection label cannot reach the mail', function () {
+  install();
+  h.call('sendIndividualReportEmail', { imageBase64: PNG, dateLabel: 'Aug 2026\r\nBcc: evil@x.com\n' + 'z'.repeat(300) });
+  assert.equal(h.state.sentEmails.length, 1);
+  const subj = h.state.sentEmails[0].subject;
+  // The CR/LF that would have started a new header is flattened to a space:
+  // "Bcc: evil@x.com" survives only as inert subject TEXT.
+  assert.doesNotMatch(subj, /[\r\n]/);
+  assert.ok(subj.length <= 'Individual Report: '.length + 120, 'capped: ' + subj.length);
+  assert.match(subj, /^Individual Report: Aug 2026 Bcc: evil@x\.com z/);
+});
+
+test('A-5: an Access Control read failure SURFACES instead of reading as "no address on file"', function () {
+  install();
+  const realOpen = h.ctx.openSpreadsheet_;
+  h.ctx.openSpreadsheet_ = function () {
+    const ss = realOpen();
+    const sheet = ss.getSheetByName('Access Control');
+    sheet.getRange = function () { throw new Error('Service Spreadsheets timed out'); };
+    return { getSheetByName: function (n) { return n === 'Access Control' ? sheet : null; } };
+  };
+  // Anna HAS a registered address; with the read swallowed, a typed address
+  // would have been accepted for her. It must refuse instead.
+  assert.throws(function () {
+    h.call('sendIndividualReportEmail', { imageBase64: PNG, dateLabel: 'x', sendToAgent: true,
+      department: 'CSR', agentName: 'Anna Smith', toEmail: 'anna.other@co.com' });
+  }, /Could not read Access Control/);
+  assert.equal(h.state.sentEmails.length, 0);
 });

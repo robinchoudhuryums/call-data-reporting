@@ -1110,6 +1110,22 @@ test('DD-6 col-G status gates: the sidebar rows 36/40 carry the pipeline\'s stat
     'sidebar row 40 col G must carry the pipeline\'s status === "1" gate');
 });
 
+// T-5 (2026-09-18): deploy.sh gates the LIVE push on the same three jobs
+// ci.yml runs, with CI=1 so a missing eslint / playwright FAILS the gate (the
+// F-9 rule) instead of skipping. Without the lint gate a box without eslint
+// could push live what the PR's blocking `lint` job would reject.
+test('T-5: deploy.sh runs npm run ci, lint:gas and ci:ui with CI=1 inside the DEPLOY_SKIP_CI gate', function () {
+  const sh = read('scripts/deploy.sh');
+  const gate = /if \[ "\$\{DEPLOY_SKIP_CI:-\}" != "1" \]; then([\s\S]*?)\nfi\n/.exec(sh);
+  assert.ok(gate, 'the DEPLOY_SKIP_CI gate block is missing or reshaped');
+  assert.match(gate[1], /TZ="\$CI_TZ" npm run ci\b/, 'npm run ci inside the gate');
+  assert.match(gate[1], /CI=1 TZ="\$CI_TZ" npm run lint:gas/, 'lint:gas inside the gate, with CI=1 (absence must FAIL)');
+  assert.match(gate[1], /CI=1 TZ="\$CI_TZ" npm run ci:ui/, 'ci:ui inside the gate, with CI=1 (absence must FAIL)');
+  // The two skip-or-fail switches the gate relies on must still exist.
+  assert.match(read('scripts/lint-gas.mjs'), /process\.env\.CI/, 'lint-gas keeps its CI=true absence-fails branch');
+  assert.match(read('tools/ui-harness/ci.mjs'), /process\.env\.CI/, 'ci.mjs keeps its CI=true absence-fails branch');
+});
+
 // ── H3 (2026-09-17): one global scope per project, so a top-level name
 // declared in two files of the SAME project silently resolves to whichever
 // file loads last -- the `onOpen` collision CLAUDE.md warns about, and the

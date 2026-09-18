@@ -170,3 +170,39 @@ test('R8-N: a valid pair (canonical in the dept\'s effective/constant queue list
   assert.ok(String(grid[1][9]).indexOf('A_Q_CSR=A_Q_CustomerSuccess') !== -1, 'pair stored verbatim');
   delete h.ctx.queuesForDept_;
 });
+
+
+// ---- A-4 (broad-scan 2026-09-17): the four admin config writers neutralize formula-leading cells ----
+
+test('A-4: saveAlertConfigRow neutralizes formula-leading recipients / notes / skip dates', function () {
+  install([], []);
+  h.call('saveAlertConfigRow', { department: 'CSR', threshold: 92, extraRecipients: '', active: true,
+    notes: '=IMPORTXML("http://x","//a")', skipDates: '' });
+  const r = rows('Alert Config')[0];
+  assert.equal(r[4], "'=IMPORTXML(\"http://x\",\"//a\")", 'notes wrapped');
+  assert.equal(r[0], 'CSR', 'the validated dept is untouched');
+});
+
+test('A-4: saveDigestConfigRow neutralizes formula-leading notes (the email is regex-validated, and wrapped for uniformity)', function () {
+  install([], []);
+  h.call('saveDigestConfigRow', { email: 'm@x.com', department: 'CSR', cadence: 'daily', notes: '+1' });
+  const r = rows('Digest Config')[0];
+  assert.equal(r[0], 'm@x.com', 'a normal email passes through sheetSafeCell_ unchanged');
+  assert.equal(r[4], "'+1", 'notes wrapped');
+  assert.equal(r[1], 'CSR');
+  assert.equal(h.fn('sheetSafeCell_')('=x@x.com'), "'=x@x.com", 'a formula-leading address WOULD be wrapped');
+});
+
+test('A-4: appendAlertLog_ neutralizes recipients / triggeredBy / notes', function () {
+  install([], []);
+  h.state.spreadsheet._sheet ? null : null;
+  const ss = h.state.spreadsheet;
+  const log = ss.insertSheet('Alert Log');
+  log.appendRow(['Timestamp', 'Department', 'Date Checked', 'Threshold', 'Answer Rate', 'Sent', 'Recipients', 'Triggered By', 'Notes', 'Status']);
+  h.call('appendAlertLog_', { department: 'CSR', threshold: 92, answerRate: 80, status: 'error',
+    recipients: ['=HYPERLINK("x")'], notes: '-oops' }, '@preview:admin');
+  const r = log._data[1];
+  assert.equal(r[6], "'=HYPERLINK(\"x\")");
+  assert.equal(r[7], "'@preview:admin");
+  assert.equal(r[8], "'-oops");
+});

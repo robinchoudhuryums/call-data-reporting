@@ -12,13 +12,32 @@ const { loadGas } = require('../harness/loadGas');
 // staleness credit, and runs ON a company holiday are skipped.
 const h = loadGas({ files: ['Config.gs', 'IngestWatchdog.gs'] });
 
-// The trigger body is gated on the REAL current weekday (no injectable
-// clock in the Apps Script surface it uses). Self-skip on weekends so a
-// Saturday CI run can't false-fail; every weekday run exercises it.
-function isRealWeekend_() {
-  const d = new Date().getDay();
-  return d === 0 || d === 6;
+// T-8 (broad-scan 2026-09-17): the trigger body is gated on the current
+// weekday via `new Date()`, and this suite used to SKIP its run-gate tests on
+// real weekends -- a Saturday CI run silently lost them. The harness fakes
+// `ctx.Date` elsewhere, so the clock is pinned to a WEEKDAY here (Wed
+// 2026-06-03, mid-morning Chicago) for every test; `atDate()` re-pins it for
+// the one test that needs a weekend.
+const RealDate = h.ctx.Date;
+function fakeDate(fixed) {
+  function FakeDate() {
+    if (arguments.length === 0) return new RealDate(fixed.getTime());
+    return new RealDate(...arguments);
+  }
+  FakeDate.prototype = RealDate.prototype;
+  FakeDate.UTC = RealDate.UTC;
+  FakeDate.parse = RealDate.parse;
+  FakeDate.now = function () { return fixed.getTime(); };
+  return FakeDate;
 }
+const WEEKDAY = new RealDate('2026-06-03T15:00:00Z');   // Wednesday, 10:00 Chicago
+const SATURDAY = new RealDate('2026-06-06T15:00:00Z');
+h.ctx.Date = fakeDate(WEEKDAY);
+function atDate(d, fn) {
+  h.ctx.Date = fakeDate(d);
+  try { return fn(); } finally { h.ctx.Date = fakeDate(WEEKDAY); }
+}
+function isRealWeekend_() { return false; }   // the clock is pinned; kept so the gates below read as before
 
 function install(freshness) {
   h.state.props = { INGEST_WATCHDOG_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com' };
@@ -55,6 +74,17 @@ test('OPS-1: a fresh build clears the episode flag', function (t) {
   h.call('runIngestWatchdog_');
   assert.equal(h.state.props.INGEST_WATCHDOG_ALERTED, undefined, 'recovered -> re-armed for the next episode');
   assert.equal(h.state.props.INGEST_WATCHDOG_LAST_RESULT, 'fresh');
+});
+
+test('T-8: the run is skipped entirely on a WEEKEND (pinned clock, no real-calendar skip)', function () {
+  install({ hoursSinceFresh: 900, latestTimestamp: 'stale' });
+  atDate(SATURDAY, function () { h.call('runIngestWatchdog_'); });
+  assert.equal(h.state.sentEmails.length, 0, 'no alert on a Saturday run');
+  assert.equal(h.state.props.INGEST_WATCHDOG_LAST_RESULT, undefined, 'run gated before assessment');
+  // And the same stale state on the pinned WEEKDAY does fire -- so the gate
+  // above is the weekend, not a broken fixture.
+  h.call('runIngestWatchdog_');
+  assert.equal(h.state.sentEmails.length, 1, 'the weekday run alerts');
 });
 
 test('OPS-7: the run is skipped entirely on a company holiday', function (t) {

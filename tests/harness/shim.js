@@ -25,6 +25,7 @@ function createShim() {
     strictOpenById: false,            // 1b: true -> openById THROWS for an unknown id (real API)
     sentEmails: [],                   // MailApp.sendEmail captures
     locks: 0,                         // LockService.tryLock call count
+    lockBusy: false,                  // A-6: true -> tryLock/waitLock report the lock as held
     mailQuota: undefined,             // MailApp.getRemainingDailyQuota (B4)
   };
 
@@ -124,8 +125,8 @@ function createShim() {
     LockService: {
       getScriptLock: function () {
         return {
-          tryLock: function () { state.locks++; return true; },
-          waitLock: function () { state.locks++; return true; },   // R7: saveUiFlags path
+          tryLock: function () { state.locks++; return !state.lockBusy; },
+          waitLock: function () { state.locks++; if (state.lockBusy) throw new Error('Lock timeout'); return true; },   // R7: saveUiFlags path
           releaseLock: function () {},
         };
       },

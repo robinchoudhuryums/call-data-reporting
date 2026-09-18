@@ -95,7 +95,7 @@ tests/
     digest-wow.test.js        Digest.gs: WoW "driver" narrative (#11) reusing INV-48 — gain/drop drivers, threshold, narrative HTML + escaping
     missed-report.test.js     MissedCallsReport.gs: RPT-1 slot-less abandoned parents + lost-detail flag, RPT-2 per-second FIFO parent-id pairing
     ingest-watchdog.test.js   IngestWatchdog.gs: OPS-1 confirmed-send episode arming, OPS-7 holiday skip + non-business-day staleness credit
-    ...                       + 104 more (this file is the coverage map —
+    ...                       + 105 more (this file is the coverage map —
                               CLAUDE.md's Key-commands block deliberately
                               stopped enumerating suites in the 2026-08-20
                               trim pass): dal-cutover parity (+ the R40
@@ -135,6 +135,12 @@ tests/
                               callout; the deleteRows/deleteColumns call
                               itself is not harness-modelled),
                               sheet-repairs-merge,
+                              manifest-scopes (T-7: each project's
+                              appsscript.json declares EXACTLY the OAuth
+                              scopes its service calls need -- derived from
+                              the source, so a new DriveApp call without a
+                              manifest edit fails here, not in production;
+                              dqe-report stays on auto-detection, frozen),
                               queue-split-sample (P-5: the SIXTH mirror of the
                               build's queueLegs gate driven against the REAL
                               build -- the early-family floor counts, the same

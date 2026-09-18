@@ -1082,8 +1082,11 @@ function sheetUpsertAlertConfigRow_(rec) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ALERT_CONFIG);
   if (!sheet) throw new Error('Alert Config sheet missing -- run setup().');
-  const row = [rec.department, rec.thresholdRaw, (rec.extraRecipients || []).join(', '),
-               rec.active ? 'TRUE' : 'FALSE', rec.notes || '', rec.skipDatesRaw || ''];
+  // A-4: the department is a validated roster header and the threshold a
+  // validated number; the recipients, notes and skip-dates are admin free
+  // text and go through sheetSafeCell_ like every other config writer.
+  const row = [rec.department, rec.thresholdRaw, sheetSafeCell_((rec.extraRecipients || []).join(', ')),
+               rec.active ? 'TRUE' : 'FALSE', sheetSafeCell_(rec.notes || ''), sheetSafeCell_(rec.skipDatesRaw || '')];
   const lastRow = sheet.getLastRow();
   let found = -1;
   if (lastRow >= 2) {
@@ -1156,9 +1159,11 @@ function appendAlertLog_(rec, triggeredBy, dateChecked) {
     rec.threshold,
     rec.answerRate == null ? '' : rec.answerRate,
     rec.status === 'sent' ? 'TRUE' : 'FALSE',
-    (rec.recipients || []).join(', '),
-    triggeredBy || '',
-    rec.notes || '',
+    // A-4: recipients come from config free text, triggeredBy carries the
+    // previewing admin's email, notes carry error text -- all neutralized.
+    sheetSafeCell_((rec.recipients || []).join(', ')),
+    sheetSafeCell_(triggeredBy || ''),
+    sheetSafeCell_(rec.notes || ''),
     rec.status,
   ]);
 }

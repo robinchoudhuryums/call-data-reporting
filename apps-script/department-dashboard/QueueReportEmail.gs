@@ -1186,7 +1186,10 @@ function saveQueueReportSubscriber(req) {
         }
       }
     }
-    const rowVals = [email, active ? 'TRUE' : 'FALSE', notes, cc ? 'TRUE' : 'FALSE'];
+    // A-4: admin-entered free text (and an email that passes the regex but
+    // starts with a formula char) is neutralized like every other config
+    // writer (CORE-7 / L4).
+    const rowVals = [sheetSafeCell_(email), active ? 'TRUE' : 'FALSE', sheetSafeCell_(notes), cc ? 'TRUE' : 'FALSE'];
     if (foundRow > 0) {
       sheet.getRange(foundRow, 1, 1, rowVals.length).setValues([rowVals]);
     } else {

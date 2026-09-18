@@ -163,9 +163,10 @@ node --test          # from repo root (or: npm test)
 # version in one step (avoids the manual "Manage deployments -> New
 # version" stale-deploy footgun, Operator State #2). The deployment id
 # comes from `clasp deployments` in that dir (one-time lookup).
-# TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard) AND
-# `npm run ci:ui` (the rendered-UI gate, F-10; skips cleanly when playwright
-# isn't installed); DEPLOY_SKIP_CI=1 skips both (emergencies only).
+# TST-7: it GATES the push on `npm run ci` (tests + the INV-16 guard), `npm run
+# lint:gas` AND `npm run ci:ui` -- the same three jobs ci.yml runs -- with
+# CI=1 set, so a MISSING eslint / playwright FAILS the gate (T-5; it used to
+# skip); DEPLOY_SKIP_CI=1 skips all three (emergencies only).
 # Both gate commands run under TZ=America/Chicago (CI_TZ overrides), matching
 # ci.yml: parts of the harness assume process TZ == script TZ, and a red gate
 # blocks the push entirely, so the developer's locale must not decide whether

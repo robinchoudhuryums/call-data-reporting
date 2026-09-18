@@ -101,7 +101,19 @@ When something looks wrong, before assuming a code bug, check:
    editor → Run → any function → grant the new permission. Scope-
    gated calls (trigger install, mail send) otherwise throw
    permission errors at runtime even though the dashboard page
-   loads fine.
+   loads fine. **Since T-7 (2026-09-18) all three live projects declare
+   their scopes EXPLICITLY in `appsscript.json`** (dqe-report, frozen, stays
+   on auto-detection): the dashboard dropped the unused
+   `script.container.ui`, and cdr-report / cdr-import gained explicit lists
+   (cdr-report includes `drive.readonly` for the daily PDF export, which
+   fetches the sheet's `/export` URL with the script's own token -- a scope
+   auto-detection cannot see). **The first push of each after T-7 changes
+   the consent set, so re-run one function in each editor and re-consent**;
+   until then a trigger run may fail with "Insufficient permissions".
+   `manifest-scopes.test.js` derives the required set from the service calls
+   in each project and fails when a manifest omits or over-declares one, so a
+   new `DriveApp` / `UrlFetchApp` / `MailApp` call needs its manifest edit in
+   the same commit.
 10. After adding a sub-queue to `OVERVIEW_PARENT_OF`, verify the
     key matches the `DO NOT EDIT!` column header byte-for-byte
     (case, spaces, and any ` Q` suffix). Mismatches show up as a

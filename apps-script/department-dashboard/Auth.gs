@@ -218,10 +218,32 @@ function getAccessEntries_(normalizedEmail) {
     } catch (e) { /* fall through to re-read */ }
   }
 
+  // A-6 (broad-scan 2026-09-17): saveAccessControlRow is a delete-then-append
+  // under the script lock, and this uncached read used to run outside it -- a
+  // read landing between the delete and the append cached '__none__' for the
+  // TTL (a false denial for up to 60 s and a spurious "Access changed" sign-in
+  // notice). The read now takes the same lock: it waits out an in-flight save
+  // and sees the settled rows. If the lock cannot be had, the sheet is still
+  // read (never a denial for lock contention) but the result is NOT cached, so
+  // a mid-save snapshot can live for one request only.
+  const lock = LockService.getScriptLock();
+  const locked = lock.tryLock(AUTH_READ_LOCK_WAIT_MS_);
+  try {
+    return acReadEntriesUncached_(normalizedEmail, cache, cacheKey, locked);
+  } finally {
+    if (locked) lock.releaseLock();
+  }
+}
+
+/** A-6: how long an uncached auth read waits for an in-flight Access Control save. */
+const AUTH_READ_LOCK_WAIT_MS_ = 10000;
+
+/** The sheet read behind getAccessEntries_; caches only when `mayCache`. */
+function acReadEntriesUncached_(normalizedEmail, cache, cacheKey, mayCache) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
   if (!sheet || sheet.getLastRow() < 2) {
-    cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
+    if (mayCache) cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
     return [];
   }
 
@@ -243,11 +265,11 @@ function getAccessEntries_(normalizedEmail) {
     });
   }
   if (entries.length) {
-    cache.put(cacheKey, JSON.stringify(entries), AUTH_CACHE_TTL_SECONDS);
+    if (mayCache) cache.put(cacheKey, JSON.stringify(entries), AUTH_CACHE_TTL_SECONDS);
     return entries;
   }
 
-  cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
+  if (mayCache) cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
   return [];
 }
 

@@ -281,3 +281,31 @@ test('R28: the welcome is skipped without DASHBOARD_URL or with ACCESS_WELCOME_E
   assert.equal(h.state.sentEmails.length, 0);
   assert.equal(acSheetRows().length, 1, 'the row is written regardless');
 });
+
+
+// ---- A-6 (broad-scan 2026-09-17): the uncached auth read vs the replace-all save ----
+
+test('A-6: an uncached Access Control read takes the script lock and caches', function () {
+  install([['m@x.com', 'CSR', '']]);
+  const before = h.state.locks;
+  const entries = h.call('getAccessEntries_', 'm@x.com');
+  assert.equal(entries.length, 1);
+  assert.equal(h.state.locks, before + 1, 'one tryLock for the sheet read');
+  assert.ok(h.state.cache.get('access:m@x.com'), 'cached under the lock');
+});
+
+test('A-6: when the lock is HELD (a save in flight) the read still serves but does NOT cache', function () {
+  install([['m@x.com', 'CSR', '']]);
+  h.state.lockBusy = true;
+  try {
+    const entries = h.call('getAccessEntries_', 'm@x.com');
+    assert.equal(entries.length, 1, 'never a denial for lock contention');
+    assert.equal(h.state.cache.get('access:m@x.com'), undefined, 'a mid-save snapshot is not pinned for the TTL');
+    // The negative shape too: an empty read under contention is not cached as __none__.
+    assert.equal(h.call('getAccessEntries_', 'ghost@x.com').length, 0);
+    assert.equal(h.state.cache.get('access:ghost@x.com'), undefined);
+  } finally { h.state.lockBusy = false; }
+  // Once the lock is free again the next read caches as before.
+  h.call('getAccessEntries_', 'm@x.com');
+  assert.ok(h.state.cache.get('access:m@x.com'));
+});
