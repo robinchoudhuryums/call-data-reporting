@@ -1642,6 +1642,208 @@ function obInstantDerivedRing_(journeyJson) {
   return null;
 }
 
+/**
+ * PURE. PHI-SAFE class of a journey event's name -- a CLASS, never the name.
+ *
+ * `icBuildJourney_` (cdr-import/inboundCalls.js) masks a callee name through
+ * one of several branches, and the resulting string is the ONLY thing in the
+ * blob that can identify the external leg (the event carries no direction and
+ * no callee number). The classes below are every shape that masker can emit:
+ *
+ *   extNumber  '(external number)'   the name was phone-SHAPED
+ *   extCaller  '(external caller)'   P-11 fallback when initials came back null
+ *   initials   'A.P.'                P-11 masked CNAM (cdrMaskExternalName_)
+ *   unknown    '(unknown)'           empty / 'N/A' callee name
+ *   queue                            event kind is 'queue'
+ *   other                            an internal agent's CNAM -- counted only
+ *
+ * Nothing but the class name is ever returned, so an 'other' CNAM cannot leak.
+ */
+function obJourneyNameClass_(ev) {
+  if (!ev) return 'other';
+  if (ev.kind === 'queue') return 'queue';
+  var n = String(ev.name == null ? '' : ev.name);
+  if (n === '(external number)') return 'extNumber';
+  if (n === '(external caller)') return 'extCaller';
+  if (n === '(unknown)') return 'unknown';
+  if (/^(?:[A-Za-z0-9]\.)+$/.test(n)) return 'initials';
+  return 'other';
+}
+
+/** PURE. The derived ring for ONE event, or null when it carries no duration. */
+function obJourneyEventRing_(ev) {
+  if (!ev || ev.secs == null) return null;
+  return Math.max(0, (Number(ev.secs) || 0) - (Number(ev.talk) || 0) - (Number(ev.hold) || 0));
+}
+
+/**
+ * PURE. Score every CANDIDATE external-leg marker over one sampled group.
+ *
+ * Why a table instead of a shape dump: `obInstantDerivedRing_` matches exactly
+ * one marker ('(external number)') and the live run found it on ZERO of 600
+ * rows, but its null is overloaded -- "no event matched" and "matched, no
+ * `secs`" are indistinguishable in the output, and they need different fixes.
+ * So this splits that, and then asks the only question that decides the fix:
+ * for each candidate marker, how many rows WOULD yield a derived ring, and
+ * what is its median?
+ *
+ * The rung group is the answer key. Its rows provably rang >= 17 s, so the
+ * right marker is the one whose derived median lands near that on the rung
+ * group -- a candidate that yields a plausible number there is measuring the
+ * external leg; one that yields ~0 s is measuring an internal hop. A marker is
+ * NOT chosen by coverage alone: a 100%-coverage candidate that reads 0 s on
+ * calls known to have rung is wrong, just confidently.
+ *
+ * `journeys` is an array of parsed event arrays. Returns counts + medians only.
+ */
+function obJourneyMarkerScores_(journeys) {
+  var CLASSES = ['extNumber', 'extCaller', 'initials', 'unknown', 'queue', 'other'];
+  var out = {
+    rows: journeys.length,
+    eventCountHist: {},
+    classEvents: {},        // total events per class
+    classWithSecs: {},      // ...of which carry `secs`
+    rowsWithClass: {},      // rows holding at least one event of the class
+    current: { derived: 0, nullNoMatch: 0, nullMatchNoSecs: 0 },
+    candidates: {},
+  };
+  CLASSES.forEach(function (c) {
+    out.classEvents[c] = 0; out.classWithSecs[c] = 0; out.rowsWithClass[c] = 0;
+    out.candidates[c] = { rows: 0, rings: [] };
+  });
+  ['firstEvent', 'lastEvent', 'lastAnswer', 'maxSecs'].forEach(function (k) {
+    out.candidates[k] = { rows: 0, rings: [] };
+  });
+
+  journeys.forEach(function (ev) {
+    var n = ev.length;
+    out.eventCountHist[n] = (out.eventCountHist[n] || 0) + 1;
+    var seen = {}, best = null, lastAnswer = null;
+    for (var i = 0; i < n; i++) {
+      var c = obJourneyNameClass_(ev[i]);
+      out.classEvents[c]++;
+      if (ev[i] && ev[i].secs != null) out.classWithSecs[c]++;
+      if (!seen[c]) { seen[c] = true; out.rowsWithClass[c]++; }
+      if (ev[i] && ev[i].kind === 'answer') lastAnswer = ev[i];
+      if (ev[i] && ev[i].secs != null && (best === null || Number(ev[i].secs) > Number(best.secs))) best = ev[i];
+    }
+    // Per-row candidate resolution: FIRST event of the class, as the helper does.
+    CLASSES.forEach(function (c) {
+      for (var i = 0; i < n; i++) {
+        if (obJourneyNameClass_(ev[i]) !== c) continue;
+        var r = obJourneyEventRing_(ev[i]);
+        if (r !== null) { out.candidates[c].rows++; out.candidates[c].rings.push(r); }
+        return;   // first of the class only, match or not
+      }
+    });
+    var positional = { firstEvent: ev[0], lastEvent: ev[n - 1], lastAnswer: lastAnswer, maxSecs: best };
+    Object.keys(positional).forEach(function (k) {
+      var r = obJourneyEventRing_(positional[k]);
+      if (r !== null) { out.candidates[k].rows++; out.candidates[k].rings.push(r); }
+    });
+    // Reproduce the CURRENT helper, splitting its overloaded null.
+    var matched = null;
+    for (var j = 0; j < n; j++) {
+      if (ev[j] && ev[j].name === '(external number)') { matched = ev[j]; break; }
+    }
+    if (!matched) out.current.nullNoMatch++;
+    else if (matched.secs == null) out.current.nullMatchNoSecs++;
+    else out.current.derived++;
+  });
+
+  Object.keys(out.candidates).forEach(function (k) {
+    var c = out.candidates[k];
+    c.coverage = out.rows ? Math.round(c.rows / out.rows * 1000) / 1000 : 0;
+    c.medianDerived = obInstantMedian_(c.rings);
+    c.realRingShare = c.rings.length
+      ? Math.round(c.rings.filter(function (x) { return x >= OB_INSTANT_REAL_RING_SEC_; }).length
+          / c.rings.length * 1000) / 1000 : 0;
+    delete c.rings;   // counts + medians only; never the per-call values
+  });
+  return out;
+}
+
+/**
+ * DIAGNOSTIC (read-only, admin-gated, editor-run). Why
+ * `probeOutboundInstantConnects` returns `no-journeys`, and which marker fixes
+ * it. Operator State #65; write-up in docs/outbound-callback-dept-plan.md.
+ *
+ * Sets nothing and returns no per-call value: event-name CLASSES, counts,
+ * coverage and medians only, so an internal CNAM cannot leak. Reuses
+ * `OUTBOUND_PROBE_FROM`/`_TO` and the `outbound-instant` egress label.
+ *
+ * READ THE RUNG GROUP FIRST. It is the answer key -- those rows provably rang
+ * >= 17 s, so a candidate marker is only correct if its derived median lands
+ * near that there. Coverage alone proves nothing.
+ */
+function probeOutboundJourneyShape() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var win = obProbeWindow_(props);
+  var from = win.from, to = win.to;
+  var label = from + '..' + to + ' (all departments)';
+  var conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+
+    var base = 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
+      + 'AND connected AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL ';
+    var sql =
+      "SELECT COALESCE(json_agg(t), '[]')::text AS j FROM ("
+      + "(SELECT 'instant' AS grp, journey " + base
+      +   'AND ring_seconds <= ' + OB_INSTANT_RING_SEC_ + ' AND journey IS NOT NULL '
+      +   'ORDER BY call_date DESC, call_start DESC NULLS LAST LIMIT ' + OB_INSTANT_SAMPLE_ + ') '
+      + 'UNION ALL '
+      + "(SELECT 'rung' AS grp, journey " + base
+      +   'AND ring_seconds >= ' + OB_INSTANT_RUNG_SEC_ + ' AND journey IS NOT NULL '
+      +   'ORDER BY call_date DESC, call_start DESC NULLS LAST LIMIT ' + OB_INSTANT_SAMPLE_ + ')'
+      + ') t';
+    var ps = conn.prepareStatement(sql);
+    var np = (sql.match(/\?::date/g) || []).length;
+    for (var pi = 1; pi + 1 <= np; pi += 2) { ps.setString(pi, from); ps.setString(pi + 1, to); }
+    var rs = ps.executeQuery();
+    var j = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(j ? j.length : 0, 'outbound-instant');
+    rs.close(); ps.close();
+
+    var groups = { instant: [], rung: [] };
+    var unparseable = { instant: 0, rung: 0 }, empty = { instant: 0, rung: 0 };
+    JSON.parse(j || '[]').forEach(function (r) {
+      var g = (r && r.grp === 'rung') ? 'rung' : 'instant';
+      var ev;
+      try { ev = JSON.parse(r && r.journey || 'null'); } catch (e) { unparseable[g]++; return; }
+      if (!ev || !ev.length) { empty[g]++; return; }
+      groups[g].push(ev);
+    });
+
+    var out = {
+      window: { from: from, to: to },
+      note: 'DIAGNOSTIC for Operator State #65. Sets nothing. Read the RUNG group '
+          + 'first -- it is the answer key (those rows rang >= '
+          + OB_INSTANT_RUNG_SEC_ + 's, so the right marker derives near that there).',
+      instant: obJourneyMarkerScores_(groups.instant),
+      rung: obJourneyMarkerScores_(groups.rung),
+      unparseableJourney: unparseable,
+      emptyJourney: empty,
+    };
+    out.instant.unparseable = unparseable.instant; out.instant.empty = empty.instant;
+    out.rung.unparseable = unparseable.rung; out.rung.empty = empty.rung;
+
+    var cur = out.rung.current;
+    out.result = 'diagnostic ' + label
+      + ' — sampled instant=' + out.instant.rows + ' rung=' + out.rung.rows
+      + '; the CURRENT marker resolved ' + cur.derived + '/' + out.rung.rows
+      + ' rung rows (' + cur.nullNoMatch + ' no-match, ' + cur.nullMatchNoSecs
+      + ' matched-but-no-secs). Compare candidates[*].medianDerived on the RUNG '
+      + 'group against its >= ' + OB_INSTANT_RUNG_SEC_ + 's stored ring to pick the marker.';
+    Logger.log('[outbound-jshape] %s', out.result);
+    return logStatusReturn_(out);
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
+
 /** PURE. Median of a numeric array (null on empty). */
 function obInstantMedian_(xs) {
   var a = (xs || []).filter(function (x) { return typeof x === 'number' && isFinite(x); })

@@ -199,13 +199,33 @@ the cause for these rows -- pre-P-11 the CNAM name was left unmasked entirely,
 which the marker also misses. Either way the assumption is the defect, and
 P-11 makes it worse going forward.
 
-Three causes remain and the output cannot separate them: the CNAM naming
-above, journey events missing `secs` (the helper also returns null then), or a
-NULL journey on those rows (the writer stores null for an empty leg list).
-**Next action is a one-query diagnostic** -- sample a few outbound `journey`
-blobs and print the event names, kinds and whether `secs` is present. Only
-then fix the lookup (match on leg KIND / position, or accept the whole mask
-family) and re-run.
+**A NULL journey is RULED OUT**: the probe's own query already carries
+`AND journey IS NOT NULL`, so all 600 sampled rows HAD a journey. That leaves
+exactly two causes, and the old output cannot separate them because
+`noExternalLeg` conflates both: the marker never matched, or it matched an
+event with no `secs` (the helper returns null then too).
+
+**The deeper problem is that the blob cannot identify the leg at all.**
+`icBuildJourney_` stores `t / name / kind / secs / talk / hold` and
+deliberately not the direction or the callee number -- yet the external leg is
+defined by `DIRECTION = 'Outgoing' AND icExternalNumber_(CALLEE)`, which is
+what `outboundCalls.js` itself uses to pick `extLegs[0]`. So the probe is
+trying to recover a fact the capture discarded, and the name mask is a proxy
+for it, not the fact.
+
+**`probeOutboundJourneyShape()` (added 2026-09-18) decides the fix by
+measurement.** Read-only, admin-gated, PHI-safe (event-name CLASSES and counts
+only, never a name). It splits the overloaded null, then scores every candidate
+marker -- the six mask classes plus four positional ones (first event, last
+event, last `answer`, longest `secs`) -- for coverage AND median derived ring.
+**The RUNG group is the answer key:** those rows provably rang >= 17 s, so the
+correct marker is the one whose derived median lands near that there. Coverage
+alone proves nothing -- a 100%-coverage candidate reading ~0 s on calls known
+to have rung is measuring an internal hop, confidently. Run it, read the rung
+column, then fix `obInstantDerivedRing_` to the winner. If no candidate
+survives the control group, the answer is the capture-side marker instead
+(an explicit external flag on the event), which is forward-only and needs ~2
+weeks of fresh data before #65 can run.
 
 **What the data suggests anyway, as a hypothesis with no license to set
 anything.** Talk medians fall monotonically as ring rises: **104 s** in the

@@ -357,9 +357,11 @@ probe rather than a one-peak one**; the min-talk half DID measure at 20 s.
 external-leg lookup matches only the `(external number)` mask, but
 `icBuildJourney_` also emits masked initials / `(external caller)` for a CNAM
 callee, so it found zero usable legs in 600 sampled rows. That one is a BUG
-and it gates everything else -- fix the lookup (after a one-query diagnostic
-of what the outbound journey blobs actually contain) before any of the
-parameter work below. `connected` counts a voicemail pickup
+and it gates everything else. `probeOutboundJourneyShape()` (new, read-only)
+decides the fix by measurement: it scores every candidate marker against the
+RUNG control group, whose rows provably rang. Run it, take the winner, fix
+`obInstantDerivedRing_`, then re-run #65 -- all before any of the parameter
+work below. `connected` counts a voicemail pickup
 as a reached caller (the far end genuinely answers, so every condition the
 flag tests is met), which the six-point round promoted into the "Actually
 reached" tile. A single scope-level rate carries that over-count as a

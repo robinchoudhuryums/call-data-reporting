@@ -2147,10 +2147,19 @@ When something looks wrong, before assuming a code bug, check:
       causes remain possible and the output cannot separate them: a journey
       event with no `secs` (the helper returns null then too), or a NULL
       journey (the writer stores null for an empty leg list). **Next action is
-      a one-query diagnostic** -- sample a few outbound `journey` blobs and
-      print event names, kinds and whether `secs` is present -- then fix the
-      lookup and re-run. Full write-up: "Step 1 RESULTS" in
-      `docs/outbound-callback-dept-plan.md`.
+      `probeOutboundJourneyShape()`** (added 2026-09-18, in `OutboundReport.gs`
+      beside this probe; read-only, admin-gated, sets nothing, PHI-safe --
+      event-name CLASSES and counts only). It splits the overloaded null and
+      scores every candidate marker (the six mask classes + first / last /
+      last-answer / longest-`secs`) for coverage and median derived ring.
+      **Read the RUNG column first: it is the answer key**, because those rows
+      provably rang >= 17 s, so the right marker derives near that there --
+      coverage alone proves nothing. Then fix `obInstantDerivedRing_` to the
+      winner and re-run #65. A NULL journey is already ruled out (the query
+      carries `AND journey IS NOT NULL`). If no candidate survives the control
+      group, the fix is a capture-side external-leg flag instead, which is
+      forward-only and needs ~2 weeks of fresh rows. Full write-up:
+      "Step 1 RESULTS" in `docs/outbound-callback-dept-plan.md`.
     - **What the run DID establish**, as a hypothesis carrying no license to
       set anything: 40.5% instant share (confirming the 40.6% above), FLAT on
       all 18 days, and spread across all 161 agents (`concentrated: false`,
