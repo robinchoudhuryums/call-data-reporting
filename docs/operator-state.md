@@ -2069,6 +2069,23 @@ When something looks wrong, before assuming a code bug, check:
       (`PROP_REGISTRY_`). Pinned by `tests/unit/outbound-report.test.js`
       (the two pure detectors gate by gate, the read-only contract, the
       bind order, and the refusal paths).
+    - **FIRST LIVE RUN, 2026-09-18 -- INCONCLUSIVE, and RE-RUNNING WILL NOT
+      CHANGE IT.** `2026-08-21..2026-09-17`, all depts, 62,732 single-attempt
+      connects. Refused on ONE gate, share: the peak holds 7.7% against the
+      8.0% floor. The feature is otherwise strong (31 s peak, 3,022 calls,
+      baseline 330, **ratio 9.16**, FWHM 2 s), so this is a near miss on a
+      real timeout, not a flat distribution. Do not widen the window or scope
+      hoping to clear 8% -- the mass is MULTI-MODAL (bumps at 21 s, 26-27 s
+      and 30-31 s = several carriers' voicemail delays), so a one-peak test
+      cannot reach it; the whole 20-32 s band is ~22% of connects. The fix is
+      a BAND-summing probe, a code change: see "Step 1 RESULTS" in
+      `docs/outbound-callback-dept-plan.md`. **One number DID measure and is
+      safe to cite:** `OUTBOUND_MIN_TALK_SEC` = 20 s, a real trough between
+      humps at 5 s and 35 s (`suggestedIsMeasured: true`). It still cannot be
+      set alone -- the classifier needs a ring band too. Also disclosed:
+      `agreesWithSpike: false` (9,812 repeat-callee groups peak at 0 s, not
+      31 s), which points at #65's instant-connect problem rather than at
+      voicemail.
 
 65. **The instant-connect diagnostic (`probeOutboundInstantConnects`).**
     Read-only, admin-gated, editor-run. Companion to #64 and it shares that
@@ -2110,10 +2127,40 @@ When something looks wrong, before assuming a code bug, check:
       profile (instant rows that talk like everyone else are real calls being
       mis-timed, not junk).
     - **PHI:** aggregates and derived seconds only. The journey blob is
-      PHI-safe at capture (`icBuildJourney_` rewrites any phone-shaped name to
-      `(external number)`, which is also how the external leg is identified);
-      nothing from it is echoed. Both queries egress-metered under
-      `outbound-instant`. Pinned by `tests/unit/outbound-report.test.js`.
+      PHI-safe at capture; nothing from it is echoed. Both queries
+      egress-metered under `outbound-instant`. Pinned by
+      `tests/unit/outbound-report.test.js`.
+    - **⚠ THIS PROBE CANNOT PRODUCE A VERDICT TODAY -- do not spend operator
+      time re-running it until the lookup is fixed (found 2026-09-18).** The
+      first live run returned `verdict: 'no-journeys'` with `sampled: 0` and
+      `noExternalLeg: 300` on BOTH groups: it found no usable external leg in
+      any of 600 sampled rows. Cause: `obInstantDerivedRing_` identifies the
+      external leg by matching a journey event named exactly
+      `'(external number)'`, and its docstring claims that marker "identifies
+      it exactly" -- **which is false.** `icBuildJourney_` has TWO masking
+      branches: a phone-SHAPED name becomes `(external number)`, but a callee
+      carrying a carrier CNAM takes the P-11 branch and becomes masked
+      initials or `(external caller)`. Calling a business usually yields a
+      CNAM. (P-11 shipped 2026-09-18, after that window, so it is not the
+      cause for those rows -- pre-P-11 the CNAM was left unmasked, which the
+      marker also misses. The assumption is the defect either way.) Two other
+      causes remain possible and the output cannot separate them: a journey
+      event with no `secs` (the helper returns null then too), or a NULL
+      journey (the writer stores null for an empty leg list). **Next action is
+      a one-query diagnostic** -- sample a few outbound `journey` blobs and
+      print event names, kinds and whether `secs` is present -- then fix the
+      lookup and re-run. Full write-up: "Step 1 RESULTS" in
+      `docs/outbound-callback-dept-plan.md`.
+    - **What the run DID establish**, as a hypothesis carrying no license to
+      set anything: 40.5% instant share (confirming the 40.6% above), FLAT on
+      all 18 days, and spread across all 161 agents (`concentrated: false`,
+      top-5 10.3% vs a 3.1% even baseline) -- systemic, not a few handsets.
+      Talk medians fall monotonically as ring rises (**104 s** at 0-1 s ring,
+      64 s at 2-16 s, 36 s at 17-32 s), so instant-ring rows talk the LONGEST.
+      That argues for a mis-recorded CONNECTED timestamp on real conversations
+      and AGAINST reading them as drops -- but recoverable-vs-permanent is
+      exactly what this probe exists to decide, and it cannot until the lookup
+      is fixed.
 
 66. **The QCD-vs-DQE reconciliation diagnostic (`diagnoseQcdVsDqe`).**
     Read-only, editor- or menu-run from **cdr-import** (CDR Tools → "QCD vs

@@ -146,6 +146,79 @@ property is intact; what it had also done, unintentionally, was leave a
 refused run with no ring×talk cross-tab at all — which is the one view that
 would say whether a multi-band rule is worth building.
 
+### Step 1 RESULTS — first live run, 2026-09-18 (both probes INCONCLUSIVE)
+
+Window `2026-08-21..2026-09-17`, all departments, 62,738 connects of which
+62,732 are single-attempt. **Nothing was set.** Two findings, and only one of
+them is a dead end.
+
+**`probeOutboundAnswerQuality` refused on ONE gate: share.** The peak holds
+7.7% of connects against the 8.0% floor. The feature it found is otherwise
+strong: peak at 31 s, 3,022 calls, baseline 330, **ratio 9.16**, FWHM 2 s,
+band 30-31 s. So this is a near miss on a real timeout, not a flat
+distribution.
+
+The min-talk half DID measure: **`suggestedMinTalkSec: 20`, measured, trough
+at 20 s between humps at 5 s and 35 s** (`suggestedIsMeasured: true`). That
+is the half of the rule that is defensible today. It cannot be set alone --
+the classifier needs a ring band too.
+
+Second signal, disclosure not a gate: `agreesWithSpike: false`. The 9,812
+repeat-callee groups peak at **0 s**, not 31 s. Per the contract above a
+DISAGREES still verdicts `ok`, so it did not refuse the run -- but it points
+at the instant-connect problem below rather than at voicemail.
+
+**BLOCKER 1 (design, not data): the share gate is probably unreachable here,
+because the voicemail mass is MULTI-MODAL.** The ring histogram carries
+distinct bumps at 21 s (2,077), 26-27 s (927 / 1,010) and 30-31 s (1,784 /
+3,022) -- the signature of several carriers with different voicemail pickup
+delays. A test that measures ONE 2 s-wide peak cannot capture mass split
+three ways, so a wider window or a per-dept scope will not fix it. **Summing
+the whole 20-32 s band gives 13,798 calls = 22.0% of connects** (summed by
+hand from the run's `ringHist`, NOT a probe output -- do not cite it as
+measured; roughly 3.6k of it is baseline). That is the number this plan
+already said it wanted: "the one view that would say whether a multi-band
+rule is worth building." It is worth building. **The change is a probe that
+sums a BAND rather than a peak**, with the floor and bimodality gates kept --
+a code change and a deliberate decision, never a re-run.
+
+**BLOCKER 2 (a bug, and it blocks all progress): `probeOutboundInstantConnects`
+cannot produce a verdict, because its external-leg lookup is mis-keyed.** It
+sampled 300 rows in each group and found zero usable external legs in all 600
+(`verdict: 'no-journeys'`, `sampled: 0`, `noExternalLeg: 300` both sides).
+
+`obInstantDerivedRing_` (OutboundReport.gs) finds the external leg by matching
+a journey event whose name is exactly `'(external number)'`, and its docstring
+claims that marker "identifies it exactly". **That claim is false.**
+`icBuildJourney_` (cdr-import/inboundCalls.js) has TWO masking branches: a
+callee whose NAME is phone-shaped becomes `(external number)`, but a callee
+whose name is a carrier CNAM takes the P-11 branch and becomes masked initials
+or `(external caller)`. Calling a business usually yields a CNAM, so the marker
+misses those legs. NB P-11 shipped 2026-09-18, AFTER this window, so it is not
+the cause for these rows -- pre-P-11 the CNAM name was left unmasked entirely,
+which the marker also misses. Either way the assumption is the defect, and
+P-11 makes it worse going forward.
+
+Three causes remain and the output cannot separate them: the CNAM naming
+above, journey events missing `secs` (the helper also returns null then), or a
+NULL journey on those rows (the writer stores null for an empty leg list).
+**Next action is a one-query diagnostic** -- sample a few outbound `journey`
+blobs and print the event names, kinds and whether `secs` is present. Only
+then fix the lookup (match on leg KIND / position, or accept the whole mask
+family) and re-run.
+
+**What the data suggests anyway, as a hypothesis with no license to set
+anything.** Talk medians fall monotonically as ring rises: **104 s** in the
+0-1 s ring band, 64 s at 2-16 s, 36 s at 17-32 s. Instant-ring rows talk the
+LONGEST, which is coherent with real conversations carrying a mis-recorded
+CONNECTED timestamp, and with the 30 s band being voicemail messages. It
+argues AGAINST reading instant connects as drops. Supporting: the 40.5%
+instant share is flat on all 18 days and spread across all 161 agents
+(`concentrated: false`, top-5 share 10.3% vs a 3.1% even baseline), so it is
+a systemic capture or telephony artifact, not a few handsets. #65's job is
+still to decide recoverable-vs-permanent, and it cannot until the lookup is
+fixed.
+
 ### Step 2: the parameters
 
 All READ-time, not capture-time. `connected` / `talk_seconds` / `ring_seconds`

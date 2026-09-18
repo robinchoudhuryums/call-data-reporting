@@ -345,7 +345,21 @@ queue), a crossover agent does not, so the ruling above does not reach it.
 The owner approved planning it on 2026-09-15 — full design in
 [`docs/outbound-callback-dept-plan.md`](outbound-callback-dept-plan.md),
 together with the OUTBOUND ANSWER-QUALITY work it depends on.
-**Do the answer-quality half first:** `connected` counts a voicemail pickup
+**Do the answer-quality half first -- but it is BLOCKED as of 2026-09-18,
+not merely queued.** Both probes ran live and both returned INCONCLUSIVE, for
+two different reasons recorded in full under "Step 1 RESULTS" in
+[`docs/outbound-callback-dept-plan.md`](outbound-callback-dept-plan.md):
+(1) `probeOutboundAnswerQuality` missed the 8% share gate at 7.7% on a real
+31 s timeout (ratio 9.16), and the mass is MULTI-MODAL across 20-32 s (~22%
+of connects in total), so **no re-run clears it -- it needs a band-summing
+probe rather than a one-peak one**; the min-talk half DID measure at 20 s.
+(2) `probeOutboundInstantConnects` **cannot verdict at all**: its
+external-leg lookup matches only the `(external number)` mask, but
+`icBuildJourney_` also emits masked initials / `(external caller)` for a CNAM
+callee, so it found zero usable legs in 600 sampled rows. That one is a BUG
+and it gates everything else -- fix the lookup (after a one-query diagnostic
+of what the outbound journey blobs actually contain) before any of the
+parameter work below. `connected` counts a voicemail pickup
 as a reached caller (the far end genuinely answers, so every condition the
 flag tests is met), which the six-point round promoted into the "Actually
 reached" tile. A single scope-level rate carries that over-count as a
@@ -510,6 +524,19 @@ tripwire. Revisit only after Batch 5 has held.
 - ~~The census's per-instant memo.~~ DONE in Batch 4 (`hdScanOneSheet_`).
 - Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
   instead of C+D; the all-dept QCD budget being per-run.
+- **`obInstantDerivedRing_` is mis-keyed (2026-09-18, BLOCKS Part 2).** It
+  matches only the `(external number)` journey mask; the CNAM callee takes
+  `icBuildJourney_`'s P-11 branch to masked initials / `(external caller)`,
+  so `probeOutboundInstantConnects` finds no external leg and returns
+  `no-journeys`. Its docstring's "identifies it exactly" is false. Fix =
+  diagnose what the blobs hold, then match on leg kind/position or the whole
+  mask family. → rides the next OutboundReport change; Operator State #65
+  carries the warning so no operator re-runs it meanwhile.
+- **The answer-quality probe needs a BAND gate, not a peak gate (2026-09-18).**
+  Voicemail pickup here is multi-modal (21 / 26-27 / 30-31 s), so the 8%
+  single-peak share gate refuses a real signal; the 20-32 s band is ~22% of
+  connects. Keep the floor + bimodality gates. → same change as above;
+  measurements in the plan's "Step 1 RESULTS".
 - Escalations Phase 2's EXTERNAL WRITER is designed, unbuilt (H3, 2026-09):
   the review queue, the INSERT contract and the pending-review ping exist on
   this side; team-tools has no Neon connection and no writer. Building it is
