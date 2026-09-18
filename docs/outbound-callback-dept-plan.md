@@ -182,62 +182,91 @@ rule is worth building." It is worth building. **The change is a probe that
 sums a BAND rather than a peak**, with the floor and bimodality gates kept --
 a code change and a deliberate decision, never a re-run.
 
-**BLOCKER 2 (a bug, and it blocks all progress): `probeOutboundInstantConnects`
-cannot produce a verdict, because its external-leg lookup is mis-keyed.** It
-sampled 300 rows in each group and found zero usable external legs in all 600
-(`verdict: 'no-journeys'`, `sampled: 0`, `noExternalLeg: 300` both sides).
+**BLOCKER 2 -- RESOLVED 2026-09-18, and the answer came with it.**
+`probeOutboundInstantConnects` could not verdict: it sampled 300 rows in each
+group and found zero usable external legs in all 600 (`verdict:
+'no-journeys'`, `sampled: 0`, `noExternalLeg: 300` both sides).
+`probeOutboundJourneyShape()` was written to decide the fix by measurement
+rather than by inspection, and it overturned the standing hypothesis.
 
-`obInstantDerivedRing_` (OutboundReport.gs) finds the external leg by matching
-a journey event whose name is exactly `'(external number)'`, and its docstring
-claims that marker "identifies it exactly". **That claim is false.**
-`icBuildJourney_` (cdr-import/inboundCalls.js) has TWO masking branches: a
-callee whose NAME is phone-shaped becomes `(external number)`, but a callee
-whose name is a carrier CNAM takes the P-11 branch and becomes masked initials
-or `(external caller)`. Calling a business usually yields a CNAM, so the marker
-misses those legs. NB P-11 shipped 2026-09-18, AFTER this window, so it is not
-the cause for these rows -- pre-P-11 the CNAM name was left unmasked entirely,
-which the marker also misses. Either way the assumption is the defect, and
-P-11 makes it worse going forward.
+**The hypothesis was wrong.** We expected P-11: `icBuildJourney_` has two
+masking branches, and a callee carrying a carrier CNAM takes the P-11 branch
+and becomes masked initials or `(external caller)`, which the
+`'(external number)'` marker misses. Measured across 600 rows the counts were
+`extNumber: 0`, `extCaller: 0`, `initials: 0`. **None of the three name
+shapes is present at all**, so no masking branch was firing, and P-11 was
+never the mechanism.
 
-**A NULL journey is RULED OUT**: the probe's own query already carries
-`AND journey IS NOT NULL`, so all 600 sampled rows HAD a journey. That leaves
-exactly two causes, and the old output cannot separate them because
-`noExternalLeg` conflates both: the marker never matched, or it matched an
-event with no `secs` (the helper returns null then too).
+**The actual cause is one level up.** `icBuildJourney_` derives every event's
+name from **CALLEE_NAME**. An outbound dial carries the number in **CALLEE**
+and leaves CALLEE_NAME blank, so the phone-shaped branch never fires; the
+P-11 branch is additionally gated on `name &&`, so it never fires either; and
+the leg falls through to `if (!name ...) name = '(unknown)'`. Every outbound
+external leg is named `(unknown)`, by construction -- the rung group was 100%
+`unknown`, 600 of 600 events, every one of them carrying `secs`. The other
+two candidate causes are ruled out by the same run: `nullMatchNoSecs: 0` on
+both groups (never a matched-but-duration-less event), and the query already
+carried `AND journey IS NOT NULL`.
 
-**The deeper problem is that the blob cannot identify the leg at all.**
-`icBuildJourney_` stores `t / name / kind / secs / talk / hold` and
-deliberately not the direction or the callee number -- yet the external leg is
-defined by `DIRECTION = 'Outgoing' AND icExternalNumber_(CALLEE)`, which is
-what `outboundCalls.js` itself uses to pick `extLegs[0]`. So the probe is
-trying to recover a fact the capture discarded, and the name mask is a proxy
-for it, not the fact.
+This is still the deeper problem named above -- the blob cannot identify the
+leg, because the external leg is defined by `DIRECTION = 'Outgoing' AND
+icExternalNumber_(CALLEE)` and the capture stores neither. The name mask was
+always a proxy. What changed is that we now know the proxy is not merely
+lossy, it is empty.
 
-**`probeOutboundJourneyShape()` (added 2026-09-18) decides the fix by
-measurement.** Read-only, admin-gated, PHI-safe (event-name CLASSES and counts
-only, never a name). It splits the overloaded null, then scores every candidate
-marker -- the six mask classes plus four positional ones (first event, last
-event, last `answer`, longest `secs`) -- for coverage AND median derived ring.
-**The RUNG group is the answer key:** those rows provably rang >= 17 s, so the
-correct marker is the one whose derived median lands near that there. Coverage
-alone proves nothing -- a 100%-coverage candidate reading ~0 s on calls known
-to have rung is measuring an internal hop, confidently. Run it, read the rung
-column, then fix `obInstantDerivedRing_` to the winner. If no candidate
-survives the control group, the answer is the capture-side marker instead
-(an explicit external flag on the event), which is forward-only and needs ~2
-weeks of fresh data before #65 can run.
+**The fix (shipped): a measured fallback inside `obInstantDerivedRing_`**,
+reader-side so it works on existing history. `(external number)` stays the
+first and authoritative marker -- so a capture-side fix later takes
+precedence with no reader change -- and behind it sits the first
+`unknown`-CLASS event. The answer key endorsed that marker at **100%
+coverage, a median 27 s derived ring, every value a real ring**, while the
+same marker read a median **1 s** on the instant group: it tracks the stored
+ring across both populations, which an internal hop could not. `lastEvent`
+was the one candidate eliminated outright -- it read 38 s on the rung group
+but **74 s** on rows whose stored ring is <= 1 s, i.e. it measures the talk
+leg. The other three survivors (`firstEvent`, `lastAnswer`, `maxSecs`) tied
+with `unknown` at 27 s on the answer key, because 87% of sampled journeys are
+two events and all four resolve to the same one there; `unknown` was chosen
+over them because it is selected by CLASS, and `obJourneyNameClass_` scores a
+queue event as `queue` whatever its name, so the 12% of instant rows that
+passed through a queue skip it rather than measuring hold music. A bare
+`firstEvent` fallback would have measured the music on those rows.
 
-**What the data suggests anyway, as a hypothesis with no license to set
-anything.** Talk medians fall monotonically as ring rises: **104 s** in the
-0-1 s ring band, 64 s at 2-16 s, 36 s at 17-32 s. Instant-ring rows talk the
-LONGEST, which is coherent with real conversations carrying a mis-recorded
-CONNECTED timestamp, and with the 30 s band being voicemail messages. It
-argues AGAINST reading instant connects as drops. Supporting: the 40.5%
-instant share is flat on all 18 days and spread across all 161 agents
-(`concentrated: false`, top-5 share 10.3% vs a 3.1% even baseline), so it is
-a systemic capture or telephony artifact, not a few handsets. #65's job is
-still to decide recoverable-vs-permanent, and it cannot until the lookup is
-fixed.
+**The answer to #65, from the diagnostic's own numbers: `carrier-instant`.**
+The instant group derives a median 1 s ring with only **12.3%** of rows at or
+above the 3 s real-ring line -- under the 20% `OB_INSTANT_CARRIER_SHARE_`
+gate -- against a control that derives 27 s with 100% real rings. So **these
+calls genuinely connect instantly, `ring_seconds` is telling the truth, and
+the classifier must EXCLUDE them and disclose the reduced reachable
+population (~60%, permanently).** Re-run #65 to have the probe state that in
+its own verdict before building on it.
+
+Two things that follow. First, this **overrules the talk-profile cut**, which
+pointed the other way: talk medians fall monotonically as ring rises (**104
+s** in the 0-1 s band, 64 s at 2-16 s, 36 s at 17-32 s), so instant-ring rows
+talk the LONGEST, which looked like real conversations carrying a mis-recorded
+CONNECTED timestamp. The derived ring outranks it because it measures the ring
+directly instead of inferring it from behaviour -- and long talk is equally
+consistent with an early-media trunk that connects for real. The supporting
+cuts stand and are consistent either way: the 40.5% instant share is flat on
+all 18 days and spread across all 161 agents (`concentrated: false`, top-5
+share 10.3% vs a 3.1% even baseline), so it is systemic telephony, not a few
+handsets.
+
+Second, the agreement is **not circular**, which matters because both figures
+come from the same leg rows. `ring_seconds` is `START -> CONNECTED`; the
+derived ring is `STOP - START - talk - hold` and never reads CONNECTED. A
+spuriously early CONNECTED would shrink the former and leave the latter
+untouched, so the two agreeing is a genuine check on CONNECTED rather than a
+restatement of it.
+
+**Capture-side follow-on, recorded and NOT done.** Labelling a leg whose
+CALLEE is external as `(external number)` when it carries no CNAM would make
+the authoritative marker correct and retire the fallback. It is a WRITER
+change in `icBuildJourney_`, which means: forward-only (history still needs
+the fallback), and shared with INBOUND, whose journeys render in the call-path
+drill and Caller Lookup. Worth doing deliberately, with its own regression
+walk -- not folded into a probe fix.
 
 ### Step 2: the parameters
 

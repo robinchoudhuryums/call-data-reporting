@@ -353,15 +353,20 @@ two different reasons recorded in full under "Step 1 RESULTS" in
 31 s timeout (ratio 9.16), and the mass is MULTI-MODAL across 20-32 s (~22%
 of connects in total), so **no re-run clears it -- it needs a band-summing
 probe rather than a one-peak one**; the min-talk half DID measure at 20 s.
-(2) `probeOutboundInstantConnects` **cannot verdict at all**: its
-external-leg lookup matches only the `(external number)` mask, but
-`icBuildJourney_` also emits masked initials / `(external caller)` for a CNAM
-callee, so it found zero usable legs in 600 sampled rows. That one is a BUG
-and it gates everything else. `probeOutboundJourneyShape()` (new, read-only)
-decides the fix by measurement: it scores every candidate marker against the
-RUNG control group, whose rows provably rang. Run it, take the winner, fix
-`obInstantDerivedRing_`, then re-run #65 -- all before any of the parameter
-work below. `connected` counts a voicemail pickup
+(2) `probeOutboundInstantConnects` could not verdict at all -- zero usable
+external legs in 600 sampled rows. **FIXED 2026-09-18, and the fix came with
+the answer.** `probeOutboundJourneyShape()` measured the cause and overturned
+the P-11/CNAM hypothesis: no masked name shape is present at ALL
+(`extNumber: 0`, `extCaller: 0`, `initials: 0`), because `icBuildJourney_`
+names from CALLEE_NAME, which an outbound dial leaves blank, so every
+external leg is `(unknown)`. `obInstantDerivedRing_` now falls back to the
+first `unknown`-CLASS event (endorsed by the rung answer key at 100%
+coverage / median 27 s / all real rings). Its numbers already say
+`carrier-instant` -- a median 1 s derived ring with 12.3% real rings, under
+the 20% gate -- so **the instant connects are genuine and the classifier must
+exclude and disclose them**; re-run #65 for the probe's own verdict. This
+overrules the talk-profile hypothesis. Only the band-gate half of (1) still
+blocks the parameter work below. `connected` counts a voicemail pickup
 as a reached caller (the far end genuinely answers, so every condition the
 flag tests is met), which the six-point round promoted into the "Actually
 reached" tile. A single scope-level rate carries that over-count as a
@@ -526,14 +531,19 @@ tripwire. Revisit only after Batch 5 has held.
 - ~~The census's per-instant memo.~~ DONE in Batch 4 (`hdScanOneSheet_`).
 - Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
   instead of C+D; the all-dept QCD budget being per-run.
-- **`obInstantDerivedRing_` is mis-keyed (2026-09-18, BLOCKS Part 2).** It
-  matches only the `(external number)` journey mask; the CNAM callee takes
-  `icBuildJourney_`'s P-11 branch to masked initials / `(external caller)`,
-  so `probeOutboundInstantConnects` finds no external leg and returns
-  `no-journeys`. Its docstring's "identifies it exactly" is false. Fix =
-  diagnose what the blobs hold, then match on leg kind/position or the whole
-  mask family. → rides the next OutboundReport change; Operator State #65
-  carries the warning so no operator re-runs it meanwhile.
+- ~~`obInstantDerivedRing_` is mis-keyed (2026-09-18, BLOCKS Part 2).~~ FIXED
+  2026-09-18 by measurement, not by the guessed cause: no masked name shape
+  exists in the blobs at all, because `icBuildJourney_` names from CALLEE_NAME
+  and an outbound dial leaves it blank. The reader now falls back to the first
+  `unknown`-CLASS event, validated on the rung answer key. Operator State #65
+  carries the run and the `carrier-instant` reading.
+- **The journey does not carry the external leg's identity (2026-09-18).** The
+  capture stores `t / name / kind / secs / talk / hold` and not DIRECTION or
+  CALLEE, so the reader recovers the leg by proxy. Labelling a CALLEE-external
+  leg `(external number)` when it has no CNAM would retire the proxy, but it
+  is a WRITER change in a function INBOUND shares (the call-path drill and
+  Caller Lookup render its journeys) and is forward-only, so history keeps the
+  fallback regardless. → deliberate, with its own regression walk; unbatched.
 - **The answer-quality probe needs a BAND gate, not a peak gate (2026-09-18).**
   Voicemail pickup here is multi-modal (21 / 26-27 / 30-31 s), so the 8%
   single-peak share gate refuses a real signal; the 20-32 s band is ~22% of

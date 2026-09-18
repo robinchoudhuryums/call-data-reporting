@@ -2130,36 +2130,62 @@ When something looks wrong, before assuming a code bug, check:
       PHI-safe at capture; nothing from it is echoed. Both queries
       egress-metered under `outbound-instant`. Pinned by
       `tests/unit/outbound-report.test.js`.
-    - **⚠ THIS PROBE CANNOT PRODUCE A VERDICT TODAY -- do not spend operator
-      time re-running it until the lookup is fixed (found 2026-09-18).** The
-      first live run returned `verdict: 'no-journeys'` with `sampled: 0` and
-      `noExternalLeg: 300` on BOTH groups: it found no usable external leg in
-      any of 600 sampled rows. Cause: `obInstantDerivedRing_` identifies the
-      external leg by matching a journey event named exactly
-      `'(external number)'`, and its docstring claims that marker "identifies
-      it exactly" -- **which is false.** `icBuildJourney_` has TWO masking
-      branches: a phone-SHAPED name becomes `(external number)`, but a callee
-      carrying a carrier CNAM takes the P-11 branch and becomes masked
-      initials or `(external caller)`. Calling a business usually yields a
-      CNAM. (P-11 shipped 2026-09-18, after that window, so it is not the
-      cause for those rows -- pre-P-11 the CNAM was left unmasked, which the
-      marker also misses. The assumption is the defect either way.) Two other
-      causes remain possible and the output cannot separate them: a journey
-      event with no `secs` (the helper returns null then too), or a NULL
-      journey (the writer stores null for an empty leg list). **Next action is
-      `probeOutboundJourneyShape()`** (added 2026-09-18, in `OutboundReport.gs`
-      beside this probe; read-only, admin-gated, sets nothing, PHI-safe --
-      event-name CLASSES and counts only). It splits the overloaded null and
-      scores every candidate marker (the six mask classes + first / last /
-      last-answer / longest-`secs`) for coverage and median derived ring.
-      **Read the RUNG column first: it is the answer key**, because those rows
-      provably rang >= 17 s, so the right marker derives near that there --
-      coverage alone proves nothing. Then fix `obInstantDerivedRing_` to the
-      winner and re-run #65. A NULL journey is already ruled out (the query
-      carries `AND journey IS NOT NULL`). If no candidate survives the control
-      group, the fix is a capture-side external-leg flag instead, which is
-      forward-only and needs ~2 weeks of fresh rows. Full write-up:
-      "Step 1 RESULTS" in `docs/outbound-callback-dept-plan.md`.
+    - **FIXED 2026-09-18 -- re-run it; the first live run could not verdict.**
+      That run returned `verdict: 'no-journeys'` with `sampled: 0` and
+      `noExternalLeg: 300` on BOTH groups. `probeOutboundJourneyShape()` then
+      measured the cause, and it was not the suspected one. The standing
+      hypothesis was P-11: a callee carrying a carrier CNAM takes the masking
+      branch and becomes initials or `(external caller)`, which the marker
+      misses. **Measured, that is wrong** -- across 600 sampled rows the
+      counts were `extNumber: 0`, `extCaller: 0`, `initials: 0`. None of the
+      three name shapes exists at all.
+      The real cause is one level up: `icBuildJourney_` derives every event's
+      name from **CALLEE_NAME**, and an outbound dial carries the number in
+      **CALLEE** with CALLEE_NAME blank. So the phone-shaped branch never
+      fires, the P-11 branch is gated on `name &&` and never fires either, and
+      the leg falls through to `'(unknown)'`. Every outbound external leg is
+      named `(unknown)`, by construction -- the rung group was 100%
+      `unknown`, 600 of 600 events. `nullMatchNoSecs: 0` on both groups rules
+      out the missing-`secs` branch, and the query already carries
+      `AND journey IS NOT NULL`, so the no-match was the whole story.
+      **The fix is in `obInstantDerivedRing_`** (reader-side, so it works on
+      existing history): `(external number)` stays the first and authoritative
+      marker, and behind it sits the measured fallback -- the first
+      `unknown`-CLASS event. The answer key endorsed it at 100% coverage, a
+      median 27 s derived ring and every value a real ring, while the same
+      marker read a median 1 s on the instant group. By CLASS, not position:
+      `obJourneyNameClass_` scores a queue event as `queue` whatever its name,
+      so the 12% of instant rows that passed through a queue skip it instead
+      of measuring hold music (a bare first-event fallback would have
+      measured the music). Pinned by four tests in `outbound-report.test.js`.
+    - **The diagnostic already contains the answer; the re-run is
+      confirmation.** Its instant group derived a median 1 s ring with only
+      **12.3%** of rows at or above the 3 s real-ring line -- under the 20%
+      `OB_INSTANT_CARRIER_SHARE_` gate -- against a control group that derived
+      27 s with 100% real rings. That is `carrier-instant`: **these calls
+      really do connect instantly, `ring_seconds` is truthful, and a voicemail
+      classifier must EXCLUDE them and disclose the smaller reachable
+      population.** Re-run #65 to have the probe say so in its own verdict
+      before acting on it.
+      Note this OVERRULES the talk-profile cut below, which pointed the other
+      way (instant rows talk the longest, which looked like real conversations
+      being mis-timed). The derived ring wins because it measures the ring
+      directly rather than inferring it: long talk is equally consistent with
+      an early-media trunk connecting for real.
+      Independence check, since the two figures come from the same leg rows:
+      `ring_seconds` is `START -> CONNECTED`, while the derived ring is
+      `STOP - START - talk - hold` and never reads CONNECTED. A spuriously
+      early CONNECTED would shrink the former and leave the latter alone, so
+      their agreement is a real check on CONNECTED, not a restatement of it.
+    - **Capture-side follow-on, recorded but NOT done** (`icBuildJourney_`,
+      cdr-import/inboundCalls.js): the journey does not carry the external
+      leg's identity, only a name that happens to be blank for it. Labelling
+      a leg whose CALLEE is external as `(external number)` when it has no
+      CNAM would make the authoritative marker correct and retire the
+      fallback -- but it is a WRITER change (forward-only, so history still
+      needs the fallback) in a function INBOUND shares, whose journeys render
+      in the call-path drill and Caller Lookup. Worth doing deliberately, not
+      as part of a probe fix.
     - **What the run DID establish**, as a hypothesis carrying no license to
       set anything: 40.5% instant share (confirming the 40.6% above), FLAT on
       all 18 days, and spread across all 161 agents (`concentrated: false`,
