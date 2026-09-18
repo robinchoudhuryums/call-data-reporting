@@ -1600,10 +1600,13 @@ function obProbeSpikeHint_(s) {
 // deliberately -- the two are companion tools and should be read against one
 // window. It does NOT self-clear them; the answer-quality probe owns that.
 //
-// PHI: aggregates and derived seconds only. The journey blob is already
-// PHI-safe at capture (icBuildJourney_ rewrites any phone-shaped name to
-// '(external number)'), and nothing from it is echoed -- only counts and
-// durations. No hash, number or call id is selected, logged or returned.
+// PHI: aggregates and derived seconds only. Nothing from the journey blob is
+// echoed -- only counts and durations -- so its own masking is a second line
+// rather than the guarantee. (Do not read that masking as the external-leg
+// marker: `icBuildJourney_` labels from CALLEE_NAME, which an outbound dial
+// leaves blank, so the phone-shaped rewrite never fires here. See
+// `obInstantDerivedRing_`.) No hash, number or call id is selected, logged or
+// returned.
 
 var OB_INSTANT_RING_SEC_ = 1;        // "instant" = a stored ring at or under this
 var OB_INSTANT_RUNG_SEC_ = 17;       // the comparison group: rings in the spike region
@@ -1620,24 +1623,39 @@ var OB_INSTANT_LOPSIDED_ = 1.5;          // ...and this much MORE lopsided than 
  * PURE. The external leg's ring, derived from the journey instead of from the
  * stored CONNECTED timestamp.
  *
- * The external leg is the first event the capture rewrote to
- * '(external number)' -- every other event is an internal agent or queue, so
- * the marker identifies it exactly rather than by position (an outbound group
- * can carry the agent's own leg first). Returns null when the blob has no
- * external leg or no duration to work from: absent evidence, never a zero.
+ * TWO markers, in order of authority:
+ *
+ * 1. An event named exactly '(external number)'. This is what the function
+ *    originally looked for, ALONE -- and `probeOutboundJourneyShape` measured
+ *    it at ZERO events across 600 sampled rows, which is not bad luck but
+ *    structural: `icBuildJourney_` names an event from CALLEE_NAME, and an
+ *    outbound dial carries the number in CALLEE with CALLEE_NAME blank, so
+ *    the phone-shaped branch never fires and the leg falls through to
+ *    '(unknown)'. The marker is kept FIRST so that a capture-side fix which
+ *    starts labelling the leg takes precedence here with no reader change.
+ *
+ * 2. The first 'unknown'-class event -- the measured fallback. On the answer
+ *    key (rows that provably rang >= OB_INSTANT_RUNG_SEC_) it covered 100% of
+ *    rows and derived a median 27s with every value a real ring, while the
+ *    same marker read a median 1s on the instant group: it tracks the stored
+ *    ring across both populations, which an internal hop would not. NOTE the
+ *    class, not the position -- `obJourneyNameClass_` scores a queue event as
+ *    'queue' whatever its name, so a call that passed through a queue first
+ *    skips the queue rather than measuring it (ev[0] would not).
+ *
+ * Returns null when neither marker resolves to an event with a duration:
+ * absent evidence, never a zero. Callers count those separately.
  */
 function obInstantDerivedRing_(journeyJson) {
   var ev;
   try { ev = JSON.parse(journeyJson || 'null'); } catch (e) { return null; }
   if (!ev || !ev.length) return null;
-  for (var i = 0; i < ev.length; i++) {
-    if (ev[i] && ev[i].name === '(external number)') {
-      if (ev[i].secs == null) return null;
-      var secs = Number(ev[i].secs) || 0;
-      var talk = Number(ev[i].talk) || 0;
-      var hold = Number(ev[i].hold) || 0;
-      return Math.max(0, secs - talk - hold);
-    }
+  var i;
+  for (i = 0; i < ev.length; i++) {
+    if (ev[i] && ev[i].name === '(external number)') return obJourneyEventRing_(ev[i]);
+  }
+  for (i = 0; i < ev.length; i++) {
+    if (obJourneyNameClass_(ev[i]) === 'unknown') return obJourneyEventRing_(ev[i]);
   }
   return null;
 }
@@ -2025,6 +2043,10 @@ function probeOutboundInstantConnects() {
     rs2.close(); ps2.close();
 
     var groups = { instant: [], rung: [] };
+    // `noExternalLeg` = NEITHER marker in `obInstantDerivedRing_` resolved to
+    // an event carrying a duration. Before the measured fallback landed this
+    // was every row (300/300 on both groups), which is what made the first
+    // live run verdict `no-journeys`.
     var noExternalLeg = { instant: 0, rung: 0 };
     JSON.parse(j2 || '[]').forEach(function (r) {
       var g = (r && r.grp === 'rung') ? 'rung' : 'instant';

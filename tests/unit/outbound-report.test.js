@@ -1351,8 +1351,10 @@ test('probe: the source keeps its read-only contract', function () {
 
 test('instant/derive: the EXTERNAL leg is found by its marker, not by position', function () {
   // An outbound group can carry the agent's own leg first, so position is not
-  // the identifier — '(external number)' is (the capture rewrites every
-  // phone-shaped name to it, which is also why no number can leak here).
+  // the identifier. '(external number)' is the AUTHORITATIVE marker, and it
+  // stays first so a capture-side fix that starts labelling the leg wins here
+  // with no reader change — measured, it currently never fires on outbound
+  // (see the fallback tests below).
   const j = JSON.stringify([
     { t: '09:00:00', name: 'Ann Agent', kind: 'leg', secs: 30, talk: 25 },
     { t: '09:00:01', name: '(external number)', kind: 'answer', secs: 40, talk: 18, hold: 2 },
@@ -1377,6 +1379,54 @@ test('instant/derive: never negative, and missing talk/hold count as zero', func
     { name: '(external number)', secs: 5, talk: 90 }])), 0, 'clamped, not negative');
   assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
     { name: '(external number)', secs: 12 }])), 12);
+});
+
+// The MEASURED fallback (probeOutboundJourneyShape, live 2026-09-18). The
+// '(external number)' marker resolved 0 of 600 sampled rows, and the shape
+// diagnostic showed why: `icBuildJourney_` labels an event from CALLEE_NAME,
+// which an outbound dial leaves blank, so every outbound external leg is
+// named '(unknown)'. On the answer key (rows that provably rang >= 17s) the
+// first 'unknown'-class event covered 100% of rows at a median 27s with every
+// value a real ring, and read a median 1s on the instant group — it tracks
+// the stored ring across both populations, which an internal hop would not.
+
+test('instant/derive: falls back to the first unknown-class leg (the measured marker)', function () {
+  // The live outbound shape: two events, both '(unknown)', no marker in sight.
+  const j = JSON.stringify([
+    { t: '09:00:00', name: '(unknown)', kind: 'answer', secs: 45, talk: 18 },
+    { t: '09:00:46', name: '(unknown)', kind: 'leg', secs: 80 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 27, 'secs 45 − talk 18, from the FIRST unknown leg');
+});
+
+test('instant/derive: the explicit marker still outranks an earlier unknown leg', function () {
+  // Ordering matters: if a capture fix starts labelling the external leg, the
+  // fallback must not shadow it from an earlier position.
+  const j = JSON.stringify([
+    { name: '(unknown)', kind: 'leg', secs: 90 },
+    { name: '(external number)', kind: 'answer', secs: 40, talk: 18, hold: 2 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 20, 'the marked leg wins, not the first unknown one');
+});
+
+test('instant/derive: the fallback is by CLASS, so a leading queue is skipped', function () {
+  // 12% of the sampled instant rows passed through a queue first. A queue
+  // event classes as 'queue' whatever its name, so measuring it is impossible
+  // here — a bare ev[0] fallback would have measured the hold music.
+  const j = JSON.stringify([
+    { name: '(unknown)', kind: 'queue', secs: 12 },
+    { name: '(unknown)', kind: 'answer', secs: 30, talk: 25 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 5, 'the queue leg is not the external leg');
+});
+
+test('instant/derive: an unknown leg with no duration REFUSES rather than hunting on', function () {
+  // Same rule as the marker arm: absent evidence is null. Walking past it to
+  // a later leg would silently measure a different call segment.
+  assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
+    { name: '(unknown)', kind: 'leg', talk: 5 },
+    { name: '(unknown)', kind: 'answer', secs: 30 },
+  ])), null);
 });
 
 // ── The pure verdict ───────────────────────────────────────────────────────

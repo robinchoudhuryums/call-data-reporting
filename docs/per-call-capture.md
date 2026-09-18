@@ -324,7 +324,17 @@ semantics), talk/ring seconds, attempts, `call_start` (raw PST
 convention), and the masked leg-by-leg journey (a phone-shaped callee
 name renders '(external number)', and -- P-11, Batch 5 -- a leg whose CALLEE
 NUMBER is external carries that party's CNAM as INITIALS, the IMP-12 rule;
-internal callees keep their names; no raw number or external name in Neon). The writer
+internal callees keep their names; no raw number or external name in Neon).
+**Every naming branch reads CALLEE_NAME, so an OUTBOUND dial -- which carries
+the number in CALLEE and leaves CALLEE_NAME blank -- names its external leg
+`'(unknown)'`, always** (measured 2026-09-18: 600 of 600 sampled events, zero
+`(external number)` / `(external caller)` / initials). So the journey does NOT
+carry the external leg's identity on outbound, and a reader must not key on a
+name mask to find it -- `obInstantDerivedRing_` (OutboundReport.gs) is the one
+reader that does, and it falls back to the first `unknown`-CLASS event for
+exactly this reason. Labelling a CALLEE-external leg with no CNAM would fix it
+at the source, but forward-only and for inbound too; see
+`docs/outbound-callback-dept-plan.md`. The writer
 auto-creates the table AND `idx_outbound_calls_callee_hash` (no operator
 console step). Best-effort + isolated: failures log a
 `processIntegratedHistory:Outbound` Pipeline Health row + email (the F9
