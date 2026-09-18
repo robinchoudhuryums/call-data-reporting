@@ -62,7 +62,8 @@ function idMap(text, re) {
 
 test('F8 split: CLAUDE.md points at every split file', function () {
   ['docs/invariants.md', 'docs/regression-scenarios.md', 'docs/operator-state.md',
-   'docs/client-ui-conventions.md', 'docs/per-call-capture.md'].forEach(function (rel) {
+   'docs/client-ui-conventions.md', 'docs/per-call-capture.md',
+   'docs/neon-layer.md'].forEach(function (rel) {
     assert.ok(CLAUDE.indexOf(rel) !== -1,
       'CLAUDE.md no longer links ' + rel + ' -- the split content is unreachable '
       + 'for anyone reading CLAUDE.md. Restore the pointer.');
