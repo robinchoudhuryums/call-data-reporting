@@ -697,15 +697,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   under 3 missed) so a 1-missed agent is never branded worst; in
   that case cards render sorted but untiered. Styles
   (`.agent-tier`, `.agent-card--tier-*`) live in `styles.html`.
-  **Agent-scoped chart (R11-C4):** each card's summary carries a
-  "■ chart" button (`.agent-scope-btn`) that rebuckets the 18-slot
+  **Agent-scoped chart (R11-C4):** each card carries a "■ chart"
+  button (`.agent-scope-btn`; rendered AFTER `</summary>` and pulled onto
+  the header row by CSS -- UD-5) that rebuckets the 18-slot
   hour-of-day chart above from THAT agent's own timeline entries
   (pure client rebucket via `missedTimeBucketIdx_` -- the times are
   already in the payload, no fetch); a toolbar chip
   (`#dept-missed-scope-chip`) names the active scope with an ✕
-  clear. Clicks are intercepted in the delegated document handler
-  with preventDefault so the button never toggles the card's
-  `<details>`. The bucket drill panel stays DEPT-WIDE by design;
+  clear. The bucket drill panel stays DEPT-WIDE by design;
   scope resets on every fresh fetch (`deptMissedRender_`).
 - **Threshold-drift surface (E10, commit b3a5a51).** The Alerts
   modal config table renders a "Last 30 days" chip per dept

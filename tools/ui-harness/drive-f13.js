@@ -39,12 +39,22 @@ function record(name, pass, detail) {
   // ---- 1. Overview dept tile: focusable + Enter solos the chart line -------
   const tile = page.locator('.ov-dept-tile[data-dept]').first();
   await tile.waitFor({ state: 'visible', timeout: 10000 });
-  const tileAttrs = await tile.evaluate((el) => ({
-    tabindex: el.getAttribute('tabindex'), role: el.getAttribute('role'),
-    label: el.getAttribute('aria-label'),
-  }));
-  record('OV tile is focusable + announced',
-    tileAttrs.tabindex === '0' && tileAttrs.role === 'button' && !!tileAttrs.label,
+  // C1-14: the tile is DESCRIBED, never aria-labelled -- a label would
+  // replace its accessible content (the KPIs) with the isolate action. The
+  // name is the tile's own text; the description must resolve to real text.
+  const tileAttrs = await tile.evaluate((el) => {
+    const descId = el.getAttribute('aria-describedby');
+    const desc = descId && document.getElementById(descId);
+    return {
+      tabindex: el.getAttribute('tabindex'), role: el.getAttribute('role'),
+      label: el.getAttribute('aria-label'),
+      described: !!(desc && desc.textContent.trim()),
+      hasName: (el.textContent || '').trim().length > 0,
+    };
+  });
+  record('OV tile is focusable + announced (content is the name, the action is a description)',
+    tileAttrs.tabindex === '0' && tileAttrs.role === 'button' && !tileAttrs.label
+      && tileAttrs.described && tileAttrs.hasName,
     JSON.stringify(tileAttrs));
 
   await tile.focus();

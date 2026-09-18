@@ -468,10 +468,12 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   `missedAgentCardEl_` matches the attribute by ITERATION, not a
   `[data-agent-card="…"]` selector — agent names are external CDR text and a
   quote would break the selector string (the `csvSafeCell_` lesson).
-  **Both are link-styled SPANS, not buttons, deliberately:** a day slice runs
-  to hundreds of rings and that many tab stops would bury the page's real
-  controls; nothing becomes keyboard-unreachable, since both destinations are
-  themselves in the tab order on the same page. `qsSpotlight_` accepts an
+  **Both are link-styled `<button>`s kept OUT of the tab order (`tabindex="-1"`,
+  UD-4):** a day slice runs to hundreds of rings and that many tab stops would
+  bury the page's real controls -- but a bare span was mouse-only, so a button
+  (announced, virtual-cursor-activatable, programmatically focusable) with no
+  sequential tab stop is the shape; nothing becomes keyboard-unreachable, since
+  both destinations are themselves in the tab order. `qsSpotlight_` accepts an
   element as well as an id for this (agent cards are keyed by name, which
   makes a poor id fragment).
 - **"These rings are one call" has ONE definition:
