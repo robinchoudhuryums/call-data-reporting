@@ -53,14 +53,27 @@
 
   // Populate a dept <select> from the admin's full dept list (USER.departments
   // is all depts for an admin -- the Alerts modal is admin-only).
+  // The dept list the config editors offer. Set from the SERVER payload
+  // (`getAlertsInit().departments` = `getAllDepartments_()`), which is the
+  // same list `saveAlertConfigRow` validates against -- so the picker cannot
+  // offer a dept the save rejects. The USER envelope is only a fallback: it
+  // carries the full list for an admin, but it is a TRIMMED copy made at page
+  // render (Code.gs ships `[]` to a single-dept manager), and an empty one
+  // left this select with no options at all and no way to tell why.
+  var alDepts_ = null;
+
   function alFillDeptSelect_(id) {
     const sel = $(id);
     if (!sel) return;
     const want = sel.value;
-    const depts = (USER && USER.departments) || [];
+    const depts = (alDepts_ && alDepts_.length) ? alDepts_ : ((USER && USER.departments) || []);
     sel.innerHTML = '<option value="">— pick —</option>'
       + depts.map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
     if (want) sel.value = want;
+    // A picker with nothing to pick is a load failure, not an empty state --
+    // say so next to the control rather than rendering a lone "— pick —".
+    if (!depts.length) sel.title = 'No departments loaded — reopen the modal or use the Alert Config sheet.';
+    else sel.removeAttribute('title');
   }
 
   function alCfgStatus_(kind, msg) { alMiniStatus_('al-cfg-status', kind, msg); }
@@ -93,6 +106,26 @@
     if ($('al-cfg-active')) $('al-cfg-active').checked = true;
     alCfgStatus_(null);
   }
+  // Re-render ONLY the config section from a write path's own result.
+  // A save used to call alLoadInit_(), which hid the entire modal behind its
+  // spinner and re-fired five more RPCs (digests, keep-warm, cache-warm,
+  // queue report) to show one changed row. `sectionStale` means the write
+  // landed but the server could not re-read the section -- then, and only
+  // then, fall back to the full reload.
+  function alCfgApplySection_(res) {
+    if (!res || res.sectionStale || !res.config) { alLoadInit_(); return; }
+    alRenderConfigTable_(res.config, res.drift || {}, res.departments || []);
+  }
+  // Dims + marks the config table busy while a write is in flight, so the
+  // section that is about to change is the one showing the activity.
+  function alCfgBusy_(on) {
+    const t = document.querySelector('.al-config-table');
+    if (!t) return;
+    t.classList.toggle('is-busy', !!on);
+    if (on) t.setAttribute('aria-busy', 'true');
+    else t.removeAttribute('aria-busy');
+  }
+
   function alCfgSave_() {
     const department = $('al-cfg-dept') ? $('al-cfg-dept').value : '';
     if (!department) { alCfgStatus_('error', 'Pick a department.'); return; }
@@ -106,10 +139,16 @@
     };
     const btn = $('al-cfg-save');
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Saving…'; }
-    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save dept'; } };
+    const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save dept'; } alCfgBusy_(false); };
+    alCfgBusy_(true);
     alCfgStatus_('loading', 'Saving ' + department + '…');
     google.script.run
-      .withSuccessHandler(function () { restore(); showToast('Saved alert config for ' + department, 'success'); alCfgClear_(); alLoadInit_(); })
+      .withSuccessHandler(function (res) {
+        restore();
+        showToast('Saved alert config for ' + department, 'success');
+        alCfgClear_();
+        alCfgApplySection_(res);
+      })
       .withFailureHandler(function (err) { restore(); alCfgStatus_('error', 'Save failed: ' + (err && err.message ? err.message : String(err))); })
       .saveAlertConfigRow(req);
   }
@@ -119,9 +158,16 @@
     if (!window.confirm('Remove alert config for "' + c.department + '"? It will stop receiving low-answer-rate alerts.')) return;
     if (mutationBusy_('alCfgRemove')) return;   // C2-6
     alCfgStatus_('loading', 'Removing ' + c.department + '…');
+    alCfgBusy_(true);
     google.script.run
-      .withSuccessHandler(function () { mutationDone_('alCfgRemove'); showToast('Removed alert config for ' + c.department, 'success'); alLoadInit_(); })
-      .withFailureHandler(function (err) { mutationDone_('alCfgRemove'); alCfgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
+      .withSuccessHandler(function (res) {
+        mutationDone_('alCfgRemove');
+        alCfgBusy_(false);
+        showToast('Removed alert config for ' + c.department, 'success');
+        alCfgStatus_(null);
+        alCfgApplySection_(res);
+      })
+      .withFailureHandler(function (err) { mutationDone_('alCfgRemove'); alCfgBusy_(false); alCfgStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err))); })
       .removeAlertConfigRow({ department: c.department });
   }
 
@@ -505,6 +551,16 @@
     $('al-body').style.display = 'none';
     google.script.run
       .withSuccessHandler(function (data) {
+        // A FALSY payload used to be swallowed by `alRenderInit_`'s own
+        // `if (!data) return;` AFTER the body had been revealed, so the modal
+        // sat there looking loaded with an empty date, an empty config table
+        // and an empty dept picker -- and every field showing its placeholder,
+        // which reads like real config. Route it to the retry path instead:
+        // the whole section is unrenderable, so this is a load failure.
+        if (!data) {
+          adminInitError_('al-loading', new Error('The server returned no alert configuration.'), alLoadInit_);
+          return;
+        }
         $('al-loading').style.display = 'none';
         $('al-body').style.display = '';
         alRenderInit_(data);
@@ -837,7 +893,7 @@
     if ($('al-open-sheet') && data.spreadsheetUrl) {
       $('al-open-sheet').href = data.spreadsheetUrl;
     }
-    alRenderConfigTable_(data.config || [], data.drift || {});
+    alRenderConfigTable_(data.config || [], data.drift || {}, data.departments || []);
     alRenderTriggerStatus_(data.trigger || { installed: false });
     alRenderLog_(data.log || []);
     alRenderNeonMirror_(data.neonMirror || null);
@@ -957,10 +1013,12 @@
     }).join('');
   }
 
-  function alRenderConfigTable_(config, drift) {
+  function alRenderConfigTable_(config, drift, departments) {
     const tbody = $('al-config-tbody');
     if (!tbody) return;
-    alCfgRows_ = config || [];                 // C3 editor reads this for prefill
+    config = config || [];
+    alCfgRows_ = config;                       // C3 editor reads this for prefill
+    if (departments && departments.length) alDepts_ = departments;
     alFillDeptSelect_('al-cfg-dept');
     if (!config.length) {
       tbody.innerHTML = '<tr><td colspan="8" class="al-empty">'

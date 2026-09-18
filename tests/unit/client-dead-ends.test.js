@@ -298,3 +298,46 @@ test('UD-4 / UD-5 / UD-6 / UD-9 / UD-10 / C2-13: the markup-level fixes', functi
   assert.ok(/setAttribute\('aria-selected', home \? 'true' : 'false'\)/.test(src('agentApp.html')), 'C2-13: aria-selected follows the tab switch');
   assert.ok(/role="tab" aria-selected="' \+ \(inboundDrillMetric === 'calls'\)/.test(s9), 'C2-13: the inbound drill tabs carry aria-selected');
 });
+
+// The Alerts modal's config section (reported from production 2026-09-18).
+// Two defects, both client-side, so only source pins can hold them:
+// (1) the dept picker was filled from the USER envelope and rendered EMPTY,
+//     leaving no way to create an alert; (2) a save re-ran the whole modal
+//     init, blanking every section to show one changed row.
+test('Alerts config section: server-fed picker, in-place re-render, loud empty payload', function () {
+  const s7 = src('script-7-admin.html');
+
+  // (1) The server list WINS; the envelope is only a fallback.
+  assert.ok(/const depts = \(alDepts_ && alDepts_\.length\) \? alDepts_ : \(\(USER && USER\.departments\) \|\| \[\]\);/.test(s7),
+    'the dept picker prefers the served list over the USER envelope');
+  assert.ok(/alRenderConfigTable_\(data\.config \|\| \[\], data\.drift \|\| \{\}, data\.departments \|\| \[\]\)/.test(s7),
+    'the served dept list is threaded into the config renderer');
+
+  // (2) Neither write path may reach for the whole-modal init directly; both
+  // go through the section applier, which falls back to it only on
+  // `sectionStale`. Guard against a future edit quietly restoring the reload.
+  const save = s7.slice(s7.indexOf('function alCfgSave_()'), s7.indexOf('function alCfgRemove_('));
+  assert.ok(!/alLoadInit_\(\)/.test(save), 'alCfgSave_ does not re-run the modal init');
+  assert.ok(/alCfgApplySection_\(res\)/.test(save), 'alCfgSave_ re-renders the section from the save result');
+  const remove = s7.slice(s7.indexOf('function alCfgRemove_('), s7.indexOf('// ---- Report Subscribers'));
+  assert.ok(!/alLoadInit_\(\)/.test(remove), 'alCfgRemove_ does not re-run the modal init');
+  assert.ok(/alCfgApplySection_\(res\)/.test(remove), 'alCfgRemove_ re-renders the section from the remove result');
+  assert.ok(/if \(!res \|\| res\.sectionStale \|\| !res\.config\) \{ alLoadInit_\(\); return; \}/.test(s7),
+    'a stale section is the ONE path back to the full reload');
+  assert.ok(/\.al-config-table\.is-busy/.test(src('styles.html')),
+    'the busy cue is on the config table, not the modal-wide loader');
+
+  // (3) A falsy payload must reach the retry path BEFORE the body is shown.
+  // It used to be swallowed after reveal, which is what made the blank modal
+  // look loaded -- every field showing a placeholder reads like real config.
+  const guard = s7.slice(s7.indexOf('function alLoadInit_()'), s7.indexOf('function alRenderDigestInit_'));
+  // Assert the CONDITION, not just the order: an earlier draft of this pin
+  // checked only that the bail-out preceded the reveal, and stayed green when
+  // `if (!data)` was mutated to `if (false)`.
+  assert.ok(/if \(!data\) \{\s*adminInitError_\('al-loading', new Error\([^)]*\), alLoadInit_\);\s*return;\s*\}/.test(guard),
+    'a falsy payload routes to the retry path');
+  const bail = guard.indexOf('if (!data) {');
+  const reveal = guard.indexOf("$('al-body').style.display = ''");
+  assert.ok(bail > 0 && reveal > 0 && bail < reveal,
+    'the no-payload bail-out comes before the body is revealed');
+});

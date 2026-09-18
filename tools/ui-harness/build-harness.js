@@ -83,6 +83,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
 (function () {
   var ROLE = window.__HARNESS__.role;
   var P = ${JSON.stringify(P)};
+  // Exposed so a DRIVER can assert a rendered control against the payload it
+  // was served, rather than against a value hardcoded in the driver (which
+  // drifts from the fixture silently). Harness-only: the real client has no
+  // such global.
+  window.__HARNESS_PAYLOADS__ = P;
   function spanDays(req) {
     if (!req || !req.from || !req.to) return 1;
     return Math.round((new Date(req.to) - new Date(req.from)) / 864e5) + 1;

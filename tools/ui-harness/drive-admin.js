@@ -165,6 +165,35 @@ const MODALS = [
       record(m.name + ': the modal opens', !!info.found && info.visible,
         info.found ? ('visible=' + info.visible) : 'panel ' + m.sel + ' not in the DOM');
       record(m.name + ': the modal renders content', !!info.hasContent);
+
+      // A PICKER WITH NOTHING TO PICK. Reported from production 2026-09-18:
+      // the Alerts modal opened, rendered, trapped focus and closed -- every
+      // check above passed -- while its dept <select> held no options, so no
+      // alert could be created at all. `hasContent` cannot see it (the static
+      // prose is plenty) and no server pin can (the list was a CLIENT-side
+      // read of the USER envelope). So assert the control an admin has to use.
+      if (m.name === 'Alerts' && info.found && info.visible) {
+        const picker = await page.evaluate(() => {
+          const sel = document.getElementById('al-cfg-dept');
+          if (!sel) return { present: false };
+          const vals = Array.from(sel.options).map((o) => o.value).filter(Boolean);
+          const served = (window.__HARNESS_PAYLOADS__
+            && window.__HARNESS_PAYLOADS__['alerts-init']
+            && window.__HARNESS_PAYLOADS__['alerts-init'].departments) || null;
+          return { present: true, vals: vals, served: served };
+        });
+        record('Alerts: the dept picker offers departments',
+          !!picker.present && picker.vals.length > 0,
+          picker.present ? 'options=' + JSON.stringify(picker.vals) : 'no #al-cfg-dept');
+        // ...and they are the SERVER's list, which is what saveAlertConfigRow
+        // validates against. A picker filled from a different source can offer
+        // a dept the save then rejects.
+        if (picker.served) {
+          record('Alerts: the picker matches the served dept list',
+            JSON.stringify(picker.vals) === JSON.stringify(picker.served),
+            'picker=' + JSON.stringify(picker.vals) + ' served=' + JSON.stringify(picker.served));
+        }
+      }
       record(m.name + ': the panel does not overflow the viewport', info.overflows === false,
         'overflows=' + info.overflows);
 

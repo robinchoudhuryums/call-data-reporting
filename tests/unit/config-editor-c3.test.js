@@ -61,6 +61,71 @@ test('removeAlertConfigRow deletes by department', function () {
   assert.equal(rows('Alert Config')[0][0], 'Sales');
 });
 
+// The write paths return the RE-READ config section (2026-09-18). The client
+// re-renders just that section from it; before this, a save called the modal's
+// whole init again -- five more RPCs and a blanked modal to show one changed
+// row. `sectionStale` is the honest fallback when the re-read itself fails.
+
+test('saveAlertConfigRow returns the re-read section so the client can re-render in place', function () {
+  install([], []);
+  const res = h.call('saveAlertConfigRow', { department: 'CSR', threshold: 92, active: true });
+  assert.equal(res.saved, true, 'the write outcome is still the contract');
+  assert.equal(res.sectionStale, undefined, 'the re-read succeeded');
+  assert.equal(res.config.length, 1, 'the saved row comes back');
+  assert.equal(res.config[0].department, 'CSR');
+  assert.equal(res.config[0].threshold, 92);
+  assert.ok(res.drift && typeof res.drift === 'object', 'drift map present');
+});
+
+test('removeAlertConfigRow returns the section with the row gone', function () {
+  install([['CSR', '92', '', 'TRUE', '', ''], ['Sales', '90', '', 'TRUE', '', '']], []);
+  const res = h.call('removeAlertConfigRow', { department: 'CSR' });
+  assert.equal(res.removed, 1);
+  assert.equal(res.config.length, 1);
+  assert.equal(res.config[0].department, 'Sales');
+});
+
+test('the section carries the dept PICKER list, and it is the list the save validates', function () {
+  // The picker used to be filled from the client USER envelope, which is a
+  // trimmed copy made at page render; an empty one left the select with no
+  // options and no way to create an alert. Serving it from the same
+  // getAllDepartments_() the save validates against removes the divergence.
+  install([], []);
+  const init = h.call('getAlertsInit');
+  // Field-by-field: objects built inside the vm are not reference-equal to
+  // test-realm literals, so deepEqual reports "same structure, not equal".
+  assert.equal(init.departments.length, 2);
+  assert.equal(init.departments[0], 'CSR');
+  assert.equal(init.departments[1], 'Sales');
+  // Every offered dept must be acceptable to the save.
+  init.departments.forEach(function (d) {
+    h.call('saveAlertConfigRow', { department: d, threshold: 90, active: true });
+  });
+  assert.equal(rows('Alert Config').length, 2);
+  // ...and a dept NOT offered is still refused.
+  assert.throws(function () {
+    h.call('saveAlertConfigRow', { department: 'Nope', threshold: 90 });
+  }, /not a department/);
+});
+
+test('a failed section re-read does not fail the write -- it reports sectionStale', function () {
+  install([], []);
+  const realRead = h.ctx.readAlertConfig_;
+  // The write validates the dept via getAllDepartments_(), not via
+  // readAlertConfig_ -- so the re-read is the only caller, and failing it
+  // outright is what a vanished sheet looks like to the post-write read.
+  h.ctx.readAlertConfig_ = function () { throw new Error('sheet vanished mid-save'); };
+  try {
+    const res = h.call('saveAlertConfigRow', { department: 'CSR', threshold: 92, active: true });
+    assert.equal(res.saved, true, 'the row was still written');
+    assert.equal(res.sectionStale, true, 'and the client is told to reload rather than shown nothing');
+    assert.equal(res.config, undefined);
+    assert.equal(rows('Alert Config').length, 1, 'the write landed');
+  } finally {
+    h.ctx.readAlertConfig_ = realRead;
+  }
+});
+
 // ---- Digest Config ----
 test('saveDigestConfigRow appends + upserts by (email, dept)', function () {
   install([], []);
