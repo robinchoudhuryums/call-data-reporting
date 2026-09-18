@@ -330,6 +330,7 @@ S41 | Theme × mode sweep (perceptual) | Subsystem: Department Dashboard
     - Open the dashboard in LIGHT theme, then switch to DARK (Settings toggle), on each page: Overview, My Department, Insights, Escalations.
     - On each, confirm every chart's lines/bars/labels remain legible and no text drops to invisible (the INV-42 OKLCH/datalabels class -- a token that fails to resolve renders an empty fill, which looks like a missing label rather than an error).
     - Repeat with "Show data labels" ON (IR / Insights), and with reduced-motion enabled at the OS level.
+    - (C1-17) In DARK mode, trigger a success toast (save any admin config) and an error toast (submit an invalid date range), and open a destructive confirm (an Outlier Fix rename) -- the text ON those filled surfaces must be legible. They read `--on-good` / `--on-warn`, which flip to dark ink in dark mode because the fills lighten; a regression to hardcoded white lands at ~2.3:1 and no test can see it.
   Expected: no invisible text, no chart element that changes meaning between themes, no animation that ignores reduced-motion. Proposed in increment 54 as a perceptual check no code can verify; promoted here so it stops being an un-numbered TODO.
 
 S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
@@ -337,6 +338,7 @@ S42 | Narrow-viewport trend band (perceptual) | Subsystem: Department Dashboard
     - Narrow the browser to ~900px, then ~700px, then ~400px.
     - On Overview confirm the stacked sticky trend chart collapses without clipping its legend or overflowing horizontally; on My Department confirm the QCD side-card stacks ABOVE the table (`order:-1`) and the sub-queue scope bar wraps to its own line rather than squeezing the note.
     - Confirm no page scrolls sideways at any width (the drive-smoke gate asserts this at 1440px only).
+    - (UD-1 / UD-2) At ~400px: open a report setup form (IR / Inbound / Direct / Outbound) and confirm its date row STACKS rather than overflowing the modal body sideways, and confirm My Department's Insights region (the abandon heatmap and the Queue-health table card) fits the content box instead of forcing the page sideways.
   Expected: every page reflows without horizontal overflow or clipped controls. Proposed in increment 54; promoted here for the same reason as S41.
 
 S43 | Combined-view CSV export | Subsystem: Department Dashboard

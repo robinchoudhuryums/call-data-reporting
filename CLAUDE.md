@@ -1016,7 +1016,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   auto-refresh -- trend arrows, axis zoom) · the top-tab ROUTER (Phase C:
   every tab/menu item's `data-route`+id pair, `__DASHBOARD_URL__` -- NEVER
   `window.location` inside the Apps Script iframe -- deep links + state-in-URL
-  via `SHARE_STATE_`, the F11 non-admin no-op).
+  via `SHARE_STATE_`, the F11 non-admin no-op) · the client ACCESSIBILITY +
+  PRINT contract (keyboard parity, the ARIA shapes, the focus ring, the
+  on-fill tokens, what never reaches paper).
   **The client traps that CAN bite you without warning stayed HERE** and are
   not repeated there: `safeChart_`, `dsConfirm_`, `csvSafeCell_`, the
   datalabels registration, the OKLCH/datalabels fillStyle rule, and the
@@ -2213,7 +2215,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   row renders from `totals` (never part of the sort).
   CSV export (`exportTableCsv_`) emits ALL columns regardless of the toggle
   and renders the bar as `answered / missed (rate%)` text + the Answer %
-  column via `pctCsv`. **In a sub-queue COMBINED view it also prepends a
+  column via `pctCell`. **In a sub-queue COMBINED view it also prepends a
   `Department` column and emits per-dept subtotals + an `All shown` grand
   total** (single-dept exports are byte-identical to before) -- see the
   sub-queue combined-view decision above, and S43. `drive-subqueue.js` is the

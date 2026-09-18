@@ -579,7 +579,16 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   SETTINGS modal via its own close button -- the F-42 focus-trap discipline --
   before starting the tour, C-2) **and, since R10-1, from the Help modal's
   `#help-tour-btn`** (same close-then-start discipline; the tour's closing
-  step always pointed users at Help, so the button now exists there). No server endpoint / cache bump -- part of
+  step always pointed users at Help, so the button now exists there).
+  **Focus (C2-11):** the tip is a `role="dialog" aria-modal="true"`, so it
+  TRAPS Tab (`trapFocus_($('tour-tip'))`) and starts on **Next** rather than
+  Skip, `tourFinish_` releases the trap and returns focus to whatever opened
+  the tour (`tourOpener_`, falling back to `#page-title` -- the Settings
+  replay button has closed its own modal by then), and `tourShow_` moves
+  focus off **Back** when step 1 hides it. The document-level `tourKey_`
+  shortcut maps Enter to Next ONLY when focus is not already on a tip button;
+  a focused button fires natively, and handling Enter in both places stepped
+  the tour twice per keypress. No server endpoint / cache bump -- part of
   the same client-only anti-intimidation layer below.
 - **Insights floating admin A/B remote is client-only (R11-J).** A small
   collapsible fixed card (`#ins-ab-panel`, bottom-right above the Help FAB)
@@ -1385,8 +1394,11 @@ behind the removed button.
   queues" DAY row (dept-total `dailySeries` — the `queuesForDept_` rollup,
   CLASSIC bar per the house tally convention) with its per-queue TALLY rows
   (Queue-health payload order; sub-queues tagged `.ins-daily-q-sub`)
-  COLLAPSED beneath (`insQhDayToggle_`; click or Enter/Space, the F13
-  discipline). The Queue `<th>` is static markup revealed by
+  COLLAPSED beneath (`insQhDayToggle_`; click anywhere on the row, or
+  Enter/Space on its inner `.ins-daily-toggle` button -- the F13 discipline
+  through the E-8 shape below, so do NOT add a row-level keydown: the native
+  button already fires a click and a second handler toggles the day twice per
+  keypress). The Queue `<th>` is static markup revealed by
   `.ins-qh-daily--multi` on the `<details>`; rows carry `data-date` +
   `data-queue`, and a violation-date chip click force-opens its day before
   flashing the queue row (`insJumpToDailyRow_`) — no scoping needed, chip
@@ -1817,3 +1829,86 @@ behind the removed button.
   onto Overview, and so does a non-admin's deep link to a `data-admin-only`
   route — `initRouter` skips the trigger rather than opening a modal that would
   only surface an "admin-only" server error (F11).
+
+## Client accessibility + print contract (Batch 9, 2026-09-18)
+
+Six cross-cutting rules. Each was a real defect on this client before it was
+a rule, each is swept by `tests/unit/client-dead-ends.test.js` (the Batch 9
+block) unless noted, and the two behavioural ones are also driven in
+`npm run ci:ui`. Read this before adding an interactive surface.
+
+- **A `<tr>` never carries `role="button"` — the control goes INSIDE the
+  cell** (the E-8 rule). The role overrides the implicit `row` role and the
+  table stops being a grid for assistive tech, so the row loses its column
+  context. Put a real `<button>` in the cell, let it own `aria-expanded` and
+  the native Enter/Space, and keep the whole row as the click target by
+  bubbling. It shipped twice after the rule was written (the Insights daily
+  day row, the Health fold head), so the pin is a SWEEP over every
+  `script-*.html` fragment, not a per-site assertion. **The corollary bites
+  on the way in:** once the button is native, a row-level keydown handler
+  toggles the same thing twice per keypress — delete it.
+- **Anything focusable is keyboard-OPERABLE, and the two must land in the
+  same commit.** A `tabindex` + `role="button"` that Enter does not activate
+  is worse than a plain div: it advertises an action and then swallows it.
+  The sub-queue group header sat that way (the delegated handler was
+  click-only); the 41 report sort headers were mouse-only. Both now route
+  through their existing one handler — `agentsTbody`'s keydown re-dispatches
+  `ghead.click()`, and `srtApply_` wires `tabIndex`, a thead keydown and
+  `aria-sort` for every table that sorts through it, so a new report table
+  inherits all three. `drive-subqueue.js` presses Enter and Space on a real
+  group header; `drive-f13.js` is the S39 walk.
+- **A dialog traps Tab, names itself, and gives focus back.** `role="dialog"`
+  / `alertdialog` with `aria-modal` promises a boundary the browser does not
+  enforce: use the shared `trapFocus_` / `releaseFocus_`, point
+  `aria-labelledby` at the title (and `aria-describedby` at the body where
+  there is one), and return focus to the opener on close. Two traps here:
+  a popover with NO focusable child has nothing for the trap to cycle on, so
+  give it a real Close control (`.chp-close` on the chart-tips popover); and
+  `trapFocus_` releases any trap it finds first, so a dialog opened OVER a
+  modal must stash that modal's trap and re-arm it on close
+  (`outerTrap` in `initChartHelp_`).
+- **Describe an action, never `aria-label` a content-bearing element.** A
+  label REPLACES the accessible content, so `aria-label="Isolate X in the
+  trend chart"` on an Overview dept tile hid every KPI inside it — the
+  percentage, the rung/answered/missed row, the QCD chips, the silence note.
+  The tile's own text stays the name; the action moves to
+  `aria-describedby="ov-tile-action-desc"` (one shared `.sr-only` node).
+  Same reasoning makes a transient notice a live region rather than silent
+  markup: `#dept-clamp-note`, `#ov-cached-pill` and `#ov-refresh-warn` are
+  `role="status"`.
+- **ONE global keyboard focus ring; never `outline: none` on a `:focus`
+  rule.** `:focus-visible { outline: 2px solid var(--accent); outline-offset:
+  2px }` is the baseline, and it matches keyboard focus only so mouse clicks
+  stay clean; per-surface rules still override where a negative offset is
+  needed (table rows inside an overflow wrapper). The pattern it replaced —
+  `outline: none` plus `box-shadow: 0 0 0 2px var(--accent-soft)` — is a
+  hover-grade tint at ~1.1:1 on white, i.e. no indicator at all. The sweep
+  fails on ANY `outline: none` declaration in `styles.html`, so the
+  regression cannot return quietly.
+- **Text ON a `--good` / `--warn` fill reads `--on-good` / `--on-warn`.**
+  Both fills are tuned as TEXT colors on dark paper, so they LIGHTEN in dark
+  mode (`#5cb494` / `#e08a63`) and a hardcoded `color: #fff` lands at
+  ~2.3:1 there. The tokens are white in light mode and dark ink in dark, so
+  a filled surface is legible in both without a per-surface dark override —
+  the S2-5 date-chip trap, closed at the token instead. Consumers: the
+  success/error toasts and the danger confirm button. **Only S41 can verify
+  this** (it is a perceptual property), so the walk carries the step.
+- **Screen-only chrome never reaches paper.** A plain Ctrl+P on any page
+  used to print the Help FAB, the admin A/B remote, the dev overlay, toasts,
+  the update notice, the tour, the confirm and tooltip layers and the modal
+  backdrop; the two scripted report prints (`ir-printing` / `ins-printing`)
+  were the only covered paths. `@media print` now hides that chrome globally
+  and makes the sticky strips static, since a fixed or sticky band either
+  repeats on every page or covers content. A new floating or sticky surface
+  must join that list.
+
+Three markup rules from the same batch, one line each: a dense cross-link
+(the missed-list agent-name / ring-time jumps) is a **link-styled `<button>`
+with `tabindex="-1"`** — announced and activatable, without adding hundreds
+of tab stops to a page whose real controls would then be buried; an
+interactive control never sits **inside `<summary>`** (invalid, and it reads
+as part of the disclosure — the per-card chart-scope button renders as the
+card's first body child and CSS pulls it onto the header row); and an
+admin-modal section heading is an **`<h3 class="al-section-title">`**, since
+screen readers navigate a long modal by heading and a styled `<div>` offers
+nothing to navigate.
