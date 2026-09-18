@@ -1665,3 +1665,100 @@ test('instant: the source keeps its read-only contract', function () {
   assert.match(probe, /assertAdmin_\(\);/);
   assert.match(probe, /neonNoteEgress_\([^,]+, 'outbound-instant'\)/);
 });
+
+// ---------------------------------------------------------------------------
+// The journey-shape DIAGNOSTIC (2026-09-18). `probeOutboundInstantConnects`
+// came back `no-journeys` on a live run -- zero usable external legs in 600
+// sampled rows -- because `obInstantDerivedRing_` matches ONE name mask and
+// `icBuildJourney_` emits several. These pin the diagnostic that decides the
+// fix, and the property that makes it a diagnostic rather than a shape dump:
+// it separates the two causes the old null conflated.
+// ---------------------------------------------------------------------------
+
+test('jshape: every mask branch icBuildJourney_ can emit gets its own CLASS', function () {
+  const c = h.ctx.obJourneyNameClass_;
+  assert.equal(c({ name: '(external number)' }), 'extNumber');
+  assert.equal(c({ name: '(external caller)' }), 'extCaller');
+  assert.equal(c({ name: 'A.P.' }), 'initials', 'cdrMaskExternalName_ output');
+  assert.equal(c({ name: 'R.' }), 'initials', 'a single-word CNAM masks to one initial');
+  assert.equal(c({ name: '(unknown)' }), 'unknown', 'empty / N/A callee name');
+  assert.equal(c({ name: 'A_Q_CSR', kind: 'queue' }), 'queue', 'kind wins over the name');
+  assert.equal(c({ name: 'Sonia Martinez' }), 'other', 'an internal agent CNAM');
+  assert.equal(c(null), 'other');
+});
+
+test('jshape: the class is the ONLY thing derived from a name (no CNAM can leak)', function () {
+  // The guard that keeps this probe inside the PHI rule: whatever goes in,
+  // what comes out is one of six fixed strings.
+  const CLASSES = ['extNumber', 'extCaller', 'initials', 'unknown', 'queue', 'other'];
+  ['Jane Q Public', '+15551234567', 'ACME PHARMACY LLC', '', 'N/A'].forEach(function (n) {
+    assert.ok(CLASSES.indexOf(h.ctx.obJourneyNameClass_({ name: n })) >= 0,
+      'class for ' + JSON.stringify(n) + ' is one of the six, never the name');
+  });
+});
+
+test('jshape: derived ring is secs minus talk and hold, floored at 0, null without secs', function () {
+  const r = h.ctx.obJourneyEventRing_;
+  assert.equal(r({ secs: 30, talk: 8, hold: 2 }), 20);
+  assert.equal(r({ secs: 30 }), 30, 'absent talk/hold count as zero');
+  assert.equal(r({ secs: 5, talk: 90 }), 0, 'never negative');
+  assert.equal(r({ talk: 8 }), null, 'no secs = absent evidence, never a zero');
+  assert.equal(r(null), null);
+});
+
+test('jshape: the CURRENT marker\'s null is split into its two causes', function () {
+  // This is the whole point of the diagnostic. The live probe reported 300
+  // noExternalLeg and could not say whether the marker missed or the matched
+  // event had no duration -- which need different fixes.
+  const rows = [
+    [{ name: '(external number)', secs: 30, talk: 5 }],        // resolves -> 25
+    [{ name: '(external number)' }],                            // matched, no secs
+    [{ name: 'A.P.', secs: 22, talk: 2 }],                      // no match (initials)
+    [{ name: '(unknown)', secs: 19 }],                          // no match (unknown)
+  ];
+  const s = h.ctx.obJourneyMarkerScores_(rows);
+  assert.equal(s.rows, 4);
+  // Field-by-field, not deepEqual: the object is built inside the vm realm.
+  assert.equal(s.current.derived, 1);
+  assert.equal(s.current.nullNoMatch, 2, 'initials + unknown: the marker never matched');
+  assert.equal(s.current.nullMatchNoSecs, 1, 'matched, but the event carried no duration');
+});
+
+test('jshape: each candidate marker is scored for coverage AND median, first-of-class', function () {
+  const rows = [
+    [{ name: 'Agent One', secs: 4 }, { name: 'A.P.', secs: 30, talk: 8, hold: 2 }],
+    [{ name: 'Agent Two', secs: 3 }, { name: 'B.Q.', secs: 24, talk: 4 }],
+    [{ name: 'Agent Three', secs: 2 }],
+  ];
+  const s = h.ctx.obJourneyMarkerScores_(rows);
+  // The initials class is present on 2 of 3 rows and derives 20 and 20.
+  assert.equal(s.candidates.initials.rows, 2);
+  assert.equal(s.candidates.initials.coverage, 0.667);
+  assert.equal(s.candidates.initials.medianDerived, 20);
+  assert.equal(s.candidates.initials.realRingShare, 1, 'both are real rings');
+  // The current marker finds nothing here -- the live failure, reproduced.
+  assert.equal(s.current.derived, 0);
+  assert.equal(s.current.nullNoMatch, 3);
+  // Positional candidates are scored too, and firstEvent is the WRONG answer
+  // on this fixture (it reads the internal hop at 2-4s), which is exactly the
+  // discrimination the rung control group provides.
+  assert.equal(s.candidates.firstEvent.rows, 3);
+  assert.equal(s.candidates.firstEvent.medianDerived, 3);
+  assert.equal(s.candidates.lastEvent.medianDerived, 20);
+  assert.ok(!('rings' in s.candidates.initials), 'per-call values are dropped, never returned');
+});
+
+test('jshape: counts events and rows per class, and tracks secs availability', function () {
+  const rows = [
+    [{ name: '(external number)', secs: 10 }, { name: '(external number)' }],
+    [{ name: 'A_Q_CSR', kind: 'queue', secs: 3 }, { name: '(unknown)', secs: 8 }],
+  ];
+  const s = h.ctx.obJourneyMarkerScores_(rows);
+  assert.equal(s.classEvents.extNumber, 2, 'two events');
+  assert.equal(s.rowsWithClass.extNumber, 1, 'but only one row holds them');
+  assert.equal(s.classWithSecs.extNumber, 1, 'one of the two carries secs');
+  assert.equal(s.classEvents.queue, 1);
+  assert.equal(s.classEvents.unknown, 1);
+  assert.equal(s.eventCountHist[2], 2, 'both rows carry two events');
+  assert.equal(Object.keys(s.eventCountHist).length, 1);
+});

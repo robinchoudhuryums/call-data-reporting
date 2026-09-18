@@ -2069,6 +2069,23 @@ When something looks wrong, before assuming a code bug, check:
       (`PROP_REGISTRY_`). Pinned by `tests/unit/outbound-report.test.js`
       (the two pure detectors gate by gate, the read-only contract, the
       bind order, and the refusal paths).
+    - **FIRST LIVE RUN, 2026-09-18 -- INCONCLUSIVE, and RE-RUNNING WILL NOT
+      CHANGE IT.** `2026-08-21..2026-09-17`, all depts, 62,732 single-attempt
+      connects. Refused on ONE gate, share: the peak holds 7.7% against the
+      8.0% floor. The feature is otherwise strong (31 s peak, 3,022 calls,
+      baseline 330, **ratio 9.16**, FWHM 2 s), so this is a near miss on a
+      real timeout, not a flat distribution. Do not widen the window or scope
+      hoping to clear 8% -- the mass is MULTI-MODAL (bumps at 21 s, 26-27 s
+      and 30-31 s = several carriers' voicemail delays), so a one-peak test
+      cannot reach it; the whole 20-32 s band is ~22% of connects. The fix is
+      a BAND-summing probe, a code change: see "Step 1 RESULTS" in
+      `docs/outbound-callback-dept-plan.md`. **One number DID measure and is
+      safe to cite:** `OUTBOUND_MIN_TALK_SEC` = 20 s, a real trough between
+      humps at 5 s and 35 s (`suggestedIsMeasured: true`). It still cannot be
+      set alone -- the classifier needs a ring band too. Also disclosed:
+      `agreesWithSpike: false` (9,812 repeat-callee groups peak at 0 s, not
+      31 s), which points at #65's instant-connect problem rather than at
+      voicemail.
 
 65. **The instant-connect diagnostic (`probeOutboundInstantConnects`).**
     Read-only, admin-gated, editor-run. Companion to #64 and it shares that
@@ -2110,10 +2127,49 @@ When something looks wrong, before assuming a code bug, check:
       profile (instant rows that talk like everyone else are real calls being
       mis-timed, not junk).
     - **PHI:** aggregates and derived seconds only. The journey blob is
-      PHI-safe at capture (`icBuildJourney_` rewrites any phone-shaped name to
-      `(external number)`, which is also how the external leg is identified);
-      nothing from it is echoed. Both queries egress-metered under
-      `outbound-instant`. Pinned by `tests/unit/outbound-report.test.js`.
+      PHI-safe at capture; nothing from it is echoed. Both queries
+      egress-metered under `outbound-instant`. Pinned by
+      `tests/unit/outbound-report.test.js`.
+    - **⚠ THIS PROBE CANNOT PRODUCE A VERDICT TODAY -- do not spend operator
+      time re-running it until the lookup is fixed (found 2026-09-18).** The
+      first live run returned `verdict: 'no-journeys'` with `sampled: 0` and
+      `noExternalLeg: 300` on BOTH groups: it found no usable external leg in
+      any of 600 sampled rows. Cause: `obInstantDerivedRing_` identifies the
+      external leg by matching a journey event named exactly
+      `'(external number)'`, and its docstring claims that marker "identifies
+      it exactly" -- **which is false.** `icBuildJourney_` has TWO masking
+      branches: a phone-SHAPED name becomes `(external number)`, but a callee
+      carrying a carrier CNAM takes the P-11 branch and becomes masked
+      initials or `(external caller)`. Calling a business usually yields a
+      CNAM. (P-11 shipped 2026-09-18, after that window, so it is not the
+      cause for those rows -- pre-P-11 the CNAM was left unmasked, which the
+      marker also misses. The assumption is the defect either way.) Two other
+      causes remain possible and the output cannot separate them: a journey
+      event with no `secs` (the helper returns null then too), or a NULL
+      journey (the writer stores null for an empty leg list). **Next action is
+      `probeOutboundJourneyShape()`** (added 2026-09-18, in `OutboundReport.gs`
+      beside this probe; read-only, admin-gated, sets nothing, PHI-safe --
+      event-name CLASSES and counts only). It splits the overloaded null and
+      scores every candidate marker (the six mask classes + first / last /
+      last-answer / longest-`secs`) for coverage and median derived ring.
+      **Read the RUNG column first: it is the answer key**, because those rows
+      provably rang >= 17 s, so the right marker derives near that there --
+      coverage alone proves nothing. Then fix `obInstantDerivedRing_` to the
+      winner and re-run #65. A NULL journey is already ruled out (the query
+      carries `AND journey IS NOT NULL`). If no candidate survives the control
+      group, the fix is a capture-side external-leg flag instead, which is
+      forward-only and needs ~2 weeks of fresh rows. Full write-up:
+      "Step 1 RESULTS" in `docs/outbound-callback-dept-plan.md`.
+    - **What the run DID establish**, as a hypothesis carrying no license to
+      set anything: 40.5% instant share (confirming the 40.6% above), FLAT on
+      all 18 days, and spread across all 161 agents (`concentrated: false`,
+      top-5 10.3% vs a 3.1% even baseline) -- systemic, not a few handsets.
+      Talk medians fall monotonically as ring rises (**104 s** at 0-1 s ring,
+      64 s at 2-16 s, 36 s at 17-32 s), so instant-ring rows talk the LONGEST.
+      That argues for a mis-recorded CONNECTED timestamp on real conversations
+      and AGAINST reading them as drops -- but recoverable-vs-permanent is
+      exactly what this probe exists to decide, and it cannot until the lookup
+      is fixed.
 
 66. **The QCD-vs-DQE reconciliation diagnostic (`diagnoseQcdVsDqe`).**
     Read-only, editor- or menu-run from **cdr-import** (CDR Tools → "QCD vs
@@ -2357,6 +2413,31 @@ When something looks wrong, before assuming a code bug, check:
     for the TTL. Reversible by clearing the property. Memoized per execution.
     Pinned by `tests/unit/answer-rate-formula.test.js` (the switch, the probe,
     and a tripwire that fails on any bare `answered / rung` outside the helper).
+    - **FIRST LIVE RUN, 2026-09-18 -- the flip is SAFE and changes NO number.**
+      `2026-08-19..2026-09-17`, all 16 depts on the sheet source: largest dept
+      gap **0.0 pts**, no standard verdict flips, worst per-agent gap 0.2 pts
+      (Sales). So step (3) above had nothing to re-tune. **Adopt `answerable`
+      for CONSISTENCY, not correction** -- it aligns the dashboard with
+      team-tools by construction instead of by coincidence.
+    - **Why the two agreed, and why that is not a reason to skip the flip.**
+      `rung` equalled `answered + missed` on every leg but ONE (a single Sales
+      leg, reported in the probe's `neither` column). That equality is
+      **EMPIRICAL, not structural**: `rung` is `windowLegs.length`, while
+      `answered` / `missed` are set from two INDEPENDENT CDR columns
+      (`=== 'Answered'` / `=== 'Missed'`, buildDQEHistoricalData.js ~781), so
+      nothing guarantees a leg carries exactly one. If a third disposition
+      ever appears in the feed, `answered / rung` silently dilutes every rate
+      downward while `answerable` stays correct -- which is the strongest
+      argument for the flip. **Re-run this probe after any feed change**, and
+      treat a non-trivial `neither` column as the signal.
+    - **The H2 "91.7 beside a 92" drift was ROUNDING, not the denominator**
+      (CLAUDE.md's team-tools bullet is corrected accordingly). The two
+      denominators agree to within 0.007 pts here. The run demonstrates the
+      real mechanism in its own table: Sales prints 28.9 under `rung` and 29.0
+      under `answerable`, which reads as a tenth of a point, but the values are
+      28.949 and 28.956 -- they straddle 28.95 and round apart. A whole-percent
+      surface beside a one-decimal one manufactures exactly that gap with no
+      difference underneath.
 70. **Execution ceiling + the cdr-import time budgets (P-3, Batch 5,
     2026-09-17) -- and the cdr-import Script Property registry.** The repo
     carried two beliefs about the per-execution ceiling (30 min in the bulk /
