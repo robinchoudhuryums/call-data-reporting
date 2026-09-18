@@ -43,6 +43,11 @@ drift apart, and caps this file's size.
   the design tokens are built. **Read before touching `script.html` /
   `styles.html` / `dashboard.html`**, then re-run `npm run ci:ui`. The client
   traps that bite unrelated work stayed in Common Gotchas below.
+- [`docs/neon-layer.md`](docs/neon-layer.md) — the **Neon mirror + read-back
+  layer**: the connection contract, the six write-discipline rules, the
+  flag-gated DQE read-back + its parity gate, outage mode's three degradation
+  tiers, keep-warm and the deferred mirror. **Read before touching any Neon
+  writer or reader, or adding a DQE reader.** Indexed in Common Gotchas.
 - [`docs/per-call-capture.md`](docs/per-call-capture.md) — the **per-call
   capture subsystem**: the `inbound_calls` / `outbound_calls` /
   `direct_call_history` writers, the reports over them, the journey drill,
@@ -310,6 +315,18 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > `tests/unit/claude-md-split.test.js` enforces this with a per-bullet
 > ratchet: every bullet stays under 4 KB (the once-grandfathered oversize five
 > have all been trimmed under it -- keep them there).
+>
+> **The 2026-09-18 pass added a fourth habit: when a bullet FAMILY describes
+> one subsystem, split the family, not the bullets.** The Neon mirror +
+> read-back layer was eight bullets and 18 KB of "how this is built", so it
+> became [`docs/neon-layer.md`](docs/neon-layer.md) with the two rules that
+> bite from outside it left inline. The same pass found the Operator State
+> INDEX re-telling its own doc -- five items ran 495-714 B against a doc
+> holding 2.5-7 KB each -- and compressed 31 lines to true one-liners. Between
+> them that recovered ~20 KB with no rule deleted (every dropped reference was
+> verified to still resolve). Both moves are cheaper than shaving prose from
+> bullets already under budget, which is where this section's remaining weight
+> now sits.
 
 - **Spreadsheet TZ ≠ script TZ**. The CDR Report spreadsheet is on
   `America/Mexico_City`; the script is on `America/Chicago`. Duration cells
@@ -1479,85 +1496,42 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   falls back to a hardcoded ID if unset. Set `TARGET_SS_ID` in
   the CDR Import project's Script Properties to point at the CDR
   Report spreadsheet.
-- **Neon writes are guarded by `getReachableNeonConn_()`** which opens
-  one write connection and probes it with `SELECT 1` (5-second timeout),
-  returning that SAME connection for the insert (or null). If Neon is
-  down (free-tier suspend, exhausted compute) or unconfigured, the write
-  is skipped with a clean log — no failure email, no exception (the one-probe
-  rule's backstory: the 2026-09-11 section of fix-history). `NEON_HOST`, `NEON_DB`,
-  `NEON_USER`, `NEON_PASS` must be set in BOTH the CDR Report AND CDR
-  Import project's Script Properties for Neon mirroring to work.
-  **NEVER put `connectTimeout` / `socketTimeout` / `loginTimeout` on a Neon
-  JDBC URL.** Apps Script's JDBC service REJECTS them ("The following
+- **The Neon mirror + read-back layer lives in
+  [`docs/neon-layer.md`](docs/neon-layer.md). READ IT before touching
+  `neonWrite.js` / `NeonMirror.js` / `NeonRead.gs` / `NeonKeepWarm.gs`, any
+  `Jdbc.getConnection` callsite, or any DQE reader.** Eight bullets moved
+  there in the 2026-09-18 split because they describe how ONE subsystem is
+  built rather than a trap that bites unrelated work; the file is
+  authoritative, this is the index: the probed-connection contract
+  (`getReachableNeonConn_`, and the dashboard's per-execution down-memo) ·
+  the six WRITE-DISCIPLINE rules (the per-run phone-hash memo, inline-literal
+  size-packed VALUES committed ONCE, one probed connection per writer,
+  authoritative per-date replace and which callers may NOT pass it, the
+  `CDR_PHONES_MIRROR` gate, DDL in autocommit before the transaction) · the
+  flag-gated DQE READ-BACK (`DQE_READ_SOURCE`, the `json_agg` rule, the
+  LM2 reachable-but-empty semantics, the parity GATE) · OUTAGE mode and its
+  three degradation tiers, plus the R43 all-dept budget and what
+  `meta.partial` obliges a consumer to do · keep-warm · the deferred mirror
+  (`NEON_MIRROR_MODE`) · the bulk rebuild's `skipNeon` + the follow-up
+  upsert · the daily toast's mirror-status segment.
+  **Two rules stayed HERE, because each bites from OUTSIDE that subsystem:**
+  (1) **NEVER put `connectTimeout` / `socketTimeout` / `loginTimeout` on a
+  Neon JDBC URL.** Apps Script's JDBC service REJECTS them ("The following
   connection properties are unsupported: …"), so instead of bounding a hang
   they make EVERY connection fail instantly, in every project at once
-  (incident: docs/known-issues.md). `cross-file-pins.test.js` pins their ABSENCE across
-  all six builders and sweeps for unlisted `Jdbc.getConnection` callsites.
-  Bound STATEMENTS with `stmt.setQueryTimeout(seconds)` (what
-  `getReachableNeonConn_`'s 5 s probe already does) — the platform supports
-  that. Dashboard-side, `getDashboardNeonConn_` memoizes a hard connect
-  failure PER EXECUTION (`NEON_CONN_DOWN_MEMO_` -- ~54 callsites each paid
-  their own 15-25s failed handshake in one Neon-down request; a fresh
-  execution probes again, so recovery is never masked;
-  neon-conn-memo.test.js). **The hanging-connect problem is therefore still OPEN**: a connect
-  that hangs can still burn the execution ceiling (measure it, #70), whose kill SKIPS catch blocks,
-  so none of the designed "fall back on error" paths run (the class that
-  silently ate a Daily Queue Report day). Any future attempt needs a
-  platform-supported mechanism, not URL properties.
-- **Neon write discipline (don't regress this — it caused a daily-import
-  timeout).** The Neon mirror is the dominant cost of the daily import,
-  and these rules live in `neonWrite.js` (duplicated, INV-16) -- plus the
-  cdr-import-ONLY `directCallMetrics.js`, which has NO twin. (1) **Hash phone numbers through the per-run memo
-  `CDR_HMAC_CACHE_`, never raw per-occurrence** (slow, and the same numbers
-  recur thousands of times per day); the cache is reset at the top of
-  `writeCDRRowsToNeon`. (2) **Inline-literal
-  VALUES, size-packed, commit ONCE (R38)** — every daily writer (DQE / QCD /
-  CDR parents + the cdr-import-only Direct writer, all via
-  `neonInsertInline_`, plus the phones children) emits dollar-quoted literals
-  with ZERO bound params, packed to `NEON_INLINE_STMT_CHARS_` (30 KB -- R38
-  in fix-history has the bridge's cap); a lone oversize tuple falls back to the ORIGINAL
-  bound insert (`dqeBoundInsert_` / `qcdBoundInsert_` / `cdrBoundInsert_` /
-  `dcBoundUpsert_`); the writer suites pin inline == bound value-for-value. One
-  `conn.commit()` after the loop: smaller commits add round-trips AND leave
-  partial rows behind on a mid-loop timeout. (3) **One probed connection per
-  writer** via `getReachableNeonConn_()` (above), not a separate probe +
-  write connection. (4) **Authoritative per-date replace (IMP-5).** Callers whose payload is provably the COMPLETE
-  set for its date(s) pass `{ authoritative: true }` (an in-transaction
-  DELETE of those dates before the insert): the daily DQE build + dup-guard
-  re-mirror (both INV-16 copies), the daily QCD mirror, the deferred
-  per-date mirrors (NeonMirror.js), the daily Direct writer;
-  **`writeCDRRowsToNeon({authoritative:true})` (P-6)** deletes the dates'
-  `call_history_phones` CHILDREN first (parent-id subselect; deleted
-  parents would strand their children), then the `call_history_dept`
-  parents, same txn; and **`writeInboundCallsToNeon({authoritative:true,
-  expectedDateIso})` (L2 + P-1)** so a shrinking re-import can't leave a
-  phantom in `inbound_calls` (NO sheet primary). **P-1 -- every caller MUST
-  pass `expectedDateIso`** (records are dated from their own first leg;
-  stray-dated records are dropped with a log line and the DELETE can only
-  touch the expected date). **F2 -- an empty record set still runs a delete-only
-  pass** (`icDeleteDateOnly_`) so a legitimately-zero date sheds its
-  phantoms -- GATED on a NON-EMPTY source grid (P-3) AND on zero
-  stray-dated/date-less records (C-1 / C-6: all-stray or all-unparsed means a
-  wrong grid, refused with `allStray`/`allUnparsed` + a failure row + email). It reports
-  `unreachable` when Neon is down so a deferred-mirror date stays queued.
-  Pinned by the inbound-/outbound-calls suites.
-  Partial-set callers -- the bulk archive after `dedupeAlreadyArchived_`,
-  the row-batched backfills (`backfillDQEHistory*`,
-  `backfillDirectCallToNeon`) -- must NOT pass authoritative. Duplicate
-  conflict-key rows are deduped last-write-wins first (IMP-6; since P10
-  `backfillCDRHistory`'s batches too). The
-  `call_history_phones` children are per-parent DELETE-then-insert (IMP-4 --
-  each payload row carries its parent's COMPLETE entry set, so per-parent
-  replace is safe even on a partial-date bulk batch; `DO NOTHING` is ONLY an
-  intra-payload dup guard, never cross-run dedup; `backfillCDRHistory`'s
-  child path stays fill-only per its docstring).
-  (5) **`call_history_phones` children are GATED OFF (R27)** -- written only
-  when `CDR_PHONES_MIRROR` is `on` (both copies), and the weekly
-  `NeonRetention.gs` prune bounds storage (`NEON_RETENTION_ENABLED`).
-  Operator State #57 has the why, the runbook and the tests.
-  (6) **DDL runs in AUTOCOMMIT, before `setAutoCommit(false)` (P-9 in
-  fix-history: `ADD COLUMN IF NOT EXISTS` takes ACCESS EXCLUSIVE even when the
-  column exists); the three writer suites pin the order.**
+  (incident: docs/known-issues.md). Bound STATEMENTS with
+  `stmt.setQueryTimeout(seconds)` instead -- the platform supports that.
+  `cross-file-pins.test.js` pins their ABSENCE across all six builders and
+  sweeps for unlisted `Jdbc.getConnection` callsites. **The hanging-connect
+  problem is therefore still OPEN**: a connect that hangs can burn the
+  execution ceiling (#70), whose kill SKIPS catch blocks, so none of the
+  designed fallbacks run.
+  (2) **ALL DQE readers are cut over to the DAL, and a NEW DQE reader must be
+  cut over in the SAME commit** -- an uncut one is invisible until the sheet
+  ages out from under it, and prose could not keep that claim true (B-2, the
+  silently-dead alerts): `cross-file-pins.test.js` fails CI if a dashboard
+  `.gs` references `SHEETS.HISTORICAL` without `neonFetchDqeRows_`, unless it
+  is on the documented `DQE_SHEET_ONLY_ALLOWED` list.
 - **Force-path data-loss guard convention (M2 generalized).** A FORCE
   re-import DELETES a date's rows for EVERY historical sheet (CDR / QPath /
   QCD / CSR / DQE) before rebuilding (`processNewImport`'s `if (force)`
@@ -1695,179 +1669,6 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   html-include-structure.test.js pins the 4-piece wiring (both template
   injections + both success handlers); system-health.test.js pins the stamp
   return.
-- **Neon read-back (F1) is flag-gated and defaults OFF.** The dashboard
-  still reads DQE from the `DQE Historical Data` sheet by default; the
-  read-back lives in `NeonRead.gs` behind the `DQE_READ_SOURCE` Script
-  Property (`getDqeReadSource_()` returns `'neon'` only when explicitly
-  set, else `'sheet'`). With it unset, behavior is byte-identical to
-  pre-read-back. Pieces: `neonFetchDqeRows_` / `sheetFetchDqeRows_`
-  (symmetric DAL primitives returning the same normalized per-(date,agent)
-  shape -- durations parsed to seconds, so the Neon path sidesteps the
-  INV-02 TZ gotcha); `neonGetMaxDqeDate_`; and `compareDqeSources_` -- the
-  **parity GATE** (editor-run wrapper `runDqeParityCheck`; range from the
-  `DQE_PARITY_FROM`/`DQE_PARITY_TO` Script Properties; it ALSO compares the
-  slot/abandoned detail columns via `includeMissedDetail`, so a
-  parity-CLEAN result certifies the Missed Calls reader's inputs too).
-  **Cut over a reader only after the gate is parity-clean over a
-  representative range.** Rules that hold for every reader:
-  (1) **`neonFetchDqeRows_` aggregates the whole result set into ONE json
-  string server-side (`json_agg`) fetched with one `rs.getString` -- do NOT
-  regress to per-row `rs.getXXX` iteration (Apps Script JDBC is ~0.5 s/row;
-  F1 in fix-history).**
-  (2) Every reader is `getDqeReadSource_()`-gated and falls back to the
-  sheet on ERROR only -- LM2: a REACHABLE-but-empty read (the
-  `out._neonReachable` marker, gated via the shared `neonDqeRowsUsable_`)
-  is TRUSTED and served empty; pinned by `dal-cutover.test.js`, which also
-  pins sheet-vs-neon payload parity byte-identical (incl. Missed Calls'
-  `includeMissedDetail` grid adapter `missedGridsFromDal_` and
-  `computeActiveAgentsInRange_`). Flipping the flag is reversible with no
-  redeploy.
-  (3) **ALL DQE readers are cut over, and a NEW DQE reader must be cut over
-  in the SAME commit** -- an uncut one is invisible until the sheet ages
-  out from under it, and prose could not keep this claim true (B-2, the
-  silently-dead alerts -- fix-history): `tests/unit/cross-file-pins.test.js`
-  fails CI if a dashboard `.gs` references `SHEETS.HISTORICAL` without
-  `neonFetchDqeRows_`, unless it is on the documented
-  `DQE_SHEET_ONLY_ALLOWED` list.
-  (4) Even on the Neon path, `getDeptQueueExts_`'s all-history ext
-  derivation comes from `deptQueueExtsForNeonReader_` /
-  `neonGetAgentExtPairs_` (cached DISTINCT pairs fetch), sheet-scan
-  fallback -- OD-4: that set is bounded by the 25-month `dqe_history`
-  retention (#57) while the sheet scan sees all history, so a >2-year-idle
-  extension is recognized on one source and not the other.
-  Every cutover reader emits a `[dqe-read] <label> source=<neon|sheet>
-  rows=<n> ms=<elapsed>` line (`logDqeReadTiming_`) for cost comparison.
-  Reuses the dashboard `NEON_*` props + `script.external_request` scope
-  (Operator State #18-19). **Index prerequisite (F1), created in prod:**
-  `idx_dqe_history_call_date` + `idx_dqe_history_date_agent` on
-  `dqe_history` -- Postgres has no stored row order; `ORDER BY call_date`
-  at query time and the indexes keep it fast.
-- **A Neon OUTAGE is a supported operating mode -- know what degrades and
-  what does not.** Flip `DQE_READ_SOURCE` (and `QCD_READ_SOURCE`) to `sheet`
-  for any outage lasting more than a few hours: the per-execution memo
-  (`NEON_CONN_DOWN_MEMO_`) bounds the failed handshakes to one, but each of
-  the ~20 cut-over readers still falls back with its OWN whole-sheet scan,
-  which measured 730 s+ on the all-departments queue report (R43 in
-  fix-history) -- and a run killed at the execution ceiling (#70) skips its
-  catch blocks, so the designed fallbacks never run. **That run now
-  bounds itself (R43):** `computeQcdAllDepartments_` stops its dept loop on a
-  DEPT BOUNDARY once `QCD_ALLDEPT_BUDGET_MS` (default 4 min) is spent -- a
-  half-computed dept would corrupt the company grand totals it feeds -- and
-  marks the payload `meta.partial`. **A partial is served, never trusted:** it
-  is not cached (it would pin an incomplete report for the 6h TTL), the
-  subscriber email REFUSES it (a non-zero dept count slips past the D-1 empty
-  check, and an omitted dept reads as "no calls"), the day is not claimed so
-  the next poll retries, and the web view carries an explicit note. A new
-  consumer of this payload must decide what `meta.partial` means for it. Three tiers
-  when Neon is down: (1) **sheet-primary, no loss** -- DQE + QCD (the sheet
-  IS the authority; Neon mirrors it), so the flag flip is pre-cutover
-  behavior, not a degraded one; (2) **sheet FALLBACK, disclosed** -- Direct
-  Call (`Direct Call History` is the primary), Inbound report + heatmap +
-  call-path drill (the `Inbound Calls` tab, Op State #49), Escalations (the
-  E2 `ESC_SNAPSHOT_*` property snapshot, open rows only, read-only); (3)
-  **NEON-ONLY, unavailable** -- the Coaching worklist, Caller Lookup's
-  day-level "Earlier outbound activity" (`call_history_phones` aggregates),
-  and every Neon WRITE (escalation create/update, coaching close). The flags
-  do not change tier 2 or 3 either way. The Outbound report, the journey
-  drill's outbound arm and Caller Lookup's per-call outbound section LEFT
-  tier 3 when the `Outbound Calls` export landed (Op State #50). **Coming back is NOT just flipping back:**
-  every import during the outage skipped its mirror writes, so
-  `dqe_history` / `qcd_history` have a hole -- `runNeonCoverageCheck` (#35) to
-  size it, `backfillDQEHistoryUpsert()` / a force re-import to fill it, THEN
-  the parity gates over a window spanning the gap, and only flip on CLEAN
-  (a clean run now self-clears its window props, so set them per run).
-- **Neon keep-warm is an optional, admin-toggled trigger (`NeonKeepWarm.gs`).**
-  Neon's free tier scale-to-zero suspends the compute after ~5 min idle, so
-  the FIRST DQE read of a lull (when `DQE_READ_SOURCE=neon`) pays a
-  cold-start penalty. `keepNeonWarm_` pings Neon (`SELECT 1`) every
-  `NEON_KEEPWARM_EVERY_MINUTES` (=5) but ONLY inside a weekday business-hours
-  window (`NEON_KEEPWARM_START_HOUR`=7 .. `NEON_KEEPWARM_END_HOUR`=13 Central,
-  Script-Property-tunable), no-opping cheaply (property + clock check, NO Neon
-  connection) outside the window / on weekends / when
-  `NEON_KEEPWARM_ENABLED!='true'`. Default window ≈ 6h × ~22 weekdays ≈
-  ~132 compute-hrs/mo. NB Neon's free tier is now 100 compute-hrs (it was
-  ~190h when this window was sized), so the DEFAULT window no longer fits
-  inside it -- narrow the hours or expect to pay (the Alerts modal
-  surfaces the estimate + last-ping outcome). Enable/disable from the Alerts
-  modal's **Neon keep-warm** section (`installNeonKeepWarmTrigger` /
-  `uninstallNeonKeepWarmTrigger`, both `assertAdmin_`-gated); reversible
-  (disable removes the trigger + clears the flag). Reuses the dashboard
-  `NEON_*` props + `script.external_request` + `script.scriptapp` scopes;
-  independent of `DQE_READ_SOURCE` (it only MATTERS once reads are on neon).
-  To run the editor-only parity gate, use the non-underscore wrapper
-  `runDqeParityCheck` -- the Apps Script Run picker hides `_`-suffixed
-  functions like `compareDqeSources_`.
-- **Daily import toast carries a Neon-mirror status segment.**
-  `processIntegratedHistory` tracks `counts.neon` ('ok' | 'unreachable' |
-  'error', folding the CDR + QCD + Inbound + Outbound writer results --
-  reachability is per-run binary against one instance) and the success toast appends
-  `| Neon ✓` / `| Neon ⚠ unreachable` / `| Neon ⚠ error` after the
-  CDR/QPath/QCD/CSR/DQE counts. DQE-specific Neon failures still surface
-  separately, so they're intentionally NOT folded into this single flag: a
-  DQE *build* failure emails `notifyDqeBuildFailure_` + logs a `:DQE failure`
-  row, while a DQE->Neon *mirror* skip/error (sheet build OK) logs a
-  `buildDQE:neon` `failure` row (F4) and shows on the Alerts modal's Neon
-  mirror-health line (`computeNeonMirrorHealth_`). When the deferred mirror
-  is enabled (`NEON_MIRROR_MODE=deferred`, see next bullet) the inline
-  writers don't run, so `counts.neon` is `'queued'` and the toast shows
-  `| Neon ⏳ queued` -- the real mirror outcome lands later as `neonMirror:*`
-  Pipeline Health rows from `runNeonMirror_`.
-- **Deferred Neon mirror is flag-gated and defaults OFF (`NeonMirror.js`,
-  cdr-import).** By default (`NEON_MIRROR_MODE` unset or `inline`) the daily
-  import mirrors CDR/QCD/DQE/Inbound to Neon inline inside
-  `processIntegratedHistory`, byte-identical to before. Set the cdr-import
-  Script Property `NEON_MIRROR_MODE=deferred` to move the mirror OFF the
-  synchronous import path: the import writes only the sheets and appends the
-  processed date to a `Neon Mirror Queue` tab in the CDR Report spreadsheet
-  (the cross-project shared channel -- cdr-import / cdr-report have separate
-  Script Properties but share the workbook), and the `runNeonMirror_`
-  time-driven trigger (install via the cdr-import **CDR Tools** menu ->
-  "Install Neon Mirror Trigger", every 15 min) drains the queue, re-deriving
-  each payload from the Historical Data sheets (durations via
-  `getDisplayValues`, INV-02-safe) and upserting via the SAME local writers
-  (`writeCDRRowsToNeon` / `writeQCDRowsToNeon` / `writeDQERowsToNeon` /
-  `backfillInboundCalls`). Three properties to preserve when editing it:
-  the per-date reads are a BOUNDED TAIL-SCAN (`nmReadDateRowsTail_`, window
-  `NEON_MIRROR_TAIL_ROWS`=3000, widening until the date's block is provably
-  complete, so a drained date costs O(recent) but stays row-identical to a
-  full scan -- F-20, pinned by tests/unit/neon-mirror-tail.test.js); the
-  coercion-prone AD/AE/AF columns route through NeonMirror.js's copies of
-  `sanitizeAbandonedCellForNeon_` / `sanitizeSlotCellForNeon_`, which **must
-  stay byte-identical to the cdr-report/neonbackfill.js copies** (F3/F-24,
-  enforced by `scripts/check-duplicated-files.sh`'s function-level check); and
-  a date is LEFT QUEUED on any unreachable/failed step rather than dequeued --
-  `mirrorInboundForDate_` honors `backfillInboundCalls`'s status object for
-  exactly this reason, since `inbound_calls` has no sheet primary and a silent
-  dequeue lost the rows for good. **P-2 (Batch 5): a PRUNED per-call source
-  is a per-TYPE terminal, not a date failure** (`{pruned:true}`: a failure row,
-  the sheet-derivable types still complete, ONE email at completion), and a
-  hard error thrown while Neon was unreachable in the same run
-  (`err.neonUnreachable`) never counts toward the retry cap. Only affects the daily/manual
-  path (`!isHistoricalBackfill`); the bulk backfill already defers DQE via
-  `skipNeon` + `backfillDQEHistoryUpsert`. In deferred mode the cdr-report
-  `runDailyDQEBuild_` safety-net trigger (if still installed) re-mirrors DQE
-  inline -- harmless (idempotent), but uninstall it once the integrated path
-  is trusted. Reversible with no redeploy: set `NEON_MIRROR_MODE=inline`
-  (or clear it). PHASE 1 -- shipped flag-gated/default-off; validate
-  `deferred` against live Neon on one import before flipping it on.
-- **Bulk DQE rebuild skips the per-date Neon mirror (`skipNeon`).**
-  `buildDQEHistoricalData(rawSheet, dqeSheet, opts)` takes an optional
-  `opts.skipNeon`; the cdr-import BULK path (`bulkHistoricalUpdate`) passes
-  `true` so the per-date DQE->Neon mirror (the slow part) is deferred. The
-  daily integrated path and the cdr-report standalone trigger omit `opts`
-  for `skipNeon` (real-time mirror unchanged), but the cdr-import daily
-  AND bulk callers BOTH pass `opts.expectedDate` (the importer's date) so
-  the build refuses to write when its Raw-Data-derived date disagrees --
-  see INV-16 / F2. **After a bulk rebuild, run
-  `backfillDQEHistoryUpsert()` (cdr-report) once** to mirror those dates to
-  `dqe_history` with `ON CONFLICT DO UPDATE` (so re-calculated values
-  OVERWRITE stale rows -- `backfillDQEHistory`'s `DO NOTHING` would skip
-  them). Resumable via `DQE_UPSERT_RESUME` (fingerprinted since T-8: a sheet
-  change restarts from 0, logged); one connection per invocation; the T-7
-  sanitizer-loss tally lands in `DQE_UPSERT_LAST` and a `dqeUpsert` Pipeline
-  Health row (`failure` on loss = run the sheetRepairs). The bulk-complete
-  alert reminds the operator.
-
 ## Key Design Decisions
 
 - **Web app deploys as "Execute as: Me"** with **"Access: Anyone within
@@ -2379,7 +2180,7 @@ items for anything it flags or doesn't cover.)
 11. Pipeline Health sheet -- a long quiet stretch on `autoImport` or any DQE-freshness step
 12. Manager digest not delivered -- the eight things to check (incl. the R31 daily freshness gate: `DEFERRED` before noon is waiting on the import, not lost)
 13. `ADMIN_EMAILS` Script Property (a new admin who sees no admin features)
-14. A dept shows "No queues mapped" / no QCD chips -- map its queues (Dept Config, no redeploy); the SAME list narrows My Department's per-agent numbers WHEN `QUEUE_SPLIT_SCOPE=dept` (#42), so a partially-mapped dept under-reports only in that mode
+14. A dept shows "No queues mapped" / no QCD chips -- map its queues in Dept Config; the same list narrows per-agent numbers under `QUEUE_SPLIT_SCOPE=dept` (#42)
 15. `TARGET_SS_ID` in CDR Import must point at the CDR Report spreadsheet
 16. `NEON_*` Script Properties in CDR Import (without them, mirror writes silently skip)
 17. `HMAC_SECRET` must match across cdr-import, cdr-report AND the dashboard
@@ -2392,7 +2193,7 @@ items for anything it flags or doesn't cover.)
 24. Escalations notification flag + the one-time `backfillEscalationActivity()`
 25. `CONFIG_SOURCE` -- Dept + Alert + Digest config source switch (backfill -> compare -> flip)
 26. Direct-call history backfill after a bulk rebuild (`backfillDirectCallToNeon`)
-27. Company holidays -- the `Company Holidays` SHEET is the source since H1 (the `COMPANY_HOLIDAYS` property is only the fallback, and a property left set beside a populated sheet is IGNORED -- the Health page's `company-holidays` row says which is live); maintain it yearly; team-tools reads the same tab (#68)
+27. Company holidays -- the `Company Holidays` SHEET is the source since H1, the `COMPANY_HOLIDAYS` property only its fallback; maintain it yearly (team-tools reads the same tab, #68)
 28. Neon backup (optional but recommended; needs the new `drive` scope)
 29. Retired server files must be deleted in the WEB EDITOR (INV-17) -- now DETECTED by `check-remote-orphans.mjs`
 30. `QCD_READ_SOURCE` -- the QCD read-back switch; set `QCD_PARITY_FROM/_TO` before running the gate
@@ -2402,40 +2203,40 @@ items for anything it flags or doesn't cover.)
 34. `UI_FLAGS` -- admin toggles that HIDE a UI surface for all viewers
 35. Neon coverage check -- per-date sheet-vs-Neon reconciliation + zero-row weekday gaps
 36. `EMAIL_ALIASES` -- alias sign-in addresses resolving to one identity (+ the multi-dept manager note)
-37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` -- the admin-tunable DISPLAY standards (R23: global answer target seed 80 + 10-pt amber band; CSR seed 92/2; CSR transfer tiers 25/30/35); since H2 the RESOLVED per-dept answer target / band / team-avg excludes are PUBLISHED to the `Dashboard Standards` sheet for team-tools (rewritten by setup(), the standards save and the Dept Config verbs; the Health page's `dashboard-standards` row flags a stale sheet -- edit standards from the Alerts modal, never the editor)
+37. `ANSWER_TARGETS` / `DEPT_ANSWER_TARGETS` / `TRANSFER_TIERS` -- the admin-tunable DISPLAY standards, and the `Dashboard Standards` sheet they publish for team-tools (H2)
 38. Diagnosing "a queue's inbound calls are missing" -- the F1/F1b runbook, incl. the ANTI-pattern probe
 39. Sub-queue ACCESS widening -- who gains what on deploy, with no admin edit (INV-38)
-40. Per-queue split backfill -- do it inside the 14-day `Call_Legs_*` window, where it is a force re-import; outside it the date's source must be re-imported first (Op State #56), so a missed date is an operator job, not a loss
-41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates "the de-dup worked" from "a queue is mapped to no dept and its calls were dropped"
-42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`); the ship list is COMPLETE -- the flip checklist, and what each mode makes the numbers mean
-43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` (CDR Tools menu; logs `retentionPrune` Pipeline Health rows) and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window everything assumes rests on it
-44. DQE-silence watchdog -- the queue-active-agents-dark cross-check born from the Field Ops Power blind spot; enable it (`installDqeSilenceWatchTrigger()`), thresholds + episode semantics in the item
+40. Per-queue split backfill -- cheap inside the 14-day `Call_Legs_*` window, an operator job outside it; nothing is lost for good
+41. A dept's totals changed after a re-import -- `auditQueueSplitAttribution()` separates a working de-dup from a queue mapped to no dept
+42. `QUEUE_SPLIT_SCOPE` -- the per-dept queue-narrowing switch (default `off`), its flip checklist, and what each mode makes the numbers mean
+43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window rests on it
+44. DQE-silence watchdog -- the queue-active-agents-dark cross-check; `installDqeSilenceWatchTrigger()`, with thresholds + episode semantics in the item
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
 46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; Phase A ships dark -- agents get access-denied until Phase B's pages exist)
-47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; unset leaves it informational (and the figure is a FLOOR, so under-budget is not proof of headroom)
-48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install/arm from Admin ▾ → Coaching, first armed run emails one larger NEW-flag batch
-49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh (CDR Tools menu), plus the one-time historical re-export after deploying cols 16-17
-50. Outbound Calls tab export trigger -- the keystone that moved the Outbound report, the journey drill's outbound arm and Caller Lookup's per-call outbound section OUT of Neon-only (CDR Tools menu); seed it while Neon is reachable
-51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use when emailing an Individual Report to its subject; prefer adding the agent's Access Control row instead (no typing, no mis-delivery risk)
-52. Sheet coverage check -- flags business days with ZERO rows in a dashboard-read historical sheet (the interior gap every other signal misses); no Neon needed, so it works mid-outage; arm the weekly trigger (`installSheetCoverageTrigger()`) -- a clean week is silent
-53. Script Properties past the settings page's 50-row display cap -- set or clear one from a TEMPORARY editor-run function, then delete the function; the Health page inventory is the complete read view
+47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; the figure is a FLOOR, so under-budget is not headroom
+48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching
+49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh, plus the one-time historical re-export
+50. Outbound Calls tab export trigger -- the keystone that took the Outbound report, the journey drill and Caller Lookup out of Neon-only; seed it while Neon is reachable
+51. `AGENT_EMAIL_DOMAINS` (optional) -- extra domains a TYPED agent address may use for an emailed Individual Report; prefer adding the agent to Access Control
+52. Sheet coverage check -- business days with ZERO rows in a dashboard-read sheet, the interior gap every other signal misses; needs no Neon, so it works mid-outage
+53. Script Properties past the settings page's 50-row cap -- set or clear one from a TEMPORARY editor-run function; the Health inventory is the complete read view
 54. Caller Lookup's one-time Neon index (`idx_inbound_calls_caller_hash`) -- create it in the Neon console; nothing auto-creates it
-55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants in `insuranceNumbers.js`, a cdr-report push, and re-running `syncInsuranceNumbersToNeon`; keep a blank header column between the dept block and it
-56. Reprocessing historical dates -- Manual Export per date (mirrors Neon inline) over the bulk path; clear `DQE_UPSERT_RESUME` before any backfill; the zero-talk scan (answered > 0 with TTT 0:00:00) is the post-rebuild check, and `repairDqeDuplicateMerge` is the remedy for same-day (date, agent) duplicates
-57. Neon storage cap -- the `CDR_PHONES_MIRROR` phones-write gate (OFF by default since R27), the weekly `NEON_RETENTION_ENABLED` prune (`installNeonRetentionTrigger()`), `CDR_BACKFILL_BEFORE`, the one-time reclaim runbook (drop dead indexes, delete post-capture phone rows, TRUNCATE + refill the pre-capture block, VACUUM FULL), and the Health page's `neon-storage` row (`NEON_STORAGE_CAP_MB` turns it into a threshold; a DELETE never moves it)
-58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email (first admin unless overridden; `none` disables) and the welcome email a brand-new Access Control grant sends (needs `DASHBOARD_URL`; `false` disables)
-59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every 500+-cell `repair*` apply snapshots into first (self-populating; newest 3 tabs per sheet kept) and the restore procedure
-60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the cdr-report + cdr-import push, then the backfill by force re-import (a pruned date needs its source re-imported first, #56; NULL = never captured, 0 = captured and empty)
-61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + the ~3 AM trigger from CDR Tools; the Health page's `historical-sort` row (needed sorting EVERY night = a writer regressing; "could not fix" = a repair, not a sort; skipped = a backfill resume pointer is set)
-62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap, not the cells holding data; the Health page's `workbook-cells` row (warns at 80%, sheet-only so it renders mid-outage) and CDR Tools -> Workbook Cell Space (audit / preview / apply trim). A named range past the keep bounds REFUSES, and a writer's reach is not derivable from the grid -- read the writers before trimming a new tab
-63. Outbound report RELEASE runbook (6c) -- backfill, `runOutboundVettingCheck`, release ONLY on a CLEAN `ok parity` (INCONCLUSIVE is not a pass), then flip `OUTBOUND_VETTING_GATE_` and un-hide the menu item in ONE commit (cross-file-pins fails on either half alone) and walk S46. Per-dept cards stay ruled out
-64. Outbound answer quality -- `probeOutboundAnswerQuality`, the MEASURE-first step before any voicemail threshold: is the connected-call ring distribution bimodal? Read-only, sets nothing, SINGLE-ATTEMPT only (ring and connect describe different legs on a multi-attempt call), two independent estimates that must agree, and INCONCLUSIVE is a result meaning "no threshold is defensible" -- never set `OUTBOUND_VM_RING_SEC` off one
-65. Outbound INSTANT connects -- `probeOutboundInstantConnects`, the #64 follow-up: 40.6% of connected single-attempt calls ring 0-1s, capping any ring-based classifier at ~60% of calls. Cross-checks the stored ring against one DERIVED from the journey (`secs - talk - hold` on the external leg) plus a control group that provably rang, to separate a wrong CONNECTED timestamp (recoverable) from genuinely instant connects (permanent) -- `mixed` is a REFUSAL, since the two need opposite fixes. Shares #64's window props
-66. QCD vs DQE reconciliation -- `diagnoseQcdVsDqe` (cdr-import, CDR Tools menu), the read-only tool that explains why a dept's QCD "Queue Calls" answered and its per-agent answered sum differ: it classifies every leg of one date against BOTH rule sets and names the gate that dropped each one. Read its VERDICT first -- it is a fifth hand-mirror of calcQcdReport, so it reconciles against the real function AND the stored DQE rows before reporting, and refuses (INCONCLUSIVE) when either check fails
-67. Work-window edge census -- `runWorkWindowCensus` (cdr-import, CDR Tools menu), the read-only PRE-FLIGHT that cleared the R49 window change: per-queue traffic at each window edge, the size of the existing AJ/AK after-hours capture, and -- read this first -- the legs whose queue the DQE gate cannot recognise at all (the R18e shape, where the change's queue-name list is the thing that can silently miss a queue). Read "Would have counted", never the raw leg count: a lost queue name on a leg the NEXT gate drops anyway is not a loss, and the first live run's lone finding (146 legs on ext 782) was exactly that -- every one bound for a `DQE_EXCLUDED_AGENTS` pseudo-agent. Also carries the backfill note for R49
-68. External READERS of the CDR Report workbook -- team-tools (the CSR team app, a separate repo) reads `DQE Historical Data`, `CSR Transfer Historical Data`, `Agent Alias Overrides`, `Inbound Calls` and, since H1/H2, `Company Holidays` + `Dashboard Standards` read-only via its `CDR_SS_ID`; nothing in this repo's tests knows it exists, so a rename, a column move, a retention trim or a holiday-grammar change on one of those tabs is a TWO-REPO edit -- read the item before touching any of them
-69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2): `rung` (default, `answered / rung`) or `answerable` (`answered / (answered + missed)`, the H2 standard the table, the agent app and team-tools already use); run `probeAnswerRateFormulas()` first to see both rates per dept and which standard verdicts flip, then set the property -- no redeploy, every rate cache carries the `rf-` suffix
-70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the one-shot probe (CDR Tools, `execCeilingProbe.js`), then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`; `listCdrImportScriptProperties()` / `listCdrReportScriptProperties()` are the sibling projects' registry-backed inventories
+55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants, a push and a re-sync
+56. Reprocessing historical dates -- Manual Export per date over the bulk path, the `DQE_UPSERT_RESUME` reset, the zero-talk post-rebuild scan and the duplicate-merge repair
+57. Neon storage cap -- the `CDR_PHONES_MIRROR` write gate, the weekly `NEON_RETENTION_ENABLED` prune, `NEON_STORAGE_CAP_MB`, and the one-time reclaim runbook
+58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email, and the welcome email a brand-new Access Control grant sends
+59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every bulk `repair*` apply snapshots into first, and the restore procedure
+60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the push, then backfill by force re-import; NULL and 0 are different facts
+61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + its ~3 AM trigger, and how to read the Health page’s `historical-sort` row
+62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap; the `workbook-cells` Health row and the CDR Tools trim, whose refusals matter
+63. Outbound report RELEASE runbook (6c) -- backfill, `runOutboundVettingCheck`, release only on a CLEAN parity, then flip `OUTBOUND_VETTING_GATE_` and walk S46
+64. Outbound answer quality -- `probeOutboundAnswerQuality`, the MEASURE-first step before any voicemail threshold; INCONCLUSIVE is a result, never a reason to guess
+65. Outbound INSTANT connects -- `probeOutboundInstantConnects`, the #64 follow-up separating a wrong CONNECTED timestamp from genuinely instant connects
+66. QCD vs DQE reconciliation -- `diagnoseQcdVsDqe` (cdr-import), the read-only tool that names the gate which dropped each leg; read its VERDICT first
+67. Work-window edge census -- `runWorkWindowCensus` (cdr-import), the read-only PRE-FLIGHT for a window change; read "Would have counted", never the raw leg count
+68. External READERS of the CDR Report workbook -- the five tabs team-tools reads; a rename, column move, retention trim or grammar change on one is a TWO-REPO edit
+69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2); run `probeAnswerRateFormulas()` before setting it
+70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the probe, then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
 
 ## Cycle Workflow Config
 
