@@ -1855,3 +1855,27 @@ test('diagnostic/marker parity: the unknown candidate equals what the live marke
   }
   assert.ok(compared >= 3000, 'the sweep actually ran');
 });
+
+test('diagnostic/marker parity holds over a MULTI-ROW sample, not just per journey', function () {
+  // The sweep above feeds ONE journey per call, so a bug in the diagnostic's
+  // accumulation ACROSS rows would be invisible to it -- which was the real
+  // gap in the first version of this proof. Same shape the live sample has:
+  // 2 events, both '(unknown)', ev[0] carrying the talk (small ring) and
+  // ev[1] carrying none (its whole duration). That is the shape that produced
+  // the 1s-vs-68s disagreement.
+  const journeys = [];
+  for (let i = 0; i < 300; i++) {
+    journeys.push([
+      { name: '(unknown)', kind: 'answer', secs: 100 + i, talk: 99 + i },
+      { name: '(unknown)', kind: 'leg', secs: 60 + i },
+    ]);
+  }
+  const cand = h.ctx.obJourneyMarkerScores_(journeys).candidates.unknown;
+  const derived = journeys.map((ev) => h.ctx.obInstantDerivedRing_(JSON.stringify(ev)));
+  const kept = derived.filter((v) => v !== null);
+  assert.equal(kept.length, journeys.length, 'the marker resolved every row');
+  assert.equal(cand.medianDerived, h.ctx.obInstantMedian_(kept), 'medians agree over 300 rows');
+  const real = kept.filter((v) => v >= 3).length;
+  assert.equal(cand.realRingShare, Math.round(real / kept.length * 1000) / 1000,
+    'real-ring shares agree over 300 rows');
+});
