@@ -537,6 +537,19 @@ tripwire. Revisit only after Batch 5 has held.
   and an outbound dial leaves it blank. The reader now falls back to the first
   `unknown`-CLASS event, validated on the rung answer key. Operator State #65
   carries the run and the `carrier-instant` reading.
+- **Overview trend chart: the Company line is % ONLY (2026-09-18).** Delivered
+  for `pct` and `abandonedPct`; the two COUNT metrics deliberately have no
+  `companyField`, because a company "answered calls" line just restates the
+  visual sum of the dept lines. If one is ever wanted anyway, the server side
+  is already there (`ovDeptChartSeries_` over the company daily maps) -- it is
+  a registry entry plus the count-unit tooltip formatting.
+- **The Company line is ADMIN-ONLY (INV-39), by owner-ruled precedent, not by
+  request.** The ask did not say who should see it, and every other
+  company-aggregate surface is admin-only, so it inherited that. Widening it
+  to managers is one line in each of the two payloads (stop nesting it under
+  `companyAggregate`; drop the `ovStripChartTrend_` gate) plus flipping the
+  `drive-smoke.js` manager assertion -- but it is a data-visibility decision,
+  so it needs an owner ruling first.
 - **The journey does not carry the external leg's identity (2026-09-18).** The
   capture stores `t / name / kind / secs / talk / hold` and not DIRECTION or
   CALLEE, so the reader recovers the leg by proxy. Labelling a CALLEE-external

@@ -5311,6 +5311,15 @@
   }
   .qcd-alldept-grand td:first-child { letter-spacing: 0.02em; }
 
+  /* In-flight state for a config WRITE. The save re-renders only this
+     section now, so the busy cue belongs on the table rather than on the
+     modal-wide loader that used to blank everything. */
+  .al-config-table.is-busy {
+    opacity: 0.55;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
   .al-config-table, .al-log-table, .al-results-table {
     width: 100%;
     border-collapse: collapse;

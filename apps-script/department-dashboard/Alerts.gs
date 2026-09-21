@@ -29,15 +29,29 @@
  * only at the server boundary):
  *   getAlertsInit() -> {
  *     config: [{ department, threshold, extraRecipients[], active, notes }],
+ *     drift: { <dept>: { fired, total, meanRate, severity } },   // E10 chips
+ *     departments: string[],   // the dept PICKER's list = getAllDepartments_(),
+ *                              // i.e. exactly what saveAlertConfigRow accepts
  *     log: [{ timestamp, department, dateChecked, threshold,
  *             answerRate, triggered, recipients, notes }],
  *     trigger: { installed, hour? },
+ *     pipelineHealth: [...],   // recent rows for the modal's health panel
+ *     neonMirror: {...}|null,  // F2 sheet-vs-Neon divergence, best-effort
+ *     neonRead: {...}|null,    // F3 read-back failure signal, best-effort
+ *     answerTargets: {...}|null,   // R23 standards editor, best-effort
  *     spreadsheetUrl: string,
- *     defaultDate: 'yyyy-MM-dd' (yesterday in TZ)
+ *     defaultDate: 'yyyy-MM-dd' -- the previous BUSINESS day (O-8), NOT
+ *                 calendar yesterday, which opened every Monday on Sunday
  *   }
  *   previewAlerts({ date }) -> [{ ...same shape as sendAlerts return }]
  *   sendAlerts({ date }) -> [{ department, status, answerRate,
  *                              threshold, recipients, notes }]
+ *   saveAlertConfigRow(req)   -> { saved: true,   ...the re-read section }
+ *   removeAlertConfigRow(req) -> { removed: <n>,  ...the re-read section }
+ *     Both append `config` / `drift` / `departments` so the client
+ *     re-renders THAT SECTION instead of re-running the whole modal init;
+ *     `sectionStale: true` (and no section) means the write landed but the
+ *     re-read failed, so the client falls back to a full reload.
  *   installAlertTrigger() -> { installed: true, hour }
  *   uninstallAlertTrigger() -> { installed: false }
  */
@@ -60,13 +74,18 @@ const DRIFT_CHRONIC_FIRE_RATIO = 0.80;  // fired/total >= 80% -> chronic
 const DRIFT_LENIENT_HEADROOM_PTS = 10;  // mean rate >= threshold + 10pts AND fired=0 -> lenient
 const DRIFT_LOG_SCAN_CAP       = 2000;  // max Alert Log rows we'll read to bucket the lookback
 
-function getAlertsInit() {
-  assertAdmin_();
-  // Pull config first so the drift helper can be keyed by the same
-  // dept list + thresholds. Drift is best-effort -- a failure (e.g.
-  // Alert Log sheet missing) returns an empty map and the modal
-  // table simply renders no drift column data; the rest of the
-  // payload is unaffected.
+/**
+ * The Alerts modal's CONFIG SECTION payload -- the rows, their drift chips and
+ * the dept picker list. Shared by `getAlertsInit` and by the two config write
+ * paths, which return it so a save can re-render THAT SECTION instead of
+ * making the client re-run the whole modal init (five more RPCs, a blanked
+ * modal, and every unrelated section reloading to show one changed row).
+ *
+ * Both enrichments are best-effort and independent: a roster read failure
+ * costs the unknown-dept flags and the picker list, an Alert Log failure costs
+ * the drift chips, and neither can take down the section.
+ */
+function alertConfigSection_() {
   const config = readAlertConfig_();
   // O-3: flag config rows whose Department matches no DO NOT EDIT! header
   // (typo, or a header renamed after the row was saved). Such a dept reads
@@ -74,16 +93,18 @@ function getAlertsInit() {
   // it is silently never monitored. Best-effort (a roster read failure just
   // skips the flag); the modal renders a "⚠ unknown dept" chip and
   // runAlertsCore_ logs an `error` outcome per run.
+  let departments = [];
   try {
+    departments = getAllDepartments_() || [];
     const knownDepts = {};
-    getAllDepartments_().forEach(function (d) { knownDepts[d] = true; });
+    departments.forEach(function (d) { knownDepts[d] = true; });
     if (Object.keys(knownDepts).length) {
       config.forEach(function (c) {
         if (c.department && !knownDepts[c.department]) c.unknownDept = true;
       });
     }
   } catch (e) {
-    Logger.log('getAlertsInit: dept validation skipped: %s', e);
+    Logger.log('alertConfigSection_: dept validation skipped: %s', e);
   }
   let drift = {};
   try {
@@ -91,6 +112,19 @@ function getAlertsInit() {
   } catch (e) {
     Logger.log('computeThresholdDrift_ failed: %s', e);
   }
+  return { config: config, drift: drift, departments: departments };
+}
+
+function getAlertsInit() {
+  assertAdmin_();
+  // Pull config first so the drift helper can be keyed by the same
+  // dept list + thresholds. Drift is best-effort -- a failure (e.g.
+  // Alert Log sheet missing) returns an empty map and the modal
+  // table simply renders no drift column data; the rest of the
+  // payload is unaffected.
+  const section = alertConfigSection_();
+  const config = section.config;
+  const drift = section.drift;
   // F2 divergence detector: sheet-vs-Neon DQE max-date comparison. Best-effort
   // -- null on any failure (computeNeonMirrorHealth_ already swallows its own
   // errors and returns a status object; the try/catch here is belt-and-
@@ -132,6 +166,12 @@ function getAlertsInit() {
   return {
     config: config,
     drift: drift,
+    // The dept PICKER's list. Shipped by the server rather than read from the
+    // client USER envelope, because `saveAlertConfigRow` validates the typed
+    // dept against `getAllDepartments_()` -- so the picker must offer exactly
+    // that list or it can present a choice the save then rejects (and, when
+    // the envelope arrives empty, no choice at all).
+    departments: section.departments,
     log: readAlertLog_(20),
     trigger: getAlertTriggerStatus_(),
     pipelineHealth: readPipelineHealth_(20),
@@ -1075,7 +1115,11 @@ function saveAlertConfigRow(req) {
     else sheetUpsertAlertConfigRow_(rec);
     Logger.log('saveAlertConfigRow: %s by %s', department, Session.getActiveUser().getEmail());
   } finally { lock.releaseLock(); }
-  return { saved: true };
+  // Return the re-read section so the client re-renders the config table in
+  // place. Computed AFTER the lock is released: it is a read, and holding the
+  // lock across it would serialize every admin's save behind another's
+  // re-read for no benefit.
+  return alertSectionResult_({ saved: true });
 }
 
 function sheetUpsertAlertConfigRow_(rec) {
@@ -1111,7 +1155,27 @@ function removeAlertConfigRow(req) {
     else removed = sheetRemoveAlertConfigRow_(department);
     Logger.log('removeAlertConfigRow: removed %s row(s) for %s by %s', removed, department, Session.getActiveUser().getEmail());
   } finally { lock.releaseLock(); }
-  return { removed: removed };
+  return alertSectionResult_({ removed: removed });
+}
+
+/**
+ * Attaches the re-read config section to a write path's result. The re-read is
+ * a CONVENIENCE, never the write's contract: if it throws, the write still
+ * succeeded, so the caller gets its outcome plus `sectionStale: true` and the
+ * client falls back to a full reload rather than rendering a lie.
+ */
+function alertSectionResult_(base) {
+  const out = base || {};
+  try {
+    const section = alertConfigSection_();
+    out.config = section.config;
+    out.drift = section.drift;
+    out.departments = section.departments;
+  } catch (e) {
+    Logger.log('alertSectionResult_: section re-read failed: %s', e);
+    out.sectionStale = true;
+  }
+  return out;
 }
 
 function sheetRemoveAlertConfigRow_(department) {
