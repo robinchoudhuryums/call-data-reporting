@@ -29,15 +29,29 @@
  * only at the server boundary):
  *   getAlertsInit() -> {
  *     config: [{ department, threshold, extraRecipients[], active, notes }],
+ *     drift: { <dept>: { fired, total, meanRate, severity } },   // E10 chips
+ *     departments: string[],   // the dept PICKER's list = getAllDepartments_(),
+ *                              // i.e. exactly what saveAlertConfigRow accepts
  *     log: [{ timestamp, department, dateChecked, threshold,
  *             answerRate, triggered, recipients, notes }],
  *     trigger: { installed, hour? },
+ *     pipelineHealth: [...],   // recent rows for the modal's health panel
+ *     neonMirror: {...}|null,  // F2 sheet-vs-Neon divergence, best-effort
+ *     neonRead: {...}|null,    // F3 read-back failure signal, best-effort
+ *     answerTargets: {...}|null,   // R23 standards editor, best-effort
  *     spreadsheetUrl: string,
- *     defaultDate: 'yyyy-MM-dd' (yesterday in TZ)
+ *     defaultDate: 'yyyy-MM-dd' -- the previous BUSINESS day (O-8), NOT
+ *                 calendar yesterday, which opened every Monday on Sunday
  *   }
  *   previewAlerts({ date }) -> [{ ...same shape as sendAlerts return }]
  *   sendAlerts({ date }) -> [{ department, status, answerRate,
  *                              threshold, recipients, notes }]
+ *   saveAlertConfigRow(req)   -> { saved: true,   ...the re-read section }
+ *   removeAlertConfigRow(req) -> { removed: <n>,  ...the re-read section }
+ *     Both append `config` / `drift` / `departments` so the client
+ *     re-renders THAT SECTION instead of re-running the whole modal init;
+ *     `sectionStale: true` (and no section) means the write landed but the
+ *     re-read failed, so the client falls back to a full reload.
  *   installAlertTrigger() -> { installed: true, hour }
  *   uninstallAlertTrigger() -> { installed: false }
  */

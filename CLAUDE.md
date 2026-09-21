@@ -748,7 +748,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   install renders every chip as `cold` until each dept has
   >= `DRIFT_MIN_TOTAL_TO_ASSESS` daily-trigger entries logged
   (~10 weekdays after the trigger goes live). **Best-effort:**
-  the helper is wrapped in a try/catch inside `getAlertsInit`
+  the helper is wrapped in a try/catch inside
+  `alertConfigSection_` (the shared rows + drift + dept-list builder that
+  `getAlertsInit` and both config write paths read)
   so a missing or corrupt Alert Log returns an empty drift map
   and the modal table still renders the rest of the payload --
   the column just shows dashes for every row. Admin-only via the
@@ -1931,7 +1933,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `viewerDept`) are injected per-request so a payload warmed by
   user A still personalizes correctly for user B. Adding a new
   admin-only Overview field means adding it to the strip list
-  inside `personalizeOverview_`.
+  inside `personalizeOverview_`. **There are now TWO Overview payloads
+  carrying admin-only data, with two strips** -- `getOverviewChartTrend`
+  (the YTD chart series) is manager-reachable with its own shared cache,
+  so it computes once and strips on serve via `ovStripChartTrend_`, on
+  every return path. A field added to THAT payload is not covered by
+  `personalizeOverview_`; pick the strip that matches the endpoint
+  (INV-39 carries both).
 - **View-as-Manager (admin preview).** Admins get a "View as"
   control in the header (`initViewAs_`, built only for admins; it
   carries NO `data-admin-only` so it stays visible to switch back).

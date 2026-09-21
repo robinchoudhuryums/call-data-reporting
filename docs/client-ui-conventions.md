@@ -1947,3 +1947,41 @@ card's first body child and CSS pulls it onto the header row); and an
 admin-modal section heading is an **`<h3 class="al-section-title">`**, since
 screen readers navigate a long modal by heading and a styled `<div>` offers
 nothing to navigate.
+
+- **A config WRITE re-renders its own section, not the whole modal.** The
+  admin config modals load one big init payload per open, so the easy thing
+  after a save is to call that init again -- which hides the modal body behind
+  its spinner and re-fires every unrelated RPC to show one changed row. The
+  Alerts config editor is the worked example (2026-09-18, reported from
+  production): `saveAlertConfigRow` / `removeAlertConfigRow` return the
+  RE-READ section (`alertConfigSection_` -- rows + drift chips + the dept
+  picker list) alongside their write outcome, and the client calls
+  `alCfgApplySection_(res)` to re-render just the config table, with the busy
+  cue on that table (`.al-config-table.is-busy`) rather than the modal-wide
+  loader. **The re-read is a convenience, never the write's contract:** it runs
+  AFTER the LockService lock is released (it is a read, and holding the lock
+  across it would serialize one admin's save behind another's re-read), and if
+  it throws, the write still succeeded -- the result carries
+  `sectionStale: true` with no section, which is the ONE path back to the full
+  reload. What enforces the Alerts half: `config-editor-c3.test.js` (both
+  write paths return the section; the picker list is the list the save
+  accepts; the `sectionStale` fallback) and `client-dead-ends.test.js`
+  (neither write path may reach for `alLoadInit_` directly).
+  **Backlog, prose-only:** six post-write callsites still re-run their whole
+  init -- Dept Config ×2 (`dcLoadInit_`) and Access Control ×4
+  (`acLoadInit_`). Nothing enforces that count, so verify it in the source
+  before quoting it; a new config editor should follow the Alerts shape
+  rather than adding a seventh.
+- **A picker's options come from the SERVER list the write validates
+  against, never from the `USER` envelope.** `Code.gs::renderDashboard_`
+  ships `departments` as a TRIMMED copy (a single-dept manager gets `[]`), so
+  a client-side picker built from `USER.departments` can render EMPTY with no
+  way to tell why -- which shipped, and left an admin unable to create a Low
+  Answer Rate alert at all. `getAlertsInit` now serves `departments` =
+  `getAllDepartments_()`, the same list `saveAlertConfigRow` validates, and
+  `alFillDeptSelect_` prefers it with the envelope only as a fallback. A
+  picker that still ends up empty says so in its own tooltip instead of
+  rendering a lone "- pick -". The rendered gate asserts BOTH halves
+  (`drive-admin.js`: the picker offers departments, and they equal the served
+  list) -- every pre-existing check passed against a picker with no options,
+  because the modal opened, rendered, trapped focus and closed.
