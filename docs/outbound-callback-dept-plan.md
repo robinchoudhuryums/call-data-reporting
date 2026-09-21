@@ -182,6 +182,42 @@ rule is worth building." It is worth building. **The change is a probe that
 sums a BAND rather than a peak**, with the floor and bimodality gates kept --
 a code change and a deliberate decision, never a re-run.
 
+**BLOCKER 1 ADDRESSED 2026-09-21 -- and building it surfaced the number that
+actually decides this work.** `obProbeRingBand_` is a SECOND detector, not
+looser gates on the first: the spike detector is untouched and still encodes
+"one carrier, one timeout, one tight peak", and the band runs only when the
+spike refused as `spike-too-small` or `too-wide` (the two shapes mass split
+across several timeouts produces through a one-peak test). A passing spike
+still wins, because a 2 s band implies a far higher precision than a 13 s one.
+
+**The new gate is PURITY, and on the live numbers it is the whole story.**
+Summing the 20-32 s band counts the baseline traffic inside it as if it were
+voicemail: 13,798 calls in the band, of which 13 x 330 = 4,290 are baseline,
+so **roughly 31% of anything a threshold there flags is a human who simply
+answered slowly.** That is the classifier's precision CEILING -- before any
+implementation error -- it was measurable all along, and no gate in the
+original design looked at it. A band that is mostly baseline is now refused as
+`band-impure` rather than handed over. The ceiling travels with the parameters
+as `out.suggestedBasis.expectedPrecisionCeiling`, deliberately OUTSIDE the
+`suggested` block (that block is copied key-for-key into Script Properties, so
+a non-property key in it invites setting a property by that name -- pinned).
+
+**One claim was corrected while building it.** The scan was first written as
+"maximise EXCESS over baseline, never raw mass, so it cannot drift onto the
+human cluster". At FIXED window width that is false: `mass - W*baseline` and
+`mass` rank windows identically, the subtracted term being constant. What
+actually keeps the scan off the human cluster is the FLOOR (the left edge may
+not fall below `OB_PROBE_VM_FLOOR_SEC_`) and the new SHOULDER gate (`no-trough`
+-- a window whose three preceding seconds are nearly as busy is the upper tail
+of people answering). Both are pinned; the excess is computed for the purity
+gate, not to steer the scan.
+
+**What is still NOT established: that a 20-32 s ring means voicemail at all.**
+Every measurement in this document is unlabelled inference from timing. The one
+independent signal available -- the repeat-callee check -- DISAGREED (its modal
+ring is 0 s, not 31 s). The band makes the rule REACHABLE; it does not make it
+CORRECT. See "Step 1b" below.
+
 **BLOCKER 2 -- RESOLVED 2026-09-18, and the answer came with it.**
 `probeOutboundInstantConnects` could not verdict: it sampled 300 rows in each
 group and found zero usable external legs in all 600 (`verdict:
@@ -274,6 +310,72 @@ change in `icBuildJourney_`, which means: forward-only (history still needs
 the fallback), and shared with INBOUND, whose journeys render in the call-path
 drill and Caller Lookup. Worth doing deliberately, with its own regression
 walk -- not folded into a probe fix.
+
+### Step 1b: GROUND TRUTH — listen to calls before setting anything (owner ask, 2026-09-21; DESIGNED, NOT BUILT)
+
+**Why this is the gate, not another distribution.** Everything in Step 1 is
+UNLABELLED inference: we observe that rings cluster at 21 / 26-27 / 30-31 s and
+interpret the clusters as carrier voicemail timeouts. Nobody has confirmed that
+a single 31 s-ring connect actually went to voicemail. Three facts say the
+interpretation needs a check rather than more measurement:
+
+1. The one independent signal in the probe **DISAGREED**: the repeat-callee
+   check peaks at 0 s, not 31 s (`agreesWithSpike: false`). The design treats a
+   disagreement as disclosure rather than a refusal, which is right, but a
+   disagreeing independent estimate is exactly when labels are worth more than
+   another histogram.
+2. The band's measured purity puts a **~69% ceiling** on precision. Whether
+   that is acceptable is a judgement about how the number will be read, and it
+   cannot be made from the distribution alone.
+3. #65 closed by establishing that 40.6% of connects are genuinely instant.
+   That conclusion is also unlabelled -- it rests on a derived ring agreeing
+   with a stored one. Listening to a handful would confirm it independently and
+   cheaply.
+
+**Sample by STRATUM, and let the listener assign the label.** "Get me some
+voicemail calls" is not a query this data can answer -- voicemail is the thing
+being inferred, so it cannot be a sampling filter without assuming the
+conclusion. Only two of the four classes the owner named are stored facts;
+the other two are hypotheses:
+
+| Stratum | Selector | What a label would settle |
+| --- | --- | --- |
+| A. Instant | `connected`, ring <= 1 s | Whether #65's `carrier-instant` verdict holds by ear |
+| B. Human pickup | `connected`, ring 2-11 s, talk >= 20 s | The control: these should be people |
+| C. **In-band candidates** | `connected`, ring 20-32 s | **The actual question** -- what fraction are machines |
+| D. Above band | `connected`, ring >= 33 s | Whether the band's right edge is in the right place |
+| E. Never connected | `connected = false` | That the unconnected side is what we think |
+
+~10-15 per stratum is enough: at n=15, a stratum-C precision estimate carries
+roughly a +/-12 pt confidence interval, which separates "mostly machines" from
+"a coin flip" -- the only distinction that changes the decision. More listening
+buys precision on a number whose threshold for action is coarse.
+
+**Blind the listener to the stratum.** If the sheet says "31 s ring -- expected
+voicemail", the label is contaminated by the hypothesis and the exercise
+confirms itself. Emit ONE shuffled list with an opaque token per row and keep
+the stratum in a separate key the listener does not open until after labelling.
+This costs a few lines and is the difference between evidence and agreement.
+
+**⚠ This tool would BREAK the probe convention, deliberately.** Every probe in
+this repo is aggregates-only -- "No hash, no number, no call id is selected,
+logged or returned". A sampler whose whole purpose is letting an operator FIND
+specific recordings must emit row identifiers, so it is a different class of
+tool and must be labelled as one in its own docblock, so nobody cites the
+aggregates-only rule as though it covered this. Minimum viable locator:
+`call_date`, the start timestamp, the agent name, ring/talk seconds and the
+stratum token. **It should NOT emit the dialled number or the callee hash** if
+the phone system can locate a recording by agent + timestamp -- which is the
+one thing that has to be confirmed before building it, because if recordings
+are only searchable by dialled number then the tool must emit PHI and that is
+an owner decision, not an implementation detail.
+
+**Sequence: 1b comes BEFORE Step 2.** No parameter should be set from the band
+alone. If stratum C comes back mostly machines, the band is validated and Step
+2 proceeds with a measured precision figure to disclose. If it comes back mixed,
+the honest outcome is that `ring_seconds` cannot carry this classifier here, and
+Part 1's table needs a different treatment of `connected` -- a relabel rather
+than a reclassification.
 
 ### Step 2: the parameters
 

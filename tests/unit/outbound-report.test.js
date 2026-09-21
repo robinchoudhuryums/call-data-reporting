@@ -1012,6 +1012,137 @@ test('probe/spike: out-of-domain buckets are ignored, not folded into the edges'
   assert.equal(s.spike, true);
 });
 
+// ── The multi-modal band detector ──────────────────────────────────────────
+
+// The LIVE 2026-09-18 shape, from the numbers the run recorded (Step 1
+// RESULTS in docs/outbound-callback-dept-plan.md): bumps at 21s (2,077),
+// 26-27s (927 / 1,010) and 30-31s (1,784 / 3,022) over a ~330 baseline, with
+// 40.6% of connects at a 0s ring. This is the distribution the single-peak
+// detector refused at 7.7% against the 8% floor, so it is the fixture that
+// decides whether the band fallback was worth building.
+function liveMultiModal_() {
+  const m = {};
+  m[0] = 25000;                                   // the #65 instant population
+  [3000, 2400, 1900, 1500, 1200, 1000, 850, 700, 600, 520, 460].forEach(function (n, i) {
+    m[i + 1] = n;                                 // the human cluster, decaying
+  });
+  for (let i = 12; i <= 19; i++) m[i] = 350;       // the trough between the two populations
+  const band = { 20: 400, 21: 2077, 22: 500, 23: 400, 24: 380, 25: 600, 26: 927,
+                 27: 1010, 28: 700, 29: 800, 30: 1784, 31: 3022, 32: 900 };
+  Object.keys(band).forEach(function (k) { m[k] = band[k]; });
+  for (let i = 33; i <= 60; i++) m[i] = 300;       // the long tail
+  return m;
+}
+
+test('probe/band: the LIVE multi-modal shape is refused by the peak test and found by the band', function () {
+  const m = liveMultiModal_();
+  const rows = hist_(m), tot = total_(m);
+
+  // First, the premise: the single-peak detector still refuses it, for one of
+  // the two reasons the band fallback is gated on. If this ever stops being
+  // true the fallback is dead code and this test says so.
+  const sp = h.ctx.obProbeRingSpike_(rows, tot);
+  assert.equal(sp.spike, false, 'the live shape must still defeat the one-peak test');
+  assert.ok(sp.reason === 'spike-too-small' || sp.reason === 'too-wide',
+    'and it must fail for a reason a band can legitimately explain, got ' + sp.reason);
+
+  const b = JSON.parse(JSON.stringify(h.ctx.obProbeRingBand_(rows, tot)));
+  assert.equal(b.band, true, 'the band detector must find what the peak test could not');
+  assert.equal(b.reason, 'ok');
+  // The band must span the bumps, not sit on one of them.
+  assert.ok(b.leftSec <= 21 && b.rightSec >= 31,
+    'the band must cover the 21s and 31s bumps, got ' + b.leftSec + '-' + b.rightSec);
+  assert.ok(b.peaks.length >= 3, 'the multi-modal structure is reported, got ' + b.peaks.length);
+  // The parameters follow the same contract as the spike path.
+  assert.equal(b.suggestedVmRingSec, b.leftSec, 'the threshold is the LEFT edge');
+  assert.equal(b.suggestedToleranceSec, Math.ceil((b.rightSec - b.leftSec) / 2));
+  // And the number the whole fallback exists to surface.
+  assert.ok(b.purity > 0.55 && b.purity < 0.95,
+    'the live band is impure but usable; a purity of 1 would mean the baseline vanished, got ' + b.purity);
+  assert.equal(b.bandCount, b.baselineCount + b.excessCount,
+    'the mass decomposition must add up, or the disclosed ceiling is wrong');
+});
+
+test('probe/band: REFUSES a band that is mostly baseline (band-impure)', function () {
+  // A broad gentle bulge: elevated enough to be found (1.8x baseline, so the
+  // edges survive the trim) and wide enough to clear the share gates, but its
+  // mass is mostly the baseline traffic running underneath it. A threshold
+  // here would flag ~56% humans. This is the gate no earlier test looked at.
+  const m = { 0: 8000 };
+  for (let i = 1; i <= 11; i++) m[i] = 1200;
+  for (let i = 12; i <= 19; i++) m[i] = 1000;
+  for (let i = 20; i <= 35; i++) m[i] = 1800;      // 1.8x baseline -> purity 0.44
+  for (let i = 36; i <= 60; i++) m[i] = 1000;
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.equal(b.baseline, 1000, 'fixture must pin the baseline the purity is measured against');
+  assert.ok(b.bandShare >= 0.12 && b.excessShare >= 0.06,
+    'the fixture must REACH the purity gate rather than trip an earlier one');
+  assert.equal(b.band, false);
+  assert.equal(b.reason, 'band-impure');
+  assert.equal(b.suggestedVmRingSec, null, 'no number is offered on a refusal');
+  assert.match(h.ctx.obProbeBandHint_(b), /precision ceiling|took a while/i);
+});
+
+test('probe/band: REFUSES the upper tail of the human cluster (no-trough)', function () {
+  // Elevated AND pure enough to pass every mass gate, but the three seconds
+  // immediately below it are nearly as busy -- the signature of people
+  // answering slowly, not of a distinct voicemail population. This is the
+  // gate that carries the weight now that the scan objective is known not to
+  // steer away from the human cluster on its own.
+  const m = { 0: 3000 };
+  for (let i = 1; i <= 11; i++) m[i] = 1500;       // the human cluster
+  for (let i = 12; i <= 17; i++) m[i] = 200;
+  for (let i = 18; i <= 19; i++) m[i] = 900;       // the shoulder, nearly as busy as the band
+  for (let i = 20; i <= 35; i++) m[i] = 1000;
+  for (let i = 36; i <= 60; i++) m[i] = 200;
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.equal(b.leftSec, 20, 'the scan must find the bulge before the gate can refuse it');
+  assert.ok(b.purity >= 0.55, 'the fixture must PASS purity so the shoulder gate is what fires');
+  assert.equal(b.band, false);
+  assert.equal(b.reason, 'no-trough');
+  assert.ok(b.shoulderRatio > 0.6, 'and it must be refused on the measured shoulder');
+  assert.equal(b.suggestedVmRingSec, null);
+  assert.match(h.ctx.obProbeBandHint_(b), /upper tail of people/i);
+});
+
+test('probe/band: REFUSES a sample too small, before looking at shape', function () {
+  const m = { 1: 20, 2: 15, 21: 10, 26: 12, 31: 14 };
+  assert.ok(total_(m) < 200);
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.equal(b.band, false);
+  assert.equal(b.reason, 'too-few-rows');
+  assert.match(h.ctx.obProbeBandHint_(b), /widen OUTBOUND_PROBE_FROM/);
+});
+
+test('probe/band: the FLOOR is what keeps the scan off the human cluster', function () {
+  // At fixed window width, maximising mass-above-baseline and maximising mass
+  // pick the same window -- the subtracted term is constant -- so the scan
+  // objective cannot be what avoids the human cluster. The floor is. Here the
+  // busiest 16s window by far starts at 1s; the band must not be reported
+  // there however much mass sits in it.
+  const m = { 0: 4000 };
+  for (let i = 1; i <= 16; i++) m[i] = 5000;        // the heaviest window in the histogram
+  for (let i = 17; i <= 60; i++) m[i] = 150;
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.ok(b.leftSec === null || b.leftSec >= 12,
+    'no band may be reported below OB_PROBE_VM_FLOOR_SEC_, got ' + b.leftSec);
+  assert.equal(b.band, false, 'and a histogram with nothing above the floor yields no band');
+});
+
+test('probe/band: a band is never offered where the peak test already passed', function () {
+  // Behaviour preservation. The probe consults the band ONLY for the two
+  // multi-modal refusals; a clean bimodal shape must keep taking the peak
+  // path, whose narrower band implies the better precision.
+  const src = OB_SRC;
+  const m = src.match(/var BAND_ELIGIBLE_ = \{([^}]*)\}/);
+  assert.ok(m, 'the eligibility map must exist -- it is what keeps the peak path unchanged');
+  const keys = m[1].match(/'[a-z-]+'/g) || [];
+  assert.deepEqual(keys.sort(), ["'spike-too-small'", "'too-wide'"],
+    'only the two multi-modal refusals may fall through to the band');
+  assert.match(src, /var band = \(!spike\.spike && BAND_ELIGIBLE_\[spike\.reason\]\)/,
+    'and the fallback must be gated on a REFUSED spike, never run alongside a passing one');
+});
+
 // ── The pure talk-trough detector ──────────────────────────────────────────
 
 test('probe/trough: a real dip between hangups and conversations is measured', function () {

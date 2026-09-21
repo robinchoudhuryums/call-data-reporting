@@ -574,18 +574,39 @@ tripwire. Revisit only after Batch 5 has held.
   is a WRITER change in a function INBOUND shares (the call-path drill and
   Caller Lookup render its journeys) and is forward-only, so history keeps the
   fallback regardless. → deliberate, with its own regression walk; unbatched.
-- **The answer-quality probe needs a BAND gate, not a peak gate (2026-09-18).**
-  Voicemail pickup here is multi-modal (21 / 26-27 / 30-31 s), so the 8%
-  single-peak share gate refuses a real signal; the 20-32 s band is ~22% of
-  connects. Keep the floor + bimodality gates. → same change as above;
-  measurements in the plan's "Step 1 RESULTS". **Re-derive the band share over
-  the REACHABLE population, don't carry the 22% forward (2026-09-21):** that
-  figure is over all connects, and #65 closed by establishing that 40.6% of
-  them connect instantly and must be excluded from any ring-based classifier.
-  The denominator shrinks by that much, so the band's share of what the
-  classifier can actually see is a different number — measure it, since
-  whether instant rows can fall in a 20-32 s band at all is a property of the
-  data, not an assumption to reason from.
+- ~~**The answer-quality probe needs a BAND gate, not a peak gate
+  (2026-09-18).**~~ DONE 2026-09-21: `obProbeRingBand_` is a SECOND detector
+  behind the untouched spike detector, consulted only on the two multi-modal
+  refusals (`spike-too-small` / `too-wide`), with a passing spike still
+  winning. Building it surfaced the number that decides the work: a 13 s band
+  carries the baseline traffic inside its own width, so the live band's
+  **precision ceiling is ~69%** — roughly 31% of what a threshold there flags
+  is a human who answered slowly. That is now a GATE (`band-impure`) and the
+  ceiling travels beside the parameters. Two corrections came with it: the
+  scan's "maximises excess, not mass" rationale was false at fixed width (the
+  FLOOR and the new `no-trough` shoulder gate are what keep it off the human
+  cluster), and the ceiling had to move OUT of the `suggested` block, which an
+  operator copies key-for-key into Script Properties. Details in the plan's
+  "BLOCKER 1 ADDRESSED".
+- **Ground truth before any parameter is set — Step 1b, DESIGNED not built
+  (owner ask, 2026-09-21).** Every figure in Part 2 is unlabelled inference
+  from timing, the one independent signal (repeat-callee) DISAGREED, and the
+  band makes the rule reachable without making it correct. So: a stratified,
+  BLINDED sample of ~10-15 calls per stratum (instant / human / in-band
+  candidates / above-band / never-connected) for the owner to listen to and
+  label. Two things make this more than a script: voicemail cannot be a
+  sampling FILTER (it is the thing being inferred), and the sampler must emit
+  row identifiers, which breaks this repo's aggregates-only probe convention
+  on purpose. **Blocked on one owner answer: can the phone system find a
+  recording by agent + timestamp, or only by dialled number?** The second
+  answer means the tool emits PHI, which is a ruling, not an implementation
+  detail. Full design in the plan's "Step 1b".
+- **Re-derive the band share over the REACHABLE population; do not carry the
+  22% forward (2026-09-21).** That figure is over all connects, and #65
+  established that 40.6% of them connect instantly and must be excluded from
+  any ring-based classifier. Measure the band's share of the remainder rather
+  than reasoning it out — whether instant rows can fall in a 20-32 s band at
+  all is a property of the data.
 - Escalations Phase 2's EXTERNAL WRITER is designed, unbuilt (H3, 2026-09):
   the review queue, the INSERT contract and the pending-review ping exist on
   this side; team-tools has no Neon connection and no writer. Building it is

@@ -1097,6 +1097,17 @@ var OB_PROBE_VM_FLOOR_SEC_ = 12;        // a peak below this is the human cluste
 var OB_PROBE_MIN_LOW_SHARE_ = 0.15;     // bimodality: a real cluster must sit BELOW the spike
 var OB_PROBE_CANDIDATE_MIN_TALK_SEC_ = 10;  // the plan's candidate, used only when no trough is found
 
+// Band tunables (the multi-modal fallback below). The single-peak gates above
+// test for ONE carrier timeout; these test for SEVERAL, which is what the
+// 2026-09-18 live run actually found (bumps at 21 / 26-27 / 30-31 s).
+var OB_PROBE_BAND_WIDTH_SEC_ = 16;        // scan window: standard no-answer timeouts span ~20-35s
+var OB_PROBE_BAND_EDGE_RATIO_ = 1.5;      // an edge bucket must be this far above baseline to stay in
+var OB_PROBE_BAND_MIN_SHARE_ = 0.12;      // a band this wide must hold more than a 2s peak did (0.08)
+var OB_PROBE_BAND_MIN_EXCESS_SHARE_ = 0.06;  // mass ABOVE baseline, as a share of connects
+var OB_PROBE_BAND_MIN_PURITY_ = 0.55;     // excess / band mass -- the precision ceiling; see obProbeRingBand_
+var OB_PROBE_BAND_SEP_LOOKBACK_ = 3;      // buckets below the left edge used as the shoulder
+var OB_PROBE_BAND_MAX_SHOULDER_ = 0.6;    // shoulder must be under this fraction of the band's mean
+
 /**
  * PURE. Spike detection over the 1s ring histogram.
  *
@@ -1184,6 +1195,148 @@ function obProbeRingSpike_(rows, total) {
   out.reason = 'ok';
   // The plan's two parameters, read straight off the measured spike: the
   // threshold is its LEFT edge, the tolerance its half-width.
+  out.suggestedVmRingSec = left;
+  out.suggestedToleranceSec = Math.ceil((right - left) / 2);
+  return out;
+}
+
+/**
+ * PURE. Band detection over the same 1s ring histogram -- the MULTI-MODAL
+ * fallback for `obProbeRingSpike_`.
+ *
+ * WHY A SECOND DETECTOR RATHER THAN LOOSER GATES. The spike detector encodes
+ * "one carrier, one no-answer timeout, therefore one tight peak". The first
+ * live run (2026-09-18) measured something else: distinct bumps at 21 s
+ * (2,077), 26-27 s (927 / 1,010) and 30-31 s (1,784 / 3,022) -- several
+ * carriers with different pickup delays. A test that measures ONE 2 s-wide
+ * peak cannot capture mass split three ways, so it refused at 7.7% against
+ * the 8% floor. Widening `OB_PROBE_SPIKE_MAX_WIDTH_SEC_` would have "fixed"
+ * that by letting a single FWHM swallow the dips, which is not the same claim
+ * and would also swallow the human tail on any other distribution. So the
+ * spike detector is left exactly as it was, and this runs only when the spike
+ * refused for a multi-modal reason.
+ *
+ * WHAT IT ADDS, AND IT IS THE POINT: a PURITY gate. Summing a 13-16 s band
+ * counts the baseline traffic inside it as if it were voicemail. On the live
+ * numbers the 20-32 s band holds 13,798 calls, of which 13 x 330 = 4,290 are
+ * baseline -- so roughly 31% of anything the band flags would be a human who
+ * simply took a while to pick up. That is the classifier's precision ceiling,
+ * it is measurable here, and no gate above looked at it. A band that is
+ * mostly baseline is refused as `band-impure` rather than handed over as a
+ * threshold, which is this probe's whole contract.
+ *
+ * WHAT KEEPS IT OFF THE HUMAN CLUSTER, precisely -- because the obvious
+ * answer is wrong. The scan maximises enclosed mass over a FIXED-width
+ * window, and at fixed width `mass - W*baseline` is maximal at exactly the
+ * same window as `mass`, since the subtracted term is a constant. So the
+ * objective provides NO protection against drifting onto people answering,
+ * and it would be false to claim it does. Two other things provide it: the
+ * left edge may not fall below `OB_PROBE_VM_FLOOR_SEC_`, and the SHOULDER
+ * gate refuses a window whose immediately-preceding seconds are nearly as
+ * busy -- which is what the upper tail of a human cluster looks like. The
+ * excess is computed for the purity gate and the report, not to steer the
+ * scan. The window is then TRIMMED to its own elevated edges, so the emitted
+ * threshold is data-determined and not an artifact of the scan width.
+ *
+ * `rows` is sparse ([{sec, n}]), densified here so a test can hand it a
+ * literal. Same return shape whether or not a band was found, with `reason`
+ * naming the FIRST gate that failed.
+ */
+function obProbeRingBand_(rows, total) {
+  var max = OB_PROBE_RING_MAX_SEC_;
+  var counts = [], i;
+  for (i = 0; i <= max; i++) counts.push(0);
+  (rows || []).forEach(function (r) {
+    var sec = Math.round(Number(r && r.sec));
+    var n = Number(r && r.n) || 0;
+    if (!isFinite(sec) || sec < 0 || sec > max) return;
+    counts[sec] += n;
+  });
+  var tot = Number(total) || 0;
+  var out = {
+    band: false, reason: '', sampled: tot, leftSec: null, rightSec: null,
+    widthSec: null, baseline: null, bandCount: 0, bandShare: 0,
+    baselineCount: 0, excessCount: 0, excessShare: 0, purity: null,
+    shoulder: null, shoulderRatio: null, belowShare: 0, peaks: [],
+    suggestedVmRingSec: null, suggestedToleranceSec: null,
+  };
+  if (tot < OB_PROBE_MIN_CONNECTED_) { out.reason = 'too-few-rows'; return out; }
+
+  // Same robust baseline as the spike detector: the median bucket cannot be
+  // moved by a band occupying a sixth of the domain, while a mean would be.
+  var sorted = counts.slice().sort(function (a, b) { return a - b; });
+  var mid = Math.floor(sorted.length / 2);
+  var baseline = (sorted.length % 2) ? sorted[mid] : ((sorted[mid - 1] + sorted[mid]) / 2);
+  out.baseline = baseline;
+
+  // Scan for the window of width W, left edge at or above the timeout floor,
+  // carrying the most mass. Expressed as excess over baseline because that is
+  // the quantity the purity gate needs anyway; at FIXED width the two rank
+  // windows identically (see the docblock -- the floor and the shoulder gate,
+  // not this objective, are what keep it off the human cluster).
+  var w = OB_PROBE_BAND_WIDTH_SEC_;
+  var bestLeft = null, bestExcess = -Infinity;
+  for (i = OB_PROBE_VM_FLOOR_SEC_; i + w - 1 <= max; i++) {
+    var mass = 0;
+    for (var j = i; j <= i + w - 1; j++) mass += counts[j];
+    var excess = mass - (w * baseline);
+    if (excess > bestExcess) { bestExcess = excess; bestLeft = i; }
+  }
+  if (bestLeft === null) { out.reason = 'empty-region'; return out; }
+
+  // Trim to the band's own elevated edges so the threshold is data-determined.
+  var edge = baseline * OB_PROBE_BAND_EDGE_RATIO_;
+  var left = bestLeft, right = bestLeft + w - 1;
+  while (left <= right && counts[left] < edge) left++;
+  while (right >= left && counts[right] < edge) right--;
+  if (left > right) { out.reason = 'empty-region'; return out; }
+  out.leftSec = left; out.rightSec = right; out.widthSec = right - left + 1;
+
+  var bandCount = 0;
+  for (i = left; i <= right; i++) bandCount += counts[i];
+  var baselineCount = out.widthSec * baseline;
+  var excessCount = Math.max(0, bandCount - baselineCount);
+  out.bandCount = bandCount;
+  out.baselineCount = Math.round(baselineCount);
+  out.excessCount = Math.round(excessCount);
+  out.bandShare = Math.round((bandCount / tot) * 1000) / 1000;
+  out.excessShare = Math.round((excessCount / tot) * 1000) / 1000;
+  out.purity = bandCount > 0 ? Math.round((excessCount / bandCount) * 1000) / 1000 : null;
+
+  var below = 0;
+  for (i = 0; i < left; i++) below += counts[i];
+  out.belowShare = Math.round((below / tot) * 1000) / 1000;
+
+  // The local maxima inside the band, reported so the operator can see WHY
+  // the single-peak detector could not hold this shape.
+  for (i = left; i <= right; i++) {
+    var hiL = (i === left) || counts[i] >= counts[i - 1];
+    var hiR = (i === right) || counts[i] >= counts[i + 1];
+    if (hiL && hiR && counts[i] >= edge) out.peaks.push({ sec: i, n: counts[i] });
+  }
+
+  // Separation from the human cluster. A band is only a band if the seconds
+  // immediately below it are materially quieter -- otherwise it is the upper
+  // tail of people answering, and every gate above would still pass.
+  var lookFrom = Math.max(0, left - OB_PROBE_BAND_SEP_LOOKBACK_);
+  var shoulderN = 0, shoulderBuckets = 0;
+  for (i = lookFrom; i < left; i++) { shoulderN += counts[i]; shoulderBuckets++; }
+  var shoulderMean = shoulderBuckets ? (shoulderN / shoulderBuckets) : 0;
+  var bandMean = bandCount / out.widthSec;
+  out.shoulder = Math.round(shoulderMean);
+  out.shoulderRatio = bandMean > 0 ? Math.round((shoulderMean / bandMean) * 1000) / 1000 : null;
+
+  if (out.bandShare < OB_PROBE_BAND_MIN_SHARE_) { out.reason = 'band-too-small'; return out; }
+  if (out.excessShare < OB_PROBE_BAND_MIN_EXCESS_SHARE_) { out.reason = 'band-is-baseline'; return out; }
+  if (out.purity < OB_PROBE_BAND_MIN_PURITY_) { out.reason = 'band-impure'; return out; }
+  if (shoulderBuckets && out.shoulderRatio > OB_PROBE_BAND_MAX_SHOULDER_) { out.reason = 'no-trough'; return out; }
+  if (out.belowShare < OB_PROBE_MIN_LOW_SHARE_) { out.reason = 'unimodal'; return out; }
+
+  out.band = true;
+  out.reason = 'ok';
+  // Same output contract as the spike path: threshold at the left edge,
+  // tolerance the half-width. A band's tolerance is necessarily wider, which
+  // is exactly why `purity` travels with it.
   out.suggestedVmRingSec = left;
   out.suggestedToleranceSec = Math.ceil((right - left) / 2);
   return out;
@@ -1415,6 +1568,18 @@ function probeOutboundAnswerQuality() {
     var spike = obProbeRingSpike_(d.ringHist, Number(d.conn1) || 0);
     var trough = obProbeTalkTrough_(d.talkHist, Number(d.talkTotal) || 0);
 
+    // The MULTI-MODAL fallback. Only consulted when the single-peak detector
+    // refused for a reason a band could legitimately explain -- a peak that
+    // is too small or too wide is what mass split across several carrier
+    // timeouts looks like through a one-peak test. Every other refusal
+    // (too-few-rows, empty-region, flat, unimodal) is a property of the
+    // whole distribution that a band cannot rescue, and running it there
+    // would only offer a second chance at the same wrong answer.
+    var BAND_ELIGIBLE_ = { 'spike-too-small': 1, 'too-wide': 1 };
+    var band = (!spike.spike && BAND_ELIGIBLE_[spike.reason])
+      ? obProbeRingBand_(d.ringHist, Number(d.conn1) || 0)
+      : null;
+
     // The repeat check's own modal ring -- an INDEPENDENT estimate. It is
     // only meaningful as agreement or disagreement, so it is reported either
     // way and never averaged into the suggestion.
@@ -1422,8 +1587,25 @@ function probeOutboundAnswerQuality() {
     (d.repeatRingHist || []).forEach(function (r) {
       if ((Number(r.n) || 0) > repeatModeN) { repeatModeN = Number(r.n) || 0; repeatMode = Number(r.sec); }
     });
-    var repeatAgrees = (spike.spike && repeatMode !== null
-      && repeatMode >= spike.leftSec && repeatMode <= spike.rightSec);
+    // Which detector, if either, produced a defensible parameter set. The
+    // peak is preferred whenever it passes: a 2s band implies a far higher
+    // precision than a 13s one, so a passing spike is strictly the better
+    // answer and this keeps the pre-band behaviour byte-identical.
+    var basis = null;
+    if (spike.spike) {
+      basis = { kind: 'peak', lo: spike.suggestedVmRingSec, hi: spike.rightSec,
+                tol: spike.suggestedToleranceSec, share: spike.spikeShare, purity: null };
+    } else if (band && band.band) {
+      basis = { kind: 'band', lo: band.suggestedVmRingSec, hi: band.rightSec,
+                tol: band.suggestedToleranceSec, share: band.bandShare, purity: band.purity };
+    }
+
+    // Agreement is judged against the band that was actually ADOPTED, not
+    // always the spike's: on a band basis the independent estimate has to be
+    // tested against the range the parameters came from, or it would report
+    // disagreement with a peak nothing is being set from.
+    var repeatAgrees = (!!basis && repeatMode !== null
+      && repeatMode >= basis.lo && repeatMode <= basis.hi);
 
     var out = {
       window: { from: from, to: to },
@@ -1435,13 +1617,14 @@ function probeOutboundAnswerQuality() {
       talk: { measured: Number(d.talkTotal) || 0, over300: Number(d.talkOver) || 0 },
       talkHist: d.talkHist || [],
       spike: spike,
+      bandScan: band,
       trough: trough,
       repeat: { groups: Number(d.repeatGroups) || 0, modalRingSec: repeatMode,
                 modalRingGroups: repeatModeN, agreesWithSpike: repeatAgrees,
                 hist: d.repeatRingHist || [] },
     };
 
-    if (!spike.spike) {
+    if (!basis) {
       // INCONCLUSIVE is a RESULT here, not an error: it says the data does
       // not support a voicemail threshold, which is exactly what the probe
       // was run to find out. Tool params are deliberately kept so the
@@ -1476,7 +1659,9 @@ function probeOutboundAnswerQuality() {
           byAttempts: xcut.attempts,
         };
       }
-      out.result = 'INCONCLUSIVE (' + obProbeSpikeHint_(spike) + ') ' + label
+      out.result = 'INCONCLUSIVE (' + obProbeSpikeHint_(spike)
+        + (band ? '; multi-modal band fallback also refused: ' + obProbeBandHint_(band) : '')
+        + ') ' + label
         + ' — do NOT set OUTBOUND_VM_RING_SEC or enable OUTBOUND_ANSWER_QUALITY from this run.'
         + (out.exploratory ? ' An EXPLORATORY ring×talk cut at the observed peak is included'
             + ' for diagnosis only — it is not a measurement.' : '');
@@ -1485,27 +1670,55 @@ function probeOutboundAnswerQuality() {
     }
 
     // ── Query 2: the joint cuts, at the MEASURED band ────────────────────
-    var lo = spike.suggestedVmRingSec;
-    var hi = spike.rightSec;
+    var lo = basis.lo;
+    var hi = basis.hi;
     var minTalk = trough.suggestedMinTalkSec;
     var cut = obProbeJointCut_(conn, from, to, lo, hi, minTalk);
     out.quadrants = cut.quadrants;
     out.byAttempts = cut.attempts;
-    out.band = { vmRingSec: lo, toleranceSec: spike.suggestedToleranceSec, rightSec: hi,
-                 minTalkSec: minTalk, minTalkMeasured: trough.suggestedIsMeasured };
+    out.band = { vmRingSec: lo, toleranceSec: basis.tol, rightSec: hi,
+                 minTalkSec: minTalk, minTalkMeasured: trough.suggestedIsMeasured,
+                 basis: basis.kind, purity: basis.purity };
 
     out.suggested = {
       OUTBOUND_VM_RING_SEC: lo,
-      OUTBOUND_VM_RING_TOLERANCE_SEC: spike.suggestedToleranceSec,
+      OUTBOUND_VM_RING_TOLERANCE_SEC: basis.tol,
       OUTBOUND_MIN_TALK_SEC: minTalk,
       OUTBOUND_ANSWER_QUALITY: 'off',
     };
+    // Deliberately NOT inside `suggested`: that block is what an operator
+    // copies key-for-key into Script Properties, and a `basis` key sitting in
+    // it invites setting a property by that name (pinned by the deep-equal in
+    // outbound-report.test.js). The ceiling still has to travel with the
+    // parameters -- a band-derived threshold flags the baseline traffic inside
+    // its own width as voicemail, and that is not recoverable from the three
+    // numbers above -- so it sits beside them.
+    out.suggestedBasis = {
+      basis: basis.kind,
+      expectedPrecisionCeiling: basis.purity,
+      note: basis.kind === 'band'
+        ? 'Derived from a MULTI-MODAL band, not a single timeout. About '
+          + obProbePct1_(1 - (basis.purity || 0)) + ' of what this threshold flags will be a '
+          + 'human who answered slowly. Validate against listened calls before enabling.'
+        : 'Derived from a single tight timeout peak.',
+    };
     if (typeof clearToolParamsAfterCleanRun_ === 'function') clearToolParamsAfterCleanRun_(
       ['OUTBOUND_PROBE_FROM', 'OUTBOUND_PROBE_TO'], 'probeOutboundAnswerQuality');
-    out.result = 'ok bimodal: ring spike at ' + spike.peakSec + 's '
-      + '(band ' + lo + '-' + hi + 's, ' + Math.round(spike.spikeShare * 100) + '% of '
-      + spike.sampled + ' single-attempt connects, ' + spike.widthSec + 's wide); '
-      + 'repeat-callee modal ring ' + (repeatMode === null ? 'n/a' : repeatMode + 's')
+    out.result = 'ok '
+      + (basis.kind === 'peak'
+          ? ('bimodal: ring spike at ' + spike.peakSec + 's (band ' + lo + '-' + hi + 's, '
+             + Math.round(spike.spikeShare * 100) + '% of ' + spike.sampled
+             + ' single-attempt connects, ' + spike.widthSec + 's wide)')
+          : ('MULTI-MODAL: no single timeout, but an elevated band at ' + lo + '-' + hi + 's '
+             + 'holding ' + obProbePct1_(band.bandShare) + ' of ' + band.sampled
+             + ' single-attempt connects across ' + band.peaks.length + ' peaks ('
+             + band.peaks.map(function (pk) { return pk.sec + 's'; }).join(', ') + '). '
+             + '⚠ PRECISION CEILING ' + obProbePct1_(band.purity) + ': only '
+             + band.excessCount + ' of the band\'s ' + band.bandCount
+             + ' calls sit above baseline, so roughly ' + obProbePct1_(1 - (band.purity || 0))
+             + ' of what a threshold here flags would be a human who took a while to '
+             + 'answer. Decide whether that is good enough BEFORE setting anything'))
+      + '; repeat-callee modal ring ' + (repeatMode === null ? 'n/a' : repeatMode + 's')
       + (repeatMode === null ? '' : (repeatAgrees ? ' AGREES' : ' DISAGREES')) + '; '
       + 'min-talk ' + minTalk + 's ' + (trough.suggestedIsMeasured ? '(measured trough)' : '(candidate — no trough found)')
       + '. ' + label + ' — these are MEASURED values for Part 2; nothing was set. '
@@ -1528,6 +1741,40 @@ function probeOutboundAnswerQuality() {
 function obProbePct1_(x) { return ((Number(x) || 0) * 100).toFixed(1) + '%'; }
 
 /** PURE. The operator-facing sentence for a spike gate that did not pass. */
+function obProbeBandHint_(b) {
+  switch (b && b.reason) {
+    case 'too-few-rows':
+      return 'only ' + b.sampled + ' single-attempt connected calls, need '
+        + OB_PROBE_MIN_CONNECTED_ + ' — widen OUTBOUND_PROBE_FROM/_TO';
+    case 'empty-region':
+      return 'no band of elevated ring seconds at or above ' + OB_PROBE_VM_FLOOR_SEC_ + 's';
+    case 'band-too-small':
+      return 'the widest elevated band (' + b.leftSec + '-' + b.rightSec + 's) holds only '
+        + obProbePct1_(b.bandShare) + ' of connects (need ' + obProbePct1_(OB_PROBE_BAND_MIN_SHARE_)
+        + ') — too little to build a rule on';
+    case 'band-is-baseline':
+      return 'the ' + b.leftSec + '-' + b.rightSec + 's band is barely above background ('
+        + obProbePct1_(b.excessShare) + ' of connects above baseline, need '
+        + obProbePct1_(OB_PROBE_BAND_MIN_EXCESS_SHARE_) + ') — nothing is concentrated there';
+    case 'band-impure':
+      return 'the ' + b.leftSec + '-' + b.rightSec + 's band is only '
+        + obProbePct1_(b.purity) + ' above-baseline mass (need '
+        + obProbePct1_(OB_PROBE_BAND_MIN_PURITY_) + ') — roughly '
+        + obProbePct1_(1 - (b.purity || 0)) + ' of anything it flagged would be a human who '
+        + 'took a while to answer, which is too low a precision ceiling to set a threshold on';
+    case 'no-trough':
+      return 'the ' + b.leftSec + '-' + b.rightSec + 's band does not separate from the seconds '
+        + 'below it (shoulder is ' + obProbePct1_(b.shoulderRatio) + ' of the band mean, max '
+        + obProbePct1_(OB_PROBE_BAND_MAX_SHOULDER_) + ') — it is the upper tail of people '
+        + 'answering, not a distinct population';
+    case 'unimodal':
+      return 'only ' + obProbePct1_(b.belowShare) + ' of connects ring SHORTER than the band '
+        + '(need ' + obProbePct1_(OB_PROBE_MIN_LOW_SHARE_) + ') — no human cluster below it';
+    default:
+      return 'no voicemail band found';
+  }
+}
+
 function obProbeSpikeHint_(s) {
   switch (s && s.reason) {
     case 'too-few-rows':
