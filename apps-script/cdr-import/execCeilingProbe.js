@@ -99,11 +99,27 @@ function execCeilingVerdict_(lastMs, finished, startedIso, nowMs) {
   // Budgets leave ~2 min for the in-flight date + the final archive, floored at 1 min.
   out.recommendMs = Math.max(60000, Math.round((last - 2 * 60000) / 60000) * 60000);
   var ceilMin = Math.round(last / 60000);
+  // WHICH belief the measurement settles depends on the measurement. This
+  // clause used to assert unconditionally that the "30-min ceiling" comments
+  // were wrong -- written on the assumption the real ceiling would come in
+  // LOWER. Measured at ~30 min (2026-09-21, Operator State #70) it inverted
+  // the tool's own finding and told the operator to disbelieve the comments
+  // the probe had just confirmed.
+  out.settles = (ceilMin >= 25) ? '30min-confirmed' : (ceilMin <= 7 ? '6min-confirmed' : 'neither');
+  var settles = (out.settles === '30min-confirmed')
+    ? ' That CONFIRMS the "30-min ceiling" comments (the bulk budget\'s, the inbound backfill\'s)'
+      + ' and disproves the "~6 min" ones -- including the rationale printed beside'
+      + ' NEON_MIRROR_BUDGET_MS. Correct those comments; the 4-min mirror budget itself may still'
+      + ' be deliberate for other reasons, so do not raise it on the strength of this number alone.'
+    : (out.settles === '6min-confirmed')
+      ? ' That CONFIRMS the "~6 min" comments and makes every "30-min ceiling" comment wrong --'
+        + ' the deferred mirror\'s NEON_MIRROR_BUDGET_MS (default ~4 min) is already right.'
+      : ' That matches NEITHER standing belief ("30 min" or "~6 min"), so treat both as wrong'
+        + ' and use the measured number.';
   out.text = 'The platform killed the probe at ~' + Math.round(last / 1000) + ' s (~' + ceilMin + ' min) -- '
     + 'that is the trigger execution ceiling. Set BULK_TIME_LIMIT_MS and IC_BACKFILL_TIME_LIMIT_MS to '
     + out.recommendMs + ' (' + Math.round(out.recommendMs / 60000) + ' min) in the cdr-import Script '
-    + 'Properties (no redeploy), and treat every "30-min ceiling" comment as wrong.'
-    + (ceilMin <= 7 ? ' At ~6 min the deferred mirror\'s NEON_MIRROR_BUDGET_MS (default ~4 min) is already right.' : '');
+    + 'Properties (no redeploy).' + settles;
   return out;
 }
 

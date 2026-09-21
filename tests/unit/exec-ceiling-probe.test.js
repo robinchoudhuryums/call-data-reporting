@@ -46,3 +46,41 @@ test('the two budgets read their Script Property, default when unset, and stay i
   h.state.props.IC_BACKFILL_TIME_LIMIT_MS = String(60 * 60000);
   assert.equal(h.call('icBackfillTimeLimitMs_'), 40 * 60000, 'capped at 40 min');
 });
+
+// Which belief the measurement SETTLES follows the measurement (2026-09-21).
+// The KILLED text used to assert unconditionally that the "30-min ceiling"
+// comments were wrong -- written assuming the real ceiling would come in
+// lower. The live probe measured ~1794 s (~30 min), so that clause told the
+// operator to disbelieve the very comments the probe had just confirmed.
+// A tool whose job is to hand over one correct instruction cannot be wrong
+// in the case it was built to measure.
+
+test('KILLED at ~30 min CONFIRMS the 30-min comments instead of contradicting them', function () {
+  const v = verdict(1794000, null, '2026-09-21T12:00:00Z', Date.parse('2026-09-21T13:00:00Z'));
+  assert.equal(v.verdict, 'KILLED');
+  assert.equal(v.settles, '30min-confirmed');
+  assert.equal(v.recommendMs, 1680000, '28 min -- the measured ceiling less ~2 min, floored to the minute');
+  assert.match(v.text, /CONFIRMS the "30-min ceiling" comments/);
+  assert.match(v.text, /disproves the "~6 min" ones/);
+  assert.ok(!/treat every "30-min ceiling" comment as wrong/.test(v.text),
+    'must not tell the operator to disbelieve what it just confirmed');
+  // The 4-min mirror budget may be deliberate for reasons this probe cannot
+  // see, so the advice must stop short of telling anyone to raise it.
+  assert.match(v.text, /do not raise it on the strength of this number alone/);
+});
+
+test('KILLED at ~6 min CONFIRMS the 6-min comments and condemns the 30-min ones', function () {
+  const v = verdict(360000, null, '2026-09-21T12:00:00Z', Date.parse('2026-09-21T13:00:00Z'));
+  assert.equal(v.verdict, 'KILLED');
+  assert.equal(v.settles, '6min-confirmed');
+  assert.match(v.text, /CONFIRMS the "~6 min" comments/);
+  assert.match(v.text, /every "30-min ceiling" comment wrong/);
+  assert.match(v.text, /NEON_MIRROR_BUDGET_MS \(default ~4 min\) is already right/);
+});
+
+test('a ceiling matching NEITHER belief says so rather than picking a side', function () {
+  const v = verdict(15 * 60000, null, '2026-09-21T12:00:00Z', Date.parse('2026-09-21T13:00:00Z'));
+  assert.equal(v.settles, 'neither');
+  assert.match(v.text, /matches NEITHER standing belief/);
+  assert.equal(v.recommendMs, 13 * 60000);
+});
