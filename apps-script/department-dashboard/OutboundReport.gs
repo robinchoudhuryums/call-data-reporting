@@ -1650,10 +1650,25 @@ function obInstantDerivedRing_(journeyJson) {
   var ev;
   try { ev = JSON.parse(journeyJson || 'null'); } catch (e) { return null; }
   if (!ev || !ev.length) return null;
-  var i;
+  var i, c;
+  // 1. A phone-SHAPED callee name. Never seen on outbound (0 of 1200 sampled
+  //    events across two runs), kept first so a capture fix that starts
+  //    emitting it wins here with no reader change.
   for (i = 0; i < ev.length; i++) {
     if (ev[i] && ev[i].name === '(external number)') return obJourneyEventRing_(ev[i]);
   }
+  // 2. The P-11 MASKED external party -- initials, or '(external caller)' when
+  //    the mask declined. This is the external leg BY CONSTRUCTION: P-11's
+  //    branch fires only for a leg whose CALLEE is an external number.
+  for (i = 0; i < ev.length; i++) {
+    c = obJourneyNameClass_(ev[i]);
+    if (c === 'initials' || c === 'extCaller') return obJourneyEventRing_(ev[i]);
+  }
+  // 3. PRE-P-11 rows only. Before 2026-09-17 that branch did not exist, so a
+  //    CNAM-carrying external leg fell through to '(unknown)' and the first
+  //    unknown event WAS the external leg. It no longer is: on post-P-11 rows
+  //    the external leg is masked (step 2) and the remaining '(unknown)' is
+  //    the other leg, whose secs-talk-hold is a residual, not a ring.
   for (i = 0; i < ev.length; i++) {
     if (obJourneyNameClass_(ev[i]) === 'unknown') return obJourneyEventRing_(ev[i]);
   }

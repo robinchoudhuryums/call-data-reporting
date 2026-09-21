@@ -232,10 +232,17 @@ queue event as `queue` whatever its name, so the 12% of instant rows that
 passed through a queue skip it rather than measuring hold music. A bare
 `firstEvent` fallback would have measured the music on those rows.
 
-**The answer to #65, from the diagnostic's own numbers: `carrier-instant`.**
-The instant group derives a median 1 s ring with only **12.3%** of rows at or
-above the 3 s real-ring line -- under the 20% `OB_INSTANT_CARRIER_SHARE_`
-gate -- against a control that derives 27 s with 100% real rings. So **these
+**The answer to #65: `carrier-instant`** -- reached on the 09-18 run, briefly
+contradicted, and CONFIRMED on a second shape run 2026-09-21 with the
+corrected marker. The confirming figures are the clean ones: the P-11 masked
+external leg (`initials`) covers 300/300 rows and reads a median **1 s with a
+0% real-ring share** on the instant group, against **27 s with 100%** on the
+rung control -- a marker that tracks the stored `ring_seconds` at both ends to
+the second. Well under the 20% `OB_INSTANT_CARRIER_SHARE_` gate. (The 09-18
+figures were a median 1 s at **12.3%**, from the pre-P-11 marker; same answer,
+noisier instrument. The `connected-timestamp` verdict in between came from
+reading the wrong leg on post-P-11 rows -- Operator State #65 has the era
+split.) So **these
 calls genuinely connect instantly, `ring_seconds` is telling the truth, and
 the classifier must EXCLUDE them and disclose the reduced reachable
 population (~60%, permanently).** Re-run #65 to have the probe state that in
