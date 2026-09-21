@@ -535,11 +535,18 @@ tripwire. Revisit only after Batch 5 has held.
 - Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
   instead of C+D; the all-dept QCD budget being per-run.
 - ~~`obInstantDerivedRing_` is mis-keyed (2026-09-18, BLOCKS Part 2).~~ FIXED
-  2026-09-18 by measurement, not by the guessed cause: no masked name shape
-  exists in the blobs at all, because `icBuildJourney_` names from CALLEE_NAME
-  and an outbound dial leaves it blank. The reader now falls back to the first
-  `unknown`-CLASS event, validated on the rung answer key. Operator State #65
-  carries the run and the `carrier-instant` reading.
+  2026-09-21, and the 09-18 fix's REASONING was wrong: it read "no masked name
+  shape exists in the blobs at all", which was true only of the era it
+  sampled. P-11 shipped 2026-09-17 and made `icBuildJourney_` mask a
+  CALLEE-external leg's CNAM to initials, so the two probe runs straddled a
+  capture change -- the 09-18 run saw 0 `initials`, the 09-21 run 300. The
+  reader now prefers the MASKED leg and keeps the first-`unknown` fallback for
+  pre-P-11 rows; `carrier-instant` is confirmed on the post-P-11 answer key
+  (rung 27 s / 100% talk, instant 1 s / 0%). Operator State #65 carries both
+  runs and the lesson: a reader keyed on a journey NAME is keyed on a capture
+  convention, so when a marker and its own recommending diagnostic disagree
+  across two runs, check whether the capture moved before auditing either
+  implementation.
 - **Overview trend chart: the Company line is % ONLY (2026-09-18).** Delivered
   for `pct` and `abandonedPct`; the two COUNT metrics deliberately have no
   `companyField`, because a company "answered calls" line just restates the
