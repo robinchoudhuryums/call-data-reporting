@@ -2481,7 +2481,22 @@ When something looks wrong, before assuming a code bug, check:
     Then set the cdr-import Script Properties `BULK_TIME_LIMIT_MS` (the bulk
     per-click budget, default 15 min) and `IC_BACKFILL_TIME_LIMIT_MS` (the
     inbound / outbound backfill budget, default 15 min) -- both bounded to
-    1-40 min, no redeploy. If the ceiling reads ~6 min, the deferred mirror's
+    1-40 min, no redeploy.
+    **MEASURED 2026-09-21: KILLED at ~1794 s (~30 min), recommending 1680000
+    (28 min) for both budgets.** So the 30-min family of comments (the bulk
+    budget's, the inbound backfill's) is CONFIRMED and the "~6 min" family is
+    WRONG for a trigger -- including the rationale that sat beside
+    `NEON_MIRROR_BUDGET_MS`, now corrected in place. The 4-min mirror budget
+    itself was NOT raised: its job is keeping a frequent trigger short, which
+    the ceiling never bounded, so changing it is a separate decision with its
+    own reasoning. Re-measure only on an account-type change; the number is
+    per-account and not derivable from code.
+    A NOTE ON THE OBSERVED 6-MIN KILL that seeded the wrong belief: it was
+    not the trigger ceiling, so it had another cause, and the open
+    hanging-Neon-connect problem (the `connectTimeout` prohibition in Common
+    Gotchas) is the obvious suspect -- unproven, and worth remembering before
+    anyone reads a future ~6 min kill as "the ceiling". If the ceiling ever
+    reads ~6 min on some account, the deferred mirror's
     `NEON_MIRROR_BUDGET_MS` (default ~4 min, #22) is already right. Nothing
     else changes: a kill mid-date is recoverable either way (`bulkIndex`
     advances only after a date completes, so Resume re-runs the in-flight

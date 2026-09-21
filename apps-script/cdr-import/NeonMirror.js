@@ -72,7 +72,12 @@ var NEON_MIRROR_MAX_ATTEMPTS_DEFAULT = 8;
 // their attempts UNCHANGED (they were not tried, so they must not be penalized),
 // and log a `neonMirror:budget` row naming what was left. The next run resumes
 // at the head of the queue. Same shape as CacheWarm.gs's INSIGHTS_WARM_BUDGET_MS.
-var NEON_MIRROR_BUDGET_MS_DEFAULT = 4 * 60 * 1000;   // 4 min of the ~6 min ceiling
+// 4 min. NOT "4 min of the ~6 min ceiling" -- that rationale was measured
+// WRONG (Operator State #70, 2026-09-21: the trigger ceiling is ~30 min).
+// The 4 min stays as-is because this budget's real job is to keep a frequent
+// mirror trigger short, which the ceiling never bounded; raising it is a
+// separate decision with its own reasoning, not a correction to this one.
+var NEON_MIRROR_BUDGET_MS_DEFAULT = 4 * 60 * 1000;
 
 function nmBudgetMs_() {
   var raw = null;
@@ -197,7 +202,9 @@ function runNeonMirror_() {
         + (unbudgeted.length > 10 ? ' …' : '')
         + '. Attempts NOT incremented (untried). If this repeats with the count '
         + 'not falling, the queue is growing faster than it drains -- check Neon '
-        + 'reachability first, then raise NEON_MIRROR_BUDGET_MS (ceiling is ~6 min).');
+        + 'reachability first, then raise NEON_MIRROR_BUDGET_MS (the trigger ceiling '
+        + 'is ~30 min -- MEASURED, Operator State #70 -- so a 4-min budget has room; '
+        + 'it is short to keep a frequent trigger short, not because of the ceiling).');
       Logger.log('runNeonMirror_: budget hit -- %s date(s) left queued.', unbudgeted.length);
     }
 
