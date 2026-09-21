@@ -2213,8 +2213,45 @@ When something looks wrong, before assuming a code bug, check:
       64 s at 2-16 s, 36 s at 17-32 s), so instant-ring rows talk the LONGEST.
       That argues for a mis-recorded CONNECTED timestamp on real conversations
       and AGAINST reading them as drops -- but recoverable-vs-permanent is
-      exactly what this probe exists to decide, and it cannot until the lookup
-      is fixed.
+      exactly what this probe exists to decide, and it could not until the
+      lookup was fixed. It since has been: see CLOSED below.
+    - **CLOSED 2026-09-21, post-deploy, by the probe ITSELF.** Everything
+      above the era fix was inference from the shape run; this is
+      `probeOutboundInstantConnects` verdicting on the full population, with
+      the era-aware marker live. `carrier-instant`, window 2026-08-24..09-20,
+      all departments, **66,042 connected single-attempt calls, 26,804 instant
+      (40.6%)**. The two sampled groups separate perfectly and in opposite
+      directions: instant = 300 sampled, `noExternalLeg` **0**, median derived
+      ring **1 s**, real-ring share **0%**; rung (stored ring >= 17 s) = 300
+      sampled, `noExternalLeg` **0**, median derived **27 s**, real-ring share
+      **100%**. `noExternalLeg: 0` on BOTH groups is the era fix working --
+      the 09-18 run read 300 misses on the same rows.
+      **All three supporting cuts agree, and each kills a different
+      alternative.** (a) TALK PROFILE, the strongest corroboration: medians
+      fall as ring rises -- **105 s** at 0-1 s, 65 s at 2-16 s, 36 s at
+      17-32 s, 38 s past that. Instant rows hold the LONGEST conversations, so
+      they are real calls, not answering-machine drops (a drop would be the
+      shortest bucket). (b) PER DAY: the instant share sits in 39.3-42.7% on
+      every one of the 19 business days -- no step change, so no config-change
+      date to find. The window's business days are all present (28 calendar
+      days minus 8 weekend days minus Labor Day 09-07 = 19), so no gap is
+      skewing it. (c) CONCENTRATION: `concentrated: false` across 168 agents.
+      Do NOT over-read its `top` list -- the five agents shown at 89-100%
+      instant rates have only 28-40 calls each against a ~393-call per-agent
+      average, so those rates are low-volume noise, not a handset setting; the
+      measure that matters is the top-5 VOLUME share, 9.9% against a 3.0% even
+      baseline, which the detector correctly judged un-concentrated.
+    - **What this OBLIGES of any voicemail classifier built on #64.** These
+      calls genuinely connect instantly (early media / auto-answer);
+      `ring_seconds` is TRUTHFUL and simply cannot discriminate them. So a
+      classifier must (1) EXCLUDE the instant population rather than
+      threshold it, and (2) DISCLOSE that its reachable population is the
+      ~59% remainder -- a coverage figure on the surface, not a footnote.
+      **#64's measured voicemail band (20-32 s, multi-modal at 21 / 26-27 /
+      30-31 s) was measured over ALL connects**, so its ~22% share is over a
+      denominator that now shrinks by 40.6%; re-derive that share over the
+      reachable remainder before sizing anything on it, rather than carrying
+      the old number forward.
 
 66. **The QCD-vs-DQE reconciliation diagnostic (`diagnoseQcdVsDqe`).**
     Read-only, editor- or menu-run from **cdr-import** (CDR Tools → "QCD vs

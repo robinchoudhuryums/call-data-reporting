@@ -355,21 +355,28 @@ of connects in total), so **no re-run clears it -- it needs a band-summing
 probe rather than a one-peak one**; the min-talk half DID measure at 20 s.
 (2) `probeOutboundInstantConnects` could not verdict at all -- zero usable
 external legs in 600 sampled rows. **FIXED 2026-09-18, and the fix came with
-the answer.** `probeOutboundJourneyShape()` measured the cause and overturned
-the P-11/CNAM hypothesis: no masked name shape is present at ALL
-(`extNumber: 0`, `extCaller: 0`, `initials: 0`), because `icBuildJourney_`
-names from CALLEE_NAME, which an outbound dial leaves blank, so every
-external leg is named by an ERA-dependent rule: masked initials since P-11
-(2026-09-17), `(unknown)` before it. `obInstantDerivedRing_` prefers the
+the answer.** `probeOutboundJourneyShape()` measured the cause. Its
+FIRST run (09-18) showed no masked name shape at all (`extNumber: 0`,
+`extCaller: 0`, `initials: 0`) and that reading was taken as structural; it
+was era-bound. The second run (09-21) showed `initials: 300`. The rule is
+ERA-dependent, because `icBuildJourney_` names from CALLEE_NAME, which an
+outbound dial leaves blank: masked initials since P-11 (2026-09-17),
+`(unknown)` before it. `obInstantDerivedRing_` prefers the
 masked leg and keeps the first-`unknown` rule as the pre-P-11 fallback -- the
 one-arm version read the wrong leg on post-P-11 rows and flipped the verdict
-for a day. CONFIRMED `carrier-instant` on the 2026-09-21 run: the masked
-marker reads a median 1 s at a **0%** real-ring share on the instant group
-against 27 s at 100% on the rung control, so **the instant connects are
-genuine and the classifier must exclude and disclose them**. That also means
-the talk-profile hypothesis was right and the derived ring does NOT overrule
-it. Only the band-gate half of (1) still
-blocks the parameter work below. `connected` counts a voicemail pickup
+for a day. **CLOSED 2026-09-21 post-deploy by
+`probeOutboundInstantConnects` itself** (not by inference from the shape run):
+`carrier-instant` over 66,042 connected single-attempt calls, 26,804 instant
+(40.6%), with `noExternalLeg: 0` on both sampled groups. The marker reads a
+median 1 s at a **0%** real-ring share on the instant group against 27 s at
+**100%** on the rung control, and all three supporting cuts agree -- talk
+medians FALL as ring rises (105 / 65 / 36 s), the share is flat on all 19
+business days, and it is spread across 168 agents. So **the instant connects
+are genuine, `ring_seconds` is truthful, and the classifier must EXCLUDE them
+and DISCLOSE the ~59% reachable remainder**; the talk-profile hypothesis was
+right all along and the derived ring does not overrule it. Operator State #65
+carries the numbers and the low-volume trap in the concentration list.
+Only the band-gate half of (1) still blocks the parameter work below. `connected` counts a voicemail pickup
 as a reached caller (the far end genuinely answers, so every condition the
 flag tests is met), which the six-point round promoted into the "Actually
 reached" tile. A single scope-level rate carries that over-count as a
@@ -571,7 +578,14 @@ tripwire. Revisit only after Batch 5 has held.
   Voicemail pickup here is multi-modal (21 / 26-27 / 30-31 s), so the 8%
   single-peak share gate refuses a real signal; the 20-32 s band is ~22% of
   connects. Keep the floor + bimodality gates. → same change as above;
-  measurements in the plan's "Step 1 RESULTS".
+  measurements in the plan's "Step 1 RESULTS". **Re-derive the band share over
+  the REACHABLE population, don't carry the 22% forward (2026-09-21):** that
+  figure is over all connects, and #65 closed by establishing that 40.6% of
+  them connect instantly and must be excluded from any ring-based classifier.
+  The denominator shrinks by that much, so the band's share of what the
+  classifier can actually see is a different number — measure it, since
+  whether instant rows can fall in a 20-32 s band at all is a property of the
+  data, not an assumption to reason from.
 - Escalations Phase 2's EXTERNAL WRITER is designed, unbuilt (H3, 2026-09):
   the review queue, the INSERT contract and the pending-review ping exist on
   this side; team-tools has no Neon connection and no writer. Building it is

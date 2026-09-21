@@ -77,12 +77,29 @@
     the E10 `alertConfigSection_` seam, the config-section re-render and
     server-fed-picker conventions, INV-39's two strips, and a new
     `getOverviewChartTrend` row in `docs/architecture.md`.
-  - **OPERATOR OWES (none blocking each other):** (1) deploy the dashboard,
-    then re-run `probeOutboundInstantConnects` and confirm the verdict returns
-    to `carrier-instant`; (2) set the two cdr-import time limits to `1680000`;
-    (3) set `ANSWER_RATE_FORMULA=answerable`; (4) delete `PerformanceReport.gs`
-    in the Apps Script WEB EDITOR (INV-17); (5) import 2026-09-18's data;
-    (6) walk S39 + S41 by hand.
+  - **THE #64/#65 OUTBOUND THREAD IS CLOSED (2026-09-21, post-deploy).** The
+    dashboard is deployed and `probeOutboundInstantConnects` verdicted
+    `carrier-instant` on the full population: 66,042 connected single-attempt
+    calls, 26,804 instant (40.6%), `noExternalLeg: 0` on BOTH sampled groups
+    (it was 300 misses on the 09-18 run -- that zero is the era fix working),
+    instant median 1 s at a 0% real-ring share against the rung control's 27 s
+    at 100%. All three supporting cuts agree: talk medians FALL as ring rises
+    (105 / 65 / 36 s, so instant rows hold the LONGEST calls and are not
+    drops), the share is flat 39.3-42.7% on all 19 business days (no
+    config-change date), and it is spread across 168 agents. **Consequence for
+    the work still queued: a voicemail classifier must EXCLUDE the instant
+    population and DISCLOSE the ~59% remainder as its reachable coverage --
+    and #64's ~22% band share was measured over ALL connects, so it must be
+    re-derived over that remainder rather than carried forward.** Recorded in
+    Operator State #65 (incl. the trap in the concentration list: the top-5
+    agents at 89-100% instant have only 28-40 calls each against a ~393-call
+    average, so those rates are noise -- the un-concentrated verdict rests on
+    the VOLUME share, 9.9% vs a 3.0% even baseline).
+  - **OPERATOR OWES (none blocking each other):** ~~(1) deploy + re-run the
+    instant-connect probe~~ DONE 2026-09-21, above; (2) set the two cdr-import
+    time limits to `1680000`; (3) set `ANSWER_RATE_FORMULA=answerable`;
+    (4) delete `PerformanceReport.gs` in the Apps Script WEB EDITOR (INV-17);
+    (5) import 2026-09-18's data; (6) walk S39 + S41 by hand.
   - **WHERE I LEFT OFF / next code work:** the scan's fix batches are drained,
     so the queue is `docs/next-steps.md`'s own order -- **Batch 6c (Outbound
     report: CODE DONE, RELEASE PENDING** -- backfill, `runOutboundVettingCheck`
