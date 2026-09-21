@@ -1025,6 +1025,243 @@ function runOutboundVettingCheck() {
 }
 
 // ---------------------------------------------------------------------------
+// ── sampleOutboundCallsForReview -- STEP 1b of the answer-quality work ─────
+// (docs/outbound-callback-dept-plan.md "Step 1b"). Read-only, admin-gated,
+// editor-run. It SAMPLES; it labels nothing and decides nothing.
+//
+// WHY IT EXISTS. Everything probeOutboundAnswerQuality and
+// probeOutboundInstantConnects establish is UNLABELLED inference from timing:
+// rings cluster at 21 / 26-27 / 30-31 s and we INTERPRET the clusters as
+// carrier voicemail timeouts. Nobody has confirmed that one 31 s-ring connect
+// went to voicemail. Two facts make a labelled check worth more than another
+// histogram: the only independent signal in the probe DISAGREED (the
+// repeat-callee modal ring is 0 s, not 31 s), and the band's measured purity
+// caps precision near 69%, which is a judgement about how the number will be
+// read rather than something the distribution can settle. The owner can hear
+// the automated greeting and the agent's message in the recording, so the
+// label is directly observable -- which makes this the cheapest decisive
+// evidence available.
+//
+// ⚠ VOICEMAIL CANNOT BE A SAMPLING FILTER. It is the thing being inferred, so
+// selecting on it would assume the conclusion. Of the classes worth labelling
+// only two are stored facts (connected, never-connected); the rest are
+// hypotheses about ring position. So the sample is drawn by RING STRATUM and
+// the LISTENER assigns the label. `OB_REVIEW_STRATA_` mirrors the table in
+// Step 1b and must be revisited if the measured band moves.
+//
+// ⚠ THE WORKSHEET IS BLINDED, AND THAT IS NOT DECORATION. If a row says
+// "31 s ring", the label is contaminated by the hypothesis and the exercise
+// confirms itself. So `worksheet` carries ONLY what is needed to FIND the
+// recording -- token, date, time, agent -- and deliberately NOT ring or talk
+// seconds, which would name the stratum outright. `key` maps token -> stratum
+// afterwards. Tokens are assigned AFTER the shuffle, so their order leaks
+// nothing either.
+//
+// PHI: none, and this is worth stating because the design question was open.
+// A recording is locatable by AGENT + TIME, so no callee identity is needed:
+// no phone number, no callee_hash and no call_id is selected, logged or
+// returned. The probe convention holds here unchanged. What does leave is
+// internal-staff and duration data (agent name, department, ring/talk).
+//
+// Window: the SAME OUTBOUND_PROBE_FROM / _TO as the two probes, on purpose --
+// the sample must come from the distribution that was measured, or it
+// validates a different population. It does NOT self-clear (#64 owns that).
+// Size: OUTBOUND_REVIEW_N per stratum, default OB_REVIEW_DEFAULT_N_.
+
+var OB_REVIEW_DEFAULT_N_ = 12;   // ~+/-12pt CI on a stratum share -- enough to separate
+                                 // "mostly machines" from "a coin flip", which is the
+                                 // only distinction that changes the decision
+var OB_REVIEW_MAX_N_ = 40;       // a listening exercise, not an export
+
+// Mirrors Step 1b's table. `sql` is a fragment appended to the window
+// predicate; it must reference only outbound_calls columns and carry no
+// user input (these are literals, never operator-supplied).
+var OB_REVIEW_STRATA_ = [
+  { id: 'A-instant',     sql: 'connected AND ring_seconds <= 1',
+    asks: "whether #65's carrier-instant verdict holds by ear" },
+  { id: 'B-human',       sql: 'connected AND ring_seconds BETWEEN 2 AND 11 AND talk_seconds >= 20',
+    asks: 'the control -- these should be people' },
+  { id: 'C-inband',      sql: 'connected AND ring_seconds BETWEEN 20 AND 32',
+    asks: 'THE QUESTION -- what fraction are machines' },
+  { id: 'D-above',       sql: 'connected AND ring_seconds >= 33',
+    asks: "whether the band's right edge is placed right" },
+  { id: 'E-unconnected', sql: 'NOT connected',
+    asks: 'that the unconnected side is what we think' },
+];
+
+/**
+ * PURE. Shuffles in place with Fisher-Yates and assigns R01.. tokens in the
+ * SHUFFLED order, so a token carries no information about its stratum.
+ *
+ * `rand` is injectable so a test can pin the blinding property against a
+ * deterministic sequence rather than hoping a random run exhibits it.
+ */
+function obReviewShuffleAndToken_(rows, rand) {
+  var r = rand || Math.random;
+  var i, j, t;
+  for (i = rows.length - 1; i > 0; i--) {
+    j = Math.floor(r() * (i + 1));
+    t = rows[i]; rows[i] = rows[j]; rows[j] = t;
+  }
+  var pad = String(rows.length).length;
+  for (i = 0; i < rows.length; i++) {
+    var n = String(i + 1);
+    while (n.length < Math.max(2, pad)) n = '0' + n;
+    rows[i].token = 'R' + n;
+  }
+  return rows;
+}
+
+/**
+ * PURE. Splits one `call_start` into the date and clock time an operator
+ * types into the recording search. Returns the raw string as `time` when it
+ * does not parse -- a locator is better than a blank, and the date column
+ * still carries call_date.
+ */
+function obReviewStartParts_(callStart) {
+  var s = String(callStart == null ? '' : callStart).trim();
+  var m = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return { time: s };
+  var hh = m[1].length < 2 ? '0' + m[1] : m[1];
+  return { time: hh + ':' + m[2] + ':' + (m[3] || '00') };
+}
+
+/**
+ * PURE. The blinded worksheet as TSV: token, date, time, agent, dept.
+ *
+ * TAB-separated because the paste target is a spreadsheet, which splits on
+ * tabs (the deptGridToTsv_ reasoning). Agent and department come from the
+ * external CDR feed and land in a spreadsheet cell, so both go through
+ * `sheetSafeCell_` -- the injection rule's "CSV or not" clause -- and any tab
+ * or newline inside a value is flattened, since a paste has no quoting
+ * convention to escape into and one stray tab shifts every column after it.
+ *
+ * Ring and talk are ABSENT by design. See the header.
+ */
+function obReviewWorksheetTsv_(rows) {
+  var flat = function (v) {
+    return String(sheetSafeCell_(v == null ? '' : String(v))).replace(/[\t\r\n]+/g, ' ');
+  };
+  var out = ['Token\tDate\tTime\tAgent\tDepartment\tLabel (human / voicemail / ivr / no-answer / unclear)\tNotes'];
+  (rows || []).forEach(function (r) {
+    out.push([flat(r.token), flat(r.callDate), flat(r.time), flat(r.agent), flat(r.dept), '', ''].join('\t'));
+  });
+  return out.join('\n');
+}
+
+/**
+ * PURE. The answer key, withheld until labelling is done.
+ */
+function obReviewKeyTsv_(rows) {
+  var out = ['Token\tStratum\tRing (s)\tTalk (s)\tAttempts\tConnected'];
+  (rows || []).slice().sort(function (a, b) {
+    return a.token < b.token ? -1 : (a.token > b.token ? 1 : 0);
+  }).forEach(function (r) {
+    out.push([r.token, r.stratum, (r.ring == null ? '' : r.ring),
+              (r.talk == null ? '' : r.talk), (r.attempts == null ? '' : r.attempts),
+              (r.connected ? 'yes' : 'no')].join('\t'));
+  });
+  return out.join('\n');
+}
+
+function sampleOutboundCallsForReview() {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var win = obProbeWindow_(props);
+  var from = win.from, to = win.to;
+  var n = Math.round(Number(props.getProperty('OUTBOUND_REVIEW_N')) || OB_REVIEW_DEFAULT_N_);
+  if (!isFinite(n) || n < 1) n = OB_REVIEW_DEFAULT_N_;
+  if (n > OB_REVIEW_MAX_N_) n = OB_REVIEW_MAX_N_;
+  var label = from + '..' + to + ' (all departments)';
+
+  var conn = null;
+  try {
+    conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+    if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+
+    // One round trip, one getString (the JDBC discipline). Each stratum is
+    // sampled independently with ORDER BY random(), so a quiet stratum does
+    // not starve a busy one -- which a single global sample would do, and the
+    // in-band stratum is the smallest of the five.
+    // The stratum travels as its INDEX, not its name: an integer needs no
+    // quoting helper, so nothing operator- or name-derived is ever
+    // concatenated into this statement. `sx` is mapped back in JS below.
+    var parts = OB_REVIEW_STRATA_.map(function (st, sx) {
+      return '(SELECT ' + sx + ' AS sx, call_date::text AS d, '
+        + 'call_start AS st, agent_name AS ag, department AS dp, ring_seconds AS rs, '
+        + 'talk_seconds AS ts, attempts AS at, connected AS cn '
+        + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND '
+        + st.sql + ' ORDER BY random() LIMIT ' + n + ')';
+    });
+    var sql = "SELECT COALESCE(json_agg(json_build_object("
+      + "'sx', sx, 'd', d, 'st', st, 'ag', ag, 'dp', dp, "
+      + "'rs', rs, 'ts', ts, 'at', at, 'cn', cn)), '[]')::text AS j FROM ("
+      + parts.join(' UNION ALL ') + ') s';
+    var ps = conn.prepareStatement(sql);
+    var nParams = (sql.match(/\?::date/g) || []).length;
+    for (var pi = 1; pi + 1 <= nParams; pi += 2) {
+      ps.setString(pi, from); ps.setString(pi + 1, to);
+    }
+    var rs = ps.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'outbound-review');
+    rs.close(); ps.close();
+
+    var raw = JSON.parse(json || '[]');
+    var rows = (raw || []).map(function (r) {
+      return {
+        stratum: (OB_REVIEW_STRATA_[Number(r.sx)] || {}).id || '?',
+        callDate: String(r.d || ''),
+        time: obReviewStartParts_(r.st).time,
+        agent: String(r.ag == null ? '' : r.ag), dept: String(r.dp == null ? '' : r.dp),
+        ring: r.rs == null ? null : Number(r.rs), talk: r.ts == null ? null : Number(r.ts),
+        attempts: r.at == null ? null : Number(r.at), connected: !!r.cn,
+      };
+    });
+
+    var perStratum = {};
+    OB_REVIEW_STRATA_.forEach(function (st) { perStratum[st.id] = 0; });
+    rows.forEach(function (r) {
+      if (perStratum[r.stratum] !== undefined) perStratum[r.stratum]++;
+    });
+    var thin = OB_REVIEW_STRATA_.filter(function (st) { return perStratum[st.id] < Math.min(5, n); })
+      .map(function (st) { return st.id + ' (' + perStratum[st.id] + ')'; });
+
+    obReviewShuffleAndToken_(rows, null);
+
+    var out = {
+      window: { from: from, to: to },
+      perStratumRequested: n,
+      perStratumSampled: perStratum,
+      strata: OB_REVIEW_STRATA_.map(function (st) {
+        return { id: st.id, asks: st.asks, selector: st.sql };
+      }),
+      // Paste `worksheet` into a sheet, label every row, and only THEN open
+      // `key`. Reading the key first defeats the whole exercise.
+      worksheet: obReviewWorksheetTsv_(rows),
+      key: obReviewKeyTsv_(rows),
+      howToUse: 'Paste `worksheet` into a spreadsheet (tab-separated). For each row, find the '
+        + 'recording by AGENT + DATE + TIME and label what answered: human / voicemail / ivr / '
+        + 'no-answer / unclear. Do NOT open `key` until every row is labelled -- it names the '
+        + 'ring stratum, which is the hypothesis under test. Then join on Token and read the '
+        + 'label mix per stratum. Stratum C is the decision: if it is mostly voicemail the band '
+        + 'is validated and its measured precision is what to disclose; if it is mixed, '
+        + 'ring_seconds cannot carry this classifier here and the callback table needs a '
+        + 'relabel of `connected` rather than a reclassification.',
+    };
+    out.result = 'ok sampled ' + rows.length + ' calls for review across '
+      + OB_REVIEW_STRATA_.length + ' strata (' + n + ' requested each) ' + label
+      + (thin.length ? ' — ⚠ THIN: ' + thin.join(', ') + '; widen OUTBOUND_PROBE_FROM/_TO '
+          + 'before drawing conclusions from those strata' : '')
+      + ' — labels are assigned by the LISTENER; this tool infers nothing.';
+    Logger.log('[outbound-review] %s', out.result);
+    Logger.log('[outbound-review] worksheet (paste into a sheet):\n%s', out.worksheet);
+    return logStatusReturn_(out);
+  } finally {
+    if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
+  }
+}
+
 // probeOutboundAnswerQuality -- STEP 1 of the answer-quality work
 // (docs/outbound-callback-dept-plan.md Part 2). Read-only, admin-gated,
 // editor-run, sibling of runOutboundVettingCheck. It MEASURES and reports;

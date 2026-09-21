@@ -357,18 +357,42 @@ confirms itself. Emit ONE shuffled list with an opaque token per row and keep
 the stratum in a separate key the listener does not open until after labelling.
 This costs a few lines and is the difference between evidence and agreement.
 
-**⚠ This tool would BREAK the probe convention, deliberately.** Every probe in
-this repo is aggregates-only -- "No hash, no number, no call id is selected,
-logged or returned". A sampler whose whole purpose is letting an operator FIND
-specific recordings must emit row identifiers, so it is a different class of
-tool and must be labelled as one in its own docblock, so nobody cites the
-aggregates-only rule as though it covered this. Minimum viable locator:
-`call_date`, the start timestamp, the agent name, ring/talk seconds and the
-stratum token. **It should NOT emit the dialled number or the callee hash** if
-the phone system can locate a recording by agent + timestamp -- which is the
-one thing that has to be confirmed before building it, because if recordings
-are only searchable by dialled number then the tool must emit PHI and that is
-an owner decision, not an implementation detail.
+**The PHI question is SETTLED, and the answer was the good one (owner,
+2026-09-21): recordings are locatable by AGENT + TIME.** I had expected this
+tool to break the aggregates-only probe convention ("no hash, no number, no
+call id is selected, logged or returned") because a sampler must emit row
+identifiers to be useful. It does not: agent + date + time locates the
+recording, so **no callee identity is needed at all** -- no phone number, no
+`callee_hash`, no `call_id`. The convention holds unchanged. What leaves is
+internal-staff and duration data (agent name, department, ring/talk seconds).
+Pinned, because a later "add the call id, it's handy" would otherwise be
+invisible.
+
+**The owner also confirmed the label is directly observable:** the recording
+carries the automated greeting and the agent's own message, so a listener can
+separate voicemail from a human without judgement calls. That is what makes
+this the cheapest decisive evidence available rather than another proxy.
+
+**SHIPPED 2026-09-21: `sampleOutboundCallsForReview()`** (`OutboundReport.gs`,
+read-only, admin-gated, editor-run). Operator State #71 is the runbook. Design
+notes worth keeping:
+- **The worksheet is blinded and the key is separate.** `worksheet` carries
+  token / date / time / agent / department and a Label column -- and
+  deliberately NOT ring or talk seconds, which would name the stratum outright
+  and turn the exercise into self-confirmation. `key` maps token -> stratum +
+  ring + talk afterwards.
+- **Tokens are assigned AFTER the shuffle**, so their order leaks nothing
+  either. Pinned against a deterministic shuffle rather than hoping a random
+  run happens to show it.
+- **Each stratum is sampled independently** (`ORDER BY random() LIMIT n` per
+  stratum, one round trip): a single global sample would starve the in-band
+  stratum, which is the smallest of the five and the only one that decides
+  anything. A stratum returning under 5 rows is flagged THIN in the result.
+- **Both TSV writers route through `sheetSafeCell_`** and flatten embedded
+  tabs -- the paste target is a spreadsheet and agent names come from the
+  external CDR feed (the injection rule's "CSV or not" clause).
+- **The stratum travels into SQL as an integer index**, so nothing
+  name-derived is concatenated into the statement.
 
 **Sequence: 1b comes BEFORE Step 2.** No parameter should be set from the band
 alone. If stratum C comes back mostly machines, the band is validated and Step

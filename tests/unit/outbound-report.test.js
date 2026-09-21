@@ -1012,6 +1012,134 @@ test('probe/spike: out-of-domain buckets are ignored, not folded into the edges'
   assert.equal(s.spike, true);
 });
 
+// ── The review sampler (Step 1b ground truth) ──────────────────────────────
+
+function revRows_() {
+  // One row per stratum, with ring values that would GIVE THE STRATUM AWAY if
+  // they reached the worksheet.
+  return [
+    { stratum: 'A-instant', callDate: '2026-09-02', time: '09:14:00', agent: 'Ann A', dept: 'CSR',
+      ring: 0, talk: 120, attempts: 1, connected: true },
+    { stratum: 'B-human', callDate: '2026-09-03', time: '10:01:00', agent: 'Bob B', dept: 'Sales',
+      ring: 6, talk: 90, attempts: 1, connected: true },
+    { stratum: 'C-inband', callDate: '2026-09-04', time: '11:22:00', agent: 'Cid C', dept: 'CSR',
+      ring: 31, talk: 35, attempts: 1, connected: true },
+    { stratum: 'D-above', callDate: '2026-09-05', time: '12:40:00', agent: 'Dee D', dept: 'Power',
+      ring: 44, talk: 20, attempts: 1, connected: true },
+    { stratum: 'E-unconnected', callDate: '2026-09-08', time: '13:05:00', agent: 'Eve E', dept: 'Sales',
+      ring: 28, talk: null, attempts: 3, connected: false },
+  ];
+}
+
+test('review: the worksheet is BLINDED — no ring, talk or stratum reaches it', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; });
+  const ws = h.ctx.obReviewWorksheetTsv_(rows);
+  // The locator fields must be there, or the operator cannot find the call.
+  assert.match(ws, /Ann A/);
+  assert.match(ws, /2026-09-04\t11:22:00/, 'date and time must locate the recording');
+  // And the hypothesis must NOT be.
+  ['A-instant', 'B-human', 'C-inband', 'D-above', 'E-unconnected'].forEach(function (id) {
+    assert.ok(ws.indexOf(id) === -1, 'the worksheet must not name the stratum: ' + id);
+  });
+  const head = ws.split('\n')[0];
+  assert.ok(!/ring/i.test(head) && !/talk/i.test(head),
+    'no ring or talk column may appear in the worksheet header: ' + head);
+  // A ring of 31 in a labelling sheet is the answer written next to the
+  // question. Checked per row, since a bare "31" could appear in a date.
+  ws.split('\n').slice(1).forEach(function (line) {
+    const cells = line.split('\t');
+    assert.equal(cells.length, 7, 'every row carries the header column count');
+    assert.ok(cells.indexOf('31') === -1 && cells.indexOf('44') === -1,
+      'a ring value must not appear as a cell: ' + line);
+  });
+});
+
+test('review: the key carries the stratum and joins back on Token', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; });
+  const key = h.ctx.obReviewKeyTsv_(rows);
+  assert.match(key, /C-inband/);
+  assert.match(key, /\t31\t/, 'the key is where the ring belongs');
+  const wsTokens = h.ctx.obReviewWorksheetTsv_(rows).split('\n').slice(1)
+    .map(function (l) { return l.split('\t')[0]; }).sort();
+  const keyTokens = key.split('\n').slice(1)
+    .map(function (l) { return l.split('\t')[0]; }).sort();
+  assert.deepEqual(keyTokens, wsTokens, 'every worksheet row must be resolvable in the key');
+  assert.equal(new Set(keyTokens).size, keyTokens.length, 'tokens must be unique');
+});
+
+test('review: tokens are assigned AFTER the shuffle, so their order leaks nothing', function () {
+  // A reversing "shuffle" (always pick index 0) makes the property checkable:
+  // if tokens were assigned before shuffling, R01 would still sit on the
+  // A-instant row. Assigned after, it must land on whatever moved to front.
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0; });
+  const first = rows[0];
+  assert.equal(first.token, 'R01');
+  assert.notEqual(first.stratum, 'A-instant',
+    'R01 must not be pinned to the first stratum — that is the leak this ordering prevents');
+  // And every input row still has exactly one token.
+  assert.equal(rows.length, 5);
+  assert.equal(new Set(rows.map(function (r) { return r.token; })).size, 5);
+});
+
+test('review: agent names from the CDR feed are neutralised for the paste target', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_([
+    { stratum: 'C-inband', callDate: '2026-09-04', time: '11:22:00',
+      agent: '=HYPERLINK("http://x","clickme")', dept: '+CSR', ring: 31, talk: 35,
+      attempts: 1, connected: true },
+    { stratum: 'B-human', callDate: '2026-09-05', time: '09:00:00',
+      agent: 'Tab\tInjected', dept: 'Sales', ring: 5, talk: 60, attempts: 1, connected: true },
+  ], function () { return 0.5; });
+  const ws = h.ctx.obReviewWorksheetTsv_(rows);
+  assert.match(ws, /'=HYPERLINK/, 'a formula-shaped agent name is prefixed (sheetSafeCell_)');
+  assert.match(ws, /'\+CSR/, 'and so is a formula-shaped department');
+  ws.split('\n').forEach(function (line) {
+    assert.equal(line.split('\t').length, 7,
+      'an embedded tab must be flattened or it shifts every column after it: ' + line);
+  });
+});
+
+test('review: the strata mirror Step 1b and never select on the thing being inferred', function () {
+  const strata = h.ctx.OB_REVIEW_STRATA_;
+  assert.equal(strata.length, 5);
+  // Joined rather than deepEqual: the array crosses the vm realm boundary, so
+  // a structural compare fails on reference identity (the harness trap).
+  assert.equal(strata.map(function (s) { return s.id; }).join('|'),
+    'A-instant|B-human|C-inband|D-above|E-unconnected');
+  // The whole methodological point: a stratum may select on stored facts
+  // (connected, ring, talk) and never on a voicemail judgement.
+  strata.forEach(function (st) {
+    assert.match(st.sql, /^(connected|NOT connected)/,
+      st.id + ' must key off the stored connected flag');
+    assert.ok(!/voicemail|vm|machine/i.test(st.sql),
+      st.id + ' must not select on the label being tested: ' + st.sql);
+  });
+  // C is the measured band from the 09-18 histogram.
+  assert.match(strata[2].sql, /ring_seconds BETWEEN 20 AND 32/);
+});
+
+test('review: the sampler emits NO caller identity', function () {
+  // The convention this tool was expected to break, and does not: a recording
+  // is found by agent + time, so no number, hash or call id is needed. A pin,
+  // because a later "add the call id, it is handy" would be invisible.
+  const fn = OB_SRC.slice(OB_SRC.indexOf('function sampleOutboundCallsForReview'),
+    OB_SRC.indexOf('// probeOutboundAnswerQuality --'));
+  assert.ok(fn.length > 200, 'the function must be found for this pin to mean anything');
+  [/callee_hash/, /\bcall_id\b/, /caller_hash/, /\bphone\b/].forEach(function (re) {
+    assert.ok(!re.test(fn), 'the review sampler must not select ' + re);
+  });
+  // And the two TSV writers cannot leak one either.
+  assert.ok(!/hash|call_id|phone/i.test(String(h.ctx.obReviewWorksheetTsv_(
+    h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; })))));
+});
+
+test('review: a start timestamp that will not parse still yields a locator', function () {
+  assert.equal(h.ctx.obReviewStartParts_('2026-09-04 09:05:07').time, '09:05:07');
+  assert.equal(h.ctx.obReviewStartParts_('9:05').time, '09:05:00', 'padded, seconds defaulted');
+  assert.equal(h.ctx.obReviewStartParts_('garbage').time, 'garbage',
+    'an unparseable start is passed through — a bad locator beats a blank one');
+  assert.equal(h.ctx.obReviewStartParts_(null).time, '');
+});
+
 // ── The multi-modal band detector ──────────────────────────────────────────
 
 // The LIVE 2026-09-18 shape, from the numbers the run recorded (Step 1

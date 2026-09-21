@@ -2571,3 +2571,57 @@ When something looks wrong, before assuming a code bug, check:
     `tests/unit/cdr-report-prop-registry.test.js` (which also sweeps the
     `nbResumeRead_` / `nbResumeWrite_` key arguments), listed by
     `listCdrReportScriptProperties()`.
+
+71. **The answer-quality review sample (`sampleOutboundCallsForReview`).**
+    Read-only, admin-gated, editor-run from the DASHBOARD project. The GROUND
+    TRUTH step for the voicemail classifier (#64) -- run it BEFORE setting
+    `OUTBOUND_VM_RING_SEC` or anything else in that family.
+    - **Why it exists.** Everything #64 and #65 establish is UNLABELLED
+      inference from timing: rings cluster at 21 / 26-27 / 30-31 s and we
+      INTERPRET those clusters as carrier voicemail timeouts. Nobody has
+      confirmed that one 31 s-ring connect went to voicemail. Two facts make a
+      labelled check worth more than another histogram: the only independent
+      signal in #64 DISAGREED (its repeat-callee modal ring is 0 s, not 31 s),
+      and the band's measured purity caps precision near 69%, which is a
+      judgement about how the number will be read rather than something a
+      distribution can settle.
+    - **Window: the SAME `OUTBOUND_PROBE_FROM` / `_TO` as #64 and #65**, on
+      purpose -- a sample from a different window validates a different
+      population. It does NOT self-clear those params; #64 owns that.
+    - **Size:** `OUTBOUND_REVIEW_N` per stratum, default 12, capped at 40. At
+      n=12-15 the in-band share carries roughly a +/-12 pt interval, which is
+      enough to separate "mostly machines" from "a coin flip" -- the only
+      distinction that changes the decision. More listening buys precision on
+      a number whose threshold for action is coarse.
+    - **HOW TO RUN IT, in order, and the order matters.** (1) Run it. (2) Paste
+      `worksheet` into a spreadsheet -- it is TAB-separated, so a paste splits
+      into columns. (3) For each row, find the recording by **AGENT + DATE +
+      TIME** and label what answered: human / voicemail / ivr / no-answer /
+      unclear. The recording carries the automated greeting and the agent's own
+      message, so this is an observation, not a judgement call. (4) **Only
+      then open `key`.** (5) Join on Token and read the label mix per stratum.
+    - **⚠ DO NOT READ `key` FIRST.** It names each row's ring stratum, which is
+      the hypothesis under test. A worksheet row that said "31 s ring" would
+      contaminate the label and the exercise would confirm itself; that is why
+      ring and talk are absent from the worksheet and why the tokens are
+      assigned after a shuffle. Reading the key early throws the run away --
+      re-run it for a fresh sample rather than labelling from a peeked key.
+    - **Read stratum C; it is the decision.** Mostly voicemail -> the band is
+      validated, and its measured precision ceiling is what the surface must
+      DISCLOSE. Mixed -> `ring_seconds` cannot carry this classifier here, and
+      Part 1's callback table needs `connected` RELABELLED rather than
+      reclassified. The other four strata are controls: A tests #65's
+      carrier-instant verdict by ear, B should be people, D tests the band's
+      right edge, E tests the unconnected side.
+    - **A THIN warning in the result line means a stratum returned under 5
+      rows** -- widen `OUTBOUND_PROBE_FROM`/`_TO` before drawing anything from
+      that stratum. The in-band stratum is the smallest of the five, which is
+      why each is sampled independently rather than from one global draw.
+    - **PHI: none.** A recording is locatable by agent + time, so no phone
+      number, `callee_hash` or `call_id` is selected, logged or returned --
+      the same aggregates-only discipline as every other probe here, which
+      this tool was expected to have to break and does not. Internal-staff and
+      duration data (agent, department, ring/talk) does leave. Pinned by
+      `tests/unit/outbound-report.test.js`.
+    - **It infers nothing and sets nothing.** The labels are the listener's;
+      the tool only draws the sample and withholds the key.

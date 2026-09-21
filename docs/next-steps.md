@@ -588,19 +588,19 @@ tripwire. Revisit only after Batch 5 has held.
   cluster), and the ceiling had to move OUT of the `suggested` block, which an
   operator copies key-for-key into Script Properties. Details in the plan's
   "BLOCKER 1 ADDRESSED".
-- **Ground truth before any parameter is set — Step 1b, DESIGNED not built
-  (owner ask, 2026-09-21).** Every figure in Part 2 is unlabelled inference
-  from timing, the one independent signal (repeat-callee) DISAGREED, and the
-  band makes the rule reachable without making it correct. So: a stratified,
-  BLINDED sample of ~10-15 calls per stratum (instant / human / in-band
-  candidates / above-band / never-connected) for the owner to listen to and
-  label. Two things make this more than a script: voicemail cannot be a
-  sampling FILTER (it is the thing being inferred), and the sampler must emit
-  row identifiers, which breaks this repo's aggregates-only probe convention
-  on purpose. **Blocked on one owner answer: can the phone system find a
-  recording by agent + timestamp, or only by dialled number?** The second
-  answer means the tool emits PHI, which is a ruling, not an implementation
-  detail. Full design in the plan's "Step 1b".
+- ~~**Ground truth before any parameter is set — Step 1b (owner ask,
+  2026-09-21).**~~ SHIPPED 2026-09-21: `sampleOutboundCallsForReview()`,
+  Operator State #71. A stratified, BLINDED sample (instant / human / in-band
+  / above-band / never-connected, 12 per stratum) whose worksheet carries only
+  the recording locator — token, date, time, agent — while ring and talk sit
+  in a separate key the listener opens AFTER labelling. **Still OPEN, and it
+  is the real gate: the listening itself.** Read stratum C; mostly voicemail
+  validates the band and its precision ceiling becomes a disclosure, mixed
+  means `ring_seconds` cannot carry this classifier here and Part 1 needs
+  `connected` RELABELLED instead. **No parameter in this family should be set
+  before those labels exist.** The PHI question resolved in the good direction
+  — recordings are findable by agent + time, so no caller identity is emitted
+  and the aggregates-only convention holds (pinned).
 - **Re-derive the band share over the REACHABLE population; do not carry the
   22% forward (2026-09-21).** That figure is over all connects, and #65
   established that 40.6% of them connect instantly and must be excluded from

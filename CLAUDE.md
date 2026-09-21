@@ -2250,6 +2250,7 @@ items for anything it flags or doesn't cover.)
 68. External READERS of the CDR Report workbook -- the five tabs team-tools reads; a rename, column move, retention trim or grammar change on one is a TWO-REPO edit
 69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2); run `probeAnswerRateFormulas()` before setting it
 70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the probe, then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
+71. The answer-quality review sample -- the GROUND TRUTH step before any voicemail threshold; blinded worksheet, and do NOT open the key until every row is labelled
 
 ## Cycle Workflow Config
 

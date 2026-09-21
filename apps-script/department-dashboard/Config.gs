@@ -805,6 +805,7 @@ var PROP_REGISTRY_ = Object.freeze({
     OUTBOUND_VETTING_FROM: 'tool', OUTBOUND_VETTING_TO: 'tool',
     OUTBOUND_VETTING_DEPT: 'tool', OUTBOUND_VETTING_SAMPLE: 'tool',
     OUTBOUND_PROBE_FROM: 'tool', OUTBOUND_PROBE_TO: 'tool',
+    OUTBOUND_REVIEW_N: 'tool',
     OV_PROBE_FROM: 'tool', OV_PROBE_TO: 'tool',
     QUEUE_SPLIT_AUDIT_DATE: 'tool',
   }),
