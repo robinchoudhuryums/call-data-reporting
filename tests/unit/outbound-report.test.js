@@ -1812,3 +1812,46 @@ test('jshape: counts events and rows per class, and tracks secs availability', f
   assert.equal(s.eventCountHist[2], 2, 'both rows carry two events');
   assert.equal(Object.keys(s.eventCountHist).length, 1);
 });
+
+// DIFFERENTIAL: the shape diagnostic's recommendation must agree with the
+// marker the probe actually uses (2026-09-21).
+//
+// Why this exists: probeOutboundJourneyShape scored the first `unknown`-class
+// event at a median 1s on the instant group, and probeOutboundInstantConnects
+// -- which derives through obInstantDerivedRing_, whose fallback IS that same
+// marker -- then reported 68s on a sample drawn by BYTE-IDENTICAL SQL. One of
+// those numbers has to be wrong, and the pair of tools is exactly the shape
+// this repo has been bitten by four times: a verification tool contradicting
+// the thing it is verifying, during the investigation it exists to serve.
+//
+// So pin the invariant rather than the numbers: for a journey with no
+// '(external number)' event -- the measured production shape, 0 of 600 sampled
+// events carried one -- the `unknown` candidate the diagnostic REPORTS and the
+// value obInstantDerivedRing_ RETURNS must be the same value, always. If they
+// ever diverge, the recommendation cannot be trusted and neither can a verdict
+// built on it.
+test('diagnostic/marker parity: the unknown candidate equals what the live marker returns', function () {
+  const NAMES = ['(unknown)', '(external caller)', 'A.P.', 'Ann Agent'];   // no extNumber
+  const KINDS = ['leg', 'answer', 'queue'];
+  let seed = 12345;
+  const rnd = (n) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+  let compared = 0;
+  for (let i = 0; i < 3000; i++) {
+    const ev = [];
+    for (let k = 0, n = 1 + rnd(4); k < n; k++) {
+      const e = { name: NAMES[rnd(NAMES.length)], kind: KINDS[rnd(KINDS.length)] };
+      if (rnd(10) > 0) e.secs = rnd(200);
+      if (rnd(3) === 0) e.talk = rnd(120);
+      if (rnd(5) === 0) e.hold = rnd(30);
+      ev.push(e);
+    }
+    const cand = h.ctx.obJourneyMarkerScores_([ev]).candidates.unknown;
+    // One row in, so the candidate's median IS that row's derived value.
+    const reported = cand.rows ? cand.medianDerived : null;
+    const live = h.ctx.obInstantDerivedRing_(JSON.stringify(ev));
+    assert.equal(reported, live,
+      'journey ' + JSON.stringify(ev) + ': diagnostic says ' + reported + ', marker returns ' + live);
+    compared++;
+  }
+  assert.ok(compared >= 3000, 'the sweep actually ran');
+});
