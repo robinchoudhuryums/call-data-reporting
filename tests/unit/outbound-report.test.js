@@ -1831,7 +1831,9 @@ test('jshape: counts events and rows per class, and tracks secs availability', f
 // ever diverge, the recommendation cannot be trusted and neither can a verdict
 // built on it.
 test('diagnostic/marker parity: the unknown candidate equals what the live marker returns', function () {
-  const NAMES = ['(unknown)', '(external caller)', 'A.P.', 'Ann Agent'];   // no extNumber
+  // No extNumber (never observed on outbound). Mixes the P-11 era's masked
+  // names with the pre-P-11 '(unknown)' so both arms of the marker are hit.
+  const NAMES = ['(unknown)', '(external caller)', 'A.P.', 'Ann Agent'];
   const KINDS = ['leg', 'answer', 'queue'];
   let seed = 12345;
   const rnd = (n) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
@@ -1845,9 +1847,14 @@ test('diagnostic/marker parity: the unknown candidate equals what the live marke
       if (rnd(5) === 0) e.hold = rnd(30);
       ev.push(e);
     }
-    const cand = h.ctx.obJourneyMarkerScores_([ev]).candidates.unknown;
-    // One row in, so the candidate's median IS that row's derived value.
-    const reported = cand.rows ? cand.medianDerived : null;
+    const cands = h.ctx.obJourneyMarkerScores_([ev]).candidates;
+    // The marker prefers the P-11 MASKED external leg (initials, else
+    // '(external caller)') and only falls back to '(unknown)' for pre-P-11
+    // rows -- so the candidate it must agree with is era-dependent. One row
+    // in, so each candidate's median IS that row's derived value.
+    const pick = cands.initials.rows ? cands.initials
+      : (cands.extCaller.rows ? cands.extCaller : cands.unknown);
+    const reported = pick.rows ? pick.medianDerived : null;
     const live = h.ctx.obInstantDerivedRing_(JSON.stringify(ev));
     assert.equal(reported, live,
       'journey ' + JSON.stringify(ev) + ': diagnostic says ' + reported + ', marker returns ' + live);
@@ -1859,18 +1866,20 @@ test('diagnostic/marker parity: the unknown candidate equals what the live marke
 test('diagnostic/marker parity holds over a MULTI-ROW sample, not just per journey', function () {
   // The sweep above feeds ONE journey per call, so a bug in the diagnostic's
   // accumulation ACROSS rows would be invisible to it -- which was the real
-  // gap in the first version of this proof. Same shape the live sample has:
-  // 2 events, both '(unknown)', ev[0] carrying the talk (small ring) and
-  // ev[1] carrying none (its whole duration). That is the shape that produced
-  // the 1s-vs-68s disagreement.
+  // gap in the first version of this proof.
+  //
+  // The live POST-P-11 shape: 2 events, one masked-initials external leg
+  // carrying the talk (small ring) and one '(unknown)' leg carrying none
+  // (its whole duration reads as a residual). Picking the wrong one of these
+  // two is exactly what produced the 1s-vs-68s disagreement.
   const journeys = [];
   for (let i = 0; i < 300; i++) {
     journeys.push([
-      { name: '(unknown)', kind: 'answer', secs: 100 + i, talk: 99 + i },
+      { name: 'A.P.', kind: 'answer', secs: 100 + i, talk: 99 + i },
       { name: '(unknown)', kind: 'leg', secs: 60 + i },
     ]);
   }
-  const cand = h.ctx.obJourneyMarkerScores_(journeys).candidates.unknown;
+  const cand = h.ctx.obJourneyMarkerScores_(journeys).candidates.initials;
   const derived = journeys.map((ev) => h.ctx.obInstantDerivedRing_(JSON.stringify(ev)));
   const kept = derived.filter((v) => v !== null);
   assert.equal(kept.length, journeys.length, 'the marker resolved every row');
@@ -1878,4 +1887,61 @@ test('diagnostic/marker parity holds over a MULTI-ROW sample, not just per journ
   const real = kept.filter((v) => v >= 3).length;
   assert.equal(cand.realRingShare, Math.round(real / kept.length * 1000) / 1000,
     'real-ring shares agree over 300 rows');
+});
+
+// THE P-11 ERA SPLIT (measured 2026-09-21). This is what made two runs of the
+// same marker disagree, and it is worth pinning because the capture changed
+// under the reader rather than the reader changing.
+//
+// P-11 shipped 2026-09-17, adding the icBuildJourney_ branch that names a
+// CALLEE-external leg with its MASKED CNAM. Before it, that leg had no name
+// branch that fired and fell through to '(unknown)'. So:
+//   pre-P-11 rows  -> the external leg IS the first '(unknown)' event
+//   post-P-11 rows -> the external leg is masked initials, and the remaining
+//                     '(unknown)' is the OTHER leg, whose secs-talk-hold is a
+//                     residual rather than a ring
+// A marker that only knows the pre-P-11 rule silently reads the wrong leg on
+// every row captured after 2026-09-17 -- which is how a `carrier-instant`
+// population (stored ring <= 1s, derived 1s) reported a 68s ring and flipped
+// the verdict to `connected-timestamp`.
+
+test('P-11 era: the MASKED external leg wins over the (unknown) leg beside it', function () {
+  // Post-P-11: initials carry the talk, so the external ring is small and
+  // agrees with a stored ring <= 1s. The other leg's 300s is a residual.
+  const j = JSON.stringify([
+    { name: '(unknown)', kind: 'leg', secs: 300 },
+    { name: 'A.P.', kind: 'answer', secs: 240, talk: 239 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 1,
+    'the masked external leg, not the 300s residual -- order in the blob must not matter');
+});
+
+test("P-11 era: '(external caller)' counts too -- it is the mask declining, not a different leg", function () {
+  const j = JSON.stringify([
+    { name: '(external caller)', kind: 'answer', secs: 50, talk: 20 },
+    { name: '(unknown)', kind: 'leg', secs: 400 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 30);
+});
+
+test('PRE-P-11 era: with no masked leg, the first (unknown) is still the external one', function () {
+  const j = JSON.stringify([
+    { name: '(unknown)', kind: 'answer', secs: 45, talk: 18 },
+    { name: '(unknown)', kind: 'leg', secs: 80 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 27, 'the pre-P-11 fallback must survive for history');
+});
+
+test('an internal agent CNAM is never the external leg in either era', function () {
+  // 'Ann Agent' is class `other`: a real internal name, not a mask. It must
+  // not be mistaken for the external party, or a dept would read its own
+  // agent's leg as the customer's ring.
+  const j = JSON.stringify([
+    { name: 'Ann Agent', kind: 'answer', secs: 900, talk: 10 },
+    { name: 'A.P.', kind: 'answer', secs: 60, talk: 55 },
+  ]);
+  assert.equal(h.ctx.obInstantDerivedRing_(j), 5, 'the masked leg, not the internal agent');
+  // ...and with no masked leg at all, `other` still does not qualify.
+  assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
+    { name: 'Ann Agent', kind: 'answer', secs: 900, talk: 10 }])), null);
 });

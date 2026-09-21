@@ -359,13 +359,16 @@ the answer.** `probeOutboundJourneyShape()` measured the cause and overturned
 the P-11/CNAM hypothesis: no masked name shape is present at ALL
 (`extNumber: 0`, `extCaller: 0`, `initials: 0`), because `icBuildJourney_`
 names from CALLEE_NAME, which an outbound dial leaves blank, so every
-external leg is `(unknown)`. `obInstantDerivedRing_` now falls back to the
-first `unknown`-CLASS event (endorsed by the rung answer key at 100%
-coverage / median 27 s / all real rings). Its numbers already say
-`carrier-instant` -- a median 1 s derived ring with 12.3% real rings, under
-the 20% gate -- so **the instant connects are genuine and the classifier must
-exclude and disclose them**; re-run #65 for the probe's own verdict. This
-overrules the talk-profile hypothesis. Only the band-gate half of (1) still
+external leg is named by an ERA-dependent rule: masked initials since P-11
+(2026-09-17), `(unknown)` before it. `obInstantDerivedRing_` prefers the
+masked leg and keeps the first-`unknown` rule as the pre-P-11 fallback -- the
+one-arm version read the wrong leg on post-P-11 rows and flipped the verdict
+for a day. CONFIRMED `carrier-instant` on the 2026-09-21 run: the masked
+marker reads a median 1 s at a **0%** real-ring share on the instant group
+against 27 s at 100% on the rung control, so **the instant connects are
+genuine and the classifier must exclude and disclose them**. That also means
+the talk-profile hypothesis was right and the derived ring does NOT overrule
+it. Only the band-gate half of (1) still
 blocks the parameter work below. `connected` counts a voicemail pickup
 as a reached caller (the far end genuinely answers, so every condition the
 flag tests is met), which the six-point round promoted into the "Actually

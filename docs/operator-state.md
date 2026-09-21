@@ -2158,25 +2158,44 @@ When something looks wrong, before assuming a code bug, check:
       so the 12% of instant rows that passed through a queue skip it instead
       of measuring hold music (a bare first-event fallback would have
       measured the music). Pinned by four tests in `outbound-report.test.js`.
-    - **The diagnostic already contains the answer; the re-run is
-      confirmation.** Its instant group derived a median 1 s ring with only
-      **12.3%** of rows at or above the 3 s real-ring line -- under the 20%
-      `OB_INSTANT_CARRIER_SHARE_` gate -- against a control group that derived
-      27 s with 100% real rings. That is `carrier-instant`: **these calls
-      really do connect instantly, `ring_seconds` is truthful, and a voicemail
-      classifier must EXCLUDE them and disclose the smaller reachable
-      population.** Re-run #65 to have the probe say so in its own verdict
-      before acting on it.
-      Note this OVERRULES the talk-profile cut below, which pointed the other
-      way (instant rows talk the longest, which looked like real conversations
-      being mis-timed). The derived ring wins because it measures the ring
-      directly rather than inferring it: long talk is equally consistent with
-      an early-media trunk connecting for real.
-      Independence check, since the two figures come from the same leg rows:
-      `ring_seconds` is `START -> CONNECTED`, while the derived ring is
-      `STOP - START - talk - hold` and never reads CONNECTED. A spuriously
-      early CONNECTED would shrink the former and leave the latter alone, so
-      their agreement is a real check on CONNECTED, not a restatement of it.
+    - **RESOLVED 2026-09-21 by a second shape run, and the answer is
+      `carrier-instant`.** The intervening `probeOutboundInstantConnects` run
+      verdicted `connected-timestamp` (instant median 68 s, 99.3% real rings)
+      and that verdict is WRONG -- an artifact of the reader picking the wrong
+      leg, not a property of the calls. What changed was the CAPTURE, not the
+      data and not the query: **P-11 shipped 2026-09-17**, adding the
+      `icBuildJourney_` branch that names a CALLEE-external leg with its
+      MASKED CNAM. Before it, that leg had no branch that fired and fell
+      through to `'(unknown)'`. The two runs straddle that date, so:
+      - 09-18 run (mostly pre-P-11 rows): `initials` 0 events; the external
+        leg was the first `'(unknown)'`, deriving 1 s on instant.
+      - 09-21 run (post-P-11 rows): `initials` exactly 300 of 300 rows; the
+        external leg is masked, and the leftover `'(unknown)'` is the OTHER
+        leg, whose `secs - talk - hold` is a residual, not a ring -- the 66-68 s
+        both tools then reported.
+      **The answer key settles the marker beyond doubt.** On the rung group
+      (stored ring >= 17 s) `initials` covers 300/300 at a median **27 s with
+      100% real rings**; on the instant group (stored ring <= 1 s) the same
+      marker reads a median **1 s with a 0% real-ring share**. A marker that
+      tracks the stored column at both ends, to the second, is measuring the
+      external leg. Under the 20% `OB_INSTANT_CARRIER_SHARE_` gate, 0% is
+      `carrier-instant`: **these calls genuinely connect instantly,
+      `ring_seconds` is truthful, and a voicemail classifier must EXCLUDE them
+      and disclose the ~60% reachable population.**
+      So the original reading was right, the talk-profile cut (instant rows
+      talk the longest) was pointing the right way all along, and the
+      `connected-timestamp` detour was self-inflicted.
+      `obInstantDerivedRing_` now prefers the masked leg (`initials`, or
+      `'(external caller)'` when the mask declined) and keeps the
+      first-`'(unknown)'` rule as the PRE-P-11 fallback, so both eras of
+      stored history resolve correctly. Re-run #65 to see the verdict move
+      back; pinned by the era tests in `outbound-report.test.js`.
+    - **The lesson worth keeping, because it cost four exchanges:** a reader
+      keyed on a journey NAME is keyed on a capture convention, and this repo
+      changes those. When a marker and its own recommending diagnostic
+      disagree across two runs, check whether the CAPTURE moved between them
+      before auditing either implementation -- the code, the SQL and the
+      deployment were all identical here and all three were checked first.
     - **Capture-side follow-on, recorded but NOT done** (`icBuildJourney_`,
       cdr-import/inboundCalls.js): the journey does not carry the external
       leg's identity, only a name that happens to be blank for it. Labelling

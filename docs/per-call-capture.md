@@ -325,16 +325,24 @@ convention), and the masked leg-by-leg journey (a phone-shaped callee
 name renders '(external number)', and -- P-11, Batch 5 -- a leg whose CALLEE
 NUMBER is external carries that party's CNAM as INITIALS, the IMP-12 rule;
 internal callees keep their names; no raw number or external name in Neon).
-**Every naming branch reads CALLEE_NAME, so an OUTBOUND dial -- which carries
-the number in CALLEE and leaves CALLEE_NAME blank -- names its external leg
-`'(unknown)'`, always** (measured 2026-09-18: 600 of 600 sampled events, zero
-`(external number)` / `(external caller)` / initials). So the journey does NOT
-carry the external leg's identity on outbound, and a reader must not key on a
-name mask to find it -- `obInstantDerivedRing_` (OutboundReport.gs) is the one
-reader that does, and it falls back to the first `unknown`-CLASS event for
-exactly this reason. Labelling a CALLEE-external leg with no CNAM would fix it
-at the source, but forward-only and for inbound too; see
-`docs/outbound-callback-dept-plan.md`. The writer
+**How an OUTBOUND external leg is NAMED changed with P-11 (2026-09-17), and
+stored history carries both eras.** A phone-SHAPED `CALLEE_NAME` renders
+`'(external number)'` -- never observed on outbound (0 of 1200 sampled events).
+What varies is the leg that carries the callee's CNAM:
+- **Post-P-11**: the CALLEE-external branch fires and the leg is MASKED to
+  initials (or `'(external caller)'` when the mask declines). Measured
+  2026-09-21: `initials` on exactly 300 of 300 sampled rows, both groups.
+- **Pre-P-11**: that branch did not exist, so the leg fell through to
+  `'(unknown)'`. Measured 2026-09-18 on the same query: `initials` 0 events,
+  600 of 600 `'(unknown)'`.
+**So a reader keyed on a journey NAME is keyed on a capture convention, and
+this one moved.** `obInstantDerivedRing_` (OutboundReport.gs) is the one such
+reader: it prefers the masked leg and keeps the first-`'(unknown)'` rule as the
+pre-P-11 fallback, so both eras resolve. Getting that order wrong is not a
+subtle error -- on a post-P-11 row the leftover `'(unknown)'` leg is the OTHER
+leg, whose `secs - talk - hold` is a residual, and reading it flipped Operator
+State #65's verdict from `carrier-instant` to `connected-timestamp`. Pinned
+both ways by the era tests in `outbound-report.test.js`. The writer
 auto-creates the table AND `idx_outbound_calls_callee_hash` (no operator
 console step). Best-effort + isolated: failures log a
 `processIntegratedHistory:Outbound` Pipeline Health row + email (the F9
