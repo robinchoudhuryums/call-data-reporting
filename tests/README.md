@@ -309,7 +309,18 @@ tests/
                               journey must read as null not zero, zero
                               samples must not read as "genuinely instant",
                               and the mixed case must refuse rather than
-                              average two opposite remedies),
+                              average two opposite remedies; the multi-modal
+                              BAND fallback and its band-impure precision
+                              gate; and the Step 1b review audit --
+                              sampleOutboundCallsForReview's BLINDING (no
+                              ring/talk on the worksheet, tokens assigned
+                              after the shuffle, pinned against a
+                              deterministic shuffle), the ring bands TILING
+                              0..inf with no gap, no caller identity emitted,
+                              and scoreOutboundReviewSample's Wilson-interval
+                              verdict, partial findings on partial labels,
+                              and voicemail+ivr as NOT-REACHED; plus SOURCE
+                              pins on SQL the mocked connection never runs),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
                               LOCAL recording fake — deliberately not a

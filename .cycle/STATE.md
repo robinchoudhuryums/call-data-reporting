@@ -1,6 +1,38 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-22 (answer-quality ground truth, branch `claude/jolly-hamilton-n5fs2o`):
+  PRs #338-#340 MERGED; nothing unmerged except this sync-docs pass.** The
+  #64/#65 thread moved from measurement to LABELLED evidence, and the evidence
+  is running against the ring method:
+  - **#65 CLOSED** post-deploy, `carrier-instant` over 66,042 connects -- but
+    that says the ring is TRUTHFUL, not that a person answered.
+  - **Band fallback shipped** (`obProbeRingBand_`), with a `band-impure` gate:
+    the measured 20-32 s band has a ~69% PRECISION ceiling.
+  - **Step 1b review audit shipped and streamlined**: `sampleOutboundCallsForReview`
+    (blinded worksheet into a separate `OB_REVIEW_SS_ID` workbook, 54 calls over
+    six strata that TILE the ring space) + `scoreOutboundReviewSample` (Wilson
+    interval on the INTERVAL, partial findings on partial labels, voicemail+ivr
+    as NOT-REACHED). New INV-01 carve-out, registered.
+  - **Owner ground truth (5 raw calls + 12 sheet labels)**: voicemail at 8 / 18 /
+    22 s, a human at 4 s, a screening service that connected then took a
+    message. So there are FOUR ways to reach a machine and only TIMEOUT voicemail
+    has a ring signature -- the method has a RECALL ceiling on top of its
+    precision ceiling, and the error inflates `reached`.
+  - **Defects the labels found in my own tooling, all fixed:** a 12-19 s hole in
+    the strata (a real voicemail sat in it); A/B wired as human controls whose
+    "failure" downgraded C; findings computed BELOW the C guards so partial
+    labelling returned nothing; `ivr` counted as neither hit nor miss; no
+    labelling convention for a call that is several things in sequence (now:
+    LABEL THE TERMINAL OUTCOME, on the sheet). Also: the probe SQL is never
+    executed by any test (mocked conn) -- source pins now cover the new
+    sub-selects.
+  - **WHERE I LEFT OFF:** the owner is labelling run `Review 20260922-1313`
+    (12 of 54 done). Next is to score it (A+B first, it measures the recall
+    ceiling alone), then the **Step 3 precedence ruling**, and `strict` stays
+    off. Standing operator items unchanged: the two cdr-import time limits
+    (`1680000`), `ANSWER_RATE_FORMULA=answerable`, delete `PerformanceReport.gs`
+    in the web editor, walk S39 + S41.
 - **2026-09-21 (post-Batch-9 owner round, branch `claude/jolly-hamilton-n5fs2o`):
   the broad scan is DRAINED and MERGED (PRs through #337); this region's
   Batch 1-9 / DD-2 / H1-H3 entries below are history now, not open work.**

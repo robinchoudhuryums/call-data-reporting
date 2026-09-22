@@ -319,7 +319,11 @@ Captures: `callee_hash` (HMAC of the canonical `+<digits>` form via
 ext + raw CDR Departments label), `connected` (Talk>0 Answered external
 leg -- the CDR can't distinguish no-answer / voicemail / busy on the
 unconnected side, matching the Direct report's activity-only outbound
-semantics), talk/ring seconds, attempts, `call_start` (raw PST
+semantics; **and on the CONNECTED side it cannot distinguish a person from
+voicemail, an IVR or a call-screening service either** -- every disposition
+field reads identically, verified against labelled calls 2026-09-22, so
+`connected` means "something answered", never "reached the caller"; see
+`outbound-callback-dept-plan.md` GROUND TRUTH), talk/ring seconds, attempts, `call_start` (raw PST
 'HH:MM:SS'; clients shift +2h to CST via `clCstTime_`, the INV-18
 convention), and the masked leg-by-leg journey (a phone-shaped callee
 name renders '(external number)', and -- P-11, Batch 5 -- a leg whose CALLEE

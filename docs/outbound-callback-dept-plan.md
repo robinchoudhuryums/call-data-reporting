@@ -338,18 +338,25 @@ being inferred, so it cannot be a sampling filter without assuming the
 conclusion. Only two of the four classes the owner named are stored facts;
 the other two are hypotheses:
 
-| Stratum | Selector | What a label would settle |
-| --- | --- | --- |
-| A. Instant | `connected`, ring <= 1 s | Whether #65's `carrier-instant` verdict holds by ear |
-| B. Human pickup | `connected`, ring 2-11 s, talk >= 20 s | The control: these should be people |
-| C. **In-band candidates** | `connected`, ring 20-32 s | **The actual question** -- what fraction are machines |
-| D. Above band | `connected`, ring >= 33 s | Whether the band's right edge is in the right place |
-| E. Never connected | `connected = false` | That the unconnected side is what we think |
+*Revised 2026-09-22 after the ground truth below -- this is the LIVE table.*
+The first version had B at `2-11 s AND talk >= 20 s` and no B2, which left
+12-19 s in no stratum (finding 1), and it framed A and B as human controls,
+which an 8 s voicemail falsified (finding 9). Ids are frozen: the scorer joins
+on the id stored in each run's Key tab.
 
-~10-15 per stratum is enough: at n=15, a stratum-C precision estimate carries
-roughly a +/-12 pt confidence interval, which separates "mostly machines" from
-"a coin flip" -- the only distinction that changes the decision. More listening
-buys precision on a number whose threshold for action is coarse.
+| Stratum | Selector | Want | What a label settles |
+| --- | --- | --- | --- |
+| `A-instant` | `connected`, ring <= 1 s | 8 | RECALL -- how many instant connects are not a person |
+| `B-human` | `connected`, ring 2-11 s | 5 | RECALL -- fast rings can be voicemail |
+| `B2-shoulder` | `connected`, ring 12-19 s | 12 | The band's LEFT EDGE |
+| `C-inband` | `connected`, ring 20-32 s | 20 | **The precision question** -- what fraction are machines |
+| `D-above` | `connected`, ring >= 33 s | 5 | Whether the right edge is placed right |
+| `E-unconnected` | `connected = false` | 4 | The one CONTROL -- that `connected` means what it should |
+
+The connected bands TILE 0..inf with no gap (pinned). Allocation is uneven on
+purpose: at n=20 a share carries about +/-10 pts, at n=12 about +/-13, and the
+call is "mostly machines vs a coin flip", so the listening goes where the
+decision is.
 
 **Blind the listener to the stratum.** If the sheet says "31 s ring -- expected
 voicemail", the label is contaminated by the hypothesis and the exercise
