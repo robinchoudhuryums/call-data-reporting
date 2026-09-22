@@ -1018,15 +1018,15 @@ function revRows_() {
   // One row per stratum, with ring values that would GIVE THE STRATUM AWAY if
   // they reached the worksheet.
   return [
-    { stratum: 'A-instant', callDate: '2026-09-02', time: '09:14:00', agent: 'Ann A', dept: 'CSR',
+    { stratum: 'A-instant', callDate: '2026-09-02', time: '09:14:00', agent: 'Ann A', ext: '101', dept: 'CSR',
       ring: 0, talk: 120, attempts: 1, connected: true },
-    { stratum: 'B-human', callDate: '2026-09-03', time: '10:01:00', agent: 'Bob B', dept: 'Sales',
+    { stratum: 'B-human', callDate: '2026-09-03', time: '10:01:00', agent: 'Bob B', ext: '102', dept: 'Sales',
       ring: 6, talk: 90, attempts: 1, connected: true },
-    { stratum: 'C-inband', callDate: '2026-09-04', time: '11:22:00', agent: 'Cid C', dept: 'CSR',
+    { stratum: 'C-inband', callDate: '2026-09-04', time: '11:22:00', agent: 'Cid C', ext: '103', dept: 'CSR',
       ring: 31, talk: 35, attempts: 1, connected: true },
-    { stratum: 'D-above', callDate: '2026-09-05', time: '12:40:00', agent: 'Dee D', dept: 'Power',
+    { stratum: 'D-above', callDate: '2026-09-05', time: '12:40:00', agent: 'Dee D', ext: '104', dept: 'Power',
       ring: 44, talk: 20, attempts: 1, connected: true },
-    { stratum: 'E-unconnected', callDate: '2026-09-08', time: '13:05:00', agent: 'Eve E', dept: 'Sales',
+    { stratum: 'E-unconnected', callDate: '2026-09-08', time: '13:05:00', agent: 'Eve E', ext: '105', dept: 'Sales',
       ring: 28, talk: null, attempts: 3, connected: false },
   ];
 }
@@ -1048,9 +1048,73 @@ test('review: the worksheet is BLINDED — no ring, talk or stratum reaches it',
   // question. Checked per row, since a bare "31" could appear in a date.
   ws.split('\n').slice(1).forEach(function (line) {
     const cells = line.split('\t');
-    assert.equal(cells.length, 7, 'every row carries the header column count');
+    assert.equal(cells.length, h.ctx.OB_REVIEW_WS_HEADER_.length,
+      'every row carries the header column count');
     assert.ok(cells.indexOf('31') === -1 && cells.indexOf('44') === -1,
       'a ring value must not appear as a cell: ' + line);
+  });
+});
+
+test('review: the recording link is a TEMPLATE, and renders as a bare URL', function () {
+  const row = { callDate: '2026-09-21', time: '16:55:00', agent: 'Ann A', ext: '101' };
+  const t = 'https://admin.8x8.com/recordings?date={date}&ext={ext}&q={agent}';
+  const url = h.ctx.obReviewRecordingUrl_(t, row);
+  assert.equal(url, 'https://admin.8x8.com/recordings?date=2026-09-21&ext=101&q=Ann%20A',
+    'placeholders substitute and each value is URI-encoded');
+  // The trap: a =HYPERLINK() formula would be neutralised by sheetSafeCell_
+  // into visible text, so the cell must be a bare URL that Sheets auto-links.
+  assert.ok(!/^=/.test(url), 'never a formula');
+  assert.equal(h.ctx.sheetSafeCell_(url), url,
+    'and it must survive the injection guard unchanged, or the link breaks');
+});
+
+test('review: no template means no link, and a non-URL template is refused', function () {
+  const row = { callDate: '2026-09-21', time: '16:55:00', agent: 'Ann A', ext: '101' };
+  ['', null, undefined, '   '].forEach(function (t) {
+    assert.equal(h.ctx.obReviewRecordingUrl_(t, row), '', 'absent template -> empty cell');
+  });
+  // A stray non-http value must not reach a cell as if it were a link.
+  assert.equal(h.ctx.obReviewRecordingUrl_('javascript:alert(1)', row), '');
+  assert.equal(h.ctx.obReviewRecordingUrl_('admin.8x8.com/{date}', row), '',
+    'a scheme-less template is refused rather than rendered half-built');
+});
+
+test('review: the Label column constant actually points at the Label column', function () {
+  // Not a tautology, unlike deriving a fixture from the same constant: this
+  // pins the constant against the HEADER TEXT, so a wrong index bites even
+  // though every fixture and the tally read it from the same place.
+  assert.match(h.ctx.OB_REVIEW_WS_HEADER_[h.ctx.OB_REVIEW_LABEL_COL_ - 1], /^Label/,
+    'OB_REVIEW_LABEL_COL_ must index the Label column, or the scorer tallies the wrong cell');
+  // And the two columns the listener fills are the last two, so a new column
+  // cannot be inserted between them and the label.
+  assert.equal(h.ctx.OB_REVIEW_WS_HEADER_.length, h.ctx.OB_REVIEW_LABEL_COL_ + 1,
+    'Notes is expected to follow Label as the final column');
+});
+
+test('review: {callid} is NOT a supported placeholder', function () {
+  // Supporting it would mean selecting call_id, trading this tool's
+  // no-call-id property for a link that cannot resolve anyway -- the CDR
+  // Call ID is numeric, the recording id is a UUID.
+  const row = { callDate: '2026-09-21', time: '16:55:00', agent: 'A', ext: '1' };
+  const out = h.ctx.obReviewRecordingUrl_('https://x/{callid}', row);
+  assert.equal(out, 'https://x/{callid}',
+    'an unsupported placeholder is left literal, never silently filled');
+  assert.ok(!/call_id/.test(String(h.ctx.obReviewRecordingUrl_)),
+    'and the helper must not reach for a call id');
+});
+
+test('review: the link column does not break the blinding', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; });
+  const ws = h.ctx.obReviewGridToTsv_(h.ctx.obReviewWorksheetGrid_(
+    rows, 'https://admin.8x8.com/recordings?date={date}&ext={ext}'));
+  assert.match(ws, /admin\.8x8\.com/, 'the link renders');
+  ['A-instant', 'C-inband'].forEach(function (id) {
+    assert.ok(ws.indexOf(id) === -1, 'still no stratum in the worksheet: ' + id);
+  });
+  ws.split('\n').slice(1).forEach(function (line) {
+    const cells = line.split('\t');
+    assert.ok(cells.indexOf('31') === -1 && cells.indexOf('44') === -1,
+      'and still no ring value: ' + line);
   });
 });
 
@@ -1084,16 +1148,16 @@ test('review: tokens are assigned AFTER the shuffle, so their order leaks nothin
 test('review: agent names from the CDR feed are neutralised for the paste target', function () {
   const rows = h.ctx.obReviewShuffleAndToken_([
     { stratum: 'C-inband', callDate: '2026-09-04', time: '11:22:00',
-      agent: '=HYPERLINK("http://x","clickme")', dept: '+CSR', ring: 31, talk: 35,
+      agent: '=HYPERLINK("http://x","clickme")', ext: '@101', dept: '+CSR', ring: 31, talk: 35,
       attempts: 1, connected: true },
     { stratum: 'B-human', callDate: '2026-09-05', time: '09:00:00',
-      agent: 'Tab\tInjected', dept: 'Sales', ring: 5, talk: 60, attempts: 1, connected: true },
+      agent: 'Tab\tInjected', ext: '5\t5', dept: 'Sales', ring: 5, talk: 60, attempts: 1, connected: true },
   ], function () { return 0.5; });
   const ws = h.ctx.obReviewGridToTsv_(h.ctx.obReviewWorksheetGrid_(rows));
   assert.match(ws, /'=HYPERLINK/, 'a formula-shaped agent name is prefixed (sheetSafeCell_)');
   assert.match(ws, /'\+CSR/, 'and so is a formula-shaped department');
   ws.split('\n').forEach(function (line) {
-    assert.equal(line.split('\t').length, 7,
+    assert.equal(line.split('\t').length, h.ctx.OB_REVIEW_WS_HEADER_.length,
       'an embedded tab must be flattened or it shifts every column after it: ' + line);
   });
 });
@@ -1215,13 +1279,16 @@ test('wilson: the interval never leaves [0,1] and never collapses at the edges',
 test('tally: a BLANK label is never folded into "not voicemail"', function () {
   // Folding blanks in would bias the one share the audit measures, toward
   // refusing the band. They are counted separately instead.
-  const ws = [
-    h.ctx.OB_REVIEW_WS_HEADER_,
-    ['R01', '2026-09-04', '11:00:00', 'A', 'CSR', 'voicemail', ''],
-    ['R02', '2026-09-04', '11:10:00', 'B', 'CSR', '', ''],
-    ['R03', '2026-09-04', '11:20:00', 'C', 'CSR', 'HUMAN', ''],
-    ['R04', '2026-09-04', '11:30:00', 'D', 'CSR', 'banana', ''],
-  ];
+  // Built through the real grid builder so the Label lands in the real Label
+  // column -- a literal row would silently drift when a column is added.
+  const ws = [h.ctx.OB_REVIEW_WS_HEADER_].concat([
+    ['R01', 'voicemail'], ['R02', ''], ['R03', 'HUMAN'], ['R04', 'banana'],
+  ].map(function (pair) {
+    const row = h.ctx.OB_REVIEW_WS_HEADER_.map(function () { return ''; });
+    row[0] = pair[0];
+    row[h.ctx.OB_REVIEW_LABEL_COL_ - 1] = pair[1];
+    return row;
+  }));
   const key = [
     h.ctx.OB_REVIEW_KEY_HEADER_,
     ['R01', 'C-inband', 31, 35, 1, 'yes'],
@@ -1242,9 +1309,12 @@ test('tally: a BLANK label is never folded into "not voicemail"', function () {
 });
 
 test('tally: a worksheet token with no key row is reported, not silently dropped', function () {
-  const ws = [h.ctx.OB_REVIEW_WS_HEADER_,
-    ['R01', '2026-09-04', '11:00:00', 'A', 'CSR', 'voicemail', ''],
-    ['R99', '2026-09-04', '11:00:00', 'A', 'CSR', 'voicemail', '']];
+  const ws = [h.ctx.OB_REVIEW_WS_HEADER_].concat(['R01', 'R99'].map(function (tok) {
+    const row = h.ctx.OB_REVIEW_WS_HEADER_.map(function () { return ''; });
+    row[0] = tok;
+    row[h.ctx.OB_REVIEW_LABEL_COL_ - 1] = 'voicemail';
+    return row;
+  }));
   const key = [h.ctx.OB_REVIEW_KEY_HEADER_, ['R01', 'C-inband', 31, 35, 1, 'yes']];
   const t = h.ctx.obReviewTally_(ws, key);
   assert.equal(t.tokensMissingKey.join(','), 'R99');

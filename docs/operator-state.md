@@ -2650,6 +2650,25 @@ When something looks wrong, before assuming a code bug, check:
       scorer reports `unlabelled` and `unrecognisedLabels` separately, because
       counting a blank as "not voicemail" would bias the one share the audit
       measures, in the direction of refusing the band.
+    - **`OB_REVIEW_RECORDING_URL` (optional) turns every row into a link.**
+      A recording is addressed by the phone system's OWN id (8x8:
+      `https://admin.8x8.com/recordings/details/<uuid>?region=USA`) and we do
+      NOT store that id -- `outbound_calls.call_id` is the CDR's Call ID,
+      which in this feed is a NUMERIC epoch-millis-shaped value (the same id
+      space as the DQE AD/AE columns, which is exactly why those coerce
+      through the thousands-separator bug). **So a per-recording DEEP link is
+      not derivable from captured data.** What is derivable is a pre-filtered
+      SEARCH url, and only you know that console's parameter scheme -- so set
+      this property to a template and the worksheet renders it per row.
+      Placeholders: `{date}` `{time}` `{agent}` `{ext}`, each URI-encoded;
+      e.g. `https://admin.8x8.com/recordings?date={date}&ext={ext}`. Unset,
+      the column stays blank and you search by agent + time as before. Two
+      rules: it must start with `http://` or `https://` (anything else is
+      refused rather than rendered half-built), and it renders as a BARE URL
+      -- never a `=HYPERLINK()` formula, which `sheetSafeCell_` would
+      neutralise into visible text. **`{callid}` is deliberately NOT
+      supported:** it would mean selecting `call_id`, trading this tool's
+      no-call-id property for a link that cannot resolve anyway.
     - **Workbook housekeeping:** newest 6 runs kept per prefix, oldest pruned
       (the `HR_BACKUP_KEEP_` pattern). It is a SEPARATE spreadsheet on
       purpose -- review artifacts do not belong in the CDR Report workbook,

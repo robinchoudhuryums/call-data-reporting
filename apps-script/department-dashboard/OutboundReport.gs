@@ -1146,13 +1146,50 @@ function obReviewStartParts_(callStart) {
   return { time: hh + ':' + m[2] + ':' + (m[3] || '00') };
 }
 
+/**
+ * PURE. The per-row recording link, from the operator's own URL TEMPLATE.
+ *
+ * WHY A TEMPLATE AND NOT A BUILT-IN URL. A recording is addressed by the
+ * phone system's OWN id (`https://admin.8x8.com/recordings/details/<uuid>`),
+ * and we do not store that id -- `outbound_calls.call_id` is the CDR's Call
+ * ID, which in this feed is a NUMERIC epoch-millis-shaped value (the same id
+ * space as the DQE AD/AE columns, which is exactly why those coerce through
+ * the thousands-separator bug). It is not the recording UUID, so no deep link
+ * is derivable from captured data. What IS derivable is a pre-filtered SEARCH
+ * url, whose parameter scheme only the operator knows -- so they paste it
+ * once into `OB_REVIEW_RECORDING_URL` and every row becomes a link.
+ *
+ * Placeholders: `{date}` `{time}` `{agent}` `{ext}`, each URI-encoded.
+ * **`{callid}` is deliberately NOT offered:** supporting it would mean
+ * selecting `call_id`, giving up this tool's no-call-id property (pinned) to
+ * buy a link that cannot resolve anyway, since the id spaces differ.
+ *
+ * Returns '' with no template, so the column simply stays empty.
+ *
+ * ⚠ It must render a BARE URL, never a `=HYPERLINK(...)` formula: the cell
+ * goes through `sheetSafeCell_`, which would prefix a leading `=` with an
+ * apostrophe and turn the formula into visible text. Sheets auto-links a
+ * bare https:// value anyway.
+ */
+function obReviewRecordingUrl_(template, row) {
+  var t = String(template == null ? '' : template).trim();
+  if (!t || !/^https?:\/\//i.test(t)) return '';
+  var enc = function (v) { return encodeURIComponent(String(v == null ? '' : v)); };
+  return t
+    .replace(/\{date\}/g, enc(row && row.callDate))
+    .replace(/\{time\}/g, enc(row && row.time))
+    .replace(/\{agent\}/g, enc(row && row.agent))
+    .replace(/\{ext\}/g, enc(row && row.ext));
+}
+
 // The worksheet's column order, in ONE place. Both the sheet write and the
 // TSV fallback render from `obReviewWorksheetGrid_`, so a new column is added
 // once and cannot appear in one and not the other -- the deptTableGrid_ rule
 // ("one grid, two serialisations"), which exists because the CSV and the
 // clipboard drifted apart when each built its own row.
-var OB_REVIEW_WS_HEADER_ = ['Token', 'Date', 'Time', 'Agent', 'Department',
-  'Label (' + OB_REVIEW_LABELS_.join(' / ') + ')', 'Notes'];
+var OB_REVIEW_WS_HEADER_ = ['Token', 'Date', 'Time', 'Agent', 'Ext', 'Department',
+  'Recording', 'Label (' + OB_REVIEW_LABELS_.join(' / ') + ')', 'Notes'];
+var OB_REVIEW_LABEL_COL_ = 8;    // 1-based: the Label column in the header above
 var OB_REVIEW_KEY_HEADER_ = ['Token', 'Stratum', 'Ring (s)', 'Talk (s)', 'Attempts', 'Connected'];
 
 /**
@@ -1165,13 +1202,15 @@ var OB_REVIEW_KEY_HEADER_ = ['Token', 'Stratum', 'Ring (s)', 'Talk (s)', 'Attemp
  * `sheetSafeCell_` HERE, once, rather than in each serialisation: the
  * injection rule's "CSV or not" clause.
  */
-function obReviewWorksheetGrid_(rows) {
+function obReviewWorksheetGrid_(rows, recordingTemplate) {
   var grid = [OB_REVIEW_WS_HEADER_.slice()];
   (rows || []).forEach(function (r) {
     grid.push([
       r.token, r.callDate, r.time,
       sheetSafeCell_(String(r.agent == null ? '' : r.agent)),
+      sheetSafeCell_(String(r.ext == null ? '' : r.ext)),
       sheetSafeCell_(String(r.dept == null ? '' : r.dept)),
+      obReviewRecordingUrl_(recordingTemplate, r),
       '', '',
     ]);
   });
@@ -1242,6 +1281,8 @@ function obReviewWorkbook_() {
  * dropdown instead of typing.
  */
 function obReviewWriteTabs_(rows, meta) {
+  var recordingTemplate = PropertiesService.getScriptProperties()
+    .getProperty('OB_REVIEW_RECORDING_URL');
   var ss = obReviewWorkbook_();
   var stamp = Utilities.formatDate(new Date(), TZ, 'yyyyMMdd-HHmm');
   var wsName = OB_REVIEW_TAB_PREFIX_ + stamp;
@@ -1251,7 +1292,7 @@ function obReviewWriteTabs_(rows, meta) {
     keyName = OB_REVIEW_KEY_PREFIX_ + stamp + '-' + k;
   }
 
-  var wsGrid = obReviewWorksheetGrid_(rows);
+  var wsGrid = obReviewWorksheetGrid_(rows, recordingTemplate);
   var ws = ss.insertSheet(wsName, 0);
   ws.getRange(1, 1, wsGrid.length, wsGrid[0].length).setValues(wsGrid);
   ws.getRange(1, 1, 1, wsGrid[0].length).setFontWeight('bold');
@@ -1262,14 +1303,18 @@ function obReviewWriteTabs_(rows, meta) {
     // tally it was meant for.
     var rule = SpreadsheetApp.newDataValidation()
       .requireValueInList(OB_REVIEW_LABELS_, true).setAllowInvalid(false).build();
-    ws.getRange(2, 6, wsGrid.length - 1, 1).setDataValidation(rule);
+    ws.getRange(2, OB_REVIEW_LABEL_COL_, wsGrid.length - 1, 1).setDataValidation(rule);
   }
   // The listener's instructions live ON the sheet, because a runbook in a doc
   // is not where someone labelling row 34 is looking.
   var noteCol = wsGrid[0].length + 2;
   ws.getRange(1, noteCol).setValue('How to label');
   ws.getRange(2, noteCol).setValue(
-    'Find each call in the phone system by AGENT + DATE + TIME, listen, and pick a Label. '
+    (recordingTemplate
+      ? 'Open each row\'s Recording link, listen, and pick a Label. '
+      : 'Find each call in the phone system by AGENT + DATE + TIME, listen, and pick a Label. '
+        + 'Tip: set the OB_REVIEW_RECORDING_URL Script Property to a search-url template '
+        + '(placeholders {date} {time} {agent} {ext}) and every row becomes a link. ')
     + 'Ring length is deliberately NOT shown -- it is the hypothesis under test. '
     + 'When every row is labelled, run scoreOutboundReviewSample() in the Apps Script editor. '
     + 'Partial is fine: it reports how many are still blank. '
@@ -1353,7 +1398,8 @@ function obReviewTally_(wsGrid, keyGrid) {
     if (!out.byStratum[st]) out.byStratum[st] = { n: 0, labels: {}, unlabelled: 0 };
     var bucket = out.byStratum[st];
     bucket.n++;
-    var raw = String(row[5] == null ? '' : row[5]).trim().toLowerCase();
+    var raw = String(row[OB_REVIEW_LABEL_COL_ - 1] == null ? '' : row[OB_REVIEW_LABEL_COL_ - 1])
+      .trim().toLowerCase();
     if (!raw) { bucket.unlabelled++; out.unlabelled++; continue; }
     if (!labelSet[raw]) { out.unrecognised.push(token + '=' + raw); continue; }
     bucket.labels[raw] = (bucket.labels[raw] || 0) + 1;
@@ -1401,13 +1447,13 @@ function sampleOutboundCallsForReview() {
     // concatenated into this statement. `sx` is mapped back in JS below.
     var parts = OB_REVIEW_STRATA_.map(function (st, sx) {
       return '(SELECT ' + sx + ' AS sx, call_date::text AS d, '
-        + 'call_start AS st, agent_name AS ag, department AS dp, ring_seconds AS rs, '
-        + 'talk_seconds AS ts, attempts AS at, connected AS cn '
+        + 'call_start AS st, agent_name AS ag, agent_ext AS ax, department AS dp, '
+        + 'ring_seconds AS rs, talk_seconds AS ts, attempts AS at, connected AS cn '
         + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND '
         + st.sql + ' ORDER BY random() LIMIT ' + wantFor(st) + ')';
     });
     var sql = "SELECT COALESCE(json_agg(json_build_object("
-      + "'sx', sx, 'd', d, 'st', st, 'ag', ag, 'dp', dp, "
+      + "'sx', sx, 'd', d, 'st', st, 'ag', ag, 'ax', ax, 'dp', dp, "
       + "'rs', rs, 'ts', ts, 'at', at, 'cn', cn)), '[]')::text AS j FROM ("
       + parts.join(' UNION ALL ') + ') s';
     var ps = conn.prepareStatement(sql);
@@ -1426,7 +1472,8 @@ function sampleOutboundCallsForReview() {
         stratum: (OB_REVIEW_STRATA_[Number(r.sx)] || {}).id || '?',
         callDate: String(r.d || ''),
         time: obReviewStartParts_(r.st).time,
-        agent: String(r.ag == null ? '' : r.ag), dept: String(r.dp == null ? '' : r.dp),
+        agent: String(r.ag == null ? '' : r.ag), ext: String(r.ax == null ? '' : r.ax),
+        dept: String(r.dp == null ? '' : r.dp),
         ring: r.rs == null ? null : Number(r.rs), talk: r.ts == null ? null : Number(r.ts),
         attempts: r.at == null ? null : Number(r.at), connected: !!r.cn,
       };
@@ -1465,7 +1512,8 @@ function sampleOutboundCallsForReview() {
       out.sheet = obReviewWriteTabs_(rows, { from: from, to: to });
     } catch (we) {
       out.sheetError = String(we);
-      out.worksheet = obReviewGridToTsv_(obReviewWorksheetGrid_(rows));
+      out.worksheet = obReviewGridToTsv_(obReviewWorksheetGrid_(rows,
+        PropertiesService.getScriptProperties().getProperty('OB_REVIEW_RECORDING_URL')));
       out.key = obReviewGridToTsv_(obReviewKeyGrid_(rows));
       Logger.log('[outbound-review] sheet write FAILED (%s) — falling back to the TSV below.', we);
       Logger.log('[outbound-review] worksheet (paste into a sheet):\n%s', out.worksheet);

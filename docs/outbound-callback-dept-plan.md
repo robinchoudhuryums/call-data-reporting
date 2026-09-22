@@ -412,12 +412,37 @@ Design notes worth keeping:
   external CDR feed (the injection rule's "CSV or not" clause).
 - **The stratum travels into SQL as an integer index**, so nothing
   name-derived is concatenated into the statement.
+- **A per-recording DEEP LINK is not derivable, and the reason is worth
+  knowing (2026-09-22).** 8x8 addresses a recording by its own UUID
+  (`/recordings/details/cdd3ea31-...`); `outbound_calls.call_id` is the CDR's
+  Call ID, numeric and epoch-millis-shaped -- the same id space as the DQE
+  AD/AE columns, which is why those coerce. Different spaces, no mapping. The
+  optional `OB_REVIEW_RECORDING_URL` template (Operator State #71) renders a
+  SEARCH url per row instead, since the console's parameter scheme is operator
+  knowledge rather than anything the repo can infer.
 - **The window now anchors to the DATA** (`obProbeAnchorDate_`, shared by all
   four outbound tools): unset, it ends at `max(call_date)` rather than at
   yesterday, so no window carries a tail of empty days. **Capped at
   yesterday** -- `max(call_date)` becomes today the moment a mid-day import
   lands a partial day, which is the P16 bug, so the anchor may only pull the
   window earlier. An explicitly set window is never moved.
+
+**One labelled example already exists, and it raises a question the audit
+should answer first (owner, 2026-09-22).** An outbound call on 2026-09-21 at
+4:55 PM CST, 29 s, where the agent reached voicemail and left a message. Two
+things follow. (1) It confirms the LABEL is directly observable from the
+recording -- the automated greeting and the agent's message are both audible
+-- which is the premise Step 1b rests on. (2) **It does not yet support the
+band, and might cut against it.** If that 29 s is the WHOLE call, then ring +
+message ≈ 29 s, leaving far too little for a 20-32 s ring plus a spoken
+message -- which would mean voicemail here answers FAST rather than after a
+carrier no-answer timeout, and the band premise weakens. If the 29 s is TALK
+only, it is consistent. **So the cheapest next measurement is a single-row
+parity check, not 46 labels:** take this exact call, read its ring / talk
+split in the console, and compare against its stored `ring_seconds` /
+`talk_seconds` row. One row either supports the timeout model or undermines
+it before any listening effort is spent. (Caveat: 2026-09-21 must be imported
+for the stored row to exist.)
 
 **Sequence: 1b comes BEFORE Step 2.** No parameter should be set from the band
 alone. If stratum C comes back mostly machines, the band is validated and Step
