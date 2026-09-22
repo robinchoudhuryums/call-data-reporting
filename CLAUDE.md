@@ -563,17 +563,17 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
   `applyOrphanRename`'s best-effort `dqe_history` rename mirror
-  (`renameAgentInNeon_`). **A review-artifact write goes to a SEPARATE
-  standing workbook, never a production tab** -- `sampleOutboundCallsForReview`
-  (INV-01, Operator State #71) self-creates one under `OB_REVIEW_SS_ID`, the
-  `HR_BACKUP_SS_ID` pattern: admin-gated, insert-only, and it keeps the CDR
-  Report workbook's tabs and its ALLOCATED cell budget (#62) untouched.
+  (`renameAgentInNeon_`).
   It's admin-gated (rides inside `applyOrphanRename`), conflict-safe
   (skips `(call_date, toName)` collisions rather than violating
   `uq_dqe_history`), and never throws (a Neon failure leaves the
   authoritative sheet rename intact). Needs the dashboard-project
   `NEON_*` Script Properties + `script.external_request` scope
-  (Operator State #18); no-ops cleanly when unset.
+  (Operator State #18); no-ops cleanly when unset. **A review-artifact write goes to a SEPARATE
+  standing workbook, never a production tab** -- `sampleOutboundCallsForReview`
+  (INV-01, Operator State #71) self-creates one under `OB_REVIEW_SS_ID`, the
+  `HR_BACKUP_SS_ID` pattern: admin-gated, insert-only, and it keeps the CDR
+  Report workbook's tabs and its ALLOCATED cell budget (#62) untouched.
 - **Roster cells embed extensions**: `DO NOT EDIT!` cells follow
   `"Name, ext1, ext2"`. Take everything before the first comma as the name;
   digit-only tokens after are queue extensions.
@@ -2295,7 +2295,7 @@ below is a finding aid.** Several invariants carry exceptions and version
 history that a one-line summary cannot hold, so open the entry before relying
 on one (INV-30's cache-version table above all).
 
-INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / the Coaching worklist close, a Neon write) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
+INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / the Coaching worklist close, a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDisplayValues()`, never `getValue()` -- spreadsheet-vs-script TZ | Subsystem: Department Dashboard
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard

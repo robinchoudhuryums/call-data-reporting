@@ -97,7 +97,10 @@ function buildOutboundCallRecords_(rawRows) {
     var dept = String(first[IC_COL.DEPARTMENTS] == null ? '' : first[IC_COL.DEPARTMENTS]).trim();
     if (!dept || dept.toUpperCase() === 'N/A') dept = null;
 
-    // Connected = the callee picked up: Talk>0 on an Answered external leg
+    // Connected = SOMETHING on the far end answered: Talk>0 on an Answered
+    // external leg. That is a person OR voicemail OR an IVR OR a call-screening
+    // service -- the CDR reports all four identically (verified against
+    // labelled calls, 2026-09-22; docs/outbound-callback-dept-plan.md).
     // (zero-talk legs that say "Answered" are ringback/system noise, the
     // same gate the inbound disposition uses).
     var connected = false, talkSeconds = 0;

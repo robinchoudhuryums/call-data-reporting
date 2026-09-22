@@ -1075,8 +1075,14 @@ var OB_REVIEW_MAX_N_ = 40;       // per stratum: a listening exercise, not an ex
 // user input (these are literals, never operator-supplied).
 //
 // ⚠ `want` IS DELIBERATELY UNEVEN. C and B2 decide things -- the band's
-// interior and its LEFT EDGE -- while the rest are controls, where a handful
-// confirms the data is what we think. Spending the same effort on each would
+// interior and its LEFT EDGE -- A and B measure what the ring CANNOT see
+// (the recall ceiling), and E is the one data-integrity control, where a
+// handful confirms `connected` means what it should.
+//
+// The IDs are frozen even where they now mislead (`B-human` is not a human
+// control -- a voicemail rang 8 s): the scorer joins on the stratum id stored
+// in each run's Key tab, so renaming one would make every in-flight run
+// unscorable. Spending the same effort on each would
 // buy precision where it changes nothing: at n=12 a share carries roughly a
 // +/-13 pt Wilson interval, at n=20 about +/-10, and the call is "mostly
 // machines vs a coin flip".
@@ -1096,10 +1102,10 @@ var OB_REVIEW_MAX_N_ = 40;       // per stratum: a listening exercise, not an ex
 var OB_REVIEW_STRATA_ = [
   { id: 'A-instant',     want: 8,  ring: [0, 1],
     sql: 'connected AND ring_seconds <= 1',
-    asks: "whether #65's carrier-instant verdict holds by ear" },
+    asks: 'the RECALL question -- how many instant connects are not a person' },
   { id: 'B-human',       want: 5,  ring: [2, 11],
     sql: 'connected AND ring_seconds BETWEEN 2 AND 11',
-    asks: 'the control -- these should be people' },
+    asks: 'the RECALL question -- fast rings can be voicemail (one rang 8 s)' },
   { id: 'B2-shoulder',   want: 12, ring: [12, 19],
     sql: 'connected AND ring_seconds BETWEEN 12 AND 19',
     asks: "THE BAND'S LEFT EDGE -- a known voicemail rang 18 s here" },

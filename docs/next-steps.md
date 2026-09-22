@@ -608,6 +608,20 @@ tripwire. Revisit only after Batch 5 has held.
   weighted toward stratum C, a failed control downgrades a validation, and all
   four outbound tools now anchor an unset window to `max(call_date)` capped at
   yesterday (the P16 rule).
+- **The ring method has a RECALL ceiling, and three decisions hang off it
+  (2026-09-22, from owner-labelled calls).** A voicemail rang 8 s and a
+  call-screening service connected fast then took a message, so a ring
+  threshold can only ever see TIMEOUT voicemail; immediate voicemail, IVR and
+  screening stay inside `reached`, the number managers act on. Open, in order:
+  (1) **finish the labelling** -- A+B first, since that measures the ceiling
+  regardless of C (Operator State #71); (2) **owner ruling on Step 3
+  precedence** -- `voicemail-likely` (ring-only) and `brief` (talk-only)
+  overlap for a short-message voicemail, and the model states no order; the
+  natural answer is that `voicemail-likely` wins, but it is a decision about
+  what the surface says; (3) **`strict` must not ship** while the recall
+  ceiling is unmeasured -- `disclose` has to call `reached` an upper bound.
+  Unbuilt and only needed if a population figure is wanted: per-band ROW
+  COUNTS as weights, since the pooled sample rate is not a population rate.
 - **Re-derive the band share over the REACHABLE population; do not carry the
   22% forward (2026-09-21).** That figure is over all connects, and #65
   established that 40.6% of them connect instantly and must be excluded from

@@ -2086,6 +2086,24 @@ When something looks wrong, before assuming a code bug, check:
       `agreesWithSpike: false` (9,812 repeat-callee groups peak at 0 s, not
       31 s), which points at #65's instant-connect problem rather than at
       voicemail.
+    - **SHIPPED since that run (2026-09-21/22) -- the fields a re-run adds.**
+      (1) **The band fallback**, `obProbeRingBand_`: consulted ONLY when the
+      spike refuses as `spike-too-small` or `too-wide` (the multi-modal
+      signatures); a passing spike still wins. Read `bandScan` in the output.
+      (2) **`band-impure` is the gate that matters**: summing a 13 s band
+      counts the baseline traffic inside it as voicemail, so on the 09-18
+      histogram ~31% of what a threshold flags would be a human -- a ~69%
+      PRECISION CEILING. (3) **`suggestedBasis`** carries `basis` (peak/band)
+      and `expectedPrecisionCeiling` BESIDE `suggested`, never inside it --
+      `suggested` is copied key-for-key into Script Properties. (4) **The
+      repeat-callee check now also runs with the instant population
+      excluded** (`modalRingSecNoInstant` / `agreesWithSpikeNoInstant`),
+      because 40.6% of connects at <= 1 s swamps every repeat group's mode;
+      the result line names both readings. (5) `window.anchoredToData` says
+      whether an unset window was anchored to `max(call_date)` or fell back
+      to the calendar. **None of this makes a threshold settable: #71's
+      ground truth found a voicemail at 8 s, so the ring method also has a
+      RECALL ceiling no probe can measure.**
 
 65. **The instant-connect diagnostic (`probeOutboundInstantConnects`).**
     Read-only, admin-gated, editor-run. Companion to #64 and it shares that
@@ -2247,6 +2265,11 @@ When something looks wrong, before assuming a code bug, check:
       classifier must (1) EXCLUDE the instant population rather than
       threshold it, and (2) DISCLOSE that its reachable population is the
       ~59% remainder -- a coverage figure on the surface, not a footnote.
+      **⚠ It establishes that the stored ring is TRUTHFUL, never that a person
+      answered.** Later ground truth (#71) found voicemail reached at 8 s and
+      a call-screening service that connects fast and then takes a message --
+      so the instant population may be substantially machines, and "carrier-
+      instant" must not be read as "human-instant".
       **#64's measured voicemail band (20-32 s, multi-modal at 21 / 26-27 /
       30-31 s) was measured over ALL connects**, so its ~22% share is over a
       denominator that now shrinks by 40.6%; re-derive that share over the
@@ -2599,8 +2622,9 @@ When something looks wrong, before assuming a code bug, check:
     - **Size: per stratum, and deliberately UNEVEN.** C (in-band) 20,
       **B2 (the 12-19 s shoulder) 12**, A (instant) 8, B and D 5, E 4 -- 54
       calls, not a uniform 60. C and B2 decide things (the band's interior and
-      its LEFT EDGE); the rest are controls where a handful confirms the data
-      is what we think. **The ring bands TILE with no gap, and that is
+      its LEFT EDGE), A and B measure how much voicemail the ring CANNOT see
+      (the recall ceiling), and E is the one data-integrity control -- a
+      handful there confirms `connected` means what it should. **The ring bands TILE with no gap, and that is
       enforced** -- the first version left 12-19 s in no stratum at all, and
       the first two labelled voicemails rang 18 s and 22 s, so one of them
       could never have been drawn. At n=12 the C share carries roughly a +/-13 pt
