@@ -2596,10 +2596,14 @@ When something looks wrong, before assuming a code bug, check:
       mid-day import lands a partial day, and measuring a partial day is
       exactly the P16 bug. So the anchor can only ever pull the window
       EARLIER. A date you typed is never moved.
-    - **Size: per stratum, and deliberately UNEVEN.** C (in-band) 20, A
-      (instant) 10, B and D 6, E 4 -- 46 calls, not a uniform 60. Only C
-      decides anything; the rest are controls where a handful confirms the
-      data is what we think. At n=12 the C share carries roughly a +/-13 pt
+    - **Size: per stratum, and deliberately UNEVEN.** C (in-band) 20,
+      **B2 (the 12-19 s shoulder) 12**, A (instant) 8, B and D 5, E 4 -- 54
+      calls, not a uniform 60. C and B2 decide things (the band's interior and
+      its LEFT EDGE); the rest are controls where a handful confirms the data
+      is what we think. **The ring bands TILE with no gap, and that is
+      enforced** -- the first version left 12-19 s in no stratum at all, and
+      the first two labelled voicemails rang 18 s and 22 s, so one of them
+      could never have been drawn. At n=12 the C share carries roughly a +/-13 pt
       Wilson interval and at n=20 about +/-10, against a decision of "mostly
       machines vs a coin flip", so the listening budget goes where it changes
       the answer. `OUTBOUND_REVIEW_N`, if set, overrides every stratum with
@@ -2636,6 +2640,11 @@ When something looks wrong, before assuming a code bug, check:
       re-sample), never pick an end. **A point estimate is not the test** -- a
       14-of-20 run reads 70% and still refuses, because the interval reaches
       down to the coin flip.
+    - **A voicemail-heavy 12-19 s SHOULDER means the band starts too high.**
+      The scorer says so explicitly and does NOT downgrade the verdict: that
+      is a finding about where the left edge belongs, not evidence that
+      stratum C is uninterpretable. Widen the band down before setting a
+      threshold -- a known voicemail rang at 18 s.
     - **A FAILED CONTROL downgrades a validation, and that is the one result
       worth reading twice.** If stratum A comes back mostly NOT human, #65's
       carrier-instant conclusion is wrong and nothing here is interpretable

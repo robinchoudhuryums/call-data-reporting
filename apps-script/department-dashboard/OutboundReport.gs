@@ -1074,23 +1074,43 @@ var OB_REVIEW_MAX_N_ = 40;       // per stratum: a listening exercise, not an ex
 // predicate; it must reference only outbound_calls columns and carry no
 // user input (these are literals, never operator-supplied).
 //
-// ⚠ `want` IS DELIBERATELY UNEVEN. Only stratum C decides anything -- the
-// other four are controls, where a handful is enough to confirm the data is
-// what we think. Spending the same effort on each would buy precision where
-// it changes nothing and withhold it where it does: at n=12 the C share
-// carries roughly a +/-13 pt Wilson interval, at n=20 about +/-10, and the
-// call is "mostly machines vs a coin flip". So C gets the listening budget
-// and the totals stay smaller than a uniform draw would.
+// ⚠ `want` IS DELIBERATELY UNEVEN. C and B2 decide things -- the band's
+// interior and its LEFT EDGE -- while the rest are controls, where a handful
+// confirms the data is what we think. Spending the same effort on each would
+// buy precision where it changes nothing: at n=12 a share carries roughly a
+// +/-13 pt Wilson interval, at n=20 about +/-10, and the call is "mostly
+// machines vs a coin flip".
+//
+// ⚠ THE RING BANDS MUST TILE 0..INFINITY WITH NO GAP, and that is not
+// theoretical: the first version ran B as 2-11 and C as 20-32, leaving
+// 12-19 s in NO stratum -- and the FIRST two labelled voicemails the owner
+// produced rang at 18 s and 22 s, so one of them sat in the hole and could
+// never have been drawn. Worse, the hole was exactly where the band's left
+// edge is in question. `ring` is the declarative range, pinned against the
+// SQL and checked for gaps by outbound-report.test.js.
+//
+// B dropped its old `talk_seconds >= 20` condition with that fix. It made the
+// bands non-contiguous (a 2-11 s ring with a short talk was also homeless),
+// and a control PRE-FILTERED to the outcome it is meant to confirm is a
+// weaker control: what a short ring actually is, is the thing being checked.
 var OB_REVIEW_STRATA_ = [
-  { id: 'A-instant',     want: 10, sql: 'connected AND ring_seconds <= 1',
+  { id: 'A-instant',     want: 8,  ring: [0, 1],
+    sql: 'connected AND ring_seconds <= 1',
     asks: "whether #65's carrier-instant verdict holds by ear" },
-  { id: 'B-human',       want: 6,  sql: 'connected AND ring_seconds BETWEEN 2 AND 11 AND talk_seconds >= 20',
+  { id: 'B-human',       want: 5,  ring: [2, 11],
+    sql: 'connected AND ring_seconds BETWEEN 2 AND 11',
     asks: 'the control -- these should be people' },
-  { id: 'C-inband',      want: 20, sql: 'connected AND ring_seconds BETWEEN 20 AND 32',
+  { id: 'B2-shoulder',   want: 12, ring: [12, 19],
+    sql: 'connected AND ring_seconds BETWEEN 12 AND 19',
+    asks: "THE BAND'S LEFT EDGE -- a known voicemail rang 18 s here" },
+  { id: 'C-inband',      want: 20, ring: [20, 32],
+    sql: 'connected AND ring_seconds BETWEEN 20 AND 32',
     asks: 'THE QUESTION -- what fraction are machines' },
-  { id: 'D-above',       want: 6,  sql: 'connected AND ring_seconds >= 33',
+  { id: 'D-above',       want: 5,  ring: [33, null],
+    sql: 'connected AND ring_seconds >= 33',
     asks: "whether the band's right edge is placed right" },
-  { id: 'E-unconnected', want: 4,  sql: 'NOT connected',
+  { id: 'E-unconnected', want: 4,  ring: null,
+    sql: 'NOT connected',
     asks: 'that the unconnected side is what we think' },
 ];
 
@@ -1608,9 +1628,33 @@ function obReviewVerdict_(tally) {
   };
   check('A-instant', 'human', 'if the instant connects are NOT humans, #65\'s carrier-instant '
     + 'reading is wrong and that conclusion needs revisiting before this one');
-  check('B-human', 'human', 'a short ring with real talk time should be a person; if it is not, '
-    + 'the strata do not mean what the selectors say and stratum C is not interpretable');
-  if (out.notes.length && out.verdict === 'validated') {
+  check('B-human', 'human', 'a 2-11 s ring should be a person; if it is not, the strata do not '
+    + 'mean what the selectors say and stratum C is not interpretable');
+  // B2 is not a control -- it is a second QUESTION, and a voicemail-heavy
+  // shoulder means the measured band starts too high rather than that
+  // anything is wrong. Reported as a note either way, never as a downgrade.
+  var b2 = tally.byStratum['B2-shoulder'];
+  if (b2) {
+    var b2tot = 0;
+    Object.keys(b2.labels || {}).forEach(function (k) { b2tot += b2.labels[k]; });
+    if (b2tot) {
+      var b2vm = (b2.labels.voicemail || 0) / b2tot;
+      out.shoulder = { n: b2tot, voicemailShare: Math.round(b2vm * 1000) / 1000,
+                       interval: obWilsonInterval_(b2.labels.voicemail || 0, b2tot) };
+      if (b2vm >= 0.4) {
+        out.notes.push('⚠ THE BAND STARTS TOO HIGH: ' + Math.round(b2vm * 100) + '% of the '
+          + '12-19 s shoulder is voicemail too, so a 20 s left edge is MISSING those calls. '
+          + 'Widen the band down before setting a threshold (a known voicemail rang 18 s).');
+      }
+    }
+  }
+  // Only a CONTROL failure downgrades. The shoulder note above is a finding
+  // about where the band's edge belongs, not evidence that stratum C is
+  // uninterpretable, so it is reported without touching the verdict.
+  var controlFailed = Object.keys(out.controls).some(function (id) {
+    return out.controls[id].share < 0.5;
+  });
+  if (controlFailed && out.verdict === 'validated') {
     out.verdict = 'inconclusive';
     out.reason = 'stratum C looked validated, but a CONTROL failed, so the strata themselves are '
       + 'in question: ' + out.notes.join(' ');

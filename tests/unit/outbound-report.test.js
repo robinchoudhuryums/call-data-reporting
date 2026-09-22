@@ -1164,11 +1164,11 @@ test('review: agent names from the CDR feed are neutralised for the paste target
 
 test('review: the strata mirror Step 1b and never select on the thing being inferred', function () {
   const strata = h.ctx.OB_REVIEW_STRATA_;
-  assert.equal(strata.length, 5);
+  assert.equal(strata.length, 6);
   // Joined rather than deepEqual: the array crosses the vm realm boundary, so
   // a structural compare fails on reference identity (the harness trap).
   assert.equal(strata.map(function (s) { return s.id; }).join('|'),
-    'A-instant|B-human|C-inband|D-above|E-unconnected');
+    'A-instant|B-human|B2-shoulder|C-inband|D-above|E-unconnected');
   // The whole methodological point: a stratum may select on stored facts
   // (connected, ring, talk) and never on a voicemail judgement.
   strata.forEach(function (st) {
@@ -1177,8 +1177,11 @@ test('review: the strata mirror Step 1b and never select on the thing being infe
     assert.ok(!/voicemail|vm|machine/i.test(st.sql),
       st.id + ' must not select on the label being tested: ' + st.sql);
   });
-  // C is the measured band from the 09-18 histogram.
-  assert.match(strata[2].sql, /ring_seconds BETWEEN 20 AND 32/);
+  // C is the measured band from the 09-18 histogram. Looked up by ID, not by
+  // position -- inserting B2 moved C's index and broke the old assertion.
+  const cBand = strata.filter(function (st) { return st.id === 'C-inband'; })[0];
+  assert.ok(cBand, 'the in-band stratum must exist');
+  assert.match(cBand.sql, /ring_seconds BETWEEN 20 AND 32/);
 });
 
 test('review: the sampler emits NO caller identity', function () {
@@ -1378,6 +1381,89 @@ test('verdict: a FAILED CONTROL downgrades a validation — the strata are in qu
   assert.equal(ok.notes.length, 0);
 });
 
+test('review: the connected ring bands TILE 0..inf with no gap', function () {
+  // The defect this pin exists for: B was 2-11 and C was 20-32, so ring 12-19
+  // belonged to NO stratum -- and the first two labelled voicemails the owner
+  // produced rang at 18 s and 22 s. One of them could never have been drawn,
+  // in exactly the region where the band's left edge is in question.
+  const bands = h.ctx.OB_REVIEW_STRATA_
+    .filter(function (st) { return st.ring; })
+    .map(function (st) { return { id: st.id, lo: st.ring[0], hi: st.ring[1] }; })
+    .sort(function (a, b) { return a.lo - b.lo; });
+  assert.ok(bands.length >= 4, 'the connected strata must declare ring ranges');
+  assert.equal(bands[0].lo, 0, 'the first band must start at 0');
+  assert.equal(bands[bands.length - 1].hi, null, 'the last band must be open-ended');
+  for (let i = 1; i < bands.length; i++) {
+    assert.equal(bands[i].lo, bands[i - 1].hi + 1,
+      'gap or overlap between ' + bands[i - 1].id + ' (..' + bands[i - 1].hi + ') and '
+      + bands[i].id + ' (' + bands[i].lo + '..)');
+  }
+  // Every second 0..60 is claimed exactly once.
+  for (let sec = 0; sec <= 60; sec++) {
+    const hits = bands.filter(function (b) {
+      return sec >= b.lo && (b.hi === null || sec <= b.hi);
+    });
+    assert.equal(hits.length, 1, 'ring ' + sec + 's is claimed by ' + hits.length + ' strata');
+  }
+});
+
+test('review: each stratum SQL matches its declared ring range', function () {
+  // The range is what the gap test reasons about; the SQL is what actually
+  // runs. A drift between them would make the partition pin vacuous.
+  h.ctx.OB_REVIEW_STRATA_.forEach(function (st) {
+    if (!st.ring) { assert.match(st.sql, /^NOT connected$/); return; }
+    const lo = st.ring[0], hi = st.ring[1];
+    if (hi === null) {
+      assert.ok(st.sql.indexOf('ring_seconds >= ' + lo) >= 0,
+        st.id + ' sql must say >= ' + lo + ', got: ' + st.sql);
+    } else if (lo === 0) {
+      assert.ok(st.sql.indexOf('ring_seconds <= ' + hi) >= 0,
+        st.id + ' sql must say <= ' + hi + ', got: ' + st.sql);
+    } else {
+      assert.ok(st.sql.indexOf('BETWEEN ' + lo + ' AND ' + hi) >= 0,
+        st.id + ' sql must say BETWEEN ' + lo + ' AND ' + hi + ', got: ' + st.sql);
+    }
+  });
+});
+
+test('review: the two REAL labelled voicemails each land in a stratum', function () {
+  // Ground truth, 2026-09-21, same agent two minutes apart, both confirmed
+  // voicemail-with-message from the recordings. Derived from the raw CDR:
+  // ring = CONNECTED - START on the external Outgoing leg.
+  const real = [
+    { call: '1783984138942', ring: 22, talk: 73, expect: 'C-inband' },
+    { call: '1783984138898', ring: 18, talk: 30, expect: 'B2-shoulder' },
+  ];
+  real.forEach(function (r) {
+    const owners = h.ctx.OB_REVIEW_STRATA_.filter(function (st) {
+      return st.ring && r.ring >= st.ring[0] && (st.ring[1] === null || r.ring <= st.ring[1]);
+    });
+    assert.equal(owners.length, 1,
+      'call ' + r.call + ' (ring ' + r.ring + 's) must be sampleable, got ' + owners.length);
+    assert.equal(owners[0].id, r.expect,
+      'call ' + r.call + ' belongs in ' + r.expect + ', got ' + owners[0].id);
+  });
+});
+
+test('review: a voicemail-heavy shoulder is REPORTED, and does not downgrade C', function () {
+  // The shoulder answers a different question from the controls -- where the
+  // band's edge belongs, not whether the strata are trustworthy -- so it must
+  // not turn a validated C into inconclusive.
+  const v = h.ctx.obReviewVerdict_(cTally_(19, 1, {
+    'B2-shoulder': { n: 12, unlabelled: 0, labels: { voicemail: 7, human: 5 } },
+  }));
+  assert.equal(v.verdict, 'validated', 'the shoulder is a finding, not a control failure');
+  assert.ok(v.shoulder && v.shoulder.n === 12);
+  assert.ok(v.notes.some(function (n) { return /BAND STARTS TOO HIGH/.test(n); }),
+    'and it must say the left edge is missing calls');
+  // A quiet shoulder says nothing.
+  const quiet = h.ctx.obReviewVerdict_(cTally_(19, 1, {
+    'B2-shoulder': { n: 12, unlabelled: 0, labels: { human: 11, voicemail: 1 } },
+  }));
+  assert.equal(quiet.verdict, 'validated');
+  assert.equal(quiet.notes.length, 0);
+});
+
 test('review: stratum C carries the listening budget', function () {
   const strata = h.ctx.OB_REVIEW_STRATA_;
   const byId = {};
@@ -1386,8 +1472,13 @@ test('review: stratum C carries the listening budget', function () {
   strata.forEach(function (st) {
     if (st.id === 'C-inband') return;
     assert.ok(st.want < byId['C-inband'],
-      st.id + ' is a control and must not be sampled as heavily as C');
+      st.id + ' must not be sampled as heavily as C, which carries the main decision');
     assert.ok(st.want >= 3, st.id + ' still needs enough rows to sanity-check');
+  });
+  // B2 decides the band's LEFT EDGE, so it outranks the pure controls.
+  ['A-instant', 'B-human', 'D-above', 'E-unconnected'].forEach(function (id) {
+    assert.ok(byId['B2-shoulder'] > byId[id],
+      'B2 answers a question and must be sampled above the ' + id + ' control');
   });
 });
 

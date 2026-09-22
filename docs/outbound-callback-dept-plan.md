@@ -427,6 +427,55 @@ Design notes worth keeping:
   lands a partial day, which is the P16 bug, so the anchor may only pull the
   window earlier. An explicitly set window is never moved.
 
+### GROUND TRUTH: the first two labelled calls (owner, 2026-09-22)
+
+Two outbound calls from 2026-09-21, same agent (ext 279) two minutes apart,
+both confirmed from the recordings as **voicemail reached, message left**.
+Raw CDR rows supplied; ring derived as `CONNECTED - START` on the external
+Outgoing leg, exactly as `outboundCalls.js` computes it:
+
+| Call id | START | CONNECTED | **Ring** | Talk | `CALL_TIME` | Recording leg |
+| --- | --- | --- | --- | --- | --- | --- |
+| `1783984138942` | 14:56:24 | 14:56:46 | **22 s** | 73 s | 95 s | 73 s |
+| `1783984138898` | 14:55:30 | 14:55:48 | **18 s** | 30 s | 48 s | **29 s** |
+
+**Four findings, in order of how much they change.**
+
+**1. The strata had a HOLE, and a real voicemail was in it.** B ran 2-11 s and
+C 20-32 s, so ring 12-19 belonged to no stratum -- the 18 s call could never
+have been sampled, in exactly the region where the band's left edge is in
+question. FIXED: `ring` ranges are declarative, `B2-shoulder` (12-19 s) is a
+new stratum with a real allocation, B dropped its `talk_seconds >= 20`
+condition (it made the bands non-contiguous, and a control pre-filtered to the
+outcome it confirms is a weaker control), and two pins now fail on any gap or
+overlap. The scorer reports a voicemail-heavy shoulder as **"THE BAND STARTS
+TOO HIGH"** -- a finding about the edge, deliberately NOT a control failure,
+so it does not downgrade stratum C's verdict.
+
+**2. The 20 s left edge would MISS one of the two known voicemails** (18 s).
+On this evidence the measured band is too narrow at the bottom. Two labelled
+calls do not move a threshold, but they do say which question to measure
+first, which is what B2 now does.
+
+**3. The console's "29 s duration" is the RECORDING LEG**, not the call and
+not the talk time: the `Internal / CallRecording` leg runs 14:55:49-14:56:19
+while the call itself is 48 s (18 ring + 30 talk). That resolves the 09-22
+worry that ring + message could not both fit 29 s -- they were never meant to.
+**Read a console duration as the recording, never as the call.**
+
+**4. The capture handles both calls correctly**, verified by hand against the
+real grouping rules: both legs share root `call_id` (the `CallRecording` leg
+carries `Internal` + a non-phone callee, so `extLegs` excludes it), `first`
+is the Outgoing leg, `connected` is true via Talk>0 + `Answered`, and
+`ring_seconds` is 22 / 18. Also worth noting as OBSERVED rather than reasoned:
+**a voicemail pickup really does report `Answered` + `Connected`** -- the
+structural premise this whole plan rests on.
+
+**Caveat on independence:** both calls are the same agent, minutes apart, on a
+callback run. They are two observations of one agent's dialling pattern, not
+two independent draws from the population -- which is exactly why the sampler
+draws at random across the window rather than taking whatever is to hand.
+
 **One labelled example already exists, and it raises a question the audit
 should answer first (owner, 2026-09-22).** An outbound call on 2026-09-21 at
 4:55 PM CST, 29 s, where the agent reached voicemail and left a message. Two
