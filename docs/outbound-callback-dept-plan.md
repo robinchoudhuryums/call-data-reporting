@@ -373,9 +373,28 @@ carries the automated greeting and the agent's own message, so a listener can
 separate voicemail from a human without judgement calls. That is what makes
 this the cheapest decisive evidence available rather than another proxy.
 
-**SHIPPED 2026-09-21: `sampleOutboundCallsForReview()`** (`OutboundReport.gs`,
-read-only, admin-gated, editor-run). Operator State #71 is the runbook. Design
-notes worth keeping:
+**SHIPPED 2026-09-21, streamlined 2026-09-22: `sampleOutboundCallsForReview()`
++ `scoreOutboundReviewSample()`** (`OutboundReport.gs`, admin-gated,
+editor-run). Operator State #71 is the runbook. The 09-22 pass removed every
+manual step between sampling and a verdict: the worksheet is WRITTEN into a
+standing review workbook instead of pasted out of the execution log, the key
+is a hidden tab the SCORER reads so no human ever needs to open it, and the
+scorer does the join, the per-stratum tally and the decision rule. Two
+judgement calls in that pass are worth stating:
+- **Allocation is UNEVEN, because only stratum C decides.** 20 in C, 10 in A,
+  6 in B and D, 4 in E -- 46 calls rather than a uniform 60, with the
+  precision spent where it changes the answer (+/-10 pts at n=20 versus
+  +/-13 at n=12, against a "mostly machines vs coin flip" call).
+- **The verdict tests the INTERVAL, not the point estimate.** A 14-of-20 run
+  reads 70% voicemail and still returns `inconclusive`, because its Wilson
+  lower bound reaches down to the coin flip. `validated` needs the lower
+  bound above 60%, `refuted` the upper bound below 50%. And a failed CONTROL
+  downgrades a validation: if stratum A comes back mostly non-human then
+  #65's carrier-instant conclusion is wrong and stratum C is not
+  interpretable, so the scorer refuses rather than letting C outvote a broken
+  premise.
+
+Design notes worth keeping:
 - **The worksheet is blinded and the key is separate.** `worksheet` carries
   token / date / time / agent / department and a Label column -- and
   deliberately NOT ring or talk seconds, which would name the stratum outright
@@ -393,6 +412,12 @@ notes worth keeping:
   external CDR feed (the injection rule's "CSV or not" clause).
 - **The stratum travels into SQL as an integer index**, so nothing
   name-derived is concatenated into the statement.
+- **The window now anchors to the DATA** (`obProbeAnchorDate_`, shared by all
+  four outbound tools): unset, it ends at `max(call_date)` rather than at
+  yesterday, so no window carries a tail of empty days. **Capped at
+  yesterday** -- `max(call_date)` becomes today the moment a mid-day import
+  lands a partial day, which is the P16 bug, so the anchor may only pull the
+  window earlier. An explicitly set window is never moved.
 
 **Sequence: 1b comes BEFORE Step 2.** No parameter should be set from the band
 alone. If stratum C comes back mostly machines, the band is validated and Step

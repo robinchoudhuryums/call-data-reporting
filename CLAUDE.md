@@ -563,7 +563,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
   `applyOrphanRename`'s best-effort `dqe_history` rename mirror
-  (`renameAgentInNeon_`).
+  (`renameAgentInNeon_`). **A review-artifact write goes to a SEPARATE
+  standing workbook, never a production tab** -- `sampleOutboundCallsForReview`
+  (INV-01, Operator State #71) self-creates one under `OB_REVIEW_SS_ID`, the
+  `HR_BACKUP_SS_ID` pattern: admin-gated, insert-only, and it keeps the CDR
+  Report workbook's tabs and its ALLOCATED cell budget (#62) untouched.
   It's admin-gated (rides inside `applyOrphanRename`), conflict-safe
   (skips `(call_date, toName)` collisions rather than violating
   `uq_dqe_history`), and never throws (a Neon failure leaves the

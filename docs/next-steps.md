@@ -600,7 +600,14 @@ tripwire. Revisit only after Batch 5 has held.
   `connected` RELABELLED instead. **No parameter in this family should be set
   before those labels exist.** The PHI question resolved in the good direction
   — recordings are findable by agent + time, so no caller identity is emitted
-  and the aggregates-only convention holds (pinned).
+  and the aggregates-only convention holds (pinned). **Streamlined 2026-09-22:**
+  the worksheet is written into a standing review workbook (no paste out of a
+  log), the key is a hidden tab only `scoreOutboundReviewSample()` reads, and
+  that scorer does the join / tally / decision rule — testing the Wilson
+  INTERVAL, not the point estimate, so 14 of 20 still refuses. Allocation is
+  weighted toward stratum C, a failed control downgrades a validation, and all
+  four outbound tools now anchor an unset window to `max(call_date)` capped at
+  yesterday (the P16 rule).
 - **Re-derive the band share over the REACHABLE population; do not carry the
   22% forward (2026-09-21).** That figure is over all connects, and #65
   established that 40.6% of them connect instantly and must be excluded from

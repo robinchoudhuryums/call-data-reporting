@@ -1068,26 +1068,46 @@ function runOutboundVettingCheck() {
 // validates a different population. It does NOT self-clear (#64 owns that).
 // Size: OUTBOUND_REVIEW_N per stratum, default OB_REVIEW_DEFAULT_N_.
 
-var OB_REVIEW_DEFAULT_N_ = 12;   // ~+/-12pt CI on a stratum share -- enough to separate
-                                 // "mostly machines" from "a coin flip", which is the
-                                 // only distinction that changes the decision
-var OB_REVIEW_MAX_N_ = 40;       // a listening exercise, not an export
+var OB_REVIEW_MAX_N_ = 40;       // per stratum: a listening exercise, not an export
 
 // Mirrors Step 1b's table. `sql` is a fragment appended to the window
 // predicate; it must reference only outbound_calls columns and carry no
 // user input (these are literals, never operator-supplied).
+//
+// ⚠ `want` IS DELIBERATELY UNEVEN. Only stratum C decides anything -- the
+// other four are controls, where a handful is enough to confirm the data is
+// what we think. Spending the same effort on each would buy precision where
+// it changes nothing and withhold it where it does: at n=12 the C share
+// carries roughly a +/-13 pt Wilson interval, at n=20 about +/-10, and the
+// call is "mostly machines vs a coin flip". So C gets the listening budget
+// and the totals stay smaller than a uniform draw would.
 var OB_REVIEW_STRATA_ = [
-  { id: 'A-instant',     sql: 'connected AND ring_seconds <= 1',
+  { id: 'A-instant',     want: 10, sql: 'connected AND ring_seconds <= 1',
     asks: "whether #65's carrier-instant verdict holds by ear" },
-  { id: 'B-human',       sql: 'connected AND ring_seconds BETWEEN 2 AND 11 AND talk_seconds >= 20',
+  { id: 'B-human',       want: 6,  sql: 'connected AND ring_seconds BETWEEN 2 AND 11 AND talk_seconds >= 20',
     asks: 'the control -- these should be people' },
-  { id: 'C-inband',      sql: 'connected AND ring_seconds BETWEEN 20 AND 32',
+  { id: 'C-inband',      want: 20, sql: 'connected AND ring_seconds BETWEEN 20 AND 32',
     asks: 'THE QUESTION -- what fraction are machines' },
-  { id: 'D-above',       sql: 'connected AND ring_seconds >= 33',
+  { id: 'D-above',       want: 6,  sql: 'connected AND ring_seconds >= 33',
     asks: "whether the band's right edge is placed right" },
-  { id: 'E-unconnected', sql: 'NOT connected',
+  { id: 'E-unconnected', want: 4,  sql: 'NOT connected',
     asks: 'that the unconnected side is what we think' },
 ];
+
+// The standing review workbook -- a SEPARATE spreadsheet, following the
+// `HR_BACKUP_SS_ID` precedent (Operator State #59): review artifacts do not
+// belong in the production workbook, whose ALLOCATED grid counts against the
+// 10M-cell cap (Operator State #62) and whose tabs the pipeline reads.
+var OB_REVIEW_SS_PROP_ = 'OB_REVIEW_SS_ID';
+var OB_REVIEW_SS_NAME_ = 'Outbound Answer-Quality Review';
+var OB_REVIEW_TAB_PREFIX_ = 'Review ';
+var OB_REVIEW_KEY_PREFIX_ = 'Key ';
+var OB_REVIEW_KEEP_ = 6;         // newest runs kept; a run is ~50 rows
+
+// The labels a listener may assign. `voicemail` and `human` are the two that
+// decide anything; the rest exist so an honest "I could not tell" does not
+// get forced into one of them, which would bias the very share being measured.
+var OB_REVIEW_LABELS_ = ['human', 'voicemail', 'ivr', 'no-answer', 'unclear'];
 
 /**
  * PURE. Shuffles in place with Fisher-Yates and assigns R01.. tokens in the
@@ -1126,42 +1146,220 @@ function obReviewStartParts_(callStart) {
   return { time: hh + ':' + m[2] + ':' + (m[3] || '00') };
 }
 
-/**
- * PURE. The blinded worksheet as TSV: token, date, time, agent, dept.
- *
- * TAB-separated because the paste target is a spreadsheet, which splits on
- * tabs (the deptGridToTsv_ reasoning). Agent and department come from the
- * external CDR feed and land in a spreadsheet cell, so both go through
- * `sheetSafeCell_` -- the injection rule's "CSV or not" clause -- and any tab
- * or newline inside a value is flattened, since a paste has no quoting
- * convention to escape into and one stray tab shifts every column after it.
- *
- * Ring and talk are ABSENT by design. See the header.
- */
-function obReviewWorksheetTsv_(rows) {
-  var flat = function (v) {
-    return String(sheetSafeCell_(v == null ? '' : String(v))).replace(/[\t\r\n]+/g, ' ');
-  };
-  var out = ['Token\tDate\tTime\tAgent\tDepartment\tLabel (human / voicemail / ivr / no-answer / unclear)\tNotes'];
-  (rows || []).forEach(function (r) {
-    out.push([flat(r.token), flat(r.callDate), flat(r.time), flat(r.agent), flat(r.dept), '', ''].join('\t'));
-  });
-  return out.join('\n');
-}
+// The worksheet's column order, in ONE place. Both the sheet write and the
+// TSV fallback render from `obReviewWorksheetGrid_`, so a new column is added
+// once and cannot appear in one and not the other -- the deptTableGrid_ rule
+// ("one grid, two serialisations"), which exists because the CSV and the
+// clipboard drifted apart when each built its own row.
+var OB_REVIEW_WS_HEADER_ = ['Token', 'Date', 'Time', 'Agent', 'Department',
+  'Label (' + OB_REVIEW_LABELS_.join(' / ') + ')', 'Notes'];
+var OB_REVIEW_KEY_HEADER_ = ['Token', 'Stratum', 'Ring (s)', 'Talk (s)', 'Attempts', 'Connected'];
 
 /**
- * PURE. The answer key, withheld until labelling is done.
+ * PURE. The BLINDED worksheet as a 2-D grid: token, date, time, agent, dept,
+ * plus the two empty columns the listener fills.
+ *
+ * Ring, talk and stratum are ABSENT by design -- see the header. Agent and
+ * department come from the external CDR feed and land in a spreadsheet cell
+ * either way (written, or pasted from the TSV), so both go through
+ * `sheetSafeCell_` HERE, once, rather than in each serialisation: the
+ * injection rule's "CSV or not" clause.
  */
-function obReviewKeyTsv_(rows) {
-  var out = ['Token\tStratum\tRing (s)\tTalk (s)\tAttempts\tConnected'];
+function obReviewWorksheetGrid_(rows) {
+  var grid = [OB_REVIEW_WS_HEADER_.slice()];
+  (rows || []).forEach(function (r) {
+    grid.push([
+      r.token, r.callDate, r.time,
+      sheetSafeCell_(String(r.agent == null ? '' : r.agent)),
+      sheetSafeCell_(String(r.dept == null ? '' : r.dept)),
+      '', '',
+    ]);
+  });
+  return grid;
+}
+
+/** PURE. The answer key as a grid, withheld until labelling is done. */
+function obReviewKeyGrid_(rows) {
+  var grid = [OB_REVIEW_KEY_HEADER_.slice()];
   (rows || []).slice().sort(function (a, b) {
     return a.token < b.token ? -1 : (a.token > b.token ? 1 : 0);
   }).forEach(function (r) {
-    out.push([r.token, r.stratum, (r.ring == null ? '' : r.ring),
-              (r.talk == null ? '' : r.talk), (r.attempts == null ? '' : r.attempts),
-              (r.connected ? 'yes' : 'no')].join('\t'));
+    grid.push([r.token, r.stratum, (r.ring == null ? '' : r.ring),
+               (r.talk == null ? '' : r.talk), (r.attempts == null ? '' : r.attempts),
+               (r.connected ? 'yes' : 'no')]);
   });
-  return out.join('\n');
+  return grid;
+}
+
+/**
+ * PURE. A grid as TSV, for the log fallback when the sheet write fails.
+ *
+ * TAB-separated because the paste target is a spreadsheet, which splits on
+ * tabs. Cells are ALREADY `sheetSafeCell_`-neutralised by the grid builder;
+ * what this adds is FLATTENING any tab or newline inside a value, since a
+ * paste has no quoting convention to escape into and one stray tab shifts
+ * every column after it silently. A written sheet cell holds them harmlessly,
+ * which is why the flattening lives here and not in the grid.
+ */
+function obReviewGridToTsv_(grid) {
+  return (grid || []).map(function (row) {
+    return row.map(function (v) {
+      return String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
+    }).join('\t');
+  }).join('\n');
+}
+
+/**
+ * Opens (creating once) the standing review workbook. Same self-populating
+ * shape as `HR_BACKUP_SS_ID`: the id lives in a Script Property, so the
+ * operator never has to create or wire anything.
+ */
+function obReviewWorkbook_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty(OB_REVIEW_SS_PROP_);
+  var ss = null;
+  if (id) { try { ss = SpreadsheetApp.openById(id); } catch (e) { ss = null; } }
+  if (!ss) {
+    ss = SpreadsheetApp.create(OB_REVIEW_SS_NAME_);
+    props.setProperty(OB_REVIEW_SS_PROP_, ss.getId());
+    Logger.log('[outbound-review] created the review workbook %s and stored its id in %s.',
+      ss.getUrl(), OB_REVIEW_SS_PROP_);
+  }
+  return ss;
+}
+
+/**
+ * Writes one run: a Review tab the listener fills in, and a HIDDEN Key tab.
+ *
+ * ⚠ THE KEY TAB IS FOR THE SCORER, NOT FOR THE LISTENER. Hiding a tab in
+ * Sheets is a speed bump, not a control -- what makes the blinding hold is
+ * that `scoreOutboundReviewSample` reads the key programmatically, so there
+ * is no step in the workflow that requires a human to look at it. The tab is
+ * named with that instruction so an operator who finds it knows why not to.
+ *
+ * Data validation on the Label column keeps a listener from inventing a
+ * sixth label that the scorer would then have to guess at, and gives them a
+ * dropdown instead of typing.
+ */
+function obReviewWriteTabs_(rows, meta) {
+  var ss = obReviewWorkbook_();
+  var stamp = Utilities.formatDate(new Date(), TZ, 'yyyyMMdd-HHmm');
+  var wsName = OB_REVIEW_TAB_PREFIX_ + stamp;
+  var keyName = OB_REVIEW_KEY_PREFIX_ + stamp;
+  for (var k = 2; k < 50 && ss.getSheetByName(wsName); k++) {   // same-minute re-run
+    wsName = OB_REVIEW_TAB_PREFIX_ + stamp + '-' + k;
+    keyName = OB_REVIEW_KEY_PREFIX_ + stamp + '-' + k;
+  }
+
+  var wsGrid = obReviewWorksheetGrid_(rows);
+  var ws = ss.insertSheet(wsName, 0);
+  ws.getRange(1, 1, wsGrid.length, wsGrid[0].length).setValues(wsGrid);
+  ws.getRange(1, 1, 1, wsGrid[0].length).setFontWeight('bold');
+  ws.setFrozenRows(1);
+  if (wsGrid.length > 1) {
+    // A dropdown, not free text: the scorer has to bucket these, and an
+    // invented label would land in its "unrecognised" pile instead of the
+    // tally it was meant for.
+    var rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(OB_REVIEW_LABELS_, true).setAllowInvalid(false).build();
+    ws.getRange(2, 6, wsGrid.length - 1, 1).setDataValidation(rule);
+  }
+  // The listener's instructions live ON the sheet, because a runbook in a doc
+  // is not where someone labelling row 34 is looking.
+  var noteCol = wsGrid[0].length + 2;
+  ws.getRange(1, noteCol).setValue('How to label');
+  ws.getRange(2, noteCol).setValue(
+    'Find each call in the phone system by AGENT + DATE + TIME, listen, and pick a Label. '
+    + 'Ring length is deliberately NOT shown -- it is the hypothesis under test. '
+    + 'When every row is labelled, run scoreOutboundReviewSample() in the Apps Script editor. '
+    + 'Partial is fine: it reports how many are still blank. '
+    + 'Window sampled: ' + (meta && meta.from) + '..' + (meta && meta.to) + '.');
+  ws.getRange(1, noteCol, 2, 1).setWrap(true);
+  ws.setColumnWidth(noteCol, 420);
+
+  var keyGrid = obReviewKeyGrid_(rows);
+  var key = ss.insertSheet(keyName);
+  key.getRange(1, 1, keyGrid.length, keyGrid[0].length).setValues(keyGrid);
+  key.getRange(1, 1, 1, keyGrid[0].length).setFontWeight('bold');
+  key.hideSheet();
+
+  // Prune oldest runs. The stamp leads the name, so lexical order is
+  // chronological (the HR_BACKUP_KEEP_ reasoning).
+  [OB_REVIEW_TAB_PREFIX_, OB_REVIEW_KEY_PREFIX_].forEach(function (prefix) {
+    var mine = ss.getSheets()
+      .filter(function (t) { return t.getName().indexOf(prefix) === 0; })
+      .sort(function (a, b) { return a.getName() < b.getName() ? -1 : (a.getName() > b.getName() ? 1 : 0); });
+    while (mine.length > OB_REVIEW_KEEP_) ss.deleteSheet(mine.shift());
+  });
+
+  return { url: ss.getUrl(), worksheetTab: wsName, keyTab: keyName, rows: rows.length };
+}
+
+/**
+ * PURE. Wilson score interval for a binomial share.
+ *
+ * Wilson, not the normal approximation, and the difference is the whole
+ * reason this function exists: at n=20 with 18 voicemails the normal
+ * interval runs past 100% and at 0 successes it collapses to zero width,
+ * both of which would misreport exactly the small-sample cases this audit
+ * produces. Returns null below one observation.
+ */
+function obWilsonInterval_(successes, n, z) {
+  var k = Number(successes), N = Number(n);
+  if (!isFinite(k) || !isFinite(N) || N < 1 || k < 0 || k > N) return null;
+  var Z = (z === undefined || z === null) ? 1.96 : Number(z);
+  var p = k / N;
+  var z2 = Z * Z;
+  var denom = 1 + z2 / N;
+  var centre = (p + z2 / (2 * N)) / denom;
+  var half = (Z * Math.sqrt((p * (1 - p) / N) + (z2 / (4 * N * N)))) / denom;
+  var lo = Math.max(0, centre - half), hi = Math.min(1, centre + half);
+  return {
+    share: Math.round(p * 1000) / 1000,
+    lo: Math.round(lo * 1000) / 1000,
+    hi: Math.round(hi * 1000) / 1000,
+    halfWidthPts: Math.round(((hi - lo) / 2) * 1000) / 10,
+    n: N, successes: k,
+  };
+}
+
+/**
+ * PURE. Joins labels to strata and tallies. `wsGrid` / `keyGrid` are the two
+ * tabs read verbatim, header row included.
+ *
+ * Deliberately does NOT force an unrecognised or blank label into a bucket:
+ * `unlabelled` and `unrecognised` are reported separately, because folding a
+ * blank into "not voicemail" would bias the one share the audit exists to
+ * measure, in the direction of refusing the band.
+ */
+function obReviewTally_(wsGrid, keyGrid) {
+  var out = { byStratum: {}, unlabelled: 0, unrecognised: [], totalRows: 0, labelled: 0,
+              tokensMissingKey: [] };
+  var stratumOf = {}, i, row;
+  for (i = 1; i < (keyGrid || []).length; i++) {
+    row = keyGrid[i];
+    if (row && row[0]) stratumOf[String(row[0]).trim()] = String(row[1] == null ? '' : row[1]).trim();
+  }
+  var labelSet = {};
+  OB_REVIEW_LABELS_.forEach(function (l) { labelSet[l] = true; });
+
+  for (i = 1; i < (wsGrid || []).length; i++) {
+    row = wsGrid[i];
+    if (!row || !row[0]) continue;
+    var token = String(row[0]).trim();
+    out.totalRows++;
+    var st = stratumOf[token];
+    if (!st) { out.tokensMissingKey.push(token); continue; }
+    if (!out.byStratum[st]) out.byStratum[st] = { n: 0, labels: {}, unlabelled: 0 };
+    var bucket = out.byStratum[st];
+    bucket.n++;
+    var raw = String(row[5] == null ? '' : row[5]).trim().toLowerCase();
+    if (!raw) { bucket.unlabelled++; out.unlabelled++; continue; }
+    if (!labelSet[raw]) { out.unrecognised.push(token + '=' + raw); continue; }
+    bucket.labels[raw] = (bucket.labels[raw] || 0) + 1;
+    out.labelled++;
+  }
+  return out;
 }
 
 function sampleOutboundCallsForReview() {
@@ -1169,15 +1367,30 @@ function sampleOutboundCallsForReview() {
   var props = PropertiesService.getScriptProperties();
   var win = obProbeWindow_(props);
   var from = win.from, to = win.to;
-  var n = Math.round(Number(props.getProperty('OUTBOUND_REVIEW_N')) || OB_REVIEW_DEFAULT_N_);
-  if (!isFinite(n) || n < 1) n = OB_REVIEW_DEFAULT_N_;
-  if (n > OB_REVIEW_MAX_N_) n = OB_REVIEW_MAX_N_;
+  // OUTBOUND_REVIEW_N, when set, OVERRIDES every stratum with one uniform
+  // count -- an escape hatch for a deliberately bigger or smaller run. Unset
+  // (the normal case) each stratum takes its own `want`, which is uneven on
+  // purpose; see OB_REVIEW_STRATA_.
+  var uniform = Math.round(Number(props.getProperty('OUTBOUND_REVIEW_N')) || 0);
+  if (!isFinite(uniform) || uniform < 1) uniform = 0;
+  if (uniform > OB_REVIEW_MAX_N_) uniform = OB_REVIEW_MAX_N_;
+  var wantFor = function (st) {
+    var w = uniform || Number(st.want) || 1;
+    return Math.min(OB_REVIEW_MAX_N_, Math.max(1, Math.round(w)));
+  };
   var label = from + '..' + to + ' (all departments)';
 
   var conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+    // Re-resolve the window now that a connection exists, so an UNSET window
+    // ends at the latest date the data holds rather than at yesterday. The
+    // pre-connection call above still validates an explicitly pinned window
+    // (and throws on a bad one) before any connection is opened.
+    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    from = win.from; to = win.to;
+    label = from + '..' + to + ' (all departments)';
 
     // One round trip, one getString (the JDBC discipline). Each stratum is
     // sampled independently with ORDER BY random(), so a quiet stratum does
@@ -1191,7 +1404,7 @@ function sampleOutboundCallsForReview() {
         + 'call_start AS st, agent_name AS ag, department AS dp, ring_seconds AS rs, '
         + 'talk_seconds AS ts, attempts AS at, connected AS cn '
         + 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date AND '
-        + st.sql + ' ORDER BY random() LIMIT ' + n + ')';
+        + st.sql + ' ORDER BY random() LIMIT ' + wantFor(st) + ')';
     });
     var sql = "SELECT COALESCE(json_agg(json_build_object("
       + "'sx', sx, 'd', d, 'st', st, 'ag', ag, 'dp', dp, "
@@ -1224,42 +1437,205 @@ function sampleOutboundCallsForReview() {
     rows.forEach(function (r) {
       if (perStratum[r.stratum] !== undefined) perStratum[r.stratum]++;
     });
-    var thin = OB_REVIEW_STRATA_.filter(function (st) { return perStratum[st.id] < Math.min(5, n); })
-      .map(function (st) { return st.id + ' (' + perStratum[st.id] + ')'; });
+    // THIN = fewer rows than asked for, judged per stratum against its own
+    // request rather than one global floor: 4 of 4 in a control is complete,
+    // 4 of 20 in stratum C is not a decision.
+    var thin = OB_REVIEW_STRATA_.filter(function (st) {
+      return perStratum[st.id] < Math.min(wantFor(st), Math.max(3, Math.ceil(wantFor(st) * 0.6)));
+    }).map(function (st) { return st.id + ' (' + perStratum[st.id] + ' of ' + wantFor(st) + ')'; });
 
     obReviewShuffleAndToken_(rows, null);
 
     var out = {
       window: { from: from, to: to },
-      perStratumRequested: n,
+      perStratumRequested: OB_REVIEW_STRATA_.reduce(function (a, st) {
+        a[st.id] = wantFor(st); return a;
+      }, {}),
       perStratumSampled: perStratum,
       strata: OB_REVIEW_STRATA_.map(function (st) {
         return { id: st.id, asks: st.asks, selector: st.sql };
       }),
-      // Paste `worksheet` into a sheet, label every row, and only THEN open
-      // `key`. Reading the key first defeats the whole exercise.
-      worksheet: obReviewWorksheetTsv_(rows),
-      key: obReviewKeyTsv_(rows),
-      howToUse: 'Paste `worksheet` into a spreadsheet (tab-separated). For each row, find the '
-        + 'recording by AGENT + DATE + TIME and label what answered: human / voicemail / ivr / '
-        + 'no-answer / unclear. Do NOT open `key` until every row is labelled -- it names the '
-        + 'ring stratum, which is the hypothesis under test. Then join on Token and read the '
-        + 'label mix per stratum. Stratum C is the decision: if it is mostly voicemail the band '
-        + 'is validated and its measured precision is what to disclose; if it is mixed, '
-        + 'ring_seconds cannot carry this classifier here and the callback table needs a '
-        + 'relabel of `connected` rather than a reclassification.',
     };
+
+    // Written straight into the standing review workbook, so there is no
+    // copy-paste-out-of-a-log step. Best-effort: if the write fails the run
+    // is not wasted -- the TSV goes to the log as it did before, and the
+    // operator can paste it.
+    try {
+      out.sheet = obReviewWriteTabs_(rows, { from: from, to: to });
+    } catch (we) {
+      out.sheetError = String(we);
+      out.worksheet = obReviewGridToTsv_(obReviewWorksheetGrid_(rows));
+      out.key = obReviewGridToTsv_(obReviewKeyGrid_(rows));
+      Logger.log('[outbound-review] sheet write FAILED (%s) — falling back to the TSV below.', we);
+      Logger.log('[outbound-review] worksheet (paste into a sheet):\n%s', out.worksheet);
+    }
+    out.howToUse = out.sheet
+      ? ('Open ' + out.sheet.url + ' → tab "' + out.sheet.worksheetTab + '". Find each call in '
+         + 'the phone system by AGENT + DATE + TIME, listen, and pick a Label from the dropdown. '
+         + 'Ring length is deliberately not shown — it is the hypothesis under test, and the '
+         + 'hidden Key tab exists for the scorer, not for you. When the rows are labelled (partial '
+         + 'is fine) run scoreOutboundReviewSample() — it joins the key, tallies per stratum and '
+         + 'returns the verdict, so there is no manual join or pivot to do.')
+      : ('Sheet write failed — paste `worksheet` into a spreadsheet, label every row, and do NOT '
+         + 'open `key` until they are all labelled.');
     out.result = 'ok sampled ' + rows.length + ' calls for review across '
-      + OB_REVIEW_STRATA_.length + ' strata (' + n + ' requested each) ' + label
+      + OB_REVIEW_STRATA_.length + ' strata ' + label
+      + (out.sheet ? ' → ' + out.sheet.url + ' tab "' + out.sheet.worksheetTab + '"' : '')
       + (thin.length ? ' — ⚠ THIN: ' + thin.join(', ') + '; widen OUTBOUND_PROBE_FROM/_TO '
           + 'before drawing conclusions from those strata' : '')
       + ' — labels are assigned by the LISTENER; this tool infers nothing.';
     Logger.log('[outbound-review] %s', out.result);
-    Logger.log('[outbound-review] worksheet (paste into a sheet):\n%s', out.worksheet);
     return logStatusReturn_(out);
   } finally {
     if (conn) { try { conn.close(); } catch (ce) { /* already closed */ } }
   }
+}
+
+/**
+ * PURE. The verdict, from the tally. Separated from the sheet read so the
+ * DECISION RULE is testable without a spreadsheet -- it is the part that has
+ * to be right, and the part an operator should not be re-deriving by eye.
+ *
+ * Stratum C decides. `validated` needs its voicemail share's Wilson LOWER
+ * bound above `OB_REVIEW_C_VALIDATE_LO_`: the point estimate alone would
+ * call 14/20 a validation when the interval still reaches down to 48%, which
+ * is the coin flip the audit exists to rule out. `refuted` is the mirror --
+ * the UPPER bound below `OB_REVIEW_C_REFUTE_HI_`. Anything spanning both is
+ * `inconclusive`, which is a result: it means listen to more of stratum C,
+ * not pick whichever end you prefer.
+ */
+var OB_REVIEW_C_MIN_N_ = 8;          // below this an interval is too wide to conclude from
+var OB_REVIEW_C_VALIDATE_LO_ = 0.6;  // Wilson lower bound to call the band validated
+var OB_REVIEW_C_REFUTE_HI_ = 0.5;    // Wilson upper bound to call it refuted
+
+function obReviewVerdict_(tally) {
+  var out = { verdict: 'inconclusive', reason: '', c: null, controls: {}, notes: [] };
+  var c = tally && tally.byStratum && tally.byStratum['C-inband'];
+  if (!c || !c.n) { out.reason = 'no stratum-C rows found'; return out; }
+  var labelled = 0;
+  Object.keys(c.labels || {}).forEach(function (k) { labelled += c.labels[k]; });
+  var vm = (c.labels && c.labels.voicemail) || 0;
+  out.c = { n: c.n, labelled: labelled, unlabelled: c.unlabelled || 0,
+            voicemail: vm, interval: obWilsonInterval_(vm, labelled) };
+  if (labelled < OB_REVIEW_C_MIN_N_) {
+    out.reason = 'only ' + labelled + ' stratum-C rows labelled, need '
+      + OB_REVIEW_C_MIN_N_ + ' before any interval is narrow enough to read';
+    return out;
+  }
+  var ci = out.c.interval;
+  if (ci.lo >= OB_REVIEW_C_VALIDATE_LO_) {
+    out.verdict = 'validated';
+    out.reason = 'the in-band voicemail share is ' + Math.round(ci.share * 100) + '% ('
+      + Math.round(ci.lo * 100) + '-' + Math.round(ci.hi * 100) + '% at 95%), so the band '
+      + 'identifies voicemail well enough to threshold on -- DISCLOSE the measured precision '
+      + 'and remember the classifier must still EXCLUDE the instant population (#65)';
+  } else if (ci.hi < OB_REVIEW_C_REFUTE_HI_) {
+    out.verdict = 'refuted';
+    out.reason = 'the in-band voicemail share is only ' + Math.round(ci.share * 100) + '% ('
+      + Math.round(ci.lo * 100) + '-' + Math.round(ci.hi * 100) + '% at 95%), so ring_seconds '
+      + 'cannot carry this classifier here -- RELABEL `connected` in the callback table rather '
+      + 'than reclassifying it, and do not set OUTBOUND_VM_RING_SEC';
+  } else {
+    out.reason = 'the in-band voicemail share is ' + Math.round(ci.share * 100) + '% but its 95% '
+      + 'interval spans ' + Math.round(ci.lo * 100) + '-' + Math.round(ci.hi * 100) + '%, which '
+      + 'covers both "mostly machines" and "a coin flip" -- label more stratum-C rows (re-run the '
+      + 'sampler with OUTBOUND_REVIEW_N raised) rather than choosing an end';
+  }
+  // The controls do not decide, but a control that comes back WRONG means the
+  // strata are not what we think and stratum C cannot be trusted either --
+  // so they are checked, and a surprise downgrades the verdict.
+  var check = function (id, expect, why) {
+    var b = tally.byStratum[id];
+    if (!b) return;
+    var tot = 0;
+    Object.keys(b.labels || {}).forEach(function (k) { tot += b.labels[k]; });
+    if (!tot) return;
+    var hit = (b.labels[expect] || 0) / tot;
+    out.controls[id] = { n: tot, expected: expect, share: Math.round(hit * 1000) / 1000 };
+    if (hit < 0.5) {
+      out.notes.push('⚠ CONTROL ' + id + ' came back ' + Math.round(hit * 100) + '% ' + expect
+        + ', expected a majority — ' + why);
+    }
+  };
+  check('A-instant', 'human', 'if the instant connects are NOT humans, #65\'s carrier-instant '
+    + 'reading is wrong and that conclusion needs revisiting before this one');
+  check('B-human', 'human', 'a short ring with real talk time should be a person; if it is not, '
+    + 'the strata do not mean what the selectors say and stratum C is not interpretable');
+  if (out.notes.length && out.verdict === 'validated') {
+    out.verdict = 'inconclusive';
+    out.reason = 'stratum C looked validated, but a CONTROL failed, so the strata themselves are '
+      + 'in question: ' + out.notes.join(' ');
+  }
+  return out;
+}
+
+/**
+ * Reads back a labelled review run and returns the tally + verdict.
+ *
+ * Read-only, admin-gated, editor-run. It does the join and the pivot the
+ * operator would otherwise do by hand, and applies the decision rule from
+ * `obReviewVerdict_` rather than leaving a share to be eyeballed. Pass a tab
+ * name to score an older run; the default is the newest.
+ */
+function scoreOutboundReviewSample(worksheetTab) {
+  assertAdmin_();
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty(OB_REVIEW_SS_PROP_);
+  if (!id) {
+    return logStatusReturn_({ result: 'FAILED (no review workbook yet — run '
+      + 'sampleOutboundCallsForReview() first)' });
+  }
+  var ss;
+  try { ss = SpreadsheetApp.openById(id); } catch (e) {
+    return logStatusReturn_({ result: 'FAILED (cannot open the review workbook ' + id
+      + '; clear ' + OB_REVIEW_SS_PROP_ + ' to start a new one): ' + e });
+  }
+  var wsName = String(worksheetTab || '').trim();
+  if (!wsName) {
+    // Newest run: the stamp leads the tab name, so lexical order is
+    // chronological (the same property the prune relies on).
+    var tabs = ss.getSheets()
+      .map(function (t) { return t.getName(); })
+      .filter(function (nm) { return nm.indexOf(OB_REVIEW_TAB_PREFIX_) === 0; })
+      .sort();
+    if (!tabs.length) {
+      return logStatusReturn_({ result: 'FAILED (no "' + OB_REVIEW_TAB_PREFIX_
+        + '*" tab in ' + ss.getUrl() + ')' });
+    }
+    wsName = tabs[tabs.length - 1];
+  }
+  var ws = ss.getSheetByName(wsName);
+  if (!ws) return logStatusReturn_({ result: 'FAILED (no tab named "' + wsName + '")' });
+  var keyName = OB_REVIEW_KEY_PREFIX_ + wsName.slice(OB_REVIEW_TAB_PREFIX_.length);
+  var key = ss.getSheetByName(keyName);
+  if (!key) {
+    return logStatusReturn_({ result: 'FAILED (no key tab "' + keyName + '" for "' + wsName
+      + '" — a run whose key was deleted cannot be scored; re-sample)' });
+  }
+
+  var wsGrid = ws.getDataRange().getDisplayValues();
+  var keyGrid = key.getDataRange().getDisplayValues();
+  var tally = obReviewTally_(wsGrid, keyGrid);
+  var verdict = obReviewVerdict_(tally);
+
+  var out = {
+    workbook: ss.getUrl(), worksheetTab: wsName,
+    rows: tally.totalRows, labelled: tally.labelled, unlabelled: tally.unlabelled,
+    byStratum: tally.byStratum, verdict: verdict.verdict, why: verdict.reason,
+    stratumC: verdict.c, controls: verdict.controls, controlWarnings: verdict.notes,
+  };
+  if (tally.unrecognised.length) out.unrecognisedLabels = tally.unrecognised;
+  if (tally.tokensMissingKey.length) out.tokensMissingKey = tally.tokensMissingKey;
+  out.result = (verdict.verdict === 'validated' ? 'ok VALIDATED'
+      : (verdict.verdict === 'refuted' ? 'ok REFUTED' : 'INCONCLUSIVE'))
+    + ' — ' + verdict.reason + '. ' + tally.labelled + ' of ' + tally.totalRows
+    + ' rows labelled in "' + wsName + '"'
+    + (tally.unlabelled ? ' (' + tally.unlabelled + ' still blank)' : '')
+    + (verdict.notes.length ? ' ' + verdict.notes.join(' ') : '')
+    + '. Nothing was set — a threshold is still an owner decision.';
+  Logger.log('[outbound-review] %s', out.result);
+  return logStatusReturn_(out);
 }
 
 // probeOutboundAnswerQuality -- STEP 1 of the answer-quality work
@@ -1664,19 +2040,63 @@ function obProbeTalkTrough_(rows, total) {
 }
 
 
-/** PURE. The probe's window defaults + validation (shared with the tests). */
-function obProbeWindow_(props, nowMs) {
+/**
+ * PURE. The probe's window defaults + validation (shared with the tests).
+ *
+ * `anchorIso` (optional) is the latest date the DATA actually holds, from
+ * `obProbeAnchorDate_`. When the operator has not pinned the window, the
+ * default ends at that date instead of at yesterday, so a window never
+ * carries a silent tail of days with no rows -- which is what "the 28 days
+ * ending yesterday" produced whenever an import had not run yet, quietly
+ * measuring 27 days of data plus an empty one.
+ *
+ * ⚠ THE ANCHOR IS CAPPED AT YESTERDAY, and the cap is the P16 rule, not
+ * caution. `max(call_date)` can BE today the moment a mid-day import lands
+ * a partial day, and P16 is exactly that bug: a tool that decisions hang on
+ * measuring an incomplete day. So the anchor may only ever pull the window
+ * EARLIER than yesterday, never later. An explicit `OUTBOUND_PROBE_TO` is
+ * untouched -- a date the operator typed is a decision, not a default.
+ */
+function obProbeWindow_(props, nowMs, anchorIso) {
   var msDay = 24 * 3600 * 1000;
   var iso = function (d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); };
-  var yesterday = new Date((nowMs || Date.now()) - msDay);
-  var to = String(props.getProperty('OUTBOUND_PROBE_TO') || iso(yesterday)).trim();
+  var yesterdayIso = iso(new Date((nowMs || Date.now()) - msDay));
+  var defaultTo = yesterdayIso;
+  if (isIsoDate_(anchorIso) && anchorIso < yesterdayIso) defaultTo = anchorIso;
+  var to = String(props.getProperty('OUTBOUND_PROBE_TO') || defaultTo).trim();
   var from = String(props.getProperty('OUTBOUND_PROBE_FROM')
     || iso(new Date(new Date(to + 'T12:00:00Z').getTime() - 27 * msDay))).trim();
   if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) {
     throw new Error('OUTBOUND_PROBE_FROM/_TO must be YYYY-MM-DD with from <= to (got '
       + from + ' .. ' + to + ').');
   }
-  return { from: from, to: to };
+  return { from: from, to: to, anchoredTo: (to === defaultTo && defaultTo === anchorIso) || false };
+}
+
+/**
+ * The latest `call_date` the outbound capture holds, or null.
+ *
+ * NEVER THROWS and never widens a window: a failure here just leaves the
+ * calendar default in place, because an anchor is a convenience and the four
+ * tools must still run when it cannot be read. Its own tiny round trip, since
+ * the window is a BOUND PARAMETER of each tool's main query and so has to be
+ * settled before that query is prepared.
+ */
+function obProbeAnchorDate_(conn) {
+  if (!conn) return null;
+  var st = null, rs = null;
+  try {
+    st = conn.createStatement();
+    rs = st.executeQuery('SELECT max(call_date)::text AS d FROM outbound_calls');
+    var d = rs.next() ? rs.getString('d') : null;
+    return isIsoDate_(d) ? d : null;
+  } catch (e) {
+    Logger.log('[outbound-probe] anchor date unavailable (%s); using the calendar default.', e);
+    return null;
+  } finally {
+    if (rs) { try { rs.close(); } catch (e1) { /* closed */ } }
+    if (st) { try { st.close(); } catch (e2) { /* closed */ } }
+  }
 }
 
 /**
@@ -1745,6 +2165,13 @@ function probeOutboundAnswerQuality() {
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+    // Re-resolve the window now that a connection exists, so an UNSET window
+    // ends at the latest date the data holds rather than at yesterday. The
+    // pre-connection call above still validates an explicitly pinned window
+    // (and throws on a bad one) before any connection is opened.
+    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    from = win.from; to = win.to;
+    label = from + '..' + to + ' (all departments)';
 
     // ── Query 1: the distributions ───────────────────────────────────────
     // One round trip, one getString (the JDBC discipline -- per-row
@@ -2303,6 +2730,13 @@ function probeOutboundJourneyShape() {
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+    // Re-resolve the window now that a connection exists, so an UNSET window
+    // ends at the latest date the data holds rather than at yesterday. The
+    // pre-connection call above still validates an explicitly pinned window
+    // (and throws on a bad one) before any connection is opened.
+    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    from = win.from; to = win.to;
+    label = from + '..' + to + ' (all departments)';
 
     var base = 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
       + 'AND connected AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL ';
@@ -2462,6 +2896,13 @@ function probeOutboundInstantConnects() {
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
     if (!conn) return logStatusReturn_({ result: 'FAILED (Neon unreachable) ' + label });
+    // Re-resolve the window now that a connection exists, so an UNSET window
+    // ends at the latest date the data holds rather than at yesterday. The
+    // pre-connection call above still validates an explicitly pinned window
+    // (and throws on a bad one) before any connection is opened.
+    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    from = win.from; to = win.to;
+    label = from + '..' + to + ' (all departments)';
 
     var base = 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
       + 'AND connected AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL ';

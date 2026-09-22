@@ -2588,40 +2588,83 @@ When something looks wrong, before assuming a code bug, check:
     - **Window: the SAME `OUTBOUND_PROBE_FROM` / `_TO` as #64 and #65**, on
       purpose -- a sample from a different window validates a different
       population. It does NOT self-clear those params; #64 owns that.
-    - **Size:** `OUTBOUND_REVIEW_N` per stratum, default 12, capped at 40. At
-      n=12-15 the in-band share carries roughly a +/-12 pt interval, which is
-      enough to separate "mostly machines" from "a coin flip" -- the only
-      distinction that changes the decision. More listening buys precision on
-      a number whose threshold for action is coarse.
-    - **HOW TO RUN IT, in order, and the order matters.** (1) Run it. (2) Paste
-      `worksheet` into a spreadsheet -- it is TAB-separated, so a paste splits
-      into columns. (3) For each row, find the recording by **AGENT + DATE +
-      TIME** and label what answered: human / voicemail / ivr / no-answer /
-      unclear. The recording carries the automated greeting and the agent's own
-      message, so this is an observation, not a judgement call. (4) **Only
-      then open `key`.** (5) Join on Token and read the label mix per stratum.
-    - **⚠ DO NOT READ `key` FIRST.** It names each row's ring stratum, which is
-      the hypothesis under test. A worksheet row that said "31 s ring" would
-      contaminate the label and the exercise would confirm itself; that is why
-      ring and talk are absent from the worksheet and why the tokens are
-      assigned after a shuffle. Reading the key early throws the run away --
-      re-run it for a fresh sample rather than labelling from a peeked key.
-    - **Read stratum C; it is the decision.** Mostly voicemail -> the band is
-      validated, and its measured precision ceiling is what the surface must
-      DISCLOSE. Mixed -> `ring_seconds` cannot carry this classifier here, and
+      **Unset, all four tools now end their window at the LATEST DATE THE DATA
+      HOLDS** (`obProbeAnchorDate_`, a `max(call_date)` probe) rather than at
+      yesterday, so a window no longer carries a silent tail of empty days
+      when an import has not run. **The anchor is CAPPED at yesterday and that
+      cap is load-bearing:** `max(call_date)` becomes TODAY the moment a
+      mid-day import lands a partial day, and measuring a partial day is
+      exactly the P16 bug. So the anchor can only ever pull the window
+      EARLIER. A date you typed is never moved.
+    - **Size: per stratum, and deliberately UNEVEN.** C (in-band) 20, A
+      (instant) 10, B and D 6, E 4 -- 46 calls, not a uniform 60. Only C
+      decides anything; the rest are controls where a handful confirms the
+      data is what we think. At n=12 the C share carries roughly a +/-13 pt
+      Wilson interval and at n=20 about +/-10, against a decision of "mostly
+      machines vs a coin flip", so the listening budget goes where it changes
+      the answer. `OUTBOUND_REVIEW_N`, if set, overrides every stratum with
+      one uniform count (capped at 40) -- the escape hatch for a bigger run.
+    - **HOW TO RUN IT.** (1) Run `sampleOutboundCallsForReview()`. It writes a
+      **Review <stamp>** tab into a standing workbook it creates itself
+      (`OB_REVIEW_SS_ID`; the result line carries the URL) -- there is no
+      copy-paste out of the execution log. (2) In that tab, find each call in
+      the phone system by **AGENT + DATE + TIME**, listen, and pick a Label
+      from the dropdown (human / voicemail / ivr / no-answer / unclear). The
+      recording carries the automated greeting and the agent's own message, so
+      this is an observation, not a judgement call. Partial progress is fine.
+      (3) Run **`scoreOutboundReviewSample()`**. It joins the hidden key,
+      tallies per stratum, and returns the verdict -- no manual join or pivot.
+      Pass a tab name to score an older run; the default is the newest.
+    - **⚠ THE KEY TAB IS FOR THE SCORER, NOT FOR YOU.** Each run also writes a
+      HIDDEN **Key <stamp>** tab naming every row's ring stratum -- the
+      hypothesis under test. Nothing in the workflow requires a human to open
+      it, which is what makes the blinding hold; hiding the tab is only a
+      speed bump. A worksheet row that said "31 s ring" would contaminate the
+      label and the exercise would confirm itself, which is also why ring and
+      talk are absent from the worksheet and why tokens are assigned after a
+      shuffle. If you do read it, re-sample rather than labelling from a
+      peeked key. Deleting a key tab makes its run unscorable.
+    - **Read the VERDICT, and note what each one obliges.** `VALIDATED` --
+      stratum C's voicemail share has its 95% Wilson LOWER bound above 60%, so
+      the band identifies voicemail well enough to threshold on; its measured
+      precision is what the surface must DISCLOSE, and the classifier must
+      still EXCLUDE the instant population (#65). `REFUTED` -- the upper bound
+      is under 50%, so `ring_seconds` cannot carry this classifier here and
       Part 1's callback table needs `connected` RELABELLED rather than
-      reclassified. The other four strata are controls: A tests #65's
-      carrier-instant verdict by ear, B should be people, D tests the band's
-      right edge, E tests the unconnected side.
-    - **A THIN warning in the result line means a stratum returned under 5
-      rows** -- widen `OUTBOUND_PROBE_FROM`/`_TO` before drawing anything from
-      that stratum. The in-band stratum is the smallest of the five, which is
-      why each is sampled independently rather than from one global draw.
+      reclassified. `INCONCLUSIVE` -- the interval spans both, or under 8 C
+      rows are labelled: label more of C (raise `OUTBOUND_REVIEW_N` and
+      re-sample), never pick an end. **A point estimate is not the test** -- a
+      14-of-20 run reads 70% and still refuses, because the interval reaches
+      down to the coin flip.
+    - **A FAILED CONTROL downgrades a validation, and that is the one result
+      worth reading twice.** If stratum A comes back mostly NOT human, #65's
+      carrier-instant conclusion is wrong and nothing here is interpretable
+      until that is resolved; same for B (a short ring with real talk time
+      should be a person). The scorer flips `validated` to `inconclusive` and
+      says so rather than letting stratum C outvote a broken premise.
+    - **A THIN warning means a stratum returned well under its request** --
+      judged per stratum against its own `want`, since 4 of 4 in a control is
+      complete while 4 of 20 in C is not a decision. Widen
+      `OUTBOUND_PROBE_FROM`/`_TO` before drawing anything from that stratum.
+    - **Blanks and invented labels are never folded into a bucket.** The
+      scorer reports `unlabelled` and `unrecognisedLabels` separately, because
+      counting a blank as "not voicemail" would bias the one share the audit
+      measures, in the direction of refusing the band.
+    - **Workbook housekeeping:** newest 6 runs kept per prefix, oldest pruned
+      (the `HR_BACKUP_KEEP_` pattern). It is a SEPARATE spreadsheet on
+      purpose -- review artifacts do not belong in the CDR Report workbook,
+      whose ALLOCATED grid counts against the 10M-cell cap (#62) and whose
+      tabs the pipeline reads. `OB_REVIEW_SS_ID` self-populates; clear it to
+      start a fresh workbook.
     - **PHI: none.** A recording is locatable by agent + time, so no phone
       number, `callee_hash` or `call_id` is selected, logged or returned --
       the same aggregates-only discipline as every other probe here, which
       this tool was expected to have to break and does not. Internal-staff and
       duration data (agent, department, ring/talk) does leave. Pinned by
       `tests/unit/outbound-report.test.js`.
+    - **It is an INV-01 carve-out** (the only one that writes no production
+      sheet): admin-gated, insert-only, into its own workbook. A new
+      review-artifact writer should copy that shape rather than widen any
+      other carve-out.
     - **It infers nothing and sets nothing.** The labels are the listener's;
       the tool only draws the sample and withholds the key.
