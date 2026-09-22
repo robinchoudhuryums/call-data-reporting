@@ -1129,6 +1129,22 @@ var OB_REVIEW_KEEP_ = 6;         // newest runs kept; a run is ~50 rows
 // get forced into one of them, which would bias the very share being measured.
 var OB_REVIEW_LABELS_ = ['human', 'voicemail', 'ivr', 'no-answer', 'unclear'];
 
+// ⚠ TWO MEASURES, and they answer different questions (owner labels,
+// 2026-09-22). `voicemail` is what a VOICEMAIL THRESHOLD claims, so it is
+// what the band's precision is measured against. But the KPI the classifier
+// feeds is "did we reach the caller?", and an IVR / auto-attendant is a miss
+// exactly like voicemail is -- the first live labelling round returned 2 `ivr`
+// rows out of 12, which the voicemail share silently treats as neither hit
+// nor miss. So NOT-REACHED is tallied beside it, and it is the right measure
+// for the RECALL question: an IVR in a fast band is just as invisible to a
+// ring threshold, and just as much a non-reach.
+//
+// `no-answer` is NOT here: on a connected row it means the listener could not
+// hear an answer at all, which is a labelling problem rather than an outcome,
+// and on an unconnected row it is the expected value. `unclear` stays out for
+// the same reason -- folding either in would bias the measure.
+var OB_REVIEW_NOT_REACHED_ = ['voicemail', 'ivr'];
+
 /**
  * PURE. Shuffles in place with Fisher-Yates and assigns R01.. tokens in the
  * SHUFFLED order, so a token carries no information about its stratum.
@@ -1335,6 +1351,11 @@ function obReviewWriteTabs_(rows, meta) {
       : 'Find each call in the phone system by AGENT + DATE + TIME, listen, and pick a Label. '
         + 'Tip: set the OB_REVIEW_RECORDING_URL Script Property to a search-url template '
         + '(placeholders {date} {time} {agent} {ext}) and every row becomes a link. ')
+    + 'LABEL THE TERMINAL OUTCOME -- what the call ultimately amounted to, not what it '
+    + 'passed through. A call that hit a screening prompt, went unanswered, then took a '
+    + 'message is "voicemail". Reaching voicemail and NOT leaving a message is still '
+    + '"voicemail" (a machine answered). Use "ivr" only when the call ENDED at a menu or '
+    + 'auto-attendant without reaching a person or a mailbox. '
     + 'Ring length is deliberately NOT shown -- it is the hypothesis under test. '
     + 'When every row is labelled, run scoreOutboundReviewSample() in the Apps Script editor. '
     + 'Partial is fine: it reports how many are still blank. '
@@ -1415,7 +1436,9 @@ function obReviewTally_(wsGrid, keyGrid) {
     out.totalRows++;
     var st = stratumOf[token];
     if (!st) { out.tokensMissingKey.push(token); continue; }
-    if (!out.byStratum[st]) out.byStratum[st] = { n: 0, labels: {}, unlabelled: 0 };
+    if (!out.byStratum[st]) {
+      out.byStratum[st] = { n: 0, labels: {}, unlabelled: 0, notReached: 0 };
+    }
     var bucket = out.byStratum[st];
     bucket.n++;
     var raw = String(row[OB_REVIEW_LABEL_COL_ - 1] == null ? '' : row[OB_REVIEW_LABEL_COL_ - 1])
@@ -1423,6 +1446,7 @@ function obReviewTally_(wsGrid, keyGrid) {
     if (!raw) { bucket.unlabelled++; out.unlabelled++; continue; }
     if (!labelSet[raw]) { out.unrecognised.push(token + '=' + raw); continue; }
     bucket.labels[raw] = (bucket.labels[raw] || 0) + 1;
+    if (OB_REVIEW_NOT_REACHED_.indexOf(raw) >= 0) bucket.notReached++;
     out.labelled++;
   }
   return out;
@@ -1596,6 +1620,11 @@ function obReviewVerdict_(tally) {
     Object.keys((b && b.labels) || {}).forEach(function (k) { t += b.labels[k]; });
     return t;
   };
+  var notReachedIn = function (b) {
+    var t = 0;
+    OB_REVIEW_NOT_REACHED_.forEach(function (k) { t += ((b && b.labels && b.labels[k]) || 0); });
+    return t;
+  };
 
   // ── FINDINGS FIRST ─────────────────────────────────────────────────────
   // Everything below depends only on its OWN stratum, so it must be computed
@@ -1633,30 +1662,50 @@ function obReviewVerdict_(tally) {
     + 'means the stored `connected` flag is wrong, which would invalidate every figure here '
     + '(note: an unconnected call may have no recording to listen to at all)');
 
-  // The RECALL ceiling: voicemail the ring can never catch.
-  var lowVm = 0, lowN = 0;
+  // Every band's profile, in BOTH measures. Reported for all of them, not
+  // just the fast ones, because "voicemail rate by ring band" is the shape
+  // the threshold decision actually rests on.
+  Object.keys(byStratum).forEach(function (id) {
+    var b = byStratum[id];
+    var tot = labelledIn(b);
+    if (!tot) return;
+    var nr = notReachedIn(b);
+    out.byBand[id] = {
+      n: tot,
+      voicemail: b.labels.voicemail || 0,
+      voicemailShare: Math.round(((b.labels.voicemail || 0) / tot) * 1000) / 1000,
+      notReached: nr,
+      notReachedShare: Math.round((nr / tot) * 1000) / 1000,
+    };
+  });
+
+  // The RECALL ceiling, measured on NOT-REACHED rather than voicemail alone:
+  // an IVR in a fast band is equally invisible to a ring threshold and
+  // equally a non-reach, so counting only voicemail would understate what
+  // the method misses.
+  var lowNr = 0, lowVm = 0, lowN = 0;
   ['A-instant', 'B-human'].forEach(function (id) {
     var b = byStratum[id];
     if (!b) return;
     var tot = labelledIn(b);
     if (!tot) return;
+    lowNr += notReachedIn(b);
     lowVm += (b.labels.voicemail || 0);
     lowN += tot;
-    out.byBand[id] = { n: tot, voicemail: b.labels.voicemail || 0,
-                       voicemailShare: Math.round(((b.labels.voicemail || 0) / tot) * 1000) / 1000 };
   });
   if (lowN >= OB_REVIEW_LOW_MIN_N_) {
-    var lowShare = lowVm / lowN;
-    out.recallCeiling = { n: lowN, voicemail: lowVm,
+    var lowShare = lowNr / lowN;
+    out.recallCeiling = { n: lowN, notReached: lowNr, voicemail: lowVm,
                           share: Math.round(lowShare * 1000) / 1000,
-                          interval: obWilsonInterval_(lowVm, lowN) };
+                          interval: obWilsonInterval_(lowNr, lowN) };
     if (lowShare >= OB_REVIEW_LOW_VM_SHARE_) {
-      out.notes.push('⚠ IMMEDIATE VOICEMAIL EXISTS: ' + Math.round(lowShare * 100) + '% of the '
-        + '0-11 s rings are voicemail too (n=' + lowN + '). Those are phones off / on DND / '
-        + 'forwarded, reached in call-setup time, and NO ring threshold can see them. The band '
-        + 'may still be precise, but `reached` stays OVER-COUNTED by this population -- which is '
-        + 'the number managers act on. Do not enable `strict` on this evidence; `disclose` must '
-        + 'say the reached figure is an upper bound.');
+      out.notes.push('⚠ THE RING CANNOT SEE IT: ' + Math.round(lowShare * 100) + '% of the '
+        + '0-11 s rings did NOT reach a person (n=' + lowN + '; ' + lowVm + ' voicemail, '
+        + (lowNr - lowVm) + ' IVR). Those are phones off / on DND / forwarded / screened, '
+        + 'answered in call-setup time, and NO ring threshold can separate them from a real '
+        + 'pickup. The band may still be precise, but `reached` stays OVER-COUNTED by this '
+        + 'population -- which is the number managers act on. Do not enable `strict` on this '
+        + 'evidence; `disclose` must say the reached figure is an upper bound.');
     }
   }
 
@@ -1682,8 +1731,13 @@ function obReviewVerdict_(tally) {
   if (!c || !c.n) { out.reason = 'no stratum-C rows found'; return out; }
   var labelled = labelledIn(c);
   var vm = (c.labels && c.labels.voicemail) || 0;
+  var cNr = notReachedIn(c);
   out.c = { n: c.n, labelled: labelled, unlabelled: c.unlabelled || 0,
-            voicemail: vm, interval: obWilsonInterval_(vm, labelled) };
+            voicemail: vm, interval: obWilsonInterval_(vm, labelled),
+            // The VERDICT stays on voicemail -- that is what
+            // OUTBOUND_VM_RING_SEC claims -- but not-reached travels with it,
+            // because that is the measure the `reached` KPI cares about.
+            notReached: cNr, notReachedInterval: obWilsonInterval_(cNr, labelled) };
   if (labelled < OB_REVIEW_C_MIN_N_) {
     out.reason = 'only ' + labelled + ' stratum-C rows labelled, need '
       + OB_REVIEW_C_MIN_N_ + ' before any interval is narrow enough to read'

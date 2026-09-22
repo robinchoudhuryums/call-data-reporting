@@ -2628,6 +2628,29 @@ When something looks wrong, before assuming a code bug, check:
       voicemail exist? that caps the whole method regardless of C), then B2
       (12 rows -> is the band's left edge too high?), then C (20 rows -> is
       the band precise?). A fully blank sheet correctly reports nothing.
+    - **⚠ LABEL THE TERMINAL OUTCOME, not what the call passed through (owner
+      labels, 2026-09-22).** One call can be several things in sequence: a
+      live row hit a Google call-screening prompt, went unanswered, and then
+      took a voicemail -- all on ONE leg. Without a convention two listeners
+      label that differently and the tally moves. The rule: **what did the
+      call ultimately amount to?** That row is `voicemail`. Reaching voicemail
+      and NOT leaving a message is also `voicemail` (a machine answered).
+      `ivr` is only for a call that ENDED at a menu or auto-attendant without
+      reaching a person or a mailbox.
+    - **TWO measures come back, and they answer different questions.**
+      `voicemailShare` is what a voicemail THRESHOLD claims, so it drives the
+      verdict. `notReachedShare` = voicemail + ivr is what the `reached` KPI
+      cares about, and it is what the RECALL ceiling is measured on -- an
+      auto-attendant is just as invisible to a ring threshold as voicemail is,
+      and just as much a miss. The first live round returned 2 `ivr` rows in
+      12, which a voicemail-only measure would have counted as neither.
+      `no-answer` and `unclear` are folded into NEITHER measure, by design.
+    - **⚠ THE POOLED RATE IS NOT A POPULATION RATE.** The sample deliberately
+      over-weights C and B2 relative to how often those rings actually occur,
+      so "N of 54 did not reach a person" is NOT the company's not-reached
+      rate and must never be quoted as one. Per-band shares are the readable
+      output; converting them to a population figure needs each band's row
+      count as a weight, which the scorer does not yet carry.
     - **⚠ THE KEY TAB IS FOR THE SCORER, NOT FOR YOU.** Each run also writes a
       HIDDEN **Key <stamp>** tab naming every row's ring stratum -- the
       hypothesis under test. Nothing in the workflow requires a human to open
