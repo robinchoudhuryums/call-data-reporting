@@ -24,6 +24,7 @@ const EXEMPT = {
   'NeonBackup.gs':    ['nbMinMonth_'],
   'NeonCoverage.gs':  ['ncNeonMinDate_'],
   'InboundReport.gs': ['computeInboundReport_'],   // the information_schema column probe (SELECT 1 …)
+  'OutboundReport.gs': ['obProbeAnchorDate_'],     // SELECT max(call_date) — the window anchor
 };
 
 function enclosingFn(lines, i) {

@@ -355,21 +355,28 @@ of connects in total), so **no re-run clears it -- it needs a band-summing
 probe rather than a one-peak one**; the min-talk half DID measure at 20 s.
 (2) `probeOutboundInstantConnects` could not verdict at all -- zero usable
 external legs in 600 sampled rows. **FIXED 2026-09-18, and the fix came with
-the answer.** `probeOutboundJourneyShape()` measured the cause and overturned
-the P-11/CNAM hypothesis: no masked name shape is present at ALL
-(`extNumber: 0`, `extCaller: 0`, `initials: 0`), because `icBuildJourney_`
-names from CALLEE_NAME, which an outbound dial leaves blank, so every
-external leg is named by an ERA-dependent rule: masked initials since P-11
-(2026-09-17), `(unknown)` before it. `obInstantDerivedRing_` prefers the
+the answer.** `probeOutboundJourneyShape()` measured the cause. Its
+FIRST run (09-18) showed no masked name shape at all (`extNumber: 0`,
+`extCaller: 0`, `initials: 0`) and that reading was taken as structural; it
+was era-bound. The second run (09-21) showed `initials: 300`. The rule is
+ERA-dependent, because `icBuildJourney_` names from CALLEE_NAME, which an
+outbound dial leaves blank: masked initials since P-11 (2026-09-17),
+`(unknown)` before it. `obInstantDerivedRing_` prefers the
 masked leg and keeps the first-`unknown` rule as the pre-P-11 fallback -- the
 one-arm version read the wrong leg on post-P-11 rows and flipped the verdict
-for a day. CONFIRMED `carrier-instant` on the 2026-09-21 run: the masked
-marker reads a median 1 s at a **0%** real-ring share on the instant group
-against 27 s at 100% on the rung control, so **the instant connects are
-genuine and the classifier must exclude and disclose them**. That also means
-the talk-profile hypothesis was right and the derived ring does NOT overrule
-it. Only the band-gate half of (1) still
-blocks the parameter work below. `connected` counts a voicemail pickup
+for a day. **CLOSED 2026-09-21 post-deploy by
+`probeOutboundInstantConnects` itself** (not by inference from the shape run):
+`carrier-instant` over 66,042 connected single-attempt calls, 26,804 instant
+(40.6%), with `noExternalLeg: 0` on both sampled groups. The marker reads a
+median 1 s at a **0%** real-ring share on the instant group against 27 s at
+**100%** on the rung control, and all three supporting cuts agree -- talk
+medians FALL as ring rises (105 / 65 / 36 s), the share is flat on all 19
+business days, and it is spread across 168 agents. So **the instant connects
+are genuine, `ring_seconds` is truthful, and the classifier must EXCLUDE them
+and DISCLOSE the ~59% reachable remainder**; the talk-profile hypothesis was
+right all along and the derived ring does not overrule it. Operator State #65
+carries the numbers and the low-volume trap in the concentration list.
+Only the band-gate half of (1) still blocks the parameter work below. `connected` counts a voicemail pickup
 as a reached caller (the far end genuinely answers, so every condition the
 flag tests is met), which the six-point round promoted into the "Actually
 reached" tile. A single scope-level rate carries that over-count as a
@@ -535,11 +542,18 @@ tripwire. Revisit only after Batch 5 has held.
 - Carried: the qcd-report `delete` leak; `getDeptQueueExts_` reading A–D
   instead of C+D; the all-dept QCD budget being per-run.
 - ~~`obInstantDerivedRing_` is mis-keyed (2026-09-18, BLOCKS Part 2).~~ FIXED
-  2026-09-18 by measurement, not by the guessed cause: no masked name shape
-  exists in the blobs at all, because `icBuildJourney_` names from CALLEE_NAME
-  and an outbound dial leaves it blank. The reader now falls back to the first
-  `unknown`-CLASS event, validated on the rung answer key. Operator State #65
-  carries the run and the `carrier-instant` reading.
+  2026-09-21, and the 09-18 fix's REASONING was wrong: it read "no masked name
+  shape exists in the blobs at all", which was true only of the era it
+  sampled. P-11 shipped 2026-09-17 and made `icBuildJourney_` mask a
+  CALLEE-external leg's CNAM to initials, so the two probe runs straddled a
+  capture change -- the 09-18 run saw 0 `initials`, the 09-21 run 300. The
+  reader now prefers the MASKED leg and keeps the first-`unknown` fallback for
+  pre-P-11 rows; `carrier-instant` is confirmed on the post-P-11 answer key
+  (rung 27 s / 100% talk, instant 1 s / 0%). Operator State #65 carries both
+  runs and the lesson: a reader keyed on a journey NAME is keyed on a capture
+  convention, so when a marker and its own recommending diagnostic disagree
+  across two runs, check whether the capture moved before auditing either
+  implementation.
 - **Overview trend chart: the Company line is % ONLY (2026-09-18).** Delivered
   for `pct` and `abandonedPct`; the two COUNT metrics deliberately have no
   `companyField`, because a company "answered calls" line just restates the
@@ -560,11 +574,46 @@ tripwire. Revisit only after Batch 5 has held.
   is a WRITER change in a function INBOUND shares (the call-path drill and
   Caller Lookup render its journeys) and is forward-only, so history keeps the
   fallback regardless. → deliberate, with its own regression walk; unbatched.
-- **The answer-quality probe needs a BAND gate, not a peak gate (2026-09-18).**
-  Voicemail pickup here is multi-modal (21 / 26-27 / 30-31 s), so the 8%
-  single-peak share gate refuses a real signal; the 20-32 s band is ~22% of
-  connects. Keep the floor + bimodality gates. → same change as above;
-  measurements in the plan's "Step 1 RESULTS".
+- ~~**The answer-quality probe needs a BAND gate, not a peak gate
+  (2026-09-18).**~~ DONE 2026-09-21: `obProbeRingBand_` is a SECOND detector
+  behind the untouched spike detector, consulted only on the two multi-modal
+  refusals (`spike-too-small` / `too-wide`), with a passing spike still
+  winning. Building it surfaced the number that decides the work: a 13 s band
+  carries the baseline traffic inside its own width, so the live band's
+  **precision ceiling is ~69%** — roughly 31% of what a threshold there flags
+  is a human who answered slowly. That is now a GATE (`band-impure`) and the
+  ceiling travels beside the parameters. Two corrections came with it: the
+  scan's "maximises excess, not mass" rationale was false at fixed width (the
+  FLOOR and the new `no-trough` shoulder gate are what keep it off the human
+  cluster), and the ceiling had to move OUT of the `suggested` block, which an
+  operator copies key-for-key into Script Properties. Details in the plan's
+  "BLOCKER 1 ADDRESSED".
+- ~~**Ground truth before any parameter is set — Step 1b (owner ask,
+  2026-09-21).**~~ SHIPPED 2026-09-21: `sampleOutboundCallsForReview()`,
+  Operator State #71. A stratified, BLINDED sample (instant / human / in-band
+  / above-band / never-connected, 12 per stratum) whose worksheet carries only
+  the recording locator — token, date, time, agent — while ring and talk sit
+  in a separate key the listener opens AFTER labelling. **Still OPEN, and it
+  is the real gate: the listening itself.** Read stratum C; mostly voicemail
+  validates the band and its precision ceiling becomes a disclosure, mixed
+  means `ring_seconds` cannot carry this classifier here and Part 1 needs
+  `connected` RELABELLED instead. **No parameter in this family should be set
+  before those labels exist.** The PHI question resolved in the good direction
+  — recordings are findable by agent + time, so no caller identity is emitted
+  and the aggregates-only convention holds (pinned). **Streamlined 2026-09-22:**
+  the worksheet is written into a standing review workbook (no paste out of a
+  log), the key is a hidden tab only `scoreOutboundReviewSample()` reads, and
+  that scorer does the join / tally / decision rule — testing the Wilson
+  INTERVAL, not the point estimate, so 14 of 20 still refuses. Allocation is
+  weighted toward stratum C, a failed control downgrades a validation, and all
+  four outbound tools now anchor an unset window to `max(call_date)` capped at
+  yesterday (the P16 rule).
+- **Re-derive the band share over the REACHABLE population; do not carry the
+  22% forward (2026-09-21).** That figure is over all connects, and #65
+  established that 40.6% of them connect instantly and must be excluded from
+  any ring-based classifier. Measure the band's share of the remainder rather
+  than reasoning it out — whether instant rows can fall in a 20-32 s band at
+  all is a property of the data.
 - Escalations Phase 2's EXTERNAL WRITER is designed, unbuilt (H3, 2026-09):
   the review queue, the INSERT contract and the pending-review ping exist on
   this side; team-tools has no Neon connection and no writer. Building it is

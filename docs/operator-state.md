@@ -2213,8 +2213,45 @@ When something looks wrong, before assuming a code bug, check:
       64 s at 2-16 s, 36 s at 17-32 s), so instant-ring rows talk the LONGEST.
       That argues for a mis-recorded CONNECTED timestamp on real conversations
       and AGAINST reading them as drops -- but recoverable-vs-permanent is
-      exactly what this probe exists to decide, and it cannot until the lookup
-      is fixed.
+      exactly what this probe exists to decide, and it could not until the
+      lookup was fixed. It since has been: see CLOSED below.
+    - **CLOSED 2026-09-21, post-deploy, by the probe ITSELF.** Everything
+      above the era fix was inference from the shape run; this is
+      `probeOutboundInstantConnects` verdicting on the full population, with
+      the era-aware marker live. `carrier-instant`, window 2026-08-24..09-20,
+      all departments, **66,042 connected single-attempt calls, 26,804 instant
+      (40.6%)**. The two sampled groups separate perfectly and in opposite
+      directions: instant = 300 sampled, `noExternalLeg` **0**, median derived
+      ring **1 s**, real-ring share **0%**; rung (stored ring >= 17 s) = 300
+      sampled, `noExternalLeg` **0**, median derived **27 s**, real-ring share
+      **100%**. `noExternalLeg: 0` on BOTH groups is the era fix working --
+      the 09-18 run read 300 misses on the same rows.
+      **All three supporting cuts agree, and each kills a different
+      alternative.** (a) TALK PROFILE, the strongest corroboration: medians
+      fall as ring rises -- **105 s** at 0-1 s, 65 s at 2-16 s, 36 s at
+      17-32 s, 38 s past that. Instant rows hold the LONGEST conversations, so
+      they are real calls, not answering-machine drops (a drop would be the
+      shortest bucket). (b) PER DAY: the instant share sits in 39.3-42.7% on
+      every one of the 19 business days -- no step change, so no config-change
+      date to find. The window's business days are all present (28 calendar
+      days minus 8 weekend days minus Labor Day 09-07 = 19), so no gap is
+      skewing it. (c) CONCENTRATION: `concentrated: false` across 168 agents.
+      Do NOT over-read its `top` list -- the five agents shown at 89-100%
+      instant rates have only 28-40 calls each against a ~393-call per-agent
+      average, so those rates are low-volume noise, not a handset setting; the
+      measure that matters is the top-5 VOLUME share, 9.9% against a 3.0% even
+      baseline, which the detector correctly judged un-concentrated.
+    - **What this OBLIGES of any voicemail classifier built on #64.** These
+      calls genuinely connect instantly (early media / auto-answer);
+      `ring_seconds` is TRUTHFUL and simply cannot discriminate them. So a
+      classifier must (1) EXCLUDE the instant population rather than
+      threshold it, and (2) DISCLOSE that its reachable population is the
+      ~59% remainder -- a coverage figure on the surface, not a footnote.
+      **#64's measured voicemail band (20-32 s, multi-modal at 21 / 26-27 /
+      30-31 s) was measured over ALL connects**, so its ~22% share is over a
+      denominator that now shrinks by 40.6%; re-derive that share over the
+      reachable remainder before sizing anything on it, rather than carrying
+      the old number forward.
 
 66. **The QCD-vs-DQE reconciliation diagnostic (`diagnoseQcdVsDqe`).**
     Read-only, editor- or menu-run from **cdr-import** (CDR Tools → "QCD vs
@@ -2534,3 +2571,119 @@ When something looks wrong, before assuming a code bug, check:
     `tests/unit/cdr-report-prop-registry.test.js` (which also sweeps the
     `nbResumeRead_` / `nbResumeWrite_` key arguments), listed by
     `listCdrReportScriptProperties()`.
+
+71. **The answer-quality review sample (`sampleOutboundCallsForReview`).**
+    Read-only, admin-gated, editor-run from the DASHBOARD project. The GROUND
+    TRUTH step for the voicemail classifier (#64) -- run it BEFORE setting
+    `OUTBOUND_VM_RING_SEC` or anything else in that family.
+    - **Why it exists.** Everything #64 and #65 establish is UNLABELLED
+      inference from timing: rings cluster at 21 / 26-27 / 30-31 s and we
+      INTERPRET those clusters as carrier voicemail timeouts. Nobody has
+      confirmed that one 31 s-ring connect went to voicemail. Two facts make a
+      labelled check worth more than another histogram: the only independent
+      signal in #64 DISAGREED (its repeat-callee modal ring is 0 s, not 31 s),
+      and the band's measured purity caps precision near 69%, which is a
+      judgement about how the number will be read rather than something a
+      distribution can settle.
+    - **Window: the SAME `OUTBOUND_PROBE_FROM` / `_TO` as #64 and #65**, on
+      purpose -- a sample from a different window validates a different
+      population. It does NOT self-clear those params; #64 owns that.
+      **Unset, all four tools now end their window at the LATEST DATE THE DATA
+      HOLDS** (`obProbeAnchorDate_`, a `max(call_date)` probe) rather than at
+      yesterday, so a window no longer carries a silent tail of empty days
+      when an import has not run. **The anchor is CAPPED at yesterday and that
+      cap is load-bearing:** `max(call_date)` becomes TODAY the moment a
+      mid-day import lands a partial day, and measuring a partial day is
+      exactly the P16 bug. So the anchor can only ever pull the window
+      EARLIER. A date you typed is never moved.
+    - **Size: per stratum, and deliberately UNEVEN.** C (in-band) 20, A
+      (instant) 10, B and D 6, E 4 -- 46 calls, not a uniform 60. Only C
+      decides anything; the rest are controls where a handful confirms the
+      data is what we think. At n=12 the C share carries roughly a +/-13 pt
+      Wilson interval and at n=20 about +/-10, against a decision of "mostly
+      machines vs a coin flip", so the listening budget goes where it changes
+      the answer. `OUTBOUND_REVIEW_N`, if set, overrides every stratum with
+      one uniform count (capped at 40) -- the escape hatch for a bigger run.
+    - **HOW TO RUN IT.** (1) Run `sampleOutboundCallsForReview()`. It writes a
+      **Review <stamp>** tab into a standing workbook it creates itself
+      (`OB_REVIEW_SS_ID`; the result line carries the URL) -- there is no
+      copy-paste out of the execution log. (2) In that tab, find each call in
+      the phone system by **AGENT + DATE + TIME**, listen, and pick a Label
+      from the dropdown (human / voicemail / ivr / no-answer / unclear). The
+      recording carries the automated greeting and the agent's own message, so
+      this is an observation, not a judgement call. Partial progress is fine.
+      (3) Run **`scoreOutboundReviewSample()`**. It joins the hidden key,
+      tallies per stratum, and returns the verdict -- no manual join or pivot.
+      Pass a tab name to score an older run; the default is the newest.
+    - **⚠ THE KEY TAB IS FOR THE SCORER, NOT FOR YOU.** Each run also writes a
+      HIDDEN **Key <stamp>** tab naming every row's ring stratum -- the
+      hypothesis under test. Nothing in the workflow requires a human to open
+      it, which is what makes the blinding hold; hiding the tab is only a
+      speed bump. A worksheet row that said "31 s ring" would contaminate the
+      label and the exercise would confirm itself, which is also why ring and
+      talk are absent from the worksheet and why tokens are assigned after a
+      shuffle. If you do read it, re-sample rather than labelling from a
+      peeked key. Deleting a key tab makes its run unscorable.
+    - **Read the VERDICT, and note what each one obliges.** `VALIDATED` --
+      stratum C's voicemail share has its 95% Wilson LOWER bound above 60%, so
+      the band identifies voicemail well enough to threshold on; its measured
+      precision is what the surface must DISCLOSE, and the classifier must
+      still EXCLUDE the instant population (#65). `REFUTED` -- the upper bound
+      is under 50%, so `ring_seconds` cannot carry this classifier here and
+      Part 1's callback table needs `connected` RELABELLED rather than
+      reclassified. `INCONCLUSIVE` -- the interval spans both, or under 8 C
+      rows are labelled: label more of C (raise `OUTBOUND_REVIEW_N` and
+      re-sample), never pick an end. **A point estimate is not the test** -- a
+      14-of-20 run reads 70% and still refuses, because the interval reaches
+      down to the coin flip.
+    - **A FAILED CONTROL downgrades a validation, and that is the one result
+      worth reading twice.** If stratum A comes back mostly NOT human, #65's
+      carrier-instant conclusion is wrong and nothing here is interpretable
+      until that is resolved; same for B (a short ring with real talk time
+      should be a person). The scorer flips `validated` to `inconclusive` and
+      says so rather than letting stratum C outvote a broken premise.
+    - **A THIN warning means a stratum returned well under its request** --
+      judged per stratum against its own `want`, since 4 of 4 in a control is
+      complete while 4 of 20 in C is not a decision. Widen
+      `OUTBOUND_PROBE_FROM`/`_TO` before drawing anything from that stratum.
+    - **Blanks and invented labels are never folded into a bucket.** The
+      scorer reports `unlabelled` and `unrecognisedLabels` separately, because
+      counting a blank as "not voicemail" would bias the one share the audit
+      measures, in the direction of refusing the band.
+    - **`OB_REVIEW_RECORDING_URL` (optional) turns every row into a link.**
+      A recording is addressed by the phone system's OWN id (8x8:
+      `https://admin.8x8.com/recordings/details/<uuid>?region=USA`) and we do
+      NOT store that id -- `outbound_calls.call_id` is the CDR's Call ID,
+      which in this feed is a NUMERIC epoch-millis-shaped value (the same id
+      space as the DQE AD/AE columns, which is exactly why those coerce
+      through the thousands-separator bug). **So a per-recording DEEP link is
+      not derivable from captured data.** What is derivable is a pre-filtered
+      SEARCH url, and only you know that console's parameter scheme -- so set
+      this property to a template and the worksheet renders it per row.
+      Placeholders: `{date}` `{time}` `{agent}` `{ext}`, each URI-encoded;
+      e.g. `https://admin.8x8.com/recordings?date={date}&ext={ext}`. Unset,
+      the column stays blank and you search by agent + time as before. Two
+      rules: it must start with `http://` or `https://` (anything else is
+      refused rather than rendered half-built), and it renders as a BARE URL
+      -- never a `=HYPERLINK()` formula, which `sheetSafeCell_` would
+      neutralise into visible text. **`{callid}` is deliberately NOT
+      supported:** it would mean selecting `call_id`, trading this tool's
+      no-call-id property for a link that cannot resolve anyway.
+    - **Workbook housekeeping:** newest 6 runs kept per prefix, oldest pruned
+      (the `HR_BACKUP_KEEP_` pattern). It is a SEPARATE spreadsheet on
+      purpose -- review artifacts do not belong in the CDR Report workbook,
+      whose ALLOCATED grid counts against the 10M-cell cap (#62) and whose
+      tabs the pipeline reads. `OB_REVIEW_SS_ID` self-populates; clear it to
+      start a fresh workbook.
+    - **PHI: none.** A recording is locatable by agent + time, so no phone
+      number, `callee_hash` or `call_id` is selected, logged or returned --
+      the same aggregates-only discipline as every other probe here, which
+      this tool was expected to have to break and does not. Internal-staff and
+      duration data (agent, department, ring/talk) does leave. Pinned by
+      `tests/unit/outbound-report.test.js`.
+    - **It is an INV-01 carve-out** (the only one that writes no production
+      sheet): admin-gated, insert-only, into its own workbook. A new
+      review-artifact writer should copy that shape rather than widen any
+      other carve-out.
+    - **It infers nothing and sets nothing.** The labels are the listener's;
+      the tool only draws the sample and withholds the key.

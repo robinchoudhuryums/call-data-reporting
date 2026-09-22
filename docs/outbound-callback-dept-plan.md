@@ -182,6 +182,42 @@ rule is worth building." It is worth building. **The change is a probe that
 sums a BAND rather than a peak**, with the floor and bimodality gates kept --
 a code change and a deliberate decision, never a re-run.
 
+**BLOCKER 1 ADDRESSED 2026-09-21 -- and building it surfaced the number that
+actually decides this work.** `obProbeRingBand_` is a SECOND detector, not
+looser gates on the first: the spike detector is untouched and still encodes
+"one carrier, one timeout, one tight peak", and the band runs only when the
+spike refused as `spike-too-small` or `too-wide` (the two shapes mass split
+across several timeouts produces through a one-peak test). A passing spike
+still wins, because a 2 s band implies a far higher precision than a 13 s one.
+
+**The new gate is PURITY, and on the live numbers it is the whole story.**
+Summing the 20-32 s band counts the baseline traffic inside it as if it were
+voicemail: 13,798 calls in the band, of which 13 x 330 = 4,290 are baseline,
+so **roughly 31% of anything a threshold there flags is a human who simply
+answered slowly.** That is the classifier's precision CEILING -- before any
+implementation error -- it was measurable all along, and no gate in the
+original design looked at it. A band that is mostly baseline is now refused as
+`band-impure` rather than handed over. The ceiling travels with the parameters
+as `out.suggestedBasis.expectedPrecisionCeiling`, deliberately OUTSIDE the
+`suggested` block (that block is copied key-for-key into Script Properties, so
+a non-property key in it invites setting a property by that name -- pinned).
+
+**One claim was corrected while building it.** The scan was first written as
+"maximise EXCESS over baseline, never raw mass, so it cannot drift onto the
+human cluster". At FIXED window width that is false: `mass - W*baseline` and
+`mass` rank windows identically, the subtracted term being constant. What
+actually keeps the scan off the human cluster is the FLOOR (the left edge may
+not fall below `OB_PROBE_VM_FLOOR_SEC_`) and the new SHOULDER gate (`no-trough`
+-- a window whose three preceding seconds are nearly as busy is the upper tail
+of people answering). Both are pinned; the excess is computed for the purity
+gate, not to steer the scan.
+
+**What is still NOT established: that a 20-32 s ring means voicemail at all.**
+Every measurement in this document is unlabelled inference from timing. The one
+independent signal available -- the repeat-callee check -- DISAGREED (its modal
+ring is 0 s, not 31 s). The band makes the rule REACHABLE; it does not make it
+CORRECT. See "Step 1b" below.
+
 **BLOCKER 2 -- RESOLVED 2026-09-18, and the answer came with it.**
 `probeOutboundInstantConnects` could not verdict: it sampled 300 rows in each
 group and found zero usable external legs in all 600 (`verdict:
@@ -274,6 +310,146 @@ change in `icBuildJourney_`, which means: forward-only (history still needs
 the fallback), and shared with INBOUND, whose journeys render in the call-path
 drill and Caller Lookup. Worth doing deliberately, with its own regression
 walk -- not folded into a probe fix.
+
+### Step 1b: GROUND TRUTH — listen to calls before setting anything (owner ask, 2026-09-21; DESIGNED, NOT BUILT)
+
+**Why this is the gate, not another distribution.** Everything in Step 1 is
+UNLABELLED inference: we observe that rings cluster at 21 / 26-27 / 30-31 s and
+interpret the clusters as carrier voicemail timeouts. Nobody has confirmed that
+a single 31 s-ring connect actually went to voicemail. Three facts say the
+interpretation needs a check rather than more measurement:
+
+1. The one independent signal in the probe **DISAGREED**: the repeat-callee
+   check peaks at 0 s, not 31 s (`agreesWithSpike: false`). The design treats a
+   disagreement as disclosure rather than a refusal, which is right, but a
+   disagreeing independent estimate is exactly when labels are worth more than
+   another histogram.
+2. The band's measured purity puts a **~69% ceiling** on precision. Whether
+   that is acceptable is a judgement about how the number will be read, and it
+   cannot be made from the distribution alone.
+3. #65 closed by establishing that 40.6% of connects are genuinely instant.
+   That conclusion is also unlabelled -- it rests on a derived ring agreeing
+   with a stored one. Listening to a handful would confirm it independently and
+   cheaply.
+
+**Sample by STRATUM, and let the listener assign the label.** "Get me some
+voicemail calls" is not a query this data can answer -- voicemail is the thing
+being inferred, so it cannot be a sampling filter without assuming the
+conclusion. Only two of the four classes the owner named are stored facts;
+the other two are hypotheses:
+
+| Stratum | Selector | What a label would settle |
+| --- | --- | --- |
+| A. Instant | `connected`, ring <= 1 s | Whether #65's `carrier-instant` verdict holds by ear |
+| B. Human pickup | `connected`, ring 2-11 s, talk >= 20 s | The control: these should be people |
+| C. **In-band candidates** | `connected`, ring 20-32 s | **The actual question** -- what fraction are machines |
+| D. Above band | `connected`, ring >= 33 s | Whether the band's right edge is in the right place |
+| E. Never connected | `connected = false` | That the unconnected side is what we think |
+
+~10-15 per stratum is enough: at n=15, a stratum-C precision estimate carries
+roughly a +/-12 pt confidence interval, which separates "mostly machines" from
+"a coin flip" -- the only distinction that changes the decision. More listening
+buys precision on a number whose threshold for action is coarse.
+
+**Blind the listener to the stratum.** If the sheet says "31 s ring -- expected
+voicemail", the label is contaminated by the hypothesis and the exercise
+confirms itself. Emit ONE shuffled list with an opaque token per row and keep
+the stratum in a separate key the listener does not open until after labelling.
+This costs a few lines and is the difference between evidence and agreement.
+
+**The PHI question is SETTLED, and the answer was the good one (owner,
+2026-09-21): recordings are locatable by AGENT + TIME.** I had expected this
+tool to break the aggregates-only probe convention ("no hash, no number, no
+call id is selected, logged or returned") because a sampler must emit row
+identifiers to be useful. It does not: agent + date + time locates the
+recording, so **no callee identity is needed at all** -- no phone number, no
+`callee_hash`, no `call_id`. The convention holds unchanged. What leaves is
+internal-staff and duration data (agent name, department, ring/talk seconds).
+Pinned, because a later "add the call id, it's handy" would otherwise be
+invisible.
+
+**The owner also confirmed the label is directly observable:** the recording
+carries the automated greeting and the agent's own message, so a listener can
+separate voicemail from a human without judgement calls. That is what makes
+this the cheapest decisive evidence available rather than another proxy.
+
+**SHIPPED 2026-09-21, streamlined 2026-09-22: `sampleOutboundCallsForReview()`
++ `scoreOutboundReviewSample()`** (`OutboundReport.gs`, admin-gated,
+editor-run). Operator State #71 is the runbook. The 09-22 pass removed every
+manual step between sampling and a verdict: the worksheet is WRITTEN into a
+standing review workbook instead of pasted out of the execution log, the key
+is a hidden tab the SCORER reads so no human ever needs to open it, and the
+scorer does the join, the per-stratum tally and the decision rule. Two
+judgement calls in that pass are worth stating:
+- **Allocation is UNEVEN, because only stratum C decides.** 20 in C, 10 in A,
+  6 in B and D, 4 in E -- 46 calls rather than a uniform 60, with the
+  precision spent where it changes the answer (+/-10 pts at n=20 versus
+  +/-13 at n=12, against a "mostly machines vs coin flip" call).
+- **The verdict tests the INTERVAL, not the point estimate.** A 14-of-20 run
+  reads 70% voicemail and still returns `inconclusive`, because its Wilson
+  lower bound reaches down to the coin flip. `validated` needs the lower
+  bound above 60%, `refuted` the upper bound below 50%. And a failed CONTROL
+  downgrades a validation: if stratum A comes back mostly non-human then
+  #65's carrier-instant conclusion is wrong and stratum C is not
+  interpretable, so the scorer refuses rather than letting C outvote a broken
+  premise.
+
+Design notes worth keeping:
+- **The worksheet is blinded and the key is separate.** `worksheet` carries
+  token / date / time / agent / department and a Label column -- and
+  deliberately NOT ring or talk seconds, which would name the stratum outright
+  and turn the exercise into self-confirmation. `key` maps token -> stratum +
+  ring + talk afterwards.
+- **Tokens are assigned AFTER the shuffle**, so their order leaks nothing
+  either. Pinned against a deterministic shuffle rather than hoping a random
+  run happens to show it.
+- **Each stratum is sampled independently** (`ORDER BY random() LIMIT n` per
+  stratum, one round trip): a single global sample would starve the in-band
+  stratum, which is the smallest of the five and the only one that decides
+  anything. A stratum returning under 5 rows is flagged THIN in the result.
+- **Both TSV writers route through `sheetSafeCell_`** and flatten embedded
+  tabs -- the paste target is a spreadsheet and agent names come from the
+  external CDR feed (the injection rule's "CSV or not" clause).
+- **The stratum travels into SQL as an integer index**, so nothing
+  name-derived is concatenated into the statement.
+- **A per-recording DEEP LINK is not derivable, and the reason is worth
+  knowing (2026-09-22).** 8x8 addresses a recording by its own UUID
+  (`/recordings/details/cdd3ea31-...`); `outbound_calls.call_id` is the CDR's
+  Call ID, numeric and epoch-millis-shaped -- the same id space as the DQE
+  AD/AE columns, which is why those coerce. Different spaces, no mapping. The
+  optional `OB_REVIEW_RECORDING_URL` template (Operator State #71) renders a
+  SEARCH url per row instead, since the console's parameter scheme is operator
+  knowledge rather than anything the repo can infer.
+- **The window now anchors to the DATA** (`obProbeAnchorDate_`, shared by all
+  four outbound tools): unset, it ends at `max(call_date)` rather than at
+  yesterday, so no window carries a tail of empty days. **Capped at
+  yesterday** -- `max(call_date)` becomes today the moment a mid-day import
+  lands a partial day, which is the P16 bug, so the anchor may only pull the
+  window earlier. An explicitly set window is never moved.
+
+**One labelled example already exists, and it raises a question the audit
+should answer first (owner, 2026-09-22).** An outbound call on 2026-09-21 at
+4:55 PM CST, 29 s, where the agent reached voicemail and left a message. Two
+things follow. (1) It confirms the LABEL is directly observable from the
+recording -- the automated greeting and the agent's message are both audible
+-- which is the premise Step 1b rests on. (2) **It does not yet support the
+band, and might cut against it.** If that 29 s is the WHOLE call, then ring +
+message ≈ 29 s, leaving far too little for a 20-32 s ring plus a spoken
+message -- which would mean voicemail here answers FAST rather than after a
+carrier no-answer timeout, and the band premise weakens. If the 29 s is TALK
+only, it is consistent. **So the cheapest next measurement is a single-row
+parity check, not 46 labels:** take this exact call, read its ring / talk
+split in the console, and compare against its stored `ring_seconds` /
+`talk_seconds` row. One row either supports the timeout model or undermines
+it before any listening effort is spent. (Caveat: 2026-09-21 must be imported
+for the stored row to exist.)
+
+**Sequence: 1b comes BEFORE Step 2.** No parameter should be set from the band
+alone. If stratum C comes back mostly machines, the band is validated and Step
+2 proceeds with a measured precision figure to disclose. If it comes back mixed,
+the honest outcome is that `ring_seconds` cannot carry this classifier here, and
+Part 1's table needs a different treatment of `connected` -- a relabel rather
+than a reclassification.
 
 ### Step 2: the parameters
 

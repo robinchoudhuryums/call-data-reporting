@@ -1012,6 +1012,516 @@ test('probe/spike: out-of-domain buckets are ignored, not folded into the edges'
   assert.equal(s.spike, true);
 });
 
+// ── The review sampler (Step 1b ground truth) ──────────────────────────────
+
+function revRows_() {
+  // One row per stratum, with ring values that would GIVE THE STRATUM AWAY if
+  // they reached the worksheet.
+  return [
+    { stratum: 'A-instant', callDate: '2026-09-02', time: '09:14:00', agent: 'Ann A', ext: '101', dept: 'CSR',
+      ring: 0, talk: 120, attempts: 1, connected: true },
+    { stratum: 'B-human', callDate: '2026-09-03', time: '10:01:00', agent: 'Bob B', ext: '102', dept: 'Sales',
+      ring: 6, talk: 90, attempts: 1, connected: true },
+    { stratum: 'C-inband', callDate: '2026-09-04', time: '11:22:00', agent: 'Cid C', ext: '103', dept: 'CSR',
+      ring: 31, talk: 35, attempts: 1, connected: true },
+    { stratum: 'D-above', callDate: '2026-09-05', time: '12:40:00', agent: 'Dee D', ext: '104', dept: 'Power',
+      ring: 44, talk: 20, attempts: 1, connected: true },
+    { stratum: 'E-unconnected', callDate: '2026-09-08', time: '13:05:00', agent: 'Eve E', ext: '105', dept: 'Sales',
+      ring: 28, talk: null, attempts: 3, connected: false },
+  ];
+}
+
+test('review: the worksheet is BLINDED — no ring, talk or stratum reaches it', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; });
+  const ws = h.ctx.obReviewGridToTsv_(h.ctx.obReviewWorksheetGrid_(rows));
+  // The locator fields must be there, or the operator cannot find the call.
+  assert.match(ws, /Ann A/);
+  assert.match(ws, /2026-09-04\t11:22:00/, 'date and time must locate the recording');
+  // And the hypothesis must NOT be.
+  ['A-instant', 'B-human', 'C-inband', 'D-above', 'E-unconnected'].forEach(function (id) {
+    assert.ok(ws.indexOf(id) === -1, 'the worksheet must not name the stratum: ' + id);
+  });
+  const head = ws.split('\n')[0];
+  assert.ok(!/ring/i.test(head) && !/talk/i.test(head),
+    'no ring or talk column may appear in the worksheet header: ' + head);
+  // A ring of 31 in a labelling sheet is the answer written next to the
+  // question. Checked per row, since a bare "31" could appear in a date.
+  ws.split('\n').slice(1).forEach(function (line) {
+    const cells = line.split('\t');
+    assert.equal(cells.length, h.ctx.OB_REVIEW_WS_HEADER_.length,
+      'every row carries the header column count');
+    assert.ok(cells.indexOf('31') === -1 && cells.indexOf('44') === -1,
+      'a ring value must not appear as a cell: ' + line);
+  });
+});
+
+test('review: the recording link is a TEMPLATE, and renders as a bare URL', function () {
+  const row = { callDate: '2026-09-21', time: '16:55:00', agent: 'Ann A', ext: '101' };
+  const t = 'https://admin.8x8.com/recordings?date={date}&ext={ext}&q={agent}';
+  const url = h.ctx.obReviewRecordingUrl_(t, row);
+  assert.equal(url, 'https://admin.8x8.com/recordings?date=2026-09-21&ext=101&q=Ann%20A',
+    'placeholders substitute and each value is URI-encoded');
+  // The trap: a =HYPERLINK() formula would be neutralised by sheetSafeCell_
+  // into visible text, so the cell must be a bare URL that Sheets auto-links.
+  assert.ok(!/^=/.test(url), 'never a formula');
+  assert.equal(h.ctx.sheetSafeCell_(url), url,
+    'and it must survive the injection guard unchanged, or the link breaks');
+});
+
+test('review: no template means no link, and a non-URL template is refused', function () {
+  const row = { callDate: '2026-09-21', time: '16:55:00', agent: 'Ann A', ext: '101' };
+  ['', null, undefined, '   '].forEach(function (t) {
+    assert.equal(h.ctx.obReviewRecordingUrl_(t, row), '', 'absent template -> empty cell');
+  });
+  // A stray non-http value must not reach a cell as if it were a link.
+  assert.equal(h.ctx.obReviewRecordingUrl_('javascript:alert(1)', row), '');
+  assert.equal(h.ctx.obReviewRecordingUrl_('admin.8x8.com/{date}', row), '',
+    'a scheme-less template is refused rather than rendered half-built');
+});
+
+test('review: the Label column constant actually points at the Label column', function () {
+  // Not a tautology, unlike deriving a fixture from the same constant: this
+  // pins the constant against the HEADER TEXT, so a wrong index bites even
+  // though every fixture and the tally read it from the same place.
+  assert.match(h.ctx.OB_REVIEW_WS_HEADER_[h.ctx.OB_REVIEW_LABEL_COL_ - 1], /^Label/,
+    'OB_REVIEW_LABEL_COL_ must index the Label column, or the scorer tallies the wrong cell');
+  // And the two columns the listener fills are the last two, so a new column
+  // cannot be inserted between them and the label.
+  assert.equal(h.ctx.OB_REVIEW_WS_HEADER_.length, h.ctx.OB_REVIEW_LABEL_COL_ + 1,
+    'Notes is expected to follow Label as the final column');
+});
+
+test('review: {callid} is NOT a supported placeholder', function () {
+  // Supporting it would mean selecting call_id, trading this tool's
+  // no-call-id property for a link that cannot resolve anyway -- the CDR
+  // Call ID is numeric, the recording id is a UUID.
+  const row = { callDate: '2026-09-21', time: '16:55:00', agent: 'A', ext: '1' };
+  const out = h.ctx.obReviewRecordingUrl_('https://x/{callid}', row);
+  assert.equal(out, 'https://x/{callid}',
+    'an unsupported placeholder is left literal, never silently filled');
+  assert.ok(!/call_id/.test(String(h.ctx.obReviewRecordingUrl_)),
+    'and the helper must not reach for a call id');
+});
+
+test('review: the link column does not break the blinding', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; });
+  const ws = h.ctx.obReviewGridToTsv_(h.ctx.obReviewWorksheetGrid_(
+    rows, 'https://admin.8x8.com/recordings?date={date}&ext={ext}'));
+  assert.match(ws, /admin\.8x8\.com/, 'the link renders');
+  ['A-instant', 'C-inband'].forEach(function (id) {
+    assert.ok(ws.indexOf(id) === -1, 'still no stratum in the worksheet: ' + id);
+  });
+  ws.split('\n').slice(1).forEach(function (line) {
+    const cells = line.split('\t');
+    assert.ok(cells.indexOf('31') === -1 && cells.indexOf('44') === -1,
+      'and still no ring value: ' + line);
+  });
+});
+
+test('review: the key carries the stratum and joins back on Token', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; });
+  const key = h.ctx.obReviewGridToTsv_(h.ctx.obReviewKeyGrid_(rows));
+  assert.match(key, /C-inband/);
+  assert.match(key, /\t31\t/, 'the key is where the ring belongs');
+  const wsTokens = h.ctx.obReviewGridToTsv_(h.ctx.obReviewWorksheetGrid_(rows)).split('\n').slice(1)
+    .map(function (l) { return l.split('\t')[0]; }).sort();
+  const keyTokens = key.split('\n').slice(1)
+    .map(function (l) { return l.split('\t')[0]; }).sort();
+  assert.deepEqual(keyTokens, wsTokens, 'every worksheet row must be resolvable in the key');
+  assert.equal(new Set(keyTokens).size, keyTokens.length, 'tokens must be unique');
+});
+
+test('review: tokens are assigned AFTER the shuffle, so their order leaks nothing', function () {
+  // A reversing "shuffle" (always pick index 0) makes the property checkable:
+  // if tokens were assigned before shuffling, R01 would still sit on the
+  // A-instant row. Assigned after, it must land on whatever moved to front.
+  const rows = h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0; });
+  const first = rows[0];
+  assert.equal(first.token, 'R01');
+  assert.notEqual(first.stratum, 'A-instant',
+    'R01 must not be pinned to the first stratum — that is the leak this ordering prevents');
+  // And every input row still has exactly one token.
+  assert.equal(rows.length, 5);
+  assert.equal(new Set(rows.map(function (r) { return r.token; })).size, 5);
+});
+
+test('review: agent names from the CDR feed are neutralised for the paste target', function () {
+  const rows = h.ctx.obReviewShuffleAndToken_([
+    { stratum: 'C-inband', callDate: '2026-09-04', time: '11:22:00',
+      agent: '=HYPERLINK("http://x","clickme")', ext: '@101', dept: '+CSR', ring: 31, talk: 35,
+      attempts: 1, connected: true },
+    { stratum: 'B-human', callDate: '2026-09-05', time: '09:00:00',
+      agent: 'Tab\tInjected', ext: '5\t5', dept: 'Sales', ring: 5, talk: 60, attempts: 1, connected: true },
+  ], function () { return 0.5; });
+  const ws = h.ctx.obReviewGridToTsv_(h.ctx.obReviewWorksheetGrid_(rows));
+  assert.match(ws, /'=HYPERLINK/, 'a formula-shaped agent name is prefixed (sheetSafeCell_)');
+  assert.match(ws, /'\+CSR/, 'and so is a formula-shaped department');
+  ws.split('\n').forEach(function (line) {
+    assert.equal(line.split('\t').length, h.ctx.OB_REVIEW_WS_HEADER_.length,
+      'an embedded tab must be flattened or it shifts every column after it: ' + line);
+  });
+});
+
+test('review: the strata mirror Step 1b and never select on the thing being inferred', function () {
+  const strata = h.ctx.OB_REVIEW_STRATA_;
+  assert.equal(strata.length, 5);
+  // Joined rather than deepEqual: the array crosses the vm realm boundary, so
+  // a structural compare fails on reference identity (the harness trap).
+  assert.equal(strata.map(function (s) { return s.id; }).join('|'),
+    'A-instant|B-human|C-inband|D-above|E-unconnected');
+  // The whole methodological point: a stratum may select on stored facts
+  // (connected, ring, talk) and never on a voicemail judgement.
+  strata.forEach(function (st) {
+    assert.match(st.sql, /^(connected|NOT connected)/,
+      st.id + ' must key off the stored connected flag');
+    assert.ok(!/voicemail|vm|machine/i.test(st.sql),
+      st.id + ' must not select on the label being tested: ' + st.sql);
+  });
+  // C is the measured band from the 09-18 histogram.
+  assert.match(strata[2].sql, /ring_seconds BETWEEN 20 AND 32/);
+});
+
+test('review: the sampler emits NO caller identity', function () {
+  // The convention this tool was expected to break, and does not: a recording
+  // is found by agent + time, so no number, hash or call id is needed. A pin,
+  // because a later "add the call id, it is handy" would be invisible.
+  const fn = OB_SRC.slice(OB_SRC.indexOf('function sampleOutboundCallsForReview'),
+    OB_SRC.indexOf('// probeOutboundAnswerQuality --'));
+  assert.ok(fn.length > 200, 'the function must be found for this pin to mean anything');
+  [/callee_hash/, /\bcall_id\b/, /caller_hash/, /phone_hash/, /phone_number/].forEach(function (re) {
+    assert.ok(!re.test(fn), 'the review sampler must not select ' + re);
+  });
+  // Identifiers, not the WORD: the operator instructions legitimately say to
+  // find the recording in the phone system, and an earlier version of this
+  // pin failed on that prose — a pin that fires on documentation teaches
+  // people to weaken it.
+  assert.match(fn, /phone system/, 'the locator instructions are expected prose here');
+  // And the two TSV writers cannot leak one either.
+  assert.ok(!/hash|call_id|phone/i.test(String(h.ctx.obReviewGridToTsv_(
+    h.ctx.obReviewWorksheetGrid_(
+      h.ctx.obReviewShuffleAndToken_(revRows_(), function () { return 0.5; }))))));
+});
+
+test('review: a start timestamp that will not parse still yields a locator', function () {
+  assert.equal(h.ctx.obReviewStartParts_('2026-09-04 09:05:07').time, '09:05:07');
+  assert.equal(h.ctx.obReviewStartParts_('9:05').time, '09:05:00', 'padded, seconds defaulted');
+  assert.equal(h.ctx.obReviewStartParts_('garbage').time, 'garbage',
+    'an unparseable start is passed through — a bad locator beats a blank one');
+  assert.equal(h.ctx.obReviewStartParts_(null).time, '');
+});
+
+// ── The window anchor, the Wilson interval and the verdict rule ────────────
+
+function propsOf_(map) {
+  return { getProperty: function (k) { return Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null; } };
+}
+// 2026-09-22T18:00Z — so "yesterday" in America/Chicago is 2026-09-21.
+const NOW_ = Date.UTC(2026, 8, 22, 18, 0, 0);
+
+test('window: an UNSET window ends at the latest date the data holds', function () {
+  const w = h.ctx.obProbeWindow_(propsOf_({}), NOW_, '2026-09-18');
+  assert.equal(w.to, '2026-09-18', 'the anchor pulls the window back off the empty tail');
+  assert.equal(w.from, '2026-08-22', '28 days inclusive, counted back from the anchor');
+  assert.equal(w.anchoredTo, true);
+});
+
+test('window: the anchor is CAPPED at yesterday — the P16 rule', function () {
+  // A mid-day import lands a PARTIAL today. max(call_date) is then today, and
+  // measuring it is exactly the bug P16 recorded, so the anchor must not
+  // widen the window past yesterday.
+  const w = h.ctx.obProbeWindow_(propsOf_({}), NOW_, '2026-09-22');
+  assert.equal(w.to, '2026-09-21', 'today must never become the window end');
+  assert.equal(w.anchoredTo, false, 'and the result is not reported as anchored');
+  // A FUTURE anchor (a clock-skewed or bad row) is likewise capped.
+  assert.equal(h.ctx.obProbeWindow_(propsOf_({}), NOW_, '2026-12-01').to, '2026-09-21');
+});
+
+test('window: an EXPLICIT window is never moved by the anchor', function () {
+  const w = h.ctx.obProbeWindow_(
+    propsOf_({ OUTBOUND_PROBE_FROM: '2026-07-01', OUTBOUND_PROBE_TO: '2026-07-31' }),
+    NOW_, '2026-09-18');
+  assert.equal(w.from, '2026-07-01');
+  assert.equal(w.to, '2026-07-31', 'a date the operator typed is a decision, not a default');
+});
+
+test('window: a missing or malformed anchor falls back to the calendar default', function () {
+  assert.equal(h.ctx.obProbeWindow_(propsOf_({}), NOW_, null).to, '2026-09-21');
+  assert.equal(h.ctx.obProbeWindow_(propsOf_({}), NOW_, 'garbage').to, '2026-09-21');
+  assert.equal(h.ctx.obProbeWindow_(propsOf_({}), NOW_).to, '2026-09-21');
+});
+
+test('window: an invalid explicit window still throws before any connection', function () {
+  assert.throws(function () {
+    h.ctx.obProbeWindow_(propsOf_({ OUTBOUND_PROBE_FROM: '2026-09-30', OUTBOUND_PROBE_TO: '2026-09-01' }),
+      NOW_, '2026-09-18');
+  }, /from <= to/);
+});
+
+test('wilson: the interval never leaves [0,1] and never collapses at the edges', function () {
+  // The two cases a normal approximation gets wrong, which is why this is
+  // Wilson: a unanimous small sample, and a zero-success one.
+  const all = h.ctx.obWilsonInterval_(20, 20);
+  assert.equal(all.share, 1);
+  assert.ok(all.hi <= 1, 'cannot exceed 100%, got ' + all.hi);
+  assert.ok(all.lo > 0.8 && all.lo < 1, 'a unanimous n=20 still has a lower bound, got ' + all.lo);
+  const none = h.ctx.obWilsonInterval_(0, 20);
+  assert.equal(none.share, 0);
+  assert.ok(none.lo >= 0 && none.hi > 0,
+    'zero successes must still carry width, got ' + none.lo + '..' + none.hi);
+  // And it narrows with n, which is the whole argument for weighting stratum C.
+  const at12 = h.ctx.obWilsonInterval_(9, 12), at20 = h.ctx.obWilsonInterval_(15, 20);
+  assert.ok(at20.halfWidthPts < at12.halfWidthPts,
+    'n=20 must be tighter than n=12 at the same share');
+  assert.equal(h.ctx.obWilsonInterval_(1, 0), null, 'nonsense input returns null, never a number');
+  assert.equal(h.ctx.obWilsonInterval_(5, 3), null);
+});
+
+test('tally: a BLANK label is never folded into "not voicemail"', function () {
+  // Folding blanks in would bias the one share the audit measures, toward
+  // refusing the band. They are counted separately instead.
+  // Built through the real grid builder so the Label lands in the real Label
+  // column -- a literal row would silently drift when a column is added.
+  const ws = [h.ctx.OB_REVIEW_WS_HEADER_].concat([
+    ['R01', 'voicemail'], ['R02', ''], ['R03', 'HUMAN'], ['R04', 'banana'],
+  ].map(function (pair) {
+    const row = h.ctx.OB_REVIEW_WS_HEADER_.map(function () { return ''; });
+    row[0] = pair[0];
+    row[h.ctx.OB_REVIEW_LABEL_COL_ - 1] = pair[1];
+    return row;
+  }));
+  const key = [
+    h.ctx.OB_REVIEW_KEY_HEADER_,
+    ['R01', 'C-inband', 31, 35, 1, 'yes'],
+    ['R02', 'C-inband', 26, 40, 1, 'yes'],
+    ['R03', 'C-inband', 21, 50, 1, 'yes'],
+    ['R04', 'C-inband', 30, 20, 1, 'yes'],
+  ];
+  const t = h.ctx.obReviewTally_(ws, key);
+  const c = t.byStratum['C-inband'];
+  assert.equal(c.n, 4);
+  assert.equal(c.labels.voicemail, 1);
+  assert.equal(c.labels.human, 1, 'case is normalised');
+  assert.equal(c.unlabelled, 1);
+  assert.equal(t.unlabelled, 1);
+  assert.equal(t.unrecognised.join(','), 'R04=banana');
+  assert.equal(c.labels.banana, undefined, 'an invented label joins no tally');
+  assert.equal(t.labelled, 2, 'only recognised, non-blank labels count as labelled');
+});
+
+test('tally: a worksheet token with no key row is reported, not silently dropped', function () {
+  const ws = [h.ctx.OB_REVIEW_WS_HEADER_].concat(['R01', 'R99'].map(function (tok) {
+    const row = h.ctx.OB_REVIEW_WS_HEADER_.map(function () { return ''; });
+    row[0] = tok;
+    row[h.ctx.OB_REVIEW_LABEL_COL_ - 1] = 'voicemail';
+    return row;
+  }));
+  const key = [h.ctx.OB_REVIEW_KEY_HEADER_, ['R01', 'C-inband', 31, 35, 1, 'yes']];
+  const t = h.ctx.obReviewTally_(ws, key);
+  assert.equal(t.tokensMissingKey.join(','), 'R99');
+  assert.equal(t.byStratum['C-inband'].n, 1);
+});
+
+// Builds a tally literal for the verdict rule.
+function cTally_(voicemail, human, controls) {
+  const by = { 'C-inband': { n: voicemail + human, unlabelled: 0,
+                             labels: { voicemail: voicemail, human: human } } };
+  Object.keys(controls || {}).forEach(function (k) { by[k] = controls[k]; });
+  return { byStratum: by, unlabelled: 0, unrecognised: [], tokensMissingKey: [],
+           totalRows: voicemail + human, labelled: voicemail + human };
+}
+
+test('verdict: VALIDATED needs the lower bound clear, not just the point estimate', function () {
+  // 14/20 = 70% — but the interval reaches down toward the coin flip, which
+  // is precisely the call this audit exists to make, so it must NOT validate.
+  const weak = h.ctx.obReviewVerdict_(cTally_(14, 6));
+  assert.equal(weak.verdict, 'inconclusive', 'a 70% point estimate at n=20 is not a validation');
+  assert.match(weak.reason, /interval spans|covers both/);
+  // 19/20 clears it.
+  const strong = h.ctx.obReviewVerdict_(cTally_(19, 1));
+  assert.equal(strong.verdict, 'validated');
+  assert.match(strong.reason, /EXCLUDE the instant population/,
+    'a validation must carry the #65 obligation with it');
+});
+
+test('verdict: REFUTED when the upper bound is under the coin flip', function () {
+  const v = h.ctx.obReviewVerdict_(cTally_(2, 18));
+  assert.equal(v.verdict, 'refuted');
+  assert.match(v.reason, /RELABEL/, 'and it names the alternative rather than just saying no');
+  assert.match(v.reason, /do not set OUTBOUND_VM_RING_SEC/i);
+});
+
+test('verdict: too few labelled rows is INCONCLUSIVE, never a guess', function () {
+  const v = h.ctx.obReviewVerdict_(cTally_(4, 1));
+  assert.equal(v.verdict, 'inconclusive');
+  assert.match(v.reason, /only 5 stratum-C rows labelled/);
+  const none = h.ctx.obReviewVerdict_({ byStratum: {} });
+  assert.equal(none.verdict, 'inconclusive');
+  assert.match(none.reason, /no stratum-C rows/);
+});
+
+test('verdict: a FAILED CONTROL downgrades a validation — the strata are in question', function () {
+  // Stratum C says validated, but the instant connects came back as machines.
+  // That contradicts #65, so nothing here is interpretable yet.
+  const v = h.ctx.obReviewVerdict_(cTally_(19, 1, {
+    'A-instant': { n: 10, unlabelled: 0, labels: { voicemail: 8, human: 2 } },
+  }));
+  assert.equal(v.verdict, 'inconclusive',
+    'a control that contradicts a settled conclusion must not be outvoted by stratum C');
+  assert.match(v.reason, /CONTROL/);
+  assert.ok(v.notes.length >= 1);
+  assert.match(v.notes[0], /carrier-instant reading is wrong/);
+  // A control that behaves leaves the validation standing.
+  const ok = h.ctx.obReviewVerdict_(cTally_(19, 1, {
+    'A-instant': { n: 10, unlabelled: 0, labels: { human: 9, voicemail: 1 } },
+  }));
+  assert.equal(ok.verdict, 'validated');
+  assert.equal(ok.notes.length, 0);
+});
+
+test('review: stratum C carries the listening budget', function () {
+  const strata = h.ctx.OB_REVIEW_STRATA_;
+  const byId = {};
+  strata.forEach(function (st) { byId[st.id] = st.want; });
+  assert.ok(byId['C-inband'] >= 20, 'C decides, so it gets the most, got ' + byId['C-inband']);
+  strata.forEach(function (st) {
+    if (st.id === 'C-inband') return;
+    assert.ok(st.want < byId['C-inband'],
+      st.id + ' is a control and must not be sampled as heavily as C');
+    assert.ok(st.want >= 3, st.id + ' still needs enough rows to sanity-check');
+  });
+});
+
+// ── The multi-modal band detector ──────────────────────────────────────────
+
+// The LIVE 2026-09-18 shape, from the numbers the run recorded (Step 1
+// RESULTS in docs/outbound-callback-dept-plan.md): bumps at 21s (2,077),
+// 26-27s (927 / 1,010) and 30-31s (1,784 / 3,022) over a ~330 baseline, with
+// 40.6% of connects at a 0s ring. This is the distribution the single-peak
+// detector refused at 7.7% against the 8% floor, so it is the fixture that
+// decides whether the band fallback was worth building.
+function liveMultiModal_() {
+  const m = {};
+  m[0] = 25000;                                   // the #65 instant population
+  [3000, 2400, 1900, 1500, 1200, 1000, 850, 700, 600, 520, 460].forEach(function (n, i) {
+    m[i + 1] = n;                                 // the human cluster, decaying
+  });
+  for (let i = 12; i <= 19; i++) m[i] = 350;       // the trough between the two populations
+  const band = { 20: 400, 21: 2077, 22: 500, 23: 400, 24: 380, 25: 600, 26: 927,
+                 27: 1010, 28: 700, 29: 800, 30: 1784, 31: 3022, 32: 900 };
+  Object.keys(band).forEach(function (k) { m[k] = band[k]; });
+  for (let i = 33; i <= 60; i++) m[i] = 300;       // the long tail
+  return m;
+}
+
+test('probe/band: the LIVE multi-modal shape is refused by the peak test and found by the band', function () {
+  const m = liveMultiModal_();
+  const rows = hist_(m), tot = total_(m);
+
+  // First, the premise: the single-peak detector still refuses it, for one of
+  // the two reasons the band fallback is gated on. If this ever stops being
+  // true the fallback is dead code and this test says so.
+  const sp = h.ctx.obProbeRingSpike_(rows, tot);
+  assert.equal(sp.spike, false, 'the live shape must still defeat the one-peak test');
+  assert.ok(sp.reason === 'spike-too-small' || sp.reason === 'too-wide',
+    'and it must fail for a reason a band can legitimately explain, got ' + sp.reason);
+
+  const b = JSON.parse(JSON.stringify(h.ctx.obProbeRingBand_(rows, tot)));
+  assert.equal(b.band, true, 'the band detector must find what the peak test could not');
+  assert.equal(b.reason, 'ok');
+  // The band must span the bumps, not sit on one of them.
+  assert.ok(b.leftSec <= 21 && b.rightSec >= 31,
+    'the band must cover the 21s and 31s bumps, got ' + b.leftSec + '-' + b.rightSec);
+  assert.ok(b.peaks.length >= 3, 'the multi-modal structure is reported, got ' + b.peaks.length);
+  // The parameters follow the same contract as the spike path.
+  assert.equal(b.suggestedVmRingSec, b.leftSec, 'the threshold is the LEFT edge');
+  assert.equal(b.suggestedToleranceSec, Math.ceil((b.rightSec - b.leftSec) / 2));
+  // And the number the whole fallback exists to surface.
+  assert.ok(b.purity > 0.55 && b.purity < 0.95,
+    'the live band is impure but usable; a purity of 1 would mean the baseline vanished, got ' + b.purity);
+  assert.equal(b.bandCount, b.baselineCount + b.excessCount,
+    'the mass decomposition must add up, or the disclosed ceiling is wrong');
+});
+
+test('probe/band: REFUSES a band that is mostly baseline (band-impure)', function () {
+  // A broad gentle bulge: elevated enough to be found (1.8x baseline, so the
+  // edges survive the trim) and wide enough to clear the share gates, but its
+  // mass is mostly the baseline traffic running underneath it. A threshold
+  // here would flag ~56% humans. This is the gate no earlier test looked at.
+  const m = { 0: 8000 };
+  for (let i = 1; i <= 11; i++) m[i] = 1200;
+  for (let i = 12; i <= 19; i++) m[i] = 1000;
+  for (let i = 20; i <= 35; i++) m[i] = 1800;      // 1.8x baseline -> purity 0.44
+  for (let i = 36; i <= 60; i++) m[i] = 1000;
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.equal(b.baseline, 1000, 'fixture must pin the baseline the purity is measured against');
+  assert.ok(b.bandShare >= 0.12 && b.excessShare >= 0.06,
+    'the fixture must REACH the purity gate rather than trip an earlier one');
+  assert.equal(b.band, false);
+  assert.equal(b.reason, 'band-impure');
+  assert.equal(b.suggestedVmRingSec, null, 'no number is offered on a refusal');
+  assert.match(h.ctx.obProbeBandHint_(b), /precision ceiling|took a while/i);
+});
+
+test('probe/band: REFUSES the upper tail of the human cluster (no-trough)', function () {
+  // Elevated AND pure enough to pass every mass gate, but the three seconds
+  // immediately below it are nearly as busy -- the signature of people
+  // answering slowly, not of a distinct voicemail population. This is the
+  // gate that carries the weight now that the scan objective is known not to
+  // steer away from the human cluster on its own.
+  const m = { 0: 3000 };
+  for (let i = 1; i <= 11; i++) m[i] = 1500;       // the human cluster
+  for (let i = 12; i <= 17; i++) m[i] = 200;
+  for (let i = 18; i <= 19; i++) m[i] = 900;       // the shoulder, nearly as busy as the band
+  for (let i = 20; i <= 35; i++) m[i] = 1000;
+  for (let i = 36; i <= 60; i++) m[i] = 200;
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.equal(b.leftSec, 20, 'the scan must find the bulge before the gate can refuse it');
+  assert.ok(b.purity >= 0.55, 'the fixture must PASS purity so the shoulder gate is what fires');
+  assert.equal(b.band, false);
+  assert.equal(b.reason, 'no-trough');
+  assert.ok(b.shoulderRatio > 0.6, 'and it must be refused on the measured shoulder');
+  assert.equal(b.suggestedVmRingSec, null);
+  assert.match(h.ctx.obProbeBandHint_(b), /upper tail of people/i);
+});
+
+test('probe/band: REFUSES a sample too small, before looking at shape', function () {
+  const m = { 1: 20, 2: 15, 21: 10, 26: 12, 31: 14 };
+  assert.ok(total_(m) < 200);
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.equal(b.band, false);
+  assert.equal(b.reason, 'too-few-rows');
+  assert.match(h.ctx.obProbeBandHint_(b), /widen OUTBOUND_PROBE_FROM/);
+});
+
+test('probe/band: the FLOOR is what keeps the scan off the human cluster', function () {
+  // At fixed window width, maximising mass-above-baseline and maximising mass
+  // pick the same window -- the subtracted term is constant -- so the scan
+  // objective cannot be what avoids the human cluster. The floor is. Here the
+  // busiest 16s window by far starts at 1s; the band must not be reported
+  // there however much mass sits in it.
+  const m = { 0: 4000 };
+  for (let i = 1; i <= 16; i++) m[i] = 5000;        // the heaviest window in the histogram
+  for (let i = 17; i <= 60; i++) m[i] = 150;
+  const b = h.ctx.obProbeRingBand_(hist_(m), total_(m));
+  assert.ok(b.leftSec === null || b.leftSec >= 12,
+    'no band may be reported below OB_PROBE_VM_FLOOR_SEC_, got ' + b.leftSec);
+  assert.equal(b.band, false, 'and a histogram with nothing above the floor yields no band');
+});
+
+test('probe/band: a band is never offered where the peak test already passed', function () {
+  // Behaviour preservation. The probe consults the band ONLY for the two
+  // multi-modal refusals; a clean bimodal shape must keep taking the peak
+  // path, whose narrower band implies the better precision.
+  const src = OB_SRC;
+  const m = src.match(/var BAND_ELIGIBLE_ = \{([^}]*)\}/);
+  assert.ok(m, 'the eligibility map must exist -- it is what keeps the peak path unchanged');
+  const keys = m[1].match(/'[a-z-]+'/g) || [];
+  assert.deepEqual(keys.sort(), ["'spike-too-small'", "'too-wide'"],
+    'only the two multi-modal refusals may fall through to the band');
+  assert.match(src, /var band = \(!spike\.spike && BAND_ELIGIBLE_\[spike\.reason\]\)/,
+    'and the fallback must be gated on a REFUSED spike, never run alongside a passing one');
+});
+
 // ── The pure talk-trough detector ──────────────────────────────────────────
 
 test('probe/trough: a real dip between hangups and conversations is measured', function () {

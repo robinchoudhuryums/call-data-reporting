@@ -805,6 +805,9 @@ var PROP_REGISTRY_ = Object.freeze({
     OUTBOUND_VETTING_FROM: 'tool', OUTBOUND_VETTING_TO: 'tool',
     OUTBOUND_VETTING_DEPT: 'tool', OUTBOUND_VETTING_SAMPLE: 'tool',
     OUTBOUND_PROBE_FROM: 'tool', OUTBOUND_PROBE_TO: 'tool',
+    OUTBOUND_REVIEW_N: 'tool',
+    OB_REVIEW_SS_ID: 'engine',          // #71: self-populating review workbook id
+    OB_REVIEW_RECORDING_URL: 'operator',  // #71: recording search-url template
     OV_PROBE_FROM: 'tool', OV_PROBE_TO: 'tool',
     QUEUE_SPLIT_AUDIT_DATE: 'tool',
   }),
