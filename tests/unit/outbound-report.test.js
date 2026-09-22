@@ -1362,23 +1362,60 @@ test('verdict: too few labelled rows is INCONCLUSIVE, never a guess', function (
   assert.match(none.reason, /no stratum-C rows/);
 });
 
-test('verdict: a FAILED CONTROL downgrades a validation — the strata are in question', function () {
-  // Stratum C says validated, but the instant connects came back as machines.
-  // That contradicts #65, so nothing here is interpretable yet.
+test('verdict: a FAILED CONTROL downgrades a validation — the data is in question', function () {
+  // E is the only real control left: a NOT-connected row carrying a real
+  // conversation means the stored `connected` flag is wrong, which would
+  // invalidate everything else.
   const v = h.ctx.obReviewVerdict_(cTally_(19, 1, {
-    'A-instant': { n: 10, unlabelled: 0, labels: { voicemail: 8, human: 2 } },
+    'E-unconnected': { n: 6, unlabelled: 0, labels: { human: 5, 'no-answer': 1 } },
   }));
   assert.equal(v.verdict, 'inconclusive',
-    'a control that contradicts a settled conclusion must not be outvoted by stratum C');
+    'a broken connected flag must not be outvoted by stratum C');
   assert.match(v.reason, /CONTROL/);
-  assert.ok(v.notes.length >= 1);
-  assert.match(v.notes[0], /carrier-instant reading is wrong/);
+  assert.ok(v.notes.some(function (n) { return /connected. flag is wrong/.test(n); }));
   // A control that behaves leaves the validation standing.
   const ok = h.ctx.obReviewVerdict_(cTally_(19, 1, {
-    'A-instant': { n: 10, unlabelled: 0, labels: { human: 9, voicemail: 1 } },
+    'E-unconnected': { n: 6, unlabelled: 0, labels: { 'no-answer': 6 } },
   }));
   assert.equal(ok.verdict, 'validated');
   assert.equal(ok.notes.length, 0);
+});
+
+test('verdict: voicemail in the FAST bands is a RECALL finding, not a control failure', function () {
+  // The call that forced this: 1783984138413 rang 8s and was voicemail (agent
+  // left a message, then a silent line for ~2 min). A fast ring does not mean
+  // a person answered, so a voicemail-heavy 0-11s band says the ring cannot
+  // SEE that population -- it does not say stratum C is untrustworthy.
+  const v = h.ctx.obReviewVerdict_(cTally_(19, 1, {
+    'A-instant': { n: 8, unlabelled: 0, labels: { human: 5, voicemail: 3 } },
+    'B-human': { n: 5, unlabelled: 0, labels: { human: 3, voicemail: 2 } },
+  }));
+  assert.equal(v.verdict, 'validated',
+    'precision in C is unaffected by voicemail the threshold never claims');
+  assert.ok(v.recallCeiling, 'the recall ceiling must be quantified');
+  assert.equal(v.recallCeiling.n, 13);
+  assert.equal(v.recallCeiling.voicemail, 5);
+  assert.ok(v.notes.some(function (n) { return /IMMEDIATE VOICEMAIL EXISTS/.test(n); }));
+  assert.ok(v.notes.some(function (n) { return /reached. stays OVER-COUNTED/.test(n); }),
+    'and it must name the consequence for the number managers act on');
+  assert.ok(v.notes.some(function (n) { return /do not enable .strict./i.test(n); }));
+  // Clean fast bands say nothing.
+  const clean = h.ctx.obReviewVerdict_(cTally_(19, 1, {
+    'A-instant': { n: 8, unlabelled: 0, labels: { human: 8 } },
+    'B-human': { n: 5, unlabelled: 0, labels: { human: 5 } },
+  }));
+  assert.equal(clean.verdict, 'validated');
+  assert.equal(clean.notes.length, 0);
+  assert.equal(clean.recallCeiling.share, 0);
+});
+
+test('verdict: too few fast-band rows says nothing about recall', function () {
+  const v = h.ctx.obReviewVerdict_(cTally_(19, 1, {
+    'A-instant': { n: 2, unlabelled: 0, labels: { voicemail: 2 } },
+  }));
+  assert.equal(v.recallCeiling, null,
+    '2 rows cannot carry a claim about a population');
+  assert.equal(v.notes.length, 0);
 });
 
 test('review: the connected ring bands TILE 0..inf with no gap', function () {
@@ -1732,6 +1769,7 @@ function probeJson1_(over) {
     talkHist: hist_({ 0: 300, 5: 200, 10: 80, 15: 20, 20: 90, 25: 140, 30: 200,
                       35: 240, 40: 270, 45: 300, 50: 380, 55: 440, 60: 500 }),
     repeatGroups: 88, repeatRingHist: hist_({ 24: 3, 25: 60, 26: 5, 31: 2 }),
+    repeatRingHistNoInstant: hist_({ 24: 3, 25: 60, 26: 5, 31: 2 }),
   }, over || {}));
 }
 const PROBE_JSON2_ = JSON.stringify({
@@ -1775,15 +1813,61 @@ test('probe: the repeat check is an INDEPENDENT estimate, reported as agreement'
   const ok = h.call('probeOutboundAnswerQuality');
   assert.equal(ok.repeat.modalRingSec, 25);
   assert.equal(ok.repeat.agreesWithSpike, true);
-  assert.match(ok.result, /repeat-callee modal ring 25s AGREES/);
+  assert.equal(ok.repeat.modalRingSecNoInstant, 25);
+  assert.equal(ok.repeat.agreesWithSpikeNoInstant, true);
+  assert.match(ok.result, /repeat-callee modal ring \(instant excluded\) 25s AGREES/);
+  assert.match(ok.result, /unfiltered 25s AGREES/);
 
   // Same spike, but repeat callees answer at 40s — two methods disagreeing
   // is exactly what the operator must see before trusting the band.
-  installProbe_(probeConn_(probeJson1_({ repeatRingHist: hist_({ 40: 70, 25: 3 }) }), PROBE_JSON2_));
+  installProbe_(probeConn_(probeJson1_({
+    repeatRingHist: hist_({ 40: 70, 25: 3 }),
+    repeatRingHistNoInstant: hist_({ 40: 70, 25: 3 }),
+  }), PROBE_JSON2_));
   const dis = h.call('probeOutboundAnswerQuality');
   assert.equal(dis.repeat.agreesWithSpike, false);
-  assert.match(dis.result, /repeat-callee modal ring 40s DISAGREES/);
+  assert.equal(dis.repeat.agreesWithSpikeNoInstant, false);
+  assert.match(dis.result, /\(instant excluded\) 40s DISAGREES/);
   assert.match(dis.result, /^ok bimodal/, 'a disagreement is disclosed, not a verdict downgrade');
+});
+
+test('probe: the instant-excluded repeat SQL is actually built (source pin)', function () {
+  // Why a SOURCE pin and not a behavioural one: the probe suite drives a
+  // MOCKED connection that returns fixture JSON keyed by field name, so the
+  // query text is never executed and a typo in it would leave every test
+  // green. Found by a bite-check that refused to bite.
+  assert.match(OB_SRC, /'repeatRingHistNoInstant',\s*\(SELECT/,
+    'the instant-excluded histogram must be selected under the key the reader expects');
+  // And the exclusion must reuse #65's definition of instant rather than a
+  // local copy, or the two tools disagree about which rows they mean.
+  const frag = OB_SRC.slice(OB_SRC.indexOf("'repeatRingHistNoInstant'"));
+  const stmt = frag.slice(0, frag.indexOf('rr2)'));
+  assert.match(stmt, /ring_seconds > '\s*\+\s*OB_INSTANT_RING_SEC_/,
+    'the instant floor must come from OB_INSTANT_RING_SEC_, got: ' + stmt.slice(0, 400));
+  assert.match(stmt, /HAVING count\(\*\) >= 2/,
+    'it must still be a REPEAT-callee check, not a plain histogram');
+  assert.match(stmt, /GROUP BY 1,2/, 'grouped by (callee, ring) like its unfiltered twin');
+});
+
+test('probe: the instant-excluded repeat check rescues a SWAMPED signal', function () {
+  // The 09-18 live shape: the unfiltered check peaks at 0s because 40.6% of
+  // connects ring <= 1s and sit in that one bucket regardless of destination,
+  // so it DISAGREED with a perfectly good spike. Excluding the instant rows
+  // must recover the real per-destination timeout — which is the whole point
+  // of the second histogram.
+  installProbe_(probeConn_(probeJson1_({
+    repeatRingHist: hist_({ 0: 900, 25: 60 }),          // swamped by instant
+    repeatRingHistNoInstant: hist_({ 25: 60, 31: 4 }),  // the signal underneath
+  }), PROBE_JSON2_));
+  const out = h.call('probeOutboundAnswerQuality');
+  assert.equal(out.repeat.modalRingSec, 0, 'the unfiltered reading is kept, not replaced');
+  assert.equal(out.repeat.agreesWithSpike, false, 'and it still reads as a disagreement');
+  assert.equal(out.repeat.modalRingSecNoInstant, 25);
+  assert.equal(out.repeat.agreesWithSpikeNoInstant, true,
+    'while the instant-excluded reading AGREES — the disagreement was an artifact');
+  assert.match(out.result, /\(instant excluded\) 25s AGREES/);
+  assert.match(out.result, /unfiltered 0s DISAGREES/,
+    'both must appear, so the 0s peak stays visible as the thing explained');
 });
 
 test('probe: no spike → INCONCLUSIVE, EXPLORATORY cut only, no suggestion, params KEPT', function () {

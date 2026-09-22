@@ -1576,9 +1576,12 @@ function sampleOutboundCallsForReview() {
 var OB_REVIEW_C_MIN_N_ = 8;          // below this an interval is too wide to conclude from
 var OB_REVIEW_C_VALIDATE_LO_ = 0.6;  // Wilson lower bound to call the band validated
 var OB_REVIEW_C_REFUTE_HI_ = 0.5;    // Wilson upper bound to call it refuted
+var OB_REVIEW_LOW_MIN_N_ = 6;        // labelled 0-11s rows needed to speak about recall
+var OB_REVIEW_LOW_VM_SHARE_ = 0.15;  // voicemail share in 0-11s that flags a recall ceiling
 
 function obReviewVerdict_(tally) {
-  var out = { verdict: 'inconclusive', reason: '', c: null, controls: {}, notes: [] };
+  var out = { verdict: 'inconclusive', reason: '', c: null, controls: {}, byBand: {},
+              recallCeiling: null, notes: [] };
   var c = tally && tally.byStratum && tally.byStratum['C-inband'];
   if (!c || !c.n) { out.reason = 'no stratum-C rows found'; return out; }
   var labelled = 0;
@@ -1626,10 +1629,50 @@ function obReviewVerdict_(tally) {
         + ', expected a majority — ' + why);
     }
   };
-  check('A-instant', 'human', 'if the instant connects are NOT humans, #65\'s carrier-instant '
-    + 'reading is wrong and that conclusion needs revisiting before this one');
-  check('B-human', 'human', 'a 2-11 s ring should be a person; if it is not, the strata do not '
-    + 'mean what the selectors say and stratum C is not interpretable');
+  // ⚠ A AND B ARE NOT HUMAN CONTROLS, and treating them as such was wrong.
+  // A confirmed voicemail rang 8 s (call 1783984138413: agent left a message,
+  // then sat on a silent line for ~2 min). So a fast ring does NOT imply a
+  // person answered, and #65 never said it did -- it established that the
+  // stored ring is TRUTHFUL, not who picked up. The mechanism is that there
+  // are TWO kinds of voicemail: a phone that rings out and forwards after a
+  // carrier timeout (18-31 s, ring-detectable), and a phone that is off / on
+  // DND / unconditionally forwarded, which reaches voicemail in call-setup
+  // time and is INDISTINGUISHABLE BY RING from a human answer.
+  //
+  // So voicemail in a low band is a FINDING about recall, not a broken
+  // stratum: it says a ring threshold cannot see that population at all.
+  // `E-unconnected` is the only genuine data-integrity control left.
+  check('E-unconnected', 'no-answer', 'a NOT-connected row that carries a real conversation '
+    + 'means the stored `connected` flag is wrong, which would invalidate every figure here '
+    + '(note: an unconnected call may have no recording to listen to at all)');
+
+  // The RECALL ceiling: voicemail the ring can never catch.
+  var lowVm = 0, lowN = 0;
+  ['A-instant', 'B-human'].forEach(function (id) {
+    var b = tally.byStratum[id];
+    if (!b) return;
+    var tot = 0;
+    Object.keys(b.labels || {}).forEach(function (k) { tot += b.labels[k]; });
+    if (!tot) return;
+    lowVm += (b.labels.voicemail || 0);
+    lowN += tot;
+    out.byBand[id] = { n: tot, voicemail: b.labels.voicemail || 0,
+                       voicemailShare: Math.round(((b.labels.voicemail || 0) / tot) * 1000) / 1000 };
+  });
+  if (lowN >= OB_REVIEW_LOW_MIN_N_) {
+    var lowShare = lowVm / lowN;
+    out.recallCeiling = { n: lowN, voicemail: lowVm,
+                          share: Math.round(lowShare * 1000) / 1000,
+                          interval: obWilsonInterval_(lowVm, lowN) };
+    if (lowShare >= OB_REVIEW_LOW_VM_SHARE_) {
+      out.notes.push('⚠ IMMEDIATE VOICEMAIL EXISTS: ' + Math.round(lowShare * 100) + '% of the '
+        + '0-11 s rings are voicemail too (n=' + lowN + '). Those are phones off / on DND / '
+        + 'forwarded, reached in call-setup time, and NO ring threshold can see them. The band '
+        + 'may still be precise, but `reached` stays OVER-COUNTED by this population -- which is '
+        + 'the number managers act on. Do not enable `strict` on this evidence; `disclose` must '
+        + 'say the reached figure is an upper bound.');
+    }
+  }
   // B2 is not a control -- it is a second QUESTION, and a voicemail-heavy
   // shoulder means the measured band starts too high rather than that
   // anything is wrong. Reported as a note either way, never as a downgrade.
@@ -2304,7 +2347,28 @@ function probeOutboundAnswerQuality() {
       +     'SELECT callee_hash, ring_seconds ' + base
       +     'AND callee_hash IS NOT NULL AND ring_seconds IS NOT NULL AND ring_seconds <= '
       +     OB_PROBE_RING_MAX_SEC_ + ' GROUP BY 1,2 HAVING count(*) >= 2) gg '
-      +   'GROUP BY 1) rr)'
+      +   'GROUP BY 1) rr), '
+      // The SAME repeat check with the INSTANT population excluded. This is
+      // the one signal here that can VALIDATE a threshold rather than assume
+      // one -- the same callee answering at the same ring repeatedly is
+      // voicemail with high confidence -- and on the 09-18 run it DISAGREED,
+      // peaking at 0 s instead of near the spike. That is very likely an
+      // artifact rather than a refutation: #65 established that 40.6% of
+      // connects ring <= 1 s, and a population that large sitting in one
+      // bucket regardless of destination swamps the modal ring of every
+      // repeat group. Excluding it lets a real per-destination timeout show.
+      // Reported BESIDE the unfiltered figure, never instead of it, so the
+      // 0 s peak stays visible as the thing being explained.
+      + "'repeatRingHistNoInstant', (SELECT COALESCE(json_agg(json_build_object('sec', sec, 'n', n) ORDER BY sec), '[]') "
+      +   'FROM (SELECT ring_seconds::int AS sec, count(*) AS n FROM ('
+      +     'SELECT callee_hash, ring_seconds ' + base
+      // `OB_INSTANT_RING_SEC_` on purpose, not a local copy: "instant" must
+      // mean here exactly what #65 measured it to mean, or the two tools
+      // disagree about which rows they are talking about.
+      +     'AND callee_hash IS NOT NULL AND ring_seconds IS NOT NULL AND ring_seconds > '
+      +     OB_INSTANT_RING_SEC_ + ' AND ring_seconds <= '
+      +     OB_PROBE_RING_MAX_SEC_ + ' GROUP BY 1,2 HAVING count(*) >= 2) gg2 '
+      +   'GROUP BY 1) rr2)'
       + ')::text AS j';
     var ps = conn.prepareStatement(sql);
     // The window is the ONLY bound input here, and every occurrence comes
@@ -2339,10 +2403,16 @@ function probeOutboundAnswerQuality() {
     // The repeat check's own modal ring -- an INDEPENDENT estimate. It is
     // only meaningful as agreement or disagreement, so it is reported either
     // way and never averaged into the suggestion.
-    var repeatMode = null, repeatModeN = 0;
-    (d.repeatRingHist || []).forEach(function (r) {
-      if ((Number(r.n) || 0) > repeatModeN) { repeatModeN = Number(r.n) || 0; repeatMode = Number(r.sec); }
-    });
+    var modeOf = function (hist) {
+      var sec = null, n = 0;
+      (hist || []).forEach(function (r) {
+        if ((Number(r.n) || 0) > n) { n = Number(r.n) || 0; sec = Number(r.sec); }
+      });
+      return { sec: sec, n: n };
+    };
+    var rpt = modeOf(d.repeatRingHist);
+    var rptNI = modeOf(d.repeatRingHistNoInstant);
+    var repeatMode = rpt.sec, repeatModeN = rpt.n;
     // Which detector, if either, produced a defensible parameter set. The
     // peak is preferred whenever it passes: a 2s band implies a far higher
     // precision than a 13s one, so a passing spike is strictly the better
@@ -2377,7 +2447,16 @@ function probeOutboundAnswerQuality() {
       trough: trough,
       repeat: { groups: Number(d.repeatGroups) || 0, modalRingSec: repeatMode,
                 modalRingGroups: repeatModeN, agreesWithSpike: repeatAgrees,
-                hist: d.repeatRingHist || [] },
+                hist: d.repeatRingHist || [],
+                // The instant-excluded variant, and whether IT agrees. A
+                // disagreement that survives the exclusion is a real
+                // disagreement; one that does not was the instant population
+                // all along.
+                modalRingSecNoInstant: rptNI.sec,
+                modalRingGroupsNoInstant: rptNI.n,
+                agreesWithSpikeNoInstant: (!!basis && rptNI.sec !== null
+                  && rptNI.sec >= basis.lo && rptNI.sec <= basis.hi),
+                histNoInstant: d.repeatRingHistNoInstant || [] },
     };
 
     if (!basis) {
@@ -2474,7 +2553,11 @@ function probeOutboundAnswerQuality() {
              + ' calls sit above baseline, so roughly ' + obProbePct1_(1 - (band.purity || 0))
              + ' of what a threshold here flags would be a human who took a while to '
              + 'answer. Decide whether that is good enough BEFORE setting anything'))
-      + '; repeat-callee modal ring ' + (repeatMode === null ? 'n/a' : repeatMode + 's')
+      + '; repeat-callee modal ring (instant excluded) '
+      + (rptNI.sec === null ? 'n/a' : rptNI.sec + 's')
+      + (rptNI.sec === null ? '' : (out.repeat && out.repeat.agreesWithSpikeNoInstant
+          ? ' AGREES' : ' DISAGREES'))
+      + '; unfiltered ' + (repeatMode === null ? 'n/a' : repeatMode + 's')
       + (repeatMode === null ? '' : (repeatAgrees ? ' AGREES' : ' DISAGREES')) + '; '
       + 'min-talk ' + minTalk + 's ' + (trough.suggestedIsMeasured ? '(measured trough)' : '(candidate — no trough found)')
       + '. ' + label + ' — these are MEASURED values for Part 2; nothing was set. '

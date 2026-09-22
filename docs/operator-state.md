@@ -2640,6 +2640,18 @@ When something looks wrong, before assuming a code bug, check:
       re-sample), never pick an end. **A point estimate is not the test** -- a
       14-of-20 run reads 70% and still refuses, because the interval reaches
       down to the coin flip.
+    - **⚠ A voicemail-heavy 0-11 s band is the RESULT THAT MATTERS MOST, and it
+      is not a failure.** A confirmed voicemail rang **8 s** (an agent left a
+      message, then sat on a silent line ~2 min). There are TWO kinds of
+      voicemail: timeout (rings out, forwards after ~18-31 s -- what the band
+      catches) and IMMEDIATE (phone off / DND / forwarded, reached in
+      call-setup time), and the second is indistinguishable from a human
+      answer by ring. So the scorer reports `IMMEDIATE VOICEMAIL EXISTS` with
+      its interval and does NOT downgrade the verdict: the band can still be
+      precise while `reached` stays OVER-COUNTED by a population no ring
+      threshold can see. **On that finding, do not enable `strict` --
+      `disclose` must say `reached` is an upper bound.** A and B are
+      measurements, not controls; `E-unconnected` is the only control left.
     - **A voicemail-heavy 12-19 s SHOULDER means the band starts too high.**
       The scorer says so explicitly and does NOT downgrade the verdict: that
       is a finding about where the left edge belongs, not evidence that

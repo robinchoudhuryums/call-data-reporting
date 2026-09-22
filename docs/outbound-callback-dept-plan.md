@@ -439,6 +439,7 @@ Outgoing leg, exactly as `outboundCalls.js` computes it:
 | `1783984138942` | voicemail | 14:56:24 | 14:56:46 | **22 s** | 73 s | 95 s | 73 s |
 | `1783984138898` | voicemail | 14:55:30 | 14:55:48 | **18 s** | 30 s | 48 s | **29 s** |
 | `1783984138422` | **human** | 14:50:52 | 14:50:56 | **4 s** | 168 s | 172 s | 167 s |
+| `1783984138413` | **voicemail** | 14:50:49 | 14:50:57 | **8 s** | 127 s | 135 s | 127 s |
 
 **The human control (added 2026-09-22) separates cleanly, and in the
 hypothesised direction:** 4 s for a person against 18 / 22 s for voicemail.
@@ -519,6 +520,53 @@ a short voicemail is still a voicemail, but that is a decision about what the
 surface should say, not an implementation detail. Whatever is chosen, the four
 outcomes need an explicit evaluation ORDER and a test that every
 `connected` row lands in exactly one.
+
+**9. ⚠⚠ THE COUNTEREXAMPLE: A VOICEMAIL RANG 8 SECONDS (2026-09-22).**
+`1783984138413` -- agent left a message, then sat on a silent line for ~2 min
+until it dropped -- rings **8 s**, one second outside the human's 4 s and
+nowhere near the 18-31 s timeout region. **No ring threshold can catch it**,
+and today's `connected` boolean counts it as a reached caller.
+
+**The mechanism, which this plan did not account for: there are TWO KINDS of
+voicemail.**
+
+| | Ring | Ring-detectable? |
+| --- | --- | --- |
+| **Timeout voicemail** -- phone rings out, carrier forwards after N s | 18-31 s | yes, this is what the band finds |
+| **Immediate voicemail** -- phone off / DND / unconditionally forwarded | call-setup time only (~4-10 s) | **NO -- indistinguishable from a human answer** |
+
+The 40.6% instant population (#65) is plausibly a third variant with near-zero
+setup, which would mean #65's "these genuinely connect instantly" says nothing
+about WHO answered -- it established the stored ring is TRUTHFUL, never that a
+person picked up. That distinction was collapsed in my own earlier reading.
+
+**What this changes, in order of consequence.**
+
+(a) **The ring method has a RECALL ceiling on top of its ~31% precision
+ceiling.** It can only ever catch timeout voicemail. Immediate voicemail stays
+inside `reached` -- and `reached` is the number managers act on, so the error
+runs in the direction that flatters the team. A precision problem inflates
+`voicemail-likely`; this inflates `reached`, which is worse.
+
+(b) **`strict` mode should not ship on this evidence.** It would present
+`reached` as fact while a population it cannot see sits inside it. `disclose`
+must state that reached is an UPPER BOUND.
+
+(c) **A-instant and B-human were never human controls, and the scorer treated
+them as such.** A voicemail-heavy fast band was wired to downgrade stratum C
+as though the strata were broken. FIXED: A and B are now MEASUREMENTS of
+voicemail share by ring band, a voicemail-heavy 0-11 s band emits the
+`IMMEDIATE VOICEMAIL EXISTS` finding with its Wilson interval, and
+`E-unconnected` is the only genuine data-integrity control left (a
+not-connected row carrying a real conversation means the stored `connected`
+flag is wrong). Pinned three ways.
+
+(d) **The decisive number is no longer just "is the band voicemail?" but
+"what SHARE of all voicemail is immediate?"** The sampler can now measure
+both, because the bands tile the ring space -- but converting per-band shares
+into a true recall figure needs each band's POPULATION size as a weight, which
+the scorer does not yet have. Until it does, read the per-band shares as
+directional, not as a recall percentage.
 
 **Caveat on independence, and a hard limit of this sample:** the two
 voicemails are one agent minutes apart on a callback run, and the human is a
