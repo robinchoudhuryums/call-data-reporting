@@ -2619,6 +2619,15 @@ When something looks wrong, before assuming a code bug, check:
       (3) Run **`scoreOutboundReviewSample()`**. It joins the hidden key,
       tallies per stratum, and returns the verdict -- no manual join or pivot.
       Pass a tab name to score an older run; the default is the newest.
+    - **PARTIAL LABELLING YIELDS PARTIAL FINDINGS, so score early and often.**
+      Each finding stands on its OWN stratum: the recall ceiling needs only
+      `A-instant` + `B-human` (>= 6 labelled), the shoulder only `B2`, the
+      control only `E`. Stratum C's 8-row minimum gates the VERDICT and
+      nothing else. **Suggested order, which gets the most decision-relevant
+      answer for the least listening:** A + B first (13 rows -> does immediate
+      voicemail exist? that caps the whole method regardless of C), then B2
+      (12 rows -> is the band's left edge too high?), then C (20 rows -> is
+      the band precise?). A fully blank sheet correctly reports nothing.
     - **⚠ THE KEY TAB IS FOR THE SCORER, NOT FOR YOU.** Each run also writes a
       HIDDEN **Key <stamp>** tab naming every row's ring stratum -- the
       hypothesis under test. Nothing in the workflow requires a human to open

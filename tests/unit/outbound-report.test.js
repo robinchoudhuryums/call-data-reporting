@@ -1409,6 +1409,56 @@ test('verdict: voicemail in the FAST bands is a RECALL finding, not a control fa
   assert.equal(clean.recallCeiling.share, 0);
 });
 
+test('verdict: PARTIAL labelling still yields the findings it has earned', function () {
+  // The defect this pin exists for: the findings used to sit AFTER the
+  // stratum-C guards, so labelling the fast bands and not C returned an
+  // empty result and the listening effort was wasted. Found on the owner's
+  // first live run, where every row was still blank.
+  const partial = {
+    byStratum: {
+      'C-inband': { n: 20, unlabelled: 20, labels: {} },          // none labelled yet
+      'A-instant': { n: 8, unlabelled: 0, labels: { human: 5, voicemail: 3 } },
+      'B-human': { n: 5, unlabelled: 0, labels: { human: 3, voicemail: 2 } },
+      'B2-shoulder': { n: 12, unlabelled: 0, labels: { voicemail: 7, human: 5 } },
+      'E-unconnected': { n: 4, unlabelled: 0, labels: { 'no-answer': 4 } },
+    },
+    unlabelled: 20, unrecognised: [], tokensMissingKey: [], totalRows: 49, labelled: 29,
+  };
+  const v = h.ctx.obReviewVerdict_(partial);
+  assert.equal(v.verdict, 'inconclusive', 'no C rows means no verdict, which is correct');
+  assert.match(v.reason, /only 0 stratum-C rows labelled/);
+  assert.match(v.reason, /stand on their own strata/,
+    'and the reason must point at the findings rather than reading as "nothing to report"');
+  // ...but every finding that does not depend on C must be present.
+  assert.ok(v.recallCeiling, 'the recall ceiling stands on A+B alone');
+  assert.equal(v.recallCeiling.n, 13);
+  assert.equal(v.recallCeiling.voicemail, 5);
+  assert.ok(v.shoulder, 'the shoulder stands on B2 alone');
+  assert.equal(v.shoulder.n, 12);
+  assert.ok(v.controls['E-unconnected'], 'and the control was still checked');
+  assert.ok(v.notes.some(function (n) { return /IMMEDIATE VOICEMAIL EXISTS/.test(n); }));
+  assert.ok(v.notes.some(function (n) { return /BAND STARTS TOO HIGH/.test(n); }));
+});
+
+test('verdict: an ENTIRELY blank sheet reports nothing, and says so plainly', function () {
+  // The owner's first run: 54 rows, 0 labelled. Must not invent findings.
+  const blank = {
+    byStratum: {
+      'C-inband': { n: 20, unlabelled: 20, labels: {} },
+      'A-instant': { n: 8, unlabelled: 8, labels: {} },
+      'B2-shoulder': { n: 12, unlabelled: 12, labels: {} },
+    },
+    unlabelled: 40, unrecognised: [], tokensMissingKey: [], totalRows: 40, labelled: 0,
+  };
+  const v = h.ctx.obReviewVerdict_(blank);
+  assert.equal(v.verdict, 'inconclusive');
+  assert.equal(v.recallCeiling, null, 'no labels, no recall claim');
+  assert.equal(v.shoulder, null, 'no labels, no shoulder claim');
+  assert.equal(v.notes.length, 0, 'and no notes invented from nothing');
+  assert.ok(!/stand on their own strata/.test(v.reason),
+    'nor a pointer to findings that do not exist');
+});
+
 test('verdict: too few fast-band rows says nothing about recall', function () {
   const v = h.ctx.obReviewVerdict_(cTally_(19, 1, {
     'A-instant': { n: 2, unlabelled: 0, labels: { voicemail: 2 } },
@@ -1829,6 +1879,22 @@ test('probe: the repeat check is an INDEPENDENT estimate, reported as agreement'
   assert.equal(dis.repeat.agreesWithSpikeNoInstant, false);
   assert.match(dis.result, /\(instant excluded\) 40s DISAGREES/);
   assert.match(dis.result, /^ok bimodal/, 'a disagreement is disclosed, not a verdict downgrade');
+});
+
+test('probe: the window reports whether it was ANCHORED to the data', function () {
+  // Why this is not cosmetic: a fallback to the calendar produces the SAME
+  // dates as an anchor that happens to land on yesterday, so a silent anchor
+  // failure is invisible without this -- and the anchor exists precisely to
+  // stop the window covering days with no data. Pinned in source across all
+  // four tools, since the probe suite mocks the connection and never runs
+  // the anchor query.
+  const sites = OB_SRC.match(/anchoredToData: !!win\.anchoredTo/g) || [];
+  assert.equal(sites.length, 4,
+    'all four outbound tools must disclose it, got ' + sites.length);
+  const anchors = OB_SRC.match(/anchor = obProbeAnchorDate_\(conn\)/g) || [];
+  assert.equal(anchors.length, 4, 'and each must capture the anchor it resolved');
+  assert.match(OB_SRC, /anchored to the latest data/,
+    'the human-readable label must say so too');
 });
 
 test('probe: the instant-excluded repeat SQL is actually built (source pin)', function () {
