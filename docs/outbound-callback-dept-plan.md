@@ -427,6 +427,157 @@ Design notes worth keeping:
   lands a partial day, which is the P16 bug, so the anchor may only pull the
   window earlier. An explicitly set window is never moved.
 
+### GROUND TRUTH: the first two labelled calls (owner, 2026-09-22)
+
+Two outbound calls from 2026-09-21, same agent (ext 279) two minutes apart,
+both confirmed from the recordings as **voicemail reached, message left**.
+Raw CDR rows supplied; ring derived as `CONNECTED - START` on the external
+Outgoing leg, exactly as `outboundCalls.js` computes it:
+
+| Call id | Outcome | START | CONNECTED | **Ring** | Talk | `CALL_TIME` | Recording |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `1783984138942` | voicemail | 14:56:24 | 14:56:46 | **22 s** | 73 s | 95 s | 73 s |
+| `1783984138898` | voicemail | 14:55:30 | 14:55:48 | **18 s** | 30 s | 48 s | **29 s** |
+| `1783984138422` | **human** | 14:50:52 | 14:50:56 | **4 s** | 168 s | 172 s | 167 s |
+| `1783984138413` | **voicemail** | 14:50:49 | 14:50:57 | **8 s** | 127 s | 135 s | 127 s |
+
+**The human control (added 2026-09-22) separates cleanly, and in the
+hypothesised direction:** 4 s for a person against 18 / 22 s for voicemail.
+That is the bimodality this plan was built on, observed for the first time
+with a labelled human in the sample -- and it OVERTURNS the 09-22 worry that
+voicemail here might answer FAST. It answers slower than the human, which is
+the carrier-timeout model behaving as designed. Three calls cannot site a
+threshold; they can say the premise is not dead.
+
+**Four findings, in order of how much they change.**
+
+**1. The strata had a HOLE, and a real voicemail was in it.** B ran 2-11 s and
+C 20-32 s, so ring 12-19 belonged to no stratum -- the 18 s call could never
+have been sampled, in exactly the region where the band's left edge is in
+question. FIXED: `ring` ranges are declarative, `B2-shoulder` (12-19 s) is a
+new stratum with a real allocation, B dropped its `talk_seconds >= 20`
+condition (it made the bands non-contiguous, and a control pre-filtered to the
+outcome it confirms is a weaker control), and two pins now fail on any gap or
+overlap. The scorer reports a voicemail-heavy shoulder as **"THE BAND STARTS
+TOO HIGH"** -- a finding about the edge, deliberately NOT a control failure,
+so it does not downgrade stratum C's verdict.
+
+**2. The 20 s left edge would MISS one of the two known voicemails** (18 s).
+On this evidence the measured band is too narrow at the bottom. Two labelled
+calls do not move a threshold, but they do say which question to measure
+first, which is what B2 now does.
+
+**3. The console's "29 s duration" is the RECORDING LEG**, not the call and
+not the talk time: the `Internal / CallRecording` leg runs 14:55:49-14:56:19
+while the call itself is 48 s (18 ring + 30 talk). That resolves the 09-22
+worry that ring + message could not both fit 29 s -- they were never meant to.
+**Read a console duration as the recording, never as the call.**
+
+**4. The capture handles both calls correctly**, verified by hand against the
+real grouping rules: both legs share root `call_id` (the `CallRecording` leg
+carries `Internal` + a non-phone callee, so `extLegs` excludes it), `first`
+is the Outgoing leg, `connected` is true via Talk>0 + `Answered`, and
+`ring_seconds` is 22 / 18. Also worth noting as OBSERVED rather than reasoned:
+**a voicemail pickup really does report `Answered` + `Connected`** -- the
+structural premise this whole plan rests on.
+
+**5. NO CDR FIELD DISTINGUISHES THEM -- now verified, not assumed.** Swept
+every column across all three calls: `Answered`, `Connected`, `Completed`,
+`Normal`, `Missed`, `Abandoned`, the hold-duration and disconnect-on-hold
+fields, `VOD`, `Record Service On` are IDENTICAL on the voicemail and human
+legs. The only fields that differ are the ring/talk durations, the dialled
+number, and the agent's own org columns. So the plan's structural claim --
+"there is no field in the CDR that says a machine picked up" -- holds against
+a matched voicemail/human pair rather than as an inference. **Ring time is the
+only discriminator in the data**, which is why this whole exercise exists.
+
+**6. The HAND-WRITTEN candidate band fits the labels better than the measured
+one, at the low end.** Step 2's candidate is `VM_RING 22 ± TOL 4` = **18-26 s**,
+which classifies all three calls correctly (both voicemails in, the human
+out). The band the DETECTOR measured from the 09-18 histogram is **20-32 s**,
+whose left edge misses the 18 s voicemail by one second and whose right edge
+runs well past anything observed. Two labelled voicemails cannot move a
+threshold -- but "the measured left edge is a second too high" is now a
+specific, testable claim, and `B2-shoulder` is what tests it.
+
+**7. `OUTBOUND_MIN_TALK_SEC` contributes NOTHING to voicemail detection on
+this evidence.** Both voicemails talk 30 s and 73 s, clearing any plausible
+floor (the measured trough was 20 s, the candidate 10 s). The plan already
+calls talk "weak on its own", but it is worth stating flatly: in the Step 3
+model the RING BAND does all the voicemail work and min-talk only separates
+conversations from hangups. A 73 s voicemail message also exceeds the
+"greeting + message ~= 20-60 s" expectation written into Step 1, so a talk
+UPPER bound would have misclassified it.
+
+**8. ⚠ THE STEP 3 OUTCOME MODEL DOES NOT PARTITION.** `voicemail-likely` is
+ring-only and `brief` is talk-only, so a voicemail with a short message
+(ring in band AND talk < MIN_TALK) matches BOTH and the model states no
+precedence. This is the same defect class as the sampler's stratum gap found
+the same day: categories that look exhaustive and are not. **Owner ruling
+needed before Step 3 is built** -- the natural resolution is that
+`voicemail-likely` WINS over `brief`, since it is the more specific claim and
+a short voicemail is still a voicemail, but that is a decision about what the
+surface should say, not an implementation detail. Whatever is chosen, the four
+outcomes need an explicit evaluation ORDER and a test that every
+`connected` row lands in exactly one.
+
+**9. ⚠⚠ THE COUNTEREXAMPLE: A VOICEMAIL RANG 8 SECONDS (2026-09-22).**
+`1783984138413` -- agent left a message, then sat on a silent line for ~2 min
+until it dropped -- rings **8 s**, one second outside the human's 4 s and
+nowhere near the 18-31 s timeout region. **No ring threshold can catch it**,
+and today's `connected` boolean counts it as a reached caller.
+
+**The mechanism, which this plan did not account for: there are TWO KINDS of
+voicemail.**
+
+| | Ring | Ring-detectable? |
+| --- | --- | --- |
+| **Timeout voicemail** -- phone rings out, carrier forwards after N s | 18-31 s | yes, this is what the band finds |
+| **Immediate voicemail** -- phone off / DND / unconditionally forwarded | call-setup time only (~4-10 s) | **NO -- indistinguishable from a human answer** |
+
+The 40.6% instant population (#65) is plausibly a third variant with near-zero
+setup, which would mean #65's "these genuinely connect instantly" says nothing
+about WHO answered -- it established the stored ring is TRUTHFUL, never that a
+person picked up. That distinction was collapsed in my own earlier reading.
+
+**What this changes, in order of consequence.**
+
+(a) **The ring method has a RECALL ceiling on top of its ~31% precision
+ceiling.** It can only ever catch timeout voicemail. Immediate voicemail stays
+inside `reached` -- and `reached` is the number managers act on, so the error
+runs in the direction that flatters the team. A precision problem inflates
+`voicemail-likely`; this inflates `reached`, which is worse.
+
+(b) **`strict` mode should not ship on this evidence.** It would present
+`reached` as fact while a population it cannot see sits inside it. `disclose`
+must state that reached is an UPPER BOUND.
+
+(c) **A-instant and B-human were never human controls, and the scorer treated
+them as such.** A voicemail-heavy fast band was wired to downgrade stratum C
+as though the strata were broken. FIXED: A and B are now MEASUREMENTS of
+voicemail share by ring band, a voicemail-heavy 0-11 s band emits the
+`IMMEDIATE VOICEMAIL EXISTS` finding with its Wilson interval, and
+`E-unconnected` is the only genuine data-integrity control left (a
+not-connected row carrying a real conversation means the stored `connected`
+flag is wrong). Pinned three ways.
+
+(d) **The decisive number is no longer just "is the band voicemail?" but
+"what SHARE of all voicemail is immediate?"** The sampler can now measure
+both, because the bands tile the ring space -- but converting per-band shares
+into a true recall figure needs each band's POPULATION size as a weight, which
+the scorer does not yet have. Until it does, read the per-band shares as
+directional, not as a recall percentage.
+
+**Caveat on independence, and a hard limit of this sample:** the two
+voicemails are one agent minutes apart on a callback run, and the human is a
+different agent. So with three calls from two agents, **every agent-level
+attribute is perfectly confounded with the outcome** -- department (`Field
+Operations (Market Activity)` vs `Inside Sales`), brand (`UniversalMed` vs
+`UniversalMed (Sales)`), extension, roster. None of those can be read as a
+discriminator from this sample, however suggestive the split looks. That
+confounding is precisely why the sampler draws at random across the window
+instead of taking whatever is to hand.
+
 **One labelled example already exists, and it raises a question the audit
 should answer first (owner, 2026-09-22).** An outbound call on 2026-09-21 at
 4:55 PM CST, 29 s, where the agent reached voicemail and left a message. Two
