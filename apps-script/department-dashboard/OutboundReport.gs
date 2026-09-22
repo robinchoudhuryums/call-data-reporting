@@ -1129,6 +1129,22 @@ var OB_REVIEW_KEEP_ = 6;         // newest runs kept; a run is ~50 rows
 // get forced into one of them, which would bias the very share being measured.
 var OB_REVIEW_LABELS_ = ['human', 'voicemail', 'ivr', 'no-answer', 'unclear'];
 
+// ⚠ TWO MEASURES, and they answer different questions (owner labels,
+// 2026-09-22). `voicemail` is what a VOICEMAIL THRESHOLD claims, so it is
+// what the band's precision is measured against. But the KPI the classifier
+// feeds is "did we reach the caller?", and an IVR / auto-attendant is a miss
+// exactly like voicemail is -- the first live labelling round returned 2 `ivr`
+// rows out of 12, which the voicemail share silently treats as neither hit
+// nor miss. So NOT-REACHED is tallied beside it, and it is the right measure
+// for the RECALL question: an IVR in a fast band is just as invisible to a
+// ring threshold, and just as much a non-reach.
+//
+// `no-answer` is NOT here: on a connected row it means the listener could not
+// hear an answer at all, which is a labelling problem rather than an outcome,
+// and on an unconnected row it is the expected value. `unclear` stays out for
+// the same reason -- folding either in would bias the measure.
+var OB_REVIEW_NOT_REACHED_ = ['voicemail', 'ivr'];
+
 /**
  * PURE. Shuffles in place with Fisher-Yates and assigns R01.. tokens in the
  * SHUFFLED order, so a token carries no information about its stratum.
@@ -1335,6 +1351,11 @@ function obReviewWriteTabs_(rows, meta) {
       : 'Find each call in the phone system by AGENT + DATE + TIME, listen, and pick a Label. '
         + 'Tip: set the OB_REVIEW_RECORDING_URL Script Property to a search-url template '
         + '(placeholders {date} {time} {agent} {ext}) and every row becomes a link. ')
+    + 'LABEL THE TERMINAL OUTCOME -- what the call ultimately amounted to, not what it '
+    + 'passed through. A call that hit a screening prompt, went unanswered, then took a '
+    + 'message is "voicemail". Reaching voicemail and NOT leaving a message is still '
+    + '"voicemail" (a machine answered). Use "ivr" only when the call ENDED at a menu or '
+    + 'auto-attendant without reaching a person or a mailbox. '
     + 'Ring length is deliberately NOT shown -- it is the hypothesis under test. '
     + 'When every row is labelled, run scoreOutboundReviewSample() in the Apps Script editor. '
     + 'Partial is fine: it reports how many are still blank. '
@@ -1415,7 +1436,9 @@ function obReviewTally_(wsGrid, keyGrid) {
     out.totalRows++;
     var st = stratumOf[token];
     if (!st) { out.tokensMissingKey.push(token); continue; }
-    if (!out.byStratum[st]) out.byStratum[st] = { n: 0, labels: {}, unlabelled: 0 };
+    if (!out.byStratum[st]) {
+      out.byStratum[st] = { n: 0, labels: {}, unlabelled: 0, notReached: 0 };
+    }
     var bucket = out.byStratum[st];
     bucket.n++;
     var raw = String(row[OB_REVIEW_LABEL_COL_ - 1] == null ? '' : row[OB_REVIEW_LABEL_COL_ - 1])
@@ -1423,6 +1446,7 @@ function obReviewTally_(wsGrid, keyGrid) {
     if (!raw) { bucket.unlabelled++; out.unlabelled++; continue; }
     if (!labelSet[raw]) { out.unrecognised.push(token + '=' + raw); continue; }
     bucket.labels[raw] = (bucket.labels[raw] || 0) + 1;
+    if (OB_REVIEW_NOT_REACHED_.indexOf(raw) >= 0) bucket.notReached++;
     out.labelled++;
   }
   return out;
@@ -1432,7 +1456,7 @@ function sampleOutboundCallsForReview() {
   assertAdmin_();
   var props = PropertiesService.getScriptProperties();
   var win = obProbeWindow_(props);
-  var from = win.from, to = win.to;
+  var from = win.from, to = win.to, anchor = null;
   // OUTBOUND_REVIEW_N, when set, OVERRIDES every stratum with one uniform
   // count -- an escape hatch for a deliberately bigger or smaller run. Unset
   // (the normal case) each stratum takes its own `want`, which is uneven on
@@ -1454,9 +1478,11 @@ function sampleOutboundCallsForReview() {
     // ends at the latest date the data holds rather than at yesterday. The
     // pre-connection call above still validates an explicitly pinned window
     // (and throws on a bad one) before any connection is opened.
-    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    anchor = obProbeAnchorDate_(conn);
+    win = obProbeWindow_(props, null, anchor);
     from = win.from; to = win.to;
-    label = from + '..' + to + ' (all departments)';
+    label = from + '..' + to + ' (all departments)'
+      + (win.anchoredTo ? ' [anchored to the latest data]' : '');
 
     // One round trip, one getString (the JDBC discipline). Each stratum is
     // sampled independently with ORDER BY random(), so a quiet stratum does
@@ -1514,7 +1540,12 @@ function sampleOutboundCallsForReview() {
     obReviewShuffleAndToken_(rows, null);
 
     var out = {
-      window: { from: from, to: to },
+      // `anchoredTo` / `anchorDate` so a SILENT anchor failure is visible: a
+      // fallback to the calendar produces the same dates as an anchor that
+      // happens to land on yesterday, and the whole point of the anchor is
+      // to avoid measuring days with no data. Without this the two are
+      // indistinguishable in the log.
+      window: { from: from, to: to, anchoredToData: !!win.anchoredTo, anchorDate: anchor },
       perStratumRequested: OB_REVIEW_STRATA_.reduce(function (a, st) {
         a[st.id] = wantFor(st); return a;
       }, {}),
@@ -1578,20 +1609,139 @@ var OB_REVIEW_C_VALIDATE_LO_ = 0.6;  // Wilson lower bound to call the band vali
 var OB_REVIEW_C_REFUTE_HI_ = 0.5;    // Wilson upper bound to call it refuted
 var OB_REVIEW_LOW_MIN_N_ = 6;        // labelled 0-11s rows needed to speak about recall
 var OB_REVIEW_LOW_VM_SHARE_ = 0.15;  // voicemail share in 0-11s that flags a recall ceiling
+var OB_REVIEW_SHOULDER_VM_SHARE_ = 0.4;  // voicemail share in 12-19s that says the band starts too high
 
 function obReviewVerdict_(tally) {
   var out = { verdict: 'inconclusive', reason: '', c: null, controls: {}, byBand: {},
-              recallCeiling: null, notes: [] };
-  var c = tally && tally.byStratum && tally.byStratum['C-inband'];
+              recallCeiling: null, shoulder: null, notes: [] };
+  var byStratum = (tally && tally.byStratum) || {};
+  var labelledIn = function (b) {
+    var t = 0;
+    Object.keys((b && b.labels) || {}).forEach(function (k) { t += b.labels[k]; });
+    return t;
+  };
+  var notReachedIn = function (b) {
+    var t = 0;
+    OB_REVIEW_NOT_REACHED_.forEach(function (k) { t += ((b && b.labels && b.labels[k]) || 0); });
+    return t;
+  };
+
+  // ── FINDINGS FIRST ─────────────────────────────────────────────────────
+  // Everything below depends only on its OWN stratum, so it must be computed
+  // BEFORE the stratum-C guards return. It used to sit after them, which
+  // meant labelling the fast bands and not C produced NOTHING -- the recall
+  // finding, arguably the most important output here, was silently withheld
+  // and the listening effort wasted. Partial progress must yield partial
+  // findings.
+
+  // ⚠ A AND B ARE NOT HUMAN CONTROLS, and treating them as such was wrong.
+  // A confirmed voicemail rang 8 s (call 1783984138413: agent left a message,
+  // then sat on a silent line for ~2 min). So a fast ring does NOT imply a
+  // person answered, and #65 never said it did -- it established that the
+  // stored ring is TRUTHFUL, not who picked up. There are TWO kinds of
+  // voicemail: a phone that rings out and forwards after a carrier timeout
+  // (18-31 s, ring-detectable), and a phone that is off / on DND /
+  // unconditionally forwarded, reached in call-setup time and
+  // INDISTINGUISHABLE BY RING from a human answer.
+  //
+  // So voicemail in a low band is a FINDING about recall, not a broken
+  // stratum. `E-unconnected` is the only genuine data-integrity control left.
+  var check = function (id, expect, why) {
+    var b = byStratum[id];
+    if (!b) return;
+    var tot = labelledIn(b);
+    if (!tot) return;
+    var hit = (b.labels[expect] || 0) / tot;
+    out.controls[id] = { n: tot, expected: expect, share: Math.round(hit * 1000) / 1000 };
+    if (hit < 0.5) {
+      out.notes.push('⚠ CONTROL ' + id + ' came back ' + Math.round(hit * 100) + '% ' + expect
+        + ', expected a majority — ' + why);
+    }
+  };
+  check('E-unconnected', 'no-answer', 'a NOT-connected row that carries a real conversation '
+    + 'means the stored `connected` flag is wrong, which would invalidate every figure here '
+    + '(note: an unconnected call may have no recording to listen to at all)');
+
+  // Every band's profile, in BOTH measures. Reported for all of them, not
+  // just the fast ones, because "voicemail rate by ring band" is the shape
+  // the threshold decision actually rests on.
+  Object.keys(byStratum).forEach(function (id) {
+    var b = byStratum[id];
+    var tot = labelledIn(b);
+    if (!tot) return;
+    var nr = notReachedIn(b);
+    out.byBand[id] = {
+      n: tot,
+      voicemail: b.labels.voicemail || 0,
+      voicemailShare: Math.round(((b.labels.voicemail || 0) / tot) * 1000) / 1000,
+      notReached: nr,
+      notReachedShare: Math.round((nr / tot) * 1000) / 1000,
+    };
+  });
+
+  // The RECALL ceiling, measured on NOT-REACHED rather than voicemail alone:
+  // an IVR in a fast band is equally invisible to a ring threshold and
+  // equally a non-reach, so counting only voicemail would understate what
+  // the method misses.
+  var lowNr = 0, lowVm = 0, lowN = 0;
+  ['A-instant', 'B-human'].forEach(function (id) {
+    var b = byStratum[id];
+    if (!b) return;
+    var tot = labelledIn(b);
+    if (!tot) return;
+    lowNr += notReachedIn(b);
+    lowVm += (b.labels.voicemail || 0);
+    lowN += tot;
+  });
+  if (lowN >= OB_REVIEW_LOW_MIN_N_) {
+    var lowShare = lowNr / lowN;
+    out.recallCeiling = { n: lowN, notReached: lowNr, voicemail: lowVm,
+                          share: Math.round(lowShare * 1000) / 1000,
+                          interval: obWilsonInterval_(lowNr, lowN) };
+    if (lowShare >= OB_REVIEW_LOW_VM_SHARE_) {
+      out.notes.push('⚠ THE RING CANNOT SEE IT: ' + Math.round(lowShare * 100) + '% of the '
+        + '0-11 s rings did NOT reach a person (n=' + lowN + '; ' + lowVm + ' voicemail, '
+        + (lowNr - lowVm) + ' IVR). Those are phones off / on DND / forwarded / screened, '
+        + 'answered in call-setup time, and NO ring threshold can separate them from a real '
+        + 'pickup. The band may still be precise, but `reached` stays OVER-COUNTED by this '
+        + 'population -- which is the number managers act on. Do not enable `strict` on this '
+        + 'evidence; `disclose` must say the reached figure is an upper bound.');
+    }
+  }
+
+  // B2 is a second QUESTION, not a control: a voicemail-heavy shoulder means
+  // the measured band starts too high, not that anything is broken.
+  var b2 = byStratum['B2-shoulder'];
+  if (b2 && labelledIn(b2)) {
+    var b2tot = labelledIn(b2);
+    var b2vm = (b2.labels.voicemail || 0) / b2tot;
+    out.shoulder = { n: b2tot, voicemailShare: Math.round(b2vm * 1000) / 1000,
+                     interval: obWilsonInterval_(b2.labels.voicemail || 0, b2tot) };
+    if (b2vm >= OB_REVIEW_SHOULDER_VM_SHARE_) {
+      out.notes.push('⚠ THE BAND STARTS TOO HIGH: ' + Math.round(b2vm * 100) + '% of the '
+        + '12-19 s shoulder is voicemail too, so a 20 s left edge is MISSING those calls. '
+        + 'Widen the band down before setting a threshold (a known voicemail rang 18 s).');
+    }
+  }
+
+  // ── THE VERDICT: stratum C only ────────────────────────────────────────
+  // The guards below decide the VERDICT and nothing else -- every finding
+  // above is already on `out`, so an early return still reports them.
+  var c = byStratum['C-inband'];
   if (!c || !c.n) { out.reason = 'no stratum-C rows found'; return out; }
-  var labelled = 0;
-  Object.keys(c.labels || {}).forEach(function (k) { labelled += c.labels[k]; });
+  var labelled = labelledIn(c);
   var vm = (c.labels && c.labels.voicemail) || 0;
+  var cNr = notReachedIn(c);
   out.c = { n: c.n, labelled: labelled, unlabelled: c.unlabelled || 0,
-            voicemail: vm, interval: obWilsonInterval_(vm, labelled) };
+            voicemail: vm, interval: obWilsonInterval_(vm, labelled),
+            // The VERDICT stays on voicemail -- that is what
+            // OUTBOUND_VM_RING_SEC claims -- but not-reached travels with it,
+            // because that is the measure the `reached` KPI cares about.
+            notReached: cNr, notReachedInterval: obWilsonInterval_(cNr, labelled) };
   if (labelled < OB_REVIEW_C_MIN_N_) {
     out.reason = 'only ' + labelled + ' stratum-C rows labelled, need '
-      + OB_REVIEW_C_MIN_N_ + ' before any interval is narrow enough to read';
+      + OB_REVIEW_C_MIN_N_ + ' before any interval is narrow enough to read'
+      + (out.notes.length ? ' (the findings below stand on their own strata)' : '');
     return out;
   }
   var ci = out.c.interval;
@@ -1613,87 +1763,10 @@ function obReviewVerdict_(tally) {
       + 'covers both "mostly machines" and "a coin flip" -- label more stratum-C rows (re-run the '
       + 'sampler with OUTBOUND_REVIEW_N raised) rather than choosing an end';
   }
-  // The controls do not decide, but a control that comes back WRONG means the
-  // strata are not what we think and stratum C cannot be trusted either --
-  // so they are checked, and a surprise downgrades the verdict.
-  var check = function (id, expect, why) {
-    var b = tally.byStratum[id];
-    if (!b) return;
-    var tot = 0;
-    Object.keys(b.labels || {}).forEach(function (k) { tot += b.labels[k]; });
-    if (!tot) return;
-    var hit = (b.labels[expect] || 0) / tot;
-    out.controls[id] = { n: tot, expected: expect, share: Math.round(hit * 1000) / 1000 };
-    if (hit < 0.5) {
-      out.notes.push('⚠ CONTROL ' + id + ' came back ' + Math.round(hit * 100) + '% ' + expect
-        + ', expected a majority — ' + why);
-    }
-  };
-  // ⚠ A AND B ARE NOT HUMAN CONTROLS, and treating them as such was wrong.
-  // A confirmed voicemail rang 8 s (call 1783984138413: agent left a message,
-  // then sat on a silent line for ~2 min). So a fast ring does NOT imply a
-  // person answered, and #65 never said it did -- it established that the
-  // stored ring is TRUTHFUL, not who picked up. The mechanism is that there
-  // are TWO kinds of voicemail: a phone that rings out and forwards after a
-  // carrier timeout (18-31 s, ring-detectable), and a phone that is off / on
-  // DND / unconditionally forwarded, which reaches voicemail in call-setup
-  // time and is INDISTINGUISHABLE BY RING from a human answer.
-  //
-  // So voicemail in a low band is a FINDING about recall, not a broken
-  // stratum: it says a ring threshold cannot see that population at all.
-  // `E-unconnected` is the only genuine data-integrity control left.
-  check('E-unconnected', 'no-answer', 'a NOT-connected row that carries a real conversation '
-    + 'means the stored `connected` flag is wrong, which would invalidate every figure here '
-    + '(note: an unconnected call may have no recording to listen to at all)');
 
-  // The RECALL ceiling: voicemail the ring can never catch.
-  var lowVm = 0, lowN = 0;
-  ['A-instant', 'B-human'].forEach(function (id) {
-    var b = tally.byStratum[id];
-    if (!b) return;
-    var tot = 0;
-    Object.keys(b.labels || {}).forEach(function (k) { tot += b.labels[k]; });
-    if (!tot) return;
-    lowVm += (b.labels.voicemail || 0);
-    lowN += tot;
-    out.byBand[id] = { n: tot, voicemail: b.labels.voicemail || 0,
-                       voicemailShare: Math.round(((b.labels.voicemail || 0) / tot) * 1000) / 1000 };
-  });
-  if (lowN >= OB_REVIEW_LOW_MIN_N_) {
-    var lowShare = lowVm / lowN;
-    out.recallCeiling = { n: lowN, voicemail: lowVm,
-                          share: Math.round(lowShare * 1000) / 1000,
-                          interval: obWilsonInterval_(lowVm, lowN) };
-    if (lowShare >= OB_REVIEW_LOW_VM_SHARE_) {
-      out.notes.push('⚠ IMMEDIATE VOICEMAIL EXISTS: ' + Math.round(lowShare * 100) + '% of the '
-        + '0-11 s rings are voicemail too (n=' + lowN + '). Those are phones off / on DND / '
-        + 'forwarded, reached in call-setup time, and NO ring threshold can see them. The band '
-        + 'may still be precise, but `reached` stays OVER-COUNTED by this population -- which is '
-        + 'the number managers act on. Do not enable `strict` on this evidence; `disclose` must '
-        + 'say the reached figure is an upper bound.');
-    }
-  }
-  // B2 is not a control -- it is a second QUESTION, and a voicemail-heavy
-  // shoulder means the measured band starts too high rather than that
-  // anything is wrong. Reported as a note either way, never as a downgrade.
-  var b2 = tally.byStratum['B2-shoulder'];
-  if (b2) {
-    var b2tot = 0;
-    Object.keys(b2.labels || {}).forEach(function (k) { b2tot += b2.labels[k]; });
-    if (b2tot) {
-      var b2vm = (b2.labels.voicemail || 0) / b2tot;
-      out.shoulder = { n: b2tot, voicemailShare: Math.round(b2vm * 1000) / 1000,
-                       interval: obWilsonInterval_(b2.labels.voicemail || 0, b2tot) };
-      if (b2vm >= 0.4) {
-        out.notes.push('⚠ THE BAND STARTS TOO HIGH: ' + Math.round(b2vm * 100) + '% of the '
-          + '12-19 s shoulder is voicemail too, so a 20 s left edge is MISSING those calls. '
-          + 'Widen the band down before setting a threshold (a known voicemail rang 18 s).');
-      }
-    }
-  }
-  // Only a CONTROL failure downgrades. The shoulder note above is a finding
-  // about where the band's edge belongs, not evidence that stratum C is
-  // uninterpretable, so it is reported without touching the verdict.
+  // Only a CONTROL failure downgrades. The recall and shoulder findings are
+  // about what the method can SEE and where its edge belongs -- not evidence
+  // that stratum C is uninterpretable -- so they never touch the verdict.
   var controlFailed = Object.keys(out.controls).some(function (id) {
     return out.controls[id].share < 0.5;
   });
@@ -2294,7 +2367,7 @@ function probeOutboundAnswerQuality() {
   assertAdmin_();
   var props = PropertiesService.getScriptProperties();
   var win = obProbeWindow_(props);
-  var from = win.from, to = win.to;
+  var from = win.from, to = win.to, anchor = null;
   var label = from + '..' + to + ' (all departments)';
   var conn = null;
   try {
@@ -2304,9 +2377,11 @@ function probeOutboundAnswerQuality() {
     // ends at the latest date the data holds rather than at yesterday. The
     // pre-connection call above still validates an explicitly pinned window
     // (and throws on a bad one) before any connection is opened.
-    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    anchor = obProbeAnchorDate_(conn);
+    win = obProbeWindow_(props, null, anchor);
     from = win.from; to = win.to;
-    label = from + '..' + to + ' (all departments)';
+    label = from + '..' + to + ' (all departments)'
+      + (win.anchoredTo ? ' [anchored to the latest data]' : '');
 
     // ── Query 1: the distributions ───────────────────────────────────────
     // One round trip, one getString (the JDBC discipline -- per-row
@@ -2434,7 +2509,12 @@ function probeOutboundAnswerQuality() {
       && repeatMode >= basis.lo && repeatMode <= basis.hi);
 
     var out = {
-      window: { from: from, to: to },
+      // `anchoredTo` / `anchorDate` so a SILENT anchor failure is visible: a
+      // fallback to the calendar produces the same dates as an anchor that
+      // happens to land on yesterday, and the whole point of the anchor is
+      // to avoid measuring days with no data. Without this the two are
+      // indistinguishable in the log.
+      window: { from: from, to: to, anchoredToData: !!win.anchoredTo, anchorDate: anchor },
       connected: { total: Number(d.connTotal) || 0, singleAttempt: Number(d.conn1) || 0,
                    singleAttemptRingNull: Number(d.conn1RingNull) || 0,
                    singleAttemptRingOver60: Number(d.conn1RingOver) || 0 },
@@ -2899,7 +2979,7 @@ function probeOutboundJourneyShape() {
   assertAdmin_();
   var props = PropertiesService.getScriptProperties();
   var win = obProbeWindow_(props);
-  var from = win.from, to = win.to;
+  var from = win.from, to = win.to, anchor = null;
   var label = from + '..' + to + ' (all departments)';
   var conn = null;
   try {
@@ -2909,9 +2989,11 @@ function probeOutboundJourneyShape() {
     // ends at the latest date the data holds rather than at yesterday. The
     // pre-connection call above still validates an explicitly pinned window
     // (and throws on a bad one) before any connection is opened.
-    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    anchor = obProbeAnchorDate_(conn);
+    win = obProbeWindow_(props, null, anchor);
     from = win.from; to = win.to;
-    label = from + '..' + to + ' (all departments)';
+    label = from + '..' + to + ' (all departments)'
+      + (win.anchoredTo ? ' [anchored to the latest data]' : '');
 
     var base = 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
       + 'AND connected AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL ';
@@ -2944,7 +3026,12 @@ function probeOutboundJourneyShape() {
     });
 
     var out = {
-      window: { from: from, to: to },
+      // `anchoredTo` / `anchorDate` so a SILENT anchor failure is visible: a
+      // fallback to the calendar produces the same dates as an anchor that
+      // happens to land on yesterday, and the whole point of the anchor is
+      // to avoid measuring days with no data. Without this the two are
+      // indistinguishable in the log.
+      window: { from: from, to: to, anchoredToData: !!win.anchoredTo, anchorDate: anchor },
       note: 'DIAGNOSTIC for Operator State #65. Sets nothing. Read the RUNG group '
           + 'first -- it is the answer key (those rows rang >= '
           + OB_INSTANT_RUNG_SEC_ + 's, so the right marker derives near that there).',
@@ -3065,7 +3152,7 @@ function probeOutboundInstantConnects() {
   assertAdmin_();
   var props = PropertiesService.getScriptProperties();
   var win = obProbeWindow_(props);
-  var from = win.from, to = win.to;
+  var from = win.from, to = win.to, anchor = null;
   var label = from + '..' + to + ' (all departments)';
   var conn = null;
   try {
@@ -3075,9 +3162,11 @@ function probeOutboundInstantConnects() {
     // ends at the latest date the data holds rather than at yesterday. The
     // pre-connection call above still validates an explicitly pinned window
     // (and throws on a bad one) before any connection is opened.
-    win = obProbeWindow_(props, null, obProbeAnchorDate_(conn));
+    anchor = obProbeAnchorDate_(conn);
+    win = obProbeWindow_(props, null, anchor);
     from = win.from; to = win.to;
-    label = from + '..' + to + ' (all departments)';
+    label = from + '..' + to + ' (all departments)'
+      + (win.anchoredTo ? ' [anchored to the latest data]' : '');
 
     var base = 'FROM outbound_calls WHERE call_date BETWEEN ?::date AND ?::date '
       + 'AND connected AND COALESCE(attempts,1) = 1 AND ring_seconds IS NOT NULL ';
@@ -3119,7 +3208,12 @@ function probeOutboundInstantConnects() {
       return s + (Number(b.ring) === 0 ? (Number(b.n) || 0) : 0);
     }, 0);
     var out = {
-      window: { from: from, to: to },
+      // `anchoredTo` / `anchorDate` so a SILENT anchor failure is visible: a
+      // fallback to the calendar produces the same dates as an anchor that
+      // happens to land on yesterday, and the whole point of the anchor is
+      // to avoid measuring days with no data. Without this the two are
+      // indistinguishable in the log.
+      window: { from: from, to: to, anchoredToData: !!win.anchoredTo, anchorDate: anchor },
       totalConnected: totalRows,
       instantCount: instantRows,
       instantShare: totalRows ? Math.round(instantRows / totalRows * 1000) / 1000 : 0,
