@@ -1995,6 +1995,10 @@ When something looks wrong, before assuming a code bug, check:
     reach a manager before the report does.
 
 64. **Outbound answer quality — the MEASUREMENT step (`probeOutboundAnswerQuality`).**
+    **CONCLUDED 2026-09-23 (see #71): no voicemail threshold will be set** --
+    labelled calls showed no stored field separates a person from a machine.
+    The probe stays as a research tool; the "before any threshold" framing
+    below is the historical record.
     A read-only, admin-gated, editor-run probe. It answers one question with
     data and sets nothing: **is the ring distribution on connected outbound
     calls bimodal?** Run it before anyone sets a voicemail threshold — it is

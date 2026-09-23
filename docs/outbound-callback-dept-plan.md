@@ -313,7 +313,7 @@ the fallback), and shared with INBOUND, whose journeys render in the call-path
 drill and Caller Lookup. Worth doing deliberately, with its own regression
 walk -- not folded into a probe fix.
 
-### Step 1b: GROUND TRUTH — listen to calls before setting anything (owner ask, 2026-09-21; DESIGNED, NOT BUILT)
+### Step 1b: GROUND TRUTH — listen to calls before setting anything (owner ask, 2026-09-21; SHIPPED 2026-09-21, CONCLUDED 2026-09-23)
 
 **Why this is the gate, not another distribution.** Everything in Step 1 is
 UNLABELLED inference: we observe that rings cluster at 21 / 26-27 / 30-31 s and

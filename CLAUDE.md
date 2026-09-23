@@ -2247,14 +2247,14 @@ items for anything it flags or doesn't cover.)
 61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + its ~3 AM trigger, and how to read the Health page’s `historical-sort` row
 62. Workbook cell space -- Google counts the ALLOCATED grid against the 10M-cell cap; the `workbook-cells` Health row and the CDR Tools trim, whose refusals matter
 63. Outbound report RELEASE runbook (6c) -- backfill, `runOutboundVettingCheck`, release only on a CLEAN parity, then flip `OUTBOUND_VETTING_GATE_` and walk S46
-64. Outbound answer quality -- `probeOutboundAnswerQuality`, the MEASURE-first step before any voicemail threshold; INCONCLUSIVE is a result, never a reason to guess
+64. Outbound answer quality -- `probeOutboundAnswerQuality`; CONCLUDED 2026-09-23 (no threshold will be set, #71), kept as a research tool; INCONCLUSIVE is a result, never a reason to guess
 65. Outbound INSTANT connects -- `probeOutboundInstantConnects`, the #64 follow-up separating a wrong CONNECTED timestamp from genuinely instant connects
 66. QCD vs DQE reconciliation -- `diagnoseQcdVsDqe` (cdr-import), the read-only tool that names the gate which dropped each leg; read its VERDICT first
 67. Work-window edge census -- `runWorkWindowCensus` (cdr-import), the read-only PRE-FLIGHT for a window change; read "Would have counted", never the raw leg count
 68. External READERS of the CDR Report workbook -- the five tabs team-tools reads; a rename, column move, retention trim or grammar change on one is a TWO-REPO edit
 69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2); run `probeAnswerRateFormulas()` before setting it
 70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the probe, then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
-71. The answer-quality review sample -- the GROUND TRUTH step before any voicemail threshold; blinded worksheet, and do NOT open the key until every row is labelled
+71. The answer-quality review sample -- CONCLUDED 2026-09-23: no stored field tells a person from a machine; now research-only, its figures never shown in reporting; blinded worksheet, do NOT open the key until every row is labelled
 
 ## Cycle Workflow Config
 
