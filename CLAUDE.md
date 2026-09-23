@@ -434,11 +434,15 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 - **Bulk sheet repairs snapshot first (1b).** Every `repair*` apply in
   `cdr-report/sheetRepairs.js` that rewrites 500+ cells copies the sheet into
   the standing repair-backup workbook BEFORE its first write
-  (`hrBackupBeforeApply_`; `HR_BACKUP_SS_ID` self-populates, newest 3 tabs per
+  (`hrBackupBeforeApply_`; `HR_BACKUP_SS_ID` self-populates, newest 6 tabs per
   sheet kept; Operator State #59 has the restore). Previews never back up. A
   new bulk apply must call it -- the source pin in
   `tests/unit/sheet-repairs-backup.test.js` fails when one of the applies
-  writes before it.
+  writes before it. **And re-verifies before it writes (CRT-7):** the daily
+  build runs in another project, so a DQE apply fingerprints row identity
+  (`hrRowFingerprint_`) before reading and calls `hrReverifyRows_` before its
+  first write, aborting with nothing written -- the source pin in
+  `sheet-repairs-merge.test.js` names the five current applies.
 - **A dated sheet read is bounded by a min/max SPAN, not a tail scan -- and the
   discriminator is whether that sheet is date-ORDERED.** Two dashboard readers
   answer a windowed question against a years-deep sheet, and both do it the same

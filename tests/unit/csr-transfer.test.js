@@ -422,3 +422,38 @@ test('ING-3: a skipped bulk-archive mirror logs a processBatchArchive:<type>:neo
   assert.equal((body.match(/bulkArchiveMirrorGap_\(targetSS, 'CDR'/g) || []).length, 2);
   assert.equal((body.match(/bulkArchiveMirrorGap_\(targetSS, 'QCD'/g) || []).length, 2);
 });
+
+// Follow-on to ING-3: the DAILY inline mirror's Neon-unreachable SKIP now logs
+// the same failure-only :QCD:neon / :CDR:neon row its throw already did (L7).
+test('ING-3 follow-on: a skipped DAILY QCD mirror logs processIntegratedHistory:QCD:neon; silent with no NEON_HOST', function () {
+  const rows = [];
+  const hist = { getLastRow: function () { return 1; }, getRange: function () { return { setValues: function () {} }; } };
+  const results = { qcdData: { output: [[10, 9, 1, '0:01:00', '0:00:20']], labels: [['A_Q_X', 'DeptX']] } };
+  const saved = { qcd: h.ctx.writeQCDRowsToNeon, mode: h.ctx.getNeonMirrorMode_, log: h.ctx.logPipelineHealthWithFallback_ };
+  h.ctx.writeQCDRowsToNeon = function () { return { inserted: 0, skipped: 1 }; };
+  h.ctx.getNeonMirrorMode_ = function () { return 'inline'; };
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, row) { rows.push(row); };
+  const run = function () {
+    const fakeSS = { getSheetByName: function (n) { return n === 'QCD Historical Data' ? hist : null; } };
+    h.call('processIntegratedHistory', fakeSS, null, results, new Date(2026, 6, 14),
+      true, true, false, false, true, null, true, { qcd: true, csr: false, dqe: false });
+  };
+  try {
+    h.state.props = { NEON_HOST: 'h' };
+    run();
+    const mirror = rows.filter(function (r) { return r.step === 'processIntegratedHistory:QCD:neon'; });
+    assert.equal(mirror.length, 1);
+    assert.equal(mirror[0].status, 'failure');
+    assert.match(mirror[0].notes, /Tue Jul 14 2026 \| inline Neon mirror SKIPPED -- Neon unreachable \(1 rows\)/);
+    rows.length = 0;
+    h.state.props = {};
+    run();
+    assert.equal(rows.filter(function (r) { return /:neon$/.test(r.step); }).length, 0, 'no Neon configured -> silent');
+  } finally {
+    h.ctx.writeQCDRowsToNeon = saved.qcd;
+    h.ctx.getNeonMirrorMode_ = saved.mode;
+    h.ctx.logPipelineHealthWithFallback_ = saved.log;
+  }
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /Neon CDR write skipped[^\n]*\n\s*dailyMirrorSkipRow_\(targetSS, 'processIntegratedHistory:CDR:neon'/);
+});

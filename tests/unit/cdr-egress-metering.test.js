@@ -184,7 +184,9 @@ test('the reader survives an absent or corrupt record', function () {
 // FILE:REASON pair so adding one is a deliberate, reviewable act.
 const UNMETERED_ALLOWED = {
   'dbHistorical.js': 'testConnection() probe -- SELECT current_database(), now()',
-  'neonbackfill.js': 'COUNT(*) verification reads + a write-path id subselect',
+  // neonbackfill.js left this list with CRT-4 (2026-09-23): its keep-stored
+  // pre-read returns payload and meters it ('backfill:dqe-keep-stored'); its
+  // COUNT(*) verification reads stay unmetered in a now-metered file.
   // INV-16: neonWrite.js is byte-identical across cdr-report and cdr-import.
   // Instrumenting it here alone would break check-duplicated-files.sh, and its
   // one read is a parent-id subselect inside a write transaction.

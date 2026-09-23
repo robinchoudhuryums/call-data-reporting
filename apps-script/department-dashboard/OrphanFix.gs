@@ -582,12 +582,19 @@ function renameHistoricalAgent_(fromName, toName) {
   const original = range.getValues();
   const updated = new Array(original.length);
   let affected = 0;
+  // S2B-7 (broad-scan 2026-09-23): the whole column is written back in ONE
+  // setValues (atomicity), so every cell passes through sheetSafeCell_: an
+  // UNCHANGED cell that was stored as apostrophe-neutralized text ("=X" read
+  // back without its apostrophe) was re-armed as a live formula by the
+  // round trip (the R8-3 mechanism), and a formula-leading toName was written
+  // raw. The apostrophe is a Sheets text marker, not content, so every reader
+  // still sees the exact name (INV-04).
   for (let i = 0; i < original.length; i++) {
     if (String(original[i][0] || '').trim() === fromName) {
-      updated[i] = [toName];
+      updated[i] = [sheetSafeCell_(toName)];
       affected++;
     } else {
-      updated[i] = [original[i][0]];
+      updated[i] = [sheetSafeCell_(original[i][0])];
     }
   }
   if (affected === 0) return 0;

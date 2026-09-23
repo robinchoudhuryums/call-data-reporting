@@ -67,12 +67,17 @@ test('1b: the prune keeps the newest HR_BACKUP_KEEP_ tabs per SOURCE sheet and l
   const dqe = ss.getSheetByName('DQE Historical Data');
   const qcd = ss.getSheetByName('QCD Historical Data');
   h.call('hrBackupBeforeApply_', ss, qcd, 'other', 600);   // a different source sheet's tab
-  ['a', 'b', 'c', 'd', 'e'].forEach(function (label) { h.call('hrBackupBeforeApply_', ss, dqe, label, 600); });
   const keep = h.ctx.HR_BACKUP_KEEP_;
+  // keep + 2 applies, labelled l00, l01, ... so the two OLDEST must be pruned.
+  const labels = [];
+  for (let i = 0; i < keep + 2; i++) labels.push('l' + (i < 10 ? '0' : '') + i);
+  labels.forEach(function (label) { h.call('hrBackupBeforeApply_', ss, dqe, label, 600); });
   const tabs = tabsOf(backupSs());
   const dqeTabs = tabs.filter(function (t) { return t.indexOf('DQE Historical Data|') === 0; });
   assert.equal(dqeTabs.length, keep, 'pruned to ' + keep + ': ' + dqeTabs.join(', '));
-  assert.ok(dqeTabs.every(function (t) { return /\|(c|d|e)$/.test(t); }), 'the NEWEST survive (a, b pruned): ' + dqeTabs.join(', '));
+  const survivors = labels.slice(2);
+  assert.ok(dqeTabs.every(function (t) { return survivors.some(function (l) { return new RegExp('\\|' + l + '(-\\d+)?$').test(t); }); }),
+    'the NEWEST survive (l00, l01 pruned): ' + dqeTabs.join(', '));
   assert.equal(tabs.filter(function (t) { return t.indexOf('QCD Historical Data|') === 0; }).length, 1, 'another sheet\'s backup untouched');
   assert.ok(tabs.includes('Sheet1'), 'the workbook\'s default tab is never a prune target');
 });
@@ -125,4 +130,10 @@ test('1b: every bulk apply in sheetRepairs.js calls the backup before its first 
     const firstWrite = body.search(/\.setValues\(|\.deleteRow\(|\.setValue\(/);
     assert.ok(firstWrite > call, fn + ': the backup precedes the first value write');
   });
+});
+
+// CRT-5 (broad-scan 2026-09-23): the keep window must hold a whole DQE repair
+// chain (five applies on one sheet) so the pre-chain original survives it.
+test('CRT-5: HR_BACKUP_KEEP_ covers the five-apply DQE chain', function () {
+  assert.ok(h.ctx.HR_BACKUP_KEEP_ >= 5, 'keep=' + h.ctx.HR_BACKUP_KEEP_);
 });

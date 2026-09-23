@@ -1138,6 +1138,28 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
 // -------------------------------------------------------------------------
 
 /**
+ * Broad-scan 2026-09-23 follow-on to ING-3: the DAILY inline CDR / QCD mirror
+ * logged a Pipeline Health row only when it THREW (L7); a Neon-unreachable
+ * SKIP reached the console alone, so the admin found the gap only through the
+ * coverage check (#35). The skip now logs under the same failure-only step as
+ * the throw. Silent with no NEON_HOST (R8-A2). Best-effort.
+ */
+function dailyMirrorSkipRow_(targetSS, step, dateObj, skipped) {
+  try {
+    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return;
+    logPipelineHealthWithFallback_(targetSS, {
+      step:       step,
+      status:     'failure',
+      rows:       null,
+      durationMs: null,
+      notes:      (dateObj && dateObj.toDateString ? dateObj.toDateString() : String(dateObj))
+                + ' | inline Neon mirror SKIPPED -- Neon unreachable (' + skipped + ' rows); the sheet '
+                + 'rows are written, re-mirror this date (Operator State #35 / #56)',
+    });
+  } catch (e) { console.log('dailyMirrorSkipRow_: could not log (' + (e && e.message || e) + ')'); }
+}
+
+/**
  * ING-3 (broad-scan 2026-09-23): the bulk archive's CDR / QCD Neon mirror
  * gap as a FAILURE-ONLY Pipeline Health row (`processBatchArchive:CDR:neon` /
  * `:QCD:neon`, INV-44). A skip used to reach only the console, so the admin
@@ -2055,6 +2077,7 @@ if (!skipCDR && obcHD) {
       if (neonCdrResult && neonCdrResult.skipped) {
         setNeonStatus_('unreachable');
         console.log('processIntegratedHistory: Neon CDR write skipped (' + neonCdrResult.skipped + ' rows — Neon unreachable).');
+        dailyMirrorSkipRow_(targetSS, 'processIntegratedHistory:CDR:neon', dateObj, neonCdrResult.skipped);
       } else {
         console.log('processIntegratedHistory: mirrored ' + neonCdrRows.length + ' CDR rows to Neon'
           + (neonCdrResult.phones ? ' + ' + neonCdrResult.phones + ' phone rows' : '') + '.');
@@ -2188,6 +2211,7 @@ if (!skipCDR && obcHD) {
         if (neonResult && neonResult.skipped) {
           setNeonStatus_('unreachable');
           console.log('processIntegratedHistory: Neon QCD write skipped (' + neonResult.skipped + ' rows — Neon unreachable).');
+          dailyMirrorSkipRow_(targetSS, 'processIntegratedHistory:QCD:neon', dateObj, neonResult.skipped);
         } else {
           console.log('processIntegratedHistory: mirrored ' + neonQcdRows.length + ' QCD rows to Neon.');
         }

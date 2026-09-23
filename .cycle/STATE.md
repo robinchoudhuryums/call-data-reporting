@@ -24,10 +24,15 @@
   INTERRUPTED + STALE, ENG-6 EMAIL_BCC validation, DATA-7 freshness re-aged at
   serve, ING-3 bulk mirror-gap rows, CRT-6 per-sheet sort deferral +
   STALE-POINTER, ENG-7 NOTIFY-FAILED, ENG-8 manual-blast toasts.
-  **WHERE I LEFT OFF:** Batches 1-4 pushed, NOT deployed. Next: deploy the
+  **Batch 5 SHIPPED on this branch** (block 199, + the ING-3 daily-mirror
+  follow-on): CRT-1 export tabs delete instead of round-tripping, CRT-7
+  repairs re-verify before writing, CRT-3 identical counts-only dups deduped,
+  CRT-5 keep 6 + no no-op snapshot, CRT-4 upsert keeps Neon's good value for
+  lost sheet cells, CRT-8 + S2B-7 sheet-safe names.
+  **WHERE I LEFT OFF:** Batches 1-5 pushed, NOT deployed. Next: deploy the
   dashboard + cdr-import + cdr-report, run "Back up now" once, check the
   Health page's `historical-sort` / `email-bcc` rows, then
-  `/broad-implement Batch 5` (cdr-report repair/export hardening). The full
+  `/broad-implement Batch 6` (per-call report attribution). The full
   plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).

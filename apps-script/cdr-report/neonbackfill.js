@@ -119,9 +119,10 @@ function nbNewSanTally_() { return { nulled: 0, sentineled: 0, rowsAffected: 0 }
 
 function nbSanitizeDqeCells_(r, tally) {
   var lostBefore = tally.nulled + tally.sentineled;
-  var slots = r.slice(10, 29).map(function (cell) {
+  var lostSlots = [];   // CRT-4: indexes of slot cells the sheet can no longer supply
+  var slots = r.slice(10, 29).map(function (cell, si) {
     var out = sanitizeSlotCellForNeon_(cell);   // F-51
-    if (out === null && String(cell == null ? '' : cell).trim()) tally.nulled++;
+    if (out === null && String(cell == null ? '' : cell).trim()) { tally.nulled++; lostSlots.push(si); }
     return out;
   });
   var abId = function (cell) {
@@ -140,10 +141,71 @@ function nbSanitizeDqeCells_(r, tally) {
   // empty-cell -> NULL contract the ID sanitizer gave (the slot sanitizer
   // returns '' for empty).
   var afOut = sanitizeSlotCellForNeon_(r[31]);
-  if (afOut === null && String(r[31] == null ? '' : r[31]).trim()) tally.nulled++;
+  var afLost = afOut === null && !!String(r[31] == null ? '' : r[31]).trim();
+  if (afLost) tally.nulled++;
   if (tally.nulled + tally.sentineled > lostBefore) tally.rowsAffected++;
+  // CRT-4: which cells are UNRECOVERABLE on the sheet (nulled or #REBUILD,
+  // pre-marked included) -- the DO-UPDATE upsert keeps Neon's stored value for
+  // exactly these instead of overwriting it (nbKeepStoredForLostCells_).
+  var lost = { slots: lostSlots, abParentIds: abParentIds === DQE_ABANDONED_LOST_SENTINEL,
+               abMissedIds: abMissedIds === DQE_ABANDONED_LOST_SENTINEL, abMissedTimes: afLost };
+  lost.any = !!(lostSlots.length || lost.abParentIds || lost.abMissedIds || lost.abMissedTimes);
   return { slots: slots, abParentIds: abParentIds, abMissedIds: abMissedIds,
-           abMissedTimes: afOut || null };
+           abMissedTimes: afOut || null, lost: lost };
+}
+
+// CRT-4 (broad-scan 2026-09-23): the DO-UPDATE upsert re-reads the SHEET, so a
+// cell corrupted there AFTER it was mirrored (a coercion, a copy-paste, a
+// #REBUILD mark from repairDqeAbandonedIds) overwrote Neon's still-good value
+// with NULL / #REBUILD -- the backfill meant to REPAIR the mirror destroying
+// the one intact copy. For the batch's rows that carry such cells, read what
+// Neon holds and keep any real stored value (never a stored NULL or #REBUILD,
+// which the sheet's verdict should replace). One bounded SELECT per affected
+// batch; best-effort -- a failed read logs and leaves the sheet-sanitized
+// values, the pre-CRT-4 behaviour. Returns the number of cells kept.
+var NB_DQE_SLOT_COLS_ = [
+  'slot_0800_0830', 'slot_0830_0900', 'slot_0900_0930', 'slot_0930_1000', 'slot_1000_1030',
+  'slot_1030_1100', 'slot_1100_1130', 'slot_1130_1200', 'slot_1200_1230', 'slot_1230_1300',
+  'slot_1300_1330', 'slot_1330_1400', 'slot_1400_1430', 'slot_1430_1500', 'slot_1500_1530',
+  'slot_1530_1600', 'slot_1600_1630', 'slot_1630_1700', 'slot_1700_1730',
+];
+function nbKeepStoredForLostCells_(conn, batch) {
+  var needs = batch.filter(function (row) { return row.lost && row.lost.any; });
+  if (!needs.length) return 0;
+  var kept = 0;
+  try {
+    var sql = 'SELECT call_date::text, agent_name, ' + NB_DQE_SLOT_COLS_.join(', ')
+      + ', abandoned_parent_ids, abandoned_missed_ids, abandoned_missed_times FROM dqe_history WHERE '
+      + needs.map(function () { return '(call_date = ?::date AND agent_name = ?)'; }).join(' OR ');
+    var st = conn.prepareStatement(sql);
+    var p = 1;
+    needs.forEach(function (row) { st.setString(p++, row.callDate); st.setString(p++, row.agentName); });
+    var rs = st.executeQuery();
+    var stored = {}, bytes = 0;
+    while (rs.next()) {
+      var vals = [];
+      for (var c = 3; c <= 24; c++) { var v = rs.getString(c); vals.push(v); bytes += v ? v.length : 0; }
+      stored[rs.getString(1) + '\u0000' + rs.getString(2)] = vals;
+    }
+    rs.close(); st.close();
+    if (typeof cdrNoteEgress_ === 'function') cdrNoteEgress_(bytes, 'backfill:dqe-keep-stored');
+    var good = function (x) {
+      var t = String(x == null ? '' : x).trim();
+      return !!t && t !== DQE_ABANDONED_LOST_SENTINEL;
+    };
+    needs.forEach(function (row) {
+      var v = stored[row.callDate + '\u0000' + row.agentName];
+      if (!v) return;   // not mirrored yet: the insert stores the sheet's verdict
+      row.lost.slots.forEach(function (si) { if (good(v[si])) { row.slots[si] = v[si]; kept++; } });
+      if (row.lost.abParentIds && good(v[19])) { row.abParentIds = v[19]; kept++; }
+      if (row.lost.abMissedIds && good(v[20])) { row.abMissedIds = v[20]; kept++; }
+      if (row.lost.abMissedTimes && good(v[21])) { row.abMissedTimes = v[21]; kept++; }
+    });
+  } catch (e) {
+    Logger.log('DQE upsert: could not read the stored values for ' + needs.length + ' row(s) with lost sheet '
+      + 'cells (' + (e && e.message ? e.message : e) + ') -- those cells mirror as the sheet has them (CRT-4).');
+  }
+  return kept;
 }
 
 // Batch 2 follow-on: the tally also lands as a Pipeline Health row (the
@@ -485,6 +547,7 @@ function backfillDQEHistoryUpsert() {
   var TIME_LIMIT_MS = 240000;
   var startTime     = Date.now();
   var totalUpserted = 0;
+  var keptFromNeon  = 0;   // CRT-4
   var i = startIndex;
 
   var conn = getNeonConn_backfill();
@@ -534,6 +597,7 @@ function backfillDQEHistoryUpsert() {
           abParentIds:      san.abParentIds,
           abMissedIds:      san.abMissedIds,
           abMissedTimes:    san.abMissedTimes,   // M3: AF via the slot sanitizer
+          lost:             san.lost,            // CRT-4
           // See backfillDQEHistory: normalizeDuration nulls the "No abd
           // calls" sentinel + any non-H:MM:SS so it can't overflow the
           // varchar(10) abd-wait columns.
@@ -576,6 +640,7 @@ function backfillDQEHistoryUpsert() {
       if (batch.length === 0) continue;
 
       try {
+        keptFromNeon += nbKeepStoredForLostCells_(conn, batch);   // CRT-4
         var placeholderRow  = '(' + new Array(35).fill('?').join(',') + ",NULLIF(?, '')::int,NULLIF(?, '')::int)";   // +queue_split (Phase 1), +after_hours pair (Batch 3)
         var allPlaceholders = batch.map(function() { return placeholderRow; }).join(',');
         var sql = 'INSERT INTO dqe_history (' +
@@ -667,7 +732,9 @@ function backfillDQEHistoryUpsert() {
       '. Total upserted into Neon: ' + totalUpserted);
     nbSanTallyLog_('DQE upsert', sanTally);
     props.setProperty('DQE_UPSERT_LAST', 'OK ' + new Date().toISOString()
-      + ' upserted=' + totalUpserted + ' ' + nbSanTallyText_(sanTally));
+      + ' upserted=' + totalUpserted + ' ' + nbSanTallyText_(sanTally)
+      + (keptFromNeon ? ' kept-from-neon=' + keptFromNeon : ''));
+    if (keptFromNeon) Logger.log('DQE upsert: ' + keptFromNeon + ' unrecoverable sheet cell(s) kept Neon\'s stored value (CRT-4).');
     var upLoss = sanTally.nulled + sanTally.sentineled;
     nbPipelineRow_(ss, 'dqeUpsert', upLoss ? 'failure' : 'success', totalUpserted, startTime,
       nbSanTallyText_(sanTally) + (upLoss ? ' -- coerced cells EXCLUDED from the mirror; run the sheetRepairs, then re-run' : ''));
@@ -736,7 +803,11 @@ function findDqeDuplicateRows() {
   dupKeys.forEach(function (k) {
     g++;
     groups[k].forEach(function (e) {
-      rows.push([g, e.row, e.date, e.agent, e.unique, e.rung, e.missed, e.answered, e.ttt, e.att]);
+      // CRT-8 (broad-scan 2026-09-23): the agent name comes from the external
+      // CDR feed; neutralize a formula-leading one before it lands in this
+      // report tab (crSheetSafeCell_ lives in dashboardCDR.js, same project).
+      var agentCell = (typeof crSheetSafeCell_ === 'function') ? crSheetSafeCell_(e.agent) : e.agent;
+      rows.push([g, e.row, e.date, agentCell, e.unique, e.rung, e.missed, e.answered, e.ttt, e.att]);
     });
   });
   if (rows.length === 1) {

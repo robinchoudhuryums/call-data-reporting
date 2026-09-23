@@ -1855,9 +1855,16 @@ When something looks wrong, before assuming a code bug, check:
     (a same-minute re-run gets a `-2` suffix). The workbook is created on the
     first such apply via `SpreadsheetApp.create` and its id stored here; you
     never set it by hand. If the property points at a deleted workbook the next
-    apply creates a fresh one and re-stores the id. The newest 3 tabs per SOURCE
-    sheet are kept (`HR_BACKUP_KEEP_`; older ones deleted via `deleteSheet`, so
-    no Drive scope). Previews never back up. The apply log names the tab and
+    apply creates a fresh one and re-stores the id. The newest 6 tabs per SOURCE
+    sheet are kept (`HR_BACKUP_KEEP_`, CRT-5: the DQE repair chain is five
+    applies, so the pre-chain original survives the whole chain; ~6.6M of the
+    backup workbook's 10M cells; older ones deleted via `deleteSheet`, so no
+    Drive scope). Previews never back up, and neither does a slot repair that
+    finds nothing coerced. Every DQE apply also re-checks the row identity
+    (row count + date/agent columns) right before its first write and ABORTS
+    with nothing written if the sheet changed since it was read (CRT-7: the
+    daily build runs in another project) -- re-run it outside the build
+    window. The apply log names the tab and
     the workbook URL. **Why a separate workbook:** a DQE copy is ~1.1M cells and
     the CDR Report workbook is already large, so in-workbook copies could reach
     the 10M-cell cap; the backup workbook holds its own.

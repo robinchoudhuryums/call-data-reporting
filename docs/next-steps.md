@@ -99,7 +99,7 @@ that lucky.
 - Why a separate workbook, not a hidden tab: a DQE copy is ~1.1M cells and
   the CDR Report workbook is already large; three backups in-workbook could
   approach the 10M-cell cap. The backup workbook holds its own cap.
-- Prune: keep the newest `HR_BACKUP_KEEP_` (3) tabs per source sheet via
+- Prune: keep the newest `HR_BACKUP_KEEP_` (3; 6 since CRT-5) tabs per source sheet via
   `deleteSheet` — no Drive scope needed, so no new OAuth consent.
 - Wire into the five apply paths: date normalize, slot timestamps, abandoned
   ids, PST shift, duplicate merge. Previews never back up.

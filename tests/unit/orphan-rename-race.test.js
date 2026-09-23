@@ -102,3 +102,21 @@ test('F-22: zero matches returns 0 without touching the sheet', function () {
   install([dqeRowFor('03/09/2026', 'Anna')]);
   assert.equal(h.call('renameHistoricalAgent_', 'Nobody', 'Anyone'), 0);
 });
+
+// S2B-7 (broad-scan 2026-09-23): the rename writes the WHOLE agent column back
+// in one setValues. A formula-leading toName was written raw, and an unchanged
+// cell stored as apostrophe-neutralized text (read back WITHOUT the apostrophe)
+// was re-armed as a live formula by the round trip. Every cell is now
+// sheet-safed; the value a reader sees is unchanged (INV-04).
+test('S2B-7: the column write-back neutralizes formula-leading names, renamed and untouched alike', function () {
+  const sheet = install([
+    dqeRowFor('03/09/2026', 'Roman Paulose'),
+    dqeRowFor('03/09/2026', '=HYPERLINK("http://evil","x")'),   // stored as text, read back bare
+    dqeRowFor('03/09/2026', 'Anna'),
+  ]);
+  const affected = h.call('renameHistoricalAgent_', 'Roman Paulose', '+Roman (Robin) Paulose');
+  assert.equal(affected, 1);
+  assert.equal(sheet._data[1][2], "'+Roman (Robin) Paulose", 'a formula-leading destination is neutralized');
+  assert.equal(sheet._data[2][2], "'=HYPERLINK(\"http://evil\",\"x\")", 'an untouched formula-shaped cell is not re-armed');
+  assert.equal(sheet._data[3][2], 'Anna', 'an ordinary name is written back byte-identical');
+});

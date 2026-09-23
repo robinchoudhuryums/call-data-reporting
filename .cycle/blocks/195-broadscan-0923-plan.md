@@ -44,7 +44,7 @@ ENG-1, S2A-1 (missed half), ENG-2, ENG-11.
 - ENG-7 Low: coaching "ok ... EMAIL NOT SENT" classified healthy.
 - ENG-8 Low: manual queue-report send reports partial/failed as "0 subscribers" (QueueReportEmail.gs:1454, script-11:150).
 
-## Batch 5 — cdr-report repair/export hardening (~7h)
+## Batch 5 — cdr-report repair/export hardening — SHIPPED (block 199, + the ING-3 daily-mirror follow-on)
 - CRT-1 Med: ic_/oc_removeRowsInRange_ getValues->setValues round trip re-arms apostrophe-neutralized formulas daily (only Call Start is '@'); the R8-3 mechanism.
 - CRT-7 Low: bulk repairs write back without F-22-style re-verify.
 - CRT-3 Low: duplicate merge re-sums byte-identical token-less duplicates (sheetRepairs.js:783-794).

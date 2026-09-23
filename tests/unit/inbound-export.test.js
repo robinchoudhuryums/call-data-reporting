@@ -27,7 +27,7 @@ const h = loadGas({
   project: 'cdr-report',
   // neonEgress.js provides cdrNoteEgress_, which the export calls after its
   // payload fetch (one global scope in production; explicit here).
-  files: ['neonEgress.js', 'inboundCallsExport.js'],
+  files: ['neonEgress.js', 'inboundCallsExport.js', 'outboundCallsExport.js'],   // CRT-1 pins both removers
 });
 
 // Mutable fake sheet: a dense grid of display strings, header at row 1.
@@ -282,4 +282,37 @@ test('scheduled runner: success logs written rows + replaced/pruned note', funct
   assert.equal(logged[0].step, 'inboundExport');
   assert.equal(logged[0].status, 'success');
   assert.equal(logged[0].rows, 1);
+});
+
+// CRT-1 (broad-scan 2026-09-23): the per-date replace used to getValues the
+// whole tab and setValues the KEPT rows back. A cell neutralized with a
+// leading apostrophe reads back WITHOUT it, so every re-export re-armed it as
+// a live formula. Both removers now delete matching rows as blocks and never
+// write a kept row.
+test('CRT-1: ic_/oc_removeRowsInRange_ delete matched rows as blocks and never rewrite a kept row', function () {
+  ['ic_removeRowsInRange_', 'oc_removeRowsInRange_'].forEach(function (fn) {
+    const rows = [
+      ['2026-09-01', 'keep-a', "'=HYPERLINK(\"x\")"],
+      ['2026-09-02', 'drop-1'], ['2026-09-02', 'drop-2'],
+      ['2026-09-03', 'keep-b'],
+      ['2026-09-04', 'drop-3'],
+    ];
+    const sheet = fakeSheet(rows, { header: ['Date'], maxRows: 6 });   // no spare rows: a full delete would be refused
+    let writes = 0;
+    const realGetRange = sheet.getRange;
+    sheet.getRange = function () {
+      const r = realGetRange.apply(sheet, arguments);
+      const sv = r.setValues;
+      r.setValues = function (v) { writes++; return sv.call(r, v); };
+      r.getValues = function () { throw new Error('the whole-row read is the re-arm vector'); };
+      return r;
+    };
+    const removed = h.call(fn, sheet, '2026-09-02', '2026-09-04', { '2026-09-02': true, '2026-09-04': true });
+    assert.equal(removed, 3, fn);
+    assert.equal(writes, 0, fn + ': kept rows are never rewritten');
+    assert.deepEqual(JSON.parse(JSON.stringify(sheet._deleted)), [[6, 1], [3, 2]], fn + ': bottom-up blocks');
+    assert.deepEqual(sheet._rows.slice(1).map(function (r) { return r[1]; }), ['keep-a', 'keep-b']);
+    assert.equal(sheet._rows[1][2], "'=HYPERLINK(\"x\")", fn + ': the neutralized cell is untouched');
+    assert.equal(sheet._maxRows, 9, fn + ': padded before the delete (the fake does not shrink on delete)');
+  });
 });
