@@ -2693,9 +2693,18 @@ When something looks wrong, before assuming a code bug, check:
       Part 1's callback table needs `connected` RELABELLED rather than
       reclassified. `INCONCLUSIVE` -- the interval spans both, or under 8 C
       rows are labelled: label more of C (raise `OUTBOUND_REVIEW_N` and
-      re-sample), never pick an end. **A point estimate is not the test** -- a
-      14-of-20 run reads 70% and still refuses, because the interval reaches
-      down to the coin flip.
+      re-sample), never pick an end -- **but only when the scorer says more
+      listening CAN settle it** (`stratumC.rowsToDecide` /
+      `settleableByListening`). Near the bars it cannot: the owner's 13-of-20
+      (65%) would need ~350 rows, and a share between 50% and 60% never clears
+      either bar. Then the share IS the answer. **A point estimate is not the
+      test** -- a 14-of-20 run reads 70% and still refuses, because the
+      interval reaches down to the coin flip.
+    - **The scorer also compares TALK time by label** (`talkByLabel`,
+      `talkSeparation`; connected rows only, machine = voicemail + ivr). It
+      searches every `a <= talk <= b` window for the best balanced accuracy
+      and calls it separating at 85%. The search is IN-SAMPLE, so read it
+      asymmetrically: a fail is final, a pass only earns a fresh sample.
     - **⚠ A voicemail-heavy 0-11 s band is the RESULT THAT MATTERS MOST, and it
       is not a failure.** A confirmed voicemail rang **8 s** (an agent left a
       message, then sat on a silent line ~2 min). There are TWO kinds of

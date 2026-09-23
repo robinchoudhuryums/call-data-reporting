@@ -609,6 +609,48 @@ the honest outcome is that `ring_seconds` cannot carry this classifier here, and
 Part 1's table needs a different treatment of `connected` -- a relabel rather
 than a reclassification.
 
+### GROUND TRUTH round 2: 53 labels -- ring time is not a classifier (owner, 2026-09-23)
+
+Run "Review 20260922-1313", 53 of 54 rows labelled. Weighted by each band's
+share of the 62,646 connected first-attempt calls in the #64 ring histogram
+(a different, earlier window -- directional, not exact):
+
+| Ring band | Share of connected | Voicemail (labels) | 95% interval |
+|---|---|---|---|
+| 0-1 s (A) | 40.6% | 3/8 (+1 ivr) | 14-69% |
+| 2-11 s (B) | 26.2% | 1/5 | 4-62% |
+| 12-19 s (B2) | 10.7% | 5/12 | 19-68% |
+| 20-32 s (C) | 22.0% | 13/20 | 43-82% |
+| 33+ s (D) | 0.6% | 4/5 | 38-96% |
+
+**Voicemail is an estimated ~40% of all connected calls**, and its share
+RISES with ring without ever splitting: a `>= 20 s` rule flags 23% of calls
+at ~65% precision and catches only **~37% of all voicemail**; `>= 12 s` gets
+~58% precision and ~48% recall. The bulk of voicemail sits in the 0-1 s band,
+where ring says nothing. Stratum C's 65% cannot be settled by listening
+(~350 rows to clear the 60% bar) -- the scorer now says so instead of asking
+for more.
+
+**Conclusion: the stored CDR cannot tell a person from a machine**, and the
+open-ended voicemail variants (message left / no message / screening) are
+less separable still. The CDR reports all four answerers identically
+(Answered, talk > 0); ring carries a gradient, not a boundary. Only the AUDIO
+can decide it (a person listening, or the phone system's own answering-machine
+detection / speech analytics if it offers one). The talk-time comparison the
+scorer now runs is the last stored-duration check; unless it passes -- and
+then on a FRESH sample -- **Step 2 is superseded: no `OUTBOUND_VM_RING_SEC`,
+no `strict`.** `connected` is relabelled as "answered (person or machine)"
+and the reached figure disclosed as an upper bound. That representation work
+is the next step (owner direction, 2026-09-23).
+
+**Open, and it outranks everything above: the E control failed** (0 of 3
+unconnected rows came back no-answer; 2 human, 1 voicemail). The likely cause
+is the lookup, not the data -- an unconnected call often has no recording, so
+agent + time lands on the agent's next call (usually the redial, a separate
+row). Check each E row's recording start against its row time, and whether
+the agent redialled within a minute. A match would mean `connected` itself is
+wrong.
+
 ### Step 2: the parameters
 
 All READ-time, not capture-time. `connected` / `talk_seconds` / `ring_seconds`

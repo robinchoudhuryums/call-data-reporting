@@ -1324,6 +1324,126 @@ test('tally: a worksheet token with no key row is reported, not silently dropped
   assert.equal(t.byStratum['C-inband'].n, 1);
 });
 
+// ── Talk-time comparison (owner labels, 2026-09-23) ──────────────────────
+// Ring could not split machines from people; talk is the other stored
+// duration. These pin the tally's duration capture and the window search.
+
+function wsRows_(pairs) {
+  return [h.ctx.OB_REVIEW_WS_HEADER_].concat(pairs.map(function (pair) {
+    const row = h.ctx.OB_REVIEW_WS_HEADER_.map(function () { return ''; });
+    row[0] = pair[0];
+    row[h.ctx.OB_REVIEW_LABEL_COL_ - 1] = pair[1];
+    return row;
+  }));
+}
+
+test('tally: durations are collected by LABEL, connected rows only, located by HEADER', function () {
+  const ws = wsRows_([['R01', 'voicemail'], ['R02', 'human'], ['R03', 'ivr'], ['R04', 'human'],
+                      ['R05', '']]);
+  const key = [
+    h.ctx.OB_REVIEW_KEY_HEADER_,
+    ['R01', 'C-inband', 31, 35, 1, 'yes'],
+    ['R02', 'A-instant', 0, 140, 1, 'yes'],
+    ['R03', 'A-instant', 1, 12, 1, 'yes'],
+    ['R04', 'E-unconnected', 30, 0, 1, 'no'],   // unconnected: no talk by definition
+    ['R05', 'C-inband', 25, 40, 1, 'yes'],      // blank label: never compared
+  ];
+  const t = h.ctx.obReviewTally_(ws, key);
+  assert.equal(t.byLabel.voicemail.talk.join(','), '35');
+  assert.equal(t.byLabel.voicemail.ring.join(','), '31');
+  assert.equal(t.byLabel.human.talk.join(','), '140',
+    'the unconnected human row must not pad the comparison with a zero');
+  assert.equal(t.byLabel.ivr.talk.join(','), '12');
+  // A key whose columns are in a different order still reads the right ones.
+  // (Talk deliberately NOT at its default index 3 -- a fixture that kept it
+  // there could not tell a header lookup from a hard-coded position.)
+  const reordered = [['Token', 'Stratum', 'Talk (s)', 'Connected', 'Ring (s)'],
+                     ['R01', 'C-inband', 77, 'yes', 31]];
+  const t2 = h.ctx.obReviewTally_(wsRows_([['R01', 'voicemail']]), reordered);
+  assert.equal(t2.byLabel.voicemail.talk.join(','), '77');
+  // A key with no duration columns still scores; it just compares nothing.
+  const bare = h.ctx.obReviewTally_(wsRows_([['R01', 'voicemail']]), [['Token', 'Stratum'],
+    ['R01', 'C-inband']]);
+  assert.equal(bare.labelled, 1);
+  assert.equal(Object.keys(bare.byLabel).length, 0);
+});
+
+test('talk: a real message-length window is found and reported as SEPARATING', function () {
+  const cmp = h.ctx.obReviewTalkComparison_({
+    human: { talk: [2, 3, 4, 5, 90, 120, 150, 200], ring: [] },
+    voicemail: { talk: [20, 22, 25, 28, 30, 33, 35], ring: [] },
+    ivr: { talk: [40], ring: [] },
+  });
+  const sep = cmp.separation;
+  assert.equal(sep.separates, true);
+  assert.equal(sep.best.lo, 20);
+  assert.equal(sep.best.hi, 40);
+  assert.equal(sep.best.balancedAccuracy, 1);
+  assert.equal(sep.machineN, 8, 'ivr counts as NOT reached, beside voicemail');
+  assert.match(sep.reason, /OPTIMISTIC/, 'a pass must still say it is in-sample');
+});
+
+test('talk: overlapping durations are reported as NOT separating', function () {
+  const same = [5, 15, 25, 35, 45, 60, 90, 120, 18, 40];
+  const cmp = h.ctx.obReviewTalkComparison_({
+    human: { talk: same.slice(), ring: [] },
+    voicemail: { talk: same.map(function (x) { return x + 1; }), ring: [] },
+  });
+  assert.equal(cmp.separation.separates, false);
+  assert.ok(cmp.separation.best.balancedAccuracy < h.ctx.OB_REVIEW_TALK_SEPARATES_BA_);
+  assert.match(cmp.separation.reason, /DOES NOT SEPARATE/);
+  assert.equal(cmp.byLabel.human.talk.median, 35);
+});
+
+test('talk: too few rows in either class is skipped, never a verdict', function () {
+  const cmp = h.ctx.obReviewTalkComparison_({
+    human: { talk: [10, 20, 30], ring: [] },
+    voicemail: { talk: [25, 26, 27, 28, 29, 30, 31, 32, 33], ring: [] },
+  });
+  assert.equal(cmp.separation.separates, null);
+  assert.equal(cmp.separation.best, null);
+  assert.match(cmp.separation.reason, /have 3 \/ 9/);
+  assert.equal(h.ctx.obReviewTalkComparison_(undefined).separation.separates, null);
+});
+
+test('rows-to-decide: the owner\'s 13/20 is NOT settleable by listening', function () {
+  // The live 2026-09-23 run: 65% in C. "Label more" was the only advice, and
+  // it would have taken ~350 rows.
+  const need = h.ctx.obReviewRowsToDecide_(0.65);
+  assert.ok(need > h.ctx.OB_REVIEW_MAX_N_ && need < 500, 'got ' + need);
+  // A share BETWEEN the bars never clears either, however much is labelled.
+  assert.equal(h.ctx.obReviewRowsToDecide_(0.55), null);
+  // A clear share is settled quickly.
+  assert.ok(h.ctx.obReviewRowsToDecide_(0.8) <= h.ctx.OB_REVIEW_MAX_N_);
+  assert.equal(h.ctx.obReviewRowsToDecide_('x'), null);
+});
+
+test('verdict: an inconclusive C says whether MORE LISTENING can settle it', function () {
+  const stuck = h.ctx.obReviewVerdict_(cTally_(13, 7));
+  assert.equal(stuck.verdict, 'inconclusive');
+  assert.equal(stuck.c.settleableByListening, false);
+  assert.match(stuck.reason, /MORE LISTENING WILL NOT SETTLE IT/);
+  assert.match(stuck.reason, /about 7 in 10 in-band calls/);
+  assert.doesNotMatch(stuck.reason, /so label more/);
+  const between = h.ctx.obReviewVerdict_(cTally_(11, 9));
+  assert.match(between.reason, /at NO sample size/);
+  // A clear share at small n still gets "label more", with the number.
+  const early = h.ctx.obReviewVerdict_(cTally_(8, 2));
+  assert.equal(early.verdict, 'inconclusive');
+  assert.equal(early.c.settleableByListening, true);
+  assert.match(early.reason, /about \d+ labelled stratum-C rows would settle it/);
+});
+
+test('scorer: returns the per-band findings and the talk comparison (source pin)', function () {
+  const fn = OB_SRC.slice(OB_SRC.indexOf('function scoreOutboundReviewSample'));
+  // These were computed by the verdict and then dropped before the return.
+  ['byBand: verdict.byBand', 'recallCeiling: verdict.recallCeiling',
+   'shoulder: verdict.shoulder', 'talkSeparation: talk.separation',
+   'obReviewTalkComparison_(tally.byLabel)'].forEach(function (needle) {
+    assert.ok(fn.indexOf(needle) > 0, 'scorer must carry ' + needle);
+  });
+});
+
 // Builds a tally literal for the verdict rule.
 function cTally_(voicemail, human, controls) {
   const by = { 'C-inband': { n: voicemail + human, unlabelled: 0,
