@@ -1127,6 +1127,52 @@ var OB_REVIEW_STRATA_ = [
     asks: 'that the unconnected side is what we think' },
 ];
 
+// ── The TALK-TIME test (owner, 2026-09-23) ────────────────────────────────
+// Run "Review 20260922-1313" found that TALK separates a person from a
+// machine far better than ring did: the best window, talk 8-79 s -> machine,
+// scored 92% balanced accuracy. But that window was FITTED to the rows it was
+// scored on, and the ring-drawn sample held no person call under 62 s -- so
+// the rule's most likely failure (a person who answers and hangs up fast)
+// was never tested.
+//
+// ⚠ THE RULE IS PRE-REGISTERED. It is fixed HERE, before the fresh sample is
+// listened to, and the talk-mode scorer tests exactly this window without
+// refitting. Changing it after a talk run has been labelled turns the test
+// back into a fit -- which is why a pin fails on any edit. A genuinely new
+// hypothesis gets a new constant AND a new sample.
+var OB_REVIEW_TALK_RULE_ = { lo: 8, hi: 79, registered: '2026-09-23',
+                             from: 'Review 20260922-1313' };
+
+// Drawn by TALK band, weighted toward the rule's EDGES: 8-30 s is where a
+// fast-hanging-up person would be called a machine, and 61-120 s straddles
+// the right edge where short conversations meet long messages. So this is a
+// STRESS test -- edge cases are over-represented, and its accuracy is a
+// floor for the population's, not an estimate of it.
+//
+// Same rules as the ring strata: the bands TILE 1..infinity with no gap
+// (connected implies talk > 0), `talk` is the declarative range pinned
+// against the SQL, and the ids are frozen once a run exists.
+var OB_REVIEW_TALK_STRATA_ = [
+  { id: 'T1-under8',  want: 4,  talk: [1, 7],
+    sql: 'connected AND talk_seconds BETWEEN 1 AND 7',
+    asks: 'below the rule -- what a near-instant connect actually is' },
+  { id: 'T2-8to30',   want: 10, talk: [8, 30],
+    sql: 'connected AND talk_seconds BETWEEN 8 AND 30',
+    asks: "THE RULE'S BLIND SPOT -- a person who answered and hung up fast is called a machine" },
+  { id: 'T3-31to60',  want: 6,  talk: [31, 60],
+    sql: 'connected AND talk_seconds BETWEEN 31 AND 60',
+    asks: "the rule's core -- greeting plus a left message" },
+  { id: 'T4-61to79',  want: 10, talk: [61, 79],
+    sql: 'connected AND talk_seconds BETWEEN 61 AND 79',
+    asks: "THE RIGHT EDGE, inside -- short conversations the rule calls machines" },
+  { id: 'T5-80to120', want: 10, talk: [80, 120],
+    sql: 'connected AND talk_seconds BETWEEN 80 AND 120',
+    asks: 'THE RIGHT EDGE, outside -- long messages the rule calls people' },
+  { id: 'T6-over120', want: 6,  talk: [121, null],
+    sql: 'connected AND talk_seconds >= 121',
+    asks: 'well above the rule -- a message then a silent line (the 8 s case) reads as a person' },
+];
+
 // The standing review workbook -- a SEPARATE spreadsheet, following the
 // `HR_BACKUP_SS_ID` precedent (Operator State #59): review artifacts do not
 // belong in the production workbook, whose ALLOCATED grid counts against the
@@ -1369,7 +1415,7 @@ function obReviewWriteTabs_(rows, meta) {
     + 'message is "voicemail". Reaching voicemail and NOT leaving a message is still '
     + '"voicemail" (a machine answered). Use "ivr" only when the call ENDED at a menu or '
     + 'auto-attendant without reaching a person or a mailbox. '
-    + 'Ring length is deliberately NOT shown -- it is the hypothesis under test. '
+    + 'Ring and talk length are deliberately NOT shown -- they are the hypotheses under test. '
     + 'When every row is labelled, run scoreOutboundReviewSample() in the Apps Script editor. '
     + 'Partial is fine: it reports how many are still blank. '
     + 'Window sampled: ' + (meta && meta.from) + '..' + (meta && meta.to) + '.');
@@ -1599,6 +1645,75 @@ function obReviewTalkComparison_(byLabel) {
  */
 var OB_REVIEW_DECIDE_SEARCH_MAX_ = 2000;
 
+/**
+ * PURE. The TALK-mode verdict: the PRE-REGISTERED rule (OB_REVIEW_TALK_RULE_)
+ * applied as-is to a fresh talk-stratified run -- never refitted.
+ *
+ * Two rates, each with its Wilson interval, because the rule can fail in two
+ * different ways and a single accuracy would let one hide the other:
+ *   machineRecall -- of the calls a machine answered (voicemail + ivr), the
+ *                    share the rule calls a machine;
+ *   personKept    -- of the calls a person answered, the share the rule
+ *                    leaves as a person (the fast-hang-up blind spot lives here).
+ * `validated` needs BOTH lower bounds at OB_REVIEW_TALK_VALIDATE_LO_;
+ * `refuted` needs EITHER upper bound below it. The sample over-represents the
+ * rule's edges on purpose, so these are FLOORS for the population's rates.
+ */
+var OB_REVIEW_TALK_VALIDATE_LO_ = 0.7;
+
+function obReviewTalkRuleVerdict_(byLabel, rule) {
+  var R = rule || OB_REVIEW_TALK_RULE_;
+  var src = byLabel || {};
+  var inRule = function (t) { return t >= R.lo && t <= R.hi; };
+  var human = ((src.human || {}).talk || []);
+  var machine = [];
+  OB_REVIEW_NOT_REACHED_.forEach(function (l) { machine = machine.concat((src[l] || {}).talk || []); });
+  var tp = machine.filter(inRule).length;
+  var kept = human.filter(function (t) { return !inRule(t); }).length;
+  var out = {
+    verdict: 'inconclusive', rule: 'talk ' + R.lo + '-' + R.hi + ' s → machine',
+    registered: R.registered, humanN: human.length, machineN: machine.length,
+    machineRecall: machine.length ? obWilsonInterval_(tp, machine.length) : null,
+    personKept: human.length ? obWilsonInterval_(kept, human.length) : null,
+    // The two ways to be wrong, counted rather than left inside a rate.
+    fastHangupPeople: human.filter(function (t) { return t <= 30 && inRule(t); }).length,
+    longMachines: machine.filter(function (t) { return t > R.hi; }).length,
+    shortMachines: machine.filter(function (t) { return t < R.lo; }).length,
+    reason: '',
+  };
+  if (human.length < OB_REVIEW_TALK_MIN_CLASS_N_ || machine.length < OB_REVIEW_TALK_MIN_CLASS_N_) {
+    out.reason = 'needs ' + OB_REVIEW_TALK_MIN_CLASS_N_ + ' labelled connected rows in EACH of '
+      + 'person and voicemail/ivr (have ' + human.length + ' / ' + machine.length
+      + ') -- label more of the run before reading the rule';
+    return out;
+  }
+  var mr = out.machineRecall, pk = out.personKept;
+  var pct = function (x) { return Math.round(x * 100); };
+  var line = out.rule + ' (pre-registered ' + R.registered + ', NOT refitted): catches '
+    + pct(mr.share) + '% of machine answers (' + pct(mr.lo) + '-' + pct(mr.hi) + '%), keeps '
+    + pct(pk.share) + '% of people as people (' + pct(pk.lo) + '-' + pct(pk.hi) + '%)';
+  if (mr.lo >= OB_REVIEW_TALK_VALIDATE_LO_ && pk.lo >= OB_REVIEW_TALK_VALIDATE_LO_) {
+    out.verdict = 'validated';
+    out.reason = line + ' -- it held on a fresh sample that over-weights its edges, so its '
+      + 'population accuracy is at least this. Still research: nothing reaches the reports '
+      + 'without an owner ruling';
+  } else if (mr.hi < OB_REVIEW_TALK_VALIDATE_LO_ || pk.hi < OB_REVIEW_TALK_VALIDATE_LO_) {
+    out.verdict = 'refuted';
+    out.reason = line + ' -- it FAILED out of sample (' + (pk.hi < OB_REVIEW_TALK_VALIDATE_LO_
+      ? 'it calls too many people machines' : 'it misses too many machines')
+      + '), so the 92% was the fit, not the rule. Do not refit on this run';
+  } else {
+    out.reason = line + ' -- the intervals still span the ' + pct(OB_REVIEW_TALK_VALIDATE_LO_)
+      + '% bar; label more of THIS rule on a new talk run (raise OUTBOUND_REVIEW_N), '
+      + 'never a new window fitted to these rows';
+  }
+  if (out.fastHangupPeople) {
+    out.reason += '. ' + out.fastHangupPeople + ' person call(s) at 30 s or under were called '
+      + 'machines -- the blind spot this run was drawn to find';
+  }
+  return out;
+}
+
 function obReviewRowsToDecide_(share) {
   var p = Number(share);
   if (!isFinite(p) || p < 0 || p > 1) return null;
@@ -1611,13 +1726,30 @@ function obReviewRowsToDecide_(share) {
 
 function sampleOutboundCallsForReview() {
   assertAdmin_();
+  return obReviewSample_(OB_REVIEW_STRATA_, 'ring');
+}
+
+/**
+ * The TALK-mode sample: the fresh, talk-stratified draw that tests the
+ * pre-registered OB_REVIEW_TALK_RULE_ (see OB_REVIEW_TALK_STRATA_). Same
+ * blinded worksheet, same standing workbook, same window, same PHI rules --
+ * only the strata differ, and the scorer recognises the run by its stratum
+ * ids. Editor-run, admin-gated (the INV-01 review-worksheet carve-out).
+ */
+function sampleOutboundCallsForReviewByTalk() {
+  assertAdmin_();
+  return obReviewSample_(OB_REVIEW_TALK_STRATA_, 'talk');
+}
+
+/** The shared sampler body. `strata` is one of the two stratum tables. */
+function obReviewSample_(strata, mode) {
   var props = PropertiesService.getScriptProperties();
   var win = obProbeWindow_(props);
   var from = win.from, to = win.to, anchor = null;
   // OUTBOUND_REVIEW_N, when set, OVERRIDES every stratum with one uniform
   // count -- an escape hatch for a deliberately bigger or smaller run. Unset
   // (the normal case) each stratum takes its own `want`, which is uneven on
-  // purpose; see OB_REVIEW_STRATA_.
+  // purpose; see strata.
   var uniform = Math.round(Number(props.getProperty('OUTBOUND_REVIEW_N')) || 0);
   if (!isFinite(uniform) || uniform < 1) uniform = 0;
   if (uniform > OB_REVIEW_MAX_N_) uniform = OB_REVIEW_MAX_N_;
@@ -1648,7 +1780,7 @@ function sampleOutboundCallsForReview() {
     // The stratum travels as its INDEX, not its name: an integer needs no
     // quoting helper, so nothing operator- or name-derived is ever
     // concatenated into this statement. `sx` is mapped back in JS below.
-    var parts = OB_REVIEW_STRATA_.map(function (st, sx) {
+    var parts = strata.map(function (st, sx) {
       return '(SELECT ' + sx + ' AS sx, call_date::text AS d, '
         + 'call_start AS st, agent_name AS ag, agent_ext AS ax, department AS dp, '
         + 'ring_seconds AS rs, talk_seconds AS ts, attempts AS at, connected AS cn '
@@ -1672,7 +1804,7 @@ function sampleOutboundCallsForReview() {
     var raw = JSON.parse(json || '[]');
     var rows = (raw || []).map(function (r) {
       return {
-        stratum: (OB_REVIEW_STRATA_[Number(r.sx)] || {}).id || '?',
+        stratum: (strata[Number(r.sx)] || {}).id || '?',
         callDate: String(r.d || ''),
         time: obReviewStartParts_(r.st).time,
         agent: String(r.ag == null ? '' : r.ag), ext: String(r.ax == null ? '' : r.ax),
@@ -1683,31 +1815,32 @@ function sampleOutboundCallsForReview() {
     });
 
     var perStratum = {};
-    OB_REVIEW_STRATA_.forEach(function (st) { perStratum[st.id] = 0; });
+    strata.forEach(function (st) { perStratum[st.id] = 0; });
     rows.forEach(function (r) {
       if (perStratum[r.stratum] !== undefined) perStratum[r.stratum]++;
     });
     // THIN = fewer rows than asked for, judged per stratum against its own
     // request rather than one global floor: 4 of 4 in a control is complete,
     // 4 of 20 in stratum C is not a decision.
-    var thin = OB_REVIEW_STRATA_.filter(function (st) {
+    var thin = strata.filter(function (st) {
       return perStratum[st.id] < Math.min(wantFor(st), Math.max(3, Math.ceil(wantFor(st) * 0.6)));
     }).map(function (st) { return st.id + ' (' + perStratum[st.id] + ' of ' + wantFor(st) + ')'; });
 
     obReviewShuffleAndToken_(rows, null);
 
     var out = {
+      mode: mode,
       // `anchoredTo` / `anchorDate` so a SILENT anchor failure is visible: a
       // fallback to the calendar produces the same dates as an anchor that
       // happens to land on yesterday, and the whole point of the anchor is
       // to avoid measuring days with no data. Without this the two are
       // indistinguishable in the log.
       window: { from: from, to: to, anchoredToData: !!win.anchoredTo, anchorDate: anchor },
-      perStratumRequested: OB_REVIEW_STRATA_.reduce(function (a, st) {
+      perStratumRequested: strata.reduce(function (a, st) {
         a[st.id] = wantFor(st); return a;
       }, {}),
       perStratumSampled: perStratum,
-      strata: OB_REVIEW_STRATA_.map(function (st) {
+      strata: strata.map(function (st) {
         return { id: st.id, asks: st.asks, selector: st.sql };
       }),
     };
@@ -1717,7 +1850,7 @@ function sampleOutboundCallsForReview() {
     // is not wasted -- the TSV goes to the log as it did before, and the
     // operator can paste it.
     try {
-      out.sheet = obReviewWriteTabs_(rows, { from: from, to: to });
+      out.sheet = obReviewWriteTabs_(rows, { from: from, to: to, mode: mode });
     } catch (we) {
       out.sheetError = String(we);
       out.worksheet = obReviewGridToTsv_(obReviewWorksheetGrid_(rows,
@@ -1729,14 +1862,14 @@ function sampleOutboundCallsForReview() {
     out.howToUse = out.sheet
       ? ('Open ' + out.sheet.url + ' → tab "' + out.sheet.worksheetTab + '". Find each call in '
          + 'the phone system by AGENT + DATE + TIME, listen, and pick a Label from the dropdown. '
-         + 'Ring length is deliberately not shown — it is the hypothesis under test, and the '
+         + 'Ring and talk length are deliberately not shown — they are the hypotheses under test, and the '
          + 'hidden Key tab exists for the scorer, not for you. When the rows are labelled (partial '
          + 'is fine) run scoreOutboundReviewSample() — it joins the key, tallies per stratum and '
          + 'returns the verdict, so there is no manual join or pivot to do.')
       : ('Sheet write failed — paste `worksheet` into a spreadsheet, label every row, and do NOT '
          + 'open `key` until they are all labelled.');
     out.result = 'ok sampled ' + rows.length + ' calls for review across '
-      + OB_REVIEW_STRATA_.length + ' strata ' + label
+      + strata.length + ' ' + mode.toUpperCase() + ' strata ' + label
       + (out.sheet ? ' → ' + out.sheet.url + ' tab "' + out.sheet.worksheetTab + '"' : '')
       + (thin.length ? ' — ⚠ THIN: ' + thin.join(', ') + '; widen OUTBOUND_PROBE_FROM/_TO '
           + 'before drawing conclusions from those strata' : '')
@@ -1999,8 +2132,36 @@ function scoreOutboundReviewSample(worksheetTab) {
   var wsGrid = ws.getDataRange().getDisplayValues();
   var keyGrid = key.getDataRange().getDisplayValues();
   var tally = obReviewTally_(wsGrid, keyGrid);
-  var verdict = obReviewVerdict_(tally);
   var talk = obReviewTalkComparison_(tally.byLabel);
+
+  // A TALK run is recognised by its stratum ids, and is scored ONLY against
+  // the pre-registered rule: the refitted best window is still computed, but
+  // as exploratory context -- quoting it as the result would undo the
+  // pre-registration.
+  var talkIds = {};
+  OB_REVIEW_TALK_STRATA_.forEach(function (st) { talkIds[st.id] = true; });
+  var isTalkRun = Object.keys(tally.byStratum).some(function (id) { return talkIds[id]; });
+  if (isTalkRun) {
+    var tv = obReviewTalkRuleVerdict_(tally.byLabel);
+    var tout = {
+      mode: 'talk', workbook: ss.getUrl(), worksheetTab: wsName,
+      rows: tally.totalRows, labelled: tally.labelled, unlabelled: tally.unlabelled,
+      byStratum: tally.byStratum, verdict: tv.verdict, why: tv.reason, talkRule: tv,
+      talkByLabel: talk.byLabel, exploratoryRefit: talk.separation,
+    };
+    if (tally.unrecognised.length) tout.unrecognisedLabels = tally.unrecognised;
+    if (tally.tokensMissingKey.length) tout.tokensMissingKey = tally.tokensMissingKey;
+    tout.result = (tv.verdict === 'validated' ? 'ok VALIDATED'
+        : (tv.verdict === 'refuted' ? 'ok REFUTED' : 'INCONCLUSIVE'))
+      + ' (talk run) — ' + tv.reason + '. ' + tally.labelled + ' of ' + tally.totalRows
+      + ' rows labelled in "' + wsName + '"'
+      + (tally.unlabelled ? ' (' + tally.unlabelled + ' still blank)' : '')
+      + '. Research only — nothing was set, and nothing reaches the reports.';
+    Logger.log('[outbound-review] %s', tout.result);
+    return logStatusReturn_(tout);
+  }
+
+  var verdict = obReviewVerdict_(tally);
 
   // byBand / recallCeiling / shoulder were computed by the verdict and then
   // dropped on the floor here -- the per-band profile is what the threshold

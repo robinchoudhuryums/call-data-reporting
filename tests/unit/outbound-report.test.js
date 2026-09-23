@@ -2904,3 +2904,93 @@ test('connected: every outbound surface uses the definition, and "Actually reach
   assert.match(readDD_('dashboard.html'), /upper bound on callers actually reached/);
   assert.match(OB_SRC, /upper bound on callers '\s*\n\s*\+ 'actually reached/);
 });
+
+// ── The TALK-time test: pre-registered rule, talk-stratified sample ───────
+// Run "Review 20260922-1313" found talk 8-79 s -> machine at 92% balanced
+// accuracy, but FITTED to the rows it scored and with no person call under
+// 62 s in the sample. These pin the out-of-sample test that answers it.
+
+test('talk: the rule is PRE-REGISTERED -- editing it after a run is refitting', function () {
+  // If this fails, you changed the rule. Do not update the numbers here to
+  // match: a new hypothesis needs its own constant AND a fresh sample, or the
+  // talk run stops being a test of anything.
+  const R = h.ctx.OB_REVIEW_TALK_RULE_;
+  assert.equal(R.lo, 8);
+  assert.equal(R.hi, 79);
+  assert.equal(R.registered, '2026-09-23');
+});
+
+test('talk: the strata TILE 1..inf with no gap, and each SQL matches its range', function () {
+  const bands = h.ctx.OB_REVIEW_TALK_STRATA_
+    .map(function (st) { return { id: st.id, lo: st.talk[0], hi: st.talk[1], sql: st.sql }; })
+    .sort(function (a, b) { return a.lo - b.lo; });
+  assert.equal(bands[0].lo, 1, 'connected implies talk > 0, so the first band starts at 1');
+  assert.equal(bands[bands.length - 1].hi, null, 'the last band must be open-ended');
+  for (let i = 1; i < bands.length; i++) {
+    assert.equal(bands[i].lo, bands[i - 1].hi + 1,
+      'gap or overlap between ' + bands[i - 1].id + ' and ' + bands[i].id);
+  }
+  bands.forEach(function (b) {
+    assert.match(b.sql, /^connected AND /, b.id + ' must sample CONNECTED rows only');
+    assert.ok(b.hi === null ? b.sql.indexOf('talk_seconds >= ' + b.lo) >= 0
+      : b.sql.indexOf('BETWEEN ' + b.lo + ' AND ' + b.hi) >= 0, b.id + ' sql/range drift: ' + b.sql);
+  });
+  // The rule's edges are band edges, so every band sits wholly in or out of it.
+  const R = h.ctx.OB_REVIEW_TALK_RULE_;
+  assert.ok(bands.some(function (b) { return b.lo === R.lo; }), 'a band must start at the rule\'s lo');
+  assert.ok(bands.some(function (b) { return b.hi === R.hi; }), 'a band must end at the rule\'s hi');
+  // No talk stratum id may collide with a ring one: the scorer tells the two
+  // run types apart by id.
+  const ringIds = h.ctx.OB_REVIEW_STRATA_.map(function (st) { return st.id; });
+  bands.forEach(function (b) { assert.equal(ringIds.indexOf(b.id), -1, b.id + ' collides'); });
+});
+
+test('talk: the verdict applies the rule AS-IS, and names both ways to fail', function () {
+  const many = function (v, n) { return Array.from({ length: n }, function () { return v; }); };
+  // Holds: machines inside 8-79, people outside.
+  const ok = h.ctx.obReviewTalkRuleVerdict_({
+    voicemail: { talk: many(40, 18) }, ivr: { talk: many(30, 2) }, human: { talk: many(150, 20) },
+  });
+  assert.equal(ok.verdict, 'validated');
+  assert.match(ok.reason, /NOT refitted/);
+  assert.match(ok.reason, /Still research/);
+  // Fails on the blind spot: people who hung up fast sit inside the rule.
+  const blind = h.ctx.obReviewTalkRuleVerdict_({
+    voicemail: { talk: many(40, 20) }, human: { talk: many(20, 14).concat(many(150, 6)) },
+  });
+  assert.equal(blind.verdict, 'refuted');
+  assert.match(blind.reason, /calls too many people machines/);
+  assert.equal(blind.fastHangupPeople, 14);
+  assert.match(blind.reason, /14 person call\(s\) at 30 s or under/);
+  // Fails the other way: long messages outside the rule.
+  const longVm = h.ctx.obReviewTalkRuleVerdict_({
+    voicemail: { talk: many(100, 16).concat(many(40, 4)) }, human: { talk: many(150, 20) },
+  });
+  assert.equal(longVm.verdict, 'refuted');
+  assert.match(longVm.reason, /misses too many machines/);
+  assert.equal(longVm.longMachines, 16);
+  // Too few in a class is a count, never a verdict.
+  const thin = h.ctx.obReviewTalkRuleVerdict_({ voicemail: { talk: many(40, 20) }, human: { talk: [150] } });
+  assert.equal(thin.verdict, 'inconclusive');
+  assert.match(thin.reason, /have 1 \/ 20/);
+  // In between: an interval spanning the bar asks for more of THIS rule.
+  const mid = h.ctx.obReviewTalkRuleVerdict_({
+    voicemail: { talk: many(40, 8).concat(many(100, 2)) }, human: { talk: many(150, 10) },
+  });
+  assert.equal(mid.verdict, 'inconclusive');
+  assert.match(mid.reason, /never a new window fitted to these rows/);
+});
+
+test('talk: the entry point is admin-gated, and a talk run is scored ONLY by the rule', function () {
+  const entry = OB_SRC.slice(OB_SRC.indexOf('function sampleOutboundCallsForReviewByTalk'));
+  assert.match(entry, /^function sampleOutboundCallsForReviewByTalk\(\) \{\n  assertAdmin_\(\);\n  return obReviewSample_\(OB_REVIEW_TALK_STRATA_, 'talk'\);/);
+  const ring = OB_SRC.slice(OB_SRC.indexOf('function sampleOutboundCallsForReview()'));
+  assert.match(ring, /^function sampleOutboundCallsForReview\(\) \{\n  assertAdmin_\(\);\n  return obReviewSample_\(OB_REVIEW_STRATA_, 'ring'\);/);
+  const scorer = OB_SRC.slice(OB_SRC.indexOf('function scoreOutboundReviewSample'));
+  const branch = scorer.slice(scorer.indexOf('if (isTalkRun)'), scorer.indexOf('var verdict = obReviewVerdict_(tally);'));
+  assert.ok(branch.indexOf('obReviewTalkRuleVerdict_(tally.byLabel)') >= 0, 'the rule decides a talk run');
+  assert.ok(branch.indexOf('exploratoryRefit: talk.separation') >= 0,
+    'the refit is carried only as EXPLORATORY context');
+  assert.ok(branch.indexOf('talk.separation.reason') < 0,
+    'the refit window must never be quoted as a talk run\'s result');
+});

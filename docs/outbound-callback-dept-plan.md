@@ -658,6 +658,17 @@ carry no number. Steps 2-4 below are SUPERSEDED; the per-dept callback table
 (Part 1) is unblocked, since it ranks by called-back and any connected column
 inherits the definition.
 
+**The talk-time follow-up (same day).** Re-scored after deploy, the same
+run's labels showed TALK separates far better than ring: person median 147 s
+(none under 62 s), voicemail median 37 s, and the best window -- talk 8-79 s
+-> machine -- scored 92% balanced accuracy. That window was FITTED to the rows
+it was scored on, and the ring-drawn sample held no fast-hang-up person call,
+the rule's most likely failure. So it is now **pre-registered**
+(`OB_REVIEW_TALK_RULE_`, pinned) and tested on a fresh TALK-stratified draw,
+`sampleOutboundCallsForReviewByTalk()`, weighted toward the rule's edges; the
+scorer applies the rule as-is (Operator State #71). Research only either way:
+the owner ruling keeps audit findings out of the reports.
+
 **Open, and it outranks everything above: the E control failed** (0 of 3
 unconnected rows came back no-answer; 2 human, 1 voicemail). The likely cause
 is the lookup, not the data -- an unconnected call often has no recording, so

@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer
+  found talk 8-79 s -> machine at 92% balanced accuracy on run 20260922-1313
+  -- IN-SAMPLE, and with no person call under 62 s in that ring-drawn sample.
+  The rule is now PRE-REGISTERED (`OB_REVIEW_TALK_RULE_`, pinned) and
+  `sampleOutboundCallsForReviewByTalk()` draws a fresh ~46-call sample in six
+  talk bands weighted to the rule's edges; the scorer detects a talk run and
+  scores only the fixed rule (both failure modes, 70% lower-bound bar).
+  **Owner next:** deploy, run the talk sampler, label, score. Research only --
+  nothing reaches the reports. The E-control question (unconnected rows heard
+  as human) is still open.
 - **2026-09-23 (answer-quality CONCLUDED, same branch; PR #341 merged):** the
   owner labelled 53/54 rows of `Review 20260922-1313`. Population-weighted,
   voicemail is ~40% of connected calls, its share RISES with ring (~30% ->

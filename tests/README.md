@@ -324,7 +324,12 @@ tests/
                               a share) and the talk-time comparison (header-
                               located key columns, connected rows only);
                               the "Connected" DEFINITION on every outbound
-                              surface with no audit figure in it; plus SOURCE
+                              surface with no audit figure in it; the TALK
+                              run -- the pre-registered rule pinned against
+                              edits, talk strata tiling 1..inf, the rule
+                              verdict naming both failure modes, and a talk
+                              run scored ONLY by the rule, never the refit;
+                              plus SOURCE
                               pins on SQL the mocked connection never runs),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a
