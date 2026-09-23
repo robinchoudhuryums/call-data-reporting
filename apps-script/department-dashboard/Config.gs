@@ -765,6 +765,8 @@ var PROP_REGISTRY_ = Object.freeze({
     SHEET_COVERAGE_ENABLED: 'operator',
     NEON_RETENTION_ENABLED: 'operator', NEON_RETENTION_JOURNEY_DAYS: 'operator',
     NEON_RETENTION_CALL_DAYS: 'operator', NEON_RETENTION_HISTORY_MONTHS: 'operator',
+    // ENG-2: explicit opt-out of the backup gate on the per-call prune steps.
+    NEON_RETENTION_WITHOUT_BACKUP: 'operator',
     CACHE_WARM_HOUR: 'operator',
     QUEUE_REPORT_ENABLED: 'operator',
     // R43: the all-departments report's whole-run compute budget (ms). Unset

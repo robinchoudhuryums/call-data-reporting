@@ -542,7 +542,7 @@ function computeDigestStats_(dept, fromIso, toIso) {
  * Week-over-week "driver" narrative for the digest (#11). Reuses the
  * Overview's tested INV-48 logic (computeWowDelta_ + computeWowDriver_)
  * by building the `stats` shape those expect -- dept-level
- * `trendByDate` ({rung, answered}) + per-agent `agentTrendByDate`
+ * `trendByDate` ({rung, answered, missed}) + per-agent `agentTrendByDate`
  * ({answered, missed}) -- over the 14-day window ending on `anchorIso`
  * (the digest window's end). computeWowDelta_ then carves the 7-day
  * current vs prior-7 windows internally and attaches `.driver` when
@@ -569,7 +569,7 @@ function computeDigestWowDriver_(dept, anchorIso) {
     const windowStartIso = Utilities.formatDate(
       new Date(anchorObj.getTime() - 13 * 86400000), TZ, 'yyyy-MM-dd');
 
-    const trendByDate = {};        // iso -> { rung, answered }
+    const trendByDate = {};        // iso -> { rung, answered, missed }
     const agentTrendByDate = {};   // agent -> iso -> { answered, missed }
     // Shared accumulator so both sources produce identical shapes.
     const accept = function (dateIso, agentRaw, rungRaw, missedRaw, answeredRaw) {
@@ -582,9 +582,15 @@ function computeDigestWowDriver_(dept, anchorIso) {
       const missed   = Number(missedRaw)   || 0;
       const answered = Number(answeredRaw) || 0;
 
+      // S2A-1 (broad-scan 2026-09-23): carry `missed` -- computeWowDelta_
+      // rates through answerRatePct_ (DD-2), and under
+      // ANSWER_RATE_FORMULA=answerable a missing `missed` made both weeks
+      // answered/answered = 100%, so every digest said "no notable shift".
+      // CompanyOverview's own trendByDate got this field in DD-2; this copy
+      // did not.
       let t = trendByDate[dateIso];
-      if (!t) t = trendByDate[dateIso] = { rung: 0, answered: 0 };
-      t.rung += rung; t.answered += answered;
+      if (!t) t = trendByDate[dateIso] = { rung: 0, answered: 0, missed: 0 };
+      t.rung += rung; t.answered += answered; t.missed += missed;
 
       let a = agentTrendByDate[agent];
       if (!a) a = agentTrendByDate[agent] = {};

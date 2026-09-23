@@ -222,7 +222,17 @@ tests/
                               one json round trip over the public tables,
                               largest first -- and its pure verdict:
                               informational without NEON_STORAGE_CAP_MB,
-                              warn at 80% with it, top 5 named),
+                              warn at 80% with it, top 5 named; ENG-2: the
+                              per-call steps HELD -- PARTIAL, not ok --
+                              without a clean backup in 15 days, unless
+                              NEON_RETENTION_WITHOUT_BACKUP=true),
+                              neon-backup (ENG-1: the closed-month rule,
+                              driven through the REAL runNeonBackup_ over
+                              an in-memory Drive -- a month is rewritten
+                              until a run lands >= 3 days after it closed,
+                              then frozen; a pre-fix month too old to
+                              rewrite losslessly gets a .tail.jsonl of the
+                              rows after its last row, never an overwrite),
                               html-include-structure (the whole-file
                               tag-wrap trap + the assembled-client pins),
                               queue-split (cols A..AH byte-identical +

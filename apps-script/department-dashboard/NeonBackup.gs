@@ -16,11 +16,16 @@
  *     mutable — status/resolution change), trimmed to the newest
  *     NEON_BACKUP_KEEP snapshots (default 8 ≈ two months of weeklies).
  *   - escalation_activity-<YYYY-MM>.jsonl   MONTHLY partitions (append-only
- *     rows): a CLOSED month whose file already exists is skipped; the
- *     current month is rewritten each run.
+ *     rows): the current month is rewritten each run; a CLOSED month is
+ *     skipped only once FINAL -- written at least NB_FINAL_GRACE_DAYS_ after
+ *     it closed (ENG-1: the old "file exists -> skip" froze each month at its
+ *     last in-month Saturday and never backed up the days after it). A
+ *     pre-ENG-1 month too old to rewrite losslessly gets a
+ *     <table>-<YYYY-MM>.tail.jsonl supplement instead (nbClosedMonthAction_).
+ *     Restore = the month file(s) + its tail file, if any.
  *   - inbound_calls-<YYYY-MM>.jsonl         Same monthly scheme (rows for a
  *     date can be refreshed by a re-import, but only current-ish dates are
- *     ever rewritten, so closed months are stable).
+ *     ever rewritten, so final closed months are stable).
  *
  * Format: one JSON object per line (row_to_json), which restores cleanly
  * via psql/\copy or a small script. Fetching uses ONE
@@ -114,21 +119,39 @@ function runNeonBackup_() {
       // until then the catch below reports a clean not-created-yet skip.
       { table: 'outbound_calls',      dateCol: 'call_date', cast: 'date',        orderBy: 'call_date, call_id' },
     ];
+    var journeyDays = nbJourneyDays_();
     for (var m = 0; m < monthlies.length; m++) {
       var spec = monthlies[m];
       try {
         var firstYm = nbMinMonth_(conn, spec.table, spec.dateCol);
         if (!firstYm) { outcomes.push(spec.table + ' empty'); continue; }
         var months = nbMonthsBetween_(firstYm, currentYm);
-        var written = 0, skipped = 0;
+        var written = 0, skipped = 0, tails = 0;
         for (var i = 0; i < months.length; i++) {
           var ym = months[i];
           var name = spec.table + '-' + ym + '.jsonl';
-          // OPS-4: a month already written as split parts also counts as
-          // closed (the single-name check alone would refetch it forever).
-          if (ym < currentYm && (folder.getFilesByName(name).hasNext()
-              || folder.getFilesByName(spec.table + '-' + ym + '.part1.jsonl').hasNext())) {
-            skipped++; continue;
+          if (ym < currentYm) {
+            // ENG-1 (broad-scan 2026-09-23): a closed month is FINAL only once
+            // a run has written it at least NB_FINAL_GRACE_DAYS_ after the
+            // month closed. The old rule ("closed + file exists -> skip")
+            // froze the file from the month's LAST IN-MONTH Saturday, so the
+            // days after it (1-7 per month, plus the next-morning ingest of
+            // the last day) were never backed up -- and NeonRetention prunes
+            // them later. See nbClosedMonthAction_.
+            var main = nbMonthMainFile_(folder, spec.table, ym);
+            var tailName = spec.table + '-' + ym + '.tail.jsonl';
+            var tailFile = nbFirstFile_(folder, tailName);
+            var action = nbClosedMonthAction_(ym, {
+              lastUpdatedIso: main ? nbFileUpdatedIso_(main) : null,
+              tailUpdatedIso: tailFile ? nbFileUpdatedIso_(tailFile) : null,
+            }, nowIso, { graceDays: NB_FINAL_GRACE_DAYS_, journeyDays: journeyDays });
+            if (action === 'skip') { skipped++; continue; }
+            if (action === 'tail') {
+              nbWriteMonthTail_(conn, folder, spec, ym, main, tailName);
+              tails++;
+              continue;
+            }
+            // 'write' / 'rewrite': fall through to the full-month fetch.
           }
           // OPS-4: fetch the month in ~week-sized windows so no single JDBC
           // getString has to carry a whole month of journey-bearing rows
@@ -176,9 +199,15 @@ function runNeonBackup_() {
               while (staleIt.hasNext()) staleIt.next().setTrashed(true);
             }
           }
+          // ENG-1: a full-month file now holds every row the tail file held,
+          // so a stale tail would duplicate rows on restore.
+          var staleTail = folder.getFilesByName(spec.table + '-' + ym + '.tail.jsonl');
+          while (staleTail.hasNext()) staleTail.next().setTrashed(true);
           written++;
         }
-        outcomes.push(spec.table + ' ok (' + written + ' month file(s) written, ' + skipped + ' closed skipped)');
+        outcomes.push(spec.table + ' ok (' + written + ' month file(s) written, '
+          + (tails ? tails + ' closed-month tail(s) written, ' : '')
+          + skipped + ' closed skipped)');
       } catch (e2) {
         var m2 = (e2 && e2.message ? e2.message : String(e2));
         // P5: a per-call table not created yet (outbound_calls before the
@@ -243,6 +272,12 @@ function runNeonBackup_() {
 // failed/truncated around ~10MB; stay comfortably under. Months whose
 // combined rows exceed this are written as .partN.jsonl files.
 var NB_FILE_BUDGET_CHARS = 8 * 1024 * 1024;
+
+// ENG-1: a closed month's file is final once written at least this many days
+// after the month closed -- covers the last day's next-morning ingest and a
+// short catch-up. The previous month is therefore rewritten by the first one
+// or two Saturday runs of the new month, then frozen.
+var NB_FINAL_GRACE_DAYS_ = 3;
 
 /** OPS-4: fetch one month's rows in ~week-sized date windows (4 windows:
  *  1st-8th, 9th-16th, 17th-24th, 25th-1st-of-next). Bounds every JDBC
@@ -309,6 +344,110 @@ function nbNextMonth_(ym) {
   m++;
   if (m > 12) { m = 1; y++; }
   return y + '-' + (m < 10 ? '0' + m : String(m));
+}
+
+/** Pure: ISO 'YYYY-MM-DD' shifted by `n` calendar days (UTC arithmetic, DST-proof). */
+function nbAddDaysIso_(iso, n) {
+  var p = String(iso || '').split('-').map(Number);
+  var d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + (Number(n) || 0)));
+  return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2)
+    + '-' + ('0' + d.getUTCDate()).slice(-2);
+}
+
+/**
+ * ENG-1. Pure: what the backup does with a CLOSED month `ym` (< the current
+ * month). `info.lastUpdatedIso` is the Drive last-updated date (script TZ) of
+ * the month's file (single or part1; '' when unreadable, null when absent),
+ * `info.tailUpdatedIso` the same for its `.tail.jsonl` supplement.
+ *
+ *   'write'   no file yet -- fetch the whole month (unchanged behaviour).
+ *   'skip'    FINAL: the file (or its tail) was written at least
+ *             `graceDays` after the month closed, so it saw the last day's
+ *             next-morning ingest and any late re-import.
+ *   'rewrite' not final, and every row of the month is still inside the
+ *             retention journey horizon -- a full rewrite loses nothing.
+ *   'tail'    not final, but older rows may already have had `journey`
+ *             pruned, so overwriting the file would DESTROY backed-up
+ *             journeys. Instead write `<table>-<ym>.tail.jsonl` with only the
+ *             rows after the file's last row (the pre-ENG-1 legacy months).
+ *
+ * `opts.journeyDays` null/absent -> never 'rewrite' (fail toward the
+ * lossless 'tail'). Two days of slack cover the prune's UTC CURRENT_DATE vs
+ * the script-TZ `todayIso`.
+ */
+function nbClosedMonthAction_(ym, info, todayIso, opts) {
+  info = info || {}; opts = opts || {};
+  var grace = parseInt(opts.graceDays, 10);
+  if (!isFinite(grace) || grace < 0) grace = NB_FINAL_GRACE_DAYS_;
+  if (info.lastUpdatedIso === null || info.lastUpdatedIso === undefined) return 'write';
+  var finalOn = nbAddDaysIso_(nbNextMonth_(ym) + '-01', grace);
+  if (info.lastUpdatedIso && info.lastUpdatedIso >= finalOn) return 'skip';
+  var jd = parseInt(opts.journeyDays, 10);
+  if (isFinite(jd) && jd > 2 && (ym + '-01') >= nbAddDaysIso_(todayIso, -(jd - 2))) return 'rewrite';
+  if (info.tailUpdatedIso && info.tailUpdatedIso >= finalOn) return 'skip';
+  return 'tail';
+}
+
+/** The effective retention journey horizon (days), or null when unknown. */
+function nbJourneyDays_() {
+  try {
+    if (typeof neonRetentionSettings_ === 'function') {
+      return neonRetentionSettings_(PropertiesService.getScriptProperties()).journeyDays;
+    }
+  } catch (e) { /* unknown -> the lossless 'tail' path */ }
+  return null;
+}
+
+function nbFirstFile_(folder, name) {
+  var it = folder.getFilesByName(name);
+  return it.hasNext() ? it.next() : null;
+}
+
+/** The month's single file, else its part1 (OPS-4), else null. */
+function nbMonthMainFile_(folder, table, ym) {
+  return nbFirstFile_(folder, table + '-' + ym + '.jsonl')
+    || nbFirstFile_(folder, table + '-' + ym + '.part1.jsonl');
+}
+
+/** Drive last-updated date in script TZ; '' when it cannot be read (= not final). */
+function nbFileUpdatedIso_(file) {
+  try { return Utilities.formatDate(file.getLastUpdated(), TZ, 'yyyy-MM-dd'); }
+  catch (e) { return ''; }
+}
+
+/**
+ * ENG-1 'tail' action: back up the rows AFTER the month file's last row
+ * (the file is ordered by spec.orderBy, so its last line carries the max
+ * dateCol) into `<table>-<ym>.tail.jsonl`. Written even when empty -- the
+ * file's timestamp is what marks the month final. Restore = month file(s)
+ * + tail. Throws (-> the table's FAILED outcome) when the last row cannot
+ * be read, rather than guess a cut-off and duplicate or drop rows.
+ */
+function nbWriteMonthTail_(conn, folder, spec, ym, mainFile, tailName) {
+  var last = mainFile;
+  if (/\.part1\.jsonl$/.test(mainFile.getName())) {
+    for (var p = 2; ; p++) {
+      var nextPart = nbFirstFile_(folder, spec.table + '-' + ym + '.part' + p + '.jsonl');
+      if (!nextPart) break;
+      last = nextPart;
+    }
+  }
+  var lines = String(last.getBlob().getDataAsString() || '').split('\n')
+    .filter(function (l) { return l.trim(); });
+  var maxVal = null;
+  try { maxVal = lines.length ? JSON.parse(lines[lines.length - 1])[spec.dateCol] : null; }
+  catch (e) { maxVal = null; }
+  if (maxVal === null || maxVal === undefined || maxVal === '') {
+    throw new Error('tail for ' + ym + ': cannot read the last row of ' + last.getName());
+  }
+  var body = nbFetchAgg_(conn,
+    "SELECT COALESCE(string_agg(row_to_json(t)::text, E'\\n'), '') AS j "
+    + 'FROM (SELECT * FROM ' + spec.table
+    + ' WHERE ' + spec.dateCol + ' > ?::' + spec.cast
+    + ' AND ' + spec.dateCol + ' < ?::' + spec.cast
+    + ' ORDER BY ' + spec.orderBy + ') t',
+    [String(maxVal), nbNextMonth_(ym) + '-01']);
+  nbWriteFile_(folder, tailName, body);
 }
 
 /**

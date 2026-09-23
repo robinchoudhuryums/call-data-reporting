@@ -676,8 +676,9 @@ function getSystemHealth(req) {
     svc('trg-neonretention', 'Neon retention prune (weekly storage-cap control)',
       ['runNeonRetentionWeekly_'], false,
       'Recommended: nulls per-call journeys past 90d, drops per-call rows past 400d and '
-      + 'dqe/qcd mirror rows past 13 months so the free-tier 0.5 GB cap is never reached '
-      + '(Operator State #57). Enable via installNeonRetentionTrigger().',
+      + 'dqe/qcd mirror rows past 25 months (OD-4) so the free-tier 0.5 GB cap is never reached '
+      + '(Operator State #57). The per-call steps wait on a clean Neon backup in the last 15 days (ENG-2). '
+      + 'Enable via installNeonRetentionTrigger().',
       'NEON_RETENTION_ENABLED');
     // F-e: the coaching delivery engine (weekly email + worklist upsert).
     // Admin-only while dark (owner ruling): emails go to getAdminEmails_().

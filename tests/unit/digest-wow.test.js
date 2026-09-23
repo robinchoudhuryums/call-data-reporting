@@ -187,3 +187,40 @@ test('P6: a delivered run still claims the window (dedup preserved)', function (
   h.call('sendDigestsForCadence_', 'daily');
   assert.equal(sends, 1, 'duplicate run skipped');
 });
+
+// S2A-1 (broad-scan 2026-09-23): the digest's trendByDate carried no `missed`,
+// so under ANSWER_RATE_FORMULA=answerable (DD-2, Operator State #69) both weeks
+// rated answered/answered = 100% and every digest said "no notable shift".
+// The rung figure here deliberately differs from answered+missed so the two
+// formulas give DIFFERENT, pinned answers.
+test('S2A-1: the digest WoW rates under ANSWER_RATE_FORMULA=answerable (was: always 100% vs 100%)', function () {
+  const rows = [
+    row('2026-03-04', 'Anna', { rung: 12, missed: 5, answered: 5 }),
+    row('2026-03-04', 'Ben',  { rung: 12, missed: 5, answered: 5 }),
+    row('2026-03-11', 'Anna', { rung: 12, missed: 1, answered: 9 }),
+    row('2026-03-11', 'Ben',  { rung: 12, missed: 5, answered: 5 }),
+  ];
+  try {
+    install(rows);
+    h.state.props.ANSWER_RATE_FORMULA = 'answerable';
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    const wow = h.call('computeDigestWowDriver_', 'Alpha', '2026-03-14');
+    assert.ok(wow, 'expected a wow result');
+    assert.equal(wow.prevPct, 50);          // 10 / (10 + 10)
+    assert.equal(wow.curPct, 70);           // 14 / (14 + 6)
+    assert.equal(wow.deltaPct, 20);
+    assert.ok(wow.driver && wow.driver.agent === 'Anna', 'the driver surfaces under answerable too');
+
+    // Same rows under the default formula: answered / rung.
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    const wow2 = h.call('computeDigestWowDriver_', 'Alpha', '2026-03-14');
+    assert.equal(wow2.prevPct, round1(10 / 24 * 100));
+    assert.equal(wow2.curPct, round1(14 / 24 * 100));
+  } finally {
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  }
+});
+
+function round1(x) { return Math.round(x * 10) / 10; }

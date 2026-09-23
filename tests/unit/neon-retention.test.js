@@ -146,8 +146,15 @@ test('R27: a not-yet-created table is a clean per-step skip; a throwing step is 
   assert.match(s, /inbound_calls:rows=ERR/);
 });
 
-function runWith(counts, throws) {
-  props();
+// ENG-2: the per-call steps now wait on a healthy Neon backup, so the default
+// fixture carries one (a clean run yesterday); the ENG-2 tests below vary it.
+function healthyBackup() {
+  return { NEON_BACKUP_LAST: new Date(Date.now() - 86400000).toISOString(),
+           NEON_BACKUP_LAST_RESULT: 'ok | escalations ok (1KB) | inbound_calls ok (1 month file(s) written, 3 closed skipped) | 9ms' };
+}
+
+function runWith(counts, throws, backupProps) {
+  props(backupProps === undefined ? healthyBackup() : backupProps);
   const mails = [];
   h.ctx.MailApp = { sendEmail: function (m) { mails.push(m); } };
   h.ctx.getDashboardNeonConn_ = function () { return conn(counts, throws); };
@@ -188,6 +195,47 @@ test('R27: the weekly handler NO-OPS when the flag is off, runs when on, never t
   h.ctx.getDashboardNeonConn_ = function () { throw new Error('connect exploded'); };
   assert.doesNotThrow(function () { h.call('runNeonRetentionWeekly_'); });
   assert.match(h.state.props.NEON_RETENTION_LAST_RESULT, /^FAILED connect exploded/);
+});
+
+test('ENG-2: neonRetentionBackupGate_ holds the per-call prune unless the backup is recent and clean', function () {
+  const now = Date.parse('2026-10-04T08:00:00Z');
+  function gate(extra) {
+    const store = Object.assign({}, extra);
+    return h.call('neonRetentionBackupGate_', { getProperty: function (k) { return store[k] || null; } }, now);
+  }
+  assert.match(gate({}), /no Neon backup has run/);
+  assert.equal(gate({ NEON_BACKUP_LAST: '2026-10-03T11:00:00Z', NEON_BACKUP_LAST_RESULT: 'ok | x' }), null);
+  assert.equal(gate({ NEON_BACKUP_LAST: '2026-09-26T11:00:00Z', NEON_BACKUP_LAST_RESULT: 'ok | x' }), null,
+    'one missed Saturday does not hold the prune');
+  assert.match(gate({ NEON_BACKUP_LAST: '2026-09-12T11:00:00Z', NEON_BACKUP_LAST_RESULT: 'ok | x' }), /ran 21 days ago/);
+  assert.match(gate({ NEON_BACKUP_LAST: '2026-10-03T11:00:00Z', NEON_BACKUP_LAST_RESULT: 'FAILED | inbound_calls FAILED: x' }),
+    /did not finish clean/);
+  assert.match(gate({ NEON_BACKUP_LAST: '2026-10-03T11:00:00Z', NEON_BACKUP_LAST_RESULT: 'skipped (Neon unreachable/unconfigured)' }),
+    /did not finish clean/);
+  assert.match(gate({ NEON_BACKUP_LAST: 'garbage', NEON_BACKUP_LAST_RESULT: 'ok' }), /unreadable/);
+  assert.equal(gate({ NEON_RETENTION_WITHOUT_BACKUP: 'true' }), null, 'explicit operator opt-out');
+});
+
+test('ENG-2: with no healthy backup the run prunes ONLY the sheet-primary tables and reads PARTIAL', function () {
+  const mails = runWith({ 'DELETE FROM qcd_history': [4], 'DELETE FROM inbound_calls': [9] }, null, {});
+  const out = h.call('runNeonRetentionPrune');
+  const touched = out.steps.map(function (s) { return s.key; });
+  assert.deepEqual(JSON.parse(JSON.stringify(touched)), ['dqe_history:rows', 'qcd_history:rows']);
+  assert.equal(out.rows, 4, 'the per-call DELETE never ran');
+  assert.match(out.heldPerCall, /no Neon backup has run/);
+  const res = h.state.props.NEON_RETENTION_LAST_RESULT;
+  assert.match(res, /^PARTIAL per-call prune HELD -- no Neon backup has run/);
+  assert.match(res, /NEON_RETENTION_WITHOUT_BACKUP=true/);
+  assert.equal(mails.length, 0, 'a hold is a Health-row warning, not an email');
+  // The Health classifier must read the hold as bad (a green row would hide it).
+  const sh = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'SystemHealth.gs'] });
+  assert.equal(sh.call('healthOutcomeIsBad_', res), true);
+
+  // Opt-out: every step runs again.
+  runWith({ 'DELETE FROM inbound_calls': [9] }, null, { NEON_RETENTION_WITHOUT_BACKUP: 'true' });
+  const out2 = h.call('runNeonRetentionPrune');
+  assert.equal(out2.steps.length, 6);
+  assert.match(h.state.props.NEON_RETENTION_LAST_RESULT, /^ok pruned 9 row\(s\)/);
 });
 
 test('R27: install/uninstall are admin-gated and fully reversible', function () {

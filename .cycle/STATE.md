@@ -1,6 +1,19 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
+  a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
+  owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds
+  the app; now in Batch 2) and SEC-6 -> PHI in Script Properties is ACCEPTED
+  (Apps Script is Workspace HIPAA Included Functionality; Batch 10 gets a docs
+  note). **Batch 1 SHIPPED on this branch** (block 195): ENG-1 backup
+  closed-month finalization + tail files, ENG-2 retention held without a clean
+  backup, S2A-1 digest WoW `missed` (unblocks `ANSWER_RATE_FORMULA=answerable`),
+  ENG-11 text. **WHERE I LEFT OFF:** Batch 1 pushed, not yet deployed. Next:
+  deploy the dashboard, run "Back up now" once, then `/broad-implement Batch 2`
+  (S2B-1 add-agent lockout, S2B-2 auth-lock stalls, SEC-1 range cap, SEC-3,
+  S2B-6, SEC-5). Batch 11 must also carry S2A-1's deferred queue-split half.
+  The per-dept callback table stays the next FEATURE (entry below).
 - **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer
   found talk 8-79 s -> machine at 92% balanced accuracy on run 20260922-1313
   -- IN-SAMPLE, and with no person call under 62 s in that ring-drawn sample.

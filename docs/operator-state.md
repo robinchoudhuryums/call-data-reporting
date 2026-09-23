@@ -587,8 +587,15 @@ When something looks wrong, before assuming a code bug, check:
     `escalations`, `escalation_activity`, `inbound_calls` (incl. journey
     JSON) -- as one-JSON-object-per-line files: a full escalations
     snapshot per run (newest `NEON_BACKUP_KEEP`=8 kept) + monthly
-    partition files for the other two (closed months written once,
-    current month rewritten). Enable from the Health modal's **Neon
+    partition files for the other two (current month rewritten each run;
+    a CLOSED month is rewritten until a run lands >= 3 days after it
+    closed, then frozen -- ENG-1, 2026-09-23: before that fix a month froze
+    at its last IN-month Saturday and the days after it were never backed
+    up. The first run after deploying the fix writes a
+    `<table>-<ym>.tail.jsonl` for every older month frozen that way -- the
+    rows after the month file's last row, never an overwrite, because
+    those months' journeys may already be pruned. RESTORE = the month
+    file(s) + its `.tail.jsonl` if present). Enable from the Health modal's **Neon
     backup** section (or `installNeonBackupTrigger()` -- Saturdays at
     `NEON_BACKUP_HOUR`=6 Central); "Back up now" seeds the folder. The
     Drive folder is auto-created ("Dashboard Neon Backups") and its id
@@ -1705,8 +1712,15 @@ When something looks wrong, before assuming a code bug, check:
     OPS-8 coded in `NEON_RETENTION_LAST` / `NEON_RETENTION_LAST_RESULT`
     (`ok` / `FAILED` / `skipped`), the Health page's "Neon retention — last
     prune" row reads it, admins are emailed only on FAILED. Closed months of
-    the per-call tables are backed up ONCE (#28) before any horizon here can
-    reach them.
+    the per-call tables are backed up and finalized (#28) before any horizon
+    here can reach them -- PROVIDED the backup runs. **ENG-2 (2026-09-23): the
+    two per-call tables' steps (`inbound_calls` / `outbound_calls`, which have
+    no sheet primary) are HELD unless `NEON_BACKUP_LAST` is within 15 days and
+    its result starts `ok`**; the run still prunes `dqe_history` /
+    `qcd_history` and records `PARTIAL per-call prune HELD -- <reason>` (the
+    Health row warns; no email). Fix the backup (#28), or set
+    `NEON_RETENTION_WITHOUT_BACKUP=true` to prune those rows knowing they then
+    exist nowhere.
     **(c) `CDR_BACKFILL_BEFORE` (cdr-report)** — an ISO ceiling for
     `backfillCDRHistory`: rows dated at/after it are skipped. The backfill
     ALWAYS writes phone children (it is the refill tool), so the ceiling is
