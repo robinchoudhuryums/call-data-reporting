@@ -87,6 +87,35 @@ function assertManagerOrAdmin_(user) {
   }
 }
 
+// SEC-1 (broad-scan 2026-09-23): the DQE / QCD report RPCs accepted ANY
+// valid window, so `from: '2000-01-01'` -- shifted a day per call to defeat
+// the cache -- read the whole history each time (a json_agg with no LIMIT on
+// the Neon path, prior window doubling it): the R24 monthly-transfer-cap
+// incident, reachable by any manager (or agent) from devtools. The per-call
+// reports already capped at 366 days. Two years covers every UI preset
+// (lastYear / last12Months) AND INV-29's >366-day trend branch; the agent
+// app's presets never exceed a year.
+var REPORT_MAX_RANGE_DAYS = 731;
+var AGENT_MAX_RANGE_DAYS = 366;
+
+/** Inclusive day count of an ISO window (UTC arithmetic, DST-proof). */
+function reportRangeDays_(from, to) {
+  var f = String(from).split('-').map(Number), t = String(to).split('-').map(Number);
+  return Math.round((Date.UTC(t[0], t[1] - 1, t[2]) - Date.UTC(f[0], f[1] - 1, f[2])) / 86400000) + 1;
+}
+
+/**
+ * SEC-1. Throws when an already-validated ISO window spans more than
+ * `maxDays` (default REPORT_MAX_RANGE_DAYS). `label` names the window in the
+ * message ('Prior range' for a client-supplied comparison window).
+ */
+function assertReportRangeCap_(from, to, maxDays, label) {
+  var cap = maxDays || REPORT_MAX_RANGE_DAYS;
+  if (reportRangeDays_(from, to) > cap) {
+    throw new Error((label || 'Range') + ' is capped at ' + cap + ' days.');
+  }
+}
+
 // -- Report-usage telemetry --------------------------------------------------
 
 /**

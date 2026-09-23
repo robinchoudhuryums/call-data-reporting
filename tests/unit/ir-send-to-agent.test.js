@@ -222,3 +222,16 @@ test('A-5: an Access Control read failure SURFACES instead of reading as "no add
   }, /Could not read Access Control/);
   assert.equal(h.state.sentEmails.length, 0);
 });
+
+// SEC-3 (broad-scan 2026-09-23): the gate was a bare `role === 'none'` check,
+// so the AGENT role (and any future role) reached the send-to-self path.
+test('SEC-3: an agent (or any non-manager role) cannot send an IR email', function () {
+  install({ user: { role: 'agent', email: 'anna@co.com', department: null, departments: [],
+                    agentDept: 'CSR', agentName: 'Anna Smith' } });
+  assert.throws(function () { send({}); }, /Not authorized/);
+  install({ user: { role: 'supervisor', email: 'x@co.com', department: 'CSR', departments: ['CSR'] } });
+  assert.throws(function () { send({}); }, /Not authorized/);
+  assert.equal(h.state.sentEmails.length, 0);
+  install({ email: 'admin@co.com', user: { role: 'admin', email: 'admin@co.com', department: null, departments: ['CSR', 'Sales'] } });
+  assert.equal(send({}).to, 'admin@co.com', 'admins still send to themselves');
+});

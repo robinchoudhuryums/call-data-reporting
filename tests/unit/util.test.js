@@ -316,3 +316,16 @@ test('CORE-7: sheetSafeCell_ neutralizes formula-leading cells, passes everythin
   const d = new Date(2026, 0, 1);
   assert.equal(f(d), d);
 });
+
+// SEC-1 (broad-scan 2026-09-23): the shared report-window cap.
+test('SEC-1: reportRangeDays_ is inclusive and DST-proof; assertReportRangeCap_ caps at the limit', function () {
+  assert.equal(h.call('reportRangeDays_', '2026-03-01', '2026-03-01'), 1);
+  assert.equal(h.call('reportRangeDays_', '2026-03-07', '2026-03-09'), 3);        // spans the DST start
+  assert.equal(h.call('reportRangeDays_', '2024-01-01', '2025-12-31'), 731);      // two years incl. a leap day
+  assert.doesNotThrow(function () { h.call('assertReportRangeCap_', '2024-01-01', '2025-12-31'); });
+  assert.throws(function () { h.call('assertReportRangeCap_', '2024-01-01', '2026-01-01'); },
+    /^Error: Range is capped at 731 days\.$/);
+  assert.throws(function () { h.call('assertReportRangeCap_', '2024-12-31', '2026-01-01', 366, 'Prior range'); },
+    /Prior range is capped at 366 days/);
+  assert.doesNotThrow(function () { h.call('assertReportRangeCap_', '2025-01-01', '2025-12-31', 366); });
+});

@@ -87,7 +87,7 @@ function renderAgentApp_(user, preview) {
   ).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('My Performance — Call Data')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
 /**
@@ -206,7 +206,7 @@ function renderDashboard_(user) {
   ).replace(/</g, '\\u003c');
   return tmpl.evaluate()
     .setTitle('Department Dashboard')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
 function renderAccessDenied_(user) {
@@ -215,5 +215,5 @@ function renderAccessDenied_(user) {
   tmpl.adminContact = getAdminEmails_()[0] || '';
   return tmpl.evaluate()
     .setTitle('Access Required')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }

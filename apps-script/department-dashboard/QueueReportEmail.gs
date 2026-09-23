@@ -1407,6 +1407,7 @@ function sendQcdAllDeptEmail(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
   const data = qcdAllDeptCachedData_(from, to).data;
   const email = Session.getActiveUser().getEmail();
   const label = data.dateLabel || (from === to ? from : (from + ' – ' + to));

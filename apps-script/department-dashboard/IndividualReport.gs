@@ -106,6 +106,7 @@ function getIndividualReportInit(req) {
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
   if (isIsoDate_(from) && isIsoDate_(to) && from <= to) {
+    assertReportRangeCap_(from, to);   // SEC-1: the picker scans the window too
     const active = computeActiveAgentsInRange_(dept, from, to, roster);
     activeAgents   = active.agents;
     activeFloaters = active.floaters;
@@ -141,6 +142,7 @@ function getIndividualReport(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   // Optional prior-period for same-agent YoY / vs-self comparison.
   // Both dates required if either is supplied; absent = no
@@ -167,6 +169,7 @@ function getIndividualReport(req) {
     if (priorFrom > priorTo) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
+    assertReportRangeCap_(priorFrom, priorTo, null, 'Prior range');   // SEC-1
   }
 
   const rawAgents = (req && req.agents) || [];
@@ -950,7 +953,10 @@ function buildAgentInsights_(agent, teamAvg) {
 function sendIndividualReportEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  // SEC-3 (broad-scan 2026-09-23): ALLOWLIST (the A-1 rule), never a bare
+  // `role === 'none'` check -- that let the AGENT role through to the
+  // send-to-self path, mailing any PNG from the deployer's mailbox.
+  assertManagerOrAdmin_(user);
 
   // Owner ruling 2026-09: a manager may send an agent THEIR OWN report
   // instead of mailing it to themselves and forwarding. The recipient is

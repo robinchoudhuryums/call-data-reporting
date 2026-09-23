@@ -212,6 +212,9 @@ function getAgentHome(req) {
   var to = String(req.to || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  // SEC-1: the least-privileged role reached an unbounded computeSummary_ +
+  // journey pull; the app's presets never exceed a year.
+  assertReportRangeCap_(from, to, AGENT_MAX_RANGE_DAYS);
 
   var tag = (typeof readSourceCacheTag_ === 'function') ? readSourceCacheTag_() : 'sheet-sheet';
   // Adoption round: the scope joins BOTH keys -- the team blob's figures come

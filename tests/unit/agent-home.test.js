@@ -82,6 +82,20 @@ test('agents are always themselves: a crafted request naming another agent is ig
   assert.equal(d.meta.agentName, 'Maria Lopez');
 });
 
+// SEC-1 (broad-scan 2026-09-23): the least-privileged role could request any
+// window -- computeSummary_ + the journey pull over all history, uncached per
+// shifted `from`. Capped at AGENT_MAX_RANGE_DAYS (366).
+test('SEC-1: an agent window longer than a year is refused before any read', function () {
+  install('agent');
+  let reads = 0;
+  h.ctx.computeSummary_ = function () { reads++; return summaryFixture(); };
+  assert.throws(function () { h.call('getAgentHome', { from: '2020-01-01', to: '2026-08-13' }); },
+    /capped at 366 days/);
+  assert.equal(reads, 0, 'refused before computeSummary_');
+  const d = h.call('getAgentHome', { from: '2025-08-14', to: '2026-08-13' });   // exactly 365 days
+  assert.equal(d.meta.agentName, 'Maria Lopez');
+});
+
 test('managers and role-none are refused; admins need explicit preview params', function () {
   install('manager');
   assert.throws(function () { h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' }); }, /Not authorized/);

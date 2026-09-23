@@ -143,6 +143,7 @@ function getInsightsReport(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   // Optional explicit prior window (both-or-neither; INV-49 pattern).
   // Absent = auto-adjacent prior (INV-28). The client resolves YoY /
@@ -156,6 +157,7 @@ function getInsightsReport(req) {
     if (customPriorFrom > customPriorTo) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
+    assertReportRangeCap_(customPriorFrom, customPriorTo, null, 'Prior range');   // SEC-1
   }
 
   const roster = getRosterForDepartment_(dept);
@@ -1120,6 +1122,7 @@ function sendInsightsReportEmail(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   const customPriorFrom = String((req && req.priorFrom) || '').trim();
   const customPriorTo   = String((req && req.priorTo)   || '').trim();
@@ -1135,6 +1138,7 @@ function sendInsightsReportEmail(req) {
     if (customPriorFrom > customPriorTo) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
+    assertReportRangeCap_(customPriorFrom, customPriorTo, null, 'Prior range');   // SEC-1
   }
 
   const roster = getRosterForDepartment_(dept);

@@ -14,7 +14,7 @@ HIPAA Included Functionality) -- docs note only.
 ## Batch 1 — durability + the answer-rate flip blocker — SHIPPED (block 195)
 ENG-1, S2A-1 (missed half), ENG-2, ENG-11.
 
-## Batch 2 — access & auth (~9h)
+## Batch 2 — access & auth — SHIPPED (block 196)
 - S2B-1 Med: `saveAccessControlRow` replace-all (Auth.gs:574-593) deletes ALL rows for the email; "Add agent" on a manager deletes their manager rows -> lockout (AGENT_ROLE off). Fix: role-scoped replace + confirm; remove-agent must not delete manager rows.
 - S2B-2 Med: uncached auth reads wait 10 s on the project-wide script lock (Auth.gs:229-236, A-6); the 8 AM alerts run holds it across compute+send; unlocked reads are not cached so every RPC pays. Fix: CacheService save-in-flight marker instead of the lock.
 - SEC-1 Med: no max date range on getDepartmentSummary (Data.gs:811), IR, Insights, Missed, QCD, getAgentHome (AgentHome.gs:211; journey pull ~:330 has no LIMIT) -> R24-class Neon egress. Fix: shared max-range assert (~400d; tighter for agents).

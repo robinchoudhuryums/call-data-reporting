@@ -214,6 +214,7 @@ function getQcdAllDepartments(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   const tRpc = Date.now();
   const res = qcdAllDeptCachedData_(from, to);

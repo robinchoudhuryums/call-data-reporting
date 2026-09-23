@@ -59,6 +59,7 @@ function getMissedCallsReport(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   // Scope: 'roster' so the per-agent missed-calls TIMELINES list
   // exactly the dept's roster agents -- matching the My Department
@@ -355,6 +356,7 @@ function getMissedCallsSlice(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   const filter = missedSliceValidateFilter_(req);
   const full = missedReportDataCached_(dept, from, to);

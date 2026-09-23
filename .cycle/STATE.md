@@ -9,11 +9,17 @@
   note). **Batch 1 SHIPPED on this branch** (block 195): ENG-1 backup
   closed-month finalization + tail files, ENG-2 retention held without a clean
   backup, S2A-1 digest WoW `missed` (unblocks `ANSWER_RATE_FORMULA=answerable`),
-  ENG-11 text. **WHERE I LEFT OFF:** Batch 1 pushed, not yet deployed. Next:
-  deploy the dashboard, run "Back up now" once, then `/broad-implement Batch 2`
-  (S2B-1 add-agent lockout, S2B-2 auth-lock stalls, SEC-1 range cap, SEC-3,
-  S2B-6, SEC-5). Batch 11 must also carry S2A-1's deferred queue-split half.
-  The per-dept callback table stays the next FEATURE (entry below).
+  ENG-11 text. **Batch 2 SHIPPED on this branch** (block 196): S2B-1 role-scoped
+  Access Control save/remove, S2B-2 sign-in reads off the script lock
+  (save-in-flight marker + generation token), SEC-1 `assertReportRangeCap_`
+  (731 d; agent app 366), SEC-3 IR email allowlist, S2B-6 alias rows stored
+  canonically, SEC-5 XFrameOptionsMode.DEFAULT. **WHERE I LEFT OFF:** Batches 1
+  + 2 pushed, NOT deployed. Next: deploy the dashboard, run "Back up now" once,
+  then `/broad-implement Batch 3` (pipeline sibling-fix drift: ING-1, S2C-1,
+  S2C-3, ING-2, S2C-4, ING-6, ING-7 -- cdr-import deploy). The full plan is
+  `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
+  deferred queue-split half. The per-dept callback table stays the next
+  FEATURE (entry below).
 - **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer
   found talk 8-79 s -> machine at 92% balanced accuracy on run 20260922-1313
   -- IN-SAMPLE, and with no person call under 62 s in that ring-drawn sample.

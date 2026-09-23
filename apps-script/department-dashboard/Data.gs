@@ -830,6 +830,7 @@ function getDepartmentSummary(req) {
   if (from > to) {
     throw new Error('from must be on or before to.');
   }
+  assertReportRangeCap_(from, to);   // SEC-1
 
   // Scope: ROSTER-only for the My Department agent table. Phase D showed
   // queue-only "floaters" (matched via shared-queue extension overlap), but

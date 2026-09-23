@@ -979,6 +979,14 @@ When something looks wrong, before assuming a code bug, check:
     assigned subset; see the "Role model" gotcha. If a manager who should
     see several depts sees only one, check for a stale 60s auth cache or
     that all their rows share the exact same email.
+    **S2B-6 (2026-09-23):** the Access Control editor now stores a row typed
+    under an ALIAS address as its CANONICAL address (the save status says
+    "Stored as ..."), because sign-in canonicalizes before the lookup and an
+    alias-keyed row never matched. A row hand-typed into the SHEET under an
+    alias still never matches -- use the canonical address there.
+    **S2B-1 (2026-09-23):** manager and agent rows for one address are now
+    edited independently -- saving or removing an agent entry never touches
+    the same address's manager rows (manager rows still win at sign-in).
 37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` Script
     Properties (dashboard; optional, R12-25 + R23) -- the admin-tunable
     DISPLAY standards. `ANSWER_TARGETS`: tolerant `key=value` pairs

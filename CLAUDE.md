@@ -1687,6 +1687,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   so managers never get direct access to CDR Report. Read-only safety
   relies on the trailing-underscore convention plus auth re-resolution
   inside every public function (`getLatestDataDate`/`getLatestDataDates` carry a signed-in gate since CORE-1/DEEP-1 -- the F-28 commit message had claimed that gate without implementing it).
+  **Pages are served `XFrameOptionsMode.DEFAULT` (SEC-5, owner: nothing
+  embeds the app)** -- ALLOWALL let any site frame it for a signed-in admin
+  (clickjacking the write paths); re-enable only for a real embedding use
+  case. Pinned by `cross-file-pins.test.js`. **Every DQE/QCD report RPC caps
+  its client window (SEC-1, `assertReportRangeCap_`: 731 days, 366 for the
+  agent app)** -- an uncapped `from` defeated the cache and read all history
+  (the R24 transfer-cap class); a new report RPC joins the cross-file-pins list.
 - **`SPREADSHEET_ID` lives in Script Properties**, not in code. Lets dev
   and prod copies of the dashboard run from the same source without
   edits.

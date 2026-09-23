@@ -145,6 +145,51 @@ test('saveAccessControlRow role=agent: validates single real dept + exact roster
   assert.deepEqual(JSON.parse(JSON.stringify(rows[0])), ['a@x.com', 'CSR', '', 'agent', 'Maria Lopez']);
 });
 
+// S2B-1 (broad-scan 2026-09-23): the replace-all used to delete EVERY row for
+// the email whatever its role, so "Add agent" on a manager's address silently
+// revoked the manager access -- a lockout while AGENT_ROLE_ENABLED is off (the
+// agent row resolves to nothing). Save and remove are now role-scoped.
+test('S2B-1: adding an agent row keeps the same address\'s manager rows (no lockout)', function () {
+  install([['lead@x.com', 'CSR', 'team lead', 'manager', ''], ['lead@x.com', 'Sales', '', 'manager', '']]);
+  const res = h.call('saveAccessControlRow',
+    { email: 'Lead@X.com', department: 'CSR', role: 'agent', agentName: 'Maria Lopez' });
+  assert.equal(res.coexistsWith, 'manager');
+  assert.equal(res.welcomed, false, 'not a brand-new grant');
+  const rows = h.state.spreadsheet.getSheetByName('Access Control')._data.slice(1);
+  assert.equal(rows.length, 3);
+  assert.equal(rows.filter(function (r) { return r[3] === 'manager'; }).length, 2, 'manager rows survive');
+  // Flag OFF (the default): still a manager -- the lockout the old replace-all caused.
+  const u = h.call('resolveUser_', 'lead@x.com');
+  assert.equal(u.role, 'manager');
+  assert.deepEqual(JSON.parse(JSON.stringify(u.departments)).sort(), ['CSR', 'Sales']);
+});
+
+test('S2B-1: a manager save replaces only manager rows; an agent re-save only the agent row', function () {
+  install([['lead@x.com', 'CSR', '', 'manager', ''], ['lead@x.com', 'CSR', '', 'agent', 'Maria Lopez']]);
+  const r1 = h.call('saveAccessControlRow', { email: 'lead@x.com', departments: ['Sales'] });
+  assert.equal(r1.coexistsWith, 'agent');
+  let rows = h.state.spreadsheet.getSheetByName('Access Control')._data.slice(1);
+  assert.deepEqual(JSON.parse(JSON.stringify(rows.map(function (r) { return r[1] + '/' + r[3]; }))).sort(),
+    ['CSR/agent', 'Sales/manager']);
+  h.call('saveAccessControlRow', { email: 'lead@x.com', department: 'CSR', role: 'agent', agentName: 'Devon Park' });
+  rows = h.state.spreadsheet.getSheetByName('Access Control')._data.slice(1);
+  assert.equal(rows.filter(function (r) { return r[3] === 'agent'; }).length, 1, 'no duplicate agent row');
+  assert.equal(rows.filter(function (r) { return r[3] === 'agent'; })[0][4], 'Devon Park');
+});
+
+test('S2B-1: removeAccessControlRow with a role removes only that role\'s rows; no role = every row', function () {
+  install([['lead@x.com', 'CSR', '', 'manager', ''], ['lead@x.com', 'CSR', '', 'agent', 'Maria Lopez'],
+           ['other@x.com', 'Sales', '', 'manager', '']]);
+  const r = h.call('removeAccessControlRow', { email: 'LEAD@x.com', role: 'agent' });
+  assert.equal(r.removed, 1); assert.equal(r.kept, 1);
+  assert.equal(h.call('resolveUser_', 'lead@x.com').role, 'manager', 'removing the agent entry kept manager access');
+  install([['lead@x.com', 'CSR', '', 'manager', ''], ['lead@x.com', 'CSR', '', 'agent', 'Maria Lopez']]);
+  assert.equal(h.call('removeAccessControlRow', { email: 'lead@x.com', role: 'manager' }).removed, 1);
+  install([['lead@x.com', 'CSR', '', 'manager', ''], ['lead@x.com', 'CSR', '', 'agent', 'Maria Lopez']]);
+  assert.equal(h.call('removeAccessControlRow', { email: 'lead@x.com' }).removed, 2, 'legacy: no role = all rows');
+  assert.throws(function () { h.call('removeAccessControlRow', { email: 'lead@x.com', role: 'boss' }); }, /Role must be/);
+});
+
 test('saveAccessControlRow rejects an unknown role outright', function () {
   install([]);
   assert.throws(function () {

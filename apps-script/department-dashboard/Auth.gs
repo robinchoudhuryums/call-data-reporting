@@ -218,34 +218,73 @@ function getAccessEntries_(normalizedEmail) {
     } catch (e) { /* fall through to re-read */ }
   }
 
-  // A-6 (broad-scan 2026-09-17): saveAccessControlRow is a delete-then-append
-  // under the script lock, and this uncached read used to run outside it -- a
-  // read landing between the delete and the append cached '__none__' for the
-  // TTL (a false denial for up to 60 s and a spurious "Access changed" sign-in
-  // notice). The read now takes the same lock: it waits out an in-flight save
-  // and sees the settled rows. If the lock cannot be had, the sheet is still
-  // read (never a denial for lock contention) but the result is NOT cached, so
-  // a mid-save snapshot can live for one request only.
-  const lock = LockService.getScriptLock();
-  const locked = lock.tryLock(AUTH_READ_LOCK_WAIT_MS_);
-  try {
-    return acReadEntriesUncached_(normalizedEmail, cache, cacheKey, locked);
-  } finally {
-    if (locked) lock.releaseLock();
+  // A-6 (broad-scan 2026-09-17): saveAccessControlRow is a delete-then-append,
+  // and a read landing between the delete and the append used to cache
+  // '__none__' for the TTL (a false denial for up to 60 s and a spurious
+  // "Access changed" sign-in notice). A-6 closed that by taking the SCRIPT
+  // LOCK here -- but that lock is project-wide and long jobs hold it (the
+  // 8 AM alerts run holds it across its whole compute-and-send loop, exactly
+  // when managers sign in), so every uncached sign-in waited up to 10 s and,
+  // failing the lock, was not cached, so every RPC in the page paid again
+  // (S2B-2, broad-scan 2026-09-23).
+  //
+  // S2B-2: no lock. Access Control writers bracket their delete/append with
+  // a save-in-flight marker and a generation token (acSaveMarkStart_ /
+  // acSaveMarkEnd_). The read always serves the sheet, and CACHES only when
+  // no save was in flight at either end of the read and the generation did
+  // not move across it -- so a mid-save snapshot is never pinned, and an
+  // unrelated long lock holder costs a sign-in nothing.
+  const s1 = cache.get(AC_SAVE_INFLIGHT_KEY_);
+  const g1 = cache.get(AC_SAVE_GEN_KEY_);
+  const entries = acReadEntriesUncached_(normalizedEmail);
+  const g2 = cache.get(AC_SAVE_GEN_KEY_);
+  const s2 = cache.get(AC_SAVE_INFLIGHT_KEY_);
+  if (s1 == null && s2 == null && acSameToken_(g1, g2)) {
+    cache.put(cacheKey, entries.length ? JSON.stringify(entries) : '__none__', AUTH_CACHE_TTL_SECONDS);
+    // A save that STARTED after g2 and finished before this put busted the
+    // key before we wrote our (now pre-save) snapshot -- un-pin it.
+    if (!acSameToken_(cache.get(AC_SAVE_GEN_KEY_), g2) || cache.get(AC_SAVE_INFLIGHT_KEY_) != null) {
+      cache.remove(cacheKey);
+    }
   }
+  return entries;
 }
 
-/** A-6: how long an uncached auth read waits for an in-flight Access Control save. */
-const AUTH_READ_LOCK_WAIT_MS_ = 10000;
+// S2B-2: the Access Control save-in-flight marker + generation token. Keys
+// live outside the 'access:<email>' space (no '@').
+const AC_SAVE_INFLIGHT_KEY_ = 'acsave:inflight';
+const AC_SAVE_GEN_KEY_ = 'acsave:gen';
+const AC_SAVE_INFLIGHT_TTL_S_ = 60;      // outlives any save; self-clears if a save dies mid-write
+const AC_SAVE_GEN_TTL_S_ = 21600;        // CacheService max
 
-/** The sheet read behind getAccessEntries_; caches only when `mayCache`. */
-function acReadEntriesUncached_(normalizedEmail, cache, cacheKey, mayCache) {
+/** Missing (null in Apps Script, undefined in the harness) compares equal to missing. */
+function acSameToken_(a, b) {
+  return (a == null && b == null) || a === b;
+}
+
+function acNewToken_() {
+  return String(Date.now()) + ':' + Math.random().toString(36).slice(2, 10);
+}
+
+/** S2B-2: called by every Access Control writer, under its lock, BEFORE its first write. */
+function acSaveMarkStart_() {
+  const cache = CacheService.getScriptCache();
+  cache.put(AC_SAVE_INFLIGHT_KEY_, '1', AC_SAVE_INFLIGHT_TTL_S_);
+  cache.put(AC_SAVE_GEN_KEY_, acNewToken_(), AC_SAVE_GEN_TTL_S_);
+}
+
+/** S2B-2: called in the writer's finally, AFTER its auth-cache bust. */
+function acSaveMarkEnd_() {
+  const cache = CacheService.getScriptCache();
+  cache.put(AC_SAVE_GEN_KEY_, acNewToken_(), AC_SAVE_GEN_TTL_S_);
+  cache.remove(AC_SAVE_INFLIGHT_KEY_);
+}
+
+/** The sheet read behind getAccessEntries_ (no caching -- the caller decides). */
+function acReadEntriesUncached_(normalizedEmail) {
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
-  if (!sheet || sheet.getLastRow() < 2) {
-    if (mayCache) cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
-    return [];
-  }
+  if (!sheet || sheet.getLastRow() < 2) return [];
 
   // Read Email..Agent Name, bounded by the sheet's real width so a
   // pre-migration 3-column sheet reads cleanly (missing cols = '').
@@ -264,13 +303,7 @@ function acReadEntriesUncached_(normalizedEmail, cache, cacheKey, mayCache) {
       agentName: String(rows[i][4] || '').trim(),
     });
   }
-  if (entries.length) {
-    if (mayCache) cache.put(cacheKey, JSON.stringify(entries), AUTH_CACHE_TTL_SECONDS);
-    return entries;
-  }
-
-  if (mayCache) cache.put(cacheKey, '__none__', AUTH_CACHE_TTL_SECONDS);
-  return [];
+  return entries;
 }
 
 /**
@@ -503,9 +536,10 @@ function getAccessControlInit() {
  * `req.departments` (an array) OR the legacy single `req.department`. Every
  * dept must be a real roster header OR the "ALL"/"*" sentinel (stored
  * canonically as "ALL", which is EXCLUSIVE -- if present, the manager gets a
- * single ALL row). All of the email's existing rows are removed and one row
- * per resolved dept is appended, so re-saving can't silently collapse a
- * multi-dept manager (nor leave stray duplicates). Validates BEFORE any write.
+ * single ALL row). The email's existing rows OF THE SAME ROLE are removed
+ * and one row per resolved dept is appended, so re-saving can't silently
+ * collapse a multi-dept manager (nor leave stray duplicates); rows of the
+ * other role are left alone (S2B-1). Validates BEFORE any write.
  */
 function saveAccessControlRow(req) {
   assertAdmin_();
@@ -559,28 +593,38 @@ function saveAccessControlRow(req) {
         + 'The Agent Name must match the DO NOT EDIT! entry exactly (the part before the first comma).');
     }
   }
-  const normalized = email.toLowerCase();
+  // S2B-6: resolveUser_ canonicalizes a sign-in address through
+  // EMAIL_ALIASES BEFORE the Access Control lookup, so a row stored under an
+  // ALIAS address can never match -- the person stays denied while the
+  // welcome email says "live now". Store the CANONICAL address instead (and
+  // clear any stale alias rows of the same role). `storeEmail` keeps the
+  // admin's casing when no alias applies.
+  const typedNormalized = email.toLowerCase();
+  const normalized = canonicalizeEmail_(typedNormalized);
+  const storeEmail = (normalized === typedNormalized) ? email : normalized;
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
   let hadRows = false;
+  let coexistsWith = '';
+  let marked = false;
   try {
     const ss = openSpreadsheet_();
     let sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
     if (!sheet) throw new Error('Access Control sheet missing -- run setup().');
+    acSaveMarkStart_(); marked = true;   // S2B-2: readers must not cache a mid-save snapshot
     acEnsureSchema_(sheet);   // Phase A: heal a pre-agent 3-column header row
-    // Replace-all: delete every existing row for this email (bottom-up so
-    // indices don't shift), then append one row per resolved dept.
-    const lastRow = sheet.getLastRow();
-    if (lastRow >= 2) {
-      const col = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-      for (let i = col.length - 1; i >= 0; i--) {
-        if (String(col[i][0] || '').toLowerCase().trim() === normalized) {
-          sheet.deleteRow(i + 2);
-          hadRows = true;
-        }
-      }
-    }
+    // Replace-all, ROLE-SCOPED (S2B-1): delete this email's existing rows OF
+    // THE SAVED ROLE (bottom-up so indices don't shift), then append one row
+    // per resolved dept. It used to delete every row for the email whatever
+    // its role, so "Add agent" on an address that also held manager rows
+    // silently revoked the manager access -- a lockout while
+    // AGENT_ROLE_ENABLED is off. Rows of the other role are kept (manager
+    // rows win at resolve time); the caller is told via `coexistsWith`.
+    const removed = acDeleteEmailRows_(sheet, normalized, role);
+    hadRows = removed.matched > 0 || removed.kept > 0;
+    if (removed.kept > 0) coexistsWith = role === 'agent' ? 'manager' : 'agent';
+    if (normalized !== typedNormalized) acDeleteEmailRows_(sheet, typedNormalized, role);   // S2B-6
     // CORE-7 + L4: neutralize formula-leading values on ALL admin-entered
     // columns. Depts are roster-validated (real header / ALL, safe) but wrapped
     // for uniformity; `email` MUST be wrapped -- acIsValidEmail_'s regex
@@ -588,16 +632,18 @@ function saveAccessControlRow(req) {
     // which under "Execute as: Me" would evaluate as a live cell in a sheet read
     // on every request. A normal email passes through unchanged.
     toStore.forEach(function (d) {
-      sheet.appendRow([sheetSafeCell_(email), sheetSafeCell_(d), sheetSafeCell_(notes),
+      sheet.appendRow([sheetSafeCell_(storeEmail), sheetSafeCell_(d), sheetSafeCell_(notes),
                        sheetSafeCell_(role), sheetSafeCell_(role === 'agent' ? agentName : '')]);
     });
     // The auth cache is busted here, so the grant is live on the person's
     // NEXT page load -- no 60 s wait (AUTH_CACHE_TTL_SECONDS is the ceiling
     // only for hand-edits of the sheet).
     CacheService.getScriptCache().remove('access:' + normalized);
+    if (normalized !== typedNormalized) CacheService.getScriptCache().remove('access:' + typedNormalized);
     Logger.log('saveAccessControlRow: %s -> [%s] role=%s%s by %s', normalized, toStore.join(', '),
       role, role === 'agent' ? (' agent=' + agentName) : '', Session.getActiveUser().getEmail());
   } finally {
+    if (marked) { try { acSaveMarkEnd_(); } catch (me) { /* the marker TTL self-clears */ } }
     lock.releaseLock();
   }
   // R28: a brand-new grant (no prior row for this address) tells the person
@@ -606,7 +652,40 @@ function saveAccessControlRow(req) {
   // there is no DASHBOARD_URL to send. Best-effort: a send failure never
   // fails the save (the row is already written).
   const welcomed = !hadRows && acSendWelcomeEmail_(email, toStore, role);
-  return { saved: true, departments: toStore, role: role, welcomed: welcomed };
+  return { saved: true, departments: toStore, role: role, welcomed: welcomed, coexistsWith: coexistsWith,
+           // S2B-6: set when the typed address was an EMAIL_ALIASES alias.
+           storedAs: (normalized !== typedNormalized) ? normalized : '' };
+}
+
+/**
+ * S2B-1. The role a stored Access Control row carries (col D; blank = the
+ * pre-agent default 'manager'). Anything that is not 'agent' is treated as
+ * the manager side, so an unrecognized legacy value is cleaned up by a
+ * manager save/remove exactly as before.
+ */
+function acRowIsAgent_(roleCell) {
+  return String(roleCell || '').toLowerCase().trim() === 'agent';
+}
+
+/**
+ * S2B-1. Deletes (bottom-up) this email's rows whose role matches `role`
+ * ('manager' | 'agent'); `role` null/'' deletes every row for the email (the
+ * legacy remove). Caller holds the script lock. Returns {matched, kept}:
+ * rows deleted, and rows for the email left in place (the other role).
+ */
+function acDeleteEmailRows_(sheet, normalizedEmail, role) {
+  const out = { matched: 0, kept: 0 };
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return out;
+  const width = Math.min(Math.max(sheet.getLastColumn(), 1), 4);
+  const vals = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  for (let i = vals.length - 1; i >= 0; i--) {
+    if (String(vals[i][0] || '').toLowerCase().trim() !== normalizedEmail) continue;
+    const isAgent = acRowIsAgent_(width >= 4 ? vals[i][3] : '');
+    const hit = !role || (role === 'agent' ? isAgent : !isAgent);
+    if (hit) { sheet.deleteRow(i + 2); out.matched++; } else { out.kept++; }
+  }
+  return out;
 }
 
 /**
@@ -675,33 +754,42 @@ function acSendWelcomeEmail_(email, depts, role) {
   }
 }
 
-/** Remove ALL Access Control rows for an email (revokes manager access). */
+/**
+ * Remove an email's Access Control rows. S2B-1: `req.role` ('manager' |
+ * 'agent') scopes the delete to that role's rows, so removing an agent entry
+ * no longer revokes the same address's manager access (and vice versa); with
+ * no role, every row for the email goes (the legacy behaviour).
+ */
 function removeAccessControlRow(req) {
   assertAdmin_();
   const email = String((req && req.email) || '').trim();
   if (!email) throw new Error('Email is required.');
+  const role = String((req && req.role) || '').toLowerCase().trim();
+  if (role && role !== 'manager' && role !== 'agent') {
+    throw new Error('Role must be "manager" or "agent".');
+  }
   const normalized = email.toLowerCase();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
   let removed = 0;
+  let kept = 0;
+  let marked = false;
   try {
     const ss = openSpreadsheet_();
     const sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
-    if (!sheet || sheet.getLastRow() < 2) return { removed: 0 };
-    // Delete bottom-up so row indices don't shift mid-loop.
-    const col = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
-    for (let i = col.length - 1; i >= 0; i--) {
-      if (String(col[i][0] || '').toLowerCase().trim() === normalized) {
-        sheet.deleteRow(i + 2);
-        removed++;
-      }
-    }
+    if (!sheet || sheet.getLastRow() < 2) return { removed: 0, kept: 0 };
+    acSaveMarkStart_(); marked = true;   // S2B-2
+    const res = acDeleteEmailRows_(sheet, normalized, role || null);
+    removed = res.matched;
+    kept = res.kept;
     CacheService.getScriptCache().remove('access:' + normalized);
-    Logger.log('removeAccessControlRow: removed %s row(s) for %s by %s', removed, normalized, Session.getActiveUser().getEmail());
+    Logger.log('removeAccessControlRow: removed %s %srow(s) for %s by %s', removed,
+      role ? role + ' ' : '', normalized, Session.getActiveUser().getEmail());
   } finally {
+    if (marked) { try { acSaveMarkEnd_(); } catch (me) { /* the marker TTL self-clears */ } }
     lock.releaseLock();
   }
-  return { removed: removed };
+  return { removed: removed, kept: kept };
 }
 
 // ── R18d: sign-in notifications (first sighting + outcome change) ──────────
