@@ -7,6 +7,18 @@
   // QCD violation gate (cdr-import autoImport.js).
   var ABANDON_STANDARD_ = 4;
 
+  // What an OUTBOUND call's "Connected" means -- the one definition every
+  // outbound surface shows (glossary tooltips, Caller Lookup / agent-day
+  // chips, the call-path head). Owner ruling 2026-09-23: the term stays
+  // "Connected", but it is DEFINED wherever it appears, because the phone
+  // records report a person, a voicemail greeting and a phone menu
+  // identically (Answered, talk > 0) and a listening audit confirmed that no
+  // stored field separates them. Deliberately carries NO audit figure: the
+  // answer-quality audit stays a research tool, out of manager reporting.
+  var OB_CONNECTED_DEF_ = 'Connected = the far end answered: a person, a voicemail greeting '
+    + 'or a phone menu. The phone records report all three the same way, so a connected '
+    + 'call is not proof that someone was reached.';
+
   // ══ DEV OVERLAY (O-11) ══════════════════════════════════════════════════
   //
   // An admin-only, off-by-default diagnostics panel. Toggle: Ctrl/Cmd+Alt+D,

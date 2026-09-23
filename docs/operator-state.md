@@ -1995,6 +1995,10 @@ When something looks wrong, before assuming a code bug, check:
     reach a manager before the report does.
 
 64. **Outbound answer quality — the MEASUREMENT step (`probeOutboundAnswerQuality`).**
+    **CONCLUDED 2026-09-23 (see #71): no voicemail threshold will be set** --
+    labelled calls showed no stored field separates a person from a machine.
+    The probe stays as a research tool; the "before any threshold" framing
+    below is the historical record.
     A read-only, admin-gated, editor-run probe. It answers one question with
     data and sets nothing: **is the ring distribution on connected outbound
     calls bimodal?** Run it before anyone sets a voicemail threshold — it is
@@ -2002,9 +2006,10 @@ When something looks wrong, before assuming a code bug, check:
     Part 2, and steps 2-3 there are not safe to start without its output.
     - **Why it exists.** `connected` counts a voicemail pickup as a connect,
       because the far end genuinely answers — structural in the CDR, and no
-      new capture column fixes it. So the admin-visible "Actually reached"
-      tile currently over-counts by however much voicemail there is, and
-      nobody knows how much that is. The one unused discriminator already
+      new capture column fixes it. So the callback tile over-counts callers
+      reached by however much voicemail there is (renamed "Callbacks
+      connected" and disclosed as an upper bound, 2026-09-23 -- #71 has why
+      no classifier followed). The one unused discriminator already
       stored is `ring_seconds` on a connected call: voicemail answers only
       after the handset rang out to the carrier's no-answer timeout, a
       near-constant per destination, so the distribution SHOULD show a broad
@@ -2596,6 +2601,15 @@ When something looks wrong, before assuming a code bug, check:
     `listCdrReportScriptProperties()`.
 
 71. **The answer-quality review sample (`sampleOutboundCallsForReview`).**
+    **CONCLUDED 2026-09-23: no classifier will be built from stored call
+    data.** 53 owner labels showed voicemail share RISING with ring but never
+    splitting, with most voicemail in the 0-1 s band where ring says nothing;
+    only audio can tell a person from a machine. `OUTBOUND_VM_RING_SEC` /
+    `OUTBOUND_ANSWER_QUALITY` stay unset, and the reporting instead DEFINES
+    "Connected" everywhere (`OB_CONNECTED_DEF_`). The sampler, scorer and
+    probes stay as the owner's ongoing RESEARCH tools -- **their figures are
+    never shown in any report** (owner ruling). The runbook below stands for
+    that research use.
     Read-only, admin-gated, editor-run from the DASHBOARD project. The GROUND
     TRUTH step for the voicemail classifier (#64) -- run it BEFORE setting
     `OUTBOUND_VM_RING_SEC` or anything else in that family.
@@ -2693,9 +2707,18 @@ When something looks wrong, before assuming a code bug, check:
       Part 1's callback table needs `connected` RELABELLED rather than
       reclassified. `INCONCLUSIVE` -- the interval spans both, or under 8 C
       rows are labelled: label more of C (raise `OUTBOUND_REVIEW_N` and
-      re-sample), never pick an end. **A point estimate is not the test** -- a
-      14-of-20 run reads 70% and still refuses, because the interval reaches
-      down to the coin flip.
+      re-sample), never pick an end -- **but only when the scorer says more
+      listening CAN settle it** (`stratumC.rowsToDecide` /
+      `settleableByListening`). Near the bars it cannot: the owner's 13-of-20
+      (65%) would need ~350 rows, and a share between 50% and 60% never clears
+      either bar. Then the share IS the answer. **A point estimate is not the
+      test** -- a 14-of-20 run reads 70% and still refuses, because the
+      interval reaches down to the coin flip.
+    - **The scorer also compares TALK time by label** (`talkByLabel`,
+      `talkSeparation`; connected rows only, machine = voicemail + ivr). It
+      searches every `a <= talk <= b` window for the best balanced accuracy
+      and calls it separating at 85%. The search is IN-SAMPLE, so read it
+      asymmetrically: a fail is final, a pass only earns a fresh sample.
     - **⚠ A voicemail-heavy 0-11 s band is the RESULT THAT MATTERS MOST, and it
       is not a failure.** A confirmed voicemail rang **8 s** (an agent left a
       message, then sat on a silent line ~2 min). There are TWO kinds of

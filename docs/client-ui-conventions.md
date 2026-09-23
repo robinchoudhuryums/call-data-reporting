@@ -668,7 +668,13 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   Add new terms to `METRIC_GLOSSARY_` (and a rich entry to
   `METRIC_GLOSSARY_RICH_` if it's a standards metric), NOT as inline
   `title=` in render code (the applier never clobbers an existing title,
-  so per-callsite titles would shadow the dict). (4)
+  so per-callsite titles would shadow the dict). The one exception is an
+  element the applier cannot reach (it matches `th` + KPI labels only): a
+  chip or inline outcome word then takes its `title=` from ONE shared
+  constant, never per-callsite text -- `OB_CONNECTED_DEF_` (script-1-core)
+  is that constant for outbound "Connected", feeding both the glossary keys
+  and the Caller Lookup / agent-day / call-path chips (pinned in
+  `outbound-report.test.js`). (4)
   **Benchmark tints** -- `benchValueCls_(label, formatted, symmetric,
   surface?)` applies the ONLY two company-wide standards: the answer-rate
   TARGET (-> `.bm-target` sage at/above; `.bm-watch` amber within the band

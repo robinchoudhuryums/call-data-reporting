@@ -54,7 +54,9 @@ The six-point round promoted **"Actually reached"** to a headline tile
 caller". The tile is more honest than the raw callback rate it sits beside —
 it still excludes rang-out callbacks — but it is not yet what its label
 claims. **Fixing the label or fixing the number are both acceptable; leaving
-both is not.**
+both is not.** **RESOLVED 2026-09-23 by fixing the LABEL:** the number cannot
+be fixed from stored data (round 2 below), so the tile is now "Callbacks
+connected", with an upper-bound disclosure.
 
 ### The two discriminators we actually have
 
@@ -311,7 +313,7 @@ the fallback), and shared with INBOUND, whose journeys render in the call-path
 drill and Caller Lookup. Worth doing deliberately, with its own regression
 walk -- not folded into a probe fix.
 
-### Step 1b: GROUND TRUTH — listen to calls before setting anything (owner ask, 2026-09-21; DESIGNED, NOT BUILT)
+### Step 1b: GROUND TRUTH — listen to calls before setting anything (owner ask, 2026-09-21; SHIPPED 2026-09-21, CONCLUDED 2026-09-23)
 
 **Why this is the gate, not another distribution.** Everything in Step 1 is
 UNLABELLED inference: we observe that rings cluster at 21 / 26-27 / 30-31 s and
@@ -609,6 +611,61 @@ the honest outcome is that `ring_seconds` cannot carry this classifier here, and
 Part 1's table needs a different treatment of `connected` -- a relabel rather
 than a reclassification.
 
+### GROUND TRUTH round 2: 53 labels -- ring time is not a classifier (owner, 2026-09-23)
+
+Run "Review 20260922-1313", 53 of 54 rows labelled. Weighted by each band's
+share of the 62,646 connected first-attempt calls in the #64 ring histogram
+(a different, earlier window -- directional, not exact):
+
+| Ring band | Share of connected | Voicemail (labels) | 95% interval |
+|---|---|---|---|
+| 0-1 s (A) | 40.6% | 3/8 (+1 ivr) | 14-69% |
+| 2-11 s (B) | 26.2% | 1/5 | 4-62% |
+| 12-19 s (B2) | 10.7% | 5/12 | 19-68% |
+| 20-32 s (C) | 22.0% | 13/20 | 43-82% |
+| 33+ s (D) | 0.6% | 4/5 | 38-96% |
+
+**Voicemail is an estimated ~40% of all connected calls**, and its share
+RISES with ring without ever splitting: a `>= 20 s` rule flags 23% of calls
+at ~65% precision and catches only **~37% of all voicemail**; `>= 12 s` gets
+~58% precision and ~48% recall. The bulk of voicemail sits in the 0-1 s band,
+where ring says nothing. Stratum C's 65% cannot be settled by listening
+(~350 rows to clear the 60% bar) -- the scorer now says so instead of asking
+for more.
+
+**Conclusion: the stored CDR cannot tell a person from a machine**, and the
+open-ended voicemail variants (message left / no message / screening) are
+less separable still. The CDR reports all four answerers identically
+(Answered, talk > 0); ring carries a gradient, not a boundary. Only the AUDIO
+can decide it (a person listening, or the phone system's own answering-machine
+detection / speech analytics if it offers one). The talk-time comparison the
+scorer now runs is the last stored-duration check; unless it passes -- and
+then on a FRESH sample -- **Step 2 is superseded: no `OUTBOUND_VM_RING_SEC`,
+no `strict`.** `connected` is relabelled as "answered (person or machine)"
+and the reached figure disclosed as an upper bound.
+
+**SHIPPED the same day, with two owner rulings.** (1) The word stays
+**"Connected"** -- "Picked up" was proposed and rejected as MORE misleading --
+but it is DEFINED wherever it appears through one client constant,
+`OB_CONNECTED_DEF_` (glossary tooltips on the Outbound + Direct reports'
+Connected / Connect % / OB connected labels, the Caller Lookup and agent-day
+chips, the call-path head). The callback tile "Actually reached" became
+**"Callbacks connected"**, its foot and the caption / email footer calling it
+an upper bound on callers reached. (2) **Audit figures stay out of the
+reporting**: the owner keeps auditing raw calls as research, and no measured
+voicemail share appears on any surface -- the definition string is pinned to
+carry no number. Steps 2-4 below are SUPERSEDED; the per-dept callback table
+(Part 1) is unblocked, since it ranks by called-back and any connected column
+inherits the definition.
+
+**Open, and it outranks everything above: the E control failed** (0 of 3
+unconnected rows came back no-answer; 2 human, 1 voicemail). The likely cause
+is the lookup, not the data -- an unconnected call often has no recording, so
+agent + time lands on the agent's next call (usually the redial, a separate
+row). Check each E row's recording start against its row time, and whether
+the agent redialled within a minute. A match would mean `connected` itself is
+wrong.
+
 ### Step 2: the parameters
 
 All READ-time, not capture-time. `connected` / `talk_seconds` / `ring_seconds`
@@ -659,6 +716,9 @@ also degrades safely: if the probe shows no spike, `voicemail-likely` is
 near-empty and the surface just says so.
 
 ### Step 4: what it changes
+
+> **SUPERSEDED 2026-09-23** -- no classifier; see "GROUND TRUTH round 2".
+> Kept as the record of what was planned.
 
 - `kpis`: `obReached` / `obVoicemailLikely` / `obBrief` alongside
   `obConnected` (which KEEPS its current meaning — nothing reinterprets a
@@ -927,4 +987,6 @@ what keeps this table from rewarding dialing over connecting.
 6. Regression scenario + `drive-admin` coverage, as with every surface here.
 
 **Steps 1–3 are worth doing even if the table is never built** — the tile that
-says "Actually reached" is live for admins today.
+says "Actually reached" is live for admins today. **(2026-09-23: steps 2-3
+SUPERSEDED -- the tile was relabelled "Callbacks connected" instead; step 5
+is unblocked.)**

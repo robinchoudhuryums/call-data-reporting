@@ -319,7 +319,12 @@ tests/
                               0..inf with no gap, no caller identity emitted,
                               and scoreOutboundReviewSample's Wilson-interval
                               verdict, partial findings on partial labels,
-                              and voicemail+ivr as NOT-REACHED; plus SOURCE
+                              and voicemail+ivr as NOT-REACHED, rows-to-
+                              decide (it says when listening CANNOT settle
+                              a share) and the talk-time comparison (header-
+                              located key columns, connected rows only);
+                              the "Connected" DEFINITION on every outbound
+                              surface with no audit figure in it; plus SOURCE
                               pins on SQL the mocked connection never runs),
                               dashboard-cdr-helpers + dashboard-cdr-core
                               (generateCustomReportCore_ end-to-end via a

@@ -1,6 +1,28 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-23 (answer-quality CONCLUDED, same branch; PR #341 merged):** the
+  owner labelled 53/54 rows of `Review 20260922-1313`. Population-weighted,
+  voicemail is ~40% of connected calls, its share RISES with ring (~30% ->
+  42% -> 65% -> 80%) without splitting, and a `>= 20 s` rule would catch only
+  ~37% of it at ~65% precision. **Owner + I concur: the CDR cannot separate a
+  person from a machine; only audio can.** Step 2 (`OUTBOUND_VM_RING_SEC` /
+  `strict`) is superseded unless the talk-time check passes on a FRESH sample.
+  - **Shipped this round:** the scorer's inconclusive branch now says whether
+    listening CAN settle it (`rowsToDecide`; 13/20 needs ~350 rows, 50-60%
+    never), it returns the `byBand` / `recallCeiling` / `shoulder` findings it
+    used to drop, and it compares TALK time by label (in-sample best window,
+    85% balanced-accuracy bar).
+  - **Open:** the E control failed (2 human + 1 voicemail on unconnected rows)
+    -- probably the agent+time lookup landing on the redial; the owner is to
+    check recording start vs row time. Then re-run the (redeployed) scorer to
+    get the talk comparison.
+  - **SHIPPED (owner rulings):** the word stays "Connected" ("Picked up"
+    rejected as more misleading) but is DEFINED everywhere via
+    `OB_CONNECTED_DEF_`; "Actually reached" -> "Callbacks connected" (upper
+    bound, tile / caption / email); **no audit figure on any surface** -- the
+    owner keeps auditing raw calls as research only. Plan Steps 2-4
+    superseded; the per-dept callback table is unblocked.
 - **2026-09-22 (answer-quality ground truth, branch `claude/jolly-hamilton-n5fs2o`):
   PRs #338-#340 MERGED; nothing unmerged except this sync-docs pass.** The
   #64/#65 thread moved from measurement to LABELLED evidence, and the evidence

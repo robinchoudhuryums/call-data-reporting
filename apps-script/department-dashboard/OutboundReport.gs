@@ -12,10 +12,14 @@
  *
  * TWO CAVEATS ARE PART OF THE CONTRACT (they ship as captions in the UI and
  * must never be dropped):
- *   - "Connected" means a Talk>0 Answered external leg. The CDR cannot
- *     distinguish no-answer / voicemail / busy on the unconnected side, so
- *     an un-connected callback attempt still COUNTS as a callback attempt
- *     (we dialed them), and `calledBackConnected` is the stricter subset.
+ *   - "Connected" means a Talk>0 Answered external leg: the far end
+ *     ANSWERED -- a person, a voicemail greeting or a phone menu, which the
+ *     CDR reports identically (a labelled listening audit, 2026-09-23,
+ *     confirmed no stored field separates them). So `calledBackConnected` is
+ *     an UPPER BOUND on callers reached, never "reached" itself, and every
+ *     surface says so (owner ruling: keep the word "Connected", define it
+ *     everywhere, and keep audit figures OUT of the reporting). An
+ *     un-connected callback attempt still COUNTS as a callback (we dialed).
  *   - Dept attribution for AGENTS uses the dialing agent's ROSTER dept
  *     (DO NOT EDIT!, exact INV-04 match via buildDeptsByAgent_), NEVER the
  *     raw CDR org label stored in outbound_calls.department ("Customer
@@ -584,7 +588,8 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
   // punish depts for their caller-ID mix.
   cb.calledBackPct = cb.abandonedTracked
     ? Math.round(cb.calledBack / cb.abandonedTracked * 1000) / 10 : null;
-  // (2) The rate that actually reached someone. Same denominator as above --
+  // (2) The rate whose callback CONNECTED -- the far end answered, which
+  // includes voicemail, so an upper bound on callers reached. Same denominator as above --
   // a DIFFERENT one would make the two tiles incomparable, which is the whole
   // point of showing them side by side. calledBackConnected is a strict
   // subset of calledBack, so this can never exceed calledBackPct.
@@ -658,7 +663,7 @@ function sendOutboundReportEmail(req) {
     + inboundEmailKpiRow_('Called back',
         fmtNum_(cb.calledBack) + (cb.calledBackPct != null ? ' (' + cb.calledBackPct + '%)' : ''),
         inboundEmailDelta_(cb.calledBackPct, cbp.calledBackPct, true))
-    + inboundEmailKpiRow_('Actually reached',
+    + inboundEmailKpiRow_('Callbacks connected',
         fmtNum_(cb.calledBackConnected)
         + (cb.calledBackConnectedPct != null ? ' (' + cb.calledBackConnectedPct + '%)' : ''),
         inboundEmailDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, true))
@@ -697,10 +702,12 @@ function sendOutboundReportEmail(req) {
     footerHtml: 'Requested from the Outbound report — sent only to you. '
       + 'Both callback rates divide by the TRACKABLE abandons (an anonymous '
       + 'caller cannot be called back), so a dept is never penalised for its '
-      + 'caller-ID mix. “Actually reached” is the stricter subset: the CDR '
-      + 'cannot tell a no-answer from a voicemail, so a callback that rang '
-      + 'out still counts as called back. The per-day trend, the abandon-hour '
-      + 'cut and the not-called-back list are in the web app.',
+      + 'caller-ID mix. A callback that rang out still counts as called back. '
+      + '“Connected” means the far end answered — a person, a voicemail '
+      + 'greeting or a phone menu; the phone records report all three the '
+      + 'same way, so “Callbacks connected” is an upper bound on callers '
+      + 'actually reached. The per-day trend, the abandon-hour cut and the '
+      + 'not-called-back list are in the web app.',
   });
 
   sendAppEmail_({ to: email,
@@ -1426,11 +1433,32 @@ function obWilsonInterval_(successes, n, z) {
  */
 function obReviewTally_(wsGrid, keyGrid) {
   var out = { byStratum: {}, unlabelled: 0, unrecognised: [], totalRows: 0, labelled: 0,
-              tokensMissingKey: [] };
-  var stratumOf = {}, i, row;
+              tokensMissingKey: [], byLabel: {} };
+  var stratumOf = {}, durOf = {}, i, row;
+  // Ring / talk / connected are located by HEADER, not position, so an older
+  // run's key tab (or a column added later) cannot feed the talk comparison
+  // the wrong column. A key without them still scores; it just has no
+  // durations to compare.
+  var head = ((keyGrid || [])[0] || []).map(function (c) { return String(c == null ? '' : c).trim(); });
+  var ringIx = head.indexOf(OB_REVIEW_KEY_HEADER_[2]);
+  var talkIx = head.indexOf(OB_REVIEW_KEY_HEADER_[3]);
+  var connIx = head.indexOf(OB_REVIEW_KEY_HEADER_[5]);
+  var num = function (v) {
+    var t = String(v == null ? '' : v).trim();
+    return (t === '' || !isFinite(Number(t))) ? null : Number(t);
+  };
   for (i = 1; i < (keyGrid || []).length; i++) {
     row = keyGrid[i];
-    if (row && row[0]) stratumOf[String(row[0]).trim()] = String(row[1] == null ? '' : row[1]).trim();
+    if (!row || !row[0]) continue;
+    var tok = String(row[0]).trim();
+    stratumOf[tok] = String(row[1] == null ? '' : row[1]).trim();
+    if (talkIx >= 0 && connIx >= 0) {
+      durOf[tok] = {
+        connected: String(row[connIx] == null ? '' : row[connIx]).trim().toLowerCase() === 'yes',
+        talk: num(row[talkIx]),
+        ring: ringIx >= 0 ? num(row[ringIx]) : null,
+      };
+    }
   }
   var labelSet = {};
   OB_REVIEW_LABELS_.forEach(function (l) { labelSet[l] = true; });
@@ -1454,8 +1482,131 @@ function obReviewTally_(wsGrid, keyGrid) {
     bucket.labels[raw] = (bucket.labels[raw] || 0) + 1;
     if (OB_REVIEW_NOT_REACHED_.indexOf(raw) >= 0) bucket.notReached++;
     out.labelled++;
+    // Durations by LABEL, connected rows only: an unconnected row has no
+    // talk by definition, so it would only pad the comparison with zeros.
+    var d = durOf[token];
+    if (d && d.connected && d.talk !== null) {
+      var bl = out.byLabel[raw] || (out.byLabel[raw] = { talk: [], ring: [] });
+      bl.talk.push(d.talk);
+      if (d.ring !== null) bl.ring.push(d.ring);
+    }
   }
   return out;
+}
+
+/**
+ * PURE. Five-number summary (nearest-rank), or null for an empty list.
+ */
+function obReviewQuantiles_(vals) {
+  var v = (vals || []).filter(function (x) { return typeof x === 'number' && isFinite(x); })
+    .slice().sort(function (a, b) { return a - b; });
+  if (!v.length) return null;
+  var at = function (q) { return v[Math.min(v.length - 1, Math.max(0, Math.ceil(q * v.length) - 1))]; };
+  return { n: v.length, min: v[0], p25: at(0.25), median: at(0.5), p75: at(0.75), max: v[v.length - 1] };
+}
+
+/**
+ * PURE. Does TALK time separate a machine from a person, where ring could not?
+ *
+ * The owner's labels answered the ring question: voicemail share RISES with
+ * ring (roughly 30% -> 40% -> 65% -> 80% across the bands) but never splits
+ * cleanly, and ~40% of all voicemail sits in the 0-1 s band where ring says
+ * nothing. Talk is the other stored duration, and the natural hypothesis is a
+ * WINDOW -- a left message is ~15-45 s, a person is shorter (a quick "not
+ * interested") or longer (a conversation). So the search is over every
+ * `a <= talk <= b` window (which includes both one-sided cuts as its edge
+ * cases), scored by BALANCED accuracy so the larger class cannot win by
+ * volume.
+ *
+ * Machine = NOT REACHED (voicemail + ivr) -- the `reached` KPI's question.
+ * `no-answer` / `unclear` stay out: neither is an outcome.
+ *
+ * ⚠ THE BEST WINDOW IS FOUND IN-SAMPLE, SO IT IS OPTIMISTIC. That makes the
+ * result ASYMMETRIC: a window that fails here fails everywhere, while one that
+ * passes has only earned a fresh sample to confirm it on. The wording says so.
+ */
+var OB_REVIEW_TALK_MIN_CLASS_N_ = 8;     // labelled connected rows needed in EACH class
+var OB_REVIEW_TALK_SEPARATES_BA_ = 0.85; // in-sample balanced accuracy to call it separating
+
+function obReviewTalkComparison_(byLabel) {
+  var src = byLabel || {};
+  var out = { byLabel: {}, separation: null };
+  Object.keys(src).sort().forEach(function (l) {
+    var b = src[l] || {};
+    out.byLabel[l] = { n: (b.talk || []).length, talk: obReviewQuantiles_(b.talk),
+                       ring: obReviewQuantiles_(b.ring) };
+  });
+  var human = ((src.human || {}).talk || []).slice();
+  var machine = [];
+  OB_REVIEW_NOT_REACHED_.forEach(function (l) { machine = machine.concat((src[l] || {}).talk || []); });
+  var sep = { humanN: human.length, machineN: machine.length,
+              humanMedian: human.length ? obReviewQuantiles_(human).median : null,
+              machineMedian: machine.length ? obReviewQuantiles_(machine).median : null,
+              separates: null, best: null };
+  out.separation = sep;
+  if (human.length < OB_REVIEW_TALK_MIN_CLASS_N_ || machine.length < OB_REVIEW_TALK_MIN_CLASS_N_) {
+    sep.reason = 'needs ' + OB_REVIEW_TALK_MIN_CLASS_N_ + ' labelled connected rows in EACH of '
+      + 'human and voicemail/ivr (have ' + human.length + ' / ' + machine.length + ')';
+    return out;
+  }
+  var cuts = human.concat(machine).slice().sort(function (a, b) { return a - b; })
+    .filter(function (x, i, a) { return i === 0 || x !== a[i - 1]; });
+  var inWin = function (lo, hi) { return function (x) { return x >= lo && x <= hi; }; };
+  var best = null;
+  for (var i = 0; i < cuts.length; i++) {
+    for (var j = i; j < cuts.length; j++) {
+      var f = inWin(cuts[i], cuts[j]);
+      var tp = machine.filter(f).length;               // machine inside the window
+      var tn = human.length - human.filter(f).length;  // person outside it
+      var ba = (tp / machine.length + tn / human.length) / 2;
+      // Ties go to the WIDER window found first -- never a sliver fitted to
+      // one row.
+      if (!best || ba > best.ba + 1e-9) {
+        best = { lo: cuts[i], hi: cuts[j], ba: ba, tp: tp, fp: human.length - tn };
+      }
+    }
+  }
+  sep.best = {
+    rule: 'talk ' + best.lo + '-' + best.hi + ' s → machine',
+    lo: best.lo, hi: best.hi,
+    balancedAccuracy: Math.round(best.ba * 1000) / 1000,
+    machineRecall: Math.round((best.tp / machine.length) * 1000) / 1000,
+    precision: (best.tp + best.fp) ? Math.round((best.tp / (best.tp + best.fp)) * 1000) / 1000 : null,
+  };
+  sep.separates = best.ba >= OB_REVIEW_TALK_SEPARATES_BA_;
+  sep.reason = sep.separates
+    ? ('TALK TIME MAY SEPARATE THEM: the best in-sample rule (' + sep.best.rule + ') reaches '
+       + Math.round(best.ba * 100) + '% balanced accuracy (person median ' + sep.humanMedian
+       + ' s vs machine median ' + sep.machineMedian + ' s). In-sample is the OPTIMISTIC case '
+       + '-- confirm it on a fresh sample before building anything on it.')
+    : ('TALK TIME DOES NOT SEPARATE THEM EITHER: even the best in-sample rule (' + sep.best.rule
+       + ') reaches only ' + Math.round(best.ba * 100) + '% balanced accuracy (person median '
+       + sep.humanMedian + ' s vs machine median ' + sep.machineMedian + ' s), and in-sample '
+       + 'is the OPTIMISTIC case. Neither stored duration can tell a machine from a person.');
+  return out;
+}
+
+/**
+ * PURE. The fewest stratum-C rows at which THIS share would clear either bar,
+ * or null when no sample size ever would.
+ *
+ * Exists because "label more rows" was the scorer's only advice for an
+ * inconclusive C, and at a share near the bars it is advice that cannot be
+ * followed: 13/20 (65%) clears the 60% lower bound only at ~350 rows, and a
+ * share between the two bars (50-60%) never clears either, however much is
+ * listened to. Assumes the share holds as n grows -- the honest reading of
+ * "how much more would it take".
+ */
+var OB_REVIEW_DECIDE_SEARCH_MAX_ = 2000;
+
+function obReviewRowsToDecide_(share) {
+  var p = Number(share);
+  if (!isFinite(p) || p < 0 || p > 1) return null;
+  for (var n = OB_REVIEW_C_MIN_N_; n <= OB_REVIEW_DECIDE_SEARCH_MAX_; n++) {
+    var ci = obWilsonInterval_(Math.round(p * n), n);
+    if (ci && (ci.lo >= OB_REVIEW_C_VALIDATE_LO_ || ci.hi < OB_REVIEW_C_REFUTE_HI_)) return n;
+  }
+  return null;
 }
 
 function sampleOutboundCallsForReview() {
@@ -1764,10 +1915,27 @@ function obReviewVerdict_(tally) {
       + 'cannot carry this classifier here -- RELABEL `connected` in the callback table rather '
       + 'than reclassifying it, and do not set OUTBOUND_VM_RING_SEC';
   } else {
+    // How many rows would settle it -- and whether that is a number anyone
+    // can listen to. One sampler run draws at most OB_REVIEW_MAX_N_ per
+    // stratum, so beyond that "label more" is advice that cannot be taken.
+    var need = obReviewRowsToDecide_(ci.share);
+    out.c.rowsToDecide = need;
+    out.c.settleableByListening = need !== null && need <= OB_REVIEW_MAX_N_;
     out.reason = 'the in-band voicemail share is ' + Math.round(ci.share * 100) + '% but its 95% '
       + 'interval spans ' + Math.round(ci.lo * 100) + '-' + Math.round(ci.hi * 100) + '%, which '
-      + 'covers both "mostly machines" and "a coin flip" -- label more stratum-C rows (re-run the '
-      + 'sampler with OUTBOUND_REVIEW_N raised) rather than choosing an end';
+      + 'covers both "mostly machines" and "a coin flip"';
+    if (out.c.settleableByListening) {
+      out.reason += ' -- at this share about ' + need + ' labelled stratum-C rows would settle it, '
+        + 'so label more (re-run the sampler with OUTBOUND_REVIEW_N raised) rather than choosing '
+        + 'an end';
+    } else {
+      out.reason += ' -- and MORE LISTENING WILL NOT SETTLE IT: at this share the interval clears '
+        + 'a bar only ' + (need === null ? 'at NO sample size (it sits between the two bars)'
+          : 'at ~' + need + ' rows, past what one run can draw (' + OB_REVIEW_MAX_N_ + ')')
+        + '. The share IS the answer: about ' + Math.round(ci.share * 10) + ' in 10 in-band calls '
+        + 'are voicemail -- too impure to threshold on silently, and not pure enough to call the '
+        + 'band validated';
+    }
   }
 
   // Only a CONTROL failure downgrades. The recall and shoulder findings are
@@ -1832,12 +2000,18 @@ function scoreOutboundReviewSample(worksheetTab) {
   var keyGrid = key.getDataRange().getDisplayValues();
   var tally = obReviewTally_(wsGrid, keyGrid);
   var verdict = obReviewVerdict_(tally);
+  var talk = obReviewTalkComparison_(tally.byLabel);
 
+  // byBand / recallCeiling / shoulder were computed by the verdict and then
+  // dropped on the floor here -- the per-band profile is what the threshold
+  // decision rests on, so it travels with the result.
   var out = {
     workbook: ss.getUrl(), worksheetTab: wsName,
     rows: tally.totalRows, labelled: tally.labelled, unlabelled: tally.unlabelled,
     byStratum: tally.byStratum, verdict: verdict.verdict, why: verdict.reason,
-    stratumC: verdict.c, controls: verdict.controls, controlWarnings: verdict.notes,
+    stratumC: verdict.c, byBand: verdict.byBand, recallCeiling: verdict.recallCeiling,
+    shoulder: verdict.shoulder, controls: verdict.controls, controlWarnings: verdict.notes,
+    talkByLabel: talk.byLabel, talkSeparation: talk.separation,
   };
   if (tally.unrecognised.length) out.unrecognisedLabels = tally.unrecognised;
   if (tally.tokensMissingKey.length) out.tokensMissingKey = tally.tokensMissingKey;
@@ -1847,6 +2021,8 @@ function scoreOutboundReviewSample(worksheetTab) {
     + ' rows labelled in "' + wsName + '"'
     + (tally.unlabelled ? ' (' + tally.unlabelled + ' still blank)' : '')
     + (verdict.notes.length ? ' ' + verdict.notes.join(' ') : '')
+    + (talk.separation && talk.separation.reason ? ' ' + (talk.separation.separates === null
+        ? 'Talk-time comparison skipped: ' : '') + talk.separation.reason : '')
     + '. Nothing was set — a threshold is still an owner decision.';
   Logger.log('[outbound-review] %s', out.result);
   return logStatusReturn_(out);
