@@ -381,8 +381,14 @@ caller_hash` within `OUTBOUND_CALLBACK_WINDOW_DAYS` (=3), matched from
 ANY dept/agent and uncapped by the report's `to`; anonymous abandons are
 excluded from the rate denominator (a dept is never punished for its
 caller-ID mix); `pendingTail` counts tracked abandons still inside the
-window. "Connected" is the disclosed stricter subset -- the CDR cannot
-distinguish no-answer/voicemail/busy. **Company view is the FLAT table by
+window. **"Connected" = the far end ANSWERED -- a person, a voicemail
+greeting or a phone menu, which the CDR reports identically** (a labelled
+listening audit, 2026-09-23, found no stored field that separates them). Owner
+ruling: the word stays "Connected" but is DEFINED on every surface through one
+client constant, `OB_CONNECTED_DEF_` (glossary tooltips, the Caller Lookup /
+agent-day chips, the call-path head); the callback tile is "Callbacks
+connected", disclosed as an UPPER BOUND on callers reached; and the audit's
+figures never appear in reporting. Pinned in `outbound-report.test.js`. **Company view is the FLAT table by
 owner ruling (Option C, 2026-08-20)**: crossover agents have multiple
 roster homes, so per-dept cards would double-count or misattribute --
 don't "upgrade" without a new ruling. `getOutboundUncalled` is the

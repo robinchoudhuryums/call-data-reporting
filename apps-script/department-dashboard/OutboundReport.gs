@@ -12,10 +12,14 @@
  *
  * TWO CAVEATS ARE PART OF THE CONTRACT (they ship as captions in the UI and
  * must never be dropped):
- *   - "Connected" means a Talk>0 Answered external leg. The CDR cannot
- *     distinguish no-answer / voicemail / busy on the unconnected side, so
- *     an un-connected callback attempt still COUNTS as a callback attempt
- *     (we dialed them), and `calledBackConnected` is the stricter subset.
+ *   - "Connected" means a Talk>0 Answered external leg: the far end
+ *     ANSWERED -- a person, a voicemail greeting or a phone menu, which the
+ *     CDR reports identically (a labelled listening audit, 2026-09-23,
+ *     confirmed no stored field separates them). So `calledBackConnected` is
+ *     an UPPER BOUND on callers reached, never "reached" itself, and every
+ *     surface says so (owner ruling: keep the word "Connected", define it
+ *     everywhere, and keep audit figures OUT of the reporting). An
+ *     un-connected callback attempt still COUNTS as a callback (we dialed).
  *   - Dept attribution for AGENTS uses the dialing agent's ROSTER dept
  *     (DO NOT EDIT!, exact INV-04 match via buildDeptsByAgent_), NEVER the
  *     raw CDR org label stored in outbound_calls.department ("Customer
@@ -584,7 +588,8 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
   // punish depts for their caller-ID mix.
   cb.calledBackPct = cb.abandonedTracked
     ? Math.round(cb.calledBack / cb.abandonedTracked * 1000) / 10 : null;
-  // (2) The rate that actually reached someone. Same denominator as above --
+  // (2) The rate whose callback CONNECTED -- the far end answered, which
+  // includes voicemail, so an upper bound on callers reached. Same denominator as above --
   // a DIFFERENT one would make the two tiles incomparable, which is the whole
   // point of showing them side by side. calledBackConnected is a strict
   // subset of calledBack, so this can never exceed calledBackPct.
@@ -658,7 +663,7 @@ function sendOutboundReportEmail(req) {
     + inboundEmailKpiRow_('Called back',
         fmtNum_(cb.calledBack) + (cb.calledBackPct != null ? ' (' + cb.calledBackPct + '%)' : ''),
         inboundEmailDelta_(cb.calledBackPct, cbp.calledBackPct, true))
-    + inboundEmailKpiRow_('Actually reached',
+    + inboundEmailKpiRow_('Callbacks connected',
         fmtNum_(cb.calledBackConnected)
         + (cb.calledBackConnectedPct != null ? ' (' + cb.calledBackConnectedPct + '%)' : ''),
         inboundEmailDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, true))
@@ -697,10 +702,12 @@ function sendOutboundReportEmail(req) {
     footerHtml: 'Requested from the Outbound report — sent only to you. '
       + 'Both callback rates divide by the TRACKABLE abandons (an anonymous '
       + 'caller cannot be called back), so a dept is never penalised for its '
-      + 'caller-ID mix. “Actually reached” is the stricter subset: the CDR '
-      + 'cannot tell a no-answer from a voicemail, so a callback that rang '
-      + 'out still counts as called back. The per-day trend, the abandon-hour '
-      + 'cut and the not-called-back list are in the web app.',
+      + 'caller-ID mix. A callback that rang out still counts as called back. '
+      + '“Connected” means the far end answered — a person, a voicemail '
+      + 'greeting or a phone menu; the phone records report all three the '
+      + 'same way, so “Callbacks connected” is an upper bound on callers '
+      + 'actually reached. The per-day trend, the abandon-hour cut and the '
+      + 'not-called-back list are in the web app.',
   });
 
   sendAppEmail_({ to: email,

@@ -756,6 +756,14 @@
       + '— not the share of unique calls answered. The company-wide target is '
       + answerTarget_('global') + '%.';
     g['total ttt']    = g['ttt'];
+    // Outbound (Outbound + Direct reports): one definition, OB_CONNECTED_DEF_.
+    g['connected']    = OB_CONNECTED_DEF_;
+    g['ob connected'] = OB_CONNECTED_DEF_;
+    g['connect %']    = 'Connected calls as a share of calls placed. ' + OB_CONNECTED_DEF_;
+    g['callbacks connected'] = 'Abandoned callers we called back where the far end answered, '
+      + 'divided by the same trackable abandons as the callback rate. It includes voicemail '
+      + 'and phone menus, so it is an UPPER BOUND on callers actually reached. '
+      + OB_CONNECTED_DEF_;
     g['avg att']      = g['att'];
     g['avg talk']     = g['att'];
   })();

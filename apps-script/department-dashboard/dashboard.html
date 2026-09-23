@@ -2252,11 +2252,12 @@
             <!-- The two contract caveats (see OutboundReport.gs header). -->
             <p class="al-hint" id="outbound-callback-caption">
               &ldquo;Called back&rdquo; = we <em>dialed</em> the abandoned caller within
-              <span id="outbound-cb-window">3</span> days &mdash; the CDR cannot
-              distinguish no-answer / voicemail / busy on the unconnected side, so
-              &ldquo;connected&rdquo; is the stricter subset. Callbacks count no matter which
-              agent or department dialed. Anonymous abandons (no caller ID) cannot be
-              tracked and are excluded from the callback rate.
+              <span id="outbound-cb-window">3</span> days, whether or not the call connected.
+              &ldquo;Connected&rdquo; means the far end answered &mdash; a person, a voicemail
+              greeting or a phone menu; the phone records report all three the same way, so
+              &ldquo;Callbacks connected&rdquo; is an upper bound on callers actually reached.
+              Callbacks count no matter which agent or department dialed. Anonymous abandons
+              (no caller ID) cannot be tracked and are excluded from the callback rate.
             </p>
             <!-- v2: daily callback-rate trend (safeChart_; hidden under 2 days). -->
             <div id="outbound-cb-chart-wrap" style="display:none; max-width:100%;">

@@ -2002,9 +2002,10 @@ When something looks wrong, before assuming a code bug, check:
     Part 2, and steps 2-3 there are not safe to start without its output.
     - **Why it exists.** `connected` counts a voicemail pickup as a connect,
       because the far end genuinely answers — structural in the CDR, and no
-      new capture column fixes it. So the admin-visible "Actually reached"
-      tile currently over-counts by however much voicemail there is, and
-      nobody knows how much that is. The one unused discriminator already
+      new capture column fixes it. So the callback tile over-counts callers
+      reached by however much voicemail there is (renamed "Callbacks
+      connected" and disclosed as an upper bound, 2026-09-23 -- #71 has why
+      no classifier followed). The one unused discriminator already
       stored is `ring_seconds` on a connected call: voicemail answers only
       after the handset rang out to the carrier's no-answer timeout, a
       near-constant per destination, so the distribution SHOULD show a broad
@@ -2596,6 +2597,15 @@ When something looks wrong, before assuming a code bug, check:
     `listCdrReportScriptProperties()`.
 
 71. **The answer-quality review sample (`sampleOutboundCallsForReview`).**
+    **CONCLUDED 2026-09-23: no classifier will be built from stored call
+    data.** 53 owner labels showed voicemail share RISING with ring but never
+    splitting, with most voicemail in the 0-1 s band where ring says nothing;
+    only audio can tell a person from a machine. `OUTBOUND_VM_RING_SEC` /
+    `OUTBOUND_ANSWER_QUALITY` stay unset, and the reporting instead DEFINES
+    "Connected" everywhere (`OB_CONNECTED_DEF_`). The sampler, scorer and
+    probes stay as the owner's ongoing RESEARCH tools -- **their figures are
+    never shown in any report** (owner ruling). The runbook below stands for
+    that research use.
     Read-only, admin-gated, editor-run from the DASHBOARD project. The GROUND
     TRUTH step for the voicemail classifier (#64) -- run it BEFORE setting
     `OUTBOUND_VM_RING_SEC` or anything else in that family.

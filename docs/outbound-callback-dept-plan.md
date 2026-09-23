@@ -54,7 +54,9 @@ The six-point round promoted **"Actually reached"** to a headline tile
 caller". The tile is more honest than the raw callback rate it sits beside —
 it still excludes rang-out callbacks — but it is not yet what its label
 claims. **Fixing the label or fixing the number are both acceptable; leaving
-both is not.**
+both is not.** **RESOLVED 2026-09-23 by fixing the LABEL:** the number cannot
+be fixed from stored data (round 2 below), so the tile is now "Callbacks
+connected", with an upper-bound disclosure.
 
 ### The two discriminators we actually have
 
@@ -640,8 +642,21 @@ detection / speech analytics if it offers one). The talk-time comparison the
 scorer now runs is the last stored-duration check; unless it passes -- and
 then on a FRESH sample -- **Step 2 is superseded: no `OUTBOUND_VM_RING_SEC`,
 no `strict`.** `connected` is relabelled as "answered (person or machine)"
-and the reached figure disclosed as an upper bound. That representation work
-is the next step (owner direction, 2026-09-23).
+and the reached figure disclosed as an upper bound.
+
+**SHIPPED the same day, with two owner rulings.** (1) The word stays
+**"Connected"** -- "Picked up" was proposed and rejected as MORE misleading --
+but it is DEFINED wherever it appears through one client constant,
+`OB_CONNECTED_DEF_` (glossary tooltips on the Outbound + Direct reports'
+Connected / Connect % / OB connected labels, the Caller Lookup and agent-day
+chips, the call-path head). The callback tile "Actually reached" became
+**"Callbacks connected"**, its foot and the caption / email footer calling it
+an upper bound on callers reached. (2) **Audit figures stay out of the
+reporting**: the owner keeps auditing raw calls as research, and no measured
+voicemail share appears on any surface -- the definition string is pinned to
+carry no number. Steps 2-4 below are SUPERSEDED; the per-dept callback table
+(Part 1) is unblocked, since it ranks by called-back and any connected column
+inherits the definition.
 
 **Open, and it outranks everything above: the E control failed** (0 of 3
 unconnected rows came back no-answer; 2 human, 1 voicemail). The likely cause
@@ -701,6 +716,9 @@ also degrades safely: if the probe shows no spike, `voicemail-likely` is
 near-empty and the surface just says so.
 
 ### Step 4: what it changes
+
+> **SUPERSEDED 2026-09-23** -- no classifier; see "GROUND TRUTH round 2".
+> Kept as the record of what was planned.
 
 - `kpis`: `obReached` / `obVoicemailLikely` / `obBrief` alongside
   `obConnected` (which KEEPS its current meaning — nothing reinterprets a
@@ -969,4 +987,6 @@ what keeps this table from rewarding dialing over connecting.
 6. Regression scenario + `drive-admin` coverage, as with every surface here.
 
 **Steps 1–3 are worth doing even if the table is never built** — the tile that
-says "Actually reached" is live for admins today.
+says "Actually reached" is live for admins today. **(2026-09-23: steps 2-3
+SUPERSEDED -- the tile was relabelled "Callbacks connected" instead; step 5
+is unblocked.)**

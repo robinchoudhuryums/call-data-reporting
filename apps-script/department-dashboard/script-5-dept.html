@@ -774,7 +774,8 @@
       + (c.callStart ? escapeHtml(clCstTime_(c.callStart)) + ' · ' : '')
       + '<span class="cj-internal-tag">outbound call</span> · '
       + escapeHtml(c.callDate || '')
-      + ' · <strong>' + (c.connected ? 'connected' : 'not connected') + '</strong>'
+      + ' · <strong' + (c.connected ? ' title="' + escapeHtml(OB_CONNECTED_DEF_) + '"' : '') + '>'
+      + (c.connected ? 'connected' : 'not connected') + '</strong>'
       + (c.talkSeconds ? ' · talked ' + escapeHtml(fmtDuration(c.talkSeconds)) : '')
       + '</div>';
     var who = bits.length ? '<div class="cj-origin">Placed by ' + bits.join(' · ') + '</div>' : '';

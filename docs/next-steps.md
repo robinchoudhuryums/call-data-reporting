@@ -345,6 +345,14 @@ queue), a crossover agent does not, so the ruling above does not reach it.
 The owner approved planning it on 2026-09-15 — full design in
 [`docs/outbound-callback-dept-plan.md`](outbound-callback-dept-plan.md),
 together with the OUTBOUND ANSWER-QUALITY work it depends on.
+**2026-09-23: the answer-quality half is CONCLUDED, and the table is
+UNBLOCKED.** 53 owner labels showed no stored field separates a person from a
+voicemail greeting or a phone menu, so no classifier will be built; the
+reporting instead DEFINES "Connected" everywhere and calls the callback tile
+("Callbacks connected") an upper bound on callers reached, with no audit
+figure on any surface (plan: "GROUND TRUTH round 2"; Operator State #71). The
+table ranks by called-back, so it does not need a classifier. The history
+below is the record of how that was established.
 **Do the answer-quality half first -- but it is BLOCKED as of 2026-09-18,
 not merely queued.** Both probes ran live and both returned INCONCLUSIVE, for
 two different reasons recorded in full under "Step 1 RESULTS" in
@@ -608,8 +616,10 @@ tripwire. Revisit only after Batch 5 has held.
   weighted toward stratum C, a failed control downgrades a validation, and all
   four outbound tools now anchor an unset window to `max(call_date)` capped at
   yesterday (the P16 rule).
-- **The ring method has a RECALL ceiling, and three decisions hang off it
-  (2026-09-22, from owner-labelled calls).** A voicemail rang 8 s and a
+- ~~**The ring method has a RECALL ceiling, and three decisions hang off it
+  (2026-09-22, from owner-labelled calls).**~~ SUPERSEDED 2026-09-23: the
+  labelling finished and the classifier was dropped (above), so the
+  precedence ruling and `strict` are moot. A voicemail rang 8 s and a
   call-screening service connected fast then took a message, so a ring
   threshold can only ever see TIMEOUT voicemail; immediate voicemail, IVR and
   screening stay inside `reached`, the number managers act on. Open, in order:
@@ -622,8 +632,8 @@ tripwire. Revisit only after Batch 5 has held.
   ceiling is unmeasured -- `disclose` has to call `reached` an upper bound.
   Unbuilt and only needed if a population figure is wanted: per-band ROW
   COUNTS as weights, since the pooled sample rate is not a population rate.
-- **Re-derive the band share over the REACHABLE population; do not carry the
-  22% forward (2026-09-21).** That figure is over all connects, and #65
+- ~~**Re-derive the band share over the REACHABLE population; do not carry the
+  22% forward (2026-09-21).**~~ MOOT 2026-09-23 (no classifier). That figure is over all connects, and #65
   established that 40.6% of them connect instantly and must be excluded from
   any ring-based classifier. Measure the band's share of the remainder rather
   than reasoning it out — whether instant rows can fall in a 20-32 s band at

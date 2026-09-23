@@ -2862,3 +2862,45 @@ test('an internal agent CNAM is never the external leg in either era', function 
   assert.equal(h.ctx.obInstantDerivedRing_(JSON.stringify([
     { name: 'Ann Agent', kind: 'answer', secs: 900, talk: 10 }])), null);
 });
+
+// ── "Connected" is DEFINED everywhere it appears (owner ruling 2026-09-23) ──
+// A labelled listening audit found that the phone records report a person, a
+// voicemail greeting and a phone menu identically, so no stored field can say
+// who answered. The owner kept the word "Connected" but required it defined on
+// every surface, and required the audit's figures to stay OUT of reporting.
+const DD_ = path_.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+function readDD_(f) { return fs_.readFileSync(path_.join(DD_, f), 'utf8'); }
+
+test('connected: one client definition names voicemail and carries NO audit figure', function () {
+  const core = readDD_('script-1-core.html');
+  const m = core.match(/var OB_CONNECTED_DEF_ = ([\s\S]*?);\n/);
+  assert.ok(m, 'OB_CONNECTED_DEF_ must exist in script-1-core');
+  const def = m[1];
+  assert.match(def, /voicemail/);
+  assert.match(def, /phone menu/);
+  assert.doesNotMatch(def, /\d/,
+    'no number may ride this definition -- audit figures stay out of manager reporting');
+});
+
+test('connected: every outbound surface uses the definition, and "Actually reached" is gone', function () {
+  const nav = readDD_('script-4-nav.html');
+  ['connected', 'ob connected', 'connect %', 'callbacks connected'].forEach(function (k) {
+    assert.ok(nav.indexOf("g['" + k + "']") >= 0, 'glossary must define "' + k + '"');
+  });
+  const esc = readDD_('script-10-escalations.html');
+  assert.equal((esc.match(/title="' \+ escapeHtml\(OB_CONNECTED_DEF_\) \+ '">Connected<\/span>/g) || []).length, 2,
+    'both Connected chips (Caller Lookup + agent-day) carry the definition');
+  assert.match(readDD_('script-5-dept.html'), /escapeHtml\(OB_CONNECTED_DEF_\)/,
+    'the call-path head defines it too');
+  // The claim the data cannot back, removed from every surface that showed it.
+  // (Matched as a RENDERED string -- a code comment recording the old label
+  // is history, not a surface.)
+  assert.doesNotMatch(readDD_('script-9-inbound-direct.html'), /'Actually reached'/,
+    'the callback tile must not say "Actually reached"');
+  assert.doesNotMatch(readDD_('dashboard.html'), /Actually reached/);
+  assert.doesNotMatch(OB_SRC, /inboundEmailKpiRow_\('Actually reached'/);
+  assert.doesNotMatch(OB_SRC, /“Actually reached”/);
+  // And the callback caption + email footer both say it is an upper bound.
+  assert.match(readDD_('dashboard.html'), /upper bound on callers actually reached/);
+  assert.match(OB_SRC, /upper bound on callers '\s*\n\s*\+ 'actually reached/);
+});

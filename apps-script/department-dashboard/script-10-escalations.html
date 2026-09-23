@@ -1426,7 +1426,7 @@
   function clOutboundCardHtml_(c) {
     const when = escapeHtml((c.callDate || '?') + (c.callStart ? ' · ' + clCstTime_(c.callStart) : ''));
     const outcome = c.connected
-      ? '<span class="cl-chip cl-chip-good">Connected</span>'
+      ? '<span class="cl-chip cl-chip-good" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">Connected</span>'
       : '<span class="cl-chip cl-chip-muted">Not connected</span>';
     const facts = [];
     facts.push('Called by ' + escapeHtml(c.agentName || (c.agentExt ? 'ext ' + c.agentExt : '(unknown)'))
@@ -2023,7 +2023,7 @@
   function adOutboundCardHtml_(c) {
     const when = escapeHtml(c.callStart ? clCstTime_(c.callStart) : '?');
     const outcome = c.connected
-      ? '<span class="cl-chip cl-chip-good">Connected</span>'
+      ? '<span class="cl-chip cl-chip-good" title="' + escapeHtml(OB_CONNECTED_DEF_) + '">Connected</span>'
       : '<span class="cl-chip cl-chip-muted">Not connected</span>';
     const facts = [];
     if (c.connected && c.talkSec > 0) facts.push('Talked ' + fmtDuration(c.talkSec));

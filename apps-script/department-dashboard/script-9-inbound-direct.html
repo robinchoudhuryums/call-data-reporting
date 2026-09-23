@@ -1816,11 +1816,14 @@
       inboundKpiTile_('Agents', fmtNumber(k.agents), 'with outbound calls', ''),
       inboundKpiTile_('OB calls', fmtNumber(k.obTotal), fmtNumber(k.attempts) + ' dial attempts',
         kp ? inboundDelta_(k.obTotal, kp.obTotal, 'pos', false) : ''),
+      // "Connected" includes voicemail and phone menus (OB_CONNECTED_DEF_,
+      // the glossary tooltip on the label) -- the foot says so where the
+      // number is read, not only on hover.
       inboundKpiTile_('Connected', fmtNumber(k.obConnected),
-        k.obConnectRate != null ? (k.obConnectRate + '% of calls') : '',
+        (k.obConnectRate != null ? (k.obConnectRate + '% of calls · ') : '') + 'incl. voicemail',
         (kp && k.obConnectRate != null && kp.obConnectRate != null)
           ? inboundDelta_(k.obConnectRate, kp.obConnectRate, 'pos', true) : ''),
-      inboundKpiTile_('Talk time', fmtDuration(k.obTalkSec), 'ATT ' + fmtDuration(k.obAttSec) + ' per connected', ''),
+      inboundKpiTile_('Talk time', fmtDuration(k.obTalkSec), 'ATT ' + fmtDuration(k.obAttSec) + ' per connected call', ''),
       // (4): the unconnected split. The CDR still cannot tell a no-answer
       // from a voicemail -- that stays disclosed -- but ring LENGTH
       // separates effort from noise, which is the distinction a manager can
@@ -1850,9 +1853,12 @@
       // and burying that under "Callback rate" made the softer number the
       // headline. SAME denominator as the tile above, deliberately, so the
       // gap between the two is readable without arithmetic.
-      inboundKpiTile_('Actually reached',
+      // Was "Actually reached" -- a claim the data cannot back: a connected
+      // callback includes voicemail and phone menus (owner ruling
+      // 2026-09-23). It is an upper bound on callers reached, and says so.
+      inboundKpiTile_('Callbacks connected',
         cb.calledBackConnectedPct != null ? cb.calledBackConnectedPct + '%' : '—',
-        fmtNumber(cb.calledBackConnected) + ' connected, same denominator',
+        fmtNumber(cb.calledBackConnected) + ' · same denominator · incl. voicemail',
         (cbp && cb.calledBackConnectedPct != null && cbp.calledBackConnectedPct != null)
           ? inboundDelta_(cb.calledBackConnectedPct, cbp.calledBackConnectedPct, 'pos', true) : ''),
       inboundKpiTile_('Median time to callback',
