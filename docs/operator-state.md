@@ -2719,6 +2719,21 @@ When something looks wrong, before assuming a code bug, check:
       searches every `a <= talk <= b` window for the best balanced accuracy
       and calls it separating at 85%. The search is IN-SAMPLE, so read it
       asymmetrically: a fail is final, a pass only earns a fresh sample.
+    - **The TALK run -- that fresh sample (2026-09-23).** Run
+      **`sampleOutboundCallsForReviewByTalk()`** instead of the ring sampler:
+      same blinded worksheet, workbook, window and labels, but ~46 connected
+      calls drawn in six TALK bands weighted toward the rule's edges (8-30 s,
+      where a person who hangs up fast would be called a machine; 61-120 s,
+      where short conversations meet long messages). Label as usual, then run
+      `scoreOutboundReviewSample()` -- it recognises a talk run by its
+      stratum ids and scores ONLY the pre-registered rule
+      (`OB_REVIEW_TALK_RULE_` = talk 8-79 s -> machine, fixed before this run
+      and pinned against edits): machine answers caught and people kept, each
+      with its interval, `validated` only if BOTH lower bounds clear 70%. The
+      refitted best window is shown as `exploratoryRefit` only -- never quote
+      it as the result. The sample over-weights the edges, so its rates are
+      FLOORS for the population's. Research only: a pass changes no report
+      without an owner ruling.
     - **⚠ A voicemail-heavy 0-11 s band is the RESULT THAT MATTERS MOST, and it
       is not a failure.** A confirmed voicemail rang **8 s** (an agent left a
       message, then sat on a silent line ~2 min). There are TWO kinds of

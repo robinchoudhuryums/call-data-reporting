@@ -1,6 +1,33 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer
+  found talk 8-79 s -> machine at 92% balanced accuracy on run 20260922-1313
+  -- IN-SAMPLE, and with no person call under 62 s in that ring-drawn sample.
+  The rule is now PRE-REGISTERED (`OB_REVIEW_TALK_RULE_`, pinned) and
+  `sampleOutboundCallsForReviewByTalk()` draws a fresh ~46-call sample in six
+  talk bands weighted to the rule's edges; the scorer detects a talk run and
+  scores only the fixed rule (both failure modes, 70% lower-bound bar).
+  **Owner next:** deploy, run the talk sampler, label, score. Research only --
+  nothing reaches the reports. The E-control question (unconnected rows heard
+  as human) is still open.
+  - **WHERE I LEFT OFF (the one current line -- older "left off" notes below
+    are history):** nothing half-built; the answer-quality thread is now the
+    OWNER's research loop, not queued code. **NEXT PIECE OF WORK
+    (owner-confirmed 2026-09-23): the per-dept CALLBACK table** --
+    `docs/outbound-callback-dept-plan.md` Part 1 + sequence step 5, with the
+    2026-09-15 owner rulings (rank by the OWN-dept called-back column; rows
+    own / another dept / not called back summing to trackable abandons; the
+    per-dialing-dept matrix as a row EXPAND; sub-queues via `queuesForDept_`;
+    crossover / unrostered / no-agent columns explicit from the first commit;
+    `outboundReport:v3` -> `v4`). Unblocked: it ranks by called-back, needs
+    no classifier, and any connected column inherits `OB_CONNECTED_DEF_`
+    (`docs/next-steps.md`). Start with `/plan` against that plan doc. **Standing
+    operator items:** deploy the dashboard + walk S46 (new "Callbacks
+    connected" wording); run the talk sampler; check the E rows' recording
+    start vs row time; set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
+    = `1680000` (#70); set `ANSWER_RATE_FORMULA=answerable` (#69); delete
+    `PerformanceReport.gs` in the web editor (INV-17); walk S39 + S41.
 - **2026-09-23 (answer-quality CONCLUDED, same branch; PR #341 merged):** the
   owner labelled 53/54 rows of `Review 20260922-1313`. Population-weighted,
   voicemail is ~40% of connected calls, its share RISES with ring (~30% ->
@@ -15,8 +42,8 @@
     85% balanced-accuracy bar).
   - **Open:** the E control failed (2 human + 1 voicemail on unconnected rows)
     -- probably the agent+time lookup landing on the redial; the owner is to
-    check recording start vs row time. Then re-run the (redeployed) scorer to
-    get the talk comparison.
+    check recording start vs row time. (The talk comparison has since run:
+    see the entry above.)
   - **SHIPPED (owner rulings):** the word stays "Connected" ("Picked up"
     rejected as more misleading) but is DEFINED everywhere via
     `OB_CONNECTED_DEF_`; "Actually reached" -> "Callbacks connected" (upper
@@ -49,7 +76,7 @@
     LABEL THE TERMINAL OUTCOME, on the sheet). Also: the probe SQL is never
     executed by any test (mocked conn) -- source pins now cover the new
     sub-selects.
-  - **WHERE I LEFT OFF:** the owner is labelling run `Review 20260922-1313`
+  - **(SUPERSEDED 2026-09-23 -- labelling finished, Step 3 moot.) WHERE I LEFT OFF was:** the owner is labelling run `Review 20260922-1313`
     (12 of 54 done). Next is to score it (A+B first, it measures the recall
     ceiling alone), then the **Step 3 precedence ruling**, and `strict` stays
     off. Standing operator items unchanged: the two cdr-import time limits
