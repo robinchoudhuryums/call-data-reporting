@@ -99,6 +99,9 @@ function nbResumeWrite_(props, prop, idx, data, keyCols) {
     index: idx,
     rowCount: data.length,
     key: idx < data.length ? nbResumeKey_(data[idx], keyCols) : '',
+    // CRT-6: lets the nightly sort tell a live multi-run backfill from an
+    // abandoned pointer (nbResumeRead_ ignores it).
+    writtenAt: new Date().toISOString(),
   }));
 }
 

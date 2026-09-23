@@ -66,8 +66,26 @@ function ahFetchDalRows_(fromIso, toIso, opts) {
     var usable = (typeof neonDqeRowsUsable_ === 'function')
       ? neonDqeRowsUsable_(rows) : (rows && rows.length > 0);
     if (usable) return rows;
+    // S2A-3: Neon unusable -> the sheet is the fallback; if IT is empty too
+    // this is the outage-empty shape (computeSummary_'s sourceUnavailable),
+    // not a quiet window. Marked on the array so the caller never caches it.
+    var fb = sheetFetchDqeRows_(fromIso, toIso, opts);
+    if (!fb || !fb.length) { fb = fb || []; fb.sourceUnavailable = true; }
+    return fb;
   }
   return sheetFetchDqeRows_(fromIso, toIso, opts);
+}
+
+/**
+ * S2A-3 (broad-scan 2026-09-23): may an agent-app blob be cached for the 6 h
+ * TTL? Not when it was built from an outage-empty read or after a failed Dept
+ * Config read -- the R8-C1 / R8-C4 rules every other report already follows.
+ * One zero-team blob pinned for 6 h showed EVERY teammate "no data".
+ */
+function agentHomeCacheable_(sourceUnavailable) {
+  if (sourceUnavailable) return false;
+  if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) return false;
+  return true;
 }
 
 /**
@@ -237,9 +255,12 @@ function getAgentHome(req) {
     try { blob = JSON.parse(cachedTeam); teamHit = true; } catch (e) { blob = null; }
   }
   if (!blob) {
-    blob = agentHomeTeamBlob_(computeSummary_(who.dept, from, to, 'roster'));
-    try { cache.put(teamKey, JSON.stringify(blob), REPORT_CACHE_TTL_SECONDS); }
-    catch (e) { /* oversized/unavailable -- serve uncached */ }
+    var summary = computeSummary_(who.dept, from, to, 'roster');
+    blob = agentHomeTeamBlob_(summary);
+    if (agentHomeCacheable_(summary && summary.meta && summary.meta.sourceUnavailable)) {
+      try { cache.put(teamKey, JSON.stringify(blob), REPORT_CACHE_TTL_SECONDS); }
+      catch (e) { /* oversized/unavailable -- serve uncached */ }
+    }
   }
   var ownView = agentHomeOwnView_(blob, who.agentName);
 
@@ -276,8 +297,14 @@ function getAgentHome(req) {
         return { t: t, ring: (m.ring != null ? m.ring : null), wait: (m.wait != null ? m.wait : null) };
       }) };
     });
-    try { cache.put(meKey, JSON.stringify(detail), REPORT_CACHE_TTL_SECONDS); }
-    catch (e) { /* serve uncached */ }
+    // S2A-3: never pin an outage-empty / degraded-config blob; and a wait
+    // join that came back unavailable (a transient Neon miss looks the same
+    // as "no capture") caches only for the short tier, so ring/wait times do
+    // not vanish for the full 6 h.
+    if (agentHomeCacheable_(dalRows && dalRows.sourceUnavailable)) {
+      try { cache.put(meKey, JSON.stringify(detail), join.available ? REPORT_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS); }
+      catch (e) { /* serve uncached */ }
+    }
   }
 
   logReportUsage_('agentHome', who.dept, who.user, teamHit && meHit);
@@ -468,8 +495,10 @@ function getAgentHistory(req) {
       applyQueueSplitToRows_(dalRows, who.dept);
     }
     months = agentHistoryBlob_(dalRows, roster.names);
-    try { cache.put(key, JSON.stringify(months), REPORT_CACHE_TTL_SECONDS); }
-    catch (e) { /* oversized/unavailable -- serve uncached */ }
+    if (agentHomeCacheable_(dalRows && dalRows.sourceUnavailable)) {   // S2A-3
+      try { cache.put(key, JSON.stringify(months), REPORT_CACHE_TTL_SECONDS); }
+      catch (e) { /* oversized/unavailable -- serve uncached */ }
+    }
   }
   logReportUsage_('agentHistory', who.dept, who.user, hit);
   return {

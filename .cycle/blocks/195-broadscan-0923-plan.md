@@ -31,7 +31,7 @@ ENG-1, S2A-1 (missed half), ENG-2, ENG-11.
 - ING-6 Low: `backfillOutboundCalls` ignores IC_BACKFILL_TIME_LIMIT_MS (outboundCalls.js:389).
 - ING-7 Low: `repairCsrTransferForRawDataDate` first-row date + no lock/snapshot (autoImport.js:3716/3759).
 
-## Batch 4 — silent degradation & observability (~13h)
+## Batch 4 — silent degradation & observability — SHIPPED (block 198)
 - ENG-3 Med: daily alerts have no DQE-readiness gate (Alerts.gs:558-568, 8 AM); late data -> all depts `no-data`, outcome `ok`. Reuse the digest R31 gate + retry.
 - DATA-2 Med: Missed (MissedCallsReport.gs:112-121/242-245), IR (IndividualReport.gs:229-240), picker (Util.gs:773) cache despite deptConfigReadFailed_.
 - DATA-3 Low-Med: computeCsrTransferRange_ catch -> null == "no rows" (Data.gs:1689); Insights prior Queue-health (InsightsReport.gs:861); both cached 6h.

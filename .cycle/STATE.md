@@ -18,9 +18,16 @@
   legs, S2C-1 first_agent no longer stores customer CNAM (agentBusy half left
   as a follow-on), S2C-4 NUL strip, ING-6 outbound budget, ING-2 CDR/QCD
   mirrors after every sheet write, ING-7 CSR repair date/lock/per-row writes.
-  **WHERE I LEFT OFF:** Batches 1-3 pushed, NOT deployed. Next: deploy the
-  dashboard (Batches 1+2) + cdr-import (Batch 3), run "Back up now" once, then
-  `/broad-implement Batch 4` (silent degradation & observability). The full
+  **Batch 4 SHIPPED on this branch** (block 198, all 11 findings): ENG-3
+  alerts readiness gate (DEFERRED/LATE/EMPTY + run marker), DATA-2/DATA-3/
+  S2A-3 no caching of degraded reads, ENG-5 digest/queue-report
+  INTERRUPTED + STALE, ENG-6 EMAIL_BCC validation, DATA-7 freshness re-aged at
+  serve, ING-3 bulk mirror-gap rows, CRT-6 per-sheet sort deferral +
+  STALE-POINTER, ENG-7 NOTIFY-FAILED, ENG-8 manual-blast toasts.
+  **WHERE I LEFT OFF:** Batches 1-4 pushed, NOT deployed. Next: deploy the
+  dashboard + cdr-import + cdr-report, run "Back up now" once, check the
+  Health page's `historical-sort` / `email-bcc` rows, then
+  `/broad-implement Batch 5` (cdr-report repair/export hardening). The full
   plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).

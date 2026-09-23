@@ -58,6 +58,8 @@ var HEALTH_FAILURE_ONLY_STEPS_ = [
   'neonMirror:gave-up',
   'bulkBackfill:QCD',
   'bulkBackfill:CSR',
+  'processBatchArchive:CDR:neon',   // ING-3
+  'processBatchArchive:QCD:neon',
 ];
 
 function healthFailureOnlyStep_(step) {
@@ -135,6 +137,10 @@ function healthAgeMs_(stamp, nowMs) {
 // Workspace) and the app cannot read which plan it is on -- below ~50 the
 // alert channel is at risk on either.
 var MAIL_QUOTA_WARN_FLOOR_ = 50;
+// ENG-5: a started send with no later outcome, older than this, was killed.
+// Comfortably past the 6-minute execution ceiling so a send in flight while
+// the admin loads the page is not flagged.
+var HEALTH_SEND_INTERRUPTED_MS_ = 30 * 60000;
 // R47: Google's hard per-spreadsheet cell cap and the point this page warns.
 // Kept in step with cdr-report/sheetSpace.js's copies by cross-file-pins.
 var WORKBOOK_CELL_CAP_ = 10000000;
@@ -331,8 +337,9 @@ function getSystemHealth(req) {
           hsFailing.length + ' sheet(s) the check could not fix: '
             + hsFailing.map(function (k) { return hsName(k) + ' (' + hsHead(k) + ')'; }).join('; '),
           'A MIXED-TYPE / TZ-SPLIT / UNPARSED date column needs its repair (previewHistoricalDateColumns → '
-          + 'the matching repair*), not a sort; a "check threw" or bulk-path "sort threw" row clears on the '
-          + 'next clean nightly run. Latest row ' + hsNewest + '. Operator State #61.');
+          + 'the matching repair*), not a sort; a STALE-POINTER row is an abandoned backfill *_RESUME '
+          + 'pointer (finish that backfill or delete the property, CRT-6); a "check threw" or bulk-path '
+          + '"sort threw" row clears on the next clean nightly run. Latest row ' + hsNewest + '. Operator State #61.');
       } else if (hsSorted.length) {
         add('pipeline', 'historical-sort', 'Nightly historical sort check', 'warn',
           hsSorted.length + ' sheet(s) needed sorting on the latest run: '
@@ -340,11 +347,18 @@ function getSystemHealth(req) {
           'One night after a reprocess (Operator State #56) is expected; a sheet that needs sorting EVERY '
           + 'night is a writer appending out of order — find the writer, not the sort. Latest row '
           + hsNewest + '.');
-      } else if (hsSkipped.length === hsKeys.length) {
+      } else if (hsSkipped.length) {
+        // CRT-6: a pointer now defers only the sheet it indexes, so a run can
+        // be part-checked; name the deferred sheets instead of folding them
+        // into a green "none needed sorting".
         add('pipeline', 'historical-sort', 'Nightly historical sort check', 'muted',
-          'skipped on the latest run — ' + String(hsLatest[hsSkipped[0]].notes || '').replace(/^skipped -- /, ''),
-          'The check defers while any backfill *_RESUME pointer is set (a sort would reset it) and resumes '
-          + 'when the backfill clears its pointer. Latest row ' + hsNewest + '.');
+          hsSkipped.length + ' of ' + hsKeys.length + ' sheet(s) deferred on the latest run: '
+            + hsSkipped.map(function (k) {
+                return hsName(k) + ' (' + String(hsLatest[k].notes || '').replace(/^skipped -- /, '') + ')';
+              }).join('; '),
+          'A sheet defers while a backfill *_RESUME pointer into THAT sheet is set (a sort would reset it) '
+          + 'and is re-checked once the backfill clears its pointer; a pointer older than 3 days turns '
+          + 'into a STALE-POINTER failure. Latest row ' + hsNewest + '.');
       } else {
         add('pipeline', 'historical-sort', 'Nightly historical sort check', 'ok',
           hsKeys.length + ' sheet(s) checked, none needed sorting (' + hsKeys.map(hsName).join(', ') + ')',
@@ -732,9 +746,13 @@ function getSystemHealth(req) {
       // string carries its own timestamp (no *_LAST prop), 'ok …' /
       // 'FAILED-ALL …' / 'NO-SUBSCRIBERS …' / 'SKIPPED-LOCK …'.
       ['out-alerts',   'Daily alerts — last run',     'ALERTS_LAST',        'ALERTS_LAST_RESULT',        'runDailyAlerts_', null, 4 * DAY_],
-      ['out-digest-daily',   'Daily digest — last outcome',   null, 'DIGEST_LAST_RESULT_daily',   'runDailyDigests_',   null, null],
-      ['out-digest-weekly',  'Weekly digest — last outcome',  null, 'DIGEST_LAST_RESULT_weekly',  'runWeeklyDigests_',  null, null],
-      ['out-digest-monthly', 'Monthly digest — last outcome', null, 'DIGEST_LAST_RESULT_monthly', 'runMonthlyDigests_', null, null],
+      // ENG-5 (broad-scan 2026-09-23): digests + the queue report now write a
+      // *_LAST timestamp beside every outcome and a *_STARTED stamp when a send
+      // begins (8th column), so a killed send reads INTERRUPTED and a silent
+      // cadence goes STALE instead of the previous run's "ok" staying green.
+      ['out-digest-daily',   'Daily digest — last outcome',   'DIGEST_LAST_daily',   'DIGEST_LAST_RESULT_daily',   'runDailyDigests_',   null, 4 * DAY_,  'DIGEST_STARTED_daily'],
+      ['out-digest-weekly',  'Weekly digest — last outcome',  'DIGEST_LAST_weekly',  'DIGEST_LAST_RESULT_weekly',  'runWeeklyDigests_',  null, 9 * DAY_,  'DIGEST_STARTED_weekly'],
+      ['out-digest-monthly', 'Monthly digest — last outcome', 'DIGEST_LAST_monthly', 'DIGEST_LAST_RESULT_monthly', 'runMonthlyDigests_', null, 35 * DAY_, 'DIGEST_STARTED_monthly'],
       ['out-warm',     'Cache warm — last outcome',   'CACHE_WARM_LAST',    'CACHE_WARM_LAST_RESULT',    'warmReportCaches_', null, 4 * DAY_],
       ['out-keepwarm', 'Keep-warm — last ping',       'NEON_KEEPWARM_LAST', 'NEON_KEEPWARM_LAST_RESULT', 'keepNeonWarm_', 'NEON_KEEPWARM_ENABLED', null],
       ['out-backup',   'Neon backup — last run',      'NEON_BACKUP_LAST',   'NEON_BACKUP_LAST_RESULT',   'runNeonBackup_', null, 9 * DAY_],
@@ -745,9 +763,9 @@ function getSystemHealth(req) {
       // O-5: queue-report outcome (this engine has no *_LAST timestamp prop;
       // the result string carries its own timestamp). MISSED / FAILED-ALL
       // outcomes trip the OPS-8 classifier's bad-word match, as intended.
-      // O-14: there is no QUEUE_REPORT_LAST timestamp property (the result
-      // string carries its own); the old row read a key nothing ever wrote.
-      ['out-queuereport', 'Queue report — last outcome', null, 'QUEUE_REPORT_LAST_RESULT', 'runDailyQueueReport_', 'QUEUE_REPORT_ENABLED', null],
+      // O-14 said no QUEUE_REPORT_LAST existed; ENG-5 now writes it (and
+      // QUEUE_REPORT_STARTED) through queueReportRecordResult_.
+      ['out-queuereport', 'Queue report — last outcome', 'QUEUE_REPORT_LAST', 'QUEUE_REPORT_LAST_RESULT', 'runDailyQueueReport_', 'QUEUE_REPORT_ENABLED', 4 * DAY_, 'QUEUE_REPORT_STARTED'],
       // Live smoke harness (SmokeCheck.gs, editor-run): result string is
       // OPS-8 prefix-coded ('ok N/N ...' / 'FAILED k/N ...').
       ['out-smoke', 'Live smoke — last run', 'SMOKE_LAST', 'SMOKE_LAST_RESULT', null, null, null],
@@ -819,8 +837,25 @@ function getSystemHealth(req) {
             + 'Executions log for this handler (O-4).';
         }
       }
-      add('triggers', outcomes[o][0], outcomes[o][1], (bad || stale) ? 'warn' : 'ok',
-        (res || '') + (at ? (' @ ' + at) : '') + stale);
+      // ENG-5: a send that STARTED after the last recorded outcome and is
+      // older than any real send takes is a run killed mid-send -- the
+      // recipients before the kill got theirs, the rest did not, and the
+      // previous outcome still reads "ok". Independent of the trigger check:
+      // a manual run killed the same way is just as incomplete.
+      var interrupted = '';
+      var startedProp = outcomes[o][7];
+      if (startedProp) {
+        var startedAt = props.getProperty(startedProp);
+        var sAge = startedAt ? healthAgeMs_(startedAt, Date.now()) : null;
+        var lastAge = at ? healthAgeMs_(at, Date.now()) : null;
+        if (sAge != null && sAge > HEALTH_SEND_INTERRUPTED_MS_ && (lastAge == null || sAge < lastAge)) {
+          interrupted = ' — INTERRUPTED: a send started ' + startedAt + ' and never recorded an '
+            + 'outcome (the 6-minute kill skips catch/finally, so some recipients may not have '
+            + 'received it). Check the Executions log for this handler (ENG-5).';
+        }
+      }
+      add('triggers', outcomes[o][0], outcomes[o][1], (bad || stale || interrupted) ? 'warn' : 'ok',
+        (res || '') + (at ? (' @ ' + at) : '') + stale + interrupted);
     }
   } catch (e) { add('triggers', 'out-probe', 'Service outcomes', 'warn', 'probe failed', String(e && e.message || e)); }
 
@@ -889,6 +924,18 @@ function getSystemHealth(req) {
           dsStatus.status, dsStatus.value, dsStatus.hint);
       }
     } catch (eS) { add('config', 'dashboard-standards', 'Published display standards (Dashboard Standards sheet)', 'warn', 'probe failed', String(eS && eS.message || eS)); }
+    // ENG-6: EMAIL_BCC entries sendAppEmail_ drops as malformed. Only rendered
+    // when there is something to say -- the default (unset) is the norm.
+    try {
+      var bccCfg = appEmailBccConfig_();
+      if (bccCfg.invalid.length) {
+        add('config', 'email-bcc', 'EMAIL_BCC addresses', 'warn',
+          bccCfg.invalid.length + ' malformed address(es) ignored: ' + bccCfg.invalid.join(', '),
+          (bccCfg.valid.length ? 'Still BCC\'ing: ' + bccCfg.valid.join(', ') + '. '
+            : 'No valid address left -- the default first-admin BCC applies. ')
+          + 'Fix the EMAIL_BCC Script Property (comma-separated addresses, or none; Operator State #58).');
+      }
+    } catch (eB) { add('config', 'email-bcc', 'EMAIL_BCC addresses', 'warn', 'probe failed', String(eB && eB.message || eB)); }
   } catch (e) { add('config', 'prop-probe', 'Script Properties', 'warn', 'probe failed', String(e && e.message || e)); }
 
   // ── All Script Properties (inventory) ───────────────────────────────

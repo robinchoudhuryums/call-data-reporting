@@ -140,6 +140,8 @@ test('T-8: the pointer written on a batch failure carries the fingerprint (index
   h.ctx.getNeonConn_backfill = function () { return conn; };
   assert.throws(function () { h.call('backfillDQEHistoryUpsert'); }, /boom/);
   const st = JSON.parse(h.state.props.DQE_UPSERT_RESUME);
+  assert.match(st.writtenAt, /^\d{4}-\d{2}-\d{2}T/, 'CRT-6: the pointer carries its age');
+  delete st.writtenAt;
   assert.deepEqual(st, { index: 0, rowCount: 4, key: K('08/05/2026', 'Anna') });
   assert.equal(cap.rollbacks, 1);
 });
@@ -149,8 +151,9 @@ test('T-8: nbResumeRead_ covers the CDR / QCD pointers with their own key column
                   setProperty: function (k, v) { this.bag[k] = String(v); } };
   const cdr = [['m', 'w', '08/05/2026', 'CSR', 'Anna'], ['m', 'w', '08/05/2026', 'CSR', 'Ben']];
   h.fn('nbResumeWrite_')(props, 'CDR_BACKFILL_RESUME', 1, cdr, h.ctx.NB_CDR_KEY_COLS_);
-  assert.deepEqual(JSON.parse(props.bag.CDR_BACKFILL_RESUME),
-    { index: 1, rowCount: 2, key: K('08/05/2026', 'CSR', 'Ben') });
+  const cdrSt = JSON.parse(props.bag.CDR_BACKFILL_RESUME);
+  delete cdrSt.writtenAt;   // CRT-6 age stamp; nbResumeRead_ ignores it
+  assert.deepEqual(cdrSt, { index: 1, rowCount: 2, key: K('08/05/2026', 'CSR', 'Ben') });
   assert.equal(h.fn('nbResumeRead_')(props, 'CDR_BACKFILL_RESUME', cdr, h.ctx.NB_CDR_KEY_COLS_), 1);
   // The dept of the row at the index changed -> 0.
   const cdr2 = [cdr[0], ['m', 'w', '08/05/2026', 'Sales', 'Ben']];

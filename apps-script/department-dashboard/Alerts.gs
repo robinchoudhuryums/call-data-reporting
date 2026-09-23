@@ -314,9 +314,34 @@ function uninstallAlertTrigger() {
  * bypass this gate intentionally so admins can force-send after
  * a holiday review.
  */
-function runDailyAlerts_() {
+function runDailyAlerts_() { alertsGatedAttempt_(new Date(), 'trigger'); }
+
+/** ENG-3: the one-shot readiness retry the gate schedules. */
+function runDailyAlertsRetry_() {
+  alertsClearRetryTriggers_();
+  alertsGatedAttempt_(new Date(), 'retry');
+}
+
+// ENG-3 (broad-scan 2026-09-23): the daily alerts had NO readiness gate. The
+// 8 AM trigger assessed the previous business day at that minute, and when
+// the morning import / DQE build had not landed yet every department read 0
+// rung calls -> `no-data`, no retry, and an `ok` outcome on the Health page.
+// The digest had the same shape and got R31's gate; alerts now reuse it: the
+// assessed day's DQE data must EXIST on the read source, else the run defers
+// (one-shot retry +ALERTS_RETRY_MINUTES_) until ALERTS_CUTOFF_HOUR_, then
+// runs anyway and records a LATE outcome. ALERTS_RUN_MARKER stops a retry --
+// or a second trigger -- from re-alerting a day already assessed.
+var ALERTS_CUTOFF_HOUR_ = 12;       // noon script-TZ: assess regardless (LATE outcome)
+var ALERTS_RETRY_MINUTES_ = 60;
+var ALERTS_RETRY_HANDLER_ = 'runDailyAlertsRetry_';
+
+/**
+ * ENG-3. One gated attempt, trigger or retry. Never throws to the runner.
+ * Returns { decision } for tests: 'skip-weekend' | 'skip-holiday' | 'done' |
+ * 'defer' | 'run' | 'run-late'.
+ */
+function alertsGatedAttempt_(now, source) {
   const tz = TZ;
-  const now = new Date();
   // F-6 class: skip when TODAY is Sat/Sun -- INV-33's documented contract
   // (no weekend alert emails). The old check tested the DATA date's dow,
   // which FIRED Friday's alerts on SATURDAY morning and skipped Monday
@@ -325,7 +350,7 @@ function runDailyAlerts_() {
   const dowToday = now.getDay();   // 0 = Sun, 6 = Sat
   if (dowToday === 0 || dowToday === 6) {
     Logger.log('runDailyAlerts_: weekend run -- skipping.');
-    return;
+    return { decision: 'skip-weekend' };
   }
   // S5: a company holiday (COMPANY_HOLIDAYS Script Property) is a
   // non-working day too -- nobody is in to act on the alert, and the
@@ -335,20 +360,51 @@ function runDailyAlerts_() {
   const todayIso = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
   if (isCompanyHoliday_(todayIso)) {
     Logger.log('runDailyAlerts_: company holiday (' + todayIso + ') -- skipping.');
-    return;
+    return { decision: 'skip-holiday' };
   }
   // Previous BUSINESS day, skipping weekends AND company holidays (S5;
   // shared walker in Util.gs -- with no holidays configured this is exactly
   // the F-6 behavior: Mon -> Fri, else yesterday).
   const dateIso = prevBusinessDayIso_(now);
+  const props = PropertiesService.getScriptProperties();
+  let alreadyRun = false;
+  try { alreadyRun = props.getProperty('ALERTS_RUN_MARKER') === dateIso; } catch (pe) { /* treat as not run */ }
+  // digestLatestDqeIso_ (Digest.gs) is the trigger-safe latest DQE date on the
+  // active read source; '' = unknown, which counts as NOT fresh. Absent the
+  // helper (a selective test load) the gate is open -- the pre-ENG-3 behaviour.
+  const latest = (typeof digestLatestDqeIso_ === 'function') ? digestLatestDqeIso_() : null;
+  const fresh = latest === null || (!!latest && latest >= dateIso);
+  const hour = Number(Utilities.formatDate(now, tz, 'H')) || 0;
+  const decision = (typeof digestDailyDecision_ === 'function')
+    ? digestDailyDecision_(hour, fresh, alreadyRun, ALERTS_CUTOFF_HOUR_)
+    : (alreadyRun ? 'done' : 'send');
+  Logger.log('alertsGatedAttempt_(%s): assessing %s latestDqe=%s hour=%s -> %s',
+    source, dateIso, latest == null ? '(no gate)' : (latest || '(none)'), hour, decision);
+  if (decision === 'done') { alertsClearRetryTriggers_(); return { decision: 'done' }; }
+  if (decision === 'defer') {
+    if (alertsScheduleRetry_()) {
+      recordAlertsOutcome_('DEFERRED ' + dateIso + ': DQE data is through ' + (latest || '(none)')
+        + ' at ' + Utilities.formatDate(now, tz, 'HH:mm') + ' -- the import has not landed yet; retrying in '
+        + ALERTS_RETRY_MINUTES_ + ' min (assesses regardless at ' + ALERTS_CUTOFF_HOUR_ + ':00). At ' + now);
+      return { decision: 'defer', latest: latest };
+    }
+    // Could not schedule a retry (scope / trigger quota): deferring would lose
+    // the run, so assess now and let the LATE outcome say why.
+    Logger.log('alertsGatedAttempt_: retry could not be scheduled -- assessing now.');
+  }
+  const late = !fresh;
   try {
     const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger') || [];
+    try { props.setProperty('ALERTS_RUN_MARKER', dateIso); } catch (me) { /* best-effort */ }
     // O-5 (broad-scan 2026-09-17): the alerts engine is REQUIRED yet had no
     // outcome on the Health page (its outcomes lived only in the Alert Log +
     // the failure email). Record an OPS-8 prefix-coded outcome: ok only when
     // no department errored; a per-dept error leads FAILED-PARTIAL so the
     // classifier paints it amber.
-    recordAlertsOutcome_(alertsOutcomeString_(dateIso, results));
+    recordAlertsOutcome_(alertsOutcomeString_(dateIso, results,
+      late ? { lateLatest: latest || '(none)' } : null));
+    alertsClearRetryTriggers_();
+    return { decision: late ? 'run-late' : 'run' };
   } catch (e) {
     Logger.log('runDailyAlerts_ failed: %s', e);
     recordAlertsOutcome_('FAILED (threw): ' + (e && e.message ? e.message : String(e)) + ' -- assessing ' + dateIso);
@@ -377,23 +433,59 @@ function runDailyAlerts_() {
       });
     } catch (e2) { /* best-effort */ }
   }
+  alertsClearRetryTriggers_();
+  return { decision: 'error' };
+}
+
+/** ENG-3. Schedules ONE retry attempt; true on success. Best-effort. */
+function alertsScheduleRetry_() {
+  try {
+    alertsClearRetryTriggers_();
+    ScriptApp.newTrigger(ALERTS_RETRY_HANDLER_).timeBased().after(ALERTS_RETRY_MINUTES_ * 60 * 1000).create();
+    return true;
+  } catch (e) {
+    Logger.log('alertsScheduleRetry_ failed: %s', e);
+    return false;
+  }
+}
+
+/** ENG-3. Deletes any pending one-shot alerts retry. Best-effort. */
+function alertsClearRetryTriggers_() {
+  try {
+    const triggers = ScriptApp.getProjectTriggers();
+    for (let i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === ALERTS_RETRY_HANDLER_) ScriptApp.deleteTrigger(triggers[i]);
+    }
+  } catch (e) { /* best-effort */ }
 }
 
 /**
  * O-5: pure outcome string for the daily run (tests/unit/alerts*.test.js).
  * `ok <date>: N assessed, K fired, …` or `FAILED-PARTIAL <date>: E error(s) …`.
+ * ENG-3: `opts.lateLatest` (the run assessed after the readiness cutoff with
+ * the day's DQE data still missing) leads `LATE`, and a run where EVERY
+ * department came back `no-data` leads `EMPTY` -- both are bad prefixes
+ * (HEALTH_BAD_PREFIXES_), so a day the alerts could not really assess no
+ * longer reads green on the Health page.
  */
-function alertsOutcomeString_(dateIso, results) {
+function alertsOutcomeString_(dateIso, results, opts) {
+  opts = opts || {};
   var counts = {};
   (results || []).forEach(function (r) {
     var st = String((r && r.status) || 'unknown');
     counts[st] = (counts[st] || 0) + 1;
   });
+  var n = (results || []).length;
   var errors = counts.error || 0;
   var fired = counts.sent || 0;
   var detail = Object.keys(counts).sort().map(function (k) { return counts[k] + ' ' + k; }).join(', ');
-  var head = (errors ? ('FAILED-PARTIAL ' + dateIso + ': ' + errors + ' dept error(s); ') : ('ok ' + dateIso + ': '))
-    + (results || []).length + ' dept(s) assessed, ' + fired + ' fired'
+  var lead;
+  if (errors) lead = 'FAILED-PARTIAL ' + dateIso + ': ' + errors + ' dept error(s); ';
+  else if (opts.lateLatest) lead = 'LATE ' + dateIso + ': DQE data was still only through ' + opts.lateLatest
+    + ' at the ' + ALERTS_CUTOFF_HOUR_ + ':00 cutoff; ';
+  else if (n > 0 && (counts['no-data'] || 0) === n) lead = 'EMPTY ' + dateIso + ': every dept had no data; ';
+  else lead = 'ok ' + dateIso + ': ';
+  var head = lead + n + ' dept(s) assessed, ' + fired + ' fired'
     + (detail ? ' (' + detail + ')' : '');
   return head + '. At ' + new Date();
 }
@@ -1471,6 +1563,7 @@ function uninstallAlertTrigger_() {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
+  alertsClearRetryTriggers_();   // ENG-3: a pending one-shot retry goes with it
 }
 
 function getAlertTriggerStatus_() {

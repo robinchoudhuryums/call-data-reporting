@@ -509,8 +509,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   single-typed, but a text sort is lexical). Outcome = `historicalSort:<sheet>` Pipeline Health rows
   (INV-44) -> the Health page's `historical-sort` row; a sheet that needs
   sorting EVERY night is a writer appending out of order, not a job to tune.
-  It DEFERS while any backfill `*_RESUME` pointer is set (a sort resets the
-  T-8 fingerprints). Two traps: (1) never `console.warn` a sheet-sort failure
+  It DEFERS a sheet while a backfill `*_RESUME` pointer into THAT sheet is set
+  (a sort resets the T-8 fingerprints; CRT-6 -- a >3-day pointer fails). Two traps: (1) never `console.warn` a sheet-sort failure
   -- the bulk path's did, and a CSR / Q Path left unsorted was seen nowhere;
   it now logs a failure row under the same step name. (2) `parseDateForNeon`
   refuses a BARE NUMBER (a serial under a numeric format used to read as the

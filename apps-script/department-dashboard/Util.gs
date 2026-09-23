@@ -799,8 +799,13 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
     agents:   Object.keys(activeRoster).sort(),
     floaters: floaters,
   };
-  try { cache.put(cacheKey, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
-  catch (e) { /* harmless */ }
+  // DATA-2 (broad-scan 2026-09-23): a failed Dept Config read made the queue
+  // ext set constant-only, which changes WHICH names count as floaters --
+  // serve it, never pin that picker for the 6 h TTL (the R8-C4 rule).
+  if (!(typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_())) {
+    try { cache.put(cacheKey, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { /* harmless */ }
+  }
   return out;
 }
 

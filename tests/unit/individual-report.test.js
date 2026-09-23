@@ -269,3 +269,22 @@ test('DD-2: IR % Answered follows ANSWER_RATE_FORMULA (rung by default, answerab
     h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
   }
 });
+
+// DATA-2 (broad-scan 2026-09-23; R8-C4's sibling): after a FAILED Dept Config
+// read the team average used the constant TEAM_AVG_EXCLUDES and the picker's
+// floater set the constant ext overrides -- both served, neither cached.
+test('DATA-2: IR + the active-agent picker do not cache a payload built on a failed Dept Config read', function () {
+  install([dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4, answered: 2, att: '0:03:00', ttt: '0:06:00' })]);
+  const keys = function (re) { return Array.from(h.state.cache.keys()).filter(function (k) { return re.test(k); }); };
+  const real = h.ctx.deptConfigReadFailed_;
+  h.ctx.deptConfigReadFailed_ = function () { return true; };
+  try {
+    const data = h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'] });
+    assert.ok(entry(data, 'Anna'), 'still served');
+    assert.equal(keys(/^individual:/).length, 0, 'IR not pinned');
+    h.call('computeActiveAgentsInRange_', 'Alpha', '2026-03-09', '2026-03-10', h.call('getRosterForDepartment_', 'Alpha'));
+    assert.equal(keys(/^individual_active:/).length, 0, 'picker not pinned');
+  } finally { h.ctx.deptConfigReadFailed_ = real; }
+  h.call('getIndividualReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-10', agents: ['Anna'] });
+  assert.equal(keys(/^individual:/).length, 1, 'a healthy read caches as before');
+});

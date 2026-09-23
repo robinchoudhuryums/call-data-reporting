@@ -149,11 +149,21 @@
           .withSuccessHandler(function (res) {
             blastBtn.disabled = false; blastBtn.textContent = prev;
             const failed = (res && res.failed && res.failed.length) || 0;
+            // ENG-8: a run that reached nobody is not a send -- say which
+            // failure it was, as an error toast, instead of "Sent … to 0".
+            if (res && res.noRecipients) {
+              showToast('Not sent: ' + day + ' has no active subscribers — add one under Alerts → Report Subscribers.', 'error');
+              return;
+            }
+            if (res && res.allFailed) {
+              showToast('Send FAILED for all ' + failed + ' subscriber' + (failed === 1 ? '' : 's')
+                + ' — nothing went out (' + ((res.failed[0] && res.failed[0].error) || 'see the Apps Script log') + ').', 'error');
+              return;
+            }
             showToast('Sent ' + day + ' to ' + ((res && res.count) || 0) + ' subscriber'
               + (res && res.count === 1 ? '' : 's')
               + (failed ? ' (' + failed + ' failed — admins notified via the modal log)' : '')
-              + (res && res.markerClaimed ? ' · claimed today’s automated send' : '')
-              + ((res && res.count) === 0 ? ' — no active subscribers' : '') + '.');
+              + (res && res.markerClaimed ? ' · claimed today’s automated send' : '') + '.');
           })
           .withFailureHandler(function (err) {
             blastBtn.disabled = false; blastBtn.textContent = prev;

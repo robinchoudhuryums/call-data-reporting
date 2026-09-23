@@ -1137,6 +1137,37 @@ function queueToPendingArchive(targetSS, results, dateObj, skipCDR, skipQPath, s
 // PENDING ARCHIVE FUNCTIONS
 // -------------------------------------------------------------------------
 
+/**
+ * ING-3 (broad-scan 2026-09-23): the bulk archive's CDR / QCD Neon mirror
+ * gap as a FAILURE-ONLY Pipeline Health row (`processBatchArchive:CDR:neon` /
+ * `:QCD:neon`, INV-44). A skip used to reach only the console, so the admin
+ * learned about the missing Neon dates from the coverage check (#35) if it
+ * was ever run -- the daily path's L7 rows had closed this for the daily
+ * mirror only. The notes name the date span to re-mirror. An install with no
+ * NEON_HOST stays silent (nothing to mirror to -- the R8-A2 rule). Best-effort.
+ */
+function bulkArchiveMirrorGap_(targetSS, type, dates, reason) {
+  try {
+    if (!PropertiesService.getScriptProperties().getProperty('NEON_HOST')) return;
+    var tz = Session.getScriptTimeZone();
+    var isos = [];
+    (dates || []).forEach(function (d) {
+      var iso = (d instanceof Date) ? Utilities.formatDate(d, tz, 'yyyy-MM-dd') : String(d || '').slice(0, 10);
+      if (iso && isos.indexOf(iso) === -1) isos.push(iso);
+    });
+    isos.sort();
+    logPipelineHealthWithFallback_(targetSS, {
+      step:       'processBatchArchive:' + type + ':neon',
+      status:     'failure',
+      rows:       null,
+      durationMs: null,
+      notes:      (isos.length ? isos[0] + (isos.length > 1 ? '..' + isos[isos.length - 1] : '') : '(no dates)')
+                + ' (' + isos.length + ' date(s)) | bulk ' + type + ' Neon mirror: ' + reason
+                + ' -- the sheet rows are written; re-mirror these dates (Operator State #35 / #56)',
+    });
+  } catch (e) { console.log('bulkArchiveMirrorGap_: could not log (' + (e && e.message || e) + ')'); }
+}
+
 function processBatchArchive(silent = false, callerHoldsLock = false) {
   const ui = SpreadsheetApp.getUi();
   // F-17: the standalone menu path ("Process Batch Archive") writes the four
@@ -1293,9 +1324,13 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
         if (neonCdrRes && neonCdrRes.skipped) {
           console.log('processBatchArchive: Neon CDR mirror skipped ('
             + neonCdrRes.skipped + ' rows — Neon unreachable).');
+          bulkArchiveMirrorGap_(targetSS, 'CDR', neonCdrRows.map(function (r) { return r.callDate; }),
+            'Neon unreachable (' + neonCdrRes.skipped + ' rows skipped)');
         }
       } catch (neonCdrErr) {
         notifyNeonWriteFailure('processBatchArchive (bulk CDR)', neonCdrErr.message);
+        bulkArchiveMirrorGap_(targetSS, 'CDR', cdrRows.map(function (r) { return r[2]; }),
+          'mirror error: ' + (neonCdrErr && neonCdrErr.message ? neonCdrErr.message : neonCdrErr));
       }
     }
     if (qPathRows.length > 0    && salesHD) salesHD.getRange(salesHD.getLastRow() + 1, 1, qPathRows.length,    11).setValues(qPathRows);
@@ -1325,9 +1360,17 @@ function processBatchArchive(silent = false, callerHoldsLock = false) {
         // post-dedupeAlreadyArchived_, so it can be a PARTIAL set for a date
         // (rows already archived earlier are dropped); an authoritative
         // delete here would nuke legitimate Neon rows.
-        writeQCDRowsToNeon(neonQcdRows);
+        var neonQcdRes = writeQCDRowsToNeon(neonQcdRows);
+        if (neonQcdRes && neonQcdRes.skipped) {
+          console.log('processBatchArchive: Neon QCD mirror skipped ('
+            + neonQcdRes.skipped + ' rows — Neon unreachable).');
+          bulkArchiveMirrorGap_(targetSS, 'QCD', qcdRows.map(function (r) { return r[2]; }),
+            'Neon unreachable (' + neonQcdRes.skipped + ' rows skipped)');
+        }
       } catch (neonErr) {
         notifyNeonWriteFailure('processBatchArchive (bulk QCD)', neonErr.message);
+        bulkArchiveMirrorGap_(targetSS, 'QCD', qcdRows.map(function (r) { return r[2]; }),
+          'mirror error: ' + (neonErr && neonErr.message ? neonErr.message : neonErr));
       }
     }
 

@@ -212,6 +212,10 @@ function getInsightsReport(req) {
   // (dept, range, agents, prior) tuple for the full 30-min TTL.
   if (data.queueHealth && data.queueHealth.error) {
     Logger.log('InsightsReport: queueHealth errored -- skipping cache put so the next request retries.');
+  } else if (typeof qcdSnapshotReadFailed_ === 'function' && qcdSnapshotReadFailed_()) {
+    // DATA-3: the prior-window Queue health read threw (priorTotals:null reads
+    // as "no prior data") -- serve it, never pin the delta-less payload.
+    Logger.log('InsightsReport: a Queue health read errored -- skipping cache put.');
   } else if (data.meta && data.meta.sourceUnavailable) {
     // R8-C1: outage-empty shape (Neon unreachable + no DQE sheet) -- never
     // pin it for the TTL; the next request retries the live source.
@@ -860,7 +864,13 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
     // missing QCD sheet (above) stays null = silently hidden.
     if (cur.meta.unmapped) return { unmapped: true };
     let prior = null;
-    try { prior = computeQcdReport_(dept, priorFrom, priorTo, true, true); } catch (e) { prior = null; }
+    try { prior = computeQcdReport_(dept, priorFrom, priorTo, true, true); }
+    catch (e) {
+      // DATA-3: a failed prior read renders as priorTotals:null -- the same as
+      // "no prior data" -- so flag it and getInsightsReport skips the put.
+      noteQcdSnapshotReadFailed_('Insights prior Queue health', e);
+      prior = null;
+    }
     const pick = function (t) {
       t = t || {};
       return {

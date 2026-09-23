@@ -73,6 +73,15 @@ When something looks wrong, before assuming a code bug, check:
    - **Daily alerts**: dashboard project → Triggers should list
      `runDailyAlerts_` (or install via the Alerts modal). Without
      it, alerts only fire when an admin clicks "Send alerts".
+     **Readiness gate (ENG-3, 2026-09-23):** the 8 AM run assesses the
+     previous business day only once DQE data for it exists. Before that it
+     records `DEFERRED …` and schedules a one-shot `runDailyAlertsRetry_` an
+     hour out. At the 12:00 cutoff it assesses anyway and records `LATE …`
+     (the Health `out-alerts` row warns). `ALERTS_RUN_MARKER` holds the last
+     assessed date, so a retry never re-alerts. An `EMPTY …` outcome means
+     every dept had no data. A leftover `runDailyAlertsRetry_` trigger is
+     normal while a day is deferred, and uninstalling the alert trigger
+     removes it too.
    - **Daily DQE build** is now integrated into cdr-import's
      `processIntegratedHistory` (5th block; INV-16 expanded). Each
      successful daily import now refreshes DQE Historical Data
@@ -148,6 +157,14 @@ When something looks wrong, before assuming a code bug, check:
     Department matches a `DO NOT EDIT!` header exactly (an unknown dept is
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
+    ENG-5: the Health page's `out-digest-<cadence>` row now warns
+    **INTERRUPTED** when a send started (`DIGEST_STARTED_<cadence>`) after the
+    last recorded outcome (`DIGEST_LAST_<cadence>`) and never finished, which
+    is the 6-minute-kill signature. Some recipients got theirs and the rest
+    did not; the run marker is claimed, so re-send by hand only to the ones
+    who missed it. It warns **STALE** past 4 / 9 / 35 days while the trigger
+    is installed. The queue report has the same pair (`QUEUE_REPORT_STARTED`
+    / `QUEUE_REPORT_LAST`, 4 days).
     (h) **R31/R32 -- every digest cadence is FRESHNESS-GATED.** The 8 AM run
     sends only once the last BUSINESS day on or before the window's end
     (`lastBusinessDayOnOrBeforeIso_`; daily: the previous business day;
@@ -1806,7 +1823,11 @@ When something looks wrong, before assuming a code bug, check:
     goes through `Config.gs::sendAppEmail_`, which BCCs `getAdminEmails_()[0]`
     unless the address is already a recipient. Set `EMAIL_BCC` to a
     comma-separated list to BCC other addresses instead, or `none` to turn it
-    off (e.g. once the app is trusted and the admin inbox is noisy). Pinned by
+    off (e.g. once the app is trusted and the admin inbox is noisy). A
+    malformed entry is DROPPED rather than handed to MailApp, which would
+    fail the whole message (ENG-6). The Health page's `email-bcc` row names
+    what was dropped, and if nothing valid remains the default first-admin
+    BCC applies. Pinned by
     `tests/unit/app-email.test.js`, whose sweep fails on any dashboard .gs
     that calls `MailApp.sendEmail` directly. **Every admin notice renders in
     the house style (R29):** the sender passes a `notice:` spec and
@@ -1908,10 +1929,14 @@ When something looks wrong, before assuming a code bug, check:
     scrolled out; ok = none needed sorting; warn "needed sorting" = a writer
     appended out of order (ONE night after a reprocess, #56, is expected —
     every night is a writer regressing: find the writer, not the sort); warn
-    "could not fix" = refused or threw → the repair above; muted "skipped" = a
-    backfill `*_RESUME` pointer is set — the check defers so a nightly sort
-    cannot reset a multi-run backfill's T-8 fingerprint, and resumes when the
-    backfill clears its pointer. The bulk path (`processBatchArchive`) now logs
+    "could not fix" = refused or threw → the repair above; muted "deferred" = a
+    backfill `*_RESUME` pointer INTO THAT SHEET is set (CRT-6: only the
+    indexed sheet waits; the others are still checked). The check defers so a
+    nightly sort cannot reset a multi-run backfill's T-8 fingerprint, and it
+    resumes when the backfill clears its pointer. A pointer older than 3 days
+    turns into a `STALE-POINTER` failure: an abandoned backfill. Re-run it to
+    completion or delete the property. Pointers written before CRT-6 carry no
+    age and never go stale; re-running the backfill once stamps them. The bulk path (`processBatchArchive`) now logs
     its own post-write sort failure under the same step name, so the next
     clean nightly run supersedes it; until the check is installed such a row
     stays flagged in "Recent pipeline step failures", which is correct — the

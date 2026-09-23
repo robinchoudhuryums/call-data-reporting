@@ -771,3 +771,23 @@ test('L5: team rollup + teamAvgBasis identical for a partial selection and the f
   assert.equal(partial.agentData.length, 1, 'cards still follow the selection');
   assert.equal(full.agentData.length, 2);
 });
+
+// DATA-3 (broad-scan 2026-09-23): the prior-window Queue health read's catch
+// returned null ("no prior data"), and the payload was cached for 6 h. The
+// catch now flags the QCD read degraded (the D-5 flag) and the put is skipped.
+test('DATA-3: a degraded Queue health read this execution keeps Insights out of the cache', function () {
+  const fs = require('fs');
+  const src = fs.readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
+  assert.match(src, /prior = computeQcdReport_\(dept, priorFrom, priorTo, true, true\); \}\s*catch \(e\) \{[\s\S]{0,300}noteQcdSnapshotReadFailed_\(/,
+    'the prior-window catch flags the failure instead of silently returning null');
+  install([dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1 })]);
+  const insightsKeys = function () { return Array.from(h.state.cache.keys()).filter(function (k) { return /^insights:/.test(k); }); };
+  h.ctx.QCD_SNAPSHOT_READ_FAILED_ = true;
+  try {
+    const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] });
+    assert.ok(data && data.meta, 'still served');
+    assert.equal(insightsKeys().length, 0, 'not pinned');
+  } finally { h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false; }
+  h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] });
+  assert.equal(insightsKeys().length, 1, 'a healthy execution caches as before');
+});

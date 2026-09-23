@@ -1415,9 +1415,15 @@ function normalizeDqeDateColumn_(dryRun) {
 // `historicalSort:<DQE|QCD|CDR|CSR|QPath>` -- the labels the bulk path uses),
 // since cdr-report's Script Properties are not the dashboard's.
 //
-// DEFERS while any backfill *_RESUME pointer is set: a sort invalidates the
-// T-8 fingerprinted pointers (safe -- the run restarts from 0 -- but a nightly
-// reset would keep a multi-run backfill from ever finishing).
+// DEFERS a sheet while a backfill *_RESUME pointer INTO THAT SHEET is set: a
+// sort invalidates the T-8 fingerprinted pointers (safe -- the run restarts
+// from 0 -- but a nightly reset would keep a multi-run backfill from ever
+// finishing). CRT-6 (broad-scan 2026-09-23): it used to defer ALL five sheets
+// on ANY pointer, so one abandoned DQE upsert pointer kept QCD / CSR / Q Path
+// unsorted indefinitely while every row read "skipped" (success). Now only
+// the indexed sheet waits, and a pointer older than
+// HISTORICAL_SORT_STALE_POINTER_DAYS_ turns its deferral into a FAILURE row
+// (an abandoned backfill -- resume it or clear the property).
 //
 // No 1b snapshot before the sort: a sort moves whole rows and loses no cell,
 // and the DQE build already sorts nightly without one.
@@ -1439,6 +1445,25 @@ var HISTORICAL_SORT_RESUME_PROPS_ = [
   'DQE_UPSERT_RESUME', 'DQE_BACKFILL_RESUME', 'QCD_BACKFILL_RESUME',
   'CDR_BACKFILL_RESUME', 'CDR_MISSING_BACKFILL_RESUME', 'CDR_PHONES_BACKFILL_RESUME',
 ];
+// CRT-6: the sheet each pointer indexes (neonbackfill.js reads each over it).
+var HISTORICAL_SORT_RESUME_SHEET_ = {
+  DQE_UPSERT_RESUME:          'DQE Historical Data',
+  DQE_BACKFILL_RESUME:        'DQE Historical Data',
+  QCD_BACKFILL_RESUME:        'QCD Historical Data',
+  CDR_BACKFILL_RESUME:        'CDR Historical Data',
+  CDR_MISSING_BACKFILL_RESUME:'CDR Historical Data',
+  CDR_PHONES_BACKFILL_RESUME: 'CDR Historical Data',
+};
+var HISTORICAL_SORT_STALE_POINTER_DAYS_ = 3;
+
+/** CRT-6: a pointer's age in days from its T-8 `writtenAt`, or null (legacy / unparsable). */
+function hsPointerAgeDays_(raw, nowMs) {
+  try {
+    var st = JSON.parse(raw);
+    var t = st && st.writtenAt ? new Date(st.writtenAt).getTime() : NaN;
+    return isNaN(t) ? null : ((nowMs || Date.now()) - t) / 86400000;
+  } catch (e) { return null; }
+}
 
 /** Read-only: what tonight's run WOULD do. Writes nothing, logs no rows. */
 function previewHistoricalSortCheck() { return historicalSortCheck_({ apply: false }); }
@@ -1477,10 +1502,23 @@ function historicalSortCheck_(opts) {
     var entry = { sheet: spec.sheet, label: label, verdict: null, action: 'none',
                   rows: null, inversions: 0, status: 'success', notes: '', ms: 0 };
     try {
-      if (out.resumePending.length) {
+      var mine = out.resumePending.filter(function (k) { return HISTORICAL_SORT_RESUME_SHEET_[k] === spec.sheet; });
+      if (mine.length) {
         entry.action = 'skipped';
-        entry.notes = 'skipped -- backfill resume pointer(s) set: ' + out.resumePending.join(', ')
-          + ' (a sort would reset them); re-checks once the backfill clears its pointer';
+        var stale = [];
+        mine.forEach(function (k) {
+          var age = hsPointerAgeDays_(props.getProperty(k));
+          if (age != null && age > HISTORICAL_SORT_STALE_POINTER_DAYS_) stale.push(k + ' (' + Math.floor(age) + ' days old)');
+        });
+        if (stale.length) {
+          entry.status = 'failure';
+          entry.notes = 'STALE-POINTER -- skipped for ' + stale.join(', ') + ': a backfill pointer this old is '
+            + 'an abandoned run, and it keeps this sheet unsorted every night. Re-run that backfill to '
+            + 'completion (it clears its own pointer) or delete the property (Operator State #61)';
+        } else {
+          entry.notes = 'skipped -- backfill resume pointer(s) set: ' + mine.join(', ')
+            + ' (a sort would reset them); re-checks once the backfill clears its pointer';
+        }
       } else {
         var res = hdScanOneSheet_(ss, spec, { skipFormats: true });
         entry.verdict = res.verdict; entry.rows = res.rows; entry.inversions = res.inversions;

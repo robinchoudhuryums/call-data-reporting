@@ -233,6 +233,11 @@ function getIndividualReport(req) {
     // R8-C1: an outage-empty shape (Neon unreachable + no sheet) must not
     // pin under the :neon key -- skip the put so the next request retries.
     Logger.log('IndividualReport: source unavailable -- skipping cache put.');
+  } else if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    // DATA-2 (broad-scan 2026-09-23; R8-C4's sibling): the Dept Config read
+    // ERRORED, so TEAM_AVG_EXCLUDES (and the queue ext overrides) fell back to
+    // the constants -- serve the report, never pin that team average for 6 h.
+    Logger.log('IndividualReport: Dept Config read errored -- skipping cache put.');
   } else {
     try {
       cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);

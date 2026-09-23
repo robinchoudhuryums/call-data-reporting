@@ -51,6 +51,19 @@ test('R28: EMAIL_BCC overrides the list; none/off disables; an existing bcc is k
   assert.equal(h.state.sentEmails[0].bcc, undefined);
 });
 
+test('ENG-6: a malformed EMAIL_BCC entry is dropped, never handed to MailApp (one typo failed EVERY send)', function () {
+  reset({ EMAIL_BCC: 'audit@x.com, robin@x,com' });   // the comma typo splits into 'robin@x' + 'com'
+  h.call('sendAppEmail_', { to: 'mgr@x.com', subject: 's', body: 'b' });
+  assert.equal(h.state.sentEmails[0].bcc, 'audit@x.com', 'the valid entry still applies');
+  const cfg = JSON.parse(JSON.stringify(h.call('appEmailBccConfig_')));
+  assert.deepEqual(cfg, { mode: 'list', valid: ['audit@x.com'], invalid: ['robin@x', 'com'] });
+  // Nothing valid -> the default first-admin BCC, not silently nobody.
+  reset({ EMAIL_BCC: 'robin at x dot com' });
+  h.call('sendAppEmail_', { to: 'mgr@x.com', subject: 's', body: 'b' });
+  assert.equal(h.state.sentEmails[0].bcc, 'robin@x.com');
+  assert.equal(h.call('appEmailBccConfig_').mode, 'default');
+});
+
 test('R28: the positional (to, subject, body) form is accepted', function () {
   reset();
   h.call('sendAppEmail_', 'mgr@x.com', 'subj', 'plain');

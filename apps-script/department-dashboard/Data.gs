@@ -983,6 +983,11 @@ function getDepartmentSummary(req) {
     // queues) -- serve the table, never pin the panel-less payload.
     data.meta.qcdReadFailed = true;
     Logger.log('getDepartmentSummary: QCD snapshot read errored -- skipping cache put (degraded QCD must not pin).');
+  } else if (typeof bestEffortReadFailed_ === 'function' && bestEffortReadFailed_()) {
+    // DATA-3: the CSR Transfer section's read threw (null == "no rows") --
+    // serve the table, never pin the tile-less payload.
+    data.meta.sectionReadFailed = true;
+    Logger.log('getDepartmentSummary: a best-effort section read errored -- skipping cache put.');
   } else if (data.meta.sourceUnavailable) {
     // L1 (R8-C1 discipline): the payload is an OUTAGE empty, not a real
     // quiet window -- caching it would pin an empty agent table for every
@@ -1687,7 +1692,10 @@ function computeCsrTransferRange_(dept, from, to) {
       queueUnaccounted: Math.max(0, transferred - queueSum),
     };
   } catch (e) {
-    Logger.log('computeCsrTransferRange_ failed: %s', e);
+    // DATA-3: null here is ALSO the "no rows / not CSR" answer, so flag the
+    // failure -- getDepartmentSummary then serves the payload uncached
+    // instead of pinning a tile-less My Department for 6 h.
+    noteBestEffortReadFailed_('computeCsrTransferRange_', e);
     return null;
   }
 }

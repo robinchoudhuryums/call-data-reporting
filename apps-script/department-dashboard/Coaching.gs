@@ -409,6 +409,7 @@ function coachingDeliveryRun_() {
     } catch (pe) { carried = []; }
     var toEmail = diff.newFlags.concat(carried);
     var emailNote = ' — no email (nothing new)';
+    var notifyFailed = false;   // ENG-7
     if (toEmail.length) {
       var to = getAdminEmails_().join(',');   // admin-only until released (owner)
       var sentOk = false;
@@ -459,12 +460,18 @@ function coachingDeliveryRun_() {
             window: preview.window, flags: toEmail.slice(0, 40),
           }));
         } catch (se) { Logger.log('coachingDeliveryRun_: pending-notify save failed: %s', se); }
+        notifyFailed = true;
         emailNote = ' — EMAIL NOT SENT (' + (to ? 'send failed' : 'no admin recipients')
           + '); ' + toEmail.length + ' flag(s) kept pending, re-emailed on the next run';
       }
     }
     return {
-      result: 'ok ' + diff.newFlags.length + ' new, ' + diff.continuing.length
+      // ENG-7 (broad-scan 2026-09-23): a run whose notification did not go
+      // out is not an "ok" -- the OPS-8 classifier trusts the prefix, so the
+      // old "ok … EMAIL NOT SENT" read green on the Health page while the
+      // admins were never told about the new flags. NOTIFY-FAILED carries the
+      // failure word the classifier already matches.
+      result: (notifyFailed ? 'NOTIFY-FAILED ' : 'ok ') + diff.newFlags.length + ' new, ' + diff.continuing.length
         + ' continuing, ' + diff.recoveredOpenRows.length + ' recovered-open ('
         + preview.window.from + '..' + preview.window.to + ')'
         + emailNote,

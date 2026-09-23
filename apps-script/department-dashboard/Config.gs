@@ -87,14 +87,36 @@ function appEsc_(v) {
   });
 }
 
-/** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The BCC list to ADD, or ''. */
-function appEmailBcc_(msg) {
+// ENG-6 (broad-scan 2026-09-23): EMAIL_BCC is hand-typed, and MailApp rejects
+// the WHOLE message on one malformed bcc address -- so a single typo in the
+// property failed every alert, digest, queue report and admin notice at once.
+// Entries are now validated: a malformed one is dropped (and named on the
+// Health page's `email-bcc` row); if NONE survive, the default first-admin BCC
+// applies rather than silently BCC'ing nobody.
+var APP_EMAIL_ADDR_RE_ = /^[^@\s,;<>()"]+@[^@\s,;<>()"]+\.[^@\s,;<>()"]+$/;
+
+/** PURE-ish (reads EMAIL_BCC). { mode: 'default'|'none'|'list', valid[], invalid[] }. */
+function appEmailBccConfig_() {
   var raw = '';
   try { raw = String(PropertiesService.getScriptProperties().getProperty('EMAIL_BCC') || '').trim(); } catch (e) {}
-  if (/^(none|off|false)$/i.test(raw)) return '';
-  var list = raw
-    ? raw.split(/[,;\s]+/).map(function (x) { return x.trim(); }).filter(Boolean)
-    : getAdminEmails_().slice(0, 1);
+  if (!raw) return { mode: 'default', valid: [], invalid: [] };
+  if (/^(none|off|false)$/i.test(raw)) return { mode: 'none', valid: [], invalid: [] };
+  var valid = [], invalid = [];
+  raw.split(/[,;\s]+/).map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (x) {
+    (APP_EMAIL_ADDR_RE_.test(x) ? valid : invalid).push(x);
+  });
+  return { mode: valid.length ? 'list' : 'default', valid: valid, invalid: invalid };
+}
+
+/** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The BCC list to ADD, or ''. */
+function appEmailBcc_(msg) {
+  var cfg = appEmailBccConfig_();
+  if (cfg.mode === 'none') return '';
+  if (cfg.invalid.length) {
+    Logger.log('sendAppEmail_: EMAIL_BCC has malformed address(es) -- dropped: ' + cfg.invalid.join(', ')
+      + (cfg.valid.length ? '' : ' (none valid; using the default first-admin BCC)'));
+  }
+  var list = cfg.mode === 'list' ? cfg.valid : getAdminEmails_().slice(0, 1);
   var already = {};
   ['to', 'cc', 'bcc'].forEach(function (f) {
     String((msg && msg[f]) || '').split(/[,;\s]+/).forEach(function (x) {
@@ -734,6 +756,19 @@ function noteQcdSnapshotReadFailed_(where, e) {
     where, (e && e.message) ? e.message : e);
 }
 function qcdSnapshotReadFailed_() { return !!QCD_SNAPSHOT_READ_FAILED_; }
+// DATA-3 (broad-scan 2026-09-23): the same per-execution flag for a
+// best-effort NON-QCD section whose read threw and came back as the value that
+// also means "no rows" -- the CSR Transfer tile's computeCsrTransferRange_
+// returned null on a transient sheet timeout, and getDepartmentSummary cached
+// that tile-less payload for 6 h. A cache put that embeds such a section
+// checks bestEffortReadFailed_() and skips.
+var BEST_EFFORT_READ_FAILED_ = false;
+function noteBestEffortReadFailed_(where, e) {
+  BEST_EFFORT_READ_FAILED_ = true;
+  Logger.log('%s failed (section degraded; caches that embed it will NOT be written this execution): %s',
+    where, (e && e.message) ? e.message : e);
+}
+function bestEffortReadFailed_() { return !!BEST_EFFORT_READ_FAILED_; }
 
 var PROP_REGISTRY_ = Object.freeze({
   secret: Object.freeze({ NEON_PASS: true, HMAC_SECRET: true }),
@@ -776,6 +811,7 @@ var PROP_REGISTRY_ = Object.freeze({
     // engine — outcome/state the code writes itself
     CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
     ALERTS_LAST: 'engine', ALERTS_LAST_RESULT: 'engine',   // O-5: the daily alerts outcome
+    ALERTS_RUN_MARKER: 'engine',   // ENG-3: the last business day the daily alerts assessed
     ANSWER_RATE_FORMULA: 'config',                          // DD-2: 'rung' (default) | 'answerable' (H2)
     ANSWER_RATE_PROBE_FROM: 'tool', ANSWER_RATE_PROBE_TO: 'tool',   // DD-2: probeAnswerRateFormulas window
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
@@ -798,6 +834,7 @@ var PROP_REGISTRY_ = Object.freeze({
     PIPELINE_WATCH_BACKUP_MARK: 'engine', PIPELINE_WATCH_READBACK_MARK: 'engine',
     QUEUE_REPORT_LAST_SENT: 'engine', QUEUE_REPORT_LAST_MISSED: 'engine',
     QUEUE_REPORT_LAST_RESULT: 'engine',
+    QUEUE_REPORT_LAST: 'engine', QUEUE_REPORT_STARTED: 'engine',   // ENG-5
     SMOKE_LAST: 'engine', SMOKE_LAST_RESULT: 'engine',
     // tool — editor-run diagnostic inputs (self-cleared after a clean run)
     DQE_PARITY_FROM: 'tool', DQE_PARITY_TO: 'tool',
@@ -819,6 +856,7 @@ var PROP_REGISTRY_ = Object.freeze({
     ESC_SNAPSHOT_: 'engine',
     DIGEST_RUN_MARKER_: 'engine',
     DIGEST_LAST_RESULT_: 'engine',
+    DIGEST_LAST_: 'engine', DIGEST_STARTED_: 'engine',   // ENG-5
   }),
 });
 

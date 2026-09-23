@@ -1216,3 +1216,38 @@ test('R43: the SELF-SEND email discloses a partial in the message body', functio
   assert.doesNotMatch(h.call('buildQueueReportEmailHtml_', whole, '2026-07-10', false),
     /Incomplete report/, 'a complete report shows no incompleteness bar');
 });
+
+// ENG-8 (broad-scan 2026-09-23): the manual subscriber blast reported a
+// refused, subscriber-less or all-failed run as "Sent … to 0 subscribers".
+test('ENG-8: the manual blast flags no-subscribers and all-failed, and refuses a PARTIAL compute', function () {
+  qvInstall_('admin');
+  h.ctx.prevBusinessDayIso_ = function () { return '2026-07-20'; };
+  // No active subscriber rows.
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['off@x.com', 'FALSE', '']] },
+  });
+  let res = h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' });
+  assert.equal(res.noRecipients, true);
+  assert.equal(res.allFailed, false);
+  // Every send throws.
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: { 'Queue Report Subscribers': [['Email', 'Active', 'Notes'], ['s1@x.com', 'TRUE', '']] },
+  });
+  h.ctx.MailApp = { sendEmail: function () { throw new Error('quota'); } };
+  res = h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' });
+  assert.equal(res.allFailed, true);
+  assert.equal(res.noRecipients, false);
+  // A partial compute is a refusal, not "0 sent".
+  partialStub_();
+  assert.throws(function () {
+    h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' });
+  }, /^Error: Not sent: the report computed only/);
+  // The client toasts on the flags (the rendered gate cannot see a toast's wording).
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..',
+    'apps-script', 'department-dashboard', 'script-11-qcd-boot.html'), 'utf8');
+  assert.match(src, /res && res\.noRecipients[\s\S]{0,200}'error'/);
+  assert.match(src, /res && res\.allFailed[\s\S]{0,300}'error'/);
+  delete h.ctx.resolveUser_;
+  delete h.ctx.prevBusinessDayIso_;
+  delete h.ctx.qcdAllDeptCachedData_;
+});

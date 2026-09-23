@@ -115,6 +115,12 @@ function getMissedCallsReport(req) {
     // R8-C1: outage-empty shape (Neon unreachable + no DQE sheet) -- skip
     // the put so the next request retries instead of serving "no data".
     Logger.log('MissedCallsReport: DQE source unavailable -- skipping cache put.');
+  } else if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    // DATA-2 (broad-scan 2026-09-23; R8-C4's sibling): the Dept Config read
+    // ERRORED this execution, so the queue set fell back to the constants --
+    // a raw alias like CSR's A_Q_CSR (sheet-only) is missing and the
+    // queue-only abandoned card under-counts. Serve it, never pin it for 6 h.
+    Logger.log('MissedCallsReport: Dept Config read errored -- skipping cache put.');
   } else if (json.length <= 100000) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('MissedCallsReport cache put failed: %s', e); }
@@ -242,7 +248,10 @@ function missedReportDataCached_(dept, from, to) {
   try {
     const json = JSON.stringify(data);
     // R8-C1: never pin the outage-empty shape (see computeMissedCallsReport_).
-    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable)) {
+    // DATA-2: nor a payload built on constant-only config after a failed
+    // Dept Config read (the R8-C4 rule getDepartmentSummary already follows).
+    const cfgFailed = typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_();
+    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable) && !cfgFailed) {
       cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
     }
   } catch (e) { /* best-effort */ }

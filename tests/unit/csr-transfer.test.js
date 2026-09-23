@@ -397,3 +397,28 @@ test('ING-2: the inline QCD Neon mirror runs only AFTER the CSR sheet write (and
     h.ctx.getNeonMirrorMode_ = saved.mode;
   }
 });
+
+// ING-3 (broad-scan 2026-09-23): the bulk archive's CDR/QCD Neon mirror gap
+// was console-only; it is now a failure-only Pipeline Health row.
+test('ING-3: a skipped bulk-archive mirror logs a processBatchArchive:<type>:neon failure row naming the date span', function () {
+  const logged = [];
+  const orig = h.ctx.logPipelineHealthWithFallback_;
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, row) { logged.push(row); };
+  try {
+    h.state.props = { NEON_HOST: 'h' };
+    h.call('bulkArchiveMirrorGap_', null, 'QCD', ['2026-09-03', '2026-09-01', '2026-09-03'], 'Neon unreachable (40 rows skipped)');
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].step, 'processBatchArchive:QCD:neon');
+    assert.equal(logged[0].status, 'failure');
+    assert.match(logged[0].notes, /^2026-09-01\.\.2026-09-03 \(2 date\(s\)\) \| bulk QCD Neon mirror: Neon unreachable/);
+    // No Neon configured -> nothing to mirror to, stays silent (R8-A2 rule).
+    h.state.props = {};
+    h.call('bulkArchiveMirrorGap_', null, 'CDR', ['2026-09-01'], 'x');
+    assert.equal(logged.length, 1);
+  } finally { h.ctx.logPipelineHealthWithFallback_ = orig; }
+  // Wired on BOTH the skip and the throw path of BOTH mirrors.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const body = src.slice(src.indexOf('function processBatchArchive('), src.indexOf('function processBatchArchive(') + 12000);
+  assert.equal((body.match(/bulkArchiveMirrorGap_\(targetSS, 'CDR'/g) || []).length, 2);
+  assert.equal((body.match(/bulkArchiveMirrorGap_\(targetSS, 'QCD'/g) || []).length, 2);
+});

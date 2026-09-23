@@ -1210,24 +1210,47 @@ function computeOverviewPipelineFreshness_() {
         isStale:         true,
       };
     }
-    const hoursSinceFresh = (Date.now() - latestTs.getTime()) / 3600000;
-    // Weekend/holiday credit (OPS-7 parity): 24h allowance per non-business
-    // day in the gap, so Friday's build does not read as stale on Monday
-    // morning. IngestWatchdog.gs has always applied this to the SAME
-    // threshold; this banner and the header pill did not, so both false-warned
-    // every Monday on current data. Reuses the watchdog's helper (one Apps
-    // Script global scope); typeof-guarded like every other cross-file call.
-    const nonBusinessCredit = (typeof ingestWatchdogNonBusinessCredit_ === 'function')
-      ? ingestWatchdogNonBusinessCredit_(hoursSinceFresh) : 0;
-    return {
-      latestTimestamp: Utilities.formatDate(latestTs, TZ, 'yyyy-MM-dd HH:mm'),
-      hoursSinceFresh: Math.round(hoursSinceFresh * 10) / 10,
-      isStale:         (hoursSinceFresh - nonBusinessCredit) > OVERVIEW_PIPELINE_STALE_HOURS,
-    };
+    return ovFreshnessAt_(latestTs, Date.now());
   } catch (e) {
     Logger.log('computeOverviewPipelineFreshness_ failed: %s', e);
     return null;
   }
+}
+
+/** The freshness verdict for a latest-DQE-build instant, measured at nowMs. */
+function ovFreshnessAt_(latestTs, nowMs) {
+  const hoursSinceFresh = (nowMs - latestTs.getTime()) / 3600000;
+  // Weekend/holiday credit (OPS-7 parity): 24h allowance per non-business
+  // day in the gap, so Friday's build does not read as stale on Monday
+  // morning. IngestWatchdog.gs has always applied this to the SAME
+  // threshold; this banner and the header pill did not, so both false-warned
+  // every Monday on current data. Reuses the watchdog's helper (one Apps
+  // Script global scope); typeof-guarded like every other cross-file call.
+  const nonBusinessCredit = (typeof ingestWatchdogNonBusinessCredit_ === 'function')
+    ? ingestWatchdogNonBusinessCredit_(hoursSinceFresh) : 0;
+  return {
+    latestTimestamp: Utilities.formatDate(latestTs, TZ, 'yyyy-MM-dd HH:mm'),
+    hoursSinceFresh: Math.round(hoursSinceFresh * 10) / 10,
+    isStale:         (hoursSinceFresh - nonBusinessCredit) > OVERVIEW_PIPELINE_STALE_HOURS,
+  };
+}
+
+/**
+ * DATA-7 (broad-scan 2026-09-23): re-age the cached freshness verdict at
+ * SERVE time. The Overview blob lives up to 6 h under a key anchored on the
+ * latest DQE DATE -- which is exactly what does NOT move when the pipeline
+ * stops -- so a blob cached while fresh kept `isStale:false` for the rest of
+ * its TTL and the banner stayed silent through the first hours of an outage.
+ * Recomputed from the stored timestamp: no sheet read, a fresh object (the
+ * cached blob is never mutated). A null timestamp (no DQE build found) was
+ * already stale and stays so.
+ */
+function ovReageFreshness_(pf, nowMs) {
+  if (!pf || !pf.latestTimestamp) return pf;
+  try {
+    const ts = parsePipelineHealthTimestamp_(pf.latestTimestamp);
+    return ts ? ovFreshnessAt_(ts, nowMs || Date.now()) : pf;
+  } catch (e) { return pf; }
 }
 
 function parsePipelineHealthTimestamp_(s) {
@@ -1344,6 +1367,7 @@ function personalizeOverview_(blob, user) {
       }
       out.viewerRole = user.role;
       out.viewerDept = user.department || null;
+      if (out.pipelineFreshness) out.pipelineFreshness = ovReageFreshness_(out.pipelineFreshness);
       return out;
     }
     return {
@@ -1354,6 +1378,9 @@ function personalizeOverview_(blob, user) {
       viewerRole:     user.role,
       viewerDept:     user.department || null,
     };
+  }
+  if (user.role === 'admin' && out.pipelineFreshness) {
+    out.pipelineFreshness = ovReageFreshness_(out.pipelineFreshness);   // DATA-7
   }
   if (user.role !== 'admin') {
     delete out.companyAggregate;

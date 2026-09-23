@@ -64,6 +64,17 @@ const DIGEST_DAILY_RETRY_MINUTES  = 60;
 const DIGEST_WEEKLY_TRIGGER_HOUR  = 8;
 const DIGEST_MONTHLY_TRIGGER_HOUR = 8;   // 1st of the month, 8 AM
 
+// ENG-5 (broad-scan 2026-09-23): every outcome write goes through here so the
+// result carries a machine-readable timestamp (DIGEST_LAST_<cadence>) next to
+// its human text. The Health row ages it against the cadence's allowance and
+// compares it to DIGEST_STARTED_<cadence> -- a started send with no later
+// outcome is the 6-minute-kill signature, which used to stay green on the
+// previous run's "ok".
+function digestRecordResult_(props, cadence, text) {
+  props.setProperty('DIGEST_LAST_RESULT_' + cadence, text);
+  props.setProperty('DIGEST_LAST_' + cadence, new Date().toISOString());
+}
+
 function getDigestsInit() {
   assertAdmin_();
   // O-2: last per-cadence run outcome (see sendDigestsForCadence_'s
@@ -249,7 +260,7 @@ function digestGatedAttempt_(cadence, now, source) {
       const scheduled = digestScheduleRetry_(cadence);
       if (scheduled) {
         try {
-          props.setProperty('DIGEST_LAST_RESULT_' + cadence,
+          digestRecordResult_(props, cadence,
             'DEFERRED ' + window.toIso + ': DQE data is through ' + (latest || '(none)')
             + ' at ' + hhmm + ' -- the import has not landed yet; retrying in '
             + DIGEST_DAILY_RETRY_MINUTES + ' min (sends regardless at '
@@ -334,7 +345,7 @@ function sendDigestsForCadence_(cadence, runOpts) {
     // "ok" stayed in DIGEST_LAST_RESULT_<cadence> (the modal's "Last runs"
     // line and, since O-5, the Health page) while nothing went out.
     try {
-      PropertiesService.getScriptProperties().setProperty('DIGEST_LAST_RESULT_' + cadence,
+      digestRecordResult_(PropertiesService.getScriptProperties(), cadence,
         'SKIPPED-LOCK: ' + cadence + ' digests skipped -- another run held the script lock; '
         + 're-send via sendDigestsForCadence_ or wait for the next trigger. At ' + new Date());
     } catch (e) { /* best-effort */ }
@@ -363,6 +374,10 @@ function sendDigestsForCadence_(cadence, runOpts) {
       return;
     }
     props.setProperty(markerKey, window.toIso);
+    // ENG-5: stamp the send's START. The outcome below is recorded only after
+    // every recipient; a run killed mid-send at the 6-minute ceiling skips it,
+    // so the Health row compares this stamp to DIGEST_LAST_<cadence>.
+    props.setProperty('DIGEST_STARTED_' + cadence, new Date().toISOString());
   } finally {
     digestLock.releaseLock();
   }
@@ -434,7 +449,6 @@ function sendDigestsForCadence_(cadence, runOpts) {
   // can't duplicate). Partial success keeps the marker -- the recipients who
   // got theirs must not be re-blasted. The last outcome is also recorded per
   // cadence so the operator can see it without spelunking logs.
-  const resultKey = 'DIGEST_LAST_RESULT_' + cadence;
   try {
     const propsOut = PropertiesService.getScriptProperties();
     if (attempted === 0) {
@@ -448,7 +462,7 @@ function sendDigestsForCadence_(cadence, runOpts) {
       // the whole week/month. The old code claimed the window and recorded
       // "ok … sent 0 of 0", an all-green no-op even when EVERY row failed.
       propsOut.deleteProperty(markerKey);
-      propsOut.setProperty(resultKey,
+      digestRecordResult_(propsOut, cadence,
         (failures.length
           ? 'FAILED-ALL-VALIDATION ' + window.toIso + ': 0 attempted, ' + failures.length
             + ' row(s) failed dept validation (see admin email) -- run marker cleared; '
@@ -458,12 +472,12 @@ function sendDigestsForCadence_(cadence, runOpts) {
         + 'inside the same window) will deliver once rows exist. At ' + new Date());
     } else if (sent === 0) {
       propsOut.deleteProperty(markerKey);
-      propsOut.setProperty(resultKey,
+      digestRecordResult_(propsOut, cadence,
         'FAILED-ALL ' + window.toIso + ': 0 of ' + attempted + ' digests sent -- run marker '
         + 'cleared, so a manual sendDigestsForCadence_(\'' + cadence + '\') (or the next '
         + 'trigger inside the same window) will retry. At ' + new Date());
     } else {
-      propsOut.setProperty(resultKey,
+      digestRecordResult_(propsOut, cadence,
         'ok ' + window.toIso + ': sent ' + sent + ' of ' + attempted
         + (failures.length ? ' (' + failures.length + ' failure(s) -- see admin email)' : '')
         + (runOpts.staleLatest !== undefined

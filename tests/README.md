@@ -213,7 +213,13 @@ tests/
                               app-email (R28: the sendAppEmail_ chokepoint --
                               default admin BCC, EMAIL_BCC override/none,
                               dedup, both signatures, and the sweep that
-                              no .gs sends mail directly),
+                              no .gs sends mail directly; ENG-6: a malformed
+                              EMAIL_BCC entry is dropped, never sent),
+                              alerts-readiness (ENG-3: the daily alerts'
+                              DQE-readiness gate -- DEFERRED + one-shot retry
+                              until noon, a LATE outcome past it, the run
+                              marker that stops a retry re-alerting, EMPTY
+                              when every dept had no data),
                               neon-retention (R27: the storage-cap prune --
                               floored horizons above the coverage window,
                               the six ctid-batched steps, budget/skip/error
