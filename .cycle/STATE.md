@@ -13,11 +13,15 @@
   Access Control save/remove, S2B-2 sign-in reads off the script lock
   (save-in-flight marker + generation token), SEC-1 `assertReportRangeCap_`
   (731 d; agent app 366), SEC-3 IR email allowlist, S2B-6 alias rows stored
-  canonically, SEC-5 XFrameOptionsMode.DEFAULT. **WHERE I LEFT OFF:** Batches 1
-  + 2 pushed, NOT deployed. Next: deploy the dashboard, run "Back up now" once,
-  then `/broad-implement Batch 3` (pipeline sibling-fix drift: ING-1, S2C-1,
-  S2C-3, ING-2, S2C-4, ING-6, ING-7 -- cdr-import deploy). The full plan is
-  `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
+  canonically, SEC-5 XFrameOptionsMode.DEFAULT. **Batch 3 SHIPPED on this
+  branch** (block 197, cdr-import only): ING-1/S2C-3 Direct build date + stray
+  legs, S2C-1 first_agent no longer stores customer CNAM (agentBusy half left
+  as a follow-on), S2C-4 NUL strip, ING-6 outbound budget, ING-2 CDR/QCD
+  mirrors after every sheet write, ING-7 CSR repair date/lock/per-row writes.
+  **WHERE I LEFT OFF:** Batches 1-3 pushed, NOT deployed. Next: deploy the
+  dashboard (Batches 1+2) + cdr-import (Batch 3), run "Back up now" once, then
+  `/broad-implement Batch 4` (silent degradation & observability). The full
+  plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).
 - **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer

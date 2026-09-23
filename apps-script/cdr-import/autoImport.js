@@ -1858,6 +1858,16 @@ function processIntegratedHistory(targetSS, outputSheet, results, dateObj, skipC
   // mirrors, write only the sheets, and enqueue this date for the
   // off-synchronous-path runNeonMirror_ trigger to mirror shortly after.
   const neonMirrorMode = (typeof getNeonMirrorMode_ === 'function') ? getNeonMirrorMode_() : 'inline';
+  // ING-2 (broad-scan 2026-09-23): the inline CDR / QCD Neon mirrors are
+  // QUEUED here and run only AFTER every sheet write below (Q Path, QCD, CSR,
+  // DQE). On a force re-import the caller has already deleted this date from
+  // all five history sheets; a mirror that hangs on a Neon connect (the open
+  // hanging-connect problem, Operator State #70) used to be killed at the
+  // execution ceiling BEFORE the remaining sheets were rewritten -- the kill
+  // skips every catch, so the date was gone from them with no failure row and
+  // no email. Mirror behaviour, logging and failure rows are unchanged; only
+  // the ORDER moved. (NEON_MIRROR_MODE=deferred already avoided this.)
+  const pendingNeonMirrors = [];
   const neonDeferred   = (neonMirrorMode === 'deferred');
 
   // Neon mirror status for the daily toast (derived from the CDR + QCD +
@@ -1976,6 +1986,7 @@ if (!skipCDR && obcHD) {
     if (neonDeferred) {
       console.log('processIntegratedHistory: CDR Neon mirror deferred (NEON_MIRROR_MODE=deferred).');
     } else {
+    pendingNeonMirrors.push(function () {   // ING-2: runs after every sheet write
     try {
       var neonDateStr = Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy-MM-dd');
       var neonCdrRows = raw.map(function(r) {
@@ -2025,11 +2036,16 @@ if (!skipCDR && obcHD) {
       } catch (logErr) { /* best-effort */ }
       notifyNeonWriteFailure('processIntegratedHistory:CDR (' + dateObj.toDateString() + ')', neonErr.message);
     }
+    });
     }
   }
 }
 
 // 2. Q Path History
+  // ING-2: sections 2-5 run inside try/finally so the queued mirrors still run
+  // when a later sheet write THROWS (the pre-ING-2 order mirrored CDR/QCD
+  // before those writes, so a CSR failure never cost the Neon copy).
+  try {
   if (!skipQPath && salesHD) {
     const finalRows     = [];
     const salesDeptName = "Sales";
@@ -2104,6 +2120,7 @@ if (!skipCDR && obcHD) {
       if (neonDeferred) {
         console.log('processIntegratedHistory: QCD Neon mirror deferred (NEON_MIRROR_MODE=deferred).');
       } else {
+      pendingNeonMirrors.push(function () {   // ING-2: runs after every sheet write
       try {
         const neonQcdRows = qcdBatch.map(function(r) {
           return {
@@ -2150,6 +2167,7 @@ if (!skipCDR && obcHD) {
         } catch (logErr) { /* best-effort */ }
         notifyNeonWriteFailure('processIntegratedHistory (' + dateObj.toDateString() + ')', neonErr.message);
       }
+      });
       }
     }
   }
@@ -2294,6 +2312,13 @@ if (!skipCDR && obcHD) {
       try { notifyDqeBuildFailure_(dateObj.toDateString(), msg); }
       catch (notifyErr) { /* best-effort */ }
     }
+  }
+
+  } finally {
+    // ING-2: every history-sheet write for this date is done (or one threw);
+    // NOW mirror the queued CDR / QCD payloads. Each closure keeps its own
+    // try/catch, L7 failure row and email, so one failing never blocks the other.
+    for (var pm = 0; pm < pendingNeonMirrors.length; pm++) pendingNeonMirrors[pm]();
   }
 
   // 6. Direct-extension call metrics (Phase 1b). Computes per-agent-day
@@ -3710,17 +3735,64 @@ function repairCsrTransferForRawDataDate() {
   var csrHD = ss.getSheetByName('CSR Transfer Historical Data');
   if (!rawSheet || !csrHD) throw new Error('Raw Data or CSR Transfer Historical Data sheet missing.');
 
-  var rawDisp = rawSheet.getDataRange().getDisplayValues();
-  if (rawDisp.length < 2) { Logger.log('repairCsrTransfer: Raw Data empty.'); return { date: null, updated: 0 }; }
+  var rawDispAll = rawSheet.getDataRange().getDisplayValues();
+  if (rawDispAll.length < 2) { Logger.log('repairCsrTransfer: Raw Data empty.'); return { date: null, updated: 0 }; }
 
-  // Date currently in Raw Data (from the first data row's start-time col C),
-  // normalized to yyyy-mm-dd for robust matching against the sheet.
-  var rawDateIso = null;
-  for (var i = 1; i < rawDisp.length && !rawDateIso; i++) {
-    rawDateIso = parseDateForNeon(String(rawDisp[i][2] || '').split(' ')[0]);
-  }
+  // ING-7 (broad-scan 2026-09-23; P-7's sibling): the date used to come from
+  // the FIRST data row, and a D-1 carry-over leg sorts first -- so the repair
+  // overwrote D-1's rows with day D's counts. Take the grid's MAJORITY date
+  // instead (strays are a handful of legs) and drop the other-date legs
+  // before recomputing, as the DQE (P-7) and Direct (ING-1) builds do.
+  var split = csrRepairDayRows_(rawDispAll);
+  var rawDateIso = split.dateIso;
   if (!rawDateIso) throw new Error('Could not determine the date from Raw Data.');
+  var rawDisp = split.rows;
+  if (split.strays) {
+    Logger.log('repairCsrTransfer: dropped %s leg(s) dated off %s before recomputing.', split.strays, rawDateIso);
+  }
 
+  // ING-7: serialize against the daily import (same project, same script
+  // lock), which deletes/re-appends a date's rows in this very sheet.
+  var repairLock = LockService.getScriptLock();
+  if (!repairLock.tryLock(30000)) {
+    throw new Error('repairCsrTransfer: an import is running (script lock busy) -- re-run when it finishes.');
+  }
+  try {
+    return csrRepairApply_(ss, csrHD, rawDisp, rawDateIso, split.strays);
+  } finally {
+    repairLock.releaseLock();
+  }
+}
+
+/**
+ * ING-7. Pure: the majority date of a Raw Data display grid and the grid with
+ * only that date's legs kept (header + undated rows kept). Returns
+ * { dateIso, rows, strays }.
+ */
+function csrRepairDayRows_(rawDisp) {
+  var counts = {}, isoMemo = {};
+  var rowIso = [];
+  for (var i = 1; i < rawDisp.length; i++) {
+    var ds = String((rawDisp[i] && rawDisp[i][2]) || '').split(' ')[0];
+    if (!(ds in isoMemo)) isoMemo[ds] = ds ? parseDateForNeon(ds) : null;
+    var iso = isoMemo[ds];
+    rowIso.push(iso);
+    if (iso) counts[iso] = (counts[iso] || 0) + 1;
+  }
+  var best = null;
+  Object.keys(counts).forEach(function (k) {
+    if (best === null || counts[k] > counts[best] || (counts[k] === counts[best] && k > best)) best = k;
+  });
+  var rows = [rawDisp[0]], strays = 0;
+  for (var j = 1; j < rawDisp.length; j++) {
+    var ri = rowIso[j - 1];
+    if (!ri || ri === best) rows.push(rawDisp[j]); else strays++;
+  }
+  return { dateIso: best, rows: rows, strays: strays };
+}
+
+/** ING-7: the repair body, under the caller's lock. */
+function csrRepairApply_(ss, csrHD, rawDisp, rawDateIso, strays) {
   // Recompute with the FIXED engine (calcCsrReport reads the display grid).
   var csrData = calcCsrReport(rawDisp, ss);
   var byAgent = {};
@@ -3750,17 +3822,21 @@ function repairCsrTransferForRawDataDate() {
     if (Number(vals[r][5]) !== Number(rec.totalCalls)) {
       totalCallsMismatch.push(vals[r][3] + ' (sheet ' + vals[r][5] + ' vs recompute ' + rec.totalCalls + ')');
     }
-    vals[r][4] = rec.transPct;       // E Trans %
-    vals[r][6] = rec.transferred;    // G Transferred
-    for (var q = 0; q < 11; q++) vals[r][7 + q] = (rec.queues[q] != null ? rec.queues[q] : 0);   // H..R
+    // ING-7: write ONLY this row's recomputed cells (E, G, H..R). The whole-
+    // sheet getValues -> setValues round trip it replaces rewrote every row of
+    // the sheet, so a concurrent change anywhere in it was overwritten with the
+    // snapshot, and neutralized formula cells came back live (the R8-3 class).
+    // F (Total Calls) sits between E and G and is written back unchanged.
+    var out = [rec.transPct, vals[r][5], rec.transferred];
+    for (var q = 0; q < 11; q++) out.push(rec.queues[q] != null ? rec.queues[q] : 0);   // H..R
+    csrHD.getRange(r + 2, 5, 1, 14).setValues([out]);
     updated++;
   }
 
-  if (updated) csrHD.getRange(2, 1, last - 1, width).setValues(vals);
-
-  Logger.log('repairCsrTransfer: date=%s updated=%s rows; missing-in-recompute=%s; totalCalls-mismatch=%s',
-    rawDateIso, updated, JSON.stringify(missing), JSON.stringify(totalCallsMismatch));
-  return { date: rawDateIso, updated: updated, missingInRecompute: missing, totalCallsMismatch: totalCallsMismatch };
+  Logger.log('repairCsrTransfer: date=%s updated=%s rows; missing-in-recompute=%s; totalCalls-mismatch=%s; stray legs dropped=%s',
+    rawDateIso, updated, JSON.stringify(missing), JSON.stringify(totalCallsMismatch), strays || 0);
+  return { date: rawDateIso, updated: updated, missingInRecompute: missing,
+           totalCallsMismatch: totalCallsMismatch, strayLegsDropped: strays || 0 };
 }
 
 /**

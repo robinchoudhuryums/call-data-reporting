@@ -144,6 +144,9 @@ test('inline SQL escapers neutralize quotes + coerce ints/hash', function () {
   assert.equal(h.call('icSqlStr_', null), 'NULL');
   assert.equal(h.call('icSqlStr_', ''), 'NULL');
   assert.equal(h.call('icSqlStr_', "x'); DROP TABLE inbound_calls;--"), "'x''); DROP TABLE inbound_calls;--'");
+  // S2C-4 (broad-scan 2026-09-23): NUL is stripped (Postgres rejects it in a
+  // text literal, failing the whole date's batch), as neonSqlLit_ does.
+  assert.equal(h.call('icSqlStr_', 'Ann\u0000a'), "'Anna'");
   assert.equal(h.call('icSqlInt_', 393), '393');
   assert.equal(h.call('icSqlInt_', null), 'NULL');
   assert.equal(h.call('icSqlInt_', 'notnum'), 'NULL');
@@ -301,6 +304,22 @@ test('R5: firstAgent = FIRST person leg (queues/menus skipped; phone-shaped call
   const r = rec(recs, '910003');
   assert.equal(r.firstAgent, 'Anna Smith',
     'IVR (no dept), queue, and phone-shaped legs are all skipped');
+});
+
+// S2C-1 (broad-scan 2026-09-23): on an answered queue call the agent's own
+// OUTGOING talk leg carries the CALLER's CNAM in CALLEE_NAME (callee = the
+// external number) plus the agent's Departments value, so first_agent stored a
+// customer's raw name -- while the journey masks the same leg to initials.
+test('S2C-1: firstAgent skips a leg whose CALLEE is an external number (never a customer CNAM)', function () {
+  const recs = build([
+    leg({ callId: '910004', legId: 1, start: '06/04/2026 10:00:00', stop: '06/04/2026 10:00:30', direction: 'Incoming', caller: '12145556666', callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820' }),
+    leg({ callId: '910004', legId: 2, start: '06/04/2026 10:00:30', connected: '06/04/2026 10:00:30', stop: '06/04/2026 10:04:00', direction: 'Outgoing', talk: '0:03:30', caller: '352', callee: '12145556666', calleeName: 'JOHN SMITH', answered: 'Answered', dialIn: '19722281820', dept: 'CSR' }),
+  ]);
+  const r = rec(recs, '910004');
+  assert.notEqual(r.firstAgent, 'JOHN SMITH', 'a caller\'s CNAM must never be stored as first_agent');
+  assert.equal(r.firstAgent, null);
+  const jNames = r.journey.map(function (ev) { return ev.name; });
+  assert.ok(jNames.indexOf('JOHN SMITH') === -1, 'the journey still masks the same leg');
 });
 
 // ---- Internal-transfer path enrichment (journey-only, unique-match-only) ------

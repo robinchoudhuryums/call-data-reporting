@@ -709,15 +709,34 @@ function backfillDirectCallToNeon() {
  * the date's rows are replaced, so it's idempotent), and mirror to Neon.
  * Shared by the editor-run runDirectCallBuild AND the daily
  * processIntegratedHistory block (Phase 1b). Best-effort Neon (never throws
- * out of the mirror; returns a status). The date is derived from the grid's
- * first data row (same as Phase 1a), since Raw Data holds one day.
+ * out of the mirror; returns a status). The date is the first row ON
+ * `opts.expectedDate` when given (else the grid's first dated row), and legs
+ * dated on any other day are dropped before the engine runs (ING-1 / S2C-3).
  * @returns {{wrote, dateStr, isoDate, monthYear, meta, neon}}
  */
 function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   opts = opts || {};
-  let dateStr = '';
-  for (let i = 1; i < rawDisp.length && !dateStr; i++) dateStr = dcDateStr_(rawDisp[i][2]);
-  const isoDate = (typeof parseDateForNeon === 'function') ? parseDateForNeon(dateStr) : null;
+  const toIso = function (ds) { return (typeof parseDateForNeon === 'function') ? parseDateForNeon(ds) : null; };
+  const expIso = (opts.expectedDate instanceof Date && !isNaN(opts.expectedDate.getTime()))
+    ? opts.expectedDate.getFullYear() + '-'
+      + ('0' + (opts.expectedDate.getMonth() + 1)).slice(-2) + '-'
+      + ('0' + opts.expectedDate.getDate()).slice(-2)
+    : null;
+  // ING-1 (broad-scan 2026-09-23; P-7's sibling): a D-1 carry-over leg sorts
+  // FIRST in Raw Data, and this used to take the whole day's date from the
+  // first row -- so the P-4 guard below refused a 99%-correct grid on every
+  // re-run and the date never got Direct history. With `expectedDate` the
+  // date is the first row ON that day (the DQE build's P-7 rule); a grid with
+  // NO row on the expected day still falls through to the refusal.
+  let dateStr = '', firstSeen = '';
+  for (let i = 1; i < rawDisp.length && !dateStr; i++) {
+    const ds = dcDateStr_(rawDisp[i][2]);
+    if (!ds) continue;
+    if (!firstSeen) firstSeen = ds;
+    if (!expIso || toIso(ds) === expIso) dateStr = ds;
+  }
+  if (!dateStr) dateStr = firstSeen;
+  const isoDate = toIso(dateStr);
   const monthYear = dcMonthYearFromDate_(dateStr);
 
   // P-4 (the F2 class, mirrored from buildDQEHistoricalData's expectedDate
@@ -729,10 +748,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
   // When the caller supplies its own date, refuse the write on a mismatch;
   // the throw lands in the caller's existing catch (Pipeline Health failure
   // row), so the corruption is surfaced instead of silently written.
-  if (opts.expectedDate instanceof Date && !isNaN(opts.expectedDate.getTime())) {
-    const expIso = opts.expectedDate.getFullYear() + '-'
-      + ('0' + (opts.expectedDate.getMonth() + 1)).slice(-2) + '-'
-      + ('0' + opts.expectedDate.getDate()).slice(-2);
+  if (expIso) {
     if (isoDate !== expIso) {
       throw new Error('buildDirectCallFromRaw_: Raw Data derives date ' + (isoDate || dateStr || '(none)')
         + ' but the caller expected ' + expIso
@@ -755,7 +771,30 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
       + 'extensions -- refusing to rebuild (an empty-map rebuild would erase the date\'s '
       + 'Direct Call History and its Neon mirror). Check the roster sheet, then re-run.');
   }
-  const result = computeDirectCallMetrics(rawDisp, maps, opts);
+  // S2C-3 (broad-scan 2026-09-23): the engine keys every leg by its time of
+  // day only (dcStartSec_), so a leg from ANOTHER date anywhere in the grid
+  // counted toward this day -- inflating activity and, as a busy interval,
+  // excusing a genuine missed ring as missed_busy. Keep only the build date's
+  // legs (rows with no parseable start stay: the engine counts them as
+  // droppedNoStart). Mirrors the DQE build's P-7 stray-leg drop.
+  let dayRows = rawDisp;
+  let strayLegs = 0;
+  if (isoDate) {
+    const isoMemo = {};
+    dayRows = [rawDisp[0]];
+    for (let i = 1; i < rawDisp.length; i++) {
+      const ds = dcDateStr_(rawDisp[i] && rawDisp[i][2]);
+      if (!ds) { dayRows.push(rawDisp[i]); continue; }
+      if (!(ds in isoMemo)) isoMemo[ds] = toIso(ds);
+      if (isoMemo[ds] === isoDate) dayRows.push(rawDisp[i]);
+      else strayLegs++;
+    }
+    if (strayLegs) {
+      Logger.log('buildDirectCallFromRaw_: dropped %s leg(s) dated off %s (carry-over / stray rows).',
+        strayLegs, isoDate);
+    }
+  }
+  const result = computeDirectCallMetrics(dayRows, maps, opts);
 
   const sheetRes = dcWriteSheet_(ss, result.rows, monthYear, dateStr);
   if (sheetRes.written === 0 && sheetRes.deleted > 0) {
@@ -776,7 +815,7 @@ function buildDirectCallFromRaw_(ss, rawDisp, configSheet, opts) {
       neon = { inserted: 0, error: String(e && e.message ? e.message : e) };
     }
   }
-  return { wrote: sheetRes.written, deletedExisting: sheetRes.deleted,
+  return { wrote: sheetRes.written, deletedExisting: sheetRes.deleted, strayLegsDropped: strayLegs,
            dateStr: dateStr, isoDate: isoDate, monthYear: monthYear, meta: result.meta, neon: neon };
 }
 

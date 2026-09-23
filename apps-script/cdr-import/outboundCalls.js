@@ -386,7 +386,10 @@ function backfillOutboundCalls(fromIso, toIso, force) {
   var unreachable = false;
 
   for (var i = 0; i < candidates.length; i++) {
-    if (Date.now() - startMs > IC_BACKFILL_TIME_LIMIT_MS) {
+    // ING-6 (broad-scan 2026-09-23): the TUNABLE budget (P-3, Operator State
+    // #70), as the inbound backfill reads it -- the raw constant ignored the
+    // IC_BACKFILL_TIME_LIMIT_MS Script Property the probe tells operators to set.
+    if (Date.now() - startMs > icBackfillTimeLimitMs_()) {
       stoppedEarly = 'time budget reached at ' + candidates[i].iso
         + ' (' + (candidates.length - i) + ' sheets left) — run again to continue';
       break;

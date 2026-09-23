@@ -22,7 +22,7 @@ ENG-1, S2A-1 (missed half), ENG-2, ENG-11.
 - S2B-6 Low: Access Control row saved under an EMAIL_ALIASES alias never matches (resolveUser_ canonicalizes first); welcome email says live. Canonicalize on save.
 - SEC-5 Low (ruled): Code.gs:90/209/218 ALLOWALL -> DEFAULT; CLAUDE.md line.
 
-## Batch 3 — pipeline sibling-fix drift (~8.5h)
+## Batch 3 — pipeline sibling-fix drift — SHIPPED (block 197; S2C-1's agentBusy half deferred)
 - ING-1 Med: `buildDirectCallFromRaw_` (cdr-import/directCallMetrics.js:716-741) dates the day from the FIRST row; P-7 fixed this for DQE only -> a D-1 carry-over first row makes Direct refuse the date on every re-run.
 - S2C-1 Med: inboundCalls.js `firstAgent` loop (:527-535) doesn't skip external-callee legs -> stores a caller's raw CNAM (IMP-12/P-11 bypass) and misattributes; `agentBusy` keys on customer digits. Fix + SQL audit/re-mask of existing rows.
 - S2C-3 Low-Med: Direct engine never drops other-day legs (dcStartSec_ time-of-day only) -> inflates activity, excuses missed rings as missed_busy.

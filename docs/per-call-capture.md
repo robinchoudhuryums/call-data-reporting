@@ -105,7 +105,12 @@ queue, so it is null). Without it the receiving dept's drill said only "an
 internal call abandoned in your queue"; with it the manager sees the
 abandon was a colleague's assist request, not a lost customer. NULL on
 every externally-originated row; phone-shaped caller names are never
-stored (the firstAgent PHI guard). **Step 4 (owner ruling) links the assist
+stored (the firstAgent PHI guard), and since S2C-1 (2026-09-23) neither is the
+NAME on a leg whose CALLEE is an external number -- the agent's own Outgoing
+talk leg on an answered queue call carries the CALLER's CNAM there (with the
+agent's Departments value), so first_agent had stored customers' raw names.
+Rows captured before the fix keep them until re-captured (`backfillInboundCalls`
+with `force` over the surviving `Call_Legs_*` window). **Step 4 (owner ruling) links the assist
 to the requester's concurrent OUTBOUND call** -- `related_call_kind`
 ('inbound' | 'outbound'; NULL reads as inbound) says which table
 `related_call_id` points at, and `getCallJourney({kind:'outbound'})` serves

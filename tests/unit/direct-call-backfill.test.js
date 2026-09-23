@@ -230,6 +230,66 @@ test('P-4: buildDirectCallFromRaw_ refuses a derived date that disagrees with ex
   }, /derives date 2026-03-08 but the caller expected 2026-03-09/);
 });
 
+// ING-1 / S2C-3 (broad-scan 2026-09-23): P-7's sibling. A D-1 carry-over leg
+// sorts FIRST in Raw Data; the build took the whole day's date from it, so
+// P-4 refused a 99%-correct grid on every re-run, and the engine (time-of-day
+// only) counted any other-date leg toward the day.
+function withBuildStubs(fn) {
+  const saved = {};
+  ['dcBuildExtMaps_', 'dcWriteSheet_', 'computeDirectCallMetrics'].forEach(function (k) { saved[k] = h.ctx[k]; });
+  const seen = { grid: null, wrote: null };
+  h.ctx.dcBuildExtMaps_ = function () {
+    return { extToAgent: { '201': { name: 'Anna', dept: 'CSR' } }, queueExtSet: new Set(), exclusions: new Set() };
+  };
+  h.ctx.dcWriteSheet_ = function (ss, rows, monthYear, dateStr) { seen.wrote = { rows: rows, dateStr: dateStr }; return { written: rows.length, deleted: 0 }; };
+  h.ctx.computeDirectCallMetrics = function (grid, maps, opts) { seen.grid = grid; return saved.computeDirectCallMetrics(grid, maps, opts); };
+  try { return fn(seen); } finally { Object.keys(saved).forEach(function (k) { h.ctx[k] = saved[k]; }); }
+}
+
+test('ING-1: a D-1 carry-over FIRST row no longer refuses the day; the date is the first row on expectedDate', function () {
+  withBuildStubs(function (seen) {
+    const rawDisp = [
+      ['CALL ID', 'LEG', 'START'],
+      ['0', '1', '03/08/2026 23:58:00'],   // stray carry-over leg, sorts first
+      ['1', '1', '03/09/2026 10:00:00'],
+      ['2', '1', '03/09/2026 11:00:00'],
+    ];
+    const res = h.fn('buildDirectCallFromRaw_')(null, rawDisp, null,
+      { expectedDate: new Date(2026, 2, 9, 12, 0, 0), skipNeon: true });
+    assert.equal(res.isoDate, '2026-03-09');
+    assert.equal(res.strayLegsDropped, 1);
+    assert.equal(seen.wrote.dateStr, '03/09/2026');
+    assert.deepEqual(JSON.parse(JSON.stringify(seen.grid.slice(1).map(function (r) { return r[0]; }))), ['1', '2'], 'the stray leg never reaches the engine');
+  });
+});
+
+test('S2C-3: an other-date leg ANYWHERE in the grid is dropped, so it cannot count or excuse a miss as busy', function () {
+  withBuildStubs(function (seen) {
+    // Anna (ext 201) takes an OUTGOING 5-min call at 09:58 on the WRONG date,
+    // and misses a direct ring at 10:00 on the build date. Counted by time of
+    // day, the stray call made her "busy" (missed_busy) and added outbound
+    // activity; dropped, the ring is a plain missed_free.
+    function leg(cid, start, dir, caller, callee, talk, calltime, mis, ans) {
+      const r = new Array(26).fill('');
+      r[0] = cid; r[2] = start; r[5] = dir; r[6] = talk; r[7] = calltime;
+      r[8] = caller; r[10] = callee; r[14] = 'N/A'; r[23] = mis; r[25] = ans;
+      return r;
+    }
+    const rawDisp = [new Array(26).fill('H'),
+      leg('10', '03/10/2026 10:00:00', 'Internal', '305', '201', '0:00:00', '0:00:20', 'Missed', ''),
+      leg('9', '03/09/2026 09:58:00', 'Outgoing', '201', '5551234567', '0:05:00', '0:05:00', '', 'Answered'),
+    ];
+    const res = h.fn('buildDirectCallFromRaw_')(null, rawDisp, null,
+      { expectedDate: new Date(2026, 2, 10, 12, 0, 0), skipNeon: true });
+    assert.equal(res.strayLegsDropped, 1);
+    const anna = seen.wrote.rows.filter(function (r) { return r.agent === 'Anna'; })[0];
+    assert.ok(anna, 'Anna has a row');
+    assert.equal(anna.ib_int_missed_busy, 0, 'the other-day call no longer excuses the miss');
+    assert.equal(anna.ib_int_missed_free, 1);
+    assert.equal(anna.ob_ext_total, 0, 'nor counts as outbound activity on the build date');
+  });
+});
+
 // ── R39: inline-literal upsert pins ─────────────────────────────────────────
 function metricRow(agent, extra) {
   return Object.assign({ monthYear: 'March 2026', isoDate: '2026-03-09', dept: 'CSR', agent: agent,

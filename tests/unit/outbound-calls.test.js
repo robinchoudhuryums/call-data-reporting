@@ -271,3 +271,32 @@ test('P-9 (broad-scan 2026-09-17): the outbound writer runs its DDL in AUTOCOMMI
   assert.ok(ddl.every(function (i) { return i < iAuto; }), 'CREATE TABLE + CREATE INDEX precede setAutoCommit(false)');
   assert.ok(iAuto < iDel, 'the DELETE + INSERT stay inside the transaction');
 });
+
+// ING-6 (broad-scan 2026-09-23): the outbound backfill read the raw 15-min
+// constant, ignoring the IC_BACKFILL_TIME_LIMIT_MS Script Property (P-3,
+// Operator State #70) that the inbound backfill honours.
+test('ING-6: backfillOutboundCalls honours the tunable IC_BACKFILL_TIME_LIMIT_MS budget', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Call_Legs_2026-09-01': [['CALL ID'], ['1']], 'Call_Legs_2026-09-02': [['CALL ID'], ['2']] } });
+  const saved = { mirrored: h.ctx.ocFetchMirroredDates_, write: h.ctx.writeOutboundCallsToNeon };
+  let writes = 0;
+  h.ctx.ocFetchMirroredDates_ = function () { return {}; };
+  h.ctx.writeOutboundCallsToNeon = function () { writes++; return { inserted: 1 }; };
+  try {
+    // A budget ALREADY spent (the property floor is 60 s; simulate elapsed time
+    // by making the tunable read return a value the elapsed time exceeds).
+    h.state.props.IC_BACKFILL_TIME_LIMIT_MS = '60000';
+    const realNow = Date.now;
+    let t = 1e12;
+    h.ctx.Date.now = function () { t += 61000; return t; };
+    let res;
+    try { res = h.call('backfillOutboundCalls'); } finally { h.ctx.Date.now = realNow; }
+    assert.match(res.stoppedEarly, /time budget reached at 2026-09-01/);
+    assert.equal(writes, 0, 'stopped on the Script Property budget, not the 15-min constant');
+  } finally {
+    delete h.state.props.IC_BACKFILL_TIME_LIMIT_MS;
+    h.ctx.ocFetchMirroredDates_ = saved.mirrored;
+    h.ctx.writeOutboundCallsToNeon = saved.write;
+  }
+});
