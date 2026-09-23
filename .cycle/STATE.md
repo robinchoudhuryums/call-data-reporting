@@ -13,9 +13,16 @@
   as human) is still open.
   - **WHERE I LEFT OFF (the one current line -- older "left off" notes below
     are history):** nothing half-built; the answer-quality thread is now the
-    OWNER's research loop, not queued code. **Next cycle's candidate:** the
-    per-dept CALLBACK table (plan Part 1), unblocked since it ranks by
-    called-back and needs no classifier (`docs/next-steps.md`). **Standing
+    OWNER's research loop, not queued code. **NEXT PIECE OF WORK
+    (owner-confirmed 2026-09-23): the per-dept CALLBACK table** --
+    `docs/outbound-callback-dept-plan.md` Part 1 + sequence step 5, with the
+    2026-09-15 owner rulings (rank by the OWN-dept called-back column; rows
+    own / another dept / not called back summing to trackable abandons; the
+    per-dialing-dept matrix as a row EXPAND; sub-queues via `queuesForDept_`;
+    crossover / unrostered / no-agent columns explicit from the first commit;
+    `outboundReport:v3` -> `v4`). Unblocked: it ranks by called-back, needs
+    no classifier, and any connected column inherits `OB_CONNECTED_DEF_`
+    (`docs/next-steps.md`). Start with `/plan` against that plan doc. **Standing
     operator items:** deploy the dashboard + walk S46 (new "Callbacks
     connected" wording); run the talk sampler; check the E rows' recording
     start vs row time; set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`

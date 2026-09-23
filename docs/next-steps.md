@@ -351,7 +351,9 @@ voicemail greeting or a phone menu, so no classifier will be built; the
 reporting instead DEFINES "Connected" everywhere and calls the callback tile
 ("Callbacks connected") an upper bound on callers reached, with no audit
 figure on any surface (plan: "GROUND TRUTH round 2"; Operator State #71). The
-table ranks by called-back, so it does not need a classifier. The history
+table ranks by called-back, so it does not need a classifier. **It is the
+owner-confirmed NEXT piece of work (2026-09-23)** -- build from the plan's
+Part 1 + sequence step 5. The history
 below is the record of how that was established.
 **Do the answer-quality half first -- but it is BLOCKED as of 2026-09-18,
 not merely queued.** Both probes ran live and both returned INCONCLUSIVE, for
