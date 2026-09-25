@@ -943,7 +943,7 @@ function saveDeptConfig(req) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
   try {
-    upsertDeptConfigRow_({
+    const mirrorWarning = upsertDeptConfigRow_({
       dept:              dept,
       qcdQueues:         qcdQueues,
       overviewParent:    overviewParent,
@@ -955,6 +955,7 @@ function saveDeptConfig(req) {
       notes:             notes,
       admin:             admin,
     });
+    if (mirrorWarning) queueWarnings.push(mirrorWarning);   // S2B-5
     dcBustCaches_();
     // H2: Team Avg Excludes is one of the published standards -- republish
     // (best-effort; the Health row reports a failure, the save stands). The
@@ -979,23 +980,59 @@ function removeDeptConfig(req) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
   let removed = 0;
+  const warnings = [];
   try {
-    removed = deactivateDeptConfig_(dept);
+    const res = deactivateDeptConfig_(dept);
+    removed = res.count;
+    if (res.warning) warnings.push(res.warning);   // S2B-5
     dcBustCaches_();
     if (typeof publishDashboardStandards_ === 'function') publishDashboardStandards_();   // H2 -- see saveDeptConfig
   } finally {
     lock.releaseLock();
   }
-  return { removed: removed };
+  return { removed: removed, warnings: warnings };
 }
 
 // -- Write helpers (trailing underscore; RPC-unreachable) ----------
 // Writes go to the ACTIVE source (Neon when CONFIG_SOURCE=neon, else the
 // sheet). Both clear the per-execution memo so the next accessor re-reads.
+//
+// S2B-5 (broad-scan 2026-09-23, Batch 11): under CONFIG_SOURCE=neon the SHEET
+// is still read -- by the OTHER projects, which have no Neon config reader:
+// cdr-import's capture-time queue recognition + canonical translation
+// (inboundCalls.js, INV-54's third consumer) and cdr-report's
+// queueOverlapAudit.js -- and by this project as the outage fallback. A
+// Neon-only write left all of them on the pre-flip copy, so a new Inbound
+// queue alias reached the dashboard and never reached capture (the Operator
+// State #38 blindness), with no warning. So a Neon write is MIRRORED to the
+// sheet: Neon stays authoritative (it is written first and a failure there
+// still throws), the mirror is best-effort, and a failed mirror comes back as
+// a WARNING string the caller surfaces -- never as a failed save.
 
 function upsertDeptConfigRow_(rec) {
-  if (getConfigSource_() === 'neon') { neonUpsertDeptConfigRow_(rec); return; }
+  if (getConfigSource_() === 'neon') {
+    neonUpsertDeptConfigRow_(rec);
+    return dcMirrorToSheet_(function () { sheetUpsertDeptConfigRow_(rec); }, rec.dept);
+  }
   sheetUpsertDeptConfigRow_(rec);
+  return null;
+}
+
+/** S2B-5: run a sheet mirror write; null on success, a warning string on failure. */
+function dcMirrorToSheet_(fn, dept) {
+  try {
+    fn();
+    return null;
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : String(e);
+    Logger.log('Dept Config (CONFIG_SOURCE=neon): saved to Neon, but the SHEET mirror for '
+      + dept + ' failed: ' + msg);
+    return 'Saved to Neon, but the Dept Config SHEET copy was not updated (' + msg + '). '
+      + 'cdr-import\'s call capture reads only the sheet -- re-save this dept, or copy the row '
+      + 'to the sheet by hand (Operator State #25).';
+  } finally {
+    DEPT_CONFIG_ROWS_MEMO_ = null;
+  }
 }
 
 function sheetUpsertDeptConfigRow_(rec) {
@@ -1078,9 +1115,14 @@ function neonUpsertDeptConfigRow_(rec) {
   DEPT_CONFIG_ROWS_MEMO_ = null;
 }
 
+// Returns { count, warning } -- warning is the S2B-5 sheet-mirror failure, or null.
 function deactivateDeptConfig_(dept) {
-  if (getConfigSource_() === 'neon') return neonDeactivateDeptConfig_(dept);
-  return sheetDeactivateDeptConfig_(dept);
+  if (getConfigSource_() === 'neon') {
+    const count = neonDeactivateDeptConfig_(dept);
+    const warning = dcMirrorToSheet_(function () { sheetDeactivateDeptConfig_(dept); }, dept);
+    return { count: count, warning: warning };
+  }
+  return { count: sheetDeactivateDeptConfig_(dept), warning: null };
 }
 
 function sheetDeactivateDeptConfig_(dept) {

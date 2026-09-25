@@ -74,7 +74,7 @@ DATA-5 computeSummary_ unmemoized per-dept span (Data.gs:1140); DATA-6 orphan na
 ## Batch 10 — docs — SHIPPED (block 205, + the Batch 9 follow-ons)
 DOC-1 INV-01 carve-out list incomplete; DOC-2 conventions.md:283 old access model; DOC-3 "cannot be backfilled" (INV-10, Config.gs); DOC-4 30-min/5-min cache claims; DOC-7 OVERVIEW_PARENT_OF "Overview-only" comment; DOC-5/6/8/9/10/11/12/13/14/15 stale counts/comments (see scan); + SEC-6 accepted-PHI note (ESC_SNAPSHOT_*).
 
-## Batch 11 — flag-flip prerequisites (~6h+)
+## Batch 11 — flag-flip prerequisites — SHIPPED (block 206)
 S2B-5 CONFIG_SOURCE=neon: cdr-import capture reads the sheet only (inboundCalls.js:860); DATA-1 B-1 fall-open on divergent row sets (Data.gs:503/572); CRT-2 merge + upsert stale queue_split; S2A-1 queue-split half (digest WoW never narrows).
 
 ## Deferred

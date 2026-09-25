@@ -805,7 +805,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (`DQE_WRITE_WIDTH`, 37 since Batch 3; a getRange past `getMaxColumns` throws
   -- REP-10). Mirrored
   to `dqe_history.queue_split` via an idempotent ADD COLUMN, and every upsert
-  COALESCEs so a sheet-sourced NULL can't erase a stored split.
+  COALESCEs so a sheet-sourced NULL can't erase a stored split -- which is
+  why the duplicate merge, which BLANKS AI..AK on purpose, NULLs the Neon
+  twin itself (CRT-2, `sheet-repairs-merge.test.js`).
   **The pipeline always WRITES this column; whether any dashboard surface USES
   it is a separate switch** -- `QUEUE_SPLIT_SCOPE`, default `off` (Operator
   State #42). So keep deploying and backfilling the split on its own urgency
@@ -1834,8 +1836,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   serve the other mode's payload for the TTL. It **FAILS OPEN four ways**
   (showing a dept ZERO calls is worse than too many): no mapped queues, a
   row with no split, unparseable JSON -- and (B-1, assessed per WINDOW,
-  never per row) a whole window whose mapped queues match NONE of the
-  splits' RAW queue names, which is a CONFIGURATION fault (the
+  never per row, over the dept's ROSTER rows only so every caller reaches
+  the same verdict -- DATA-1, `queue-split.test.js`) a whole window whose
+  mapped queues match NONE of the splits' RAW queue names, which is a CONFIGURATION fault (the
   canonical-vs-raw name bridge is the admin-populated "Inbound queue
   aliases" column, and nothing verifies it is complete -- fix-history B-1
   has the mechanism). A PARTIAL mismatch keeps its narrowing and reports

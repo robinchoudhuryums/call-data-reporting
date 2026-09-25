@@ -428,6 +428,21 @@ function getQueueSplitScope_() {
  *      observed queue" indicates the mapping itself is wrong. An `{}` split
  *      contributes no observed queue names, so a genuinely-idle window still
  *      narrows to zero as it should.
+
+ *      DATA-1 (broad-scan 2026-09-23, Batch 11): the evidence is gathered from
+ *      the dept's OWN ROSTER rows only. Callers hand this function different
+ *      row sets -- computeSummary_, the Missed report and the IR/Insights
+ *      sheet paths pass EVERY agent's rows in the window, while the Overview,
+ *      Alerts and the Neon paths pass roster rows -- and one other dept's
+ *      agent taking a single call on a mapped queue used to be enough to
+ *      "match", so the My Department table narrowed CSR to zero while the
+ *      Overview tile and the alert engine fell open on the same data. Every
+ *      row is still NARROWED; only the verdict (and `unmatchedQueues`, which
+ *      otherwise listed every other dept's queues) reads the roster rows.
+ *      The roster comes from `opts.assessAgents` (names), or `opts.rowsAreRoster`
+ *      (the caller already filtered -- queueSplitNarrowedCopy_'s contract), or a
+ *      getRosterForDepartment_ read; an empty roster assesses every row, as
+ *      before.
  * Every row is tagged `queueScoped` so the caller can tell which of its
  * numbers were actually narrowed, and the client can say so.
  *
@@ -480,6 +495,9 @@ function applyQueueSplitToRows_(srcRows, dept, opts) {
   // Fail-open #1: no mapped queues -> every row keeps its rollup.
   if (!queues.length) return out;
 
+  // DATA-1: which rows count as B-1 EVIDENCE (see the docblock). null = all.
+  const assessSet = qsAssessAgentSet_(dept, opts);
+
   // B-1: window-level evidence that the dept's queue mapping is USABLE.
   // `observedQueues` counts distinct queue names seen in any split this window;
   // `matchedQueues` counts how many of those the dept claims. Rollback state is
@@ -498,11 +516,12 @@ function applyQueueSplitToRows_(srcRows, dept, opts) {
     out.dates[row.dateIso] = true;
 
     let u = 0, r = 0, m = 0, a = 0, t = 0, n = 0;
+    const isEvidence = !assessSet || assessSet[row.agent] === true;
     Object.keys(split).forEach(function (qName) {
       const key = String(qName).trim().toLowerCase();
-      if (key) observedQueues[key] = qName;   // keep the RAW spelling for the report
+      if (key && isEvidence) observedQueues[key] = qName;   // keep the RAW spelling for the report
       if (!want[key]) return;
-      matchedQueues[key] = true;
+      if (isEvidence) matchedQueues[key] = true;
       const e = split[qName] || {};
       u += Number(e.u) || 0;
       r += Number(e.r) || 0;
@@ -613,6 +632,35 @@ function applyQueueSplitToRows_(srcRows, dept, opts) {
  * shallow-clones first. Slot narrowing ASSIGNS a fresh array (never mutates),
  * so shallow clones are sufficient.
  */
+/**
+ * DATA-1: the agent-name set whose rows are B-1 evidence for `dept`, or null
+ * to assess every row. Explicit names win; `rowsAreRoster` means the caller's
+ * rows ARE the roster rows already (no read); otherwise one roster read. Never
+ * throws -- a failed or empty roster read degrades to the pre-DATA-1 "every
+ * row" assessment rather than to no assessment.
+ */
+function qsAssessAgentSet_(dept, opts) {
+  if (opts && opts.rowsAreRoster) return null;
+  let names = opts && opts.assessAgents;
+  if (!names) {
+    try {
+      names = (typeof getRosterForDepartment_ === 'function')
+        ? (getRosterForDepartment_(dept) || {}).names : null;
+    } catch (e) {
+      Logger.log('applyQueueSplitToRows_: roster read failed for ' + dept
+                 + ' -- B-1 assessed over every row: ' + e);
+      names = null;
+    }
+  }
+  if (!names || !names.length) return null;
+  const set = {};
+  names.forEach(function (nm) { if (nm) set[nm] = true; });
+  return set;
+}
+
+// CONTRACT (DATA-1): every caller passes the dept's ROSTER rows only (the
+// Overview's deptsForAgent filter, the alert engine's roster filter), so the
+// B-1 verdict is assessed over all of them without a second roster read.
 function queueSplitNarrowedCopy_(rows, dept, opts) {
   if (getQueueSplitScope_() !== 'dept' || !rows || !rows.length) {
     return { rows: rows || [], info: { scope: 'off', applied: 0, dates: {}, fellOpenUnmatched: false } };
@@ -622,7 +670,9 @@ function queueSplitNarrowedCopy_(rows, dept, opts) {
     for (const k in r) if (Object.prototype.hasOwnProperty.call(r, k)) c[k] = r[k];
     return c;
   });
-  const info = applyQueueSplitToRows_(clones, dept, opts);
+  const o = { rowsAreRoster: true };
+  if (opts) for (const k in opts) if (Object.prototype.hasOwnProperty.call(opts, k)) o[k] = opts[k];
+  const info = applyQueueSplitToRows_(clones, dept, o);
   return { rows: clones, info: info };
 }
 
@@ -1149,7 +1199,7 @@ function computeSummary_(dept, from, to, scope) {
   // Sub-queue Phase 2: narrow each row to THIS dept's own queues before any
   // aggregation happens, so the loop below and every rule inside it are
   // unchanged. Fails open per-row -- see applyQueueSplitToRows_.
-  const splitInfo = applyQueueSplitToRows_(srcRows, dept);
+  const splitInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
 
   const acc = {};
 

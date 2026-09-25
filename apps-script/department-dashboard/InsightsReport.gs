@@ -392,7 +392,7 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // Queue-split adoption (Phase 4): narrow BEFORE every aggregation this
   // report runs -- current window, prior window, 12-mo trend, team stats,
   // gap-vs-team -- so all of it inherits one definition. Off = untouched.
-  const qsInfo = applyQueueSplitToRows_(srcRows, dept);
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
   if (typeof logDqeReadTiming_ === 'function') {
     logDqeReadTiming_('computeInsights_:' + dept, effectiveSource, _tRead, srcRows.length);
   }

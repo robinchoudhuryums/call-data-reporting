@@ -373,7 +373,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // per-agent cards, the monthly trend, the prior window and the team average
   // all inherit one definition (the S2-0/B-1 fail-open rules live in the
   // shared helper; off = rows untouched, payload byte-identical).
-  const qsInfo = applyQueueSplitToRows_(srcRows, dept);
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
 
   // Aggregators.
   // aggregatedStats[agent][monthKey] = { rung, missed, answered, ttt, attTotal }

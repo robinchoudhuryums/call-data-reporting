@@ -492,7 +492,7 @@ function getAgentHistory(req) {
     // Queue-split adoption: narrow before the monthly rollup so the history
     // (own AND team monthly averages) shares the one definition.
     if (typeof applyQueueSplitToRows_ === 'function') {
-      applyQueueSplitToRows_(dalRows, who.dept);
+      applyQueueSplitToRows_(dalRows, who.dept, { assessAgents: roster.names });
     }
     months = agentHistoryBlob_(dalRows, roster.names);
     if (agentHomeCacheable_(dalRows && dalRows.sourceUnavailable)) {   // S2A-3

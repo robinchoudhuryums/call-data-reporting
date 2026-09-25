@@ -187,6 +187,61 @@ test('Batch 3: a merged row has AI, AJ and AK CLEARED (blank = never captured; a
   assert.equal(String(ben[36]), '400');
 });
 
+// CRT-2 (broad-scan 2026-09-23, Batch 11): blank AI..AK mirrors as NULL, and
+// every dqe_history upsert COALESCEs those columns, so the follow-up
+// backfillDQEHistoryUpsert() used to KEEP Neon's pre-merge split beside the
+// re-summed rollup. The merge now NULLs the Neon twin for exactly its keys.
+test('CRT-2: a merge NULLs dqe_history\'s queue_split + after-hours pair for the merged keys only', function () {
+  const sql = [], batches = [];
+  let closed = false;
+  const fakeConn = {
+    prepareStatement: function (q) {
+      sql.push(q);
+      let cur = {};
+      return {
+        setQueryTimeout: function () {},
+        setString: function (i, v) { cur[i] = v; },
+        addBatch: function () { batches.push(cur); cur = {}; },
+        executeBatch: function () { return batches.map(function () { return 1; }); },
+        close: function () {},
+      };
+    },
+    close: function () { closed = true; },
+  };
+  const orig = h.ctx.getReachableNeonConn_;
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn; };
+  try {
+    h.state.props.SPREADSHEET_ID = 'fake';
+    h.state.spreadsheet = makeFakeSpreadsheet({
+      sheets: {
+        'DQE Historical Data': [
+          new Array(37).fill('h'),
+          dqeRow('2026-06-22', 'Anna Smith', { 29: 'P1', 30: 'M1', 31: '10:30:00', 34: '{"A_Q_CSR":{"a":1}}', 35: 1, 36: 240 }),
+          dqeRow('2026-06-22', 'Anna Smith', { 29: 'P2', 30: 'M2', 31: '9:15:00',  34: '{"A_Q_CSR":{"a":1}}', 35: 2, 36: 300 }),
+          dqeRow('2026-06-22', 'Ben Jones',  { 35: 3, 36: 400 }),
+        ],
+      },
+    });
+    const res = h.call('repairDqeDuplicateMerge');
+    assert.equal(res.merged, 1);
+    assert.equal(sql.length, 1);
+    assert.match(sql[0], /UPDATE dqe_history SET queue_split = NULL, after_hours_answered = NULL, after_hours_ttt = NULL/);
+    assert.equal(batches.length, 1, 'Ben (not a duplicate) is left alone');
+    assert.equal(batches[0][1], '2026-06-22');
+    assert.equal(batches[0][2], 'Anna Smith');
+    assert.equal(res.neonExtrasCleared.status, 'ok');
+    assert.equal(res.neonExtrasCleared.cleared, 1);
+    assert.ok(closed, 'the connection is closed');
+
+    // Unreachable Neon: the sheet merge still stands, the result says so.
+    h.ctx.getReachableNeonConn_ = function () { return null; };
+    const r2 = h.call('scClearNeonMergeExtras_', [{ date: '2026-06-22', agent: 'Anna Smith' }]);
+    assert.equal(r2.status, 'unreachable');
+  } finally {
+    h.ctx.getReachableNeonConn_ = orig;
+  }
+});
+
 // CRT-3 (broad-scan 2026-09-23): a COUNTS-ONLY (no slot / AD token) double
 // append fell through the R8-B6 detector (nothing to verify) and was re-summed.
 test('CRT-3: identical counts-only duplicates are deduped, not summed', function () {

@@ -543,8 +543,18 @@ When something looks wrong, before assuming a code bug, check:
     ⚠ Under `neon`, EVERY reader (the auth-path sub-queue widening included)
     falls back to the SHEET copy on any Neon error, and nothing logs it -- so a
     Neon blip serves whatever the sheet held at backfill time (a removed
-    `Overview Parent` edge would re-grant access for the outage). Keep the
-    sheet copy in sync after Neon-side edits until A-1 is closed.
+    `Overview Parent` edge would re-grant access for the outage). **Since
+    S2B-5 (broad-scan 2026-09-23, Batch 11) the modal keeps the sheet in sync
+    for you:** a Dept Config save / deactivate under `neon` writes Neon first
+    (authoritative -- a Neon failure still fails the save) and then MIRRORS the
+    row to the sheet, because the sheet is also what the OTHER projects read
+    -- cdr-import's capture-time queue recognition (INV-54's third consumer)
+    and cdr-report's `queueOverlapAudit.js` have no Neon config reader. A
+    failed mirror does not fail the save; it comes back as a ⚠ warning in the
+    modal status ("the Dept Config SHEET copy was not updated") -- re-save the
+    dept, or copy the row across by hand. Edits made DIRECTLY in Neon (outside
+    the modal) are still not mirrored. Alert + Digest Config (C3, below) have
+    no cross-project reader and are not mirrored.
     `dept_config` is created lazily (`CREATE TABLE IF NOT EXISTS`, no setup()
     change). Parity pinned by `tests/unit/dept-config-neon.test.js`. Needs the
     dashboard `NEON_*` props + `script.external_request` scope. (First of the

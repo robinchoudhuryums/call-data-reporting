@@ -507,7 +507,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     }
     dalRows = sheetFetchDqeRows_(from, to, { includeMissedDetail: true });
   }
-  qsInfo = applyQueueSplitToRows_(dalRows, dept, { narrowSlots: true });
+  qsInfo = applyQueueSplitToRows_(dalRows, dept, { narrowSlots: true, assessAgents: roster.names });
   {
     const grids = missedGridsFromDal_(dalRows);
     values = grids.values;

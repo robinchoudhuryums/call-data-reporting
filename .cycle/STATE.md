@@ -69,13 +69,20 @@
   carve-outs, access model, AI backfill, 6 h caches, QCD comments + new-dept
   runbook, "Batch N" collision note, counts), DOC-14 deploy.sh records a
   dirty-tree deploy as `<sha>+dirty`, SEC-6 accepted-PHI note (#24(c)).
-  **WHERE I LEFT OFF:** Batches 1-10 + the follow-ons pushed, NOT deployed. Next: deploy the
-  dashboard + cdr-import + cdr-report, run "Back up now" once, check the
-  Health page's `historical-sort` / `email-bcc` rows, then
-  `/broad-implement Batch 11` (flag-flip prerequisites). The full
-  plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
-  deferred queue-split half. The per-dept callback table stays the next
-  FEATURE (entry below).
+  **Batch 11 SHIPPED on this branch** (block 206, the flag-flip
+  prerequisites): DATA-1 the B-1 fall-open verdict reads the dept's ROSTER
+  rows (every caller agrees), S2A-1's queue-split half (the digest WoW
+  narrows, via sheetFetchDqeRows_), CRT-2 the duplicate merge NULLs Neon's
+  queue_split + after-hours for its keys, S2B-5 Dept Config saves under
+  CONFIG_SOURCE=neon mirror to the sheet (warning on a failed mirror).
+  **WHERE I LEFT OFF:** ALL 11 broad-scan batches + the follow-ons pushed,
+  NOT deployed. Next: deploy the dashboard + cdr-import + cdr-report, run
+  "Back up now" once, check the Health page's `historical-sort` /
+  `email-bcc` rows. The plan's Deferred list (S2C-2, S2C-5, ING-4, DATA-4)
+  needs owner rulings / live data. `QUEUE_SPLIT_SCOPE=dept` and
+  `CONFIG_SOURCE=neon` no longer have a known code blocker -- each still
+  flips only through its own Operator State checklist (#42 / #25). The
+  per-dept callback table stays the next FEATURE (entry below).
 - **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer
   found talk 8-79 s -> machine at 92% balanced accuracy on run 20260922-1313
   -- IN-SAMPLE, and with no person call under 62 s in that ring-drawn sample.

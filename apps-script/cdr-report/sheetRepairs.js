@@ -943,7 +943,10 @@ function mergeDqeDuplicateRows_(dryRun) {
     m[33 - 3] = scSecToHms_(mean(cawVals));   // AH csr_avg_abd_wait (approx)
 
     var firstRow1 = idxs[0] + 2;
-    writes.push({ row: firstRow1, vals: m });
+    // CRT-2: the (date, agent) key rides along so the Neon twin of the AI..AK
+    // clear below can target exactly the rows this merge rewrote.
+    var keyParts = key.split('\u0000');
+    writes.push({ row: firstRow1, vals: m, date: keyParts[0], agent: keyParts[1] });
     idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
     summary.push(key.replace('\u0000', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
       + '  -> answered=' + sumAns + ' rung=' + sumRung + ' missed=' + sumMissed + ' unique=' + sumUnique);
@@ -988,9 +991,65 @@ function mergeDqeDuplicateRows_(dryRun) {
   // Delete extras bottom-up so earlier deletions don't shift later row numbers.
   deleteRows.sort(function (a, b) { return b - a; }).forEach(function (rn) { sheet.deleteRow(rn); });
 
+  // CRT-2 (broad-scan 2026-09-23, Batch 11): the sheet's AI..AK are now blank,
+  // but blank mirrors as NULL and every dqe_history upsert COALESCEs those three
+  // columns (so a sheet-sourced NULL never erases a stored split). That rule is
+  // right for a pre-Phase-1 row and WRONG here: the follow-up
+  // backfillDQEHistoryUpsert() would keep Neon's pre-merge queue_split and
+  // after-hours pair beside the re-summed rollup -- a split describing a
+  // smaller day than the row it sits on. So clear the Neon twin explicitly for
+  // exactly the merged keys. Best-effort: the sheet is the authority and is
+  // already correct; an unreachable Neon is named in the log with the fix.
+  var neonClear = scClearNeonMergeExtras_(writes.filter(function (w) { return w.date && w.agent; })
+    .map(function (w) { return { date: w.date, agent: w.agent }; }));
+
   Logger.log('DQE merge: merged ' + dupKeys.length + ' group(s), deleted ' + deleteRows.length + ' row(s).\n'
     + 'If DQE_READ_SOURCE=neon (or the mirror is consumed), re-run backfillDQEHistoryUpsert() to refresh dqe_history.');
-  return { applied: true, merged: dupKeys.length, deleted: deleteRows.length };
+  return { applied: true, merged: dupKeys.length, deleted: deleteRows.length, neonExtrasCleared: neonClear };
+}
+
+/**
+ * CRT-2: NULL dqe_history's queue_split + after-hours pair for the given
+ * (ISO date, agent) keys -- the Neon twin of the merge's AI..AK clear, which
+ * the upsert's COALESCE cannot express. Returns { status, cleared }:
+ * 'none' (no keys), 'ok', 'unreachable' (NEON_* unset / down) or 'error'.
+ * Never throws; the sheet merge it follows has already been applied.
+ */
+function scClearNeonMergeExtras_(keys) {
+  if (!keys || !keys.length) return { status: 'none', cleared: 0 };
+  var conn = (typeof getReachableNeonConn_ === 'function') ? getReachableNeonConn_() : null;
+  if (!conn) {
+    Logger.log('DQE merge (CRT-2): Neon unreachable -- dqe_history still holds the PRE-merge '
+      + 'queue_split / after-hours values for ' + keys.length + ' merged row(s). When Neon is back, '
+      + 'NULL those three columns for: ' + keys.map(function (k) { return k.date + ' / ' + k.agent; }).join('; ')
+      + ' (the upsert COALESCEs them and cannot clear them), then run backfillDQEHistoryUpsert().');
+    return { status: 'unreachable', cleared: 0 };
+  }
+  try {
+    var stmt = conn.prepareStatement('UPDATE dqe_history SET queue_split = NULL, '
+      + 'after_hours_answered = NULL, after_hours_ttt = NULL '
+      + 'WHERE call_date = ?::date AND agent_name = ?');
+    stmt.setQueryTimeout(60);
+    keys.forEach(function (k) {
+      stmt.setString(1, k.date);
+      stmt.setString(2, k.agent);
+      stmt.addBatch();
+    });
+    var counts = stmt.executeBatch() || [];
+    stmt.close();
+    var cleared = 0;
+    for (var i = 0; i < counts.length; i++) cleared += Math.max(0, Number(counts[i]) || 0);
+    Logger.log('DQE merge (CRT-2): cleared queue_split + after-hours on ' + cleared
+      + ' dqe_history row(s) for ' + keys.length + ' merged key(s).');
+    return { status: 'ok', cleared: cleared };
+  } catch (e) {
+    Logger.log('DQE merge (CRT-2): Neon clear FAILED (' + (e && e.message ? e.message : e)
+      + ') -- dqe_history keeps the pre-merge queue_split / after-hours for the merged rows; '
+      + 'NULL them by hand before trusting a Neon-read split.');
+    return { status: 'error', cleared: 0 };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
 }
 
 

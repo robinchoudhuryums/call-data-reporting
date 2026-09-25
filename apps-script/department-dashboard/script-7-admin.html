@@ -2789,8 +2789,10 @@
       .withSuccessHandler(function (res) {
         if (deact) deact.disabled = false;
         const n = (res && res.removed) || 0;
+        const dWarns = (res && res.warnings) || [];   // S2B-5: sheet-mirror failure
         dcSetStatus_('success', 'Deactivated ' + n + ' override row'
-          + (n === 1 ? '' : 's') + '. Reverted to defaults.');
+          + (n === 1 ? '' : 's') + '. Reverted to defaults.'
+          + (dWarns.length ? ' ⚠ ' + dWarns.join(' ') : ''));
         showToast('Reverted ' + dcEditDept + ' to defaults', 'success');
         dcLoadInit_();
       })
