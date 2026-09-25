@@ -207,7 +207,11 @@ the `Inbound Calls` tab (cols 18-22, journey/origin/related --
 `inboundCallJourneySheetFallback_`)**: same shaper, BOTH auth arms
 re-derived (the F-4 gate reads the DQE sheet, so it survives the outage),
 disclosed via `fallbackSource`/`fallbackThrough` + an overlay caption, a
-`fallback-gap` reason for dates past the copy's ceiling; journey cells
+`fallback-gap` reason for dates past the copy's ceiling -- and, like the Neon
+path, a miss REASON only for a caller entitled to the unscoped lookup (SEC-7:
+the fallback used to classify before auth, an existence oracle), with NO
+`insurer` on the call (the Neon row has none; the label is the admin-gated
+Inbound report's); journey cells
 are only exported within `INBOUND_EXPORT_JOURNEY_DAYS` (=90, Op State
 #49), older dates render the summary; the OUTBOUND arm falls back to the
 `Outbound Calls` tab (Op State #50) with its two-arm entitlement
@@ -266,7 +270,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v10`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v11`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -386,7 +390,11 @@ caller_hash` within `OUTBOUND_CALLBACK_WINDOW_DAYS` (=3), matched from
 ANY dept/agent and uncapped by the report's `to`; anonymous abandons are
 excluded from the rate denominator (a dept is never punished for its
 caller-ID mix); `pendingTail` counts tracked abandons still inside the
-window. **"Connected" = the far end ANSWERED -- a person, a voicemail
+window -- INCLUSIVE of abandon date + 3, on the script-TZ date (PCR-3).
+**A parent dept's inbound/outbound/missed scope rolls in its one-level
+children's raw inbound aliases AND final-dept labels** (PCR-1/PCR-2,
+`inboundQueuesForDept_` / `inboundDeptFinalLabels_`, the same
+`{includeChildren:false}` opt-out as `queuesForDept_`). **"Connected" = the far end ANSWERED -- a person, a voicemail
 greeting or a phone menu, which the CDR reports identically** (a labelled
 listening audit, 2026-09-23, found no stored field that separates them). Owner
 ruling: the word stays "Connected" but is DEFINED on every surface through one
@@ -399,7 +407,7 @@ roster homes, so per-dept cards would double-count or misattribute --
 don't "upgrade" without a new ruling. `getOutboundUncalled` is the
 not-called-back drill (same lateral as the KPI, cap 200, no caller
 identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
-`outboundReport:v3` + the freshness tag; unavailable payloads uncached.
+`outboundReport:v4` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) `calledBackConnectedPct`, the CONNECTED callback rate
@@ -451,7 +459,7 @@ carry it -- that would silently narrow the grid's first column;
 from, to})` aggregates abandon rate by `ISODOW × hour-slot` in ONE
 json_agg round-trip, reusing `inboundResolveRequest_` (so it inherits
 the inbound report's **admin-only vetting gate** + per-dept scoping) and
-`inboundDeptPredicate_`. Cached `inboundHeatmap:v3`. Rendered by the
+`inboundDeptPredicate_`. Cached `inboundHeatmap:v4`. Rendered by the
 SHARED client `renderAbandonHeatmap_` / `loadAbandonHeatmap_` as a
 CSS-grid heatmap (no Chart.js dep) in the **Inbound report**
 (`#inbound-heatmap`, always, since that report is admin-only), AND the **Insights report**

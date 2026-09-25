@@ -742,7 +742,7 @@ near-empty and the surface just says so.
   and `outbound-fallback.test.js` compares them byte for byte. The
   classifier must be ONE pure function both call — the
   `outboundClassifyRing_` pattern from point 4.
-- `outboundReport:v3` -> `v4`.
+- `outboundReport:v4` -> `v5` (v4 was taken by broad-scan Batch 6's PCR-1/PCR-3).
 
 ---
 

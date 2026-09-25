@@ -2016,7 +2016,10 @@ When something looks wrong, before assuming a code bug, check:
        parity check that the report's abandon denominator equals the Inbound
        report's own `kpis.abandoned` for the same scope, and a per-sample
        re-verification of individual callback verdicts, logging the call ids
-       so you can eyeball them in Caller Lookup.
+       so you can eyeball them in Caller Lookup. The parity leg must run on
+       the LIVE Neon report: if the outbound compute was served from the
+       sheet copy (Neon unreachable) the run reads `FAILED (outbound served
+       from the sheet copy …)` -- re-run when Neon is back (PCR-9).
     3. **Read the verdict literally.** Release ONLY on `ok parity`.
        **INCONCLUSIVE is not a pass** — a window with zero abandons reports it
        by construction, so widen the window and re-run. FAILED and MISMATCH

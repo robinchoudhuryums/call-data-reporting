@@ -76,13 +76,21 @@
 //       outbound on ring seconds so "effort" and "noise" stop reading alike;
 //   (6) callbackByHour, callback rate cut by the ABANDON's hour -- "which
 //       abandons fall through the cracks", which the daily series cannot ask.
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v3';
+// v4 (broad-scan Batch 6): PCR-1/PCR-2 a parent's scope rolls in its
+// children's raw aliases + final-dept labels; PCR-3 pendingTail is inclusive
+// of the last window day and anchored on the script-TZ date.
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v4';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
 // abandon answered on Monday). Also the reason the report's newest abandons
 // can legitimately still be pending -- the client captions that.
 const OUTBOUND_CALLBACK_WINDOW_DAYS = 3;
+
+/** PCR-3: today as a script-TZ calendar date (validated shape, safe to inline as a SQL literal). */
+function obTodayIso_() {
+  return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+}
 // ── THE RELEASE SWITCH (6c / Operator State #63) ───────────────────────────
 // The report is feature-complete; it is admin-only ONLY while the callback
 // linkage + roster attribution are being vetted against live data. Releasing
@@ -414,9 +422,14 @@ function computeOutboundReport_(scope) {
             // pendingTail: tracked, un-called-back abandons still INSIDE the
             // callback window as of today -- "not called back YET", not a
             // verdict. Client renders it as a count, not a caption guess.
+            // PCR-3 (broad-scan 2026-09-23): the window is INCLUSIVE of
+            // abandon date + N (cbLateral: o.call_date <= c.call_date + N),
+            // so an abandon N days ago can still be called back today --
+            // `>=`, not `>`. And "today" is the SCRIPT-TZ date, not Neon's
+            // UTC current_date, which rolled a day early every evening.
             + ", 'pendingTail', count(*) FILTER (WHERE c.caller_hash IS NOT NULL "
             +   'AND cb.delay_sec IS NULL '
-            +   'AND c.call_date > current_date - ' + OUTBOUND_CALLBACK_WINDOW_DAYS + ')')
+            +   "AND c.call_date >= '" + obTodayIso_() + "'::date - " + OUTBOUND_CALLBACK_WINDOW_DAYS + ')')
           : '')
         + ') FROM inbound_calls c ' + cbLateral + ' WHERE ' + where + ')';
     };
@@ -893,6 +906,14 @@ function runOutboundVettingCheck() {
   const ob = computeOutboundReport_(scope);
   if (!ob.meta.available) {
     return logStatusReturn_({ result: 'FAILED (outbound compute unavailable — Neon unreachable?) ' + label });
+  }
+  // PCR-9 (broad-scan 2026-09-23): computeOutboundReport_ degrades to the
+  // SHEET copy when Neon is unreachable and still reports available:true. The
+  // vetting run certifies the LIVE Neon report for release (Operator State
+  // #63), so a sheet-served leg proves nothing about it -- refuse.
+  if (ob.meta.fallbackSource) {
+    return logStatusReturn_({ result: 'FAILED (outbound served from the ' + ob.meta.fallbackSource
+      + ' copy — Neon unreachable; vetting must compare the live Neon paths, re-run when it is back) ' + label });
   }
   const ib = computeInboundReport_({ from: from, to: to, dept: dept,
     deptQueues: deptQueues, companyView: scope.companyView });
@@ -3774,15 +3795,11 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
   var deptFilter = !!scope.dept;
   var qSet = {};
   (deptQueues || []).forEach(function (q) { qSet[String(q).trim().toLowerCase()] = true; });
-  var labels = deptFilter
-    ? ((typeof getFinalDeptLabels_ === 'function') ? getFinalDeptLabels_(scope.dept)
-                                                  : [String(scope.dept).trim().toLowerCase()])
-      .map(function (l) { return String(l).trim().toLowerCase(); })
-    : [];
+  var labels = deptFilter ? inboundDeptFinalLabels_(scope.dept) : [];   // PCR-2: the predicate's own list
   var allLabels = ((typeof getAllFinalDeptLabels_ === 'function') ? getAllFinalDeptLabels_() : [])
     .map(function (l) { return String(l).trim().toLowerCase(); });
 
-  var todayIso = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var todayIso = obTodayIso_();   // PCR-3: the same "today" the SQL uses
   var winStart = INBOUND_WORK_WINDOW_PST.start, winEnd = INBOUND_WORK_WINDOW_PST.end;
 
   // One pass over the inbound abandons for a window -> the callback block
@@ -3835,7 +3852,7 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
         if (hb) hb.called_back++;
         if (match.connected) agg.calledBackConnected++;
         delays.push(match.ord - abOrd);
-      } else if (iso > obDaysAfterIso_(todayIso, -OUTBOUND_CALLBACK_WINDOW_DAYS)) {
+      } else if (iso >= obDaysAfterIso_(todayIso, -OUTBOUND_CALLBACK_WINDOW_DAYS)) {   // PCR-3: inclusive, like the SQL
         pendingTail++;                                      // still inside the window today
       }
     }

@@ -1853,7 +1853,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   a sentinel is included when its queue NAME is in the dept's queue
   set (case-insensitive) -- NOT via shared-extension overlap, which
   leaked other depts' queues onto the card. Since the R8-1 name-space
-  fix (missed:v17) that set is the INBOUND union
+  fix that set is the INBOUND union
   (`inboundQueuesForDept_` = `queuesForDept_` + the Dept Config
   "Inbound queue aliases" column): sentinel names are RAW
   phone-system queue names (e.g. `A_Q_CSR`), not QCD-canonical ones

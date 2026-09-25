@@ -306,7 +306,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   produces, narrowed IN MEMORY by `{isoDow, hourStart, hourEnd (CST), agent,
   queue}` (pure `missedSliceFilter_` + `missedSliceValidateFilter_` +
   TZ-safe `missedSliceIsoDow_`; `missedReportDataCached_` shares the section's
-  `missed:v17` cache). It is the **DQE missed-ring lens** the heatmap cell
+  `missed:v18` cache). It is the **DQE missed-ring lens** the heatmap cell
   drill + Queue-health hand-off will surface as a SEPARATE, LABELED lens: the
   three drill surfaces count DIFFERENT things and DON'T reconcile (heatmap =
   `inbound_calls` abandons, Queue health = `qcd_history` roll-up, missed bar =

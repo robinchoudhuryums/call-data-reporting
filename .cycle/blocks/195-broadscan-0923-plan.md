@@ -53,7 +53,7 @@ ENG-1, S2A-1 (missed half), ENG-2, ENG-11.
 - CRT-5 Low: HR_BACKUP_KEEP_=3 < repair chain; no-op slot repair still snapshots.
 - CRT-8 Low: findDqeDuplicateRows writes names without crSheetSafeCell_ (neonbackfill.js:731-742).
 
-## Batch 6 — per-call report attribution (~8h)
+## Batch 6 — per-call report attribution — SHIPPED (block 200)
 - PCR-1 Med: inboundQueuesForDept_ (InboundReport.gs:156-175) omits CHILD depts' raw inbound aliases (contradicts CLAUDE.md "parent covers sub-queues").
 - PCR-2 Low: on-hold arm label list is parent-only (InboundReport.gs:212-245).
 - SEC-7 Low: journey sheet fallback returns miss reason before auth + `insurer` (InboundReport.gs:858-913).

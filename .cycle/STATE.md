@@ -29,10 +29,16 @@
   repairs re-verify before writing, CRT-3 identical counts-only dups deduped,
   CRT-5 keep 6 + no no-op snapshot, CRT-4 upsert keeps Neon's good value for
   lost sheet cells, CRT-8 + S2B-7 sheet-safe names.
-  **WHERE I LEFT OFF:** Batches 1-5 pushed, NOT deployed. Next: deploy the
+  **Batch 6 SHIPPED on this branch** (block 200): PCR-1/PCR-2 parent depts
+  roll in children's raw aliases + on-hold labels (inbound:v11,
+  inboundHeatmap:v4, missed:v18, outboundReport:v4), SEC-7 journey fallback
+  gates reasons + drops insurer, PCR-3 pendingTail inclusive + script-TZ,
+  PCR-9 vetting refuses a sheet-served leg, PCR-5 agent-day quoted-name
+  pattern + truncation, PCR-8 snapshot refresh after every escalation write.
+  **WHERE I LEFT OFF:** Batches 1-6 pushed, NOT deployed. Next: deploy the
   dashboard + cdr-import + cdr-report, run "Back up now" once, check the
   Health page's `historical-sort` / `email-bcc` rows, then
-  `/broad-implement Batch 6` (per-call report attribution). The full
+  `/broad-implement Batch 7` (client UI layering & races). The full
   plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).
@@ -55,7 +61,7 @@
     own / another dept / not called back summing to trackable abandons; the
     per-dialing-dept matrix as a row EXPAND; sub-queues via `queuesForDept_`;
     crossover / unrostered / no-agent columns explicit from the first commit;
-    `outboundReport:v3` -> `v4`). Unblocked: it ranks by called-back, needs
+    `outboundReport:v4` -> `v5` -- v4 was taken by broad-scan Batch 6). Unblocked: it ranks by called-back, needs
     no classifier, and any connected column inherits `OB_CONNECTED_DEF_`
     (`docs/next-steps.md`). Start with `/plan` against that plan doc. **Standing
     operator items:** deploy the dashboard + walk S46 (new "Callbacks

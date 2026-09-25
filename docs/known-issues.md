@@ -883,13 +883,13 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `IndividualReport.gs` (active-in-range subset shared by all three report pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
-| `MissedCallsReport.gs` | `missed:vN:` | `v17` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v18` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v24` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v10` |
+| `InboundReport.gs` | `inbound:vN:` | `v11` |
 | `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
 
 `Alerts.gs` holds no cached compute. Preview/send always re-reads the
@@ -1486,7 +1486,7 @@ names are masked at capture). Logs when the fallback hits.
 the end / col 10 so pre-existing 9-col prod sheets keep working) holds the RAW
 queue names per dept. `getInboundQueueAliases_` (DeptConfig.gs, sheet-only — no
 seed constant) reads it, and `InboundReport.gs::inboundQueuesForDept_` UNIONs it
-with `queuesForDept_(dept)`. Since R8-1 (missed:v17) the **Missed report's
+with `queuesForDept_(dept)`. Since R8-1 the **Missed report's
 queue-only SENTINEL attribution** consumes the same union too -- DQE sentinel
 rows carry the raw names, so R6's canonical-only match silently dropped CSR's
 `A_Q_CSR` no-ring abandons until the union was wired in. BOTH inbound dept predicates now consume that union

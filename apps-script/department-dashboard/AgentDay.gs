@@ -323,6 +323,19 @@ function emptyAgentDay_(scope, horizons) {
  * Best-effort: a Neon failure returns `{ available: false }` and the caller
  * still serves the DQE half, which is the tier-3 behavior anyway.
  */
+/**
+ * PCR-5 (broad-scan 2026-09-23): the journey pre-filter pattern. The SQL LIMIT
+ * applies BEFORE the exact-name check drops LIKE false positives, so a bare
+ * '%Ann%' let "Anna" / "Annette" rows fill the LIMIT and push real rows out
+ * with no truncation flag. Journey names are JSON string values, so matching
+ * the name QUOTED ('"Ann"') is still a superset of the exact match (the JS
+ * check stays) but no longer matches a name that merely contains it. LIKE's
+ * own wildcards (% _ and the backslash escape) are escaped.
+ */
+function agentDayLikePattern_(agentName) {
+  return '%' + JSON.stringify(String(agentName == null ? '' : agentName)).replace(/[\\%_]/g, '\\$&') + '%';
+}
+
 function agentDayFetchCapture_(agentName, dateIso) {
   var out = { available: false, inbound: [], outbound: [], anyJourney: false };
   if (typeof getDashboardNeonConn_ !== 'function') return out;
@@ -341,7 +354,7 @@ function agentDayFetchCapture_(agentName, dateIso) {
       + 'AND (journey LIKE ? OR first_agent = ?) '
       + 'ORDER BY call_start LIMIT ' + (AGENT_DAY_MAX_CALLS_ + 1) + ') t');
     st.setString(1, dateIso);
-    st.setString(2, '%' + agentName + '%');
+    st.setString(2, agentDayLikePattern_(agentName));   // PCR-5
     st.setString(3, agentName);
     var rs = st.executeQuery();
     var ij = rs.next() ? rs.getString('j') : '[]';
@@ -446,6 +459,9 @@ function getAgentDay(req) {
   });
 
   var outbound = cap.outbound.map(agentDayShapeOutbound_);
+  // PCR-5: the SQL hitting its LIMIT means rows past it were never read --
+  // true even when the exact-name filter above left fewer than the cap.
+  if (cap.inbound.length > AGENT_DAY_MAX_CALLS_) out.meta.truncated = true;
   if (inbound.length > AGENT_DAY_MAX_CALLS_) {
     inbound = inbound.slice(0, AGENT_DAY_MAX_CALLS_);
     out.meta.truncated = true;

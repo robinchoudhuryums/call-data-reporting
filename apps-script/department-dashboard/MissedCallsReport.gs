@@ -94,7 +94,7 @@ function getMissedCallsReport(req) {
   // Adoption round: + the queue-split scope (S2-0 -- the figures MEAN something
   // different in each mode, so a flip must not serve the other mode's payload).
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'missed:v17:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+  const cacheKey = 'missed:v18:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -235,13 +235,13 @@ function missedSliceFilter_(reportData, filter) {
 
 // Read (or compute) the roster-scope Missed report for (dept, from, to),
 // sharing the SAME cache the section render uses so a drill after the section
-// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v17,
+// loaded is a cache hit. Key mirrors getMissedCallsReport's (the missed: key,
 // scope=roster, source-suffixed per CORE-3).
 function missedReportDataCached_(dept, from, to) {
   const cache = CacheService.getScriptCache();
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'missed:v17:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+  const cacheKey = 'missed:v18:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
@@ -273,7 +273,7 @@ function missedReportDataCached_(dept, from, to) {
 //   - bounded: at most MISSED_ENRICH_MAX_CALLS_ distinct (date, id) pairs
 //     join the IN-list (a multi-week range can list hundreds of abandons;
 //     the oldest overflow entries just stay un-enriched).
-// Enriched fields ride the cached payload (missed:v17).
+// Enriched fields ride the cached payload (the missed: key).
 // ---------------------------------------------------------------------------
 var MISSED_ENRICH_MAX_CALLS_ = 400;
 

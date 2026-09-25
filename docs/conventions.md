@@ -515,13 +515,13 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
-| `MissedCallsReport.gs` | `missed:vN:` | `v17` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v18` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v24` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v10` |
+| `InboundReport.gs` | `inbound:vN:` | `v11` |
 | `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads

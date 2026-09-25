@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v10';  // v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v11';  // v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -148,7 +148,7 @@ function inboundResolveRequest_(req) {
  * QCD Historical Data / DEPT_QCD_QUEUES carry canonical names, but
  * inbound_calls.entry_queue/final_queue carry the raw phone-system names.
  * Order-stable, de-duped. Consumers: the inbound surfaces AND (since the
- * R8-1 name-space fix, missed:v17) the Missed report's queue-only SENTINEL
+ * R8-1 name-space fix) the Missed report's queue-only SENTINEL
  * attribution in computeMissedCallsReport_ -- DQE sentinel rows carry the
  * same RAW queue names inbound_calls does, so they need the same union.
  * No QCD reader calls this (those stay on queuesForDept_).
@@ -169,8 +169,47 @@ function inboundQueuesForDept_(dept, opts) {
   // {includeChildren:false}; every pre-existing caller omits opts and is
   // byte-identical.
   queuesForDept_(dept, opts).forEach(add);
-  if (typeof getInboundQueueAliases_ === 'function') getInboundQueueAliases_(dept).forEach(add);
+  if (typeof getInboundQueueAliases_ === 'function') {
+    getInboundQueueAliases_(dept).forEach(add);
+    // PCR-1 (broad-scan 2026-09-23): queuesForDept_ rolls a parent's CHILD
+    // canonical queues in, but the raw-name aliases were the parent's own only
+    // -- so a child queue whose raw name differs from its canonical one (the
+    // CSR A_Q_CSR / A_Q_CustomerSuccess shape) fell out of the parent's inbound
+    // report, journey scope and missed-section sentinels, contradicting "the
+    // parent covers its sub-queues". Roll the children's aliases in on the
+    // same terms: same opt-out, one level (inboundChildDepts_).
+    if (!(opts && opts.includeChildren === false)) {
+      inboundChildDepts_(dept).forEach(function (child) { getInboundQueueAliases_(child).forEach(add); });
+    }
+  }
   return out;
+}
+
+/**
+ * PCR-2: the answered-on-hold arm's label list for `dept` -- its own Final
+ * Dept Labels UNIONed with its one-level children's, lowercased, deduped.
+ * The ONE source for the SQL predicate AND its two sheet-fallback mirrors
+ * (the heatmap here, the outbound callback rule in OutboundReport.gs), so the
+ * three cannot drift.
+ */
+function inboundDeptFinalLabels_(dept) {
+  const labels = [];
+  const add = function (l) {
+    const t = String(l == null ? '' : l).trim().toLowerCase();
+    if (t && labels.indexOf(t) === -1) labels.push(t);
+  };
+  if (typeof getFinalDeptLabels_ !== 'function') { add(dept); return labels; }
+  [dept].concat(inboundChildDepts_(dept)).forEach(function (d) { getFinalDeptLabels_(d).forEach(add); });
+  return labels;
+}
+
+/** PCR-1/PCR-2: the depts whose Overview parent is `dept` (one level; [] on any read failure). */
+function inboundChildDepts_(dept) {
+  try {
+    if (typeof getOverviewParentMap_ !== 'function') return [];
+    const parentMap = getOverviewParentMap_() || {};
+    return Object.keys(parentMap).filter(function (child) { return parentMap[child] === dept && child !== dept; });
+  } catch (e) { return []; }
 }
 
 /** Single-quote-escape a value for inline SQL literals. */
@@ -208,9 +247,13 @@ function inboundDeptPredicate_(dept, deptQueues) {
   // the admin-mapped labels for the dept (Dept Config "Final Dept Labels"),
   // ALWAYS including the dept name itself, so an install whose labels happen to
   // match is byte-equivalent to the old behavior and needs no config.
-  const labels = (typeof getFinalDeptLabels_ === 'function')
-    ? getFinalDeptLabels_(dept)
-    : [String(dept).trim().toLowerCase()];
+  // PCR-2 (broad-scan 2026-09-23): every caller passes the CHILD-inclusive
+  // queue set (inboundQueuesForDept_ default), so the on-hold arm must claim the
+  // children's labels too -- a sub-queue's answered-on-hold call otherwise fell
+  // out of the parent's rollup while the same call unanswered would count.
+  // Mutual exclusion is unchanged: a label still belongs to exactly one dept's
+  // OWN list, and the parent view is a rollup of its children by design.
+  const labels = inboundDeptFinalLabels_(dept);
   const labelList = labels.length
     ? labels.map(inboundSqlLit_).join(',')
     : inboundSqlLit_(String(dept).trim().toLowerCase());
@@ -863,7 +906,20 @@ function inboundCallJourneySheetFallback_(callId, date, dept, user) {
 
     var miss = { available: true, found: false,
                  fallbackSource: 'sheet', fallbackThrough: through };
+    // SEC-7 (broad-scan 2026-09-23): a miss REASON is only for a caller the
+    // Neon path would have run UNSCOPED for (company view, admin, allDepts, or
+    // a manager whose own Missed report carries this id -- ranUnscoped there).
+    // This fallback used to classify every miss before any auth, so a manager
+    // probing another dept's call_id could tell 'not-captured' (no such call)
+    // from the reason-less gate-closed miss (a call exists) -- an existence
+    // oracle the Neon path deliberately closes. The outbound fallback already
+    // gates first. Evaluated lazily: the Missed lookup runs only on a miss.
+    var reasonOk = function () {
+      return !dept || (user && user.role === 'admin') || !!(user && user.allDepts)
+          || callIdInDeptMissedReport_(dept, date, callId);
+    };
     if (first < 0) {
+      if (!reasonOk()) return { available: true, found: false };
       // Classify the miss with the sheet's own coverage (the R7 reason
       // vocabulary, plus 'fallback-gap' for a date past the copy's ceiling
       // -- Neon might have it, the sheet provably does not).
@@ -880,7 +936,10 @@ function inboundCallJourneySheetFallback_(callId, date, dept, user) {
     for (var r = 0; r < grid.length; r++) {
       if (String(grid[r][1] == null ? '' : grid[r][1]).trim() === callId) { row = grid[r]; break; }
     }
-    if (!row) { miss.reason = 'not-captured'; return miss; }
+    if (!row) {
+      if (!reasonOk()) return { available: true, found: false };   // SEC-7
+      miss.reason = 'not-captured'; return miss;
+    }
 
     // ── Auth, both arms, Neon-path order ──
     var entitled = !dept;   // admin / allDepts company view runs unscoped
@@ -910,7 +969,10 @@ function inboundCallJourneySheetFallback_(callId, date, dept, user) {
     var call = callerLookupShapeCall_({
       call_date:         date,
       call_id:           callId,
-      insurer:           cell(2) || null,
+      // SEC-7: the Neon path's to_jsonb(c) carries NO insurer (the label is
+      // a join to insurance_numbers, shown only in the admin-gated Inbound
+      // report and Caller Lookup), so the fallback must not disclose one.
+      insurer:           null,
       dial_in_number:    cell(4) || null,
       disposition:       cell(5) || null,
       abandon_stage:     cell(6) || null,
@@ -1800,7 +1862,8 @@ function runInboundQcdParityCheck() {
 // Pre-extension rows (null/empty call_start) carry no time-of-day and are
 // excluded (documented gap -- they predate the journey extension).
 // v3: bumped with the B-4 inbound bump (shares inboundDeptPredicate_).
-const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v3';
+// v4: bumped with PCR-1/PCR-2 (the same predicate now rolls in children).
+const INBOUND_HEATMAP_CACHE_KEY_PREFIX = 'inboundHeatmap:v4';
 const INBOUND_HEATMAP_CST_SHIFT_HOURS = 2;    // PST(stored) -> CST(dashboard)
 const INBOUND_HEATMAP_WINDOW_START_HOUR = 8;  // 8 AM CST (matches INV-18)
 const INBOUND_HEATMAP_WINDOW_END_HOUR   = 17; // 5 PM CST (exclusive)
@@ -1982,12 +2045,7 @@ function ihSheetHeatmapCells_(scope) {
   });
   // Same guarded accessors (and the same defaults) as inboundDeptPredicate_;
   // lowercasing is idempotent on the accessors' already-lowercase output.
-  var labels = deptFilter
-    ? ((typeof getFinalDeptLabels_ === 'function')
-        ? getFinalDeptLabels_(scope.dept)
-        : [String(scope.dept).trim().toLowerCase()])
-      .map(function (l) { return String(l).trim().toLowerCase(); })
-    : [];
+  var labels = deptFilter ? inboundDeptFinalLabels_(scope.dept) : [];   // PCR-2: the predicate's own list
   var allLabels = ((typeof getAllFinalDeptLabels_ === 'function')
     ? getAllFinalDeptLabels_() : [])
     .map(function (l) { return String(l).trim().toLowerCase(); });

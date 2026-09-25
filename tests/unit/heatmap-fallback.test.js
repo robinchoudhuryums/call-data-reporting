@@ -267,3 +267,39 @@ test('fallback constants are the SAME globals the SQL is built from (no fork kno
   assert.equal(c.INBOUND_HEATMAP_WINDOW_END_HOUR, 17);
   assert.equal(c.INBOUND_HEATMAP_SLOT_MINUTES, 60);
 });
+
+// PCR-1 / PCR-2 (broad-scan 2026-09-23): a parent dept's inbound scope rolls
+// in its CHILDREN's canonical queues (queuesForDept_) but used to take only
+// its OWN raw-name aliases and final-dept labels -- so a sub-queue's calls
+// under a raw name, or answered on hold under the child's org-chart label,
+// fell out of the parent's report. Both now roll up one level, with the same
+// {includeChildren:false} opt-out, and the sheet fallbacks share the list.
+test('PCR-1/PCR-2: a parent\'s inbound scope rolls in its children\'s raw aliases and final-dept labels', function () {
+  install();
+  const saved = { q: h.ctx.queuesForDept_, a: h.ctx.getInboundQueueAliases_, l: h.ctx.getFinalDeptLabels_, p: h.ctx.getOverviewParentMap_ };
+  h.ctx.getOverviewParentMap_ = function () { return { PAP: 'Sales' }; };
+  h.ctx.queuesForDept_ = function (d, o) {
+    const own = { Sales: ['A_Q_Sales'], PAP: ['A_Q_PAP_Canon'] };
+    return d === 'Sales' && !(o && o.includeChildren === false) ? own.Sales.concat(own.PAP) : (own[d] || []);
+  };
+  h.ctx.getInboundQueueAliases_ = function (d) { return d === 'PAP' ? ['A_Q_PAP'] : (d === 'Sales' ? ['A_Q_SALES_RAW'] : []); };
+  h.ctx.getFinalDeptLabels_ = function (d) { return d === 'PAP' ? ['pap', 'patient assistance'] : [String(d).toLowerCase()]; };
+  try {
+    assert.deepEqual(JSON.parse(JSON.stringify(h.call('inboundQueuesForDept_', 'Sales'))),
+      ['A_Q_Sales', 'A_Q_PAP_Canon', 'A_Q_SALES_RAW', 'A_Q_PAP']);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.call('inboundQueuesForDept_', 'Sales', { includeChildren: false }))),
+      ['A_Q_Sales', 'A_Q_SALES_RAW'], 'the queue-split narrowing still gets the dept\'s OWN set');
+    assert.deepEqual(JSON.parse(JSON.stringify(h.call('inboundDeptFinalLabels_', 'Sales'))), ['sales', 'pap', 'patient assistance']);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.call('inboundDeptFinalLabels_', 'PAP'))), ['pap', 'patient assistance'], 'a child gets no upward roll');
+    const pred = h.call('inboundDeptPredicate_', 'Sales', ['A_Q_Sales']);
+    assert.match(pred, /lower\(trim\(c\.final_dept\)\) IN \('sales','pap','patient assistance'\)/);
+    // Both sheet fallbacks read the same helper (source pin: no private copy).
+    ['InboundReport.gs', 'OutboundReport.gs'].forEach(function (f) {
+      const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', f), 'utf8');
+      assert.doesNotMatch(src.replace(/function inboundDeptFinalLabels_[\s\S]*?\n}\n/, ''), /getFinalDeptLabels_\(scope\.dept\)/, f + ' has no private label list');
+    });
+  } finally {
+    h.ctx.queuesForDept_ = saved.q; h.ctx.getInboundQueueAliases_ = saved.a;
+    h.ctx.getFinalDeptLabels_ = saved.l; h.ctx.getOverviewParentMap_ = saved.p;
+  }
+});
