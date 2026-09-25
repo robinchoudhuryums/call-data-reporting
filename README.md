@@ -11,7 +11,7 @@ Source of truth for the call-data reporting stack:
   section at the bottom — the deeper lens that absorbed the retired
   Performance / Compare Ranges / QCD reports), and the **Escalations**
   worklist page, toggled via header buttons; the Individual report modal
-  (plus the admin-vetted Inbound / Direct) overlays any page.
+  (plus the admin-vetted Inbound / Direct / Outbound) overlays any page.
 - **Reference copies** of related Apps Script code from sibling projects
   (CDR Report, CDR Import) that the dashboard depends on. Pulled in
   gradually so changes across projects can be reviewed in one place.

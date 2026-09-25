@@ -1072,15 +1072,14 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   passed) `{ excludeVolume: lengthMismatch }` so a different-length comparison
   DROPS the raw cumulative-volume insights (answered / missed COUNTS --
   apples-to-oranges across unequal windows) while keeping the
-  length-independent ones (answer rate %, avg talk time per-call). The
-  Performance Report never mismatches (INV-28 same-length prior) so it
-  passes nothing -- unchanged. Separately, the Insights at-a-glance HEADLINE
+  length-independent ones (answer rate %, avg talk time per-call).
+  Separately, the Insights at-a-glance HEADLINE
   tone is neutralized (no green/orange "On track"/"Watch" banner -- falls
   back to neutral) when the two windows differ by more than 7 days, so a
   shaky comparison doesn't read as a false alarm (the sentences still
   render). NOTE: these change `teamInsights` output without an INV-30 cache
   bump -- the cache key already encodes the prior window (so the result is
-  deterministic per key); the only effect is a ≤30-min stale callout on
+  deterministic per key); the only effect is a ≤6 h stale callout on
   mismatched windows right after deploy.
 - **Chart.js CDN-failure fallback (`safeChart_`).** Every chart is created
   through `safeChart_(target, config)` (script.html), NOT `new Chart(...)`
@@ -1121,8 +1120,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   commit, so the number cannot drift from the prose again.
 - **CacheService key length cap (250 chars).** Apps Script silently
   rejects cache keys longer than 250 characters, surfacing as an
-  error on `cache.get`. The Individual / Performance / Compare
-  Ranges reports include the selected agent list in their cache
+  error on `cache.get`. The Individual / Insights reports
+  include the selected agent list in their cache
   key, which overflows on big rosters (Sales is the canonical
   trigger). `Data.gs::hashAgents_` MD5-hashes the sorted agent
   list to a 32-char hex digest so the compound key stays bounded
@@ -1942,7 +1941,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   backfillable, and the constant is code — dropping self-parent edges, edges
   naming a non-existent dept, and any cyclic edge; it FAILS CLOSED (an
   unreadable map returns the assigned list unchanged). A dept with no children
-  is untouched, which is 11 of 14 here. **Owner ruling (2026-07): the widening
+  is untouched -- every dept but the three seeded parents. **Owner ruling (2026-07): the widening
   is intended** — a parent dept's managers get their child queues' data,
   agent-level included (Operator State #39), so don't treat the seeded
   `PAP`/`Spanish`/`PAK` edges as an accidental grant. **Alerts and Digests are deliberately
