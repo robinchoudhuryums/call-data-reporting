@@ -12,7 +12,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // queuesForDept_ (QCDReport.gs), and the rest of Data.gs.
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs'],
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs'],
 });
 
 // Roster: Alpha = Anna/Ben; Beta = Cara (so Cara is a floater into

@@ -1149,3 +1149,12 @@ Codes from the 2026-09-23 broad scan. Its pipeline findings were renamed `ING-#`
 | `S2A-4` (2026-09-23) | CacheWarm warmed Insights for the whole roster over the last 30 days. The quick-start chips run the dept window (`latest..latest`) with the picker's ACTIVE agents, and the key carries `hashAgents_`, so the warm never matched. Fix: `warmInsightsChips_` warms that exact request from the picker's own init endpoint. | `cache-warm-budget.test.js` |
 | `ENG-10` (2026-09-23) | CacheWarm warmed the qcdAll key for calendar yesterday, but the modal preloads the LATEST QCD date. That missed every Monday and every post-holiday morning. Fix: warm `latestQcd`, gated on the previous business day. | same |
 
+## Broad scan 2026-09-23 — Batch 9 (performance & chart edges)
+
+| Code | What happened / why the rule exists | Live rule |
+|---|---|---|
+| `DATA-5` (2026-09-23) | `computeSummary_`'s sheet path ran its own bounded span read (R41), which bypassed the R40 per-execution memo. The function is charged once per department by `combineSummaries_` and the digests, so every dept re-read identical bytes. Fix: it now reads `sheetFetchDqeRows_(priorFrom, to)`: the same row shape, memoized, with a shallow clone per caller, so the in-place queue-split narrowing cannot leak between depts. The R44 read-count pin moves from 2 wide reads to 1. | CLAUDE.md span bullet; `dqe-span-readers.test.js` |
+| `DATA-6` (2026-09-23) | On every Overview cache miss, the orphan nag's `computeOrphans_` read DQE cols A..D for ALL history to keep a 180-day lookback, then re-read every dept's roster the Overview had just loaded. Fix: a min/max span over the lookback via the shared date-column memo (per-row cutoff kept), and `computeOverviewOrphanNag_` passes the Overview's roster names in. | `orphan-rename-race.test.js` |
+| `S2A-2` (2026-09-23) | The Overview chart's admin-only Company line came from a per-day map that skipped rows older than the 30-day trend start, so on the 60- and 90-day views it was null for all but its last 30 days. Fix: the per-day series spans the 90-day chart window, and the 30-day recently-active set keeps its own gate. `companyOverview:v24` → `v25`. | INV-30; `company-overview.test.js` |
+| `DATA-8` (2026-09-23) | `computeTrendStartDate_` called `setMonth(-12)` before `setDate(1)`. A Feb-29 end date moved to Feb 29 of the prior (non-leap) year, rolled to Mar 1, and the 12-month trend lost its first month. Fix: day first, then month. | INV-29; `trend-window.test.js` |
+

@@ -22,7 +22,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs', 'QCDReport.gs',
-          'DeptConfig.gs', 'Data.gs', 'InsightsReport.gs', 'Digest.gs', 'EmailKit.gs'],
+          'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'InsightsReport.gs', 'Digest.gs', 'EmailKit.gs'],
 });
 const ROSTER = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'] });
 const REAL_SEND = h.ctx.sendDigestsForCadence_;

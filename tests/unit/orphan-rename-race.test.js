@@ -27,6 +27,10 @@ function dqeRowFor(date, agent) {
 
 function install(rows) {
   h.state.props.SPREADSHEET_ID = 'fake';
+  // The orphan scan reads through the per-execution DQE memos (DATA-6); a new
+  // fixture must reset the WHOLE family (the R40 test-side trap).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.spreadsheet = makeFakeSpreadsheet({
     sheets: { 'DQE Historical Data': [DQE_HEADER].concat(rows) },
   });
@@ -119,4 +123,46 @@ test('S2B-7: the column write-back neutralizes formula-leading names, renamed an
   assert.equal(sheet._data[1][2], "'+Roman (Robin) Paulose", 'a formula-leading destination is neutralized');
   assert.equal(sheet._data[2][2], "'=HYPERLINK(\"http://evil\",\"x\")", 'an untouched formula-shaped cell is not re-armed');
   assert.equal(sheet._data[3][2], 'Anna', 'an ordinary name is written back byte-identical');
+});
+
+// DATA-6 (broad-scan 2026-09-23, Batch 9): computeOrphans_ ran on every
+// Overview cache miss (the orphan nag) and read cols A..D of ALL history, then
+// re-read every dept's roster the Overview had just loaded. The sheet read is
+// now a min/max SPAN over the lookback; the roster names can be passed in.
+function isoDaysAgo(n) {
+  const d = new Date(Date.now() - n * 86400000);
+  const p = (x) => (x < 10 ? '0' : '') + x;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+test('DATA-6: the orphan scan reads only the lookback SPAN, and still finds an out-of-order row inside it', function () {
+  const old = isoDaysAgo(400), recent = isoDaysAgo(3), recent2 = isoDaysAgo(5);
+  const sheet = install([
+    dqeRowFor(old, 'Ancient Orphan'),        // outside the lookback
+    dqeRowFor(old, 'Ancient Orphan'),
+    dqeRowFor(recent, 'New Orphan'),
+    dqeRowFor(old, 'Ancient Orphan'),        // out of order: old date AFTER a recent one
+    dqeRowFor(recent2, 'Late Backfill'),     // recent date appended last
+  ]);
+  const real = sheet.getRange.bind(sheet);
+  const wide = [];
+  sheet.getRange = function (r, c, nr, nc) { if (nc > 1) wide.push({ r: r, nr: nr }); return real(r, c, nr, nc); };
+  try {
+    const out = JSON.parse(JSON.stringify(h.call('computeOrphans_', { rosterNames: ['Anna'] })));
+    const names = out.map(function (o) { return o.name; });
+    assert.deepEqual(names, ['Late Backfill', 'New Orphan'], 'both recent orphans, nothing outside the lookback');
+    assert.equal(wide.length, 1);
+    assert.deepEqual(wide[0], { r: 4, nr: 3 }, 'rows 4..6 only -- the span of the in-window dates, not all of history');
+  } finally { sheet.getRange = real; }
+});
+
+test('DATA-6: passed roster names are used instead of re-reading every roster', function () {
+  install([dqeRowFor(isoDaysAgo(2), 'Anna'), dqeRowFor(isoDaysAgo(2), 'Stranger')]);
+  let rosterReads = 0;
+  const realGet = h.ctx.getRosterForDepartment_;
+  h.ctx.getRosterForDepartment_ = function (d) { rosterReads++; return realGet(d); };
+  try {
+    const out = h.call('computeOrphans_', { rosterNames: ['Anna'] });
+    assert.deepEqual(JSON.parse(JSON.stringify(out)).map(function (o) { return o.name; }), ['Stranger']);
+    assert.equal(rosterReads, 0, 'no roster sheet reads when the caller supplies the names');
+  } finally { h.ctx.getRosterForDepartment_ = realGet; }
 });

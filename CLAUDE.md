@@ -469,9 +469,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   ENFORCED by out-of-order + full-scan-equivalence tests in
   `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); the
   `[dqe-read]` log lines say whether a slow read is the scan or the open (R26c).
-  **The five DAL-bypassing readers are span-bounded too (R41), via ONE shared
-  `Data.gs::dqeWindowRowSpan_`** -- `computeSummary_` (charged per dept),
-  IndividualReport, InsightsReport, `computeActiveAgentsInRange_`, Alerts.
+  **The DAL-bypassing readers are span-bounded too (R41), via ONE shared
+  `Data.gs::dqeWindowRowSpan_`** -- IndividualReport, InsightsReport,
+  `computeActiveAgentsInRange_`, Alerts; `computeSummary_` (charged per dept)
+  left that list for the memoized `sheetFetchDqeRows_` in DATA-5 (Batch 9).
   **The trap that makes it more than find-and-replace:** four of them ALSO
   derive `deptQueueExts` from that grid, and that needs every ext a roster
   agent EVER used -- feed it the span and the set silently shrinks, changing
@@ -2008,7 +2009,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
-  stripped by `personalizeOverview_` (`companyOverview:v24`).
+  stripped by `personalizeOverview_` (`companyOverview:v25`).
 - **Agent table column model (My Department).** The table is rendered
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table

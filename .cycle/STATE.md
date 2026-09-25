@@ -58,10 +58,14 @@
   S2B-8 queue-report send claim, ENG-4 alerts run claim (busy -> retry),
   SEC-4 login-notify byte cap, ING-5 RETENTION_HOLD + importer, S2A-5 digest
   stale text + preview gate, S2A-4/ENG-10 CacheWarm keys.
-  **WHERE I LEFT OFF:** Batches 1-8 + the follow-ons pushed, NOT deployed. Next: deploy the
+  **Batch 9 SHIPPED on this branch** (block 204): DATA-5 computeSummary_
+  reads through the memoized sheetFetchDqeRows_, DATA-6 orphan nag
+  span-bounded + reuses the Overview's rosters, S2A-2 Company chart line spans
+  the 90-day window (companyOverview:v25), DATA-8 Feb-29 trend start.
+  **WHERE I LEFT OFF:** Batches 1-9 + the follow-ons pushed, NOT deployed. Next: deploy the
   dashboard + cdr-import + cdr-report, run "Back up now" once, check the
   Health page's `historical-sort` / `email-bcc` rows, then
-  `/broad-implement Batch 9` (performance & chart edges). The full
+  `/broad-implement Batch 10` (docs). The full
   plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).

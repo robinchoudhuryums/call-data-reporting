@@ -68,7 +68,7 @@ UI-1 Escape on a stacked layer closes the report modal (script-5:629, script-4:1
 ## Batch 8 — engines & admin write hygiene — SHIPPED (block 203, + the qcd-expandable a11y tidy-up)
 S2B-3 orphan rename unprobed Neon before audit append; S2B-4 failed Neon rename not retryable; PCR-7 coaching delivery no lock / no status guard; SEC-2 no per-user email throttle; S2B-8 queue-report manual vs poll double-send; ENG-4 alerts per-date marker; SEC-4 LOGIN_NOTIFY_SEEN > 9KB at ~165 addrs (Auth.gs:729/847); ING-5 importer empty sheet + prune vs recovery; S2A-5 digest stale-note wording/previews; S2A-4 CacheWarm Insights warms the wrong key; ENG-10 CacheWarm queue key on Mondays.
 
-## Batch 9 — performance & chart edges (~5h)
+## Batch 9 — performance & chart edges — SHIPPED (block 204)
 DATA-5 computeSummary_ unmemoized per-dept span (Data.gs:1140); DATA-6 orphan nag whole-sheet read per Overview miss (OrphanFix.gs:471); S2A-2 Company line only 30 days on 60/90-day views (CompanyOverview.gs:538 vs 910); DATA-8 Feb-29 trend start (Util.gs:228).
 
 ## Batch 10 — docs (~5h)

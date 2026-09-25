@@ -319,3 +319,38 @@ test('chart company line: rides companyAggregate, so INV-39 strips it for a mana
   assert.ok((mgr.depts || []).every(function (d) { return Array.isArray(d.trendChartAbandonedPct); }),
     'the per-dept series are untouched -- only the company aggregate is stripped');
 });
+
+// S2A-2 (broad-scan 2026-09-23, Batch 9): the chart's Company line was built
+// from a per-day map that skipped every row older than the 30-day trend start,
+// so on the 60- and 90-day views it was null for all but its last 30 days.
+test('S2A-2: the Company chart line covers the whole 90-day chart window, not just the last 30 days', function () {
+  install({ rows: function () {
+    return [
+      dalRow({ agent: 'Bob', date: LATEST, r: 10, m: 2, a: 8 }),
+      dalRow({ agent: 'Bob', date: '2026-06-05', r: 10, m: 5, a: 5 }),   // -45 days: only on the 60/90 views
+      dalRow({ agent: 'Bob', date: '2026-04-23', r: 4, m: 1, a: 3 }),    // -88 days: the 90-day edge
+    ];
+  } });
+  const data = h.call('getCompanyOverview', {});
+  const labels = data.chartTrendIsoLabels || [];
+  const ca = data.companyAggregate;
+  [['2026-06-05', h.ctx.answerRatePct_(5, 5, 10)], ['2026-04-23', h.ctx.answerRatePct_(3, 1, 4)]].forEach(function (p) {
+    const idx = labels.indexOf(p[0]);
+    assert.ok(idx >= 0, p[0] + ' is on the 90-day chart axis');
+    assert.equal(ca.trendChart[idx], h.ctx.round1_(p[1]), 'the Company point on ' + p[0] + ' is populated');
+  });
+  // The 30-day surfaces are unchanged: the -45-day activity does not make Bob
+  // "recently active" on its own, and the sparkline axis is still 30 days.
+  assert.equal(ca.trend.length, (data.trendIsoLabels || []).length);
+});
+
+test('S2A-2: widening the Company chart series leaves the 30-day recently-active count alone', function () {
+  install({ rows: function () {
+    return [
+      dalRow({ agent: 'Bob', date: LATEST, r: 10, m: 2, a: 8 }),
+      dalRow({ agent: 'Anna', date: '2026-06-05', r: 10, m: 5, a: 5 }),   // active only 45 days ago
+    ];
+  } });
+  const ca = h.call('getCompanyOverview', {}).companyAggregate;
+  assert.equal(ca.recentlyActiveCount, 1, 'Anna is outside the 30-day recently-active window');
+});

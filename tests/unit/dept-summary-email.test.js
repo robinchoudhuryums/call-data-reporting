@@ -13,7 +13,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // EmailKit shape (KPI tiles + the volume-tally cells + worst-first order).
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'EmailKit.gs', 'DeptSummaryEmail.gs'],
 });
 

@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v24` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v25` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -92,7 +92,7 @@
 // v21 (R18d): per-dept `dqeSilence` (the queue-lens fallback flag) joined the blob.
 // v22 (6b): each dept carries a per-day `trendChartAnswered` series (DQE
 // answered COUNT) feeding the chart's new Answered calls metric view.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v24';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v25';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -536,10 +536,17 @@ function getCompanyOverview(req) {
   // counted once, so the all-queue rollup IS the correct company number. Only
   // the PER-DEPT attribution below narrows (that is where a crossover agent's
   // other-dept calls double-counted). The two passes therefore split.
+  // S2A-2 (broad-scan 2026-09-23, Batch 9): companyTrendByDate ALSO feeds the
+  // chart's 90-day Company line (trendChart below), but this loop skipped every
+  // row older than the 30-day trendStartIso -- so on the 60/90-day views the
+  // Company line was null for all but its last 30 days. The per-DAY series now
+  // spans the chart window; everything else here (the recent-active set, the
+  // latest-day tile) keeps its own 30-day / latest-day gate unchanged.
+  const companyFloorIso = [trendStartIso, chartTrendStartIso].sort()[0];
   for (let i = 0; i < dqeRows.length; i++) {
     const row = dqeRows[i];
     const dateIso = row.dateIso;
-    if (!dateIso || dateIso < trendStartIso) continue;
+    if (!dateIso || dateIso < companyFloorIso) continue;
     const agent = row.agent;
     if (!agent) continue;
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
@@ -575,7 +582,7 @@ function getCompanyOverview(req) {
         companyLatest.att_sum  += attTotal;
         if (hadActivity) companyLatest.activeAgents[agent] = true;
       }
-      if (hadActivity) companyRecentlyActive[agent] = true;
+      if (hadActivity && dateIso >= trendStartIso) companyRecentlyActive[agent] = true;   // S2A-2: stays 30-day
     }
   }
 
@@ -937,7 +944,7 @@ function getCompanyOverview(req) {
     // managers). Computed lazily inside try/catch so a Pipeline Health
     // sheet outage or a slow orphan scan never blocks the Overview.
     pipelineFreshness: computeOverviewPipelineFreshness_(),
-    orphanNag:         computeOverviewOrphanNag_(),
+    orphanNag:         computeOverviewOrphanNag_(Object.keys(deptsForAgent)),   // DATA-6: rosters already loaded
     unmappedQcd:       computeOverviewUnmappedQcd_(),
     // viewerRole and viewerDept are NOT cached; personalizeOverview_
     // injects them per-request so a payload warmed by user A still
@@ -1296,9 +1303,9 @@ function parsePipelineHealthTimestamp_(s) {
  * sheet doesn't block Overview rendering. Admin-only on serve via
  * personalizeOverview_.
  */
-function computeOverviewOrphanNag_() {
+function computeOverviewOrphanNag_(rosterNames) {
   try {
-    const orphans = computeOrphans_();
+    const orphans = computeOrphans_(rosterNames ? { rosterNames: rosterNames } : undefined);
     if (!orphans || !orphans.length) {
       return { activeCount: 0, totalCount: 0, sampleNames: [] };
     }

@@ -254,8 +254,12 @@ function computeTrendStartDate_(startDate, endDate) {
     trendStartDate = new Date(startDate);
   } else {
     trendStartDate = new Date(endDate);
-    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
+    // DATA-8 (broad-scan 2026-09-23, Batch 9): day FIRST, then month. With
+    // the month first, an end date of Feb 29 moved to Feb 29 of the prior
+    // (non-leap) year, which rolled over to Mar 1 -- and setDate(1) then kept
+    // March, so the "12-month" trend silently lost its first month.
     trendStartDate.setDate(1);
+    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
   }
   return trendStartDate;
 }

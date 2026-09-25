@@ -51,3 +51,14 @@ test('partial year that is NOT Jan1-Dec31 uses 12-mo lookback, not the range', f
   // Feb 1 - Dec 31 same year: not a full calendar year -> 12-mo lookback.
   assert.equal(trendStart('2025-02-01', '2025-12-31'), '2024-12-01');
 });
+
+// DATA-8 (broad-scan 2026-09-23, Batch 9): setMonth(-12) BEFORE setDate(1)
+// moved a Feb-29 end date to the non-existent Feb 29 of the prior year, which
+// rolled to Mar 1 -- the 12-month trend then started in MARCH and lost a month.
+test('DATA-8: a Feb-29 end date still starts the trend on the 1st of the same month a year earlier', function () {
+  assert.equal(trendStart('2028-02-01', '2028-02-29'), '2027-02-01');
+  assert.equal(trendStart('2024-02-29', '2024-02-29'), '2023-02-01');
+  // Ordinary month ends are unaffected.
+  assert.equal(trendStart('2026-05-01', '2026-05-31'), '2025-05-01');
+  assert.equal(trendStart('2026-03-01', '2026-03-31'), '2025-03-01');
+});

@@ -1395,7 +1395,7 @@ When something looks wrong, before assuming a code bug, check:
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
     Overview tile's companion surface is the per-dept `dqeSilence`
-    queue-lens badge (`companyOverview:v24`) — the PULL view to this
+    queue-lens badge (`companyOverview:v25`) — the PULL view to this
     engine's PUSH, same detector shape over the trailing 7 chart days.
 
 45. **Sign-in notifications (`notifyLoginEvent_`, Auth.gs/doGet) — ON by

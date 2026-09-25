@@ -856,7 +856,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v24` — zero DQE rings over the trailing 7 chart days while
+  (`companyOverview:v25` — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1085,7 +1085,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   day) in `ovPeriodStats_`** -- a plausible-looking number, not an error -- so
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
-  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v24`.
+  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v25`.
 
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a

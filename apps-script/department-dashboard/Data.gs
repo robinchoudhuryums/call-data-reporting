@@ -1126,54 +1126,23 @@ function computeSummary_(dept, from, to, scope) {
       if (neonCapable) e.meta.sourceUnavailable = true;
       return e;
     }
-    // Phase 2 needs col AI (QUEUE_SPLIT). Read only what the sheet HAS:
-    // getRange past getMaxColumns THROWS (REP-10), and the DQE sheet is still
-    // 34 wide until the Phase 1 pipeline has run against it once. At 34 the
-    // split cell reads undefined -> '' -> every row keeps its rollup, which is
-    // exactly the pre-Phase-2 behavior.
-    const readCols = Math.min(HISTORICAL_COLS.QUEUE_SPLIT, sheet.getMaxColumns());
     // Queue-scope/Both-scope matching uses this set, NOT roster.allExtensions
     // (personal exts, which never overlap col D's shared-queue exts). See
     // getDeptQueueExts_ docstring. R41: its DERIVED path needs ALL history, so
     // it reads its own whole-sheet cols-A..D slice -- it must NOT be fed the
-    // windowed span below, which would shrink the set.
+    // windowed rows below, which would shrink the set.
     const dqr = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow);
     deptQueueExts = dqr.exts; deptQueueExtsSource = dqr.source;
-    // R41: bounded SPAN read over [priorFrom, to] -- this used to pull the
-    // whole sheet at full width, TWICE (INV-02 needs values AND displays), and
-    // it is charged PER DEPARTMENT by combineSummaries_. The per-row date
-    // filter below STAYS: the span bounds the read, it does not replace the
-    // filter (the sheet is not reliably date-ordered).
-    const span = dqeWindowRowSpan_(sheet, lastRow, priorFrom, to, ssTZ);
-    const range = span ? sheet.getRange(span.startRow, 1, span.numRows, readCols) : null;
-    const values = range ? range.getValues() : [];
-    const displays = range ? range.getDisplayValues() : [];
-    // Build the same normalized [priorFrom, to] window the Neon path
-    // returns, so the aggregation loop below is identical for both sources.
-    srcRows = [];
-    for (let i = 0; i < values.length; i++) {
-      const r = values[i], rd = displays[i];
-      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-      if (!dIso || dIso < priorFrom || dIso > to) continue;
-      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-      if (!ag) continue;
-      srcRows.push({
-        dateIso:          dIso,
-        agent:            ag,
-        queueExt:         String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
-        totalUnique:      Number(r[HISTORICAL_COLS.TOTAL_UNIQUE - 1])   || 0,
-        totalRung:        Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
-        totalMissed:      Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
-        totalAnswered:    Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
-        tttSec:           parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
-        attSec:           parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
-        avgAbdWaitSec:    parseHmsDisplay_(rd[HISTORICAL_COLS.AVG_ABD_WAIT - 1]),
-        csrAvgAbdWaitSec: parseHmsDisplay_(rd[HISTORICAL_COLS.CSR_AVG_ABD_WAIT - 1]),
-        // Sub-queue Phase 2. Display value: the cell is plain-text JSON, and
-        // getValues would hand back the same string anyway.
-        queueSplit:       String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
-      });
-    }
+    // DATA-5 (broad-scan 2026-09-23, Batch 9): the windowed rows come from the
+    // DAL's sheet primitive, not a private span read. The private read was the
+    // same bounded span (R41) at the same width, but it bypassed the R40
+    // per-execution memo -- and this function is charged PER DEPARTMENT by
+    // combineSummaries_ and the digests, so every dept re-read identical bytes.
+    // sheetFetchDqeRows_ returns the identical row shape (same fields, same
+    // window + non-empty-agent filter, REP-10-clamped width incl. col AI) as a
+    // SHALLOW COPY per call, which is what makes the in-place narrowing by
+    // applyQueueSplitToRows_ below safe across depts (the R40 contract).
+    srcRows = sheetFetchDqeRows_(priorFrom, to);
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeSummary_:' + dept, effectiveSource, _tRead, srcRows.length);
 

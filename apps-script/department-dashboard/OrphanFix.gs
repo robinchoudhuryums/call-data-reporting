@@ -47,7 +47,7 @@
  *      row to `Orphan Fix Log` BEFORE returning to the client.
  *      The log is append-only and idempotently created by setup().
  *
- * The downstream cache layers (companyOverview:v24, summary:v22,
+ * The downstream cache layers (companyOverview:v25, summary:v22,
  * individual:v12, etc.; see INV-30 for the canonical list) will
  * hold stale data for up to 6 hours (REPORT_CACHE_TTL_SECONDS,
  * R24) after a rename -- though the morning ingest's freshness tag
@@ -434,9 +434,12 @@ function addOrphanToRoster(req) {
  */
 const ORPHAN_LOOKBACK_DAYS = 180;
 
-function computeOrphans_() {
+function computeOrphans_(opts) {
+  // DATA-6 (broad-scan 2026-09-23, Batch 9): a caller that has ALREADY loaded
+  // every dept's roster (the Overview, on each cache miss) passes the names in
+  // instead of this re-reading the roster sheet once per department.
   const rosterSet = {};
-  collectAllRosterNames_().forEach(function (n) { rosterSet[n] = true; });
+  ((opts && opts.rosterNames) || collectAllRosterNames_()).forEach(function (n) { rosterSet[n] = true; });
 
   // Cutoff iso = today - ORPHAN_LOOKBACK_DAYS in script TZ.
   const cutoff = new Date(Date.now() - ORPHAN_LOOKBACK_DAYS * 86400000);
@@ -498,7 +501,15 @@ function computeOrphans_() {
     const numCols = Math.max(
       HISTORICAL_COLS.DATE, HISTORICAL_COLS.AGENT, HISTORICAL_COLS.QUEUE_EXT
     );
-    const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+    // DATA-6: a min/max SPAN over the lookback, not the whole sheet. This read
+    // ran on every Overview cache miss (the orphan nag) and pulled cols A..D for
+    // all of history to keep the last ORPHAN_LOOKBACK_DAYS. The span comes from
+    // the shared per-execution date-column memo (R44), which the Overview's own
+    // DQE read has usually filled already; the per-row cutoff in accept() STAYS,
+    // since the sheet is not reliably date-ordered (the span only bounds the read).
+    const span = dqeWindowRowSpan_(sheet, lastRow, cutoffIso, '9999-12-31', ssTZ);
+    if (!span) return [];
+    const values = sheet.getRange(span.startRow, 1, span.numRows, numCols).getValues();
     for (let i = 0; i < values.length; i++) {
       accept(rowDateIso_(values[i][HISTORICAL_COLS.DATE - 1], ssTZ),
              values[i][HISTORICAL_COLS.AGENT - 1],
