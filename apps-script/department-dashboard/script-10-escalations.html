@@ -98,8 +98,17 @@
 
   // Fetch role + dept list once; populate the dept selectors; reveal the
   // admin-only create controls. cb() runs after (or immediately if cached).
+  // UI-4 follow-on: ONE init request at a time. Two quick page entries used
+  // to fire two getEscalationsInit RPCs; while one is in flight the newest
+  // continuation replaces the pending one (every caller passes the same
+  // page-entry load, so running it twice would only double the telemetry).
+  var escInitInFlight_ = false;
+  var escInitPendingCb_ = null;
   function escEnsureInit_(cb) {
     if (escInit_) { cb && cb(); return; }
+    if (cb) escInitPendingCb_ = cb;
+    if (escInitInFlight_) return;
+    escInitInFlight_ = true;
     // R9-4: the init fetch painted NOTHING -- on a cold entry the page sat
     // as blank background until getEscalationsInit returned and escLoad_'s
     // own loader took over. Show the same rings loader from the first frame.
@@ -156,7 +165,10 @@
         // R11-D1: seed the (countless) category list so the wide-viewport status
         // filter is present immediately; escRenderList_ refreshes it with counts.
         escRenderCatMenu_(null);
-        cb && cb();
+        escInitInFlight_ = false;
+        const next = escInitPendingCb_;
+        escInitPendingCb_ = null;
+        if (next) next();
       })
       .withFailureHandler(function (err) {
         // UI-4: the init failure left the loader spinning beside the error,
@@ -165,6 +177,9 @@
         // loader, offer Retry (re-running init with the same continuation),
         // and report it like every other top-level page load.
         const msg = (err && err.message ? err.message : String(err));
+        escInitInFlight_ = false;
+        const pendingCb = escInitPendingCb_;
+        escInitPendingCb_ = null;
         if ($('esc-loading')) { $('esc-loading').style.display = 'none'; $('esc-loading').innerHTML = ''; }
         const el = $('esc-error');
         if (el) {
@@ -174,7 +189,7 @@
           const retry = $('esc-init-retry');
           if (retry) retry.addEventListener('click', function () {
             escSetError_('');
-            escEnsureInit_(cb);
+            escEnsureInit_(pendingCb);
           });
         }
         if (typeof reportClientIssue_ === 'function') {

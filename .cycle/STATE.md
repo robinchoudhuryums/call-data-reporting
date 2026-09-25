@@ -44,7 +44,15 @@
   drill key / per-flag close guard, UI-8 aria-labels, UI-9 insurer-row
   disclosure button (trp-row deliberately unchanged -- it jumps, not
   expands). ui-harness gained `__HARNESS__.failOnce`.
-  **WHERE I LEFT OFF:** Batches 1-7 pushed, NOT deployed. Next: deploy the
+  **Follow-ons SHIPPED on this branch** (block 202): report Export menus stop
+  Escape (`wireMenuKeys_`), trp-row action description, Escalations init
+  in-flight guard, view-as usage logs the real admin, journey predicate +
+  sheet mirrors match Final Dept Labels, Dept Config qcdQueues sheet-safe,
+  `ALERTS_STARTED` -> alerts INTERRUPTED. **CRT-4 on the dup-guard re-mirror /
+  deferred mirror is CONFIRMED but NOT fixed** -- the INV-16 writer conflates
+  lost and empty cells as NULL, so it needs a lost-cell channel (design in
+  block 202); unscheduled.
+  **WHERE I LEFT OFF:** Batches 1-7 + the follow-ons pushed, NOT deployed. Next: deploy the
   dashboard + cdr-import + cdr-report, run "Back up now" once, check the
   Health page's `historical-sort` / `email-bcc` rows, then
   `/broad-implement Batch 8` (engines & admin write hygiene). The full

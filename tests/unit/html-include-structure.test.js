@@ -541,3 +541,30 @@ test('UI-9: the insurer drill row\'s disclosure is a button that owns aria-expan
   assert.ok(wire.length > 0 && !/keydown/.test(wire),
     'no row-level keydown -- the native button already answers Enter/Space, so it would toggle twice');
 });
+
+// ---- Batch 7 follow-ons ----------------------------------------------------
+test('UI-9 follow-on: the Team Rings row DESCRIBES its jump action (never a label)', function () {
+  const s5 = fs.readFileSync(path.join(DIR, 'script-5-dept.html'), 'utf8');
+  const dash = fs.readFileSync(path.join(DIR, 'dashboard.html'), 'utf8');
+  assert.match(s5, /class="trp-row"[\s\S]{0,300}aria-describedby="trp-row-action-desc"/, 'the row points at the description');
+  assert.ok(!/class="trp-row"[^>]*aria-label/.test(s5), 'no aria-label on the row -- it would replace the numbers');
+  assert.match(dash, /<span id="trp-row-action-desc" class="sr-only">[^<]+<\/span>/, 'the description node exists once in the page');
+});
+
+test('UI-1 follow-on: a report menu\'s Escape stops at the menu', function () {
+  const core = fs.readFileSync(path.join(DIR, 'script-1-core.html'), 'utf8');
+  const fn = core.slice(core.indexOf('function wireMenuKeys_('), core.indexOf('function emptyStateHtml_('));
+  assert.match(fn, /if \(e\.key === 'Escape' && menuOpen_\(\)\) \{\s*e\.preventDefault\(\); e\.stopPropagation\(\);/,
+    'the trigger stops an Escape that closes its open menu');
+  assert.match(fn, /else if \(e\.key === 'Escape'\)\s*\{ e\.preventDefault\(\); e\.stopPropagation\(\); setOpen\(false\)/,
+    'the menu itself stops it too');
+});
+
+test('UI-4 follow-on: Escalations init runs ONE request at a time and retries with the pending continuation', function () {
+  const s10 = fs.readFileSync(path.join(DIR, 'script-10-escalations.html'), 'utf8');
+  const fn = s10.slice(s10.indexOf('function escEnsureInit_('), s10.indexOf('.getEscalationsInit();'));
+  assert.match(fn, /if \(cb\) escInitPendingCb_ = cb;\s*if \(escInitInFlight_\) return;\s*escInitInFlight_ = true;/,
+    'a second entry while init is in flight queues its continuation instead of a second RPC');
+  assert.equal((fn.match(/escInitInFlight_ = false;/g) || []).length, 2, 'both handlers clear the in-flight flag');
+  assert.match(fn, /escEnsureInit_\(pendingCb\)/, 'Retry re-runs with the continuation that was pending');
+});

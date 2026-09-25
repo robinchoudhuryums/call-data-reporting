@@ -95,6 +95,38 @@ function record(name, pass, detail) {
   });
   record('agent row Enter opens the Individual Report', irOpen);
   if (irOpen) {
+    // UI-1 follow-on: Escape on the report's Export MENU closes the menu
+    // only. The menu's Escape used to bubble to the modal's own handler, so
+    // one press closed the menu AND the report. Both entry shapes: focus on
+    // the trigger (click-opened) and focus inside the menu (ArrowDown).
+    const irShown = () => page.evaluate(() => {
+      const m = document.getElementById('individual-modal');
+      return !!m && getComputedStyle(m).display !== 'none';
+    });
+    const menuShown = () => page.evaluate(() => {
+      const m = document.getElementById('ir-export-menu');
+      return !!m && getComputedStyle(m).display !== 'none';
+    });
+    const exportVisible = await page.locator('#ir-export-btn').isVisible().catch(() => false);
+    if (exportVisible) {
+      await page.click('#ir-export-btn');
+      await page.waitForTimeout(200);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      record('IR Export menu (click-opened): Escape closes the menu only',
+        !(await menuShown()) && (await irShown()));
+      await page.focus('#ir-export-btn');
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(200);
+      const inMenu = await page.evaluate(() =>
+        document.getElementById('ir-export-menu').contains(document.activeElement));
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      record('IR Export menu (keyboard-opened): Escape closes the menu only',
+        inMenu && !(await menuShown()) && (await irShown()), 'focusInMenu=' + inMenu);
+    } else {
+      record('IR Export menu is reachable for the Escape check', false, '#ir-export-btn not visible');
+    }
     await page.keyboard.press('Escape');
     await page.waitForTimeout(800);
   }

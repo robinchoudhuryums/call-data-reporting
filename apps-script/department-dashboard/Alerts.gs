@@ -393,6 +393,11 @@ function alertsGatedAttempt_(now, source) {
     Logger.log('alertsGatedAttempt_: retry could not be scheduled -- assessing now.');
   }
   const late = !fresh;
+  // Batch 4 follow-on (the ENG-5 pattern): stamp the assessment's START. The
+  // outcome is recorded only after every dept; a run killed at the execution
+  // ceiling records nothing (a kill skips the catch below too), so the Health
+  // row compares this stamp to ALERTS_LAST and reads INTERRUPTED.
+  try { props.setProperty('ALERTS_STARTED', new Date().toISOString()); } catch (se) { /* best-effort */ }
   try {
     const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger') || [];
     try { props.setProperty('ALERTS_RUN_MARKER', dateIso); } catch (me) { /* best-effort */ }

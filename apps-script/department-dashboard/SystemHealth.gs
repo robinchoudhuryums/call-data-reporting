@@ -745,7 +745,7 @@ function getSystemHealth(req) {
       // / 'FAILED (threw) …' (Alerts.gs). Digests: per cadence, the result
       // string carries its own timestamp (no *_LAST prop), 'ok …' /
       // 'FAILED-ALL …' / 'NO-SUBSCRIBERS …' / 'SKIPPED-LOCK …'.
-      ['out-alerts',   'Daily alerts — last run',     'ALERTS_LAST',        'ALERTS_LAST_RESULT',        'runDailyAlerts_', null, 4 * DAY_],
+      ['out-alerts',   'Daily alerts — last run',     'ALERTS_LAST',        'ALERTS_LAST_RESULT',        'runDailyAlerts_', null, 4 * DAY_, 'ALERTS_STARTED'],
       // ENG-5 (broad-scan 2026-09-23): digests + the queue report now write a
       // *_LAST timestamp beside every outcome and a *_STARTED stamp when a send
       // begins (8th column), so a killed send reads INTERRUPTED and a silent

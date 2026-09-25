@@ -360,9 +360,19 @@ function callJourneyDeptPredicate_(dept, deptQueues) {
   // B-4: case-insensitive, matching inboundDeptPredicate_ above.
   const queueList = (deptQueues && deptQueues.length)
     ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',') : 'NULL';
+  // PCR-2 follow-on: final_dept holds the raw CDR ORG-CHART label, so the
+  // dept NAME alone matched nothing in this install -- the same gap
+  // inboundDeptPredicate_ closed with the Final Dept Labels. Own + children's
+  // labels (inboundDeptFinalLabels_, always incl. the dept name), matching the
+  // child-inclusive queue set every caller passes. Defence-in-depth only:
+  // the F-4 gate behind it still admits a call this arm misses.
+  const labels = inboundDeptFinalLabels_(dept);
+  const labelList = labels.length
+    ? labels.map(inboundSqlLit_).join(',')
+    : inboundSqlLit_(String(dept).trim().toLowerCase());
   return " AND (lower(trim(coalesce(c.entry_queue,''))) IN (" + queueList + ')'
        + " OR lower(trim(coalesce(c.final_queue,''))) IN (" + queueList + ')'
-       + " OR lower(trim(coalesce(c.final_dept, ''))) = lower(" + inboundSqlLit_(dept) + '))';
+       + " OR lower(trim(coalesce(c.final_dept, ''))) IN (" + labelList + '))';
 }
 
 /**
@@ -693,7 +703,7 @@ function callIdInDeptMissedReport_(dept, date, callId) {
 // Contracts that must hold here exactly as on the Neon path:
 //   * BOTH auth arms, in the same order: the dept-scoped match mirrors
 //     callJourneyDeptPredicate_ (entry/final queue in the dept's inbound
-//     union, OR final_dept === the dept name), then the exact-id arm gated
+//     union, OR final_dept in inboundDeptFinalLabels_), then the exact-id arm gated
 //     for managers by callIdInDeptMissedReport_ -- which reads the DQE
 //     sheet via getMissedCallsReport's own fallback chain, so the F-4 gate
 //     survives the outage. A gate-closed manager gets the same reason-less
@@ -791,12 +801,14 @@ function outboundCallJourneySheetFallback_(callId, date, dept, user) {
           linkers.push(lrow);
         }
         // Arm 1: the dept predicate (entry / final queue / final dept).
+        var fdSet2 = {};
+        inboundDeptFinalLabels_(dept).forEach(function (l) { fdSet2[l] = true; });
         for (var a1 = 0; a1 < linkers.length && !entitled; a1++) {
           var eq2 = String(linkers[a1][10] == null ? '' : linkers[a1][10]).trim().toLowerCase();
           var fq2 = String(linkers[a1][11] == null ? '' : linkers[a1][11]).trim().toLowerCase();
           var fd2 = String(linkers[a1][12] == null ? '' : linkers[a1][12]).trim().toLowerCase();
           if (qSet2[eq2] === true || qSet2[fq2] === true
-              || (!!fd2 && fd2 === String(dept).trim().toLowerCase())) entitled = true;
+              || (!!fd2 && fdSet2[fd2] === true)) entitled = true;
         }
         // Arm 2: the F-4 missed-report fallback, same order as the Neon path.
         for (var a2 = 0; a2 < linkers.length && !entitled; a2++) {
@@ -951,8 +963,10 @@ function inboundCallJourneySheetFallback_(callId, date, dept, user) {
       var eq = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
       var fq = String(row[11] == null ? '' : row[11]).trim().toLowerCase();
       var fd = String(row[12] == null ? '' : row[12]).trim().toLowerCase();
+      var fdSet = {};
+      inboundDeptFinalLabels_(dept).forEach(function (l) { fdSet[l] = true; });
       entitled = qSet[eq] === true || qSet[fq] === true
-              || (!!fd && fd === String(dept).trim().toLowerCase());
+              || (!!fd && fdSet[fd] === true);
       if (!entitled) {
         entitled = (user && user.role === 'admin') || !!(user && user.allDepts)
                 || callIdInDeptMissedReport_(dept, date, callId);

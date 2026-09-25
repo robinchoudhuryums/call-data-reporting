@@ -1498,3 +1498,17 @@ test('O-9: a company holiday inside the gap extends a daily engine\'s STALE allo
 function Utilities_fmt_(d) {
   return h.ctx.Utilities.formatDate(d, h.ctx.TZ, 'yyyy-MM-dd');
 }
+
+test('Batch 4 follow-on: a daily-alerts run that STARTED after its last outcome and never finished reads INTERRUPTED', function () {
+  const hoursAgo = function (n) { return new Date(Date.now() - n * 3600000).toISOString(); };
+  installHealth({ props: { NEON_HOST: 'h',
+    ALERTS_LAST: isoDaysAgo_(1), ALERTS_LAST_RESULT: 'ok 2026-09-21: 14 dept(s) assessed, 2 fired',
+    ALERTS_STARTED: hoursAgo(2) } });
+  const row = rowByKey(h.call('getSystemHealth'), 'out-alerts');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /INTERRUPTED/);
+  installHealth({ props: { NEON_HOST: 'h',
+    ALERTS_LAST: hoursAgo(1.9), ALERTS_LAST_RESULT: 'ok 2026-09-22: 14 dept(s) assessed, 2 fired',
+    ALERTS_STARTED: hoursAgo(2) } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-alerts').status, 'ok');
+});

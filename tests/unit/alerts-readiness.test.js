@@ -91,3 +91,17 @@ test('ENG-3: weekends and holidays still skip before the gate; uninstall clears 
   h.call('uninstallAlertTrigger_');
   assert.equal(env.made.length, 0, 'the retry does not outlive the uninstall');
 });
+
+// Batch 4 follow-on (the ENG-5 pattern): an assessment stamps ALERTS_STARTED
+// before it runs, so a run killed at the execution ceiling -- which records no
+// outcome and skips the catch -- is visible as INTERRUPTED on the Health page.
+test('Batch 4 follow-on: an assessment stamps ALERTS_STARTED; a DEFER does not', function () {
+  install('2026-09-18');
+  h.call('alertsGatedAttempt_', at('08:05'), 'trigger');   // defers
+  assert.equal(h.state.props.ALERTS_STARTED, undefined, 'nothing was assessed, nothing started');
+  install('2026-09-21');
+  h.call('alertsGatedAttempt_', at('08:05'), 'trigger');   // runs
+  assert.ok(h.state.props.ALERTS_STARTED, 'the run stamps its start');
+  assert.ok(Date.parse(h.state.props.ALERTS_LAST) >= Date.parse(h.state.props.ALERTS_STARTED),
+    'a finished run records its outcome AFTER the start, so it never reads INTERRUPTED');
+});

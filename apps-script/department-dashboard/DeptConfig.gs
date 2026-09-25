@@ -1017,11 +1017,13 @@ function sheetUpsertDeptConfigRow_(rec) {
   // formula-leading values (dcParseList_/readers see the original string;
   // the leading apostrophe is Sheets formatting, not content). S2B-7: so are
   // the team-avg excludes -- validated to ROSTER names, but a roster name is
-  // a feed spelling and can lead with a formula character. The other fields
-  // are validated to known queue names / real depts / digits upstream.
+  // a feed spelling and can lead with a formula character. So are the QCD
+  // queues (Batch 5 follow-on): validated against QCD col D, which is itself
+  // written from the feed. The other fields are validated to real depts /
+  // digits upstream.
   const rowValues = [
     rec.dept,
-    rec.qcdQueues.join(', '),
+    sheetSafeCell_(rec.qcdQueues.join(', ')),
     rec.overviewParent || '',
     sheetSafeCell_(rec.teamAvgExcludes.join(', ')),   // S2B-7: roster names from the feed can lead with =/+/-/@
     rec.queueExtOverrides.join(', '),

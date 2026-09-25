@@ -328,3 +328,11 @@ test('UI-3: the client keys the cached YTD payload by view-as scope and re-fetch
   assert.match(apply, /ovChartRange === 'ytd'[\s\S]*?ovLoadYtdChart_\(\)/,
     'entering/exiting view-as re-fetches the YTD series when YTD is on screen');
 });
+
+test('UI-3 follow-on: both Overview endpoints log the REAL caller under view-as', function () {
+  const gs = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard/CompanyOverview.gs'), 'utf8');
+  assert.match(gs, /logReportUsage_\('overview', user\.department \|\| '\(all\)', realUser, !!cached\)/,
+    'the Overview logs the admin, not the synthetic manager it previews as');
+  assert.equal((gs.match(/logReportUsage_\('overviewChartYtd', '\(all\)', realUser,/g) || []).length, 3,
+    'every YTD return path logs the real caller');
+});

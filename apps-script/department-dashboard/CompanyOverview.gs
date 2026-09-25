@@ -328,7 +328,11 @@ function getCompanyOverview(req) {
   // mean deliberate visits (Overview is the default landing, so this is the
   // per-session "who showed up" row). One log site covers every return path
   // below; cache-warm traffic is already suppressed via REPORT_USAGE_SUPPRESS_.
-  if (!(req && req.auto)) logReportUsage_('overview', user.department || '(all)', user, !!cached);
+  // Telemetry records the REAL caller: under view-as `user` is a synthetic
+  // manager carrying the admin's email, which filed the admin as a manager
+  // in the Health page's per-user rollup. The dept column keeps the scope
+  // that was viewed (matches the YTD endpoint, UI-3).
+  if (!(req && req.auto)) logReportUsage_('overview', user.department || '(all)', realUser, !!cached);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);

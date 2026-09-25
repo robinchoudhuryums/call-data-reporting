@@ -1073,8 +1073,12 @@
       ? '<div class="ans-tally trp-tally" aria-hidden="true">'
         + ansTallyBlocks_(a, unit, 'a') + ansTallyBlocks_(m, unit, 'm') + '</div>'
       : '';
+    // UI-9 follow-on: the row's action was carried by `title` alone, which
+    // most screen readers never read -- describe it (never aria-label: that
+    // would replace the row's numbers, the C1-14 rule).
     return '<tr class="trp-row" data-trp-agent="' + escapeHtml(r.agent) + '"'
-      + ' title="' + escapeHtml(r.agent) + ' — click to jump to the full row" tabindex="0">'
+      + ' title="' + escapeHtml(r.agent) + ' — click to jump to the full row" tabindex="0"'
+      + ' aria-describedby="trp-row-action-desc">'
       + '<td class="trp-name">' + escapeHtml(trpShortName_(r.agent)) + '</td>'
       + '<td class="trp-num trp-tally-cell">' + tally + '</td>'
       + '<td class="trp-num"><span class="trp-a">' + fmtNumber(a) + '</span>'

@@ -812,6 +812,7 @@ var PROP_REGISTRY_ = Object.freeze({
     CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
     ALERTS_LAST: 'engine', ALERTS_LAST_RESULT: 'engine',   // O-5: the daily alerts outcome
     ALERTS_RUN_MARKER: 'engine',   // ENG-3: the last business day the daily alerts assessed
+    ALERTS_STARTED: 'engine',      // Batch 4 follow-on: an assessment's start (INTERRUPTED check)
     ANSWER_RATE_FORMULA: 'config',                          // DD-2: 'rung' (default) | 'answerable' (H2)
     ANSWER_RATE_PROBE_FROM: 'tool', ANSWER_RATE_PROBE_TO: 'tool',   // DD-2: probeAnswerRateFormulas window
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',

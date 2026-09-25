@@ -11,7 +11,7 @@ const { loadGas } = require('../harness/loadGas');
 //       callerLookupShapeCall_ as the Neon path, so equivalent rows produce
 //       an identical `call` object;
 //   (2) BOTH auth arms in the Neon-path order: the dept-scoped match
-//       (entry/final queue in the inbound union, or final_dept === dept),
+//       (entry/final queue in the inbound union, or final_dept in the dept's Final Dept Labels),
 //       then the exact-id arm gated for managers by
 //       callIdInDeptMissedReport_ -- and a gate-closed manager gets a
 //       reason-LESS miss (learns nothing);
@@ -370,4 +370,21 @@ test('OD-5: journeyPrunedMeta_ flags a NULL journey on a call older than the ret
   assert.deepEqual(JSON.parse(JSON.stringify(f(null, '2026-05-01', now))), {});
   delete h.ctx.neonRetentionSettings_;
   assert.equal(f({ journey: null }, '2026-05-01', now).journeyHorizonDays, 90, 'default horizon when NeonRetention.gs is not in scope');
+});
+
+// PCR-2 follow-on: the sheet mirror of callJourneyDeptPredicate_ compared
+// final_dept to the dept NAME, which a raw org-chart label never equals, so
+// the arm never settled anything and every such call fell to the F-4 gate.
+test('PCR-2 follow-on: auth arm 1 matches final_dept against the dept\'s Final Dept Labels', function () {
+  install({ user: MANAGER, missedGateOpen: false, sheet: fakeExportSheet([
+    exRow({ date: '2026-08-19', id: '111', entryQueue: 'A_Q_Spanish', finalQueue: 'A_Q_Spanish',
+            finalDept: 'Customer Success', disposition: 'answered' }),
+  ]) });
+  const saved = h.ctx.getFinalDeptLabels_;
+  h.ctx.getFinalDeptLabels_ = function (d) { return d === 'CSR' ? ['csr', 'customer success'] : [String(d).toLowerCase()]; };
+  try {
+    const res = drill({ callId: '111', date: '2026-08-19', department: 'CSR' });
+    assert.equal(res.found, true, 'the org-chart label settles arm 1');
+    assert.equal(install.missedGateCalls.length, 0, 'without consulting the F-4 gate');
+  } finally { h.ctx.getFinalDeptLabels_ = saved; }
 });

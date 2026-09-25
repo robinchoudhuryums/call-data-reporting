@@ -1924,6 +1924,10 @@ block) unless noted, and the two behavioural ones are also driven in
   The report modals themselves stay the base layer on their own handlers;
   `dsConfirm_` / `dsPrompt_` keep their own capture-phase Escape and win
   while up. Current layers: Help, the chart tips, the "↳ path" overlay.
+  A role=menu dropdown needs no registration: `wireMenuKeys_` STOPS the
+  Escape that closes an open menu (on the trigger and inside the menu), so
+  the IR / all-dept Queue report Export menus no longer close their report
+  (`drive-f13.js` presses it both ways).
   Pinned by `html-include-structure.test.js` (the wiring) and
   `drive-admin.js` (Escape on each layer over a real report leaves the
   report open with its trap and scroll lock).
