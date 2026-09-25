@@ -1251,3 +1251,67 @@ test('ENG-8: the manual blast flags no-subscribers and all-failed, and refuses a
   delete h.ctx.prevBusinessDayIso_;
   delete h.ctx.qcdAllDeptCachedData_;
 });
+
+// S2B-8 (broad-scan 2026-09-23, Batch 8): the manual blast and the automated
+// poll could both see the day as unsent and both send it. Each now claims the
+// day under a short script lock before sending and releases the claim after.
+test('S2B-8: the in-flight claim refuses a second send of the same day and expires when stale', function () {
+  h.state.props = {};
+  const props = h.ctx.PropertiesService.getScriptProperties();
+  assert.equal(h.call('queueReportClaimSend_', props, '2026-07-10', false).ok, true);
+  assert.equal(h.call('queueReportClaimSend_', props, '2026-07-10', true).reason, 'in-flight',
+    'force does not override a send that is in flight right now');
+  assert.equal(h.call('queueReportClaimSend_', props, '2026-07-09', false).ok, true,
+    'a DIFFERENT day is not blocked');
+  h.state.props.QUEUE_REPORT_SENDING = '2026-07-10|' + (Date.now() - 16 * 60000);
+  assert.equal(h.call('queueReportClaimSend_', props, '2026-07-10', false).ok, true,
+    'a claim older than the stale limit is a killed run, ignored');
+  h.state.props.QUEUE_REPORT_LAST_SENT = '2026-07-10';
+  delete h.state.props.QUEUE_REPORT_SENDING;
+  assert.equal(h.call('queueReportClaimSend_', props, '2026-07-10', false).reason, 'sent');
+  h.state.props = {};
+});
+
+test('S2B-8: the manual blast refuses while a send is in flight, and releases its own claim even when the send throws', function () {
+  h.state.userEmail = 'admin@x.com';
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com', QUEUE_REPORT_SENDING: '2026-07-10|' + Date.now() };
+  const realSend = h.ctx.sendQueueReportForDate_;
+  let sends = 0;
+  h.ctx.sendQueueReportForDate_ = function () { sends++; throw new Error('mail down'); };
+  try {
+    assert.throws(function () { h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10', force: true }); },
+      /being sent to subscribers RIGHT NOW/);
+    assert.equal(sends, 0, 'nothing sent twice');
+    delete h.state.props.QUEUE_REPORT_SENDING;
+    assert.throws(function () { h.call('sendQcdAllDeptToSubscribers', { date: '2026-07-10' }); }, /mail down/);
+    assert.equal(sends, 1);
+    assert.equal(h.state.props.QUEUE_REPORT_SENDING, undefined, 'the claim is released on the throw path');
+  } finally {
+    h.ctx.sendQueueReportForDate_ = realSend;
+    h.state.props = {};
+  }
+});
+
+test('S2B-8: the poll stands down while a manual blast owns the day', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com',
+                    QUEUE_REPORT_SENDING: '2026-07-10|' + Date.now() };
+  const saved = { send: h.ctx.sendQueueReportForDate_, prev: h.ctx.prevBusinessDayIso_,
+                  hol: h.ctx.isCompanyHoliday_, latest: h.ctx.queueReportQcdLatestIso_, Date: h.ctx.Date };
+  let sends = 0;
+  h.ctx.sendQueueReportForDate_ = function () { sends++; return { count: 1, failed: [] }; };
+  h.ctx.prevBusinessDayIso_ = function () { return '2026-07-10'; };
+  h.ctx.isCompanyHoliday_ = function () { return false; };
+  h.ctx.queueReportQcdLatestIso_ = function () { return '2026-07-10'; };
+  const fixed = new saved.Date('2026-07-13T07:00:00-05:00');
+  h.ctx.Date = function (a) { return arguments.length ? new saved.Date(a) : new saved.Date(fixed.getTime()); };
+  h.ctx.Date.now = function () { return fixed.getTime(); };
+  try {
+    h.call('runDailyQueueReport_');
+    assert.equal(sends, 0, 'the poll did not send the day a manual blast is sending');
+    assert.equal(h.state.props.QUEUE_REPORT_LAST_SENT, undefined);
+  } finally {
+    h.ctx.sendQueueReportForDate_ = saved.send; h.ctx.prevBusinessDayIso_ = saved.prev;
+    h.ctx.isCompanyHoliday_ = saved.hol; h.ctx.queueReportQcdLatestIso_ = saved.latest; h.ctx.Date = saved.Date;
+    h.state.props = {};
+  }
+});

@@ -1884,7 +1884,11 @@ block) unless noted, and the two behavioural ones are also driven in
   context. Put a real `<button>` in the cell, let it own `aria-expanded` and
   the native Enter/Space, and keep the whole row as the click target by
   bubbling. It shipped twice after the rule was written (the Insights daily
-  day row, the Health fold head), so the pin is a SWEEP over every
+  day row, the Health fold head); the older F13 row-level shape
+  (`tr.qcd-expandable` with its own `tabindex` + `aria-expanded`, Insights
+  Queue health + the all-dept report) was moved onto a cell
+  `button.qcd-expand-toggle` in broad-scan Batch 8 (`drive-f13.js` presses
+  Enter and Space on both), so the pin is a SWEEP over every
   `script-*.html` fragment, not a per-site assertion. **The corollary bites
   on the way in:** once the button is native, a row-level keydown handler
   toggles the same thing twice per keypress — delete it.

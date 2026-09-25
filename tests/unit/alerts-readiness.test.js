@@ -105,3 +105,40 @@ test('Batch 4 follow-on: an assessment stamps ALERTS_STARTED; a DEFER does not',
   assert.ok(Date.parse(h.state.props.ALERTS_LAST) >= Date.parse(h.state.props.ALERTS_STARTED),
     'a finished run records its outcome AFTER the start, so it never reads INTERRUPTED');
 });
+
+// ENG-4 (broad-scan 2026-09-23, Batch 8, re-scoped after ENG-3): a second
+// admin's trigger is a second daily run. The run marker was read before and
+// written after the run, so two runs firing together both alerted. The date
+// is now claimed under the script lock; a concurrent run stands down.
+test('ENG-4: a run in flight for the same date makes a concurrent trigger stand down', function () {
+  const env = install('2026-09-21', { ALERTS_RUN_CLAIM: '2026-09-21|' + Date.now() });
+  const res = h.call('alertsGatedAttempt_', at('08:05'), 'trigger');
+  assert.equal(res.decision, 'in-flight');
+  assert.equal(env.calls.length, 0, 'the second trigger assessed nothing');
+});
+
+test('ENG-4: the claim is released after the run (and a stale claim is ignored)', function () {
+  let env = install('2026-09-21');
+  h.call('alertsGatedAttempt_', at('08:05'), 'trigger');
+  assert.equal(env.calls.length, 1);
+  assert.equal(h.state.props.ALERTS_RUN_CLAIM, undefined, 'released on the success path');
+  env = install('2026-09-21', { ALERTS_RUN_CLAIM: '2026-09-21|' + (Date.now() - 21 * 60000) });
+  h.call('alertsGatedAttempt_', at('08:05'), 'trigger');
+  assert.equal(env.calls.length, 1, 'a claim older than the stale limit is a killed run, ignored');
+  env = install('2026-09-21');
+  h.ctx.runAlertsCore_ = function () { throw new Error('boom'); };
+  h.call('alertsGatedAttempt_', at('08:05'), 'trigger');
+  assert.equal(h.state.props.ALERTS_RUN_CLAIM, undefined, 'released on the throw path too');
+});
+
+test('ENG-4: a BUSY script lock (some other admin write) reschedules instead of losing the day', function () {
+  const env = install('2026-09-21');
+  h.state.lockBusy = true;
+  try {
+    const res = h.call('alertsGatedAttempt_', at('08:05'), 'trigger');
+    assert.equal(res.decision, 'defer');
+    assert.equal(env.calls.length, 0);
+    assert.deepEqual(env.made.map(function (t) { return t.getHandlerFunction(); }), ['runDailyAlertsRetry_']);
+    assert.match(h.state.props.ALERTS_LAST_RESULT, /^DEFERRED 2026-09-21: the script lock was busy/);
+  } finally { h.state.lockBusy = false; }
+});

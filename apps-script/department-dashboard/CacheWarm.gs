@@ -14,15 +14,16 @@
  *   - getCompanyOverview() -- the shared Overview blob.
  *   - getDepartmentSummary({dept, latest, latest}) for every dept -- the
  *     My Department default range (INV-43 snaps From/To to the latest date).
- *   - getQcdAllDepartments(yesterday, yesterday) -- the exact key the
- *     all-departments Daily Queue Report modal pre-loads (6h qcdAll TTL);
- *     freshness-guarded so a late ingest can't pin an empty blob.
- *   - getInsightsReport({dept, agents: []}) for every dept, over TWO
- *     windows most-used-first (PERF-1): the dept-page default
- *     (latest..latest -- what the inline Insights section loads on every
- *     My Department open) and then the last-30-days launcher window the
- *     Help quick-start chips run. Runs LAST under a shared 4-minute
- *     runtime budget (a partial warm is fine).
+ *   - getQcdAllDepartments(latestQcd, latestQcd) -- the exact key the
+ *     all-departments Daily Queue Report modal pre-loads (6h qcdAll TTL;
+ *     ENG-10: the LATEST QCD date, never calendar yesterday); freshness-
+ *     guarded against the previous business day.
+ *   - getInsightsReport for every dept, most-used first (PERF-1): the
+ *     agent-free dept-page default (latest..latest -- what the inline
+ *     Insights section loads on every My Department open), then the
+ *     quick-start chip request (S2A-4: same window, the picker's ACTIVE
+ *     agents). Runs LAST under a shared 4-minute runtime budget (a partial
+ *     warm is fine).
  *
  * NOTE: CacheService is per-Apps-Script-PROJECT, so this MUST run in the
  * dashboard project (it can't be warmed from the cdr-import ingest project).
@@ -42,6 +43,31 @@ var CACHE_WARM_DEFAULT_HOUR = 9;   // Central; after the morning ingest window
 // measured 730s+). Each phase now checks this before starting a unit of work
 // and records what it skipped, so the run always ends by recording.
 var CACHE_WARM_TOTAL_BUDGET_MS = 5 * 60 * 1000;
+
+/**
+ * S2A-4: warms the quick-start chip request per dept -- (dept, latest,
+ * latest, the picker's active agents). Returns the number of depts left cold
+ * by the budget; `tally(ok)` counts each attempt.
+ */
+function warmInsightsChips_(depts, latest, start, budgetMs, tally) {
+  for (var j = 0; j < depts.length; j++) {
+    if (Date.now() - start > budgetMs) {
+      Logger.log('warmReportCaches_: insights (chips) budget hit -- ' + (depts.length - j) + ' dept(s) left cold.');
+      return depts.length - j;
+    }
+    try {
+      var init = getInsightsReportInit({ department: depts[j], from: latest, to: latest }) || {};
+      var picked = (init.activeAgents && init.activeAgents.length) ? init.activeAgents : (init.agents || []);
+      if (!picked.length) continue;   // empty roster: the chip runs agent-free, warmed above
+      getInsightsReport({ department: depts[j], from: latest, to: latest, agents: picked });
+      tally(true);
+    } catch (e) {
+      tally(false);
+      Logger.log('warmReportCaches_: insights (chips) ' + depts[j] + ' failed: ' + (e && e.message ? e.message : e));
+    }
+  }
+  return 0;
+}
 
 // ── Public (admin-gated) API ──────────────────────────────────────────
 
@@ -118,21 +144,27 @@ function warmReportCaches_() {
   // hasn't landed yesterday's QCD rows yet, warming would pin an
   // empty/partial report for the long TTL, so we skip instead (the first
   // organic request after ingest computes fresh and caches correctly).
+  // ENG-10 (broad-scan 2026-09-23, Batch 8): the modal does NOT preload
+  // calendar yesterday -- qcdAllDeptDefaultDates_ (script-11) opens on the
+  // LATEST QCD date, falling back to the previous workday. Warming literal
+  // yesterday missed every Monday and every post-holiday morning (a weekend
+  // day has no queue data, and it is not the key the modal asks for). Warm the
+  // latest QCD date, and only once it has reached the previous BUSINESS day
+  // (the same freshness guard, now weekend/holiday-aware).
   try {
-    var yesterday = Utilities.formatDate(
-      new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
+    var expectedQcd = prevBusinessDayIso_(new Date());
     var dates = null;
     try { dates = getLatestDataDates(); } catch (e2) { dates = null; }
     var qcdLatest = dates && dates.qcd;
     if (overBudget_()) {
       qcdSkipped = 1;   // O-4
       Logger.log('warmReportCaches_: skipping qcdAll warm (run budget hit)');
-    } else if (qcdLatest && qcdLatest >= yesterday) {
-      getQcdAllDepartments({ from: yesterday, to: yesterday });
+    } else if (qcdLatest && qcdLatest >= expectedQcd) {
+      getQcdAllDepartments({ from: qcdLatest, to: qcdLatest });
       warmed++;
     } else {
       Logger.log('warmReportCaches_: skipping qcdAll warm (QCD latest '
-        + (qcdLatest || 'unknown') + ' < ' + yesterday + ')');
+        + (qcdLatest || 'unknown') + ' < ' + expectedQcd + ')');
     }
   } catch (e) {
     failed++;
@@ -152,8 +184,8 @@ function warmReportCaches_() {
   // launcher window this only used to warm. The cache key carries the
   // window (`insights:v24:<dept>:<from>:<to>:...`), so warming just the
   // 30-day key left EVERY first dept open paying a full cold aggregation
-  // while the warm sat unread. The launcher window still gets warmed
-  // second, since the Help quick-start chips run exactly that request.
+  // while the warm sat unread. The quick-start chip request is warmed
+  // second (S2A-4 below).
   // Cost note: a 1-day window is NOT cheaper to compute than a 30-day one
   // -- both fetch the whole 12-month trend range (computeTrendStartDate_,
   // INV-29) -- so ordering, not window size, is what the budget buys.
@@ -181,11 +213,18 @@ function warmReportCaches_() {
   // 1. The dept-page default window -- what an inline Insights section
   //    loads on every My Department open.
   insSkipped += warmInsightsWindow_(latest, latest, 'dept default');
-  // 2. The Overview/Help quick-start chip window (last 30 days ending
-  //    yesterday) -- the exact agent-free request both chips auto-run.
-  var insFrom = Utilities.formatDate(new Date(Date.now() - 30 * 86400000), TZ, 'yyyy-MM-dd');
-  var insTo   = Utilities.formatDate(new Date(Date.now() - 86400000), TZ, 'yyyy-MM-dd');
-  insSkipped += warmInsightsWindow_(insFrom, insTo, 'launcher 30d');
+  // 2. S2A-4 (broad-scan 2026-09-23, Batch 8): the quick-start chips. This
+  //    used to warm the whole roster over the last 30 days, but a chip
+  //    (launcherOpenInsights_) runs over the DEPT window -- latest..latest by
+  //    default -- with the ACTIVE agents ticked (selectAllActiveAgents_), and
+  //    the insights key carries hashAgents_(agents). The warm never matched a
+  //    single chip request. Warm that exact selection: the init endpoint the
+  //    picker itself calls, its active list (or the whole list when nobody is
+  //    active, which is what the picker then ticks). Best effort: a sub-queue
+  //    parent's picker can group differently, and then this just misses.
+  insSkipped += warmInsightsChips_(depts, latest, start, INSIGHTS_WARM_BUDGET_MS, function (ok) {
+    if (ok) warmed++; else failed++;
+  });
 
   var ms = Date.now() - start;
   Logger.log('warmReportCaches_: warmed=' + warmed + ' failed=' + failed

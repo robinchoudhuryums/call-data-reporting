@@ -16,6 +16,7 @@ function sendDepartmentSummaryEmail(req) {
   if (user.role === 'none') throw new Error('Not authorized.');
 
   const data = getDepartmentSummary(req);   // full validation + auth inside
+  assertReportEmailThrottle_(email);   // SEC-2
   const meta = (data && data.meta) || {};
   const dept = meta.department || String((req && req.department) || '').trim();
   const from = meta.from || '', to = meta.to || '';

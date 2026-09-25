@@ -52,10 +52,16 @@
   deferred mirror is CONFIRMED but NOT fixed** -- the INV-16 writer conflates
   lost and empty cells as NULL, so it needs a lost-cell channel (design in
   block 202); unscheduled.
-  **WHERE I LEFT OFF:** Batches 1-7 + the follow-ons pushed, NOT deployed. Next: deploy the
+  **Batch 8 SHIPPED on this branch** (block 203, + the qcd-expandable a11y
+  tidy-up): S2B-3/S2B-4 orphan rename audits before Neon + Neon-only retry,
+  PCR-7 coaching lock + status guard, SEC-2 per-user report-email throttle,
+  S2B-8 queue-report send claim, ENG-4 alerts run claim (busy -> retry),
+  SEC-4 login-notify byte cap, ING-5 RETENTION_HOLD + importer, S2A-5 digest
+  stale text + preview gate, S2A-4/ENG-10 CacheWarm keys.
+  **WHERE I LEFT OFF:** Batches 1-8 + the follow-ons pushed, NOT deployed. Next: deploy the
   dashboard + cdr-import + cdr-report, run "Back up now" once, check the
   Health page's `historical-sort` / `email-bcc` rows, then
-  `/broad-implement Batch 8` (engines & admin write hygiene). The full
+  `/broad-implement Batch 9` (performance & chart edges). The full
   plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).

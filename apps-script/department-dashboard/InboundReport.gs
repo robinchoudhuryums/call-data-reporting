@@ -1059,6 +1059,7 @@ function getInboundReport(req) {
 function sendInboundReportEmail(req) {
   const scope = inboundResolveRequest_(req);
   const email = (scope.user && scope.user.email) || Session.getActiveUser().getEmail();
+  assertReportEmailThrottle_(email);   // SEC-2
   const data = computeInboundReport_(scope);
   if (!data || data.meta.available === false) {
     throw new Error('The Inbound report is unavailable right now — try again shortly.');

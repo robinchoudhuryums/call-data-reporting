@@ -185,16 +185,8 @@
         if (!row) return;
         qcdToggleExpandRow_(row);
       });
-      // F13: keyboard equivalent (the per-source breakdown + violation dates
-      // are only reachable through this toggle).
-      bodyEl.addEventListener('keydown', function (e) {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        const row = e.target.closest && e.target.closest('tr.qcd-expandable');
-        if (!row) return;
-        if (e.target.closest('button')) return;   // let real buttons act
-        e.preventDefault();
-        qcdToggleExpandRow_(row);
-      });
+      // (Enter/Space: each expandable row's .qcd-expand-toggle is a native
+      // button whose click bubbles here -- a row keydown would toggle twice.)
     }
   }
 
@@ -697,10 +689,13 @@
       const hasViolDates = (Number(q.violations) || 0) > 0 && (q.violationDates || []).length;
       const hasDetail = sources.length > 0 || hasViolDates;
       const chevron = hasDetail ? ' <span class="qcd-expand-icon">&#9654;</span>' : '';
-      // F13: only the rows that actually expand become focusable.
-      let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '"'
-        + (hasDetail ? ' tabindex="0" aria-expanded="false"' : '') + '>'
-        + '<td>' + escapeHtml(q.queue) + subTag + chevron + qMtdSub(q) + '</td>'
+      // F13 -> a11y tidy-up: only the rows that actually expand get the
+      // disclosure BUTTON (which owns aria-expanded); the row is no tab stop.
+      const qLabel = escapeHtml(q.queue) + subTag + chevron;
+      let out = '<tr class="' + (hasDetail ? 'qcd-expandable' : '') + '">'
+        + '<td>' + (hasDetail
+          ? '<button type="button" class="qcd-expand-toggle" aria-expanded="false">' + qLabel + '</button>'
+          : qLabel) + qMtdSub(q) + '</td>'
         + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
         + '<td class="qcd-daily-bar-cell">' + qcdDailyBarCell_(q, { tick: true, tallyUnit: qcdSectionUnit, tallyMax: QCD_TALLY_MAX_BLOCKS }) + '</td>'   // QV-1 + R16e per-section tally
         + '<td class="num">' + escapeHtml(q.longestWait) + '</td>'
@@ -830,6 +825,8 @@
       if (sectionTbody) {
         sectionTbody.querySelectorAll('tr.qcd-detail-row').forEach(function (dr) { dr.style.display = ''; });
         sectionTbody.querySelectorAll('tr.qcd-expandable .qcd-expand-icon').forEach(function (ic) { ic.innerHTML = '&#9660;'; });
+        // ...and the disclosure buttons say so (they used to keep reading collapsed).
+        sectionTbody.querySelectorAll('tr.qcd-expandable .qcd-expand-toggle').forEach(function (b) { b.setAttribute('aria-expanded', 'true'); });
       }
     }
   }

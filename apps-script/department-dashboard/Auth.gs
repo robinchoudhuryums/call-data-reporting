@@ -815,9 +815,20 @@ function removeAccessControlRow(req) {
 // INV-01 note: writes a Script Property only -- no spreadsheet write.
 
 var LOGIN_NOTIFY_MAX_KEYS = 300;
+// SEC-4 (broad-scan 2026-09-23, Batch 8): the KEY cap alone did not keep the
+// store under the 9 KB Script Property value limit -- at ~55 bytes an entry it
+// overflowed near 165 addresses, long before 300 keys. setProperty then threw
+// after every send, the sighting was never recorded, and every page view by a
+// new or changed address emailed the admins again: the exact loop the
+// eviction exists to prevent. The store is now bounded in UTF-8 BYTES too,
+// with headroom under the limit, evicting oldest-first like the key cap.
+var LOGIN_NOTIFY_MAX_BYTES = 8000;
+function loginNotifyBytes_(str) {
+  return encodeURIComponent(str).replace(/%[0-9A-F]{2}/gi, 'x').length;   // UTF-8 byte count
+}
 
 /** Pure decision core (tests/unit/login-notify.test.js). */
-function loginNotifyDecide_(storeJson, emailLower, outcomeKey, maxKeys) {
+function loginNotifyDecide_(storeJson, emailLower, outcomeKey, maxKeys, maxBytes) {
   var store = {};
   try { store = JSON.parse(storeJson || '{}') || {}; } catch (e) { store = {}; }
   var prev = store[emailLower];
@@ -848,6 +859,14 @@ function loginNotifyDecide_(storeJson, emailLower, outcomeKey, maxKeys) {
     if (oldest !== undefined) { delete store[oldest]; evicted = oldest; }
   }
   store[emailLower] = outcomeKey;
+  // SEC-4: then the BYTE bound -- oldest first, never the entry just written.
+  var byteCap = maxBytes || LOGIN_NOTIFY_MAX_BYTES;
+  while (loginNotifyBytes_(JSON.stringify(store)) > byteCap) {
+    var victim = Object.keys(store)[0];
+    if (victim === undefined || victim === emailLower) break;
+    delete store[victim];
+    evicted = evicted || victim;
+  }
   return { notify: true, reason: reason, prev: prev, store: store, evicted: evicted };
 }
 
@@ -932,6 +951,13 @@ function notifyLoginEvent_(email, user) {
       (e && e.message) || e);
     return;
   }
-  props.setProperty('LOGIN_NOTIFY_SEEN', JSON.stringify(d.store));
+  try {
+    props.setProperty('LOGIN_NOTIFY_SEEN', JSON.stringify(d.store));
+  } catch (pe) {
+    // SEC-4: never silent -- a failed save means this address re-notifies.
+    Logger.log('notifyLoginEvent_: sighting NOT recorded (%s) -- %s will notify again.',
+      (pe && pe.message) || pe, emailLower);
+    return;
+  }
   Logger.log('notifyLoginEvent_: %s (%s, %s)', emailLower, outcomeKey, d.reason);
 }

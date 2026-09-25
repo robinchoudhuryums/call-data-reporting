@@ -656,6 +656,7 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
 function sendOutboundReportEmail(req) {
   const scope = outboundResolveRequest_(req);
   const email = (scope.user && scope.user.email) || Session.getActiveUser().getEmail();
+  assertReportEmailThrottle_(email);   // SEC-2
   const data = computeOutboundReport_(scope);
   if (!data || data.meta.available === false) {
     throw new Error('The Outbound report is unavailable right now — try again shortly.');

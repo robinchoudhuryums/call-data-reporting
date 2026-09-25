@@ -380,6 +380,10 @@ tests/
                               deliberate exemptions),
                               login-notify (P14 store-after-confirmed-send),
                               orphan-rename-race (the F-22 re-verify),
+                              orphan-rename-neon (S2B-3/S2B-4: the audit row
+                              lands BEFORE the Neon mirror, the Neon outcome
+                              as its own neon-rename row, and the Neon-only
+                              retry of a failed mirror),
                               orphan-roster-add (the New-hire flow),
                               agent-day (6d: the agent-day interaction view --
                               the three-tier horizon decided by what CAME

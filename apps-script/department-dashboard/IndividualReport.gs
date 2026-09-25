@@ -962,6 +962,7 @@ function sendIndividualReportEmail(req) {
   // `role === 'none'` check -- that let the AGENT role through to the
   // send-to-self path, mailing any PNG from the deployer's mailbox.
   assertManagerOrAdmin_(user);
+  assertReportEmailThrottle_(email);   // SEC-2
 
   // Owner ruling 2026-09: a manager may send an agent THEIR OWN report
   // instead of mailing it to themselves and forwarding. The recipient is

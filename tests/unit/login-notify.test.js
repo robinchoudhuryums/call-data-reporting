@@ -145,3 +145,30 @@ test('O-10: LOGIN_NOTIFY_ENABLED=FALSE (any case) silences the notifier; anythin
   h.call('notifyLoginEvent_', 'new@x.com', { role: 'none' });
   assert.equal(h.state.sentEmails.length, 1, 'unset = on');
 });
+
+// SEC-4 (broad-scan 2026-09-23, Batch 8): the 300-KEY cap did not keep the
+// store under the 9 KB Script Property limit -- it overflowed near ~165
+// realistic addresses, setProperty then threw after every send, and every page
+// view by a new address re-emailed the admins. The store is byte-bounded too.
+test('SEC-4: the store stays under the byte cap at realistic address sizes, evicting oldest-first', function () {
+  let json = '{}';
+  let last = null;
+  for (let i = 0; i < 400; i++) {
+    const email = 'firstname.lastname' + i + '@universalmedsupply.com';
+    last = decide(json, email, 'manager:Customer Service Representatives+Sales');
+    json = JSON.stringify(last.store);
+    assert.ok(Buffer.byteLength(json, 'utf8') <= h.ctx.LOGIN_NOTIFY_MAX_BYTES,
+      'store exceeded the byte cap at address ' + i + ': ' + Buffer.byteLength(json, 'utf8'));
+  }
+  const keys = Object.keys(last.store);
+  assert.ok(keys.length < 300, 'the BYTE cap bites before the key cap at these sizes (' + keys.length + ')');
+  assert.equal(keys[keys.length - 1], 'firstname.lastname399@universalmedsupply.com', 'the new address is recorded');
+  assert.ok(!('firstname.lastname0@universalmedsupply.com' in last.store), 'the oldest went first');
+  assert.ok(h.ctx.LOGIN_NOTIFY_MAX_BYTES < 9 * 1024, 'headroom under the 9 KB property limit');
+});
+
+test('SEC-4: the byte count is UTF-8, not UTF-16 characters', function () {
+  assert.equal(h.call('loginNotifyBytes_', 'abc'), 3);
+  assert.equal(h.call('loginNotifyBytes_', 'é'), 2);
+  assert.equal(h.call('loginNotifyBytes_', '€'), 3);
+});

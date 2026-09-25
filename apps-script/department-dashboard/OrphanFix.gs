@@ -259,35 +259,65 @@ function applyOrphanRename(req) {
   let affected = 0;
   let aliasAdded = false;
   let neonRename = null;
+  const neonConfigured = !!PropertiesService.getScriptProperties().getProperty('NEON_HOST');
   try {
     affected = renameHistoricalAgent_(fromName, toName);
     if (affected === 0) {
-      throw new Error('No rows in DQE Historical Data have agent name "'
-                      + fromName + '". Nothing renamed.');
+      // S2B-4: nothing left on the SHEET is exactly the state a FAILED Neon
+      // mirror leaves behind (the sheet rename committed, the Neon one did
+      // not) -- and with DQE_READ_SOURCE=neon the orphan is still listed, so
+      // the admin retries. That retry used to throw here, before Neon, so a
+      // failed mirror could never be repaired from the UI. Now: a Neon-only
+      // retry, audited as its own `neon-rename` row. Nothing on either side
+      // is still the original error.
+      const retry = neonConfigured ? renameAgentInNeon_(fromName, toName) : null;
+      if (!retry || (retry.renamed === 0 && retry.skipped === 0)) {
+        throw new Error('No rows in DQE Historical Data have agent name "'
+                        + fromName + '". Nothing renamed.'
+                        + (neonConfigured && !retry ? ' (The Neon mirror could not be reached either -- try again later.)' : ''));
+      }
+      if (alsoAddAlias) {
+        upsertAgentAlias_(fromName, toName, admin, notes);
+        aliasAdded = true;
+      }
+      appendOrphanFixLog_({
+        admin: admin, action: 'neon-rename', fromName: fromName, toName: toName, affected: 0,
+        notes: notes + orphanNeonNote_(retry, true) + (aliasAdded ? ' | alias added' : ''),
+      });
+      neonRename = retry;
+    } else {
+      if (alsoAddAlias) {
+        upsertAgentAlias_(fromName, toName, admin, notes);
+        aliasAdded = true;
+      }
+      // S2B-3: the audit row lands BEFORE the Neon mirror. The mirror opens a
+      // connection that can hang past the execution ceiling (the open
+      // hanging-connect problem), and a kill skips every catch -- so the
+      // row written after it could be lost, leaving the irreversible sheet
+      // rename unaudited. The Neon OUTCOME follows as its own append-only
+      // `neon-rename` row (INV-47), so nothing is overwritten.
+      appendOrphanFixLog_({
+        admin:    admin,
+        action:   alsoAddAlias ? 'rename+alias' : 'rename',
+        fromName: fromName,
+        toName:   toName,
+        affected: affected,
+        notes:    notes + (neonConfigured ? ' | Neon: mirror follows (see the neon-rename row)' : ''),
+      });
+      // Best-effort: mirror the rename into Neon's dqe_history so it isn't
+      // lost once aged rows drop from the sheet. Never throws -- the sheet
+      // rename above is the authoritative action today. null = Neon not
+      // configured on this project, or the write failed (logged inside).
+      neonRename = renameAgentInNeon_(fromName, toName);
+      if (neonConfigured) {
+        try {
+          appendOrphanFixLog_({
+            admin: admin, action: 'neon-rename', fromName: fromName, toName: toName, affected: 0,
+            notes: orphanNeonNote_(neonRename, false),
+          });
+        } catch (le) { Logger.log('applyOrphanRename: neon-rename audit row failed: ' + le); }
+      }
     }
-    if (alsoAddAlias) {
-      upsertAgentAlias_(fromName, toName, admin, notes);
-      aliasAdded = true;
-    }
-    // Best-effort: mirror the rename into Neon's dqe_history so it isn't
-    // lost once aged rows drop from the sheet. Never throws -- the sheet
-    // rename above is the authoritative action today. null = Neon not
-    // configured on this project, or the write failed (logged inside).
-    neonRename = renameAgentInNeon_(fromName, toName);
-    const neonNote = neonRename
-      ? (' | Neon: ' + neonRename.renamed + ' renamed'
-         + (neonRename.skipped ? ', ' + neonRename.skipped + ' conflict-skipped' : ''))
-      : (PropertiesService.getScriptProperties().getProperty('NEON_HOST')
-          ? ' | Neon: write failed (see log)'
-          : '');
-    appendOrphanFixLog_({
-      admin:    admin,
-      action:   alsoAddAlias ? 'rename+alias' : 'rename',
-      fromName: fromName,
-      toName:   toName,
-      affected: affected,
-      notes:    notes + neonNote,
-    });
     // Bust the single fixed-key Overview cache so the change shows
     // up immediately on the landing page. Per-(dept, range) caches
     // TTL out naturally (REPORT_CACHE_TTL_SECONDS, 6h since R24).
@@ -683,6 +713,15 @@ function appendRosterEntry_(department, name, exts) {
  * succeeds. Returns { renamed, skipped } on success, or null when Neon
  * isn't configured / the write failed.
  */
+var ORPHAN_NEON_STMT_TIMEOUT_S_ = 60;   // S2B-3: bounds each rename statement
+
+/** S2B-3/S2B-4: the Neon outcome in an Orphan Fix Log `neon-rename` row. */
+function orphanNeonNote_(res, isRetry) {
+  if (!res) return 'Neon: write failed or unreachable (see log) -- re-run the same rename to retry the mirror';
+  return 'Neon' + (isRetry ? ' retry' : '') + ': ' + res.renamed + ' renamed'
+    + (res.skipped ? ', ' + res.skipped + ' conflict-skipped' : '');
+}
+
 function renameAgentInNeon_(fromName, toName) {
   var props = PropertiesService.getScriptProperties();
   var host = props.getProperty('NEON_HOST');
@@ -692,16 +731,13 @@ function renameAgentInNeon_(fromName, toName) {
   }
   var conn;
   try {
-    // NO connect/socket/login timeout params here: Apps Script's JDBC service
-    // REJECTS them outright -- "The following connection properties are
-    // unsupported: connectTimeout,socketTimeout,loginTimeout" -- so adding them
-    // made EVERY Neon connection fail instantly across all three projects
-    // (shipped 2026-08-24, caught in production the next day). The hanging-connect
-    // problem they were meant to bound is real but NOT solvable this way; bound
-    // STATEMENTS with stmt.setQueryTimeout(seconds) instead, which the platform
-    // does support. cross-file-pins.test.js fails if the params come back.
-    var url = 'jdbc:postgresql://' + host + '/' + props.getProperty('NEON_DB');
-    conn = Jdbc.getConnection(url, props.getProperty('NEON_USER'), props.getProperty('NEON_PASS'));
+    // S2B-3: the SHARED dashboard connection (NeonRead.gs) instead of a
+    // private JDBC connect -- it carries the per-execution down-memo
+    // (a Neon found unreachable earlier in this execution is not dialled
+    // again) and keeps the no-timeout-params rule in ONE place. Statements
+    // are bounded with setQueryTimeout below; there is no supported
+    // connect-level timeout (docs/neon-layer.md).
+    conn = getDashboardNeonConn_();
     if (!conn) return null;
 
     // F11: run the conflict-safe rename AND the skip-count inside ONE
@@ -718,6 +754,7 @@ function renameAgentInNeon_(fromName, toName) {
         'WHERE t.agent_name = ? ' +
         'AND NOT EXISTS (SELECT 1 FROM dqe_history x ' +
         'WHERE x.call_date = t.call_date AND x.agent_name = ?)');
+      upStmt.setQueryTimeout(ORPHAN_NEON_STMT_TIMEOUT_S_);   // S2B-3
       upStmt.setString(1, toName);
       upStmt.setString(2, fromName);
       upStmt.setString(3, toName);
@@ -733,6 +770,7 @@ function renameAgentInNeon_(fromName, toName) {
       // concurrent insert between two statements.
       var skipStmt = conn.prepareStatement(
         'SELECT COUNT(*) FROM dqe_history WHERE agent_name = ?');
+      skipStmt.setQueryTimeout(ORPHAN_NEON_STMT_TIMEOUT_S_);
       skipStmt.setString(1, fromName);
       var srs = skipStmt.executeQuery();
       var skipped = srs.next() ? srs.getInt(1) : 0;

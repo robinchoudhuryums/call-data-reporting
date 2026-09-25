@@ -34,6 +34,42 @@ function getAdminEmails_() {
 }
 
 /**
+ * SEC-2 (broad-scan 2026-09-23, Batch 8): a per-USER cap on the report
+ * emails a signed-in user can trigger (dept summary, IR, Insights, the
+ * all-dept Queue report, Inbound, Outbound). Each send also BCCs an admin,
+ * and the MailApp quota is SHARED with alerts, digests and the watchdogs, so
+ * a devtools loop on one endpoint could starve every engine for the day.
+ * Rolling window in CacheService (6 h, its maximum TTL): at most
+ * USER_REPORT_EMAIL_CAP_ sends per user per window. Lossy by design (no
+ * lock; a lost write under-counts by one) -- it is a quota guard, not an
+ * audit. Admins are capped too: the quota does not care who drains it.
+ * Throws a user-facing error at the cap; records the attempt BEFORE the
+ * send so a loop of failing sends is bounded as well.
+ */
+var USER_REPORT_EMAIL_CAP_ = 30;
+var USER_REPORT_EMAIL_WINDOW_S_ = 6 * 3600;
+function assertReportEmailThrottle_(email) {
+  var who = String(email || '').trim().toLowerCase();
+  if (!who) return;
+  var cache, key = 'mailThrottle:v1:' + who.slice(0, 200), now = Date.now(), stamps = [];
+  try {
+    cache = CacheService.getScriptCache();
+    var raw = cache.get(key);
+    stamps = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(stamps)) stamps = [];
+  } catch (e) { return; }   // cache unavailable: fail OPEN (the send itself is authorized)
+  var cutoff = now - USER_REPORT_EMAIL_WINDOW_S_ * 1000;
+  stamps = stamps.filter(function (t) { return Number(t) > cutoff; });
+  if (stamps.length >= USER_REPORT_EMAIL_CAP_) {
+    throw new Error('You have sent ' + stamps.length + ' report emails in the last '
+      + Math.round(USER_REPORT_EMAIL_WINDOW_S_ / 3600) + ' hours -- the limit protects the '
+      + 'shared daily email quota that alerts and digests also use. Try again later.');
+  }
+  stamps.push(now);
+  try { cache.put(key, JSON.stringify(stamps), USER_REPORT_EMAIL_WINDOW_S_); } catch (e2) { /* best-effort */ }
+}
+
+/**
  * R28: the ONE send chokepoint for every dashboard email. Every
  * MailApp.sendEmail callsite routes through here (cross-file-pins.test.js
  * fails on a bare one) so the default BCC cannot be missed by a new sender.
@@ -813,6 +849,7 @@ var PROP_REGISTRY_ = Object.freeze({
     ALERTS_LAST: 'engine', ALERTS_LAST_RESULT: 'engine',   // O-5: the daily alerts outcome
     ALERTS_RUN_MARKER: 'engine',   // ENG-3: the last business day the daily alerts assessed
     ALERTS_STARTED: 'engine',      // Batch 4 follow-on: an assessment's start (INTERRUPTED check)
+    ALERTS_RUN_CLAIM: 'engine',    // ENG-4: the in-flight run claim (two admins' triggers)
     ANSWER_RATE_FORMULA: 'config',                          // DD-2: 'rung' (default) | 'answerable' (H2)
     ANSWER_RATE_PROBE_FROM: 'tool', ANSWER_RATE_PROBE_TO: 'tool',   // DD-2: probeAnswerRateFormulas window
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
@@ -836,6 +873,7 @@ var PROP_REGISTRY_ = Object.freeze({
     QUEUE_REPORT_LAST_SENT: 'engine', QUEUE_REPORT_LAST_MISSED: 'engine',
     QUEUE_REPORT_LAST_RESULT: 'engine',
     QUEUE_REPORT_LAST: 'engine', QUEUE_REPORT_STARTED: 'engine',   // ENG-5
+    QUEUE_REPORT_SENDING: 'engine',   // S2B-8: the in-flight send claim
     SMOKE_LAST: 'engine', SMOKE_LAST_RESULT: 'engine',
     // tool — editor-run diagnostic inputs (self-cleared after a clean run)
     DQE_PARITY_FROM: 'tool', DQE_PARITY_TO: 'tool',

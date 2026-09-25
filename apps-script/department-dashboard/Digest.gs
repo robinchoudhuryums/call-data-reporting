@@ -117,6 +117,16 @@ function sendPreviewDigest(req) {
   if (!window) throw new Error('No window available for cadence ' + cadence);
 
   const adminEmail = Session.getActiveUser().getEmail();
+  // S2A-5: a preview ran no freshness check, so one sent before the morning
+  // import showed empty tiles plus the R32 "No calls recorded -- the roster or
+  // queue mapping may need a look" note: it blamed the roster for a missing
+  // import. Apply the scheduled send's own gate (the window's last BUSINESS
+  // day must have landed, O-2) and carry the same stale callout.
+  let staleLatest;
+  try {
+    const latest = digestLatestDqeIso_();
+    if (!(latest && latest >= lastBusinessDayOnOrBeforeIso_(window.toIso))) staleLatest = latest || '';
+  } catch (fe) { /* unknown freshness: preview as before */ }
   sendDigestEmail_({
     to:         adminEmail,
     dept:       dept,
@@ -126,6 +136,7 @@ function sendPreviewDigest(req) {
     toIso:      window.toIso,
     isPreview:  true,
     previewFor: String((req && req.email) || ''),
+    staleLatest: staleLatest,
   });
   return { to: adminEmail };
 }
@@ -709,12 +720,21 @@ function sendDigestEmail_(opts) {
     : '';
 
   // R31: the cutoff send names the gap instead of showing blank tiles.
+  // S2A-5 (broad-scan 2026-09-23, Batch 8): only a ONE-day window is empty
+  // for want of its day. A weekly / monthly window is missing its LAST day
+  // (the gate checks the last business day), so its tiles already carry the
+  // earlier days -- "the tiles below are empty" was false there.
+  const multiDay = opts.fromIso !== opts.toIso;
   const staleRow = (opts.staleLatest !== undefined)
-    ? ekRow_(ekCalloutHtml_('Data not yet available for ' + rangeLabel,
-        'The morning import had not landed for ' + ekEsc_(rangeLabel) + ' when this digest was sent '
-        + '(data is through ' + ekEsc_(opts.staleLatest || 'an earlier date') + '). The tiles below are '
-        + 'empty for that reason, not because the team took no calls; the dashboard will show the day '
-        + 'once the import completes.', 'warn'), '16px 26px 0')
+    ? ekRow_(ekCalloutHtml_(multiDay ? ('Latest day not yet available for ' + rangeLabel)
+                                     : ('Data not yet available for ' + rangeLabel),
+        'The morning import had not landed for ' + ekEsc_(multiDay ? ('the end of ' + rangeLabel) : rangeLabel)
+        + ' when this digest was ' + (opts.isPreview ? 'previewed' : 'sent')
+        + ' (data is through ' + ekEsc_(opts.staleLatest || 'an earlier date') + '). '
+        + (multiDay
+          ? 'The figures below cover only the days that had landed; the rest will show in the dashboard once the import completes.'
+          : 'The tiles below are empty for that reason, not because the team took no calls; the dashboard will show the day once the import completes.'),
+        'warn'), '16px 26px 0')
     : '';
 
   const subject = (opts.isPreview ? '[Preview] ' : '')

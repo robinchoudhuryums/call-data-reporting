@@ -190,27 +190,35 @@ function record(name, pass, detail) {
     await surface.open();
     const exp = page.locator(surface.sel).first();
     if (await exp.count()) {
-      const expAttrs = await exp.evaluate((el) => ({
-        tabindex: el.getAttribute('tabindex'), expanded: el.getAttribute('aria-expanded'),
-      }));
-      record(surface.label + ': expandable row is focusable + reports state',
-        expAttrs.tabindex === '0' && expAttrs.expanded === 'false', JSON.stringify(expAttrs));
-      await exp.focus();
+      // A11y tidy-up (the E-8 contract): the disclosure is a real <button> in
+      // the first cell that owns aria-expanded; the row is no tab stop. One
+      // Enter must toggle ONCE -- a leftover row keydown would toggle twice.
+      const expAttrs = await exp.evaluate((el) => {
+        const b = el.querySelector('button.qcd-expand-toggle');
+        return { rowTabindex: el.getAttribute('tabindex'), rowExpanded: el.getAttribute('aria-expanded'),
+                 button: !!b, expanded: b ? b.getAttribute('aria-expanded') : null };
+      });
+      record(surface.label + ': the disclosure is a button that reports state (the row is not a tab stop)',
+        expAttrs.button && expAttrs.expanded === 'false' && expAttrs.rowTabindex === null
+          && expAttrs.rowExpanded === null, JSON.stringify(expAttrs));
+      const toggle = exp.locator('button.qcd-expand-toggle');
+      await toggle.focus();
       await page.keyboard.press('Enter');
       await page.waitForTimeout(500);
       const opened = await exp.evaluate((el) => {
         const d = el.nextElementSibling;
+        const b = el.querySelector('button.qcd-expand-toggle');
         return {
           shown: !!d && d.classList.contains('qcd-detail-row') && d.style.display !== 'none',
-          expanded: el.getAttribute('aria-expanded'),
+          expanded: b ? b.getAttribute('aria-expanded') : null,
         };
       });
       record(surface.label + ': Enter expands the per-source detail',
         opened.shown && opened.expanded === 'true', JSON.stringify(opened));
-      await page.keyboard.press('Enter');
+      await page.keyboard.press(' ');
       await page.waitForTimeout(400);
-      const closed = await exp.evaluate((el) => el.getAttribute('aria-expanded'));
-      record(surface.label + ': Enter again collapses it', closed === 'false', 'aria-expanded=' + closed);
+      const closed = await exp.evaluate((el) => el.querySelector('button.qcd-expand-toggle').getAttribute('aria-expanded'));
+      record(surface.label + ': Space collapses it again', closed === 'false', 'aria-expanded=' + closed);
     } else {
       record(surface.label + ': expandable row present', false, 'no qcd-expandable row in the fixture');
     }

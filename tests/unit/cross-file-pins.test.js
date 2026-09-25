@@ -535,7 +535,8 @@ test('no Neon JDBC URL carries connect/socket/login timeout properties', functio
     'apps-script/cdr-import/neonWrite.js',
     'apps-script/cdr-report/dbHistorical.js',
     'apps-script/cdr-report/neonbackfill.js',
-    'apps-script/department-dashboard/OrphanFix.gs',
+    // (OrphanFix.gs left this list in Batch 8: S2B-3 routes its rename
+    // through NeonRead.gs's getDashboardNeonConn_.)
   ];
   JDBC_FILES.forEach(function (rel) {
     const src = read(rel);

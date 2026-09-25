@@ -1123,6 +1123,7 @@ function sendInsightsReportEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
+  assertReportEmailThrottle_(email);   // SEC-2
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');

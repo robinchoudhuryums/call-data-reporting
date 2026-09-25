@@ -996,6 +996,9 @@
   // `tr.qcd-detail-row` (the Insights Queue-health table and the all-dept QCD
   // report render the same pair). Keeps the chevron glyph and aria-expanded in
   // step with the row's state, so click and Enter/Space cannot diverge.
+  // A11y tidy-up (the E-8 contract): the disclosure is a real
+  // `button.qcd-expand-toggle` in the first cell and IT owns aria-expanded;
+  // the row stays the mouse target and is no longer a tab stop.
   function qcdToggleExpandRow_(row) {
     if (!row) return;
     var detail = row.nextElementSibling;
@@ -1004,7 +1007,8 @@
     detail.style.display = open ? 'none' : '';
     var icon = row.querySelector('.qcd-expand-icon');
     if (icon) icon.textContent = open ? '▶' : '▼';
-    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+    var toggle = row.querySelector('.qcd-expand-toggle') || row;
+    toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
   }
 
   // Activates on Enter/Space for an element already carrying a click handler.

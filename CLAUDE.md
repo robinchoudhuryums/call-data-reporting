@@ -1212,7 +1212,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   owner ruling: a wrong recipient or a silent non-send must be seen the day
   it happens), dedups an address already in to/cc, and honors `EMAIL_BCC`
   (override list; `none` disables). A new send site that calls MailApp
-  directly fails `app-email.test.js`'s sweep. **A plain-text admin notice
+  directly fails `app-email.test.js`'s sweep, and a USER-triggered report
+  email must call `assertReportEmailThrottle_` first (SEC-2: a per-user cap,
+  since the quota is shared with every engine -- same suite's second sweep). **A plain-text admin notice
   passes a `notice:` spec (R29)** -- sendAppEmail_ renders it through
   `EmailKit.gs::ekNoticeHtml_` (banded shell, tiles, steps, callout, mono)
   as the HTML alternative, keeping `body` as the fallback; senders never

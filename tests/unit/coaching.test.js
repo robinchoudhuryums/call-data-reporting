@@ -436,3 +436,30 @@ test('coaching delivery P13: no admin recipients parks the batch instead of clai
   assert.match(out.result, /^NOTIFY-FAILED .*EMAIL NOT SENT \(no admin recipients\)/);
   assert.ok(h.state.props.COACHING_NOTIFY_PENDING, 'batch parked for retry');
 });
+
+// PCR-7 (broad-scan 2026-09-23, Batch 8): the delivery's read-diff-write runs
+// under the script lock updateCoachingFlagStatus takes, and its "continuing"
+// UPDATE only touches OPEN rows -- an admin's close can no longer be rewritten
+// back into a refreshed open card, and two overlapping runs cannot both insert.
+test('PCR-7: the continuing UPDATE is guarded on status = open', function () {
+  const conn = installDeliveryStubs_(
+    [flag_('CSR', 'Still Bad')],
+    JSON.stringify([{ id: 'id-1', department: 'CSR', agent_name: 'Still Bad' }]));
+  h.call('coachingDeliveryRun_');
+  const updates = conn.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); });
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /WHERE id = \? AND status = 'open'/);
+});
+
+test('PCR-7: a busy script lock skips the run LOUDLY, before any read or write', function () {
+  const conn = installDeliveryStubs_([flag_('CSR', 'Brand New')], '[]');
+  h.state.lockBusy = true;
+  try {
+    const out = h.call('coachingDeliveryRun_');
+    assert.match(out.result, /^skipped \(another coaching write is in progress/);
+    assert.equal(conn.params.length, 0, 'nothing read or written without the lock');
+    assert.equal(conn.committed, 0);
+    assert.equal(h.state.sentEmails.length, 0);
+    assert.equal(conn.closed, true, 'the connection is still closed');
+  } finally { h.state.lockBusy = false; }
+});

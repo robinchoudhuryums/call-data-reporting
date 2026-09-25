@@ -393,53 +393,103 @@ function alertsGatedAttempt_(now, source) {
     Logger.log('alertsGatedAttempt_: retry could not be scheduled -- assessing now.');
   }
   const late = !fresh;
-  // Batch 4 follow-on (the ENG-5 pattern): stamp the assessment's START. The
-  // outcome is recorded only after every dept; a run killed at the execution
-  // ceiling records nothing (a kill skips the catch below too), so the Health
-  // row compares this stamp to ALERTS_LAST and reads INTERRUPTED.
-  try { props.setProperty('ALERTS_STARTED', new Date().toISOString()); } catch (se) { /* best-effort */ }
-  try {
-    const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger') || [];
-    try { props.setProperty('ALERTS_RUN_MARKER', dateIso); } catch (me) { /* best-effort */ }
-    // O-5 (broad-scan 2026-09-17): the alerts engine is REQUIRED yet had no
-    // outcome on the Health page (its outcomes lived only in the Alert Log +
-    // the failure email). Record an OPS-8 prefix-coded outcome: ok only when
-    // no department errored; a per-dept error leads FAILED-PARTIAL so the
-    // classifier paints it amber.
-    recordAlertsOutcome_(alertsOutcomeString_(dateIso, results,
-      late ? { lateLatest: latest || '(none)' } : null));
-    alertsClearRetryTriggers_();
-    return { decision: late ? 'run-late' : 'run' };
-  } catch (e) {
-    Logger.log('runDailyAlerts_ failed: %s', e);
-    recordAlertsOutcome_('FAILED (threw): ' + (e && e.message ? e.message : String(e)) + ' -- assessing ' + dateIso);
-    // Surface to admins via email so a silent trigger failure
-    // doesn't go unnoticed.
-    try {
-      sendAppEmail_({
-        to: getAdminEmails_().join(','),
-        subject: '[Dashboard] Daily alert trigger failed',
-        notice: {
-          tone: 'bad', kicker: 'Admin notice · Daily alerts', title: 'Daily alert trigger failed',
-          subtitle: 'Assessing ' + dateIso,
-          tiles: [{ label: 'Date assessed', value: dateIso }, { label: 'Handler', value: 'runDailyAlerts_' },
-                  { label: 'Alerts sent', value: 'none', sub: 'this run', tone: 'bad' }],
-          callout: { kicker: 'Error', html: appEsc_(e && e.message ? e.message : String(e)), tone: 'warn' },
-          stepsTitle: 'What to check',
-          steps: [{ head: 'Alert Log.', body: 'The Alerts modal shows the last runs; an <em>error</em> row names the dept it died on.' },
-                  { head: 'Execution log.', body: 'Apps Script → Executions → runDailyAlerts_ for the full trace.' },
-                  { head: 'Re-send by hand.', body: 'Alerts modal → Send for ' + appEsc_(dateIso) + ' once the cause is fixed; the trigger re-runs tomorrow regardless.' }],
-          mono: { title: 'Stack', text: (e && e.stack) ? e.stack : '(no stack)' },
-          ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Alerts',
-          footerHtml: 'Sent by the daily alerts trigger when it throws before assessing any department. Operator State #8.',
-        },
-        body: 'runDailyAlerts_ threw: ' + (e && e.message ? e.message : String(e))
-            + '\nDate: ' + dateIso + '\nStack: ' + (e && e.stack ? e.stack : '(no stack)'),
-      });
-    } catch (e2) { /* best-effort */ }
+  // ENG-4 (broad-scan 2026-09-23, Batch 8, re-scoped after ENG-3): triggers
+  // belong to the admin who installed them, so a second admin installing from
+  // the editor runs a SECOND daily trigger. ENG-3's ALERTS_RUN_MARKER is read
+  // above and written only after the run, so two triggers firing together
+  // both saw "not run" and both alerted. Claim the date under the script lock
+  // first; a concurrent run stands down.
+  const claim = alertsClaimRun_(props, dateIso);
+  if (!claim.ok) {
+    Logger.log('alertsGatedAttempt_(%s): %s not assessed (%s) -- another run owns the date.', source, dateIso, claim.reason);
+    // A BUSY lock is not another alerts run -- some other admin write held it.
+    // Standing down there without a retry would lose the day, so reschedule
+    // exactly as a data deferral does.
+    if (claim.reason === 'busy') {
+      const retried = alertsScheduleRetry_();
+      recordAlertsOutcome_((retried ? 'DEFERRED ' : 'FAILED-LOCK ') + dateIso
+        + ': the script lock was busy (another admin write)' + (retried
+          ? '; retrying in ' + ALERTS_RETRY_MINUTES_ + ' min.'
+          : ' and a retry could not be scheduled -- send by hand from the Alerts modal.') + ' At ' + now);
+      return { decision: retried ? 'defer' : 'error' };
+    }
+    return { decision: claim.reason === 'done' ? 'done' : 'in-flight' };
   }
-  alertsClearRetryTriggers_();
-  return { decision: 'error' };
+  try {
+    // Batch 4 follow-on (the ENG-5 pattern): stamp the assessment's START. The
+    // outcome is recorded only after every dept; a run killed at the execution
+    // ceiling records nothing (a kill skips the catch below too), so the Health
+    // row compares this stamp to ALERTS_LAST and reads INTERRUPTED.
+    try { props.setProperty('ALERTS_STARTED', new Date().toISOString()); } catch (se) { /* best-effort */ }
+    try {
+      const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/'daily-trigger') || [];
+      try { props.setProperty('ALERTS_RUN_MARKER', dateIso); } catch (me) { /* best-effort */ }
+      // O-5 (broad-scan 2026-09-17): the alerts engine is REQUIRED yet had no
+      // outcome on the Health page (its outcomes lived only in the Alert Log +
+      // the failure email). Record an OPS-8 prefix-coded outcome: ok only when
+      // no department errored; a per-dept error leads FAILED-PARTIAL so the
+      // classifier paints it amber.
+      recordAlertsOutcome_(alertsOutcomeString_(dateIso, results,
+        late ? { lateLatest: latest || '(none)' } : null));
+      alertsClearRetryTriggers_();
+      return { decision: late ? 'run-late' : 'run' };
+    } catch (e) {
+      Logger.log('runDailyAlerts_ failed: %s', e);
+      recordAlertsOutcome_('FAILED (threw): ' + (e && e.message ? e.message : String(e)) + ' -- assessing ' + dateIso);
+      // Surface to admins via email so a silent trigger failure
+      // doesn't go unnoticed.
+      try {
+        sendAppEmail_({
+          to: getAdminEmails_().join(','),
+          subject: '[Dashboard] Daily alert trigger failed',
+          notice: {
+            tone: 'bad', kicker: 'Admin notice · Daily alerts', title: 'Daily alert trigger failed',
+            subtitle: 'Assessing ' + dateIso,
+            tiles: [{ label: 'Date assessed', value: dateIso }, { label: 'Handler', value: 'runDailyAlerts_' },
+                    { label: 'Alerts sent', value: 'none', sub: 'this run', tone: 'bad' }],
+            callout: { kicker: 'Error', html: appEsc_(e && e.message ? e.message : String(e)), tone: 'warn' },
+            stepsTitle: 'What to check',
+            steps: [{ head: 'Alert Log.', body: 'The Alerts modal shows the last runs; an <em>error</em> row names the dept it died on.' },
+                    { head: 'Execution log.', body: 'Apps Script → Executions → runDailyAlerts_ for the full trace.' },
+                    { head: 'Re-send by hand.', body: 'Alerts modal → Send for ' + appEsc_(dateIso) + ' once the cause is fixed; the trigger re-runs tomorrow regardless.' }],
+            mono: { title: 'Stack', text: (e && e.stack) ? e.stack : '(no stack)' },
+            ctaUrl: appDashUrl_('#/admin/alerts'), ctaLabel: 'Open Alerts',
+            footerHtml: 'Sent by the daily alerts trigger when it throws before assessing any department. Operator State #8.',
+          },
+          body: 'runDailyAlerts_ threw: ' + (e && e.message ? e.message : String(e))
+              + '\nDate: ' + dateIso + '\nStack: ' + (e && e.stack ? e.stack : '(no stack)'),
+        });
+      } catch (e2) { /* best-effort */ }
+    }
+    alertsClearRetryTriggers_();
+    return { decision: 'error' };
+  } finally {
+    alertsReleaseRun_(props);   // ENG-4
+  }
+}
+
+// ENG-4: the in-flight claim ("<iso>|<ms>"), checked and set under the script
+// lock together with a re-read of ALERTS_RUN_MARKER. The lock covers only the
+// check-and-claim, never the per-dept run. A claim older than
+// ALERTS_CLAIM_STALE_MS_ is a killed run's leftover and is ignored.
+var ALERTS_CLAIM_STALE_MS_ = 20 * 60000;
+function alertsClaimRun_(props, dateIso) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return { ok: false, reason: 'busy' };
+  try {
+    if ((props.getProperty('ALERTS_RUN_MARKER') || '') === dateIso) return { ok: false, reason: 'done' };
+    var cur = String(props.getProperty('ALERTS_RUN_CLAIM') || '').split('|');
+    if (cur[0] === dateIso && (Date.now() - Number(cur[1] || 0)) < ALERTS_CLAIM_STALE_MS_) {
+      return { ok: false, reason: 'in-flight' };
+    }
+    props.setProperty('ALERTS_RUN_CLAIM', dateIso + '|' + Date.now());
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+function alertsReleaseRun_(props) {
+  try { props.deleteProperty('ALERTS_RUN_CLAIM'); } catch (e) { /* the stale rule covers it */ }
 }
 
 /** ENG-3. Schedules ONE retry attempt; true on success. Best-effort. */

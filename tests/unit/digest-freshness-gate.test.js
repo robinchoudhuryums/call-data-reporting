@@ -324,3 +324,32 @@ test('O-2: the weekly digest after a Friday holiday sends on Thursday\'s data', 
     assert.equal(calls[0].runOpts.staleLatest, undefined);
   } finally { delete h.ctx.isCompanyHoliday_; }
 });
+
+// S2A-5 (broad-scan 2026-09-23, Batch 8): (1) the stale callout said "the
+// tiles below are empty" on weekly / monthly digests, whose tiles already hold
+// every day but the last; (2) a preview ran no freshness check, so a preview
+// sent before the import showed empty tiles plus the R32 note blaming the
+// roster / queue mapping.
+test('S2A-5: a multi-day stale digest says the figures are PARTIAL, a one-day one says the tiles are empty', function () {
+  install({ dates: ['2026-09-01'] });
+  h.call('sendDigestEmail_', { to: 'm@x.com', dept: 'Alpha', cadence: 'weekly', format: 'summary',
+    fromIso: '2026-08-31', toIso: '2026-09-04', isPreview: false, staleLatest: '2026-09-03' });
+  const weekly = h.state.sentEmails[0].htmlBody;
+  assert.match(weekly, /Latest day not yet available/);
+  assert.match(weekly, /cover only the days that had landed/);
+  assert.ok(!/tiles below are empty/.test(weekly), 'a weekly digest is not empty');
+  h.state.sentEmails.length = 0;
+  h.call('sendDigestEmail_', { to: 'm@x.com', dept: 'Alpha', cadence: 'daily', format: 'summary',
+    fromIso: '2026-09-04', toIso: '2026-09-04', isPreview: false, staleLatest: '2026-09-03' });
+  assert.match(h.state.sentEmails[0].htmlBody, /tiles below are empty for that reason/);
+});
+
+test('S2A-5: a preview sent before the import lands carries the stale callout, not the roster blame', function () {
+  install({ dates: [] });   // no DQE rows at all: nothing has landed
+  h.state.userEmail = 'admin@x.com';
+  h.call('sendPreviewDigest', { department: 'Alpha', cadence: 'daily', format: 'summary', email: 'm@x.com' });
+  const html = h.state.sentEmails[0].htmlBody;
+  assert.match(html, /not yet available/);
+  assert.match(html, /when this digest was previewed/);
+  assert.ok(!/No calls recorded/.test(html), 'the missing import is not blamed on the roster');
+});

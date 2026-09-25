@@ -1351,6 +1351,18 @@ When something looks wrong, before assuming a code bug, check:
     P-2 (Batch 5): a queued deferred-mirror date whose sheet the prune already
     removed no longer parks at the retry cap -- its Inbound/Outbound mirror is a
     per-type terminal and ONE `SOURCE PRUNED` email names it (#22).
+
+    **Recovery holds (ING-5, broad-scan Batch 8).** A `Call_Legs_*` tab
+    recreated to RECOVER an over-age date is, by definition, older than the
+    cutoff, and the prune used to delete it again the next night. It now skips
+    any tab held in the `RETENTION_HOLD` Script Property (cdr-import; tab name
+    -> hold-until, dropped once expired) and the run's Pipeline Health row
+    names the held count. `importBulkCSVsFromDrive` holds every tab it creates
+    for `RETENTION_RECOVERY_HOLD_DAYS` (3); **a tab recreated BY HAND needs
+    `holdCallLegsForRecovery()` run from the editor** right after, or the
+    first prune removes it. Rebuild / backfill the date inside the hold. The
+    importer also re-fills an EMPTY leftover tab from an earlier failed import
+    and removes a tab its own failed write created.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1670,7 +1682,8 @@ When something looks wrong, before assuming a code bug, check:
     passes `skipNeon`, force-deletes every date in range up front and needs
     `backfillDQEHistoryUpsert()` afterwards -- fine for dozens of dates, not for
     a handful. Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
-    with the tab gone, recreate it from the provider CSV (exact tab name) or,
+    with the tab gone, recreate it from the provider CSV (exact tab name, then
+    `holdCallLegsForRecovery()` so the prune keeps it -- #43) or,
     failing that, Neon holds the only intact copy. BEFORE any `backfill*`
     run: clearing `DQE_UPSERT_RESUME` still forces a from-the-top pass, but
     since Batch 1 (2026-09-03) the four `*_RESUME` pointers -- `DQE_UPSERT_RESUME`,
