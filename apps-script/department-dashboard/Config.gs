@@ -425,8 +425,9 @@ const HISTORICAL_COLS = Object.freeze({
   // keyed by raw queue name ({"A_Q_CSR":{u,r,m,a,t,n,mt}, ...}). Cols A-AH keep
   // their all-queue meaning as the rollup, so this is purely additive.
   // '' = never computed (a row built before Phase 1, or an INV-23 queue
-  // sentinel); '{}' = computed with nothing in the work window. Cannot be
-  // backfilled past the ~14-day Call_Legs retention.
+  // sentinel); '{}' = computed with nothing in the work window. Backfill is
+  // cheap inside the ~14-day Call_Legs retention; past it the date's source
+  // CSV must be re-imported first (Operator State #40 / #56).
   QUEUE_SPLIT: 35,       // AI - JSON
   // Batch 3 (owner note #5): the AFTER-HOURS pair -- legs starting in the
   // half-hour after the work window (3:00-3:30 PM PST = 5:00-5:30 PM CST, a

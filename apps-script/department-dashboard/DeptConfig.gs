@@ -116,8 +116,8 @@ function readDeptConfigRows_() {
 // sheet read ERRORED" (a transient 'Service Spreadsheets timed out' etc.).
 // Both fall back to constants so the request still serves -- but an ERRORED
 // read means the served payload may be missing real sheet overrides (a
-// sheet-mapped dept loses its QCD queues entirely), and the 30-min report
-// caches would amplify that transient into a half-hour of wrong config.
+// sheet-mapped dept loses its QCD queues entirely), and the 6 h report
+// caches would amplify that transient into hours of wrong config.
 // The QCD-embedding cache-put sites consult deptConfigReadFailed_() and
 // skip the put, so the next request (with a healthy read) recomputes.
 var DEPT_CONFIG_READ_FAILED_ = false;
@@ -700,7 +700,7 @@ function getDeptConfigInit() {
     spreadsheetUrl:  'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
   };
   // A-2 (the R8-C4 discipline, applied to this endpoint's OWN cache): don't
-  // pin a degraded picture of the config for the 30-min TTL. Two degraded
+  // pin a degraded picture of the config for the 6 h TTL. Two degraded
   // shapes: (a) the config read errored this execution -- `rows` is [] and
   // `effective` is constants-only, which an admin would read as "nothing is
   // configured" and might then "correct"; (b) the inbound discovery came

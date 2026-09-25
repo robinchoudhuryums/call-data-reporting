@@ -840,8 +840,11 @@ function findDqeDuplicateRows() {
 //      This is the ONLY way to repair rows mirrored before the F2 fix to
 //      cdrParseNameFieldJson_'s entry splitter (which silently merged
 //      name entries beginning with a lowercase letter / accented capital /
-//      digit). The live writeCDRRowsToNeon uses DO NOTHING, so a plain
-//      re-run does NOT repair them -- this DO UPDATE does.
+//      digit). (DOC-13: the live writeCDRRowsToNeon has ALSO used
+//      ON CONFLICT DO UPDATE -- name-list columns included -- since the
+//      IMP-4 write-discipline work, so a date re-mirrored by the live
+//      path is repaired too; this backfill is the way to repair EVERY
+//      date at once, from the sheet, without re-importing.)
 //   2. Fills any partially-written call_history_phones rows left by an
 //      old per-chunk-commit timeout. Phone children are NOT affected by
 //      F2 (cdrParsePhoneField_ uses a separate regex), so DO NOTHING on

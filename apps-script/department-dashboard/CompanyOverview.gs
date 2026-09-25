@@ -262,14 +262,23 @@ const OVERVIEW_ORPHAN_NAG_DAYS = 7;
 const OVERVIEW_RECENT_ACTIVE_DAYS = 30;
 
 /**
- * Overview-only parent->children dept relationships. The "Overview"
- * tile grid renders each parent followed by its child sub-queues,
- * visually nested. Each dept is still independent everywhere else
- * (Reports modals, admin dept dropdown, alerts) -- this nesting
- * only affects the Company Overview display.
+ * Parent->children dept relationships (the SEED default beneath the Dept
+ * Config sheet's `Overview Parent` column -- read it through
+ * getOverviewParentMap_, never this constant; INV-54).
  *
- * Add a row here when a new sub-queue is introduced; the child's
- * dept name must match the column header in DO NOT EDIT! exactly.
+ * NOT Overview-only any more (INV-38, DOC-7). An edge here:
+ *   - nests the child's tile under the parent on the Overview;
+ *   - GRANTS ACCESS: resolveUser_ widens a manager of the parent to the
+ *     child one level, agent-level data included (owner ruling 2026-07,
+ *     Operator State #39) -- adding an edge gives every parent manager the
+ *     child's data with no Access Control edit;
+ *   - shapes rollups: the child's queues fold into the parent's QCD snapshot
+ *     (queuesForDept_) and inbound union, and My Department shows the
+ *     combined view.
+ * Two depts that merely share a manager want multiple Access Control rows
+ * instead (the Field Ops / Field Ops Power ruling). Alerts and Digests are
+ * NOT widened. The child's dept name must match the DO NOT EDIT! column
+ * header exactly.
  */
 const OVERVIEW_PARENT_OF = Object.freeze({
   // Sub-queue names appear here verbatim as they're written in the

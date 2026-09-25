@@ -508,6 +508,22 @@ When something looks wrong, before assuming a code bug, check:
     serve until the FIRST successful read after deploy -- it protects the
     NEXT outage, not the one already in progress. Clearing the properties
     just forfeits the current snapshot until the next read.
+    **PHI at rest here is ACCEPTED (SEC-6, owner ruling 2026-09-23).** The
+    snapshot carries the open rows' patient name / caller / Trx # / reason,
+    so the dashboard project's Script Properties hold PHI in plain text --
+    readable by anyone with EDIT access to the Apps Script project (the
+    property store is not encrypted separately and is shown in the
+    project settings page). The owner ruled this acceptable because the
+    store stays inside the organization's Google Workspace tenancy, like the
+    CDR Report workbook itself; Apps Script is listed among Google
+    Workspace's HIPAA "Included Functionality" (checked 2026-09-23). **The
+    one standing condition:** the org's signed Workspace BAA must cover it
+    -- if it does NOT, this ruling is void and the
+    snapshot must move to a Workspace-covered store (e.g. a restricted
+    sheet) or be switched off. Keep the project's editor list to admins,
+    and do not copy the property values into tickets, logs or chat. The
+    Health page's property inventory lists these KEYS only, never values
+    (`system-health.test.js` pins that).
 
 25. `CONFIG_SOURCE` Script Property (dashboard) -- the C2 Dept Config
     read+write source switch read by `getConfigSource_()`. Unset / `sheet`

@@ -609,8 +609,8 @@ function getSystemHealth(req) {
     var installed = {};
     var trig = ScriptApp.getProjectTriggers();
     for (var i = 0; i < trig.length; i++) installed[trig[i].getHandlerFunction()] = true;
-    // Batch 3: an engine can be ARMED two ways, and they can disagree. Four of
-    // them gate their handler BODY on an `*_ENABLED` Script Property, so a
+    // Batch 3: an engine can be ARMED two ways, and they can disagree. Eight of
+    // them (DOC-15: every svc() row below that passes a flagProp) gate their handler BODY on an `*_ENABLED` Script Property, so a
     // trigger that is installed while the flag is off fires on schedule and
     // returns immediately -- the page said "installed", the operator believed
     // it was armed, and it did nothing. That mismatch is invisible today and is

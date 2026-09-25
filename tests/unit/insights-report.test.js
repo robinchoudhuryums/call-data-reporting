@@ -13,7 +13,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // mirroring Apps Script's flat scope.
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'InsightsReport.gs',
           // Digest.gs provides digestTakeaway_ + INSIGHTS_EMAIL_MIN_CALLS_
           // that sendInsightsReportEmail reuses for the server-rendered HTML
@@ -43,6 +43,10 @@ function install(rows, deptConfig) {
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
+  // The DQE rows now come through the memoized DAL (Batch 10): reset the
+  // WHOLE per-execution DQE memo family per fixture (the R40 test-side trap).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 
@@ -457,6 +461,10 @@ function installWithQcd(dqeRows, deptConfigRows, qcdRows) {
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
+  // The DQE rows now come through the memoized DAL (Batch 10): reset the
+  // WHOLE per-execution DQE memo family per fixture (the R40 test-side trap).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 

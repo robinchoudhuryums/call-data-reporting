@@ -39,7 +39,7 @@
  *   - Team % Answered, TTT, ATT: weighted across the whole team's
  *     calls in range (NOT per-agent mean of percentages).
  *
- * Caching: 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to, sortedAgents) tuple. Best-
+ * Caching: 6 h (REPORT_CACHE_TTL_SECONDS, R24; keys carry reportFreshnessTag_()) per (dept, from, to, sortedAgents) tuple. Best-
  * effort -- large ranges with many agents may exceed CacheService's
  * per-value 100KB limit; on cache-put failure we log + continue.
  */
@@ -352,38 +352,20 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       // it so the caller skips the cache put (the Inbound/Direct
       // unavailable-not-cached discipline); otherwise a transient Neon
       // blip on a trimmed sheet pins an indistinguishable-from-real empty
-      // report for every viewer of this tuple for the 30-min TTL.
+      // report for every viewer of this tuple for the 6 h TTL.
       if (neonCapable) e.meta.sourceUnavailable = true;
       return e;
     }
     // R41: the ext derivation needs ALL history (getDeptQueueExts_ docstring),
-    // so it reads its own whole-sheet cols-A..D slice; the windowed rows come
-    // from a bounded SPAN. The per-row date filter below STAYS -- the span
-    // bounds the read, it does not replace the filter.
+    // so it reads its own whole-sheet cols-A..D slice.
     deptQueueExts = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow).exts;
-    const span = dqeWindowRowSpan_(sheet, lastRow, fetchFrom, fetchTo, ssTZ);
-    const range = span ? sheet.getRange(span.startRow, 1, span.numRows, numCols) : null;
-    const values   = range ? range.getValues() : [];
-    const displays = range ? range.getDisplayValues() : [];
-    srcRows = [];
-    for (let i = 0; i < values.length; i++) {
-      const r = values[i], rd = displays[i];
-      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-      if (!dIso || dIso < fetchFrom || dIso > fetchTo) continue;
-      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-      if (!ag) continue;
-      srcRows.push({
-        dateIso:       dIso,
-        agent:         ag,
-        queueExt:      String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
-        totalRung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
-        totalMissed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
-        totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
-        tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
-        attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
-        queueSplit:    String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
-      });
-    }
+    // DATA-5 follow-on (Batch 10): the windowed rows come from the DAL's
+    // memoized sheet primitive (the bounded span + per-row date filter live
+    // there), not a private span read -- CacheWarm and the Insights-format
+    // digests run this once per DEPT over one window in a single execution,
+    // and each dept re-read identical bytes. Same row fields (a superset),
+    // shallow-copied per caller, so the in-place narrowing below stays per-dept.
+    srcRows = sheetFetchDqeRows_(fetchFrom, fetchTo);
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeIndividualReport_:' + dept, effectiveSource, _tRead, srcRows.length);
 

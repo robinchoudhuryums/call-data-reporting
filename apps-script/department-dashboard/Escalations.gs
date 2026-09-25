@@ -82,7 +82,11 @@ var ESC_MAX_ROWS = 500;
 // set so the client shows a read-only banner. Writes still hard-fail (INV-55
 // untouched); a snapshot cannot drift because nothing can change while the
 // only writer is down. Properties are engine-written outcome state (the
-// *_LAST class) -- deliberately NOT an Operator State item.
+// *_LAST class) -- deliberately NOT an Operator State item. SEC-6: the rows
+// carry PHI (patient / caller / Trx / reason), so this puts PHI in plain
+// Script Properties -- ACCEPTED by owner ruling (inside the Workspace
+// tenancy), conditional on Apps Script being a covered service; see
+// docs/operator-state.md #24(c) before widening what the snapshot stores.
 var ESC_SNAPSHOT_MAX_ROWS = 150;      // open rows kept (newest first)
 var ESC_SNAPSHOT_CHUNK_CHARS = 8000;  // under the ~9KB per-property cap
 var ESC_SNAPSHOT_MAX_CHUNKS = 6;      // hard ceiling ~48KB of the 500KB store

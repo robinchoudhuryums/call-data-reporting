@@ -62,10 +62,17 @@
   reads through the memoized sheetFetchDqeRows_, DATA-6 orphan nag
   span-bounded + reuses the Overview's rosters, S2A-2 Company chart line spans
   the 90-day window (companyOverview:v25), DATA-8 Feb-29 trend start.
-  **WHERE I LEFT OFF:** Batches 1-9 + the follow-ons pushed, NOT deployed. Next: deploy the
+  **Batch 10 SHIPPED on this branch** (block 205, + the Batch 9
+  follow-ons): IR + Insights read through the memoized sheetFetchDqeRows_
+  (computeActiveAgentsInRange_ + Alerts deliberately left on the span),
+  getOrphanFixInit reads rosters once, DOC-1..DOC-15 doc drift (INV-01
+  carve-outs, access model, AI backfill, 6 h caches, QCD comments + new-dept
+  runbook, "Batch N" collision note, counts), DOC-14 deploy.sh records a
+  dirty-tree deploy as `<sha>+dirty`, SEC-6 accepted-PHI note (#24(c)).
+  **WHERE I LEFT OFF:** Batches 1-10 + the follow-ons pushed, NOT deployed. Next: deploy the
   dashboard + cdr-import + cdr-report, run "Back up now" once, check the
   Health page's `historical-sort` / `email-bcc` rows, then
-  `/broad-implement Batch 10` (docs). The full
+  `/broad-implement Batch 11` (flag-flip prerequisites). The full
   plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).

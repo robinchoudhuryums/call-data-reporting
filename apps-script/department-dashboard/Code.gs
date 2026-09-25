@@ -171,8 +171,9 @@ function renderDashboard_(user) {
   // shared dashboard Config.gs constant rather than hand-syncing a
   // hardcoded HTML string.
   tmpl.workWindowJson = JSON.stringify(DASHBOARD_WORK_WINDOW).replace(/</g, '\\u003c');
-  // S5: company-holiday ranges (COMPANY_HOLIDAYS Script Property, parsed
-  // server-side) so the client form hints' working-day math
+  // S5: company-holiday ranges (since H1 the `Company Holidays` SHEET, with
+  // the COMPANY_HOLIDAYS Script Property only as its fallback -- parsed
+  // server-side by getCompanyHolidayRanges_) so the client form hints' working-day math
   // (workingDaysBetween_) agrees with the server's countWorkingDays_ --
   // otherwise a holiday-straddling window would show a balanced hint and
   // then a length-mismatch banner on the results. [] when unset.

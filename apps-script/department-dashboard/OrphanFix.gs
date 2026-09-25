@@ -100,9 +100,12 @@ function getOrphanFixInit() {
     const hit = cache.get(ORPHAN_FIX_INIT_CACHE_KEY);
     if (hit) return JSON.parse(hit);
   } catch (e) { /* best-effort: fall through to a fresh build */ }
+  // DATA-6 follow-on (Batch 10): read every dept's roster ONCE -- the orphan
+  // scan and the picker's name list used to each walk all the rosters.
+  const rosterNames = collectAllRosterNames_();
   const init = {
-    orphans:        computeOrphans_(),
-    rosterNames:    collectAllRosterNames_(),
+    orphans:        computeOrphans_({ rosterNames: rosterNames }),
+    rosterNames:    rosterNames,
     departments:    getAllDepartments_(),   // for the add-to-roster dept picker
     aliases:        readAgentAliases_(),
     log:            readOrphanFixLog_(20),

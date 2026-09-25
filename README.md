@@ -44,7 +44,7 @@ still LIVE TRUTH, and CLAUDE.md carries a one-line index for each entry** —
 [`docs/invariants.md`](docs/invariants.md) (`INV-01`…`INV-55`),
 [`docs/operator-state.md`](docs/operator-state.md) (the numbered operator
 checklist), [`docs/regression-scenarios.md`](docs/regression-scenarios.md)
-(`S1`…`S44`), and
+(`S1`…`S47`), and
 [`docs/client-ui-conventions.md`](docs/client-ui-conventions.md) (client /
 presentation layer). So "see CLAUDE.md INV-54" below means: find the index line
 there, read the full entry in `docs/invariants.md`.
@@ -181,7 +181,8 @@ for emergencies only.
   reads, Orphan Fix log) don't silently no-op against missing
   sheets.
 - Populate the `Access Control` sheet with one row per manager
-  (Email | Department | Notes). A manager is pinned to that one
+  (Email | Department | Notes | Role | Agent Name -- Role/Agent Name are for
+  the agent role, `AGENT_ROLE_ENABLED`). A manager is pinned to that one
   department. Two ways to widen that:
   - **Several rows with the SAME email**, one per department, grants a
     **multi-department manager** (Tier C) — the rows are unioned into
@@ -277,7 +278,9 @@ for emergencies only.
   QCD queues, Overview sub-queue nesting (parent), team-average
   exclusions, and queue-extension overrides. Saved rows live in the
   `Dept Config` sheet (created by `setup()`) and take effect on the
-  next request — caches refresh within ~5 min, no redeploy.
+  next request, no redeploy. A save busts the Overview and the admin
+  init blobs at once; the per-(dept, range) report caches (6 h) pick it
+  up when the freshness tag moves with the next ingest or the TTL expires.
 - Blank fields fall back to the built-in `Config.gs` defaults
   (`DEPT_QCD_QUEUES`, `OVERVIEW_PARENT_OF`, `TEAM_AVG_EXCLUDES`,
   `DEPT_QUEUE_EXT_OVERRIDES`); a non-empty field overrides that

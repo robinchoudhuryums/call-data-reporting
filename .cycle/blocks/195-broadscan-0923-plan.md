@@ -71,7 +71,7 @@ S2B-3 orphan rename unprobed Neon before audit append; S2B-4 failed Neon rename 
 ## Batch 9 — performance & chart edges — SHIPPED (block 204)
 DATA-5 computeSummary_ unmemoized per-dept span (Data.gs:1140); DATA-6 orphan nag whole-sheet read per Overview miss (OrphanFix.gs:471); S2A-2 Company line only 30 days on 60/90-day views (CompanyOverview.gs:538 vs 910); DATA-8 Feb-29 trend start (Util.gs:228).
 
-## Batch 10 — docs (~5h)
+## Batch 10 — docs — SHIPPED (block 205, + the Batch 9 follow-ons)
 DOC-1 INV-01 carve-out list incomplete; DOC-2 conventions.md:283 old access model; DOC-3 "cannot be backfilled" (INV-10, Config.gs); DOC-4 30-min/5-min cache claims; DOC-7 OVERVIEW_PARENT_OF "Overview-only" comment; DOC-5/6/8/9/10/11/12/13/14/15 stale counts/comments (see scan); + SEC-6 accepted-PHI note (ESC_SNAPSHOT_*).
 
 ## Batch 11 — flag-flip prerequisites (~6h+)

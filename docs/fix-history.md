@@ -57,7 +57,7 @@ rule; leave the history entry as-is (it's an archive).
 | `Phase A`–`E`, `Phase 1`–`15`, `Phase D`/`D+1`, `Batch E`/`F` | Redesign / rollout phases named in commit narratives | commit messages + CLAUDE.md prose |
 | `A-1`, `D-1`…`D-9`, `DD-1`…`DD-3`, `O-1`…`O-11`, `OD-#`, `C1-#`, `C2-#` (**2026-09-17**) | The 2026-09-17 broad-scan finding numbers, cited in code as "(broad-scan 2026-09-17)". **`A-1`, `D-1`, `D-4`, `O-1`…`O-7`, `C2-5` and `T-8` ALSO exist in the 2026-09-03 section with DIFFERENT meanings** — the date in the comment decides which section to read | the "2026-09-17 broad-scan" section below |
 
-### ⚠ Two collisions that WILL confuse you
+### ⚠ Three collisions that WILL confuse you
 
 1. **Dashed `F-#` vs bare `F#` are different families — and since Round 13
    there are THREE.** `F-2` (the AD/AE/AF pairing fix) has nothing to do with
@@ -70,6 +70,16 @@ rule; leave the history entry as-is (it's an archive).
    (`COMPANY_HOLIDAYS`, Operator State #27), `S1(c)` for `discoverInboundQueues_`
    (INV-54), and `S35` both as a fix reference *and* as Regression Scenario 35
    (Phase D totals parity). Disambiguate by context.
+3. **"Batch N" means two different things (DOC-11, broad-scan 2026-09-23).**
+   `docs/next-steps.md` numbers the **roadmap** batches (Batch 1…6 there are
+   sequenced feature/ops work, e.g. roadmap "Batch 6" = the 2026-09-14 owner
+   testing round, 6a-6d). The 2026-09-23 broad scan numbered its **fix** batches
+   independently (`.cycle/blocks/195-broadscan-0923-plan.md`, Batch 1…11),
+   and code comments cite those as "(broad-scan 2026-09-23, Batch N)" next to
+   a finding code (`UI-#`, `S2A-#`, `PCR-#`, `DATA-#`, `DOC-#`, …). Earlier
+   scans (2026-09-03 / 2026-09-17) had their own batch numbers too. A bare
+   "Batch 5" in a comment with no scan date is a ROADMAP batch; with a scan
+   date or a finding code beside it, read that scan's section below.
 
 ---
 
@@ -1158,3 +1168,12 @@ Codes from the 2026-09-23 broad scan. Its pipeline findings were renamed `ING-#`
 | `S2A-2` (2026-09-23) | The Overview chart's admin-only Company line came from a per-day map that skipped rows older than the 30-day trend start, so on the 60- and 90-day views it was null for all but its last 30 days. Fix: the per-day series spans the 90-day chart window, and the 30-day recently-active set keeps its own gate. `companyOverview:v24` → `v25`. | INV-30; `company-overview.test.js` |
 | `DATA-8` (2026-09-23) | `computeTrendStartDate_` called `setMonth(-12)` before `setDate(1)`. A Feb-29 end date moved to Feb 29 of the prior (non-leap) year, rolled to Mar 1, and the 12-month trend lost its first month. Fix: day first, then month. | INV-29; `trend-window.test.js` |
 
+
+## Broad scan 2026-09-23 — Batch 10 (docs) + the Batch 9 follow-ons
+
+| Code | What happened / why the rule exists | Live rule |
+|---|---|---|
+| `DATA-5` follow-on (2026-09-25) | IndividualReport and InsightsReport still ran private `dqeWindowRowSpan_` reads. That left them outside the R40 memo, so an Insights run for two depts over one window read the same span twice. Fix: both now call `sheetFetchDqeRows_`, and the ext derivation keeps its own whole-sheet read. `computeActiveAgentsInRange_` (an 8-column read) and Alerts (its own `ALERT_DATE_ROWS_MEMO_`) were LEFT on the span on purpose, because the shared full-width read would cost them more. | CLAUDE.md span bullet; `dqe-span-readers.test.js` |
+| `DATA-6` follow-on (2026-09-25) | `getOrphanFixInit` walked every roster twice, once for `computeOrphans_` and once for the payload. It now collects the names once and passes them to both. | `orphan-roster-add.test.js` |
+| `DOC-1`…`DOC-15` (2026-09-25) | Doc drift after Batches 1–9. The INV-01 carve-out list was missing the answer-target, Queue Report subscriber and Alert Log writers. The Access Control model in conventions.md, architecture.md and the README described the pre-Tier-C single-row shape. The Queue Split column said it "cannot be backfilled" (it can, by re-import). "30-min" report caches had been 6 h since R24. The module-deps prose quoted stale counts. The drive-admin modal count was wrong. The `OVERVIEW_PARENT_OF` comment said "Overview-only" (it grants access, INV-38). The QCDReport comments pointed at the raw `DEPT_QCD_QUEUES` constant and called the all-dept report admin-only, and the known-issues new-dept runbook said to edit the constant. The CDR backfill comment claimed the live writer uses DO NOTHING. Other small drift: the Health "Four engines" comment (there are eight), the README scenario range, the 14-vs-16 dept counts, and six files missing from the architecture table. Two real fixes rode along: `scripts/deploy.sh` now records a dirty-tree deploy as `<sha>+dirty`, so a later clean run of that HEAD is no longer skipped as "already deployed" (DOC-14), and fix-history gained the "Batch N" collision note (DOC-11). | the docs themselves; the collision note above |
+| `SEC-6` (2026-09-25) | The Escalations outage snapshot keeps PHI in plain Script Properties (`ESC_SNAPSHOT_*`). By owner ruling this is ACCEPTED because it stays inside the Workspace tenancy. The ruling is conditional on Apps Script being a covered service under the org's Workspace terms or BAA. | Operator State #24(c); Escalations.gs snapshot comment |

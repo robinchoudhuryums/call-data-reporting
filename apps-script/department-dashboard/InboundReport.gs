@@ -48,7 +48,7 @@
  * Neon null/error returns the empty shape with meta.available=false, so the
  * modal renders a clean "unavailable" state rather than throwing.
  *
- * Caching: 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to) under
+ * Caching: 6 h (REPORT_CACHE_TTL_SECONDS, R24; keys carry reportFreshnessTag_()) per (dept, from, to) under
  * INBOUND_CACHE_KEY_PREFIX; the insurer drill-down caches per (dept, from,
  * to, md5(insurer)). Unavailable payloads are intentionally NOT cached so a
  * transient Neon failure isn't pinned for the TTL.
@@ -1037,7 +1037,7 @@ function getInboundReport(req) {
   data.meta.computeMs = Date.now() - t0;
   data.meta.cacheHit = false;
   // Only cache USABLE payloads. An unavailable result (Neon unreachable /
-  // table missing / query error) must NOT be pinned for the 30-min report
+  // table missing / query error) must NOT be pinned for the 6 h report
   // TTL -- a transient Neon blip would otherwise render the modal
   // "unavailable" for every viewer until the entry expires. Skipping the
   // put means the next request simply retries Neon.

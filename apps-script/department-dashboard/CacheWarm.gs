@@ -1,7 +1,7 @@
 /**
  * Report cache warming (perf companion to the F1 read-back).
  *
- * The heavy per-(dept,range) report aggregations cache 30 min
+ * The heavy per-(dept,range) report aggregations cache 6 h
  * (REPORT_CACHE_TTL_SECONDS), but the FIRST request after the morning
  * ingest is a cold fresh-read -- whichever manager opens the dashboard
  * first that day eats the full aggregation cost. This optional,

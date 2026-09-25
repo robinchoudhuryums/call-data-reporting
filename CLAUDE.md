@@ -66,7 +66,8 @@ drift apart, and caps this file's size.
   `node scripts/module-deps.mjs --write` after adding or renaming a `.gs`
   (CI's `test` job runs `--check`, T-3).
   Read it before touching `Config.gs` / `Util.gs` / `Auth.gs` / `NeonRead.gs` /
-  `Data.gs`, which 61-95% of the project depends on.
+  `Data.gs`, which most of the project depends on (the generated table has
+  today's shares).
 - [`docs/known-issues.md`](docs/known-issues.md) — institutional memory.
   Fixed bugs, design rules, drift risks. Read before changing the source
   pipeline or the dashboard's data layer.
@@ -82,8 +83,9 @@ drift apart, and caps this file's size.
   current-invariants / live truth; fix-history is the "why" archive.** Read
   fix-history when you hit a
   code in a comment and want the backstory — not to learn a current rule. It
-  also flags the two code-family collisions that trip everyone up (dashed
-  `F-#` vs bare `F#`; `S#` = Regression Scenario vs inline batch-step) and
+  also flags the three collisions that trip everyone up (dashed `F-#` vs
+  bare `F#`; `S#` = Regression Scenario vs inline batch-step; roadmap
+  "Batch N" vs a broad-scan's "Batch N") and
   lists codes that live in the code but never made it into CLAUDE.md
   (`CORE-7`, `OPS-8`, `NEO-5`, `NEO-6`).
 - [`README.md`](README.md) — clasp setup + deploy flow.
@@ -236,16 +238,18 @@ npm run ci:ui                # gen payloads -> build admin+manager -> assert
 # RENDERED until this driver clicked one, the dept-selector class of bug; the
 # drill was unreachable by any driver until getCallJourney was mocked, since
 # drive-smoke's unmocked-RPC check would have flagged the call),
-# drive-admin.js (the six ADMIN MODALS + the Escalations worklist: each modal
+# drive-admin.js (the NINE driven modals -- the admin set plus Caller Lookup,
+# Outbound and Agent Day -- + the Escalations worklist: each modal
 # opens, renders, traps focus and closes on Escape, with no page errors, plus
 # the F10 no-duplicate-badge property -- these had thorough server-side pins
 # and no assertion that any of them RENDERED, the dept-selector class of bug.
 # Its MODALS list mirrors the router table in script-4-nav.html, and since F1
 # that mirror is ENFORCED: cross-file-pins.test.js fails when a `kind:'modal'`
 # route is neither driven by an asserting driver nor listed in its
-# DRIVER_MODAL_EXEMPT with a reason. Coaching (`/admin/coaching`) joined the
-# list; the three REPORT modals (inbound / direct / outbound) are the current
-# documented exemptions -- admin-only while vetted, no harness fixture yet),
+# DRIVER_MODAL_EXEMPT with a reason. The two REPORT modals Inbound and Direct
+# are the current documented exemptions -- admin-only while vetted, no harness
+# fixture yet (Outbound left the list at 6c). It also walks Help / chart tips /
+# the call path stacked over a report and a failed Escalations init (Batch 7)),
 # and drive-subqueue.js (the collapsible
 # sub-queue groups, the S35 parent-subtotal parity property, the combined AND
 # single-dept CSV shapes -- the ONLY automated coverage of any CSV writer in
@@ -470,10 +474,13 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `dal-cutover.test.js` (R26b) and `csr-transfer-detail.test.js` (R25b); the
   `[dqe-read]` log lines say whether a slow read is the scan or the open (R26c).
   **The DAL-bypassing readers are span-bounded too (R41), via ONE shared
-  `Data.gs::dqeWindowRowSpan_`** -- IndividualReport, InsightsReport,
-  `computeActiveAgentsInRange_`, Alerts; `computeSummary_` (charged per dept)
-  left that list for the memoized `sheetFetchDqeRows_` in DATA-5 (Batch 9).
-  **The trap that makes it more than find-and-replace:** four of them ALSO
+  `Data.gs::dqeWindowRowSpan_`** -- now just `computeActiveAgentsInRange_` and
+  Alerts, whose narrow reads (8 cols / their own memo) would get DEARER on the
+  shared full-width one; `computeSummary_`, IndividualReport and
+  InsightsReport moved to the memoized `sheetFetchDqeRows_` (DATA-5,
+  broad-scan 2026-09-23 Batches 9-10).
+  **The trap that makes it more than find-and-replace:** four readers
+  (`computeSummary_`, IR, Insights, `computeActiveAgentsInRange_`) ALSO
   derive `deptQueueExts` from that grid, and that needs every ext a roster
   agent EVER used -- feed it the span and the set silently shrinks, changing
   which floaters are recognized while every existing test stays green. So each
@@ -744,7 +751,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   (=10; `fired === 0` AND `meanRate >= threshold + 10pts` flags
   'lenient' = muted, informational), `DRIFT_LOG_SCAN_CAP` (=2000;
   caps the Alert Log read so a runaway log can't blow the script
-  budget -- ~143 days of history at 14 depts × 1 trigger/day).
+  budget -- ~125 days of history at all 16 roster depts × 1
+  trigger/day; ~143 at the 14 Overview-visible ones).
   Server-side `computeThresholdDrift_` filters to `triggeredBy
   === 'daily-trigger'` rows AND drops anything whose Triggered
   By starts with `preview:`, so manual sends from the UI +
@@ -772,8 +780,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   its CDR field-parsing helpers (`cdrTimeToSeconds_`, `cdrHashPhone_`,
   `cdrLooksLikePhone_`, `cdrParseNameFieldJson_`, `cdrParsePhoneField_`)
   so they travel with the duplication.
-- **DQE col AI (`Queue Split`) is the per-queue breakdown -- ADDITIVE, and it
-  cannot be backfilled.** Sub-queue Phase 1 appended col 35
+- **DQE col AI (`Queue Split`) is the per-queue breakdown -- ADDITIVE, and
+  backfilling it past ~14 days is an operator job.** Sub-queue Phase 1 appended col 35
   (`HISTORICAL_COLS.QUEUE_SPLIT`): JSON keyed by RAW queue name,
   `{"A_Q_CSR":{u,r,m,a,t,n,mt}}`, produced by the pure `dqeQueueSplitForAgent_`.
   Cols A-AH keep their ALL-QUEUE meaning as the rollup, so nothing that existed
@@ -1124,7 +1132,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   `OVERVIEW_CACHE_WARN_BYTES` (80 KB) and, on a failed put, says
   explicitly that the Overview is now UNCACHED so every request pays
   the full compute (`OVERVIEW_CACHE_MAX_BYTES` = 100 KB documents the
-  cap; it is not enforced). MEASURED at ~27 KB for 14 depts (~1.9
+  cap; it is not enforced). MEASURED at ~27 KB for the 14 visible depts
+  (16 on the roster, 2 in `OVERVIEW_HIDDEN_DEPTS`; ~1.9
   KB/dept) -- roughly 50+ depts away, so this is instrumentation, not
   a live risk, and it is LOG-only: nothing surfaces on the Health
   page.
@@ -2243,7 +2252,7 @@ items for anything it flags or doesn't cover.)
 43. The `Call_Legs_*` retention prune -- install `runRetentionPrune_` and remove any hand-made `deleteOldCDRSheets` trigger; the ~14-day window rests on it
 44. DQE-silence watchdog -- the queue-active-agents-dark cross-check; `installDqeSilenceWatchTrigger()`, with thresholds + episode semantics in the item
 45. Sign-in notifications -- first-sighting + outcome-change emails to admins (incl. DENIED attempts); ON by default, `LOGIN_NOTIFY_ENABLED=false` silences
-46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; Phase A ships dark -- agents get access-denied until Phase B's pages exist)
+46. `AGENT_ROLE_ENABLED` -- the agent-role resolution switch (default OFF; when set, an Access Control `agent` row opens the separate agent app -- off, agents get access-denied)
 47. `NEON_EGRESS_BUDGET_MB` -- arms the Health page's Neon read-volume gauge with a threshold; the figure is a FLOOR, so under-budget is not headroom
 48. `COACHING_DELIVERY_ENABLED` -- the weekly coaching delivery engine (F-e); install and arm it from Admin ▾ → Coaching
 49. Inbound Calls tab export trigger -- keeps the heatmap's SHEET FALLBACK fresh, plus the one-time historical re-export
@@ -2309,7 +2318,7 @@ below is a finding aid.** Several invariants carry exceptions and version
 history that a one-line summary cannot hold, so open the entry before relying
 on one (INV-30's cache-version table above all).
 
-INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / the Coaching worklist close, a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
+INV-01 | Public (RPC-callable) functions never write a spreadsheet except the admin-gated carve-outs (OrphanFix / setup / DeptConfig / Access Control / Alert+Digest config / answer targets / Queue Report subscribers / the Alert Log / the Coaching worklist close, a Neon write / the outbound review worksheet, a SEPARATE workbook) plus the append-only Report Usage telemetry; `_`-suffixed helpers are RPC-unreachable | Subsystem: Department Dashboard
 INV-02 | Duration columns (TTT/ATT/AvgAbdWait/CSRAvgAbdWait) are read via `getDisplayValues()`, never `getValue()` -- spreadsheet-vs-script TZ | Subsystem: Department Dashboard
 INV-03 | `DO NOT EDIT!` roster cell format `"Name, ext1, ext2"` -- name is everything before the first comma; digit-only tokens after are extensions | Subsystem: Department Dashboard
 INV-04 | Agent-name match (DQE col C <-> roster) is EXACT: case- and whitespace-sensitive, no alias normalization at the dashboard layer | Subsystem: Department Dashboard

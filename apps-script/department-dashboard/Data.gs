@@ -899,7 +899,7 @@ function getDepartmentSummary(req) {
   //   mainQueueCount / subQueueCount for the gated Main/Sub/All summary lines.
   // CORE-3: suffixed with the ACTIVE read source (the latestDate:v1
   // pattern) so a DQE_READ_SOURCE flip can't serve a table computed from
-  // the other source for up to the 30-min TTL.
+  // the other source for up to the 6 h TTL.
   // CORE-3 (extended for #3): suffix with BOTH read sources -- this payload
   // embeds the DQE agent table AND the QCD dept snapshot, so a flip of EITHER
   // DQE_READ_SOURCE or QCD_READ_SOURCE must not serve a cross-source blob.
@@ -911,12 +911,12 @@ function getDepartmentSummary(req) {
   // v15 (R11-C1): + qcd.rangePrior (the E5 prior window's block) and
   // csrTransfer.prior, feeding the Avg answer / Transfer % delta chips.
   // v16 (sub-queue Phase 1): `subScope` joins the key. Without it a manager
-  // toggling the switcher inside the 30-min TTL would be served the other
+  // toggling the switcher inside the 6 h TTL would be served the other
   // scope's table.
   // S2-0: the queue-split SCOPE joins the key for the same reason the read
   // sources do (the CORE-3 pattern) -- the payload's figures mean something
   // different in each mode, so flipping QUEUE_SPLIT_SCOPE must not serve the
-  // other mode's table for up to the 30-min TTL. Deliberately a key SUFFIX
+  // other mode's table for up to the 6 h TTL. Deliberately a key SUFFIX
   // rather than a version bump: the version tracks aggregation-RULE changes
   // (INV-30) and both modes are the same rule under a different scope.
   const qsScope = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';

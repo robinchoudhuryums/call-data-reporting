@@ -1654,20 +1654,28 @@ existing per-dept dropdown):
   version).
 
 **Onboarding a new dept.** When a new dept starts producing rows
-in `QCD Historical Data`, the dashboard ignores them until a
-matching entry exists in `DEPT_QCD_QUEUES`. To onboard:
+in `QCD Historical Data`, the dashboard ignores them until the dept
+has an EFFECTIVE queue list (`getDeptQcdQueues_`, INV-54). To
+onboard (no redeploy -- DOC-12, broad-scan 2026-09-23):
 
-1. Open `QCD Historical Data` and find the new dept's `A_Q_*`
-   values in col D for recent rows.
-2. Add a row to `Config.gs::DEPT_QCD_QUEUES` keyed on the
-   dashboard dept name (the value in `DO NOT EDIT!` row 1 header),
-   with the value as an array of those queue names.
-3. `clasp push -f` + create a new deployment version.
+1. Open the admin **Dept Config** modal. Its queue discovery (the
+   180-day QCD scan) lists the unmapped `A_Q_*` names seen in col D,
+   and the Overview's unmapped-queue nag names the busiest of them.
+2. Add those queue names to the dept's **QCD Queues** field and save
+   (validation accepts only canonical names actually seen in col D).
+   If the dept's RAW phone-system queue name differs from the QCD
+   canonical one, also fill **Inbound queue aliases** (Operator
+   State #14).
+3. The save busts the Overview + Dept Config caches; the other
+   6 h report caches pick the mapping up when the freshness tag moves
+   or the TTL expires (see the CacheService-tiers design decision).
 
-The 5-min cache TTLs out automatically; no manual cache bump
-needed unless the aggregation logic itself changes (in which case
-bump `insights:vN` (Queue health), `companyOverview:vN`, AND `summary:vN` since all
-three read QCD now).
+The `Config.gs::DEPT_QCD_QUEUES` constant is only the SEED default
+beneath the sheet -- editing it still works but needs a push + a new
+deployment version, and a sheet row overrides it anyway. No manual
+cache bump is needed unless the aggregation logic itself changes (in
+which case bump `insights:vN` (Queue health), `companyOverview:vN`,
+AND `summary:vN` since all three read QCD now).
 
 ---
 

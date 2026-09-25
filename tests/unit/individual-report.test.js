@@ -9,7 +9,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'IndividualReport.gs'],
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'IndividualReport.gs'],
   capture: ['DEPT_CONFIG_HEADERS'],
 });
 const DC_HEADERS = h.consts.DEPT_CONFIG_HEADERS;

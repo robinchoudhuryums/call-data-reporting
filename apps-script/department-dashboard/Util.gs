@@ -670,7 +670,7 @@ function computeSubQueuePickerGroups_(dept, from, to) {
 function computeActiveAgentsInRange_(dept, from, to, roster) {
   // CORE-3: like latestDate:v1, the key carries the ACTIVE read source so a
   // DQE_READ_SOURCE flip can't serve a picker subset computed from the
-  // other source for up to the 30-min TTL (Neon can lag the sheet
+  // other source for up to the 6 h TTL (Neon can lag the sheet
   // mid-backfill, and vice versa right after a rebuild).
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cache = CacheService.getScriptCache();

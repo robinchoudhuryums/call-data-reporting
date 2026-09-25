@@ -36,8 +36,9 @@ quietly verify the client against a different Chart.js than production ships.
   the exporter Blob-and-clicks, so the driver stubs `URL.createObjectURL` and
   reads the real bytes. Also the header **department switch**, which threw a
   `ReferenceError` in production until a driver first tried it.
-- `drive-admin.js` — the six **admin modals** (Alerts, Outlier Fix, Dept
-  Config, Access Control, System Health, Caller Lookup) and the **Escalations
+- `drive-admin.js` — nine **modals** (Alerts, Outlier Fix, Dept Config,
+  Access Control, System Health, Caller Lookup, Coaching, and the Outbound and
+  Agent Day reports, each run past its setup form) and the **Escalations
   worklist**. Each modal must open, render content, trap focus over 25 tabs,
   close on Escape and fit the viewport, with no page or console errors; the
   Escalations page must render its cards, give an admin the dept filter, and

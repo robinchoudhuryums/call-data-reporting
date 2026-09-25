@@ -77,9 +77,9 @@ External CDR system (telephony provider)
 
 | Layer | Apps Script project | Files (representative) | This repo path |
 |---|---|---|---|
-| CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `inboundCalls.js` (per-call inbound capture -> Neon `inbound_calls` + `backfillInboundCalls`), `outboundCalls.js` (per-call outbound capture -> Neon `outbound_calls` + `backfillOutboundCalls`, Option B), `directCallMetrics.js` (direct-extension call metrics, cdr-import-only), `NeonMirror.js` (the deferred Neon mirror queue drain), `queueSplitSample.js`, `buildStamp.js`, `appsscript.json` | `apps-script/cdr-import/` |
-| Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `inboundCallsExport.js` (Neon `inbound_calls` -> "Inbound Calls" fallback tab), `insuranceNumbers.js` (insurer-number hashing -> Neon `insurance_numbers`), `outboundCallsExport.js` (Neon `outbound_calls` -> "Outbound Calls" fallback tab), `sheetRepairs.js` (the DQE coercion repairs, the duplicate merge, the date-column census + Phase 1 normalize, the Phase 2 nightly sort check), `neonEgress.js`, `queueOverlapAudit.js`, `buildStamp.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
-| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `BuildStamp.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `DirectCallReport.gs`, `OutboundReport.gs`, `AgentHome.gs`, `Coaching.gs`, `CallerLookup.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `IngestWatchdog.gs`, `PipelineWatch.gs`, `NeonBackup.gs`, `NeonCoverage.gs`, `NeonRetention.gs`, `SheetCoverage.gs`, `SystemHealth.gs`, `SmokeCheck.gs`, `QueueReportEmail.gs`, `EmailKit.gs`, `DeptSummaryEmail.gs`, `DqeSilenceWatch.gs`, `dashboard.html`, `styles.html`, `script.html` (an ASSEMBLER -- it splices the `script-N-*.html` fragments into ONE IIFE), `agent.html` + `agentApp.html` (the separate agent-role page), `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
+| CSV ingest | CDR Import | `autoImport.js`, `importBulkCSVsFromDrive.js` (pending Drive auth), `AbandonedFilter.js`, `CDR Tools.js`, `DeleteOldSheets.js`, `neonWrite.js`, `inboundCalls.js` (per-call inbound capture -> Neon `inbound_calls` + `backfillInboundCalls`), `outboundCalls.js` (per-call outbound capture -> Neon `outbound_calls` + `backfillOutboundCalls`, Option B), `directCallMetrics.js` (direct-extension call metrics, cdr-import-only), `NeonMirror.js` (the deferred Neon mirror queue drain), `queueSplitSample.js`, `qcdDqeDiagnostic.js` (read-only QCD-vs-DQE gate diagnostic, Operator State #66), `execCeilingProbe.js` (execution-ceiling probe, #70), `propRegistry.js` (the cdr-import Script Property registry), `buildStamp.js`, `appsscript.json` | `apps-script/cdr-import/` |
+| Per-agent aggregation + downstream tooling | CDR Report | `buildDQEHistoricalData.js`, `DQEdrilldown.js`, `DQEDrilldownSidebar.html`, `dashboardCDR.js`, `dataFilters.js` (extraction sidebar), `dbHistorical.js`, `dbReporting.js`, `emailDailyReport.js`, `neonWrite.js`, `neonbackfill.js`, `inboundCallsExport.js` (Neon `inbound_calls` -> "Inbound Calls" fallback tab), `insuranceNumbers.js` (insurer-number hashing -> Neon `insurance_numbers`), `outboundCallsExport.js` (Neon `outbound_calls` -> "Outbound Calls" fallback tab), `sheetRepairs.js` (the DQE coercion repairs, the duplicate merge, the date-column census + Phase 1 normalize, the Phase 2 nightly sort check), `sheetSpace.js` (workbook cell-space trim, Operator State #62), `neonEgress.js`, `queueOverlapAudit.js`, `propRegistry.js` (the cdr-report Script Property registry), `buildStamp.js`, `CDR Tools menu.js`, `appsscript.json` | `apps-script/cdr-report/` |
+| Manager dashboard | Department Dashboard (standalone) | `Code.gs`, `Auth.gs`, `Data.gs`, `Config.gs`, `BuildStamp.gs`, `Setup.gs`, `Util.gs`, `Diagnostics.gs`, `MissedCallsReport.gs`, `IndividualReport.gs`, `InsightsReport.gs`, `InboundReport.gs`, `DirectCallReport.gs`, `OutboundReport.gs`, `AgentHome.gs`, `AgentDay.gs` (the 6d agent-day interaction view), `Coaching.gs`, `CallerLookup.gs`, `CompanyOverview.gs`, `QCDReport.gs`, `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `DeptConfig.gs`, `Escalations.gs`, `NeonRead.gs`, `NeonKeepWarm.gs`, `CacheWarm.gs`, `IngestWatchdog.gs`, `PipelineWatch.gs`, `NeonBackup.gs`, `NeonCoverage.gs`, `NeonRetention.gs`, `SheetCoverage.gs`, `SystemHealth.gs`, `SmokeCheck.gs`, `QueueReportEmail.gs`, `EmailKit.gs`, `DeptSummaryEmail.gs`, `DqeSilenceWatch.gs`, `dashboard.html`, `styles.html`, `script.html` (an ASSEMBLER -- it splices the `script-N-*.html` fragments into ONE IIFE), `agent.html` + `agentApp.html` (the separate agent-role page), `access_denied.html`, `appsscript.json` | `apps-script/department-dashboard/` |
 | Postgres mirror | shared lib used by both CDR Import and CDR Report | `neonWrite.js` (duplicated across both projects, currently identical) | see [known-issues.md](known-issues.md) |
 | Per-agent DQE build (duplicated) | both CDR Import and CDR Report | `buildDQEHistoricalData.js` (duplicated across both projects, currently identical -- INV-16). cdr-import invokes inline inside `processIntegratedHistory`; cdr-report keeps a daily trigger copy as a safety net. | `apps-script/cdr-import/` + `apps-script/cdr-report/` |
 | Legacy reports (migration COMPLETE — frozen, awaiting spreadsheet decommission) | DQE Report (spreadsheet) | `DQEdashboard.js`, 4 report pairs (`SingleRangeReport`, `IndividualReport`, `MissedCallsReport`, `MultiComparisonTool` + their `.html` modals), `sendManualAlert.js`, `showFAQ.js` + `FAQGuide.html`, `menu DQE Tools.js`, `appsscript.json` | `apps-script/dqe-report/` |
@@ -205,17 +205,22 @@ onboarding flow.
 Until OrphanFix.gs shipped, the dashboard had ZERO write paths into
 shared sheets -- everything in `apps-script/department-dashboard/`
 was read-only via the trailing-underscore convention (INV-01). The
-Orphan Fix engine introduced the first three admin-only public
-writes (INV-01 now carries the AUTHORITATIVE carve-out list -- Dept Config,
-Access Control, the Alert/Digest config editors, Escalations and Coaching
-followed):
+Orphan Fix engine introduced the first admin-only public writes. **INV-01
+(docs/invariants.md) carries the AUTHORITATIVE carve-out list** -- since
+then: Dept Config, Access Control, the Alert/Digest config editors, the
+answer targets (`saveAnswerTargets`, which republishes `Dashboard
+Standards`), the Queue Report subscriber editor, the Alert Log appends
+from `previewAlerts` / `sendAlerts`, the Escalations (per-dept, Neon) and
+Coaching (Neon) verbs, and the review worksheet in its own workbook. The
+Orphan Fix engine's own writes:
 
 | Function | Writes to | Notes |
 |---|---|---|
 | `addAgentAlias`, `removeAgentAlias` | `Agent Alias Overrides` (in CDR Report spreadsheet) | Forward-fix only; future builds honor the alias. |
-| `applyOrphanRename` | `DQE Historical Data` Agent Name column (in CDR Report spreadsheet) | Backfills past rows. Also typically writes to `Agent Alias Overrides` (`alsoAddAlias=true`) so the next build keeps the mapping. |
+| `applyOrphanRename` | `DQE Historical Data` Agent Name column (in CDR Report spreadsheet) | Backfills past rows. Also typically writes to `Agent Alias Overrides` (`alsoAddAlias=true`) so the next build keeps the mapping, and mirrors the rename to Neon `dqe_history` (best-effort; its outcome is a `neon-rename` log row, S2B-3). |
+| `addOrphanToRoster` | one `"Name, ext1, ext2"` cell in a dept's `DO NOT EDIT!` column | The New Assignment flow (a new hire or a reassignment); extensions required, confined to the dept block. |
 
-All three are admin-only at the server boundary
+All of them are admin-only at the server boundary
 (`assertAdmin_()`), input-validated (no queue sentinels,
 length-capped, canonical destination must be on some roster),
 serialized via `LockService`, and audited to the `Orphan Fix Log`
@@ -274,7 +279,7 @@ is canonical and reflects current code.
 | Escalations worklist (Neon `escalations` + `escalation_activity`) | `Escalations.gs` | `getEscalationsInit`, `getEscalationsBadge` (R12-20 nav-badge aggregate), `getEscalations`, `getEscalationActivity` (read), `createEscalation`, `updateEscalation` (admin write), `resolveEscalation`, `startEscalation` (C6), `approveEscalation`/`rejectEscalation` (Phase-2 review), `updateEscalationComment`, `reopenEscalation` (per-dept write, INV-55) | (no cache) | no (per-dept; create/edit admin-only) |
 | Low Answer Rate Alerts | `Alerts.gs` | `getAlertsInit`, `previewAlerts`, `sendAlerts`, `installAlertTrigger`, `uninstallAlertTrigger`, `saveAlertConfigRow`/`removeAlertConfigRow` (C3 config editor), `saveAnswerTargets` (R12-25 display standards), `backfillAlertConfigToNeon`/`compareAlertConfigSources` (editor-run C3 gates) (+ `runDailyAlerts_` time trigger) | (no cache) | yes |
 | Manager Digest engine | `Digest.gs` | `getDigestsInit`, `sendPreviewDigest`, `installDigestTriggers`, `uninstallDigestTriggers`, `saveDigestConfigRow`/`removeDigestConfigRow` (C3 config editor), `backfillDigestConfigToNeon`/`compareDigestConfigSources` (editor-run C3 gates) (+ `runDailyDigests_`, `runWeeklyDigests_`, `runMonthlyDigests_` time triggers) | (no cache) | yes |
-| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v25` -- on write) | yes |
+| Orphan Fix engine (admin write path) | `OrphanFix.gs` | `getOrphanFixInit`, `addAgentAlias`, `removeAgentAlias`, `applyOrphanRename`, `addOrphanToRoster` | (no cache; busts `COMPANY_OVERVIEW_CACHE_KEY` -- currently `companyOverview:v25` -- on write) | yes |
 
 All reports use the same auth resolution (`resolveUser_(email)`), the
 same roster reader (`getRosterForDepartment_`), and — for the picker —
@@ -421,7 +426,9 @@ would replace both this dashboard's sheet reads AND team-tools'
   - `Config.gs::getAdminEmails_()` — reads the `ADMIN_EMAILS` Script Property
     (comma-separated) at request time, falls back to `ADMIN_EMAILS_FALLBACK`
     constant if unset; bypasses dept check
-  - `Access Control` sheet (Email | Department | Notes) for managers
+  - `Access Control` sheet (Email | Department | Notes | Role | Agent Name):
+    managers (one row per dept; several rows = a multi-dept manager, `ALL` =
+    all departments) and, with `AGENT_ROLE_ENABLED`, agents (Role `agent`)
 - **Execute-as: deployer.** The script runs with Robin's permissions, so
   managers don't need direct access to CDR Report. Read-only safety relies
   on every public function (`google.script.run`-callable) being read-only.

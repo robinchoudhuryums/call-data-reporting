@@ -473,3 +473,22 @@ test('DATA-5: two depts over one window share ONE read and neither sees the othe
   assert.ok(!/dqeWindowRowSpan_\(/.test(fn), 'no private span read left in computeSummary_');
 });
 
+// DATA-5 follow-on (Batch 10): IR and Insights read their windows through the
+// memoized sheetFetchDqeRows_ too -- CacheWarm and the Insights-format digests
+// run them once per DEPT over one window in a single execution.
+test('DATA-5 follow-on: Insights for two depts over one window costs ONE wide read', function () {
+  install(outOfOrderRows());
+  const c = r44CountReads();
+  try {
+    h.call('computeInsights_', 'Alpha', '2026-03-09', '2026-03-10', [], h.call('getRosterForDepartment_', 'Alpha'));
+    h.call('computeInsights_', 'Beta',  '2026-03-09', '2026-03-10', [], h.call('getRosterForDepartment_', 'Beta'));
+    assert.equal(c.n.wide, 1, 'the second dept is a memo hit');
+  } finally { c.restore(); }
+  const fs = require('fs'), path = require('path');
+  ['IndividualReport.gs', 'InsightsReport.gs'].forEach(function (f) {
+    const src = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard', f), 'utf8');
+    assert.match(src, /srcRows = sheetFetchDqeRows_\(fetchFrom, fetchTo\);/, f + ' reads through the DAL primitive');
+    assert.ok(!/dqeWindowRowSpan_\(/.test(src), f + ' keeps no private span read');
+  });
+});
+

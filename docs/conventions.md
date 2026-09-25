@@ -281,12 +281,18 @@ historical roster-only numbers equal a `both` response filtered to
   manager dept check; can pick any department from the admin dropdown.
   Adding an admin is a Script-Property edit, no redeploy.
 - **Managers**: rows in the `Access Control` sheet (`Email | Department |
-  Notes`). One row per manager. Pinned to a single department. If a
-  manager email appears in MULTIPLE rows with different departments, only
-  the first is honored (the dashboard pins a manager to one dept), and
-  `getManagerDepartment_` logs a warning so the ignored row(s) are
-  detectable rather than silently dropped — grant admin for cross-dept
-  access (F13).
+  Notes | Role | Agent Name`). One row per (manager, department). A manager
+  email on MULTIPLE rows is a **multi-department manager**: `resolveUser_`
+  UNIONS the rows into `departments` (Tier C / F13) and the first row is the
+  landing dept -- no admin grant is needed for cross-dept access. A
+  Department cell of `ALL` (or `*`) makes an **all-departments manager**
+  (`allDepts:true`: every dept's data, no admin surfaces). A dept with
+  Overview sub-queues also grants its one-level children (INV-38). The admin
+  Access Control editor (`saveAccessControlRow`) writes these rows
+  REPLACE-ALL by email. Role `agent` + Agent Name is the fourth role (the
+  separate agent app, `AGENT_ROLE_ENABLED`). (DOC-2: this entry used to say
+  only the first row was honored and to grant admin instead -- the pre-Tier-C
+  model.)
 - **Everyone else**: gets the access-denied page.
 
 Access-control lookups are cached for 60 seconds (`AUTH_CACHE_TTL_SECONDS`).
