@@ -944,7 +944,18 @@
     const closeBtn = modal.querySelector('.modal-close');
     const backdrop = modal.querySelector('[data-close]');
 
+    // UI-2: Help is the one modal that opens OVER another (the FAB floats
+    // above every report modal). trapFocus_ holds a single trap, so opening
+    // Help displaced the report's; closing it then released the trap, cleared
+    // the report's scroll lock and sent focus to the header "?" BEHIND the
+    // still-open report. Stash all three on open, restore them on close.
+    var isOpen = false, outerTrapModal = null, prevOverflow = '';
     function openModal() {
+      if (isOpen) return;
+      isOpen = true;
+      outerTrapModal = (activeFocusTrap_ && activeFocusTrap_.modal !== modal)
+        ? activeFocusTrap_.modal : null;
+      prevOverflow = document.body.style.overflow;
       modal.style.display = '';
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
@@ -953,20 +964,29 @@
       if (fab) fab.classList.add('is-hidden');
       trapFocus_(modal);
       initModalDragResize_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.addEventListener('keydown', onKeyDown);
+      escapeLayerPush_(closeModal);   // UI-1: Escape closes Help, not the report under it
     }
     function closeModal() {
+      if (!isOpen) return;
+      isOpen = false;
+      escapeLayerRemove_(closeModal);
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       releaseFocus_();
       resetModalTransform_(modal.querySelector('.modal-panel') || modal.querySelector('.modal-panel-wide'));
-      document.body.style.overflow = '';
-      document.removeEventListener('keydown', onKeyDown);
       applyHelpFabPref_();   // restore FAB per the Settings pref
-      btn.focus();
-    }
-    function onKeyDown(e) {
-      if (e.key === 'Escape') closeModal();
+      var outer = outerTrapModal;
+      outerTrapModal = null;
+      if (layerIsShown_(outer)) {
+        // Back to the layer Help opened over: its scroll lock, and its trap
+        // (whose autofocus puts focus back INSIDE it -- the FAB that opened
+        // Help sits outside every modal, so it is the wrong return target).
+        document.body.style.overflow = prevOverflow;
+        trapFocus_(outer);
+      } else {
+        document.body.style.overflow = '';
+        btn.focus();
+      }
     }
 
     btn.addEventListener('click', openModal);

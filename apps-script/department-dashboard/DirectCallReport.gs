@@ -33,7 +33,7 @@
  * empty shape with meta.available=false so the modal renders a clean
  * "unavailable" state rather than throwing.
  *
- * Caching: 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to) under
+ * Caching: 6 h (REPORT_CACHE_TTL_SECONDS, R24; keys carry reportFreshnessTag_()) per (dept, from, to) under
  * DIRECT_CALL_CACHE_KEY_PREFIX. Unavailable payloads are intentionally NOT
  * cached so a transient Neon failure isn't pinned for the TTL (Inbound model).
  */

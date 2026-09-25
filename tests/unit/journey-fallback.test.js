@@ -11,7 +11,7 @@ const { loadGas } = require('../harness/loadGas');
 //       callerLookupShapeCall_ as the Neon path, so equivalent rows produce
 //       an identical `call` object;
 //   (2) BOTH auth arms in the Neon-path order: the dept-scoped match
-//       (entry/final queue in the inbound union, or final_dept === dept),
+//       (entry/final queue in the inbound union, or final_dept in the dept's Final Dept Labels),
 //       then the exact-id arm gated for managers by
 //       callIdInDeptMissedReport_ -- and a gate-closed manager gets a
 //       reason-LESS miss (learns nothing);
@@ -140,8 +140,12 @@ test('SOURCE PARITY: sheet row and Neon row shape to the identical call object',
             insurer: 'Acme', dialIn: '19722281820', finalQueue: 'A_Q_CSR', finalDept: 'CSR' }),
   ]) });
   const viaSheet = drill({ callId: '111', date: '2026-08-19' }).call;
+  // SEC-7: the real Neon lookup is `to_jsonb(c)` over inbound_calls, which has
+  // NO insurer column (the label is a join to insurance_numbers). This input
+  // used to carry one, which hid that the sheet copy disclosed a label the live
+  // path never does; the parity is now against the row Neon actually returns.
   const viaNeon = h.call('callerLookupShapeCall_', {
-    call_date: '2026-08-19', call_id: '111', insurer: 'Acme',
+    call_date: '2026-08-19', call_id: '111',
     dial_in_number: '19722281820', disposition: 'abandoned', abandon_stage: 'queue',
     abandoned_on_hold: true, hold_seconds: 7, wait_seconds: 45,
     entry_queue: 'A_Q_CSR', final_queue: 'A_Q_CSR', final_dept: 'CSR',
@@ -149,6 +153,7 @@ test('SOURCE PARITY: sheet row and Neon row shape to the identical call object',
     is_internal: false, journey: JOURNEY,
   });
   assert.deepEqual(JSON.parse(JSON.stringify(viaSheet)), JSON.parse(JSON.stringify(viaNeon)));
+  assert.equal(viaSheet.insurer, null, 'the export tab\'s Insurer column is never served on the drill');
 });
 
 test('auth arm 1: a manager reaches a row scoped to their dept queues (no missed-report call)', function () {
@@ -178,6 +183,24 @@ test('auth: gate closed -> a reason-LESS miss (the manager learns nothing)', fun
   assert.equal(res.found, false);
   assert.equal(res.reason, undefined, 'no reason probe for a gate-closed manager');
   assert.equal(res.fallbackThrough, undefined, 'no coverage hint either');
+});
+
+test('SEC-7: a gate-closed manager gets NO miss reason for a call that is not in the tab either', function () {
+  // Before SEC-7 the sheet fallback classified the miss before any auth, so a
+  // probe for an id that exists nowhere came back 'not-captured' while one in
+  // another dept came back reason-less -- an existence oracle.
+  install({ user: MANAGER, missedGateOpen: false, sheet: fakeExportSheet([
+    exRow({ date: '2026-08-18', id: 'a' }), exRow({ date: '2026-08-20', id: 'b', entryQueue: 'A_Q_Spanish' }),
+  ]) });
+  ['2026-08-20', '2026-08-19', '2026-08-01', '2026-08-25'].forEach(function (date) {
+    const r = drill({ callId: 'nope', date: date, department: 'CSR' });
+    assert.equal(r.found, false);
+    assert.equal(r.reason, undefined, date + ': no reason for a gate-closed manager');
+    assert.equal(r.fallbackThrough, undefined, date + ': no coverage hint either');
+  });
+  // The same probe from a manager whose own Missed report carries the id gets the reason.
+  install({ user: MANAGER, missedGateOpen: true, sheet: fakeExportSheet([exRow({ date: '2026-08-20', id: 'b' })]) });
+  assert.equal(drill({ callId: 'nope', date: '2026-08-20', department: 'CSR' }).reason, 'not-captured');
 });
 
 test('miss reasons from the sheet: before-capture (+minDate), date-gap, not-captured, fallback-gap', function () {
@@ -347,4 +370,21 @@ test('OD-5: journeyPrunedMeta_ flags a NULL journey on a call older than the ret
   assert.deepEqual(JSON.parse(JSON.stringify(f(null, '2026-05-01', now))), {});
   delete h.ctx.neonRetentionSettings_;
   assert.equal(f({ journey: null }, '2026-05-01', now).journeyHorizonDays, 90, 'default horizon when NeonRetention.gs is not in scope');
+});
+
+// PCR-2 follow-on: the sheet mirror of callJourneyDeptPredicate_ compared
+// final_dept to the dept NAME, which a raw org-chart label never equals, so
+// the arm never settled anything and every such call fell to the F-4 gate.
+test('PCR-2 follow-on: auth arm 1 matches final_dept against the dept\'s Final Dept Labels', function () {
+  install({ user: MANAGER, missedGateOpen: false, sheet: fakeExportSheet([
+    exRow({ date: '2026-08-19', id: '111', entryQueue: 'A_Q_Spanish', finalQueue: 'A_Q_Spanish',
+            finalDept: 'Customer Success', disposition: 'answered' }),
+  ]) });
+  const saved = h.ctx.getFinalDeptLabels_;
+  h.ctx.getFinalDeptLabels_ = function (d) { return d === 'CSR' ? ['csr', 'customer success'] : [String(d).toLowerCase()]; };
+  try {
+    const res = drill({ callId: '111', date: '2026-08-19', department: 'CSR' });
+    assert.equal(res.found, true, 'the org-chart label settles arm 1');
+    assert.equal(install.missedGateCalls.length, 0, 'without consulting the F-4 gate');
+  } finally { h.ctx.getFinalDeptLabels_ = saved; }
 });

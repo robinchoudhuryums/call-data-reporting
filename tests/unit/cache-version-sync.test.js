@@ -75,6 +75,7 @@ const SPECS = [
   // this suite (the third recurrence of the B5/F3b class).
   ['overviewChartYtd',  'CompanyOverview.gs',     /'overviewChartYtd:v(\d+)/],
   ['presence',          'SystemHealth.gs',        /'presence:v(\d+)'/],
+  ['mailThrottle',      'Config.gs',              /'mailThrottle:v(\d+):'/],   // SEC-2 (Batch 8)
   ['orphanFix:init',    'OrphanFix.gs',           /'orphanFix:init:v(\d+)'/],
   ['deptConfig:init',   'DeptConfig.gs',          /'deptConfig:init:v(\d+)'/],
 ];
@@ -211,6 +212,7 @@ const ANCHOR_SPECS = {
   outboundReport:      'tag',
   overviewChartYtd:    'exception: embeds latestDate in the key (equivalent anchor)',
   presence:            'exception: CacheService presence map, ~15-min prune -- not a report cache',
+  mailThrottle:        'exception: SEC-2 per-user report-email counter (rolling 6 h window) -- not a report cache',
   'orphanFix:init':    'exception: busted on every write (bustOrphanFixCache_)',
   'deptConfig:init':   'exception: busted on every write (dcBustCaches_)',
 };

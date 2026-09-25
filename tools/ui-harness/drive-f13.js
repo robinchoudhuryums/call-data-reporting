@@ -95,6 +95,38 @@ function record(name, pass, detail) {
   });
   record('agent row Enter opens the Individual Report', irOpen);
   if (irOpen) {
+    // UI-1 follow-on: Escape on the report's Export MENU closes the menu
+    // only. The menu's Escape used to bubble to the modal's own handler, so
+    // one press closed the menu AND the report. Both entry shapes: focus on
+    // the trigger (click-opened) and focus inside the menu (ArrowDown).
+    const irShown = () => page.evaluate(() => {
+      const m = document.getElementById('individual-modal');
+      return !!m && getComputedStyle(m).display !== 'none';
+    });
+    const menuShown = () => page.evaluate(() => {
+      const m = document.getElementById('ir-export-menu');
+      return !!m && getComputedStyle(m).display !== 'none';
+    });
+    const exportVisible = await page.locator('#ir-export-btn').isVisible().catch(() => false);
+    if (exportVisible) {
+      await page.click('#ir-export-btn');
+      await page.waitForTimeout(200);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      record('IR Export menu (click-opened): Escape closes the menu only',
+        !(await menuShown()) && (await irShown()));
+      await page.focus('#ir-export-btn');
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(200);
+      const inMenu = await page.evaluate(() =>
+        document.getElementById('ir-export-menu').contains(document.activeElement));
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      record('IR Export menu (keyboard-opened): Escape closes the menu only',
+        inMenu && !(await menuShown()) && (await irShown()), 'focusInMenu=' + inMenu);
+    } else {
+      record('IR Export menu is reachable for the Escape check', false, '#ir-export-btn not visible');
+    }
     await page.keyboard.press('Escape');
     await page.waitForTimeout(800);
   }
@@ -158,27 +190,35 @@ function record(name, pass, detail) {
     await surface.open();
     const exp = page.locator(surface.sel).first();
     if (await exp.count()) {
-      const expAttrs = await exp.evaluate((el) => ({
-        tabindex: el.getAttribute('tabindex'), expanded: el.getAttribute('aria-expanded'),
-      }));
-      record(surface.label + ': expandable row is focusable + reports state',
-        expAttrs.tabindex === '0' && expAttrs.expanded === 'false', JSON.stringify(expAttrs));
-      await exp.focus();
+      // A11y tidy-up (the E-8 contract): the disclosure is a real <button> in
+      // the first cell that owns aria-expanded; the row is no tab stop. One
+      // Enter must toggle ONCE -- a leftover row keydown would toggle twice.
+      const expAttrs = await exp.evaluate((el) => {
+        const b = el.querySelector('button.qcd-expand-toggle');
+        return { rowTabindex: el.getAttribute('tabindex'), rowExpanded: el.getAttribute('aria-expanded'),
+                 button: !!b, expanded: b ? b.getAttribute('aria-expanded') : null };
+      });
+      record(surface.label + ': the disclosure is a button that reports state (the row is not a tab stop)',
+        expAttrs.button && expAttrs.expanded === 'false' && expAttrs.rowTabindex === null
+          && expAttrs.rowExpanded === null, JSON.stringify(expAttrs));
+      const toggle = exp.locator('button.qcd-expand-toggle');
+      await toggle.focus();
       await page.keyboard.press('Enter');
       await page.waitForTimeout(500);
       const opened = await exp.evaluate((el) => {
         const d = el.nextElementSibling;
+        const b = el.querySelector('button.qcd-expand-toggle');
         return {
           shown: !!d && d.classList.contains('qcd-detail-row') && d.style.display !== 'none',
-          expanded: el.getAttribute('aria-expanded'),
+          expanded: b ? b.getAttribute('aria-expanded') : null,
         };
       });
       record(surface.label + ': Enter expands the per-source detail',
         opened.shown && opened.expanded === 'true', JSON.stringify(opened));
-      await page.keyboard.press('Enter');
+      await page.keyboard.press(' ');
       await page.waitForTimeout(400);
-      const closed = await exp.evaluate((el) => el.getAttribute('aria-expanded'));
-      record(surface.label + ': Enter again collapses it', closed === 'false', 'aria-expanded=' + closed);
+      const closed = await exp.evaluate((el) => el.querySelector('button.qcd-expand-toggle').getAttribute('aria-expanded'));
+      record(surface.label + ': Space collapses it again', closed === 'false', 'aria-expanded=' + closed);
     } else {
       record(surface.label + ': expandable row present', false, 'no qcd-expandable row in the fixture');
     }

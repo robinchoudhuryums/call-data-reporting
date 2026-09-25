@@ -304,3 +304,24 @@ testInt('is_internal exclusion: on the 5 aliased metric ranges, the 4 parity que
   assertInt.ok(fnStart !== -1 && fnSlice.indexOf('is_internal') === -1,
     'getCallJourney must NOT exclude internal rows -- serving them is the point');
 });
+
+// PCR-2 follow-on: the journey's scoped lookup matched final_dept against the
+// dept NAME alone -- a raw org-chart label never equals it, so this arm never
+// fired. It now takes the dept's own + children's Final Dept Labels, like
+// inboundDeptPredicate_'s on-hold arm.
+test('PCR-2 follow-on: callJourneyDeptPredicate_ matches final_dept against the Final Dept Labels', function () {
+  install();
+  const saved = { l: h.ctx.getFinalDeptLabels_, p: h.ctx.getOverviewParentMap_ };
+  try {
+    h.ctx.getFinalDeptLabels_ = function (d) {
+      return d === 'Sales' ? ['sales', 'inside sales'] : (d === 'PAP' ? ['pap', 'patient access'] : [String(d).toLowerCase()]);
+    };
+    h.ctx.getOverviewParentMap_ = function () { return { PAP: 'Sales' }; };
+    const j = h.call('callJourneyDeptPredicate_', 'Sales', ['A_Q_Sales']);
+    assert.ok(j.indexOf("lower(trim(coalesce(c.final_dept, ''))) IN ('sales','inside sales','pap','patient access')") !== -1,
+      'own + child labels, not the bare dept name: ' + j);
+    assert.equal(h.call('callJourneyDeptPredicate_', '', ['A_Q_Sales']), '', 'company view stays unscoped');
+  } finally {
+    h.ctx.getFinalDeptLabels_ = saved.l; h.ctx.getOverviewParentMap_ = saved.p;
+  }
+});

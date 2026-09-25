@@ -258,8 +258,14 @@ function icBuildJourney_(legs) {
 // SQL literal builders for the INLINE inbound insert (mirrors the phone-child
 // inline approach: eliminates ~14 JDBC bind-bridge calls per row, the
 // dominant per-row Apps Script cost). Free-text fields are single-quote
-// escaped; ints/bools/hash are inherently safe.
-function icSqlStr_(s) { return (s == null || s === '') ? 'NULL' : "'" + String(s).replace(/'/g, "''") + "'"; }
+// escaped; ints/bools/hash are inherently safe. S2C-4 (broad-scan
+// 2026-09-23): NUL is stripped too, as neonSqlLit_ / nbSqlLit_ already do --
+// Postgres rejects a \u0000 in a text literal, which failed the WHOLE date's
+// transaction on every re-import (these tables have no sheet primary).
+function icSqlStr_(s) {
+  if (s == null || s === '') return 'NULL';
+  return "'" + String(s).replace(/\u0000/g, '').replace(/'/g, "''") + "'";
+}
 function icSqlInt_(n) { var v = parseInt(n, 10); return isFinite(v) ? String(v) : 'NULL'; }
 function icSqlHash_(h) { return (typeof h === 'string' && /^[0-9a-f]{64}$/.test(h)) ? "'" + h + "'" : 'NULL'; }
 
@@ -530,6 +536,13 @@ function buildInboundCallRecords_(rawRows) {
       if (!facn || facn.toUpperCase() === 'N/A') continue;
       if (icIsQueueName_(facn)) continue;
       if (/^\+?[\d\s\-().]{7,}$/.test(facn)) continue;
+      // S2C-1 (broad-scan 2026-09-23): a leg whose CALLEE is an external
+      // number names the EXTERNAL party, not an agent -- on an answered queue
+      // call the agent's own Outgoing talk leg carries the caller's CNAM here
+      // AND the agent's Departments value, so first_agent stored a customer's
+      // raw name (the journey masks the same leg to initials, P-11/IMP-12) and
+      // the dial-in labels / AgentDay's degraded tier keyed on it.
+      if (icExternalNumber_(legs[fa][IC_COL.CALLEE])) continue;
       var fad = String(legs[fa][IC_COL.DEPARTMENTS] == null ? '' : legs[fa][IC_COL.DEPARTMENTS]).trim();
       if (!fad || fad.toUpperCase() === 'N/A') continue;
       firstAgent = facn.slice(0, IC_JOURNEY_NAME_MAX);

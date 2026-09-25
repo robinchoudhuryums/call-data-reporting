@@ -9,18 +9,24 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // computeDigestWowDriver_ reuses CompanyOverview's computeWowDelta_ /
 // computeWowDriver_ (INV-48) over a stats shape it builds from DQE.
 const h = loadGas({
-  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs', 'Data.gs', 'Digest.gs',
+  files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs', 'Data.gs', 'NeonRead.gs', 'Digest.gs',
           'EmailKit.gs'],   // Round-16: digestWowNarrative_ renders an EmailKit callout
 });
 
 const ROSTER = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'] });
 
-function install(rows) {
+function install(rows, prebuiltSheet) {
   h.state.props.SPREADSHEET_ID = 'fake';
   h.state.spreadsheet = makeFakeSpreadsheet({
-    sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': dqeSheet(rows) },
+    sheets: { 'DO NOT EDIT!': ROSTER, 'DQE Historical Data': prebuiltSheet || dqeSheet(rows) },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  // S2A-1 queue-split half: the WoW reads through sheetFetchDqeRows_ now, so
+  // every per-execution DQE memo resets with the fixture (the R40 family).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null;
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 
@@ -154,6 +160,12 @@ function installDigestMarkerFixture_(configRows) {
     },
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  // S2A-1 queue-split half: the WoW reads through sheetFetchDqeRows_ now, so
+  // every per-execution DQE memo resets with the fixture (the R40 family).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null;
+  h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null;
+  h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 
@@ -186,4 +198,75 @@ test('P6: a delivered run still claims the window (dedup preserved)', function (
   // A second same-window run is deduped by the marker.
   h.call('sendDigestsForCadence_', 'daily');
   assert.equal(sends, 1, 'duplicate run skipped');
+});
+
+// S2A-1 (broad-scan 2026-09-23): the digest's trendByDate carried no `missed`,
+// so under ANSWER_RATE_FORMULA=answerable (DD-2, Operator State #69) both weeks
+// rated answered/answered = 100% and every digest said "no notable shift".
+// The rung figure here deliberately differs from answered+missed so the two
+// formulas give DIFFERENT, pinned answers.
+test('S2A-1: the digest WoW rates under ANSWER_RATE_FORMULA=answerable (was: always 100% vs 100%)', function () {
+  const rows = [
+    row('2026-03-04', 'Anna', { rung: 12, missed: 5, answered: 5 }),
+    row('2026-03-04', 'Ben',  { rung: 12, missed: 5, answered: 5 }),
+    row('2026-03-11', 'Anna', { rung: 12, missed: 1, answered: 9 }),
+    row('2026-03-11', 'Ben',  { rung: 12, missed: 5, answered: 5 }),
+  ];
+  try {
+    install(rows);
+    h.state.props.ANSWER_RATE_FORMULA = 'answerable';
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    const wow = h.call('computeDigestWowDriver_', 'Alpha', '2026-03-14');
+    assert.ok(wow, 'expected a wow result');
+    assert.equal(wow.prevPct, 50);          // 10 / (10 + 10)
+    assert.equal(wow.curPct, 70);           // 14 / (14 + 6)
+    assert.equal(wow.deltaPct, 20);
+    assert.ok(wow.driver && wow.driver.agent === 'Anna', 'the driver surfaces under answerable too');
+
+    // Same rows under the default formula: answered / rung.
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+    const wow2 = h.call('computeDigestWowDriver_', 'Alpha', '2026-03-14');
+    assert.equal(wow2.prevPct, round1(10 / 24 * 100));
+    assert.equal(wow2.curPct, round1(14 / 24 * 100));
+  } finally {
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  }
+});
+
+function round1(x) { return Math.round(x * 10) / 10; }
+
+// S2A-1 queue-split half (broad-scan 2026-09-23, Batch 11): the WoW callout
+// skipped applyQueueSplitToRows_, so under QUEUE_SPLIT_SCOPE=dept the digest
+// rated all-queue figures while every other surface rated the dept's own.
+// Anna's current week carries 10 OTHER-queue misses that the narrowing drops.
+test('S2A-1: the digest WoW narrows to the dept\'s own queues under QUEUE_SPLIT_SCOPE=dept', function () {
+  const split = function (o) { return JSON.stringify(o); };
+  const withSplit = function (r, json) { r.vals.push(json); r.disp.push(json); return r; };
+  const rows = [
+    withSplit(row('2026-03-04', 'Anna', { rung: 10, missed: 5, answered: 5 }),
+              split({ A_Q_Alpha: { r: 10, m: 5, a: 5 } })),
+    withSplit(row('2026-03-11', 'Anna', { rung: 20, missed: 11, answered: 9 }),
+              split({ A_Q_Alpha: { r: 10, m: 1, a: 9 }, A_Q_Other: { r: 10, m: 10, a: 0 } })),
+  ];
+  const sheet = dqeSheet(rows);
+  sheet.values[0].push(''); sheet.displays[0].push('');
+  install(null, sheet);   // col AI (index 34) carries the split
+  h.state.props.ANSWER_RATE_FORMULA = 'answerable';
+  h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  h.ctx.inboundQueuesForDept_ = function (d) { return d === 'Alpha' ? ['A_Q_Alpha'] : []; };
+  try {
+    const off = h.call('computeDigestWowDriver_', 'Alpha', '2026-03-14');
+    assert.equal(off.curPct, 45, 'off: all-queue 9 / (9 + 11)');
+
+    h.state.props.QUEUE_SPLIT_SCOPE = 'dept';
+    const on = h.call('computeDigestWowDriver_', 'Alpha', '2026-03-14');
+    assert.equal(on.prevPct, 50);
+    assert.equal(on.curPct, 90, 'dept: Alpha\'s own queue only, 9 / (9 + 1)');
+  } finally {
+    delete h.state.props.QUEUE_SPLIT_SCOPE;
+    delete h.state.props.ANSWER_RATE_FORMULA;
+    h.ctx.ANSWER_RATE_FORMULA_MEMO_ = null;
+  }
 });

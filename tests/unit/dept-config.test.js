@@ -468,3 +468,38 @@ test('F11: saveDeptConfig saves with a WARNING when the queue universe is empty'
     'the save must SAY it skipped validation rather than passing silently; got: '
     + JSON.stringify(out.warnings));
 });
+
+// S2B-7 (broad-scan 2026-09-23): the team-avg excludes are ROSTER names, which
+// are feed spellings and can lead with a formula character; the save wrote the
+// joined list raw into a sheet cell.
+test('S2B-7: sheetUpsertDeptConfigRow_ neutralizes a formula-leading team-avg-excludes cell', function () {
+  setConfig([row({ dept: 'Alpha', qcd: 'A_Q_A' })]);
+  // Util.gs is not loaded here (earlier tests stub sheetSafeCell_ as identity);
+  // install its real rule for this assertion.
+  h.ctx.sheetSafeCell_ = function (v) { return (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + v : v; };
+  h.call('sheetUpsertDeptConfigRow_', {
+    dept: 'Alpha', qcdQueues: ['A_Q_A'], overviewParent: '', teamAvgExcludes: ['=Evil Name', 'Bo'],
+    queueExtOverrides: [], active: true, admin: 'a@x.com', notes: '', inboundAliases: [], finalDeptLabels: [],
+  });
+  const grid = h.state.spreadsheet._sheet('Dept Config')._data;
+  assert.equal(grid[1][3], "'=Evil Name, Bo");
+});
+
+// S2B-7 follow-on: the QCD queues are validated against QCD col D, which the
+// import writes from the feed -- so a queue name can lead with a formula
+// character too, and it was the one list cell still written raw.
+test('S2B-7 follow-on: sheetUpsertDeptConfigRow_ neutralizes a formula-leading QCD-queues cell', function () {
+  setConfig([row({ dept: 'Alpha', qcd: 'A_Q_A' })]);
+  h.ctx.sheetSafeCell_ = function (v) { return (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + v : v; };
+  h.call('sheetUpsertDeptConfigRow_', {
+    dept: 'Alpha', qcdQueues: ['+A_Q_Plus', 'A_Q_A'], overviewParent: '', teamAvgExcludes: [],
+    queueExtOverrides: [], active: true, admin: 'a@x.com', notes: '', inboundAliases: [], finalDeptLabels: [],
+  });
+  const grid = h.state.spreadsheet._sheet('Dept Config')._data;
+  assert.equal(grid[1][1], "'+A_Q_Plus, A_Q_A");
+  h.call('sheetUpsertDeptConfigRow_', {
+    dept: 'Alpha', qcdQueues: ['A_Q_A'], overviewParent: '', teamAvgExcludes: [],
+    queueExtOverrides: [], active: true, admin: 'a@x.com', notes: '', inboundAliases: [], finalDeptLabels: [],
+  });
+  assert.equal(grid[1][1], 'A_Q_A', 'an ordinary queue list is written unchanged');
+});

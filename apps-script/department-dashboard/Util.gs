@@ -87,6 +87,35 @@ function assertManagerOrAdmin_(user) {
   }
 }
 
+// SEC-1 (broad-scan 2026-09-23): the DQE / QCD report RPCs accepted ANY
+// valid window, so `from: '2000-01-01'` -- shifted a day per call to defeat
+// the cache -- read the whole history each time (a json_agg with no LIMIT on
+// the Neon path, prior window doubling it): the R24 monthly-transfer-cap
+// incident, reachable by any manager (or agent) from devtools. The per-call
+// reports already capped at 366 days. Two years covers every UI preset
+// (lastYear / last12Months) AND INV-29's >366-day trend branch; the agent
+// app's presets never exceed a year.
+var REPORT_MAX_RANGE_DAYS = 731;
+var AGENT_MAX_RANGE_DAYS = 366;
+
+/** Inclusive day count of an ISO window (UTC arithmetic, DST-proof). */
+function reportRangeDays_(from, to) {
+  var f = String(from).split('-').map(Number), t = String(to).split('-').map(Number);
+  return Math.round((Date.UTC(t[0], t[1] - 1, t[2]) - Date.UTC(f[0], f[1] - 1, f[2])) / 86400000) + 1;
+}
+
+/**
+ * SEC-1. Throws when an already-validated ISO window spans more than
+ * `maxDays` (default REPORT_MAX_RANGE_DAYS). `label` names the window in the
+ * message ('Prior range' for a client-supplied comparison window).
+ */
+function assertReportRangeCap_(from, to, maxDays, label) {
+  var cap = maxDays || REPORT_MAX_RANGE_DAYS;
+  if (reportRangeDays_(from, to) > cap) {
+    throw new Error((label || 'Range') + ' is capped at ' + cap + ' days.');
+  }
+}
+
 // -- Report-usage telemetry --------------------------------------------------
 
 /**
@@ -225,8 +254,12 @@ function computeTrendStartDate_(startDate, endDate) {
     trendStartDate = new Date(startDate);
   } else {
     trendStartDate = new Date(endDate);
-    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
+    // DATA-8 (broad-scan 2026-09-23, Batch 9): day FIRST, then month. With
+    // the month first, an end date of Feb 29 moved to Feb 29 of the prior
+    // (non-leap) year, which rolled over to Mar 1 -- and setDate(1) then kept
+    // March, so the "12-month" trend silently lost its first month.
     trendStartDate.setDate(1);
+    trendStartDate.setMonth(trendStartDate.getMonth() - 12);
   }
   return trendStartDate;
 }
@@ -637,7 +670,7 @@ function computeSubQueuePickerGroups_(dept, from, to) {
 function computeActiveAgentsInRange_(dept, from, to, roster) {
   // CORE-3: like latestDate:v1, the key carries the ACTIVE read source so a
   // DQE_READ_SOURCE flip can't serve a picker subset computed from the
-  // other source for up to the 30-min TTL (Neon can lag the sheet
+  // other source for up to the 6 h TTL (Neon can lag the sheet
   // mid-backfill, and vice versa right after a rebuild).
   const dqeSource = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const cache = CacheService.getScriptCache();
@@ -770,8 +803,13 @@ function computeActiveAgentsInRange_(dept, from, to, roster) {
     agents:   Object.keys(activeRoster).sort(),
     floaters: floaters,
   };
-  try { cache.put(cacheKey, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
-  catch (e) { /* harmless */ }
+  // DATA-2 (broad-scan 2026-09-23): a failed Dept Config read made the queue
+  // ext set constant-only, which changes WHICH names count as floaters --
+  // serve it, never pin that picker for the 6 h TTL (the R8-C4 rule).
+  if (!(typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_())) {
+    try { cache.put(cacheKey, JSON.stringify(out), REPORT_CACHE_TTL_SECONDS); }
+    catch (e) { /* harmless */ }
+  }
   return out;
 }
 

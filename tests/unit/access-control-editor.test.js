@@ -283,29 +283,103 @@ test('R28: the welcome is skipped without DASHBOARD_URL or with ACCESS_WELCOME_E
 });
 
 
-// ---- A-6 (broad-scan 2026-09-17): the uncached auth read vs the replace-all save ----
+// ---- A-6 / S2B-2: the uncached auth read vs the replace-all save ----
+// A-6 (2026-09-17) stopped a read landing mid-save from caching '__none__' by
+// taking the SCRIPT LOCK -- which long jobs (the 8 AM alerts run) hold, so
+// every uncached sign-in waited 10 s and, failing the lock, was not cached
+// (S2B-2, 2026-09-23). The read now takes no lock: writers bracket their
+// delete/append with a save-in-flight marker + generation token, and the read
+// caches only when neither end of it saw a save and the generation held.
 
-test('A-6: an uncached Access Control read takes the script lock and caches', function () {
+test('S2B-2: an uncached Access Control read takes NO lock and caches', function () {
   install([['m@x.com', 'CSR', '']]);
   const before = h.state.locks;
   const entries = h.call('getAccessEntries_', 'm@x.com');
   assert.equal(entries.length, 1);
-  assert.equal(h.state.locks, before + 1, 'one tryLock for the sheet read');
-  assert.ok(h.state.cache.get('access:m@x.com'), 'cached under the lock');
+  assert.equal(h.state.locks, before, 'no LockService call on the sign-in path');
+  assert.ok(h.state.cache.get('access:m@x.com'), 'cached');
 });
 
-test('A-6: when the lock is HELD (a save in flight) the read still serves but does NOT cache', function () {
+test('S2B-2: an unrelated long lock holder (the alerts run) no longer blocks or un-caches sign-in', function () {
   install([['m@x.com', 'CSR', '']]);
   h.state.lockBusy = true;
   try {
-    const entries = h.call('getAccessEntries_', 'm@x.com');
-    assert.equal(entries.length, 1, 'never a denial for lock contention');
-    assert.equal(h.state.cache.get('access:m@x.com'), undefined, 'a mid-save snapshot is not pinned for the TTL');
-    // The negative shape too: an empty read under contention is not cached as __none__.
+    assert.equal(h.call('getAccessEntries_', 'm@x.com').length, 1);
+    assert.ok(h.state.cache.get('access:m@x.com'), 'cached despite the held script lock');
     assert.equal(h.call('getAccessEntries_', 'ghost@x.com').length, 0);
-    assert.equal(h.state.cache.get('access:ghost@x.com'), undefined);
+    assert.equal(h.state.cache.get('access:ghost@x.com'), '__none__');
   } finally { h.state.lockBusy = false; }
-  // Once the lock is free again the next read caches as before.
+});
+
+test('S2B-2 (keeps A-6): a read during a save serves the sheet but does NOT cache', function () {
+  install([['m@x.com', 'CSR', '']]);
+  h.call('acSaveMarkStart_');   // a save is between its delete and its append
+  try {
+    assert.equal(h.call('getAccessEntries_', 'm@x.com').length, 1, 'never a denial for a save in flight');
+    assert.equal(h.state.cache.get('access:m@x.com'), undefined, 'a mid-save snapshot is not pinned');
+    assert.equal(h.call('getAccessEntries_', 'ghost@x.com').length, 0);
+    assert.equal(h.state.cache.get('access:ghost@x.com'), undefined, 'nor is an empty one');
+  } finally { h.call('acSaveMarkEnd_'); }
   h.call('getAccessEntries_', 'm@x.com');
-  assert.ok(h.state.cache.get('access:m@x.com'));
+  assert.ok(h.state.cache.get('access:m@x.com'), 'caches again once the save is done');
+});
+
+test('S2B-2: a save that starts AND finishes inside one read still blocks the cache write', function () {
+  install([['m@x.com', 'CSR', '']]);
+  const real = h.ctx.acReadEntriesUncached_;
+  h.ctx.acReadEntriesUncached_ = function (e) {
+    const out = real(e);
+    h.call('acSaveMarkStart_'); h.call('acSaveMarkEnd_');   // generation moved during the read
+    return out;
+  };
+  try {
+    assert.equal(h.call('getAccessEntries_', 'm@x.com').length, 1);
+    assert.equal(h.state.cache.get('access:m@x.com'), undefined);
+  } finally { h.ctx.acReadEntriesUncached_ = real; }
+});
+
+test('S2B-2: save and remove clear their in-flight marker and move the generation', function () {
+  install([['m@x.com', 'CSR', '']]);
+  const g0 = h.state.cache.get('acsave:gen');
+  h.call('saveAccessControlRow', { email: 'n@x.com', department: 'Sales' });
+  const g1 = h.state.cache.get('acsave:gen');
+  assert.ok(g1 && g1 !== g0);
+  assert.equal(h.state.cache.get('acsave:inflight'), undefined, 'marker cleared after the save');
+  h.call('removeAccessControlRow', { email: 'n@x.com' });
+  assert.notEqual(h.state.cache.get('acsave:gen'), g1);
+  assert.equal(h.state.cache.get('acsave:inflight'), undefined, 'marker cleared after the remove');
+  // A save that throws MID-WRITE still clears it (finally), so sign-in caching recovers.
+  const sheet = h.state.spreadsheet.getSheetByName('Access Control');
+  const realAppend = sheet.appendRow;
+  sheet.appendRow = function () { throw new Error('Service Spreadsheets timed out'); };
+  try {
+    assert.throws(function () { h.call('saveAccessControlRow', { email: 'n@x.com', department: 'Sales' }); }, /timed out/);
+  } finally { sheet.appendRow = realAppend; }
+  assert.equal(h.state.cache.get('acsave:inflight'), undefined);
+});
+
+// S2B-6 (broad-scan 2026-09-23): resolveUser_ canonicalizes the sign-in
+// address through EMAIL_ALIASES BEFORE the Access Control lookup, so a row
+// stored under the ALIAS never matched -- the person stayed denied while the
+// welcome email said "live now". The save now stores the canonical address.
+test('S2B-6: a row saved under an EMAIL_ALIASES alias is stored canonically and grants access', function () {
+  install([['jdoe@x.com', 'CSR', 'stale alias row']]);
+  h.state.props.EMAIL_ALIASES = 'jdoe@x.com = john.doe@x.com';
+  try {
+    const res = h.call('saveAccessControlRow', { email: 'JDoe@X.com', department: 'Sales' });
+    assert.equal(res.storedAs, 'john.doe@x.com');
+    const rows = acSheetRows();
+    assert.equal(rows.length, 1, 'the stale alias row is replaced, not left beside the canonical one');
+    assert.equal(rows[0][0], 'john.doe@x.com');
+    assert.equal(rows[0][1], 'Sales');
+    // Signing in with EITHER address now resolves to the manager.
+    assert.equal(h.call('resolveUser_', 'jdoe@x.com').role, 'manager');
+    assert.equal(h.call('resolveUser_', 'john.doe@x.com').role, 'manager');
+    // A non-alias save keeps the admin's casing and reports nothing.
+    const plain = h.call('saveAccessControlRow', { email: 'Plain@X.com', department: 'CSR' });
+    assert.equal(plain.storedAs, '');
+    assert.equal(acSheetRows().filter(function (r) { return r[0] === 'Plain@X.com'; }).length, 1);
+  } finally {
+    delete h.state.props.EMAIL_ALIASES;
+  }
 });

@@ -41,6 +41,7 @@ var CDR_IMPORT_PROP_REGISTRY_ = Object.freeze({
     // engine -- written by the code
     bulkQueue: 'engine', bulkIndex: 'engine', bulkReport: 'engine',   // processBulkQueue state
     lastSheets: 'engine',                                              // autoImport's recent-sheet memo
+    RETENTION_HOLD: 'engine',                                          // ING-5: recovered Call_Legs tabs held from the prune
     DIRECT_UPSERT_RESUME: 'engine',                                    // backfillDirectCallToNeon pointer
     EXEC_CEILING_PROBE_STARTED: 'engine', EXEC_CEILING_PROBE_LAST_MS: 'engine',
     EXEC_CEILING_PROBE_FINISHED: 'engine',                             // #70: the probe's record

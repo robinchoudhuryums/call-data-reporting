@@ -116,8 +116,8 @@ function readDeptConfigRows_() {
 // sheet read ERRORED" (a transient 'Service Spreadsheets timed out' etc.).
 // Both fall back to constants so the request still serves -- but an ERRORED
 // read means the served payload may be missing real sheet overrides (a
-// sheet-mapped dept loses its QCD queues entirely), and the 30-min report
-// caches would amplify that transient into a half-hour of wrong config.
+// sheet-mapped dept loses its QCD queues entirely), and the 6 h report
+// caches would amplify that transient into hours of wrong config.
 // The QCD-embedding cache-put sites consult deptConfigReadFailed_() and
 // skip the put, so the next request (with a healthy read) recomputes.
 var DEPT_CONFIG_READ_FAILED_ = false;
@@ -700,7 +700,7 @@ function getDeptConfigInit() {
     spreadsheetUrl:  'https://docs.google.com/spreadsheets/d/' + getSpreadsheetId_() + '/edit',
   };
   // A-2 (the R8-C4 discipline, applied to this endpoint's OWN cache): don't
-  // pin a degraded picture of the config for the 30-min TTL. Two degraded
+  // pin a degraded picture of the config for the 6 h TTL. Two degraded
   // shapes: (a) the config read errored this execution -- `rows` is [] and
   // `effective` is constants-only, which an admin would read as "nothing is
   // configured" and might then "correct"; (b) the inbound discovery came
@@ -801,7 +801,7 @@ function saveDeptConfig(req) {
   // --- M2 hardening: NON-BLOCKING warning when a saved queue is also
   // mapped to another dept. Double-mapping is tolerated downstream (the
   // Overview attributes a shared queue to EVERY dept that lists it --
-  // companyOverview:v24 M2), so this is a heads-up, not a rejection: it's
+  // companyOverview:v25 M2), so this is a heads-up, not a rejection: it's
   // almost always a config slip that would silently inflate two depts'
   // QCD numbers from the same queue. Computed against the OTHER depts'
   // current effective lists (this dept's new row isn't written yet). ---
@@ -943,7 +943,7 @@ function saveDeptConfig(req) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
   try {
-    upsertDeptConfigRow_({
+    const mirrorWarning = upsertDeptConfigRow_({
       dept:              dept,
       qcdQueues:         qcdQueues,
       overviewParent:    overviewParent,
@@ -955,6 +955,7 @@ function saveDeptConfig(req) {
       notes:             notes,
       admin:             admin,
     });
+    if (mirrorWarning) queueWarnings.push(mirrorWarning);   // S2B-5
     dcBustCaches_();
     // H2: Team Avg Excludes is one of the published standards -- republish
     // (best-effort; the Health row reports a failure, the save stands). The
@@ -979,23 +980,59 @@ function removeDeptConfig(req) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Could not acquire script lock; try again.');
   let removed = 0;
+  const warnings = [];
   try {
-    removed = deactivateDeptConfig_(dept);
+    const res = deactivateDeptConfig_(dept);
+    removed = res.count;
+    if (res.warning) warnings.push(res.warning);   // S2B-5
     dcBustCaches_();
     if (typeof publishDashboardStandards_ === 'function') publishDashboardStandards_();   // H2 -- see saveDeptConfig
   } finally {
     lock.releaseLock();
   }
-  return { removed: removed };
+  return { removed: removed, warnings: warnings };
 }
 
 // -- Write helpers (trailing underscore; RPC-unreachable) ----------
 // Writes go to the ACTIVE source (Neon when CONFIG_SOURCE=neon, else the
 // sheet). Both clear the per-execution memo so the next accessor re-reads.
+//
+// S2B-5 (broad-scan 2026-09-23, Batch 11): under CONFIG_SOURCE=neon the SHEET
+// is still read -- by the OTHER projects, which have no Neon config reader:
+// cdr-import's capture-time queue recognition + canonical translation
+// (inboundCalls.js, INV-54's third consumer) and cdr-report's
+// queueOverlapAudit.js -- and by this project as the outage fallback. A
+// Neon-only write left all of them on the pre-flip copy, so a new Inbound
+// queue alias reached the dashboard and never reached capture (the Operator
+// State #38 blindness), with no warning. So a Neon write is MIRRORED to the
+// sheet: Neon stays authoritative (it is written first and a failure there
+// still throws), the mirror is best-effort, and a failed mirror comes back as
+// a WARNING string the caller surfaces -- never as a failed save.
 
 function upsertDeptConfigRow_(rec) {
-  if (getConfigSource_() === 'neon') { neonUpsertDeptConfigRow_(rec); return; }
+  if (getConfigSource_() === 'neon') {
+    neonUpsertDeptConfigRow_(rec);
+    return dcMirrorToSheet_(function () { sheetUpsertDeptConfigRow_(rec); }, rec.dept);
+  }
   sheetUpsertDeptConfigRow_(rec);
+  return null;
+}
+
+/** S2B-5: run a sheet mirror write; null on success, a warning string on failure. */
+function dcMirrorToSheet_(fn, dept) {
+  try {
+    fn();
+    return null;
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : String(e);
+    Logger.log('Dept Config (CONFIG_SOURCE=neon): saved to Neon, but the SHEET mirror for '
+      + dept + ' failed: ' + msg);
+    return 'Saved to Neon, but the Dept Config SHEET copy was not updated (' + msg + '). '
+      + 'cdr-import\'s call capture reads only the sheet -- re-save this dept, or copy the row '
+      + 'to the sheet by hand (Operator State #25).';
+  } finally {
+    DEPT_CONFIG_ROWS_MEMO_ = null;
+  }
 }
 
 function sheetUpsertDeptConfigRow_(rec) {
@@ -1015,14 +1052,17 @@ function sheetUpsertDeptConfigRow_(rec) {
   // CORE-7: notes are admin free text and inbound aliases are raw
   // phone-system queue names that can't be list-validated -- neutralize
   // formula-leading values (dcParseList_/readers see the original string;
-  // the leading apostrophe is Sheets formatting, not content). The other
-  // fields are validated to known queue names / real depts / roster names
-  // / digits upstream.
+  // the leading apostrophe is Sheets formatting, not content). S2B-7: so are
+  // the team-avg excludes -- validated to ROSTER names, but a roster name is
+  // a feed spelling and can lead with a formula character. So are the QCD
+  // queues (Batch 5 follow-on): validated against QCD col D, which is itself
+  // written from the feed. The other fields are validated to real depts /
+  // digits upstream.
   const rowValues = [
     rec.dept,
-    rec.qcdQueues.join(', '),
+    sheetSafeCell_(rec.qcdQueues.join(', ')),
     rec.overviewParent || '',
-    rec.teamAvgExcludes.join(', '),
+    sheetSafeCell_(rec.teamAvgExcludes.join(', ')),   // S2B-7: roster names from the feed can lead with =/+/-/@
     rec.queueExtOverrides.join(', '),
     rec.active ? 'TRUE' : 'FALSE',
     rec.admin || '',
@@ -1075,9 +1115,14 @@ function neonUpsertDeptConfigRow_(rec) {
   DEPT_CONFIG_ROWS_MEMO_ = null;
 }
 
+// Returns { count, warning } -- warning is the S2B-5 sheet-mirror failure, or null.
 function deactivateDeptConfig_(dept) {
-  if (getConfigSource_() === 'neon') return neonDeactivateDeptConfig_(dept);
-  return sheetDeactivateDeptConfig_(dept);
+  if (getConfigSource_() === 'neon') {
+    const count = neonDeactivateDeptConfig_(dept);
+    const warning = dcMirrorToSheet_(function () { sheetDeactivateDeptConfig_(dept); }, dept);
+    return { count: count, warning: warning };
+  }
+  return { count: sheetDeactivateDeptConfig_(dept), warning: null };
 }
 
 function sheetDeactivateDeptConfig_(dept) {

@@ -154,7 +154,7 @@ because two narrowed rows partition the day and summing them is now correct.
 `summary:v18` (Phase 0 took v17).
 
 **Phase 3 — Missed report.** Split slots + AD/AE/AF so per-agent timelines and
-the hour-of-day chart are queue-scoped. `missed:v17→v18`.
+the hour-of-day chart are queue-scoped. `missed:v18→v19` (v18 was taken by broad-scan Batch 6's PCR-1).
 
 **Phase 4 — IR / Insights.** Per-agent cards, team averages, trends.
 `individual:v*`, `insights:v19→v20`.

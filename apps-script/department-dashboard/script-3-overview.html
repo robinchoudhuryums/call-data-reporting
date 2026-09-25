@@ -178,6 +178,10 @@
         } catch (e) { /* best-effort pre-paint; the fetch below repaints */ }
       }
       ovLoad_(false);
+      // UI-3: the YTD series is viewer-shaped too; re-fetch it for the new
+      // scope (ovCurrentChartView_ shows the 90-day window meanwhile).
+      if (typeof ovChartRange !== 'undefined' && ovChartRange === 'ytd'
+          && typeof ovLoadYtdChart_ === 'function') ovLoadYtdChart_();
     } else if (document.body.getAttribute('data-page') === 'escalations') {
       // R9-5: reload the worklist under the previewed dept's scope (or the
       // full scope when exiting the preview).
@@ -1573,6 +1577,13 @@
   })();
   let ovYtdData = null;        // session cache of the getOverviewChartTrend payload
   let ovYtdLoading = false;
+  // UI-3: the payload is VIEWER-shaped (the Company line is admin-only), so it
+  // belongs to the view-as scope it was fetched under. A cached admin payload
+  // served into a manager preview drew the admin-only line in the preview.
+  let ovYtdScope = null;
+  function ovYtdFresh_() {
+    return !!(ovYtdData && ovYtdData.available && ovYtdScope === (viewAsDept_ || ''));
+  }
 
   // 'YYYY-MM-DD' minus N calendar days, UTC-stable (parse + reformat via UTC
   // so the arithmetic can't drift across a DST boundary).
@@ -1594,7 +1605,7 @@
   // 90-day payload when a YTD fetch hasn't landed yet.
   function ovCurrentChartView_(data) {
     if (ovChartRange === 'ytd') {
-      if (ovYtdData && ovYtdData.available) {
+      if (ovYtdFresh_()) {
         return {
           trendLabels: ovYtdData.trendLabels || [],
           trendIsoLabels: ovYtdData.trendIsoLabels || [],
@@ -1980,7 +1991,7 @@
     ovChartRange = r;
     try { localStorage.setItem(OV_CHART_RANGE_KEY_, r); } catch (e2) { /* best-effort */ }
     ovWireChartRange_();              // repaint the buttons (a synced change has no click to do it)
-    if (r === 'ytd' && !(ovYtdData && ovYtdData.available)) {
+    if (r === 'ytd' && !ovYtdFresh_()) {
       ovLoadYtdChart_();
       return;                         // ovLoadYtdChart_ re-renders when it lands
     }
@@ -1992,8 +2003,9 @@
   // the 90-day view with a toast so the control never dead-ends.
   function ovLoadYtdChart_() {
     if (ovYtdLoading) return;
-    if (ovYtdData && ovYtdData.available) { if (ovLastData) ovRenderChart_(ovLastData); return; }
+    if (ovYtdFresh_()) { if (ovLastData) ovRenderChart_(ovLastData); return; }
     ovYtdLoading = true;
+    const reqScope = viewAsDept_ || '';
     ovWireChartRange_();              // paint the YTD… loading label
     const revertTo90_ = function (msg) {
       ovYtdLoading = false;
@@ -2010,9 +2022,17 @@
     };
     google.script.run
       .withSuccessHandler(function (res) {
+        // UI-3: the view-as scope moved while this was in flight -- drop it
+        // and fetch for the scope now on screen.
+        if (reqScope !== (viewAsDept_ || '')) {
+          ovYtdLoading = false;
+          if (ovChartRange === 'ytd') ovLoadYtdChart_();
+          return;
+        }
         if (res && res.available) {
           ovYtdLoading = false;
           ovYtdData = res;
+          ovYtdScope = reqScope;
           if (ovLastData) ovRenderChart_(ovLastData);
         } else {
           revertTo90_('Year-to-date trend is unavailable right now.');

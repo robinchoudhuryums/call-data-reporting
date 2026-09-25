@@ -57,7 +57,19 @@ const QUEUE_REPORT_EVERY_MINUTES     = 30;   // Apps Script allows 1/5/10/15/30
 // Script Property keys.
 const QUEUE_REPORT_ENABLED_PROP    = 'QUEUE_REPORT_ENABLED';       // 'true' to arm
 const QUEUE_REPORT_LAST_SENT_PROP  = 'QUEUE_REPORT_LAST_SENT';     // target ISO already sent (dedupe)
+const QUEUE_REPORT_SENDING_PROP    = 'QUEUE_REPORT_SENDING';       // S2B-8: "<iso>|<ms>" while a send is in flight
 const QUEUE_REPORT_LAST_RESULT_PROP = 'QUEUE_REPORT_LAST_RESULT';  // human status for the modal
+// ENG-5 (broad-scan 2026-09-23): the outcome's timestamp and the send's start.
+const QUEUE_REPORT_LAST_PROP        = 'QUEUE_REPORT_LAST';
+const QUEUE_REPORT_STARTED_PROP     = 'QUEUE_REPORT_STARTED';
+
+// ENG-5: every outcome write goes through here so the Health row can age the
+// result and spot a send that STARTED but never recorded (the 6-minute kill
+// skips catch/finally, so the previous day's "Sent" used to stay green).
+function queueReportRecordResult_(props, text) {
+  props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP, text);
+  props.setProperty(QUEUE_REPORT_LAST_PROP, new Date().toISOString());
+}
 const QUEUE_REPORT_LAST_MISSED_PROP = 'QUEUE_REPORT_LAST_MISSED';  // O-7: target ISO already flagged as missed
 
 // ── Trigger entry point ───────────────────────────────────────────────────
@@ -68,6 +80,36 @@ const QUEUE_REPORT_LAST_MISSED_PROP = 'QUEUE_REPORT_LAST_MISSED';  // O-7: targe
  * { send: bool, reason }. ctx: { enabled, hour, dow, holiday, targetIso,
  * lastSent, latestQcd }.
  */
+// S2B-8 (broad-scan 2026-09-23, Batch 8): the manual subscriber blast and the
+// automated poll could BOTH read the day as unsent and both send it -- the
+// dedupe marker is claimed only AFTER a send, and the poll took no lock. Each
+// path now CLAIMS the day under a short script lock before sending (the lock
+// is held for the check-and-claim only, never for the send, so subscriber /
+// orphan saves are not blocked for the length of a blast) and releases the
+// claim when the send ends. A claim older than QUEUE_REPORT_SENDING_STALE_MS_
+// is a killed run's leftover and is ignored.
+const QUEUE_REPORT_SENDING_STALE_MS_ = 15 * 60000;
+function queueReportClaimSend_(props, iso, force) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return { ok: false, reason: 'busy' };
+  try {
+    if (!force && (props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '') === iso) {
+      return { ok: false, reason: 'sent' };
+    }
+    const cur = String(props.getProperty(QUEUE_REPORT_SENDING_PROP) || '').split('|');
+    if (cur[0] === iso && (Date.now() - Number(cur[1] || 0)) < QUEUE_REPORT_SENDING_STALE_MS_) {
+      return { ok: false, reason: 'in-flight' };
+    }
+    props.setProperty(QUEUE_REPORT_SENDING_PROP, iso + '|' + Date.now());
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+function queueReportReleaseSend_(props) {
+  try { props.deleteProperty(QUEUE_REPORT_SENDING_PROP); } catch (e) { /* stale-claim rule covers it */ }
+}
+
 function queueReportGateDecision_(ctx) {
   ctx = ctx || {};
   if (!ctx.enabled) return { send: false, reason: 'disabled' };
@@ -126,7 +168,18 @@ function runDailyQueueReport_() {
       return;   // 'not-ready' -> no-op, retry next poll
     }
 
-    const result = sendQueueReportForDate_(targetIso, {});
+    // S2B-8: claim the day before sending; a manual blast in flight (or one
+    // that just landed and claimed the marker) wins, and this poll stands down.
+    const claim = queueReportClaimSend_(props, targetIso, false);
+    if (!claim.ok) {
+      Logger.log('runDailyQueueReport_: %s not sent by the poll (%s) -- another send owns the day.', targetIso, claim.reason);
+      return;
+    }
+    // ENG-5: stamp the send's START (see queueReportRecordResult_).
+    props.setProperty(QUEUE_REPORT_STARTED_PROP, new Date().toISOString());
+    let result;
+    try { result = sendQueueReportForDate_(targetIso, {}); }
+    finally { queueReportReleaseSend_(props); }
     const failed = result.failed || [];
 
     // O-9: a run with NO ACTIVE SUBSCRIBERS is not a send, and must never
@@ -143,7 +196,7 @@ function runDailyQueueReport_() {
     // means an admin who adds themselves at 8am still gets that morning's
     // report on the next poll instead of having to wait for tomorrow.
     if (result.noRecipients) {
-      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+      queueReportRecordResult_(props,
         'NO-SUBSCRIBERS ' + targetIso + ' — the data was ready and the report was NOT sent: '
         + 'no active Queue Report subscriber rows exist. Add one under Alerts → Report '
         + 'Subscribers (installing the trigger does not subscribe you). Will send on the '
@@ -161,7 +214,7 @@ function runDailyQueueReport_() {
     // import lands), this one repeats every poll until the underlying slowness
     // is fixed -- so the status names the likely cause and the remedy.
     if (result.partialReport) {
-      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+      queueReportRecordResult_(props,
         'PARTIAL ' + targetIso + ' - ' + result.reason + '; NOT sent, marker not claimed, '
         + 'will retry next poll. If this repeats, check Neon reachability first (an outage '
         + 'makes every per-dept read fall back to a whole-sheet scan), then consider raising '
@@ -170,7 +223,7 @@ function runDailyQueueReport_() {
     }
 
     if (result.emptyReport) {
-      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+      queueReportRecordResult_(props,
         'EMPTY ' + targetIso + ' — the QCD sheet had the date but the report computed with '
         + 'NO departments; NOT sent, marker not claimed, will retry next poll. ('
         + result.reason + ') If the day genuinely had no queue activity, add it to '
@@ -188,7 +241,7 @@ function runDailyQueueReport_() {
     if (result.count > 0 || !failed.length) {
       props.setProperty(QUEUE_REPORT_LAST_SENT_PROP, targetIso);
       const lateSend = Number(Utilities.formatDate(now, TZ, 'H')) >= QUEUE_REPORT_WINDOW_END_HOUR;
-      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+      queueReportRecordResult_(props,
         'Sent ' + targetIso + ' to ' + result.count + ' subscriber'
         + (result.count === 1 ? '' : 's')
         + (lateSend ? ' (LATE — QCD data landed after the morning window)' : '')
@@ -198,14 +251,14 @@ function runDailyQueueReport_() {
     } else {
       const alreadyFlagged = (props.getProperty(QUEUE_REPORT_LAST_RESULT_PROP) || '')
         .indexOf('FAILED-ALL ' + targetIso) === 0;
-      props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+      queueReportRecordResult_(props,
         'FAILED-ALL ' + targetIso + ' — every subscriber send failed; will retry next poll. At ' + new Date());
       if (!alreadyFlagged) notifyQueueReportSendFailures_(targetIso, failed, /*allFailed=*/true);
     }
   } catch (e) {
     Logger.log('runDailyQueueReport_ failed: %s', e);
     try {
-      PropertiesService.getScriptProperties().setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+      queueReportRecordResult_(PropertiesService.getScriptProperties(),
         'FAILED at ' + new Date() + ': ' + ((e && e.message) ? e.message : String(e)));
     } catch (pe) { /* best-effort */ }
     notifyQueueReportFailure_(e);
@@ -410,7 +463,7 @@ function queueReportFlagMissedDay_(props, now, targetIso) {
     if (!lastSent || lastSent === targetIso) return;                    // sent today, or never armed
     if ((props.getProperty(QUEUE_REPORT_LAST_MISSED_PROP) || '') === targetIso) return; // already flagged
     props.setProperty(QUEUE_REPORT_LAST_MISSED_PROP, targetIso);
-    props.setProperty(QUEUE_REPORT_LAST_RESULT_PROP,
+    queueReportRecordResult_(props,
       'LATE ' + targetIso + ' — QCD data was not ready before the window closed ('
       + QUEUE_REPORT_WINDOW_END_HOUR + ':00 Central). The poller keeps retrying every '
       + QUEUE_REPORT_EVERY_MINUTES + ' min until midnight and will send automatically '
@@ -1403,10 +1456,12 @@ function sendQueueReportPreview() {
 function sendQcdAllDeptEmail(req) {
   const user = resolveUser_(Session.getActiveUser().getEmail());
   assertManagerOrAdmin_(user);   // Phase A: all-dept payload, no dept pin
+  assertReportEmailThrottle_(Session.getActiveUser().getEmail());   // SEC-2
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
   const data = qcdAllDeptCachedData_(from, to).data;
   const email = Session.getActiveUser().getEmail();
   const label = data.dateLabel || (from === to ? from : (from + ' – ' + to));
@@ -1444,14 +1499,26 @@ function sendQcdAllDeptToSubscribers(req) {
   // send log to check against, and that limitation is documented in the
   // dialog rather than silently absorbed here.
   const props = PropertiesService.getScriptProperties();
-  const lastSent = props.getProperty(QUEUE_REPORT_LAST_SENT_PROP) || '';
-  if (!req.force && lastSent === date) {
-    throw new Error('The ' + date + ' report has ALREADY been sent to subscribers today '
-      + '(by the automated send or another admin). Re-open the dialog to send again anyway.');
+  // S2B-8: check-and-claim under the script lock (see queueReportClaimSend_);
+  // the marker check that used to run here unlocked is part of the claim.
+  const claim = queueReportClaimSend_(props, date, !!req.force);
+  if (!claim.ok) {
+    if (claim.reason === 'sent') {
+      throw new Error('The ' + date + ' report has ALREADY been sent to subscribers today '
+        + '(by the automated send or another admin). Re-open the dialog to send again anyway.');
+    }
+    throw new Error(claim.reason === 'in-flight'
+      ? 'The ' + date + ' report is being sent to subscribers RIGHT NOW (the automated send or another admin). Nothing was sent twice -- check the result in a minute.'
+      : 'Another write is in progress -- try again in a moment.');
   }
-  const result = sendQueueReportForDate_(date, {});
+  let result;
+  try { result = sendQueueReportForDate_(date, {}); }
+  finally { queueReportReleaseSend_(props); }
   // D-1: surface the empty-report refusal to the admin instead of "0 sent".
   if (result.emptyReport) throw new Error('Not sent: ' + result.reason + '.');
+  // ENG-8 (broad-scan 2026-09-23): a PARTIAL compute is the same kind of
+  // refusal (nothing sent) and used to toast "Sent … to 0 subscribers".
+  if (result.partialReport) throw new Error('Not sent: ' + result.reason + '. Retry once Neon is reachable.');
   let markerClaimed = false;
   if (result.count > 0 && date === prevBusinessDayIso_(new Date())) {
     try {
@@ -1461,8 +1528,11 @@ function sendQcdAllDeptToSubscribers(req) {
   }
   Logger.log('sendQcdAllDeptToSubscribers: %s -> %s sent, %s failed, markerClaimed=%s',
     date, result.count, (result.failed || []).length, markerClaimed);
+  // ENG-8: flags the toast needs to tell "nobody subscribed" and "every send
+  // failed" apart from a send (both used to read as "Sent … to 0").
   return { date: date, count: result.count, failed: result.failed || [],
-           markerClaimed: markerClaimed };
+           markerClaimed: markerClaimed, noRecipients: !!result.noRecipients,
+           allFailed: result.count === 0 && (result.failed || []).length > 0 };
 }
 
 // ── Trigger lifecycle helpers ─────────────────────────────────────────────

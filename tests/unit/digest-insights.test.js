@@ -11,7 +11,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // Insights/Performance files in the loader -- Apps Script flat scope).
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'InsightsReport.gs', 'Digest.gs',
           // Round-16: the digest renders through the shared EmailKit layer
           // (digestInsightsHtml_ -> insEmailReportRows_).
@@ -33,6 +33,8 @@ function install(rows, digestConfigRows) {
   }
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;   // R40: the whole family
+  h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 

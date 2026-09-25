@@ -13,7 +13,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // mirroring Apps Script's flat scope.
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs',
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs',
           'InsightsReport.gs',
           // Digest.gs provides digestTakeaway_ + INSIGHTS_EMAIL_MIN_CALLS_
           // that sendInsightsReportEmail reuses for the server-rendered HTML
@@ -43,6 +43,10 @@ function install(rows, deptConfig) {
   });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
+  // The DQE rows now come through the memoized DAL (Batch 10): reset the
+  // WHOLE per-execution DQE memo family per fixture (the R40 test-side trap).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 
@@ -457,6 +461,10 @@ function installWithQcd(dqeRows, deptConfigRows, qcdRows) {
   h.state.spreadsheet = makeFakeSpreadsheet({ sheets: sheets });
   h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
   h.ctx.QCD_SHEET_DATA_MEMO_ = null;   // per-execution QCD sheet memo
+  // The DQE rows now come through the memoized DAL (Batch 10): reset the
+  // WHOLE per-execution DQE memo family per fixture (the R40 test-side trap).
+  h.ctx.DQE_DATE_BOUNDS_MEMO_ = null; h.ctx.DQE_SHEET_ROWS_MEMO_ = null;
+  h.ctx.DQE_DATE_COL_MEMO_ = null; h.ctx.DQE_EXT_GRID_MEMO_ = null;
   h.state.cache.clear();
 }
 
@@ -770,4 +778,24 @@ test('L5: team rollup + teamAvgBasis identical for a partial selection and the f
   assert.equal(partial.teamStats.rung.val, 16, 'Anna 10 + Ben 6 even with only Anna selected');
   assert.equal(partial.agentData.length, 1, 'cards still follow the selection');
   assert.equal(full.agentData.length, 2);
+});
+
+// DATA-3 (broad-scan 2026-09-23): the prior-window Queue health read's catch
+// returned null ("no prior data"), and the payload was cached for 6 h. The
+// catch now flags the QCD read degraded (the D-5 flag) and the put is skipped.
+test('DATA-3: a degraded Queue health read this execution keeps Insights out of the cache', function () {
+  const fs = require('fs');
+  const src = fs.readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'InsightsReport.gs'), 'utf8');
+  assert.match(src, /prior = computeQcdReport_\(dept, priorFrom, priorTo, true, true\); \}\s*catch \(e\) \{[\s\S]{0,300}noteQcdSnapshotReadFailed_\(/,
+    'the prior-window catch flags the failure instead of silently returning null');
+  install([dqeRow({ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1 })]);
+  const insightsKeys = function () { return Array.from(h.state.cache.keys()).filter(function (k) { return /^insights:/.test(k); }); };
+  h.ctx.QCD_SNAPSHOT_READ_FAILED_ = true;
+  try {
+    const data = h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] });
+    assert.ok(data && data.meta, 'still served');
+    assert.equal(insightsKeys().length, 0, 'not pinned');
+  } finally { h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false; }
+  h.call('getInsightsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15', agents: ['Anna'] });
+  assert.equal(insightsKeys().length, 1, 'a healthy execution caches as before');
 });

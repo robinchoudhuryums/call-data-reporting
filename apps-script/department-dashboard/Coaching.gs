@@ -346,6 +346,21 @@ function coachingDeliveryRun_() {
     return { result: 'skipped (Neon unreachable — flags not persisted, no email)',
              newCount: 0, continuingCount: 0, recoveredCount: 0 };
   }
+  // PCR-7: the read-diff-write below runs under the SCRIPT lock that
+  // updateCoachingFlagStatus already takes. Without it an admin closing a
+  // flag between the "open flags" read and the continuing UPDATE had the
+  // close silently overwritten back into a refreshed open card, and two
+  // overlapping runs (the trigger + "run now") both inserted the same new
+  // flag -- uq_coaching_open then rolled the second batch back. Held only
+  // for the database work, released before the email.
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    try { conn.close(); } catch (ce0) {}
+    return { result: 'skipped (another coaching write is in progress — try again)',
+             newCount: 0, continuingCount: 0, recoveredCount: 0 };
+  }
+  var locked = true;
+  var releaseLock = function () { if (locked) { locked = false; try { lock.releaseLock(); } catch (le) {} } };
   var txn = false;
   try {
     coachingEnsureTable_(conn);
@@ -363,7 +378,9 @@ function coachingDeliveryRun_() {
       var u = conn.prepareStatement('UPDATE coaching_flags SET '
         + 'window_from = ?::date, window_to = ?::date, rate_pct = ?, team_rate_pct = ?, '
         + 'team_ratio_pct = ?, gap_pts = ?, missed = ?, rung = ?, answered = ?, '
-        + 'times_flagged = times_flagged + 1, updated_at = now() WHERE id = ?');
+        // PCR-7: never rewrite a flag an admin has closed -- only an OPEN row
+        // is "continuing" (defence in depth behind the lock above).
+        + "times_flagged = times_flagged + 1, updated_at = now() WHERE id = ? AND status = 'open'");
       u.setString(1, preview.window.from); u.setString(2, preview.window.to);
       u.setString(3, String(c.flag.ratePct)); u.setString(4, String(c.flag.teamRatePct));
       u.setString(5, String(c.flag.teamRatioPct)); u.setString(6, String(c.flag.gapPts));
@@ -386,6 +403,7 @@ function coachingDeliveryRun_() {
       i.execute(); i.close();
     });
     conn.commit();
+    releaseLock();   // PCR-7: the email below needs no lock
 
     // P13 (OPS-1): the flags are COMMITTED above before any email, so a
     // failed send used to orphan the batch forever -- the next run classed
@@ -409,6 +427,7 @@ function coachingDeliveryRun_() {
     } catch (pe) { carried = []; }
     var toEmail = diff.newFlags.concat(carried);
     var emailNote = ' — no email (nothing new)';
+    var notifyFailed = false;   // ENG-7
     if (toEmail.length) {
       var to = getAdminEmails_().join(',');   // admin-only until released (owner)
       var sentOk = false;
@@ -459,12 +478,18 @@ function coachingDeliveryRun_() {
             window: preview.window, flags: toEmail.slice(0, 40),
           }));
         } catch (se) { Logger.log('coachingDeliveryRun_: pending-notify save failed: %s', se); }
+        notifyFailed = true;
         emailNote = ' — EMAIL NOT SENT (' + (to ? 'send failed' : 'no admin recipients')
           + '); ' + toEmail.length + ' flag(s) kept pending, re-emailed on the next run';
       }
     }
     return {
-      result: 'ok ' + diff.newFlags.length + ' new, ' + diff.continuing.length
+      // ENG-7 (broad-scan 2026-09-23): a run whose notification did not go
+      // out is not an "ok" -- the OPS-8 classifier trusts the prefix, so the
+      // old "ok … EMAIL NOT SENT" read green on the Health page while the
+      // admins were never told about the new flags. NOTIFY-FAILED carries the
+      // failure word the classifier already matches.
+      result: (notifyFailed ? 'NOTIFY-FAILED ' : 'ok ') + diff.newFlags.length + ' new, ' + diff.continuing.length
         + ' continuing, ' + diff.recoveredOpenRows.length + ' recovered-open ('
         + preview.window.from + '..' + preview.window.to + ')'
         + emailNote,
@@ -476,6 +501,7 @@ function coachingDeliveryRun_() {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     throw e;
   } finally {
+    releaseLock();
     try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
     try { conn.close(); } catch (ce) {}
   }

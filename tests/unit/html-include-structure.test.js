@@ -450,3 +450,121 @@ test('R51: both side panels order their period buttons the same way, and each ke
   assert.ok(/return \(v === 'yesterday' \|\| v === 'mtd'\) \? v : 'range';/.test(dept),
     "trpPeriod falls back to 'range', so the stored-pref path keeps panel 2's default too");
 });
+
+// ---- UI-1 (broad-scan 2026-09-23): the Escape LAYER STACK ------------------
+// A layer that opens over a report modal must take Escape through the one
+// capture-phase dispatcher, never its own bubble-phase document listener --
+// that listener ALSO reached the report's handler, so one Escape closed both.
+// drive-admin.js asserts the rendered behaviour; this pins the wiring so a
+// fourth layer copied from an old one cannot bring the bubble listener back.
+test('UI-1: stacked layers route Escape through the capture-phase layer stack', function () {
+  const read = function (f) { return fs.readFileSync(path.join(DIR, f), 'utf8'); };
+  const core = read('script-1-core.html');
+  assert.ok(/document\.addEventListener\('keydown', function \(e\) \{\s*if \(e\.key !== 'Escape' \|\| !escapeLayers_\.length\) return;[\s\S]*?\}, true\);/.test(core),
+    'the dispatcher must be a CAPTURE-phase document listener (third arg true)');
+  const layers = [
+    ['script-2-chrome.html', 'initHelpModal', 'escapeLayerPush_(closeModal)'],
+    ['script-4-nav.html', 'CHART_HELP_', 'escapeLayerPush_(close)'],
+    ['script-5-dept.html', 'callJourneyShow_', 'escapeLayerPush_(callJourneyHide_)'],
+  ];
+  layers.forEach(function (l) {
+    const src = read(l[0]);
+    assert.ok(src.indexOf(l[2]) !== -1, l[0] + ': ' + l[1] + ' must register ' + l[2]);
+  });
+  // The old bubble-phase shapes, one per layer.
+  assert.ok(!/if \(e\.key === 'Escape' && ov\.style\.display !== 'none'\) callJourneyHide_\(\)/.test(read('script-5-dept.html')),
+    'the call-path overlay regained its bubble-phase Escape listener');
+  assert.ok(!/if \(e\.key === 'Escape'\) close\(\);/.test(read('script-4-nav.html')),
+    'the chart tips regained their bubble-phase Escape listener');
+  const help = read('script-2-chrome.html');
+  const helpFn = help.slice(help.indexOf('function initHelpModal'), help.indexOf('function initHelpNav_'));
+  assert.ok(helpFn.length > 0 && !/addEventListener\('keydown'/.test(helpFn),
+    'Help regained its own keydown listener');
+});
+
+// ---- UI-5 / UI-6 / UI-7 / UI-11 (broad-scan 2026-09-23): stale responses ---
+// Four fetches painted whatever landed LAST, not what was asked for last. The
+// rendered gate's mocked RPCs answer in random order but a driver cannot
+// reliably time a re-run inside that window, so the guards are pinned here.
+test('UI-5/6/7/11: the four late-landing fetches are guarded', function () {
+  const read = function (f) { return fs.readFileSync(path.join(DIR, f), 'utf8'); };
+  const body = function (src, name) {
+    const i = src.indexOf('function ' + name + '(');
+    assert.ok(i !== -1, name + ' not found -- update this pin');
+    return src.slice(i, src.indexOf('\n  }\n', i));
+  };
+  const s9 = read('script-9-inbound-direct.html');
+  // UI-5: the not-called-back drill -- per-request token, orphaned by a render.
+  const unc = body(s9, 'outboundLoadUncalled_');
+  assert.match(unc, /const tok = \+\+outboundUncalledSeq_;/, 'UI-5: the drill takes a token');
+  assert.equal((unc.match(/if \(tok !== outboundUncalledSeq_\) return;/g) || []).length, 2,
+    'UI-5: BOTH handlers drop a superseded response');
+  assert.ok(/outboundUncalledSeq_\+\+;\s*\n[\s\S]{0,400}outbound-uncalled-list/.test(s9),
+    'UI-5: a report render orphans an in-flight drill before resetting the panel');
+  // UI-6: the insurer drill cache is keyed by range + dept + insurer.
+  assert.match(s9, /function inboundDrillKey_\(insurer\) \{[\s\S]*?\[m\.from \|\| '', m\.to \|\| '', m\.department \|\| '', insurer\]/,
+    'UI-6: the drill key carries the range and dept');
+  assert.ok(!/inboundDrillCache\[insurer\]/.test(s9), 'UI-6: no read or write by the bare insurer name');
+  // UI-7: the Agent Day roster picker.
+  const ad = body(read('script-10-escalations.html'), 'adLoadAgents_');
+  assert.equal((ad.match(/if \(tok !== adAgentsSeq_\) return;/g) || []).length, 2,
+    'UI-7: both handlers drop a superseded roster');
+  // UI-11: the coaching worklist load + one close per flag.
+  const s7 = read('script-7-admin.html');
+  const cl = body(s7, 'coachingLoad_');
+  assert.match(cl, /if \(tok === coachingLoadSeq_\) coachingRender_\(resp\)/, 'UI-11: success paints only the newest load');
+  assert.match(cl, /if \(tok !== coachingLoadSeq_\) return;/, 'UI-11: failure too');
+  const cf = body(s7, 'coachingCloseFlag_');
+  assert.match(cf, /if \(coachingClosing_\[id\]\) return;/, 'UI-11: a second close of the same flag is refused');
+  assert.match(cf, /if \(!ok\) \{ done\(\); return; \}/, 'UI-11: Cancel releases the flag');
+});
+
+// ---- UI-8 / UI-9 (broad-scan 2026-09-23): accessible names + state ---------
+test('UI-8: generated inputs carry a real label, not only a placeholder', function () {
+  const read = function (f) { return fs.readFileSync(path.join(DIR, f), 'utf8'); };
+  const s7 = read('script-7-admin.html');
+  assert.match(s7, /<select class="of-add-dept" data-idx="' \+ idx \+ '" aria-label="/, 'Outlier Fix: roster dept select');
+  assert.match(s7, /'aria-label="Extensions for ' \+ escapeHtml\(o\.name\)/, 'Outlier Fix: extensions input');
+  assert.match(s7, /' aria-label="Note for ' \+ escapeHtml\(r\.agent_name/, 'Coaching: note input');
+  assert.match(read('script-8-insights.html'), /id="ins-views-name" placeholder="[^"]*" aria-label="/, 'Insights: saved-view name');
+});
+
+test('UI-9: the insurer drill row\'s disclosure is a button that owns aria-expanded', function () {
+  const s9 = fs.readFileSync(path.join(DIR, 'script-9-inbound-direct.html'), 'utf8');
+  assert.match(s9, /'<td><button type="button" class="inbound-insurer-toggle" aria-expanded="false">'/,
+    'a real <button> in the first cell, rendered collapsed (the E-8 contract: never role/tabindex on the <tr>)');
+  assert.ok(!/class="inbound-insurer-row"[^\n]*tabindex/.test(s9), 'the row is no longer a tab stop of its own');
+  assert.match(s9, /tr\.classList\.add\('drill-open'\);\s*inboundSetRowExpanded_\(tr, true\)/, 'set on open');
+  assert.match(s9, /tr\.classList\.remove\('drill-open'\);\s*inboundSetRowExpanded_\(tr, false\)/, 'cleared on collapse');
+  const w0 = s9.indexOf("tbody.querySelectorAll('.inbound-insurer-row').forEach");
+  const wire = s9.slice(w0, s9.indexOf('}, srtImpactInbound_);', w0));
+  assert.ok(wire.length > 0 && !/keydown/.test(wire),
+    'no row-level keydown -- the native button already answers Enter/Space, so it would toggle twice');
+});
+
+// ---- Batch 7 follow-ons ----------------------------------------------------
+test('UI-9 follow-on: the Team Rings row DESCRIBES its jump action (never a label)', function () {
+  const s5 = fs.readFileSync(path.join(DIR, 'script-5-dept.html'), 'utf8');
+  const dash = fs.readFileSync(path.join(DIR, 'dashboard.html'), 'utf8');
+  assert.match(s5, /class="trp-row"[\s\S]{0,300}aria-describedby="trp-row-action-desc"/, 'the row points at the description');
+  assert.ok(!/class="trp-row"[^>]*aria-label/.test(s5), 'no aria-label on the row -- it would replace the numbers');
+  assert.match(dash, /<span id="trp-row-action-desc" class="sr-only">[^<]+<\/span>/, 'the description node exists once in the page');
+});
+
+test('UI-1 follow-on: a report menu\'s Escape stops at the menu', function () {
+  const core = fs.readFileSync(path.join(DIR, 'script-1-core.html'), 'utf8');
+  const fn = core.slice(core.indexOf('function wireMenuKeys_('), core.indexOf('function emptyStateHtml_('));
+  assert.match(fn, /if \(e\.key === 'Escape' && menuOpen_\(\)\) \{\s*e\.preventDefault\(\); e\.stopPropagation\(\);/,
+    'the trigger stops an Escape that closes its open menu');
+  assert.match(fn, /else if \(e\.key === 'Escape'\)\s*\{ e\.preventDefault\(\); e\.stopPropagation\(\); setOpen\(false\)/,
+    'the menu itself stops it too');
+});
+
+test('UI-4 follow-on: Escalations init runs ONE request at a time and retries with the pending continuation', function () {
+  const s10 = fs.readFileSync(path.join(DIR, 'script-10-escalations.html'), 'utf8');
+  const fn = s10.slice(s10.indexOf('function escEnsureInit_('), s10.indexOf('.getEscalationsInit();'));
+  assert.match(fn, /if \(cb\) escInitPendingCb_ = cb;\s*if \(escInitInFlight_\) return;\s*escInitInFlight_ = true;/,
+    'a second entry while init is in flight queues its continuation instead of a second RPC');
+  assert.equal((fn.match(/escInitInFlight_ = false;/g) || []).length, 2, 'both handlers clear the in-flight flag');
+  assert.match(fn, /escEnsureInit_\(pendingCb\)/, 'Retry re-runs with the continuation that was pending');
+});

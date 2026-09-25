@@ -35,7 +35,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'IndividualReport.gs',
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs', 'IndividualReport.gs',
           'InsightsReport.gs', 'Alerts.gs'],
 });
 
@@ -273,7 +273,10 @@ test('R44: N departments cost ONE date-column read and ONE ext-grid read, not N'
     h.call('computeSummary_', 'Beta',  '2026-03-09', '2026-03-10', 'both');
     assert.equal(c.n.dateCol, 1, 'the date column is read ONCE for both depts');
     assert.equal(c.n.extGrid, 1, 'so is the all-history ext grid');
-    assert.equal(c.n.wide, 2, 'each dept still does its own narrow SPAN read');
+    // DATA-5 (Batch 9): the SPAN too. computeSummary_ used to run a private
+    // span read per dept, bypassing the R40 memo; it now reads its window via
+    // sheetFetchDqeRows_, so a second dept for the same window is a memo hit.
+    assert.equal(c.n.wide, 1, 'the windowed span is read ONCE, shared by both depts');
   } finally { c.restore(); }
 });
 
@@ -450,3 +453,42 @@ test('R45: a cache that throws degrades to a plain read, never an error', functi
     assert.equal(out.source, 'derived');
   } finally { h.ctx.CacheService = realCache; }
 });
+
+// DATA-5 (broad-scan 2026-09-23, Batch 9): the memo-shared rows are CLONED per
+// caller, so dept A's in-place queue-split narrowing cannot leak into dept B.
+test('DATA-5: two depts over one window share ONE read and neither sees the other\'s narrowing', function () {
+  install(outOfOrderRows());
+  h.state.props.QUEUE_SPLIT_SCOPE = 'dept';
+  try {
+    const alone = JSON.parse(JSON.stringify(h.call('computeSummary_', 'Beta', '2026-03-09', '2026-03-10', 'both').totals));
+    install(outOfOrderRows());
+    h.state.props.QUEUE_SPLIT_SCOPE = 'dept';
+    h.call('computeSummary_', 'Alpha', '2026-03-09', '2026-03-10', 'both');   // warms the memo first
+    const after = JSON.parse(JSON.stringify(h.call('computeSummary_', 'Beta', '2026-03-09', '2026-03-10', 'both').totals));
+    deepEqual(after, alone, 'Beta reads the same totals whether or not Alpha ran first');
+  } finally { delete h.state.props.QUEUE_SPLIT_SCOPE; }
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Data.gs'), 'utf8');
+  const fn = src.slice(src.indexOf('function computeSummary_('), src.indexOf("logDqeReadTiming_('computeSummary_:'"));
+  assert.match(fn, /srcRows = sheetFetchDqeRows_\(priorFrom, to\);/, 'the sheet path goes through the memoized DAL primitive');
+  assert.ok(!/dqeWindowRowSpan_\(/.test(fn), 'no private span read left in computeSummary_');
+});
+
+// DATA-5 follow-on (Batch 10): IR and Insights read their windows through the
+// memoized sheetFetchDqeRows_ too -- CacheWarm and the Insights-format digests
+// run them once per DEPT over one window in a single execution.
+test('DATA-5 follow-on: Insights for two depts over one window costs ONE wide read', function () {
+  install(outOfOrderRows());
+  const c = r44CountReads();
+  try {
+    h.call('computeInsights_', 'Alpha', '2026-03-09', '2026-03-10', [], h.call('getRosterForDepartment_', 'Alpha'));
+    h.call('computeInsights_', 'Beta',  '2026-03-09', '2026-03-10', [], h.call('getRosterForDepartment_', 'Beta'));
+    assert.equal(c.n.wide, 1, 'the second dept is a memo hit');
+  } finally { c.restore(); }
+  const fs = require('fs'), path = require('path');
+  ['IndividualReport.gs', 'InsightsReport.gs'].forEach(function (f) {
+    const src = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard', f), 'utf8');
+    assert.match(src, /srcRows = sheetFetchDqeRows_\(fetchFrom, fetchTo\);/, f + ' reads through the DAL primitive');
+    assert.ok(!/dqeWindowRowSpan_\(/.test(src), f + ' keeps no private span read');
+  });
+});
+

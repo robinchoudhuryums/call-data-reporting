@@ -17,7 +17,7 @@
  *     chart:  { labels: [..18], counts: [..18] }
  *   }
  *
- * Cached 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to, scope) tuple. Best-effort -- large
+ * Cached 6 h (REPORT_CACHE_TTL_SECONDS, R24) per (dept, from, to, scope) tuple. Best-effort -- large
  * ranges may exceed CacheService's per-value 100KB limit; if put fails
  * we log and continue.
  *
@@ -59,6 +59,7 @@ function getMissedCallsReport(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   // Scope: 'roster' so the per-agent missed-calls TIMELINES list
   // exactly the dept's roster agents -- matching the My Department
@@ -93,7 +94,7 @@ function getMissedCallsReport(req) {
   // Adoption round: + the queue-split scope (S2-0 -- the figures MEAN something
   // different in each mode, so a flip must not serve the other mode's payload).
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'missed:v17:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+  const cacheKey = 'missed:v18:' + dept + ':' + scope + ':' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) {
     try {
@@ -114,6 +115,12 @@ function getMissedCallsReport(req) {
     // R8-C1: outage-empty shape (Neon unreachable + no DQE sheet) -- skip
     // the put so the next request retries instead of serving "no data".
     Logger.log('MissedCallsReport: DQE source unavailable -- skipping cache put.');
+  } else if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    // DATA-2 (broad-scan 2026-09-23; R8-C4's sibling): the Dept Config read
+    // ERRORED this execution, so the queue set fell back to the constants --
+    // a raw alias like CSR's A_Q_CSR (sheet-only) is missing and the
+    // queue-only abandoned card under-counts. Serve it, never pin it for 6 h.
+    Logger.log('MissedCallsReport: Dept Config read errored -- skipping cache put.');
   } else if (json.length <= 100000) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('MissedCallsReport cache put failed: %s', e); }
@@ -228,20 +235,23 @@ function missedSliceFilter_(reportData, filter) {
 
 // Read (or compute) the roster-scope Missed report for (dept, from, to),
 // sharing the SAME cache the section render uses so a drill after the section
-// loaded is a cache hit. Key mirrors getMissedCallsReport's (missed:v17,
+// loaded is a cache hit. Key mirrors getMissedCallsReport's (the missed: key,
 // scope=roster, source-suffixed per CORE-3).
 function missedReportDataCached_(dept, from, to) {
   const cache = CacheService.getScriptCache();
   const dqeReadSrc = (typeof getDqeReadSource_ === 'function') ? getDqeReadSource_() : 'sheet';
   const qsScopeKey = (typeof getQueueSplitScope_ === 'function') ? getQueueSplitScope_() : 'off';
-  const cacheKey = 'missed:v17:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
+  const cacheKey = 'missed:v18:' + dept + ':roster:' + from + ':' + to + ':' + dqeReadSrc + ':' + qsScopeKey + ':' + reportFreshnessTag_();
   const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (e) { /* recompute */ } }
   const data = computeMissedCallsReport_(dept, from, to, 'roster');
   try {
     const json = JSON.stringify(data);
     // R8-C1: never pin the outage-empty shape (see computeMissedCallsReport_).
-    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable)) {
+    // DATA-2: nor a payload built on constant-only config after a failed
+    // Dept Config read (the R8-C4 rule getDepartmentSummary already follows).
+    const cfgFailed = typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_();
+    if (json.length <= 100000 && !(data.meta && data.meta.sourceUnavailable) && !cfgFailed) {
       cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS);
     }
   } catch (e) { /* best-effort */ }
@@ -263,7 +273,7 @@ function missedReportDataCached_(dept, from, to) {
 //   - bounded: at most MISSED_ENRICH_MAX_CALLS_ distinct (date, id) pairs
 //     join the IN-list (a multi-week range can list hundreds of abandons;
 //     the oldest overflow entries just stay un-enriched).
-// Enriched fields ride the cached payload (missed:v17).
+// Enriched fields ride the cached payload (the missed: key).
 // ---------------------------------------------------------------------------
 var MISSED_ENRICH_MAX_CALLS_ = 400;
 
@@ -355,6 +365,7 @@ function getMissedCallsSlice(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   const filter = missedSliceValidateFilter_(req);
   const full = missedReportDataCached_(dept, from, to);
@@ -496,7 +507,7 @@ function computeMissedCallsReport_(dept, from, to, scope) {
     }
     dalRows = sheetFetchDqeRows_(from, to, { includeMissedDetail: true });
   }
-  qsInfo = applyQueueSplitToRows_(dalRows, dept, { narrowSlots: true });
+  qsInfo = applyQueueSplitToRows_(dalRows, dept, { narrowSlots: true, assessAgents: roster.names });
   {
     const grids = missedGridsFromDal_(dalRows);
     values = grids.values;

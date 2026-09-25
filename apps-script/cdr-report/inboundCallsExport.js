@@ -107,28 +107,34 @@ function ic_cellDateIso_(disp) {
 function ic_removeRowsInRange_(sheet, startIso, endIso, onlyDates) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
-  var width = INBOUND_EXPORT_HEADERS.length;
-  var range = sheet.getRange(2, 1, lastRow - 1, width);
-  var values = range.getValues();
-  // Parallel col-A DISPLAY read for the date test (F-10) -- `values` stays
-  // the write-back source so kept rows round-trip unchanged.
+  // CRT-1 (broad-scan 2026-09-23): this used to read the whole tab with
+  // getValues, drop the matching rows and setValues the KEPT rows back. A
+  // cell neutralized with a leading apostrophe (crSheetSafeCell_) reads back
+  // WITHOUT the apostrophe, so every daily re-export re-armed it as a live
+  // formula in every kept row (the R8-3 mechanism) -- and only Call Start is
+  // '@'-formatted. It now reads ONLY the date column (DISPLAY values, F-10)
+  // and deletes the matching rows as contiguous blocks, bottom-up: kept rows
+  // are never rewritten. Padding goes in FIRST (so a window covering every
+  // data row never tries to delete all non-frozen rows, which Sheets refuses)
+  // and leaves getMaxRows where it was.
   var dateDisp = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
-  var kept = [];
-  var removed = 0;
-  for (var i = 0; i < values.length; i++) {
+  var matchRows = [];   // 1-based sheet rows, ascending
+  for (var i = 0; i < dateDisp.length; i++) {
     var d = ic_cellDateIso_(dateDisp[i][0]);
-    if (d && d >= startIso && d <= endIso && (!onlyDates || onlyDates[d])) {
-      removed++;
-    } else {
-      kept.push(values[i]);
-    }
+    if (d && d >= startIso && d <= endIso && (!onlyDates || onlyDates[d])) matchRows.push(i + 2);
   }
-  if (removed === 0) return 0;
-  var blankRow = new Array(width).fill('');
-  var newValues = kept.slice();
-  while (newValues.length < values.length) newValues.push(blankRow.slice());
-  range.setValues(newValues);
-  return removed;
+  if (!matchRows.length) return 0;
+  var blocks = [];
+  var bStart = matchRows[0], prev = matchRows[0];
+  for (var k = 1; k < matchRows.length; k++) {
+    if (matchRows[k] === prev + 1) { prev = matchRows[k]; continue; }
+    blocks.push([bStart, prev - bStart + 1]);
+    bStart = prev = matchRows[k];
+  }
+  blocks.push([bStart, prev - bStart + 1]);
+  sheet.insertRowsAfter(sheet.getMaxRows(), matchRows.length);
+  for (var b = blocks.length - 1; b >= 0; b--) sheet.deleteRows(blocks[b][0], blocks[b][1]);
+  return matchRows.length;
 }
 
 function exportInboundCalls(fromIso, toIso) {

@@ -1694,8 +1694,11 @@
            +   '<td colspan="7">'
            +     '<div class="of-add-form">'
            +       '<span class="of-add-label">Add <strong>' + escapeHtml(o.name) + '</strong> to roster:</span>'
-           +       '<select class="of-add-dept" data-idx="' + idx + '">' + deptOptionsHtml + '</select>'
+           // UI-8: a placeholder is not a label -- it vanishes on input and
+           // many screen readers skip it. Name both controls for the agent.
+           +       '<select class="of-add-dept" data-idx="' + idx + '" aria-label="Roster department for ' + escapeHtml(o.name) + '">' + deptOptionsHtml + '</select>'
            +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
+           +         'aria-label="Extensions for ' + escapeHtml(o.name) + '" '
            +         'placeholder="e.g. 1042 — the agent’s own extension" '
            +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
            +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
@@ -2374,9 +2377,15 @@
     const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Add agent'; } };
     acSetStatus_('loading', 'Saving agent ' + email + '…');
     google.script.run
-      .withSuccessHandler(function () {
+      .withSuccessHandler(function (res) {
         restore();
-        acSetStatus_('success', 'Saved agent ' + email + ' → ' + agentName + ' (' + dept + '). Takes effect within ~60 s.');
+        // S2B-1: the save keeps this address's MANAGER rows; say so, since
+        // manager rows win at sign-in and the agent row stays dormant.
+        const coexist = (res && res.coexistsWith === 'manager')
+          ? ' This address also has manager access, which takes precedence -- the agent row stays dormant until that is removed.' : '';
+        // S2B-6: an EMAIL_ALIASES alias is stored under its canonical address.
+        const stored = (res && res.storedAs) ? ' Stored as ' + res.storedAs + ' (the canonical address for this alias).' : '';
+        acSetStatus_('success', 'Saved agent ' + email + ' → ' + agentName + ' (' + dept + '). Takes effect within ~60 s.' + stored + coexist);
         showToast('Saved agent access for ' + email, 'success');
         if ($('ac-agent-email')) $('ac-agent-email').value = '';
         acLoadInit_();
@@ -2411,7 +2420,7 @@
           mutationDone_('acRemove');
           acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
         })
-        .removeAccessControlRow({ email: a.email });
+        .removeAccessControlRow({ email: a.email, role: 'agent' });   // S2B-1: agent rows only
     });
   }
 
@@ -2454,9 +2463,12 @@
     const restore = function () { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } };
     acSetStatus_('loading', 'Saving ' + email + '…');
     google.script.run
-      .withSuccessHandler(function () {
+      .withSuccessHandler(function (res) {
         restore();
-        acSetStatus_('success', 'Saved ' + email + ' → ' + label + '. Takes effect within ~60 s.');
+        const coexist = (res && res.coexistsWith === 'agent')
+          ? ' This address also has an agent row; manager access takes precedence.' : '';
+        const stored = (res && res.storedAs) ? ' Stored as ' + res.storedAs + ' (the canonical address for this alias).' : '';
+        acSetStatus_('success', 'Saved ' + email + ' → ' + label + '. Takes effect within ~60 s.' + stored + coexist);
         showToast('Saved access for ' + email, 'success');
         acLoadInit_();
       })
@@ -2492,7 +2504,7 @@
           mutationDone_('acRemove');
           acSetStatus_('error', 'Remove failed: ' + (err && err.message ? err.message : String(err)));
         })
-        .removeAccessControlRow({ email: r.email });
+        .removeAccessControlRow({ email: r.email, role: 'manager' });   // S2B-1: manager rows only
     });
   }
 
@@ -2777,8 +2789,10 @@
       .withSuccessHandler(function (res) {
         if (deact) deact.disabled = false;
         const n = (res && res.removed) || 0;
+        const dWarns = (res && res.warnings) || [];   // S2B-5: sheet-mirror failure
         dcSetStatus_('success', 'Deactivated ' + n + ' override row'
-          + (n === 1 ? '' : 's') + '. Reverted to defaults.');
+          + (n === 1 ? '' : 's') + '. Reverted to defaults.'
+          + (dWarns.length ? ' ⚠ ' + dWarns.join(' ') : ''));
         showToast('Reverted ' + dcEditDept + ' to defaults', 'success');
         dcLoadInit_();
       })
@@ -2886,14 +2900,20 @@
     });
   }
 
+  // UI-11: a filter change (or a post-close reload) while a load was in
+  // flight let the OLDER response land last and repaint the worklist for a
+  // filter no longer selected. Only the newest load may paint.
+  var coachingLoadSeq_ = 0;
   function coachingLoad_() {
     const statusEl = $('coaching-status');
     const table = $('coaching-table');
     if (statusEl) { statusEl.className = 'status status-loading'; statusEl.textContent = 'Loading worklist…'; statusEl.style.display = ''; }
     const filter = $('coaching-status-filter') ? $('coaching-status-filter').value : 'open';
+    const tok = ++coachingLoadSeq_;
     google.script.run
-      .withSuccessHandler(function (resp) { coachingRender_(resp); })
+      .withSuccessHandler(function (resp) { if (tok === coachingLoadSeq_) coachingRender_(resp); })
       .withFailureHandler(function (err) {
+        if (tok !== coachingLoadSeq_) return;
         if (table) table.style.display = 'none';
         if (statusEl) {
           statusEl.className = 'status status-error';
@@ -2961,7 +2981,8 @@
         + '">by ' + escapeHtml(r.closed_by) + '</span>' : '');
     const actions = open
       ? '<input type="text" class="coaching-note-input" data-note-for="' + escapeHtml(r.id)
-        + '" maxlength="500" placeholder="note (optional)" style="width:110px;"> '
+        + '" maxlength="500" placeholder="note (optional)" style="width:110px;"'
+        + ' aria-label="Note for ' + escapeHtml(r.agent_name || 'this flag') + ' (optional)"> '   // UI-8
         + '<button class="btn btn-secondary" type="button" data-coaching-action="resolved" data-id="'
         + escapeHtml(r.id) + '">Resolve</button> '
         + '<button class="btn btn-ghost" type="button" data-coaching-action="dismissed" data-id="'
@@ -2980,7 +3001,20 @@
       + '</tr>';
   }
 
+  // UI-11: one close per flag at a time. A second Resolve/Dismiss click before
+  // the first round trip finished opened a second confirm and sent a second
+  // update for a flag the first had already closed -- an error toast for an
+  // action that had in fact succeeded. The row's controls disable meanwhile.
+  var coachingClosing_ = {};
+  function coachingSetRowBusy_(id, busy) {
+    const sel = '[data-coaching-action][data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]';
+    document.querySelectorAll(sel).forEach(function (b) { b.disabled = !!busy; });
+  }
   function coachingCloseFlag_(id, action) {
+    if (coachingClosing_[id]) return;
+    coachingClosing_[id] = true;
+    coachingSetRowBusy_(id, true);
+    const done = function () { delete coachingClosing_[id]; coachingSetRowBusy_(id, false); };
     const row = coachingRows_.filter(function (r) { return r.id === id; })[0];
     const noteInput = document.querySelector('input[data-note-for="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
     const note = noteInput ? noteInput.value.trim() : '';
@@ -2995,13 +3029,15 @@
       confirmLabel: verb,
       tone: action === 'dismissed' ? 'danger' : undefined,
     }).then(function (ok) {
-      if (!ok) return;
+      if (!ok) { done(); return; }
       google.script.run
         .withSuccessHandler(function () {
+          done();
           showToast('Flag ' + action, 'success');
           coachingLoad_();
         })
         .withFailureHandler(function (err) {
+          done();
           showToast(err && err.message ? err.message : 'Could not update the flag', 'error');
           coachingLoad_();   // stale-view race → refresh shows the truth
         })

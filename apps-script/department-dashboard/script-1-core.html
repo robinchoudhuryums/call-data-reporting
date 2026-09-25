@@ -864,6 +864,40 @@
     document.removeEventListener('keydown', activeFocusTrap_.handler);
     activeFocusTrap_ = null;
   }
+  // UI-2: is a layer still ON SCREEN (so its trap may be re-armed)? Not
+  // `offsetParent` -- every `.modal` is position:fixed, whose offsetParent is
+  // ALWAYS null, so that test reported every open modal as closed.
+  function layerIsShown_(el) {
+    return !!(el && document.contains(el) && getComputedStyle(el).display !== 'none');
+  }
+
+  // -- UI-1: the Escape LAYER STACK -------------------------------------------
+  // A layer that opens OVER a modal -- the "↳ path" overlay, the chart tips,
+  // Help -- must take Escape for ITSELF. Each used to listen on document in
+  // the BUBBLE phase, as every report modal does, so one Escape closed the
+  // layer AND the report under it (and the report reopened on its empty
+  // form, results gone). Layers now register a close function here; ONE
+  // capture-phase dispatcher closes only the TOP layer and stops the event,
+  // so the modals' bubble-phase handlers never see it. The report modals
+  // themselves stay on their own handlers (the base layer). dsConfirm_ /
+  // dsPrompt_ run their own capture-phase Escape and win while they are up.
+  var escapeLayers_ = [];
+  function escapeLayerPush_(closeFn) {
+    escapeLayerRemove_(closeFn);
+    escapeLayers_.push(closeFn);
+  }
+  function escapeLayerRemove_(closeFn) {
+    var i = escapeLayers_.lastIndexOf(closeFn);
+    if (i >= 0) escapeLayers_.splice(i, 1);
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !escapeLayers_.length) return;
+    if (document.querySelector('.ds-confirm-overlay')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var top = escapeLayers_.pop();
+    try { top(); } catch (err) { /* the layer is already gone */ }
+  }, true);
 
   // -- Formatting helpers --------------------------------------------------
 
@@ -962,6 +996,9 @@
   // `tr.qcd-detail-row` (the Insights Queue-health table and the all-dept QCD
   // report render the same pair). Keeps the chevron glyph and aria-expanded in
   // step with the row's state, so click and Enter/Space cannot diverge.
+  // A11y tidy-up (the E-8 contract): the disclosure is a real
+  // `button.qcd-expand-toggle` in the first cell and IT owns aria-expanded;
+  // the row stays the mouse target and is no longer a tab stop.
   function qcdToggleExpandRow_(row) {
     if (!row) return;
     var detail = row.nextElementSibling;
@@ -970,7 +1007,8 @@
     detail.style.display = open ? 'none' : '';
     var icon = row.querySelector('.qcd-expand-icon');
     if (icon) icon.textContent = open ? '▶' : '▼';
-    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+    var toggle = row.querySelector('.qcd-expand-toggle') || row;
+    toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
   }
 
   // Activates on Enter/Space for an element already carrying a click handler.
@@ -1006,7 +1044,18 @@
         menu.querySelectorAll('button, [role="menuitem"], [data-action]'),
         function (el) { return el.offsetParent !== null && !el.disabled; });
     }
+    // UI-1 follow-on: an Escape that closes the menu must STOP there. Both
+    // report menus (IR, the all-dept Queue report) live inside a modal that
+    // closes on a bubble-phase document Escape, so one press closed the menu
+    // AND the report. Handled on the trigger too: a click-opened menu leaves
+    // focus on the button.
+    function menuOpen_() { return getComputedStyle(menu).display !== 'none'; }
     btn.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && menuOpen_()) {
+        e.preventDefault(); e.stopPropagation();
+        setOpen(false);
+        return;
+      }
       if (e.key !== 'ArrowDown') return;
       e.preventDefault();
       setOpen(true);
@@ -1025,7 +1074,7 @@
       else if (e.key === 'ArrowUp')   { e.preventDefault(); items[(idx - 1 + items.length) % items.length].focus(); }
       else if (e.key === 'Home')      { e.preventDefault(); items[0].focus(); }
       else if (e.key === 'End')       { e.preventDefault(); items[items.length - 1].focus(); }
-      else if (e.key === 'Escape')    { setOpen(false); btn.focus(); }
+      else if (e.key === 'Escape')    { e.preventDefault(); e.stopPropagation(); setOpen(false); btn.focus(); }
     });
   }
 

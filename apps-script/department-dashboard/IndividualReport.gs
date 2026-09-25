@@ -39,7 +39,7 @@
  *   - Team % Answered, TTT, ATT: weighted across the whole team's
  *     calls in range (NOT per-agent mean of percentages).
  *
- * Caching: 30 min (REPORT_CACHE_TTL_SECONDS) per (dept, from, to, sortedAgents) tuple. Best-
+ * Caching: 6 h (REPORT_CACHE_TTL_SECONDS, R24; keys carry reportFreshnessTag_()) per (dept, from, to, sortedAgents) tuple. Best-
  * effort -- large ranges with many agents may exceed CacheService's
  * per-value 100KB limit; on cache-put failure we log + continue.
  */
@@ -106,6 +106,7 @@ function getIndividualReportInit(req) {
   const from = String((req && req.from) || '').trim();
   const to   = String((req && req.to)   || '').trim();
   if (isIsoDate_(from) && isIsoDate_(to) && from <= to) {
+    assertReportRangeCap_(from, to);   // SEC-1: the picker scans the window too
     const active = computeActiveAgentsInRange_(dept, from, to, roster);
     activeAgents   = active.agents;
     activeFloaters = active.floaters;
@@ -141,6 +142,7 @@ function getIndividualReport(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   // Optional prior-period for same-agent YoY / vs-self comparison.
   // Both dates required if either is supplied; absent = no
@@ -167,6 +169,7 @@ function getIndividualReport(req) {
     if (priorFrom > priorTo) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
+    assertReportRangeCap_(priorFrom, priorTo, null, 'Prior range');   // SEC-1
   }
 
   const rawAgents = (req && req.agents) || [];
@@ -230,6 +233,11 @@ function getIndividualReport(req) {
     // R8-C1: an outage-empty shape (Neon unreachable + no sheet) must not
     // pin under the :neon key -- skip the put so the next request retries.
     Logger.log('IndividualReport: source unavailable -- skipping cache put.');
+  } else if (typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    // DATA-2 (broad-scan 2026-09-23; R8-C4's sibling): the Dept Config read
+    // ERRORED, so TEAM_AVG_EXCLUDES (and the queue ext overrides) fell back to
+    // the constants -- serve the report, never pin that team average for 6 h.
+    Logger.log('IndividualReport: Dept Config read errored -- skipping cache put.');
   } else {
     try {
       cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
@@ -344,38 +352,20 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
       // it so the caller skips the cache put (the Inbound/Direct
       // unavailable-not-cached discipline); otherwise a transient Neon
       // blip on a trimmed sheet pins an indistinguishable-from-real empty
-      // report for every viewer of this tuple for the 30-min TTL.
+      // report for every viewer of this tuple for the 6 h TTL.
       if (neonCapable) e.meta.sourceUnavailable = true;
       return e;
     }
     // R41: the ext derivation needs ALL history (getDeptQueueExts_ docstring),
-    // so it reads its own whole-sheet cols-A..D slice; the windowed rows come
-    // from a bounded SPAN. The per-row date filter below STAYS -- the span
-    // bounds the read, it does not replace the filter.
+    // so it reads its own whole-sheet cols-A..D slice.
     deptQueueExts = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow).exts;
-    const span = dqeWindowRowSpan_(sheet, lastRow, fetchFrom, fetchTo, ssTZ);
-    const range = span ? sheet.getRange(span.startRow, 1, span.numRows, numCols) : null;
-    const values   = range ? range.getValues() : [];
-    const displays = range ? range.getDisplayValues() : [];
-    srcRows = [];
-    for (let i = 0; i < values.length; i++) {
-      const r = values[i], rd = displays[i];
-      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-      if (!dIso || dIso < fetchFrom || dIso > fetchTo) continue;
-      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-      if (!ag) continue;
-      srcRows.push({
-        dateIso:       dIso,
-        agent:         ag,
-        queueExt:      String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
-        totalRung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
-        totalMissed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
-        totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
-        tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
-        attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
-        queueSplit:    String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
-      });
-    }
+    // DATA-5 follow-on (Batch 10): the windowed rows come from the DAL's
+    // memoized sheet primitive (the bounded span + per-row date filter live
+    // there), not a private span read -- CacheWarm and the Insights-format
+    // digests run this once per DEPT over one window in a single execution,
+    // and each dept re-read identical bytes. Same row fields (a superset),
+    // shallow-copied per caller, so the in-place narrowing below stays per-dept.
+    srcRows = sheetFetchDqeRows_(fetchFrom, fetchTo);
   }
   if (typeof logDqeReadTiming_ === 'function') logDqeReadTiming_('computeIndividualReport_:' + dept, effectiveSource, _tRead, srcRows.length);
 
@@ -383,7 +373,7 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // per-agent cards, the monthly trend, the prior window and the team average
   // all inherit one definition (the S2-0/B-1 fail-open rules live in the
   // shared helper; off = rows untouched, payload byte-identical).
-  const qsInfo = applyQueueSplitToRows_(srcRows, dept);
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
 
   // Aggregators.
   // aggregatedStats[agent][monthKey] = { rung, missed, answered, ttt, attTotal }
@@ -950,7 +940,11 @@ function buildAgentInsights_(agent, teamAvg) {
 function sendIndividualReportEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
-  if (user.role === 'none') throw new Error('Not authorized.');
+  // SEC-3 (broad-scan 2026-09-23): ALLOWLIST (the A-1 rule), never a bare
+  // `role === 'none'` check -- that let the AGENT role through to the
+  // send-to-self path, mailing any PNG from the deployer's mailbox.
+  assertManagerOrAdmin_(user);
+  assertReportEmailThrottle_(email);   // SEC-2
 
   // Owner ruling 2026-09: a manager may send an agent THEIR OWN report
   // instead of mailing it to themselves and forwarding. The recipient is

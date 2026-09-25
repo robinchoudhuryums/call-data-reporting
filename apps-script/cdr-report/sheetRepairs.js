@@ -63,9 +63,40 @@
 // via deleteSheet -- no Drive scope, so no new OAuth consent. Previews never
 // back up. Pinned by tests/unit/sheet-repairs-backup.test.js.
 var HR_BACKUP_MIN_CELLS_ = 500;
-var HR_BACKUP_KEEP_ = 3;
+// CRT-5 (broad-scan 2026-09-23): was 3, but the DQE repair CHAIN is five
+// applies on one sheet (slot -> abandoned-ids -> pst-shift -> duplicate-merge
+// -> date-normalize), so by its end the pre-chain original had been pruned --
+// the one snapshot a bad chain needs. 6 keeps the whole chain plus one; at
+// ~1.1M cells per DQE copy that is ~6.6M of the backup workbook's 10M cap.
+var HR_BACKUP_KEEP_ = 6;
 var HR_BACKUP_PROP_ = 'HR_BACKUP_SS_ID';
 var HR_BACKUP_SS_NAME_ = 'CDR Report -- repair backups';
+
+// CRT-7 (broad-scan 2026-09-23): the bulk applies below read the sheet, compute
+// for seconds to minutes, then write back BY ROW NUMBER, unlocked -- and the
+// daily DQE build runs in ANOTHER project (LockService cannot serialize it), so
+// an append + re-sort between the read and the write would put every value on
+// the wrong row. The F-22 mitigation (renameHistoricalAgent_): fingerprint the
+// row identity (row count + cols B..C, date and agent) before the read and
+// re-check it immediately before the first write, aborting with nothing
+// written. A mitigation, not a serialization -- the window shrinks to the
+// write itself.
+function hrRowFingerprint_(sheet) {
+  var lastRow = sheet.getLastRow();
+  var keys = lastRow >= 2 ? sheet.getRange(2, 2, lastRow - 1, 2).getDisplayValues() : [];
+  return { lastRow: lastRow, keys: keys.map(function (r) { return r[0] + '\u0001' + r[1]; }).join('\u0002') };
+}
+function hrReverifyRows_(sheet, snap, label) {
+  var now = hrRowFingerprint_(sheet);
+  var why = now.lastRow !== snap.lastRow
+    ? 'row count changed (' + snap.lastRow + ' -> ' + now.lastRow + ')'
+    : (now.keys !== snap.keys ? 'the date/agent columns changed (a sort or rewrite)' : null);
+  if (why) {
+    throw new Error(label + ' ABORTED before writing: the sheet changed since it was read -- ' + why
+      + ' (the daily build runs in another project and cannot be locked out). Nothing was written; '
+      + 're-run it outside the build window.');
+  }
+}
 
 /**
  * Copies `sheet` into the backup workbook when `cellCount` reaches the
@@ -148,8 +179,26 @@ function repairDqeSlotTimestamps_(dryRun) {
 
   var fixed = 0, samples = [];
   var pending = [];                                    // [{ range, vals }] to write back on apply
-  // 1b: both column groups are rewritten in full on apply (n rows x 20 cols).
-  if (!dryRun) hrBackupBeforeApply_(ss, sheet, 'slot-timestamps', n * 20);
+  if (!dryRun) {
+    // CRT-5: a NO-OP apply used to snapshot the whole sheet (and rotate an
+    // older, useful backup out) before discovering there was nothing to fix.
+    // Pre-scan WITHOUT the numeric lens: a coerced cell reads as a Date or a
+    // Number, a clean one as a string or ''. None coerced -> lock '@' (format
+    // only, no value is rewritten) and return without a backup.
+    var anyCoerced = groups.some(function (gr) {
+      return sheet.getRange(2, gr.start, n, gr.count).getValues().some(function (row) {
+        return row.some(function (v) { return v !== '' && v != null && typeof v !== 'string'; });
+      });
+    });
+    if (!anyCoerced) {
+      groups.forEach(function (gr) { sheet.getRange(2, gr.start, n, gr.count).setNumberFormat('@'); });
+      Logger.log('repairDqeSlotTimestamps: no coerced slot/AF cell -- nothing to recover (no snapshot taken).');
+      return { fixed: 0, applied: true, noop: true, samples: [] };
+    }
+    var rowSnap = hrRowFingerprint_(sheet);            // CRT-7
+    // 1b: both column groups are rewritten in full on apply (n rows x 20 cols).
+    hrBackupBeforeApply_(ss, sheet, 'slot-timestamps', n * 20);
+  }
   for (var g = 0; g < groups.length; g++) {
     var start = groups[g].start, label = groups[g].label;
     var range = sheet.getRange(2, start, n, groups[g].count);
@@ -199,6 +248,7 @@ function repairDqeSlotTimestamps_(dryRun) {
     // repair was re-run to completion. The exposure window is now a single
     // group's read->write, and each completed group is durably repaired.
     if (!dryRun) {
+      hrReverifyRows_(sheet, rowSnap, 'repairDqeSlotTimestamps');   // CRT-7
       range.setNumberFormat('@');
       range.setValues(vals);
       SpreadsheetApp.flush();
@@ -318,6 +368,7 @@ function repairDqeAbandonedIds_(dryRun) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) { Logger.log('repairDqeAbandonedIds: no data rows.'); return; }
 
+  var rowSnap = hrRowFingerprint_(sheet);     // CRT-7
   var START_COL = 30, NUM_COLS = 2;            // AD..AE (abandoned parent IDs / missed-leg IDs). AF (32) is a TIME column -- recovered by repairDqeSlotTimestamps, NOT here.
   var range = sheet.getRange(2, START_COL, lastRow - 1, NUM_COLS);
   var vals  = range.getValues();               // coerced cells come back as Numbers; text/'' stay as-is
@@ -359,6 +410,7 @@ function repairDqeAbandonedIds_(dryRun) {
   // Lock AD-AE to plain text (so recovered values + the sentinel STAY text and
   // the columns can't re-coerce), then write back. (T-5: AF's plain-text lock
   // lives in the slot repair, which owns that column's recovery.)
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeAbandonedIds');   // CRT-7
   hrBackupBeforeApply_(ss, sheet, 'abandoned-ids', vals.length * (vals[0] ? vals[0].length : 0));   // 1b
   range.setNumberFormat('@');
   range.setValues(vals);
@@ -452,6 +504,7 @@ function repairDqeOldPstTimestampShift_(dryRun) {
 
   var SLOT_START = 11, SLOT_N = 19, AF_COL = 32, SHIFT = DQE_TZ_SHIFT_SECONDS;
   var n = lastRow - 1;
+  var rowSnap = hrRowFingerprint_(sheet);   // CRT-7
   // TZ-safe reads: getDisplayValues returns the H:MM:SS strings (getValues would
   // drag the spreadsheet-vs-script TZ shift onto time-typed cells -- INV-02).
   var dates    = sheet.getRange(2, 2, n, 1).getDisplayValues();
@@ -599,6 +652,7 @@ function repairDqeOldPstTimestampShift_(dryRun) {
   }
 
   // Apply: rewrite ONLY changed rows (K-AC range + AF cell), as plain text.
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeOldPstTimestampShift');   // CRT-7
   hrBackupBeforeApply_(ss, sheet, 'pst-shift', changes.length * (SLOT_N + 1));   // 1b
   for (var x = 0; x < changes.length; x++) {
     var ch = changes[x];
@@ -737,6 +791,7 @@ function mergeDqeDuplicateRows_(dryRun) {
 
   // Same read as the upsert (getDisplayValues, 34 cols): col B (idx 1) =
   // call_date, col C (idx 2) = agent_name.
+  var rowSnap = hrRowFingerprint_(sheet);   // CRT-7
   var data = sheet.getRange(2, 1, lastRow - 1, 34).getDisplayValues();
 
   var groups = {};   // key -> [0-based row indexes into data]
@@ -780,6 +835,20 @@ function mergeDqeDuplicateRows_(dryRun) {
     // would compound the counts. Detect that state and only delete the
     // leftover duplicates. (See the docblock above; counts-only groups are
     // unverifiable and fall through to a normal re-sum, with a caution.)
+    // CRT-3 (broad-scan 2026-09-23): duplicates IDENTICAL to the first row
+    // across cols D..AH are a double APPEND of the same build, not two
+    // halves of an agent's day -- summing them doubles every count. The
+    // detail-token check below already caught that for rows carrying missed
+    // times; a counts-only (token-less) double append fell through to the
+    // re-sum. Keep one, delete the rest.
+    var sig = function (r) { return r.slice(3, 34).map(function (v) { return String(v == null ? '' : v).trim(); }).join('\u0001'); };
+    var firstSig = sig(rows[0]);
+    if (rows.slice(1).every(function (r) { return sig(r) === firstSig; })) {
+      idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
+      summary.push(key.replace('\u0000', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
+        + '  -> IDENTICAL (double append); keeping the first, deleting ' + (idxs.length - 1) + ' copy/copies, no re-sum');
+      return;
+    }
     if (scMergeAlreadyApplied_(rows[0], rows.slice(1))) {
       recovered++;
       idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
@@ -874,7 +943,10 @@ function mergeDqeDuplicateRows_(dryRun) {
     m[33 - 3] = scSecToHms_(mean(cawVals));   // AH csr_avg_abd_wait (approx)
 
     var firstRow1 = idxs[0] + 2;
-    writes.push({ row: firstRow1, vals: m });
+    // CRT-2: the (date, agent) key rides along so the Neon twin of the AI..AK
+    // clear below can target exactly the rows this merge rewrote.
+    var keyParts = key.split('\u0000');
+    writes.push({ row: firstRow1, vals: m, date: keyParts[0], agent: keyParts[1] });
     idxs.slice(1).forEach(function (i) { deleteRows.push(i + 2); });
     summary.push(key.replace('\u0000', ' / ') + '  rows ' + idxs.map(function (i) { return i + 2; }).join(',')
       + '  -> answered=' + sumAns + ' rung=' + sumRung + ' missed=' + sumMissed + ' unique=' + sumUnique);
@@ -894,6 +966,7 @@ function mergeDqeDuplicateRows_(dryRun) {
 
   // Plain-text-protect the coercion-prone cols on each target row, then write
   // cols D..AH only (A-C untouched -> no date-cell coercion).
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeDuplicateMerge');   // CRT-7
   hrBackupBeforeApply_(ss, sheet, 'duplicate-merge', writes.length * 31 + deleteRows.length * sheet.getLastColumn());   // 1b
   writes.forEach(function (w) {
     sheet.getRange(w.row, 4).setNumberFormat('@');           // D queue exts
@@ -918,9 +991,65 @@ function mergeDqeDuplicateRows_(dryRun) {
   // Delete extras bottom-up so earlier deletions don't shift later row numbers.
   deleteRows.sort(function (a, b) { return b - a; }).forEach(function (rn) { sheet.deleteRow(rn); });
 
+  // CRT-2 (broad-scan 2026-09-23, Batch 11): the sheet's AI..AK are now blank,
+  // but blank mirrors as NULL and every dqe_history upsert COALESCEs those three
+  // columns (so a sheet-sourced NULL never erases a stored split). That rule is
+  // right for a pre-Phase-1 row and WRONG here: the follow-up
+  // backfillDQEHistoryUpsert() would keep Neon's pre-merge queue_split and
+  // after-hours pair beside the re-summed rollup -- a split describing a
+  // smaller day than the row it sits on. So clear the Neon twin explicitly for
+  // exactly the merged keys. Best-effort: the sheet is the authority and is
+  // already correct; an unreachable Neon is named in the log with the fix.
+  var neonClear = scClearNeonMergeExtras_(writes.filter(function (w) { return w.date && w.agent; })
+    .map(function (w) { return { date: w.date, agent: w.agent }; }));
+
   Logger.log('DQE merge: merged ' + dupKeys.length + ' group(s), deleted ' + deleteRows.length + ' row(s).\n'
     + 'If DQE_READ_SOURCE=neon (or the mirror is consumed), re-run backfillDQEHistoryUpsert() to refresh dqe_history.');
-  return { applied: true, merged: dupKeys.length, deleted: deleteRows.length };
+  return { applied: true, merged: dupKeys.length, deleted: deleteRows.length, neonExtrasCleared: neonClear };
+}
+
+/**
+ * CRT-2: NULL dqe_history's queue_split + after-hours pair for the given
+ * (ISO date, agent) keys -- the Neon twin of the merge's AI..AK clear, which
+ * the upsert's COALESCE cannot express. Returns { status, cleared }:
+ * 'none' (no keys), 'ok', 'unreachable' (NEON_* unset / down) or 'error'.
+ * Never throws; the sheet merge it follows has already been applied.
+ */
+function scClearNeonMergeExtras_(keys) {
+  if (!keys || !keys.length) return { status: 'none', cleared: 0 };
+  var conn = (typeof getReachableNeonConn_ === 'function') ? getReachableNeonConn_() : null;
+  if (!conn) {
+    Logger.log('DQE merge (CRT-2): Neon unreachable -- dqe_history still holds the PRE-merge '
+      + 'queue_split / after-hours values for ' + keys.length + ' merged row(s). When Neon is back, '
+      + 'NULL those three columns for: ' + keys.map(function (k) { return k.date + ' / ' + k.agent; }).join('; ')
+      + ' (the upsert COALESCEs them and cannot clear them), then run backfillDQEHistoryUpsert().');
+    return { status: 'unreachable', cleared: 0 };
+  }
+  try {
+    var stmt = conn.prepareStatement('UPDATE dqe_history SET queue_split = NULL, '
+      + 'after_hours_answered = NULL, after_hours_ttt = NULL '
+      + 'WHERE call_date = ?::date AND agent_name = ?');
+    stmt.setQueryTimeout(60);
+    keys.forEach(function (k) {
+      stmt.setString(1, k.date);
+      stmt.setString(2, k.agent);
+      stmt.addBatch();
+    });
+    var counts = stmt.executeBatch() || [];
+    stmt.close();
+    var cleared = 0;
+    for (var i = 0; i < counts.length; i++) cleared += Math.max(0, Number(counts[i]) || 0);
+    Logger.log('DQE merge (CRT-2): cleared queue_split + after-hours on ' + cleared
+      + ' dqe_history row(s) for ' + keys.length + ' merged key(s).');
+    return { status: 'ok', cleared: cleared };
+  } catch (e) {
+    Logger.log('DQE merge (CRT-2): Neon clear FAILED (' + (e && e.message ? e.message : e)
+      + ') -- dqe_history keeps the pre-merge queue_split / after-hours for the merged rows; '
+      + 'NULL them by hand before trusting a Neon-read split.');
+    return { status: 'error', cleared: 0 };
+  } finally {
+    try { conn.close(); } catch (ce) {}
+  }
 }
 
 
@@ -1299,6 +1428,7 @@ function normalizeDqeDateColumn_(dryRun) {
   // Typed from getValues, resolved from the DISPLAY (INV-02 discipline; and the
   // census classifier hdCellType_ is reused so "what counts as text:mdy" has
   // exactly one definition in this file).
+  var rowSnap = hrRowFingerprint_(sheet);   // CRT-7
   var vals = sheet.getRange(2, 2, n, 1).getValues();
   var disp = sheet.getRange(2, 2, n, 1).getDisplayValues();
   var targets = [];   // { row, date } in row order
@@ -1359,6 +1489,7 @@ function normalizeDqeDateColumn_(dryRun) {
     return out;
   }
 
+  hrReverifyRows_(sheet, rowSnap, 'repairDqeDateNormalize');   // CRT-7
   // 1b: snapshot first (one cell per target).
   out.backup = hrBackupBeforeApply_(ss, sheet, 'date-normalize', targets.length);
   // Write in contiguous row runs so one setValues covers each block (the live
@@ -1415,9 +1546,15 @@ function normalizeDqeDateColumn_(dryRun) {
 // `historicalSort:<DQE|QCD|CDR|CSR|QPath>` -- the labels the bulk path uses),
 // since cdr-report's Script Properties are not the dashboard's.
 //
-// DEFERS while any backfill *_RESUME pointer is set: a sort invalidates the
-// T-8 fingerprinted pointers (safe -- the run restarts from 0 -- but a nightly
-// reset would keep a multi-run backfill from ever finishing).
+// DEFERS a sheet while a backfill *_RESUME pointer INTO THAT SHEET is set: a
+// sort invalidates the T-8 fingerprinted pointers (safe -- the run restarts
+// from 0 -- but a nightly reset would keep a multi-run backfill from ever
+// finishing). CRT-6 (broad-scan 2026-09-23): it used to defer ALL five sheets
+// on ANY pointer, so one abandoned DQE upsert pointer kept QCD / CSR / Q Path
+// unsorted indefinitely while every row read "skipped" (success). Now only
+// the indexed sheet waits, and a pointer older than
+// HISTORICAL_SORT_STALE_POINTER_DAYS_ turns its deferral into a FAILURE row
+// (an abandoned backfill -- resume it or clear the property).
 //
 // No 1b snapshot before the sort: a sort moves whole rows and loses no cell,
 // and the DQE build already sorts nightly without one.
@@ -1439,6 +1576,25 @@ var HISTORICAL_SORT_RESUME_PROPS_ = [
   'DQE_UPSERT_RESUME', 'DQE_BACKFILL_RESUME', 'QCD_BACKFILL_RESUME',
   'CDR_BACKFILL_RESUME', 'CDR_MISSING_BACKFILL_RESUME', 'CDR_PHONES_BACKFILL_RESUME',
 ];
+// CRT-6: the sheet each pointer indexes (neonbackfill.js reads each over it).
+var HISTORICAL_SORT_RESUME_SHEET_ = {
+  DQE_UPSERT_RESUME:          'DQE Historical Data',
+  DQE_BACKFILL_RESUME:        'DQE Historical Data',
+  QCD_BACKFILL_RESUME:        'QCD Historical Data',
+  CDR_BACKFILL_RESUME:        'CDR Historical Data',
+  CDR_MISSING_BACKFILL_RESUME:'CDR Historical Data',
+  CDR_PHONES_BACKFILL_RESUME: 'CDR Historical Data',
+};
+var HISTORICAL_SORT_STALE_POINTER_DAYS_ = 3;
+
+/** CRT-6: a pointer's age in days from its T-8 `writtenAt`, or null (legacy / unparsable). */
+function hsPointerAgeDays_(raw, nowMs) {
+  try {
+    var st = JSON.parse(raw);
+    var t = st && st.writtenAt ? new Date(st.writtenAt).getTime() : NaN;
+    return isNaN(t) ? null : ((nowMs || Date.now()) - t) / 86400000;
+  } catch (e) { return null; }
+}
 
 /** Read-only: what tonight's run WOULD do. Writes nothing, logs no rows. */
 function previewHistoricalSortCheck() { return historicalSortCheck_({ apply: false }); }
@@ -1477,10 +1633,23 @@ function historicalSortCheck_(opts) {
     var entry = { sheet: spec.sheet, label: label, verdict: null, action: 'none',
                   rows: null, inversions: 0, status: 'success', notes: '', ms: 0 };
     try {
-      if (out.resumePending.length) {
+      var mine = out.resumePending.filter(function (k) { return HISTORICAL_SORT_RESUME_SHEET_[k] === spec.sheet; });
+      if (mine.length) {
         entry.action = 'skipped';
-        entry.notes = 'skipped -- backfill resume pointer(s) set: ' + out.resumePending.join(', ')
-          + ' (a sort would reset them); re-checks once the backfill clears its pointer';
+        var stale = [];
+        mine.forEach(function (k) {
+          var age = hsPointerAgeDays_(props.getProperty(k));
+          if (age != null && age > HISTORICAL_SORT_STALE_POINTER_DAYS_) stale.push(k + ' (' + Math.floor(age) + ' days old)');
+        });
+        if (stale.length) {
+          entry.status = 'failure';
+          entry.notes = 'STALE-POINTER -- skipped for ' + stale.join(', ') + ': a backfill pointer this old is '
+            + 'an abandoned run, and it keeps this sheet unsorted every night. Re-run that backfill to '
+            + 'completion (it clears its own pointer) or delete the property (Operator State #61)';
+        } else {
+          entry.notes = 'skipped -- backfill resume pointer(s) set: ' + mine.join(', ')
+            + ' (a sort would reset them); re-checks once the backfill clears its pointer';
+        }
       } else {
         var res = hdScanOneSheet_(ss, spec, { skipFormats: true });
         entry.verdict = res.verdict; entry.rows = res.rows; entry.inversions = res.inversions;

@@ -19,7 +19,7 @@ batch, items are independent unless marked.
 | 3 | **After-hours capture** (note #5) | two additive DQE cols, own PR | cdr-report + cdr-import | **SHIPPED 2026-09-11** (deploy + backfill: Operator State #60) |
 | 4 | **Phase 2 nightly check-and-sort** | + Health page row · + TZ-SPLIT predicate (memoized) · + bulk-path sort failures → Pipeline Health | cdr-report + cdr-import + dashboard | **SHIPPED 2026-09-11** (install + flag: Operator State #61) |
 | ∥ | **Neon storage decision** | operator decision; Health row "Neon storage by table" **SHIPPED 2026-09-11** (block 189) | dashboard (DEPLOYED 2026-09-14) | any time |
-| 6 | **Owner testing round** — decisions taken, not started | 6a queue worst-first (own dept pinned) · 6b Overview answered volume · 6c Outbound RELEASE not build · 6d agent-day view (90d exact, then degrade) | dashboard | any time; 6a/6b are S |
+| 6 | **Owner testing round** — IMPLEMENTED 2026-09-15 (6a/6b/6d done; 6c code-complete, RELEASE pending: Operator State #63) | 6a queue worst-first (own dept pinned) · 6b Overview answered volume · 6c Outbound RELEASE not build · 6d agent-day view (90d exact, then degrade) | dashboard | any time; 6a/6b are S |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
@@ -99,7 +99,7 @@ that lucky.
 - Why a separate workbook, not a hidden tab: a DQE copy is ~1.1M cells and
   the CDR Report workbook is already large; three backups in-workbook could
   approach the 10M-cell cap. The backup workbook holds its own cap.
-- Prune: keep the newest `HR_BACKUP_KEEP_` (3) tabs per source sheet via
+- Prune: keep the newest `HR_BACKUP_KEEP_` (3; 6 since CRT-5) tabs per source sheet via
   `deleteSheet` — no Drive scope needed, so no new OAuth consent.
 - Wire into the five apply paths: date normalize, slot timestamps, abandoned
   ids, PST shift, duplicate merge. Previews never back up.
@@ -248,7 +248,7 @@ State #61); Batch 5's gate clock starts at that install.
 
 ---
 
-## Batch 6 — owner testing round (2026-09-14; 6a + 6b DONE, 6c/6d queued)
+## Batch 6 — owner testing round (2026-09-14; all four implemented 2026-09-15, 6c release pending)
 
 Four items the owner raised after the R47 trim. Each carries the design
 decision already made, so nobody re-opens it. Ordered cheapest-first; they are

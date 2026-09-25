@@ -290,3 +290,23 @@ test('DD-4 (broad-scan 2026-09-17): a sentinel ring outside the 8 AM-5 PM chart 
   assert.equal(r.queueOnly[0].outOfRange, 1, 'one of them lands in no bar -- carried so the card can say so');
   assert.equal(r.chart.counts.reduce(function (s, n) { return s + n; }, 0), 1, 'the bars sum to the in-range rings only');
 });
+
+// DATA-2 (broad-scan 2026-09-23; R8-C4's sibling): a payload built after a
+// FAILED Dept Config read (constant-only queue set -- CSR's sheet-only raw
+// alias missing, the abandoned card under-counted) is served but never cached.
+test('DATA-2: getMissedCallsReport does not cache a payload built on a failed Dept Config read', function () {
+  install([{ date: '2026-03-10', agent: 'Anna', ext: '501', rung: 6, missed: 1, answered: 5,
+             slots: ['', '', '9:05:11 AM'] }]);
+  const real = h.ctx.deptConfigReadFailed_;
+  const missedKeys = function () {
+    return Array.from(h.state.cache.keys()).filter(function (k) { return /^missed:/.test(k); });
+  };
+  h.ctx.deptConfigReadFailed_ = function () { return true; };
+  try {
+    const data = h.call('getMissedCallsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15' });
+    assert.ok(data && data.agents, 'still served');
+    assert.equal(missedKeys().length, 0, 'not pinned for the 6 h TTL');
+  } finally { h.ctx.deptConfigReadFailed_ = real; }
+  h.call('getMissedCallsReport', { department: 'Alpha', from: '2026-03-09', to: '2026-03-15' });
+  assert.equal(missedKeys().length, 1, 'a healthy read caches as before');
+});

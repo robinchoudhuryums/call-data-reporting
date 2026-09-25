@@ -267,16 +267,22 @@ test('Batch 4: a REFUSED or thrown check is a warn that says a repair, not a sor
   assert.match(rowByKey(data, 'pipe-failures').value, /historicalSort:DQE/, 'the single trustworthy signal still names it');
 });
 
-test('Batch 4: every sheet skipped for a resume pointer is muted, not a warning', function () {
+test('Batch 4 / CRT-6: a sheet deferred for its resume pointer is muted and NAMED, even when the others were checked clean', function () {
   installHealth();
   h.ctx.readPipelineHealth_ = function () {
-    return ['DQE', 'QCD'].map(function (l) {
-      return hsRow('historicalSort:' + l, 'success', 'skipped -- backfill resume pointer(s) set: DQE_UPSERT_RESUME (a sort would reset them); re-checks once the backfill clears its pointer');
-    });
+    return [hsRow('historicalSort:DQE', 'success', 'skipped -- backfill resume pointer(s) set: DQE_UPSERT_RESUME (a sort would reset them); re-checks once the backfill clears its pointer'),
+            hsRow('historicalSort:QCD', 'success', 'clean -- 40 rows single-typed and in date order')];
   };
   const row = rowByKey(h.call('getSystemHealth'), 'historical-sort');
-  assert.equal(row.status, 'muted');
-  assert.match(row.value, /skipped on the latest run — backfill resume pointer\(s\) set: DQE_UPSERT_RESUME/);
+  assert.equal(row.status, 'muted', 'a part-checked run is not a green "none needed sorting"');
+  assert.match(row.value, /^1 of 2 sheet\(s\) deferred on the latest run: DQE \(backfill resume pointer\(s\) set: DQE_UPSERT_RESUME/);
+  // A stale pointer arrives as a failure row and warns.
+  h.ctx.readPipelineHealth_ = function () {
+    return [hsRow('historicalSort:DQE', 'failure', 'STALE-POINTER -- skipped for DQE_UPSERT_RESUME (9 days old): ...')];
+  };
+  const stale = rowByKey(h.call('getSystemHealth'), 'historical-sort');
+  assert.equal(stale.status, 'warn');
+  assert.match(stale.value, /DQE \(STALE-POINTER\)/);
 });
 
 test('O-5: queue-report trigger + MISSED outcome are covered by the Health page', function () {
@@ -1136,15 +1142,72 @@ test('O-2: a LATE queue-report outcome paints the row amber (it used to read gre
   assert.equal(rowByKey(h.call('getSystemHealth'), 'out-queuereport').status, 'ok');
 });
 
-test('O-14: the queue-report row no longer reads the never-written QUEUE_REPORT_LAST key', function () {
+test('O-14 -> ENG-5: QUEUE_REPORT_LAST is now WRITTEN beside every outcome, and a row without it still renders', function () {
+  // O-14 dropped the key because nothing wrote it; ENG-5 writes it through
+  // queueReportRecordResult_, so the Health row reads it again.
   const src = require('fs').readFileSync(
-    require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'SystemHealth.gs'), 'utf8');
-  assert.doesNotMatch(src, /'QUEUE_REPORT_LAST'/, 'the bare key was dead: nothing ever wrote it');
-  // And the row still renders from the result string alone.
+    require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'QueueReportEmail.gs'), 'utf8');
+  assert.match(src, /function queueReportRecordResult_[\s\S]{0,200}QUEUE_REPORT_LAST_PROP, new Date\(\)\.toISOString\(\)/);
+  assert.doesNotMatch(src.replace(/function queueReportRecordResult_[\s\S]*?\n}\n/, ''),
+    /setProperty\(QUEUE_REPORT_LAST_RESULT_PROP/, 'every outcome write goes through the recorder');
+  // A pre-ENG-5 install (result string only) still renders from the result alone.
   installHealth({ props: { NEON_HOST: 'h', QUEUE_REPORT_LAST_RESULT: 'Sent 2026-07-16 to 4 subscribers at X' } });
   const row = rowByKey(h.call('getSystemHealth'), 'out-queuereport');
   assert.equal(row.status, 'ok');
   assert.doesNotMatch(row.value, / @ /, 'no phantom timestamp suffix');
+});
+
+test('ENG-6: a malformed EMAIL_BCC entry is named on the Health page; a clean or unset one adds no row', function () {
+  installHealth({ props: { NEON_HOST: 'h', EMAIL_BCC: 'audit@x.com;robin@x' } });
+  const row = rowByKey(h.call('getSystemHealth'), 'email-bcc');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /1 malformed address\(es\) ignored: robin@x/);
+  assert.match(row.hint, /Still BCC'ing: audit@x\.com/);
+  installHealth({ props: { NEON_HOST: 'h', EMAIL_BCC: 'audit@x.com' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'email-bcc'), undefined);
+  installHealth({ props: { NEON_HOST: 'h' } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'email-bcc'), undefined);
+});
+
+test('ENG-5: a digest / queue-report send that STARTED after its last outcome and never finished reads INTERRUPTED', function () {
+  const hoursAgo = function (n) { return new Date(Date.now() - n * 3600000).toISOString(); };
+  // Killed mid-send: started 2h ago, last outcome (yesterday's ok) 1 day ago.
+  installHealth({ props: { NEON_HOST: 'h',
+    DIGEST_LAST_daily: isoDaysAgo_(1), DIGEST_LAST_RESULT_daily: 'ok 2026-09-21: sent 5 of 5 at X',
+    DIGEST_STARTED_daily: hoursAgo(2) } });
+  let row = rowByKey(h.call('getSystemHealth'), 'out-digest-daily');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /INTERRUPTED: a send started/);
+  // Finished: the outcome is later than the start -> ok.
+  installHealth({ props: { NEON_HOST: 'h',
+    DIGEST_LAST_daily: hoursAgo(1.9), DIGEST_LAST_RESULT_daily: 'ok 2026-09-22: sent 5 of 5 at X',
+    DIGEST_STARTED_daily: hoursAgo(2) } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-digest-daily').status, 'ok');
+  // In flight right now (started 5 min ago) is not flagged.
+  installHealth({ props: { NEON_HOST: 'h',
+    DIGEST_LAST_daily: isoDaysAgo_(1), DIGEST_LAST_RESULT_daily: 'ok 2026-09-21: sent 5 of 5 at X',
+    DIGEST_STARTED_daily: hoursAgo(0.08) } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-digest-daily').status, 'ok');
+  // Queue report: same shape.
+  installHealth({ props: { NEON_HOST: 'h',
+    QUEUE_REPORT_LAST: isoDaysAgo_(1), QUEUE_REPORT_LAST_RESULT: 'Sent 2026-09-21 to 4 subscribers at X',
+    QUEUE_REPORT_STARTED: hoursAgo(3) } });
+  row = rowByKey(h.call('getSystemHealth'), 'out-queuereport');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /INTERRUPTED/);
+});
+
+test('ENG-5: an armed digest cadence silent past its allowance goes STALE (daily 4d / weekly 9d / monthly 35d)', function () {
+  installHealth({ props: { NEON_HOST: 'h',
+    DIGEST_LAST_daily: isoDaysAgo_(6), DIGEST_LAST_RESULT_daily: 'ok 2026-09-15: sent 5 of 5 at X',
+    DIGEST_LAST_weekly: isoDaysAgo_(6), DIGEST_LAST_RESULT_weekly: 'ok 2026-09-14: sent 2 of 2 at X',
+    DIGEST_LAST_monthly: isoDaysAgo_(30), DIGEST_LAST_RESULT_monthly: 'ok 2026-08-31: sent 1 of 1 at X' } });
+  const data = withTriggers_(['runDailyDigests_', 'runWeeklyDigests_', 'runMonthlyDigests_'],
+    function () { return h.call('getSystemHealth'); });
+  assert.equal(rowByKey(data, 'out-digest-daily').status, 'warn');
+  assert.match(rowByKey(data, 'out-digest-daily').value, /STALE/);
+  assert.equal(rowByKey(data, 'out-digest-weekly').status, 'ok', '6 days is inside the weekly allowance');
+  assert.equal(rowByKey(data, 'out-digest-monthly').status, 'ok', '30 days is inside the monthly allowance');
 });
 
 test('O-7: an INCONCLUSIVE watchdog outcome warns, and the ingest watchdog has an outcome row', function () {
@@ -1192,7 +1255,8 @@ test('O-3 / C2-5: a failure-only step name ages out of pipe-failures; a recurrin
   // 4. The list and INV-44 agree on the failure-only names.
   const names = h.ctx.HEALTH_FAILURE_ONLY_STEPS_;
   ['processIntegratedHistory:CDR:neon', 'processIntegratedHistory:QCD:neon', 'processIntegratedHistory:Direct:neon',
-   'buildDQE:neon', 'processIntegratedHistory:CSR-guard', 'neonMirror:gave-up', 'bulkBackfill:QCD', 'bulkBackfill:CSR']
+   'buildDQE:neon', 'processIntegratedHistory:CSR-guard', 'neonMirror:gave-up', 'bulkBackfill:QCD', 'bulkBackfill:CSR',
+   'processBatchArchive:CDR:neon', 'processBatchArchive:QCD:neon']
     .forEach(function (n) { assert.ok(names.indexOf(n) !== -1, n + ' is failure-only'); });
   const inv = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'docs', 'invariants.md'), 'utf8');
   names.forEach(function (n) { assert.ok(inv.indexOf(n) !== -1, 'INV-44 names ' + n); });
@@ -1348,6 +1412,7 @@ test('O-9: healthOutcomeIsBad_ -- ok prefix is healthy; failure words and every 
     'MISSED 2026-07-09 ...', 'LATE 2026-07-09 ...', 'EMPTY 2026-07-09 ...', 'PARTIAL 2026-07-09 ...',
     'NO-SUBSCRIBERS 2026-07-09 ...', 'GAPS 3 finding(s)', 'SILENT 1 dept(s)', 'INCONCLUSIVE — source unreadable',
     'skipped (no latest date)', 'ERROR: x', '3 failure(s) -- email send FAILED', 'unreachable',
+    'NOTIFY-FAILED 2 new, 0 continuing, 0 recovered-open (x..y) — EMAIL NOT SENT (send failed)',   // ENG-7
   ];
   bad.forEach(function (r) { assert.equal(h.call('healthOutcomeIsBad_', r), true, 'bad: ' + r); });
   const good = [
@@ -1433,3 +1498,17 @@ test('O-9: a company holiday inside the gap extends a daily engine\'s STALE allo
 function Utilities_fmt_(d) {
   return h.ctx.Utilities.formatDate(d, h.ctx.TZ, 'yyyy-MM-dd');
 }
+
+test('Batch 4 follow-on: a daily-alerts run that STARTED after its last outcome and never finished reads INTERRUPTED', function () {
+  const hoursAgo = function (n) { return new Date(Date.now() - n * 3600000).toISOString(); };
+  installHealth({ props: { NEON_HOST: 'h',
+    ALERTS_LAST: isoDaysAgo_(1), ALERTS_LAST_RESULT: 'ok 2026-09-21: 14 dept(s) assessed, 2 fired',
+    ALERTS_STARTED: hoursAgo(2) } });
+  const row = rowByKey(h.call('getSystemHealth'), 'out-alerts');
+  assert.equal(row.status, 'warn');
+  assert.match(row.value, /INTERRUPTED/);
+  installHealth({ props: { NEON_HOST: 'h',
+    ALERTS_LAST: hoursAgo(1.9), ALERTS_LAST_RESULT: 'ok 2026-09-22: 14 dept(s) assessed, 2 fired',
+    ALERTS_STARTED: hoursAgo(2) } });
+  assert.equal(rowByKey(h.call('getSystemHealth'), 'out-alerts').status, 'ok');
+});

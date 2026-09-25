@@ -34,6 +34,42 @@ function getAdminEmails_() {
 }
 
 /**
+ * SEC-2 (broad-scan 2026-09-23, Batch 8): a per-USER cap on the report
+ * emails a signed-in user can trigger (dept summary, IR, Insights, the
+ * all-dept Queue report, Inbound, Outbound). Each send also BCCs an admin,
+ * and the MailApp quota is SHARED with alerts, digests and the watchdogs, so
+ * a devtools loop on one endpoint could starve every engine for the day.
+ * Rolling window in CacheService (6 h, its maximum TTL): at most
+ * USER_REPORT_EMAIL_CAP_ sends per user per window. Lossy by design (no
+ * lock; a lost write under-counts by one) -- it is a quota guard, not an
+ * audit. Admins are capped too: the quota does not care who drains it.
+ * Throws a user-facing error at the cap; records the attempt BEFORE the
+ * send so a loop of failing sends is bounded as well.
+ */
+var USER_REPORT_EMAIL_CAP_ = 30;
+var USER_REPORT_EMAIL_WINDOW_S_ = 6 * 3600;
+function assertReportEmailThrottle_(email) {
+  var who = String(email || '').trim().toLowerCase();
+  if (!who) return;
+  var cache, key = 'mailThrottle:v1:' + who.slice(0, 200), now = Date.now(), stamps = [];
+  try {
+    cache = CacheService.getScriptCache();
+    var raw = cache.get(key);
+    stamps = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(stamps)) stamps = [];
+  } catch (e) { return; }   // cache unavailable: fail OPEN (the send itself is authorized)
+  var cutoff = now - USER_REPORT_EMAIL_WINDOW_S_ * 1000;
+  stamps = stamps.filter(function (t) { return Number(t) > cutoff; });
+  if (stamps.length >= USER_REPORT_EMAIL_CAP_) {
+    throw new Error('You have sent ' + stamps.length + ' report emails in the last '
+      + Math.round(USER_REPORT_EMAIL_WINDOW_S_ / 3600) + ' hours -- the limit protects the '
+      + 'shared daily email quota that alerts and digests also use. Try again later.');
+  }
+  stamps.push(now);
+  try { cache.put(key, JSON.stringify(stamps), USER_REPORT_EMAIL_WINDOW_S_); } catch (e2) { /* best-effort */ }
+}
+
+/**
  * R28: the ONE send chokepoint for every dashboard email. Every
  * MailApp.sendEmail callsite routes through here (cross-file-pins.test.js
  * fails on a bare one) so the default BCC cannot be missed by a new sender.
@@ -87,14 +123,36 @@ function appEsc_(v) {
   });
 }
 
-/** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The BCC list to ADD, or ''. */
-function appEmailBcc_(msg) {
+// ENG-6 (broad-scan 2026-09-23): EMAIL_BCC is hand-typed, and MailApp rejects
+// the WHOLE message on one malformed bcc address -- so a single typo in the
+// property failed every alert, digest, queue report and admin notice at once.
+// Entries are now validated: a malformed one is dropped (and named on the
+// Health page's `email-bcc` row); if NONE survive, the default first-admin BCC
+// applies rather than silently BCC'ing nobody.
+var APP_EMAIL_ADDR_RE_ = /^[^@\s,;<>()"]+@[^@\s,;<>()"]+\.[^@\s,;<>()"]+$/;
+
+/** PURE-ish (reads EMAIL_BCC). { mode: 'default'|'none'|'list', valid[], invalid[] }. */
+function appEmailBccConfig_() {
   var raw = '';
   try { raw = String(PropertiesService.getScriptProperties().getProperty('EMAIL_BCC') || '').trim(); } catch (e) {}
-  if (/^(none|off|false)$/i.test(raw)) return '';
-  var list = raw
-    ? raw.split(/[,;\s]+/).map(function (x) { return x.trim(); }).filter(Boolean)
-    : getAdminEmails_().slice(0, 1);
+  if (!raw) return { mode: 'default', valid: [], invalid: [] };
+  if (/^(none|off|false)$/i.test(raw)) return { mode: 'none', valid: [], invalid: [] };
+  var valid = [], invalid = [];
+  raw.split(/[,;\s]+/).map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (x) {
+    (APP_EMAIL_ADDR_RE_.test(x) ? valid : invalid).push(x);
+  });
+  return { mode: valid.length ? 'list' : 'default', valid: valid, invalid: invalid };
+}
+
+/** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The BCC list to ADD, or ''. */
+function appEmailBcc_(msg) {
+  var cfg = appEmailBccConfig_();
+  if (cfg.mode === 'none') return '';
+  if (cfg.invalid.length) {
+    Logger.log('sendAppEmail_: EMAIL_BCC has malformed address(es) -- dropped: ' + cfg.invalid.join(', ')
+      + (cfg.valid.length ? '' : ' (none valid; using the default first-admin BCC)'));
+  }
+  var list = cfg.mode === 'list' ? cfg.valid : getAdminEmails_().slice(0, 1);
   var already = {};
   ['to', 'cc', 'bcc'].forEach(function (f) {
     String((msg && msg[f]) || '').split(/[,;\s]+/).forEach(function (x) {
@@ -367,8 +425,9 @@ const HISTORICAL_COLS = Object.freeze({
   // keyed by raw queue name ({"A_Q_CSR":{u,r,m,a,t,n,mt}, ...}). Cols A-AH keep
   // their all-queue meaning as the rollup, so this is purely additive.
   // '' = never computed (a row built before Phase 1, or an INV-23 queue
-  // sentinel); '{}' = computed with nothing in the work window. Cannot be
-  // backfilled past the ~14-day Call_Legs retention.
+  // sentinel); '{}' = computed with nothing in the work window. Backfill is
+  // cheap inside the ~14-day Call_Legs retention; past it the date's source
+  // CSV must be re-imported first (Operator State #40 / #56).
   QUEUE_SPLIT: 35,       // AI - JSON
   // Batch 3 (owner note #5): the AFTER-HOURS pair -- legs starting in the
   // half-hour after the work window (3:00-3:30 PM PST = 5:00-5:30 PM CST, a
@@ -734,6 +793,19 @@ function noteQcdSnapshotReadFailed_(where, e) {
     where, (e && e.message) ? e.message : e);
 }
 function qcdSnapshotReadFailed_() { return !!QCD_SNAPSHOT_READ_FAILED_; }
+// DATA-3 (broad-scan 2026-09-23): the same per-execution flag for a
+// best-effort NON-QCD section whose read threw and came back as the value that
+// also means "no rows" -- the CSR Transfer tile's computeCsrTransferRange_
+// returned null on a transient sheet timeout, and getDepartmentSummary cached
+// that tile-less payload for 6 h. A cache put that embeds such a section
+// checks bestEffortReadFailed_() and skips.
+var BEST_EFFORT_READ_FAILED_ = false;
+function noteBestEffortReadFailed_(where, e) {
+  BEST_EFFORT_READ_FAILED_ = true;
+  Logger.log('%s failed (section degraded; caches that embed it will NOT be written this execution): %s',
+    where, (e && e.message) ? e.message : e);
+}
+function bestEffortReadFailed_() { return !!BEST_EFFORT_READ_FAILED_; }
 
 var PROP_REGISTRY_ = Object.freeze({
   secret: Object.freeze({ NEON_PASS: true, HMAC_SECRET: true }),
@@ -765,6 +837,8 @@ var PROP_REGISTRY_ = Object.freeze({
     SHEET_COVERAGE_ENABLED: 'operator',
     NEON_RETENTION_ENABLED: 'operator', NEON_RETENTION_JOURNEY_DAYS: 'operator',
     NEON_RETENTION_CALL_DAYS: 'operator', NEON_RETENTION_HISTORY_MONTHS: 'operator',
+    // ENG-2: explicit opt-out of the backup gate on the per-call prune steps.
+    NEON_RETENTION_WITHOUT_BACKUP: 'operator',
     CACHE_WARM_HOUR: 'operator',
     QUEUE_REPORT_ENABLED: 'operator',
     // R43: the all-departments report's whole-run compute budget (ms). Unset
@@ -774,6 +848,9 @@ var PROP_REGISTRY_ = Object.freeze({
     // engine — outcome/state the code writes itself
     CACHE_WARM_LAST: 'engine', CACHE_WARM_LAST_RESULT: 'engine',
     ALERTS_LAST: 'engine', ALERTS_LAST_RESULT: 'engine',   // O-5: the daily alerts outcome
+    ALERTS_RUN_MARKER: 'engine',   // ENG-3: the last business day the daily alerts assessed
+    ALERTS_STARTED: 'engine',      // Batch 4 follow-on: an assessment's start (INTERRUPTED check)
+    ALERTS_RUN_CLAIM: 'engine',    // ENG-4: the in-flight run claim (two admins' triggers)
     ANSWER_RATE_FORMULA: 'config',                          // DD-2: 'rung' (default) | 'answerable' (H2)
     ANSWER_RATE_PROBE_FROM: 'tool', ANSWER_RATE_PROBE_TO: 'tool',   // DD-2: probeAnswerRateFormulas window
     COACHING_DELIVERY_LAST: 'engine', COACHING_DELIVERY_LAST_RESULT: 'engine',
@@ -796,6 +873,8 @@ var PROP_REGISTRY_ = Object.freeze({
     PIPELINE_WATCH_BACKUP_MARK: 'engine', PIPELINE_WATCH_READBACK_MARK: 'engine',
     QUEUE_REPORT_LAST_SENT: 'engine', QUEUE_REPORT_LAST_MISSED: 'engine',
     QUEUE_REPORT_LAST_RESULT: 'engine',
+    QUEUE_REPORT_LAST: 'engine', QUEUE_REPORT_STARTED: 'engine',   // ENG-5
+    QUEUE_REPORT_SENDING: 'engine',   // S2B-8: the in-flight send claim
     SMOKE_LAST: 'engine', SMOKE_LAST_RESULT: 'engine',
     // tool — editor-run diagnostic inputs (self-cleared after a clean run)
     DQE_PARITY_FROM: 'tool', DQE_PARITY_TO: 'tool',
@@ -817,6 +896,7 @@ var PROP_REGISTRY_ = Object.freeze({
     ESC_SNAPSHOT_: 'engine',
     DIGEST_RUN_MARKER_: 'engine',
     DIGEST_LAST_RESULT_: 'engine',
+    DIGEST_LAST_: 'engine', DIGEST_STARTED_: 'engine',   // ENG-5
   }),
 });
 

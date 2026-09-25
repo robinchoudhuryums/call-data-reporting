@@ -306,7 +306,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   produces, narrowed IN MEMORY by `{isoDow, hourStart, hourEnd (CST), agent,
   queue}` (pure `missedSliceFilter_` + `missedSliceValidateFilter_` +
   TZ-safe `missedSliceIsoDow_`; `missedReportDataCached_` shares the section's
-  `missed:v17` cache). It is the **DQE missed-ring lens** the heatmap cell
+  `missed:v18` cache). It is the **DQE missed-ring lens** the heatmap cell
   drill + Queue-health hand-off will surface as a SEPARATE, LABELED lens: the
   three drill surfaces count DIFFERENT things and DON'T reconcile (heatmap =
   `inbound_calls` abandons, Queue health = `qcd_history` roll-up, missed bar =
@@ -856,7 +856,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   under the strip when the element is taller than the space.
 - **The Overview DQE-silence badge is a LABELED different lens, never a
   substitution (R18d).** When the server ships `dqeSilence` on a dept
-  (`companyOverview:v24` — zero DQE rings over the trailing 7 chart days while
+  (`companyOverview:v25` — zero DQE rings over the trailing 7 chart days while
   the mapped queues show QCD volume, the Field Ops Power blind-spot shape),
   `ovBuildDqeSilenceNote_` renders a warn-railed block on the grid tile AND
   inside the sub-queue card's expanded detail (+ a compact ⚠ on the collapsed
@@ -1085,7 +1085,7 @@ fillStyle rule, and the `</script>`-in-scriptlet escape. Check those there.
   day) in `ovPeriodStats_`** -- a plausible-looking number, not an error -- so
   `overview-chart-answered.test.js` pins the two sets equal (and the markup's
   buttons against both), and `company-overview.test.js` drives the window
-  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v24`.
+  BOUNDARIES end-to-end. Payload shape changed, so `companyOverview:v25`.
 
 - **Overview layout: stacked full-width sticky chart + 4-wide grid
   (Pass 3b P2).** The Overview page was restructured from a
@@ -1884,7 +1884,11 @@ block) unless noted, and the two behavioural ones are also driven in
   context. Put a real `<button>` in the cell, let it own `aria-expanded` and
   the native Enter/Space, and keep the whole row as the click target by
   bubbling. It shipped twice after the rule was written (the Insights daily
-  day row, the Health fold head), so the pin is a SWEEP over every
+  day row, the Health fold head); the older F13 row-level shape
+  (`tr.qcd-expandable` with its own `tabindex` + `aria-expanded`, Insights
+  Queue health + the all-dept report) was moved onto a cell
+  `button.qcd-expand-toggle` in broad-scan Batch 8 (`drive-f13.js` presses
+  Enter and Space on both), so the pin is a SWEEP over every
   `script-*.html` fragment, not a per-site assertion. **The corollary bites
   on the way in:** once the button is native, a row-level keydown handler
   toggles the same thing twice per keypress — delete it.
@@ -1907,7 +1911,30 @@ block) unless noted, and the two behavioural ones are also driven in
   give it a real Close control (`.chp-close` on the chart-tips popover); and
   `trapFocus_` releases any trap it finds first, so a dialog opened OVER a
   modal must stash that modal's trap and re-arm it on close
-  (`outerTrap` in `initChartHelp_`).
+  (`outerTrap` in `initChartHelp_`; Help and the call-path overlay do the
+  same, UI-2). Test "is the modal under me still open?" with
+  `layerIsShown_`, never `offsetParent` -- every `.modal` is
+  `position:fixed`, whose `offsetParent` is always null, so that test said
+  "closed" for every open modal and the trap was never re-armed. A layer
+  that stashes the trap also restores the modal's scroll lock rather than
+  clearing it.
+- **A layer over a modal takes Escape through the LAYER STACK, never its own
+  bubble-phase listener (UI-1).** Report modals close on a bubble-phase
+  `document` keydown, so a layer listening the same way closed itself AND
+  the report under it (which then reopened on its empty form, results
+  lost). Register the close function with `escapeLayerPush_(close)` on open
+  and `escapeLayerRemove_(close)` in close (script-1-core); one
+  capture-phase dispatcher closes only the top layer and stops the event.
+  The report modals themselves stay the base layer on their own handlers;
+  `dsConfirm_` / `dsPrompt_` keep their own capture-phase Escape and win
+  while up. Current layers: Help, the chart tips, the "↳ path" overlay.
+  A role=menu dropdown needs no registration: `wireMenuKeys_` STOPS the
+  Escape that closes an open menu (on the trigger and inside the menu), so
+  the IR / all-dept Queue report Export menus no longer close their report
+  (`drive-f13.js` presses it both ways).
+  Pinned by `html-include-structure.test.js` (the wiring) and
+  `drive-admin.js` (Escape on each layer over a real report leaves the
+  report open with its trap and scroll lock).
 - **Describe an action, never `aria-label` a content-bearing element.** A
   label REPLACES the accessible content, so `aria-label="Isolate X in the
   trend chart"` on an Overview dept tile hid every KPI inside it — the

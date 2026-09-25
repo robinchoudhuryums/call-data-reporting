@@ -51,6 +51,19 @@ test('R28: EMAIL_BCC overrides the list; none/off disables; an existing bcc is k
   assert.equal(h.state.sentEmails[0].bcc, undefined);
 });
 
+test('ENG-6: a malformed EMAIL_BCC entry is dropped, never handed to MailApp (one typo failed EVERY send)', function () {
+  reset({ EMAIL_BCC: 'audit@x.com, robin@x,com' });   // the comma typo splits into 'robin@x' + 'com'
+  h.call('sendAppEmail_', { to: 'mgr@x.com', subject: 's', body: 'b' });
+  assert.equal(h.state.sentEmails[0].bcc, 'audit@x.com', 'the valid entry still applies');
+  const cfg = JSON.parse(JSON.stringify(h.call('appEmailBccConfig_')));
+  assert.deepEqual(cfg, { mode: 'list', valid: ['audit@x.com'], invalid: ['robin@x', 'com'] });
+  // Nothing valid -> the default first-admin BCC, not silently nobody.
+  reset({ EMAIL_BCC: 'robin at x dot com' });
+  h.call('sendAppEmail_', { to: 'mgr@x.com', subject: 's', body: 'b' });
+  assert.equal(h.state.sentEmails[0].bcc, 'robin@x.com');
+  assert.equal(h.call('appEmailBccConfig_').mode, 'default');
+});
+
 test('R28: the positional (to, subject, body) form is accepted', function () {
   reset();
   h.call('sendAppEmail_', 'mgr@x.com', 'subj', 'plain');
@@ -67,4 +80,50 @@ test('R28 sweep: no dashboard .gs calls MailApp.sendEmail except the chokepoint'
     'route the send through sendAppEmail_ (Config.gs) so the default BCC + EMAIL_BCC apply: ' + offenders.join(', '));
   const cfg = fs.readFileSync(path.join(DASH, 'Config.gs'), 'utf8');
   assert.equal((cfg.match(/MailApp\.sendEmail\(/g) || []).length, 1, 'exactly one real send in the whole dashboard');
+});
+
+// SEC-2 (broad-scan 2026-09-23, Batch 8): a per-USER cap on user-triggered
+// report emails. The MailApp quota is shared with alerts / digests / the
+// watchdogs and every send also BCCs an admin, so a devtools loop on one
+// report-email endpoint could starve every engine for the day.
+test('SEC-2: the throttle admits up to the cap per user, then refuses with a readable error', function () {
+  reset();
+  h.state.cache.clear();
+  const cap = h.ctx.USER_REPORT_EMAIL_CAP_;
+  for (let i = 0; i < cap; i++) h.call('assertReportEmailThrottle_', 'Mgr@X.com');
+  assert.throws(function () { h.call('assertReportEmailThrottle_', 'mgr@x.com'); },
+    /report emails in the last 6 hours/, 'case-insensitive: the same user');
+  h.call('assertReportEmailThrottle_', 'other@x.com');   // a different user is unaffected
+});
+
+test('SEC-2: stamps older than the window fall away', function () {
+  reset();
+  h.state.cache.clear();
+  const old = Date.now() - (h.ctx.USER_REPORT_EMAIL_WINDOW_S_ + 60) * 1000;
+  const stamps = new Array(h.ctx.USER_REPORT_EMAIL_CAP_).fill(old);
+  h.ctx.CacheService.getScriptCache().put('mailThrottle:v1:mgr@x.com', JSON.stringify(stamps), 600);
+  h.call('assertReportEmailThrottle_', 'mgr@x.com');   // does not throw
+});
+
+test('SEC-2 sweep: every user-triggered report-email endpoint is throttled', function () {
+  // Every PUBLIC (non-underscore) .gs function whose body calls sendAppEmail_
+  // must call assertReportEmailThrottle_, unless it is on this list with a
+  // reason. A new report-email endpoint joins the throttle, or this list.
+  const EXEMPT = {
+    runLiveSmoke: 'admin-only editor/Health smoke run; one email per run',
+    reportClientIssue: 'has its own per-signature + rolling-window email cap (R19)',
+  };
+  const offenders = [];
+  fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); }).forEach(function (f) {
+    const src = fs.readFileSync(path.join(DASH, f), 'utf8');
+    const re = /^function (\w+)\(/gm;
+    let m; const starts = [];
+    while ((m = re.exec(src))) starts.push({ name: m[1], at: m.index });
+    starts.forEach(function (s, i) {
+      const body = src.slice(s.at, i + 1 < starts.length ? starts[i + 1].at : src.length);
+      if (/_$/.test(s.name) || EXEMPT[s.name]) return;
+      if (/sendAppEmail_\(/.test(body) && !/assertReportEmailThrottle_\(/.test(body)) offenders.push(f + ':' + s.name);
+    });
+  });
+  assert.deepEqual(offenders, [], 'unthrottled user-triggered senders: ' + offenders.join(', '));
 });

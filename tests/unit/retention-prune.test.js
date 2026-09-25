@@ -339,3 +339,67 @@ test('spring-forward errs the safe way: a 14-day-old tab is still kept', functio
     assert.equal(out.result.kept, 1);
   });
 });
+
+// ── ING-5 (broad-scan 2026-09-23, Batch 8): recovery holds ─────────────────
+// The documented recovery for a date past the window -- recreate its
+// Call_Legs tab from the provider CSV, then rebuild -- collided with this
+// prune, which deleted the recreated (by definition over-age) tab the next
+// night. A recovered tab is held via RETENTION_HOLD until the hold expires.
+test('ING-5: a HELD over-age tab survives the prune; an expired hold is dropped and the tab goes', function () {
+  const dayMs = 86400000;
+  const nowMs = new Date(2026, 8, 25, 12, 0, 0).getTime();
+  h.state.props.RETENTION_HOLD = JSON.stringify({
+    'Call_Legs_2026-08-01': nowMs + 2 * dayMs,     // held, still valid
+    'Call_Legs_2026-08-02': nowMs - dayMs,         // hold expired
+  });
+  const out = prune([2026, 9, 25], ['Call_Legs_2026-08-01', 'Call_Legs_2026-08-02', 'Call_Legs_2026-08-03']);
+  assert.deepEqual(out.survivors, ['Call_Legs_2026-08-01'], 'only the tab with a live hold survives');
+  assert.equal(out.result.held, 1);
+  assert.deepEqual(Object.keys(JSON.parse(h.state.props.RETENTION_HOLD)), ['Call_Legs_2026-08-01'],
+    'the expired hold was dropped from the store');
+  delete h.state.props.RETENTION_HOLD;
+});
+
+test('ING-5: a hold never protects a non-Call_Legs sheet or changes the in-window rule', function () {
+  h.state.props.RETENTION_HOLD = JSON.stringify({ 'Raw Data': Date.now() + 1e9 });
+  const out = prune([2026, 9, 25], ['Raw Data', 'Call_Legs_2026-09-20']);
+  assert.deepEqual(out.survivors, ['Call_Legs_2026-09-20', 'Raw Data']);
+  assert.equal(out.result.held, 0);
+  delete h.state.props.RETENTION_HOLD;
+});
+
+// The importer half: a failed write used to leave an EMPTY tab that every
+// later run skipped as "already exists", so the recovery could not complete.
+const hi = loadGas({ project: 'cdr-import', files: ['DeleteOldSheets.js', 'importBulkCSVsFromDrive.js'] });
+function withCsv(fn) {
+  const saved = hi.ctx.Utilities;
+  hi.ctx.Utilities = Object.assign({}, saved, {
+    parseCsv: function (t) { return String(t).split('\n').filter(Boolean).map(function (l) { return l.split(','); }); },
+  });
+  try { return fn(); } finally { hi.ctx.Utilities = saved; }
+}
+
+test('ING-5: the importer fills an EMPTY leftover tab, pads ragged rows, and never overwrites real data', function () {
+  withCsv(function () {
+    const ss = makeFakeSpreadsheet({ sheets: { 'Call_Legs_2026-08-01': [], 'Call_Legs_2026-08-02': [['a', 'b']] } });
+    assert.equal(hi.call('importCallLegsCsv_', ss, 'Call_Legs_2026-08-01', 'h1,h2,h3\nx,y\n'), 'imported');
+    const g = ss._sheet('Call_Legs_2026-08-01')._data;
+    assert.deepEqual(JSON.parse(JSON.stringify(g.slice(0, 2))), [['h1', 'h2', 'h3'], ['x', 'y', '']]);
+    assert.match(hi.call('importCallLegsCsv_', ss, 'Call_Legs_2026-08-02', 'h1\n'), /^skipped: .* already exists with data/);
+  });
+});
+
+test('ING-5: a failed write removes the tab the importer created, so a re-run can retry', function () {
+  withCsv(function () {
+    const ss = makeFakeSpreadsheet({ sheets: {} });
+    const realInsert = ss.insertSheet.bind(ss);
+    ss.insertSheet = function (name) {
+      const sh = realInsert(name);
+      sh.getRange = function () { return { setValues: function () { throw new Error('cell ceiling'); } }; };
+      return sh;
+    };
+    const out = hi.call('importCallLegsCsv_', ss, 'Call_Legs_2026-08-03', 'h1,h2\n');
+    assert.match(out, /^failed: cell ceiling .*removed/);
+    assert.equal(ss.getSheetByName('Call_Legs_2026-08-03'), null, 'no empty tab left behind');
+  });
+});

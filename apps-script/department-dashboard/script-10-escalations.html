@@ -98,8 +98,17 @@
 
   // Fetch role + dept list once; populate the dept selectors; reveal the
   // admin-only create controls. cb() runs after (or immediately if cached).
+  // UI-4 follow-on: ONE init request at a time. Two quick page entries used
+  // to fire two getEscalationsInit RPCs; while one is in flight the newest
+  // continuation replaces the pending one (every caller passes the same
+  // page-entry load, so running it twice would only double the telemetry).
+  var escInitInFlight_ = false;
+  var escInitPendingCb_ = null;
   function escEnsureInit_(cb) {
     if (escInit_) { cb && cb(); return; }
+    if (cb) escInitPendingCb_ = cb;
+    if (escInitInFlight_) return;
+    escInitInFlight_ = true;
     // R9-4: the init fetch painted NOTHING -- on a cold entry the page sat
     // as blank background until getEscalationsInit returned and escLoad_'s
     // own loader took over. Show the same rings loader from the first frame.
@@ -156,10 +165,36 @@
         // R11-D1: seed the (countless) category list so the wide-viewport status
         // filter is present immediately; escRenderList_ refreshes it with counts.
         escRenderCatMenu_(null);
-        cb && cb();
+        escInitInFlight_ = false;
+        const next = escInitPendingCb_;
+        escInitPendingCb_ = null;
+        if (next) next();
       })
       .withFailureHandler(function (err) {
-        escSetError_('Error: ' + (err && err.message ? err.message : String(err)));
+        // UI-4: the init failure left the loader spinning beside the error,
+        // offered no way back but a full reload, and never reached the admins
+        // (the R19 load-failure beacon covered only the LIST fetch). Clear the
+        // loader, offer Retry (re-running init with the same continuation),
+        // and report it like every other top-level page load.
+        const msg = (err && err.message ? err.message : String(err));
+        escInitInFlight_ = false;
+        const pendingCb = escInitPendingCb_;
+        escInitPendingCb_ = null;
+        if ($('esc-loading')) { $('esc-loading').style.display = 'none'; $('esc-loading').innerHTML = ''; }
+        const el = $('esc-error');
+        if (el) {
+          el.innerHTML = escapeHtml('Could not load escalations: ' + msg)
+            + ' <button type="button" class="link-btn" id="esc-init-retry">Retry</button>';
+          el.style.display = '';
+          const retry = $('esc-init-retry');
+          if (retry) retry.addEventListener('click', function () {
+            escSetError_('');
+            escEnsureInit_(pendingCb);
+          });
+        }
+        if (typeof reportClientIssue_ === 'function') {
+          reportClientIssue_('load-failure', 'Escalations init failed: ' + msg);
+        }
       })
       .getEscalationsInit();
   }
@@ -1825,14 +1860,20 @@
   // Agent options come from the SAME roster list the Individual Report picker
   // uses, so the names are exact (INV-04) -- the server matches on them
   // byte-for-byte and a typed name would mostly miss.
+  // UI-7: switching dept twice quickly let the FIRST dept's roster land last
+  // and fill the picker for the second -- a name the server then matched
+  // against the wrong dept. Only the newest request may paint.
+  var adAgentsSeq_ = 0;
   function adLoadAgents_() {
     const sel = $('ad-agent');
     const dept = $('ad-dept') ? $('ad-dept').value : '';
     if (!sel || !dept) return;
     sel.innerHTML = '<option value="">Loading…</option>';
     sel.disabled = true;
+    const tok = ++adAgentsSeq_;
     google.script.run
       .withSuccessHandler(function (init) {
+        if (tok !== adAgentsSeq_) return;   // a newer dept pick owns the picker
         const names = (init && init.agents) || [];
         sel.innerHTML = names.length
           ? names.map(function (n) {
@@ -1842,6 +1883,7 @@
         sel.disabled = !names.length;
       })
       .withFailureHandler(function (err) {
+        if (tok !== adAgentsSeq_) return;
         sel.innerHTML = '<option value="">(could not load)</option>';
         sel.disabled = true;
         adSetError_('Could not load the agent list: ' + (err && err.message ? err.message : String(err)));

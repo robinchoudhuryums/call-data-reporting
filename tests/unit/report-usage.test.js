@@ -13,7 +13,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // the Report Usage sheet doesn't exist (setup() not re-run).
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs'],
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs'],
 });
 
 const ROSTER = rosterGrid({ Alpha: ['Anna, 201', 'Ben, 202'] });

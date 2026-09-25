@@ -43,7 +43,7 @@
  * (read-only), and reinstating that visibility is part of the
  * design intent for this view.
  *
- * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v24` (the
+ * Caching: REPORT_CACHE_TTL_SECONDS under `companyOverview:v25` (the
  * COMPANY_OVERVIEW_CACHE_KEY constant below). Cached blob is shared
  * across all users; admin-only fields (`companyAggregate`,
  * `pipelineFreshness`, `orphanNag`) are stripped on serve for
@@ -92,7 +92,7 @@
 // v21 (R18d): per-dept `dqeSilence` (the queue-lens fallback flag) joined the blob.
 // v22 (6b): each dept carries a per-day `trendChartAnswered` series (DQE
 // answered COUNT) feeding the chart's new Answered calls metric view.
-const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v24';
+const COMPANY_OVERVIEW_CACHE_KEY = 'companyOverview:v25';
 
 /**
  * The Overview cache key, suffixed with the combined DQE+QCD read source
@@ -262,14 +262,23 @@ const OVERVIEW_ORPHAN_NAG_DAYS = 7;
 const OVERVIEW_RECENT_ACTIVE_DAYS = 30;
 
 /**
- * Overview-only parent->children dept relationships. The "Overview"
- * tile grid renders each parent followed by its child sub-queues,
- * visually nested. Each dept is still independent everywhere else
- * (Reports modals, admin dept dropdown, alerts) -- this nesting
- * only affects the Company Overview display.
+ * Parent->children dept relationships (the SEED default beneath the Dept
+ * Config sheet's `Overview Parent` column -- read it through
+ * getOverviewParentMap_, never this constant; INV-54).
  *
- * Add a row here when a new sub-queue is introduced; the child's
- * dept name must match the column header in DO NOT EDIT! exactly.
+ * NOT Overview-only any more (INV-38, DOC-7). An edge here:
+ *   - nests the child's tile under the parent on the Overview;
+ *   - GRANTS ACCESS: resolveUser_ widens a manager of the parent to the
+ *     child one level, agent-level data included (owner ruling 2026-07,
+ *     Operator State #39) -- adding an edge gives every parent manager the
+ *     child's data with no Access Control edit;
+ *   - shapes rollups: the child's queues fold into the parent's QCD snapshot
+ *     (queuesForDept_) and inbound union, and My Department shows the
+ *     combined view.
+ * Two depts that merely share a manager want multiple Access Control rows
+ * instead (the Field Ops / Field Ops Power ruling). Alerts and Digests are
+ * NOT widened. The child's dept name must match the DO NOT EDIT! column
+ * header exactly.
  */
 const OVERVIEW_PARENT_OF = Object.freeze({
   // Sub-queue names appear here verbatim as they're written in the
@@ -328,7 +337,11 @@ function getCompanyOverview(req) {
   // mean deliberate visits (Overview is the default landing, so this is the
   // per-session "who showed up" row). One log site covers every return path
   // below; cache-warm traffic is already suppressed via REPORT_USAGE_SUPPRESS_.
-  if (!(req && req.auto)) logReportUsage_('overview', user.department || '(all)', user, !!cached);
+  // Telemetry records the REAL caller: under view-as `user` is a synthetic
+  // manager carrying the admin's email, which filed the admin as a manager
+  // in the Health page's per-user rollup. The dept column keeps the scope
+  // that was viewed (matches the YTD endpoint, UI-3).
+  if (!(req && req.auto)) logReportUsage_('overview', user.department || '(all)', realUser, !!cached);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
@@ -532,10 +545,17 @@ function getCompanyOverview(req) {
   // counted once, so the all-queue rollup IS the correct company number. Only
   // the PER-DEPT attribution below narrows (that is where a crossover agent's
   // other-dept calls double-counted). The two passes therefore split.
+  // S2A-2 (broad-scan 2026-09-23, Batch 9): companyTrendByDate ALSO feeds the
+  // chart's 90-day Company line (trendChart below), but this loop skipped every
+  // row older than the 30-day trendStartIso -- so on the 60/90-day views the
+  // Company line was null for all but its last 30 days. The per-DAY series now
+  // spans the chart window; everything else here (the recent-active set, the
+  // latest-day tile) keeps its own 30-day / latest-day gate unchanged.
+  const companyFloorIso = [trendStartIso, chartTrendStartIso].sort()[0];
   for (let i = 0; i < dqeRows.length; i++) {
     const row = dqeRows[i];
     const dateIso = row.dateIso;
-    if (!dateIso || dateIso < trendStartIso) continue;
+    if (!dateIso || dateIso < companyFloorIso) continue;
     const agent = row.agent;
     if (!agent) continue;
     if (/^A_Q_/.test(agent) || agent === 'Backup CSR') continue;
@@ -571,7 +591,7 @@ function getCompanyOverview(req) {
         companyLatest.att_sum  += attTotal;
         if (hadActivity) companyLatest.activeAgents[agent] = true;
       }
-      if (hadActivity) companyRecentlyActive[agent] = true;
+      if (hadActivity && dateIso >= trendStartIso) companyRecentlyActive[agent] = true;   // S2A-2: stays 30-day
     }
   }
 
@@ -933,7 +953,7 @@ function getCompanyOverview(req) {
     // managers). Computed lazily inside try/catch so a Pipeline Health
     // sheet outage or a slow orphan scan never blocks the Overview.
     pipelineFreshness: computeOverviewPipelineFreshness_(),
-    orphanNag:         computeOverviewOrphanNag_(),
+    orphanNag:         computeOverviewOrphanNag_(Object.keys(deptsForAgent)),   // DATA-6: rosters already loaded
     unmappedQcd:       computeOverviewUnmappedQcd_(),
     // viewerRole and viewerDept are NOT cached; personalizeOverview_
     // injects them per-request so a payload warmed by user A still
@@ -999,8 +1019,19 @@ function getCompanyOverview(req) {
  *                 trendAbandonedPct }] }
  */
 function getOverviewChartTrend(req) {
-  const user = resolveUser_(Session.getActiveUser().getEmail());
-  assertManagerOrAdmin_(user);   // Phase A: all-dept surface, no dept pin below
+  const realUser = resolveUser_(Session.getActiveUser().getEmail());
+  assertManagerOrAdmin_(realUser);   // Phase A: all-dept surface, no dept pin below
+  // UI-3: honor view-as exactly as getCompanyOverview does. The client always
+  // sent `viewAsDept`, and this endpoint ignored it -- so an admin previewing
+  // a manager still got the admin-only Company line. Only ever NARROWS (a
+  // synthetic manager); non-admins and unknown depts keep their real role.
+  // The cache is shared and the strip runs on serve, so no key change.
+  let user = realUser;
+  const viewAsDept = req && String(req.viewAsDept || '').trim();
+  if (realUser.role === 'admin' && viewAsDept
+      && getAllDepartments_().indexOf(viewAsDept) !== -1) {
+    user = { email: realUser.email, role: 'manager', department: viewAsDept, departments: [viewAsDept] };
+  }
 
   const latestDate = getLatestDataDate();
   if (!latestDate) return { available: false };
@@ -1013,7 +1044,7 @@ function getOverviewChartTrend(req) {
   if (cached) {
     try {
       const hit = JSON.parse(cached);
-      logReportUsage_('overviewChartYtd', '(all)', user, true);   // B-8
+      logReportUsage_('overviewChartYtd', '(all)', realUser, true);   // B-8
       return ovStripChartTrend_(hit, user);
     } catch (e) { /* recompute */ }
   }
@@ -1138,7 +1169,7 @@ function getOverviewChartTrend(req) {
   if (configDegraded || qcdDegraded || outageEmpty) {
     Logger.log('overviewChartTrend: skipping cache put (%s) -- degraded payload must not pin.',
       configDegraded ? 'Dept Config read errored' : (qcdDegraded ? 'QCD snapshot read errored' : 'empty DQE read despite a known latest date'));
-    logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
+    logReportUsage_('overviewChartYtd', '(all)', realUser, false);   // B-8
     return ovStripChartTrend_(data, user);
   }
   // Size guard: skip caching an oversized blob (CacheService ~100KB cap) rather
@@ -1148,7 +1179,7 @@ function getOverviewChartTrend(req) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
   }
-  logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
+  logReportUsage_('overviewChartYtd', '(all)', realUser, false);   // B-8
   return ovStripChartTrend_(data, user);
 }
 
@@ -1210,24 +1241,47 @@ function computeOverviewPipelineFreshness_() {
         isStale:         true,
       };
     }
-    const hoursSinceFresh = (Date.now() - latestTs.getTime()) / 3600000;
-    // Weekend/holiday credit (OPS-7 parity): 24h allowance per non-business
-    // day in the gap, so Friday's build does not read as stale on Monday
-    // morning. IngestWatchdog.gs has always applied this to the SAME
-    // threshold; this banner and the header pill did not, so both false-warned
-    // every Monday on current data. Reuses the watchdog's helper (one Apps
-    // Script global scope); typeof-guarded like every other cross-file call.
-    const nonBusinessCredit = (typeof ingestWatchdogNonBusinessCredit_ === 'function')
-      ? ingestWatchdogNonBusinessCredit_(hoursSinceFresh) : 0;
-    return {
-      latestTimestamp: Utilities.formatDate(latestTs, TZ, 'yyyy-MM-dd HH:mm'),
-      hoursSinceFresh: Math.round(hoursSinceFresh * 10) / 10,
-      isStale:         (hoursSinceFresh - nonBusinessCredit) > OVERVIEW_PIPELINE_STALE_HOURS,
-    };
+    return ovFreshnessAt_(latestTs, Date.now());
   } catch (e) {
     Logger.log('computeOverviewPipelineFreshness_ failed: %s', e);
     return null;
   }
+}
+
+/** The freshness verdict for a latest-DQE-build instant, measured at nowMs. */
+function ovFreshnessAt_(latestTs, nowMs) {
+  const hoursSinceFresh = (nowMs - latestTs.getTime()) / 3600000;
+  // Weekend/holiday credit (OPS-7 parity): 24h allowance per non-business
+  // day in the gap, so Friday's build does not read as stale on Monday
+  // morning. IngestWatchdog.gs has always applied this to the SAME
+  // threshold; this banner and the header pill did not, so both false-warned
+  // every Monday on current data. Reuses the watchdog's helper (one Apps
+  // Script global scope); typeof-guarded like every other cross-file call.
+  const nonBusinessCredit = (typeof ingestWatchdogNonBusinessCredit_ === 'function')
+    ? ingestWatchdogNonBusinessCredit_(hoursSinceFresh) : 0;
+  return {
+    latestTimestamp: Utilities.formatDate(latestTs, TZ, 'yyyy-MM-dd HH:mm'),
+    hoursSinceFresh: Math.round(hoursSinceFresh * 10) / 10,
+    isStale:         (hoursSinceFresh - nonBusinessCredit) > OVERVIEW_PIPELINE_STALE_HOURS,
+  };
+}
+
+/**
+ * DATA-7 (broad-scan 2026-09-23): re-age the cached freshness verdict at
+ * SERVE time. The Overview blob lives up to 6 h under a key anchored on the
+ * latest DQE DATE -- which is exactly what does NOT move when the pipeline
+ * stops -- so a blob cached while fresh kept `isStale:false` for the rest of
+ * its TTL and the banner stayed silent through the first hours of an outage.
+ * Recomputed from the stored timestamp: no sheet read, a fresh object (the
+ * cached blob is never mutated). A null timestamp (no DQE build found) was
+ * already stale and stays so.
+ */
+function ovReageFreshness_(pf, nowMs) {
+  if (!pf || !pf.latestTimestamp) return pf;
+  try {
+    const ts = parsePipelineHealthTimestamp_(pf.latestTimestamp);
+    return ts ? ovFreshnessAt_(ts, nowMs || Date.now()) : pf;
+  } catch (e) { return pf; }
 }
 
 function parsePipelineHealthTimestamp_(s) {
@@ -1258,9 +1312,9 @@ function parsePipelineHealthTimestamp_(s) {
  * sheet doesn't block Overview rendering. Admin-only on serve via
  * personalizeOverview_.
  */
-function computeOverviewOrphanNag_() {
+function computeOverviewOrphanNag_(rosterNames) {
   try {
-    const orphans = computeOrphans_();
+    const orphans = computeOrphans_(rosterNames ? { rosterNames: rosterNames } : undefined);
     if (!orphans || !orphans.length) {
       return { activeCount: 0, totalCount: 0, sampleNames: [] };
     }
@@ -1344,6 +1398,7 @@ function personalizeOverview_(blob, user) {
       }
       out.viewerRole = user.role;
       out.viewerDept = user.department || null;
+      if (out.pipelineFreshness) out.pipelineFreshness = ovReageFreshness_(out.pipelineFreshness);
       return out;
     }
     return {
@@ -1354,6 +1409,9 @@ function personalizeOverview_(blob, user) {
       viewerRole:     user.role,
       viewerDept:     user.department || null,
     };
+  }
+  if (user.role === 'admin' && out.pipelineFreshness) {
+    out.pipelineFreshness = ovReageFreshness_(out.pipelineFreshness);   // DATA-7
   }
   if (user.role !== 'admin') {
     delete out.companyAggregate;

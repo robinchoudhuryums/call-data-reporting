@@ -2268,10 +2268,12 @@
         // plus the call-source subtable + violation dates when present.
         const hasDetail = true;
         const chevron = ' <span class="qcd-expand-icon">&#9654;</span>';
-        // F13: focusable + state-announcing (no role override -- see
-        // makeActivatable_'s note on table row semantics).
-        let html = '<tr class="ins-qh-row qcd-expandable" tabindex="0" aria-expanded="false">'
-          + '<td>' + escapeHtml(q.queue) + subTag + chevron + srcLine + '</td>'
+        // F13 -> a11y tidy-up (the E-8 contract): the disclosure is a real
+        // <button> in the first cell that owns aria-expanded and the native
+        // Enter/Space; the row stays the mouse target, not a tab stop.
+        let html = '<tr class="ins-qh-row qcd-expandable">'
+          + '<td><button type="button" class="qcd-expand-toggle" aria-expanded="false">'
+          +   escapeHtml(q.queue) + subTag + chevron + '</button>' + srcLine + '</td>'
           + '<td class="num">' + fmtNumber(q.totalCalls) + '</td>'
           + '<td class="num">' + fmtNumber(q.abandoned) + '</td>'
           + '<td class="num' + pctCls + '">' + escapeHtml(q.abandonedPctStr) + '</td>'
@@ -2344,16 +2346,8 @@
           if (!row || !tbody.contains(row)) return;
           qcdToggleExpandRow_(row);
         });
-        // F13: Enter/Space expands too -- the per-source breakdown and
-        // violation dates behind this toggle have no other route.
-        tbody.addEventListener('keydown', function (e) {
-          if (e.key !== 'Enter' && e.key !== ' ') return;
-          var row = e.target.closest && e.target.closest('.qcd-expandable');
-          if (!row || !tbody.contains(row)) return;
-          if (e.target.closest('button')) return;   // let real buttons act
-          e.preventDefault();
-          qcdToggleExpandRow_(row);
-        });
+        // (Enter/Space: the row's .qcd-expand-toggle is a native button, whose
+        // click bubbles to the handler above -- a row keydown would toggle twice.)
         tbody._insQhExpandWired = true;
       }
       // Round 4: resolve which queues actually have no-ring abandons (one
@@ -4527,7 +4521,7 @@
       html += '<div class="ins-views-empty">No saved views yet.</div>';
     }
     html += '<div class="ins-views-saverow">'
-      + '<input type="text" id="ins-views-name" placeholder="Name this view…" maxlength="40">'
+      + '<input type="text" id="ins-views-name" placeholder="Name this view…" aria-label="Name for the saved view" maxlength="40">'   // UI-8
       + '<button type="button" class="btn" id="ins-views-save">Save</button>'
       + '</div>'
       + '<div class="ins-views-note">Saves dates, comparison, agents &amp; Simple/Detailed — not the department.</div>';

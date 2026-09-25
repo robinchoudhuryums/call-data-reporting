@@ -535,7 +535,8 @@ test('no Neon JDBC URL carries connect/socket/login timeout properties', functio
     'apps-script/cdr-import/neonWrite.js',
     'apps-script/cdr-report/dbHistorical.js',
     'apps-script/cdr-report/neonbackfill.js',
-    'apps-script/department-dashboard/OrphanFix.gs',
+    // (OrphanFix.gs left this list in Batch 8: S2B-3 routes its rename
+    // through NeonRead.gs's getDashboardNeonConn_.)
   ];
   JDBC_FILES.forEach(function (rel) {
     const src = read(rel);
@@ -1155,4 +1156,48 @@ test('H3: no top-level name is declared in two files of the same Apps Script pro
     assert.deepEqual(dups, [], pr[0] + ': declared in two files -- the last-loaded file wins silently: '
       + dups.map(function (n) { return n + ' (' + Array.from(new Set(seen[n])).join(', ') + ')'; }).join('; '));
   });
+});
+
+// SEC-5 (broad-scan 2026-09-23; owner: nothing embeds the app): every rendered
+// page is served with XFrameOptionsMode.DEFAULT. ALLOWALL let any site frame
+// the app for a signed-in admin (clickjacking the admin write paths), and the
+// Apps Script docs make the developer responsible for clickjacking defence
+// under it. Re-enabling it needs an embedding use case + a CLAUDE.md note.
+test('SEC-5: every HtmlService page sets XFrameOptionsMode.DEFAULT, never ALLOWALL', function () {
+  const files = fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); });
+  const allowAll = files.filter(function (f) { return /XFrameOptionsMode\.ALLOWALL/.test(read(f, DASH)); });
+  assert.deepEqual(allowAll, [], 'ALLOWALL framing reintroduced in: ' + allowAll.join(', '));
+  const codeGs = read('Code.gs', DASH);
+  const evals = (codeGs.match(/tmpl\.evaluate\(\)/g) || []).length;
+  const defaults = (codeGs.match(/setXFrameOptionsMode\(HtmlService\.XFrameOptionsMode\.DEFAULT\)/g) || []).length;
+  assert.ok(evals >= 3, 'expected the three rendered templates in Code.gs');
+  assert.equal(defaults, evals, 'each rendered template sets DEFAULT explicitly');
+});
+
+// SEC-1 (broad-scan 2026-09-23): every public DQE / QCD report RPC that takes
+// a client window routes it through assertReportRangeCap_ (the per-call
+// reports keep their own 366-day caps). A new report endpoint must join this
+// list or state why it needs no cap.
+test('SEC-1: every public DQE/QCD report RPC caps its client window', function () {
+  const RPCS = {
+    'Data.gs': ['getDepartmentSummary'],
+    'IndividualReport.gs': ['getIndividualReport', 'getIndividualReportInit'],
+    'InsightsReport.gs': ['getInsightsReport', 'sendInsightsReportEmail'],
+    'MissedCallsReport.gs': ['getMissedCallsReport', 'getMissedCallsSlice'],
+    'QCDReport.gs': ['getQcdAllDepartments'],
+    'QueueReportEmail.gs': ['sendQcdAllDeptEmail'],
+    'AgentHome.gs': ['getAgentHome'],
+  };
+  const missing = [];
+  Object.keys(RPCS).forEach(function (f) {
+    const src = read(f, DASH);
+    RPCS[f].forEach(function (fn) {
+      const at = src.indexOf('\nfunction ' + fn + '(');
+      if (at === -1) { missing.push(f + '::' + fn + ' (not found)'); return; }
+      const next = src.indexOf('\nfunction ', at + 1);
+      const body = src.slice(at, next === -1 ? undefined : next);
+      if (body.indexOf('assertReportRangeCap_(') === -1) missing.push(f + '::' + fn);
+    });
+  });
+  assert.deepEqual(missing, [], 'report RPCs without the SEC-1 window cap: ' + missing.join(', '));
 });

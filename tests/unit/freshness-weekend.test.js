@@ -88,6 +88,24 @@ test('Overview banner: a rows:0 no-op success still does not count as freshness 
   assert.equal(out.isStale, true, 'no qualifying build found -> stale, unchanged by this work');
 });
 
+test('DATA-7: the cached verdict is RE-AGED at serve -- a blob cached fresh goes stale when the pipeline stops', function () {
+  // Cached 6h ago as fresh; the build it saw is now 60h old with no credit.
+  install([], 0);
+  const stamp = rowHoursAgo(60).timestamp;
+  const blob = { depts: [], pipelineFreshness: { latestTimestamp: stamp, hoursSinceFresh: 54, isStale: false } };
+  const admin = h.call('personalizeOverview_', blob, { role: 'admin', email: 'a@x.com' });
+  assert.equal(admin.pipelineFreshness.isStale, true, 'the banner fires without waiting out the 6h TTL');
+  assert.ok(admin.pipelineFreshness.hoursSinceFresh >= 59, 'the age is measured now, not at cache time');
+  assert.equal(blob.pipelineFreshness.isStale, false, 'the shared cached blob is never mutated');
+  // Managers still never see it (INV-39).
+  const mgr = h.call('personalizeOverview_', blob, { role: 'manager', department: 'CSR', departments: ['CSR'] });
+  assert.equal(mgr.pipelineFreshness, undefined);
+  // A null-timestamp verdict (no DQE build found) passes through unchanged.
+  const none = h.call('personalizeOverview_', { depts: [], pipelineFreshness: { latestTimestamp: null, hoursSinceFresh: null, isStale: true } },
+    { role: 'admin', email: 'a@x.com' });
+  assert.equal(none.pipelineFreshness.isStale, true);
+});
+
 test('the credit helper itself: 24h per weekend/holiday day, capped at 14 days back', function () {
   // Real arithmetic (restored -- the banner tests above stub this global).
   h.ctx.ingestWatchdogNonBusinessCredit_ = REAL_CREDIT_;

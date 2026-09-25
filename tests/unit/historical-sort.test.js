@@ -16,11 +16,11 @@ const { formatDate } = require('../harness/formatDate');
 //   - a single-typed, out-of-order sheet is sorted, RE-CHECKED, and reported
 //     ("sorted -- N inversion(s)"), and no other sheet is touched;
 //   - the flag gates the handler; the preview writes nothing; a backfill
-//     resume pointer defers the whole run without reading a sheet;
+//     resume pointer defers only the sheet it indexes (CRT-6);
 //   - one Pipeline Health row per sheet per run under historicalSort:<label>.
 // sheetRepairs.js needs parseDateForNeon (neonWrite.js) and, for the fixtures,
 // dateAtSheetMidnight_ (buildDQEHistoricalData.js).
-const h = loadGas({ project: 'cdr-report', files: ['neonWrite.js', 'buildDQEHistoricalData.js', 'sheetRepairs.js'] });
+const h = loadGas({ project: 'cdr-report', files: ['neonWrite.js', 'buildDQEHistoricalData.js', 'sheetRepairs.js', 'neonbackfill.js'] });
 
 const SS_TZ = makeFakeSpreadsheet({ sheets: {} }).getSpreadsheetTimeZone();
 const SCRIPT_TZ = 'America/Chicago';
@@ -213,21 +213,41 @@ test('Phase 2: a sort whose RE-CHECK still fails is a failure row, not a claimed
   }
 });
 
-test('Phase 2: a backfill resume pointer DEFERS the whole run -- no sheet is read, every row says skipped and names the pointer', function () {
+test('CRT-6: a backfill resume pointer defers ONLY the sheet it indexes -- the others are still checked and sorted', function () {
   const ss = install(fiveSheets({
     'QCD Historical Data': colCSheet([dateCell(2026, 6, 3), dateCell(2026, 6, 1)]),
   }), { HISTORICAL_SORT_ENABLED: 'true', DQE_UPSERT_RESUME: '12|abc' });
-  // Prove "not read": a sheet whose getRange throws would fail the run.
-  ss.getSheetByName('QCD Historical Data').getRange = function () { throw new Error('must not read'); };
+  // Prove "not read": the pointer's own sheet must not be touched.
+  ss.getSheetByName('DQE Historical Data').getRange = function () { throw new Error('must not read'); };
   const res = h.call('runHistoricalSortCheck_');
   assert.equal(Array.from(res.resumePending).join(','), 'DQE_UPSERT_RESUME');   // vm-realm array
   const rows = phRows(ss);
   assert.equal(rows.length, 5);
-  rows.forEach(function (r) {
-    assert.equal(r.status, 'success', r.step);
-    assert.match(String(r.notes), /^skipped -- backfill resume pointer\(s\) set: DQE_UPSERT_RESUME/, r.step);
-  });
-  NAMES.forEach(function (n) { assert.equal(sortCalls(ss, n), 0); });
+  const dqe = rows.filter(function (r) { return r.step === 'historicalSort:DQE'; })[0];
+  assert.equal(dqe.status, 'success', 'a legacy pointer with no age defers quietly');
+  assert.match(String(dqe.notes), /^skipped -- backfill resume pointer\(s\) set: DQE_UPSERT_RESUME/);
+  const qcd = res.sheets.filter(function (e) { return e.label === 'QCD'; })[0];
+  assert.equal(qcd.action, 'sorted', 'one DQE pointer no longer holds QCD hostage (CRT-6)');
+  assert.equal(sortCalls(ss, 'QCD Historical Data'), 1);
+  assert.equal(sortCalls(ss, 'DQE Historical Data'), 0);
+});
+
+test('CRT-6: a pointer older than the allowance turns its deferral into a STALE-POINTER failure row', function () {
+  const old = JSON.stringify({ index: 4, rowCount: 10, key: 'k', writtenAt: new Date(Date.now() - 9 * 86400000).toISOString() });
+  const fresh = JSON.stringify({ index: 4, rowCount: 10, key: 'k', writtenAt: new Date(Date.now() - 3600000).toISOString() });
+  let ss = install(fiveSheets({}), { HISTORICAL_SORT_ENABLED: 'true', QCD_BACKFILL_RESUME: old });
+  h.call('runHistoricalSortCheck_');
+  let row = phRows(ss).filter(function (r) { return r.step === 'historicalSort:QCD'; })[0];
+  assert.equal(row.status, 'failure');
+  assert.match(String(row.notes), /^STALE-POINTER -- skipped for QCD_BACKFILL_RESUME \(9 days old\)/);
+  ss = install(fiveSheets({}), { HISTORICAL_SORT_ENABLED: 'true', QCD_BACKFILL_RESUME: fresh });
+  h.call('runHistoricalSortCheck_');
+  row = phRows(ss).filter(function (r) { return r.step === 'historicalSort:QCD'; })[0];
+  assert.equal(row.status, 'success', 'a live multi-run backfill defers quietly');
+  // The writer stamps the age the check reads.
+  const props = { v: {}, setProperty: function (k, v) { this.v[k] = v; } };
+  h.call('nbResumeWrite_', props, 'QCD_BACKFILL_RESUME', 0, [['a', 'b', 'c', 'd']], [0]);
+  assert.ok(h.call('hsPointerAgeDays_', props.v.QCD_BACKFILL_RESUME) < 0.01);
 });
 
 test('Phase 2: the preview reports would-sort and writes NOTHING (no sort, no Pipeline Health row)', function () {

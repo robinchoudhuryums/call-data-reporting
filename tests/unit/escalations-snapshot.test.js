@@ -192,3 +192,31 @@ test('E2: the refresh is AGE-GATED — a fresh snapshot does not re-query on eve
   assert.equal(queries, 1, 'a stale snapshot refreshes');
   assert.notEqual(JSON.parse(h.state.props.ESC_SNAPSHOT_META).at, '2026-08-01T00:00:00.000Z');
 });
+
+// PCR-8 (broad-scan 2026-09-23): only the delete (2a) force-refreshed the
+// snapshot; every other committed write left it up to the refresh window
+// stale, so an outage in that window served a just-resolved row as open.
+test('PCR-8: every committed escalation write force-refreshes the snapshot, past the age gate', function () {
+  h.state.props = {};
+  seedSnapshot_();   // fresh: the age gate alone would skip the refresh
+  const calls = [];
+  const conn = {
+    setAutoCommit: function (v) { calls.push('autocommit:' + v); },
+    prepareStatement: function () {
+      calls.push('query');
+      return { setString: function () {}, executeQuery: function () {
+        return { next: function () { return true; },
+                 getString: function () { return JSON.stringify([row('n1', 'CSR', 'pending')]); }, close: function () {} };
+      }, close: function () {} };
+    },
+  };
+  h.call('escSnapshotAfterWrite_', conn);
+  assert.deepEqual(calls, ['autocommit:true', 'query'], 'leaves the transaction, then re-reads despite the fresh snapshot');
+  assert.equal(h.call('escSnapshotLoad_').rows[0].id, 'n1', 'the snapshot now holds the post-write open set');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
+  ['createEscalation', 'updateEscalation', 'resolveEscalation', 'reopenEscalation', 'startEscalation',
+   'approveEscalation', 'rejectEscalation', 'updateEscalationComment'].forEach(function (fn) {
+    assert.match(src, new RegExp("conn\\.commit\\(\\);\\n    Logger\\.log\\('" + fn + ": [^\\n]*\\n    escSnapshotAfterWrite_\\(conn\\);"),
+      fn + ' refreshes the snapshot right after its commit');
+  });
+});

@@ -23,7 +23,7 @@
  *   2. DELETE inbound_calls / outbound_calls rows older than
  *      NEON_RETENTION_CALL_DAYS (default 400);
  *   3. DELETE dqe_history / qcd_history rows older than
- *      NEON_RETENTION_HISTORY_MONTHS (default 13) -- the sheet is the
+ *      NEON_RETENTION_HISTORY_MONTHS (default 25, OD-4) -- the sheet is the
  *      authority for both (Neon mirrors it), and every DQE/QCD reader is
  *      bounded by the INV-29 12-month trend window.
  *
@@ -41,11 +41,14 @@
  * history floor (25 months, OD-4) keeps a 12-month trend AND its same-length
  * INV-28 prior window whole on the Neon read path for windows ending recently.
  *
- * Interaction with the Neon backup (NeonBackup.gs): closed months of the two
- * per-call tables are written ONCE and then skipped, and every horizon here
- * is longer than a month, so a row is always backed up (journey included)
- * before this prune can reach it. Run order on the weekend is backup
- * Saturday, prune Sunday.
+ * Interaction with the Neon backup (NeonBackup.gs): a closed month of the two
+ * per-call tables is rewritten by the backup until a run lands at least
+ * NB_FINAL_GRACE_DAYS_ after it closed, then skipped (ENG-1 -- before that
+ * fix the month froze at its last IN-month Saturday and its tail days were
+ * never backed up). Every horizon here is longer than a month, so a row is
+ * backed up (journey included) before this prune can reach it -- PROVIDED
+ * the backup is running; neonRetentionBackupGate_ (ENG-2) refuses to prune
+ * when it is not. Run order on the weekend is backup Saturday, prune Sunday.
  *
  * Flag-gated engine (the SheetCoverage/PipelineWatch pattern): the weekly
  * handler no-ops on a property read unless NEON_RETENTION_ENABLED='true';
@@ -74,6 +77,35 @@ var NEON_RETENTION_BATCH_ROWS_ = 5000;
 var NEON_RETENTION_BUDGET_MS_  = 4 * 60 * 1000;   // under the 6-min ceiling with margin
 var NEON_RETENTION_STMT_TIMEOUT_S_ = 120;
 var NEON_RETENTION_TRIGGER_HOUR_ = 3;              // Sunday, script TZ (backup runs Saturday)
+
+// ENG-2: the tables with no sheet primary, whose prune waits on a healthy
+// backup, and how old the last clean backup may be. 15 days = two weekly
+// runs, so one missed or failed Saturday does not hold the prune (every row
+// old enough to prune was backed up by a run long before it) while a backup
+// that is off or keeps failing does.
+var NEON_RETENTION_PERCALL_TABLES_ = ['inbound_calls', 'outbound_calls'];
+var NEON_RETENTION_BACKUP_MAX_AGE_MS_ = 15 * 24 * 3600 * 1000;
+
+/**
+ * ENG-2. null when the per-call prune may run, else the reason it is held:
+ * the Neon backup (NeonBackup.gs) has never run, last ran more than
+ * NEON_RETENTION_BACKUP_MAX_AGE_MS_ ago, or its last outcome was not `ok`.
+ * `NEON_RETENTION_WITHOUT_BACKUP=true` is the operator's explicit opt-out
+ * (pruning rows that then exist nowhere).
+ */
+function neonRetentionBackupGate_(props, nowMs) {
+  if (String(props.getProperty('NEON_RETENTION_WITHOUT_BACKUP') || '') === 'true') return null;
+  var last = props.getProperty('NEON_BACKUP_LAST') || '';
+  if (!last) return 'no Neon backup has run (install it: Operator State #28)';
+  var t = Date.parse(last);
+  if (!isFinite(t)) return 'the last Neon backup time is unreadable (' + last + ')';
+  if (nowMs - t > NEON_RETENTION_BACKUP_MAX_AGE_MS_) {
+    return 'the last Neon backup ran ' + Math.floor((nowMs - t) / 86400000) + ' days ago';
+  }
+  var res = String(props.getProperty('NEON_BACKUP_LAST_RESULT') || '');
+  if (!/^ok\b/.test(res)) return 'the last Neon backup did not finish clean (' + res.slice(0, 120) + ')';
+  return null;
+}
 
 /** Effective horizons: Script Property override, floored, else the default. */
 function neonRetentionSettings_(props) {
@@ -193,13 +225,31 @@ function neonRetentionRun_() {
     neonRetentionRecord_('skipped (Neon unreachable/unconfigured)');
     return { skipped: true, settings: settings };
   }
+  // ENG-2: the per-call tables (inbound_calls / outbound_calls) have NO sheet
+  // primary -- once the ~14-day Call_Legs window passes, the Drive backup is
+  // their only other copy. Their prune steps run only while that backup is
+  // healthy; the dqe/qcd steps (sheet-primary) always run, so the storage
+  // control keeps working while the per-call steps are held.
+  var hold = neonRetentionBackupGate_(props, Date.now());
+  var plan = neonRetentionPlan_(settings);
+  if (hold) {
+    plan = plan.filter(function (s) { return NEON_RETENTION_PERCALL_TABLES_.indexOf(s.table) === -1; });
+  }
   var res;
   try {
-    res = neonRetentionExecute_(conn, neonRetentionPlan_(settings));
+    res = neonRetentionExecute_(conn, plan);
   } finally {
     try { conn.close(); } catch (ce) { /* best-effort */ }
   }
   var summary = neonRetentionSummary_(settings, res);
+  if (hold) {
+    // PARTIAL (not ok) so the Health row warns: a hold that nobody sees would
+    // let the per-call tables grow toward the storage cap unnoticed.
+    var note = 'per-call prune HELD -- ' + hold
+      + '. Fix the Neon backup, or set NEON_RETENTION_WITHOUT_BACKUP=true to prune without one';
+    summary = res.errors.length ? summary + ' :: ' + note : 'PARTIAL ' + note + ' | ' + summary;
+    res.heldPerCall = hold;
+  }
   neonRetentionRecord_(summary);
   Logger.log('=== NEON RETENTION %s ===', summary);
   if (res.errors.length) neonRetentionNotify_(summary);

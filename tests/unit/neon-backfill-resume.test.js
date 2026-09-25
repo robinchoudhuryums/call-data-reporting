@@ -140,6 +140,8 @@ test('T-8: the pointer written on a batch failure carries the fingerprint (index
   h.ctx.getNeonConn_backfill = function () { return conn; };
   assert.throws(function () { h.call('backfillDQEHistoryUpsert'); }, /boom/);
   const st = JSON.parse(h.state.props.DQE_UPSERT_RESUME);
+  assert.match(st.writtenAt, /^\d{4}-\d{2}-\d{2}T/, 'CRT-6: the pointer carries its age');
+  delete st.writtenAt;
   assert.deepEqual(st, { index: 0, rowCount: 4, key: K('08/05/2026', 'Anna') });
   assert.equal(cap.rollbacks, 1);
 });
@@ -149,8 +151,9 @@ test('T-8: nbResumeRead_ covers the CDR / QCD pointers with their own key column
                   setProperty: function (k, v) { this.bag[k] = String(v); } };
   const cdr = [['m', 'w', '08/05/2026', 'CSR', 'Anna'], ['m', 'w', '08/05/2026', 'CSR', 'Ben']];
   h.fn('nbResumeWrite_')(props, 'CDR_BACKFILL_RESUME', 1, cdr, h.ctx.NB_CDR_KEY_COLS_);
-  assert.deepEqual(JSON.parse(props.bag.CDR_BACKFILL_RESUME),
-    { index: 1, rowCount: 2, key: K('08/05/2026', 'CSR', 'Ben') });
+  const cdrSt = JSON.parse(props.bag.CDR_BACKFILL_RESUME);
+  delete cdrSt.writtenAt;   // CRT-6 age stamp; nbResumeRead_ ignores it
+  assert.deepEqual(cdrSt, { index: 1, rowCount: 2, key: K('08/05/2026', 'CSR', 'Ben') });
   assert.equal(h.fn('nbResumeRead_')(props, 'CDR_BACKFILL_RESUME', cdr, h.ctx.NB_CDR_KEY_COLS_), 1);
   // The dept of the row at the index changed -> 0.
   const cdr2 = [cdr[0], ['m', 'w', '08/05/2026', 'Sales', 'Ben']];
@@ -560,4 +563,72 @@ test('R37: the prune refuses past the cap (a wrong sheet read must not wipe Neon
   assert.throws(function () { h.call('pruneNeonExtraRows'); }, /Refusing to prune 2100/);
   assert.equal(cap.statements.filter(function (s) { return /DELETE/.test(s.sql); }).length, 0);
   assert.equal(cap.commits, 0);
+});
+
+// CRT-4 (broad-scan 2026-09-23): the DO-UPDATE upsert overwrote Neon's
+// still-good slot / abandoned values with NULL / #REBUILD whenever the SHEET
+// cell had since been corrupted. For those cells it now reads what Neon holds
+// and keeps a real stored value; a stored NULL/#REBUILD, or a row Neon does
+// not have, still takes the sheet's verdict.
+test('CRT-4: the upsert keeps Neon\'s stored value for cells the sheet can no longer supply', function () {
+  const cap = install([
+    dqeRow('08/05/2026', 'Anna', { 10: '0.433020833333', 29: '#REBUILD', 31: 'garbage' }),   // slot + AD + AF lost
+    dqeRow('08/05/2026', 'Ben',  { 10: '0.5', 30: '1.76E+24' }),                             // lost, Neon stores nothing useful
+    dqeRow('08/06/2026', 'Cara', { 10: '10:23:33' }),                                        // clean: no pre-read needed
+  ]);
+  const stored = {
+    '2026-08-05\u0000Anna': { 0: '10:23:33', 19: 'P1,P2', 21: '10:23:33' },
+    '2026-08-05\u0000Ben':  { 0: null, 20: '#REBUILD' },
+  };
+  let selects = 0;
+  h.ctx.getNeonConn_backfill = function () {
+    const c = fakeConn(cap);
+    const realPrepare = c.prepareStatement;
+    c.prepareStatement = function (sql) {
+      const st = realPrepare(sql);
+      if (sql.indexOf('SELECT call_date::text') !== 0) return st;
+      selects++;
+      const keys = [];
+      st.setString = function (i, v) { keys[i - 1] = v; };
+      st.executeQuery = function () {
+        const rows = [];
+        for (let k = 0; k < keys.length; k += 2) {
+          const s = stored[keys[k] + '\u0000' + keys[k + 1]];
+          if (s) rows.push([keys[k], keys[k + 1]].concat(Array.from({ length: 22 }, function (_, j) { return s[j] === undefined ? null : s[j]; })));
+        }
+        let at = -1;
+        return { next: function () { return ++at < rows.length; }, getString: function (c) { return rows[at][c - 1]; }, close: function () {} };
+      };
+      return st;
+    };
+    return c;
+  };
+  h.call('backfillDQEHistoryUpsert');
+  assert.equal(selects, 1, 'one bounded pre-read for the batch');
+  const b = cap.statements.filter(function (s) { return s.sql.indexOf('INSERT INTO dqe_history') === 0; })[0].binds;
+  assert.equal(b[10], '10:23:33', 'lost slot keeps Neon\'s stored value');
+  assert.equal(b[29], 'P1,P2', '#REBUILD AD keeps Neon\'s stored ids');
+  assert.equal(b[31], '10:23:33', 'lost AF keeps Neon\'s stored time');
+  assert.equal(b[DQE_BINDS_PER_ROW + 10], null, 'a stored NULL is not "kept" -- the sheet verdict stands');
+  assert.equal(b[DQE_BINDS_PER_ROW + 30], '#REBUILD', 'a stored #REBUILD is not "kept" either');
+  assert.equal(b[2 * DQE_BINDS_PER_ROW + 10], '10:23:33', 'clean row untouched');
+  assert.match(h.state.props.DQE_UPSERT_LAST, / kept-from-neon=3$/);
+});
+
+// CRT-8 (broad-scan 2026-09-23): the duplicate report wrote feed agent names
+// raw into its tab.
+test('CRT-8: findDqeDuplicateRows neutralizes a formula-leading agent name in its report tab', function () {
+  install([dqeRow('08/05/2026', '=cmd|x'), dqeRow('08/05/2026', '=cmd|x')]);
+  const ss = h.state.spreadsheet;
+  const realInsert = ss.insertSheet.bind(ss);
+  ss.insertSheet = function (n) {
+    const sh = realInsert(n);
+    sh.clear = function () {}; sh.setFrozenRows = function () {}; sh.autoResizeColumns = function () {};
+    return sh;
+  };
+  h.ctx.crSheetSafeCell_ = function (v) { return (typeof v === 'string' && /^[=+\-@]/.test(v)) ? "'" + v : v; };
+  try { h.call('findDqeDuplicateRows'); } finally { delete h.ctx.crSheetSafeCell_; }
+  const out = h.state.spreadsheet.getSheetByName('DQE Duplicate Rows')._data;
+  assert.equal(out[1][3], "'=cmd|x");
+  assert.equal(out[2][3], "'=cmd|x");
 });

@@ -308,3 +308,20 @@ test('the fallback discloses how far the copy reaches (meta.fallbackThrough)', f
   // The OLDER of the two tabs bounds what the payload can know.
   assert.equal(fb.meta.fallbackThrough, '2026-08-11');
 });
+
+// PCR-3 (broad-scan 2026-09-23): a callback counts through abandon date + 3
+// INCLUSIVE, so an uncalled abandon exactly 3 days ago is still pending today.
+// Both paths used a strict '>' (and the SQL used Neon's UTC current_date).
+test('PCR-3: pendingTail includes an abandon exactly N days old, on both paths, against the script-TZ today', function () {
+  install({ conn: null });
+  const realToday = h.ctx.obTodayIso_;
+  h.ctx.obTodayIso_ = function () { return '2026-08-13'; };   // hashC abandoned 2026-08-10 = today - 3
+  try {
+    const fb = h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' });
+    assert.equal(fb.callback.pendingTail, 1, 'the uncalled 08-10 abandon can still be called back on 08-13');
+    h.ctx.obTodayIso_ = function () { return '2026-08-14'; };
+    h.state.cache.clear();
+    assert.equal(h.call('getOutboundReport', { from: FROM, to: TO, department: 'CSR' }).callback.pendingTail, 0,
+      'one day later it is outside the window');
+  } finally { h.ctx.obTodayIso_ = realToday; }
+});

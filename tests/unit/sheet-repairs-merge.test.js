@@ -186,3 +186,132 @@ test('Batch 3: a merged row has AI, AJ and AK CLEARED (blank = never captured; a
   assert.equal(String(ben[35]), '3', 'a non-duplicate row keeps its pair');
   assert.equal(String(ben[36]), '400');
 });
+
+// CRT-2 (broad-scan 2026-09-23, Batch 11): blank AI..AK mirrors as NULL, and
+// every dqe_history upsert COALESCEs those columns, so the follow-up
+// backfillDQEHistoryUpsert() used to KEEP Neon's pre-merge split beside the
+// re-summed rollup. The merge now NULLs the Neon twin for exactly its keys.
+test('CRT-2: a merge NULLs dqe_history\'s queue_split + after-hours pair for the merged keys only', function () {
+  const sql = [], batches = [];
+  let closed = false;
+  const fakeConn = {
+    prepareStatement: function (q) {
+      sql.push(q);
+      let cur = {};
+      return {
+        setQueryTimeout: function () {},
+        setString: function (i, v) { cur[i] = v; },
+        addBatch: function () { batches.push(cur); cur = {}; },
+        executeBatch: function () { return batches.map(function () { return 1; }); },
+        close: function () {},
+      };
+    },
+    close: function () { closed = true; },
+  };
+  const orig = h.ctx.getReachableNeonConn_;
+  h.ctx.getReachableNeonConn_ = function () { return fakeConn; };
+  try {
+    h.state.props.SPREADSHEET_ID = 'fake';
+    h.state.spreadsheet = makeFakeSpreadsheet({
+      sheets: {
+        'DQE Historical Data': [
+          new Array(37).fill('h'),
+          dqeRow('2026-06-22', 'Anna Smith', { 29: 'P1', 30: 'M1', 31: '10:30:00', 34: '{"A_Q_CSR":{"a":1}}', 35: 1, 36: 240 }),
+          dqeRow('2026-06-22', 'Anna Smith', { 29: 'P2', 30: 'M2', 31: '9:15:00',  34: '{"A_Q_CSR":{"a":1}}', 35: 2, 36: 300 }),
+          dqeRow('2026-06-22', 'Ben Jones',  { 35: 3, 36: 400 }),
+        ],
+      },
+    });
+    const res = h.call('repairDqeDuplicateMerge');
+    assert.equal(res.merged, 1);
+    assert.equal(sql.length, 1);
+    assert.match(sql[0], /UPDATE dqe_history SET queue_split = NULL, after_hours_answered = NULL, after_hours_ttt = NULL/);
+    assert.equal(batches.length, 1, 'Ben (not a duplicate) is left alone');
+    assert.equal(batches[0][1], '2026-06-22');
+    assert.equal(batches[0][2], 'Anna Smith');
+    assert.equal(res.neonExtrasCleared.status, 'ok');
+    assert.equal(res.neonExtrasCleared.cleared, 1);
+    assert.ok(closed, 'the connection is closed');
+
+    // Unreachable Neon: the sheet merge still stands, the result says so.
+    h.ctx.getReachableNeonConn_ = function () { return null; };
+    const r2 = h.call('scClearNeonMergeExtras_', [{ date: '2026-06-22', agent: 'Anna Smith' }]);
+    assert.equal(r2.status, 'unreachable');
+  } finally {
+    h.ctx.getReachableNeonConn_ = orig;
+  }
+});
+
+// CRT-3 (broad-scan 2026-09-23): a COUNTS-ONLY (no slot / AD token) double
+// append fell through the R8-B6 detector (nothing to verify) and was re-summed.
+test('CRT-3: identical counts-only duplicates are deduped, not summed', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: {
+      'DQE Historical Data': [
+        new Array(34).fill('h'),
+        dqeRow('06/22/2026', 'Cara Diaz', {}),
+        dqeRow('06/22/2026', 'Cara Diaz', {}),
+        dqeRow('06/22/2026', 'Cara Diaz', {}),
+      ],
+    },
+  });
+  const res = h.call('repairDqeDuplicateMerge');
+  assert.equal(res.deleted, 2);
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 34).getDisplayValues()
+    .filter(function (r) { return r[2] === 'Cara Diaz'; });
+  assert.equal(rows.length, 1);
+  assert.equal(String(rows[0][5]), '2', 'rung kept at 2, not tripled to 6');
+  assert.equal(rows[0][8], '0:10:00', 'TTT kept, not summed');
+});
+
+// CRT-7 (broad-scan 2026-09-23): the apply writes by row number, unlocked, while
+// the daily build (another project) can append + re-sort. It now re-checks the
+// row identity before its first write and aborts with nothing written.
+test('CRT-7: a sheet that changes between the read and the write aborts the merge with nothing written', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: {
+      'DQE Historical Data': [
+        new Array(34).fill('h'),
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '10:30:00', 29: 'P1', 30: 'M1', 31: '10:30:00' }),
+        dqeRow('06/22/2026', 'Anna Smith', { 10: '9:15:00', 29: 'P2', 30: 'M2', 31: '9:15:00' }),
+      ],
+    },
+  });
+  const sheet = h.state.spreadsheet.getSheetByName('DQE Historical Data');
+  const real = h.ctx.scMergeAlreadyApplied_;
+  // The concurrent build lands mid-apply (after the read, before the write).
+  h.ctx.scMergeAlreadyApplied_ = function (a, b) {
+    sheet.appendRow(dqeRow('06/23/2026', 'Zed New', {}));
+    return real(a, b);
+  };
+  try {
+    assert.throws(function () { h.call('repairDqeDuplicateMerge'); },
+      /repairDqeDuplicateMerge ABORTED before writing: the sheet changed since it was read -- row count changed \(3 -> 4\)/);
+  } finally { h.ctx.scMergeAlreadyApplied_ = real; }
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 34).getDisplayValues()
+    .filter(function (r) { return r[2] === 'Anna Smith'; });
+  assert.equal(rows.length, 2, 'no duplicate deleted');
+  assert.equal(String(rows[0][5]), '2', 'no row rewritten');
+  // Every DQE bulk apply re-verifies before it writes (source pin).
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-report', 'sheetRepairs.js'), 'utf8');
+  ['repairDqeSlotTimestamps', 'repairDqeAbandonedIds', 'repairDqeOldPstTimestampShift', 'repairDqeDuplicateMerge', 'repairDqeDateNormalize']
+    .forEach(function (n) { assert.ok(src.indexOf("hrReverifyRows_(sheet, rowSnap, '" + n + "')") !== -1, n + ' re-verifies'); });
+});
+
+// CRT-5 (broad-scan 2026-09-23): a no-op slot repair snapshotted the whole
+// sheet first, rotating a useful backup out of the keep window.
+test('CRT-5: a slot repair with nothing coerced takes no snapshot and rewrites no value', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake' };
+  h.state.createdSpreadsheets = [];
+  const grid = [new Array(34).fill('h')];
+  for (let i = 0; i < 30; i++) grid.push(dqeRow('06/22/2026', 'Agent ' + i, { 10: '10:30:00,10:45:00', 31: '9:15:00' }));
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DQE Historical Data': grid } });
+  const res = h.call('repairDqeSlotTimestamps');
+  assert.equal(res.noop, true);
+  assert.equal(res.fixed, 0);
+  assert.equal(h.state.createdSpreadsheets.length, 0, 'no backup workbook touched (30 rows x 20 cols is over the threshold)');
+  assert.equal(h.state.props.HR_BACKUP_SS_ID, undefined);
+});

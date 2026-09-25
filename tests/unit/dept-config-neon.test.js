@@ -8,12 +8,12 @@
 // so dcParseList_ normalization yields byte-identical lists.)
 
 const { test } = require('node:test');
-const { deepEqual, equal } = require('node:assert');   // prototype-agnostic for cross-realm vm values
+const { deepEqual, equal, ok } = require('node:assert');   // prototype-agnostic for cross-realm vm values
 const { loadGas } = require('../harness/loadGas');
 const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
 
 const h = loadGas({
-  files: ['Config.gs', 'CompanyOverview.gs', 'NeonRead.gs', 'DeptConfig.gs'],
+  files: ['Config.gs', 'Util.gs', 'CompanyOverview.gs', 'NeonRead.gs', 'DeptConfig.gs'],
   capture: ['DEPT_CONFIG_HEADERS', 'DEPT_QCD_QUEUES', 'OVERVIEW_PARENT_OF'],
 });
 const HEADERS = h.consts.DEPT_CONFIG_HEADERS;
@@ -209,4 +209,54 @@ test('A-1: the C2 migration helpers carry finalDeptLabels (backfill record + par
   h.ctx.getDashboardNeonConn_ = function () { return fakeDeptConfigConn(LOGICAL.map(neonRow)); };
   const ok = h.call('compareDeptConfigSources');
   equal(ok.clean, true, 'parity with the field present on both sides');
+});
+
+// S2B-5 (broad-scan 2026-09-23, Batch 11): under CONFIG_SOURCE=neon the SHEET is
+// still what cdr-import's capture (INV-54's third consumer) and cdr-report's
+// queueOverlapAudit read, so a Neon-only write left them on the pre-flip copy.
+// A Neon write is now mirrored to the sheet; a failed mirror is a WARNING.
+test('S2B-5: CONFIG_SOURCE=neon writes Neon AND mirrors the row to the sheet', function () {
+  const neonWrites = [], neonDeacts = [];
+  const origUp = h.ctx.neonUpsertDeptConfigRow_, origDe = h.ctx.neonDeactivateDeptConfig_;
+  h.ctx.neonUpsertDeptConfigRow_ = function (rec) { neonWrites.push(rec.dept); };
+  h.ctx.neonDeactivateDeptConfig_ = function (d) { neonDeacts.push(d); return 1; };
+  try {
+    installSheet();
+    h.state.props.CONFIG_SOURCE = 'neon';
+    const rec = { dept: 'Power', qcdQueues: ['A_Q_Power'], overviewParent: '', teamAvgExcludes: [],
+                  queueExtOverrides: [], inboundAliases: ['A_Q_PWR'], finalDeptLabels: [],
+                  active: true, notes: '', admin: 'a@x' };
+    const warn = h.call('upsertDeptConfigRow_', rec);
+    equal(warn, null, 'a clean mirror returns no warning');
+    deepEqual(neonWrites, ['Power'], 'Neon is still written (authoritative)');
+    const grid = h.state.spreadsheet.getSheetByName('Dept Config').getDataRange().getValues();
+    const row = grid.filter(function (r) { return r[0] === 'Power'; })[0];
+    ok(row, 'the sheet copy the other projects read now has the row');
+    equal(String(row[9]), 'A_Q_PWR', 'including the Inbound queue alias capture needs');
+
+    const de = h.call('deactivateDeptConfig_', 'CSR');
+    equal(de.count, 1);
+    equal(de.warning, null);
+    const csr = h.state.spreadsheet.getSheetByName('Dept Config').getDataRange().getValues()
+      .filter(function (r) { return r[0] === 'CSR'; })[0];
+    equal(String(csr[5]), 'FALSE', 'the deactivation reached the sheet too');
+
+    // No sheet to mirror into: the save stands (Neon) and says so.
+    h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {} });
+    const warn2 = h.call('upsertDeptConfigRow_', rec);
+    ok(/SHEET copy was not updated/.test(String(warn2)), 'a failed mirror is a warning, not a throw');
+  } finally {
+    h.ctx.neonUpsertDeptConfigRow_ = origUp;
+    h.ctx.neonDeactivateDeptConfig_ = origDe;
+    delete h.state.props.CONFIG_SOURCE;
+  }
+});
+
+test('S2B-5: the sheet source path is unchanged (one write, no mirror, no warning)', function () {
+  installSheet();
+  const rec = { dept: 'Power', qcdQueues: [], overviewParent: '', teamAvgExcludes: [],
+                queueExtOverrides: [], inboundAliases: [], finalDeptLabels: [],
+                active: true, notes: '', admin: 'a@x' };
+  equal(h.call('upsertDeptConfigRow_', rec), null);
+  deepEqual(JSON.parse(JSON.stringify(h.call('deactivateDeptConfig_', 'Sales'))), { count: 1, warning: null });
 });

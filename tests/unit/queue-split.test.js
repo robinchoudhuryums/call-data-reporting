@@ -473,6 +473,56 @@ test('B-1: one crossover agent working entirely elsewhere is NOT a mapping fault
   assert.equal(rows[1].totalRung, 6);
 });
 
+test('DATA-1: the B-1 verdict reads the dept ROSTER rows -- one other dept\'s call cannot mask a mapping fault', function () {
+  // CSR is mapped to the canonical name only (the fault B-1 exists for), and a
+  // SALES agent took one Backup CSR call. computeSummary_ hands the helper every
+  // agent's rows; the Overview and Alerts hand it CSR's roster rows. Before
+  // DATA-1 the first set "matched" via the Sales row and narrowed CSR's Cara to
+  // ZERO while the other surfaces fell open on the same data.
+  withQueues({ CSR: ['A_Q_CustomerSuccess', 'Backup CSR'] });
+  const mk = function () {
+    return [
+      srcRow({ agent: 'Cara', r: 10, a: 8, m: 2, split: JSON.stringify({ A_Q_CSR: { r: 10, a: 8, m: 2 } }) }),
+      srcRow({ agent: 'Sam',  r: 12, a: 12,     split: JSON.stringify({ A_Q_Sales: { r: 11, a: 11 }, 'Backup CSR': { r: 1, a: 1 } }) }),
+    ];
+  };
+  const all = mk();
+  const infoAll = hData.call('applyQueueSplitToRows_', all, 'CSR', { assessAgents: ['Cara'] });
+  assert.equal(infoAll.fellOpenUnmatched, true, 'the roster (Cara) matched nothing -- a mapping fault');
+  assert.equal(all[0].totalRung, 10, 'Cara keeps the all-queue figure instead of reading as zero');
+  assert.deepEqual(Array.from(infoAll.unmatchedQueues), ['A_Q_CSR'],
+    'and the report names only CSR\'s own unmatched queue, not every other dept\'s');
+
+  // The same verdict over the roster-only rows the Overview / Alerts pass.
+  const rosterOnly = hData.call('queueSplitNarrowedCopy_', [mk()[0]], 'CSR');
+  assert.equal(rosterOnly.info.fellOpenUnmatched, true);
+  assert.equal(rosterOnly.rows[0].totalRung, 10, 'every surface agrees');
+});
+
+test('DATA-1: without a roster the verdict falls back to every row (pre-DATA-1 behaviour)', function () {
+  withQueues({ CSR: ['A_Q_CSR'] });
+  const rows = [
+    srcRow({ agent: 'Anna', r: 4, split: JSON.stringify({ A_Q_Spanish: { r: 4 } }) }),
+    srcRow({ agent: 'Bob',  r: 6, split: JSON.stringify({ A_Q_CSR: { r: 6 } }) }),
+  ];
+  const info = hData.call('applyQueueSplitToRows_', rows, 'CSR', { assessAgents: [] });
+  assert.equal(info.fellOpenUnmatched, false, 'Bob matched -- assessed over all rows');
+  assert.equal(rows[0].totalRung, 0);
+});
+
+test('DATA-1: every reader that owns its row set passes the roster as B-1 evidence', function () {
+  const fs = require('fs'), path = require('path');
+  const dir = path.join(__dirname, '..', '..', 'apps-script', 'department-dashboard');
+  ['Data.gs', 'IndividualReport.gs', 'InsightsReport.gs', 'MissedCallsReport.gs'].forEach(function (f) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8').replace(/function applyQueueSplitToRows_\(/g, '');
+    const calls = src.match(/applyQueueSplitToRows_\((?:srcRows|dalRows)[^)]*\)/g) || [];
+    assert.ok(calls.length >= 1, f + ' calls the helper');
+    calls.forEach(function (c) {
+      assert.ok(/assessAgents:\s*roster\.names/.test(c), f + ': ' + c + ' must pass assessAgents');
+    });
+  });
+});
+
 test('P2: queue names match case-insensitively across the two name spaces', function () {
   withQueues({ CSR: ['a_q_csr'] });   // Dept Config casing need not match capture casing
   const rows = [srcRow({ r: 10, split: ANNA_SPLIT })];

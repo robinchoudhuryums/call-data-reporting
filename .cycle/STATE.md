@@ -1,6 +1,88 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
+  a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
+  owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds
+  the app; now in Batch 2) and SEC-6 -> PHI in Script Properties is ACCEPTED
+  (Apps Script is Workspace HIPAA Included Functionality; Batch 10 gets a docs
+  note). **Batch 1 SHIPPED on this branch** (block 195): ENG-1 backup
+  closed-month finalization + tail files, ENG-2 retention held without a clean
+  backup, S2A-1 digest WoW `missed` (unblocks `ANSWER_RATE_FORMULA=answerable`),
+  ENG-11 text. **Batch 2 SHIPPED on this branch** (block 196): S2B-1 role-scoped
+  Access Control save/remove, S2B-2 sign-in reads off the script lock
+  (save-in-flight marker + generation token), SEC-1 `assertReportRangeCap_`
+  (731 d; agent app 366), SEC-3 IR email allowlist, S2B-6 alias rows stored
+  canonically, SEC-5 XFrameOptionsMode.DEFAULT. **Batch 3 SHIPPED on this
+  branch** (block 197, cdr-import only): ING-1/S2C-3 Direct build date + stray
+  legs, S2C-1 first_agent no longer stores customer CNAM (agentBusy half left
+  as a follow-on), S2C-4 NUL strip, ING-6 outbound budget, ING-2 CDR/QCD
+  mirrors after every sheet write, ING-7 CSR repair date/lock/per-row writes.
+  **Batch 4 SHIPPED on this branch** (block 198, all 11 findings): ENG-3
+  alerts readiness gate (DEFERRED/LATE/EMPTY + run marker), DATA-2/DATA-3/
+  S2A-3 no caching of degraded reads, ENG-5 digest/queue-report
+  INTERRUPTED + STALE, ENG-6 EMAIL_BCC validation, DATA-7 freshness re-aged at
+  serve, ING-3 bulk mirror-gap rows, CRT-6 per-sheet sort deferral +
+  STALE-POINTER, ENG-7 NOTIFY-FAILED, ENG-8 manual-blast toasts.
+  **Batch 5 SHIPPED on this branch** (block 199, + the ING-3 daily-mirror
+  follow-on): CRT-1 export tabs delete instead of round-tripping, CRT-7
+  repairs re-verify before writing, CRT-3 identical counts-only dups deduped,
+  CRT-5 keep 6 + no no-op snapshot, CRT-4 upsert keeps Neon's good value for
+  lost sheet cells, CRT-8 + S2B-7 sheet-safe names.
+  **Batch 6 SHIPPED on this branch** (block 200): PCR-1/PCR-2 parent depts
+  roll in children's raw aliases + on-hold labels (inbound:v11,
+  inboundHeatmap:v4, missed:v18, outboundReport:v4), SEC-7 journey fallback
+  gates reasons + drops insurer, PCR-3 pendingTail inclusive + script-TZ,
+  PCR-9 vetting refuses a sheet-served leg, PCR-5 agent-day quoted-name
+  pattern + truncation, PCR-8 snapshot refresh after every escalation write.
+  **Batch 7 SHIPPED on this branch** (block 201, client only + one server
+  change): UI-1 capture-phase Escape layer stack (Help / chart tips / call
+  path), UI-2 Help + call-path re-arm the outer trap and scroll lock (the
+  call-path `offsetParent` check never re-armed), UI-3 YTD endpoint honors
+  view-as and the client keys its YTD cache by scope, UI-4 Escalations init
+  failure clears the loader + Retry + beacon, UI-5/6/7/11 sequence tokens /
+  drill key / per-flag close guard, UI-8 aria-labels, UI-9 insurer-row
+  disclosure button (trp-row deliberately unchanged -- it jumps, not
+  expands). ui-harness gained `__HARNESS__.failOnce`.
+  **Follow-ons SHIPPED on this branch** (block 202): report Export menus stop
+  Escape (`wireMenuKeys_`), trp-row action description, Escalations init
+  in-flight guard, view-as usage logs the real admin, journey predicate +
+  sheet mirrors match Final Dept Labels, Dept Config qcdQueues sheet-safe,
+  `ALERTS_STARTED` -> alerts INTERRUPTED. **CRT-4 on the dup-guard re-mirror /
+  deferred mirror is CONFIRMED but NOT fixed** -- the INV-16 writer conflates
+  lost and empty cells as NULL, so it needs a lost-cell channel (design in
+  block 202); unscheduled.
+  **Batch 8 SHIPPED on this branch** (block 203, + the qcd-expandable a11y
+  tidy-up): S2B-3/S2B-4 orphan rename audits before Neon + Neon-only retry,
+  PCR-7 coaching lock + status guard, SEC-2 per-user report-email throttle,
+  S2B-8 queue-report send claim, ENG-4 alerts run claim (busy -> retry),
+  SEC-4 login-notify byte cap, ING-5 RETENTION_HOLD + importer, S2A-5 digest
+  stale text + preview gate, S2A-4/ENG-10 CacheWarm keys.
+  **Batch 9 SHIPPED on this branch** (block 204): DATA-5 computeSummary_
+  reads through the memoized sheetFetchDqeRows_, DATA-6 orphan nag
+  span-bounded + reuses the Overview's rosters, S2A-2 Company chart line spans
+  the 90-day window (companyOverview:v25), DATA-8 Feb-29 trend start.
+  **Batch 10 SHIPPED on this branch** (block 205, + the Batch 9
+  follow-ons): IR + Insights read through the memoized sheetFetchDqeRows_
+  (computeActiveAgentsInRange_ + Alerts deliberately left on the span),
+  getOrphanFixInit reads rosters once, DOC-1..DOC-15 doc drift (INV-01
+  carve-outs, access model, AI backfill, 6 h caches, QCD comments + new-dept
+  runbook, "Batch N" collision note, counts), DOC-14 deploy.sh records a
+  dirty-tree deploy as `<sha>+dirty`, SEC-6 accepted-PHI note (#24(c)).
+  **Batch 11 SHIPPED on this branch** (block 206, the flag-flip
+  prerequisites): DATA-1 the B-1 fall-open verdict reads the dept's ROSTER
+  rows (every caller agrees), S2A-1's queue-split half (the digest WoW
+  narrows, via sheetFetchDqeRows_), CRT-2 the duplicate merge NULLs Neon's
+  queue_split + after-hours for its keys, S2B-5 Dept Config saves under
+  CONFIG_SOURCE=neon mirror to the sheet (warning on a failed mirror).
+  **WHERE I LEFT OFF:** ALL 11 broad-scan batches + the follow-ons pushed,
+  NOT deployed. Next: deploy the dashboard + cdr-import + cdr-report, run
+  "Back up now" once, check the Health page's `historical-sort` /
+  `email-bcc` rows. The plan's Deferred list (S2C-2, S2C-5, ING-4, DATA-4)
+  needs owner rulings / live data. `QUEUE_SPLIT_SCOPE=dept` and
+  `CONFIG_SOURCE=neon` no longer have a known code blocker -- each still
+  flips only through its own Operator State checklist (#42 / #25). The
+  per-dept callback table stays the next FEATURE (entry below).
 - **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer
   found talk 8-79 s -> machine at 92% balanced accuracy on run 20260922-1313
   -- IN-SAMPLE, and with no person call under 62 s in that ring-drawn sample.
@@ -20,7 +102,7 @@
     own / another dept / not called back summing to trackable abandons; the
     per-dialing-dept matrix as a row EXPAND; sub-queues via `queuesForDept_`;
     crossover / unrostered / no-agent columns explicit from the first commit;
-    `outboundReport:v3` -> `v4`). Unblocked: it ranks by called-back, needs
+    `outboundReport:v4` -> `v5` -- v4 was taken by broad-scan Batch 6). Unblocked: it ranks by called-back, needs
     no classifier, and any connected column inherits `OB_CONNECTED_DEF_`
     (`docs/next-steps.md`). Start with `/plan` against that plan doc. **Standing
     operator items:** deploy the dashboard + walk S46 (new "Callbacks

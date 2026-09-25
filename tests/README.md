@@ -213,7 +213,13 @@ tests/
                               app-email (R28: the sendAppEmail_ chokepoint --
                               default admin BCC, EMAIL_BCC override/none,
                               dedup, both signatures, and the sweep that
-                              no .gs sends mail directly),
+                              no .gs sends mail directly; ENG-6: a malformed
+                              EMAIL_BCC entry is dropped, never sent),
+                              alerts-readiness (ENG-3: the daily alerts'
+                              DQE-readiness gate -- DEFERRED + one-shot retry
+                              until noon, a LATE outcome past it, the run
+                              marker that stops a retry re-alerting, EMPTY
+                              when every dept had no data),
                               neon-retention (R27: the storage-cap prune --
                               floored horizons above the coverage window,
                               the six ctid-batched steps, budget/skip/error
@@ -222,7 +228,17 @@ tests/
                               one json round trip over the public tables,
                               largest first -- and its pure verdict:
                               informational without NEON_STORAGE_CAP_MB,
-                              warn at 80% with it, top 5 named),
+                              warn at 80% with it, top 5 named; ENG-2: the
+                              per-call steps HELD -- PARTIAL, not ok --
+                              without a clean backup in 15 days, unless
+                              NEON_RETENTION_WITHOUT_BACKUP=true),
+                              neon-backup (ENG-1: the closed-month rule,
+                              driven through the REAL runNeonBackup_ over
+                              an in-memory Drive -- a month is rewritten
+                              until a run lands >= 3 days after it closed,
+                              then frozen; a pre-fix month too old to
+                              rewrite losslessly gets a .tail.jsonl of the
+                              rows after its last row, never an overwrite),
                               html-include-structure (the whole-file
                               tag-wrap trap + the assembled-client pins),
                               queue-split (cols A..AH byte-identical +
@@ -364,6 +380,10 @@ tests/
                               deliberate exemptions),
                               login-notify (P14 store-after-confirmed-send),
                               orphan-rename-race (the F-22 re-verify),
+                              orphan-rename-neon (S2B-3/S2B-4: the audit row
+                              lands BEFORE the Neon mirror, the Neon outcome
+                              as its own neon-rename row, and the Neon-only
+                              retry of a failed mirror),
                               orphan-roster-add (the New-hire flow),
                               agent-day (6d: the agent-day interaction view --
                               the three-tier horizon decided by what CAME

@@ -310,8 +310,11 @@ test('outbound v2: the abandon denominator EXCLUDES is_internal rows (the inboun
 
 test('outbound v2: pendingTail counts tracked, un-called-back abandons still inside the window', function () {
   const r = runCompute_('CSR');
+  // PCR-3: INCLUSIVE of abandon + 3 (the cbLateral window) and anchored on the
+  // SCRIPT-TZ date, not Neon's UTC current_date.
   assert.match(r.sql,
-    /'pendingTail', count\(\*\) FILTER \(WHERE c\.caller_hash IS NOT NULL AND cb\.delay_sec IS NULL AND c\.call_date > current_date - 3\)/);
+    /'pendingTail', count\(\*\) FILTER \(WHERE c\.caller_hash IS NOT NULL AND cb\.delay_sec IS NULL AND c\.call_date >= '\d{4}-\d{2}-\d{2}'::date - 3\)/);
+  assert.doesNotMatch(r.sql, /current_date/);
 });
 
 test('outbound v2: the daily series groups the SAME join by call_date (chart can never disagree with the KPI)', function () {
@@ -507,6 +510,16 @@ test('vetting: clean run — parity across both code paths + both sample verdict
   const uncV = conn.prepared.filter(function (q) { return /SELECT caller_hash FROM inbound_calls/.test(q.sql); })[0];
   assert.ok(uncV, 'not-called-back verification ran');
   assert.equal(uncV.p[1], 'ab2');
+});
+
+test('PCR-9: a sheet-served outbound leg FAILS the vetting run -- it certifies nothing about the live report', function () {
+  installVetStubs_(25, 25);
+  h.ctx.computeOutboundReport_ = function () {
+    return { meta: { available: true, fallbackSource: 'sheet' }, callback: { abandonedTotal: 25 } };
+  };
+  const res = h.call('runOutboundVettingCheck').result;
+  assert.match(res, /^FAILED \(outbound served from the sheet copy/);
+  assert.equal(h.state.props.OUTBOUND_VETTING_FROM, '2026-08-06', 'a FAILED run keeps the window for the re-run');
 });
 
 test('vetting: the two reports disagreeing is a MISMATCH, never ok', function () {

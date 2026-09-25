@@ -25,8 +25,16 @@ function run(opts) {
   h.ctx.getAllDepartments_ = function () { return ['A', 'B', 'C', 'D', 'E']; };
   h.ctx.getCompanyOverview = function () { calls.overview++; clock += opts.overviewMin * MIN; };
   h.ctx.getDepartmentSummary = function () { calls.summary++; clock += opts.summaryMin * MIN; };
-  h.ctx.getQcdAllDepartments = function () { calls.qcd++; clock += MIN; };
-  h.ctx.getInsightsReport = function () { calls.insights++; clock += (opts.insightsMin == null ? 0.1 : opts.insightsMin) * MIN; };
+  calls.qcdArgs = []; calls.insightsArgs = [];
+  h.ctx.getQcdAllDepartments = function (req) { calls.qcd++; calls.qcdArgs.push(req); clock += MIN; };
+  h.ctx.getInsightsReport = function (req) { calls.insights++; calls.insightsArgs.push(req); clock += (opts.insightsMin == null ? 0.1 : opts.insightsMin) * MIN; };
+  // Batch 8 (S2A-4 / ENG-10): the warm now reads the previous business day
+  // and the picker's init endpoint -- stubbed here (Util.gs / IR not loaded).
+  h.ctx.prevBusinessDayIso_ = function () { return opts.prevBusiness || '2026-08-31'; };
+  h.ctx.getInsightsReportInit = function (req) {
+    return opts.init ? opts.init(req) : { agents: ['Ann', 'Bo', 'Cy'], activeAgents: ['Bo', 'Ann'] };
+  };
+  if (opts.latestQcd) h.ctx.getLatestDataDates = function () { return { qcd: opts.latestQcd, dqe: opts.latestQcd }; };
   try { h.call('warmReportCaches_'); } finally { Date.now = realNow; }
   return { calls: calls, result: h.state.props.CACHE_WARM_LAST_RESULT, at: h.state.props.CACHE_WARM_LAST };
 }
@@ -81,3 +89,36 @@ test('O-1: a run that warmed nothing and failed something records FAILED-ALL, ne
   try { h.call('warmReportCaches_'); } finally { Date.now = realNow; }
   assert.match(h.state.props.CACHE_WARM_LAST_RESULT, /^ok \(1 warmed, \d+ failed/);
 });
+
+// ENG-10 (broad-scan 2026-09-23, Batch 8): the all-dept Queue report modal
+// preloads the LATEST QCD date (qcdAllDeptDefaultDates_), not calendar
+// yesterday -- warming literal yesterday missed every Monday and post-holiday.
+test('ENG-10: the qcdAll warm targets the latest QCD date, gated on the previous BUSINESS day', function () {
+  // A Monday: latest QCD is Friday 2026-08-28, which IS the previous business day.
+  let r = run({ overviewMin: 0.1, summaryMin: 0.1, latestQcd: '2026-08-28', prevBusiness: '2026-08-28' });
+  assert.equal(r.calls.qcd, 1, 'a Monday morning warms (calendar yesterday would have been Sunday)');
+  assert.deepEqual(JSON.parse(JSON.stringify(r.calls.qcdArgs[0])), { from: '2026-08-28', to: '2026-08-28' });
+  // Import not landed yet: latest QCD is older than the previous business day.
+  r = run({ overviewMin: 0.1, summaryMin: 0.1, latestQcd: '2026-08-27', prevBusiness: '2026-08-28' });
+  assert.equal(r.calls.qcd, 0, 'never pins a pre-ingest report');
+});
+
+// S2A-4: the quick-start chips run the DEPT window with the ACTIVE agents
+// ticked; the warm used the whole roster over 30 days and never matched.
+test('S2A-4: the second Insights warm is the chip request -- dept window, the picker\'s active agents', function () {
+  const r = run({ overviewMin: 0.1, summaryMin: 0.1 });
+  const args = JSON.parse(JSON.stringify(r.calls.insightsArgs));
+  const chip = args.filter(function (a) { return a.agents.length > 0; });
+  assert.equal(chip.length, 5, 'one chip warm per dept');
+  chip.forEach(function (a) {
+    assert.equal(a.from, '2026-08-31'); assert.equal(a.to, '2026-08-31');
+    assert.deepEqual(a.agents, ['Bo', 'Ann'], 'the ACTIVE list the picker ticks');
+  });
+  assert.equal(args.filter(function (a) { return a.agents.length === 0; }).length, 5, 'the agent-free dept default stays');
+  assert.ok(args.every(function (a) { return a.from === a.to; }), 'no 30-day launcher window any more');
+  // Nobody active: the picker ticks everyone, so the warm does too.
+  const r2 = run({ overviewMin: 0.1, summaryMin: 0.1, init: function () { return { agents: ['Ann', 'Bo'], activeAgents: [] }; } });
+  const chip2 = JSON.parse(JSON.stringify(r2.calls.insightsArgs)).filter(function (a) { return a.agents.length > 0; });
+  assert.deepEqual(chip2[0].agents, ['Ann', 'Bo']);
+});
+

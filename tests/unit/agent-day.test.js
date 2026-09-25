@@ -315,8 +315,27 @@ test('the inbound query keeps BOTH the journey pre-filter and the first_agent ar
   assert.match(SRC, /journey LIKE \? OR first_agent = \?/,
     'dropping the first_agent arm would make every degraded (journey-pruned) '
     + 'day read as empty rather than as a subset');
-  assert.match(SRC, /setString\(2, '%' \+ agentName \+ '%'\)/,
+  assert.match(SRC, /setString\(2, agentDayLikePattern_\(agentName\)\)/,
     'the agent name must be BOUND, never inlined into SQL');
+});
+
+// PCR-5 (broad-scan 2026-09-23): the LIMIT runs before the exact-name filter,
+// so a bare '%Ann%' let other agents' rows fill it. The pattern now matches the
+// name as a quoted JSON value, with LIKE's wildcards escaped.
+test('PCR-5: the journey pattern matches the QUOTED name, escapes LIKE wildcards, and a hit LIMIT flags truncation', function () {
+  assert.equal(h.call('agentDayLikePattern_', 'Ann'), '%"Ann"%');
+  assert.equal(h.call('agentDayLikePattern_', 'Jo_Ann 100%'), '%"Jo\\_Ann 100\\%"%');
+  assert.equal(h.call('agentDayLikePattern_', 'A\\B'), '%"A\\\\\\\\B"%', 'JSON escapes the backslash, LIKE escapes both');
+  // "Ann" (quoted) is not a substring of a journey naming only "Anna".
+  const likeRe = function (pat) {
+    return new RegExp('^' + pat.replace(/\\([\\%_])|([%_])|([.*+?^${}()|[\]])/g, function (m, esc, wild, meta) {
+      return esc ? esc.replace(/[\\]/g, '\\\\') : wild ? (wild === '%' ? '.*' : '.') : '\\' + meta;
+    }) + '$');
+  };
+  assert.equal(likeRe(h.call('agentDayLikePattern_', 'Ann')).test('[{"name":"Anna","kind":"ring"}]'), false);
+  assert.equal(likeRe(h.call('agentDayLikePattern_', 'Ann')).test('[{"name":"Ann","kind":"answer"}]'), true);
+  assert.match(SRC, /if \(cap\.inbound\.length > AGENT_DAY_MAX_CALLS_\) out\.meta\.truncated = true;/,
+    'a LIMIT hit is truncation even when the exact filter leaves fewer rows');
 });
 
 test('the DQE half goes through the DAL, so DQE_READ_SOURCE is honored', function () {

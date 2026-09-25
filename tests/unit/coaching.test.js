@@ -407,6 +407,7 @@ test('coaching delivery P13: a failed send keeps the committed flags PENDING and
   let out;
   try { out = h.call('coachingDeliveryRun_'); } finally { h.ctx.MailApp = realMail; }
   assert.match(out.result, /EMAIL NOT SENT \(send failed\); 1 flag\(s\) kept pending/);
+  assert.match(out.result, /^NOTIFY-FAILED 1 new, /, 'ENG-7: an unsent notification never leads "ok" (Health reads the prefix)');
   assert.equal(conn.committed, 1, 'the data work still committed — only the notification is pending');
   const pending = JSON.parse(h.state.props.COACHING_NOTIFY_PENDING);
   assert.deepEqual(pending.flags.map(function (f) { return f.agent; }), ['Brand New']);
@@ -420,7 +421,7 @@ test('coaching delivery P13: the next run folds pending flags into its email and
               teamRatioPct: 25, gapPts: 30, missed: 30, rung: 40, answered: 4 }],
   });
   const out = h.call('coachingDeliveryRun_');
-  assert.match(out.result, /emailed admins \(incl\. 1 retried from a previous failed send\)/);
+  assert.match(out.result, /^ok .*emailed admins \(incl\. 1 retried from a previous failed send\)/);
   assert.equal(h.state.sentEmails.length, 1);
   assert.match(h.state.sentEmails[0].body, /Brand New/);
   assert.equal(h.state.props.COACHING_NOTIFY_PENDING, undefined, 'cleared on the confirmed send');
@@ -432,6 +433,33 @@ test('coaching delivery P13: no admin recipients parks the batch instead of clai
   h.ctx.getAdminEmails_ = function () { return []; };
   let out;
   try { out = h.call('coachingDeliveryRun_'); } finally { delete h.ctx.getAdminEmails_; }
-  assert.match(out.result, /EMAIL NOT SENT \(no admin recipients\)/);
+  assert.match(out.result, /^NOTIFY-FAILED .*EMAIL NOT SENT \(no admin recipients\)/);
   assert.ok(h.state.props.COACHING_NOTIFY_PENDING, 'batch parked for retry');
+});
+
+// PCR-7 (broad-scan 2026-09-23, Batch 8): the delivery's read-diff-write runs
+// under the script lock updateCoachingFlagStatus takes, and its "continuing"
+// UPDATE only touches OPEN rows -- an admin's close can no longer be rewritten
+// back into a refreshed open card, and two overlapping runs cannot both insert.
+test('PCR-7: the continuing UPDATE is guarded on status = open', function () {
+  const conn = installDeliveryStubs_(
+    [flag_('CSR', 'Still Bad')],
+    JSON.stringify([{ id: 'id-1', department: 'CSR', agent_name: 'Still Bad' }]));
+  h.call('coachingDeliveryRun_');
+  const updates = conn.params.filter(function (x) { return /UPDATE coaching_flags/.test(x.sql); });
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /WHERE id = \? AND status = 'open'/);
+});
+
+test('PCR-7: a busy script lock skips the run LOUDLY, before any read or write', function () {
+  const conn = installDeliveryStubs_([flag_('CSR', 'Brand New')], '[]');
+  h.state.lockBusy = true;
+  try {
+    const out = h.call('coachingDeliveryRun_');
+    assert.match(out.result, /^skipped \(another coaching write is in progress/);
+    assert.equal(conn.params.length, 0, 'nothing read or written without the lock');
+    assert.equal(conn.committed, 0);
+    assert.equal(h.state.sentEmails.length, 0);
+    assert.equal(conn.closed, true, 'the connection is still closed');
+  } finally { h.state.lockBusy = false; }
 });

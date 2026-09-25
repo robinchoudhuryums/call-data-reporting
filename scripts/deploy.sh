@@ -66,13 +66,25 @@ fi
 # type (dashboard: after the version roll -- a push-only run without an id
 # does NOT record, so the finished deploy is never skipped later; siblings:
 # after the push, which IS their deploy).
+# DOC-14 (broad-scan 2026-09-23): a deploy from a DIRTY tree records
+# "<sha>+dirty", never the bare sha -- what shipped was HEAD plus uncommitted
+# edits, so a later run on that same HEAD, clean, must NOT be skipped as
+# "already deployed" (it would leave the live project on code that is in no
+# commit). Dirtiness is captured HERE, before the build-stamp write below
+# dirties BuildStamp.gs on purpose.
 LAST_FILE="$(cd "$DIR" && pwd)/.last-deployed"   # absolute: the script cd's later
 HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+TREE_DIRTY=""
+[ -n "$(git status --porcelain 2>/dev/null)" ] && TREE_DIRTY="1"
 record_deploy() {
-  if [ -n "$HEAD_SHA" ]; then printf '%s' "$HEAD_SHA" > "$LAST_FILE" 2>/dev/null || true; fi
+  if [ -n "$HEAD_SHA" ]; then
+    local mark="$HEAD_SHA"
+    [ -n "$TREE_DIRTY" ] && mark="${HEAD_SHA}+dirty"
+    printf '%s' "$mark" > "$LAST_FILE" 2>/dev/null || true
+  fi
 }
 if [ "${FORCE:-}" != "1" ] && [ -n "$HEAD_SHA" ] && [ -f "$LAST_FILE" ] \
-   && [ -z "$(git status --porcelain 2>/dev/null)" ] \
+   && [ -z "$TREE_DIRTY" ] \
    && [ "$(cat "$LAST_FILE")" = "$HEAD_SHA" ]; then
   echo "==> Already deployed: '$DIR' was last deployed from commit ${HEAD_SHA:0:9},"
   echo "    which is the current clean HEAD -- nothing new to ship."

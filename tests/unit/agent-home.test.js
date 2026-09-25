@@ -82,6 +82,20 @@ test('agents are always themselves: a crafted request naming another agent is ig
   assert.equal(d.meta.agentName, 'Maria Lopez');
 });
 
+// SEC-1 (broad-scan 2026-09-23): the least-privileged role could request any
+// window -- computeSummary_ + the journey pull over all history, uncached per
+// shifted `from`. Capped at AGENT_MAX_RANGE_DAYS (366).
+test('SEC-1: an agent window longer than a year is refused before any read', function () {
+  install('agent');
+  let reads = 0;
+  h.ctx.computeSummary_ = function () { reads++; return summaryFixture(); };
+  assert.throws(function () { h.call('getAgentHome', { from: '2020-01-01', to: '2026-08-13' }); },
+    /capped at 366 days/);
+  assert.equal(reads, 0, 'refused before computeSummary_');
+  const d = h.call('getAgentHome', { from: '2025-08-14', to: '2026-08-13' });   // exactly 365 days
+  assert.equal(d.meta.agentName, 'Maria Lopez');
+});
+
 test('managers and role-none are refused; admins need explicit preview params', function () {
   install('manager');
   assert.throws(function () { h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' }); }, /Not authorized/);
@@ -264,4 +278,28 @@ test('input validation: bad dates throw', function () {
   install('agent');
   assert.throws(function () { h.call('getAgentHome', { from: 'nope', to: '2026-08-13' }); }, /YYYY-MM-DD/);
   assert.throws(function () { h.call('getAgentHome', { from: '2026-08-14', to: '2026-08-13' }); }, /on or before/);
+});
+
+// S2A-3 (broad-scan 2026-09-23): the agent app cached with no guard, so one
+// Neon outage (with the sheet empty) pinned a zero team blob -- "no data" for
+// every teammate -- for the 6 h TTL. The R8-C1 / R8-C4 rules now apply.
+test('S2A-3: an outage-empty or config-degraded agent payload is served but never cached', function () {
+  const agentKeys = function () { return Array.from(h.state.cache.keys()).filter(function (k) { return /:(team|me):/.test(k); }); };
+  const outage = summaryFixture(); outage.meta = Object.assign({}, outage.meta, { sourceUnavailable: true });
+  const emptyDal = []; emptyDal.sourceUnavailable = true;
+  install('agent', { summary: outage, dal: emptyDal });
+  h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' });
+  assert.deepEqual(agentKeys(), [], 'neither the team nor the me blob is pinned');
+
+  install('agent');
+  const real = h.ctx.deptConfigReadFailed_;
+  h.ctx.deptConfigReadFailed_ = function () { return true; };
+  try {
+    h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' });
+    assert.deepEqual(agentKeys(), [], 'a failed Dept Config read pins nothing either');
+  } finally { h.ctx.deptConfigReadFailed_ = real; }
+
+  install('agent');
+  h.call('getAgentHome', { from: '2026-08-01', to: '2026-08-13' });
+  assert.equal(agentKeys().length, 2, 'a healthy read caches both blobs as before');
 });

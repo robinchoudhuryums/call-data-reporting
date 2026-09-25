@@ -24,6 +24,60 @@
 var RETENTION_SHEET_PREFIX = 'Call_Legs_';
 var RETENTION_CUTOFF_DAYS = 14;
 
+// ING-5 (broad-scan 2026-09-23, Batch 8): the documented RECOVERY for a date
+// past the window is to recreate its Call_Legs_<date> tab from the provider CSV
+// and re-run the build / backfill -- but the nightly prune deleted that tab
+// again before anyone got to it, since by definition it is older than the
+// cutoff. A recovered tab is now HELD: the RETENTION_HOLD Script Property maps
+// tab name -> hold-until (ms), the prune skips a held tab and drops expired
+// holds. importBulkCSVsFromDrive holds every tab it creates; a tab recreated
+// by hand is held by running holdCallLegsForRecovery() from the editor.
+var RETENTION_HOLD_PROP = 'RETENTION_HOLD';
+var RETENTION_RECOVERY_HOLD_DAYS = 3;
+
+function retentionHoldRead_() {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(RETENTION_HOLD_PROP);
+    var m = raw ? JSON.parse(raw) : {};
+    return (m && typeof m === 'object') ? m : {};
+  } catch (e) { return {}; }
+}
+function retentionHoldWrite_(map) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (Object.keys(map).length) props.setProperty(RETENTION_HOLD_PROP, JSON.stringify(map));
+    else props.deleteProperty(RETENTION_HOLD_PROP);
+  } catch (e) { Logger.log('retentionHoldWrite_: ' + e); }
+}
+/** Holds the named Call_Legs tabs from the prune for `days` (default 3). */
+function retentionHoldTabs_(names, days) {
+  var map = retentionHoldRead_();
+  var until = Date.now() + (days || RETENTION_RECOVERY_HOLD_DAYS) * 86400000;
+  (names || []).forEach(function (n) { if (n) map[n] = Math.max(Number(map[n]) || 0, until); });
+  retentionHoldWrite_(map);
+  return until;
+}
+/**
+ * Editor-run (ING-5): after recreating Call_Legs_* tabs BY HAND for a
+ * recovery, run this so the next prune does not delete them before the
+ * rebuild / backfill runs. Holds every Call_Legs tab currently older than
+ * the cutoff for RETENTION_RECOVERY_HOLD_DAYS.
+ */
+function holdCallLegsForRecovery() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('holdCallLegsForRecovery: run from the bound CDR Import project.');
+  var now = new Date();
+  var todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  var names = ss.getSheets().map(function (sh) { return sh.getName(); }).filter(function (n) {
+    var m = n.match(/^Call_Legs_(\d{4})-(\d{2})-(\d{2})$/);
+    return !!m && (todayUtc - Date.UTC(+m[1], +m[2] - 1, +m[3])) / 86400000 > RETENTION_CUTOFF_DAYS;
+  });
+  var until = retentionHoldTabs_(names, RETENTION_RECOVERY_HOLD_DAYS);
+  Logger.log('holdCallLegsForRecovery: held ' + names.length + ' tab(s) until ' + new Date(until)
+    + (names.length ? ': ' + names.join(', ') : ''));
+  return { held: names.length, until: new Date(until).toISOString(), tabs: names };
+}
+
 function deleteOldCDRSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
@@ -57,7 +111,12 @@ function deleteOldCDRSheets() {
   var now = new Date();
   var todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
 
-  var deleted = 0, kept = 0;
+  var deleted = 0, kept = 0, held = 0;
+  // ING-5: recovery holds. Expired holds are dropped on the way.
+  var holds = retentionHoldRead_(), holdsChanged = false, nowMs = Date.now();
+  Object.keys(holds).forEach(function (n) {
+    if (!(Number(holds[n]) > nowMs)) { delete holds[n]; holdsChanged = true; }
+  });
   // Reverse loop so deletions don't shift the un-visited entries.
   for (var i = sheets.length - 1; i >= 0; i--) {
     var sheet = sheets[i];
@@ -83,7 +142,10 @@ function deleteOldCDRSheets() {
     if (back.getUTCFullYear() !== sy || back.getUTCMonth() !== sm - 1
         || back.getUTCDate() !== sd) continue;
     var dayDiff = (todayUtc - sheetUtc) / (1000 * 3600 * 24);
-    if (dayDiff > RETENTION_CUTOFF_DAYS) {
+    if (dayDiff > RETENTION_CUTOFF_DAYS && holds[name]) {
+      held++;   // ING-5: a recovery tab, kept until its hold expires
+      Logger.log('Kept held recovery sheet: ' + name);
+    } else if (dayDiff > RETENTION_CUTOFF_DAYS) {
       ss.deleteSheet(sheet);
       deleted++;
       Logger.log('Deleted old sheet: ' + name);
@@ -91,9 +153,10 @@ function deleteOldCDRSheets() {
       kept++;
     }
   }
+  if (holdsChanged) retentionHoldWrite_(holds);
   Logger.log('deleteOldCDRSheets: deleted ' + deleted + ', kept ' + kept
-    + ' (cutoff ' + RETENTION_CUTOFF_DAYS + 'd).');
-  return { deleted: deleted, kept: kept };
+    + (held ? ', held for recovery ' + held : '') + ' (cutoff ' + RETENTION_CUTOFF_DAYS + 'd).');
+  return { deleted: deleted, kept: kept, held: held };
 }
 
 /** Time-trigger handler: prune + a Pipeline Health row per run (C-3). */
@@ -109,7 +172,8 @@ function runRetentionPrune_() {
           rows: res.deleted,
           durationMs: Date.now() - t0,
           notes: 'deleted ' + res.deleted + ' Call_Legs sheet(s), ' + res.kept
-            + ' within the ' + RETENTION_CUTOFF_DAYS + 'd window',
+            + ' within the ' + RETENTION_CUTOFF_DAYS + 'd window'
+            + (res.held ? ', ' + res.held + ' held for recovery (ING-5)' : ''),
         });
       }
     } catch (logErr) { /* best-effort */ }

@@ -959,6 +959,7 @@
     var opener = null;   // E-7: return focus to the ? button on close
     var close = function () {
       if (!pop) return;
+      escapeLayerRemove_(close);   // UI-1
       // C1-18: release the popover's trap, then re-arm whatever trap the
       // opener's modal held (the IR modal has a chart-help button; without
       // this its Tab loop would be gone after the tips closed).
@@ -1006,9 +1007,10 @@
       if (outerTrap) document.removeEventListener('keydown', outerTrap.handler);
       activeFocusTrap_ = null;
       trapFocus_(pop);
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') close();
+      // UI-1: Escape closes the TIPS only. The old bubble-phase document
+      // listener also reached the report modal's own Escape handler, so it
+      // closed the IR modal the tips were opened from.
+      escapeLayerPush_(close);
     });
   }
 

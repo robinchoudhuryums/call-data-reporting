@@ -12,7 +12,7 @@ const { dqeRow, dqeSheet, rosterGrid } = require('../harness/fixtures');
 // queuesForDept_ (QCDReport.gs), and the rest of Data.gs.
 const h = loadGas({
   files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs',
-          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs'],
+          'QCDReport.gs', 'DeptConfig.gs', 'Data.gs', 'NeonRead.gs'],
 });
 
 // Roster: Alpha = Anna/Ben; Beta = Cara (so Cara is a floater into
@@ -321,4 +321,32 @@ test('D-7: the summary cache key carries the ROSTER, so an Orphan-Fix add is not
   const keys2 = Array.from(h.state.cache.keys()).filter(function (k) { return k.indexOf('summary:') === 0; });
   assert.equal(keys2.length, 2, 'a roster change mints a NEW key instead of serving the old table');
   assert.ok(keys1[0] !== keys2[1] && /:[0-9a-f]{32}$/.test(keys2[0]), 'the roster hash is the key\'s last segment');
+});
+
+// DATA-3 (broad-scan 2026-09-23): computeCsrTransferRange_'s catch returned
+// null -- the same value as "no rows / not CSR" -- so a transient sheet timeout
+// cached a My Department with no CSR Transfer tile for the 6 h TTL. A throw now
+// flags the section degraded and getDepartmentSummary serves it uncached.
+test('DATA-3: a CSR Transfer read that THROWS flags the section and the summary is not cached', function () {
+  install([dqeRow({ date: '2026-03-09', agent: 'Anna', ext: '501', rung: 4, answered: 3, missed: 1 })]);
+  h.state.userEmail = 'admin@x.com'; h.state.props.ADMIN_EMAILS = 'admin@x.com';
+  h.ctx.QCD_SNAPSHOT_READ_FAILED_ = false; h.ctx.BEST_EFFORT_READ_FAILED_ = false;
+  const realOpen = h.ctx.openSpreadsheet_;
+  h.ctx.openSpreadsheet_ = function () { throw new Error('Service Spreadsheets timed out'); };
+  try {
+    assert.equal(h.call('computeCsrTransferRange_', 'CSR', '2026-03-09', '2026-03-09'), null);
+    assert.equal(h.ctx.BEST_EFFORT_READ_FAILED_, true, 'the throw is flagged, not silent');
+  } finally { h.ctx.openSpreadsheet_ = realOpen; }
+  h.ctx.BEST_EFFORT_READ_FAILED_ = false;
+  assert.equal(h.call('computeCsrTransferRange_', 'Alpha', '2026-03-09', '2026-03-09'), null);
+  assert.equal(h.ctx.BEST_EFFORT_READ_FAILED_, false, 'a genuine "not CSR" null is not a failure');
+
+  const realCsr = h.ctx.computeCsrTransferRange_;
+  h.ctx.computeCsrTransferRange_ = function () { h.ctx.noteBestEffortReadFailed_('test', new Error('x')); return null; };
+  try {
+    const data = h.call('getDepartmentSummary', { department: 'Alpha', from: '2026-03-09', to: '2026-03-09' });
+    assert.equal(data.meta.sectionReadFailed, true);
+    assert.ok(!Array.from(h.state.cache.keys()).some(function (k) { return k.indexOf('summary:') === 0; }),
+      'the degraded payload is served, never pinned');
+  } finally { h.ctx.computeCsrTransferRange_ = realCsr; h.ctx.BEST_EFFORT_READ_FAILED_ = false; }
 });

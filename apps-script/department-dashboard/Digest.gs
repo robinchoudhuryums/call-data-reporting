@@ -64,6 +64,17 @@ const DIGEST_DAILY_RETRY_MINUTES  = 60;
 const DIGEST_WEEKLY_TRIGGER_HOUR  = 8;
 const DIGEST_MONTHLY_TRIGGER_HOUR = 8;   // 1st of the month, 8 AM
 
+// ENG-5 (broad-scan 2026-09-23): every outcome write goes through here so the
+// result carries a machine-readable timestamp (DIGEST_LAST_<cadence>) next to
+// its human text. The Health row ages it against the cadence's allowance and
+// compares it to DIGEST_STARTED_<cadence> -- a started send with no later
+// outcome is the 6-minute-kill signature, which used to stay green on the
+// previous run's "ok".
+function digestRecordResult_(props, cadence, text) {
+  props.setProperty('DIGEST_LAST_RESULT_' + cadence, text);
+  props.setProperty('DIGEST_LAST_' + cadence, new Date().toISOString());
+}
+
 function getDigestsInit() {
   assertAdmin_();
   // O-2: last per-cadence run outcome (see sendDigestsForCadence_'s
@@ -106,6 +117,16 @@ function sendPreviewDigest(req) {
   if (!window) throw new Error('No window available for cadence ' + cadence);
 
   const adminEmail = Session.getActiveUser().getEmail();
+  // S2A-5: a preview ran no freshness check, so one sent before the morning
+  // import showed empty tiles plus the R32 "No calls recorded -- the roster or
+  // queue mapping may need a look" note: it blamed the roster for a missing
+  // import. Apply the scheduled send's own gate (the window's last BUSINESS
+  // day must have landed, O-2) and carry the same stale callout.
+  let staleLatest;
+  try {
+    const latest = digestLatestDqeIso_();
+    if (!(latest && latest >= lastBusinessDayOnOrBeforeIso_(window.toIso))) staleLatest = latest || '';
+  } catch (fe) { /* unknown freshness: preview as before */ }
   sendDigestEmail_({
     to:         adminEmail,
     dept:       dept,
@@ -115,6 +136,7 @@ function sendPreviewDigest(req) {
     toIso:      window.toIso,
     isPreview:  true,
     previewFor: String((req && req.email) || ''),
+    staleLatest: staleLatest,
   });
   return { to: adminEmail };
 }
@@ -249,7 +271,7 @@ function digestGatedAttempt_(cadence, now, source) {
       const scheduled = digestScheduleRetry_(cadence);
       if (scheduled) {
         try {
-          props.setProperty('DIGEST_LAST_RESULT_' + cadence,
+          digestRecordResult_(props, cadence,
             'DEFERRED ' + window.toIso + ': DQE data is through ' + (latest || '(none)')
             + ' at ' + hhmm + ' -- the import has not landed yet; retrying in '
             + DIGEST_DAILY_RETRY_MINUTES + ' min (sends regardless at '
@@ -334,7 +356,7 @@ function sendDigestsForCadence_(cadence, runOpts) {
     // "ok" stayed in DIGEST_LAST_RESULT_<cadence> (the modal's "Last runs"
     // line and, since O-5, the Health page) while nothing went out.
     try {
-      PropertiesService.getScriptProperties().setProperty('DIGEST_LAST_RESULT_' + cadence,
+      digestRecordResult_(PropertiesService.getScriptProperties(), cadence,
         'SKIPPED-LOCK: ' + cadence + ' digests skipped -- another run held the script lock; '
         + 're-send via sendDigestsForCadence_ or wait for the next trigger. At ' + new Date());
     } catch (e) { /* best-effort */ }
@@ -363,6 +385,10 @@ function sendDigestsForCadence_(cadence, runOpts) {
       return;
     }
     props.setProperty(markerKey, window.toIso);
+    // ENG-5: stamp the send's START. The outcome below is recorded only after
+    // every recipient; a run killed mid-send at the 6-minute ceiling skips it,
+    // so the Health row compares this stamp to DIGEST_LAST_<cadence>.
+    props.setProperty('DIGEST_STARTED_' + cadence, new Date().toISOString());
   } finally {
     digestLock.releaseLock();
   }
@@ -434,7 +460,6 @@ function sendDigestsForCadence_(cadence, runOpts) {
   // can't duplicate). Partial success keeps the marker -- the recipients who
   // got theirs must not be re-blasted. The last outcome is also recorded per
   // cadence so the operator can see it without spelunking logs.
-  const resultKey = 'DIGEST_LAST_RESULT_' + cadence;
   try {
     const propsOut = PropertiesService.getScriptProperties();
     if (attempted === 0) {
@@ -448,7 +473,7 @@ function sendDigestsForCadence_(cadence, runOpts) {
       // the whole week/month. The old code claimed the window and recorded
       // "ok … sent 0 of 0", an all-green no-op even when EVERY row failed.
       propsOut.deleteProperty(markerKey);
-      propsOut.setProperty(resultKey,
+      digestRecordResult_(propsOut, cadence,
         (failures.length
           ? 'FAILED-ALL-VALIDATION ' + window.toIso + ': 0 attempted, ' + failures.length
             + ' row(s) failed dept validation (see admin email) -- run marker cleared; '
@@ -458,12 +483,12 @@ function sendDigestsForCadence_(cadence, runOpts) {
         + 'inside the same window) will deliver once rows exist. At ' + new Date());
     } else if (sent === 0) {
       propsOut.deleteProperty(markerKey);
-      propsOut.setProperty(resultKey,
+      digestRecordResult_(propsOut, cadence,
         'FAILED-ALL ' + window.toIso + ': 0 of ' + attempted + ' digests sent -- run marker '
         + 'cleared, so a manual sendDigestsForCadence_(\'' + cadence + '\') (or the next '
         + 'trigger inside the same window) will retry. At ' + new Date());
     } else {
-      propsOut.setProperty(resultKey,
+      digestRecordResult_(propsOut, cadence,
         'ok ' + window.toIso + ': sent ' + sent + ' of ' + attempted
         + (failures.length ? ' (' + failures.length + ' failure(s) -- see admin email)' : '')
         + (runOpts.staleLatest !== undefined
@@ -542,7 +567,7 @@ function computeDigestStats_(dept, fromIso, toIso) {
  * Week-over-week "driver" narrative for the digest (#11). Reuses the
  * Overview's tested INV-48 logic (computeWowDelta_ + computeWowDriver_)
  * by building the `stats` shape those expect -- dept-level
- * `trendByDate` ({rung, answered}) + per-agent `agentTrendByDate`
+ * `trendByDate` ({rung, answered, missed}) + per-agent `agentTrendByDate`
  * ({answered, missed}) -- over the 14-day window ending on `anchorIso`
  * (the digest window's end). computeWowDelta_ then carves the 7-day
  * current vs prior-7 windows internally and attaches `.driver` when
@@ -569,28 +594,15 @@ function computeDigestWowDriver_(dept, anchorIso) {
     const windowStartIso = Utilities.formatDate(
       new Date(anchorObj.getTime() - 13 * 86400000), TZ, 'yyyy-MM-dd');
 
-    const trendByDate = {};        // iso -> { rung, answered }
-    const agentTrendByDate = {};   // agent -> iso -> { answered, missed }
-    // Shared accumulator so both sources produce identical shapes.
-    const accept = function (dateIso, agentRaw, rungRaw, missedRaw, answeredRaw) {
-      if (!dateIso || dateIso < windowStartIso || dateIso > anchorIso) return;
-      const agent = String(agentRaw || '').trim();
+    // Roster rows in the window, from either source, in the DAL row shape.
+    const rosterRows = [];
+    const keep = function (row) {
+      if (!row || !row.dateIso || row.dateIso < windowStartIso || row.dateIso > anchorIso) return;
+      const agent = String(row.agent || '').trim();
       if (!agent) return;
       if (/^A_Q_/.test(agent) || agent === 'Backup CSR') return;   // INV-23 sentinels
       if (!rosterSet[agent]) return;                                // roster-only (INV-53)
-      const rung     = Number(rungRaw)     || 0;
-      const missed   = Number(missedRaw)   || 0;
-      const answered = Number(answeredRaw) || 0;
-
-      let t = trendByDate[dateIso];
-      if (!t) t = trendByDate[dateIso] = { rung: 0, answered: 0 };
-      t.rung += rung; t.answered += answered;
-
-      let a = agentTrendByDate[agent];
-      if (!a) a = agentTrendByDate[agent] = {};
-      let b = a[dateIso];
-      if (!b) b = a[dateIso] = { answered: 0, missed: 0 };
-      b.answered += answered; b.missed += missed;
+      rosterRows.push(row);
     };
 
     // B-2 DAL cutover (see alertRowsForDate_). Lower stakes than the alert
@@ -605,10 +617,7 @@ function computeDigestWowDriver_(dept, anchorIso) {
       try {
         const dalRows = neonFetchDqeRows_(windowStartIso, anchorIso);
         if (neonDqeRowsUsable_(dalRows)) {
-          for (let i = 0; i < dalRows.length; i++) {
-            const row = dalRows[i];
-            accept(row.dateIso, row.agent, row.totalRung, row.totalMissed, row.totalAnswered);
-          }
+          for (let i = 0; i < dalRows.length; i++) keep(dalRows[i]);
           usedNeon = true;
         }
       } catch (e) {
@@ -619,22 +628,46 @@ function computeDigestWowDriver_(dept, anchorIso) {
     }
 
     if (!usedNeon) {
-      const ss = openSpreadsheet_();
-      const sheet = ss.getSheetByName(SHEETS.HISTORICAL);
-      if (!sheet) return null;
-      const lastRow = sheet.getLastRow();
-      if (lastRow < 2) return null;
-      const ssTZ = ss.getSpreadsheetTimeZone();
-      const numCols = HISTORICAL_COLS.TOTAL_ANSWERED;   // need rung/missed/answered
-      const values = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
-      for (let i = 0; i < values.length; i++) {
-        const r = values[i];
-        accept(rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ),
-               r[HISTORICAL_COLS.AGENT - 1],
-               r[HISTORICAL_COLS.TOTAL_RUNG - 1],
-               r[HISTORICAL_COLS.TOTAL_MISSED - 1],
-               r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]);
-      }
+      // S2A-1 queue-split half (broad-scan 2026-09-23, Batch 11): the DAL's
+      // sheet primitive, not a private A..H read -- it carries col AI (the
+      // per-queue split) that the narrowing below needs, and it is span-bounded
+      // and memoized per execution (R40/R41) where the old read was whole-sheet.
+      const sheetRows = sheetFetchDqeRows_(windowStartIso, anchorIso);
+      for (let i = 0; i < sheetRows.length; i++) keep(sheetRows[i]);
+    }
+
+    // S2A-1 queue-split half: narrow like every other DQE reader ("every DQE
+    // reader narrows through this ONE helper"), so under QUEUE_SPLIT_SCOPE=dept
+    // the digest's week-over-week callout rates the SAME per-dept figures the
+    // Overview tile and the My Department table show. Roster rows only, which is
+    // queueSplitNarrowedCopy_'s contract; off = the same rows, untouched.
+    const narrowed = queueSplitNarrowedCopy_(rosterRows, dept).rows;
+
+    const trendByDate = {};        // iso -> { rung, answered, missed }
+    const agentTrendByDate = {};   // agent -> iso -> { answered, missed }
+    for (let i = 0; i < narrowed.length; i++) {
+      const row = narrowed[i];
+      const dateIso  = row.dateIso;
+      const agent    = String(row.agent || '').trim();
+      const rung     = Number(row.totalRung)     || 0;
+      const missed   = Number(row.totalMissed)   || 0;
+      const answered = Number(row.totalAnswered) || 0;
+
+      // S2A-1 (broad-scan 2026-09-23): carry `missed` -- computeWowDelta_
+      // rates through answerRatePct_ (DD-2), and under
+      // ANSWER_RATE_FORMULA=answerable a missing `missed` made both weeks
+      // answered/answered = 100%, so every digest said "no notable shift".
+      // CompanyOverview's own trendByDate got this field in DD-2; this copy
+      // did not.
+      let t = trendByDate[dateIso];
+      if (!t) t = trendByDate[dateIso] = { rung: 0, answered: 0, missed: 0 };
+      t.rung += rung; t.answered += answered; t.missed += missed;
+
+      let a = agentTrendByDate[agent];
+      if (!a) a = agentTrendByDate[agent] = {};
+      let b = a[dateIso];
+      if (!b) b = a[dateIso] = { answered: 0, missed: 0 };
+      b.answered += answered; b.missed += missed;
     }
 
     return computeWowDelta_(
@@ -689,12 +722,21 @@ function sendDigestEmail_(opts) {
     : '';
 
   // R31: the cutoff send names the gap instead of showing blank tiles.
+  // S2A-5 (broad-scan 2026-09-23, Batch 8): only a ONE-day window is empty
+  // for want of its day. A weekly / monthly window is missing its LAST day
+  // (the gate checks the last business day), so its tiles already carry the
+  // earlier days -- "the tiles below are empty" was false there.
+  const multiDay = opts.fromIso !== opts.toIso;
   const staleRow = (opts.staleLatest !== undefined)
-    ? ekRow_(ekCalloutHtml_('Data not yet available for ' + rangeLabel,
-        'The morning import had not landed for ' + ekEsc_(rangeLabel) + ' when this digest was sent '
-        + '(data is through ' + ekEsc_(opts.staleLatest || 'an earlier date') + '). The tiles below are '
-        + 'empty for that reason, not because the team took no calls; the dashboard will show the day '
-        + 'once the import completes.', 'warn'), '16px 26px 0')
+    ? ekRow_(ekCalloutHtml_(multiDay ? ('Latest day not yet available for ' + rangeLabel)
+                                     : ('Data not yet available for ' + rangeLabel),
+        'The morning import had not landed for ' + ekEsc_(multiDay ? ('the end of ' + rangeLabel) : rangeLabel)
+        + ' when this digest was ' + (opts.isPreview ? 'previewed' : 'sent')
+        + ' (data is through ' + ekEsc_(opts.staleLatest || 'an earlier date') + '). '
+        + (multiDay
+          ? 'The figures below cover only the days that had landed; the rest will show in the dashboard once the import completes.'
+          : 'The tiles below are empty for that reason, not because the team took no calls; the dashboard will show the day once the import completes.'),
+        'warn'), '16px 26px 0')
     : '';
 
   const subject = (opts.isPreview ? '[Preview] ' : '')

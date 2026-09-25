@@ -307,3 +307,153 @@ test('P-13: clearPendingArchive REFUSES while a bulk run is paused (bulkIndex se
     h.ctx.SpreadsheetApp.getUi = realUi;
   }
 });
+
+// ING-7 (broad-scan 2026-09-23; P-7's sibling): repairCsrTransferForRawDataDate
+// took the date from the FIRST Raw Data row -- a D-1 carry-over leg -- and so
+// overwrote D-1's CSR rows with day D's counts; it also rewrote the WHOLE
+// sheet with no lock. Now: majority date, stray legs dropped, the script lock,
+// and only the matched rows' recomputed cells are written.
+test('ING-7: the CSR repair keys on the MAJORITY date, drops stray legs, and writes only matched rows', function () {
+  const { makeFakeSpreadsheet } = require('../harness/fakeSheet');
+  const hw = loadGas({ project: 'cdr-import', files: ['neonWrite.js', 'autoImport.js'] });
+  const raw = [['CALL ID', 'LEG', 'START'],
+    ['0', '1', '03/08/2026 23:59:00'],                 // D-1 carry-over, sorts FIRST
+    ['1', '1', '03/09/2026 10:00:00'], ['2', '1', '03/09/2026 11:00:00'], ['3', '1', '03/09/2026 12:00:00']];
+  const hdr = ['Month', 'Week', 'Date', 'Agent', 'Trans %', 'Total Calls', 'Transferred',
+    'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9', 'Q10', 'Q11'];
+  function csrRow(date, agent, total) { return ['March 2026', 'W10', date, agent, 0.5, total, 9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]; }
+  hw.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'Raw Data': raw,
+    'CSR Transfer Historical Data': [hdr, csrRow('3/8/2026', 'Anna', 20), csrRow('3/9/2026', 'Anna', 30), csrRow('3/9/2026', 'Ben', 12)],
+  } });
+  let seenGrid = null;
+  hw.ctx.calcCsrReport = function (grid) {
+    seenGrid = grid;
+    return { agents: [['Anna']], transPct: [[0.1]], totalCalls: [[30]], totalTransferred: [[3]],
+             queues: [[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]] };
+  };
+  const locksBefore = hw.state.locks;
+  const res = hw.call('repairCsrTransferForRawDataDate');
+  assert.equal(res.date, '2026-03-09', 'the majority date, not the D-1 first row');
+  assert.equal(res.strayLegsDropped, 1);
+  assert.equal(res.updated, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(seenGrid.slice(1).map(function (r) { return r[0]; }))), ['1', '2', '3']);
+  assert.ok(hw.state.locks > locksBefore, 'took the script lock');
+  const rows = hw.state.spreadsheet.getSheetByName('CSR Transfer Historical Data')._data.slice(1);
+  assert.equal(rows[0][6], 9, 'the D-1 row is untouched');
+  assert.equal(rows[1][6], 3, "day D's Anna row is recomputed");
+  assert.equal(rows[1][4], 0.1);
+  assert.equal(rows[1][5], 30, 'Total Calls written back unchanged');
+  assert.equal(rows[2][6], 9, 'Ben (missing from the recompute) is untouched');
+  hw.state.lockBusy = true;
+  try {
+    assert.throws(function () { hw.call('repairCsrTransferForRawDataDate'); }, /script lock busy/);
+  } finally { hw.state.lockBusy = false; }
+});
+
+// ING-2 (broad-scan 2026-09-23): on a force re-import the five history sheets
+// are already cleared for the date when processIntegratedHistory runs; the
+// inline QCD Neon mirror used to run BEFORE the CSR (and DQE) sheet writes, so
+// a hanging connect killed at the ceiling lost those sheets' rows silently.
+// The mirror now runs after every sheet write -- and still runs when a later
+// sheet write throws.
+test('ING-2: the inline QCD Neon mirror runs only AFTER the CSR sheet write (and still runs if it throws)', function () {
+  const events = [];
+  const mkHist = function (name, throwOnWrite) {
+    return {
+      getLastRow: function () { return 1; },
+      getRange: function () { return { setValues: function () {
+        if (throwOnWrite) throw new Error('Service Spreadsheets timed out');
+        events.push('sheet:' + name);
+      } }; },
+    };
+  };
+  const results = {
+    qcdData: { output: [[10, 9, 1, '0:01:00', '0:00:20']], labels: [['A_Q_X', 'DeptX']] },
+    csrData: { agents: [['Anna']], totalCalls: [[5]], queues: [[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]] },
+  };
+  const saved = { qcd: h.ctx.writeQCDRowsToNeon, mode: h.ctx.getNeonMirrorMode_ };
+  h.ctx.writeQCDRowsToNeon = function () { events.push('neon:QCD'); return { inserted: 1 }; };
+  h.ctx.getNeonMirrorMode_ = function () { return 'inline'; };
+  const run = function (csrThrows) {
+    events.length = 0;
+    const sheets = {
+      'QCD Historical Data': mkHist('QCD'), 'CSR Transfer Historical Data': mkHist('CSR', csrThrows),
+      'Pipeline Health': { appendRow: function () {} },
+    };
+    const fakeSS = { getSheetByName: function (n) { return sheets[n] || null; } };
+    h.call('processIntegratedHistory', fakeSS, null, results, new Date(2026, 6, 14),
+      true, true, false, false, true, null, true, { qcd: true, csr: true, dqe: false });
+  };
+  try {
+    run(false);
+    assert.deepEqual(events.slice(), ['sheet:QCD', 'sheet:CSR', 'neon:QCD'],
+      'every sheet write lands before any Neon mirror');
+    assert.throws(function () { run(true); }, /timed out/);
+    assert.deepEqual(events.slice(), ['sheet:QCD', 'neon:QCD'],
+      'a throwing CSR write still mirrors the QCD rows that were written');
+  } finally {
+    h.ctx.writeQCDRowsToNeon = saved.qcd;
+    h.ctx.getNeonMirrorMode_ = saved.mode;
+  }
+});
+
+// ING-3 (broad-scan 2026-09-23): the bulk archive's CDR/QCD Neon mirror gap
+// was console-only; it is now a failure-only Pipeline Health row.
+test('ING-3: a skipped bulk-archive mirror logs a processBatchArchive:<type>:neon failure row naming the date span', function () {
+  const logged = [];
+  const orig = h.ctx.logPipelineHealthWithFallback_;
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, row) { logged.push(row); };
+  try {
+    h.state.props = { NEON_HOST: 'h' };
+    h.call('bulkArchiveMirrorGap_', null, 'QCD', ['2026-09-03', '2026-09-01', '2026-09-03'], 'Neon unreachable (40 rows skipped)');
+    assert.equal(logged.length, 1);
+    assert.equal(logged[0].step, 'processBatchArchive:QCD:neon');
+    assert.equal(logged[0].status, 'failure');
+    assert.match(logged[0].notes, /^2026-09-01\.\.2026-09-03 \(2 date\(s\)\) \| bulk QCD Neon mirror: Neon unreachable/);
+    // No Neon configured -> nothing to mirror to, stays silent (R8-A2 rule).
+    h.state.props = {};
+    h.call('bulkArchiveMirrorGap_', null, 'CDR', ['2026-09-01'], 'x');
+    assert.equal(logged.length, 1);
+  } finally { h.ctx.logPipelineHealthWithFallback_ = orig; }
+  // Wired on BOTH the skip and the throw path of BOTH mirrors.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  const body = src.slice(src.indexOf('function processBatchArchive('), src.indexOf('function processBatchArchive(') + 12000);
+  assert.equal((body.match(/bulkArchiveMirrorGap_\(targetSS, 'CDR'/g) || []).length, 2);
+  assert.equal((body.match(/bulkArchiveMirrorGap_\(targetSS, 'QCD'/g) || []).length, 2);
+});
+
+// Follow-on to ING-3: the DAILY inline mirror's Neon-unreachable SKIP now logs
+// the same failure-only :QCD:neon / :CDR:neon row its throw already did (L7).
+test('ING-3 follow-on: a skipped DAILY QCD mirror logs processIntegratedHistory:QCD:neon; silent with no NEON_HOST', function () {
+  const rows = [];
+  const hist = { getLastRow: function () { return 1; }, getRange: function () { return { setValues: function () {} }; } };
+  const results = { qcdData: { output: [[10, 9, 1, '0:01:00', '0:00:20']], labels: [['A_Q_X', 'DeptX']] } };
+  const saved = { qcd: h.ctx.writeQCDRowsToNeon, mode: h.ctx.getNeonMirrorMode_, log: h.ctx.logPipelineHealthWithFallback_ };
+  h.ctx.writeQCDRowsToNeon = function () { return { inserted: 0, skipped: 1 }; };
+  h.ctx.getNeonMirrorMode_ = function () { return 'inline'; };
+  h.ctx.logPipelineHealthWithFallback_ = function (ss, row) { rows.push(row); };
+  const run = function () {
+    const fakeSS = { getSheetByName: function (n) { return n === 'QCD Historical Data' ? hist : null; } };
+    h.call('processIntegratedHistory', fakeSS, null, results, new Date(2026, 6, 14),
+      true, true, false, false, true, null, true, { qcd: true, csr: false, dqe: false });
+  };
+  try {
+    h.state.props = { NEON_HOST: 'h' };
+    run();
+    const mirror = rows.filter(function (r) { return r.step === 'processIntegratedHistory:QCD:neon'; });
+    assert.equal(mirror.length, 1);
+    assert.equal(mirror[0].status, 'failure');
+    assert.match(mirror[0].notes, /Tue Jul 14 2026 \| inline Neon mirror SKIPPED -- Neon unreachable \(1 rows\)/);
+    rows.length = 0;
+    h.state.props = {};
+    run();
+    assert.equal(rows.filter(function (r) { return /:neon$/.test(r.step); }).length, 0, 'no Neon configured -> silent');
+  } finally {
+    h.ctx.writeQCDRowsToNeon = saved.qcd;
+    h.ctx.getNeonMirrorMode_ = saved.mode;
+    h.ctx.logPipelineHealthWithFallback_ = saved.log;
+  }
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /Neon CDR write skipped[^\n]*\n\s*dailyMirrorSkipRow_\(targetSS, 'processIntegratedHistory:CDR:neon'/);
+});

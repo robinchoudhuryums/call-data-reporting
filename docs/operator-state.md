@@ -73,6 +73,15 @@ When something looks wrong, before assuming a code bug, check:
    - **Daily alerts**: dashboard project → Triggers should list
      `runDailyAlerts_` (or install via the Alerts modal). Without
      it, alerts only fire when an admin clicks "Send alerts".
+     **Readiness gate (ENG-3, 2026-09-23):** the 8 AM run assesses the
+     previous business day only once DQE data for it exists. Before that it
+     records `DEFERRED …` and schedules a one-shot `runDailyAlertsRetry_` an
+     hour out. At the 12:00 cutoff it assesses anyway and records `LATE …`
+     (the Health `out-alerts` row warns). `ALERTS_RUN_MARKER` holds the last
+     assessed date, so a retry never re-alerts. An `EMPTY …` outcome means
+     every dept had no data. A leftover `runDailyAlertsRetry_` trigger is
+     normal while a day is deferred, and uninstalling the alert trigger
+     removes it too.
    - **Daily DQE build** is now integrated into cdr-import's
      `processIntegratedHistory` (5th block; INV-16 expanded). Each
      successful daily import now refreshes DQE Historical Data
@@ -148,6 +157,14 @@ When something looks wrong, before assuming a code bug, check:
     Department matches a `DO NOT EDIT!` header exactly (an unknown dept is
     skipped + admin-notified instead of sending an all-zero digest, O-3) and
     (g) it isn't a flagged `duplicateRow` copy (first row wins, O-4).
+    ENG-5: the Health page's `out-digest-<cadence>` row now warns
+    **INTERRUPTED** when a send started (`DIGEST_STARTED_<cadence>`) after the
+    last recorded outcome (`DIGEST_LAST_<cadence>`) and never finished, which
+    is the 6-minute-kill signature. Some recipients got theirs and the rest
+    did not; the run marker is claimed, so re-send by hand only to the ones
+    who missed it. It warns **STALE** past 4 / 9 / 35 days while the trigger
+    is installed. The queue report has the same pair (`QUEUE_REPORT_STARTED`
+    / `QUEUE_REPORT_LAST`, 4 days).
     (h) **R31/R32 -- every digest cadence is FRESHNESS-GATED.** The 8 AM run
     sends only once the last BUSINESS day on or before the window's end
     (`lastBusinessDayOnOrBeforeIso_`; daily: the previous business day;
@@ -491,6 +508,22 @@ When something looks wrong, before assuming a code bug, check:
     serve until the FIRST successful read after deploy -- it protects the
     NEXT outage, not the one already in progress. Clearing the properties
     just forfeits the current snapshot until the next read.
+    **PHI at rest here is ACCEPTED (SEC-6, owner ruling 2026-09-23).** The
+    snapshot carries the open rows' patient name / caller / Trx # / reason,
+    so the dashboard project's Script Properties hold PHI in plain text --
+    readable by anyone with EDIT access to the Apps Script project (the
+    property store is not encrypted separately and is shown in the
+    project settings page). The owner ruled this acceptable because the
+    store stays inside the organization's Google Workspace tenancy, like the
+    CDR Report workbook itself; Apps Script is listed among Google
+    Workspace's HIPAA "Included Functionality" (checked 2026-09-23). **The
+    one standing condition:** the org's signed Workspace BAA must cover it
+    -- if it does NOT, this ruling is void and the
+    snapshot must move to a Workspace-covered store (e.g. a restricted
+    sheet) or be switched off. Keep the project's editor list to admins,
+    and do not copy the property values into tickets, logs or chat. The
+    Health page's property inventory lists these KEYS only, never values
+    (`system-health.test.js` pins that).
 
 25. `CONFIG_SOURCE` Script Property (dashboard) -- the C2 Dept Config
     read+write source switch read by `getConfigSource_()`. Unset / `sheet`
@@ -510,8 +543,18 @@ When something looks wrong, before assuming a code bug, check:
     ⚠ Under `neon`, EVERY reader (the auth-path sub-queue widening included)
     falls back to the SHEET copy on any Neon error, and nothing logs it -- so a
     Neon blip serves whatever the sheet held at backfill time (a removed
-    `Overview Parent` edge would re-grant access for the outage). Keep the
-    sheet copy in sync after Neon-side edits until A-1 is closed.
+    `Overview Parent` edge would re-grant access for the outage). **Since
+    S2B-5 (broad-scan 2026-09-23, Batch 11) the modal keeps the sheet in sync
+    for you:** a Dept Config save / deactivate under `neon` writes Neon first
+    (authoritative -- a Neon failure still fails the save) and then MIRRORS the
+    row to the sheet, because the sheet is also what the OTHER projects read
+    -- cdr-import's capture-time queue recognition (INV-54's third consumer)
+    and cdr-report's `queueOverlapAudit.js` have no Neon config reader. A
+    failed mirror does not fail the save; it comes back as a ⚠ warning in the
+    modal status ("the Dept Config SHEET copy was not updated") -- re-save the
+    dept, or copy the row across by hand. Edits made DIRECTLY in Neon (outside
+    the modal) are still not mirrored. Alert + Digest Config (C3, below) have
+    no cross-project reader and are not mirrored.
     `dept_config` is created lazily (`CREATE TABLE IF NOT EXISTS`, no setup()
     change). Parity pinned by `tests/unit/dept-config-neon.test.js`. Needs the
     dashboard `NEON_*` props + `script.external_request` scope. (First of the
@@ -587,8 +630,15 @@ When something looks wrong, before assuming a code bug, check:
     `escalations`, `escalation_activity`, `inbound_calls` (incl. journey
     JSON) -- as one-JSON-object-per-line files: a full escalations
     snapshot per run (newest `NEON_BACKUP_KEEP`=8 kept) + monthly
-    partition files for the other two (closed months written once,
-    current month rewritten). Enable from the Health modal's **Neon
+    partition files for the other two (current month rewritten each run;
+    a CLOSED month is rewritten until a run lands >= 3 days after it
+    closed, then frozen -- ENG-1, 2026-09-23: before that fix a month froze
+    at its last IN-month Saturday and the days after it were never backed
+    up. The first run after deploying the fix writes a
+    `<table>-<ym>.tail.jsonl` for every older month frozen that way -- the
+    rows after the month file's last row, never an overwrite, because
+    those months' journeys may already be pruned. RESTORE = the month
+    file(s) + its `.tail.jsonl` if present). Enable from the Health modal's **Neon
     backup** section (or `installNeonBackupTrigger()` -- Saturdays at
     `NEON_BACKUP_HOUR`=6 Central); "Back up now" seeds the folder. The
     Drive folder is auto-created ("Dashboard Neon Backups") and its id
@@ -972,6 +1022,14 @@ When something looks wrong, before assuming a code bug, check:
     assigned subset; see the "Role model" gotcha. If a manager who should
     see several depts sees only one, check for a stale 60s auth cache or
     that all their rows share the exact same email.
+    **S2B-6 (2026-09-23):** the Access Control editor now stores a row typed
+    under an ALIAS address as its CANONICAL address (the save status says
+    "Stored as ..."), because sign-in canonicalizes before the lookup and an
+    alias-keyed row never matched. A row hand-typed into the SHEET under an
+    alias still never matches -- use the canonical address there.
+    **S2B-1 (2026-09-23):** manager and agent rows for one address are now
+    edited independently -- saving or removing an agent entry never touches
+    the same address's manager rows (manager rows still win at sign-in).
 37. `ANSWER_TARGETS` + `DEPT_ANSWER_TARGETS` + `TRANSFER_TIERS` Script
     Properties (dashboard; optional, R12-25 + R23) -- the admin-tunable
     DISPLAY standards. `ANSWER_TARGETS`: tolerant `key=value` pairs
@@ -1319,6 +1377,18 @@ When something looks wrong, before assuming a code bug, check:
     P-2 (Batch 5): a queued deferred-mirror date whose sheet the prune already
     removed no longer parks at the retry cap -- its Inbound/Outbound mirror is a
     per-type terminal and ONE `SOURCE PRUNED` email names it (#22).
+
+    **Recovery holds (ING-5, broad-scan Batch 8).** A `Call_Legs_*` tab
+    recreated to RECOVER an over-age date is, by definition, older than the
+    cutoff, and the prune used to delete it again the next night. It now skips
+    any tab held in the `RETENTION_HOLD` Script Property (cdr-import; tab name
+    -> hold-until, dropped once expired) and the run's Pipeline Health row
+    names the held count. `importBulkCSVsFromDrive` holds every tab it creates
+    for `RETENTION_RECOVERY_HOLD_DAYS` (3); **a tab recreated BY HAND needs
+    `holdCallLegsForRecovery()` run from the editor** right after, or the
+    first prune removes it. Rebuild / backfill the date inside the hold. The
+    importer also re-fills an EMPTY leftover tab from an earlier failed import
+    and removes a tab its own failed write created.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run
@@ -1351,7 +1421,7 @@ When something looks wrong, before assuming a code bug, check:
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
     Overview tile's companion surface is the per-dept `dqeSilence`
-    queue-lens badge (`companyOverview:v24`) — the PULL view to this
+    queue-lens badge (`companyOverview:v25`) — the PULL view to this
     engine's PUSH, same detector shape over the trailing 7 chart days.
 
 45. **Sign-in notifications (`notifyLoginEvent_`, Auth.gs/doGet) — ON by
@@ -1638,7 +1708,8 @@ When something looks wrong, before assuming a code bug, check:
     passes `skipNeon`, force-deletes every date in range up front and needs
     `backfillDQEHistoryUpsert()` afterwards -- fine for dozens of dates, not for
     a handful. Both read only the `Call_Legs_*` tabs (~14-day retention, #43);
-    with the tab gone, recreate it from the provider CSV (exact tab name) or,
+    with the tab gone, recreate it from the provider CSV (exact tab name, then
+    `holdCallLegsForRecovery()` so the prune keeps it -- #43) or,
     failing that, Neon holds the only intact copy. BEFORE any `backfill*`
     run: clearing `DQE_UPSERT_RESUME` still forces a from-the-top pass, but
     since Batch 1 (2026-09-03) the four `*_RESUME` pointers -- `DQE_UPSERT_RESUME`,
@@ -1705,8 +1776,15 @@ When something looks wrong, before assuming a code bug, check:
     OPS-8 coded in `NEON_RETENTION_LAST` / `NEON_RETENTION_LAST_RESULT`
     (`ok` / `FAILED` / `skipped`), the Health page's "Neon retention — last
     prune" row reads it, admins are emailed only on FAILED. Closed months of
-    the per-call tables are backed up ONCE (#28) before any horizon here can
-    reach them.
+    the per-call tables are backed up and finalized (#28) before any horizon
+    here can reach them -- PROVIDED the backup runs. **ENG-2 (2026-09-23): the
+    two per-call tables' steps (`inbound_calls` / `outbound_calls`, which have
+    no sheet primary) are HELD unless `NEON_BACKUP_LAST` is within 15 days and
+    its result starts `ok`**; the run still prunes `dqe_history` /
+    `qcd_history` and records `PARTIAL per-call prune HELD -- <reason>` (the
+    Health row warns; no email). Fix the backup (#28), or set
+    `NEON_RETENTION_WITHOUT_BACKUP=true` to prune those rows knowing they then
+    exist nowhere.
     **(c) `CDR_BACKFILL_BEFORE` (cdr-report)** — an ISO ceiling for
     `backfillCDRHistory`: rows dated at/after it are skipped. The backfill
     ALWAYS writes phone children (it is the refill tool), so the ceiling is
@@ -1784,7 +1862,11 @@ When something looks wrong, before assuming a code bug, check:
     goes through `Config.gs::sendAppEmail_`, which BCCs `getAdminEmails_()[0]`
     unless the address is already a recipient. Set `EMAIL_BCC` to a
     comma-separated list to BCC other addresses instead, or `none` to turn it
-    off (e.g. once the app is trusted and the admin inbox is noisy). Pinned by
+    off (e.g. once the app is trusted and the admin inbox is noisy). A
+    malformed entry is DROPPED rather than handed to MailApp, which would
+    fail the whole message (ENG-6). The Health page's `email-bcc` row names
+    what was dropped, and if nothing valid remains the default first-admin
+    BCC applies. Pinned by
     `tests/unit/app-email.test.js`, whose sweep fails on any dashboard .gs
     that calls `MailApp.sendEmail` directly. **Every admin notice renders in
     the house style (R29):** the sender passes a `notice:` spec and
@@ -1812,9 +1894,16 @@ When something looks wrong, before assuming a code bug, check:
     (a same-minute re-run gets a `-2` suffix). The workbook is created on the
     first such apply via `SpreadsheetApp.create` and its id stored here; you
     never set it by hand. If the property points at a deleted workbook the next
-    apply creates a fresh one and re-stores the id. The newest 3 tabs per SOURCE
-    sheet are kept (`HR_BACKUP_KEEP_`; older ones deleted via `deleteSheet`, so
-    no Drive scope). Previews never back up. The apply log names the tab and
+    apply creates a fresh one and re-stores the id. The newest 6 tabs per SOURCE
+    sheet are kept (`HR_BACKUP_KEEP_`, CRT-5: the DQE repair chain is five
+    applies, so the pre-chain original survives the whole chain; ~6.6M of the
+    backup workbook's 10M cells; older ones deleted via `deleteSheet`, so no
+    Drive scope). Previews never back up, and neither does a slot repair that
+    finds nothing coerced. Every DQE apply also re-checks the row identity
+    (row count + date/agent columns) right before its first write and ABORTS
+    with nothing written if the sheet changed since it was read (CRT-7: the
+    daily build runs in another project) -- re-run it outside the build
+    window. The apply log names the tab and
     the workbook URL. **Why a separate workbook:** a DQE copy is ~1.1M cells and
     the CDR Report workbook is already large, so in-workbook copies could reach
     the 10M-cell cap; the backup workbook holds its own.
@@ -1886,10 +1975,14 @@ When something looks wrong, before assuming a code bug, check:
     scrolled out; ok = none needed sorting; warn "needed sorting" = a writer
     appended out of order (ONE night after a reprocess, #56, is expected —
     every night is a writer regressing: find the writer, not the sort); warn
-    "could not fix" = refused or threw → the repair above; muted "skipped" = a
-    backfill `*_RESUME` pointer is set — the check defers so a nightly sort
-    cannot reset a multi-run backfill's T-8 fingerprint, and resumes when the
-    backfill clears its pointer. The bulk path (`processBatchArchive`) now logs
+    "could not fix" = refused or threw → the repair above; muted "deferred" = a
+    backfill `*_RESUME` pointer INTO THAT SHEET is set (CRT-6: only the
+    indexed sheet waits; the others are still checked). The check defers so a
+    nightly sort cannot reset a multi-run backfill's T-8 fingerprint, and it
+    resumes when the backfill clears its pointer. A pointer older than 3 days
+    turns into a `STALE-POINTER` failure: an abandoned backfill. Re-run it to
+    completion or delete the property. Pointers written before CRT-6 carry no
+    age and never go stale; re-running the backfill once stamps them. The bulk path (`processBatchArchive`) now logs
     its own post-write sort failure under the same step name, so the next
     clean nightly run supersedes it; until the check is installed such a row
     stays flagged in "Recent pipeline step failures", which is correct — the
@@ -1962,7 +2055,10 @@ When something looks wrong, before assuming a code bug, check:
        parity check that the report's abandon denominator equals the Inbound
        report's own `kpis.abandoned` for the same scope, and a per-sample
        re-verification of individual callback verdicts, logging the call ids
-       so you can eyeball them in Caller Lookup.
+       so you can eyeball them in Caller Lookup. The parity leg must run on
+       the LIVE Neon report: if the outbound compute was served from the
+       sheet copy (Neon unreachable) the run reads `FAILED (outbound served
+       from the sheet copy …)` -- re-run when Neon is back (PCR-9).
     3. **Read the verdict literally.** Release ONLY on `ok parity`.
        **INCONCLUSIVE is not a pass** — a window with zero abandons reports it
        by construction, so widen the window and re-run. FAILED and MISMATCH

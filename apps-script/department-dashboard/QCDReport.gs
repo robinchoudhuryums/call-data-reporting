@@ -32,13 +32,15 @@
  * IMPORTANT: QCD Historical Data's `callQueue` column (col D) carries
  * raw queue names like "A_Q_CustomerSuccess", "A_Q_Sales", "Backup CSR"
  * -- NOT dashboard dept names. To filter QCD rows for a dashboard dept,
- * use Config.gs::DEPT_QCD_QUEUES[dept] (admin-curated map of dept name
- * to list of queue names). A dept not in that map renders an empty QCD
- * modal with a "No queues mapped" hint.
+ * read the effective list via DeptConfig.gs::getDeptQcdQueues_(dept) (or
+ * queuesForDept_ below for the sub-queue rollup) -- NEVER index the
+ * Config.gs::DEPT_QCD_QUEUES constant, which is only the seed default
+ * beneath the admin-authored Dept Config sheet (INV-54). A dept with no
+ * effective queues renders a "No queues mapped" hint (DOC-12).
  */
 
 
-// All-departments daily report (4b): admin-only, company-wide flat
+// All-departments daily report (4b): manager+admin, company-wide flat
 // queue table reproducing the legacy emailed "Daily Call Queue Report"
 // PDF. Cached per (from, to) under its own prefix so it doesn't collide
 // with the per-dept qcd: keys. Bump on any aggregation-shape change.
@@ -69,21 +71,23 @@ const QCD_ALLDEPT_EXCLUDE_QUEUES = ['A_Q_Intake', 'Backup CSR'];
 // label-sheet drift doesn't change behavior.
 const QCD_TOTAL_CALLS_SOURCE = 'Total Calls';
 
-// All-dept report TTL: 6h (CacheService's max) instead of the 30-min
-// REPORT_CACHE_TTL_SECONDS. QCD data lands once per day (morning ingest),
+// All-dept report TTL: 6h (CacheService's max) -- the same figure the
+// per-dept REPORT_CACHE_TTL_SECONDS tier has used since R24 (it was 30 min
+// when this was written), kept as its own constant. QCD data lands once per day (morning ingest),
 // so a warmed yesterday-blob can legitimately serve all day; the trade-off
 // is that a rare mid-day force re-import's corrections can lag here up to
-// 6h (vs 30 min elsewhere). Paired with the CacheWarm qcdAll warm
+// 6h. Paired with the CacheWarm qcdAll warm
 // (CacheWarm.gs), which only fires once QCD data for yesterday exists.
 const QCD_ALLDEPT_CACHE_TTL_SECONDS = 21600;
 
 /**
  * Returns the list of queue names that belong to `dept`, from the
- * admin-curated DEPT_QCD_QUEUES map in Config.gs. When `dept` is a
- * top-level parent per CompanyOverview.gs::OVERVIEW_PARENT_OF, the
+ * effective per-dept map (getDeptQcdQueues_: the Dept Config sheet over
+ * the DEPT_QCD_QUEUES seed, INV-54). When `dept` is a top-level parent
+ * per the effective parent map (getOverviewParentMap_), the
  * result also includes every child dept's queues -- so viewing
  * Sales picks up PAP's queues, Power picks up PAK's, CSR picks
- * up Spanish's. Order: parent first, children in OVERVIEW_PARENT_OF
+ * up Spanish's. Order: parent first, children in parent-map
  * iteration order.
  *
  * Returns [] for unmapped depts (caller renders an empty report
@@ -178,18 +182,19 @@ function computeMtdViolations_(dept, values, ssTZ, qOpts, dates, anchorIso) {
 }
 
 /**
- * All-departments daily queue report (4b) -- admin-only, company-wide.
+ * All-departments daily queue report (4b) -- manager+admin, company-wide
+ * (opened to managers by owner decision; assertManagerOrAdmin_ below).
  *
  * Reproduces the legacy emailed "Daily Call Queue Report" PDF: one flat
  * table across EVERY mapped department, each dept's own queues listed
  * with Total / Answered / Abandoned / Abandoned % / Longest / Avg ans /
  * Violations, plus a per-dept subtotal and a company grand-total row.
- * Surfaced on the Overview page (admin-only) with CSV + print.
+ * Surfaced on the Overview page with CSV + print.
  *
  * Scope: each dept's OWN queues only (queuesForDept_ includeChildren=false)
  * so a child sub-queue appears under its own dept exactly once and there's
  * no parent+child double count. A queue double-mapped across two depts'
- * DEPT_QCD_QUEUES (the M2 case) intentionally appears under both -- this is
+ * effective queue lists (the M2 case) intentionally appears under both -- this is
  * a flat per-queue listing, not a de-duped rollup.
  *
  * Everything here is RANGE-scoped (unlike the per-dept report's MTD
@@ -214,6 +219,7 @@ function getQcdAllDepartments(req) {
     throw new Error('from/to must be YYYY-MM-DD.');
   }
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   const tRpc = Date.now();
   const res = qcdAllDeptCachedData_(from, to);
@@ -242,7 +248,7 @@ function qcdAllDeptCachedData_(from, to, opts) {
   // CORE-3 pattern: suffix the (6h-TTL) all-dept key with the active QCD read
   // source so flipping QCD_READ_SOURCE can't serve a cross-source blob for the
   // TTL. (The shorter-TTL report caches that embed QCD -- insights/summary/
-  // companyOverview, 30min -- are parity-gated and self-heal within the TTL.)
+  // companyOverview, 6 h -- are parity-gated and self-heal within the TTL.)
   const qcdSrc = (typeof getQcdReadSource_ === 'function') ? getQcdReadSource_() : 'sheet';
   // D-1 / O-1: the key is ANCHORED on the latest QCD date (the S3 stale-morning
   // contract every other 6h key meets via reportFreshnessTag_ -- but that tag
@@ -923,8 +929,8 @@ function computeQcdReport_(dept, from, to, includeSubQueues, separateSubQueues, 
   }
   const ssTZ = sheetData.ssTZ;
 
-  // Dept -> queue names. Empty = this dept isn't mapped in
-  // DEPT_QCD_QUEUES; return the empty shape so the modal shows
+  // Dept -> queue names. Empty = this dept has no effective queues
+  // (getDeptQcdQueues_); return the empty shape so the surface shows
   // "No queues mapped" instead of throwing.
   const queues = queuesForDept_(dept, qOpts);
   if (queues.length === 0) {

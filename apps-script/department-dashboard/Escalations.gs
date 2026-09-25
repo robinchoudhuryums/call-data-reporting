@@ -82,7 +82,11 @@ var ESC_MAX_ROWS = 500;
 // set so the client shows a read-only banner. Writes still hard-fail (INV-55
 // untouched); a snapshot cannot drift because nothing can change while the
 // only writer is down. Properties are engine-written outcome state (the
-// *_LAST class) -- deliberately NOT an Operator State item.
+// *_LAST class) -- deliberately NOT an Operator State item. SEC-6: the rows
+// carry PHI (patient / caller / Trx / reason), so this puts PHI in plain
+// Script Properties -- ACCEPTED by owner ruling (inside the Workspace
+// tenancy), conditional on Apps Script being a covered service; see
+// docs/operator-state.md #24(c) before widening what the snapshot stores.
 var ESC_SNAPSHOT_MAX_ROWS = 150;      // open rows kept (newest first)
 var ESC_SNAPSHOT_CHUNK_CHARS = 8000;  // under the ~9KB per-property cap
 var ESC_SNAPSHOT_MAX_CHUNKS = 6;      // hard ceiling ~48KB of the 500KB store
@@ -150,6 +154,19 @@ function escSnapshotLoad_() {
 }
 
 /**
+ * PCR-8 (broad-scan 2026-09-23): refresh the outage snapshot right after a
+ * committed mutation. Only the delete did (2a); every other write left the
+ * snapshot up to ESC_SNAPSHOT_REFRESH_MIN stale, so an outage in that window
+ * served a just-resolved row as still open, or hid a just-created one. The
+ * connection leaves its transaction first (the refresh is a plain read).
+ * Best-effort: a failure here never fails the write that already committed.
+ */
+function escSnapshotAfterWrite_(conn) {
+  try { conn.setAutoCommit(true); } catch (ae) { /* best-effort */ }
+  try { escSnapshotMaybeRefresh_(conn, /*force=*/true); } catch (e) { /* best-effort */ }
+}
+
+/**
  * Refreshes the snapshot from a LIVE connection, at most once per
  * ESC_SNAPSHOT_REFRESH_MIN (age-gated on the stored meta). One bounded query
  * for the open statuses, UNSCOPED -- the snapshot must serve every viewer, so
@@ -162,7 +179,8 @@ function escSnapshotMaybeRefresh_(conn, force) {
     var meta = null;
     try { meta = JSON.parse(props.getProperty('ESC_SNAPSHOT_META') || 'null'); } catch (e) { meta = null; }
     // 2a: a delete refreshes UNCONDITIONALLY, so an outage read served from
-    // the snapshot cannot resurrect a row the admin just removed.
+    // the snapshot cannot resurrect a row the admin just removed -- and since
+    // PCR-8 so does every other committed write (escSnapshotAfterWrite_).
     if (!force && meta && meta.at) {
       var ageMin = (Date.now() - new Date(meta.at).getTime()) / 60000;
       if (isFinite(ageMin) && ageMin >= 0 && ageMin < ESC_SNAPSHOT_REFRESH_MIN) return;
@@ -635,6 +653,7 @@ function createEscalation(req) {
     escAppendActivity_(conn, rec.id, 'created', rec.createdBy, rec.reason);
     conn.commit();
     Logger.log('createEscalation: %s logged escalation %s for %s', rec.createdBy, rec.id, rec.department);
+    escSnapshotAfterWrite_(conn);   // PCR-8
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('createEscalation failed: ' + (e && e.message ? e.message : e));
@@ -709,6 +728,7 @@ function updateEscalation(req) {
     escAppendActivity_(conn, id, 'edited', actor, 'Edited escalation fields');
     conn.commit();
     Logger.log('updateEscalation: %s edited %s (%s)', actor, id, department);
+    escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -793,6 +813,7 @@ function resolveEscalation(req) {
     escAppendActivity_(conn, id, 'resolved', user.email, resolution);
     conn.commit();
     Logger.log('resolveEscalation: %s resolved %s (%s)', user.email, id, dept);
+    escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -845,6 +866,7 @@ function reopenEscalation(req) {
     escAppendActivity_(conn, id, 'reopened', user.email, reason);
     conn.commit();
     Logger.log('reopenEscalation: %s reopened %s (%s)', user.email, id, meta.department);
+    escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -900,6 +922,7 @@ function startEscalation(req) {
     escAppendActivity_(conn, id, 'started', user.email, note || 'Marked in progress');
     conn.commit();
     Logger.log('startEscalation: %s started %s (%s)', user.email, id, meta.department);
+    escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -981,6 +1004,7 @@ function approveEscalation(req) {
       'Accepted into the ' + row.department + ' worklist (submitted via ' + (row.source || 'unknown') + ')');
     conn.commit();
     Logger.log('approveEscalation: %s approved %s (%s)', user.email, id, row.department);
+    escSnapshotAfterWrite_(conn);   // PCR-8
     // §1: an approved pending_review is a NEW escalation ENTERING the dept
     // worklist -- the event managers care about once Phase 2's external
     // inflow exists (it arrives as pending_review, not createEscalation --
@@ -1053,6 +1077,7 @@ function rejectEscalation(req) {
     escAppendActivity_(conn, id, 'rejected', user.email, reason);
     conn.commit();
     Logger.log('rejectEscalation: %s rejected %s (%s)', user.email, id, meta.department);
+    escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -1113,6 +1138,7 @@ function updateEscalationComment(req) {
     escAppendActivity_(conn, id, 'comment', user.email, comments);
     conn.commit();
     Logger.log('updateEscalationComment: %s updated %s (%s)', user.email, id, dept);
+    escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }

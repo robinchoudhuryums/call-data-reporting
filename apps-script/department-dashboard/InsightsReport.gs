@@ -44,7 +44,7 @@
  * / buildDeptsByAgent_ / hashAgents_ (Data), and the F1 read helpers
  * (NeonRead). No new aggregation primitives are introduced.
  *
- * Caching: 30 min (REPORT_CACHE_TTL_SECONDS) per
+ * Caching: 6 h (REPORT_CACHE_TTL_SECONDS, R24; keys carry reportFreshnessTag_()) per
  * (dept, from, to, sortedAgents) tuple under INSIGHTS_CACHE_KEY_PREFIX.
  */
 
@@ -143,6 +143,7 @@ function getInsightsReport(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   // Optional explicit prior window (both-or-neither; INV-49 pattern).
   // Absent = auto-adjacent prior (INV-28). The client resolves YoY /
@@ -156,6 +157,7 @@ function getInsightsReport(req) {
     if (customPriorFrom > customPriorTo) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
+    assertReportRangeCap_(customPriorFrom, customPriorTo, null, 'Prior range');   // SEC-1
   }
 
   const roster = getRosterForDepartment_(dept);
@@ -207,9 +209,13 @@ function getInsightsReport(req) {
   // the Inbound/Direct reports already follow for unavailable payloads.
   // Since the QCD retirement this is managers' ONLY queue surface; caching
   // the error pinned "Queue health unavailable" for every viewer of this
-  // (dept, range, agents, prior) tuple for the full 30-min TTL.
+  // (dept, range, agents, prior) tuple for the full 6 h TTL.
   if (data.queueHealth && data.queueHealth.error) {
     Logger.log('InsightsReport: queueHealth errored -- skipping cache put so the next request retries.');
+  } else if (typeof qcdSnapshotReadFailed_ === 'function' && qcdSnapshotReadFailed_()) {
+    // DATA-3: the prior-window Queue health read threw (priorTotals:null reads
+    // as "no prior data") -- serve it, never pin the delta-less payload.
+    Logger.log('InsightsReport: a Queue health read errored -- skipping cache put.');
   } else if (data.meta && data.meta.sourceUnavailable) {
     // R8-C1: outage-empty shape (Neon unreachable + no DQE sheet) -- never
     // pin it for the TTL; the next request retries the live source.
@@ -373,38 +379,20 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
       return e;
     }
     // R41: the ext derivation needs ALL history (getDeptQueueExts_ docstring),
-    // so it reads its own whole-sheet cols-A..D slice; the windowed rows come
-    // from a bounded SPAN. The per-row date filter below STAYS -- the span
-    // bounds the read, it does not replace the filter.
+    // so it reads its own whole-sheet cols-A..D slice.
     deptQueueExts = deptQueueExtsFromSheet_(dept, rosterSet, sheet, lastRow).exts;
-    const span = dqeWindowRowSpan_(sheet, lastRow, fetchFrom, fetchTo, ssTZ);
-    const range = span ? sheet.getRange(span.startRow, 1, span.numRows, numCols) : null;
-    const values   = range ? range.getValues() : [];
-    const displays = range ? range.getDisplayValues() : [];
-    srcRows = [];
-    for (let i = 0; i < values.length; i++) {
-      const r = values[i], rd = displays[i];
-      const dIso = rowDateIso_(r[HISTORICAL_COLS.DATE - 1], ssTZ);
-      if (!dIso || dIso < fetchFrom || dIso > fetchTo) continue;
-      const ag = String(r[HISTORICAL_COLS.AGENT - 1] || '').trim();
-      if (!ag) continue;
-      srcRows.push({
-        dateIso:       dIso,
-        agent:         ag,
-        queueExt:      String(r[HISTORICAL_COLS.QUEUE_EXT - 1] || '').trim(),
-        totalRung:     Number(r[HISTORICAL_COLS.TOTAL_RUNG - 1])     || 0,
-        totalMissed:   Number(r[HISTORICAL_COLS.TOTAL_MISSED - 1])   || 0,
-        totalAnswered: Number(r[HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
-        tttSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.TTT - 1]),
-        attSec:        parseHmsDisplay_(rd[HISTORICAL_COLS.ATT - 1]),
-        queueSplit:    String(rd[HISTORICAL_COLS.QUEUE_SPLIT - 1] || '').trim(),
-      });
-    }
+    // DATA-5 follow-on (Batch 10): the windowed rows come from the DAL's
+    // memoized sheet primitive (the bounded span + per-row date filter live
+    // there), not a private span read -- CacheWarm and the Insights-format
+    // digests run this once per DEPT over one window in a single execution,
+    // and each dept re-read identical bytes. Same row fields (a superset),
+    // shallow-copied per caller, so the in-place narrowing below stays per-dept.
+    srcRows = sheetFetchDqeRows_(fetchFrom, fetchTo);
   }
   // Queue-split adoption (Phase 4): narrow BEFORE every aggregation this
   // report runs -- current window, prior window, 12-mo trend, team stats,
   // gap-vs-team -- so all of it inherits one definition. Off = untouched.
-  const qsInfo = applyQueueSplitToRows_(srcRows, dept);
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
   if (typeof logDqeReadTiming_ === 'function') {
     logDqeReadTiming_('computeInsights_:' + dept, effectiveSource, _tRead, srcRows.length);
   }
@@ -858,7 +846,13 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
     // missing QCD sheet (above) stays null = silently hidden.
     if (cur.meta.unmapped) return { unmapped: true };
     let prior = null;
-    try { prior = computeQcdReport_(dept, priorFrom, priorTo, true, true); } catch (e) { prior = null; }
+    try { prior = computeQcdReport_(dept, priorFrom, priorTo, true, true); }
+    catch (e) {
+      // DATA-3: a failed prior read renders as priorTotals:null -- the same as
+      // "no prior data" -- so flag it and getInsightsReport skips the put.
+      noteQcdSnapshotReadFailed_('Insights prior Queue health', e);
+      prior = null;
+    }
     const pick = function (t) {
       t = t || {};
       return {
@@ -975,7 +969,7 @@ function insightsQueueHealth_(dept, from, to, priorFrom, priorTo) {
           // numbers for that day, which for a sub-queue row (A_Q_Spanish
           // under CSR) read as the wrong queue's data. Additive field; the
           // client falls back to the unscoped jump when absent (a stale
-          // <=30-min cached payload).
+          // <=6 h cached payload).
           daily:            (cur.perQueue && cur.perQueue[q.queue] && cur.perQueue[q.queue].daily) || [],
           // 4c: the call source driving the most abandons in this queue
           // (from the 4a bySource breakdown). Null when no sub-source has
@@ -1111,6 +1105,7 @@ function sendInsightsReportEmail(req) {
   const email = Session.getActiveUser().getEmail();
   const user = resolveUser_(email);
   if (user.role === 'none') throw new Error('Not authorized.');
+  assertReportEmailThrottle_(email);   // SEC-2
 
   const dept = String((req && req.department) || '').trim();
   if (!dept) throw new Error('Department is required.');
@@ -1120,6 +1115,7 @@ function sendInsightsReportEmail(req) {
   const to   = String((req && req.to)   || '').trim();
   if (!isIsoDate_(from) || !isIsoDate_(to)) throw new Error('from/to must be YYYY-MM-DD.');
   if (from > to) throw new Error('from must be on or before to.');
+  assertReportRangeCap_(from, to);   // SEC-1
 
   const customPriorFrom = String((req && req.priorFrom) || '').trim();
   const customPriorTo   = String((req && req.priorTo)   || '').trim();
@@ -1135,6 +1131,7 @@ function sendInsightsReportEmail(req) {
     if (customPriorFrom > customPriorTo) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
+    assertReportRangeCap_(customPriorFrom, customPriorTo, null, 'Prior range');   // SEC-1
   }
 
   const roster = getRosterForDepartment_(dept);

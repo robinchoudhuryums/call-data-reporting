@@ -281,12 +281,18 @@ historical roster-only numbers equal a `both` response filtered to
   manager dept check; can pick any department from the admin dropdown.
   Adding an admin is a Script-Property edit, no redeploy.
 - **Managers**: rows in the `Access Control` sheet (`Email | Department |
-  Notes`). One row per manager. Pinned to a single department. If a
-  manager email appears in MULTIPLE rows with different departments, only
-  the first is honored (the dashboard pins a manager to one dept), and
-  `getManagerDepartment_` logs a warning so the ignored row(s) are
-  detectable rather than silently dropped — grant admin for cross-dept
-  access (F13).
+  Notes | Role | Agent Name`). One row per (manager, department). A manager
+  email on MULTIPLE rows is a **multi-department manager**: `resolveUser_`
+  UNIONS the rows into `departments` (Tier C / F13) and the first row is the
+  landing dept -- no admin grant is needed for cross-dept access. A
+  Department cell of `ALL` (or `*`) makes an **all-departments manager**
+  (`allDepts:true`: every dept's data, no admin surfaces). A dept with
+  Overview sub-queues also grants its one-level children (INV-38). The admin
+  Access Control editor (`saveAccessControlRow`) writes these rows
+  REPLACE-ALL by email. Role `agent` + Agent Name is the fourth role (the
+  separate agent app, `AGENT_ROLE_ENABLED`). (DOC-2: this entry used to say
+  only the first row was honored and to grant admin instead -- the pre-Tier-C
+  model.)
 - **Everyone else**: gets the access-denied page.
 
 Access-control lookups are cached for 60 seconds (`AUTH_CACHE_TTL_SECONDS`).
@@ -515,13 +521,13 @@ table mirrors it; if the two ever diverge, INV-30 wins.
 | `IndividualReport.gs` (active-in-range subset, shared with all three pickers) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
-| `MissedCallsReport.gs` | `missed:vN:` | `v17` |
-| `CompanyOverview.gs` | `companyOverview:vN` | `v24` |
+| `MissedCallsReport.gs` | `missed:vN:` | `v18` |
+| `CompanyOverview.gs` | `companyOverview:vN` | `v25` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v10` |
+| `InboundReport.gs` | `inbound:vN:` | `v11` |
 | `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
-| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v3` |
+| `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v4` |
 
 `Alerts.gs` holds no cached compute — preview / send always re-reads
