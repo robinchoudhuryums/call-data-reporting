@@ -242,6 +242,136 @@ const MODALS = [
     await ctx.close();
   }
 
+  // ── UI-1 / UI-2: layers stacked OVER a report modal ─────────────────────
+  // Help (via the FAB), the chart tips and the "↳ path" overlay can each
+  // open on top of a report. Escape must close ONLY the top layer -- all
+  // three used to listen in the bubble phase, as the report does, so one
+  // Escape closed both and the report reopened on its empty form -- and
+  // closing the layer must hand the report back its focus trap and scroll
+  // lock. Agent Day is the host: it is a real report modal with a results
+  // view, and its run button is the trap's hardest case (R48, above).
+  {
+    const { ctx, page, errors } = await boot();
+    const before = errors.length;
+    const HOST = '#agent-day-modal';
+    const shown = (sel) => page.evaluate((s) => {
+      const el = document.querySelector(s);
+      return !!el && getComputedStyle(el).display !== 'none';
+    }, sel);
+    const trapHolds = async (n) => {
+      let out = 0;
+      for (let i = 0; i < n; i++) {
+        await page.keyboard.press('Tab');
+        const inside = await page.evaluate((s) => {
+          const m = document.querySelector(s);
+          return !!m && m.contains(document.activeElement);
+        }, HOST);
+        if (!inside) out++;
+      }
+      return out;
+    };
+    try {
+      await page.click('#reports-menu-btn'); await page.waitForTimeout(300);
+      await page.click('#agent-day-btn'); await page.waitForTimeout(1500);
+      await page.click('#ad-run-btn'); await page.waitForTimeout(2000);
+      const hostOpen = await shown(HOST);
+      record('UI-1: the host report (Agent Day) is open', hostOpen);
+      if (hostOpen) {
+        // (1) Help over the report.
+        await page.click('#help-fab'); await page.waitForTimeout(500);
+        record('UI-1: Help opens over the report', await shown('#help-modal'));
+        await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+        record('UI-1: Escape closes Help', !(await shown('#help-modal')));
+        record('UI-1: ...and leaves the report open', await shown(HOST));
+        const ovf = await page.evaluate(() => document.body.style.overflow);
+        record('UI-2: the report keeps its scroll lock after Help closes', ovf === 'hidden', 'overflow=' + JSON.stringify(ovf));
+        const helpOut = await trapHolds(12);
+        record('UI-2: the report\'s focus trap is re-armed after Help closes (12 tabs)', helpOut === 0,
+          helpOut ? helpOut + ' escapes' : '');
+
+        // (2) Chart tips opened from inside the report.
+        await page.evaluate((s) => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'chart-help-btn'; b.id = 'ui1-tips';
+          b.setAttribute('data-charthelp', 'overview'); b.textContent = '?';
+          document.querySelector(s + ' .modal-panel').appendChild(b);
+        }, HOST);
+        await page.click('#ui1-tips'); await page.waitForTimeout(300);
+        record('UI-1: chart tips open over the report', await page.locator('.chart-help-pop').count() === 1);
+        await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+        record('UI-1: Escape closes the chart tips', await page.locator('.chart-help-pop').count() === 0);
+        record('UI-1: ...and leaves the report open', await shown(HOST));
+
+        // (3) The "↳ path" overlay opened from inside the report.
+        await page.evaluate((s) => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'pid-journey'; b.id = 'ui1-path';
+          b.setAttribute('data-journey-pid', 'IN-UI1'); b.setAttribute('data-journey-date', '2026-08-21');
+          b.textContent = '↳ path';
+          document.querySelector(s + ' .modal-panel').appendChild(b);
+        }, HOST);
+        await page.click('#ui1-path'); await page.waitForTimeout(700);
+        const cjOpen = await shown('#call-journey-overlay');
+        record('UI-1: the call-path overlay opens over the report', cjOpen);
+        if (cjOpen) {
+          await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+          record('UI-1: Escape closes the call-path overlay', !(await shown('#call-journey-overlay')));
+          record('UI-1: ...and leaves the report open', await shown(HOST));
+          const cjOut = await trapHolds(12);
+          record('UI-2: the report\'s focus trap is re-armed after the overlay closes (12 tabs)', cjOut === 0,
+            cjOut ? cjOut + ' escapes' : '');
+        }
+
+        // The base layer still answers Escape once nothing is stacked on it.
+        await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+        record('UI-1: with no layer above it, Escape still closes the report', !(await shown(HOST)));
+      }
+    } catch (e) {
+      record('UI-1: stacked-layer walk runs without throwing', false, String(e).slice(0, 160));
+    }
+    record('UI-1: no page/console errors during the stacked-layer walk', errors.length === before,
+      Array.from(new Set(errors.slice(before))).slice(0, 2).join(' | '));
+    await ctx.close();
+  }
+
+  // ── UI-4: Escalations INIT failure ──────────────────────────────────────
+  // A failed getEscalationsInit left the loader spinning beside the error,
+  // offered no Retry, and never beaconed. The harness injects the failure.
+  {
+    const { ctx, page, errors } = await boot();
+    const before = errors.length;
+    try {
+      await page.evaluate(() => { window.__HARNESS__.failOnce.getEscalationsInit = 1; });
+      await page.click('#escalations-btn');
+      await page.waitForTimeout(1200);
+      const st = await page.evaluate(() => {
+        const ld = document.getElementById('esc-loading');
+        const er = document.getElementById('esc-error');
+        return {
+          loaderShown: !!ld && getComputedStyle(ld).display !== 'none' && ld.innerHTML.trim() !== '',
+          errorShown: !!er && getComputedStyle(er).display !== 'none',
+          retry: !!document.getElementById('esc-init-retry'),
+          beacon: window.__HARNESS__.calls.some((c) => c.fn === 'reportClientIssue'
+            && JSON.stringify(c.args).indexOf('Escalations init failed') !== -1),
+        };
+      });
+      record('UI-4: a failed Escalations init clears the loader', st.loaderShown === false);
+      record('UI-4: ...shows the error with a Retry control', st.errorShown && st.retry, JSON.stringify(st));
+      record('UI-4: ...and reports the load failure', st.beacon === true);
+      if (st.retry) {
+        await page.click('#esc-init-retry');
+        await page.waitForTimeout(2400);
+        const cards = await page.evaluate(() => document.querySelectorAll('.esc-card').length);
+        record('UI-4: Retry recovers the worklist', cards > 0, 'cards=' + cards);
+      }
+    } catch (e) {
+      record('UI-4: init-failure walk runs without throwing', false, String(e).slice(0, 160));
+    }
+    record('UI-4: no page/console errors during the init-failure walk', errors.length === before,
+      Array.from(new Set(errors.slice(before))).slice(0, 2).join(' | '));
+    await ctx.close();
+  }
+
   // ── Escalations worklist ────────────────────────────────────────────────
   {
     const { ctx, page, errors } = await boot();

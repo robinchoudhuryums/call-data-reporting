@@ -79,7 +79,11 @@ const user = role === 'admin'
 // The google.script mock. Chaining API + name-dispatched fixtures; unmocked
 // RPCs invoke the FAILURE handler async (mirrors a server throw) and log.
 const stub = `<script>
-window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
+window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
+  // UI-4: a driver sets failOnce[rpcName] = N to make the next N calls of that
+  // RPC reach the FAILURE handler -- the only way a driver can see an error
+  // state that a mocked success path never renders.
+  failOnce: {} };
 (function () {
   var ROLE = window.__HARNESS__.role;
   var P = ${JSON.stringify(P)};
@@ -335,6 +339,12 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [] };
           window.__HARNESS__.calls.push({ fn: name, args: args });
           var h = handlers[name];
           setTimeout(function () {
+            var fx = window.__HARNESS__.failOnce;
+            if (fx && fx[name] > 0) {
+              fx[name]--;
+              fail && fail(new Error('harness: injected failure ' + name));
+              return;
+            }
             if (h) { try { ok && ok(h.apply(null, args)); } catch (e) { console.error('[harness ok-handler]', name, e); } }
             else {
               window.__HARNESS__.unmocked.push(name);

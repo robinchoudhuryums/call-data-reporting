@@ -1907,7 +1907,26 @@ block) unless noted, and the two behavioural ones are also driven in
   give it a real Close control (`.chp-close` on the chart-tips popover); and
   `trapFocus_` releases any trap it finds first, so a dialog opened OVER a
   modal must stash that modal's trap and re-arm it on close
-  (`outerTrap` in `initChartHelp_`).
+  (`outerTrap` in `initChartHelp_`; Help and the call-path overlay do the
+  same, UI-2). Test "is the modal under me still open?" with
+  `layerIsShown_`, never `offsetParent` -- every `.modal` is
+  `position:fixed`, whose `offsetParent` is always null, so that test said
+  "closed" for every open modal and the trap was never re-armed. A layer
+  that stashes the trap also restores the modal's scroll lock rather than
+  clearing it.
+- **A layer over a modal takes Escape through the LAYER STACK, never its own
+  bubble-phase listener (UI-1).** Report modals close on a bubble-phase
+  `document` keydown, so a layer listening the same way closed itself AND
+  the report under it (which then reopened on its empty form, results
+  lost). Register the close function with `escapeLayerPush_(close)` on open
+  and `escapeLayerRemove_(close)` in close (script-1-core); one
+  capture-phase dispatcher closes only the top layer and stops the event.
+  The report modals themselves stay the base layer on their own handlers;
+  `dsConfirm_` / `dsPrompt_` keep their own capture-phase Escape and win
+  while up. Current layers: Help, the chart tips, the "↳ path" overlay.
+  Pinned by `html-include-structure.test.js` (the wiring) and
+  `drive-admin.js` (Escape on each layer over a real report leaves the
+  report open with its trap and scroll lock).
 - **Describe an action, never `aria-label` a content-bearing element.** A
   label REPLACES the accessible content, so `aria-label="Isolate X in the
   trend chart"` on an Overview dept tile hid every KPI inside it — the

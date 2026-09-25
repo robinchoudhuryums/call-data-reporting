@@ -7,7 +7,15 @@
   let inboundExpandedInsurer = null;   // accordion: at most one open row
   let inboundDrillChart = null;
   let inboundDrillMetric = 'calls';    // 'calls' | 'rate'
-  let inboundDrillCache = {};          // insurer -> daily[] (cleared per render)
+  let inboundDrillCache = {};          // inboundDrillKey_ -> daily[] (cleared per render)
+  // UI-6: keyed by (range, dept, insurer), not the insurer alone. A drill in
+  // flight when the report re-ran for a new range landed AFTER the per-render
+  // clear, filed the OLD range's series under the insurer's bare name, and
+  // painted it into the new report's (same-named) drill row.
+  function inboundDrillKey_(insurer) {
+    const m = (inboundLastData && inboundLastData.meta) || {};
+    return [m.from || '', m.to || '', m.department || '', insurer].join('\u0001');
+  }
 
   function initInboundReport() {
     const btn = $('inbound-report-btn');
@@ -346,9 +354,16 @@
         // role and the table stops being a grid for screen readers (the
         // documented house rule the agent table follows; tabindex + the
         // keydown handler below keep it keyboard-activatable).
-        return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '" tabindex="0"'
+        // UI-9: the row opened a detail row without ever saying whether it
+        // was open. Per the a11y contract the disclosure is a real <button>
+        // in the first cell that OWNS aria-expanded and the native
+        // Enter/Space; the row stays the mouse target, and the row-level
+        // tabindex + keydown went with it (they would toggle twice).
+        return '<tr class="inbound-insurer-row" data-insurer="' + escapeHtml(r.label) + '"'
           + ' title="Show this insurer’s daily trend">'
-          + '<td><span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label) + '</td>'
+          + '<td><button type="button" class="inbound-insurer-toggle" aria-expanded="false">'
+          +   '<span class="inbound-drill-chevron" aria-hidden="true">&#9656;</span> ' + escapeHtml(r.label)
+          + '</button></td>'
           + '<td class="num">' + fmtNumber(r.calls) + '</td>'
           + '<td class="num">' + fmtNumber(r.answered) + '</td>'
           + '<td class="num">' + fmtNumber(r.abandoned) + '</td>'
@@ -359,9 +374,6 @@
       }).join('');
       tbody.querySelectorAll('.inbound-insurer-row').forEach(function (tr) {
         tr.addEventListener('click', function () { inboundToggleDrill_(tr); });
-        tr.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inboundToggleDrill_(tr); }
-        });
       });
     }, srtImpactInbound_);
   }
@@ -371,8 +383,14 @@
     document.querySelectorAll('.inbound-drill-row').forEach(function (row) { row.remove(); });
     document.querySelectorAll('.inbound-insurer-row.drill-open').forEach(function (tr) {
       tr.classList.remove('drill-open');
+      inboundSetRowExpanded_(tr, false);   // UI-9
     });
     inboundExpandedInsurer = null;
+  }
+
+  function inboundSetRowExpanded_(tr, open) {
+    const b = tr.querySelector('.inbound-insurer-toggle');
+    if (b) b.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
   function inboundToggleDrill_(tr) {
@@ -382,6 +400,7 @@
     if (wasOpen) return;   // second click closes
     inboundExpandedInsurer = insurer;
     tr.classList.add('drill-open');
+    inboundSetRowExpanded_(tr, true);   // UI-9
 
     const drill = document.createElement('tr');
     drill.className = 'inbound-drill-row';
@@ -403,26 +422,31 @@
         b.classList.toggle('active', b === tab);
         b.setAttribute('aria-selected', b === tab ? 'true' : 'false');   // C2-13
       });
-      const cached = inboundDrillCache[insurer];
+      const cached = inboundDrillCache[inboundDrillKey_(insurer)];
       if (cached) inboundRenderDrillChart_(drill, cached);
     });
 
-    const cached = inboundDrillCache[insurer];
+    const drillKey = inboundDrillKey_(insurer);
+    const cached = inboundDrillCache[drillKey];
     if (cached) { inboundRenderDrillChart_(drill, cached); return; }
     const dept = (inboundLastData && inboundLastData.meta && inboundLastData.meta.department) || '';
     const meta = (inboundLastData && inboundLastData.meta) || {};
     google.script.run
       .withSuccessHandler(function (res) {
-        if (inboundExpandedInsurer !== insurer) return;   // collapsed meanwhile
+        // Collapsed meanwhile, or the report re-rendered (the row this drill
+        // belongs to is gone, or the range moved under it).
+        if (inboundExpandedInsurer !== insurer || !document.contains(drill)
+            || inboundDrillKey_(insurer) !== drillKey) return;
         if (!res || res.meta.available === false) {
           const st = drill.querySelector('.inbound-drill-status');
           if (st) st.textContent = 'Daily trend unavailable (Neon unreachable) — try again.';
           return;
         }
-        inboundDrillCache[insurer] = res.daily || [];
-        inboundRenderDrillChart_(drill, inboundDrillCache[insurer]);
+        inboundDrillCache[drillKey] = res.daily || [];
+        inboundRenderDrillChart_(drill, inboundDrillCache[drillKey]);
       })
       .withFailureHandler(function (err) {
+        if (!document.contains(drill)) return;
         const st = drill.querySelector('.inbound-drill-status');
         if (st) st.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
       })
@@ -1872,6 +1896,11 @@
     outboundRenderCbChart_((data && data.daily) || []);
     outboundRenderHourStrip_((data && data.callbackByHour) || []);   // (6)
     // Reset the drill panel on every fresh render (scope may have changed).
+    // UI-5: and ORPHAN any drill still in flight -- it was fetched for the
+    // previous range, and used to land on top of this render.
+    outboundUncalledSeq_++;
+    const uncBtn = $('outbound-uncalled-btn');
+    if (uncBtn && uncBtn.dataset.idleLabel) { uncBtn.disabled = false; uncBtn.textContent = uncBtn.dataset.idleLabel; }
     const uncList = $('outbound-uncalled-list');
     if (uncList) { uncList.style.display = 'none'; uncList.innerHTML = ''; }
     const uncStatus = $('outbound-uncalled-status');
@@ -2069,6 +2098,7 @@
   // v2: the not-called-back drill. Reuses the heatmap cell drill's renderer
   // (heatCellDetailHtml_) so rows carry the same stage tick + facts + "↳
   // path" journey chip; initClipboardOnce arms the delegated handler.
+  var outboundUncalledSeq_ = 0;   // UI-5: bumped per request AND per report render
   function outboundLoadUncalled_() {
     const btn = $('outbound-uncalled-btn');
     const list = $('outbound-uncalled-list');
@@ -2082,10 +2112,13 @@
       if (status) status.textContent = '';
       return;
     }
-    const prev = btn.textContent;
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    const prev = btn.dataset.idleLabel;
     btn.disabled = true; btn.textContent = 'Loading…';
+    const tok = ++outboundUncalledSeq_;
     google.script.run
       .withSuccessHandler(function (resp) {
+        if (tok !== outboundUncalledSeq_) return;   // a newer render / drill owns the panel
         btn.disabled = false; btn.textContent = prev;
         initClipboardOnce();
         // Empty here is GOOD news — heatCellDetailHtml_'s generic empty
@@ -2105,6 +2138,7 @@
         }
       })
       .withFailureHandler(function (err) {
+        if (tok !== outboundUncalledSeq_) return;
         btn.disabled = false; btn.textContent = prev;
         if (status) status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
       })

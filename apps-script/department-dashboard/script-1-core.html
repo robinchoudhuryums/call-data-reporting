@@ -864,6 +864,40 @@
     document.removeEventListener('keydown', activeFocusTrap_.handler);
     activeFocusTrap_ = null;
   }
+  // UI-2: is a layer still ON SCREEN (so its trap may be re-armed)? Not
+  // `offsetParent` -- every `.modal` is position:fixed, whose offsetParent is
+  // ALWAYS null, so that test reported every open modal as closed.
+  function layerIsShown_(el) {
+    return !!(el && document.contains(el) && getComputedStyle(el).display !== 'none');
+  }
+
+  // -- UI-1: the Escape LAYER STACK -------------------------------------------
+  // A layer that opens OVER a modal -- the "↳ path" overlay, the chart tips,
+  // Help -- must take Escape for ITSELF. Each used to listen on document in
+  // the BUBBLE phase, as every report modal does, so one Escape closed the
+  // layer AND the report under it (and the report reopened on its empty
+  // form, results gone). Layers now register a close function here; ONE
+  // capture-phase dispatcher closes only the TOP layer and stops the event,
+  // so the modals' bubble-phase handlers never see it. The report modals
+  // themselves stay on their own handlers (the base layer). dsConfirm_ /
+  // dsPrompt_ run their own capture-phase Escape and win while they are up.
+  var escapeLayers_ = [];
+  function escapeLayerPush_(closeFn) {
+    escapeLayerRemove_(closeFn);
+    escapeLayers_.push(closeFn);
+  }
+  function escapeLayerRemove_(closeFn) {
+    var i = escapeLayers_.lastIndexOf(closeFn);
+    if (i >= 0) escapeLayers_.splice(i, 1);
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !escapeLayers_.length) return;
+    if (document.querySelector('.ds-confirm-overlay')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var top = escapeLayers_.pop();
+    try { top(); } catch (err) { /* the layer is already gone */ }
+  }, true);
 
   // -- Formatting helpers --------------------------------------------------
 

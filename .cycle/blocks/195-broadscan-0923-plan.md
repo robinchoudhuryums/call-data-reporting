@@ -62,7 +62,7 @@ ENG-1, S2A-1 (missed half), ENG-2, ENG-11.
 - PCR-5 Low: AgentDay LIMIT before exact-name filter -> truncated wrong (AgentDay.gs:341, 442-452).
 - PCR-8 Low: escalation outage snapshot force-refreshed only after delete.
 
-## Batch 7 — client UI layering & races (~9h)
+## Batch 7 — client UI layering & races — SHIPPED (block 201; trp-row left as-is, see block)
 UI-1 Escape on a stacked layer closes the report modal (script-5:629, script-4:1010, script-2:968 vs script-9:39); UI-2 Help drops outer modal trap (script-2:947-967); UI-3 view-as YTD Company line (script-3 ovYtdData + ovStripChartTrend_ ignores viewAsDept); UI-4 Escalations init failure spinner/no retry/no beacon (script-10:103-162); UI-5/6/7/11 stale-response races (script-9:2072, :410; script-10:1828; script-7:2890/2983); UI-9 focusable rows w/o aria-expanded; UI-8 placeholder-only labels (script-7:1697/1698/2963, script-8:4530).
 
 ## Batch 8 — engines & admin write hygiene (~11.5h)

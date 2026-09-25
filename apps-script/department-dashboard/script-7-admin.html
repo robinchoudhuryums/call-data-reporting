@@ -1694,8 +1694,11 @@
            +   '<td colspan="7">'
            +     '<div class="of-add-form">'
            +       '<span class="of-add-label">Add <strong>' + escapeHtml(o.name) + '</strong> to roster:</span>'
-           +       '<select class="of-add-dept" data-idx="' + idx + '">' + deptOptionsHtml + '</select>'
+           // UI-8: a placeholder is not a label -- it vanishes on input and
+           // many screen readers skip it. Name both controls for the agent.
+           +       '<select class="of-add-dept" data-idx="' + idx + '" aria-label="Roster department for ' + escapeHtml(o.name) + '">' + deptOptionsHtml + '</select>'
            +       '<input type="text" class="of-add-exts" data-idx="' + idx + '" '
+           +         'aria-label="Extensions for ' + escapeHtml(o.name) + '" '
            +         'placeholder="e.g. 1042 — the agent’s own extension" '
            +         'value="' + (o.sampleExts || []).map(escapeHtml).join(', ') + '">'
            +       '<button type="button" class="btn of-add-confirm" data-idx="' + idx + '" disabled>Add to roster</button>'
@@ -2895,14 +2898,20 @@
     });
   }
 
+  // UI-11: a filter change (or a post-close reload) while a load was in
+  // flight let the OLDER response land last and repaint the worklist for a
+  // filter no longer selected. Only the newest load may paint.
+  var coachingLoadSeq_ = 0;
   function coachingLoad_() {
     const statusEl = $('coaching-status');
     const table = $('coaching-table');
     if (statusEl) { statusEl.className = 'status status-loading'; statusEl.textContent = 'Loading worklist…'; statusEl.style.display = ''; }
     const filter = $('coaching-status-filter') ? $('coaching-status-filter').value : 'open';
+    const tok = ++coachingLoadSeq_;
     google.script.run
-      .withSuccessHandler(function (resp) { coachingRender_(resp); })
+      .withSuccessHandler(function (resp) { if (tok === coachingLoadSeq_) coachingRender_(resp); })
       .withFailureHandler(function (err) {
+        if (tok !== coachingLoadSeq_) return;
         if (table) table.style.display = 'none';
         if (statusEl) {
           statusEl.className = 'status status-error';
@@ -2970,7 +2979,8 @@
         + '">by ' + escapeHtml(r.closed_by) + '</span>' : '');
     const actions = open
       ? '<input type="text" class="coaching-note-input" data-note-for="' + escapeHtml(r.id)
-        + '" maxlength="500" placeholder="note (optional)" style="width:110px;"> '
+        + '" maxlength="500" placeholder="note (optional)" style="width:110px;"'
+        + ' aria-label="Note for ' + escapeHtml(r.agent_name || 'this flag') + ' (optional)"> '   // UI-8
         + '<button class="btn btn-secondary" type="button" data-coaching-action="resolved" data-id="'
         + escapeHtml(r.id) + '">Resolve</button> '
         + '<button class="btn btn-ghost" type="button" data-coaching-action="dismissed" data-id="'
@@ -2989,7 +2999,20 @@
       + '</tr>';
   }
 
+  // UI-11: one close per flag at a time. A second Resolve/Dismiss click before
+  // the first round trip finished opened a second confirm and sent a second
+  // update for a flag the first had already closed -- an error toast for an
+  // action that had in fact succeeded. The row's controls disable meanwhile.
+  var coachingClosing_ = {};
+  function coachingSetRowBusy_(id, busy) {
+    const sel = '[data-coaching-action][data-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]';
+    document.querySelectorAll(sel).forEach(function (b) { b.disabled = !!busy; });
+  }
   function coachingCloseFlag_(id, action) {
+    if (coachingClosing_[id]) return;
+    coachingClosing_[id] = true;
+    coachingSetRowBusy_(id, true);
+    const done = function () { delete coachingClosing_[id]; coachingSetRowBusy_(id, false); };
     const row = coachingRows_.filter(function (r) { return r.id === id; })[0];
     const noteInput = document.querySelector('input[data-note-for="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
     const note = noteInput ? noteInput.value.trim() : '';
@@ -3004,13 +3027,15 @@
       confirmLabel: verb,
       tone: action === 'dismissed' ? 'danger' : undefined,
     }).then(function (ok) {
-      if (!ok) return;
+      if (!ok) { done(); return; }
       google.script.run
         .withSuccessHandler(function () {
+          done();
           showToast('Flag ' + action, 'success');
           coachingLoad_();
         })
         .withFailureHandler(function (err) {
+          done();
           showToast(err && err.message ? err.message : 'Could not update the flag', 'error');
           coachingLoad_();   // stale-view race → refresh shows the truth
         })

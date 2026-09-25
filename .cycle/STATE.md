@@ -35,10 +35,19 @@
   gates reasons + drops insurer, PCR-3 pendingTail inclusive + script-TZ,
   PCR-9 vetting refuses a sheet-served leg, PCR-5 agent-day quoted-name
   pattern + truncation, PCR-8 snapshot refresh after every escalation write.
-  **WHERE I LEFT OFF:** Batches 1-6 pushed, NOT deployed. Next: deploy the
+  **Batch 7 SHIPPED on this branch** (block 201, client only + one server
+  change): UI-1 capture-phase Escape layer stack (Help / chart tips / call
+  path), UI-2 Help + call-path re-arm the outer trap and scroll lock (the
+  call-path `offsetParent` check never re-armed), UI-3 YTD endpoint honors
+  view-as and the client keys its YTD cache by scope, UI-4 Escalations init
+  failure clears the loader + Retry + beacon, UI-5/6/7/11 sequence tokens /
+  drill key / per-flag close guard, UI-8 aria-labels, UI-9 insurer-row
+  disclosure button (trp-row deliberately unchanged -- it jumps, not
+  expands). ui-harness gained `__HARNESS__.failOnce`.
+  **WHERE I LEFT OFF:** Batches 1-7 pushed, NOT deployed. Next: deploy the
   dashboard + cdr-import + cdr-report, run "Back up now" once, check the
   Health page's `historical-sort` / `email-bcc` rows, then
-  `/broad-implement Batch 7` (client UI layering & races). The full
+  `/broad-implement Batch 8` (engines & admin write hygiene). The full
   plan is `.cycle/blocks/195-broadscan-0923-plan.md`. Batch 11 must also carry S2A-1's
   deferred queue-split half. The per-dept callback table stays the next
   FEATURE (entry below).

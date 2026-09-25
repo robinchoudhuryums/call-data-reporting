@@ -282,3 +282,49 @@ test('the client treats it as a reference series on PERCENTAGE metrics only', fu
   assert.match(ov, /skipLabel: \[mcfg\.baselineLabel \|\| '__ov_no_baseline__', OV_COMPANY_LABEL_\]/,
     'the company line is exempt from spotlight dimming');
 });
+
+// UI-3 (broad-scan 2026-09-23): the YTD endpoint honors VIEW-AS. The client
+// always sent `viewAsDept`; the server ignored it, so an admin previewing a
+// manager still got the admin-only Company line. Behavioural: served from a
+// cache hit so only the viewer resolution + the strip run.
+test('UI-3: getOverviewChartTrend strips the company line for an admin previewing a manager', function () {
+  const cached = JSON.stringify({ available: true, latestDate: '2026-09-22', depts: [],
+    company: { trend: [90] } });
+  const saved = {};
+  const stub = {
+    resolveUser_: function () { return stub.__user; },
+    assertManagerOrAdmin_: function () {},
+    getLatestDataDate: function () { return '2026-09-22'; },
+    getAllDepartments_: function () { return ['Sales', 'CSR']; },
+    logReportUsage_: function () {},
+    CacheService: { getScriptCache: function () { return { get: function () { return cached; }, put: function () {} }; } },
+    Session: { getActiveUser: function () { return { getEmail: function () { return 'a@x'; } }; } },
+  };
+  Object.keys(stub).forEach(function (k) { if (k !== '__user') { saved[k] = h.ctx[k]; h.ctx[k] = stub[k]; } });
+  try {
+    const call = function (user, req) { stub.__user = user; return h.ctx.getOverviewChartTrend(req); };
+    const admin = { email: 'a@x', role: 'admin', departments: ['Sales', 'CSR'] };
+    const mgr = { email: 'm@x', role: 'manager', department: 'Sales', departments: ['Sales'] };
+    assert.ok(call(admin, {}).company, 'a plain admin keeps the company line');
+    assert.ok(call(admin, { viewAsDept: '' }).company, 'an empty view-as is not a preview');
+    assert.equal(call(admin, { viewAsDept: 'Sales' }).company, undefined,
+      'an admin previewing Sales sees what a Sales manager sees -- no company line');
+    assert.ok(call(admin, { viewAsDept: 'Nope' }).company, 'an unknown dept is ignored (no preview)');
+    assert.equal(call(mgr, {}).company, undefined, 'a real manager never gets it');
+    assert.equal(call(mgr, { viewAsDept: 'CSR' }).company, undefined,
+      'view-as never WIDENS a non-admin');
+  } finally {
+    Object.keys(saved).forEach(function (k) { h.ctx[k] = saved[k]; });
+  }
+});
+
+test('UI-3: the client keys the cached YTD payload by view-as scope and re-fetches on a scope change', function () {
+  const ov = fs.readFileSync(path.join(__dirname, '../../apps-script/department-dashboard/script-3-overview.html'), 'utf8');
+  assert.match(ov, /function ovYtdFresh_\(\) \{\s*return !!\(ovYtdData && ovYtdData\.available && ovYtdScope === \(viewAsDept_ \|\| ''\)\);/,
+    'a cached payload is fresh only for the view-as scope it was fetched under');
+  assert.ok(!/ovYtdData && ovYtdData\.available\)/.test(ov.replace(/function ovYtdFresh_[\s\S]*?\n  \}/, '')),
+    'every YTD freshness check must go through ovYtdFresh_');
+  const apply = ov.slice(ov.indexOf('function applyViewAs_('), ov.indexOf('function applyViewAs_(') + 4000);
+  assert.match(apply, /ovChartRange === 'ytd'[\s\S]*?ovLoadYtdChart_\(\)/,
+    'entering/exiting view-as re-fetches the YTD series when YTD is on screen');
+});

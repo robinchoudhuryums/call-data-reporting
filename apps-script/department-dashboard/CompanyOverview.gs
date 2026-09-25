@@ -999,8 +999,19 @@ function getCompanyOverview(req) {
  *                 trendAbandonedPct }] }
  */
 function getOverviewChartTrend(req) {
-  const user = resolveUser_(Session.getActiveUser().getEmail());
-  assertManagerOrAdmin_(user);   // Phase A: all-dept surface, no dept pin below
+  const realUser = resolveUser_(Session.getActiveUser().getEmail());
+  assertManagerOrAdmin_(realUser);   // Phase A: all-dept surface, no dept pin below
+  // UI-3: honor view-as exactly as getCompanyOverview does. The client always
+  // sent `viewAsDept`, and this endpoint ignored it -- so an admin previewing
+  // a manager still got the admin-only Company line. Only ever NARROWS (a
+  // synthetic manager); non-admins and unknown depts keep their real role.
+  // The cache is shared and the strip runs on serve, so no key change.
+  let user = realUser;
+  const viewAsDept = req && String(req.viewAsDept || '').trim();
+  if (realUser.role === 'admin' && viewAsDept
+      && getAllDepartments_().indexOf(viewAsDept) !== -1) {
+    user = { email: realUser.email, role: 'manager', department: viewAsDept, departments: [viewAsDept] };
+  }
 
   const latestDate = getLatestDataDate();
   if (!latestDate) return { available: false };
@@ -1013,7 +1024,7 @@ function getOverviewChartTrend(req) {
   if (cached) {
     try {
       const hit = JSON.parse(cached);
-      logReportUsage_('overviewChartYtd', '(all)', user, true);   // B-8
+      logReportUsage_('overviewChartYtd', '(all)', realUser, true);   // B-8
       return ovStripChartTrend_(hit, user);
     } catch (e) { /* recompute */ }
   }
@@ -1138,7 +1149,7 @@ function getOverviewChartTrend(req) {
   if (configDegraded || qcdDegraded || outageEmpty) {
     Logger.log('overviewChartTrend: skipping cache put (%s) -- degraded payload must not pin.',
       configDegraded ? 'Dept Config read errored' : (qcdDegraded ? 'QCD snapshot read errored' : 'empty DQE read despite a known latest date'));
-    logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
+    logReportUsage_('overviewChartYtd', '(all)', realUser, false);   // B-8
     return ovStripChartTrend_(data, user);
   }
   // Size guard: skip caching an oversized blob (CacheService ~100KB cap) rather
@@ -1148,7 +1159,7 @@ function getOverviewChartTrend(req) {
     try { cache.put(cacheKey, json, REPORT_CACHE_TTL_SECONDS); }
     catch (e) { Logger.log('overviewChartTrend cache put failed: %s', e); }
   }
-  logReportUsage_('overviewChartYtd', '(all)', user, false);   // B-8
+  logReportUsage_('overviewChartYtd', '(all)', realUser, false);   // B-8
   return ovStripChartTrend_(data, user);
 }
 

@@ -4382,6 +4382,11 @@
   /* Inbound report: per-insurer daily drill-down (click-to-expand row). */
   .inbound-insurer-row { cursor: pointer; }
   .inbound-insurer-row:hover td { background: var(--paper-2); }
+  /* UI-9: the disclosure is a real <button> in the first cell (a11y contract). */
+  .inbound-insurer-toggle {
+    font: inherit; color: inherit; background: none; text-align: left;
+    border: 0; padding: 0; cursor: pointer;
+  }
   .inbound-drill-chevron {
     display: inline-block;
     font-size: 10px;

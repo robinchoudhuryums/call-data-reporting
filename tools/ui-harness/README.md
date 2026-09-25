@@ -45,7 +45,14 @@ quietly verify the client against a different Chart.js than production ships.
   from the ROUTER TABLE in `script-4-nav.html`, which is the authority --
   guessing them is what left phase3 silently checking a modal that does not
   exist. These surfaces had thorough server-side pins and, until this driver,
-  nothing asserting that any of them RENDERED.
+  nothing asserting that any of them RENDERED. Two walks ride along (broad
+  scan Batch 7): Help, the chart tips and the "↳ path" overlay stacked over a
+  real report, where Escape must close only the top layer and hand the
+  report back its focus trap and scroll lock (UI-1/UI-2); and a FAILED
+  Escalations init, which must clear the loader, offer Retry, beacon, and
+  recover (UI-4). To force a failure a driver sets
+  `window.__HARNESS__.failOnce[<rpc>] = N`: the next N calls of that RPC reach
+  the failure handler.
 - `drive-devoverlay.js` — the O-11 dev overlay and, more importantly, its
   `google.script.run` **probe**. That probe redefines the single object every
   one of the ~91 server calls in `script.html` passes through, so a wrong
