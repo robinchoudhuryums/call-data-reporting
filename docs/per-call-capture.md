@@ -323,8 +323,10 @@ report, which already charge an unanswered transfer to the receiving queue.
 Two shapes, both from the capture's own link (exactly ONE internal-origin
 record with `related_call_id` = this call, kind inbound, NOT answered; its
 `entry_queue` is the target): the caller was ON HOLD (a warm transfer), or
-that transfer record itself ABANDONED (a BLIND transfer into the target
-queue -- user error, since transfers are meant to be warm, but it happens).
+that transfer record itself ABANDONED -- the caller was put through to the
+target queue and hung up there (first called "blind"; the owner's 2026-09-28
+sample showed these callers were usually held first, the hang-up just not
+flagged as on hold, so the tool and tile say "hung up in the target queue").
 **And the CALLER must have hung up** (owner's sample, 2026-09-28): a transfer
 record also "abandons" when its caller -- the AGENT, on a warm-transfer consult
 -- gives up on the target queue and goes back to the customer, which is not a
@@ -339,9 +341,9 @@ the tile foot names both): the call stays in the answering dept's total and
 answered counts, because its agent did answer it, and a count added to
 "Abandoned" with no call in "total" would bend the abandon rate. An on-hold
 one leaves the answering dept (unless the target is one of its own queues); a
-blind one was never counted anywhere, so it is ADDED to the target even when
-that is the answering dept's own queue, and the company view gains the blind
-ones ("N in a blind transfer"). Two unanswered transfers on one call count
+target-queue one was never counted anywhere, so it is ADDED to the target even when
+that is the answering dept's own queue, and the company view gains the
+target-queue ones ("N hung up in a transfer target queue"). Two unanswered transfers on one call count
 nowhere new (unique-link-only, like the matcher). The CDR cannot tell a
 transfer from a consult ("let me ask Sales"); both are the ruling's case.
 **Checking it:** `sampleTransferAbandons()` (dashboard editor, admin,
@@ -371,7 +373,7 @@ is the record's OWN queue time -- max `secs` over its journey `kind:'queue'`
 events, the synthetic `transfer:true` ones excluded (`inboundQueueWaitSql_` /
 `xferQueueWaitSec_`) -- with `wait_seconds` only as the fallback, since an
 internal call has no IVR but its first leg can be a colleague's on a shared
-tree. **The two tiles overlap by design**: a blind transfer the caller hung
+tree. **The two tiles overlap by design**: a transfer the caller hung
 up on is one caller lost AND one attempt unanswered. The figure still will
 not equal QCD's (different feed, QCD's window edges are start > 6:30 AND end
 < 3:00, and the settled QCD-vs-inbound gap in known-issues applies). The

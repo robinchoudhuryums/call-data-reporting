@@ -594,20 +594,20 @@
       inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
         inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
       // S2C-2: a caller who hung up during a transfer the target never
-      // answered -- on hold (warm) or in the target queue (blind) -- counts
+      // answered -- on hold, or after being put through to the target queue -- counts
       // for the TARGET dept. The foot says so in both directions so the move
-      // is never silent; company-wide only the blind ones are new.
+      // is never silent; company-wide only the target-queue ones are new.
       inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold),
         'caller hung up held'
           + (Number(k.onHoldTransferIn)
             ? ' · ' + fmtNumber(k.onHoldTransferIn)
-              + (meta.companyView ? ' in a blind transfer' : ' while being transferred here') : '')
+              + (meta.companyView ? ' hung up in a transfer target queue' : ' while being transferred here') : '')
           + (Number(k.onHoldTransferOut) ? ' · ' + fmtNumber(k.onHoldTransferOut) + ' moved to the transfer target' : ''),
         inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false)),
       // S2C-6: transfer ATTEMPTS into these queues nobody answered, counted
       // the way QCD counts them (abandoned after more than a minute in the
       // queue, tied to a customer call or not). Separate from the tile above,
-      // which counts callers who hung up -- a blind transfer the caller hung
+      // which counts callers who hung up -- a transfer the caller hung
       // up on appears in both, by design.
       inboundKpiTile_('Transfers not answered', fmtNumber(k.xferUnanswered),
         'dropped after 1+ min in queue'
