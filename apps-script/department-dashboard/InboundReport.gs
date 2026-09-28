@@ -1165,9 +1165,11 @@ function inboundEmailBreakdownTable_(title, rows) {
  * WHILE on this call) that was NOT answered, AND either
  *   - the caller hung up ON HOLD (a warm transfer the target never picked
  *     up), or
- *   - that transfer record itself ABANDONED (a BLIND transfer: the caller was
- *     sent straight into the target queue and hung up there -- "shouldn't
- *     happen, all transfers are supposed to be warm", but user error can).
+ *   - that transfer record itself ABANDONED: the caller was put through to
+ *     the target queue and hung up there. Once called a "blind" transfer, but
+ *     the owner's 2026-09-28 sample showed these callers were usually held
+ *     first -- the phone system just did not flag the hang-up as on hold --
+ *     so the tool and tile say "hung up in the target queue".
  * The linked record's entry_queue is the target. AND the caller must have
  * hung up: their call ended no later than the transfer attempt (+
  * XFER_CALLER_END_SLACK_SEC_) -- see inboundJourneyEndSql_.
@@ -1296,7 +1298,7 @@ function inboundApplyXferTallies_(k, t) {
 //     figure. QCD's own edges differ slightly (start > 6:30 AND end < 3:00);
 //     the settled QCD-vs-inbound gap note in known-issues covers why the two
 //     are never shown side by side as equal.
-//   * Overlap is by design: a blind transfer the caller hung up on appears in
+//   * Overlap is by design: a transfer the caller hung up on appears in
 //     BOTH tiles -- one counts callers lost, this one counts attempts the
 //     target never answered.
 var XFER_UNANSWERED_MIN_WAIT_SEC_ = 60;
@@ -1364,9 +1366,8 @@ var XFER_SAMPLE_DEFAULT_DAYS_ = 10;   // inside the ~14-day Call_Legs window, so
  *
  * Logs, in order: the MOVED count by (answering label -> target queue ->
  * target dept); the three NOT-moved neighbours worth knowing about (target
- * answered, more than one unanswered transfer = ambiguous, and the
- * blind-transfer shape -- caller NOT on hold, a linked transfer abandoned,
- * which the ruling does not cover); then up to XFER_SAMPLE_MAX_ moved calls
+ * answered, more than one unanswered transfer = ambiguous, on hold to the same
+ * dept, not abandoned, and the caller who stayed on the line); then up to XFER_SAMPLE_MAX_ moved calls
  * with both call ids. Then the S2C-6 section: the "Transfers not answered"
  * attempts (xferUnansweredTally_, the tile's rule) by queue and dept, what
  * was not counted, and up to XFER_SAMPLE_MAX_ of them. Call ids, times, queue
@@ -1409,7 +1410,7 @@ function sampleTransferAbandons() {
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound-xfer-sample');
     rs.close(); st.close();
     const out = xferSampleTally_(JSON.parse(json || '[]'), obCallbackDeptMapSafe_(), inboundDeptFinalLabels_);
-    Logger.log('sampleTransferAbandons %s..%s -- READ-ONLY. Callers who hung up on hold during an UNANSWERED transfer, or in the target queue after a BLIND transfer, count for the TARGET dept.', from, to);
+    Logger.log('sampleTransferAbandons %s..%s -- READ-ONLY. Callers who hung up during an UNANSWERED transfer -- on hold, or after being put through to the target queue -- count for the TARGET dept.', from, to);
     // Counts go through String(): Logger's %s renders a bare JS number as "28.0".
     const n = function (x) { return String(Number(x) || 0); };
     const hms = function (sec) {
@@ -1539,7 +1540,7 @@ function xferSampleTally_(rows, deptMap, labelsOf) {
       return;
     }
     const m = { date: r.d, start: r.s || null, callId: r.id, finalDept: r.fd || null,
-                shape: r.oh ? 'on hold' : 'blind transfer',
+                shape: r.oh ? 'on hold' : 'in target queue',
                 callerEndSec: callerEndSec, xferEndSec: xferEndSec,
                 holdSec: r.hold == null ? null : Number(r.hold), xferId: x.id, targetQueue: x.q,
                 targetDepts: depts, xferDisp: x.disp };

@@ -422,7 +422,7 @@ tests/
                               branches),
                               inbound-xfer-abandon (S2C-2: a caller who hung
                               up during an UNANSWERED transfer -- on hold or
-                              in a blind transfer -- counts for the transfer
+                              in the target queue -- counts for the transfer
                               TARGET, only when the caller's call ended by
                               the time the attempt did (journey end times):
                               total/answered never move, the company
