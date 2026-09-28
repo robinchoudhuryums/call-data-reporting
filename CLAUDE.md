@@ -2432,6 +2432,7 @@ S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboa
 S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
 S46 | Outbound report reaches a manager (the 6c release) | Subsystem: Department Dashboard
 S47 | Agent-day view: fidelity degrades honestly across the three horizons | Subsystem: Department Dashboard
+S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

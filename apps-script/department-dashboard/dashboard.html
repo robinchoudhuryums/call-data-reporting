@@ -2280,6 +2280,45 @@
             </div>
             <div id="outbound-uncalled-list" style="display:none;"></div>
           </div>
+          <!-- v5 (CB-1): the per-dept callback table. COMPANY VIEW ONLY (on a
+               single dept it would repeat the tiles above). Rows sort worst
+               own-rate first; a sub-queue sits indented under its parent; the
+               total row counts each abandon ONCE, so the rows never sum to it
+               (a parent includes its sub-queues; a queue shared by two depts
+               is in both). Expand a row for who made the callbacks. -->
+          <div class="al-section" id="outbound-cbdept-section" style="display:none;">
+            <h3 class="al-section-title">Callbacks by department</h3>
+            <p class="al-hint">
+              Each department is responsible for calling back its own abandoned callers.
+              &ldquo;Called back by us&rdquo; counts abandons on the department&rsquo;s queues whose
+              <strong>first</strong> callback came from its own agents (a parent includes its
+              sub-queues&rsquo; queues and agents). Times run from the abandoned call and include
+              any internal handoff. Expand a row to see who made the callbacks.
+            </p>
+            <div style="overflow-x:auto;">
+              <table class="al-config-table ob-cbdept-table" id="outbound-cbdept-table">
+                <thead><tr>
+                  <th data-cbsort="dept" tabindex="0" class="sortable">Department</th>
+                  <th class="num sortable" data-cbsort="tracked" tabindex="0"
+                      title="Abandoned calls on this department&rsquo;s queues that carried caller ID (a parent includes its sub-queues). Anonymous abandons cannot be called back and are left out.">Trackable abandons</th>
+                  <th class="num sortable" data-cbsort="ownPct" tabindex="0"
+                      title="Trackable abandons whose FIRST callback was dialed by an agent on this department&rsquo;s roster (or a sub-queue&rsquo;s). The ranked column.">Called back by us</th>
+                  <th class="num sortable" data-cbsort="otherCalledBack" tabindex="0"
+                      title="The first callback came from someone NOT on this department&rsquo;s roster: another department, an unrostered dialer, or a call with no agent recorded. The caller was served, but not by the owning department.">By another dept</th>
+                  <th class="num sortable" data-cbsort="notCalledBack" tabindex="0"
+                      title="No outbound call to the caller within the callback window.">Not called back</th>
+                  <th class="num sortable" data-cbsort="connectedPct" tabindex="0"
+                      title="Callbacks (by anyone) where the far end answered: a person, a voicemail greeting or a phone menu. An UPPER BOUND on callers actually reached, as a share of trackable abandons.">Callbacks connected (upper bound)</th>
+                  <th class="num sortable" data-cbsort="medianCallbackSec" tabindex="0"
+                      title="Median time from the abandoned call to the first callback, measured from the caller&rsquo;s side: it INCLUDES any internal handoff (e.g. an email to the owning department), so it is not agent responsiveness alone. Same clock as the Median tile above.">Median time</th>
+                  <th class="num sortable" data-cbsort="pendingTail" tabindex="0"
+                      title="Not called back yet, but still inside the callback window.">Still in window</th>
+                </tr></thead>
+                <tbody id="outbound-cbdept-tbody"></tbody>
+                <tfoot id="outbound-cbdept-tfoot"></tfoot>
+              </table>
+            </div>
+          </div>
           <div class="al-section" id="outbound-agent-section">
             <h3 class="al-section-title">Per-agent outbound activity</h3>
             <p class="al-hint" id="outbound-attribution-note"></p>

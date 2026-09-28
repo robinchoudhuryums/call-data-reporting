@@ -1758,6 +1758,16 @@ When something looks wrong, before assuming a code bug, check:
     last-write-wins on the Neon side -- are found by `findDqeDuplicateRows`
     (neonbackfill.js) and merged by `repairDqeDuplicateMerge` (sheetRepairs.js,
     with a `preview` twin); an Orphan Fix rename can create them (X-1, open).
+    **Uploading several days in a row (ING-4, 2026-09-28):** the upload
+    trigger now imports EVERY not-yet-processed `Call_Legs_*` date within 14
+    days of the newest, OLDEST FIRST, instead of only the newest sheet -- so
+    uploading 09/23 then 09/24 minutes apart no longer skips 09/23 while the
+    first import still holds the lock. A skipped upload (lock busy) or a run
+    that hits the time budget schedules a one-shot `runPendingImportCatchUp_`
+    trigger 2 minutes out that finishes the rest; it deletes itself after it
+    runs. A date already in history is left alone (use Manual Export to
+    force a re-import, as above). Seeing a `runPendingImportCatchUp_` trigger
+    in the cdr-import triggers list for a few minutes is normal.
 
 57. **Neon storage cap — the phones-write gate, the weekly retention prune,
     and the one-time reclaim runbook (R27, 2026-09).** The free tier is 0.5 GB

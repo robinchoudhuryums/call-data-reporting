@@ -7031,6 +7031,15 @@
   .ob-delay-dot--muted  { background: var(--muted); }
   .ob-delay-dot--warn   { background: var(--warn); }
 
+  /* v5 (CB-1): the per-dept callback table. A sub-queue row is indented
+     under its parent; the unmapped row reads as a config gap (muted, italic);
+     the total row (a tfoot) is ruled off because it is NOT the rows' sum. */
+  .ob-cbdept-child .qcd-expand-toggle { padding-left: 14px; }
+  .ob-cbdept-indent { color: var(--muted); }
+  .ob-cbdept-unmapped td:first-child { font-style: italic; color: var(--muted); }
+  .ob-cbdept-total td { border-top: 2px solid var(--line); font-weight: 600; }
+  .ob-cbdept-detail { margin: 6px 0; }
+
   /* The abandon-hour strip. Scrolls horizontally on a narrow viewport rather
      than squeezing the cells past legibility -- the table/diagram exception
      to the no-horizontal-scroll rule. */

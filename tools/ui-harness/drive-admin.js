@@ -83,7 +83,47 @@ const MODALS = [
       ['#outbound-delay-strip .ob-delay-seg', 'time-to-callback distribution'],
       ['#outbound-hour-strip .ob-hour-cell', 'callback-by-abandon-hour strip'],
       ['#outbound-email-btn', 'the Email-to-me control'],
-    ] } },
+      // v5 (CB-1): the per-dept callback table (company view only).
+      ['#outbound-cbdept-tbody tr.ob-cbdept-row', 'per-dept callback rows'],
+      ['#outbound-cbdept-tbody tr.ob-cbdept-child', 'a sub-queue indented under its parent'],
+      ['#outbound-cbdept-tfoot tr.ob-cbdept-total', 'the once-counted total row'],
+    ], probe: async function (page, record) {
+      // Behaviour, not presence: the default order is worst OWN-rate first
+      // with the child kept under its parent and the unmapped row last; the
+      // row disclosure opens from the KEYBOARD; a header sort re-orders.
+      const order = await page.evaluate(() => Array.from(
+        document.querySelectorAll('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle'))
+        .map((b) => b.textContent.replace(/[\u21b3\u25b6\u25bc]/g, '').trim()));
+      record('Outbound: callback rows sort worst own-rate first, child under parent, unmapped last',
+        JSON.stringify(order) === JSON.stringify(['CSR', 'Spanish', 'Sales', 'Not mapped to a department']),
+        JSON.stringify(order));
+      await page.focus('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(150);
+      const opened = await page.evaluate(() => {
+        const btn = document.querySelector('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle');
+        const detail = btn && btn.closest('tr').nextElementSibling;
+        return { exp: btn && btn.getAttribute('aria-expanded'),
+                 shown: !!detail && detail.style.display !== 'none'
+                   && /First callback by/.test(detail.textContent) };
+      });
+      record('Outbound: a callback row expands from the keyboard', opened.exp === 'true' && opened.shown,
+        JSON.stringify(opened));
+      // Twice: ascending by name happens to match the default order, so only
+      // the descending flip proves the rows actually re-sorted.
+      await page.focus('#outbound-cbdept-table th[data-cbsort="dept"]');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(150);
+      await page.focus('#outbound-cbdept-table th[data-cbsort="dept"]');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(150);
+      const sorted = await page.evaluate(() => ({
+        aria: document.querySelector('#outbound-cbdept-table th[data-cbsort="dept"]').getAttribute('aria-sort'),
+        first: (document.querySelector('#outbound-cbdept-tbody tr.ob-cbdept-row .qcd-expand-toggle') || {}).textContent,
+      }));
+      record('Outbound: a callback header sorts from the keyboard (aria-sort set)',
+        sorted.aria === 'descending' && /Sales/.test(sorted.first || ''), JSON.stringify(sorted));
+    } } },
   // 6d: the agent-day view. Its RPCs (getAgentDay + getIndividualReportInit
   // for the picker) are mocked in build-harness.js. Like Outbound it opens on
   // a setup form, so `run` drives it through to the rendered day -- the
@@ -145,6 +185,7 @@ const MODALS = [
           const n = await page.locator(m.sel + ' ' + sel).count();
           record(m.name + ': renders ' + label, n > 0, 'count=' + n);
         }
+        if (m.run.probe) await m.run.probe(page, record);
       }
 
       const info = await page.evaluate((sel) => {

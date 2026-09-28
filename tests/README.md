@@ -420,6 +420,16 @@ tests/
                               callback rule's sheet-side mirror, the
                               never-cache rule and all three failure
                               branches),
+                              outbound-callback-dept (CB-1: the per-dept
+                              callback table -- own + other + none ===
+                              tracked on every row and the total, the FIRST
+                              callback decides (call_id tie-break), parent
+                              rows take their sub-queues' queues AND agents,
+                              a double-mapped queue in both rows, unmapped
+                              queues in their own row, the named tallies,
+                              entry-queue-only attribution for abandons, and
+                              Neon-vs-sheet parity against a hand-worked
+                              blob),
                               date-presets (the SHARED preset resolver: no
                               open-ended preset includes today, the
                               degenerate month/week-start clamps, and a

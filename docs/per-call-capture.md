@@ -404,10 +404,22 @@ connected", disclosed as an UPPER BOUND on callers reached; and the audit's
 figures never appear in reporting. Pinned in `outbound-report.test.js`. **Company view is the FLAT table by
 owner ruling (Option C, 2026-08-20)**: crossover agents have multiple
 roster homes, so per-dept cards would double-count or misattribute --
-don't "upgrade" without a new ruling. `getOutboundUncalled` is the
+don't "upgrade" without a new ruling. **The per-dept CALLBACK table (CB-1,
+2026-09-28) does not contradict that ruling**: its row axis is the ABANDON's
+entry queue (one queue, one or more depts -- never an agent's homes), and the
+agent only decides the own / other COLUMN (member of THIS row's dept, a
+parent including its sub-queues' rosters). Company view only
+(`callbackByDept`, null on a dept view); one CTE pass of the callback
+lateral joined to a queue->dept VALUES map (`outboundCallbackByDeptSql_`),
+so a double-mapped queue is in both rows and each dept gets a real median;
+unmapped queues get their own row; the TOTAL row reuses the company callback
+block (never the rows' sum). The FIRST callback decides own vs other, with a
+`call_id` tie-break in the lateral that the sheet fallback reproduces.
+`own + other + none === tracked` is pinned on every row and the total
+(`outbound-callback-dept.test.js`); S48 is the walk. `getOutboundUncalled` is the
 not-called-back drill (same lateral as the KPI, cap 200, no caller
 identity; rows reuse the heatmap cell renderer + "↳ path"). Cached
-`outboundReport:v4` + the freshness tag; unavailable payloads uncached.
+`outboundReport:v5` + the freshness tag; unavailable payloads uncached.
 **The owner's six-point round (2026-09-15) added four data cuts and an
 email, all of them landing in the SQL AND the sheet fallback because the two
 feed one shaper:** (2) `calledBackConnectedPct`, the CONNECTED callback rate
@@ -515,7 +527,12 @@ outbound to/from an employee's own extension), as a population DISTINCT from
 the department call-queue calls DQE Historical Data / QCD already cover. The
 defining rule: an INBOUND direct ring missed BECAUSE the agent was already on
 another call (any overlapping leg + a `DIRECT_BUSY_WRAPUP_SEC`=5s tail) lands
-in its own `missed_busy` bucket and is EXCLUDED from the answer rate (but
+in its own `missed_busy` bucket (S2C-5, 2026-09-28: the agent is busy on a call
+from its ANSWER -- the leg's Connected time -- to its Stop, not from the
+ring's start, so a second call ringing while the first was still ringing is a
+real miss, not "busy"; the owner confirmed a ringing extension cannot be
+forked two ways at once, and cdr-import's read-only `previewCallLegShapes`
+counts any same-start forks to verify it) and is EXCLUDED from the answer rate (but
 still counted + surfaced); outbound is activity-only. The pure engine
 `computeDirectCallMetrics` is unit-tested (`tests/unit/direct-call-metrics.test.js`).
 Persistence: the `Direct Call History` sheet (CDR Report ss, refresh-in-window

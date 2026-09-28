@@ -1,6 +1,8 @@
 # Per-dept callback table + outbound answer quality — plan
 
-Status: **PLAN ONLY, nothing built.** Two linked pieces the owner asked for on
+Status: **Part 1 (the per-dept callback table) BUILT 2026-09-28 as CB-1** -- `outboundShapeCallbackByDept_` / `outboundCallbackByDeptSql_` in OutboundReport.gs, S48; the four open details were ruled then: the FIRST callback decides own vs other, parent rows include children (children indented, total computed once), company view only, and the column is "Callbacks connected (upper bound)". Part 2 CONCLUDED 2026-09-23 with no classifier (see GROUND TRUTH round 2). The original plan text follows.
+
+Original status: **PLAN ONLY, nothing built.** Two linked pieces the owner asked for on
 2026-09-15, after the six-point Outbound round (block 193):
 
 1. **A per-dept callback table** — which departments' abandoned callers get
@@ -742,7 +744,7 @@ near-empty and the surface just says so.
   and `outbound-fallback.test.js` compares them byte for byte. The
   classifier must be ONE pure function both call — the
   `outboundClassifyRing_` pattern from point 4.
-- `outboundReport:v4` -> `v5` (v4 was taken by broad-scan Batch 6's PCR-1/PCR-3).
+- `outboundReport:v4` -> `v5` (v4 was taken by broad-scan Batch 6's PCR-1/PCR-3). **Done 2026-09-28 by the table (CB-1), not by Part 2.**
 
 ---
 
