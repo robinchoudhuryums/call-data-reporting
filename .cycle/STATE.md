@@ -23,7 +23,11 @@
   (PR #345). (1) came back: no forks (S2C-5 confirmed), and 22/583 answered
   calls show the agent only on their Outgoing talk leg -- the S2C-1 agentBusy
   half is now fixed on `claude/broad-scan-gnfpx5` (commit after #345; not yet
-  PR'd). Still waiting on the S2C-2 sample read and (3).
+  PR'd). The S2C-2 sample (28 counted, 25 "blind" with long holds) showed the
+  rule also caught AGENTS giving up on a warm-transfer consult; it now needs
+  the caller's call to have ended by the time the attempt did (`inbound:v14`),
+  also unmerged. Owner to re-run `sampleTransferAbandons` after deploying; (3)
+  still owed.
 - **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
   a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
   owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds

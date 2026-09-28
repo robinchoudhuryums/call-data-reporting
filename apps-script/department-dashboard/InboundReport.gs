@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v13';  // v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v14';  // v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -1167,7 +1167,9 @@ function inboundEmailBreakdownTable_(title, rows) {
  *   - that transfer record itself ABANDONED (a BLIND transfer: the caller was
  *     sent straight into the target queue and hung up there -- "shouldn't
  *     happen, all transfers are supposed to be warm", but user error can).
- * The linked record's entry_queue is the target.
+ * The linked record's entry_queue is the target. AND the caller must have
+ * hung up: their call ended no later than the transfer attempt (+
+ * XFER_CALLER_END_SLACK_SEC_) -- see inboundJourneyEndSql_.
  *
  * UNIQUE-link-only, like the capture's matcher: two unanswered transfers on
  * one call count nowhere new rather than guess. The CDR cannot tell a
@@ -1187,6 +1189,42 @@ function inboundEmailBreakdownTable_(title, rows) {
  *   company view (no `deptPred`): out = 0 (an on-hold move nets to zero),
  *     in = the BLIND ones, which no scope counted before.
  */
+// S2C-2 refinement (owner's sample, 2026-09-28): the caller must actually have
+// HUNG UP. A transfer record "abandons" whenever its CALLER -- the AGENT, on a
+// warm-transfer consult -- hangs up unanswered, and an agent who gives up on
+// the target queue goes back to the customer. So a transfer abandon counts
+// only when the customer's own call ENDED no later than the transfer attempt
+// did (plus this slack for teardown / an agent noticing a hang-up). Ends come
+// from the stored journeys: max(t + secs) over each record's OWN events
+// (the synthetic transfer:true events are excluded). No journey -> unknown ->
+// not counted (conservative).
+var XFER_CALLER_END_SLACK_SEC_ = 30;
+
+/** SQL: a journey column's end, in seconds after midnight (raw PST), or NULL. */
+function inboundJourneyEndSql_(col) {
+  return '(SELECT max((split_part(e->>\'t\', \':\', 1))::int * 3600'
+    + ' + (split_part(e->>\'t\', \':\', 2))::int * 60 + (split_part(e->>\'t\', \':\', 3))::int'
+    + " + CASE WHEN (e->>'secs') ~ '^[0-9]+$' THEN (e->>'secs')::int ELSE 0 END)"
+    + ' FROM json_array_elements(CASE WHEN ' + col + " LIKE '[%' THEN " + col + "::json ELSE '[]'::json END) e"
+    + " WHERE (e->>'t') ~ '^[0-9]{1,2}:[0-9]{2}:[0-9]{2}$' AND COALESCE(e->>'transfer', '') <> 'true')";
+}
+
+/** PURE twin of inboundJourneyEndSql_ for the sample tool (journey JSON text -> seconds | null). */
+function xferJourneyEndSec_(journeyText) {
+  var ev;
+  try { ev = JSON.parse(String(journeyText || '')); } catch (e) { return null; }
+  if (!Array.isArray(ev)) return null;
+  var end = null;
+  ev.forEach(function (e) {
+    if (!e || e.transfer === true) return;
+    var m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(e.t || ''));
+    if (!m) return;
+    var sec = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) + (/^\d+$/.test(String(e.secs)) ? +e.secs : 0);
+    if (end === null || sec > end) end = sec;
+  });
+  return end;
+}
+
 function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues) {
   const qList = (deptQueues && deptQueues.length)
     ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',')
@@ -1194,7 +1232,10 @@ function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues) {
   const predExpr = deptPred ? String(deptPred).replace(/^\s*AND\s+/, '') : '';
   const xf = 'SELECT min(lower(trim(x.entry_queue))) AS xt, '
     + "bool_or(x.disposition = 'abandoned') AS xab, "
-    + 'bool_or(COALESCE(c.abandoned_on_hold, false)) AS oh'
+    + 'bool_or(COALESCE(c.abandoned_on_hold, false)) AS oh, '
+    // The caller HUNG UP: their call ended no later than the transfer attempt.
+    + 'bool_or(COALESCE(' + inboundJourneyEndSql_('c.journey') + ' <= '
+    +   inboundJourneyEndSql_('x.journey') + ' + ' + XFER_CALLER_END_SLACK_SEC_ + ', false)) AS hung'
     + (predExpr ? ', bool_or(COALESCE((' + predExpr + '), false)) AS ind' : '')
     + ' FROM inbound_calls x JOIN inbound_calls c'
     + ' ON c.call_date = x.call_date AND c.call_id = x.related_call_id'
@@ -1206,12 +1247,12 @@ function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues) {
     + ' AND ' + inboundWindowClause_(true)
     + ' GROUP BY c.call_date, c.call_id HAVING count(*) = 1';
   if (!predExpr) {
-    return "(SELECT json_build_object('out', 0, 'in', count(*) FILTER (WHERE NOT s.oh AND s.xab))"
+    return "(SELECT json_build_object('out', 0, 'in', count(*) FILTER (WHERE NOT s.oh AND s.xab AND s.hung))"
       + ' FROM (' + xf + ') s)';
   }
   return '(SELECT json_build_object('
-    + "'out', count(*) FILTER (WHERE s.oh AND s.ind AND s.xt NOT IN (" + qList + ')), '
-    + "'in', count(*) FILTER (WHERE (s.oh OR s.xab) AND s.xt IN (" + qList + ') AND NOT (s.oh AND s.ind))'
+    + "'out', count(*) FILTER (WHERE s.oh AND s.hung AND s.ind AND s.xt NOT IN (" + qList + ')), '
+    + "'in', count(*) FILTER (WHERE (s.oh OR s.xab) AND s.hung AND s.xt IN (" + qList + ') AND NOT (s.oh AND s.ind))'
     + ') FROM (' + xf + ') s)';
 }
 
@@ -1274,13 +1315,13 @@ function sampleTransferAbandons() {
       + ' AND ' + inboundWindowClause_(true) + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
       + " AND c.disposition = 'answered'";
     const links = '(SELECT json_agg(json_build_object('
-      + "'id', x.call_id, 'q', lower(trim(x.entry_queue)), 'disp', x.disposition) ORDER BY x.call_start, x.call_id) "
+      + "'id', x.call_id, 'q', lower(trim(x.entry_queue)), 'disp', x.disposition, 'j', x.journey) ORDER BY x.call_start, x.call_id) "
       + 'FROM inbound_calls x WHERE x.call_date = c.call_date AND COALESCE(x.is_internal, false) '
       + "AND x.related_call_id = c.call_id AND COALESCE(x.related_call_kind, 'inbound') = 'inbound' "
       + "AND COALESCE(trim(x.entry_queue), '') <> '')";
     const sql = "SELECT COALESCE(json_agg(t ORDER BY t.d, t.s), '[]')::text AS j FROM ("
       + 'SELECT c.call_date::text AS d, c.call_start AS s, c.call_id AS id, c.final_dept AS fd, '
-      + 'COALESCE(c.abandoned_on_hold, false) AS oh, c.hold_seconds AS hold, ' + links + ' AS l '
+      + 'COALESCE(c.abandoned_on_hold, false) AS oh, c.hold_seconds AS hold, c.journey AS cj, ' + links + ' AS l '
       + 'FROM inbound_calls c WHERE ' + base + ') t WHERE t.l IS NOT NULL';
     const st = conn.createStatement();
     const rs = st.executeQuery(sql);
@@ -1289,16 +1330,27 @@ function sampleTransferAbandons() {
     rs.close(); st.close();
     const out = xferSampleTally_(JSON.parse(json || '[]'), obCallbackDeptMapSafe_(), inboundDeptFinalLabels_);
     Logger.log('sampleTransferAbandons %s..%s -- READ-ONLY. Callers who hung up on hold during an UNANSWERED transfer, or in the target queue after a BLIND transfer, count for the TARGET dept.', from, to);
-    Logger.log('MOVED: %s call(s).', out.moved.length);
-    Object.keys(out.byRoute).sort().forEach(function (k) { Logger.log('   %s : %s', k, out.byRoute[k]); });
-    Logger.log('NOT counted as a transfer abandon: %s target answered (caller on hold); %s ambiguous (2+ unanswered transfers); %s on-hold transfer to the SAME dept (already counted there); %s transfer not abandoned and caller not on hold.',
-      out.targetAnswered, out.ambiguous, out.sameDept, out.notAbandoned);
+    // Counts go through String(): Logger's %s renders a bare JS number as "28.0".
+    const n = function (x) { return String(Number(x) || 0); };
+    const hms = function (sec) {
+      if (sec == null) return '?';
+      const p = function (v) { return (v < 10 ? '0' : '') + v; };
+      return p(Math.floor(sec / 3600)) + ':' + p(Math.floor(sec % 3600 / 60)) + ':' + p(sec % 60);
+    };
+    Logger.log('COUNTED for the target: %s call(s).', n(out.moved.length));
+    Object.keys(out.byRoute).sort().forEach(function (k) { Logger.log('   %s : %s', k, n(out.byRoute[k])); });
+    Logger.log('NOT counted: %s target answered (caller on hold); %s ambiguous (2+ unanswered transfers); %s on-hold transfer to the SAME dept (already counted there); %s transfer not abandoned and caller not on hold; %s CALLER STAYED ON THE LINE after the transfer attempt ended (the agent gave up on the target and went back to the caller -- not a caller abandon).',
+      n(out.targetAnswered), n(out.ambiguous), n(out.sameDept), n(out.notAbandoned), n(out.callerStayed));
     out.moved.slice(0, XFER_SAMPLE_MAX_).forEach(function (m) {
-      Logger.log('   %s %s  [%s] customer call %s (answered by "%s", held %ss) -> transfer call %s to %s [%s] %s',
-        m.date, m.start || '(no time)', m.shape, m.callId, m.finalDept || '?', m.holdSec == null ? '?' : m.holdSec,
-        m.xferId, m.targetQueue, m.targetDepts.join(' + ') || 'NO DEPT', m.xferDisp);
+      Logger.log('   %s %s  [%s] customer call %s (answered by "%s", held %ss, caller off %s) -> transfer call %s to %s [%s] %s, attempt ended %s',
+        m.date, m.start || '(no time)', m.shape, m.callId, m.finalDept || '?', m.holdSec == null ? '?' : n(m.holdSec),
+        hms(m.callerEndSec), m.xferId, m.targetQueue, m.targetDepts.join(' + ') || 'NO DEPT', m.xferDisp, hms(m.xferEndSec));
     });
-    if (out.moved.length > XFER_SAMPLE_MAX_) Logger.log('   ... and %s more.', out.moved.length - XFER_SAMPLE_MAX_);
+    if (out.moved.length > XFER_SAMPLE_MAX_) Logger.log('   ... and %s more.', n(out.moved.length - XFER_SAMPLE_MAX_));
+    out.stayed.slice(0, 10).forEach(function (m) {
+      Logger.log('   (stayed) %s  customer call %s: caller off %s, transfer call %s to %s ended %s',
+        m.date, m.callId, hms(m.callerEndSec), m.xferId, m.targetQueue, hms(m.xferEndSec));
+    });
     return out;
   } finally {
     try { conn.close(); } catch (ce) { /* already closed */ }
@@ -1323,7 +1375,8 @@ function xferSampleTally_(rows, deptMap, labelsOf) {
   ((deptMap && deptMap.pairs) || []).forEach(function (p) {
     (qDepts[p.queue] || (qDepts[p.queue] = [])).push(p.dept);
   });
-  const out = { moved: [], byRoute: {}, targetAnswered: 0, ambiguous: 0, sameDept: 0, notAbandoned: 0 };
+  const out = { moved: [], byRoute: {}, targetAnswered: 0, ambiguous: 0, sameDept: 0, notAbandoned: 0,
+                callerStayed: 0, stayed: [] };
   (rows || []).forEach(function (r) {
     const unans = (r.l || []).filter(function (x) { return x.disp !== 'answered'; });
     if (!unans.length) { if (r.oh) out.targetAnswered++; return; }
@@ -1332,6 +1385,16 @@ function xferSampleTally_(rows, deptMap, labelsOf) {
     // Not on hold AND the transfer did not abandon (e.g. it went to
     // voicemail): the caller did not hang up on us -- not a transfer abandon.
     if (!r.oh && x.disp !== 'abandoned') { out.notAbandoned++; return; }
+    // The caller must have HUNG UP (inboundJourneyEndSql_'s rule, in JS).
+    const callerEndSec = xferJourneyEndSec_(r.cj);
+    const xferEndSec = xferJourneyEndSec_(x.j);
+    if (callerEndSec == null || xferEndSec == null
+        || callerEndSec > xferEndSec + XFER_CALLER_END_SLACK_SEC_) {
+      out.callerStayed++;
+      out.stayed.push({ date: r.d, callId: r.id, xferId: x.id, targetQueue: x.q,
+                        callerEndSec: callerEndSec, xferEndSec: xferEndSec });
+      return;
+    }
     const depts = (qDepts[x.q] || []).slice();
     // An ON-HOLD transfer to one of the answering dept's OWN queues moves
     // nothing (the report's `out` needs a target outside the dept's queues).
@@ -1342,6 +1405,7 @@ function xferSampleTally_(rows, deptMap, labelsOf) {
     }
     const m = { date: r.d, start: r.s || null, callId: r.id, finalDept: r.fd || null,
                 shape: r.oh ? 'on hold' : 'blind transfer',
+                callerEndSec: callerEndSec, xferEndSec: xferEndSec,
                 holdSec: r.hold == null ? null : Number(r.hold), xferId: x.id, targetQueue: x.q,
                 targetDepts: depts, xferDisp: x.disp };
     out.moved.push(m);

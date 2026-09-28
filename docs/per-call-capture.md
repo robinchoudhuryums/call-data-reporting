@@ -279,7 +279,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v13`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v14`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -325,7 +325,14 @@ record with `related_call_id` = this call, kind inbound, NOT answered; its
 `entry_queue` is the target): the caller was ON HOLD (a warm transfer), or
 that transfer record itself ABANDONED (a BLIND transfer into the target
 queue -- user error, since transfers are meant to be warm, but it happens).
-`inboundXferTallySql_` drives from the few internal records and joins back to
+**And the CALLER must have hung up** (owner's sample, 2026-09-28): a transfer
+record also "abandons" when its caller -- the AGENT, on a warm-transfer consult
+-- gives up on the target queue and goes back to the customer, which is not a
+caller abandon. So one counts only when the customer's call ENDED no later than
+the transfer attempt did (+ `XFER_CALLER_END_SLACK_SEC_` = 30s); both ends are
+max(`t` + `secs`) over each record's OWN journey events (`inboundJourneyEndSql_`
+/ `xferJourneyEndSec_`, the synthetic `transfer:true` events excluded; no
+journey = not counted). `inboundXferTallySql_` drives from the few internal records and joins back to
 the customer call by primary key (a per-answered-row lookup would scan each
 day once per call). ONLY the on-hold tile moves (`kpis.onHoldTransferIn/Out`,
 the tile foot names both): the call stays in the answering dept's total and
@@ -340,9 +347,10 @@ transfer from a consult ("let me ask Sales"); both are the ruling's case.
 **Checking it:** `sampleTransferAbandons()` (dashboard editor, admin,
 read-only; `XFER_SAMPLE_FROM/_TO`, default the last 10 days) logs the counted
 calls by shape and route, the not-counted neighbours (target answered,
-ambiguous, on-hold to the same dept, not abandoned and not on hold), and up to
-25 calls with BOTH call ids -- open `Call_Legs_<date>` in the CDR Import
-spreadsheet and search each id. `inbound:v13`; pinned by
+ambiguous, on-hold to the same dept, not abandoned and not on hold, and the
+caller STAYED on the line), and up to 25 calls with BOTH call ids and both end
+times -- open `Call_Legs_<date>` in the CDR Import
+spreadsheet and search each id. `inbound:v14`; pinned by
 `inbound-xfer-abandon.test.js`, and the SQL was run against Postgres 16 on a
 fixture (both shapes) before it shipped.
 

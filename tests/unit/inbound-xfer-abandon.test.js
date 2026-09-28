@@ -82,7 +82,7 @@ test('S2C-2: the company view adds the BLIND transfer abandons (an on-hold move 
   assert.equal(r.kpis.total, 40);
   assert.equal(r.kpisPrior.abandonedOnHold, 4 + 1);
   const sql = f.cap.sqls.join('\n');
-  assert.match(sql, /'xfer', \(SELECT json_build_object\('out', 0, 'in', count\(\*\) FILTER \(WHERE NOT s\.oh AND s\.xab\)\)/,
+  assert.match(sql, /'xfer', \(SELECT json_build_object\('out', 0, 'in', count\(\*\) FILTER \(WHERE NOT s\.oh AND s\.xab AND s\.hung\)\)/,
     'company-wide only the blind ones are new');
 });
 
@@ -99,35 +99,58 @@ test('S2C-2 SQL: driven from the internal records; unique unanswered link; on ho
   assert.match(sql, /x\.disposition <> 'answered'/, 'the target never picked up');
   assert.match(sql, /bool_or\(x\.disposition = 'abandoned'\) AS xab/, 'the blind shape: the transfer itself abandoned');
   assert.match(sql, /c\.disposition = 'answered' AND COALESCE\(c\.is_internal, FALSE\) = FALSE/);
-  assert.match(sql, /'out', count\(\*\) FILTER \(WHERE s\.oh AND s\.ind AND s\.xt NOT IN \('a_q_csr'\)\)/,
+  assert.match(sql, /'out', count\(\*\) FILTER \(WHERE s\.oh AND s\.hung AND s\.ind AND s\.xt NOT IN \('a_q_csr'\)\)/,
     'out: only an ON-HOLD abandon this dept answered was ever counted here');
-  assert.match(sql, /'in', count\(\*\) FILTER \(WHERE \(s\.oh OR s\.xab\) AND s\.xt IN \('a_q_csr'\) AND NOT \(s\.oh AND s\.ind\)\)/,
+  assert.match(sql, /'in', count\(\*\) FILTER \(WHERE \(s\.oh OR s\.xab\) AND s\.hung AND s\.xt IN \('a_q_csr'\) AND NOT \(s\.oh AND s\.ind\)\)/,
     'in: any transfer abandon into our queues not already counted here');
+  // The CALLER must have hung up: their call ended by the time the transfer
+  // attempt did (an agent abandoning a consult and going back is not one).
+  assert.match(sql, /AS hung/);
+  assert.ok(sql.indexOf(h.call('inboundJourneyEndSql_', 'c.journey') + ' <= '
+    + h.call('inboundJourneyEndSql_', 'x.journey') + ' + 30') !== -1, 'caller end <= transfer end + 30s');
 });
+
+test('S2C-2: a journey\'s end is max(t + secs) over its OWN events (the synthetic transfer ones excluded)', function () {
+  const j = JSON.stringify([{ t: '10:00:00', secs: 30 }, { t: '10:01:00', secs: 600 },
+                            { t: '11:00:00', secs: 5, transfer: true }, { t: 'bad', secs: 9 }]);
+  assert.equal(h.call('xferJourneyEndSec_', j), 10 * 3600 + 11 * 60);
+  assert.equal(h.call('xferJourneyEndSec_', null), null, 'no journey -> unknown -> not counted');
+  assert.equal(h.call('xferJourneyEndSec_', '[]'), null);
+});
+
+// The caller's call and the transfer attempt, as journeys: caller off at
+// `callerOff`, transfer attempt 10:02:00 for `xferSecs` seconds.
+function cj(callerOff) { return JSON.stringify([{ t: '10:00:00', secs: callerOff }]); }
+function xj(xferSecs) { return JSON.stringify([{ t: '10:02:00', secs: xferSecs }]); }
 
 test('S2C-2 sample tool: the same rule, both shapes, and every not-counted neighbour is named', function () {
   const labelsOf = function (d) { return d === 'CSR' ? ['customer success'] : ['inside sales']; };
   const map = { pairs: [{ queue: 'a_q_csr', dept: 'CSR' }, { queue: 'a_q_sales', dept: 'Sales' }] };
   const rows = [
-    { d: '2026-06-09', s: '09:00:00', id: 'c1', fd: 'Customer Success', oh: true, hold: 40,
-      l: [{ id: 'x1', q: 'a_q_sales', disp: 'missed' }] },                                    // on hold -> Sales
-    { d: '2026-06-09', id: 'c2', fd: 'Customer Success', oh: true,
-      l: [{ id: 'x2', q: 'a_q_sales', disp: 'answered' }] },                                  // target answered
-    { d: '2026-06-09', id: 'c3', fd: 'Customer Success', oh: true,
-      l: [{ id: 'x3', q: 'a_q_sales', disp: 'abandoned' }, { id: 'x4', q: 'a_q_sales', disp: 'missed' }] }, // ambiguous
-    { d: '2026-06-09', id: 'c4', fd: 'Customer Success', oh: true,
-      l: [{ id: 'x5', q: 'a_q_csr', disp: 'abandoned' }] },                                   // on hold, own dept
-    { d: '2026-06-09', id: 'c5', fd: 'Customer Success', oh: false,
-      l: [{ id: 'x6', q: 'a_q_sales', disp: 'abandoned' }] },                                 // blind -> Sales
-    { d: '2026-06-09', id: 'c6', fd: 'Customer Success', oh: false,
-      l: [{ id: 'x7', q: 'a_q_sales', disp: 'missed' }] },                                    // not an abandon
-    { d: '2026-06-09', id: 'c7', fd: 'Customer Success', oh: false,
-      l: [{ id: 'x8', q: 'a_q_csr', disp: 'abandoned' }] },                                   // blind, own dept: still NEW
+    { d: '2026-06-09', s: '09:00:00', id: 'c1', fd: 'Customer Success', oh: true, hold: 40, cj: cj(150),
+      l: [{ id: 'x1', q: 'a_q_sales', disp: 'missed', j: xj(120) }] },                                    // on hold -> Sales
+    { d: '2026-06-09', id: 'c2', fd: 'Customer Success', oh: true, cj: cj(150),
+      l: [{ id: 'x2', q: 'a_q_sales', disp: 'answered', j: xj(120) }] },                                  // target answered
+    { d: '2026-06-09', id: 'c3', fd: 'Customer Success', oh: true, cj: cj(150),
+      l: [{ id: 'x3', q: 'a_q_sales', disp: 'abandoned', j: xj(120) }, { id: 'x4', q: 'a_q_sales', disp: 'missed', j: xj(120) }] }, // ambiguous
+    { d: '2026-06-09', id: 'c4', fd: 'Customer Success', oh: true, cj: cj(150),
+      l: [{ id: 'x5', q: 'a_q_csr', disp: 'abandoned', j: xj(120) }] },                                   // on hold, own dept
+    { d: '2026-06-09', id: 'c5', fd: 'Customer Success', oh: false, cj: cj(150),
+      l: [{ id: 'x6', q: 'a_q_sales', disp: 'abandoned', j: xj(120) }] },                                 // blind -> Sales
+    { d: '2026-06-09', id: 'c6', fd: 'Customer Success', oh: false, cj: cj(150),
+      l: [{ id: 'x7', q: 'a_q_sales', disp: 'missed', j: xj(120) }] },                                    // not an abandon
+    { d: '2026-06-09', id: 'c7', fd: 'Customer Success', oh: false, cj: cj(150),
+      l: [{ id: 'x8', q: 'a_q_csr', disp: 'abandoned', j: xj(120) }] },                                   // blind, own dept: still NEW
+    { d: '2026-06-09', id: 'c8', fd: 'Customer Success', oh: false, cj: cj(900),
+      l: [{ id: 'x9', q: 'a_q_sales', disp: 'abandoned', j: xj(120) }] },                   // agent gave up; caller stayed
   ];
   const t = JSON.parse(JSON.stringify(h.call('xferSampleTally_', rows, map, labelsOf)));
   assert.deepEqual(t.moved.map(function (m) { return [m.callId, m.shape, m.targetDepts]; }),
     [['c1', 'on hold', ['Sales']], ['c5', 'blind transfer', ['Sales']], ['c7', 'blind transfer', ['CSR']]]);
-  assert.deepEqual([t.targetAnswered, t.ambiguous, t.sameDept, t.notAbandoned], [1, 1, 1, 1]);
+  assert.deepEqual([t.targetAnswered, t.ambiguous, t.sameDept, t.notAbandoned, t.callerStayed], [1, 1, 1, 1, 1]);
+  assert.deepEqual(t.stayed.map(function (m) { return [m.callId, m.callerEndSec, m.xferEndSec]; }),
+    [['c8', 10 * 3600 + 900, 10 * 3600 + 120 + 120]],
+    'caller off 10:15:00, transfer attempt over at 10:04:00 -- the caller was still with us');
   assert.equal(t.byRoute['blind transfer: Customer Success -> a_q_sales (Sales)'], 1);
   assert.ok(!/hash|caller_number/i.test(JSON.stringify(t)), 'ids, times, queues and labels only');
 });
