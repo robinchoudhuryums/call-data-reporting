@@ -423,10 +423,16 @@ tests/
                               inbound-xfer-abandon (S2C-2: a caller who hung
                               up during an UNANSWERED transfer -- on hold or
                               in a blind transfer -- counts for the transfer
-                              TARGET: total/answered never move, the company
+                              TARGET, only when the caller's call ended by
+                              the time the attempt did (journey end times):
+                              total/answered never move, the company
                               view gains the blind ones, the unique
                               inbound-kind link rule via the PK join, and the
-                              sample tool's matching tally),
+                              sample tool's matching tally; plus S2C-6, the
+                              SEPARATE "Transfers not answered" tally --
+                              internal attempts into the dept's queues,
+                              abandoned after MORE than 60 s of own queue
+                              time, linked or not, its own fields only),
                               outbound-callback-dept (CB-1: the per-dept
                               callback table -- own + other + none ===
                               tracked on every row and the total, the FIRST

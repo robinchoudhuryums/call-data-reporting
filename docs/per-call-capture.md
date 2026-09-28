@@ -125,7 +125,16 @@ what is disclosed: docs/known-issues.md. Editor diagnostics
 record builder over a Call_Legs sheet (never a parallel implementation --
 the chain diagnostic's hand-written rule is what once "resolved" a
 temporally impossible chain). Pinned by
-`tests/unit/inbound-calls.test.js`.
+`tests/unit/inbound-calls.test.js`. **Who the agent is on the answered call
+(S2C-1, 2026-09-28):** normally the CALLEE of an Incoming answered leg, but on
+~4% of answered calls (22 of 583 on 2026-09-24, owner's `previewCallLegShapes`
+run) the agent appears ONLY on their own Outgoing talk leg -- CALLEE = the
+customer's number and CALLEE_NAME = the customer's CNAM, the agent's extension
+in CALLER. `icAnswerLegAgent_` reads CALLER (and CALLER_NAME, never the CNAM)
+for that shape, so both matchers see those agents; uniqueness is counted per
+CALL (`icDistinctRoots_`), because one call can index the same agent twice (a
+ring leg and a talk leg) and that is not an ambiguity. Not retroactive: a date
+re-links on its next import or force re-import within the `Call_Legs_*` window.
 
 ### A CDR root is a leg tree
 
@@ -270,7 +279,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v13`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v15`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -316,7 +325,14 @@ record with `related_call_id` = this call, kind inbound, NOT answered; its
 `entry_queue` is the target): the caller was ON HOLD (a warm transfer), or
 that transfer record itself ABANDONED (a BLIND transfer into the target
 queue -- user error, since transfers are meant to be warm, but it happens).
-`inboundXferTallySql_` drives from the few internal records and joins back to
+**And the CALLER must have hung up** (owner's sample, 2026-09-28): a transfer
+record also "abandons" when its caller -- the AGENT, on a warm-transfer consult
+-- gives up on the target queue and goes back to the customer, which is not a
+caller abandon. So one counts only when the customer's call ENDED no later than
+the transfer attempt did (+ `XFER_CALLER_END_SLACK_SEC_` = 30s); both ends are
+max(`t` + `secs`) over each record's OWN journey events (`inboundJourneyEndSql_`
+/ `xferJourneyEndSec_`, the synthetic `transfer:true` events excluded; no
+journey = not counted). `inboundXferTallySql_` drives from the few internal records and joins back to
 the customer call by primary key (a per-answered-row lookup would scan each
 day once per call). ONLY the on-hold tile moves (`kpis.onHoldTransferIn/Out`,
 the tile foot names both): the call stays in the answering dept's total and
@@ -331,11 +347,38 @@ transfer from a consult ("let me ask Sales"); both are the ruling's case.
 **Checking it:** `sampleTransferAbandons()` (dashboard editor, admin,
 read-only; `XFER_SAMPLE_FROM/_TO`, default the last 10 days) logs the counted
 calls by shape and route, the not-counted neighbours (target answered,
-ambiguous, on-hold to the same dept, not abandoned and not on hold), and up to
-25 calls with BOTH call ids -- open `Call_Legs_<date>` in the CDR Import
-spreadsheet and search each id. `inbound:v13`; pinned by
-`inbound-xfer-abandon.test.js`, and the SQL was run against Postgres 16 on a
-fixture (both shapes) before it shipped.
+ambiguous, on-hold to the same dept, not abandoned and not on hold, and the
+caller STAYED on the line), and up to 25 calls with BOTH call ids and both end
+times -- open `Call_Legs_<date>` in the CDR Import
+spreadsheet and search each id. Pinned by `inbound-xfer-abandon.test.js`,
+and the SQL was run against Postgres 16 on a fixture (both shapes) before it
+shipped.
+
+**"Transfers not answered" is a SEPARATE tile, counted QCD's way (S2C-6,
+owner ruling 2026-09-28, `inbound:v15`).** CSRs are told to drop a transfer
+attempt after ~2 minutes on hold when the target never answers, and QCD counts
+that dropped attempt as an abandon for the TARGET queue. "Abandoned on hold"
+above deliberately does not (it counts callers who hung up), so the attempts
+get their own figure, `kpis.xferUnanswered` (+ `xferUnansweredLinked`, the
+share tied to a customer call; the tile foot names it). The rule,
+`inboundXferUnansweredSql_`: every INTERNAL record (`is_internal`) whose
+entry queue is one of the dept's (case-insensitive; company view = every
+queue), `disposition = 'abandoned'` (QCD has no missed state, so a missed
+attempt is not counted), work-window scoped, with a queue wait STRICTLY more
+than 60 s (QCD's `waitDec > time1Min`). **Linked or not**: a colleague asking
+for help counts exactly as a transfer of a customer does, as in QCD. The wait
+is the record's OWN queue time -- max `secs` over its journey `kind:'queue'`
+events, the synthetic `transfer:true` ones excluded (`inboundQueueWaitSql_` /
+`xferQueueWaitSec_`) -- with `wait_seconds` only as the fallback, since an
+internal call has no IVR but its first leg can be a colleague's on a shared
+tree. **The two tiles overlap by design**: a blind transfer the caller hung
+up on is one caller lost AND one attempt unanswered. The figure still will
+not equal QCD's (different feed, QCD's window edges are start > 6:30 AND end
+< 3:00, and the settled QCD-vs-inbound gap in known-issues applies). The
+sample tool's last section lists the counted attempts by queue and dept, and
+names the ones under the threshold, missed, or with no queue time. Pinned by
+`inbound-xfer-abandon.test.js`; the SQL was run against Postgres 16 on a
+fixture (unlinked, exactly-60 s, synthetic-event and out-of-window cases).
 
 ### Outbound-call capture
 

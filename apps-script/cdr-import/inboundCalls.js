@@ -71,6 +71,42 @@ function icOriginAgentName_(leg) {
   return n.slice(0, IC_JOURNEY_NAME_MAX);
 }
 
+// S2C-1 (owner's leg-shape probe, 2026-09-28): WHO is the agent on an
+// answered talk leg of a captured inbound call? Normally the CALLEE (an
+// Incoming leg ringing the agent's extension -- 561 of 583 answered calls on
+// 2026-09-24). But 22 of them (3.8%) carried the agent ONLY on their own
+// Outgoing talk leg, whose CALLEE is the CUSTOMER's number and whose CALLER is
+// the agent's extension (20 of 22). Keying on CALLEE indexed those legs under
+// the customer's phone digits -- the agent was invisible to the transfer
+// matchers -- and its CALLEE_NAME is the customer's CNAM (PHI), so the name
+// must come from CALLER_NAME here. Returns {ext, name, viaCallee} or null.
+function icAnswerLegAgent_(leg) {
+  if (icExternalNumber_(leg[IC_COL.CALLEE])) {
+    if (icExternalNumber_(leg[IC_COL.CALLER])) return null;   // external both ends: no agent
+    var cext = icDigits_(leg[IC_COL.CALLER]);
+    return cext ? { ext: cext, name: icOriginAgentName_(leg) || '', viaCallee: false } : null;
+  }
+  var aext = icDigits_(leg[IC_COL.CALLEE]);
+  return aext ? { ext: aext, name: String(leg[IC_COL.CALLEE_NAME] == null ? '' : leg[IC_COL.CALLEE_NAME]).trim(),
+                  viaCallee: true } : null;
+}
+
+// The matchers' uniqueness is per CALL, not per leg: one call can carry the
+// agent twice (a ring leg AND their own talk leg -- the very reason S2C-1 was
+// held back), and two entries for the SAME root are not an ambiguity. Returns
+// the distinct roots, first-seen order.
+function icDistinctRoots_(matches) {
+  var seen = {}, out = [];
+  (matches || []).forEach(function (m) { if (!seen[m.root]) { seen[m.root] = true; out.push(m.root); } });
+  return out;
+}
+
+// Of several entries for ONE root, the one to describe the answer with: a
+// CALLEE-identified leg names the agent the way every other record does.
+function icPickAgentEntry_(matches) {
+  return matches.filter(function (m) { return m.viaCallee; })[0] || matches[0];
+}
+
 // The raw CDR org-chart label on that same leg ("Field Operations (Market
 // Activity)"). Context only -- it is NOT a dashboard dept header (the
 // final_dept name-space caveat), so no attribution ever keys on it.
@@ -637,11 +673,11 @@ function buildInboundCallRecords_(rawRows) {
     groups[root].forEach(function (l) {
       if (String(l[IC_COL.ANSWERED] == null ? '' : l[IC_COL.ANSWERED]).trim() !== 'Answered'
           || icTimeToSec_(l[IC_COL.TALK]) <= 0) return;
-      var aext = icDigits_(l[IC_COL.CALLEE]);
+      var who = icAnswerLegAgent_(l);   // S2C-1: CALLEE, or CALLER on the agent's own Outgoing leg
       var as = icParseTs_(l[IC_COL.CONNECTED]), ae = icParseTs_(l[IC_COL.STOP]);
-      if (!aext || isNaN(as) || isNaN(ae)) return;
-      agentBusy.push({ root: root, ext: aext, startMs: as, endMs: ae,
-                       name: String(l[IC_COL.CALLEE_NAME] == null ? '' : l[IC_COL.CALLEE_NAME]).trim() });
+      if (!who || isNaN(as) || isNaN(ae)) return;
+      agentBusy.push({ root: root, ext: who.ext, startMs: as, endMs: ae,
+                       name: who.name, viaCallee: who.viaCallee });
     });
   });
 
@@ -687,8 +723,12 @@ function buildInboundCallRecords_(rawRows) {
     var matches = agentBusy.filter(function (a) {
       return a.ext === xext && a.root !== root && tMs >= a.startMs - 5000 && tMs <= a.endMs + 5000;
     });
-    if (matches.length !== 1) return;                  // 0 = no path; >1 = ambiguous -> no guessing
-    var rec = recordByRoot[matches[0].root];
+    // 0 calls = no path; >1 CALLS = ambiguous -> no guessing. Counted per
+    // call (icDistinctRoots_): the agent's ring leg + own talk leg on ONE
+    // call are one candidate, not two.
+    if (icDistinctRoots_(matches).length !== 1) return;
+    var pick = icPickAgentEntry_(matches);
+    var rec = recordByRoot[pick.root];
     if (!rec || !rec.journey || rec.journey.length >= IC_JOURNEY_MAX_EVENTS) return;
     var qn = String(ab[IC_COL.CALLEE_NAME] == null ? '' : ab[IC_COL.CALLEE_NAME]).trim();
     var stopMs = icParseTs_(ab[IC_COL.STOP]);
@@ -705,13 +745,13 @@ function buildInboundCallRecords_(rawRows) {
     // internal record below is now written (not dropped) and reconstructs the
     // ORIGIN hop from exactly these fields.
     enrichedRoots[root] = {
-      callerRoot:  matches[0].root,
+      callerRoot:  pick.root,
       agentExt:    xext,
-      agentName:   matches[0].name || '',
+      agentName:   pick.name || '',
       originQueue: String(rec.entryQueue || '').trim(),
       originStart: rec.callStart || null,
-      answerT:     icIsoTime_(matches[0].startMs),
-      answerTalk:  Math.max(0, Math.round((matches[0].endMs - matches[0].startMs) / 1000))
+      answerT:     icIsoTime_(pick.startMs),
+      answerTalk:  Math.max(0, Math.round((pick.endMs - pick.startMs) / 1000))
     };
   });
 
@@ -763,10 +803,11 @@ function buildInboundCallRecords_(rawRows) {
         return a.ext === ir._originExt && a.root !== ir.callId
           && ir._startMs >= a.startMs - 5000 && ir._startMs <= a.endMs + 5000;
       });
-      if (ctxMatches.length === 1) {
-        ir.relatedCallId = ctxMatches[0].root;
+      var ctxRoots = icDistinctRoots_(ctxMatches);   // S2C-1: unique per CALL
+      if (ctxRoots.length === 1) {
+        ir.relatedCallId = ctxRoots[0];
         ir.relatedCallKind = 'inbound';
-      } else if (!ctxMatches.length) {
+      } else if (!ctxRoots.length) {
         // Step 4: no concurrent captured INBOUND -> try the requester's
         // concurrent OUTBOUND call (the assist-during-outbound shape). Same
         // unique-match-only discipline: 0 or >1 leaves the record unlinked
@@ -1462,7 +1503,8 @@ function previewInternalTransferPaths(dateIso) {
     });
     g.forEach(function (l) {
       if (String(l[IC_COL.ANSWERED] || '').trim() !== 'Answered') return;
-      var ext = icDigits_(l[IC_COL.CALLEE]);                 // the agent's extension
+      var who = icAnswerLegAgent_(l);                        // S2C-1: the capture's own rule
+      var ext = who ? who.ext : '';                          // the agent's extension
       var s = icParseTs_(l[IC_COL.CONNECTED]), e = icParseTs_(l[IC_COL.STOP]);
       if (!ext || isNaN(s) || isNaN(e)) return;
       var rec = { callId: root, ext: ext, startMs: s, endMs: e, entry: entry, caller: caller };
@@ -1510,6 +1552,9 @@ function previewInternalTransferPaths(dateIso) {
     var matches = agentBusy.filter(function (a) {
       return a.ext === ext && a.callId !== root && inWindow(a, tMs);
     });
+    // S2C-1: unique per CALL, like the capture (one call can index the agent twice).
+    var seenCall = {};
+    matches = matches.filter(function (a) { if (seenCall[a.callId]) return false; seenCall[a.callId] = true; return true; });
     if (matches.length === 1) {
       nUnique++;
       var m = matches[0];
@@ -2040,6 +2085,9 @@ function previewOutboundAssistLinksForDate() {
  *     agent's extension in CALLER), those calls are invisible to the matchers.
  *     `calleeExtAnswer` = visible; `onlyExternalCallee` = invisible, split by
  *     whether that leg's CALLER is an extension (the fix would read it there).
+ *     First run (2026-09-24): 561 visible, 22 invisible (20 with an extension
+ *     in CALLER), 0 neither -- so the matchers now read that leg's CALLER
+ *     (icAnswerLegAgent_) and count matches per CALL (icDistinctRoots_).
  *
  * CDR Import editor / CDR Tools menu:
  *   previewCallLegShapes('2026-09-24')   // no arg -> latest Call_Legs sheet

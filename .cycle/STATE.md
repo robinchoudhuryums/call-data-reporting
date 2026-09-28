@@ -19,8 +19,20 @@
   was RULED the same day (counts for the target too) and SHIPPED
   (`inbound:v13`; the company view gains them). (3) click "Back up now" once
   to seed the fallback workbook.
-  **Where I left off:** all shipped, synced (sync-docs 2026-09-28) and merged;
-  waiting on (1), the S2C-2 sample read, and (3).
+  **Where I left off:** all shipped, synced (sync-docs 2026-09-28) and merged
+  (PR #345). (1) came back: no forks (S2C-5 confirmed), and 22/583 answered
+  calls show the agent only on their Outgoing talk leg -- the S2C-1 agentBusy
+  half is now fixed on `claude/broad-scan-gnfpx5` (commit after #345; not yet
+  PR'd). The S2C-2 sample (28 counted, 25 "blind" with long holds) showed the
+  rule also caught AGENTS giving up on a warm-transfer consult; it now needs
+  the caller's call to have ended by the time the attempt did (`inbound:v14`),
+  also unmerged. The owner then clarified that CSRs DROP an unanswered transfer
+  attempt after ~2 min and QCD counts it for the target; ruled "split it":
+  "Abandoned on hold" keeps the caller-hung-up rule, and a NEW "Transfers not
+  answered" tile (S2C-6, `inbound:v15`) counts every internal attempt into the
+  dept's queues abandoned after > 60 s of queue time, linked or not (QCD's
+  rule) -- also unmerged. Owner to re-run `sampleTransferAbandons` after
+  deploying (it now logs both figures); (3) still owed.
 - **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
   a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
   owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds
