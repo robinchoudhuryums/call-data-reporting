@@ -1593,13 +1593,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   one of these. The delete itself (`deleteHistoricalRowsForDate`) reads only
   the date column and removes matching rows as contiguous BLOCKS, re-padded
   to the prior `getMaxRows` (R38; `force-delete-rows.test.js` pins the match,
-  count and post-state) -- never rewrite the whole sheet again. **P-3 (ordering):** `processNewImport` reads + validates the SOURCE
-  sheet ("Source sheet empty." throw) BEFORE the force-delete block, and
-  since I-6 (Batch 2) the three compute stages
-  (`calculateMetricsInMemory` / `calcQcdReport` / `calcCsrReport`) run before
-  the delete too, so a compute throw is likewise a no-op, and since P-1
-  (Batch 5) the Raw Data staging rewrite + the two output-sheet writes run
-  before it as well (`csr-transfer.test.js` pins the order). New force-path
+  count and post-state) -- never rewrite the whole sheet again. **P-3/I-6/P-1 (ordering):** `processNewImport` runs every
+  delete-independent step -- source validation ("Source sheet empty." throw),
+  the three compute stages (`calculateMetricsInMemory` / `calcQcdReport` /
+  `calcCsrReport`), the Raw Data staging rewrite and both output-sheet writes
+  -- BEFORE the force-delete, so any of them throwing is a no-op
+  (`csr-transfer.test.js` pins the order). New force-path
   writers must keep source validation and every delete-independent write ahead of
   any delete. Pinned by `csr-transfer.test.js` (the helper) + `pipeline-build.test.js` (M2).
 - **System Health "Recent pipeline step failures" is the single trustworthy
@@ -2236,7 +2235,7 @@ items for anything it flags or doesn't cover.)
 25. `CONFIG_SOURCE` -- Dept + Alert + Digest config source switch (backfill -> compare -> flip)
 26. Direct-call history backfill after a bulk rebuild (`backfillDirectCallToNeon`)
 27. Company holidays -- the `Company Holidays` SHEET is the source since H1, the `COMPANY_HOLIDAYS` property only its fallback; maintain it yearly (team-tools reads the same tab, #68)
-28. Neon backup (optional but recommended; needs the new `drive` scope)
+28. Neon backup (optional but recommended; Drive, or the Sheets-workbook fallback when policy blocks the `drive` scope; `restoreNeonBackupFile()`)
 29. Retired server files must be deleted in the WEB EDITOR (INV-17) -- now DETECTED by `check-remote-orphans.mjs`
 30. `QCD_READ_SOURCE` -- the QCD read-back switch; set `QCD_PARITY_FROM/_TO` before running the gate
 31. Automated Daily Call Queue Report email (optional; polls a morning window for readiness)
@@ -2432,6 +2431,8 @@ S44 | CSR transfer detail renders and reconciles | Subsystem: Department Dashboa
 S45 | Admin deletes a mistaken escalation (2a) | Subsystem: Department Dashboard
 S46 | Outbound report reaches a manager (the 6c release) | Subsystem: Department Dashboard
 S47 | Agent-day view: fidelity degrades honestly across the three horizons | Subsystem: Department Dashboard
+S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
+S49 | Transfer abandons land on the target dept (S2C-2) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.

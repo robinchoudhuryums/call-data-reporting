@@ -25,6 +25,8 @@ function row(o) {
   const r = new Array(26).fill('');
   r[0]  = o.cid || '';
   r[2]  = o.start || '';                 // "MM/DD/YYYY H:MM:SS"
+  r[3]  = o.connected || '';             // CONNECTED (answer time) -- S2C-5
+  r[4]  = o.stop || '';                  // STOP
   r[5]  = o.dir || '';                   // Incoming | Internal | Outgoing
   r[6]  = o.talk || '';                  // H:MM:SS
   r[7]  = o.callTime || '';              // H:MM:SS (ring/hold duration)
@@ -142,6 +144,33 @@ test('hold time extends the busy window', function () {
     row({ cid: 'IN', start: D + '10:04:00', dir: 'Incoming', callTime: '0:00:20', caller: '+15551234567', callee: '101', missed: true }),
   ]), MAPS, {});
   assert.equal(rowFor(res, 'Anna').ib_ext_missed_busy, 1);
+});
+
+test('S2C-5: busy runs from ANSWER -- a miss during the other call\'s RINGING is missed_free', function () {
+  // Anna's other call rang 10:00:00-10:00:40 and was answered at 10:00:40,
+  // ending 10:03:00. A direct ring at 10:00:10 came in while that call was
+  // still RINGING -- she was free to pick it up, so it is her miss.
+  const res = compute(grid([
+    row({ cid: 'OTHER', start: D + '10:00:00', connected: D + '10:00:40', stop: D + '10:03:00',
+          dir: 'Incoming', talk: '0:02:20', callTime: '0:03:00', caller: '+15550001111', callee: '101', answered: true }),
+    row({ cid: 'MISS', start: D + '10:00:10', dir: 'Incoming', callTime: '0:00:15',
+          caller: '+15551234567', callee: '101', missed: true }),
+  ]), MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ib_ext_missed_free, 1, 'rang while the other call was still ringing, not answered');
+  assert.equal(a.ib_ext_missed_busy, 0);
+});
+
+test('S2C-5: a ring AFTER the answer is still excused (busy on the answered call)', function () {
+  const res = compute(grid([
+    row({ cid: 'OTHER', start: D + '10:00:00', connected: D + '10:00:40', stop: D + '10:03:00',
+          dir: 'Incoming', talk: '0:02:20', callTime: '0:03:00', caller: '+15550001111', callee: '101', answered: true }),
+    row({ cid: 'MISS', start: D + '10:01:00', dir: 'Incoming', callTime: '0:00:15',
+          caller: '+15551234567', callee: '101', missed: true }),
+  ]), MAPS, {});
+  const a = rowFor(res, 'Anna');
+  assert.equal(a.ib_ext_missed_busy, 1);
+  assert.equal(a.ib_ext_missed_free, 0);
 });
 
 test('internal vs external split (Internal -> int, Incoming -> ext)', function () {

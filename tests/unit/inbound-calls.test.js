@@ -1253,3 +1253,32 @@ test('P-6: the transfer-path preview masks the caller CNAM before it reaches a l
   assert.ok(/cdrMaskExternalName_\(cn\)/.test(block), 'the caller name goes through the IMP-12 initials rule');
   assert.ok(!/caller = String\(l\[IC_COL\.CALLER_NAME\] \|\| ''\)\.trim\(\);/.test(src), 'the verbatim capture is gone');
 });
+
+// S2C-5 / S2C-1 (owner 2026-09-28): the READ-ONLY leg-shape probe's pure core.
+// Counts only -- the probe must never surface a number, name or call id.
+test('callLegShapeTally_: counts direct forks per agent and the answer-leg shape', function () {
+  const maps = { extToAgent: { '101': { name: 'Anna', dept: 'CSR' }, '102': { name: 'Bob', dept: 'CSR' } },
+                 queueExtSet: new Set(['103']) };
+  const rows = [
+    // Answered queue call, agent visible as CALLEE (ext 101).
+    leg({ callId: '810001', legId: 1, start: '06/04/2026 10:00:00', direction: 'Incoming', caller: '12145550001', callee: '103', calleeName: 'A_Q_CSR', answered: 'Answered' }),
+    leg({ callId: '810002', legId: 1, parent: '810001', start: '06/04/2026 10:00:10', connected: '06/04/2026 10:00:15', stop: '06/04/2026 10:02:00', direction: 'Incoming', caller: '12145550001', callee: '101', calleeName: 'Anna', answered: 'Answered', talk: '0:01:45', dept: 'CSR' }),
+    // Answered queue call where the ONLY talk leg is the agent's Outgoing leg.
+    leg({ callId: '820001', legId: 1, start: '06/04/2026 11:00:00', direction: 'Incoming', caller: '12145550002', callee: '103', calleeName: 'A_Q_CSR', answered: 'Answered' }),
+    leg({ callId: '820002', legId: 1, parent: '820001', start: '06/04/2026 11:00:10', connected: '06/04/2026 11:00:12', stop: '06/04/2026 11:03:00', direction: 'Outgoing', caller: '102', callee: '12145550002', calleeName: 'J Doe', answered: 'Answered', talk: '0:02:48', dept: 'CSR' }),
+    // Direct call to Anna that ALSO forked under a second call id at the same second.
+    leg({ callId: '830001', legId: 1, start: '06/04/2026 12:00:00', direction: 'Incoming', caller: '12145550003', callee: '101', missed: 'Missed' }),
+    leg({ callId: '830002', legId: 1, parent: '830001', start: '06/04/2026 12:00:00', direction: 'Incoming', caller: '12145550003', callee: '101', missed: 'Missed' }),
+    // Plain direct call to Bob, one call id.
+    leg({ callId: '840001', legId: 1, start: '06/04/2026 13:00:00', direction: 'Incoming', caller: '12145550004', callee: '102', answered: 'Answered', talk: '0:00:30' }),
+  ];
+  const out = h.call('callLegShapeTally_', rows, maps);
+  assert.equal(out.direct.pairs, 2);
+  assert.equal(out.direct.multiCidPairs, 1, "Anna's direct call rang her under two call ids");
+  assert.equal(out.direct.multiCidSameStart, 1);
+  assert.equal(out.answer.calleeExtAnswer, 2, 'the queue call + Bob\'s answered direct call (also a captured inbound)');
+  assert.equal(out.answer.onlyExternalCallee, 1);
+  assert.equal(out.answer.onlyExternalCalleeCallerExt, 1);
+  const flat = JSON.stringify(out);
+  assert.ok(!/2145550|J Doe|8[1-4]000[12]/.test(flat), 'counts only: no number, name or call id');
+});

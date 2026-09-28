@@ -833,6 +833,9 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_KEEPWARM_ENABLED: 'operator', NEON_KEEPWARM_START_HOUR: 'operator',
     NEON_KEEPWARM_END_HOUR: 'operator',
     NEON_BACKUP_HOUR: 'operator', NEON_BACKUP_KEEP: 'operator',
+    NEON_BACKUP_STORE: 'operator',      // 'sheets' forces the Sheets workbook store
+    NEON_RESTORE_FILE: 'tool', NEON_RESTORE_APPLY: 'tool',   // restoreNeonBackupFile
+    XFER_SAMPLE_FROM: 'tool', XFER_SAMPLE_TO: 'tool',        // sampleTransferAbandons (S2C-2)
     NEON_COVERAGE_DAYS: 'operator', SHEET_COVERAGE_DAYS: 'operator',
     SHEET_COVERAGE_ENABLED: 'operator',
     NEON_RETENTION_ENABLED: 'operator', NEON_RETENTION_JOURNEY_DAYS: 'operator',
@@ -863,6 +866,7 @@ var PROP_REGISTRY_ = Object.freeze({
     LOGIN_NOTIFY_SEEN: 'engine',
     NEON_BACKUP_LAST: 'engine', NEON_BACKUP_LAST_RESULT: 'engine',
     NEON_BACKUP_FOLDER_ID: 'engine',
+    NEON_BACKUP_SS_ID: 'engine',        // Sheets fallback workbook (Drive-permission block)
     NEON_COVERAGE_LAST: 'engine', NEON_COVERAGE_LAST_RESULT: 'engine',
     SHEET_COVERAGE_LAST: 'engine', SHEET_COVERAGE_LAST_RESULT: 'engine',
     NEON_EGRESS_MTD: 'engine', NEON_READ_LAST_ERROR: 'engine',

@@ -339,7 +339,7 @@ rendered-gate covered BEFORE the release rather than after.
 deferred, then RULED OUT (crossover agents hold multiple roster homes); the
 rejection is a contract in three places incl. the render site. Needs a fresh
 ruling.
-**Per-dept CALLBACK table — PLANNED, not built.** A different question from
+**Per-dept CALLBACK table — SHIPPED 2026-09-28 (CB-1, `outboundReport:v5`, S48).** A different question from
 per-dept AGENT cards: an abandoned call has an unambiguous dept (its entry
 queue), a crossover agent does not, so the ruling above does not reach it.
 The owner approved planning it on 2026-09-15 — full design in
@@ -413,7 +413,7 @@ four data cuts: the connected-callback rate promoted to a tile, the
 time-to-callback distribution, the unconnected ring split, and callback rate
 by abandon hour. `outboundReport:v2` -> `v3`. **Point 1 of that list ("release
 it") is the operator gate above and is still pending**; the per-dept CALLBACK
-table raised alongside it is parked awaiting an owner ruling (see below).
+table raised alongside it has since SHIPPED (CB-1, 2026-09-28; see below).
 
 **Size.** S (code) + operator vetting. **Deploy.** dashboard.
 

@@ -232,8 +232,8 @@ test('outbound SQL: callback linkage joins by caller hash within the callback wi
   const r = runCompute_('CSR');
   assert.match(r.sql, /o\.callee_hash = c\.caller_hash/, 'the hash spaces are shared (CLAUDE.md)');
   assert.match(r.sql, /o\.call_date <= c\.call_date \+ 3/, 'OUTBOUND_CALLBACK_WINDOW_DAYS');
-  assert.match(r.sql, /ORDER BY o\.call_date, COALESCE\(o\.call_start,'00:00:00'\) LIMIT 1/,
-    'EARLIEST callback wins — median delay measures the first dial');
+  assert.match(r.sql, /ORDER BY o\.call_date, COALESCE\(o\.call_start,'00:00:00'\), o\.call_id LIMIT 1/,
+    'EARLIEST callback wins — median delay measures the first dial; CB-1: call_id breaks a same-second tie');
 });
 
 test('outbound SQL: agents group by agent_name ONLY — the raw CDR org label is never read', function () {
@@ -245,7 +245,10 @@ test('outbound SQL: agents group by agent_name ONLY — the raw CDR org label is
 
 test('outbound SQL: company view drops the dept predicate but keeps the window clause', function () {
   const r = runCompute_('');
-  assert.ok(!/entry_queue/.test(r.sql), 'no dept scoping in the company view');
+  // v5 (CB-1): the company view now PROJECTS entry_queue (the per-dept
+  // callback table's row axis), so the pin is on the dept FILTER, not the name.
+  assert.ok(!/entry_queue,''\)\)\) IN \(/.test(r.sql), 'no dept scoping in the company view');
+  assert.match(r.sql, /'callbackByDept'/, 'CB-1: the company view carries the per-dept table');
   assert.match(r.sql, /c\.call_start IS NULL OR \(c\.call_start >= '06:30:00'/,
     'the work-window ruling applies to the company figure too');
 });

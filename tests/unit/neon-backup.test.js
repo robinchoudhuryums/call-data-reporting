@@ -211,3 +211,98 @@ test('ENG-1: a full rewrite trashes a stale tail so a restore never duplicates r
   assert.ok(!files['inbound_calls-2026-09.tail.jsonl']);
   assert.equal(rowsIn('inbound_calls-2026-09.jsonl').length, 30);
 });
+
+// -- Sheets fallback (owner 2026-09-28: Workspace blocks the Drive permission) --
+
+function installSheets() {
+  install();
+  h.state.props = {};                                    // no folder id, no workbook yet
+  h.state.spreadsheetsById = {};
+  h.state.createdSpreadsheets.length = 0;
+  h.ctx.DriveApp = {
+    getFolderById: function () { throw new Error('You do not have permission to call DriveApp.getFolderById.'); },
+    createFolder: function () { throw new Error('You do not have permission to call DriveApp.createFolder. Required permissions: https://www.googleapis.com/auth/drive'); },
+  };
+}
+function backupBook() { return h.state.createdSpreadsheets[0]; }
+function tabLines(name) {
+  const sh = backupBook().getSheetByName(name);
+  if (!sh) return [];
+  return sh._data.map(function (r) { return r.join(''); }).filter(Boolean);
+}
+
+test('Sheets fallback: a Drive-permission block writes the backup to a workbook instead of failing', function () {
+  installSheets();
+  inbound = days('2026-09-01', '2026-09-25');
+  const r = runAt('2026-09-26');
+  assert.match(r, /^ok \| store sheets \(Drive unavailable: You do not have permission to call DriveApp\.createFolder/);
+  const ss = backupBook();
+  assert.ok(ss, 'the backup workbook was created with the Sheets permission');
+  assert.equal(h.state.props.NEON_BACKUP_SS_ID, ss.getId());
+  assert.deepEqual(tabLines('inbound_calls-2026-09.jsonl').map(function (l) { return JSON.parse(l).call_date; }),
+    days('2026-09-01', '2026-09-25'), 'one JSON line per row, same content the Drive file would hold');
+  const tab = ss.getSheetByName('inbound_calls-2026-09.jsonl');
+  assert.equal(tab.getMaxRows(), 25, 'trimmed to its rows -- allocated cells count against the cap');
+  assert.equal(tab.getMaxColumns(), 1);
+  assert.ok(!ss.getSheetByName('Sheet1'), 'the empty default tab is removed');
+  assert.ok(ss.getSheetByName('_index'), 'the index records when each file was written');
+});
+
+test('Sheets fallback: the closed-month finality rules run unchanged on the index dates', function () {
+  installSheets();
+  inbound = days('2026-09-01', '2026-09-25');
+  runAt('2026-09-26');
+  inbound = days('2026-09-01', '2026-10-02');
+  runAt('2026-10-03');                                   // rewrite after close
+  assert.equal(tabLines('inbound_calls-2026-09.jsonl').length, 30);
+  inbound = days('2026-09-01', '2026-10-09');
+  runAt('2026-10-10');                                   // grace window -> final
+  inbound.push('2026-09-15');
+  const r = runAt('2026-10-17');
+  assert.match(r, /inbound_calls ok \(1 month file\(s\) written, 1 closed skipped\)/);
+  assert.equal(h.state.createdSpreadsheets.length, 1, 'later runs reuse the same workbook');
+});
+
+test('Sheets fallback: a line longer than one cell continues across columns and round-trips', function () {
+  installSheets();
+  h.call('runNeonBackup_');                               // creates the workbook
+  const folder = h.call('nbSheetsFolder_');
+  const long = JSON.stringify({ call_date: '2026-09-01', journey: 'x'.repeat(100000) });
+  folder.createFile('inbound_calls-2026-08.jsonl', long + '\n' + JSON.stringify({ call_date: '2026-09-02' }));
+  const tab = backupBook().getSheetByName('inbound_calls-2026-08.jsonl');
+  assert.equal(tab.getMaxColumns(), 3, '100k chars -> 3 cells of <= 45,000');
+  const back = folder.getFilesByName('inbound_calls-2026-08.jsonl').next().getBlob().getDataAsString();
+  assert.equal(back.split('\n')[0], long, 'read back byte for byte');
+  assert.ok(tab._numberFormats && tab._numberFormats.length, 'plain-text formatted before the write (no coercion)');
+});
+
+test('restoreNeonBackupFile: previews by default, then inserts ON CONFLICT DO NOTHING from the same store', function () {
+  installSheets();
+  inbound = days('2026-09-01', '2026-09-03');
+  runAt('2026-09-26');
+  h.ctx.assertAdmin_ = function () {};
+  h.state.props.NEON_RESTORE_FILE = 'inbound_calls-2026-09';
+  const prev = h.call('restoreNeonBackupFile');
+  assert.equal(prev.applied, false);
+  assert.equal(prev.rows, 3);
+  assert.deepEqual(Array.from(prev.files), ['inbound_calls-2026-09.jsonl']);
+
+  const sent = [];
+  h.ctx.getDashboardNeonConn_ = function () {
+    return {
+      prepareStatement: function (sql) {
+        return { setString: function (i, v) { sent.push({ sql: sql, v: v }); },
+                 executeUpdate: function () { return 3; }, close: function () {} };
+      },
+      close: function () {},
+    };
+  };
+  h.state.props.NEON_RESTORE_APPLY = 'true';
+  const res = h.call('restoreNeonBackupFile');
+  assert.equal(res.inserted, 3);
+  assert.match(sent[0].sql, /^INSERT INTO inbound_calls SELECT \* FROM json_populate_recordset\(NULL::inbound_calls, \?::json\) ON CONFLICT DO NOTHING$/);
+  assert.equal(JSON.parse(sent[0].v).length, 3);
+  assert.equal(h.state.props.NEON_RESTORE_FILE, undefined, 'the tool params clear after an applied run');
+  assert.equal(h.call('nbRestoreTableFor_', 'escalation_activity-2026-09.jsonl'), 'escalation_activity');
+  assert.equal(h.call('nbRestoreTableFor_', 'pg_shadow-2026-09.jsonl'), null, 'allowlisted tables only');
+});

@@ -279,18 +279,34 @@ function makeFakeSheet(name, data) {
       return this;
     },
     // 1-based contiguous delete (R38). Throws past the grid like Sheets does.
+    // Real Sheets deletes up to getMaxRows() -- BLANK capacity rows included
+    // (the Neon backup's Sheets store trims every tab to its exact size, the
+    // #62 allocated-cells budget). Past the grid still throws.
     deleteRows: function (rowPosition, howMany) {
       const idx = rowPosition - 1;
-      if (idx < 0 || idx + howMany > this._data.length) throw new Error('deleteRows out of range');
-      this._data.splice(idx, howMany);
-      if (this._displays) this._displays.splice(idx, howMany);
-      if (this._formats) this._formats.splice(idx, howMany);
-      if (this._maxRows != null) this._maxRows -= howMany;
+      const maxRows = this.getMaxRows();
+      if (idx < 0 || idx + howMany > maxRows) throw new Error('deleteRows out of range');
+      if (this._data.length > idx) this._data.splice(idx, howMany);
+      if (this._displays && this._displays.length > idx) this._displays.splice(idx, howMany);
+      if (this._formats && this._formats.length > idx) this._formats.splice(idx, howMany);
+      this._maxRows = maxRows - howMany;
+      return this;
+    },
+    // Real Sheet method, modelled: removes columns from the grid WIDTH (and any
+    // data in them). Past the grid throws like Sheets.
+    deleteColumns: function (columnPosition, howMany) {
+      const maxCols = this.getMaxColumns();
+      if (columnPosition < 1 || columnPosition - 1 + howMany > maxCols) throw new Error('deleteColumns out of range');
+      const cut = function (row) { row.splice(columnPosition - 1, howMany); };
+      this._data.forEach(cut);
+      if (this._displays) this._displays.forEach(cut);
+      if (this._formats) this._formats.forEach(cut);
+      this._maxColumns = maxCols - howMany;
       return this;
     },
     // Blank rows at the bottom only affect capacity, never getLastRow.
     insertRowsAfter: function (afterPosition, howMany) {
-      if (this._maxRows != null) this._maxRows += howMany;
+      this._maxRows = this.getMaxRows() + howMany;
       return this;
     },
   };

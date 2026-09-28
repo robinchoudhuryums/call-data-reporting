@@ -593,7 +593,16 @@
         inboundDelta_(k.answered, p.answered, 'pos', false), '', 'inbound'),
       inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
         inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
-      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held',
+      // S2C-2: a caller who hung up during a transfer the target never
+      // answered -- on hold (warm) or in the target queue (blind) -- counts
+      // for the TARGET dept. The foot says so in both directions so the move
+      // is never silent; company-wide only the blind ones are new.
+      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold),
+        'caller hung up held'
+          + (Number(k.onHoldTransferIn)
+            ? ' · ' + fmtNumber(k.onHoldTransferIn)
+              + (meta.companyView ? ' in a blind transfer' : ' while being transferred here') : '')
+          + (Number(k.onHoldTransferOut) ? ' · ' + fmtNumber(k.onHoldTransferOut) + ' moved to the transfer target' : ''),
         inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false)),
       inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon',
         inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false)),
@@ -1226,7 +1235,9 @@
     lines.push(row(['KPI', 'Current', 'Prior']));
     const k = d.kpis || {}, p = d.kpisPrior || {};
     [['Inbound calls', 'total'], ['Answered', 'answered'], ['Abandoned', 'abandoned'],
-     ['Missed', 'missed'], ['Abandoned on hold', 'abandonedOnHold'], ['Anonymous', 'anonymous'],
+     ['Missed', 'missed'], ['Abandoned on hold', 'abandonedOnHold'],
+     ['On hold: transfer abandons added here (S2C-2)', 'onHoldTransferIn'],
+     ['On hold: moved to the transfer target (S2C-2)', 'onHoldTransferOut'], ['Anonymous', 'anonymous'],
      ['Answer rate %', 'answerRate'], ['Abandon rate %', 'abandonRate'],
      ['Avg wait sec', 'avgWaitSec'], ['Avg hold sec', 'avgHoldSec']].forEach(function (m) {
       lines.push(row([m[0], k[m[1]] != null ? k[m[1]] : '', p[m[1]] != null ? p[m[1]] : '']));
@@ -1895,6 +1906,7 @@
     outboundRenderDelayStrip_(cb);                              // (3)
     outboundRenderCbChart_((data && data.daily) || []);
     outboundRenderHourStrip_((data && data.callbackByHour) || []);   // (6)
+    outboundRenderCbDept_(meta.companyView ? (data && data.callbackByDept) : null, meta);   // v5 (CB-1)
     // Reset the drill panel on every fresh render (scope may have changed).
     // UI-5: and ORPHAN any drill still in flight -- it was fetched for the
     // previous range, and used to land on top of this render.
@@ -1936,6 +1948,170 @@
     }
     const agentSection = $('outbound-agent-section');
     if (agentSection) agentSection.style.display = agents.length ? '' : 'none';
+  }
+
+  // v5 (CB-1): the per-dept callback table (company view only). Own sort, not
+  // srtApply_, because the rows are GROUPED: a sub-queue stays indented under
+  // its parent whatever the order, the unmapped row stays last, and the total
+  // row (a tfoot) never takes part. Default = worst own-rate first (ruling 1).
+  var obCbDeptSort_ = { key: 'ownPct', dir: 'asc' };
+  var obCbDeptLast_ = null;
+  function obCbDeptCmp_(a, b) {
+    const k = obCbDeptSort_.key, dir = obCbDeptSort_.dir === 'asc' ? 1 : -1;
+    const va = a[k], vb = b[k];
+    // Nulls (no trackable abandons) sink regardless of direction.
+    if (va == null && vb == null) return String(a.dept).localeCompare(String(b.dept));
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    const c = (typeof va === 'number' && typeof vb === 'number')
+      ? (va - vb) : String(va).localeCompare(String(vb));
+    return (c * dir) || String(a.dept).localeCompare(String(b.dept));
+  }
+  function obCbDeptOrder_(rows) {
+    const present = {};
+    rows.forEach(function (r) { if (!r.unmapped) present[r.dept] = true; });
+    const kids = {};
+    const tops = [];
+    const tail = [];
+    rows.forEach(function (r) {
+      if (r.unmapped) tail.push(r);
+      else if (r.parent && present[r.parent]) (kids[r.parent] || (kids[r.parent] = [])).push(r);
+      else tops.push(r);
+    });
+    const out = [];
+    tops.sort(obCbDeptCmp_).forEach(function (t) {
+      out.push(t);
+      (kids[t.dept] || []).sort(obCbDeptCmp_).forEach(function (c) { out.push(c); });
+    });
+    return out.concat(tail);
+  }
+  function obCbDeptCellsHtml_(r) {
+    const pct = function (v) { return v != null ? v + '%' : '—'; };
+    return '<td class="num">' + fmtNumber(r.tracked) + '</td>'
+      + '<td class="num"><strong>' + fmtNumber(r.ownCalledBack) + '</strong> · ' + pct(r.ownPct) + '</td>'
+      + '<td class="num">' + fmtNumber(r.otherCalledBack) + '</td>'
+      + '<td class="num">' + fmtNumber(r.notCalledBack) + '</td>'
+      + '<td class="num">' + fmtNumber(r.calledBackConnected) + ' · ' + pct(r.connectedPct) + '</td>'
+      + '<td class="num">' + (r.medianCallbackSec != null ? fmtDuration(r.medianCallbackSec) : '—') + '</td>'
+      + '<td class="num">' + fmtNumber(r.pendingTail) + '</td>';
+  }
+  function obCbDeptDetailHtml_(r, t) {
+    const kindNote = { own: 'this department', dept: 'another department', multi: 'an agent on more than one roster',
+                       unrostered: 'on no roster', noAgent: 'no agent recorded' };
+    let html = '';
+    if ((r.byCaller || []).length) {
+      html += '<table class="al-config-table ob-cbdept-detail"><thead><tr>'
+        + '<th>First callback by</th><th>Who</th><th class="num">Callbacks</th><th class="num">Connected</th>'
+        + '</tr></thead><tbody>'
+        + r.byCaller.map(function (b) {
+          return '<tr><td>' + escapeHtml(b.label) + '</td><td>' + escapeHtml(kindNote[b.kind] || '') + '</td>'
+            + '<td class="num">' + fmtNumber(b.calledBack) + '</td>'
+            + '<td class="num">' + fmtNumber(b.connected) + '</td></tr>';
+        }).join('')
+        + '</tbody></table>';
+    } else {
+      html += '<p class="al-hint">No callbacks in this range.</p>';
+    }
+    const tl = r.tallies || {};
+    const bits = [];
+    if (tl.multiRoster) bits.push(fmtNumber(tl.multiRoster) + ' by agents on more than one roster');
+    if (tl.unrostered) bits.push(fmtNumber(tl.unrostered) + ' by a dialer on no roster');
+    if (tl.noAgent) bits.push(fmtNumber(tl.noAgent) + ' with no agent recorded');
+    if (bits.length) html += '<p class="al-hint">Of the callbacks: ' + escapeHtml(bits.join(' · ')) + '.</p>';
+    if (r.ownCalledBack) {
+      html += '<p class="al-hint">' + fmtNumber(r.ownConnected) + ' of the '
+        + fmtNumber(r.ownCalledBack) + ' own callbacks connected (incl. voicemail).</p>';
+    }
+    if (r.abandonedAnonymous) {
+      html += '<p class="al-hint">' + fmtNumber(r.abandonedAnonymous) + ' anonymous abandon(s) not trackable.</p>';
+    }
+    if (r.unmapped && t && (t.unmappedQueues || []).length) {
+      html += '<p class="al-hint">Queues mapped to no department (map them in Dept Config &rarr; '
+        + '&ldquo;Inbound queue aliases&rdquo;): '
+        + t.unmappedQueues.map(function (u) {
+          return escapeHtml(u.queue) + ' (' + fmtNumber(u.tracked) + ')';
+        }).join(', ')
+        + (t.unmappedQueueCount > t.unmappedQueues.length
+          ? ' and ' + fmtNumber(t.unmappedQueueCount - t.unmappedQueues.length) + ' more' : '')
+        + '.</p>';
+    }
+    return html;
+  }
+  function outboundPaintCbDept_() {
+    const t = obCbDeptLast_;
+    const tb = $('outbound-cbdept-tbody');
+    const tf = $('outbound-cbdept-tfoot');
+    if (!t || !tb) return;
+    tb.innerHTML = obCbDeptOrder_(t.rows || []).map(function (r) {
+      const child = !!(r.parent && !r.unmapped);
+      return '<tr class="qcd-expandable ob-cbdept-row' + (child ? ' ob-cbdept-child' : '')
+        + (r.unmapped ? ' ob-cbdept-unmapped' : '') + '">'
+        + '<td><button type="button" class="qcd-expand-toggle" aria-expanded="false">'
+        + (child ? '<span class="ob-cbdept-indent" aria-hidden="true">&#8627; </span>' : '')
+        + escapeHtml(r.dept) + ' <span class="qcd-expand-icon">&#9654;</span></button></td>'
+        + obCbDeptCellsHtml_(r)
+        + '</tr>'
+        + '<tr class="qcd-detail-row" style="display:none;"><td colspan="8"><div class="qcd-detail-wrap">'
+        + obCbDeptDetailHtml_(r, t) + '</div></td></tr>';
+    }).join('');
+    if (tf) {
+      tf.innerHTML = t.total
+        ? '<tr class="ob-cbdept-total"><td title="Every abandon counted once, whichever departments its queue belongs to">'
+          + '<strong>All departments</strong></td>' + obCbDeptCellsHtml_(t.total) + '</tr>'
+        : '';
+    }
+    const table = $('outbound-cbdept-table');
+    if (table) {
+      table.querySelectorAll('th[data-cbsort]').forEach(function (th) {
+        const on = th.getAttribute('data-cbsort') === obCbDeptSort_.key;
+        th.classList.toggle('srt-asc', on && obCbDeptSort_.dir === 'asc');
+        th.classList.toggle('srt-desc', on && obCbDeptSort_.dir === 'desc');
+        if (on) th.setAttribute('aria-sort', obCbDeptSort_.dir === 'asc' ? 'ascending' : 'descending');
+        else th.removeAttribute('aria-sort');
+      });
+    }
+  }
+  function outboundRenderCbDept_(t, meta) {
+    const sec = $('outbound-cbdept-section');
+    if (!sec) return;
+    obCbDeptLast_ = t || null;
+    if (!t || !(t.rows || []).length) { sec.style.display = 'none'; return; }
+    sec.style.display = '';
+    const tb = $('outbound-cbdept-tbody');
+    const table = $('outbound-cbdept-table');
+    if (tb && !tb._obCbWired) {
+      tb._obCbWired = true;
+      // Delegated expand (the qcd-expandable contract: the button owns
+      // aria-expanded + Enter/Space; the row stays the mouse target).
+      tb.addEventListener('click', function (e) {
+        const row = e.target.closest('tr.qcd-expandable');
+        if (row && tb.contains(row)) qcdToggleExpandRow_(row);
+      });
+    }
+    if (table && !table._obCbWired) {
+      table._obCbWired = true;
+      const sortBy = function (th) {
+        const key = th.getAttribute('data-cbsort');
+        if (obCbDeptSort_.key === key) obCbDeptSort_.dir = obCbDeptSort_.dir === 'asc' ? 'desc' : 'asc';
+        else { obCbDeptSort_.key = key; obCbDeptSort_.dir = (key === 'dept' || key === 'ownPct' || key === 'connectedPct') ? 'asc' : 'desc'; }
+        outboundPaintCbDept_();
+      };
+      const thead = table.querySelector('thead');
+      if (thead) {
+        thead.addEventListener('click', function (e) {
+          const th = e.target.closest('th[data-cbsort]');
+          if (th) sortBy(th);
+        });
+        thead.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          const th = e.target.closest && e.target.closest('th[data-cbsort]');
+          if (!th) return;
+          e.preventDefault();
+          sortBy(th);
+        });
+      }
+    }
+    outboundPaintCbDept_();
   }
 
   function outboundAgentRowHtml_(r) {
@@ -2165,6 +2341,21 @@
       'Callback %', cb.calledBackPct != null ? cb.calledBackPct : '',
       'Median callback sec', cb.medianCallbackSec != null ? cb.medianCallbackSec : '',
       'Still in window', cb.pendingTail != null ? cb.pendingTail : '']));
+    // v5 (CB-1): the per-dept callback table, when the view carries one.
+    const cbd = d.callbackByDept;
+    if (cbd && (cbd.rows || []).length) {
+      lines.push('');
+      lines.push(row(['Department', 'Parent', 'Trackable abandons', 'Called back by us', 'Own %',
+        'By another dept', 'Not called back', 'Callbacks connected (upper bound)', 'Connected %',
+        'Median callback sec', 'Still in window']));
+      const cbdRow = function (name, parent, r) {
+        return row([name, parent || '', r.tracked, r.ownCalledBack, r.ownPct != null ? r.ownPct : '',
+          r.otherCalledBack, r.notCalledBack, r.calledBackConnected, r.connectedPct != null ? r.connectedPct : '',
+          r.medianCallbackSec != null ? r.medianCallbackSec : '', r.pendingTail]);
+      };
+      obCbDeptOrder_(cbd.rows).forEach(function (r) { lines.push(cbdRow(r.dept, r.parent, r)); });
+      if (cbd.total) lines.push(cbdRow('All departments (each abandon once)', '', cbd.total));
+    }
     lines.push('');
     lines.push(row(['Agent', 'Roster dept', 'OB calls', 'Connected', 'Connect %',
       'Talk sec', 'ATT sec', 'Attempts']));
@@ -2453,6 +2644,17 @@
     if (el) {
       el.textContent = (st.installed ? 'Weekly trigger installed (Sat ' + st.hour + ':00). ' : 'No trigger installed. ')
         + (st.lastRun ? ('Last run ' + st.lastRun + ' — ' + (st.lastResult || '')) : 'Never run.');
+      // Sheets fallback (Drive blocked by policy): link the backup workbook.
+      // DOM nodes, not innerHTML -- the URL is server-built but stays text.
+      if (st.sheetsUrl && /^https:\/\/docs\.google\.com\//.test(st.sheetsUrl)) {
+        el.appendChild(document.createTextNode(' '));
+        const a = document.createElement('a');
+        a.href = st.sheetsUrl;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = st.store === 'sheets' ? 'Open backup workbook' : 'Backup workbook (fallback)';
+        el.appendChild(a);
+      }
     }
   }
 

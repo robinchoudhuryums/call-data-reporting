@@ -22,6 +22,7 @@ function createShim() {
     spreadsheet: null,                // current fake spreadsheet (set per test)
     spreadsheetsById: {},             // 1b: SpreadsheetApp.create() registry, keyed by id
     createdSpreadsheets: [],          // 1b: every fake SpreadsheetApp.create() call, in order
+    createdTriggers: [],              // ING-4: handler names of ScriptApp.newTrigger(...).create() calls
     strictOpenById: false,            // 1b: true -> openById THROWS for an unknown id (real API)
     sentEmails: [],                   // MailApp.sendEmail captures
     locks: 0,                         // LockService.tryLock call count
@@ -142,15 +143,20 @@ function createShim() {
     },
 
     ScriptApp: {
-      newTrigger: function () {
+      newTrigger: function (handler) {
         const builder = {
           timeBased: function () { return builder; },
           everyDays: function () { return builder; },
           everyWeeks: function () { return builder; },
+          everyMinutes: function () { return builder; },
+          after: function () { return builder; },   // ING-4: the one-shot catch-up
           atHour: function () { return builder; },
           onWeekDay: function () { return builder; },
           nearMinute: function () { return builder; },
-          create: function () { return { getUniqueId: function () { return 'fake-trigger'; } }; },
+          create: function () {
+            state.createdTriggers.push(handler);
+            return { getUniqueId: function () { return 'fake-trigger'; } };
+          },
         };
         return builder;
       },

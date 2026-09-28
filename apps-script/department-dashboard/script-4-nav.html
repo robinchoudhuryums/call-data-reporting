@@ -1458,7 +1458,7 @@
       + escapeHtml(String(k.answerRate || 0)) + '%</strong> were answered' + ratePhrase + '.'];
     if (Number(k.abandonedOnHold) > 0) {
       s.push(fmtNumber(k.abandonedOnHold) + ' caller' + (Number(k.abandonedOnHold) === 1 ? '' : 's')
-        + ' hung up while on hold.');
+        + (Number(k.onHoldTransferIn) ? ' hung up on hold or during a transfer.' : ' hung up while on hold.'));
     }
     if (meta.companyView && Number(k.abandonedIvr) > 0) {
       s.push(fmtNumber(k.abandonedIvr) + ' abandoned in the IVR before reaching any queue.');

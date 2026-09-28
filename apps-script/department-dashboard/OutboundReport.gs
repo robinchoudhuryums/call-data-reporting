@@ -79,7 +79,11 @@
 // v4 (broad-scan Batch 6): PCR-1/PCR-2 a parent's scope rolls in its
 // children's raw aliases + final-dept labels; PCR-3 pendingTail is inclusive
 // of the last window day and anchored on the script-TZ date.
-const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v4';
+// v5 (CB-1, 2026-09-28): `callbackByDept` -- the per-dept callback table on
+// the COMPANY view (own / other / none per dept, keyed on the FIRST callback's
+// dialer); the callback lateral also gained a call_id tie-break so the "first"
+// callback is deterministic when two dials share a second.
+const OUTBOUND_CACHE_KEY_PREFIX = 'outboundReport:v5';
 const OUTBOUND_MAX_RANGE_DAYS = 366;
 // An abandon still counts as "called back" if the first matching outbound
 // lands within this many CALENDAR days of the abandon (3 covers a Friday
@@ -224,6 +228,7 @@ function emptyOutboundReport_(scope) {
     callbackPrior: null,  // v2: prior-window callback rate for the delta chip
     daily: [],            // v2: per-day {date, tracked, calledBack, ratePct}
     callbackByHour: [],   // (6): per abandon-hour {hour, tracked, calledBack, ratePct}
+    callbackByDept: null, // v5 (CB-1): company view only -- see outboundShapeCallbackByDept_
     agents: [],
   };
 }
@@ -363,6 +368,8 @@ function computeOutboundReport_(scope) {
     // typeof-guarded: computePriorWindow_ lives in Data.gs.
     const pw = (typeof computePriorWindow_ === 'function') ? computePriorWindow_(from, to) : null;
     const priorAbandonWhere = pw ? outboundAbandonWhere_(scope, deptQueues, pw.from, pw.to) : null;
+    // v5 (CB-1): the queue->dept map the per-dept callback table joins on.
+    const cbDept = scope.companyView ? obCallbackDeptMap_() : null;
 
     // Timestamps: call_start is raw-PST 'HH:MM:SS' text on BOTH tables (the
     // shared INV-18 storage convention), so cross-table ordering needs no TZ
@@ -372,7 +379,7 @@ function computeOutboundReport_(scope) {
     // FILTERs to non-negative non-null values.
     const cbLateral =
       'LEFT JOIN LATERAL ('
-      +   'SELECT o.connected, EXTRACT(EPOCH FROM ('
+      +   'SELECT o.connected, o.agent_name, EXTRACT(EPOCH FROM ('
       +     "(o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval)"
       +     " - (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval)"
       +   ')) AS delay_sec '
@@ -382,7 +389,10 @@ function computeOutboundReport_(scope) {
       +     'AND o.call_date <= c.call_date + ' + OUTBOUND_CALLBACK_WINDOW_DAYS + ' '
       +     "AND (o.call_date::timestamp + COALESCE(o.call_start,'00:00:00')::interval)"
       +       " >= (c.call_date::timestamp + COALESCE(c.call_start,'00:00:00')::interval) "
-      +   "ORDER BY o.call_date, COALESCE(o.call_start,'00:00:00') LIMIT 1"
+      // CB-1: call_id breaks a same-second tie, so WHICH dial is "first"
+      // (and therefore whose dept gets the credit) is deterministic, and the
+      // sheet fallback can reproduce it (obBuildBlobFromGrids_ sorts the same).
+      +   "ORDER BY o.call_date, COALESCE(o.call_start,'00:00:00'), o.call_id LIMIT 1"
       + ') cb ON true';
 
     // NOTE: the agents sub-selects group by agent_name ONLY and never touch
@@ -456,6 +466,10 @@ function computeOutboundReport_(scope) {
       +         'count(*) FILTER (WHERE cb.delay_sec IS NOT NULL) AS called_back '
       +       'FROM inbound_calls c ' + cbLateral + ' WHERE ' + abandonWhere
       +       ' AND c.call_start IS NOT NULL GROUP BY 1) t4), '
+      // v5 (CB-1): the per-dept callback table, company view only.
+      + (scope.companyView && cbDept
+        ? ("'callbackByDept', " + outboundCallbackByDeptSql_(abandonWhere, cbLateral, cbDept.pairs) + ', ')
+        : '')
       + (pw
         ? ("'agentsPrior', " + agentsSel(pw.from, pw.to) + ', '
           + "'callbackPrior', " + callbackSel(priorAbandonWhere, false) + ', ')
@@ -471,7 +485,7 @@ function computeOutboundReport_(scope) {
     if (!json) return outboundSheetFallback_(scope);
 
     const obj = JSON.parse(json);
-    return outboundShapeReport_(scope, obj, buildDeptsByAgent_());
+    return outboundShapeReport_(scope, obj, buildDeptsByAgent_(), cbDept);
   } catch (e) {
     Logger.log('computeOutboundReport_ failed: ' + (e && e.message ? e.message : e));
     return outboundSheetFallback_(scope);
@@ -485,7 +499,7 @@ function computeOutboundReport_(scope) {
  * derivation over the fetched blob. `deptsByAgent` is the roster map
  * (Data.gs::buildDeptsByAgent_ -- exact INV-04 names, alphabetical homes).
  */
-function outboundShapeReport_(scope, obj, deptsByAgent) {
+function outboundShapeReport_(scope, obj, deptsByAgent, cbDept) {
   const out = emptyOutboundReport_(scope);
   out.meta.coverageStart = obj.coverageStart || null;
 
@@ -620,7 +634,230 @@ function outboundShapeReport_(scope, obj, deptsByAgent) {
   cb.medianCallbackSec = (cbRaw.medianCallbackSec == null)
     ? null : Math.round(Number(cbRaw.medianCallbackSec));
   cb.pendingTail = Number(cbRaw.pendingTail) || 0;   // v2
+  // v5 (CB-1): company view only; the total row reconciles against `cb`.
+  if (scope.companyView && obj.callbackByDept && cbDept) {
+    out.callbackByDept = outboundShapeCallbackByDept_(obj.callbackByDept, cb, deptsByAgent, cbDept);
+  }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// v5 (CB-1): the per-dept callback table (docs/outbound-callback-dept-plan.md
+// Part 1; owner rulings 2026-09-15 + the four details confirmed 2026-09-28).
+//
+// One row per dept: of the TRACKABLE abandons on the dept's queues, how many
+// were called back by ITS OWN agents, by someone else, or not at all.
+//   * Row axis = the abandon's ENTRY QUEUE. The on-hold arm of
+//     inboundDeptPredicate_ requires disposition='answered', so for this
+//     population (disposition='abandoned') the entry queue is the whole rule
+//     -- pinned by outbound-callback-dept.test.js.
+//   * A parent's row includes its children's queues (inboundQueuesForDept_,
+//     ruling 2) and its children's agents count as "us"; the client indents
+//     children under their parent. A queue mapped to TWO depts (M2) lands in
+//     both rows, which is why the TOTAL row is computed once, from the queue
+//     axis, and never by summing rows. A queue mapped to NO dept gets its own
+//     row, so the rows never silently lose calls.
+//   * The FIRST callback decides own vs other (the lateral's LIMIT 1).
+//   * Invariant: ownCalledBack + otherCalledBack + notCalledBack === tracked.
+//   * "Connected" includes voicemail -- an UPPER bound on callers reached.
+//   * The clock is the SAME one as the scope's median tile: from the
+//     abandoned call to the first dial, handoff time included (ruling
+//     2026-09-15 -- never netted out).
+// ---------------------------------------------------------------------------
+
+var OB_CB_UNMAPPED_LABEL_ = 'Not mapped to a department';
+var OB_CB_UNMAPPED_QUEUES_MAX_ = 10;
+
+/**
+ * The queue->dept pairs (lower-cased queue names, child-inclusive, deduped)
+ * plus the one-level parent/child relations, from the SAME accessors every
+ * inbound scope uses. `{ pairs:[{queue,dept}], childrenOf:{}, parentOf:{} }`.
+ */
+function obCallbackDeptMap_() {
+  var depts = getAllDepartments_();
+  var real = {};
+  depts.forEach(function (d) { real[d] = true; });
+  var pairs = [], seen = {}, childrenOf = {}, parentOf = {};
+  depts.forEach(function (d) {
+    (inboundQueuesForDept_(d) || []).forEach(function (q) {
+      var k = String(q == null ? '' : q).trim().toLowerCase();
+      if (!k || seen[k + '\u0000' + d]) return;
+      seen[k + '\u0000' + d] = true;
+      pairs.push({ queue: k, dept: d });
+    });
+    var kids = (typeof inboundChildDepts_ === 'function' ? inboundChildDepts_(d) : [])
+      .filter(function (c) { return real[c] && c !== d; });
+    childrenOf[d] = kids;
+    kids.forEach(function (c) { if (!parentOf[c]) parentOf[c] = d; });
+  });
+  return { pairs: pairs, childrenOf: childrenOf, parentOf: parentOf };
+}
+
+/**
+ * The per-dept callback subselect. ONE pass of the callback lateral over the
+ * company abandon population (a CTE referenced three times, so Postgres
+ * materializes it), joined to the queue->dept map passed in as VALUES --
+ * which is what lets a double-mapped queue land in both rows AND gives each
+ * dept a real median (medians do not fold).
+ *
+ * Returns json { rows, cells, qcells, unmapped } (raw; the shaper names them).
+ */
+function outboundCallbackByDeptSql_(abandonWhere, cbLateral, pairs) {
+  var qmap = (pairs && pairs.length)
+    ? ('SELECT * FROM (VALUES '
+        + pairs.map(function (p) { return '(' + inboundSqlLit_(p.queue) + ', ' + inboundSqlLit_(p.dept) + ')'; }).join(', ')
+        + ') v(queue, dept)')
+    : 'SELECT NULL::text AS queue, NULL::text AS dept WHERE false';
+  return '(WITH qmap AS (' + qmap + '), '
+    + "ab AS (SELECT lower(trim(coalesce(c.entry_queue,''))) AS q, "
+    +   '(c.caller_hash IS NULL) AS anon, c.call_date AS cd, '
+    +   'cb.delay_sec AS delay_sec, cb.connected AS conn, '
+    +   "COALESCE(trim(cb.agent_name),'') AS agent "
+    +   'FROM inbound_calls c ' + cbLateral + ' WHERE ' + abandonWhere + '), '
+    + "ad AS (SELECT COALESCE(m.dept,'') AS dept, ab.* FROM ab LEFT JOIN qmap m ON m.queue = ab.q) "
+    + 'SELECT json_build_object('
+    + "'rows', (SELECT COALESCE(json_agg(r ORDER BY r.dept), '[]') FROM ("
+    +   'SELECT dept, count(*) AS total, count(*) FILTER (WHERE anon) AS anon, '
+    +   'count(*) FILTER (WHERE delay_sec IS NOT NULL) AS called_back, '
+    +   'count(*) FILTER (WHERE conn) AS connected, '
+    +   'percentile_cont(0.5) WITHIN GROUP (ORDER BY delay_sec) '
+    +     'FILTER (WHERE delay_sec IS NOT NULL AND delay_sec >= 0) AS median, '
+    +   'count(*) FILTER (WHERE NOT anon AND delay_sec IS NULL '
+    +     "AND cd >= '" + obTodayIso_() + "'::date - " + OUTBOUND_CALLBACK_WINDOW_DAYS + ') AS pending '
+    +   'FROM ad GROUP BY dept) r), '
+    + "'cells', (SELECT COALESCE(json_agg(x ORDER BY x.dept, x.agent), '[]') FROM ("
+    +   'SELECT dept, agent, count(*) AS called_back, count(*) FILTER (WHERE conn) AS connected '
+    +   'FROM ad WHERE delay_sec IS NOT NULL GROUP BY dept, agent) x), '
+    + "'qcells', (SELECT COALESCE(json_agg(y ORDER BY y.q, y.agent), '[]') FROM ("
+    +   'SELECT q, agent, count(*) AS called_back, count(*) FILTER (WHERE conn) AS connected '
+    +   'FROM ab WHERE delay_sec IS NOT NULL GROUP BY q, agent) y), '
+    + "'unmapped', (SELECT COALESCE(json_agg(u ORDER BY u.tracked DESC, u.q), '[]') FROM ("
+    +   'SELECT q, count(*) FILTER (WHERE NOT anon) AS tracked, count(*) AS total '
+    +   "FROM ad WHERE dept = '' GROUP BY q) u)"
+    + '))';
+}
+
+/**
+ * PURE (outbound-callback-dept.test.js). Shapes the raw { rows, cells,
+ * qcells, unmapped } blob into the table the client renders.
+ *
+ * `total` is the company callback block (already shaped) -- the TOTAL row
+ * reuses it so it reconciles with the tiles above to the call; only its
+ * own/other split is computed here, from the QUEUE-axis cells: a callback is
+ * "own" at company level when its dialer belongs to ANY dept its queue maps to.
+ */
+function outboundShapeCallbackByDept_(raw, total, deptsByAgent, ctx) {
+  var num = function (v) { return Number(v) || 0; };
+  var pct = function (n, d) { return d ? Math.round(n / d * 1000) / 10 : null; };
+  var childrenOf = (ctx && ctx.childrenOf) || {};
+  var parentOf = (ctx && ctx.parentOf) || {};
+  var qDepts = {};
+  ((ctx && ctx.pairs) || []).forEach(function (p) {
+    (qDepts[p.queue] || (qDepts[p.queue] = [])).push(p.dept);
+  });
+  var homesOf = function (agent) { return (agent && deptsByAgent && deptsByAgent[agent]) || []; };
+  // "Us" for a row: its own roster plus its one-level children's.
+  var isMember = function (agent, dept) {
+    if (!dept) return false;
+    var homes = homesOf(agent);
+    if (!homes.length) return false;
+    var group = [dept].concat(childrenOf[dept] || []);
+    for (var i = 0; i < homes.length; i++) if (group.indexOf(homes[i]) !== -1) return true;
+    return false;
+  };
+
+  var cellsBy = {};
+  (raw.cells || []).forEach(function (c) {
+    var d = String(c.dept == null ? '' : c.dept);
+    (cellsBy[d] || (cellsBy[d] = [])).push(c);
+  });
+
+  var rows = (raw.rows || []).map(function (r) {
+    var dept = String(r.dept == null ? '' : r.dept);
+    var unmapped = dept === '';
+    var abandonedTotal = num(r.total), anon = num(r.anon);
+    var tracked = abandonedTotal - anon;
+    var calledBack = num(r.called_back), connected = num(r.connected);
+    var own = 0, ownConn = 0, other = 0;
+    var tallies = { multiRoster: 0, unrostered: 0, noAgent: 0 };
+    var by = {};
+    (cellsBy[dept] || []).forEach(function (c) {
+      var agent = String(c.agent == null ? '' : c.agent).trim();
+      var n = num(c.called_back), k = num(c.connected);
+      var homes = homesOf(agent);
+      if (homes.length > 1) tallies.multiRoster += n;
+      var label, kind;
+      if (!unmapped && isMember(agent, dept)) {
+        own += n; ownConn += k;
+        label = dept; kind = 'own';
+      } else {
+        other += n;
+        if (!agent) { label = 'No agent recorded'; kind = 'noAgent'; tallies.noAgent += n; }
+        else if (!homes.length) { label = 'Unrostered'; kind = 'unrostered'; tallies.unrostered += n; }
+        else if (homes.length > 1) { label = homes.join(' + '); kind = 'multi'; }
+        else { label = homes[0]; kind = 'dept'; }
+      }
+      var key = kind + '\u0000' + label;
+      var b = by[key] || (by[key] = { label: label, kind: kind, calledBack: 0, connected: 0 });
+      b.calledBack += n; b.connected += k;
+    });
+    var byCaller = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) {
+      if ((a.kind === 'own') !== (b.kind === 'own')) return a.kind === 'own' ? -1 : 1;
+      return (b.calledBack - a.calledBack) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
+    });
+    return {
+      dept: unmapped ? OB_CB_UNMAPPED_LABEL_ : dept,
+      unmapped: unmapped,
+      parent: unmapped ? null : (parentOf[dept] || null),
+      abandonedTotal: abandonedTotal, abandonedAnonymous: anon, tracked: tracked,
+      ownCalledBack: own, ownPct: pct(own, tracked),
+      ownConnected: ownConn,
+      otherCalledBack: other,
+      notCalledBack: tracked - calledBack,
+      calledBack: calledBack,
+      calledBackConnected: connected, connectedPct: pct(connected, tracked),
+      medianCallbackSec: r.median == null ? null : Math.round(Number(r.median)),
+      pendingTail: num(r.pending),
+      byCaller: byCaller,
+      tallies: tallies,
+    };
+  });
+  // Server order: mapped rows by name, the unmapped row last (the client
+  // re-sorts worst own-rate first, keeping children under their parent).
+  rows.sort(function (a, b) {
+    if (a.unmapped !== b.unmapped) return a.unmapped ? 1 : -1;
+    return a.dept < b.dept ? -1 : a.dept > b.dept ? 1 : 0;
+  });
+
+  var tOwn = 0;
+  (raw.qcells || []).forEach(function (c) {
+    var agent = String(c.agent == null ? '' : c.agent).trim();
+    var ds = qDepts[String(c.q == null ? '' : c.q)] || [];
+    for (var i = 0; i < ds.length; i++) {
+      if (isMember(agent, ds[i])) { tOwn += num(c.called_back); return; }
+    }
+  });
+  var t = total || {};
+  var tTracked = num(t.abandonedTracked), tCalled = num(t.calledBack);
+  return {
+    rows: rows,
+    total: {
+      abandonedTotal: num(t.abandonedTotal), abandonedAnonymous: num(t.abandonedAnonymous),
+      tracked: tTracked,
+      ownCalledBack: tOwn, ownPct: pct(tOwn, tTracked),
+      otherCalledBack: tCalled - tOwn,
+      notCalledBack: tTracked - tCalled,
+      calledBack: tCalled,
+      calledBackConnected: num(t.calledBackConnected), connectedPct: pct(num(t.calledBackConnected), tTracked),
+      medianCallbackSec: t.medianCallbackSec == null ? null : t.medianCallbackSec,
+      pendingTail: num(t.pendingTail),
+    },
+    unmappedQueues: (raw.unmapped || []).slice(0, OB_CB_UNMAPPED_QUEUES_MAX_).map(function (u) {
+      return { queue: String(u.q == null ? '' : u.q) || '(no entry queue)',
+               tracked: num(u.tracked), total: num(u.total) };
+    }),
+    unmappedQueueCount: (raw.unmapped || []).length,
+  };
 }
 
 /**
@@ -3743,7 +3980,7 @@ function obDaysAfterIso_(iso, n) {
  *               talkSec, ringSec, attempts, callStart, journey]
  * ibGrid rows: the Inbound Calls tab's cols 1..17 (ihRowInDept_'s shape).
  */
-function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
+function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues, cbDept) {
   var agentsFor = function (fromIso, toIso) {
     var byAgent = {};
     for (var i = 0; i < obGrid.length; i++) {
@@ -3787,10 +4024,16 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
       iso: oiso,
       ord: obOrdinal_(oiso, orow[10]),
       connected: String(orow[6] == null ? '' : orow[6]).trim().toUpperCase() === 'TRUE',
+      id: String(orow[1] == null ? '' : orow[1]).trim(),       // CB-1 tie-break
+      agent: String(orow[3] == null ? '' : orow[3]).trim(),    // CB-1 the dialer
     });
   }
   Object.keys(byHash).forEach(function (k) {
-    byHash[k].sort(function (a, b) { return a.ord - b.ord; });
+    // CB-1: the SQL's `ORDER BY ..., o.call_id` -- a same-second tie picks
+    // the same dial on both paths.
+    byHash[k].sort(function (a, b) {
+      return (a.ord - b.ord) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    });
   });
 
   var deptFilter = !!scope.dept;
@@ -3811,6 +4054,8 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var pendingTail = 0;
     var daily = {};
     var byHour = {};   // (6)
+    // v5 (CB-1): per-abandon records for the per-dept table (company view).
+    var recs = (withDetail && scope.companyView && cbDept) ? [] : null;
     for (var i = 0; i < ibGrid.length; i++) {
       var row = ibGrid[i];
       var iso = ncCellDateIso_(row[0]);
@@ -3825,7 +4070,12 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
       agg.abandonedTotal++;
       var d = daily[iso] || (daily[iso] = { d: iso, tracked: 0, called_back: 0 });
       var hash = String(row[3] == null ? '' : row[3]).trim();
-      if (!hash) { agg.abandonedAnonymous++; continue; }   // anonymous: never "not called back"
+      var qKey = String(row[10] == null ? '' : row[10]).trim().toLowerCase();
+      if (!hash) {
+        agg.abandonedAnonymous++;
+        if (recs) recs.push({ q: qKey, anon: true, delay: null, conn: false, agent: '', pending: false });
+        continue;   // anonymous: never "not called back"
+      }
       d.tracked++;
       // (6) the hour cut. `cs` is raw-PST 'HH:MM:SS' text, the same value the
       // SQL's EXTRACT(HOUR ...) reads -- a row with no call_start cannot be
@@ -3847,14 +4097,20 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
         if (cand.ord < abOrd) continue;
         match = cand; break;                                // list is ord-sorted -> earliest
       }
+      var inTail = !match && iso >= obDaysAfterIso_(todayIso, -OUTBOUND_CALLBACK_WINDOW_DAYS);
       if (match) {
         agg.calledBack++;
         d.called_back++;
         if (hb) hb.called_back++;
         if (match.connected) agg.calledBackConnected++;
         delays.push(match.ord - abOrd);
-      } else if (iso >= obDaysAfterIso_(todayIso, -OUTBOUND_CALLBACK_WINDOW_DAYS)) {   // PCR-3: inclusive, like the SQL
+      } else if (inTail) {   // PCR-3: inclusive, like the SQL
         pendingTail++;                                      // still inside the window today
+      }
+      if (recs) {
+        recs.push({ q: qKey, anon: false, delay: match ? match.ord - abOrd : null,
+                    conn: !!(match && match.connected), agent: match ? match.agent : '',
+                    pending: inTail });
       }
     }
     if (withDetail) {
@@ -3871,7 +4127,8 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     var hours = Object.keys(byHour)
       .map(function (k) { return byHour[k]; })
       .sort(function (a, b) { return a.h - b.h; });
-    return { agg: agg, daily: series, hours: hours };
+    return { agg: agg, daily: series, hours: hours,
+             byDept: recs ? obCallbackByDeptFromRecords_(recs, cbDept.pairs) : null };
   };
 
   var cur = callbackFor(scope.from, scope.to, true);
@@ -3887,11 +4144,73 @@ function obBuildBlobFromGrids_(scope, obGrid, ibGrid, pw, deptQueues) {
     callbackByHour: cur.hours,      // (6)
     coverageStart: coverageStart,
   };
+  if (cur.byDept) blob.callbackByDept = cur.byDept;   // v5 (CB-1)
   if (pw) {
     blob.agentsPrior = agentsFor(pw.from, pw.to);
     blob.callbackPrior = callbackFor(pw.from, pw.to, false).agg;
   }
   return blob;
+}
+
+/**
+ * PURE. The JS twin of outboundCallbackByDeptSql_: per-abandon records
+ * ({q, anon, delay|null, conn, agent, pending}) -> the same raw
+ * { rows, cells, qcells, unmapped } blob the SQL returns. Every clause
+ * mirrors one of the SQL's: the LEFT JOIN on the queue map (an unmapped
+ * queue -> dept ''), a double-mapped queue counted in each of its depts, the
+ * percentile_cont median over non-negative delays, and the pending FILTER.
+ */
+function obCallbackByDeptFromRecords_(recs, pairs) {
+  var qd = {};
+  (pairs || []).forEach(function (p) { (qd[p.queue] || (qd[p.queue] = [])).push(p.dept); });
+  var rowsBy = {}, cellsBy = {}, qcellsBy = {}, unm = {};
+  recs.forEach(function (rec) {
+    (qd[rec.q] || ['']).forEach(function (dept) {
+      var r = rowsBy[dept] || (rowsBy[dept] = { dept: dept, total: 0, anon: 0, called_back: 0,
+                                               connected: 0, pending: 0, delays: [] });
+      r.total++;
+      if (rec.anon) r.anon++;
+      if (rec.delay != null) {
+        r.called_back++;
+        if (rec.conn) r.connected++;
+        r.delays.push(rec.delay);
+        var ck = dept + '\u0000' + rec.agent;
+        var c = cellsBy[ck] || (cellsBy[ck] = { dept: dept, agent: rec.agent, called_back: 0, connected: 0 });
+        c.called_back++;
+        if (rec.conn) c.connected++;
+      } else if (!rec.anon && rec.pending) {
+        r.pending++;
+      }
+      if (dept === '') {
+        var u = unm[rec.q] || (unm[rec.q] = { q: rec.q, tracked: 0, total: 0 });
+        u.total++;
+        if (!rec.anon) u.tracked++;
+      }
+    });
+    if (rec.delay != null) {
+      var qk = rec.q + '\u0000' + rec.agent;
+      var qc = qcellsBy[qk] || (qcellsBy[qk] = { q: rec.q, agent: rec.agent, called_back: 0, connected: 0 });
+      qc.called_back++;
+      if (rec.conn) qc.connected++;
+    }
+  });
+  var cmp = function (a, b) { return a < b ? -1 : a > b ? 1 : 0; };
+  var vals = function (o) { return Object.keys(o).map(function (k) { return o[k]; }); };
+  return {
+    rows: vals(rowsBy).sort(function (a, b) { return cmp(a.dept, b.dept); }).map(function (r) {
+      var nonNeg = r.delays.filter(function (x) { return x >= 0; }).sort(function (a, b) { return a - b; });
+      var median = nonNeg.length
+        ? (nonNeg.length % 2
+            ? nonNeg[(nonNeg.length - 1) / 2]
+            : (nonNeg[nonNeg.length / 2 - 1] + nonNeg[nonNeg.length / 2]) / 2)
+        : null;
+      return { dept: r.dept, total: r.total, anon: r.anon, called_back: r.called_back,
+               connected: r.connected, median: median, pending: r.pending };
+    }),
+    cells: vals(cellsBy).sort(function (a, b) { return cmp(a.dept, b.dept) || cmp(a.agent, b.agent); }),
+    qcells: vals(qcellsBy).sort(function (a, b) { return cmp(a.q, b.q) || cmp(a.agent, b.agent); }),
+    unmapped: vals(unm).sort(function (a, b) { return (b.tracked - a.tracked) || cmp(a.q, b.q); }),
+  };
 }
 
 /**
@@ -3912,8 +4231,9 @@ function outboundSheetFallback_(scope) {
     var ib = obSheetTailGrid_('Inbound Calls', 17, readFrom);
     if (!ob || !ib) { out.meta.available = false; return out; }
 
-    var blob = obBuildBlobFromGrids_(scope, ob.grid, ib.grid, pw, deptQueues);
-    var shaped = outboundShapeReport_(scope, blob, buildDeptsByAgent_());
+    var cbDept = scope.companyView ? obCallbackDeptMap_() : null;   // v5 (CB-1)
+    var blob = obBuildBlobFromGrids_(scope, ob.grid, ib.grid, pw, deptQueues, cbDept);
+    var shaped = outboundShapeReport_(scope, blob, buildDeptsByAgent_(), cbDept);
     shaped.meta.fallbackSource = 'sheet';
     // The OLDER of the two copies bounds what this payload can know.
     shaped.meta.fallbackThrough =

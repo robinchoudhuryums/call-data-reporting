@@ -399,3 +399,25 @@ S47 | Agent-day view: fidelity degrades honestly across the three horizons | Sub
     - Spot-check PHI: nothing in the page or the payload carries a caller number, a caller name, or a hash.
   Expected: as described. The three banners are the point of the scenario -- a short list with NO banner is the failure this surface was designed around, because it reads as "the agent did nothing" when it means "we no longer hold the detail".
   Fails if: any tier renders a short list with no disclosure; the header tiles disagree with My Department for the same agent-day; a manager reaches an agent on neither of their depts; an unrostered name resolves for a non-admin; or the reconciliation line claims an exact match on a degraded day.
+
+S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
+  Steps:
+    - As the ADMIN (the report is admin-only until the 6c release), open Reports -> Outbound, leave Department on "All departments", and generate a window with real abandons (a week or more).
+    - Below the callback tiles, "Callbacks by department" renders. Default order is worst "Called back by us" % first; a sub-queue (e.g. Spanish) sits indented directly under its parent (CSR) whatever the sort; "Not mapped to a department" (if present) is always last.
+    - Arithmetic, on any row: Called back by us + By another dept + Not called back = Trackable abandons. Same on the "All departments" total row.
+    - Reconcile the total row against the tiles above: Trackable = "Called back"'s "of N trackable", Callbacks connected = the "Callbacks connected" tile, Median = the "Median time to callback" tile. Summing the dept rows does NOT give the total (a parent includes its sub-queues; a queue shared by two depts is in both) -- the total row's hover says so.
+    - Hover each header: the definitions name the FIRST callback, "upper bound" for Connected, and a Median clock that includes internal handoff.
+    - Keyboard only: Tab to a row's department button, press Enter -> the row expands (aria-expanded true) showing "First callback by" rows naming departments / "Unrostered" / "No agent recorded" and the multi-roster / unrostered / no-agent tallies; the unmapped row's expand lists the unmapped queue names. Tab to a header, Enter sorts; Enter again flips.
+    - Export CSV: a "Department / Parent / Trackable abandons / ..." block appears, with the total row labelled "All departments (each abandon once)". No cell begins with = + - @.
+    - Switch Department to a single dept and regenerate: the table is GONE (company view only).
+  Expected: as described. A parent row's "by us" includes its sub-queues' agents; a crossover agent counts as "us" for any dept they are rostered on.
+  Fails if: a row's three call columns do not sum to its trackable count; the total row disagrees with the tiles; a child row detaches from its parent on sort; the unmapped row is missing while unmapped abandons exist (the total would exceed what the rows can explain); the table shows on a single-dept view; or any cell shows a caller number.
+
+S49 | Transfer abandons land on the target dept (S2C-2) | Subsystem: Department Dashboard
+  Steps:
+    - In the dashboard Apps Script editor, run `sampleTransferAbandons` (optionally set `XFER_SAMPLE_FROM` / `XFER_SAMPLE_TO` first; the default is the last 10 days). Read the log: MOVED count by route (answering label -> target queue -> dept), the not-moved counts, and up to 25 moved calls.
+    - Pick 3-5 moved calls. In the CDR Import spreadsheet open `Call_Legs_<date>` and search each CUSTOMER call id and its TRANSFER call id: the customer leg was answered and the caller disconnected on hold; the transfer group was placed by that same agent, to the named queue, and nobody on it answered.
+    - If the log lists any `[blind transfer]` calls, check one the same way: the customer leg was answered and NOT held; the transfer group was placed by that agent to the named queue, nobody answered, and the caller ABANDONED in that queue.
+    - Open Reports -> Inbound for the answering dept over the same window: the "Abandoned on hold" tile foot says "N moved to the transfer target". Open it for the target dept: "N while being transferred here". Total and Answered for the answering dept are unchanged from before the change. The "All departments" view's foot says "N in a blind transfer" when any blind ones exist, and its on-hold count equals the depts' parts (a double-mapped or parent queue aside).
+  Expected: every sampled call reads as "answered, then transferred to a dept that never picked up, and the caller hung up" -- on hold, or in the target queue.
+  Fails if: a sampled transfer group was ANSWERED; the transfer was placed by a different agent or long after the answer; a `[blind transfer]` sample was not abandoned in the target queue; the answering dept's Total or Answered changed; or a move appears with no explanation in the tile foot.

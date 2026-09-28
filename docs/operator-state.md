@@ -655,6 +655,30 @@ When something looks wrong, before assuming a code bug, check:
     `digest_config` as `<table>-latest.jsonl` (skipped while config is
     sheet-backed -- the sheet is the backup then). Last outcome
     surfaces on the Health page (`NEON_BACKUP_LAST_RESULT`).
+    **SHEETS FALLBACK (BK-1, 2026-09-28) -- for installs where a Workspace
+    policy blocks the `drive` scope** ("You do not have permission to call
+    DriveApp.createFolder"). When the Drive folder cannot be opened or
+    created, the run writes the SAME files to a standalone workbook,
+    "Dashboard Neon Backups" (self-created; id persisted to
+    `NEON_BACKUP_SS_ID`), one tab per file plus an `_index` tab
+    (`file | written`). Same names, same rotation/finality rules. Each tab
+    is sized EXACTLY to its content (the 10M ALLOCATED-cell cap, #62) and a
+    line longer than a cell's 50k-char limit continues in the next column;
+    a run warns once the workbook passes 80% of the cap. The outcome says
+    which store was used (`| store sheets (Drive unavailable: ...)`), and
+    the Health section links the workbook. Set `NEON_BACKUP_STORE=sheets`
+    to skip the Drive attempt entirely. **The workbook holds the same PHI
+    as the Drive files** (caller hashes, journeys) -- keep it unshared,
+    exactly like the CDR Report workbook. **RESTORE** (either store):
+    set `NEON_RESTORE_FILE` to a file name (e.g.
+    `escalations-2026-09-27.jsonl`) or a month base
+    (`inbound_calls-2026-08` -- picks up its `.partN` + `.tail` files), run
+    `restoreNeonBackupFile()` in the editor -- it PREVIEWS (row counts per
+    file, refuses an unparseable line) -- then set `NEON_RESTORE_APPLY=true`
+    and run it again: `INSERT ... ON CONFLICT DO NOTHING` in 500-row
+    batches, so it only fills missing rows and never overwrites; both
+    properties clear after an apply. Only the backed-up tables are
+    restorable (an allowlist).
 
 29. Retired server files must be deleted in the Apps Script WEB EDITOR
     (INV-17: `clasp push -f` never deletes remote files). After deploying
@@ -1734,6 +1758,16 @@ When something looks wrong, before assuming a code bug, check:
     last-write-wins on the Neon side -- are found by `findDqeDuplicateRows`
     (neonbackfill.js) and merged by `repairDqeDuplicateMerge` (sheetRepairs.js,
     with a `preview` twin); an Orphan Fix rename can create them (X-1, open).
+    **Uploading several days in a row (ING-4, 2026-09-28):** the upload
+    trigger now imports EVERY not-yet-processed `Call_Legs_*` date within 14
+    days of the newest, OLDEST FIRST, instead of only the newest sheet -- so
+    uploading 09/23 then 09/24 minutes apart no longer skips 09/23 while the
+    first import still holds the lock. A skipped upload (lock busy) or a run
+    that hits the time budget schedules a one-shot `runPendingImportCatchUp_`
+    trigger 2 minutes out that finishes the rest; it deletes itself after it
+    runs. A date already in history is left alone (use Manual Export to
+    force a re-import, as above). Seeing a `runPendingImportCatchUp_` trigger
+    in the cdr-import triggers list for a few minutes is normal.
 
 57. **Neon storage cap — the phones-write gate, the weekly retention prune,
     and the one-time reclaim runbook (R27, 2026-09).** The free tier is 0.5 GB

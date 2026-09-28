@@ -85,7 +85,10 @@ test('report: every dept-facing sub-select is window-scoped', function () {
   // Every ALIASED, row-filtering sub-select (`FROM inbound_calls c`) must carry
   // the window; the window clause appears once per such sub-select, including
   // the research block's negated copy.
-  const froms = sql.split('FROM inbound_calls c').length - 1;
+  // S2C-2: the transfer tallies reach `c` through a JOIN from the internal
+  // rows -- counted too, so an unscoped join is caught like an unscoped FROM.
+  const froms = (sql.split('FROM inbound_calls c').length - 1)
+              + (sql.split('JOIN inbound_calls c ').length - 1);
   const scoped = sql.split("c.call_start >= '06:30:00'").length - 1;
   assert.ok(froms >= 7, 'sanity: the payload really does have many sub-selects (' + froms + ')');
   assert.equal(scoped, froms,
@@ -292,9 +295,9 @@ testInt('is_internal exclusion: on the 5 aliased metric ranges, the 4 parity que
   // "(is_internal" pattern -- so no subtraction is needed.)
   const aliased = (irSrcInt.match(/COALESCE\(c\.is_internal, FALSE\) = FALSE/g) || []).length;
   const bare = (irSrcInt.match(/COALESCE\(is_internal, FALSE\) = FALSE/g) || []).length;
-  assertInt.equal(aliased, 7,
+  assertInt.equal(aliased, 9,
     'aliased exclusions: report dr + priorDr + drOutside (P3) + insurer daily + heatmap '
-    + '+ cell drill + compare');
+    + '+ cell drill + compare + the S2C-2 on-hold transfer tally + its sample tool');
   assertInt.equal(bare, 4,
     'bare exclusions: the two parity queue/call lists + the two parity breakdowns');
   // getCallJourney's two lookups (scoped + exact-id fallback) must include

@@ -1,6 +1,26 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-28 (post-merge follow-ups, branch `claude/broad-scan-gnfpx5`
+  restarted from main after PR #344 merged):** SHIPPED BK-1 (Neon backup
+  falls back to a "Dashboard Neon Backups" workbook when policy blocks the
+  `drive` scope; `restoreNeonBackupFile()`), ING-4 (upload trigger imports
+  every unprocessed Call_Legs date oldest first + one-shot catch-up trigger),
+  S2C-5 (Direct busy from ANSWER to stop) + the read-only
+  `previewCallLegShapes` probe, and CB-1 (the per-dept callback table on the
+  Outbound company view, `outboundReport:v5`, S48). **OWED BY THE OWNER:**
+  (1) run `previewCallLegShapes` (cdr-import CDR Tools menu) on a recent date
+  and paste the log -- part A verifies no same-start forks (S2C-5), part B
+  answers S2C-1 (does an answered queue call show the agent as CALLEE on an
+  Incoming leg, or only on their Outgoing talk leg?); (2) S2C-2 RULED YES and
+  SHIPPED (an on-hold abandon during an unanswered transfer -> the target
+  dept's Inbound "Abandoned on hold"; `inbound:v12`, S49) -- the owner wants
+  to eyeball a sample via `sampleTransferAbandons()`. The BLIND-transfer shape
+  was RULED the same day (counts for the target too) and SHIPPED
+  (`inbound:v13`; the company view gains them). (3) click "Back up now" once
+  to seed the fallback workbook.
+  **Where I left off:** all shipped, synced (sync-docs 2026-09-28) and merged;
+  waiting on (1), the S2C-2 sample read, and (3).
 - **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
   a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
   owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds
