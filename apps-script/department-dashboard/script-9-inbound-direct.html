@@ -593,7 +593,13 @@
         inboundDelta_(k.answered, p.answered, 'pos', false), '', 'inbound'),
       inboundKpiTile_('Abandoned', fmtNumber(k.abandoned), (k.abandonRate || 0) + '%',
         inboundDelta_(k.abandoned, p.abandoned, 'neg', false)),
-      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold), 'caller hung up held',
+      // S2C-2: in a dept view, a caller who hung up on hold while the agent
+      // was calling ANOTHER dept (which never answered) counts for THAT dept.
+      // The foot says so in both directions so the move is never silent.
+      inboundKpiTile_('Abandoned on hold', fmtNumber(k.abandonedOnHold),
+        'caller hung up held'
+          + (Number(k.onHoldTransferIn) ? ' · ' + fmtNumber(k.onHoldTransferIn) + ' while being transferred here' : '')
+          + (Number(k.onHoldTransferOut) ? ' · ' + fmtNumber(k.onHoldTransferOut) + ' moved to the transfer target' : ''),
         inboundDelta_(k.abandonedOnHold, p.abandonedOnHold, 'neg', false)),
       inboundKpiTile_('Avg wait', fmtDuration(k.avgWaitSec), 'to answer / abandon',
         inboundDelta_(k.avgWaitSec, p.avgWaitSec, 'neg', false)),
@@ -1226,7 +1232,9 @@
     lines.push(row(['KPI', 'Current', 'Prior']));
     const k = d.kpis || {}, p = d.kpisPrior || {};
     [['Inbound calls', 'total'], ['Answered', 'answered'], ['Abandoned', 'abandoned'],
-     ['Missed', 'missed'], ['Abandoned on hold', 'abandonedOnHold'], ['Anonymous', 'anonymous'],
+     ['Missed', 'missed'], ['Abandoned on hold', 'abandonedOnHold'],
+     ['On hold: transferred here (S2C-2)', 'onHoldTransferIn'],
+     ['On hold: moved to the transfer target (S2C-2)', 'onHoldTransferOut'], ['Anonymous', 'anonymous'],
      ['Answer rate %', 'answerRate'], ['Abandon rate %', 'abandonRate'],
      ['Avg wait sec', 'avgWaitSec'], ['Avg hold sec', 'avgHoldSec']].forEach(function (m) {
       lines.push(row([m[0], k[m[1]] != null ? k[m[1]] : '', p[m[1]] != null ? p[m[1]] : '']));

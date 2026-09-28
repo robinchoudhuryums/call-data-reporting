@@ -835,6 +835,7 @@ var PROP_REGISTRY_ = Object.freeze({
     NEON_BACKUP_HOUR: 'operator', NEON_BACKUP_KEEP: 'operator',
     NEON_BACKUP_STORE: 'operator',      // 'sheets' forces the Sheets workbook store
     NEON_RESTORE_FILE: 'tool', NEON_RESTORE_APPLY: 'tool',   // restoreNeonBackupFile
+    XFER_SAMPLE_FROM: 'tool', XFER_SAMPLE_TO: 'tool',        // sampleTransferAbandons (S2C-2)
     NEON_COVERAGE_DAYS: 'operator', SHEET_COVERAGE_DAYS: 'operator',
     SHEET_COVERAGE_ENABLED: 'operator',
     NEON_RETENTION_ENABLED: 'operator', NEON_RETENTION_JOURNEY_DAYS: 'operator',

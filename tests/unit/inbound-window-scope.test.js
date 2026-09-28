@@ -292,9 +292,9 @@ testInt('is_internal exclusion: on the 5 aliased metric ranges, the 4 parity que
   // "(is_internal" pattern -- so no subtraction is needed.)
   const aliased = (irSrcInt.match(/COALESCE\(c\.is_internal, FALSE\) = FALSE/g) || []).length;
   const bare = (irSrcInt.match(/COALESCE\(is_internal, FALSE\) = FALSE/g) || []).length;
-  assertInt.equal(aliased, 7,
+  assertInt.equal(aliased, 9,
     'aliased exclusions: report dr + priorDr + drOutside (P3) + insurer daily + heatmap '
-    + '+ cell drill + compare');
+    + '+ cell drill + compare + the S2C-2 on-hold transfer tally + its sample tool');
   assertInt.equal(bare, 4,
     'bare exclusions: the two parity queue/call lists + the two parity breakdowns');
   // getCallJourney's two lookups (scoped + exact-id fallback) must include

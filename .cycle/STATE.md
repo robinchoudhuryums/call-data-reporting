@@ -12,12 +12,15 @@
   (1) run `previewCallLegShapes` (cdr-import CDR Tools menu) on a recent date
   and paste the log -- part A verifies no same-start forks (S2C-5), part B
   answers S2C-1 (does an answered queue call show the agent as CALLEE on an
-  Incoming leg, or only on their Outgoing talk leg?); (2) rule on S2C-2:
-  should the INBOUND report move an on-hold abandon during a transfer to the
-  transfer TARGET dept (QCD + the Missed report already charge the target;
-  the Inbound report keeps it on the answering dept via final_dept)?
-  (3) click "Back up now" once to seed the fallback workbook.
-  **Where I left off:** all four shipped + pushed; waiting on (1)-(3).
+  Incoming leg, or only on their Outgoing talk leg?); (2) S2C-2 RULED YES and
+  SHIPPED (an on-hold abandon during an unanswered transfer -> the target
+  dept's Inbound "Abandoned on hold"; `inbound:v12`, S49) -- the owner wants
+  to eyeball a sample via `sampleTransferAbandons()`. Open question it raises:
+  the BLIND-transfer shape (caller abandoned in the target queue while NOT on
+  hold) still counts nowhere in the Inbound report. (3) click "Back up now"
+  once to seed the fallback workbook.
+  **Where I left off:** all shipped + pushed; waiting on (1), the S2C-2
+  sample read, the blind-transfer question, and (3).
 - **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
   a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
   owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds

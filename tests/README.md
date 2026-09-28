@@ -420,6 +420,11 @@ tests/
                               callback rule's sheet-side mirror, the
                               never-cache rule and all three failure
                               branches),
+                              inbound-xfer-abandon (S2C-2: an on-hold abandon
+                              during an UNANSWERED transfer counts for the
+                              transfer TARGET -- reclassification only, the
+                              unique inbound-kind link rule, the CASE-guarded
+                              subquery, and the sample tool's matching tally),
                               outbound-callback-dept (CB-1: the per-dept
                               callback table -- own + other + none ===
                               tracked on every row and the total, the FIRST

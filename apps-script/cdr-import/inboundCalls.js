@@ -2069,20 +2069,23 @@ function previewCallLegShapes(dateIso) {
   }
   var out = callLegShapeTally_(legs, maps);
   out.date = iso || dateIso;
-  Logger.log('previewCallLegShapes ' + out.date + ' -- READ-ONLY, counts only.');
-  Logger.log('(A) S2C-5 direct inbound forks: ' + out.direct.pairs + ' (direct call, agent) pairs; '
+  var lines = [];
+  var say = function (t) { lines.push(t); Logger.log(t); };
+  say('previewCallLegShapes ' + out.date + ' -- READ-ONLY, counts only.');
+  say('(A) S2C-5 direct inbound forks: ' + out.direct.pairs + ' (direct call, agent) pairs; '
     + out.direct.multiCidPairs + ' rang the SAME agent under more than one call id'
     + (out.direct.multiCidPairs ? ' (max ' + out.direct.maxCids + ' ids; ' + out.direct.multiCidSameStart
       + ' of those rang at the same second = a fork)' : '')
     + '. VERDICT: ' + (out.direct.multiCidPairs ? 'FORKS EXIST -- per-CALL_ID dedupe over-counts; report this.'
       : 'no forks -- the per-CALL_ID dedupe is safe.'));
-  Logger.log('(B) S2C-1 answered inbound calls: ' + out.answer.calls + ' total; '
+  say('(B) S2C-1 answered inbound calls: ' + out.answer.calls + ' total; '
     + out.answer.calleeExtAnswer + ' carry an answer leg with the agent\'s extension as CALLEE (visible to the matchers); '
     + out.answer.onlyExternalCallee + ' only an answer leg whose CALLEE is an external number ('
     + out.answer.onlyExternalCalleeCallerExt + ' of them with an extension in CALLER); '
     + out.answer.other + ' neither.');
-  Logger.log('    answer-leg shapes (direction | callee | caller: legs): '
+  say('    answer-leg shapes (direction | callee | caller: legs): '
     + Object.keys(out.answer.shapes).sort().map(function (k) { return k + ': ' + out.answer.shapes[k]; }).join('; '));
+  out.lines = lines;
   return out;
 }
 
@@ -2090,7 +2093,16 @@ function previewCallLegShapes(dateIso) {
 function previewCallLegShapesForDate() {
   var arg = icPreviewDateArg_();
   if (arg.cancelled) return;
-  previewCallLegShapes(arg.dateIso);
+  var out = previewCallLegShapes(arg.dateIso);
+  // A menu run's Logger output lands in the Executions log, which is hard to
+  // find from the spreadsheet -- show the same counts-only lines in a dialog
+  // too (copyable). No UI context (editor run) -> the log alone.
+  try {
+    var ui = SpreadsheetApp.getUi();
+    ui.alert('Call-leg shapes',
+      out ? out.lines.join('\n\n') : 'No Call_Legs sheet for that date (see the log).',
+      ui.ButtonSet.OK);
+  } catch (e) { /* editor run: the log has it */ }
 }
 
 /**

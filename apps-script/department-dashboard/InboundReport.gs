@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v11';  // v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v12';  // v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -1155,6 +1155,192 @@ function inboundEmailBreakdownTable_(title, rows) {
     + '</tr></thead><tbody>' + body + '</tbody></table>';
 }
 
+/**
+ * S2C-2 (owner ruling 2026-09-28): the TARGET queue (lower-cased) of the
+ * unanswered transfer a customer was waiting on when they hung up on hold,
+ * or NULL. A correlated SQL expression over the customer row `c`:
+ *
+ *   c is an answered, abandoned-on-hold customer call, AND exactly ONE
+ *   internal-origin record links to it (related_call_id = c.call_id, kind
+ *   inbound -- set at capture by the R11-N matcher or the Round-16b
+ *   concurrent-call match: the agent dialed that queue WHILE on this call)
+ *   whose own disposition is NOT answered -- the receiving dept never picked
+ *   up. That record's entry_queue is the queue the agent was calling.
+ *
+ * UNIQUE-link-only, like the capture's matcher: two unanswered transfers on
+ * one call leave it with the answering dept rather than guess. The CASE
+ * makes the subquery run only for the few on-hold rows. The capture cannot
+ * tell a transfer from a consult ("hold on, let me ask Sales"); both are the
+ * caller hanging up while we were calling another dept, which is the ruling.
+ */
+function inboundXferTargetSql_() {
+  return "(CASE WHEN c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false) THEN ("
+    + "SELECT CASE WHEN count(*) = 1 THEN min(lower(trim(x.entry_queue))) END "
+    + 'FROM inbound_calls x '
+    + 'WHERE x.call_date = c.call_date AND COALESCE(x.is_internal, false) '
+    + 'AND x.related_call_id = c.call_id '
+    + "AND COALESCE(x.related_call_kind, 'inbound') = 'inbound' "
+    + "AND x.disposition <> 'answered' "
+    + "AND COALESCE(trim(x.entry_queue), '') <> ''"
+    + ') END)';
+}
+
+/**
+ * S2C-2: the dept-view on-hold transfer tallies for one window, as a json
+ * subselect: { out, in }.
+ *   out = on-hold abandons IN this dept's scope (its agent answered) whose
+ *         transfer target is NOT one of its queues -> charged elsewhere;
+ *   in  = on-hold abandons OUTSIDE its scope whose transfer target IS one of
+ *         its queues -> charged here.
+ * A transfer between two of the dept's own queues is neither (it stays).
+ * `deptPred` is inboundDeptPredicate_'s ' AND (...)' fragment.
+ */
+function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues) {
+  const qList = (deptQueues && deptQueues.length)
+    ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',')
+    : 'NULL';
+  const predExpr = String(deptPred || '').replace(/^\s*AND\s+/, '') || 'false';
+  const base = "c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date"
+    + ' AND ' + inboundWindowClause_(true) + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
+    + " AND c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false)";
+  const xt = inboundXferTargetSql_();
+  return '(SELECT json_build_object('
+    + "'out', (SELECT count(*) FROM (SELECT " + xt + ' AS xt FROM inbound_calls c WHERE '
+    +   base + deptPred + ') s WHERE s.xt IS NOT NULL AND s.xt NOT IN (' + qList + ')), '
+    + "'in', (SELECT count(*) FROM (SELECT " + xt + ' AS xt FROM inbound_calls c WHERE '
+    +   base + ' AND NOT COALESCE((' + predExpr + '), false)) s WHERE s.xt IN (' + qList + '))'
+    + '))';
+}
+
+/**
+ * PURE. Applies the S2C-2 tallies to a shaped KPI block: the tile keeps its
+ * meaning ("callers who hung up on hold, charged to this dept") with the
+ * transfer abandons moved to the receiving dept. total / answered are NOT
+ * touched -- the answering dept did answer the call.
+ */
+function inboundApplyXferTallies_(k, t) {
+  const out = Number(t && t.out) || 0, inn = Number(t && t.in) || 0;
+  k.onHoldTransferOut = out;
+  k.onHoldTransferIn = inn;
+  k.abandonedOnHold = Math.max(0, (Number(k.abandonedOnHold) || 0) - out) + inn;
+  return k;
+}
+
+var XFER_SAMPLE_MAX_ = 25;
+var XFER_SAMPLE_DEFAULT_DAYS_ = 10;   // inside the ~14-day Call_Legs window, so the legs can be eyeballed
+
+/**
+ * S2C-2 SAMPLE CHECK (editor-run, admin-gated, READ-ONLY). Lists the on-hold
+ * abandons the Inbound report now charges to a transfer's TARGET dept, so the
+ * owner can eyeball real calls before trusting the new numbers.
+ *
+ * Window: `XFER_SAMPLE_FROM` / `XFER_SAMPLE_TO` Script Properties, else the
+ * last XFER_SAMPLE_DEFAULT_DAYS_ days through yesterday -- kept inside the
+ * Call_Legs retention so each call's legs can still be opened in the CDR
+ * Import spreadsheet (`Call_Legs_<date>`, search the call id).
+ *
+ * Logs, in order: the MOVED count by (answering label -> target queue ->
+ * target dept); the three NOT-moved neighbours worth knowing about (target
+ * answered, more than one unanswered transfer = ambiguous, and the
+ * blind-transfer shape -- caller NOT on hold, a linked transfer abandoned,
+ * which the ruling does not cover); then up to XFER_SAMPLE_MAX_ moved calls
+ * with both call ids. Call ids, times, queue names and org labels only -- no
+ * caller number, name or hash (the vetting-tool convention).
+ */
+function sampleTransferAbandons() {
+  assertAdmin_();
+  const props = PropertiesService.getScriptProperties();
+  const tz = Session.getScriptTimeZone();
+  const day = function (offset) {
+    return Utilities.formatDate(new Date(Date.now() + offset * 86400000), tz, 'yyyy-MM-dd');
+  };
+  const from = String(props.getProperty('XFER_SAMPLE_FROM') || '').trim() || day(-XFER_SAMPLE_DEFAULT_DAYS_);
+  const to = String(props.getProperty('XFER_SAMPLE_TO') || '').trim() || day(-1);
+  if (!isIsoDate_(from) || !isIsoDate_(to) || from > to) {
+    Logger.log('sampleTransferAbandons: bad window %s..%s (XFER_SAMPLE_FROM/_TO must be YYYY-MM-DD).', from, to);
+    return null;
+  }
+  const conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;
+  if (!conn) { Logger.log('sampleTransferAbandons: Neon unreachable -- nothing to sample.'); return null; }
+  try {
+    // One pass over the customer calls that could move: answered, not
+    // internal, in the work window. `ux` = unanswered inbound-kind links.
+    const base = "c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date"
+      + ' AND ' + inboundWindowClause_(true) + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
+      + " AND c.disposition = 'answered'";
+    const links = '(SELECT json_agg(json_build_object('
+      + "'id', x.call_id, 'q', lower(trim(x.entry_queue)), 'disp', x.disposition) ORDER BY x.call_start, x.call_id) "
+      + 'FROM inbound_calls x WHERE x.call_date = c.call_date AND COALESCE(x.is_internal, false) '
+      + "AND x.related_call_id = c.call_id AND COALESCE(x.related_call_kind, 'inbound') = 'inbound' "
+      + "AND COALESCE(trim(x.entry_queue), '') <> '')";
+    const sql = "SELECT COALESCE(json_agg(t ORDER BY t.d, t.s), '[]')::text AS j FROM ("
+      + 'SELECT c.call_date::text AS d, c.call_start AS s, c.call_id AS id, c.final_dept AS fd, '
+      + 'COALESCE(c.abandoned_on_hold, false) AS oh, c.hold_seconds AS hold, ' + links + ' AS l '
+      + 'FROM inbound_calls c WHERE ' + base + ') t WHERE t.l IS NOT NULL';
+    const st = conn.createStatement();
+    const rs = st.executeQuery(sql);
+    const json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound-xfer-sample');
+    rs.close(); st.close();
+    const out = xferSampleTally_(JSON.parse(json || '[]'), obCallbackDeptMapSafe_(), inboundDeptFinalLabels_);
+    Logger.log('sampleTransferAbandons %s..%s -- READ-ONLY. On-hold abandons during an UNANSWERED transfer now count for the TARGET dept.', from, to);
+    Logger.log('MOVED: %s call(s).', out.moved.length);
+    Object.keys(out.byRoute).sort().forEach(function (k) { Logger.log('   %s : %s', k, out.byRoute[k]); });
+    Logger.log('NOT moved (stay with the answering dept): %s target answered; %s ambiguous (2+ unanswered transfers); %s transfer to the SAME dept; %s blind-transfer abandons (caller NOT on hold -- not covered by the ruling).',
+      out.targetAnswered, out.ambiguous, out.sameDept, out.blind);
+    out.moved.slice(0, XFER_SAMPLE_MAX_).forEach(function (m) {
+      Logger.log('   %s %s  customer call %s (answered by "%s", held %ss) -> transfer call %s to %s [%s] %s',
+        m.date, m.start || '(no time)', m.callId, m.finalDept || '?', m.holdSec == null ? '?' : m.holdSec,
+        m.xferId, m.targetQueue, m.targetDepts.join(' + ') || 'NO DEPT', m.xferDisp);
+    });
+    if (out.moved.length > XFER_SAMPLE_MAX_) Logger.log('   ... and %s more.', out.moved.length - XFER_SAMPLE_MAX_);
+    return out;
+  } finally {
+    try { conn.close(); } catch (ce) { /* already closed */ }
+  }
+}
+
+/** obCallbackDeptMap_ (OutboundReport.gs) or an empty map -- the tool degrades to "NO DEPT", never throws. */
+function obCallbackDeptMapSafe_() {
+  try { return (typeof obCallbackDeptMap_ === 'function') ? obCallbackDeptMap_() : { pairs: [] }; }
+  catch (e) { return { pairs: [] }; }
+}
+
+/**
+ * PURE (inbound-xfer-abandon.test.js): classifies the tool's rows with the
+ * SAME rule as inboundXferTargetSql_ -- on hold, exactly one unanswered
+ * link -> moved to that link's queue.
+ */
+function xferSampleTally_(rows, deptMap, labelsOf) {
+  const qDepts = {};
+  ((deptMap && deptMap.pairs) || []).forEach(function (p) {
+    (qDepts[p.queue] || (qDepts[p.queue] = [])).push(p.dept);
+  });
+  const out = { moved: [], byRoute: {}, targetAnswered: 0, ambiguous: 0, sameDept: 0, blind: 0 };
+  (rows || []).forEach(function (r) {
+    const unans = (r.l || []).filter(function (x) { return x.disp !== 'answered'; });
+    if (!r.oh) { if (unans.length) out.blind++; return; }
+    if (!unans.length) { out.targetAnswered++; return; }
+    if (unans.length > 1) { out.ambiguous++; return; }
+    const x = unans[0];
+    const depts = (qDepts[x.q] || []).slice();
+    // A transfer to one of the answering dept's OWN queues moves nothing
+    // (the report's `out` needs a target outside the dept's queues).
+    const fd = String(r.fd == null ? '' : r.fd).trim().toLowerCase();
+    if (fd && labelsOf && depts.some(function (d) { return (labelsOf(d) || []).indexOf(fd) !== -1; })) {
+      out.sameDept++;
+      return;
+    }
+    const m = { date: r.d, start: r.s || null, callId: r.id, finalDept: r.fd || null,
+                holdSec: r.hold == null ? null : Number(r.hold), xferId: x.id, targetQueue: x.q,
+                targetDepts: depts, xferDisp: x.disp };
+    out.moved.push(m);
+    const k = (r.fd || '(no label)') + ' -> ' + x.q + ' (' + (depts.join(' + ') || 'NO DEPT') + ')';
+    out.byRoute[k] = (out.byRoute[k] || 0) + 1;
+  });
+  return out;
+}
+
 function computeInboundReport_(scope) {
   const from = scope.from, to = scope.to;
   const empty = emptyInboundReport_(scope);
@@ -1241,6 +1427,11 @@ function computeInboundReport_(scope) {
       "SELECT json_build_object(" +
         "'kpis', " + kpiSelect(dr) + ", " +
         "'kpisPrior', " + kpiSelect(priorDr) + ", " +
+        // S2C-2: the on-hold transfer tallies (dept view only -- company-wide
+        // they only move a call between depts, so the total is unchanged).
+        (scope.companyView ? '' :
+          ("'xfer', " + inboundXferTallySql_(from, to, deptPred, scope.deptQueues) + ", " +
+           "'xferPrior', " + inboundXferTallySql_(prior.from, prior.to, deptPred, scope.deptQueues) + ", ")) +
         // R12-26b: coverage start (earliest captured inbound call, unscoped)
         // so the client can warn when the requested From predates capture.
         "'coverageStart', (SELECT MIN(call_date)::text FROM inbound_calls), " +
@@ -1345,6 +1536,11 @@ function computeInboundReport_(scope) {
       if (mapped) r.dial_in = mapped;
     });
     const kpis = inboundShapeKpis_(obj.kpis);
+    const kpisPrior = inboundShapeKpis_(obj.kpisPrior);
+    if (!scope.companyView) {   // S2C-2
+      inboundApplyXferTallies_(kpis, obj.xfer);
+      inboundApplyXferTallies_(kpisPrior, obj.xferPrior);
+    }
     return {
       meta: {
         from: from, to: to, available: true,
@@ -1356,7 +1552,7 @@ function computeInboundReport_(scope) {
         rows: kpis.total, generatedAt: new Date().toISOString(),
       },
       kpis: kpis,
-      kpisPrior: inboundShapeKpis_(obj.kpisPrior),
+      kpisPrior: kpisPrior,
       byInsurer:       Array.isArray(obj.byInsurer)       ? obj.byInsurer       : [],
       byDialIn:        Array.isArray(obj.byDialIn)        ? obj.byDialIn        : [],
       byQueue:         Array.isArray(obj.byQueue)         ? obj.byQueue         : [],
@@ -1383,6 +1579,8 @@ function inboundShapeKpis_(k) {
     abandoned:       Number(k.abandoned) || 0,
     missed:          Number(k.missed) || 0,
     abandonedOnHold: Number(k.abandonedOnHold) || 0,
+    onHoldTransferIn: 0,    // S2C-2 (dept view; inboundApplyXferTallies_)
+    onHoldTransferOut: 0,
     abandonedIvr:    Number(k.abandonedIvr) || 0,
     abandonedDirect: Number(k.abandonedDirect) || 0,   // R5 stage split
     anonymous:       Number(k.anonymous) || 0,

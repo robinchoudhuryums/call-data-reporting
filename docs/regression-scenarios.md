@@ -412,3 +412,11 @@ S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
     - Switch Department to a single dept and regenerate: the table is GONE (company view only).
   Expected: as described. A parent row's "by us" includes its sub-queues' agents; a crossover agent counts as "us" for any dept they are rostered on.
   Fails if: a row's three call columns do not sum to its trackable count; the total row disagrees with the tiles; a child row detaches from its parent on sort; the unmapped row is missing while unmapped abandons exist (the total would exceed what the rows can explain); the table shows on a single-dept view; or any cell shows a caller number.
+
+S49 | Transfer abandons land on the target dept (S2C-2) | Subsystem: Department Dashboard
+  Steps:
+    - In the dashboard Apps Script editor, run `sampleTransferAbandons` (optionally set `XFER_SAMPLE_FROM` / `XFER_SAMPLE_TO` first; the default is the last 10 days). Read the log: MOVED count by route (answering label -> target queue -> dept), the not-moved counts, and up to 25 moved calls.
+    - Pick 3-5 moved calls. In the CDR Import spreadsheet open `Call_Legs_<date>` and search each CUSTOMER call id and its TRANSFER call id: the customer leg was answered and the caller disconnected on hold; the transfer group was placed by that same agent, to the named queue, and nobody on it answered.
+    - Open Reports -> Inbound for the answering dept over the same window: the "Abandoned on hold" tile foot says "N moved to the transfer target". Open it for the target dept: "N while being transferred here". Total and Answered for the answering dept are unchanged from before the change; the "All departments" view's on-hold count equals the sum of the parts.
+  Expected: every sampled call reads as "answered, put on hold, transferred to a dept that never picked up, caller hung up".
+  Fails if: a sampled transfer group was ANSWERED; the transfer was placed by a different agent or long after the hold; the answering dept's Total or Answered changed; or a move appears with no explanation in the tile foot.

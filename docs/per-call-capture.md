@@ -270,7 +270,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v11`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v12`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -307,6 +307,29 @@ attributes their on-hold abandons correctly with nothing mapped. Leave a
 shared label out of BOTH rows. Admins can additionally pick "All
 departments" -- the only view including the "Abandoned in IVR" bucket, since
 IVR abandons never reached a queue at all.
+**Transfer abandons move to the TARGET (S2C-2, owner ruling 2026-09-28).**
+In a DEPT view, an answered call abandoned ON HOLD while the agent was
+calling ANOTHER dept that never answered counts for that other dept's
+"Abandoned on hold" tile, not the answering dept's -- matching QCD and the
+Missed report, which already charge an unanswered transfer to the receiving
+queue. The link is the capture's own: exactly ONE internal-origin record with
+`related_call_id` = this call, kind inbound, NOT answered; its `entry_queue`
+is the target (`inboundXferTargetSql_`). ONLY the on-hold tile moves
+(`kpis.onHoldTransferIn/Out`, the tile foot names both): the call stays in the
+answering dept's total and answered counts, because its agent did answer it;
+the company view is unchanged (a move between depts nets to zero); two
+unanswered transfers on one call stay put (unique-link-only, like the
+matcher). The CDR cannot tell a transfer from a consult ("let me ask Sales"),
+and both are the ruling's case. NOT covered: a BLIND transfer the caller
+abandoned in the target queue while NOT on hold -- that call's record says
+"answered", and it still counts nowhere as an abandon in this report.
+**Checking it:** `sampleTransferAbandons()` (dashboard editor, admin,
+read-only; `XFER_SAMPLE_FROM/_TO`, default the last 10 days) logs the moved
+calls by route, the not-moved neighbours (target answered, ambiguous, same
+dept, blind), and up to 25 moved calls with BOTH call ids -- open
+`Call_Legs_<date>` in the CDR Import spreadsheet and search each id.
+`inbound:v12`; pinned by `inbound-xfer-abandon.test.js`, and the SQL was run
+against Postgres 16 on a fixture when it shipped.
 
 ### Outbound-call capture
 
