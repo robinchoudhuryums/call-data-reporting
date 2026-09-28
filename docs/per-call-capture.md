@@ -270,7 +270,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v12`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v13`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18

@@ -85,7 +85,10 @@ test('report: every dept-facing sub-select is window-scoped', function () {
   // Every ALIASED, row-filtering sub-select (`FROM inbound_calls c`) must carry
   // the window; the window clause appears once per such sub-select, including
   // the research block's negated copy.
-  const froms = sql.split('FROM inbound_calls c').length - 1;
+  // S2C-2: the transfer tallies reach `c` through a JOIN from the internal
+  // rows -- counted too, so an unscoped join is caught like an unscoped FROM.
+  const froms = (sql.split('FROM inbound_calls c').length - 1)
+              + (sql.split('JOIN inbound_calls c ').length - 1);
   const scoped = sql.split("c.call_start >= '06:30:00'").length - 1;
   assert.ok(froms >= 7, 'sanity: the payload really does have many sub-selects (' + froms + ')');
   assert.equal(scoped, froms,

@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v12';  // v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v13';  // v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -1156,67 +1156,72 @@ function inboundEmailBreakdownTable_(title, rows) {
 }
 
 /**
- * S2C-2 (owner ruling 2026-09-28): the TARGET queue (lower-cased) of the
- * unanswered transfer a customer was waiting on when they hung up on hold,
- * or NULL. A correlated SQL expression over the customer row `c`:
- *
- *   c is an answered, abandoned-on-hold customer call, AND exactly ONE
- *   internal-origin record links to it (related_call_id = c.call_id, kind
- *   inbound -- set at capture by the R11-N matcher or the Round-16b
- *   concurrent-call match: the agent dialed that queue WHILE on this call)
- *   whose own disposition is NOT answered -- the receiving dept never picked
- *   up. That record's entry_queue is the queue the agent was calling.
+ * S2C-2 (owner rulings 2026-09-28): TRANSFER ABANDONS count for the transfer's
+ * TARGET dept. A customer call (answered, not internal, in the work window)
+ * is a transfer abandon when exactly ONE internal-origin record links to it
+ * (related_call_id = its call_id, kind inbound -- set at capture by the R11-N
+ * matcher or the Round-16b concurrent-call match: the agent dialed that queue
+ * WHILE on this call) that was NOT answered, AND either
+ *   - the caller hung up ON HOLD (a warm transfer the target never picked
+ *     up), or
+ *   - that transfer record itself ABANDONED (a BLIND transfer: the caller was
+ *     sent straight into the target queue and hung up there -- "shouldn't
+ *     happen, all transfers are supposed to be warm", but user error can).
+ * The linked record's entry_queue is the target.
  *
  * UNIQUE-link-only, like the capture's matcher: two unanswered transfers on
- * one call leave it with the answering dept rather than guess. The CASE
- * makes the subquery run only for the few on-hold rows. The capture cannot
- * tell a transfer from a consult ("hold on, let me ask Sales"); both are the
- * caller hanging up while we were calling another dept, which is the ruling.
- */
-function inboundXferTargetSql_() {
-  return "(CASE WHEN c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false) THEN ("
-    + "SELECT CASE WHEN count(*) = 1 THEN min(lower(trim(x.entry_queue))) END "
-    + 'FROM inbound_calls x '
-    + 'WHERE x.call_date = c.call_date AND COALESCE(x.is_internal, false) '
-    + 'AND x.related_call_id = c.call_id '
-    + "AND COALESCE(x.related_call_kind, 'inbound') = 'inbound' "
-    + "AND x.disposition <> 'answered' "
-    + "AND COALESCE(trim(x.entry_queue), '') <> ''"
-    + ') END)';
-}
-
-/**
- * S2C-2: the dept-view on-hold transfer tallies for one window, as a json
- * subselect: { out, in }.
- *   out = on-hold abandons IN this dept's scope (its agent answered) whose
- *         transfer target is NOT one of its queues -> charged elsewhere;
- *   in  = on-hold abandons OUTSIDE its scope whose transfer target IS one of
- *         its queues -> charged here.
- * A transfer between two of the dept's own queues is neither (it stays).
- * `deptPred` is inboundDeptPredicate_'s ' AND (...)' fragment.
+ * one call count nowhere new rather than guess. The CDR cannot tell a
+ * transfer from a consult ("let me ask Sales"); both are the ruling's case.
+ *
+ * Driven FROM the few internal records and joined back to the customer row by
+ * primary key -- a correlated lookup per ANSWERED row (thousands a window)
+ * would scan each day's rows once per call.
+ *
+ * Returns a json subselect { out, in } for one window:
+ *   dept view (`deptPred` = inboundDeptPredicate_'s ' AND (...)' fragment):
+ *     out = ON-HOLD abandons in this dept's scope (its agent answered) whose
+ *           target is NOT one of its queues -> no longer counted here;
+ *     in  = transfer abandons whose target IS one of its queues and that were
+ *           not already counted here (a blind one never was; an on-hold one
+ *           was only if the dept answered it).
+ *   company view (no `deptPred`): out = 0 (an on-hold move nets to zero),
+ *     in = the BLIND ones, which no scope counted before.
  */
 function inboundXferTallySql_(fromIso, toIso, deptPred, deptQueues) {
   const qList = (deptQueues && deptQueues.length)
     ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',')
     : 'NULL';
-  const predExpr = String(deptPred || '').replace(/^\s*AND\s+/, '') || 'false';
-  const base = "c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date"
-    + ' AND ' + inboundWindowClause_(true) + ' AND COALESCE(c.is_internal, FALSE) = FALSE'
-    + " AND c.disposition = 'answered' AND COALESCE(c.abandoned_on_hold, false)";
-  const xt = inboundXferTargetSql_();
+  const predExpr = deptPred ? String(deptPred).replace(/^\s*AND\s+/, '') : '';
+  const xf = 'SELECT min(lower(trim(x.entry_queue))) AS xt, '
+    + "bool_or(x.disposition = 'abandoned') AS xab, "
+    + 'bool_or(COALESCE(c.abandoned_on_hold, false)) AS oh'
+    + (predExpr ? ', bool_or(COALESCE((' + predExpr + '), false)) AS ind' : '')
+    + ' FROM inbound_calls x JOIN inbound_calls c'
+    + ' ON c.call_date = x.call_date AND c.call_id = x.related_call_id'
+    + " WHERE x.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date"
+    + ' AND COALESCE(x.is_internal, false)'
+    + " AND COALESCE(x.related_call_kind, 'inbound') = 'inbound'"
+    + " AND x.disposition <> 'answered' AND COALESCE(trim(x.entry_queue), '') <> ''"
+    + " AND c.disposition = 'answered' AND COALESCE(c.is_internal, FALSE) = FALSE"
+    + ' AND ' + inboundWindowClause_(true)
+    + ' GROUP BY c.call_date, c.call_id HAVING count(*) = 1';
+  if (!predExpr) {
+    return "(SELECT json_build_object('out', 0, 'in', count(*) FILTER (WHERE NOT s.oh AND s.xab))"
+      + ' FROM (' + xf + ') s)';
+  }
   return '(SELECT json_build_object('
-    + "'out', (SELECT count(*) FROM (SELECT " + xt + ' AS xt FROM inbound_calls c WHERE '
-    +   base + deptPred + ') s WHERE s.xt IS NOT NULL AND s.xt NOT IN (' + qList + ')), '
-    + "'in', (SELECT count(*) FROM (SELECT " + xt + ' AS xt FROM inbound_calls c WHERE '
-    +   base + ' AND NOT COALESCE((' + predExpr + '), false)) s WHERE s.xt IN (' + qList + '))'
-    + '))';
+    + "'out', count(*) FILTER (WHERE s.oh AND s.ind AND s.xt NOT IN (" + qList + ')), '
+    + "'in', count(*) FILTER (WHERE (s.oh OR s.xab) AND s.xt IN (" + qList + ') AND NOT (s.oh AND s.ind))'
+    + ') FROM (' + xf + ') s)';
 }
 
 /**
- * PURE. Applies the S2C-2 tallies to a shaped KPI block: the tile keeps its
- * meaning ("callers who hung up on hold, charged to this dept") with the
- * transfer abandons moved to the receiving dept. total / answered are NOT
- * touched -- the answering dept did answer the call.
+ * PURE. Applies the S2C-2 tallies to a shaped KPI block. The "Abandoned on
+ * hold" tile becomes "callers who hung up on hold or during a transfer,
+ * charged to this dept": on-hold transfer abandons move to the target, blind
+ * ones are added there. total / answered / abandoned are NOT touched -- the
+ * answering dept did answer the call, and a count added to "Abandoned" with
+ * no matching call in "total" would bend the abandon RATE.
  */
 function inboundApplyXferTallies_(k, t) {
   const out = Number(t && t.out) || 0, inn = Number(t && t.in) || 0;
@@ -1283,14 +1288,14 @@ function sampleTransferAbandons() {
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'inbound-xfer-sample');
     rs.close(); st.close();
     const out = xferSampleTally_(JSON.parse(json || '[]'), obCallbackDeptMapSafe_(), inboundDeptFinalLabels_);
-    Logger.log('sampleTransferAbandons %s..%s -- READ-ONLY. On-hold abandons during an UNANSWERED transfer now count for the TARGET dept.', from, to);
+    Logger.log('sampleTransferAbandons %s..%s -- READ-ONLY. Callers who hung up on hold during an UNANSWERED transfer, or in the target queue after a BLIND transfer, count for the TARGET dept.', from, to);
     Logger.log('MOVED: %s call(s).', out.moved.length);
     Object.keys(out.byRoute).sort().forEach(function (k) { Logger.log('   %s : %s', k, out.byRoute[k]); });
-    Logger.log('NOT moved (stay with the answering dept): %s target answered; %s ambiguous (2+ unanswered transfers); %s transfer to the SAME dept; %s blind-transfer abandons (caller NOT on hold -- not covered by the ruling).',
-      out.targetAnswered, out.ambiguous, out.sameDept, out.blind);
+    Logger.log('NOT counted as a transfer abandon: %s target answered (caller on hold); %s ambiguous (2+ unanswered transfers); %s on-hold transfer to the SAME dept (already counted there); %s transfer not abandoned and caller not on hold.',
+      out.targetAnswered, out.ambiguous, out.sameDept, out.notAbandoned);
     out.moved.slice(0, XFER_SAMPLE_MAX_).forEach(function (m) {
-      Logger.log('   %s %s  customer call %s (answered by "%s", held %ss) -> transfer call %s to %s [%s] %s',
-        m.date, m.start || '(no time)', m.callId, m.finalDept || '?', m.holdSec == null ? '?' : m.holdSec,
+      Logger.log('   %s %s  [%s] customer call %s (answered by "%s", held %ss) -> transfer call %s to %s [%s] %s',
+        m.date, m.start || '(no time)', m.shape, m.callId, m.finalDept || '?', m.holdSec == null ? '?' : m.holdSec,
         m.xferId, m.targetQueue, m.targetDepts.join(' + ') || 'NO DEPT', m.xferDisp);
     });
     if (out.moved.length > XFER_SAMPLE_MAX_) Logger.log('   ... and %s more.', out.moved.length - XFER_SAMPLE_MAX_);
@@ -1308,34 +1313,39 @@ function obCallbackDeptMapSafe_() {
 
 /**
  * PURE (inbound-xfer-abandon.test.js): classifies the tool's rows with the
- * SAME rule as inboundXferTargetSql_ -- on hold, exactly one unanswered
- * link -> moved to that link's queue.
+ * SAME rule as inboundXferTallySql_ -- exactly one unanswered link, and the
+ * caller was on hold OR that transfer abandoned -> counted for that link's
+ * queue. An on-hold one to the answering dept's own queue moves nothing (it
+ * was already counted there); a blind one there is still NEWLY counted.
  */
 function xferSampleTally_(rows, deptMap, labelsOf) {
   const qDepts = {};
   ((deptMap && deptMap.pairs) || []).forEach(function (p) {
     (qDepts[p.queue] || (qDepts[p.queue] = [])).push(p.dept);
   });
-  const out = { moved: [], byRoute: {}, targetAnswered: 0, ambiguous: 0, sameDept: 0, blind: 0 };
+  const out = { moved: [], byRoute: {}, targetAnswered: 0, ambiguous: 0, sameDept: 0, notAbandoned: 0 };
   (rows || []).forEach(function (r) {
     const unans = (r.l || []).filter(function (x) { return x.disp !== 'answered'; });
-    if (!r.oh) { if (unans.length) out.blind++; return; }
-    if (!unans.length) { out.targetAnswered++; return; }
+    if (!unans.length) { if (r.oh) out.targetAnswered++; return; }
     if (unans.length > 1) { out.ambiguous++; return; }
     const x = unans[0];
+    // Not on hold AND the transfer did not abandon (e.g. it went to
+    // voicemail): the caller did not hang up on us -- not a transfer abandon.
+    if (!r.oh && x.disp !== 'abandoned') { out.notAbandoned++; return; }
     const depts = (qDepts[x.q] || []).slice();
-    // A transfer to one of the answering dept's OWN queues moves nothing
-    // (the report's `out` needs a target outside the dept's queues).
+    // An ON-HOLD transfer to one of the answering dept's OWN queues moves
+    // nothing (the report's `out` needs a target outside the dept's queues).
     const fd = String(r.fd == null ? '' : r.fd).trim().toLowerCase();
-    if (fd && labelsOf && depts.some(function (d) { return (labelsOf(d) || []).indexOf(fd) !== -1; })) {
+    if (r.oh && fd && labelsOf && depts.some(function (d) { return (labelsOf(d) || []).indexOf(fd) !== -1; })) {
       out.sameDept++;
       return;
     }
     const m = { date: r.d, start: r.s || null, callId: r.id, finalDept: r.fd || null,
+                shape: r.oh ? 'on hold' : 'blind transfer',
                 holdSec: r.hold == null ? null : Number(r.hold), xferId: x.id, targetQueue: x.q,
                 targetDepts: depts, xferDisp: x.disp };
     out.moved.push(m);
-    const k = (r.fd || '(no label)') + ' -> ' + x.q + ' (' + (depts.join(' + ') || 'NO DEPT') + ')';
+    const k = m.shape + ': ' + (r.fd || '(no label)') + ' -> ' + x.q + ' (' + (depts.join(' + ') || 'NO DEPT') + ')';
     out.byRoute[k] = (out.byRoute[k] || 0) + 1;
   });
   return out;
@@ -1427,11 +1437,10 @@ function computeInboundReport_(scope) {
       "SELECT json_build_object(" +
         "'kpis', " + kpiSelect(dr) + ", " +
         "'kpisPrior', " + kpiSelect(priorDr) + ", " +
-        // S2C-2: the on-hold transfer tallies (dept view only -- company-wide
-        // they only move a call between depts, so the total is unchanged).
-        (scope.companyView ? '' :
-          ("'xfer', " + inboundXferTallySql_(from, to, deptPred, scope.deptQueues) + ", " +
-           "'xferPrior', " + inboundXferTallySql_(prior.from, prior.to, deptPred, scope.deptQueues) + ", ")) +
+        // S2C-2: the transfer-abandon tallies (company view: only the BLIND
+        // ones, which no scope counted before -- an on-hold move nets to zero).
+        "'xfer', " + inboundXferTallySql_(from, to, deptPred, scope.deptQueues) + ", " +
+        "'xferPrior', " + inboundXferTallySql_(prior.from, prior.to, deptPred, scope.deptQueues) + ", " +
         // R12-26b: coverage start (earliest captured inbound call, unscoped)
         // so the client can warn when the requested From predates capture.
         "'coverageStart', (SELECT MIN(call_date)::text FROM inbound_calls), " +
@@ -1537,10 +1546,8 @@ function computeInboundReport_(scope) {
     });
     const kpis = inboundShapeKpis_(obj.kpis);
     const kpisPrior = inboundShapeKpis_(obj.kpisPrior);
-    if (!scope.companyView) {   // S2C-2
-      inboundApplyXferTallies_(kpis, obj.xfer);
-      inboundApplyXferTallies_(kpisPrior, obj.xferPrior);
-    }
+    inboundApplyXferTallies_(kpis, obj.xfer);            // S2C-2
+    inboundApplyXferTallies_(kpisPrior, obj.xferPrior);
     return {
       meta: {
         from: from, to: to, available: true,
@@ -1579,7 +1586,7 @@ function inboundShapeKpis_(k) {
     abandoned:       Number(k.abandoned) || 0,
     missed:          Number(k.missed) || 0,
     abandonedOnHold: Number(k.abandonedOnHold) || 0,
-    onHoldTransferIn: 0,    // S2C-2 (dept view; inboundApplyXferTallies_)
+    onHoldTransferIn: 0,    // S2C-2 (inboundApplyXferTallies_; company view: the blind ones)
     onHoldTransferOut: 0,
     abandonedIvr:    Number(k.abandonedIvr) || 0,
     abandonedDirect: Number(k.abandonedDirect) || 0,   // R5 stage split
