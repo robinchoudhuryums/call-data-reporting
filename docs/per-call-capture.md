@@ -307,29 +307,35 @@ attributes their on-hold abandons correctly with nothing mapped. Leave a
 shared label out of BOTH rows. Admins can additionally pick "All
 departments" -- the only view including the "Abandoned in IVR" bucket, since
 IVR abandons never reached a queue at all.
-**Transfer abandons move to the TARGET (S2C-2, owner ruling 2026-09-28).**
-In a DEPT view, an answered call abandoned ON HOLD while the agent was
-calling ANOTHER dept that never answered counts for that other dept's
-"Abandoned on hold" tile, not the answering dept's -- matching QCD and the
-Missed report, which already charge an unanswered transfer to the receiving
-queue. The link is the capture's own: exactly ONE internal-origin record with
-`related_call_id` = this call, kind inbound, NOT answered; its `entry_queue`
-is the target (`inboundXferTargetSql_`). ONLY the on-hold tile moves
-(`kpis.onHoldTransferIn/Out`, the tile foot names both): the call stays in the
-answering dept's total and answered counts, because its agent did answer it;
-the company view is unchanged (a move between depts nets to zero); two
-unanswered transfers on one call stay put (unique-link-only, like the
-matcher). The CDR cannot tell a transfer from a consult ("let me ask Sales"),
-and both are the ruling's case. NOT covered: a BLIND transfer the caller
-abandoned in the target queue while NOT on hold -- that call's record says
-"answered", and it still counts nowhere as an abandon in this report.
+**Transfer abandons count for the TARGET (S2C-2, owner rulings 2026-09-28).**
+A caller who hung up during a transfer the receiving dept never answered
+counts in THAT dept's "Abandoned on hold" tile -- matching QCD and the Missed
+report, which already charge an unanswered transfer to the receiving queue.
+Two shapes, both from the capture's own link (exactly ONE internal-origin
+record with `related_call_id` = this call, kind inbound, NOT answered; its
+`entry_queue` is the target): the caller was ON HOLD (a warm transfer), or
+that transfer record itself ABANDONED (a BLIND transfer into the target
+queue -- user error, since transfers are meant to be warm, but it happens).
+`inboundXferTallySql_` drives from the few internal records and joins back to
+the customer call by primary key (a per-answered-row lookup would scan each
+day once per call). ONLY the on-hold tile moves (`kpis.onHoldTransferIn/Out`,
+the tile foot names both): the call stays in the answering dept's total and
+answered counts, because its agent did answer it, and a count added to
+"Abandoned" with no call in "total" would bend the abandon rate. An on-hold
+one leaves the answering dept (unless the target is one of its own queues); a
+blind one was never counted anywhere, so it is ADDED to the target even when
+that is the answering dept's own queue, and the company view gains the blind
+ones ("N in a blind transfer"). Two unanswered transfers on one call count
+nowhere new (unique-link-only, like the matcher). The CDR cannot tell a
+transfer from a consult ("let me ask Sales"); both are the ruling's case.
 **Checking it:** `sampleTransferAbandons()` (dashboard editor, admin,
-read-only; `XFER_SAMPLE_FROM/_TO`, default the last 10 days) logs the moved
-calls by route, the not-moved neighbours (target answered, ambiguous, same
-dept, blind), and up to 25 moved calls with BOTH call ids -- open
-`Call_Legs_<date>` in the CDR Import spreadsheet and search each id.
-`inbound:v12`; pinned by `inbound-xfer-abandon.test.js`, and the SQL was run
-against Postgres 16 on a fixture when it shipped.
+read-only; `XFER_SAMPLE_FROM/_TO`, default the last 10 days) logs the counted
+calls by shape and route, the not-counted neighbours (target answered,
+ambiguous, on-hold to the same dept, not abandoned and not on hold), and up to
+25 calls with BOTH call ids -- open `Call_Legs_<date>` in the CDR Import
+spreadsheet and search each id. `inbound:v13`; pinned by
+`inbound-xfer-abandon.test.js`, and the SQL was run against Postgres 16 on a
+fixture (both shapes) before it shipped.
 
 ### Outbound-call capture
 

@@ -1593,13 +1593,12 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   one of these. The delete itself (`deleteHistoricalRowsForDate`) reads only
   the date column and removes matching rows as contiguous BLOCKS, re-padded
   to the prior `getMaxRows` (R38; `force-delete-rows.test.js` pins the match,
-  count and post-state) -- never rewrite the whole sheet again. **P-3 (ordering):** `processNewImport` reads + validates the SOURCE
-  sheet ("Source sheet empty." throw) BEFORE the force-delete block, and
-  since I-6 (Batch 2) the three compute stages
-  (`calculateMetricsInMemory` / `calcQcdReport` / `calcCsrReport`) run before
-  the delete too, so a compute throw is likewise a no-op, and since P-1
-  (Batch 5) the Raw Data staging rewrite + the two output-sheet writes run
-  before it as well (`csr-transfer.test.js` pins the order). New force-path
+  count and post-state) -- never rewrite the whole sheet again. **P-3/I-6/P-1 (ordering):** `processNewImport` runs every
+  delete-independent step -- source validation ("Source sheet empty." throw),
+  the three compute stages (`calculateMetricsInMemory` / `calcQcdReport` /
+  `calcCsrReport`), the Raw Data staging rewrite and both output-sheet writes
+  -- BEFORE the force-delete, so any of them throwing is a no-op
+  (`csr-transfer.test.js` pins the order). New force-path
   writers must keep source validation and every delete-independent write ahead of
   any delete. Pinned by `csr-transfer.test.js` (the helper) + `pipeline-build.test.js` (M2).
 - **System Health "Recent pipeline step failures" is the single trustworthy
