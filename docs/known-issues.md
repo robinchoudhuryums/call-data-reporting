@@ -886,7 +886,7 @@ that disagrees, so a missed bump here is a CI failure, not a silent trap.
 | `MissedCallsReport.gs` | `missed:vN:` | `v18` |
 | `CompanyOverview.gs` | `companyOverview:vN` | `v25` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
-| `InboundReport.gs` | `inbound:vN:` | `v14` |
+| `InboundReport.gs` | `inbound:vN:` | `v15` |
 | `InsightsReport.gs` | `insights:vN:` | `v24` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v4` |

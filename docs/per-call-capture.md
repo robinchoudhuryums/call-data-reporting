@@ -279,7 +279,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v14`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v15`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -350,9 +350,35 @@ calls by shape and route, the not-counted neighbours (target answered,
 ambiguous, on-hold to the same dept, not abandoned and not on hold, and the
 caller STAYED on the line), and up to 25 calls with BOTH call ids and both end
 times -- open `Call_Legs_<date>` in the CDR Import
-spreadsheet and search each id. `inbound:v14`; pinned by
-`inbound-xfer-abandon.test.js`, and the SQL was run against Postgres 16 on a
-fixture (both shapes) before it shipped.
+spreadsheet and search each id. Pinned by `inbound-xfer-abandon.test.js`,
+and the SQL was run against Postgres 16 on a fixture (both shapes) before it
+shipped.
+
+**"Transfers not answered" is a SEPARATE tile, counted QCD's way (S2C-6,
+owner ruling 2026-09-28, `inbound:v15`).** CSRs are told to drop a transfer
+attempt after ~2 minutes on hold when the target never answers, and QCD counts
+that dropped attempt as an abandon for the TARGET queue. "Abandoned on hold"
+above deliberately does not (it counts callers who hung up), so the attempts
+get their own figure, `kpis.xferUnanswered` (+ `xferUnansweredLinked`, the
+share tied to a customer call; the tile foot names it). The rule,
+`inboundXferUnansweredSql_`: every INTERNAL record (`is_internal`) whose
+entry queue is one of the dept's (case-insensitive; company view = every
+queue), `disposition = 'abandoned'` (QCD has no missed state, so a missed
+attempt is not counted), work-window scoped, with a queue wait STRICTLY more
+than 60 s (QCD's `waitDec > time1Min`). **Linked or not**: a colleague asking
+for help counts exactly as a transfer of a customer does, as in QCD. The wait
+is the record's OWN queue time -- max `secs` over its journey `kind:'queue'`
+events, the synthetic `transfer:true` ones excluded (`inboundQueueWaitSql_` /
+`xferQueueWaitSec_`) -- with `wait_seconds` only as the fallback, since an
+internal call has no IVR but its first leg can be a colleague's on a shared
+tree. **The two tiles overlap by design**: a blind transfer the caller hung
+up on is one caller lost AND one attempt unanswered. The figure still will
+not equal QCD's (different feed, QCD's window edges are start > 6:30 AND end
+< 3:00, and the settled QCD-vs-inbound gap in known-issues applies). The
+sample tool's last section lists the counted attempts by queue and dept, and
+names the ones under the threshold, missed, or with no queue time. Pinned by
+`inbound-xfer-abandon.test.js`; the SQL was run against Postgres 16 on a
+fixture (unlinked, exactly-60 s, synthetic-event and out-of-window cases).
 
 ### Outbound-call capture
 

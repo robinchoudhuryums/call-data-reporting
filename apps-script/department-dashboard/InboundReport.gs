@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v14';  // v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v15';  // v15: S2C-6 kpis.xferUnanswered -- internal transfer attempts into the dept's queues nobody answered, QCD's > 60s rule, linked or not (a separate tile; Abandoned on hold unchanged). v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -1076,6 +1076,7 @@ function sendInboundReportEmail(req) {
     + inboundEmailKpiRow_('Answered', fmtNum_(k.answered) + ' (' + (k.answerRate || 0) + '%)', inboundEmailDelta_(k.answered, p.answered, true))
     + inboundEmailKpiRow_('Abandoned', fmtNum_(k.abandoned) + ' (' + (k.abandonRate || 0) + '%)', inboundEmailDelta_(k.abandoned, p.abandoned, false))
     + inboundEmailKpiRow_('Abandoned on hold', fmtNum_(k.abandonedOnHold), inboundEmailDelta_(k.abandonedOnHold, p.abandonedOnHold, false))
+    + inboundEmailKpiRow_('Transfers not answered', fmtNum_(k.xferUnanswered), inboundEmailDelta_(k.xferUnanswered, p.xferUnanswered, false))
     + inboundEmailKpiRow_('Avg wait', inboundEmailDur_(k.avgWaitSec), inboundEmailDelta_(k.avgWaitSec, p.avgWaitSec, false))
     + inboundEmailKpiRow_('Avg hold', inboundEmailDur_(k.avgHoldSec), '');
 
@@ -1272,6 +1273,82 @@ function inboundApplyXferTallies_(k, t) {
   return k;
 }
 
+// ---------------------------------------------------------------------------
+// S2C-6 (owner ruling 2026-09-28): "Transfers not answered" -- a SEPARATE
+// figure from "Abandoned on hold", measured the way QCD measures it.
+//
+// CSRs are told to drop a transfer attempt after ~2 minutes on hold when the
+// target never picks up, and QCD counts that dropped attempt as an abandon for
+// the TARGET queue. "Abandoned on hold" deliberately does not (it means the
+// CALLER hung up -- the v14 rule), so this is its own tile: every internal
+// call (is_internal, the originator dialled one of this dept's queues) that
+// was ABANDONED with a queue wait past QCD's threshold, whether or not it was
+// tied to a customer call (a colleague asking for help counts too, as in QCD).
+//
+//   * Threshold: QCD's `waitDec > time1Min` (autoImport.js) -- STRICTLY more
+//     than 60 s. QCD has no "missed" state, so a missed internal call (rang,
+//     nobody answered, not flagged abandoned) is not counted either.
+//   * Wait: the record's OWN queue legs (journey kind 'queue', the synthetic
+//     transfer:true events excluded) -- the time the attempt sat in the
+//     target queue. wait_seconds is only the fallback: an internal call has
+//     no IVR, but its first leg can be a colleague's on a shared tree.
+//   * Scope: the work window (inboundWindowClause_), like every Inbound
+//     figure. QCD's own edges differ slightly (start > 6:30 AND end < 3:00);
+//     the settled QCD-vs-inbound gap note in known-issues covers why the two
+//     are never shown side by side as equal.
+//   * Overlap is by design: a blind transfer the caller hung up on appears in
+//     BOTH tiles -- one counts callers lost, this one counts attempts the
+//     target never answered.
+var XFER_UNANSWERED_MIN_WAIT_SEC_ = 60;
+
+/** SQL: a record's own queue time in seconds (max over its non-transfer queue events), or NULL. */
+function inboundQueueWaitSql_(col) {
+  return "(SELECT max((e->>'secs')::int)"
+    + ' FROM json_array_elements(CASE WHEN ' + col + " LIKE '[%' THEN " + col + "::json ELSE '[]'::json END) e"
+    + " WHERE e->>'kind' = 'queue' AND COALESCE(e->>'transfer', '') <> 'true'"
+    + " AND (e->>'secs') ~ '^[0-9]+$')";
+}
+
+/** PURE twin of inboundQueueWaitSql_ (journey JSON text -> seconds | null). */
+function xferQueueWaitSec_(journeyText) {
+  var ev;
+  try { ev = JSON.parse(String(journeyText || '')); } catch (e) { return null; }
+  if (!Array.isArray(ev)) return null;
+  var w = null;
+  ev.forEach(function (e) {
+    if (!e || e.kind !== 'queue' || e.transfer === true || !/^\d+$/.test(String(e.secs))) return;
+    if (w === null || +e.secs > w) w = +e.secs;
+  });
+  return w;
+}
+
+/**
+ * SQL for the S2C-6 tally over [fromIso, toIso]: { n, linked }. `deptQueues`
+ * empty -> the company view (every queue); otherwise the attempt's entry
+ * queue must be one of the dept's (case-insensitive, the B-4 rule).
+ */
+function inboundXferUnansweredSql_(fromIso, toIso, deptQueues, companyView) {
+  const qList = (deptQueues && deptQueues.length)
+    ? deptQueues.map(function (q) { return inboundSqlLit_(String(q).trim().toLowerCase()); }).join(',')
+    : 'NULL';
+  return "(SELECT json_build_object('n', count(*), "
+    + "'linked', count(*) FILTER (WHERE c.related_call_id IS NOT NULL))"
+    + " FROM inbound_calls c WHERE c.call_date BETWEEN '" + fromIso + "'::date AND '" + toIso + "'::date"
+    + ' AND COALESCE(c.is_internal, false)'
+    + " AND c.disposition = 'abandoned' AND COALESCE(trim(c.entry_queue), '') <> ''"
+    + (companyView ? '' : ' AND lower(trim(c.entry_queue)) IN (' + qList + ')')
+    + ' AND ' + inboundWindowClause_(true)
+    + ' AND COALESCE(' + inboundQueueWaitSql_('c.journey') + ', c.wait_seconds, 0) > ' + XFER_UNANSWERED_MIN_WAIT_SEC_
+    + ')';
+}
+
+/** PURE. Applies the S2C-6 tally to a shaped KPI block (touches only its own two fields). */
+function inboundApplyXferUnanswered_(k, t) {
+  k.xferUnanswered = Number(t && t.n) || 0;
+  k.xferUnansweredLinked = Number(t && t.linked) || 0;
+  return k;
+}
+
 var XFER_SAMPLE_MAX_ = 25;
 var XFER_SAMPLE_DEFAULT_DAYS_ = 10;   // inside the ~14-day Call_Legs window, so the legs can be eyeballed
 
@@ -1290,8 +1367,11 @@ var XFER_SAMPLE_DEFAULT_DAYS_ = 10;   // inside the ~14-day Call_Legs window, so
  * answered, more than one unanswered transfer = ambiguous, and the
  * blind-transfer shape -- caller NOT on hold, a linked transfer abandoned,
  * which the ruling does not cover); then up to XFER_SAMPLE_MAX_ moved calls
- * with both call ids. Call ids, times, queue names and org labels only -- no
- * caller number, name or hash (the vetting-tool convention).
+ * with both call ids. Then the S2C-6 section: the "Transfers not answered"
+ * attempts (xferUnansweredTally_, the tile's rule) by queue and dept, what
+ * was not counted, and up to XFER_SAMPLE_MAX_ of them. Call ids, times, queue
+ * names and org labels only -- no caller number, name or hash (the
+ * vetting-tool convention).
  */
 function sampleTransferAbandons() {
   assertAdmin_();
@@ -1351,10 +1431,65 @@ function sampleTransferAbandons() {
       Logger.log('   (stayed) %s  customer call %s: caller off %s, transfer call %s to %s ended %s',
         m.date, m.callId, hms(m.callerEndSec), m.xferId, m.targetQueue, hms(m.xferEndSec));
     });
+
+    // S2C-6: the separate "Transfers not answered" tile -- every unanswered
+    // internal call into a queue, linked to a customer call or not.
+    const uSql = "SELECT COALESCE(json_agg(t ORDER BY t.d, t.s), '[]')::text AS j FROM ("
+      + 'SELECT c.call_date::text AS d, c.call_start AS s, c.call_id AS id, lower(trim(c.entry_queue)) AS q, '
+      + 'c.disposition AS disp, (c.related_call_id IS NOT NULL) AS linked, c.wait_seconds AS ws, c.journey AS j '
+      + "FROM inbound_calls c WHERE c.call_date BETWEEN '" + from + "'::date AND '" + to + "'::date"
+      + " AND COALESCE(c.is_internal, false) AND c.disposition <> 'answered'"
+      + " AND COALESCE(trim(c.entry_queue), '') <> '' AND " + inboundWindowClause_(true) + ') t';
+    const ust = conn.createStatement();
+    const urs = ust.executeQuery(uSql);
+    const uJson = urs.next() ? urs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(uJson ? uJson.length : 0, 'inbound-xfer-sample');
+    urs.close(); ust.close();
+    const u = xferUnansweredTally_(JSON.parse(uJson || '[]'), obCallbackDeptMapSafe_());
+    out.unanswered = u;
+    Logger.log('TRANSFERS NOT ANSWERED (separate tile, QCD rule: abandoned AND queue wait > %ss): %s counted -- %s tied to a customer call, %s not (colleague calls).',
+      n(XFER_UNANSWERED_MIN_WAIT_SEC_), n(u.counted.length), n(u.linked), n(u.counted.length - u.linked));
+    Object.keys(u.byQueue).sort().forEach(function (k) { Logger.log('   %s : %s', k, n(u.byQueue[k])); });
+    Logger.log('NOT counted: %s abandoned within %ss (under the threshold); %s missed, not abandoned (QCD has no missed state); %s with no queue time recorded.',
+      n(u.underThreshold), n(XFER_UNANSWERED_MIN_WAIT_SEC_), n(u.missed), n(u.noWait));
+    u.counted.slice(0, XFER_SAMPLE_MAX_).forEach(function (m) {
+      Logger.log('   %s %s  transfer call %s to %s [%s] waited %ss%s',
+        m.date, m.start || '(no time)', m.callId, m.queue, m.depts.join(' + ') || 'NO DEPT', n(m.waitSec),
+        m.linked ? ' (tied to a customer call)' : '');
+    });
+    if (u.counted.length > XFER_SAMPLE_MAX_) Logger.log('   ... and %s more.', n(u.counted.length - XFER_SAMPLE_MAX_));
     return out;
   } finally {
     try { conn.close(); } catch (ce) { /* already closed */ }
   }
+}
+
+/**
+ * PURE (inbound-xfer-abandon.test.js): the S2C-6 rule for the sample tool --
+ * the SAME wait (own queue legs, else wait_seconds) and threshold as
+ * inboundXferUnansweredSql_. Rows: { d, s, id, q, disp, linked, ws, j }.
+ */
+function xferUnansweredTally_(rows, deptMap) {
+  const deptsOf = {};
+  ((deptMap && deptMap.pairs) || []).forEach(function (p) {
+    const q = String(p.queue || '').trim().toLowerCase();
+    (deptsOf[q] = deptsOf[q] || []).push(p.dept);
+  });
+  const out = { counted: [], linked: 0, underThreshold: 0, missed: 0, noWait: 0, byQueue: {} };
+  (rows || []).forEach(function (r) {
+    if (r.disp !== 'abandoned') { out.missed++; return; }
+    var w = xferQueueWaitSec_(r.j);
+    if (w == null && r.ws != null && r.ws !== '') w = Number(r.ws);
+    if (w == null || isNaN(w)) { out.noWait++; return; }
+    if (!(w > XFER_UNANSWERED_MIN_WAIT_SEC_)) { out.underThreshold++; return; }
+    const depts = deptsOf[r.q] || [];
+    out.counted.push({ date: r.d, start: r.s || null, callId: r.id, queue: r.q, depts: depts,
+                       waitSec: w, linked: !!r.linked });
+    if (r.linked) out.linked++;
+    const key = r.q + ' (' + (depts.join(' + ') || 'NO DEPT') + ')';
+    out.byQueue[key] = (out.byQueue[key] || 0) + 1;
+  });
+  return out;
 }
 
 /** obCallbackDeptMap_ (OutboundReport.gs) or an empty map -- the tool degrades to "NO DEPT", never throws. */
@@ -1505,6 +1640,9 @@ function computeInboundReport_(scope) {
         // ones, which no scope counted before -- an on-hold move nets to zero).
         "'xfer', " + inboundXferTallySql_(from, to, deptPred, scope.deptQueues) + ", " +
         "'xferPrior', " + inboundXferTallySql_(prior.from, prior.to, deptPred, scope.deptQueues) + ", " +
+        // S2C-6: transfer attempts into our queues nobody answered (QCD's rule).
+        "'xferUn', " + inboundXferUnansweredSql_(from, to, scope.deptQueues, scope.companyView) + ", " +
+        "'xferUnPrior', " + inboundXferUnansweredSql_(prior.from, prior.to, scope.deptQueues, scope.companyView) + ", " +
         // R12-26b: coverage start (earliest captured inbound call, unscoped)
         // so the client can warn when the requested From predates capture.
         "'coverageStart', (SELECT MIN(call_date)::text FROM inbound_calls), " +
@@ -1612,6 +1750,8 @@ function computeInboundReport_(scope) {
     const kpisPrior = inboundShapeKpis_(obj.kpisPrior);
     inboundApplyXferTallies_(kpis, obj.xfer);            // S2C-2
     inboundApplyXferTallies_(kpisPrior, obj.xferPrior);
+    inboundApplyXferUnanswered_(kpis, obj.xferUn);       // S2C-6
+    inboundApplyXferUnanswered_(kpisPrior, obj.xferUnPrior);
     return {
       meta: {
         from: from, to: to, available: true,
@@ -1652,6 +1792,8 @@ function inboundShapeKpis_(k) {
     abandonedOnHold: Number(k.abandonedOnHold) || 0,
     onHoldTransferIn: 0,    // S2C-2 (inboundApplyXferTallies_; company view: the blind ones)
     onHoldTransferOut: 0,
+    xferUnanswered: 0,      // S2C-6 (inboundApplyXferUnanswered_)
+    xferUnansweredLinked: 0,
     abandonedIvr:    Number(k.abandonedIvr) || 0,
     abandonedDirect: Number(k.abandonedDirect) || 0,   // R5 stage split
     anonymous:       Number(k.anonymous) || 0,

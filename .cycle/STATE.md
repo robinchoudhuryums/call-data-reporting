@@ -26,8 +26,13 @@
   PR'd). The S2C-2 sample (28 counted, 25 "blind" with long holds) showed the
   rule also caught AGENTS giving up on a warm-transfer consult; it now needs
   the caller's call to have ended by the time the attempt did (`inbound:v14`),
-  also unmerged. Owner to re-run `sampleTransferAbandons` after deploying; (3)
-  still owed.
+  also unmerged. The owner then clarified that CSRs DROP an unanswered transfer
+  attempt after ~2 min and QCD counts it for the target; ruled "split it":
+  "Abandoned on hold" keeps the caller-hung-up rule, and a NEW "Transfers not
+  answered" tile (S2C-6, `inbound:v15`) counts every internal attempt into the
+  dept's queues abandoned after > 60 s of queue time, linked or not (QCD's
+  rule) -- also unmerged. Owner to re-run `sampleTransferAbandons` after
+  deploying (it now logs both figures); (3) still owed.
 - **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
   a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
   owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds

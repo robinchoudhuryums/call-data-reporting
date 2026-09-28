@@ -58,6 +58,7 @@ const PAYLOAD = {
   kpis: { total: 40, answered: 30, abandoned: 5, abandonedOnHold: 6 },
   kpisPrior: { total: 38, answered: 29, abandonedOnHold: 4 },
   xfer: { out: 2, in: 3 }, xferPrior: { out: 1, in: 0 },
+  xferUn: { n: 7, linked: 4 }, xferUnPrior: { n: 5, linked: 1 },
   byInsurer: [], byDialIn: [], byQueue: [], byDialInInsurer: [], daily: [], outsideWindow: {},
 };
 const DEPT = { from: '2026-06-09', to: '2026-06-16', dept: 'CSR', companyView: false, deptQueues: ['A_Q_CSR'] };
@@ -153,4 +154,74 @@ test('S2C-2 sample tool: the same rule, both shapes, and every not-counted neigh
     'caller off 10:15:00, transfer attempt over at 10:04:00 -- the caller was still with us');
   assert.equal(t.byRoute['blind transfer: Customer Success -> a_q_sales (Sales)'], 1);
   assert.ok(!/hash|caller_number/i.test(JSON.stringify(t)), 'ids, times, queues and labels only');
+});
+
+// ---------------------------------------------------------------------------
+// S2C-6 (owner ruling 2026-09-28): "Transfers not answered" -- a SEPARATE tile
+// counting, the way QCD does, every internal call into the dept's queues that
+// was abandoned after MORE than 60 s in the queue, linked to a customer call
+// or not. "Abandoned on hold" is untouched by it.
+
+test('S2C-6: the tally lands in its OWN fields and moves nothing else', function () {
+  install(PAYLOAD);
+  const r = JSON.parse(JSON.stringify(h.call('computeInboundReport_', DEPT)));
+  assert.equal(r.kpis.xferUnanswered, 7);
+  assert.equal(r.kpis.xferUnansweredLinked, 4);
+  assert.equal(r.kpisPrior.xferUnanswered, 5, 'the delta chip has a prior side');
+  assert.equal(r.kpis.abandonedOnHold, 6 - 2 + 3, 'Abandoned on hold keeps the v14 rule');
+  assert.equal(r.kpis.abandoned, 5);
+  assert.equal(r.kpis.total, 40, 'internal calls never enter the inbound total');
+});
+
+test('S2C-6 SQL: internal, abandoned, > 60 s of own queue time, linked or not; dept = entry queue', function () {
+  const f = install(PAYLOAD);
+  h.call('computeInboundReport_', DEPT);
+  const sql = f.cap.sqls.join('\n');
+  const i = sql.indexOf("'xferUn', ");
+  assert.ok(i !== -1 && sql.indexOf("'xferUnPrior', ") !== -1);
+  const body = sql.slice(i, sql.indexOf("'xferUnPrior', "));
+  assert.match(body, /count\(\*\) FILTER \(WHERE c\.related_call_id IS NOT NULL\)/);
+  assert.match(body, /AND COALESCE\(c\.is_internal, false\) AND c\.disposition = 'abandoned'/,
+    'QCD has no missed state: only abandoned attempts count');
+  assert.ok(!/related_call_id =|JOIN/.test(body), 'UNLINKED attempts count too -- no join to a customer call');
+  assert.match(body, /lower\(trim\(c\.entry_queue\)\) IN \('a_q_csr'\)/);
+  assert.ok(body.indexOf('COALESCE(' + h.call('inboundQueueWaitSql_', 'c.journey') + ', c.wait_seconds, 0) > 60') !== -1,
+    'QCD\'s strict waitDec > time1Min, on the attempt\'s own queue time');
+  assert.ok(body.indexOf(h.call('inboundWindowClause_', true)) !== -1, 'work-window scoped');
+});
+
+test('S2C-6 SQL: the company view counts every queue', function () {
+  const f = install(PAYLOAD);
+  h.call('computeInboundReport_', { from: '2026-06-09', to: '2026-06-16', dept: '', companyView: true, deptQueues: [] });
+  const sql = f.cap.sqls.join('\n');
+  const body = sql.slice(sql.indexOf("'xferUn', "), sql.indexOf("'xferUnPrior', "));
+  assert.ok(!/entry_queue\)\) IN/.test(body), "no queue filter company-wide");
+});
+
+test('S2C-6: queue wait = max own queue-leg secs (synthetic transfer events excluded)', function () {
+  const j = JSON.stringify([{ t: '10:00:00', kind: 'queue', secs: 400, transfer: true, origin: true },
+                            { t: '10:00:30', kind: 'queue', secs: 95 }, { t: '10:00:40', kind: 'leg', secs: 300 },
+                            { t: '10:02:00', kind: 'queue', secs: 'x' }]);
+  assert.equal(h.call('xferQueueWaitSec_', j), 95);
+  assert.equal(h.call('xferQueueWaitSec_', '[]'), null);
+  assert.equal(h.call('xferQueueWaitSec_', 'nope'), null);
+});
+
+test('S2C-6 sample tool: same threshold and wait rule; names what it did not count', function () {
+  const q = function (secs) { return JSON.stringify([{ t: '10:00:00', kind: 'queue', secs: secs }]); };
+  const map = { pairs: [{ queue: 'a_q_service', dept: 'Service' }] };
+  const rows = [
+    { d: '2026-06-09', s: '10:00:00', id: 'u1', q: 'a_q_service', disp: 'abandoned', linked: true, ws: 5, j: q(125) },
+    { d: '2026-06-09', id: 'u2', q: 'a_q_service', disp: 'abandoned', linked: false, ws: 500, j: q(61) },
+    { d: '2026-06-09', id: 'u3', q: 'a_q_service', disp: 'abandoned', linked: false, ws: 500, j: q(60) },   // exactly 60: QCD's > is strict
+    { d: '2026-06-09', id: 'u4', q: 'a_q_other', disp: 'abandoned', linked: false, ws: 90, j: '[]' },       // no queue leg -> wait_seconds
+    { d: '2026-06-09', id: 'u5', q: 'a_q_service', disp: 'missed', linked: true, ws: 300, j: q(300) },
+    { d: '2026-06-09', id: 'u6', q: 'a_q_service', disp: 'abandoned', linked: false, ws: null, j: '[]' },
+  ];
+  const t = JSON.parse(JSON.stringify(h.call('xferUnansweredTally_', rows, map)));
+  assert.deepEqual(t.counted.map(function (m) { return [m.callId, m.waitSec, m.linked]; }),
+    [['u1', 125, true], ['u2', 61, false], ['u4', 90, false]]);
+  assert.deepEqual([t.linked, t.underThreshold, t.missed, t.noWait], [1, 1, 1, 1]);
+  assert.equal(t.byQueue['a_q_service (Service)'], 2);
+  assert.equal(t.byQueue['a_q_other (NO DEPT)'], 1);
 });
