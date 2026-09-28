@@ -1282,3 +1282,70 @@ test('callLegShapeTally_: counts direct forks per agent and the answer-leg shape
   const flat = JSON.stringify(out);
   assert.ok(!/2145550|J Doe|8[1-4]000[12]/.test(flat), 'counts only: no number, name or call id');
 });
+
+// ---- S2C-1 agentBusy half (owner's leg-shape probe, 2026-09-28) --------------
+// 22 of 583 answered calls carried the answering agent ONLY on their own
+// Outgoing talk leg: CALLEE = the customer's number (its CALLEE_NAME is the
+// customer's CNAM), CALLER = the agent's extension. The matchers keyed on
+// CALLEE, so those agents were invisible and their transfers never linked.
+function capturedInboundAgentOnOutgoingOnly(callId, opts) {
+  opts = opts || {};
+  const rows = [
+    leg({ callId: callId, legId: 1, start: '06/04/2026 09:59:50', stop: '06/04/2026 10:00:05', direction: 'Incoming', caller: '12145559999', callee: '103', calleeName: 'A_Q_CSR', dialIn: '19722281820' }),
+    leg({ callId: callId, legId: 3, start: '06/04/2026 10:00:05', connected: '06/04/2026 10:00:06', stop: '06/04/2026 10:05:00', direction: 'Outgoing', talk: '0:04:54', caller: '215', callerName: 'Raymond (Ray) Mathews', callee: '12145559999', calleeName: 'JANE Q CUSTOMER', answered: 'Answered', dept: 'CSR', parent: callId }),
+  ];
+  if (opts.alsoRingLeg) {
+    // The SAME agent also on an Incoming answered leg of the SAME call -- the
+    // shape the fix was held back for: two index entries, ONE call.
+    rows.push(leg({ callId: callId, legId: 2, start: '06/04/2026 10:00:05', connected: '06/04/2026 10:00:05', stop: '06/04/2026 10:05:00', direction: 'Incoming', talk: '0:04:55', caller: '12145559999', callee: '215', calleeName: 'Raymond (Ray) Mathews', answered: 'Answered', dialIn: '19722281820', dept: 'CSR' }));
+  }
+  return rows;
+}
+
+test('S2C-1: an agent seen ONLY on their Outgoing talk leg is matched by CALLER ext -- and named from CALLER_NAME', function () {
+  const recs = build(capturedInboundAgentOnOutgoingOnly('830001').concat([
+    transferAbandonBy215('830900', '06/04/2026 10:03:00'),
+  ]));
+  const ir = rec(recs, '830900');
+  assert.equal(ir.relatedCallId, '830001', 'the transfer now links back to the customer\'s call');
+  const names = JSON.parse(JSON.stringify(ir.journey.map(function (e) { return e.kind + ':' + e.name; })));
+  assert.deepEqual(names, ['queue:A_Q_CSR', 'answer:Raymond (Ray) Mathews', 'queue:A_Q_Spanish']);
+  assert.ok(!/JANE/.test(JSON.stringify(recs)), 'the customer CNAM on that leg never reaches a record (PHI)');
+  const r = rec(recs, '830001');
+  assert.equal(r.journey[r.journey.length - 1].transfer, true, 'and the caller\'s journey gains the abandon');
+});
+
+test('S2C-1: the agent on BOTH a ring leg and their own talk leg of ONE call is still a UNIQUE match', function () {
+  const recs = build(capturedInboundAgentOnOutgoingOnly('830002', { alsoRingLeg: true }).concat([
+    transferAbandonBy215('830901', '06/04/2026 10:03:00'),
+  ]));
+  assert.equal(rec(recs, '830901').relatedCallId, '830002', 'two index entries, one call -- not ambiguous');
+  const answer = rec(recs, '830901').journey.filter(function (e) { return e.kind === 'answer'; })[0];
+  assert.equal(answer.name, 'Raymond (Ray) Mathews');
+  assert.equal(answer.talk, 295, 'described by the CALLEE-identified leg, like every other record');
+});
+
+test('S2C-1: two DIFFERENT concurrent calls stay ambiguous under the per-call count', function () {
+  const recs = build(capturedInboundAgentOnOutgoingOnly('830003')
+    .concat(capturedInboundAnsweredBy215('830004'))
+    .concat([transferAbandonBy215('830902', '06/04/2026 10:03:00')]));
+  assert.ok(rec(recs, '830902').relatedCallId == null, 'never guesses between two calls');
+});
+
+test('S2C-1: the Round-16b concurrent-call link also sees the Outgoing-only agent, counted per call', function () {
+  const recs = build(capturedInboundAgentOnOutgoingOnly('830005', { alsoRingLeg: true }).concat([
+    // ext 215 dials A_Q_Sales while on the call; nobody answers (not an
+    // abandon, so it takes the Round-16b context link, not R11-N).
+    leg({ callId: '830905', legId: 1, start: '06/04/2026 10:02:00', stop: '06/04/2026 10:02:30', direction: 'Internal', caller: '215', callerName: 'Raymond (Ray) Mathews', callee: '300', calleeName: 'A_Q_Sales', missed: 'Missed' }),
+  ]));
+  assert.equal(rec(recs, '830905').relatedCallId, '830005');
+});
+
+test('S2C-1: icAnswerLegAgent_ -- CALLEE normally, CALLER on an external-callee leg, nothing when both ends are external', function () {
+  const inc = leg({ callId: 'x', legId: 1, start: '06/04/2026 10:00:00', direction: 'Incoming', caller: '12145559999', callee: '215', calleeName: 'Ray' });
+  const out = leg({ callId: 'x', legId: 2, start: '06/04/2026 10:00:00', direction: 'Outgoing', caller: '215', callerName: 'Ray', callee: '12145559999', calleeName: 'JANE Q CUSTOMER' });
+  const ext2ext = leg({ callId: 'x', legId: 3, start: '06/04/2026 10:00:00', direction: 'Outgoing', caller: '19725551234', callee: '12145559999', calleeName: 'JANE Q CUSTOMER' });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('icAnswerLegAgent_', inc))), { ext: '215', name: 'Ray', viaCallee: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('icAnswerLegAgent_', out))), { ext: '215', name: 'Ray', viaCallee: false });
+  assert.equal(h.call('icAnswerLegAgent_', ext2ext), null);
+});

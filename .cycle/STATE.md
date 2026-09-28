@@ -19,8 +19,11 @@
   was RULED the same day (counts for the target too) and SHIPPED
   (`inbound:v13`; the company view gains them). (3) click "Back up now" once
   to seed the fallback workbook.
-  **Where I left off:** all shipped, synced (sync-docs 2026-09-28) and merged;
-  waiting on (1), the S2C-2 sample read, and (3).
+  **Where I left off:** all shipped, synced (sync-docs 2026-09-28) and merged
+  (PR #345). (1) came back: no forks (S2C-5 confirmed), and 22/583 answered
+  calls show the agent only on their Outgoing talk leg -- the S2C-1 agentBusy
+  half is now fixed on `claude/broad-scan-gnfpx5` (commit after #345; not yet
+  PR'd). Still waiting on the S2C-2 sample read and (3).
 - **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
   a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
   owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds

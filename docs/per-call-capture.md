@@ -125,7 +125,16 @@ what is disclosed: docs/known-issues.md. Editor diagnostics
 record builder over a Call_Legs sheet (never a parallel implementation --
 the chain diagnostic's hand-written rule is what once "resolved" a
 temporally impossible chain). Pinned by
-`tests/unit/inbound-calls.test.js`.
+`tests/unit/inbound-calls.test.js`. **Who the agent is on the answered call
+(S2C-1, 2026-09-28):** normally the CALLEE of an Incoming answered leg, but on
+~4% of answered calls (22 of 583 on 2026-09-24, owner's `previewCallLegShapes`
+run) the agent appears ONLY on their own Outgoing talk leg -- CALLEE = the
+customer's number and CALLEE_NAME = the customer's CNAM, the agent's extension
+in CALLER. `icAnswerLegAgent_` reads CALLER (and CALLER_NAME, never the CNAM)
+for that shape, so both matchers see those agents; uniqueness is counted per
+CALL (`icDistinctRoots_`), because one call can index the same agent twice (a
+ring leg and a talk leg) and that is not an ambiguity. Not retroactive: a date
+re-links on its next import or force re-import within the `Call_Legs_*` window.
 
 ### A CDR root is a leg tree
 
