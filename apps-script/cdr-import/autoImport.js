@@ -64,17 +64,23 @@ function onChange(e) {
         durationMs: null,
         notes: 'onChange INSERT_GRID SKIPPED: script lock not acquired within 10s '
           + '(another run — import, bulk archive, or Neon mirror drain — held it). '
-          + 'The import for this grid did NOT run and will not re-fire on its own; '
-          + 'if no later autoImport success row appears for today, run Manual '
-          + 'Processing (CDR Tools) for the date.',
+          + 'ING-4: a one-shot catch-up import is scheduled for ~2 minutes; if no later '
+          + 'autoImport success row appears for this date, run Manual Processing (CDR Tools).',
       });
     } catch (err) {
       console.log('onChange: lock-skip telemetry failed: ' + (err && err.message ? err.message : err));
     }
+    schedulePendingImportCatchUp_(2);   // ING-4: the grid is no longer dropped
     return;
   }
   try {
-    const outcome = processNewImport();
+    // ING-4 (broad-scan 2026-09-23, owner-approved 2026-09-28): import EVERY
+    // unprocessed Call_Legs sheet, oldest first -- not just the newest. A day
+    // uploaded shortly before/after another used to be lost silently: its
+    // trigger either found the NEWEST sheet already processed ("ALREADY
+    // PROCESSED") or lost the script lock. Each date still runs through the
+    // unchanged daily path (processNewImport, force=false).
+    const outcome = processPendingImports_();
     // processNewImport already shows step toasts and a Step 7 completion toast,
     // but those show on the source SS. This confirms the trigger fired and succeeded.
         if (outcome && outcome.startsWith("DONE")) {
@@ -402,9 +408,15 @@ function getDateRange(startStr, endStr) {
 // MAIN PROCESS
 // -------------------------------------------------------------------------
 
-function processNewImport(force = false, specificDateStr = null, silent = false, preOpenedTargetSS = null, histDateCache = null) {
+function processNewImport(force = false, specificDateStr = null, silent = false, preOpenedTargetSS = null, histDateCache = null, opts = null) {
   const sourceSS  = SpreadsheetApp.getActiveSpreadsheet();
-  const ui        = SpreadsheetApp.getUi();
+  // ING-4: the catch-up import runs from a TIME-BASED trigger, where getUi()
+  // throws ("Cannot call SpreadsheetApp.getUi() from this context"). Resolve
+  // it best-effort; the one alert below is skipped when there is no UI or the
+  // caller (the pending-import loop) asked for no alerts.
+  let ui = null;
+  try { ui = SpreadsheetApp.getUi(); } catch (uiErr) { ui = null; }
+  const noAlert = !!(opts && opts.noAlert);
   const startTime = new Date().getTime();
   // Target SS for Pipeline Health logging -- the same workbook the
   // dashboard's setup() creates "Pipeline Health" in. Resolved
@@ -469,7 +481,7 @@ function processNewImport(force = false, specificDateStr = null, silent = false,
     let existsInDirect = (histDateCache && histDateCache.direct) ? histDateCache.direct.has(dateKey) : checkHistoryForDate(targetSS, "Direct Call History", dateObj, 2);
 
     if (existsInCDR && existsInQPath && existsInQCD && existsInCSR && existsInDQE && !force) {
-      if (!silent) ui.alert("❌ Aborted", `Data for ${dateObj.toDateString()} already exists.`, ui.ButtonSet.OK);
+      if (!silent && ui && !noAlert) ui.alert("❌ Aborted", `Data for ${dateObj.toDateString()} already exists.`, ui.ButtonSet.OK);
       return "ALREADY IN HISTORY";
     }
 
@@ -2972,6 +2984,124 @@ function deleteHistoricalRowsForDate(sheet, dateObj, dateColIndex) {
   if (maxAfter < maxBefore) sheet.insertRowsAfter(maxAfter, maxBefore - maxAfter);
 
   return matchRows.length;
+}
+
+// -------------------------------------------------------------------------
+// ING-4: catch-up import of every unprocessed Call_Legs sheet
+// -------------------------------------------------------------------------
+
+// Only sheets dated within this many days of the NEWEST Call_Legs sheet are
+// candidates -- the retention prune keeps ~14 days, and `lastSheets` holds the
+// last 60 processed names, so anything older is either processed or a
+// deliberately held recovery tab (Operator State #43) the operator imports by
+// hand.
+var PENDING_IMPORT_WINDOW_DAYS_ = 14;
+var PENDING_IMPORT_HANDLER_ = 'runPendingImportCatchUp_';
+
+/**
+ * PURE (unit-tested). Given every sheet NAME in the source workbook and the
+ * `lastSheets` memo, returns the unprocessed Call_Legs dates ('YYYY-MM-DD'),
+ * OLDEST first, limited to the window ending at the newest Call_Legs date.
+ */
+function pendingCallLegsDates_(sheetNames, lastKnown, windowDays) {
+  var re = /^Call_Legs_(\d{4}-\d{2}-\d{2})$/i;
+  var known = {};
+  (lastKnown || []).forEach(function (n) { known[String(n)] = true; });
+  var dates = [];
+  (sheetNames || []).forEach(function (n) {
+    var m = String(n).match(re);
+    if (m) dates.push({ name: String(n), iso: m[1] });
+  });
+  if (!dates.length) return [];
+  dates.sort(function (a, b) { return a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0; });
+  var newest = dates[dates.length - 1].iso;
+  var p = newest.split('-').map(Number);
+  var floor = new Date(Date.UTC(p[0], p[1] - 1, p[2] - (Number(windowDays) || PENDING_IMPORT_WINDOW_DAYS_)));
+  var floorIso = floor.getUTCFullYear() + '-' + ('0' + (floor.getUTCMonth() + 1)).slice(-2)
+    + '-' + ('0' + floor.getUTCDate()).slice(-2);
+  return dates.filter(function (d) { return !known[d.name] && d.iso >= floorIso; })
+    .map(function (d) { return d.iso; });
+}
+
+/**
+ * ING-4. Runs INSIDE the caller's script lock. Imports each pending date
+ * oldest-first through processNewImport(false, date), re-reading `lastSheets`
+ * before each so a date another run finished is not repeated. Stops starting
+ * new dates once another one would not fit the bulk time budget
+ * (bulkTimeLimitMs_, Operator State #70) and schedules a one-shot catch-up for
+ * the rest. Returns the LAST outcome (the onChange toast reads it).
+ */
+function processPendingImports_() {
+  const t0 = Date.now();
+  const budget = bulkTimeLimitMs_();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let last = 'MISSING';
+  let lastMs = 0;
+  const done = [];
+  for (let guard = 0; guard < 31; guard++) {
+    const lastKnown = JSON.parse(PropertiesService.getScriptProperties().getProperty('lastSheets') || '[]');
+    const pending = pendingCallLegsDates_(ss.getSheets().map(function (sh) { return sh.getName(); }),
+                                          lastKnown, PENDING_IMPORT_WINDOW_DAYS_);
+    if (!pending.length) break;
+    if (done.length && (Date.now() - t0) + lastMs * 1.5 > budget) {
+      console.log('processPendingImports_: ' + pending.length + ' date(s) still pending ('
+        + pending.join(', ') + ') -- out of time budget; catch-up scheduled.');
+      schedulePendingImportCatchUp_(1);
+      break;
+    }
+    const iso = pending[0];
+    const s0 = Date.now();
+    last = processNewImport(false, iso, false, null, null, { noAlert: true });
+    lastMs = Date.now() - s0;
+    done.push(iso + '=' + String(last).split(' ')[0]);
+    // A date that was ALREADY IN HISTORY (imported by a path that did not
+    // record `lastSheets`) or whose sheet vanished must not be retried forever.
+    if (last === 'ALREADY IN HISTORY' || last === 'MISSING' || last === 'ALREADY PROCESSED') {
+      rememberProcessedSheet_('Call_Legs_' + iso);
+    }
+  }
+  if (done.length > 1) console.log('processPendingImports_: imported ' + done.join(', '));
+  return last;
+}
+
+/** Adds a sheet name to the `lastSheets` memo (same cap as processNewImport's F2 write). */
+function rememberProcessedSheet_(name) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const lastKnown = JSON.parse(props.getProperty('lastSheets') || '[]');
+    if (lastKnown.indexOf(name) === -1) lastKnown.push(name);
+    props.setProperty('lastSheets', JSON.stringify(lastKnown.slice(-60)));
+  } catch (e) {
+    console.warn('rememberProcessedSheet_ failed (non-fatal): ' + (e && e.message ? e.message : e));
+  }
+}
+
+/** ING-4: (re)schedule the one-shot catch-up `minutes` from now (one at a time). */
+function schedulePendingImportCatchUp_(minutes) {
+  try {
+    ScriptApp.getProjectTriggers().forEach(function (t) {
+      if (t.getHandlerFunction() === PENDING_IMPORT_HANDLER_) ScriptApp.deleteTrigger(t);
+    });
+    ScriptApp.newTrigger(PENDING_IMPORT_HANDLER_).timeBased()
+      .after(Math.max(1, Number(minutes) || 1) * 60 * 1000).create();
+  } catch (e) {
+    console.warn('schedulePendingImportCatchUp_ failed: ' + (e && e.message ? e.message : e)
+      + ' -- run Manual Processing for any date still missing.');
+  }
+}
+
+/** ING-4 trigger body: the one-shot catch-up. Deletes itself, then imports what is pending. */
+function runPendingImportCatchUp_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === PENDING_IMPORT_HANDLER_) ScriptApp.deleteTrigger(t);
+  });
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) { schedulePendingImportCatchUp_(5); return; }
+  try {
+    processPendingImports_();
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getLatestValidSheet(ss) {

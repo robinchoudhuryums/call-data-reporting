@@ -2453,6 +2453,17 @@
     if (el) {
       el.textContent = (st.installed ? 'Weekly trigger installed (Sat ' + st.hour + ':00). ' : 'No trigger installed. ')
         + (st.lastRun ? ('Last run ' + st.lastRun + ' — ' + (st.lastResult || '')) : 'Never run.');
+      // Sheets fallback (Drive blocked by policy): link the backup workbook.
+      // DOM nodes, not innerHTML -- the URL is server-built but stays text.
+      if (st.sheetsUrl && /^https:\/\/docs\.google\.com\//.test(st.sheetsUrl)) {
+        el.appendChild(document.createTextNode(' '));
+        const a = document.createElement('a');
+        a.href = st.sheetsUrl;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = st.store === 'sheets' ? 'Open backup workbook' : 'Backup workbook (fallback)';
+        el.appendChild(a);
+      }
     }
   }
 

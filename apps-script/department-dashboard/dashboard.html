@@ -2345,9 +2345,11 @@
         <div class="al-section" id="health-backup-section" style="display:none;">
           <h3 class="al-section-title">Neon backup</h3>
           <p class="al-hint">
-            Weekly Drive export of the tables with <strong>no sheet fallback</strong>
+            Weekly export of the tables with <strong>no sheet fallback</strong>
             (<code>escalations</code>, <code>escalation_activity</code>, <code>inbound_calls</code> incl. journeys).
-            Folder auto-created on first run (<code>NEON_BACKUP_FOLDER_ID</code>).
+            Written to a Drive folder (<code>NEON_BACKUP_FOLDER_ID</code>); when Drive is blocked it falls back to
+            a <strong>Dashboard Neon Backups</strong> workbook (<code>NEON_BACKUP_SS_ID</code>; force it with
+            <code>NEON_BACKUP_STORE=sheets</code>). Restore: <code>restoreNeonBackupFile()</code> in the editor.
           </p>
           <div class="esc-resolve-actions">
             <button class="btn" id="health-backup-install" type="button">Install weekly trigger</button>

@@ -122,7 +122,7 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   const queueExtSet = (maps && maps.queueExtSet) || new Set();
 
   // Column indices (== the autoImport `idx` + DQE_C layout).
-  const C = { CALL_ID: 0, PARENT: 14, START: 2, DIR: 5, TALK: 6, CALLTIME: 7,
+  const C = { CALL_ID: 0, PARENT: 14, START: 2, CONNECTED: 3, STOP: 4, DIR: 5, TALK: 6, CALLTIME: 7,
               CALLER: 8, CALLER_NAME: 9, CALLEE: 10, CALLEE_NAME: 11, CTX: 13,
               CALLER_ID: 22, MIS: 23, ANS: 25 };
   const qIdRe = /(A_Q_\w+|Backup CSR)/i;   // DQE queue-name convention (col W / names)
@@ -195,8 +195,20 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
     // (1) OCCUPIED intervals -- any leg the agent was ON (talk>0), INCLUDING
     //     queue legs. Not window-filtered: a pre-window call still in progress
     //     makes them busy for an in-window ring. Self-exclusion is by cid.
+    //     S2C-5 (owner ruling 2026-09-28): busy runs from ANSWER, not from the
+    //     leg's ring start -- the design's `[answer_start, talk_end]`. A leg
+    //     that rang 30 s before it was picked up used to make the agent "busy"
+    //     for those 30 s, excusing a genuine direct miss as missed_busy. The
+    //     window is [CONNECTED, STOP] when both parse (the same Raw Data layout
+    //     the inbound capture reads, IC_COL.CONNECTED / STOP); otherwise the
+    //     pre-S2C-5 [START, START + talk + hold] stands, so a grid without
+    //     those cells behaves exactly as before.
     if (startSec != null && talk > 0) {
-      const occ = { cid: cid, s: startSec, e: startSec + talk + hold, info: dir + ' ' + caller + '->' + callee };
+      const connSec = dcStartSec_(r[C.CONNECTED]);
+      const stopSec = dcStartSec_(r[C.STOP]);
+      const busyS = (connSec != null && connSec >= startSec) ? connSec : startSec;
+      const busyE = (stopSec != null && stopSec >= busyS) ? stopSec : startSec + talk + hold;
+      const occ = { cid: cid, s: busyS, e: busyE, info: dir + ' ' + caller + '->' + callee };
       if (callerAgent && !exclusions.has(callerAgent.name)) ensure(callerAgent.name, callerAgent.dept).occ.push(occ);
       if (calleeAgent && !exclusions.has(calleeAgent.name)) ensure(calleeAgent.name, calleeAgent.dept).occ.push(occ);
     }

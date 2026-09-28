@@ -2020,3 +2020,158 @@ function previewOutboundAssistLinksForDate() {
   if (arg.cancelled) return;
   previewOutboundAssistLinks(arg.dateIso);
 }
+
+/**
+ * READ-ONLY leg-shape probe (broad-scan 2026-09-23 follow-ups S2C-5 + S2C-1,
+ * owner-requested 2026-09-28). Writes nothing; prints COUNTS only -- no phone
+ * number, caller name or call id leaves the function. Two questions:
+ *
+ * (A) S2C-5 -- can ONE direct call produce MORE THAN ONE call id for the same
+ *     agent? The Direct metrics dedupe inbound rings per CALL_ID; the design
+ *     said per PARENT call. If a direct call to a desk extension also forks to
+ *     the agent's mobile / softphone as extra legs with their own call ids, the
+ *     per-CALL_ID key counts that one ring more than once. Owner expectation:
+ *     never. `multiCidPairs` > 0 would contradict it.
+ *
+ * (B) S2C-1 -- which leg shows the ANSWERING agent on an answered inbound call?
+ *     The transfer-abandon + related-call matchers (`agentBusy`) key on the
+ *     answer leg's CALLEE extension. If on some calls the only answered talk
+ *     leg is the agent's OUTGOING leg (CALLEE = the customer's number, the
+ *     agent's extension in CALLER), those calls are invisible to the matchers.
+ *     `calleeExtAnswer` = visible; `onlyExternalCallee` = invisible, split by
+ *     whether that leg's CALLER is an extension (the fix would read it there).
+ *
+ * CDR Import editor / CDR Tools menu:
+ *   previewCallLegShapes('2026-09-24')   // no arg -> latest Call_Legs sheet
+ */
+function previewCallLegShapes(dateIso) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = null, iso = dateIso || '';
+  if (dateIso) {
+    sheet = ss.getSheetByName('Call_Legs_' + dateIso);
+  } else {
+    ss.getSheets().forEach(function (s) {
+      var m = s.getName().match(/^Call_Legs_(\d{4}-\d{2}-\d{2})$/i);
+      if (m && m[1] > iso) { iso = m[1]; sheet = s; }
+    });
+  }
+  if (!sheet) { Logger.log('previewCallLegShapes: no Call_Legs sheet for ' + (dateIso || '(latest)') + '.'); return null; }
+  var legs = sheet.getDataRange().getDisplayValues();
+  legs.shift();   // header row
+
+  var maps = { extToAgent: {}, queueExtSet: new Set() };
+  try {
+    var cfg = SpreadsheetApp.openById(getTargetSsId_()).getSheetByName('DO NOT EDIT!');
+    if (cfg && typeof dcBuildExtMaps_ === 'function') maps = dcBuildExtMaps_(cfg);
+  } catch (e) {
+    Logger.log('previewCallLegShapes: roster read failed (' + (e && e.message ? e.message : e)
+      + ') -- part A cannot attribute agents and will report zero.');
+  }
+  var out = callLegShapeTally_(legs, maps);
+  out.date = iso || dateIso;
+  Logger.log('previewCallLegShapes ' + out.date + ' -- READ-ONLY, counts only.');
+  Logger.log('(A) S2C-5 direct inbound forks: ' + out.direct.pairs + ' (direct call, agent) pairs; '
+    + out.direct.multiCidPairs + ' rang the SAME agent under more than one call id'
+    + (out.direct.multiCidPairs ? ' (max ' + out.direct.maxCids + ' ids; ' + out.direct.multiCidSameStart
+      + ' of those rang at the same second = a fork)' : '')
+    + '. VERDICT: ' + (out.direct.multiCidPairs ? 'FORKS EXIST -- per-CALL_ID dedupe over-counts; report this.'
+      : 'no forks -- the per-CALL_ID dedupe is safe.'));
+  Logger.log('(B) S2C-1 answered inbound calls: ' + out.answer.calls + ' total; '
+    + out.answer.calleeExtAnswer + ' carry an answer leg with the agent\'s extension as CALLEE (visible to the matchers); '
+    + out.answer.onlyExternalCallee + ' only an answer leg whose CALLEE is an external number ('
+    + out.answer.onlyExternalCalleeCallerExt + ' of them with an extension in CALLER); '
+    + out.answer.other + ' neither.');
+  Logger.log('    answer-leg shapes (direction | callee | caller: legs): '
+    + Object.keys(out.answer.shapes).sort().map(function (k) { return k + ': ' + out.answer.shapes[k]; }).join('; '));
+  return out;
+}
+
+/** Menu/editor wrapper: previewCallLegShapes for a chosen date. */
+function previewCallLegShapesForDate() {
+  var arg = icPreviewDateArg_();
+  if (arg.cancelled) return;
+  previewCallLegShapes(arg.dateIso);
+}
+
+/**
+ * PURE core of previewCallLegShapes (unit-tested). `legs` = Call_Legs display
+ * rows WITHOUT the header; `maps` = dcBuildExtMaps_ output. Returns counts only.
+ */
+function callLegShapeTally_(legs, maps) {
+  var extToAgent = (maps && maps.extToAgent) || {};
+  var queueExtSet = (maps && maps.queueExtSet) || new Set();
+  var str = function (v) { return String(v == null ? '' : v).trim(); };
+  var kind = function (v) {
+    var d = icDigits_(v);
+    if (!d) return 'blank';
+    return d.length >= 10 ? 'external' : 'ext';
+  };
+  var groups = {};
+  legs.forEach(function (r) {
+    var own = str(r[IC_COL.CALL_ID]);
+    if (!own) return;
+    var parent = str(r[IC_COL.PARENT_CALL_ID]);
+    var root = (parent && parent.toUpperCase() !== 'N/A') ? parent : own;
+    (groups[root] = groups[root] || []).push(r);
+  });
+
+  // (A) direct inbound: roots with NO queue signal on any leg.
+  var direct = { pairs: 0, multiCidPairs: 0, multiCidSameStart: 0, maxCids: 0 };
+  Object.keys(groups).forEach(function (root) {
+    var g = groups[root];
+    var touchesQueue = g.some(function (l) {
+      return icIsQueueName_(l[IC_COL.CALLEE_NAME]) || icIsQueueName_(l[IC_COL.CALLER_NAME])
+        || queueExtSet.has(str(l[IC_COL.CALLER])) || queueExtSet.has(str(l[IC_COL.CALLEE]))
+        || /CallQueue/i.test(str(l[13])) || /(A_Q_\w+|Backup CSR)/i.test(str(l[22]));
+    });
+    if (touchesQueue) return;
+    var byAgent = {};
+    g.forEach(function (l) {
+      var dir = str(l[IC_COL.DIRECTION]);
+      if (dir !== 'Incoming' && dir !== 'Internal') return;
+      var agent = extToAgent[str(l[IC_COL.CALLEE])];
+      if (!agent) return;
+      var b = byAgent[agent.name] = byAgent[agent.name] || { cids: {}, starts: {} };
+      var cid = str(l[IC_COL.CALL_ID]);
+      b.cids[cid] = true;
+      b.starts[cid] = str(l[IC_COL.START]);
+    });
+    Object.keys(byAgent).forEach(function (name) {
+      var cids = Object.keys(byAgent[name].cids);
+      direct.pairs++;
+      if (cids.length > 1) {
+        direct.multiCidPairs++;
+        if (cids.length > direct.maxCids) direct.maxCids = cids.length;
+        var starts = {};
+        cids.forEach(function (c) { starts[byAgent[name].starts[c]] = true; });
+        if (Object.keys(starts).length < cids.length) direct.multiCidSameStart++;
+      }
+    });
+  });
+
+  // (B) answered EXTERNAL inbound calls (the records the matchers index).
+  var answer = { calls: 0, calleeExtAnswer: 0, onlyExternalCallee: 0, onlyExternalCalleeCallerExt: 0, other: 0, shapes: {} };
+  var records = buildInboundCallRecords_(legs);
+  records.forEach(function (rec) {
+    if (rec.isInternal || rec.disposition !== 'answered') return;
+    var g = groups[rec.callId] || [];
+    var ans = g.filter(function (l) {
+      return str(l[IC_COL.ANSWERED]) === 'Answered' && icTimeToSec_(l[IC_COL.TALK]) > 0;
+    });
+    answer.calls++;
+    var hasExtCallee = false, externalCallee = [];
+    ans.forEach(function (l) {
+      var ck = kind(l[IC_COL.CALLEE]), rk = kind(l[IC_COL.CALLER]);
+      var key = str(l[IC_COL.DIRECTION]) + ' | ' + ck + ' | ' + rk;
+      answer.shapes[key] = (answer.shapes[key] || 0) + 1;
+      if (ck === 'ext') hasExtCallee = true;
+      else if (ck === 'external') externalCallee.push(rk);
+    });
+    if (hasExtCallee) answer.calleeExtAnswer++;
+    else if (externalCallee.length) {
+      answer.onlyExternalCallee++;
+      if (externalCallee.indexOf('ext') !== -1) answer.onlyExternalCalleeCallerExt++;
+    } else answer.other++;
+  });
+  return { direct: direct, answer: answer };
+}

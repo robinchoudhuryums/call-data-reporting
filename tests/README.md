@@ -259,6 +259,7 @@ tests/
                               setup (INV-12), alert-recipients (B-5), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
+                              pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up),
                               cdr-import-prop-registry / cdr-report-prop-registry (the sibling projects' Script Property registries, swept two ways like prop-registry),
                               neon-egress-coverage (OD-3: every dashboard Neon read is metered by neonNoteEgress_ or is a listed scalar probe),
                               agent-role / agent-home (the deny wall +

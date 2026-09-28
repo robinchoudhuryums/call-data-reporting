@@ -2236,7 +2236,7 @@ items for anything it flags or doesn't cover.)
 25. `CONFIG_SOURCE` -- Dept + Alert + Digest config source switch (backfill -> compare -> flip)
 26. Direct-call history backfill after a bulk rebuild (`backfillDirectCallToNeon`)
 27. Company holidays -- the `Company Holidays` SHEET is the source since H1, the `COMPANY_HOLIDAYS` property only its fallback; maintain it yearly (team-tools reads the same tab, #68)
-28. Neon backup (optional but recommended; needs the new `drive` scope)
+28. Neon backup (optional but recommended; Drive, or the Sheets-workbook fallback when policy blocks the `drive` scope; `restoreNeonBackupFile()`)
 29. Retired server files must be deleted in the WEB EDITOR (INV-17) -- now DETECTED by `check-remote-orphans.mjs`
 30. `QCD_READ_SOURCE` -- the QCD read-back switch; set `QCD_PARITY_FROM/_TO` before running the gate
 31. Automated Daily Call Queue Report email (optional; polls a morning window for readiness)

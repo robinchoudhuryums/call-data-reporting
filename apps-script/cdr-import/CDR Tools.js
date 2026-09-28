@@ -77,6 +77,7 @@ function onOpen() {
     .addItem("Preview transfer chains (pick date)…", "previewInternalTransferChainsForDate")
     .addItem("Preview transfer paths (pick date)…",  "previewInternalTransferPathsForDate")
     .addItem("Preview outbound assist links (pick date)…", "previewOutboundAssistLinksForDate")
+    .addItem("Preview call-leg shapes (pick date)…", "previewCallLegShapesForDate")
     // Read-only row-34 double-count probe (owner request 2026-08-20): scans
     // every surviving Call_Legs_* sheet; results in the execution log.
     .addItem("Preview QCD row-34 overlap",           "previewRow34Overlap")
