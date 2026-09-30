@@ -211,13 +211,106 @@ test('PCR-8: every committed escalation write force-refreshes the snapshot, past
     },
   };
   h.call('escSnapshotAfterWrite_', conn);
-  assert.deepEqual(calls, ['autocommit:true', 'query'], 'leaves the transaction, then re-reads despite the fresh snapshot');
+  // ESC-S1: the second query re-reads the open rows' activity threads.
+  assert.deepEqual(calls, ['autocommit:true', 'query', 'query'], 'leaves the transaction, then re-reads despite the fresh snapshot');
   assert.equal(h.call('escSnapshotLoad_').rows[0].id, 'n1', 'the snapshot now holds the post-write open set');
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
-  ['createEscalation', 'updateEscalation', 'moveEscalation', 'linkEscalationDepartment', 'removeEscalationDepartment',
+  ['createEscalation', 'updateEscalation', 'moveEscalation', 'linkEscalationDepartment', 'removeEscalationDepartment', 'restoreEscalationDepartment',
    'resolveEscalation', 'reopenEscalation', 'startEscalation',
    'approveEscalation', 'rejectEscalation', 'updateEscalationComment'].forEach(function (fn) {
     assert.match(src, new RegExp("conn\\.commit\\(\\);\\n    Logger\\.log\\('" + fn + ": [^\\n]*\\n    escSnapshotAfterWrite_\\(conn\\);"),
       fn + ' refreshes the snapshot right after its commit');
   });
+});
+
+// ── ESC-S1 (2026-09-30, owner ask): the OFFLINE THREAD ─────────────────────
+// The open rows' activity threads ride beside the rows snapshot, so Activity
+// still opens (read-only) while Neon is down -- authorized exactly like the
+// live path, a thread stored whole or not at all.
+
+function act(e, g, action, detail, dept, removed, cut) {
+  return { e: e, g: g, action: action, actor: 'm@x.com', at: '2026-08-18 10:00:00',
+           detail: detail, cut: !!cut, department: dept, removed: !!removed };
+}
+
+test('ESC-S1: escSnapshotActPack_ keys a linked thread by group (dept-tagged) and a standalone one by id, once each', function () {
+  const rows = [Object.assign(row('c1', 'CSR', 'pending'), { group_id: 'g1' }), row('c2', 'CSR', 'pending'),
+                Object.assign(row('s1', 'Sales', 'pending'), { group_id: 'g1' })];
+  const p = h.ctx.escSnapshotActPack_(rows, [
+    act('c1', 'g1', 'created', 'r', 'CSR'), act('s1', 'g1', 'comment', 'not ours', 'Sales', true, true),
+    act('c2', null, 'created', 'r2', 'CSR'), act('zz', null, 'created', 'not in the snapshot', 'CSR'),
+  ]);
+  const t = JSON.parse(JSON.stringify(p.threads));
+  assert.deepEqual(Object.keys(t).sort(), ['c2', 'g1'], 'one entry per thread; strays dropped');
+  assert.equal(t.g1.length, 2);
+  assert.deepEqual(t.g1[1], { a: 'comment', u: 'm@x.com', t: '2026-08-18 10:00:00', d: 'not ours', c: 1, dp: 'Sales', r: 1 });
+  assert.equal(t.c2[0].dp, null, 'a standalone thread carries no department tag');
+  assert.equal(p.count, 2);
+  assert.equal(p.truncated, false);
+});
+
+test('ESC-S1: a thread that would pass the ceiling is skipped WHOLE and the pack is flagged truncated', function () {
+  const big = new Array(600).join('x');
+  const rows = [], entries = [];
+  for (let i = 0; i < 150; i++) {
+    rows.push(row('r' + i, 'CSR', 'pending'));
+    entries.push(act('r' + i, null, 'comment', big, 'CSR'));
+  }
+  const p = h.ctx.escSnapshotActPack_(rows, entries);
+  assert.equal(p.truncated, true);
+  assert.ok(p.count > 0 && p.count < 150);
+  assert.ok(JSON.stringify(p.threads).length <= h.ctx.ESC_SNAPSHOT_CHUNK_CHARS * h.ctx.ESC_SNAPSHOT_ACT_MAX_CHUNKS);
+  assert.ok(Object.keys(p.threads).indexOf('r0') !== -1, 'newest rows kept first');
+  Object.keys(p.threads).forEach(function (k) { assert.equal(p.threads[k].length, 1, 'never a partial thread'); });
+});
+
+test('ESC-S1: the refresh reads standalone threads by id and linked ones by group, detail capped, in one query', function () {
+  h.state.props = {};
+  const seen = [];
+  const conn = { prepareStatement: function (sql) {
+    const params = [];
+    seen.push({ sql: sql, params: params });
+    return { setString: function (i, v) { params[i - 1] = v; }, executeQuery: function () {
+      return { next: function () { return true; },
+               getString: function () { return JSON.stringify([act('c1', null, 'created', 'r', 'CSR')]); }, close: function () {} };
+    }, close: function () {} };
+  } };
+  h.call('escSnapshotActRefresh_', conn, [row('c1', 'CSR', 'pending'), Object.assign(row('s1', 'Sales', 'pending'), { group_id: 'g1' })]);
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].sql, /\(e\.group_id IS NULL AND a\.escalation_id IN \(\?\)\) OR e\.group_id IN \(\?\)/);
+  assert.match(seen[0].sql, /left\(a\.detail, 600\)/);
+  assert.deepEqual(seen[0].params, ['c1', 'g1']);
+  const loaded = h.call('escSnapshotActLoad_');
+  assert.ok(loaded && loaded.at);
+  assert.equal(loaded.threads.c1.length, 1);
+});
+
+test('ESC-S1: with Neon DOWN, Activity serves the offline thread under the SAME row gate; misses keep the unavailable shape', function () {
+  installUser_();   // CSR manager
+  h.state.props = {};
+  h.call('escSnapshotStore_', [Object.assign(row('c1', 'CSR', 'pending'), { group_id: 'g1' }), row('s1', 'Sales', 'pending'),
+                                row('c9', 'CSR', 'pending')]);
+  h.call('escSnapshotActStore_', h.ctx.escSnapshotActPack_([Object.assign(row('c1', 'CSR', 'pending'), { group_id: 'g1' }), row('s1', 'Sales', 'pending')], [
+    act('c1', 'g1', 'created', 'r', 'CSR'), act('x2', 'g1', 'comment', 'long…', 'Power', true, true), act('s1', null, 'created', 'r', 'Sales'),
+  ]));
+  h.ctx.getDashboardNeonConn_ = function () { return null; };
+  const ok = JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'c1' })));
+  assert.equal(ok.available, true);
+  assert.equal(ok.linked, true);
+  assert.ok(ok.snapshotAsOf);
+  assert.deepEqual(ok.rows[1], { action: 'comment', actor: 'm@x.com', at: '2026-08-18 10:00:00', detail: 'long…',
+                                  shortened: true, department: 'Power', removed: true });
+  // Another dept's row: the L9 not-found shape, no thread.
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 's1' }))), { available: true, rows: [] });
+  // A row the snapshot does not hold (closed / removed): unavailable.
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'nope' }))), { available: false, rows: [] });
+  // A snapshotted row whose thread did not fit: unavailable + snapshotMissing.
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'c9' }))), { available: false, rows: [], snapshotMissing: true });
+  // A MID-QUERY death serves it too.
+  h.ctx.getDashboardNeonConn_ = function () {
+    return { prepareStatement: function () { throw new Error('connection reset'); },
+             createStatement: function () { throw new Error('connection reset'); }, close: function () {} };
+  };
+  h.ctx.escEnsureTable_ = function () {};
+  assert.equal(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'c1' }))).snapshotAsOf, ok.snapshotAsOf);
 });

@@ -596,6 +596,33 @@ const MODALS = [
       await page.waitForTimeout(300);
     }
 
+    // ESC-L3: a removed copy offers Restore (admin), which sends an optional
+    // note; ESC-S1: a thread served from the offline copy says so.
+    {
+      const has = await page.evaluate(() => !!document.querySelector('.esc-restore-dept[data-id="96"]')
+        && !document.querySelector('.esc-restore-dept[data-id="101"]'));
+      record('ESC-L3: only a REMOVED copy offers Restore', has);
+      await page.click('.esc-restore-dept[data-id="96"]');
+      await page.waitForTimeout(300);
+      await page.click('.ds-confirm-ok');   // an empty note is allowed
+      await page.waitForTimeout(1500);
+      const rc = await page.evaluate(() => {
+        const c = window.__HARNESS__.calls.filter((x) => x.fn === 'restoreEscalationDepartment').pop();
+        return c ? c.args[0] : null;
+      });
+      record('ESC-L3: Restore calls the verb for that copy (the note is optional)', !!rc && rc.id === '96' && rc.note === '', JSON.stringify(rc));
+
+      await page.click('.esc-activity-summary[data-id="100"]');
+      await page.waitForTimeout(700);
+      const off = await page.evaluate(() => {
+        const b = document.querySelector('.esc-activity-body[data-id="100"]');
+        return { note: b && b.querySelector('.esc-activity-offline') ? b.querySelector('.esc-activity-offline').textContent : '',
+                 short: !!(b && b.querySelector('.esc-timeline-short')), entries: b ? b.querySelectorAll('.esc-timeline-item').length : 0 };
+      });
+      record('ESC-S1: an offline-copy thread renders with its banner and marks shortened entries',
+        /Offline copy from/.test(off.note) && off.short && off.entries === 1, JSON.stringify(off));
+    }
+
     // ESC-R1: the admin "Move…" control on an open card -- rendered visible,
     // toggles an inline panel whose department list EXCLUDES the card's own
     // dept, and "Move escalation" calls the (mocked) verb and reloads cleanly.

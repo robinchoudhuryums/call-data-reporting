@@ -26,6 +26,7 @@
  * swapped for the per-dept gate on the manager-reachable mutation paths:
  *   1. authorization — `createEscalation` / `updateEscalation` / `moveEscalation` (ESC-R1) /
  *      `linkEscalationDepartment` / `removeEscalationDepartment` (ESC-L2) /
+ *      `restoreEscalationDepartment` (ESC-L3) /
  *      `deleteEscalation` are admin-only
  *      (`assertAdmin_`); `resolveEscalation` / `updateEscalationComment` /
  *      `reopenEscalation` / `approveEscalation` / `rejectEscalation`
@@ -102,6 +103,15 @@ var ESC_SNAPSHOT_MAX_ROWS = 150;      // open rows kept (newest first)
 var ESC_SNAPSHOT_CHUNK_CHARS = 8000;  // under the ~9KB per-property cap
 var ESC_SNAPSHOT_MAX_CHUNKS = 6;      // hard ceiling ~48KB of the 500KB store
 var ESC_SNAPSHOT_REFRESH_MIN = 30;    // at most one refresh query per this
+// ESC-S1 (2026-09-30, owner ask): the ACTIVITY THREADS of the snapshot's open
+// rows ride alongside it under ESC_SNAPSHOT_ACT_*, so Activity still opens
+// (read-only) while Neon is down. Its own ceiling, so threads can never crowd
+// out the rows; each entry's detail is shortened past ESC_SNAPSHOT_ACT_DETAIL
+// chars (flagged, so the client can say so); a thread is stored WHOLE or not
+// at all -- never a silently partial conversation. SEC-6 covers it: comments
+// can carry PHI exactly as the rows do (docs/operator-state.md #24(c)).
+var ESC_SNAPSHOT_ACT_MAX_CHUNKS = 6;  // ~48KB, beside the rows' ~48KB
+var ESC_SNAPSHOT_ACT_DETAIL = 600;    // chars of each entry's detail kept
 
 /**
  * Pure: rows -> { chunks, count, truncated }. Drops TAIL rows (the list is
@@ -209,8 +219,145 @@ function escSnapshotMaybeRefresh_(conn, force) {
     var json = rs.next() ? rs.getString('j') : '[]';
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
     rs.close(); stmt.close();
-    escSnapshotStore_(JSON.parse(json || '[]'));
+    var snapRows = JSON.parse(json || '[]');
+    escSnapshotStore_(snapRows);
+    // ESC-S1: the threads of those rows, from the same connection. Its own
+    // try: a failure here costs the offline threads, never the rows.
+    try { escSnapshotActRefresh_(conn, snapRows); } catch (eAct) { /* best-effort */ }
   } catch (e) { /* best-effort */ }
+}
+
+/**
+ * ESC-S1: reads the activity of every thread the snapshot rows belong to --
+ * a standalone row's own trail, a linked row's WHOLE group (removed copies'
+ * entries included, as the live thread shows them) -- and stores it packed.
+ * One bounded query: the thread keys are bound as parameters, capped by the
+ * snapshot's own row cap.
+ */
+function escSnapshotActRefresh_(conn, rows) {
+  var ids = [], groups = [];
+  (rows || []).forEach(function (r) {
+    if (!r) return;
+    if (r.group_id) { if (groups.indexOf(String(r.group_id)) === -1) groups.push(String(r.group_id)); }
+    else ids.push(String(r.id));
+  });
+  var entries = [];
+  if (ids.length || groups.length) {
+    var where = [];
+    if (ids.length) where.push('(e.group_id IS NULL AND a.escalation_id IN (' + ids.map(function () { return '?'; }).join(',') + '))');
+    if (groups.length) where.push('e.group_id IN (' + groups.map(function () { return '?'; }).join(',') + ')');
+    var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
+      + 'SELECT a.escalation_id AS e, e.group_id AS g, a.action, a.actor, a.at::text AS at, '
+      + 'left(a.detail, ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS detail, '
+      + '(length(a.detail) > ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS cut, '
+      + "e.department, (e.status = 'removed') AS removed "
+      + 'FROM escalation_activity a JOIN escalations e ON e.id = a.escalation_id WHERE '
+      + where.join(' OR ') + ') t';
+    var stmt = conn.prepareStatement(sql);
+    var params = ids.concat(groups);
+    for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
+    var rs = stmt.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
+    rs.close(); stmt.close();
+    entries = JSON.parse(json || '[]');
+    if (!Array.isArray(entries)) entries = [];
+  }
+  escSnapshotActStore_(escSnapshotActPack_(rows, entries));
+}
+
+/**
+ * ESC-S1 (PURE): rows (newest first) + activity entries -> { threads,
+ * count, truncated }. `threads` maps a thread KEY (the group_id of a linked
+ * row, else the row's id) to its entries, oldest first, in the compact shape
+ * the serve path expands. Threads are added in row order and a thread that
+ * would push past the ceiling is skipped WHOLE (truncated = true).
+ */
+function escSnapshotActPack_(rows, entries) {
+  var byKey = {};
+  (entries || []).forEach(function (x) {
+    if (!x) return;
+    var k = x.g ? String(x.g) : String(x.e);
+    (byKey[k] = byKey[k] || []).push({ a: x.action, u: x.actor || null, t: x.at || null,
+      d: x.detail == null ? null : x.detail, c: x.cut ? 1 : 0,
+      dp: x.g ? (x.department || null) : null, r: (x.g && x.removed) ? 1 : 0 });
+  });
+  var cap = ESC_SNAPSHOT_CHUNK_CHARS * ESC_SNAPSHOT_ACT_MAX_CHUNKS;
+  var threads = {}, size = 2, count = 0, truncated = false, seen = {};
+  (rows || []).forEach(function (r) {
+    if (!r) return;
+    var k = r.group_id ? String(r.group_id) : String(r.id);
+    if (seen[k]) return;
+    seen[k] = true;
+    var list = byKey[k] || [];
+    var add = JSON.stringify(k).length + JSON.stringify(list).length + 2;
+    if (size + add > cap) { truncated = true; return; }
+    threads[k] = list;
+    size += add;
+    count++;
+  });
+  return { threads: threads, count: count, truncated: truncated };
+}
+
+/** ESC-S1: stores the packed threads, META last (a torn write reads absent). */
+function escSnapshotActStore_(packed) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var json = JSON.stringify(packed.threads || {});
+    var chunks = [];
+    for (var i = 0; i < json.length; i += ESC_SNAPSHOT_CHUNK_CHARS) chunks.push(json.slice(i, i + ESC_SNAPSHOT_CHUNK_CHARS));
+    if (chunks.length > ESC_SNAPSHOT_ACT_MAX_CHUNKS) return;   // cannot happen past the packer; never overflow the store
+    for (var c = 0; c < chunks.length; c++) props.setProperty('ESC_SNAPSHOT_ACT_' + (c + 1), chunks[c]);
+    for (var j = chunks.length + 1; j <= ESC_SNAPSHOT_ACT_MAX_CHUNKS; j++) props.deleteProperty('ESC_SNAPSHOT_ACT_' + j);
+    props.setProperty('ESC_SNAPSHOT_ACT_META', JSON.stringify({
+      at: new Date().toISOString(), chunks: chunks.length, threads: packed.count || 0, truncated: !!packed.truncated,
+    }));
+  } catch (e) { /* best-effort */ }
+}
+
+/** ESC-S1: { threads, at, truncated } or null (absent / torn / unparseable). */
+function escSnapshotActLoad_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var meta = JSON.parse(props.getProperty('ESC_SNAPSHOT_ACT_META') || 'null');
+    if (!meta || !meta.chunks) return null;
+    var json = '';
+    for (var i = 1; i <= meta.chunks; i++) {
+      var c = props.getProperty('ESC_SNAPSHOT_ACT_' + i);
+      if (c == null) return null;
+      json += c;
+    }
+    var threads = JSON.parse(json);
+    if (!threads || typeof threads !== 'object') return null;
+    return { threads: threads, at: meta.at || null, truncated: !!meta.truncated };
+  } catch (e) { return null; }
+}
+
+/**
+ * ESC-S1: getEscalationActivity's outage path. Authorizes EXACTLY like the
+ * live path -- against the requested copy's department, found in the ROWS
+ * snapshot (L9: a denial returns the not-found shape) -- then serves that
+ * row's thread from the thread snapshot, marked `snapshotAsOf`. A row the
+ * snapshot does not hold (a closed or removed copy) or a thread that did not
+ * fit keeps the plain unavailable shape (+ `snapshotMissing` for the latter).
+ */
+function escSnapshotActServe_(user, id) {
+  var snap = escSnapshotLoad_();
+  var row = snap ? snap.rows.filter(function (r) { return r && String(r.id) === String(id); })[0] : null;
+  if (!row) return { available: false, rows: [] };
+  try { escAssertRowAccess_(user, row.department); } catch (denied) { return { available: true, rows: [] }; }
+  var act = escSnapshotActLoad_();
+  var k = row.group_id ? String(row.group_id) : String(row.id);
+  var list = act && act.threads && Object.prototype.hasOwnProperty.call(act.threads, k) ? act.threads[k] : null;
+  if (!list) return { available: false, rows: [], snapshotMissing: !!act };
+  return {
+    available: true, linked: !!row.group_id, snapshotAsOf: act.at,
+    rows: list.map(function (x) {
+      var out = { action: x.a, actor: x.u, at: x.t, detail: x.d, shortened: !!x.c };
+      if (row.group_id) { out.department = x.dp; out.removed = !!x.r; }
+      return out;
+    }),
+  };
 }
 
 /**
@@ -598,7 +745,7 @@ function getEscalationActivity(req) {
   if (!id) throw new Error('Missing escalation id.');
 
   var conn = getDashboardNeonConn_();
-  if (!conn) return { available: false, rows: [] };
+  if (!conn) return escSnapshotActServe_(user, id);   // ESC-S1: the offline thread
   try {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
@@ -639,7 +786,8 @@ function getEscalationActivity(req) {
     return { available: true, rows: JSON.parse(json || '[]'), linked: !!meta.groupId };
   } catch (e) {
     Logger.log('getEscalationActivity failed: ' + (e && e.message ? e.message : e));
-    return { available: false, rows: [] };
+    // ESC-S1: a mid-query Neon death serves the offline thread too.
+    try { return escSnapshotActServe_(user, id); } catch (eSnap) { return { available: false, rows: [] }; }
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -888,8 +1036,11 @@ function moveEscalation(req) {
     }
     if (from === to) throw new Error('This escalation is already assigned to ' + to + '.');
     // ESC-L1: a linked group holds at most one copy per department.
-    if (row.groupId && escGroupHasDept_(conn, row.groupId, to, id)) {
-      throw new Error(to + ' already has a linked copy of this escalation.');
+    var heldM = row.groupId ? escGroupHasDept_(conn, row.groupId, to, id) : null;
+    if (heldM) {
+      throw new Error(heldM === ESC_STATUS_REMOVED
+        ? to + ' was removed from this escalation — use Restore on its card instead.'   // ESC-L3
+        : to + ' already has a linked copy of this escalation.');
     }
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement('UPDATE escalations SET department = ?, updated_at = now() WHERE id = ?');
@@ -960,8 +1111,13 @@ function linkEscalationDepartment(req) {
     }
     if (row.department === to) throw new Error('This escalation is already assigned to ' + to + '.');
     groupId = row.groupId || Utilities.getUuid();
-    if (row.groupId && escGroupHasDept_(conn, row.groupId, to, id)) {
-      throw new Error(to + ' already has a linked copy of this escalation.');
+    var held = row.groupId ? escGroupHasDept_(conn, row.groupId, to, id) : null;
+    if (held) {
+      // ESC-L3: a department that was REMOVED comes back through Restore, so
+      // its earlier comments and the removal stay on the same copy.
+      throw new Error(held === ESC_STATUS_REMOVED
+        ? to + ' was removed from this escalation — use Restore on its card instead.'
+        : to + ' already has a linked copy of this escalation.');
     }
     others = row.groupId ? escGroupDepts_(conn, row.groupId) : [row.department];
     conn.setAutoCommit(false); txn = true;
@@ -1000,6 +1156,77 @@ function linkEscalationDepartment(req) {
   }
   if (notifyRec) escNotifyNewEscalation_(notifyRec, { alsoDepts: others });
   return { id: id, newId: newId, groupId: groupId };
+}
+
+/**
+ * ESC-L3 (2026-09-30): RESTORE a department that was removed from a linked
+ * escalation -- the undo of removeEscalationDepartment (a dispute reversed,
+ * or a removal made in error). ADMIN-ONLY. The copy returns to the status it
+ * had when it was removed (status_before_removal; 'pending' when unknown),
+ * so a resolved copy comes back resolved and an open one re-enters its
+ * department's worklist. The removal record is cleared from the row but
+ * stays in the shared thread, and the restore is its own 'restored' thread
+ * entry (an optional note). Only a REMOVED copy can be restored. When it
+ * comes back OPEN, its managers get the escalation email again
+ * (NOTIFY_ON_NEW_ESCALATION, the EML-1 rule). Returns { id, department, status }.
+ */
+function restoreEscalationDepartment(req) {
+  assertAdmin_();
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var note = escClean_(req.note);
+  var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  var notifyRec = null, others = [], dept = null, back = null;
+  try {
+    escEnsureTable_(conn);
+    var row = escRowFull_(conn, id);
+    if (!row) throw new Error('Escalation not found.');
+    dept = row.department;
+    if (row.status !== ESC_STATUS_REMOVED) throw new Error(dept + ' is not removed from this escalation — nothing to restore.');
+    back = escRestoreStatus_(row.statusBeforeRemoval);
+    others = row.groupId ? escGroupDepts_(conn, row.groupId) : [];
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement(
+      'UPDATE escalations SET status = ?, removed_by = NULL, removed_at = NULL, removed_reason = NULL, '
+      + 'status_before_removal = NULL, updated_at = now() WHERE id = ?');
+    stmt.setString(1, back);
+    stmt.setString(2, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'restored', actor,
+      dept + ' restored to this escalation (back to ' + back.replace('_', ' ') + ')' + (note ? ': ' + note : ''));
+    conn.commit();
+    Logger.log('restoreEscalationDepartment: %s restored %s to %s as %s', actor, dept, row.groupId || '(standalone)', back);
+    escSnapshotAfterWrite_(conn);   // PCR-8
+    if (back === ESC_STATUS_PENDING || back === ESC_STATUS_IN_PROGRESS) {
+      notifyRec = { id: id, department: dept, occurredAt: row.occurredAt || '', caller: row.caller,
+                    patientName: row.patientName, trx: row.trx, area: row.area, reason: row.reason };
+    }
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('restoreEscalationDepartment failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not restore the department.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+  if (notifyRec) escNotifyNewEscalation_(notifyRec, { restored: true, alsoDepts: others });
+  return { id: id, department: dept, status: back };
+}
+
+/** ESC-L3 (PURE): the status a restored copy returns to -- the recorded one
+ *  when it is a real worklist/closed state, else 'pending'. */
+function escRestoreStatus_(before) {
+  var ok = [ESC_STATUS_PENDING, ESC_STATUS_IN_PROGRESS, ESC_STATUS_RESOLVED];
+  return ok.indexOf(String(before || '')) !== -1 ? String(before) : ESC_STATUS_PENDING;
 }
 
 /**
@@ -1047,11 +1274,12 @@ function removeEscalationDepartment(req) {
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement(
       'UPDATE escalations SET status = ?, removed_by = ?, removed_at = now(), removed_reason = ?, '
-      + 'updated_at = now() WHERE id = ?');
+      + 'status_before_removal = ?, updated_at = now() WHERE id = ?');
     stmt.setString(1, ESC_STATUS_REMOVED);
     stmt.setString(2, actor);
     stmt.setString(3, reason);
-    stmt.setString(4, id);
+    stmt.setString(4, meta.status);   // ESC-L3: what a restore returns it to
+    stmt.setString(5, id);
     stmt.execute();
     stmt.close();
     escAppendActivity_(conn, id, 'removed', actor, dept + ' removed from this escalation (was ' + meta.status + '): ' + reason);
@@ -1713,14 +1941,15 @@ function escAssertNotRemoved_(meta) {
   }
 }
 
-/** ESC-L1: does another copy in `groupId` already sit in `dept`? */
+/** ESC-L1: does another copy in `groupId` already sit in `dept`? Returns
+ *  that copy's STATUS (truthy -- ESC-L3 tells a removed one apart) or null. */
 function escGroupHasDept_(conn, groupId, dept, exceptId) {
-  var stmt = conn.prepareStatement('SELECT 1 AS n FROM escalations WHERE group_id = ? AND department = ? AND id <> ? LIMIT 1');
+  var stmt = conn.prepareStatement('SELECT status FROM escalations WHERE group_id = ? AND department = ? AND id <> ? LIMIT 1');
   stmt.setString(1, groupId);
   stmt.setString(2, dept);
   stmt.setString(3, exceptId);
   var rs = stmt.executeQuery();
-  var hit = rs.next();
+  var hit = rs.next() ? (rs.getString('status') || 'unknown') : null;
   rs.close(); stmt.close();
   if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'escalations');   // OD-3
   return hit;
@@ -1733,7 +1962,7 @@ function escRowFull_(conn, id) {
     // (escNotifyNewEscalation_ builds its rec from THIS row) silently
     // dropped its "When" line on every approved submission.
     'SELECT status, department, caller, patient_name, trx, area, reason, source, '
-    + 'occurred_at::text AS occurred_at, group_id '
+    + 'occurred_at::text AS occurred_at, group_id, status_before_removal '
     + 'FROM escalations WHERE id = ?');
   stmt.setString(1, id);
   var rs = stmt.executeQuery();
@@ -1750,6 +1979,7 @@ function escRowFull_(conn, id) {
       source:      rs.getString('source'),
       occurredAt:  rs.getString('occurred_at'),
       groupId:     rs.getString('group_id') || null,   // ESC-L1
+      statusBeforeRemoval: rs.getString('status_before_removal') || null,   // ESC-L3
     };
   }
   rs.close(); stmt.close();
@@ -1896,6 +2126,7 @@ function escPendingReviewPing_() {
 function escNotifyNewEscalation_(rec, opts) {
   var movedFrom = (opts && opts.movedFrom) ? String(opts.movedFrom) : '';   // ESC-R1
   var alsoDepts = (opts && opts.alsoDepts) ? opts.alsoDepts : [];            // ESC-L2 link
+  var restored = !!(opts && opts.restored);                                  // ESC-L3
   try {
     var props = PropertiesService.getScriptProperties();
     var enabled = String(props.getProperty('NOTIFY_ON_NEW_ESCALATION') || '').toLowerCase() === 'true';
@@ -1909,8 +2140,8 @@ function escNotifyNewEscalation_(rec, opts) {
     var link = dashUrl ? (dashUrl + '#/escalations') : '';
     sendAppEmail_({
       to:       recipients.join(','),
-      subject:  (movedFrom ? 'Escalation moved to ' : 'New escalation logged — ') + rec.department,
-      htmlBody: escNotifyHtml_(rec, link, movedFrom, alsoDepts),
+      subject:  (restored ? 'Escalation returned to ' : movedFrom ? 'Escalation moved to ' : 'New escalation logged — ') + rec.department,
+      htmlBody: escNotifyHtml_(rec, link, movedFrom, alsoDepts, restored),
     });
     Logger.log('escNotifyNewEscalation_: emailed %s for escalation %s (%s)', recipients.join(','), rec.id, rec.department);
   } catch (e) {
@@ -1982,7 +2213,7 @@ function escLinkedRecipientGroups_(depts, managersOf) {
 
 /** Email-safe HTML for the new-escalation notification -- the EmailKit house
  * style since Round-16 (shell + a label/value detail card + the shell CTA). */
-function escNotifyHtml_(rec, link, movedFrom, alsoDepts) {
+function escNotifyHtml_(rec, link, movedFrom, alsoDepts, restored) {
   var esc = ekEsc_;
   var C = EK_C_, sans = EK_SANS_;
   var row = function (label, val) {
@@ -1995,9 +2226,10 @@ function escNotifyHtml_(rec, link, movedFrom, alsoDepts) {
   return ekShellHtml_({
     band: { tone: 'neutral', glyph: '&#9873;' },   // R30: uniform banded header
     kicker: 'Call Data · Escalations',
-    title: (movedFrom ? 'Escalation moved to ' : 'New escalation — ') + rec.department,
-    subtitle: (movedFrom ? ('An escalation was moved to your department from ' + movedFrom + '.')
-                         : 'An escalation was just logged for your department.')
+    title: (restored ? 'Escalation returned to ' : movedFrom ? 'Escalation moved to ' : 'New escalation — ') + rec.department,
+    subtitle: (restored ? 'Your department was removed from this escalation earlier and has now been restored to it.'
+               : movedFrom ? ('An escalation was moved to your department from ' + movedFrom + '.')
+                           : 'An escalation was just logged for your department.')
       + ((alsoDepts && alsoDepts.length) ? ' It is also assigned to ' + alsoDepts.join(', ')
           + ' — each department works its own copy.' : ''),
     preheader: 'New escalation for ' + rec.department + (rec.area ? ' · ' + rec.area : ''),
@@ -2052,6 +2284,8 @@ function escEnsureTable_(conn) {
     grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS removed_by text');
     grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS removed_at timestamptz');
     grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS removed_reason text');
+    // ESC-L3: the status a removed copy returns to when it is RESTORED.
+    grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS status_before_removal text');
     grp.close();
   } catch (grpErr) { /* best-effort */ }
   // §5: append-only activity trail (create/comment/edit/resolve/reopen).

@@ -154,6 +154,11 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
           .concat([{ action: 'comment', actor: 'power.mgr@ums.com', at: '2026-01-01 09:00:00', detail: 'This is not a Power order.', department: 'Power', removed: true },
                    { action: 'removed', actor: 'admin@ums.com', at: '2026-01-01 10:00:00', detail: 'Power removed from this escalation (was pending): Dispute upheld', department: 'Power', removed: true }]);
       }
+      // ESC-S1: escalation 100's thread is served from the OFFLINE copy.
+      if (req && String(req.id) === '100') {
+        return { available: true, snapshotAsOf: '2026-01-01T08:00:00.000Z',
+          rows: [{ action: 'comment', actor: 'mgr@ums.com', at: '2026-01-01 07:00:00', detail: 'Vendor ETA requested', shortened: true }] };
+      }
       return a;
     },
     deleteEscalation: function (req) { return { deleted: (req && req.allLinked) ? 2 : 1 }; },   // 2a: drive-admin confirms + deletes one card
@@ -162,6 +167,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
       return { id: 'new-1', ids: d.map(function (x, i) { return 'new-' + (i + 1); }), groupId: d.length > 1 ? 'grp-new' : null };
     },
     linkEscalationDepartment: function (req) { return { id: req && req.id, newId: 'new-link', groupId: 'grp-101' }; },   // ESC-L2
+    restoreEscalationDepartment: function (req) { return { id: req && req.id, department: 'Power', status: 'pending' }; },   // ESC-L3
     removeEscalationDepartment: function (req) { return { id: req && req.id, department: 'CSR' }; },                  // ESC-L2
     moveEscalation: function (req) { return { id: req && req.id, from: 'CSR', to: req && req.department }; },   // ESC-R1: drive-admin moves one card
     getAlertsInit: function () { return P['alerts-init']; },

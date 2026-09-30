@@ -18,7 +18,9 @@
   tagged by dept, admin edit sync, Link department, soft Remove (read-only
   for the removed dept, Removed filter), delete-all-linked; S52. Owner said
   "keep stacking": Steps 0/1/2a/2b are all UNMERGED on the branch, no PR yet.
-  The linked-escalation plan is COMPLETE. **The plan as approved (for reference):**
+  The linked-escalation plan is COMPLETE. **Follow-ons SHIPPED (block 211):**
+  ESC-L3 Restore a removed department (back to its prior status) and ESC-S1
+  the Activity threads in the outage snapshot; S53. Still unmerged, no PR. **The plan as approved (for reference):**
   Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
   escalations (resolved/rejected: reopen first; pending_review stays with
   approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new

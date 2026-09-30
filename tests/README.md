@@ -116,7 +116,9 @@ tests/
                               guard, the badge's missing-column fallback;
                               ESC-L2: the group thread + its gate, edit sync,
                               link / soft-remove / delete-all-linked, every
-                              write verb refusing a removed copy),
+                              write verb refusing a removed copy; ESC-L3:
+                              restore to the prior status, Link/Move pointing
+                              at Restore),
                               neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
@@ -324,7 +326,7 @@ tests/
                               queue leg, and reporting that as one number buried
                               the two shapes that mean a queue-delivered leg
                               lost its name,
-                              escalations-snapshot (the E2 outage cache),
+                              escalations-snapshot (the E2 outage cache, incl. the ESC-S1 offline threads),
                               coaching (gates + the F-e delivery: diff/txn/
                               email gating/race-safe close),
                               outbound-report (the Batch G callback report:

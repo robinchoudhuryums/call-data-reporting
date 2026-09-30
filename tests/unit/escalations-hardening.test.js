@@ -136,7 +136,9 @@ function reviewConn(row, log) {
               const map = { status: row.status, department: row.department,
                 caller: row.caller, patient_name: row.patientName, trx: row.trx,
                 area: row.area, reason: row.reason, source: row.source, n: n,
-                group_id: row.groupId, j: row.j };
+                group_id: row.groupId, j: row.j, status_before_removal: row.statusBeforeRemoval };
+              // ESC-L3: escGroupHasDept_ reads the SIBLING's status.
+              if (isGroup && sql.indexOf('SELECT status FROM') === 0 && row.groupHitStatus) map.status = row.groupHitStatus;
               return map[col] == null ? null : map[col];
             },
             close: function () {},
@@ -946,8 +948,9 @@ test('ESC-L2: REMOVE is a soft status with who / when / why, a "removed" thread 
   const res = JSON.parse(JSON.stringify(h.call('removeEscalationDepartment', { id: 'e1', reason: 'Dispute upheld: billing matter' })));
   assert.deepEqual(res, { id: 'e1', department: 'CSR' });
   const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
-  assert.match(upd.sql, /removed_by = \?, removed_at = now\(\), removed_reason = \?/);
-  assert.deepEqual(upd.params, ['removed', 'admin@x.com', 'Dispute upheld: billing matter', 'e1']);
+  assert.match(upd.sql, /removed_by = \?, removed_at = now\(\), removed_reason = \?, status_before_removal = \?/);
+  assert.deepEqual(upd.params, ['removed', 'admin@x.com', 'Dispute upheld: billing matter', 'in_progress', 'e1'],
+    'ESC-L3: the prior status is kept for a restore');
   assert.equal(log.writes.filter(function (w) { return w.sql.indexOf('DELETE') === 0; }).length, 0, 'never a delete');
   const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
   assert.equal(act.params[2], 'removed');
@@ -998,4 +1001,55 @@ test('ESC-L2: "removed" is a list filter + count, and the list carries who/when/
   assert.match(src, /removed_by, removed_at::text AS removed_at, removed_reason, /);
   // The open-status lists (badge / snapshot / overdue) never include it.
   assert.ok(!/IN \('pending','in_progress'[^)]*'removed'/.test(src));
+});
+
+// ESC-L3 (2026-09-30): RESTORE a removed department -- the undo of a
+// removal. Admin-only; back to the status it had; the thread keeps both.
+test('ESC-L3: restore returns a removed copy to its PRIOR status, clears the removal record, and adds a "restored" entry', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'removed', department: 'CSR', reason: 'r', groupId: 'g1', statusBeforeRemoval: 'in_progress',
+    groupDepts: ['Sales'] }, log, { NOTIFY_ON_NEW_ESCALATION: 'true' });
+  h.ctx.lookupDeptManagers_ = function (d) { return d === 'CSR' ? ['csr@x.com'] : []; };
+  const res = JSON.parse(JSON.stringify(h.call('restoreEscalationDepartment', { id: 'e1', note: 'dispute reopened' })));
+  assert.deepEqual(res, { id: 'e1', department: 'CSR', status: 'in_progress' });
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
+  assert.match(upd.sql, /removed_by = NULL, removed_at = NULL, removed_reason = NULL, status_before_removal = NULL/);
+  assert.deepEqual(upd.params, ['in_progress', 'e1']);
+  const a = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
+  assert.equal(a.params[2], 'restored');
+  assert.equal(a.params[4], 'CSR restored to this escalation (back to in progress): dispute reopened');
+  assert.equal(log.commits, 1);
+  const real = h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject); });
+  assert.equal(real.length, 1);
+  assert.equal(real[0].subject, 'Escalation returned to CSR');
+  assert.match(real[0].htmlBody, /also assigned to Sales/);
+});
+
+test('ESC-L3: a copy removed while RESOLVED comes back resolved (no email); an unknown prior status comes back pending', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'removed', department: 'CSR', reason: 'r', groupId: 'g1', statusBeforeRemoval: 'resolved' }, log,
+    { NOTIFY_ON_NEW_ESCALATION: 'true' });
+  h.ctx.lookupDeptManagers_ = function () { return ['csr@x.com']; };
+  assert.equal(h.call('restoreEscalationDepartment', { id: 'e1' }).status, 'resolved');
+  assert.equal(h.state.sentEmails.length, 0, 'nothing re-enters a worklist -> no email');
+  const f = h.fn('escRestoreStatus_');
+  assert.equal(f(null), 'pending');
+  assert.equal(f('removed'), 'pending');
+  assert.equal(f('pending_review'), 'pending');
+  assert.equal(f('in_progress'), 'in_progress');
+});
+
+test('ESC-L3: only a REMOVED copy restores, only for an admin; linking or moving onto a removed dept points at Restore', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1' }, log);
+  assert.throws(function () { h.call('restoreEscalationDepartment', { id: 'e1' }); }, /not removed from this escalation/);
+  assert.equal(log.writes.length, 0);
+  installMove(CSR_MGR, { status: 'removed', department: 'CSR', reason: 'r', groupId: 'g1' }, { writes: [] });
+  assert.throws(function () { h.call('restoreEscalationDepartment', { id: 'e1' }); }, /admin-only/);
+  ['linkEscalationDepartment', 'moveEscalation'].forEach(function (fn) {
+    const l = { writes: [] };
+    installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupHit: true, groupHitStatus: 'removed' }, l);
+    assert.throws(function () { h.call(fn, { id: 'e1', department: 'Sales' }); }, /Sales was removed from this escalation — use Restore/, fn);
+    assert.equal(l.writes.length, 0, fn);
+  });
 });

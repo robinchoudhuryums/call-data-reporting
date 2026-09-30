@@ -736,6 +736,11 @@
       const activeSibs = sibs.filter(function (l) { return l && l.status !== 'removed'; });
       const canLink = !removed && ['pending', 'in_progress', 'resolved'].indexOf(r.status) !== -1;
       const aa = [];
+      if (removed) {   // ESC-L3: undo a removal (a dispute reversed / removed in error)
+        aa.push('<button class="btn btn-ghost esc-restore-dept" type="button" data-id="' + idAttr
+          + '" title="Admin only: put ' + escapeHtml(r.department || '') + ' back on this escalation">&#8634; Restore '
+          + escapeHtml(r.department || 'department') + '&hellip;</button>');
+      }
       if (canLink) {
         aa.push('<button class="btn btn-ghost esc-link-toggle" type="button" data-id="' + idAttr
           + '" title="Admin only: also assign this escalation to another department (a linked copy)">&#128279; Link department&hellip;</button>');
@@ -838,6 +843,7 @@
     if (t.classList.contains('esc-delete'))         { escDelete_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-delete-all'))     { escDelete_(t.getAttribute('data-id'), true); return; }   // ESC-L2
     if (t.classList.contains('esc-remove-dept'))    { escRemoveDept_(t.getAttribute('data-id')); return; }    // ESC-L2
+    if (t.classList.contains('esc-restore-dept'))   { escRestoreDept_(t.getAttribute('data-id')); return; }   // ESC-L3
     if (t.classList.contains('esc-link-toggle'))    {                                                         // ESC-L2
       const lw = document.querySelector('.esc-link[data-id="' + escCssId_(t.getAttribute('data-id')) + '"]');
       if (lw) lw.style.display = (lw.style.display === 'none' ? '' : 'none');
@@ -965,6 +971,30 @@
     });
   }
 
+  // ESC-L3: admin restores a removed department. The copy returns to the
+  // status it had when removed; the removal stays in the thread and the
+  // restore (with an optional note) is added to it.
+  function escRestoreDept_(id) {
+    const rows = (escLastResp_ && escLastResp_.rows) || [];
+    const row = rows.filter(function (r) { return String(r.id) === String(id); })[0];
+    const dept = (row && row.department) || 'this department';
+    dsPrompt_({
+      title: 'Restore ' + dept + ' to this escalation?',
+      messageHtml: escapeHtml(dept) + ' goes back to working this escalation, in the state it was in when it was removed. '
+        + 'The removal and its reason stay in the thread; the restore is added to it.',
+      label: 'Note (optional)',
+      placeholder: 'e.g. Dispute reopened — ' + dept + ' owns the follow-up',
+      confirmLabel: 'Restore ' + dept,
+    }).then(function (note) {
+      if (note === null) return;   // cancelled (an empty note is fine)
+      escRowError_(id, '');
+      google.script.run
+        .withSuccessHandler(function () { showToast(dept + ' restored to the escalation', 'success'); escLoad_(); })
+        .withFailureHandler(function (e) { showToast((e && e.message) ? e.message : String(e), 'error'); })
+        .restoreEscalationDepartment({ id: id, note: note || '' });
+    });
+  }
+
   // C6: start work on a pending escalation (pending -> in_progress).
   function escStart_(id) {
     escRowError_(id, '');
@@ -1084,24 +1114,37 @@
   function escRenderActivity_(body, resp) {
     if (resp.available === false) {
       body.setAttribute('data-loaded', '0');
-      body.innerHTML = '<div class="esc-activity-empty">Activity is temporarily unavailable.</div>';
+      body.innerHTML = '<div class="esc-activity-empty">' + (resp.snapshotMissing
+        ? 'Activity is unavailable right now, and this thread is not in the offline copy.'
+        : 'Activity is temporarily unavailable.') + '</div>';
       return;
     }
+    // ESC-S1: served from the offline copy while Neon is unreachable --
+    // say so, and let the next open fetch the live thread again.
+    // (The stamp is an ISO UTC instant -- local time, like the list's E2 banner.)
+    let asOfLocal = '';
+    if (resp.snapshotAsOf) { try { asOfLocal = new Date(resp.snapshotAsOf).toLocaleString(); } catch (e) { asOfLocal = String(resp.snapshotAsOf); } }
+    const offline = resp.snapshotAsOf
+      ? '<div class="esc-activity-offline">Offline copy from ' + escapeHtml(asOfLocal)
+        + ' &mdash; live data is unreachable. Read-only; long entries are shortened.</div>' : '';
+    if (resp.snapshotAsOf) body.setAttribute('data-loaded', '0');
     const rows = resp.rows || [];
-    if (!rows.length) { body.innerHTML = '<div class="esc-activity-empty">No activity recorded.</div>'; return; }
+    if (!rows.length) { body.innerHTML = offline + '<div class="esc-activity-empty">No activity recorded.</div>'; return; }
     const labels = { created: 'Created', resolved: 'Resolved', comment: 'Comment', edited: 'Edited',
       reopened: 'Reopened', started: 'Started', approved: 'Approved', rejected: 'Rejected',
       reassigned: 'Moved',                                       // ESC-R1
-      linked: 'Department added', removed: 'Department removed' };   // ESC-L2
+      linked: 'Department added', removed: 'Department removed',     // ESC-L2
+      restored: 'Department restored' };                             // ESC-L3
     // ESC-L2: a linked escalation's trail is the whole group's thread; each
     // entry names the department whose copy it was written on (and marks a
     // department that has since been removed).
     const shared = !!resp.linked;
-    body.innerHTML = '<ul class="esc-timeline">' + rows.map(function (a) {
+    body.innerHTML = offline + '<ul class="esc-timeline">' + rows.map(function (a) {
       const lab = labels[a.action] || escapeHtml(a.action || '');
       const who = a.actor ? (' · ' + escapeHtml(a.actor)) : '';
       const when = a.at ? escapeHtml(escFmtWhen_(a.at)) : '';
-      const detail = a.detail ? '<div class="esc-timeline-detail">' + escapeHtml(a.detail) + '</div>' : '';
+      const detail = a.detail ? '<div class="esc-timeline-detail">' + escapeHtml(a.detail)
+        + (a.shortened ? '&hellip; <span class="esc-timeline-short">(shortened in the offline copy)</span>' : '') + '</div>' : '';
       return '<li class="esc-timeline-item esc-timeline-' + escapeHtml(a.action || '') + '">'
         + '<div class="esc-timeline-head"><span class="esc-timeline-action">' + lab + '</span>'
         + ((shared && a.department) ? '<span class="esc-timeline-dept' + (a.removed ? ' is-removed' : '') + '">'

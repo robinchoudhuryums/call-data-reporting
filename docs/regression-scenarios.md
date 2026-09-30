@@ -460,3 +460,12 @@ S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC
     - "Delete all linked…": a red confirm naming every department; confirming deletes every copy. A plain "Delete…" on a linked copy deletes only that copy.
   Expected: as described.
   Fails if: the thread misses another department's entries or its tags; an edit changes only one copy or changes a status; a removed dept can still write, or loses read access; the removal deletes comments; the last department can be removed; or Delete removes more (or fewer) copies than it says.
+
+S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S1) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, on a linked escalation, Start the Sales copy, then "Remove Sales…" with a reason. On the Removed card click "Restore Sales…", add a note, confirm: Sales is back IN PROGRESS (the state it was removed in), back in its worklist and the Overview count; the thread shows "Department removed" then "Department restored" with the note. With `NOTIFY_ON_NEW_ESCALATION=true`, Sales managers get "Escalation returned to Sales".
+    - Remove a RESOLVED copy and restore it: it comes back Resolved, with no email.
+    - With a department removed, try "Link department…" or "Move…" to that department: refused, pointing at Restore.
+    - Neon-down check (only when an outage happens, or on a dev copy with NEON_HOST pointed nowhere): open the Escalations page -- the read-only snapshot banner shows; open Activity on an open linked card: the thread renders with "Offline copy from <time>", department tags intact, long entries marked "(shortened in the offline copy)". A card the snapshot does not hold says Activity is unavailable.
+  Expected: as described.
+  Fails if: a restore lands in a different status than the one removed; the removal disappears from the thread; a removed department gets a second copy via Link/Move; or, offline, a manager sees another department's thread, or a thread shows only part of its entries without saying so.

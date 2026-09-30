@@ -497,7 +497,9 @@ When something looks wrong, before assuming a code bug, check:
     **Remove <dept>…** (a soft removal with a required reason -- the dept's
     comments stay in the shared thread and its managers can still open it
     read-only under the Removed filter) and **Delete all linked…** (ESC-L2,
-    S52). The removal columns are added automatically too. (a) **`NOTIFY_ON_NEW_ESCALATION`
+    S52). The removal columns are added automatically too. A removed
+    department's card offers **Restore <dept>…** (ESC-L3, S53): it returns to
+    the state it was in when removed, and the thread keeps both events. (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
     (`lookupDeptManagers_`, Access Control rows; ALL managers only when
     opted in, #58) on every new escalation, and the NEW dept's managers when
@@ -520,9 +522,17 @@ When something looks wrong, before assuming a code bug, check:
     every write verb still hard-fails (INV-55 unchanged). It has nothing to
     serve until the FIRST successful read after deploy -- it protects the
     NEXT outage, not the one already in progress. Clearing the properties
-    just forfeits the current snapshot until the next read.
+    just forfeits the current snapshot until the next read. **Since ESC-S1
+    (2026-09-30, owner ask) the open rows' Activity THREADS are stored too**
+    (`ESC_SNAPSHOT_ACT_*`, its own ~48KB ceiling beside the rows' ~48KB;
+    each entry's text cut at 600 characters; a thread is stored whole or
+    not at all), so Activity still opens read-only during an outage, with
+    an "Offline copy from …" note. Closed and removed copies' threads are
+    not in it.
     **PHI at rest here is ACCEPTED (SEC-6, owner ruling 2026-09-23).** The
-    snapshot carries the open rows' patient name / caller / Trx # / reason,
+    snapshot carries the open rows' patient name / caller / Trx # / reason
+    -- and, since ESC-S1 (the owner's own request, 2026-09-30), their
+    comments and resolution notes, which can hold PHI the same way --
     so the dashboard project's Script Properties hold PHI in plain text --
     readable by anyone with EDIT access to the Apps Script project (the
     property store is not encrypted separately and is shown in the
