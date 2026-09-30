@@ -142,11 +142,15 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },
-    getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1 }; },
+    getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1, linked: 1 }; },   // ESC-L1: one open linked copy
     getEscalationsInit: function () { var e = JSON.parse(JSON.stringify(P['esc-init'])); if (ROLE==='manager'){e.role='manager';e.isAdmin=false;e.department='CSR';e.departments=['CSR'];} return e; },
     getEscalations: function () { return P[ROLE==='manager' ? 'esc-list-mgr' : 'esc-list']; },
     getEscalationActivity: function () { return P['esc-activity']; },
     deleteEscalation: function () { return { deleted: 1 }; },   // 2a: drive-admin confirms + deletes one card
+    createEscalation: function (req) {   // ESC-L1: drive-admin logs a two-department linked escalation
+      var d = (req && req.departments) || [req && req.department];
+      return { id: 'new-1', ids: d.map(function (x, i) { return 'new-' + (i + 1); }), groupId: d.length > 1 ? 'grp-new' : null };
+    },
     moveEscalation: function (req) { return { id: req && req.id, from: 'CSR', to: req && req.department }; },   // ESC-R1: drive-admin moves one card
     getAlertsInit: function () { return P['alerts-init']; },
     getDigestsInit: function () { return P['digests-init']; },

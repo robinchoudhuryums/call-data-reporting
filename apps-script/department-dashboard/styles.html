@@ -6411,6 +6411,7 @@
   }
   .ov-esc-strip .ov-esc-overdue { color: var(--warn); font-weight: 600; }
   .ov-esc-depts { color: var(--muted); }   /* R20: per-dept open-count suffix */
+  .ov-esc-linked { color: var(--muted); }   /* ESC-L1: "(N linked)" label */
   /* R12-19/#3: zero-ring card note (the R12-4 dash case, explained). */
   .ov-dept-nodata-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
   /* R12-16 (#4): compact row density -- tighter cells so Sales-sized rosters
@@ -7557,6 +7558,11 @@
 
   /* C5: labeled field grid (replaces the emoji meta run-on). */
   .esc-fields { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 4px; }
+  /* ESC-L1: the other departments holding a linked copy of this escalation. */
+  .esc-linked { margin-top: 6px; font-size: 12px; color: var(--ink-muted); }
+  .esc-linked-k { font-weight: 600; }
+  .esc-linked-dept { color: var(--ink); }
+  .esc-linked-status { color: var(--ink-muted); }
   .esc-field { display: flex; flex-direction: column; gap: 1px; }
   .esc-field-k { font: 600 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
   .esc-field-v { font-size: 13px; color: var(--ink); }

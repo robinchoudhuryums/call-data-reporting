@@ -62,6 +62,14 @@
  */
 
 var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
+
+// ESC-L1: the OTHER copies of a linked escalation, as [{department, status}]
+// (NULL for a standalone row). Correlated on the outer alias `e`; the
+// sibling's department + status is all a viewer of one copy learns about the
+// others (owner-approved; the shared thread lands in Step 2b).
+var ESC_LINKED_SQL_ = "CASE WHEN e.group_id IS NULL THEN NULL ELSE ("
+  + "SELECT json_agg(json_build_object('department', s.department, 'status', s.status) ORDER BY s.department) "
+  + "FROM escalations s WHERE s.group_id = e.group_id AND s.id <> e.id) END";
 // F-46: cap the list fetch (newest first). The query was unbounded json_agg
 // -- fine at today's volume, but Phase 2's external pending_review inserts
 // make it an unbounded single-string JDBC fetch of PII (the failure mode
@@ -189,7 +197,8 @@ function escSnapshotMaybeRefresh_(conn, force) {
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
             + 'SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, '
             + 'status, resolution, comments, created_by, created_at::text AS created_at, '
-            + 'resolved_by, resolved_at::text AS resolved_at, source FROM escalations '
+            + 'resolved_by, resolved_at::text AS resolved_at, source, group_id, '
+            + ESC_LINKED_SQL_ + ' AS linked FROM escalations e '
             + "WHERE status IN ('pending','in_progress','pending_review') "
             + 'ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + ESC_SNAPSHOT_MAX_ROWS
             + ') t';
@@ -364,16 +373,33 @@ function getEscalationsBadge() {
     // R20 (owner): grouped by department so the Overview strip + Company
     // snapshot line can name WHICH depts carry the open count, not just the
     // total. Totals are summed from the groups, so the two can never disagree.
-    var sql = 'SELECT department, '
-      + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
-      + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
-      + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
-        + ESC_OVERDUE_SQL_ + ') AS n_overdue '
-      + 'FROM escalations' + clause + ' GROUP BY department';
-    var stmt = conn.prepareStatement(sql);
-    for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
-    var rs = stmt.executeQuery();
-    var out = { available: true, open: 0, review: 0, overdue: 0, byDept: [] };
+    // ESC-L1: n_linked counts the open rows that are one copy of a linked
+    // escalation -- a company total counts each copy (each dept owes work),
+    // so the strip labels how many of them are linked. The badge never runs
+    // escEnsureTable_, so on a table the Step-2a DDL has not reached yet the
+    // group_id column is missing: fall back to the pre-2a query (linked 0).
+    var buildSql = function (withLinked) {
+      return 'SELECT department, '
+        + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
+        + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
+        + (withLinked ? "count(*) FILTER (WHERE status IN ('pending','in_progress') AND group_id IS NOT NULL) AS n_linked, " : '')
+        + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
+          + ESC_OVERDUE_SQL_ + ') AS n_overdue '
+        + 'FROM escalations' + clause + ' GROUP BY department';
+    };
+    var stmt = null, rs = null, withLinked = true;
+    try {
+      stmt = conn.prepareStatement(buildSql(true));
+      for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
+      rs = stmt.executeQuery();
+    } catch (colErr) {
+      try { if (stmt) stmt.close(); } catch (ce) {}
+      withLinked = false;
+      stmt = conn.prepareStatement(buildSql(false));
+      for (var i2 = 0; i2 < params.length; i2++) stmt.setString(i2 + 1, params[i2]);
+      rs = stmt.executeQuery();
+    }
+    var out = { available: true, open: 0, review: 0, overdue: 0, linked: 0, byDept: [] };
     while (rs.next()) {
       var dOpen    = Number(rs.getString('n_open'))    || 0;
       var dReview  = Number(rs.getString('n_review'))  || 0;
@@ -381,6 +407,7 @@ function getEscalationsBadge() {
       out.open    += dOpen;
       out.review  += dReview;
       out.overdue += dOverdue;
+      if (withLinked) out.linked += Number(rs.getString('n_linked')) || 0;
       if (dOpen > 0) {
         out.byDept.push({ dept: String(rs.getString('department') || ''), open: dOpen, overdue: dOverdue });
       }
@@ -459,8 +486,9 @@ function getEscalations(req) {
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
             + "SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, "
             + "status, resolution, comments, created_by, created_at::text AS created_at, "
-            + "resolved_by, resolved_at::text AS resolved_at, source "
-            + "FROM escalations"
+            + "resolved_by, resolved_at::text AS resolved_at, source, group_id, "
+            + ESC_LINKED_SQL_ + " AS linked "
+            + "FROM escalations e"
             + (where.length ? (' WHERE ' + where.join(' AND ')) : '')
             // F-46: newest-first cap inside the subquery (json_agg re-sorts
             // the capped set with the same keys, so order is unchanged).
@@ -604,16 +632,19 @@ function getEscalationActivity(req) {
 function createEscalation(req) {
   assertAdmin_();
   req = req || {};
-  var department = String(req.department || '').trim();
-  if (getAllDepartments_().indexOf(department) === -1) {
-    throw new Error('Unknown department: ' + department);
-  }
+  // ESC-L1 (Step 2a): `departments` (array) creates one LINKED COPY per
+  // department, sharing a group_id; the legacy single `department` still
+  // works. De-duplicated, order kept; every name must be a real department.
+  var depts = escRequestedDepts_(req);
+  var known = getAllDepartments_();
+  depts.forEach(function (d) {
+    if (known.indexOf(d) === -1) throw new Error('Unknown department: ' + d);
+  });
   var reason = escClean_(req.reason);
   if (!reason) throw new Error('Reason for escalation is required.');
 
-  var rec = {
-    id:          Utilities.getUuid(),
-    department:  department,
+  var groupId = depts.length > 1 ? Utilities.getUuid() : null;
+  var base = {
     occurredAt:  escCleanDateTime_(req.occurredAt),
     caller:      escClean_(req.caller),
     patientName: escClean_(req.patientName),
@@ -622,6 +653,12 @@ function createEscalation(req) {
     reason:      reason,
     createdBy:   (Session.getActiveUser().getEmail() || '').toLowerCase(),
   };
+  var recs = depts.map(function (d) {
+    var r = { id: Utilities.getUuid(), department: d, groupId: groupId };
+    for (var k in base) r[k] = base[k];
+    return r;
+  });
+  var rec = recs[0];
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
@@ -634,26 +671,31 @@ function createEscalation(req) {
     // NULLIF(?, '') so a blank optional field stores NULL without needing
     // JDBC setObject(null) (unreliable in Apps Script) and without binding
     // '' to a timestamptz (which errors). reason is required (non-empty).
-    var stmt = conn.prepareStatement(
-      'INSERT INTO escalations (id, department, occurred_at, caller, patient_name, trx, area, reason, '
-      + "status, created_by, source) VALUES (?, ?, NULLIF(?, '')::timestamptz, NULLIF(?, ''), "
-      + "NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?)");
-    stmt.setString(1, rec.id);
-    stmt.setString(2, rec.department);
-    stmt.setString(3, rec.occurredAt);
-    stmt.setString(4, rec.caller);
-    stmt.setString(5, rec.patientName);
-    stmt.setString(6, rec.trx);
-    stmt.setString(7, rec.area);
-    stmt.setString(8, rec.reason);
-    stmt.setString(9, ESC_STATUS_PENDING);
-    stmt.setString(10, rec.createdBy);
-    stmt.setString(11, 'manual');
-    stmt.execute();
-    stmt.close();
-    escAppendActivity_(conn, rec.id, 'created', rec.createdBy, rec.reason);
+    // ESC-L1: every copy + its 'created' trail row in ONE transaction, so a
+    // failure leaves no half-linked group.
+    recs.forEach(function (r) {
+      var stmt = conn.prepareStatement(
+        'INSERT INTO escalations (id, department, occurred_at, caller, patient_name, trx, area, reason, '
+        + "status, created_by, source, group_id) VALUES (?, ?, NULLIF(?, '')::timestamptz, NULLIF(?, ''), "
+        + "NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''))");
+      stmt.setString(1, r.id);
+      stmt.setString(2, r.department);
+      stmt.setString(3, r.occurredAt);
+      stmt.setString(4, r.caller);
+      stmt.setString(5, r.patientName);
+      stmt.setString(6, r.trx);
+      stmt.setString(7, r.area);
+      stmt.setString(8, r.reason);
+      stmt.setString(9, ESC_STATUS_PENDING);
+      stmt.setString(10, r.createdBy);
+      stmt.setString(11, 'manual');
+      stmt.setString(12, r.groupId || '');
+      stmt.execute();
+      stmt.close();
+      escAppendActivity_(conn, r.id, 'created', r.createdBy, r.reason);
+    });
     conn.commit();
-    Logger.log('createEscalation: %s logged escalation %s for %s', rec.createdBy, rec.id, rec.department);
+    Logger.log('createEscalation: %s logged escalation %s for %s', rec.createdBy, rec.id, escDeptListLabel_(recs, groupId));
     escSnapshotAfterWrite_(conn);   // PCR-8
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -668,8 +710,29 @@ function createEscalation(req) {
   // §1: fire-and-log notification AFTER the write committed + lock released
   // (so a slow MailApp send never blocks the create response or holds the
   // lock). Best-effort: any failure is swallowed + logged inside the helper.
-  escNotifyNewEscalation_(rec);
-  return { id: rec.id };
+  if (recs.length > 1) escNotifyLinkedGroup_(recs);
+  else escNotifyNewEscalation_(rec);
+  return { id: rec.id, ids: recs.map(function (r) { return r.id; }), groupId: groupId };
+}
+
+/** ESC-L1 (PURE): the request's department list -- `departments` (array)
+ *  or the legacy single `department`; trimmed, de-duplicated, order kept.
+ *  Throws when none is given. */
+function escRequestedDepts_(req) {
+  var raw = Array.isArray(req && req.departments) ? req.departments : [req && req.department];
+  var out = [];
+  raw.forEach(function (d) {
+    d = String(d == null ? '' : d).trim();
+    if (d && out.indexOf(d) === -1) out.push(d);
+  });
+  if (!out.length) throw new Error('Pick at least one department.');
+  return out;
+}
+
+/** ESC-L1 (PURE): "CSR + Sales (linked group <id>)" for the create log line. */
+function escDeptListLabel_(recs, groupId) {
+  return recs.map(function (r) { return r.department; }).join(' + ')
+    + (groupId ? ' (linked group ' + groupId + ')' : '');
 }
 
 /**
@@ -788,6 +851,10 @@ function moveEscalation(req) {
         + row.status + '") — reopen it first.');
     }
     if (from === to) throw new Error('This escalation is already assigned to ' + to + '.');
+    // ESC-L1: a linked group holds at most one copy per department.
+    if (row.groupId && escGroupHasDept_(conn, row.groupId, to, id)) {
+      throw new Error(to + ' already has a linked copy of this escalation.');
+    }
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement('UPDATE escalations SET department = ?, updated_at = now() WHERE id = ?');
     stmt.setString(1, to);
@@ -1396,11 +1463,19 @@ function escRowMeta_(conn, id) {
   return out;
 }
 
-/**
- * Appends one immutable row to the append-only activity trail (§5). MUST be
- * called inside an open transaction (the caller commits) so the activity row
- * lands atomically with its primary write. No commit here.
- */
+/** ESC-L1: does another copy in `groupId` already sit in `dept`? */
+function escGroupHasDept_(conn, groupId, dept, exceptId) {
+  var stmt = conn.prepareStatement('SELECT 1 AS n FROM escalations WHERE group_id = ? AND department = ? AND id <> ? LIMIT 1');
+  stmt.setString(1, groupId);
+  stmt.setString(2, dept);
+  stmt.setString(3, exceptId);
+  var rs = stmt.executeQuery();
+  var hit = rs.next();
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'escalations');   // OD-3
+  return hit;
+}
+
 /** Reads the review-relevant columns of one escalation; null if absent. */
 function escRowFull_(conn, id) {
   var stmt = conn.prepareStatement(
@@ -1408,7 +1483,7 @@ function escRowFull_(conn, id) {
     // (escNotifyNewEscalation_ builds its rec from THIS row) silently
     // dropped its "When" line on every approved submission.
     'SELECT status, department, caller, patient_name, trx, area, reason, source, '
-    + 'occurred_at::text AS occurred_at '
+    + 'occurred_at::text AS occurred_at, group_id '
     + 'FROM escalations WHERE id = ?');
   stmt.setString(1, id);
   var rs = stmt.executeQuery();
@@ -1424,6 +1499,7 @@ function escRowFull_(conn, id) {
       reason:      rs.getString('reason'),
       source:      rs.getString('source'),
       occurredAt:  rs.getString('occurred_at'),
+      groupId:     rs.getString('group_id') || null,   // ESC-L1
     };
   }
   rs.close(); stmt.close();
@@ -1448,6 +1524,11 @@ function escNormalizeReviewFields_(row) {
   };
 }
 
+/**
+ * Appends one immutable row to the append-only activity trail (§5). MUST be
+ * called inside an open transaction (the caller commits) so the activity row
+ * lands atomically with its primary write. No commit here.
+ */
 function escAppendActivity_(conn, escId, action, actor, detail) {
   var stmt = conn.prepareStatement(
     'INSERT INTO escalation_activity (id, escalation_id, action, actor, detail) '
@@ -1586,9 +1667,71 @@ function escNotifyNewEscalation_(rec, opts) {
   }
 }
 
+/**
+ * ESC-L1 (Step 2a): the new-escalation email for a LINKED create. Same flag
+ * and recipient rule as escNotifyNewEscalation_ (NOTIFY_ON_NEW_ESCALATION;
+ * lookupDeptManagers_, ALL managers only when opted in -- EML-1), but ONE
+ * email per manager across the group: a manager of two linked departments
+ * gets one message naming both, and every message names the other linked
+ * departments. Recipients with the same department set share a message.
+ * Best-effort; never throws.
+ */
+function escNotifyLinkedGroup_(recs) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var enabled = String(props.getProperty('NOTIFY_ON_NEW_ESCALATION') || '').toLowerCase() === 'true';
+    if (!enabled || !recs || !recs.length) return;
+    var groups = escLinkedRecipientGroups_(recs.map(function (r) { return r.department; }),
+      (typeof lookupDeptManagers_ === 'function') ? lookupDeptManagers_ : function () { return []; });
+    if (!groups.length) {
+      Logger.log('escNotifyLinkedGroup_: no managers mapped for %s; skipping.', recs.map(function (r) { return r.department; }).join(' + '));
+      return;
+    }
+    var dashUrl = props.getProperty('DASHBOARD_URL') || '';
+    var link = dashUrl ? (dashUrl + '#/escalations') : '';
+    var all = recs.map(function (r) { return r.department; });
+    groups.forEach(function (g) {
+      var rec = {};
+      for (var k in recs[0]) rec[k] = recs[0][k];
+      rec.department = g.depts.join(' + ');
+      var others = all.filter(function (d) { return g.depts.indexOf(d) === -1; });
+      sendAppEmail_({
+        to:       g.emails.join(','),
+        subject:  'New escalation logged — ' + rec.department,
+        htmlBody: escNotifyHtml_(rec, link, '', others),
+      });
+      Logger.log('escNotifyLinkedGroup_: emailed %s for %s (linked: %s)', g.emails.join(','), rec.department, all.join(' + '));
+    });
+  } catch (e) {
+    Logger.log('escNotifyLinkedGroup_ failed (non-blocking): ' + (e && e.message ? e.message : e));
+  }
+}
+
+/** ESC-L1 (PURE): depts + a dept->manager-emails resolver -> one entry per
+ *  distinct department SET: [{ depts: [...], emails: [...] }] (a manager of
+ *  two of the depts appears once, under both). Emails compared lowercase. */
+function escLinkedRecipientGroups_(depts, managersOf) {
+  var byEmail = {}, order = [];
+  depts.forEach(function (d) {
+    (managersOf(d) || []).forEach(function (e) {
+      var k = String(e || '').trim().toLowerCase();
+      if (!k) return;
+      if (!byEmail[k]) { byEmail[k] = { email: String(e).trim(), depts: [] }; order.push(k); }
+      if (byEmail[k].depts.indexOf(d) === -1) byEmail[k].depts.push(d);
+    });
+  });
+  var groups = [], byKey = {};
+  order.forEach(function (k) {
+    var key = byEmail[k].depts.join('\u0001');
+    if (!byKey[key]) { byKey[key] = { depts: byEmail[k].depts.slice(), emails: [] }; groups.push(byKey[key]); }
+    byKey[key].emails.push(byEmail[k].email);
+  });
+  return groups;
+}
+
 /** Email-safe HTML for the new-escalation notification -- the EmailKit house
  * style since Round-16 (shell + a label/value detail card + the shell CTA). */
-function escNotifyHtml_(rec, link, movedFrom) {
+function escNotifyHtml_(rec, link, movedFrom, alsoDepts) {
   var esc = ekEsc_;
   var C = EK_C_, sans = EK_SANS_;
   var row = function (label, val) {
@@ -1602,8 +1745,10 @@ function escNotifyHtml_(rec, link, movedFrom) {
     band: { tone: 'neutral', glyph: '&#9873;' },   // R30: uniform banded header
     kicker: 'Call Data · Escalations',
     title: (movedFrom ? 'Escalation moved to ' : 'New escalation — ') + rec.department,
-    subtitle: movedFrom ? ('An escalation was moved to your department from ' + movedFrom + '.')
-                        : 'An escalation was just logged for your department.',
+    subtitle: (movedFrom ? ('An escalation was moved to your department from ' + movedFrom + '.')
+                         : 'An escalation was just logged for your department.')
+      + ((alsoDepts && alsoDepts.length) ? ' It is also assigned to ' + alsoDepts.join(', ')
+          + ' — each department works its own copy.' : ''),
     preheader: 'New escalation for ' + rec.department + (rec.area ? ' · ' + rec.area : ''),
     rowsHtml: ekRow_(
       '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
@@ -1644,6 +1789,16 @@ function escEnsureTable_(conn) {
     idx.execute('CREATE INDEX IF NOT EXISTS idx_escalations_dept_status ON escalations (department, status)');
     idx.close();
   } catch (idxErr) { /* best-effort */ }
+  // ESC-L1 (Step 2a): linked department COPIES share a group_id (NULL =
+  // standalone). Nullable + idempotent, so an existing table, an old backup
+  // (json_populate_recordset leaves it NULL) and the external INSERT contract
+  // (which never sets it) are all unaffected.
+  try {
+    var grp = conn.createStatement();
+    grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS group_id text');
+    grp.execute('CREATE INDEX IF NOT EXISTS idx_escalations_group ON escalations (group_id) WHERE group_id IS NOT NULL');
+    grp.close();
+  } catch (grpErr) { /* best-effort */ }
   // §5: append-only activity trail (create/comment/edit/resolve/reopen).
   // Rows are NEVER updated or deleted.
   try {

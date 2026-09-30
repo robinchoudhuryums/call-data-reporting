@@ -110,12 +110,16 @@ function reviewConn(row, log) {
         setString: function (i, v) { params[i - 1] = v; },
         executeQuery: function () {
           let done = false;
+          // ESC-L1: escGroupHasDept_'s probe answers from row.groupHit.
+          const hit = sql.indexOf('WHERE group_id = ?') !== -1 ? !!(row && row.groupHit) : !!row;
+          if (sql.indexOf('WHERE group_id = ?') !== -1) log.groupProbes = (log.groupProbes || []).concat([params.slice()]);
           return {
-            next: function () { if (done) return false; done = true; return !!row; },
+            next: function () { if (done) return false; done = true; return hit; },
             getString: function (col) {
               const map = { status: row.status, department: row.department,
                 caller: row.caller, patient_name: row.patientName, trx: row.trx,
-                area: row.area, reason: row.reason, source: row.source, n: row.n };
+                area: row.area, reason: row.reason, source: row.source, n: row.n,
+                group_id: row.groupId };
               return map[col] == null ? null : map[col];
             },
             close: function () {},
@@ -655,4 +659,150 @@ test('ESC-R1: updateEscalation no longer changes the department (a move is its o
   const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
   assert.ok(upd.sql.indexOf('department') === -1, 'the edit UPDATE never names the department column');
   assert.ok(upd.params.indexOf('Sales') === -1);
+});
+
+// ESC-L1 (Step 2a, owner ruling 2026-09-30): one escalation assigned to
+// several departments = one LINKED COPY per department sharing a group_id.
+// Each dept works its own copy; the card names the others; counting stays
+// per copy with a "(N linked)" label; one email per manager across the group.
+test('ESC-L1: escRequestedDepts_ takes `departments` or the legacy single `department`, trimmed + de-duplicated', function () {
+  const f = h.fn('escRequestedDepts_');
+  assert.deepEqual(JSON.parse(JSON.stringify(f({ departments: [' CSR', 'Sales', 'CSR', ''] }))), ['CSR', 'Sales']);
+  assert.deepEqual(JSON.parse(JSON.stringify(f({ department: 'Power' }))), ['Power']);
+  assert.throws(function () { f({ departments: [] }); }, /Pick at least one department/);
+  assert.throws(function () { f({}); }, /Pick at least one department/);
+});
+
+test('ESC-L1: a two-department create writes two copies sharing ONE group_id, each with its own trail row, in ONE commit', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, null, log);
+  const res = JSON.parse(JSON.stringify(h.call('createEscalation',
+    { departments: ['CSR', 'Sales'], reason: 'Caller disputes both teams', patientName: 'Pat' })));
+  const ins = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalations ') === 0; });
+  assert.equal(ins.length, 2, 'one row per department');
+  assert.deepEqual(ins.map(function (w) { return w.params[1]; }), ['CSR', 'Sales']);
+  assert.ok(ins[0].params[11], 'a group id is bound');
+  assert.equal(ins[0].params[11], ins[1].params[11], 'both copies share the group id');
+  assert.notEqual(ins[0].params[0], ins[1].params[0], 'each copy has its own id');
+  assert.equal(ins[0].params[4], 'Pat'); assert.equal(ins[1].params[4], 'Pat');
+  const acts = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; });
+  assert.deepEqual(acts.map(function (w) { return w.params[1]; }), ins.map(function (w) { return w.params[0]; }),
+    'a created trail row per copy');
+  assert.equal(log.commits, 1, 'all copies atomically');
+  assert.equal(res.groupId, ins[0].params[11]);
+  assert.equal(res.ids.length, 2);
+  assert.equal(res.id, res.ids[0], 'legacy `id` is the first copy');
+});
+
+test('ESC-L1: a single-department create stays standalone (group_id NULL) -- byte-compatible with the legacy payload', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, null, log);
+  const res = JSON.parse(JSON.stringify(h.call('createEscalation', { department: 'CSR', reason: 'r' })));
+  const ins = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalations ') === 0; });
+  assert.equal(ins.length, 1);
+  assert.equal(ins[0].params[11], '', "'' binds through NULLIF -> NULL");
+  assert.equal(res.groupId, null);
+  // An unknown dept anywhere in the list refuses the whole create.
+  const log2 = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, null, log2);
+  assert.throws(function () { h.call('createEscalation', { departments: ['CSR', 'Nope'], reason: 'r' }); }, /Unknown department: Nope/);
+  assert.equal(log2.writes.length, 0);
+});
+
+test('ESC-L1: escLinkedRecipientGroups_ sends one email per manager -- a manager of two linked depts gets ONE naming both', function () {
+  const f = h.fn('escLinkedRecipientGroups_');
+  // csr2 shares csr's department set -> one message To both; CSR@X.com is a
+  // case-variant repeat of csr@x.com -> not a second recipient.
+  const mgrs = { CSR: ['csr@x.com', 'Both@x.com', 'csr2@x.com', 'CSR@X.com'], Sales: ['both@x.com', 'sales@x.com'], Power: [] };
+  const g = JSON.parse(JSON.stringify(f(['CSR', 'Sales', 'Power'], function (d) { return mgrs[d]; })));
+  assert.deepEqual(g, [
+    { depts: ['CSR'], emails: ['csr@x.com', 'csr2@x.com'] },
+    { depts: ['CSR', 'Sales'], emails: ['Both@x.com'] },
+    { depts: ['Sales'], emails: ['sales@x.com'] },
+  ]);
+});
+
+test('ESC-L1: a linked create emails each manager set once, naming the other linked departments (flag-gated)', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, null, log, { NOTIFY_ON_NEW_ESCALATION: 'true' });
+  h.ctx.lookupDeptManagers_ = function (d) { return d === 'CSR' ? ['csr@x.com'] : d === 'Sales' ? ['sales@x.com'] : []; };
+  h.call('createEscalation', { departments: ['CSR', 'Sales'], reason: 'r' });
+  const real = h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject); });
+  assert.equal(real.length, 2);
+  const csr = real.filter(function (m) { return m.to === 'csr@x.com'; })[0];
+  assert.equal(csr.subject, 'New escalation logged — CSR');
+  assert.match(csr.htmlBody, /also assigned to Sales/);
+  const sales = real.filter(function (m) { return m.to === 'sales@x.com'; })[0];
+  assert.match(sales.htmlBody, /also assigned to CSR/);
+  // Flag off -> nothing.
+  installMove({ role: 'admin', email: 'admin@x.com' }, null, { writes: [] });
+  h.call('createEscalation', { departments: ['CSR', 'Sales'], reason: 'r' });
+  assert.equal(h.state.sentEmails.length, 0);
+});
+
+test('ESC-L1: moving a linked copy into a dept that already holds one is refused with no writes', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupHit: true }, log);
+  assert.throws(function () { h.call('moveEscalation', { id: 'e1', department: 'Sales' }); },
+    /Sales already has a linked copy of this escalation/);
+  assert.equal(log.writes.length, 0);
+  assert.deepEqual(log.groupProbes[0], ['g1', 'Sales', 'e1'], 'probe excludes the moving copy itself');
+  // No sibling there -> the move goes through; a standalone row never probes.
+  const log2 = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupHit: false }, log2);
+  h.call('moveEscalation', { id: 'e1', department: 'Power' });
+  assert.equal(log2.commits, 1);
+  const log3 = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, { status: 'pending', department: 'CSR', reason: 'r' }, log3);
+  h.call('moveEscalation', { id: 'e1', department: 'Sales' });
+  assert.equal((log3.groupProbes || []).length, 0);
+});
+
+test('ESC-L1: the list + snapshot SELECTs carry group_id and the per-row linked summary', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  const linkedUses = src.split('ESC_LINKED_SQL_ + ').length - 1;
+  assert.equal(linkedUses, 2, 'getEscalations AND the snapshot query select the linked summary');
+  assert.match(h.ctx.ESC_LINKED_SQL_, /s\.group_id = e\.group_id AND s\.id <> e\.id/, 'siblings only, never the row itself');
+});
+
+function linkedBadgeConn(failLinked, rows) {
+  const seen = [];
+  return { seen: seen, conn: {
+    prepareStatement: function (sql) {
+      seen.push(sql);
+      return {
+        setString: function () {},
+        executeQuery: function () {
+          if (failLinked && sql.indexOf('n_linked') !== -1) throw new Error('column "group_id" does not exist');
+          let i = -1;
+          return { next: function () { return ++i < rows.length; },
+            getString: function (c) { return rows[i][c] == null ? null : String(rows[i][c]); }, close: function () {} };
+        },
+        close: function () {},
+      };
+    },
+    close: function () {},
+  } };
+}
+
+test('ESC-L1: the badge reports the open linked copies, and FALLS BACK to the pre-2a query when group_id is missing', function () {
+  h.ctx.resolveUser_ = function () { return { role: 'admin', email: 'admin@x.com' }; };
+  const rows = [{ department: 'CSR', n_open: 3, n_review: 1, n_linked: 2, n_overdue: 1 },
+                { department: 'Sales', n_open: 1, n_review: 0, n_linked: 1, n_overdue: 0 }];
+  let b = linkedBadgeConn(false, rows);
+  h.ctx.getDashboardNeonConn_ = function () { return b.conn; };
+  let out = JSON.parse(JSON.stringify(h.call('getEscalationsBadge')));
+  assert.equal(out.available, true);
+  assert.equal(out.open, 4);
+  assert.equal(out.linked, 3);
+  b = linkedBadgeConn(true, rows);
+  h.ctx.getDashboardNeonConn_ = function () { return b.conn; };
+  out = JSON.parse(JSON.stringify(h.call('getEscalationsBadge')));
+  assert.equal(out.available, true, 'a missing column costs the label, never the badge');
+  assert.equal(out.open, 4);
+  assert.equal(out.linked, 0);
+  assert.equal(b.seen.length, 2);
+  assert.equal(b.seen[1].indexOf('n_linked'), -1);
 });

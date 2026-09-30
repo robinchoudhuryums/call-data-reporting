@@ -470,6 +470,45 @@ const MODALS = [
       }
     }
 
+    // ESC-L1: a LINKED copy names the other departments holding a copy, the
+    // Move list never offers a dept that already holds one, the Overview strip
+    // labels the linked count, and a two-department create sends both depts.
+    {
+      const lk = await page.evaluate(() => {
+        const card = [...document.querySelectorAll('.esc-card')].find((c) => c.querySelector('.esc-linked'));
+        const cid = card ? card.getAttribute('data-id') : '';
+        const p = cid ? document.querySelector('.esc-move[data-id="' + CSS.escape(cid) + '"]') : null;
+        const strip = document.getElementById('ov-esc-strip');
+        return { line: card ? card.querySelector('.esc-linked').textContent.replace(/\s+/g, ' ').trim() : '',
+                 opts: p ? [...p.querySelectorAll('.esc-move-dept option')].map((o) => o.value) : null,
+                 strip: strip ? strip.textContent : '' };
+      });
+      record('ESC-L1: a linked copy renders the other department and its status',
+        /Also assigned to/.test(lk.line) && /Sales/.test(lk.line) && /in progress/.test(lk.line), JSON.stringify(lk));
+      record('ESC-L1: Move never offers a department that already holds a linked copy',
+        Array.isArray(lk.opts) && lk.opts.length > 0 && lk.opts.indexOf('Sales') === -1, JSON.stringify(lk.opts));
+      record('ESC-L1: the Overview escalations strip labels the linked copies', /\(1 linked\)/.test(lk.strip), lk.strip);
+
+      await page.click('#esc-new-btn');
+      await page.waitForTimeout(200);
+      const multi = await page.evaluate(() => {
+        const sel = document.getElementById('esc-c-dept');
+        return { multiple: !!(sel && sel.multiple), picked: sel ? [...sel.options].filter((o) => o.selected).length : -1 };
+      });
+      record('ESC-L1: the create form offers a multi-department pick, none pre-selected',
+        multi.multiple && multi.picked === 0, JSON.stringify(multi));
+      await page.selectOption('#esc-c-dept', ['CSR', 'Sales']);
+      await page.fill('#esc-c-reason', 'Harness: linked two-department escalation');
+      await page.click('#esc-c-save');
+      await page.waitForTimeout(1500);
+      const sent = await page.evaluate(() => {
+        const c = window.__HARNESS__.calls.filter((x) => x.fn === 'createEscalation').pop();
+        return c ? c.args[0] : null;
+      });
+      record('ESC-L1: a two-department create sends both departments in one call',
+        !!sent && Array.isArray(sent.departments) && sent.departments.join('|') === 'CSR|Sales', JSON.stringify(sent));
+    }
+
     // ESC-R1: the admin "Move…" control on an open card -- rendered visible,
     // toggles an inline panel whose department list EXCLUDES the card's own
     // dept, and "Move escalation" calls the (mocked) verb and reloads cleanly.

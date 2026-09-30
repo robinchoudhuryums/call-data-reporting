@@ -81,6 +81,10 @@
         ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
           if ($(i)) $(i).value = '';
         });
+        // ESC-L1: a multi-select keeps its picks, so a stale one (a prior
+        // create or an edit prefill) would silently add a linked copy --
+        // every fresh create starts with no department chosen.
+        if ($('esc-c-dept')) Array.prototype.forEach.call($('esc-c-dept').options || [], function (o) { o.selected = false; });
         escSetCreateError_('');
       }
     });
@@ -599,6 +603,7 @@
 
     let body = '<div class="esc-reason">' + escapeHtml(r.reason || '') + '</div>';
     body += fieldGrid;
+    body += escLinkedLineHtml_(r);   // ESC-L1
 
     if (inReview) {
       // Phase 2 review verbs: Approve admits the submission into the dept
@@ -662,7 +667,12 @@
       }
       if (pa.length) body += '<div class="esc-pending-actions">' + pa.join('') + '</div>';
       if (isAdmin) {
-        const moveOpts = ((escInit_ && escInit_.departments) || []).filter(function (d) { return d !== r.department; })
+        // ESC-L1: a linked group holds one copy per dept, so a dept that
+        // already has a linked copy is not a move target (server re-checks).
+        const linkedDepts = (Array.isArray(r.linked) ? r.linked : []).map(function (l) { return l && l.department; });
+        const moveOpts = ((escInit_ && escInit_.departments) || []).filter(function (d) {
+          return d !== r.department && linkedDepts.indexOf(d) === -1;
+        })
           .map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
         body += '<div class="esc-move" data-admin-only data-id="' + idAttr + '" style="display:none;">'
           + '<label class="esc-resolve-label">Move to department'
@@ -1014,15 +1024,19 @@
 
   function escCreate_() {
     escSetCreateError_('');
-    const dept = $('esc-c-dept') ? $('esc-c-dept').value : '';
+    // ESC-L1: the dept select is multiple -- every selected dept gets its
+    // own linked copy (server: createEscalation `departments`).
+    const depts = escSelectedCreateDepts_();
     const reason = $('esc-c-reason') ? $('esc-c-reason').value.trim() : '';
-    if (!reason) { escSetCreateError_('Reason for escalation is required.'); return; }
     const editing = !!escEditId_;
+    if (!editing && !depts.length) { escSetCreateError_('Pick at least one department.'); return; }
+    if (!reason) { escSetCreateError_('Reason for escalation is required.'); return; }
     const btn = $('esc-c-save');
     const idleLabel = editing ? 'Save changes' : 'Save escalation';
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     const payload = {
-      department: dept,
+      department: depts[0] || '',
+      departments: depts,
       occurredAt: $('esc-c-when') ? $('esc-c-when').value : '',
       caller:      $('esc-c-caller') ? $('esc-c-caller').value : '',
       patientName: $('esc-c-patient') ? $('esc-c-patient').value : '',
@@ -1031,8 +1045,11 @@
       reason:      reason,
     };
     const runner = google.script.run
-      .withSuccessHandler(function () {
+      .withSuccessHandler(function (res) {
         if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+        if (!editing && res && Array.isArray(res.ids) && res.ids.length > 1) {
+          showToast('Logged for ' + res.ids.length + ' departments (linked copies) \u2713', 'success');   // ESC-L1
+        }
         ['esc-c-caller','esc-c-patient','esc-c-trx','esc-c-area','esc-c-reason','esc-c-when'].forEach(function (i) {
           if ($(i)) $(i).value = '';
         });
@@ -1051,6 +1068,32 @@
     } else {
       runner.createEscalation(payload);
     }
+  }
+
+  // ESC-L1: the create form's selected departments, in list order.
+  function escSelectedCreateDepts_() {
+    const sel = $('esc-c-dept');
+    if (!sel) return [];
+    return Array.prototype.filter.call(sel.options || [], function (o) { return o.selected; })
+      .map(function (o) { return o.value; }).filter(Boolean);
+  }
+
+  // ESC-L1 (PURE): "Also assigned to Sales · in progress, Power · resolved"
+  // for a linked copy's card; '' for a standalone escalation.
+  function escLinkedLineHtml_(r) {
+    const linked = Array.isArray(r && r.linked) ? r.linked : [];
+    if (!linked.length) return '';
+    const label = { pending: 'pending', in_progress: 'in progress', resolved: 'resolved',
+      pending_review: 'needs review', rejected: 'rejected' };
+    return '<div class="esc-linked" title="Linked copies: each department works its own copy of this escalation">'
+      + '<span class="esc-linked-k">&#128279; Also assigned to</span> '
+      + linked.map(function (l) {
+          const st = String((l && l.status) || '');
+          return '<span class="esc-linked-dept">' + escapeHtml(String((l && l.department) || ''))
+            + (st ? ' <span class="esc-linked-status">&middot; ' + escapeHtml(label[st] || st) + '</span>' : '')
+            + '</span>';
+        }).join(', ')
+      + '</div>';
   }
 
   function escFmtWhen_(s) {

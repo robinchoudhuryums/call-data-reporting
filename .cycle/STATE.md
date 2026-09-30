@@ -10,7 +10,12 @@
   same copy. **Step 1 SHIPPED on the branch too (block 208, ESC-R1):**
   admin-only "Move…" on pending + in-progress cards (`moveEscalation`), the
   `reassigned` trail row, the new dept's email, Edit no longer changes the
-  dept; S50. **APPROVED PLAN, NOT STARTED (2a / 2b):**
+  dept; S50. **Step 2a SHIPPED on the branch (block 209, ESC-L1):** linked
+  department copies (multi-select create -> one row per dept sharing
+  `group_id`), the "Also assigned to" card line, "(N linked)" strip label,
+  one email per manager set, Move refuses a dept already holding a copy; S51.
+  Steps 0/1/2a are UNMERGED (no PR yet) -- ask the owner before 2b.
+  **APPROVED PLAN (2b NOT STARTED):**
   Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
   escalations (resolved/rejected: reopen first; pending_review stays with
   approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new

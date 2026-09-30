@@ -110,7 +110,11 @@ tests/
                               hardening (incl. ESC-R1: admin-only move of a
                               pending/in-progress escalation, the reassigned
                               trail row, the new-dept notice, and Edit no
-                              longer writing the dept), neon-write chunking/mapping (incl.
+                              longer writing the dept; ESC-L1: linked copies --
+                              one row per dept sharing a group_id in one
+                              commit, one email per manager set, the Move
+                              guard, the badge's missing-column fallback),
+                              neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
                               cache-pin drift), heatmap drill,

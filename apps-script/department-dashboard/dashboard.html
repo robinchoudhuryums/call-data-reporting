@@ -3159,7 +3159,10 @@
           <div class="ir-form-grid">
             <div class="ir-col" id="esc-c-dept-col">
               <label for="esc-c-dept">Department</label>
-              <select id="esc-c-dept"></select>
+              <!-- ESC-L1: multi-select -- more than one department creates one
+                   LINKED COPY per department (each works its own copy). -->
+              <select id="esc-c-dept" multiple size="4" aria-describedby="esc-c-dept-help"></select>
+              <span class="al-help-inline" id="esc-c-dept-help">Ctrl/Cmd-click to assign more than one department &mdash; each gets its own linked copy.</span>
             </div>
             <div class="ir-col">
               <label for="esc-c-when">Date &amp; time</label>

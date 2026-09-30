@@ -488,7 +488,11 @@ When something looks wrong, before assuming a code bug, check:
     row (dept only, no PHI) -- no property, no trigger; managers never see the
     control. **An admin can also MOVE an open escalation to another
     department** from its card (ESC-R1, S50) -- no property; recorded in the
-    Activity trail. (a) **`NOTIFY_ON_NEW_ESCALATION`
+    Activity trail. **And assign ONE escalation to several departments** by
+    picking more than one in the create form (ESC-L1, S51): each department
+    gets its own LINKED COPY. The `group_id` column is added automatically on
+    the first escalation write after the deploy -- no migration to run; until
+    then the Overview strip simply shows no "(N linked)" label. (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
     (`lookupDeptManagers_`, Access Control rows; ALL managers only when
     opted in, #58) on every new escalation, and the NEW dept's managers when

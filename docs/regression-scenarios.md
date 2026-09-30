@@ -435,3 +435,15 @@ S50 | Admin moves an escalation to another department (ESC-R1) | Subsystem: Depa
     - As a CSR manager (or View-as-Manager for CSR): the moved escalation is gone from their list; as a Sales manager it is there with its whole trail. No manager sees "Move…".
   Expected: as described; the escalation keeps its status and its activity trail across the move.
   Fails if: a manager sees or can invoke Move; the old dept can still open the moved escalation; the move is missing from Activity; the status changes; or the email goes to the OLD dept.
+
+S51 | One escalation assigned to several departments -- linked copies (ESC-L1) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, click "+ New escalation": the Department list is a multi-select with nothing pre-picked. Ctrl/Cmd-click CSR and Sales, enter a reason ("test -- linked"), save. Expect the toast "Logged for 2 departments (linked copies)".
+    - On the list (All departments): two cards, one CSR and one Sales, each saying "Also assigned to <the other> · pending".
+    - Click Start on the CSR copy only: the Sales card now says "Also assigned to CSR · in progress" and stays PENDING itself.
+    - Overview: the escalations strip counts both copies and says "(2 linked)".
+    - On the CSR copy click "Move…": Sales is NOT offered. Move it to Power: both cards now name each other (Power and Sales).
+    - With `NOTIFY_ON_NEW_ESCALATION=true`, log another linked one for CSR + Sales: each dept's managers get ONE email naming the other dept; a manager of both gets exactly one naming both; you get the `[Copy]`s.
+    - As a CSR manager: only the CSR copy is listed, with the "Also assigned to" line; no Sales thread or fields are visible. Log a single-dept escalation as admin: no "Also assigned" line, no linked label.
+  Expected: as described; resolving, commenting or editing one copy never changes another.
+  Fails if: one create yields a single row; a copy's action changes its sibling; Move offers a dept already holding a copy; a manager sees another dept's thread or fields; or a manager of both depts gets two emails.
