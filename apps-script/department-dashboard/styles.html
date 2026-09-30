@@ -6411,6 +6411,7 @@
   }
   .ov-esc-strip .ov-esc-overdue { color: var(--warn); font-weight: 600; }
   .ov-esc-depts { color: var(--muted); }   /* R20: per-dept open-count suffix */
+  .ov-esc-linked { color: var(--muted); }   /* ESC-L1: "(N linked)" label */
   /* R12-19/#3: zero-ring card note (the R12-4 dash case, explained). */
   .ov-dept-nodata-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
   /* R12-16 (#4): compact row density -- tighter cells so Sales-sized rosters
@@ -7557,6 +7558,11 @@
 
   /* C5: labeled field grid (replaces the emoji meta run-on). */
   .esc-fields { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 4px; }
+  /* ESC-L1: the other departments holding a linked copy of this escalation. */
+  .esc-linked { margin-top: 6px; font-size: 12px; color: var(--ink-muted); }
+  .esc-linked-k { font-weight: 600; }
+  .esc-linked-dept { color: var(--ink); }
+  .esc-linked-status { color: var(--ink-muted); }
   .esc-field { display: flex; flex-direction: column; gap: 1px; }
   .esc-field-k { font: 600 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
   .esc-field-v { font-size: 13px; color: var(--ink); }
@@ -7587,6 +7593,10 @@
   /* Phase 2: externally-submitted rows awaiting review / reviewed-out. */
   .esc-pill-review   { background: var(--accent-soft); color: var(--accent); }
   .esc-pill-rejected { background: var(--paper-2); color: var(--ink-muted); }
+  /* ESC-L2: a department taken off a linked escalation (read-only copy). */
+  .esc-pill-removed  { background: var(--paper-2); color: var(--ink-muted); text-decoration: line-through; }
+  .esc-removed-note { margin-top: 8px; padding: 6px 10px; font-size: 12px; color: var(--ink-muted);
+    border-left: 3px solid var(--line); background: var(--paper-2); border-radius: var(--r); }
   .esc-source-tag { font-size: 11px; color: var(--ink-muted); margin-left: 8px; }
   /* System Health rows */
   .sh-chip { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 11px; font-weight: 600; }
@@ -7638,6 +7648,10 @@
   .esc-admin-actions { margin-top: 8px; display: flex; justify-content: flex-end; }   /* 2a: admin delete, right-aligned, below the card body */
   .esc-admin-actions .esc-delete { color: var(--muted); }
   .esc-admin-actions .esc-delete:hover { color: var(--bad); }
+  /* ESC-L2: link / remove / delete-all sit beside Delete; wrap on narrow cards. */
+  .esc-admin-actions { flex-wrap: wrap; gap: 6px; }
+  .esc-admin-actions .esc-delete-all { color: var(--muted); }
+  .esc-admin-actions .esc-delete-all:hover { color: var(--bad); }
 
   /* §2 reopen affordance on resolved cards */
   .esc-reopen-wrap { margin-top: 8px; }
@@ -7677,6 +7691,17 @@
   .esc-timeline-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .esc-timeline-action { font: 600 12px var(--ui); color: var(--ink); }
   .esc-timeline-meta { font: 400 11px var(--mono); color: var(--muted); }
+  /* ESC-L2: which department's copy a shared-thread entry was written on. */
+  .esc-timeline-dept { font: 600 10px/1.6 var(--ui); padding: 0 6px; border-radius: var(--r-pill);
+    background: var(--accent-soft); color: var(--accent); }
+  .esc-timeline-dept.is-removed { background: var(--paper-2); color: var(--ink-muted); }
+  .esc-timeline-removed::before { background: var(--muted); }
+  .esc-timeline-linked::before  { background: var(--accent); }
+  .esc-timeline-restored::before { background: var(--good); }
+  /* ESC-S1: Activity served from the offline copy while Neon is down. */
+  .esc-activity-offline { margin: 0 0 6px; padding: 5px 8px; font-size: 11px; color: var(--ink-muted);
+    background: var(--paper-2); border-left: 3px solid var(--stale); border-radius: var(--r); }
+  .esc-timeline-short { color: var(--muted); font-size: 11px; }
   .esc-timeline-detail { font-size: 12px; color: var(--ink); margin-top: 2px; white-space: pre-wrap; }
 
   /* ── Call-path drill (#3) ────────────────────────────────────── */

@@ -839,6 +839,9 @@
     var review = Number(counts && counts.review) || 0;
     var over = Number(counts && counts.overdue) || 0;
     var byDept = (counts && counts.byDept && counts.byDept.length) ? counts.byDept : [];
+    // ESC-L1: open rows that are one copy of a LINKED escalation. Counting
+    // stays per copy (each dept owes its own work) -- this only labels it.
+    var linked = Number(counts && counts.linked) || 0;
     var total = open + review;
     // Round-16 (owner): the Company snapshot card carries a pending-
     // escalations line too. Stash the counts (the card can render before or
@@ -860,7 +863,7 @@
         }
         sp.classList.toggle('nav-count-badge--warn', over > 0);
         sp.textContent = String(total);
-        sp.title = open + ' open' + (over ? ' (' + over + ' overdue)' : '')
+        sp.title = open + ' open' + (linked ? ' (' + linked + ' linked)' : '') + (over ? ' (' + over + ' overdue)' : '')
           + (review ? ' \u00b7 ' + review + ' awaiting review' : '');
       }
     }
@@ -892,6 +895,7 @@
         strip.innerHTML = '';
       } else {
         strip.innerHTML = '\u26a0 <strong>Escalations:</strong> ' + sOpen + ' open'
+          + ((allViewer && linked) ? ' <span class="ov-esc-linked" title="Linked copies: one escalation assigned to several departments counts once per department">(' + linked + ' linked)</span>' : '')
           + escDeptCountsHtml_(sByDept)
           + (sOver ? ' \u00b7 <span class="ov-esc-overdue">' + sOver + ' overdue</span>' : '')
           + (sReview ? ' \u00b7 ' + sReview + ' awaiting review' : '')

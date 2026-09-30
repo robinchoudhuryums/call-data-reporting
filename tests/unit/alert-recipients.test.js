@@ -19,22 +19,26 @@ function install(rows) {
   } });
 }
 
-test('B-5: dept managers + ALL/'+ '*-sentinel managers both resolve as recipients', function () {
-  install([
+test('EML-1: ALL/'+ '*-sentinel managers are OPT-IN only; dept managers always resolve', function () {
+  const rows = [
     ['csr.mgr@x.com',   'CSR',   ''],
     ['sales.mgr@x.com', 'Sales', ''],
     ['ops.lead@x.com',  'ALL',   'all-departments manager'],
     ['star.lead@x.com', '*',     'sentinel variant'],
     ['blank@x.com',     '',      'no dept -> ignored'],
-  ]);
+  ];
+  install(rows);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('lookupDeptManagers_', 'CSR'))), ['csr.mgr@x.com'],
+    'by default an ALL manager gets NO dept-manager email (owner ruling 2026-09-30, reverses B-5)');
+  install(rows);
+  h.state.props.ALL_DEPT_NOTIFY_OPT_IN = 'OPS.Lead@x.com; someone.else@x.com';
   const csr = h.call('lookupDeptManagers_', 'CSR');
-  assert.deepEqual(JSON.parse(JSON.stringify(csr)),
-    ['csr.mgr@x.com', 'ops.lead@x.com', 'star.lead@x.com'],
-    'own-dept row + both sentinel spellings; never the other dept\'s manager');
+  assert.deepEqual(JSON.parse(JSON.stringify(csr)), ['csr.mgr@x.com', 'ops.lead@x.com'],
+    'an opted-in ALL manager (case-insensitive) receives it; the one not listed still does not');
   const sales = h.call('lookupDeptManagers_', 'Sales');
-  assert.ok(sales.indexOf('sales.mgr@x.com') !== -1);
-  assert.ok(sales.indexOf('ops.lead@x.com') !== -1, 'ALL manager receives every dept\'s alert');
+  assert.ok(sales.indexOf('ops.lead@x.com') !== -1, 'opt-in covers every dept');
   assert.ok(sales.indexOf('csr.mgr@x.com') === -1, 'single-dept manager stays scoped');
+  assert.ok(sales.indexOf('someone.else@x.com') === -1, 'the opt-in list only filters ALL rows -- it never ADDS a recipient');
 });
 
 test('B-5: missing Access Control sheet -> empty recipient list (no throw)', function () {
@@ -62,9 +66,10 @@ test('P1: agent-role rows are NEVER alert recipients; blank role = manager; unkn
       ['ops.lead@x.com',   'ALL', '', 'Manager', 'case-insensitive role'],
     ],
   } });
+  h.state.props.ALL_DEPT_NOTIFY_OPT_IN = 'ops.lead@x.com,all.agent@x.com';   // EML-1: opted in, so the role rule is what decides
   const csr = JSON.parse(JSON.stringify(h.call('lookupDeptManagers_', 'CSR')));
   assert.deepEqual(csr, ['csr.mgr@x.com', 'legacy.mgr@x.com', 'ops.lead@x.com'],
-    'manager + blank-role + ALL-sentinel manager only; agent and unknown roles excluded');
+    'manager + blank-role + opted-in ALL-sentinel manager only; agent (even opted in) and unknown roles excluded');
 });
 
 // The pre-agent 3-column sheet must still read cleanly (the fake sheet enforces

@@ -24,7 +24,10 @@
  * resolve/comment/reopen escalations for THEIR OWN dept only. It carries the
  * same four mitigations the OrphanFix carve-out does, with the admin gate
  * swapped for the per-dept gate on the manager-reachable mutation paths:
- *   1. authorization — `createEscalation` / `updateEscalation` are admin-only
+ *   1. authorization — `createEscalation` / `updateEscalation` / `moveEscalation` (ESC-R1) /
+ *      `linkEscalationDepartment` / `removeEscalationDepartment` (ESC-L2) /
+ *      `restoreEscalationDepartment` (ESC-L3) /
+ *      `deleteEscalation` are admin-only
  *      (`assertAdmin_`); `resolveEscalation` / `updateEscalationComment` /
  *      `reopenEscalation` / `approveEscalation` / `rejectEscalation`
  *      re-resolve the caller and gate via
@@ -61,6 +64,15 @@
  */
 
 var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
+
+// ESC-L1: the OTHER copies of a linked escalation, as [{department, status}]
+// (NULL for a standalone row). Correlated on the outer alias `e`; the
+// sibling's department + status is all a viewer of one copy learns about the
+// others on the LIST (owner-approved); the shared thread (ESC-L2) is the one
+// other cross-copy read, via getEscalationActivity.
+var ESC_LINKED_SQL_ = "CASE WHEN e.group_id IS NULL THEN NULL ELSE ("
+  + "SELECT json_agg(json_build_object('department', s.department, 'status', s.status) ORDER BY s.department) "
+  + "FROM escalations s WHERE s.group_id = e.group_id AND s.id <> e.id) END";
 // F-46: cap the list fetch (newest first). The query was unbounded json_agg
 // -- fine at today's volume, but Phase 2's external pending_review inserts
 // make it an unbounded single-string JDBC fetch of PII (the failure mode
@@ -91,6 +103,15 @@ var ESC_SNAPSHOT_MAX_ROWS = 150;      // open rows kept (newest first)
 var ESC_SNAPSHOT_CHUNK_CHARS = 8000;  // under the ~9KB per-property cap
 var ESC_SNAPSHOT_MAX_CHUNKS = 6;      // hard ceiling ~48KB of the 500KB store
 var ESC_SNAPSHOT_REFRESH_MIN = 30;    // at most one refresh query per this
+// ESC-S1 (2026-09-30, owner ask): the ACTIVITY THREADS of the snapshot's open
+// rows ride alongside it under ESC_SNAPSHOT_ACT_*, so Activity still opens
+// (read-only) while Neon is down. Its own ceiling, so threads can never crowd
+// out the rows; each entry's detail is shortened past ESC_SNAPSHOT_ACT_DETAIL
+// chars (flagged, so the client can say so); a thread is stored WHOLE or not
+// at all -- never a silently partial conversation. SEC-6 covers it: comments
+// can carry PHI exactly as the rows do (docs/operator-state.md #24(c)).
+var ESC_SNAPSHOT_ACT_MAX_CHUNKS = 6;  // ~48KB, beside the rows' ~48KB
+var ESC_SNAPSHOT_ACT_DETAIL = 600;    // chars of each entry's detail kept
 
 /**
  * Pure: rows -> { chunks, count, truncated }. Drops TAIL rows (the list is
@@ -188,7 +209,8 @@ function escSnapshotMaybeRefresh_(conn, force) {
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
             + 'SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, '
             + 'status, resolution, comments, created_by, created_at::text AS created_at, '
-            + 'resolved_by, resolved_at::text AS resolved_at, source FROM escalations '
+            + 'resolved_by, resolved_at::text AS resolved_at, source, group_id, '
+            + ESC_LINKED_SQL_ + ' AS linked FROM escalations e '
             + "WHERE status IN ('pending','in_progress','pending_review') "
             + 'ORDER BY occurred_at DESC NULLS LAST, created_at DESC LIMIT ' + ESC_SNAPSHOT_MAX_ROWS
             + ') t';
@@ -197,8 +219,145 @@ function escSnapshotMaybeRefresh_(conn, force) {
     var json = rs.next() ? rs.getString('j') : '[]';
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
     rs.close(); stmt.close();
-    escSnapshotStore_(JSON.parse(json || '[]'));
+    var snapRows = JSON.parse(json || '[]');
+    escSnapshotStore_(snapRows);
+    // ESC-S1: the threads of those rows, from the same connection. Its own
+    // try: a failure here costs the offline threads, never the rows.
+    try { escSnapshotActRefresh_(conn, snapRows); } catch (eAct) { /* best-effort */ }
   } catch (e) { /* best-effort */ }
+}
+
+/**
+ * ESC-S1: reads the activity of every thread the snapshot rows belong to --
+ * a standalone row's own trail, a linked row's WHOLE group (removed copies'
+ * entries included, as the live thread shows them) -- and stores it packed.
+ * One bounded query: the thread keys are bound as parameters, capped by the
+ * snapshot's own row cap.
+ */
+function escSnapshotActRefresh_(conn, rows) {
+  var ids = [], groups = [];
+  (rows || []).forEach(function (r) {
+    if (!r) return;
+    if (r.group_id) { if (groups.indexOf(String(r.group_id)) === -1) groups.push(String(r.group_id)); }
+    else ids.push(String(r.id));
+  });
+  var entries = [];
+  if (ids.length || groups.length) {
+    var where = [];
+    if (ids.length) where.push('(e.group_id IS NULL AND a.escalation_id IN (' + ids.map(function () { return '?'; }).join(',') + '))');
+    if (groups.length) where.push('e.group_id IN (' + groups.map(function () { return '?'; }).join(',') + ')');
+    var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
+      + 'SELECT a.escalation_id AS e, e.group_id AS g, a.action, a.actor, a.at::text AS at, '
+      + 'left(a.detail, ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS detail, '
+      + '(length(a.detail) > ' + ESC_SNAPSHOT_ACT_DETAIL + ') AS cut, '
+      + "e.department, (e.status = 'removed') AS removed "
+      + 'FROM escalation_activity a JOIN escalations e ON e.id = a.escalation_id WHERE '
+      + where.join(' OR ') + ') t';
+    var stmt = conn.prepareStatement(sql);
+    var params = ids.concat(groups);
+    for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
+    var rs = stmt.executeQuery();
+    var json = rs.next() ? rs.getString('j') : '[]';
+    if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
+    rs.close(); stmt.close();
+    entries = JSON.parse(json || '[]');
+    if (!Array.isArray(entries)) entries = [];
+  }
+  escSnapshotActStore_(escSnapshotActPack_(rows, entries));
+}
+
+/**
+ * ESC-S1 (PURE): rows (newest first) + activity entries -> { threads,
+ * count, truncated }. `threads` maps a thread KEY (the group_id of a linked
+ * row, else the row's id) to its entries, oldest first, in the compact shape
+ * the serve path expands. Threads are added in row order and a thread that
+ * would push past the ceiling is skipped WHOLE (truncated = true).
+ */
+function escSnapshotActPack_(rows, entries) {
+  var byKey = {};
+  (entries || []).forEach(function (x) {
+    if (!x) return;
+    var k = x.g ? String(x.g) : String(x.e);
+    (byKey[k] = byKey[k] || []).push({ a: x.action, u: x.actor || null, t: x.at || null,
+      d: x.detail == null ? null : x.detail, c: x.cut ? 1 : 0,
+      dp: x.g ? (x.department || null) : null, r: (x.g && x.removed) ? 1 : 0 });
+  });
+  var cap = ESC_SNAPSHOT_CHUNK_CHARS * ESC_SNAPSHOT_ACT_MAX_CHUNKS;
+  var threads = {}, size = 2, count = 0, truncated = false, seen = {};
+  (rows || []).forEach(function (r) {
+    if (!r) return;
+    var k = r.group_id ? String(r.group_id) : String(r.id);
+    if (seen[k]) return;
+    seen[k] = true;
+    var list = byKey[k] || [];
+    var add = JSON.stringify(k).length + JSON.stringify(list).length + 2;
+    if (size + add > cap) { truncated = true; return; }
+    threads[k] = list;
+    size += add;
+    count++;
+  });
+  return { threads: threads, count: count, truncated: truncated };
+}
+
+/** ESC-S1: stores the packed threads, META last (a torn write reads absent). */
+function escSnapshotActStore_(packed) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var json = JSON.stringify(packed.threads || {});
+    var chunks = [];
+    for (var i = 0; i < json.length; i += ESC_SNAPSHOT_CHUNK_CHARS) chunks.push(json.slice(i, i + ESC_SNAPSHOT_CHUNK_CHARS));
+    if (chunks.length > ESC_SNAPSHOT_ACT_MAX_CHUNKS) return;   // cannot happen past the packer; never overflow the store
+    for (var c = 0; c < chunks.length; c++) props.setProperty('ESC_SNAPSHOT_ACT_' + (c + 1), chunks[c]);
+    for (var j = chunks.length + 1; j <= ESC_SNAPSHOT_ACT_MAX_CHUNKS; j++) props.deleteProperty('ESC_SNAPSHOT_ACT_' + j);
+    props.setProperty('ESC_SNAPSHOT_ACT_META', JSON.stringify({
+      at: new Date().toISOString(), chunks: chunks.length, threads: packed.count || 0, truncated: !!packed.truncated,
+    }));
+  } catch (e) { /* best-effort */ }
+}
+
+/** ESC-S1: { threads, at, truncated } or null (absent / torn / unparseable). */
+function escSnapshotActLoad_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var meta = JSON.parse(props.getProperty('ESC_SNAPSHOT_ACT_META') || 'null');
+    if (!meta || !meta.chunks) return null;
+    var json = '';
+    for (var i = 1; i <= meta.chunks; i++) {
+      var c = props.getProperty('ESC_SNAPSHOT_ACT_' + i);
+      if (c == null) return null;
+      json += c;
+    }
+    var threads = JSON.parse(json);
+    if (!threads || typeof threads !== 'object') return null;
+    return { threads: threads, at: meta.at || null, truncated: !!meta.truncated };
+  } catch (e) { return null; }
+}
+
+/**
+ * ESC-S1: getEscalationActivity's outage path. Authorizes EXACTLY like the
+ * live path -- against the requested copy's department, found in the ROWS
+ * snapshot (L9: a denial returns the not-found shape) -- then serves that
+ * row's thread from the thread snapshot, marked `snapshotAsOf`. A row the
+ * snapshot does not hold (a closed or removed copy) or a thread that did not
+ * fit keeps the plain unavailable shape (+ `snapshotMissing` for the latter).
+ */
+function escSnapshotActServe_(user, id) {
+  var snap = escSnapshotLoad_();
+  var row = snap ? snap.rows.filter(function (r) { return r && String(r.id) === String(id); })[0] : null;
+  if (!row) return { available: false, rows: [] };
+  try { escAssertRowAccess_(user, row.department); } catch (denied) { return { available: true, rows: [] }; }
+  var act = escSnapshotActLoad_();
+  var k = row.group_id ? String(row.group_id) : String(row.id);
+  var list = act && act.threads && Object.prototype.hasOwnProperty.call(act.threads, k) ? act.threads[k] : null;
+  if (!list) return { available: false, rows: [], snapshotMissing: !!act };
+  return {
+    available: true, linked: !!row.group_id, snapshotAsOf: act.at,
+    rows: list.map(function (x) {
+      var out = { action: x.a, actor: x.u, at: x.t, detail: x.d, shortened: !!x.c };
+      if (row.group_id) { out.department = x.dp; out.removed = !!x.r; }
+      return out;
+    }),
+  };
 }
 
 /**
@@ -222,7 +381,7 @@ function escSnapshotServe_(scopeAll, deptList, department, status, metaDept) {
     if (deptList) return deptList.indexOf(d) !== -1;
     return d === department;
   });
-  var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0 };
+  var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0, removed: 0 };
   var oldestOpen = null;
   inScope.forEach(function (r) {
     var st = String((r && r.status) || '');
@@ -253,6 +412,13 @@ var ESC_STATUS_REJECTED       = 'rejected';
 // review. Started via startEscalation; the 'started' activity event records
 // the owner. resolveEscalation accepts it (pending OR in_progress can resolve).
 var ESC_STATUS_IN_PROGRESS = 'in_progress';
+// ESC-L2 (Step 2b, owner decision (b) 2026-09-30): a department REMOVED from
+// a linked escalation. Not a delete: the copy + its trail stay in the shared
+// thread, labelled, and the removed dept's managers can still OPEN it
+// read-only to see the outcome. Every write verb refuses it
+// (escAssertNotRemoved_); it leaves the open worklist, the badge and the
+// snapshot because each of those lists open statuses explicitly.
+var ESC_STATUS_REMOVED = 'removed';
 
 // F3: the overdue threshold, in CALENDAR DAYS. One definition, one place.
 // The client's escDaysOpen_ (script.html) computes a DATE-ONLY difference and
@@ -328,7 +494,7 @@ function getEscalationsInit() {
       : ((user.departments && user.departments.length) ? user.departments
          : (user.department ? [user.department] : [])),
     neonConfigured: !!PropertiesService.getScriptProperties().getProperty('NEON_HOST'),
-    statuses:    ['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'],
+    statuses:    ['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'removed', 'all'],
   };
 }
 
@@ -363,16 +529,33 @@ function getEscalationsBadge() {
     // R20 (owner): grouped by department so the Overview strip + Company
     // snapshot line can name WHICH depts carry the open count, not just the
     // total. Totals are summed from the groups, so the two can never disagree.
-    var sql = 'SELECT department, '
-      + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
-      + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
-      + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
-        + ESC_OVERDUE_SQL_ + ') AS n_overdue '
-      + 'FROM escalations' + clause + ' GROUP BY department';
-    var stmt = conn.prepareStatement(sql);
-    for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
-    var rs = stmt.executeQuery();
-    var out = { available: true, open: 0, review: 0, overdue: 0, byDept: [] };
+    // ESC-L1: n_linked counts the open rows that are one copy of a linked
+    // escalation -- a company total counts each copy (each dept owes work),
+    // so the strip labels how many of them are linked. The badge never runs
+    // escEnsureTable_, so on a table the Step-2a DDL has not reached yet the
+    // group_id column is missing: fall back to the pre-2a query (linked 0).
+    var buildSql = function (withLinked) {
+      return 'SELECT department, '
+        + "count(*) FILTER (WHERE status IN ('pending','in_progress')) AS n_open, "
+        + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
+        + (withLinked ? "count(*) FILTER (WHERE status IN ('pending','in_progress') AND group_id IS NOT NULL) AS n_linked, " : '')
+        + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
+          + ESC_OVERDUE_SQL_ + ') AS n_overdue '
+        + 'FROM escalations' + clause + ' GROUP BY department';
+    };
+    var stmt = null, rs = null, withLinked = true;
+    try {
+      stmt = conn.prepareStatement(buildSql(true));
+      for (var i = 0; i < params.length; i++) stmt.setString(i + 1, params[i]);
+      rs = stmt.executeQuery();
+    } catch (colErr) {
+      try { if (stmt) stmt.close(); } catch (ce) {}
+      withLinked = false;
+      stmt = conn.prepareStatement(buildSql(false));
+      for (var i2 = 0; i2 < params.length; i2++) stmt.setString(i2 + 1, params[i2]);
+      rs = stmt.executeQuery();
+    }
+    var out = { available: true, open: 0, review: 0, overdue: 0, linked: 0, byDept: [] };
     while (rs.next()) {
       var dOpen    = Number(rs.getString('n_open'))    || 0;
       var dReview  = Number(rs.getString('n_review'))  || 0;
@@ -380,6 +563,7 @@ function getEscalationsBadge() {
       out.open    += dOpen;
       out.review  += dReview;
       out.overdue += dOverdue;
+      if (withLinked) out.linked += Number(rs.getString('n_linked')) || 0;
       if (dOpen > 0) {
         out.byDept.push({ dept: String(rs.getString('department') || ''), open: dOpen, overdue: dOverdue });
       }
@@ -438,7 +622,7 @@ function getEscalations(req) {
   var metaDept = scopeAll ? 'ALL' : (deptList ? deptList.join(', ') : department);
 
   var status = String(req.status || 'pending').toLowerCase().trim();
-  if (['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'all'].indexOf(status) === -1) status = 'pending';
+  if (['pending', 'pending_review', 'in_progress', 'resolved', 'rejected', 'removed', 'all'].indexOf(status) === -1) status = 'pending';
 
   var conn = getDashboardNeonConn_();
   if (!conn) {
@@ -458,8 +642,10 @@ function getEscalations(req) {
     var sql = "SELECT COALESCE(json_agg(t ORDER BY t.occurred_at DESC NULLS LAST, t.created_at DESC), '[]')::text AS j FROM ("
             + "SELECT id, department, occurred_at::text AS occurred_at, caller, patient_name, trx, area, reason, "
             + "status, resolution, comments, created_by, created_at::text AS created_at, "
-            + "resolved_by, resolved_at::text AS resolved_at, source "
-            + "FROM escalations"
+            + "resolved_by, resolved_at::text AS resolved_at, source, group_id, "
+            + "removed_by, removed_at::text AS removed_at, removed_reason, "   // ESC-L2
+            + ESC_LINKED_SQL_ + " AS linked "
+            + "FROM escalations e"
             + (where.length ? (' WHERE ' + where.join(' AND ')) : '')
             // F-46: newest-first cap inside the subquery (json_agg re-sorts
             // the capped set with the same keys, so order is unchanged).
@@ -486,7 +672,7 @@ function getEscalations(req) {
     // band can't be derived from them (e.g. the In-progress count while
     // viewing Pending). Same connection, best-effort (band + chip just hide on
     // failure). Subsumes the old pending_review-only COUNT.
-    var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0 };
+    var counts = { pending: 0, in_progress: 0, pending_review: 0, resolved: 0, rejected: 0, removed: 0 };
     var pendingReview = 0, resolvedMTD = 0, oldestOpen = null, overdue = 0;
     try {
       // F3: ESC_OVERDUE_SQL_ is the SINGLE definition of "overdue" (calendar
@@ -498,6 +684,7 @@ function getEscalations(req) {
         + "count(*) FILTER (WHERE status = 'pending_review') AS n_review, "
         + "count(*) FILTER (WHERE status = 'resolved') AS n_resolved, "
         + "count(*) FILTER (WHERE status = 'rejected') AS n_rejected, "
+        + "count(*) FILTER (WHERE status = 'removed') AS n_removed, "   // ESC-L2
         + "count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= date_trunc('month', now())) AS n_resolved_mtd, "
         + "count(*) FILTER (WHERE status IN ('pending','in_progress') AND "
           + ESC_OVERDUE_SQL_ + ') AS n_overdue, '
@@ -512,6 +699,7 @@ function getEscalations(req) {
         counts.pending_review = Number(ars.getString('n_review'))   || 0;
         counts.resolved       = Number(ars.getString('n_resolved')) || 0;
         counts.rejected       = Number(ars.getString('n_rejected')) || 0;
+        counts.removed        = Number(ars.getString('n_removed'))  || 0;
         pendingReview = counts.pending_review;
         resolvedMTD = Number(ars.getString('n_resolved_mtd')) || 0;
         overdue       = Number(ars.getString('n_overdue'))   || 0;
@@ -557,7 +745,7 @@ function getEscalationActivity(req) {
   if (!id) throw new Error('Missing escalation id.');
 
   var conn = getDashboardNeonConn_();
-  if (!conn) return { available: false, rows: [] };
+  if (!conn) return escSnapshotActServe_(user, id);   // ESC-S1: the offline thread
   try {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
@@ -571,20 +759,35 @@ function getEscalationActivity(req) {
     } catch (denied) {
       return { available: true, rows: [] };
     }
-    var sql = "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
-            + "SELECT action, actor, at::text AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
+    // ESC-L2 (Step 2b, owner decision 1): a LINKED copy's trail is the WHOLE
+    // group's thread -- every copy's entries, each tagged with its department
+    // and whether that copy was removed -- so the departments respond on one
+    // chain. The gate above is still on the REQUESTED copy: a manager reaches
+    // the thread only through a copy of their own dept (a removed one
+    // included -- read-only, to see the outcome). A standalone row keeps the
+    // single-row query (no department tag).
+    var sql = meta.groupId
+      ? "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
+        + "SELECT a.action, a.actor, a.at::text AS at, a.detail, e.department, "
+        + "(e.status = 'removed') AS removed, (a.escalation_id = ?) AS own "
+        + "FROM escalation_activity a JOIN escalations e ON e.id = a.escalation_id "
+        + "WHERE e.group_id = ?) t"
+      : "SELECT COALESCE(json_agg(t ORDER BY t.at ASC), '[]')::text AS j FROM ("
+        + "SELECT action, actor, at::text AS at, detail FROM escalation_activity WHERE escalation_id = ?) t";
     var stmt = conn.prepareStatement(sql);
     stmt.setString(1, id);
+    if (meta.groupId) stmt.setString(2, meta.groupId);
     var rs = stmt.executeQuery();
     var json = rs.next() ? rs.getString('j') : '[]';
     // F5: meter the bytes this read actually pulled (NeonRead.gs;
     // typeof-guarded like every other cross-file call here).
     if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');
     rs.close(); stmt.close();
-    return { available: true, rows: JSON.parse(json || '[]') };
+    return { available: true, rows: JSON.parse(json || '[]'), linked: !!meta.groupId };
   } catch (e) {
     Logger.log('getEscalationActivity failed: ' + (e && e.message ? e.message : e));
-    return { available: false, rows: [] };
+    // ESC-S1: a mid-query Neon death serves the offline thread too.
+    try { return escSnapshotActServe_(user, id); } catch (eSnap) { return { available: false, rows: [] }; }
   } finally {
     try { conn.close(); } catch (ce) {}
   }
@@ -603,16 +806,19 @@ function getEscalationActivity(req) {
 function createEscalation(req) {
   assertAdmin_();
   req = req || {};
-  var department = String(req.department || '').trim();
-  if (getAllDepartments_().indexOf(department) === -1) {
-    throw new Error('Unknown department: ' + department);
-  }
+  // ESC-L1 (Step 2a): `departments` (array) creates one LINKED COPY per
+  // department, sharing a group_id; the legacy single `department` still
+  // works. De-duplicated, order kept; every name must be a real department.
+  var depts = escRequestedDepts_(req);
+  var known = getAllDepartments_();
+  depts.forEach(function (d) {
+    if (known.indexOf(d) === -1) throw new Error('Unknown department: ' + d);
+  });
   var reason = escClean_(req.reason);
   if (!reason) throw new Error('Reason for escalation is required.');
 
-  var rec = {
-    id:          Utilities.getUuid(),
-    department:  department,
+  var groupId = depts.length > 1 ? Utilities.getUuid() : null;
+  var base = {
     occurredAt:  escCleanDateTime_(req.occurredAt),
     caller:      escClean_(req.caller),
     patientName: escClean_(req.patientName),
@@ -621,6 +827,12 @@ function createEscalation(req) {
     reason:      reason,
     createdBy:   (Session.getActiveUser().getEmail() || '').toLowerCase(),
   };
+  var recs = depts.map(function (d) {
+    var r = { id: Utilities.getUuid(), department: d, groupId: groupId };
+    for (var k in base) r[k] = base[k];
+    return r;
+  });
+  var rec = recs[0];
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
@@ -633,26 +845,31 @@ function createEscalation(req) {
     // NULLIF(?, '') so a blank optional field stores NULL without needing
     // JDBC setObject(null) (unreliable in Apps Script) and without binding
     // '' to a timestamptz (which errors). reason is required (non-empty).
-    var stmt = conn.prepareStatement(
-      'INSERT INTO escalations (id, department, occurred_at, caller, patient_name, trx, area, reason, '
-      + "status, created_by, source) VALUES (?, ?, NULLIF(?, '')::timestamptz, NULLIF(?, ''), "
-      + "NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?)");
-    stmt.setString(1, rec.id);
-    stmt.setString(2, rec.department);
-    stmt.setString(3, rec.occurredAt);
-    stmt.setString(4, rec.caller);
-    stmt.setString(5, rec.patientName);
-    stmt.setString(6, rec.trx);
-    stmt.setString(7, rec.area);
-    stmt.setString(8, rec.reason);
-    stmt.setString(9, ESC_STATUS_PENDING);
-    stmt.setString(10, rec.createdBy);
-    stmt.setString(11, 'manual');
-    stmt.execute();
-    stmt.close();
-    escAppendActivity_(conn, rec.id, 'created', rec.createdBy, rec.reason);
+    // ESC-L1: every copy + its 'created' trail row in ONE transaction, so a
+    // failure leaves no half-linked group.
+    recs.forEach(function (r) {
+      var stmt = conn.prepareStatement(
+        'INSERT INTO escalations (id, department, occurred_at, caller, patient_name, trx, area, reason, '
+        + "status, created_by, source, group_id) VALUES (?, ?, NULLIF(?, '')::timestamptz, NULLIF(?, ''), "
+        + "NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''))");
+      stmt.setString(1, r.id);
+      stmt.setString(2, r.department);
+      stmt.setString(3, r.occurredAt);
+      stmt.setString(4, r.caller);
+      stmt.setString(5, r.patientName);
+      stmt.setString(6, r.trx);
+      stmt.setString(7, r.area);
+      stmt.setString(8, r.reason);
+      stmt.setString(9, ESC_STATUS_PENDING);
+      stmt.setString(10, r.createdBy);
+      stmt.setString(11, 'manual');
+      stmt.setString(12, r.groupId || '');
+      stmt.execute();
+      stmt.close();
+      escAppendActivity_(conn, r.id, 'created', r.createdBy, r.reason);
+    });
     conn.commit();
-    Logger.log('createEscalation: %s logged escalation %s for %s', rec.createdBy, rec.id, rec.department);
+    Logger.log('createEscalation: %s logged escalation %s for %s', rec.createdBy, rec.id, escDeptListLabel_(recs, groupId));
     escSnapshotAfterWrite_(conn);   // PCR-8
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
@@ -667,15 +884,38 @@ function createEscalation(req) {
   // §1: fire-and-log notification AFTER the write committed + lock released
   // (so a slow MailApp send never blocks the create response or holds the
   // lock). Best-effort: any failure is swallowed + logged inside the helper.
-  escNotifyNewEscalation_(rec);
-  return { id: rec.id };
+  if (recs.length > 1) escNotifyLinkedGroup_(recs);
+  else escNotifyNewEscalation_(rec);
+  return { id: rec.id, ids: recs.map(function (r) { return r.id; }), groupId: groupId };
+}
+
+/** ESC-L1 (PURE): the request's department list -- `departments` (array)
+ *  or the legacy single `department`; trimmed, de-duplicated, order kept.
+ *  Throws when none is given. */
+function escRequestedDepts_(req) {
+  var raw = Array.isArray(req && req.departments) ? req.departments : [req && req.department];
+  var out = [];
+  raw.forEach(function (d) {
+    d = String(d == null ? '' : d).trim();
+    if (d && out.indexOf(d) === -1) out.push(d);
+  });
+  if (!out.length) throw new Error('Pick at least one department.');
+  return out;
+}
+
+/** ESC-L1 (PURE): "CSR + Sales (linked group <id>)" for the create log line. */
+function escDeptListLabel_(recs, groupId) {
+  return recs.map(function (r) { return r.department; }).join(' + ')
+    + (groupId ? ' (linked group ' + groupId + ')' : '');
 }
 
 /**
- * Admin-only correction of a PENDING escalation's fields (wrong dept /
- * patient / Trx / reason). Writes ONLY the existing data columns; never
- * touches status, resolution, or resolved_*. Resolved rows are out of scope
- * (pending-only). Appends an 'edited' activity row atomically (§5).
+ * Admin-only correction of a PENDING escalation's fields (patient / caller /
+ * Trx / area / reason / time). Writes ONLY those data columns; never touches
+ * status, resolution, resolved_* -- or the DEPARTMENT: ESC-R1 moved that to
+ * moveEscalation, so a department change is always its own recorded
+ * `reassigned` action (req.department is ignored here). Resolved rows are out
+ * of scope (pending-only). Appends an 'edited' activity row atomically (§5).
  * Returns { id }.
  */
 function updateEscalation(req) {
@@ -683,10 +923,6 @@ function updateEscalation(req) {
   req = req || {};
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
-  var department = String(req.department || '').trim();
-  if (getAllDepartments_().indexOf(department) === -1) {
-    throw new Error('Unknown department: ' + department);
-  }
   var reason = escClean_(req.reason);
   if (!reason) throw new Error('Reason for escalation is required.');
   var fields = {
@@ -707,33 +943,354 @@ function updateEscalation(req) {
     escEnsureTable_(conn);
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
+    escAssertNotRemoved_(meta);        // ESC-L2
     if (meta.status !== ESC_STATUS_PENDING) {
       throw new Error('Only a pending escalation can be edited.');
     }
+    // ESC-L2 (owner decision 2): the shared fields are ONE record across a
+    // linked group, so an edit lands on EVERY copy (removed ones included --
+    // they are part of the thread) in the same statement. Each copy keeps its
+    // own status / resolution / comments. One 'edited' entry, on the edited
+    // copy: the shared thread shows it to every department once.
+    var linkedN = meta.groupId ? escGroupSize_(conn, meta.groupId) : 1;
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement(
-      'UPDATE escalations SET department = ?, occurred_at = NULLIF(?, \'\')::timestamptz, '
+      'UPDATE escalations SET occurred_at = NULLIF(?, \'\')::timestamptz, '
       + "caller = NULLIF(?, ''), patient_name = NULLIF(?, ''), trx = NULLIF(?, ''), "
-      + "area = NULLIF(?, ''), reason = ?, updated_at = now() WHERE id = ?");
-    stmt.setString(1, department);
-    stmt.setString(2, fields.occurredAt);
-    stmt.setString(3, fields.caller);
-    stmt.setString(4, fields.patientName);
-    stmt.setString(5, fields.trx);
-    stmt.setString(6, fields.area);
-    stmt.setString(7, reason);
-    stmt.setString(8, id);
+      + "area = NULLIF(?, ''), reason = ?, updated_at = now() WHERE "
+      + (meta.groupId ? 'group_id = ?' : 'id = ?'));
+    stmt.setString(1, fields.occurredAt);
+    stmt.setString(2, fields.caller);
+    stmt.setString(3, fields.patientName);
+    stmt.setString(4, fields.trx);
+    stmt.setString(5, fields.area);
+    stmt.setString(6, reason);
+    stmt.setString(7, meta.groupId || id);
     stmt.execute();
     stmt.close();
-    escAppendActivity_(conn, id, 'edited', actor, 'Edited escalation fields');
+    escAppendActivity_(conn, id, 'edited', actor, 'Edited escalation fields'
+      + (linkedN > 1 ? ' (applied to all ' + linkedN + ' linked copies)' : ''));
     conn.commit();
-    Logger.log('updateEscalation: %s edited %s (%s)', actor, id, department);
+    Logger.log('updateEscalation: %s edited %s (%s)', actor, id, meta.department);
     escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('updateEscalation failed: ' + (e && e.message ? e.message : e));
     throw new Error(e && e.message ? e.message : 'Could not update the escalation.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+}
+
+/**
+ * ESC-R1 (owner ruling 2026-09-30): MOVES an escalation to another
+ * department. ADMIN-ONLY (`assertAdmin_`) -- managers cannot reassign, so it
+ * is an admin SURFACE and the all-departments manager is refused too.
+ *
+ * Allowed on PENDING and IN-PROGRESS rows (the open worklist). A resolved or
+ * rejected row must be reopened first (so the move lands on live work), and
+ * a pending_review submission goes through approve/reject. The status is
+ * kept: an in-progress escalation stays in progress in its new department.
+ *
+ * The row's department changes, so access follows it at once: the old
+ * dept's managers lose the row (escAssertRowAccess_ reads the stored dept),
+ * the new dept's gain it with the whole activity trail. A 'reassigned'
+ * activity row "<from> -> <to>" (+ the optional note) records who moved it,
+ * atomically with the move (§5). After the lock is released the new dept's
+ * managers get the new-escalation email, under the same
+ * NOTIFY_ON_NEW_ESCALATION flag and ALL_DEPT_NOTIFY_OPT_IN rule (EML-1).
+ * Returns { id, from, to }.
+ */
+function moveEscalation(req) {
+  assertAdmin_();
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var to = String(req.department || '').trim();
+  if (getAllDepartments_().indexOf(to) === -1) throw new Error('Unknown department: ' + to);
+  var note = escClean_(req.note);
+  var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  var notifyRec = null;
+  var from = null;
+  try {
+    escEnsureTable_(conn);
+    var row = escRowFull_(conn, id);
+    if (!row) throw new Error('Escalation not found.');
+    from = row.department;
+    escAssertNotRemoved_(row);         // ESC-L2
+    if (row.status === ESC_STATUS_PENDING_REVIEW) {
+      throw new Error('This escalation is still awaiting review — approve or reject it first.');
+    }
+    if (row.status !== ESC_STATUS_PENDING && row.status !== ESC_STATUS_IN_PROGRESS) {
+      throw new Error('Only a pending or in-progress escalation can be moved (this one is "'
+        + row.status + '") — reopen it first.');
+    }
+    if (from === to) throw new Error('This escalation is already assigned to ' + to + '.');
+    // ESC-L1: a linked group holds at most one copy per department.
+    var heldM = row.groupId ? escGroupHasDept_(conn, row.groupId, to, id) : null;
+    if (heldM) {
+      throw new Error(heldM === ESC_STATUS_REMOVED
+        ? to + ' was removed from this escalation — use Restore on its card instead.'   // ESC-L3
+        : to + ' already has a linked copy of this escalation.');
+    }
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement('UPDATE escalations SET department = ?, updated_at = now() WHERE id = ?');
+    stmt.setString(1, to);
+    stmt.setString(2, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'reassigned', actor, from + ' \u2192 ' + to + (note ? ': ' + note : ''));
+    conn.commit();
+    Logger.log('moveEscalation: %s moved %s from %s to %s', actor, id, from, to);
+    escSnapshotAfterWrite_(conn);   // PCR-8
+    notifyRec = { id: id, department: to, occurredAt: row.occurredAt || '', caller: row.caller,
+                  patientName: row.patientName, trx: row.trx, area: row.area, reason: row.reason };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('moveEscalation failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not move the escalation.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+  // Fire-and-log AFTER the commit + lock release (the create/approve rule).
+  if (notifyRec) escNotifyNewEscalation_(notifyRec, { movedFrom: from });
+  return { id: id, from: from, to: to };
+}
+
+/**
+ * ESC-L2 (Step 2b): LINK ANOTHER DEPARTMENT to an escalation. ADMIN-ONLY
+ * (the ESC-R1 rule: managers never reassign). Adds a new PENDING copy for
+ * `department` carrying the source's shared fields (copied in SQL, so the
+ * fields cannot drift in transit) and the source's group_id -- minting one,
+ * and stamping it on the source, when the source was standalone. The source
+ * must be in the worklist or resolved (pending / in_progress / resolved);
+ * awaiting-review, rejected and removed copies cannot seed a link. A
+ * department already holding a copy (removed included) is refused. The new
+ * copy's 'linked' trail row names who added it and why; its managers get the
+ * new-escalation email (NOTIFY_ON_NEW_ESCALATION, EML-1 rule), naming the
+ * other departments. Returns { id, newId, groupId }.
+ */
+function linkEscalationDepartment(req) {
+  assertAdmin_();
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var to = String(req.department || '').trim();
+  if (getAllDepartments_().indexOf(to) === -1) throw new Error('Unknown department: ' + to);
+  var note = escClean_(req.note);
+  var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  var notifyRec = null, others = [];
+  var newId = Utilities.getUuid(), groupId = null;
+  try {
+    escEnsureTable_(conn);
+    var row = escRowFull_(conn, id);
+    if (!row) throw new Error('Escalation not found.');
+    escAssertNotRemoved_(row);
+    if ([ESC_STATUS_PENDING, ESC_STATUS_IN_PROGRESS, ESC_STATUS_RESOLVED].indexOf(row.status) === -1) {
+      throw new Error(row.status === ESC_STATUS_PENDING_REVIEW
+        ? 'This escalation is still awaiting review — approve or reject it first.'
+        : 'Only a pending, in-progress or resolved escalation can be shared with another department (this one is "'
+          + row.status + '").');
+    }
+    if (row.department === to) throw new Error('This escalation is already assigned to ' + to + '.');
+    groupId = row.groupId || Utilities.getUuid();
+    var held = row.groupId ? escGroupHasDept_(conn, row.groupId, to, id) : null;
+    if (held) {
+      // ESC-L3: a department that was REMOVED comes back through Restore, so
+      // its earlier comments and the removal stay on the same copy.
+      throw new Error(held === ESC_STATUS_REMOVED
+        ? to + ' was removed from this escalation — use Restore on its card instead.'
+        : to + ' already has a linked copy of this escalation.');
+    }
+    others = row.groupId ? escGroupDepts_(conn, row.groupId) : [row.department];
+    conn.setAutoCommit(false); txn = true;
+    if (!row.groupId) {
+      var g = conn.prepareStatement('UPDATE escalations SET group_id = ?, updated_at = now() WHERE id = ?');
+      g.setString(1, groupId); g.setString(2, id); g.execute(); g.close();
+    }
+    var ins = conn.prepareStatement(
+      'INSERT INTO escalations (id, department, occurred_at, caller, patient_name, trx, area, reason, '
+      + 'status, created_by, source, group_id) '
+      + 'SELECT ?, ?, occurred_at, caller, patient_name, trx, area, reason, ?, ?, ?, ? FROM escalations WHERE id = ?');
+    ins.setString(1, newId);
+    ins.setString(2, to);
+    ins.setString(3, ESC_STATUS_PENDING);
+    ins.setString(4, actor);
+    ins.setString(5, 'manual');
+    ins.setString(6, groupId);
+    ins.setString(7, id);
+    ins.execute();
+    ins.close();
+    escAppendActivity_(conn, newId, 'linked', actor,
+      to + ' added to this escalation (linked from ' + row.department + ')' + (note ? ': ' + note : ''));
+    conn.commit();
+    Logger.log('linkEscalationDepartment: %s linked %s to %s as %s (group %s)', actor, id, to, newId, groupId);
+    escSnapshotAfterWrite_(conn);   // PCR-8
+    notifyRec = { id: newId, department: to, occurredAt: row.occurredAt || '', caller: row.caller,
+                  patientName: row.patientName, trx: row.trx, area: row.area, reason: row.reason };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('linkEscalationDepartment failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not link the department.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+  if (notifyRec) escNotifyNewEscalation_(notifyRec, { alsoDepts: others });
+  return { id: id, newId: newId, groupId: groupId };
+}
+
+/**
+ * ESC-L3 (2026-09-30): RESTORE a department that was removed from a linked
+ * escalation -- the undo of removeEscalationDepartment (a dispute reversed,
+ * or a removal made in error). ADMIN-ONLY. The copy returns to the status it
+ * had when it was removed (status_before_removal; 'pending' when unknown),
+ * so a resolved copy comes back resolved and an open one re-enters its
+ * department's worklist. The removal record is cleared from the row but
+ * stays in the shared thread, and the restore is its own 'restored' thread
+ * entry (an optional note). Only a REMOVED copy can be restored. When it
+ * comes back OPEN, its managers get the escalation email again
+ * (NOTIFY_ON_NEW_ESCALATION, the EML-1 rule). Returns { id, department, status }.
+ */
+function restoreEscalationDepartment(req) {
+  assertAdmin_();
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var note = escClean_(req.note);
+  var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  var notifyRec = null, others = [], dept = null, back = null;
+  try {
+    escEnsureTable_(conn);
+    var row = escRowFull_(conn, id);
+    if (!row) throw new Error('Escalation not found.');
+    dept = row.department;
+    if (row.status !== ESC_STATUS_REMOVED) throw new Error(dept + ' is not removed from this escalation — nothing to restore.');
+    back = escRestoreStatus_(row.statusBeforeRemoval);
+    others = row.groupId ? escGroupDepts_(conn, row.groupId) : [];
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement(
+      'UPDATE escalations SET status = ?, removed_by = NULL, removed_at = NULL, removed_reason = NULL, '
+      + 'status_before_removal = NULL, updated_at = now() WHERE id = ?');
+    stmt.setString(1, back);
+    stmt.setString(2, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'restored', actor,
+      dept + ' restored to this escalation (back to ' + back.replace('_', ' ') + ')' + (note ? ': ' + note : ''));
+    conn.commit();
+    Logger.log('restoreEscalationDepartment: %s restored %s to %s as %s', actor, dept, row.groupId || '(standalone)', back);
+    escSnapshotAfterWrite_(conn);   // PCR-8
+    if (back === ESC_STATUS_PENDING || back === ESC_STATUS_IN_PROGRESS) {
+      notifyRec = { id: id, department: dept, occurredAt: row.occurredAt || '', caller: row.caller,
+                    patientName: row.patientName, trx: row.trx, area: row.area, reason: row.reason };
+    }
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('restoreEscalationDepartment failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not restore the department.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+  if (notifyRec) escNotifyNewEscalation_(notifyRec, { restored: true, alsoDepts: others });
+  return { id: id, department: dept, status: back };
+}
+
+/** ESC-L3 (PURE): the status a restored copy returns to -- the recorded one
+ *  when it is a real worklist/closed state, else 'pending'. */
+function escRestoreStatus_(before) {
+  var ok = [ESC_STATUS_PENDING, ESC_STATUS_IN_PROGRESS, ESC_STATUS_RESOLVED];
+  return ok.indexOf(String(before || '')) !== -1 ? String(before) : ESC_STATUS_PENDING;
+}
+
+/**
+ * ESC-L2 (Step 2b, owner decision (b) 2026-09-30): REMOVE a department from a
+ * linked escalation. ADMIN-ONLY. NOT a delete -- a removal covers disputes
+ * ("this is not ours", upheld by the admin) as much as mis-assignment, so
+ * the copy is kept with status 'removed' + removed_by / removed_at /
+ * removed_reason, its comments and updates STAY in the shared thread (tagged
+ * as that department, marked removed), and the REQUIRED reason is itself a
+ * 'removed' thread entry. The removed department's managers can still open
+ * it read-only (the Removed filter) to see the outcome; it leaves their open
+ * worklist and counts. Refused for a standalone escalation (delete or
+ * resolve it instead) and for the LAST active copy of a group -- an
+ * escalation always has at least one department working it. Returns
+ * { id, department }.
+ */
+function removeEscalationDepartment(req) {
+  assertAdmin_();
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var reason = escClean_(req.reason);
+  if (!reason) throw new Error('A reason for removing this department is required (it goes into the thread).');
+  var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  var dept = null;
+  try {
+    escEnsureTable_(conn);
+    var meta = escRowMeta_(conn, id);
+    if (!meta) throw new Error('Escalation not found.');
+    dept = meta.department;
+    if (meta.status === ESC_STATUS_REMOVED) throw new Error(dept + ' was already removed from this escalation.');
+    if (!meta.groupId) {
+      throw new Error('This escalation is assigned to one department only — resolve it, move it, or delete it instead.');
+    }
+    if (escGroupActiveOthers_(conn, meta.groupId, id) < 1) {
+      throw new Error(dept + ' is the last department still on this escalation — link another department first, '
+        + 'or resolve or delete it.');
+    }
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement(
+      'UPDATE escalations SET status = ?, removed_by = ?, removed_at = now(), removed_reason = ?, '
+      + 'status_before_removal = ?, updated_at = now() WHERE id = ?');
+    stmt.setString(1, ESC_STATUS_REMOVED);
+    stmt.setString(2, actor);
+    stmt.setString(3, reason);
+    stmt.setString(4, meta.status);   // ESC-L3: what a restore returns it to
+    stmt.setString(5, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'removed', actor, dept + ' removed from this escalation (was ' + meta.status + '): ' + reason);
+    conn.commit();
+    Logger.log('removeEscalationDepartment: %s removed %s from group %s (%s)', actor, dept, meta.groupId, id);
+    escSnapshotAfterWrite_(conn);   // PCR-8
+    return { id: id, department: dept };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('removeEscalationDepartment failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not remove the department.');
   } finally {
     try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
     try { conn.close(); } catch (ce) {}
@@ -771,6 +1328,7 @@ function resolveEscalation(req) {
     if (!meta) throw new Error('Escalation not found.');
     var dept = meta.department;
     escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
+    escAssertNotRemoved_(meta);        // ESC-L2
     // F-43: pending-only, mirroring reopenEscalation's resolved-only guard.
     // Two managers racing from stale UIs previously last-write-wins
     // clobbered the first resolution note on the row itself (only the
@@ -853,6 +1411,7 @@ function reopenEscalation(req) {
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    escAssertNotRemoved_(meta);        // ESC-L2
     if (meta.status !== ESC_STATUS_RESOLVED) {
       throw new Error('Only a resolved escalation can be reopened.');
     }
@@ -909,6 +1468,7 @@ function startEscalation(req) {
     var meta = escRowMeta_(conn, id);
     if (!meta) throw new Error('Escalation not found.');
     escAssertRowAccess_(user, meta.department);   // F-45: row dept = data, not input
+    escAssertNotRemoved_(meta);        // ESC-L2
     if (meta.status !== ESC_STATUS_PENDING) {
       if (meta.status === ESC_STATUS_IN_PROGRESS) throw new Error('This escalation is already in progress.');
       throw new Error('Only a pending escalation can be started (this one is "' + meta.status + '").');
@@ -1119,6 +1679,7 @@ function updateEscalationComment(req) {
     if (!meta) throw new Error('Escalation not found.');
     var dept = meta.department;
     escAssertRowAccess_(user, dept);   // F-45: row dept = data, not input
+    escAssertNotRemoved_(meta);        // ESC-L2: read-only once removed
     // NEO-2: comments are for rows IN the worklist (pending or resolved).
     // A pending_review row is immutable external input until the approve/
     // reject trust boundary runs (the external INSERT contract); a
@@ -1189,19 +1750,29 @@ function deleteEscalation(req) {
       Logger.log('deleteEscalation: %s -- no row with id %s; nothing deleted', user.email, id);
       return { id: id, deleted: 0 };
     }
+    // ESC-L2 (owner decision 4): the DEFAULT deletes this one copy (the
+    // rest of a linked group stays, still linked to each other);
+    // `allLinked: true` deletes EVERY copy of the group + their trails, in
+    // the same single transaction.
+    var all = !!req.allLinked && !!meta.groupId;
+    var depts = all ? escGroupDepts_(conn, meta.groupId) : [meta.department];
+    if (all && depts.indexOf(meta.department) === -1) depts.push(meta.department);   // a removed source copy
+    var n = all ? escGroupSize_(conn, meta.groupId) : 1;
     conn.setAutoCommit(false); txn = true;
-    var a = conn.prepareStatement('DELETE FROM escalation_activity WHERE escalation_id = ?');
-    a.setString(1, id); a.execute(); a.close();
-    var d = conn.prepareStatement('DELETE FROM escalations WHERE id = ?');
-    d.setString(1, id); d.execute(); d.close();
+    var a = conn.prepareStatement(all
+      ? 'DELETE FROM escalation_activity WHERE escalation_id IN (SELECT id FROM escalations WHERE group_id = ?)'
+      : 'DELETE FROM escalation_activity WHERE escalation_id = ?');
+    a.setString(1, all ? meta.groupId : id); a.execute(); a.close();
+    var d = conn.prepareStatement(all ? 'DELETE FROM escalations WHERE group_id = ?' : 'DELETE FROM escalations WHERE id = ?');
+    d.setString(1, all ? meta.groupId : id); d.execute(); d.close();
     conn.commit();
     txn = false;
     try { conn.setAutoCommit(true); } catch (ae) {}
-    Logger.log('deleteEscalation: %s deleted %s (%s, was %s) with its activity trail',
-      user.email, id, meta.department, meta.status);
-    try { logReportUsage_('escalations:delete', meta.department, user, false); } catch (eu) {}
+    Logger.log('deleteEscalation: %s deleted %s (%s, was %s) with its activity trail%s',
+      user.email, id, meta.department, meta.status, all ? (' + every linked copy (' + n + ', group ' + meta.groupId + ')') : '');
+    try { logReportUsage_('escalations:delete', depts.join(' + '), user, false); } catch (eu) {}
     try { escSnapshotMaybeRefresh_(conn, /*force=*/true); } catch (eSnap) { /* best-effort */ }
-    return { id: id, deleted: 1 };
+    return { id: id, deleted: n, allLinked: all };
   } catch (e) {
     if (txn) { try { conn.rollback(); } catch (rb) {} }
     Logger.log('deleteEscalation failed: ' + (e && e.message ? e.message : e));
@@ -1312,22 +1883,78 @@ function escRowDepartment_(conn, id) {
   return dept;
 }
 
-/** Reads { status, department } for an escalation; null if absent. */
+/** Reads { status, department, groupId } for an escalation; null if absent.
+ *  Every caller runs escEnsureTable_ first, so group_id always exists. */
 function escRowMeta_(conn, id) {
-  var stmt = conn.prepareStatement('SELECT status, department FROM escalations WHERE id = ?');
+  var stmt = conn.prepareStatement('SELECT status, department, group_id FROM escalations WHERE id = ?');
   stmt.setString(1, id);
   var rs = stmt.executeQuery();
-  var out = rs.next() ? { status: rs.getString('status'), department: rs.getString('department') } : null;
+  var out = rs.next() ? { status: rs.getString('status'), department: rs.getString('department'),
+                          groupId: rs.getString('group_id') || null } : null;   // ESC-L2
   rs.close(); stmt.close();
   if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(out ? JSON.stringify(out).length : 8, 'escalations');   // OD-3
   return out;
 }
 
-/**
- * Appends one immutable row to the append-only activity trail (§5). MUST be
- * called inside an open transaction (the caller commits) so the activity row
- * lands atomically with its primary write. No commit here.
- */
+/** ESC-L2: how many copies (any status) a linked group holds. */
+function escGroupSize_(conn, groupId) {
+  var stmt = conn.prepareStatement('SELECT count(*) AS n FROM escalations WHERE group_id = ?');
+  stmt.setString(1, groupId);
+  var rs = stmt.executeQuery();
+  var n = rs.next() ? (Number(rs.getString('n')) || 0) : 0;
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'escalations');   // OD-3
+  return n;
+}
+
+/** ESC-L2: copies OTHER than `exceptId` in the group that are not removed. */
+function escGroupActiveOthers_(conn, groupId, exceptId) {
+  var stmt = conn.prepareStatement(
+    "SELECT count(*) AS n FROM escalations WHERE group_id = ? AND id <> ? AND status <> 'removed'");
+  stmt.setString(1, groupId);
+  stmt.setString(2, exceptId);
+  var rs = stmt.executeQuery();
+  var n = rs.next() ? (Number(rs.getString('n')) || 0) : 0;
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'escalations');   // OD-3
+  return n;
+}
+
+/** ESC-L2: the departments of a group's NOT-removed copies, sorted. */
+function escGroupDepts_(conn, groupId) {
+  var stmt = conn.prepareStatement(
+    "SELECT department FROM escalations WHERE group_id = ? AND status <> 'removed' ORDER BY department");
+  stmt.setString(1, groupId);
+  var rs = stmt.executeQuery();
+  var out = [];
+  while (rs.next()) out.push(String(rs.getString('department') || ''));
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(JSON.stringify(out).length, 'escalations');   // OD-3
+  return out;
+}
+
+/** ESC-L2: a REMOVED copy is read-only -- every write verb refuses it. */
+function escAssertNotRemoved_(meta) {
+  if (meta && meta.status === ESC_STATUS_REMOVED) {
+    throw new Error((meta.department || 'This department') + ' was removed from this escalation; '
+      + 'it stays in the thread read-only.');
+  }
+}
+
+/** ESC-L1: does another copy in `groupId` already sit in `dept`? Returns
+ *  that copy's STATUS (truthy -- ESC-L3 tells a removed one apart) or null. */
+function escGroupHasDept_(conn, groupId, dept, exceptId) {
+  var stmt = conn.prepareStatement('SELECT status FROM escalations WHERE group_id = ? AND department = ? AND id <> ? LIMIT 1');
+  stmt.setString(1, groupId);
+  stmt.setString(2, dept);
+  stmt.setString(3, exceptId);
+  var rs = stmt.executeQuery();
+  var hit = rs.next() ? (rs.getString('status') || 'unknown') : null;
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(8, 'escalations');   // OD-3
+  return hit;
+}
+
 /** Reads the review-relevant columns of one escalation; null if absent. */
 function escRowFull_(conn, id) {
   var stmt = conn.prepareStatement(
@@ -1335,7 +1962,7 @@ function escRowFull_(conn, id) {
     // (escNotifyNewEscalation_ builds its rec from THIS row) silently
     // dropped its "When" line on every approved submission.
     'SELECT status, department, caller, patient_name, trx, area, reason, source, '
-    + 'occurred_at::text AS occurred_at '
+    + 'occurred_at::text AS occurred_at, group_id, status_before_removal '
     + 'FROM escalations WHERE id = ?');
   stmt.setString(1, id);
   var rs = stmt.executeQuery();
@@ -1351,6 +1978,8 @@ function escRowFull_(conn, id) {
       reason:      rs.getString('reason'),
       source:      rs.getString('source'),
       occurredAt:  rs.getString('occurred_at'),
+      groupId:     rs.getString('group_id') || null,   // ESC-L1
+      statusBeforeRemoval: rs.getString('status_before_removal') || null,   // ESC-L3
     };
   }
   rs.close(); stmt.close();
@@ -1375,6 +2004,11 @@ function escNormalizeReviewFields_(row) {
   };
 }
 
+/**
+ * Appends one immutable row to the append-only activity trail (§5). MUST be
+ * called inside an open transaction (the caller commits) so the activity row
+ * lands atomically with its primary write. No commit here.
+ */
 function escAppendActivity_(conn, escId, action, actor, detail) {
   var stmt = conn.prepareStatement(
     'INSERT INTO escalation_activity (id, escalation_id, action, actor, detail) '
@@ -1394,6 +2028,7 @@ function escAppendActivity_(conn, escId, action, actor, detail) {
  * notifyDigestFailure_): any failure is swallowed + logged so it can't break
  * the create. Recipients are the dept's managers via the shared Digest
  * resolver `lookupDeptManagers_` (Access Control rows) -- no new address book.
+ * ALL/'*' managers are included only when opted in via ALL_DEPT_NOTIFY_OPT_IN (EML-1).
  * Carries full escalation detail (operator decision): this is a PII surface,
  * which is why it stays off until explicitly enabled.
  */
@@ -1488,7 +2123,10 @@ function escPendingReviewPing_() {
   }
 }
 
-function escNotifyNewEscalation_(rec) {
+function escNotifyNewEscalation_(rec, opts) {
+  var movedFrom = (opts && opts.movedFrom) ? String(opts.movedFrom) : '';   // ESC-R1
+  var alsoDepts = (opts && opts.alsoDepts) ? opts.alsoDepts : [];            // ESC-L2 link
+  var restored = !!(opts && opts.restored);                                  // ESC-L3
   try {
     var props = PropertiesService.getScriptProperties();
     var enabled = String(props.getProperty('NOTIFY_ON_NEW_ESCALATION') || '').toLowerCase() === 'true';
@@ -1502,8 +2140,8 @@ function escNotifyNewEscalation_(rec) {
     var link = dashUrl ? (dashUrl + '#/escalations') : '';
     sendAppEmail_({
       to:       recipients.join(','),
-      subject:  'New escalation logged — ' + rec.department,
-      htmlBody: escNotifyHtml_(rec, link),
+      subject:  (restored ? 'Escalation returned to ' : movedFrom ? 'Escalation moved to ' : 'New escalation logged — ') + rec.department,
+      htmlBody: escNotifyHtml_(rec, link, movedFrom, alsoDepts, restored),
     });
     Logger.log('escNotifyNewEscalation_: emailed %s for escalation %s (%s)', recipients.join(','), rec.id, rec.department);
   } catch (e) {
@@ -1511,9 +2149,71 @@ function escNotifyNewEscalation_(rec) {
   }
 }
 
+/**
+ * ESC-L1 (Step 2a): the new-escalation email for a LINKED create. Same flag
+ * and recipient rule as escNotifyNewEscalation_ (NOTIFY_ON_NEW_ESCALATION;
+ * lookupDeptManagers_, ALL managers only when opted in -- EML-1), but ONE
+ * email per manager across the group: a manager of two linked departments
+ * gets one message naming both, and every message names the other linked
+ * departments. Recipients with the same department set share a message.
+ * Best-effort; never throws.
+ */
+function escNotifyLinkedGroup_(recs) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var enabled = String(props.getProperty('NOTIFY_ON_NEW_ESCALATION') || '').toLowerCase() === 'true';
+    if (!enabled || !recs || !recs.length) return;
+    var groups = escLinkedRecipientGroups_(recs.map(function (r) { return r.department; }),
+      (typeof lookupDeptManagers_ === 'function') ? lookupDeptManagers_ : function () { return []; });
+    if (!groups.length) {
+      Logger.log('escNotifyLinkedGroup_: no managers mapped for %s; skipping.', recs.map(function (r) { return r.department; }).join(' + '));
+      return;
+    }
+    var dashUrl = props.getProperty('DASHBOARD_URL') || '';
+    var link = dashUrl ? (dashUrl + '#/escalations') : '';
+    var all = recs.map(function (r) { return r.department; });
+    groups.forEach(function (g) {
+      var rec = {};
+      for (var k in recs[0]) rec[k] = recs[0][k];
+      rec.department = g.depts.join(' + ');
+      var others = all.filter(function (d) { return g.depts.indexOf(d) === -1; });
+      sendAppEmail_({
+        to:       g.emails.join(','),
+        subject:  'New escalation logged — ' + rec.department,
+        htmlBody: escNotifyHtml_(rec, link, '', others),
+      });
+      Logger.log('escNotifyLinkedGroup_: emailed %s for %s (linked: %s)', g.emails.join(','), rec.department, all.join(' + '));
+    });
+  } catch (e) {
+    Logger.log('escNotifyLinkedGroup_ failed (non-blocking): ' + (e && e.message ? e.message : e));
+  }
+}
+
+/** ESC-L1 (PURE): depts + a dept->manager-emails resolver -> one entry per
+ *  distinct department SET: [{ depts: [...], emails: [...] }] (a manager of
+ *  two of the depts appears once, under both). Emails compared lowercase. */
+function escLinkedRecipientGroups_(depts, managersOf) {
+  var byEmail = {}, order = [];
+  depts.forEach(function (d) {
+    (managersOf(d) || []).forEach(function (e) {
+      var k = String(e || '').trim().toLowerCase();
+      if (!k) return;
+      if (!byEmail[k]) { byEmail[k] = { email: String(e).trim(), depts: [] }; order.push(k); }
+      if (byEmail[k].depts.indexOf(d) === -1) byEmail[k].depts.push(d);
+    });
+  });
+  var groups = [], byKey = {};
+  order.forEach(function (k) {
+    var key = byEmail[k].depts.join('\u0001');
+    if (!byKey[key]) { byKey[key] = { depts: byEmail[k].depts.slice(), emails: [] }; groups.push(byKey[key]); }
+    byKey[key].emails.push(byEmail[k].email);
+  });
+  return groups;
+}
+
 /** Email-safe HTML for the new-escalation notification -- the EmailKit house
  * style since Round-16 (shell + a label/value detail card + the shell CTA). */
-function escNotifyHtml_(rec, link) {
+function escNotifyHtml_(rec, link, movedFrom, alsoDepts, restored) {
   var esc = ekEsc_;
   var C = EK_C_, sans = EK_SANS_;
   var row = function (label, val) {
@@ -1526,8 +2226,12 @@ function escNotifyHtml_(rec, link) {
   return ekShellHtml_({
     band: { tone: 'neutral', glyph: '&#9873;' },   // R30: uniform banded header
     kicker: 'Call Data · Escalations',
-    title: 'New escalation — ' + rec.department,
-    subtitle: 'An escalation was just logged for your department.',
+    title: (restored ? 'Escalation returned to ' : movedFrom ? 'Escalation moved to ' : 'New escalation — ') + rec.department,
+    subtitle: (restored ? 'Your department was removed from this escalation earlier and has now been restored to it.'
+               : movedFrom ? ('An escalation was moved to your department from ' + movedFrom + '.')
+                           : 'An escalation was just logged for your department.')
+      + ((alsoDepts && alsoDepts.length) ? ' It is also assigned to ' + alsoDepts.join(', ')
+          + ' — each department works its own copy.' : ''),
     preheader: 'New escalation for ' + rec.department + (rec.area ? ' · ' + rec.area : ''),
     rowsHtml: ekRow_(
       '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
@@ -1568,6 +2272,22 @@ function escEnsureTable_(conn) {
     idx.execute('CREATE INDEX IF NOT EXISTS idx_escalations_dept_status ON escalations (department, status)');
     idx.close();
   } catch (idxErr) { /* best-effort */ }
+  // ESC-L1 (Step 2a): linked department COPIES share a group_id (NULL =
+  // standalone). Nullable + idempotent, so an existing table, an old backup
+  // (json_populate_recordset leaves it NULL) and the external INSERT contract
+  // (which never sets it) are all unaffected.
+  try {
+    var grp = conn.createStatement();
+    grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS group_id text');
+    grp.execute('CREATE INDEX IF NOT EXISTS idx_escalations_group ON escalations (group_id) WHERE group_id IS NOT NULL');
+    // ESC-L2: who removed a department's copy, when, and why (all nullable).
+    grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS removed_by text');
+    grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS removed_at timestamptz');
+    grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS removed_reason text');
+    // ESC-L3: the status a removed copy returns to when it is RESTORED.
+    grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS status_before_removal text');
+    grp.close();
+  } catch (grpErr) { /* best-effort */ }
   // §5: append-only activity trail (create/comment/edit/resolve/reopen).
   // Rows are NEVER updated or deleted.
   try {

@@ -114,12 +114,14 @@ function emailDCTRPDF() {
     let emailBody        = `Attached is the DCTR for ${formattedDate}.`;
     if (additionalText) emailBody += `\n\n${additionalText}`;
 
-    MailApp.sendEmail({
+    const dctrMsg = {
       to:          "customersuccess@universalmedsupply.com",
       subject:     `DCTR - ${formattedDate}`,
       body:        emailBody,
       attachments: [blob],
-    });
+    };
+    MailApp.sendEmail(dctrMsg);
+    sendReportAdminCopy_(dctrMsg);
 
     SpreadsheetApp.getUi().alert(`DCTR for ${formattedDate} emailed successfully!`);
   } catch (e) {
@@ -455,4 +457,36 @@ function compensateForSpreadsheetTimezone(centralTimeDate) {
   // wrote a 23:00 fraction and the report consumed it fine.
   return new Date(centralTimeDate.getFullYear(), centralTimeDate.getMonth(),
                   centralTimeDate.getDate(), 12, 0, 0);
+}
+
+/**
+ * EML-2 (owner, 2026-09-30): the admin gets a copy of every report email,
+ * sent as a SEPARATE "[Copy]" message To them -- a BCC to the sender's own
+ * mailbox (this script sends as the admin) lands in Sent only. The Daily
+ * Queue Report needs none (it already CCs the admin); the DCTR has no admin
+ * recipient, hence this. The address is NEON_WRITE_CONFIG.alertEmail, the
+ * one this project already mails failures to. Best-effort: a failed copy
+ * never fails the real send, and an admin already in to/cc gets none.
+ */
+function sendReportAdminCopy_(msg) {
+  try {
+    const admin = (typeof NEON_WRITE_CONFIG !== 'undefined' && NEON_WRITE_CONFIG.alertEmail)
+      ? String(NEON_WRITE_CONFIG.alertEmail).trim() : '';
+    if (!admin) return null;
+    const already = String((msg.to || '') + ',' + (msg.cc || '')).toLowerCase()
+      .split(/[,;\s]+/).indexOf(admin.toLowerCase()) !== -1;
+    if (already) return null;
+    const copy = {
+      to:      admin,
+      subject: '[Copy] ' + (msg.subject || ''),
+      body:    'Copy of an email sent to: ' + (msg.to || '(none)') + (msg.cc ? ' · cc: ' + msg.cc : '')
+               + '\n\n' + (msg.body || ''),
+    };
+    if (msg.attachments) copy.attachments = msg.attachments;
+    MailApp.sendEmail(copy);
+    return copy;
+  } catch (e) {
+    Logger.log('sendReportAdminCopy_: copy failed (the email itself was sent): ' + ((e && e.message) || e));
+    return null;
+  }
 }

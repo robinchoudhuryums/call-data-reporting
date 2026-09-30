@@ -80,7 +80,7 @@ test('send-to-self is UNCHANGED when sendToAgent is absent', function () {
   const res = send({});
   assert.equal(res.to, 'mgr@co.com');
   assert.equal(res.sentToAgent, null);
-  assert.equal(h.state.sentEmails.length, 1);
+  assert.equal(h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject || ''); }).length, 1, 'one real email (plus the EML-2 admin copy)');
   assert.equal(h.state.sentEmails[0].to, 'mgr@co.com');
   assert.match(h.state.sentEmails[0].htmlBody, /sent only to you/);
 });
@@ -196,7 +196,7 @@ test('A-5: an oversize payload is refused before decoding', function () {
 test('A-5: the subject is one printable line, capped -- a header-injection label cannot reach the mail', function () {
   install();
   h.call('sendIndividualReportEmail', { imageBase64: PNG, dateLabel: 'Aug 2026\r\nBcc: evil@x.com\n' + 'z'.repeat(300) });
-  assert.equal(h.state.sentEmails.length, 1);
+  assert.equal(h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject || ''); }).length, 1);
   const subj = h.state.sentEmails[0].subject;
   // The CR/LF that would have started a new header is flattened to a space:
   // "Bcc: evil@x.com" survives only as inert subject TEXT.

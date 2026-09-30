@@ -1,6 +1,51 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-09-30 (escalations + email, branch `claude/broad-scan-gnfpx5`
+  restarted from main after PR #347):** Step 0 SHIPPED on the branch (block
+  207): EML-1 ALL/'*' managers are OPT-IN only for dept-manager email
+  (alerts + new-escalation notice; `ALL_DEPT_NOTIFY_OPT_IN`), EML-2 the admin
+  copy is a separate `[Copy]` message To the admin (the R28 BCC never reached
+  the inbox -- the app sends AS the admin), and the cdr-report DCTR sends the
+  same copy. **Step 1 SHIPPED on the branch too (block 208, ESC-R1):**
+  admin-only "Move…" on pending + in-progress cards (`moveEscalation`), the
+  `reassigned` trail row, the new dept's email, Edit no longer changes the
+  dept; S50. **Step 2a SHIPPED on the branch (block 209, ESC-L1):** linked
+  department copies (multi-select create -> one row per dept sharing
+  `group_id`), the "Also assigned to" card line, "(N linked)" strip label,
+  one email per manager set, Move refuses a dept already holding a copy; S51.
+  **Step 2b SHIPPED on the branch (block 210, ESC-L2):** the group thread
+  tagged by dept, admin edit sync, Link department, soft Remove (read-only
+  for the removed dept, Removed filter), delete-all-linked; S52. Owner said
+  "keep stacking": Steps 0/1/2a/2b are all UNMERGED on the branch, no PR yet.
+  The linked-escalation plan is COMPLETE. **Follow-ons SHIPPED (block 211):**
+  ESC-L3 Restore a removed department (back to its prior status) and ESC-S1
+  the Activity threads in the outage snapshot; S53. Still unmerged, no PR. **The plan as approved (for reference):**
+  Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
+  escalations (resolved/rejected: reopen first; pending_review stays with
+  approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new
+  dept's managers emailed under NOTIFY_ON_NEW_ESCALATION with the EML-1 rule;
+  the old dept loses access; refused into a dept already in the group.
+  Step 2a -- linked department COPIES: nullable `escalations.group_id`
+  (ADD COLUMN IF NOT EXISTS; restore/backup/external-writer contract
+  unaffected); multi-select create writes one copy per dept in one txn; the
+  card shows "Linked: CSR · in progress, Sales · resolved"; company totals
+  count each copy, labelled "(N linked)"; one email per manager across the
+  group.
+  Step 2b -- the SHARED THREAD: each dept writes only its own copy (INV-55
+  gates unchanged); getEscalationActivity on a copy returns the whole group's
+  activity tagged by dept (the one deliberate read widening, owner-approved
+  incl. author emails); admin edits of patient/caller/Trx/reason/area/time
+  propagate to every copy; "Link another department"; delete-all-linked
+  (admin). **Removing a dept (owner decision (b), 2026-09-30):** NOT a hard
+  delete -- the copy is marked REMOVED with a required reason and actor; its
+  comments/updates STAY in the shared thread, labelled e.g. "Sales · removed
+  from this escalation 9/30 by <admin>: <reason>"; the removal reason is
+  itself a thread entry (disputes are documented, not just mis-assignments);
+  a removed copy leaves that dept's open worklist and counts. **Owner
+  (2026-09-30): the removed dept's managers can still OPEN it READ-ONLY** to
+  see the outcome (every write verb refuses a removed copy; it lists under a
+  "Removed" status filter, not the open worklist).
 - **2026-09-28 (post-merge follow-ups, branch `claude/broad-scan-gnfpx5`
   restarted from main after PR #344 merged):** SHIPPED BK-1 (Neon backup
   falls back to a "Dashboard Neon Backups" workbook when policy blocks the

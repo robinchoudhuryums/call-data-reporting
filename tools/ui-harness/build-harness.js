@@ -142,11 +142,34 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     },
     getMissedCallsSlice: function () { return P['missed-slice']; },
     getQcdAllDepartments: function () { return P['qcd-alldept']; },
-    getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1 }; },
+    getEscalationsBadge: function () { return { available: true, open: 3, review: 2, overdue: 1, linked: 1 }; },   // ESC-L1: one open linked copy
     getEscalationsInit: function () { var e = JSON.parse(JSON.stringify(P['esc-init'])); if (ROLE==='manager'){e.role='manager';e.isAdmin=false;e.department='CSR';e.departments=['CSR'];} return e; },
     getEscalations: function () { return P[ROLE==='manager' ? 'esc-list-mgr' : 'esc-list']; },
-    getEscalationActivity: function () { return P['esc-activity']; },
-    deleteEscalation: function () { return { deleted: 1 }; },   // 2a: drive-admin confirms + deletes one card
+    getEscalationActivity: function (req) {
+      // ESC-L2: the linked escalation 101's trail is the whole group's thread.
+      var a = JSON.parse(JSON.stringify(P['esc-activity']));
+      if (req && String(req.id) === '101') {
+        a.linked = true;
+        a.rows = (a.rows || []).map(function (r) { r.department = 'CSR'; r.removed = false; return r; })
+          .concat([{ action: 'comment', actor: 'power.mgr@ums.com', at: '2026-01-01 09:00:00', detail: 'This is not a Power order.', department: 'Power', removed: true },
+                   { action: 'removed', actor: 'admin@ums.com', at: '2026-01-01 10:00:00', detail: 'Power removed from this escalation (was pending): Dispute upheld', department: 'Power', removed: true }]);
+      }
+      // ESC-S1: escalation 100's thread is served from the OFFLINE copy.
+      if (req && String(req.id) === '100') {
+        return { available: true, snapshotAsOf: '2026-01-01T08:00:00.000Z',
+          rows: [{ action: 'comment', actor: 'mgr@ums.com', at: '2026-01-01 07:00:00', detail: 'Vendor ETA requested', shortened: true }] };
+      }
+      return a;
+    },
+    deleteEscalation: function (req) { return { deleted: (req && req.allLinked) ? 2 : 1 }; },   // 2a: drive-admin confirms + deletes one card
+    createEscalation: function (req) {   // ESC-L1: drive-admin logs a two-department linked escalation
+      var d = (req && req.departments) || [req && req.department];
+      return { id: 'new-1', ids: d.map(function (x, i) { return 'new-' + (i + 1); }), groupId: d.length > 1 ? 'grp-new' : null };
+    },
+    linkEscalationDepartment: function (req) { return { id: req && req.id, newId: 'new-link', groupId: 'grp-101' }; },   // ESC-L2
+    restoreEscalationDepartment: function (req) { return { id: req && req.id, department: 'Power', status: 'pending' }; },   // ESC-L3
+    removeEscalationDepartment: function (req) { return { id: req && req.id, department: 'CSR' }; },                  // ESC-L2
+    moveEscalation: function (req) { return { id: req && req.id, from: 'CSR', to: req && req.department }; },   // ESC-R1: drive-admin moves one card
     getAlertsInit: function () { return P['alerts-init']; },
     getDigestsInit: function () { return P['digests-init']; },
     getQueueReportInit: function () { return P['queuereport-init']; },

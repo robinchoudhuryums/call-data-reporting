@@ -965,6 +965,7 @@ function resolveRecipients_(cfgEntry) {
 }
 
 function lookupDeptManagers_(dept) {
+  const optIn = allDeptNotifyOptIn_();
   const ss = openSpreadsheet_();
   const sheet = ss.getSheetByName(SHEETS.ACCESS_CONTROL);
   if (!sheet) return [];
@@ -989,14 +990,33 @@ function lookupDeptManagers_(dept) {
     // row; unknown roles fail closed -- both matching getAccessEntries_.
     const role = String(values[i][3] || '').toLowerCase().trim() || 'manager';
     if (role !== 'manager') continue;
-    // B-5: an ALL/'*' row (the all-departments manager, Auth.gs) manages
-    // every dept, so they receive every dept's low-answer-rate alert --
-    // the exact-match alone silently opted them out of ALL alert delivery
-    // unless duplicated into Extra Recipients. (Multi-dept managers were
-    // never affected: Tier C stores one row per dept.)
+    // EML-1 (owner ruling 2026-09-30, reverses B-5's default): an ALL/'*' row
+    // (the all-departments manager, Auth.gs) receives dept-manager
+    // notifications -- the low-answer-rate alerts AND the new-escalation
+    // email, the two callers of this resolver -- ONLY when their address is
+    // listed in ALL_DEPT_NOTIFY_OPT_IN. Seeing every dept is not the same as
+    // wanting every dept's email. (Multi-dept managers are unaffected: Tier C
+    // stores one row per dept, so they match exactly.)
     const isAll = (typeof isAllDeptsSentinel_ === 'function') && isAllDeptsSentinel_(d);
-    if (d === dept || isAll) out.push(email);
+    if (d === dept || (isAll && optIn[email.toLowerCase()])) out.push(email);
   }
+  return out;
+}
+
+/**
+ * EML-1: the ALL/'*' managers who opted IN to every dept's manager
+ * notifications -- ALL_DEPT_NOTIFY_OPT_IN, comma/space-separated addresses,
+ * matched case-insensitively. Unset/unreadable = nobody (opt-in only).
+ */
+function allDeptNotifyOptIn_() {
+  const out = {};
+  let raw = '';
+  try { raw = String(PropertiesService.getScriptProperties().getProperty('ALL_DEPT_NOTIFY_OPT_IN') || ''); }
+  catch (e) { raw = ''; }
+  raw.split(/[,;\s]+/).forEach(function (x) {
+    x = String(x || '').trim().toLowerCase();
+    if (x) out[x] = true;
+  });
   return out;
 }
 

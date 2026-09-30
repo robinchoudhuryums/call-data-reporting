@@ -72,15 +72,16 @@ function assertReportEmailThrottle_(email) {
 /**
  * R28: the ONE send chokepoint for every dashboard email. Every
  * MailApp.sendEmail callsite routes through here (cross-file-pins.test.js
- * fails on a bare one) so the default BCC cannot be missed by a new sender.
+ * fails on a bare one) so the admin copy cannot be missed by a new sender.
  *
- * BCC rule (owner ruling 2026-09): the first admin (`getAdminEmails_()[0]`)
- * is BCC'd on EVERY email the app sends, so a broken template, a wrong
- * recipient, or a send that silently never happens is seen the day it
- * happens rather than when a manager mentions it. `EMAIL_BCC` overrides the
- * address list (comma-separated); `EMAIL_BCC=none` turns it off. An address
- * already in to/cc/bcc is not added again (an admin-only alert does not
- * arrive twice). Accepts the object form AND the (to, subject, body)
+ * Copy rule (owner rulings 2026-09 / EML-2 2026-09-30): the first admin
+ * (`getAdminEmails_()[0]`) gets a copy of EVERY email the app sends, so a
+ * broken template, a wrong recipient, or a send that silently never happens
+ * is seen the day it happens rather than when a manager mentions it. The copy
+ * is a SEPARATE "[Copy]" message To the admin (see sendAppEmail_ for why not a
+ * BCC). `EMAIL_BCC` (name kept for compatibility) overrides the address list
+ * (comma-separated); `EMAIL_BCC=none` turns it off. An address already in
+ * to/cc/bcc gets no copy (an admin-only alert does not arrive twice). Accepts the object form AND the (to, subject, body)
  * positional form MailApp supports. Lives beside getAdminEmails_ (not
  * Util.gs) because Config.gs is the one file every suite and file loads.
  */
@@ -103,10 +104,42 @@ function sendAppEmail_(a, b, c) {
     }
     delete msg.notice;
   }
-  var bcc = appEmailBcc_(msg);
-  if (bcc) msg.bcc = msg.bcc ? (String(msg.bcc) + ',' + bcc) : bcc;
+  // EML-2: the admin copy is a SEPARATE message addressed To the admin, sent
+  // AFTER the real one -- never a BCC. The app sends as the deploying admin
+  // ("Execute as: Me"), and a BCC to the sender's own mailbox lands in Sent
+  // only (owner, 2026-09-30: no BCC shown, nothing in the inbox), while a
+  // message To/CC the sender reaches the inbox (the Daily Queue Report and
+  // failure notices do). A failed copy never fails the real send.
+  var copyTo = appEmailCopyList_(msg);
   MailApp.sendEmail(msg);
+  copyTo.forEach(function (addr) {
+    try { MailApp.sendEmail(appEmailCopyMessage_(msg, addr)); }
+    catch (e) { Logger.log('sendAppEmail_: admin copy to ' + addr + ' failed (the email itself was sent): ' + ((e && e.message) || e)); }
+  });
   return msg;
+}
+
+/** EML-2 (PURE): the admin's copy of `msg` -- To the admin only, subject
+ *  prefixed [Copy], and a first line naming who the original went to. */
+function appEmailCopyMessage_(msg, addr) {
+  var who = 'Sent to: ' + (msg.to || '(none)')
+    + (msg.cc ? ' · cc: ' + msg.cc : '') + (msg.bcc ? ' · bcc: ' + msg.bcc : '');
+  var copy = {};
+  ['name', 'replyTo', 'noReply', 'attachments', 'inlineImages'].forEach(function (k) {
+    if (msg[k] !== undefined) copy[k] = msg[k];
+  });
+  copy.to = addr;
+  copy.subject = '[Copy] ' + (msg.subject || '');
+  copy.body = 'Copy of an email the dashboard sent. ' + who + '\n\n' + (msg.body || '');
+  if (msg.htmlBody) {
+    var banner = '<div style="padding:8px 12px;margin:0 0 8px;background:#f2f2f2;border:1px solid #ddd;'
+      + 'font:12px Arial,sans-serif;color:#333;">Copy of an email the dashboard sent. ' + appEsc_(who) + '</div>';
+    var html = String(msg.htmlBody);
+    var m = /<body[^>]*>/i.exec(html);
+    copy.htmlBody = m ? html.slice(0, m.index + m[0].length) + banner + html.slice(m.index + m[0].length)
+                      : banner + html;
+  }
+  return copy;
 }
 
 /** R29: DASHBOARD_URL + route hash, or '' when unset (senders then omit the CTA). */
@@ -144,10 +177,12 @@ function appEmailBccConfig_() {
   return { mode: valid.length ? 'list' : 'default', valid: valid, invalid: invalid };
 }
 
-/** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The BCC list to ADD, or ''. */
-function appEmailBcc_(msg) {
+/** PURE-ish (reads EMAIL_BCC + ADMIN_EMAILS). The addresses that get a
+ *  separate admin copy (EML-2) -- [] when none, or when every one of them
+ *  already received the email (To/CC/BCC). */
+function appEmailCopyList_(msg) {
   var cfg = appEmailBccConfig_();
-  if (cfg.mode === 'none') return '';
+  if (cfg.mode === 'none') return [];
   if (cfg.invalid.length) {
     Logger.log('sendAppEmail_: EMAIL_BCC has malformed address(es) -- dropped: ' + cfg.invalid.join(', ')
       + (cfg.valid.length ? '' : ' (none valid; using the default first-admin BCC)'));
@@ -164,7 +199,7 @@ function appEmailBcc_(msg) {
     var key = x.toLowerCase();
     if (!already[key]) { already[key] = true; out.push(x); }
   });
-  return out.join(',');
+  return out;
 }
 
 // ── DD-2 (broad-scan 2026-09-17): ONE answer-rate formula ──────────────────
@@ -822,6 +857,7 @@ var PROP_REGISTRY_ = Object.freeze({
     AGENT_EMAIL_DOMAINS: 'operator', EMAIL_BCC: 'operator', ACCESS_WELCOME_EMAIL: 'operator',
     ANSWER_TARGETS: 'operator', DEPT_ANSWER_TARGETS: 'operator', TRANSFER_TIERS: 'operator',
     NOTIFY_ON_NEW_ESCALATION: 'operator', NOTIFY_PENDING_REVIEW: 'operator',
+    ALL_DEPT_NOTIFY_OPT_IN: 'operator',
     NEON_EGRESS_BUDGET_MB: 'operator', NEON_STORAGE_CAP_MB: 'operator',
     // operator — engine flags + tunables
     COACHING_DELIVERY_ENABLED: 'operator',

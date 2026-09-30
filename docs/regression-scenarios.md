@@ -423,3 +423,49 @@ S49 | Transfer abandons land on the target dept (S2C-2, S2C-6) | Subsystem: Depa
     - S2C-6: read the log's last section, TRANSFERS NOT ANSWERED. Pick 2-3 counted attempts, including one NOT tied to a customer call, and search each transfer call id in `Call_Legs_<date>`: an internal call (placed by an employee, no outside caller) to the named queue, nobody answered, abandoned after MORE than a minute in the queue. Then open Reports -> Inbound for that dept: the "Transfers not answered" tile equals the log's count for its queues over the same window (work-window days only), and its foot says how many were tied to a customer call. "Abandoned on hold" does not change because of these.
   Expected: every sampled call reads as "answered, then transferred to a dept that never picked up, and the caller hung up" -- on hold, or in the target queue.
   Fails if: a sampled transfer group was ANSWERED; the transfer was placed by a different agent or long after the answer; an `[in target queue]` sample was not abandoned in the target queue; the answering dept's Total or Answered changed; or a move appears with no explanation in the tile foot.
+
+S50 | Admin moves an escalation to another department (ESC-R1) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, log a throwaway escalation for CSR ("test -- move me"). On its card click "Move…": an inline panel lists every OTHER department (not CSR) and an optional note box.
+    - Pick Sales, type a note, click "Move escalation". Expect the toast "Moved to Sales", and the card to show the Sales tag (or leave a CSR-filtered list).
+    - Open its Activity: a "Moved" entry "CSR → Sales: <your note>" with your email.
+    - With `NOTIFY_ON_NEW_ESCALATION=true`: the Sales managers (not CSR's) receive "Escalation moved to Sales", saying it came from CSR; you get the `[Copy]`.
+    - Click Start on it, then Move it again (e.g. to Power): it moves and stays IN PROGRESS.
+    - Resolve it, then look for Move: none on a resolved card (reopen first). Open "Edit" on a pending card: the Department field is locked (use Move).
+    - As a CSR manager (or View-as-Manager for CSR): the moved escalation is gone from their list; as a Sales manager it is there with its whole trail. No manager sees "Move…".
+  Expected: as described; the escalation keeps its status and its activity trail across the move.
+  Fails if: a manager sees or can invoke Move; the old dept can still open the moved escalation; the move is missing from Activity; the status changes; or the email goes to the OLD dept.
+
+S51 | One escalation assigned to several departments -- linked copies (ESC-L1) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, click "+ New escalation": the Department list is a multi-select with nothing pre-picked. Ctrl/Cmd-click CSR and Sales, enter a reason ("test -- linked"), save. Expect the toast "Logged for 2 departments (linked copies)".
+    - On the list (All departments): two cards, one CSR and one Sales, each saying "Also assigned to <the other> · pending".
+    - Click Start on the CSR copy only: the Sales card now says "Also assigned to CSR · in progress" and stays PENDING itself.
+    - Overview: the escalations strip counts both copies and says "(2 linked)".
+    - On the CSR copy click "Move…": Sales is NOT offered. Move it to Power: both cards now name each other (Power and Sales).
+    - With `NOTIFY_ON_NEW_ESCALATION=true`, log another linked one for CSR + Sales: each dept's managers get ONE email naming the other dept; a manager of both gets exactly one naming both; you get the `[Copy]`s.
+    - As a CSR manager: only the CSR copy is listed, with the "Also assigned to" line; no Sales thread or fields are visible. Log a single-dept escalation as admin: no "Also assigned" line, no linked label.
+  Expected: as described; resolving, commenting or editing one copy never changes another.
+  Fails if: one create yields a single row; a copy's action changes its sibling; Move offers a dept already holding a copy; a manager sees another dept's thread or fields; or a manager of both depts gets two emails.
+
+S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC-L2) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, log a linked escalation for CSR + Sales ("test -- thread"). As a CSR manager, comment on the CSR copy; as a Sales manager, comment on the Sales copy.
+    - Open Activity on EITHER copy: both comments appear in one timeline, each tagged CSR or Sales, with the author's email.
+    - As the admin, Edit the pending CSR copy (change the reason): the Sales card shows the new reason too; the thread has ONE "Edited" entry saying "applied to all 2 linked copies". Each copy keeps its own status.
+    - On a copy click "Link department…", pick Power: a pending Power card appears, both others list Power, and the thread shows "Department added". With `NOTIFY_ON_NEW_ESCALATION=true`, Power's managers get the email naming CSR and Sales.
+    - Click "Remove Sales…": the dialog will not accept an empty reason. Enter "Dispute upheld: billing matter". The Sales card turns "Removed" (read-only, the reason shown), leaves the Pending list and the Overview count, and the thread keeps the Sales comment tagged "Sales · removed" plus a "Department removed" entry with the reason.
+    - As the Sales manager: the escalation is under Status -> Removed, opens read-only with the whole thread, and no Resolve / Comment / Start controls. A crafted resolve on it is refused ("was removed from this escalation").
+    - Try removing CSR, then Power, as admin: the last active department is refused ("last department still on this escalation").
+    - "Delete all linked…": a red confirm naming every department; confirming deletes every copy. A plain "Delete…" on a linked copy deletes only that copy.
+  Expected: as described.
+  Fails if: the thread misses another department's entries or its tags; an edit changes only one copy or changes a status; a removed dept can still write, or loses read access; the removal deletes comments; the last department can be removed; or Delete removes more (or fewer) copies than it says.
+
+S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S1) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, on a linked escalation, Start the Sales copy, then "Remove Sales…" with a reason. On the Removed card click "Restore Sales…", add a note, confirm: Sales is back IN PROGRESS (the state it was removed in), back in its worklist and the Overview count; the thread shows "Department removed" then "Department restored" with the note. With `NOTIFY_ON_NEW_ESCALATION=true`, Sales managers get "Escalation returned to Sales".
+    - Remove a RESOLVED copy and restore it: it comes back Resolved, with no email.
+    - With a department removed, try "Link department…" or "Move…" to that department: refused, pointing at Restore.
+    - Neon-down check (only when an outage happens, or on a dev copy with NEON_HOST pointed nowhere): open the Escalations page -- the read-only snapshot banner shows; open Activity on an open linked card: the thread renders with "Offline copy from <time>", department tags intact, long entries marked "(shortened in the offline copy)". A card the snapshot does not hold says Activity is unavailable.
+  Expected: as described.
+  Fails if: a restore lands in a different status than the one removed; the removal disappears from the thread; a removed department gets a second copy via Link/Move; or, offline, a manager sees another department's thread, or a thread shows only part of its entries without saying so.

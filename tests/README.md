@@ -107,7 +107,19 @@ tests/
                               span-vs-full-scan equivalence, the ALL-HISTORY
                               ext derivation that a naive span would shrink,
                               and the wide-read count), escalations
-                              hardening, neon-write chunking/mapping (incl.
+                              hardening (incl. ESC-R1: admin-only move of a
+                              pending/in-progress escalation, the reassigned
+                              trail row, the new-dept notice, and Edit no
+                              longer writing the dept; ESC-L1: linked copies --
+                              one row per dept sharing a group_id in one
+                              commit, one email per manager set, the Move
+                              guard, the badge's missing-column fallback;
+                              ESC-L2: the group thread + its gate, edit sync,
+                              link / soft-remove / delete-all-linked, every
+                              write verb refusing a removed copy; ESC-L3:
+                              restore to the prior status, Link/Move pointing
+                              at Restore),
+                              neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
                               cache-pin drift), heatmap drill,
@@ -211,10 +223,13 @@ tests/
                               `notice:` render hook, and the sweep that every
                               plain-text sender is styled),
                               app-email (R28: the sendAppEmail_ chokepoint --
-                              default admin BCC, EMAIL_BCC override/none,
-                              dedup, both signatures, and the sweep that
-                              no .gs sends mail directly; ENG-6: a malformed
-                              EMAIL_BCC entry is dropped, never sent),
+                              EML-2's separate [Copy] message To the admin
+                              (never a BCC), EMAIL_BCC override/none, dedup,
+                              a failed copy never failing the send, both
+                              signatures, and the sweep that no .gs sends
+                              mail directly; ENG-6: a malformed EMAIL_BCC
+                              entry is dropped, never sent; the cdr-report
+                              DCTR copy, sendReportAdminCopy_),
                               alerts-readiness (ENG-3: the daily alerts'
                               DQE-readiness gate -- DEFERRED + one-shot retry
                               until noon, a LATE outcome past it, the run
@@ -256,7 +271,7 @@ tests/
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
-                              setup (INV-12), alert-recipients (B-5), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
+                              setup (INV-12), alert-recipients (EML-1: ALL managers opt-in only), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
                               pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up),
@@ -311,7 +326,7 @@ tests/
                               queue leg, and reporting that as one number buried
                               the two shapes that mean a queue-delivered leg
                               lost its name,
-                              escalations-snapshot (the E2 outage cache),
+                              escalations-snapshot (the E2 outage cache, incl. the ESC-S1 offline threads),
                               coaching (gates + the F-e delivery: diff/txn/
                               email gating/race-safe close),
                               outbound-report (the Batch G callback report:

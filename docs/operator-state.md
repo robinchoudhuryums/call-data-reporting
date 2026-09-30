@@ -486,9 +486,24 @@ When something looks wrong, before assuming a code bug, check:
     DELETE an escalation** (mistake / test entry) from its card: row + activity
     trail in one transaction, audited as an `escalations:delete` Report Usage
     row (dept only, no PHI) -- no property, no trigger; managers never see the
-    control. (a) **`NOTIFY_ON_NEW_ESCALATION`
+    control. **An admin can also MOVE an open escalation to another
+    department** from its card (ESC-R1, S50) -- no property; recorded in the
+    Activity trail. **And assign ONE escalation to several departments** by
+    picking more than one in the create form (ESC-L1, S51): each department
+    gets its own LINKED COPY. The `group_id` column is added automatically on
+    the first escalation write after the deploy -- no migration to run; until
+    then the Overview strip simply shows no "(N linked)" label. On a linked
+    card an admin can also **Link department…** (add another dept's copy),
+    **Remove <dept>…** (a soft removal with a required reason -- the dept's
+    comments stay in the shared thread and its managers can still open it
+    read-only under the Removed filter) and **Delete all linked…** (ESC-L2,
+    S52). The removal columns are added automatically too. A removed
+    department's card offers **Restore <dept>…** (ESC-L3, S53): it returns to
+    the state it was in when removed, and the thread keeps both events. (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
-    (`lookupDeptManagers_`, Access Control rows) on every new escalation.
+    (`lookupDeptManagers_`, Access Control rows; ALL managers only when
+    opted in, #58) on every new escalation, and the NEW dept's managers when
+    one is moved to them.
     Defaults OFF. The email carries FULL escalation detail (caller / patient /
     Trx / reason) -- a PII surface -- so leave it off until that's signed off.
     Best-effort (never blocks/fails the create); needs `script.send_mail`
@@ -507,9 +522,17 @@ When something looks wrong, before assuming a code bug, check:
     every write verb still hard-fails (INV-55 unchanged). It has nothing to
     serve until the FIRST successful read after deploy -- it protects the
     NEXT outage, not the one already in progress. Clearing the properties
-    just forfeits the current snapshot until the next read.
+    just forfeits the current snapshot until the next read. **Since ESC-S1
+    (2026-09-30, owner ask) the open rows' Activity THREADS are stored too**
+    (`ESC_SNAPSHOT_ACT_*`, its own ~48KB ceiling beside the rows' ~48KB;
+    each entry's text cut at 600 characters; a thread is stored whole or
+    not at all), so Activity still opens read-only during an outage, with
+    an "Offline copy from …" note. Closed and removed copies' threads are
+    not in it.
     **PHI at rest here is ACCEPTED (SEC-6, owner ruling 2026-09-23).** The
-    snapshot carries the open rows' patient name / caller / Trx # / reason,
+    snapshot carries the open rows' patient name / caller / Trx # / reason
+    -- and, since ESC-S1 (the owner's own request, 2026-09-30), their
+    comments and resolution notes, which can hold PHI the same way --
     so the dashboard project's Script Properties hold PHI in plain text --
     readable by anyone with EDIT access to the Apps Script project (the
     property store is not encrypted separately and is shown in the
@@ -1888,19 +1911,36 @@ When something looks wrong, before assuming a code bug, check:
        `direct_call_history` (small, unpruned by design) — revisit the
        horizons before the plan upgrade.
 
-58. **`EMAIL_BCC` + `ACCESS_WELCOME_EMAIL` (dashboard) — the default BCC on
-    every app email, and the new-grant welcome email (R28, 2026-09).**
-    **BCC.** Every dashboard email (alerts, digests, the Daily Call Queue
-    Report, report exports and to-agent sends, escalation notices, coaching,
-    the watchdogs, client-issue reports, sign-in notices, the welcome below)
-    goes through `Config.gs::sendAppEmail_`, which BCCs `getAdminEmails_()[0]`
-    unless the address is already a recipient. Set `EMAIL_BCC` to a
-    comma-separated list to BCC other addresses instead, or `none` to turn it
-    off (e.g. once the app is trusted and the admin inbox is noisy). A
+58. **`EMAIL_BCC` + `ACCESS_WELCOME_EMAIL` + `ALL_DEPT_NOTIFY_OPT_IN`
+    (dashboard) — the admin copy of every app email, the new-grant welcome
+    email (R28, 2026-09), and which ALL managers get dept-manager email
+    (EML-1, 2026-09-30).**
+    **Admin copy.** Every dashboard email (alerts, digests, the Daily Call
+    Queue Report, report exports and to-agent sends, escalation notices,
+    coaching, the watchdogs, client-issue reports, sign-in notices, the
+    welcome below) goes through `Config.gs::sendAppEmail_`, which sends
+    `getAdminEmails_()[0]` a SEPARATE copy -- subject `[Copy] <original>`,
+    To the admin only, opening with "Sent to: … · cc: …" -- unless the
+    address already received the email. **It is not a BCC (EML-2, owner
+    2026-09-30):** the app sends AS the admin ("Execute as: Me"), and a BCC
+    to the sender's own mailbox lands in Sent and never the inbox, while a
+    message To the admin does. A failed copy is logged and never fails the
+    real send; the quota cost is the same one recipient a BCC cost. Set
+    `EMAIL_BCC` (name kept for compatibility) to a comma-separated list to
+    copy other addresses instead, or `none` to turn copies off. A
     malformed entry is DROPPED rather than handed to MailApp, which would
     fail the whole message (ENG-6). The Health page's `email-bcc` row names
     what was dropped, and if nothing valid remains the default first-admin
-    BCC applies. Pinned by
+    copy applies. The cdr-report DCTR (the one report email with no admin
+    recipient) sends the same `[Copy]` to `NEON_WRITE_CONFIG.alertEmail`
+    (`sendReportAdminCopy_`); the Daily Queue Report already CCs the admin.
+    **`ALL_DEPT_NOTIFY_OPT_IN`** (comma-separated addresses; unset = nobody):
+    an Access Control row whose Department is `ALL`/`*` sees every dept, but
+    receives the dept-manager emails -- the low-answer-rate alerts and the
+    new-escalation notice, both resolved by `Alerts.gs::lookupDeptManagers_`
+    -- ONLY when their address is listed here (EML-1, reversing B-5's
+    default). The list only filters ALL rows; it never adds a recipient.
+    Pinned by `tests/unit/alert-recipients.test.js` and
     `tests/unit/app-email.test.js`, whose sweep fails on any dashboard .gs
     that calls `MailApp.sendEmail` directly. **Every admin notice renders in
     the house style (R29):** the sender passes a `notice:` spec and

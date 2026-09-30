@@ -324,13 +324,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > one subsystem, split the family, not the bullets.** The Neon mirror +
 > read-back layer was eight bullets and 18 KB of "how this is built", so it
 > became [`docs/neon-layer.md`](docs/neon-layer.md) with the two rules that
-> bite from outside it left inline. The same pass found the Operator State
-> INDEX re-telling its own doc -- five items ran 495-714 B against a doc
-> holding 2.5-7 KB each -- and compressed 31 lines to true one-liners. Between
-> them that recovered ~20 KB with no rule deleted (every dropped reference was
-> verified to still resolve). Both moves are cheaper than shaving prose from
-> bullets already under budget, which is where this section's remaining weight
-> now sits.
+> bite from outside it left inline; an index that re-tells its own doc gets
+> compressed to one-liners the same way (F8d in fix-history). Both moves are
+> cheaper than shaving prose from bullets already under budget, which is
+> where this section's remaining weight now sits.
 
 - **Spreadsheet TZ ≠ script TZ**. The CDR Report spreadsheet is on
   `America/Mexico_City`; the script is on `America/Chicago`. Duration cells
@@ -571,7 +568,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   paths need at least the admin gate.** The dashboard's NON-spreadsheet
   (Neon) write paths are: Escalations (INV-55, per-dept-gated; its
   `deleteEscalation` is ADMIN-gated -- row + activity trail in one
-  transaction, audited as an `escalations:delete` usage row with no PHI),
+  transaction, audited as an `escalations:delete` usage row with no PHI --
+  as are the move / link / remove / restore department verbs),
   the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
   `applyOrphanRename`'s best-effort `dqe_history` rename mirror
@@ -1219,9 +1217,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   in `Code.gs::renderDashboard_`, then `window.__USER__ = <?!= userJson ?>;`
   in `dashboard.html`.
 - **Every dashboard email is sent through `sendAppEmail_` (Config.gs), never
-  `MailApp.sendEmail` directly -- it BCCs the first admin by default (R28,
-  owner ruling: a wrong recipient or a silent non-send must be seen the day
-  it happens), dedups an address already in to/cc, and honors `EMAIL_BCC`
+  `MailApp.sendEmail` directly -- it sends the first admin a COPY by default
+  (R28, owner ruling: a wrong recipient or a silent non-send must be seen the
+  day it happens) as a SEPARATE `[Copy]` message To them, never a BCC (EML-2:
+  the app sends AS the admin, and a BCC to the sender's own mailbox lands in
+  Sent only), skips an address already in to/cc, and honors `EMAIL_BCC`
   (override list; `none` disables). A new send site that calls MailApp
   directly fails `app-email.test.js`'s sweep, and a USER-triggered report
   email must call `assertReportEmailThrottle_` first (SEC-2: a per-user cap,
@@ -1343,7 +1343,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   map -- the owner ruled they are separate queues whose managers should see
   both. NB Alerts + Digests follow neither mechanism (their own per-dept
   config rows), so shared-manager email needs a row per dept there too --
-  though an ALL-sentinel row IS an alert recipient for every dept (B-5).
+  and an ALL-sentinel row receives dept-manager email (alerts, new
+  escalations) ONLY when listed in `ALL_DEPT_NOTIFY_OPT_IN` (EML-1).
 - **ALIAS EMAILS (Tier C).** The optional `EMAIL_ALIASES` Script Property
   (comma/newline-separated `alias@x = canonical@x` pairs, tolerant grammar
   like `DIAL_IN_LABELS`) lets several sign-in addresses resolve to ONE
@@ -2265,7 +2266,7 @@ items for anything it flags or doesn't cover.)
 55. The `DO NOT EDIT!` insurance block (cols X-AG) is read by ONE fixed-column reader -- moving it means two constants, a push and a re-sync
 56. Reprocessing historical dates -- Manual Export per date over the bulk path, the `DQE_UPSERT_RESUME` reset, the zero-talk post-rebuild scan and the duplicate-merge repair
 57. Neon storage cap -- the `CDR_PHONES_MIRROR` write gate, the weekly `NEON_RETENTION_ENABLED` prune, `NEON_STORAGE_CAP_MB`, and the one-time reclaim runbook
-58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` -- the default-BCC rule on every dashboard email, and the welcome email a brand-new Access Control grant sends
+58. `EMAIL_BCC` / `ACCESS_WELCOME_EMAIL` / `ALL_DEPT_NOTIFY_OPT_IN` -- the admin-copy rule on every dashboard email, the welcome email a brand-new Access Control grant sends, and which ALL managers get dept-manager email
 59. `HR_BACKUP_SS_ID` (cdr-report) -- the repair-backup workbook every bulk `repair*` apply snapshots into first, and the restore procedure
 60. After-hours capture (DQE cols AJ/AK) -- verify the 37-wide sheet + Neon columns after the push, then backfill by force re-import; NULL and 0 are different facts
 61. Nightly historical sort check -- `HISTORICAL_SORT_ENABLED` (cdr-report) + its ~3 AM trigger, and how to read the Health page’s `historical-sort` row
@@ -2433,6 +2434,10 @@ S46 | Outbound report reaches a manager (the 6c release) | Subsystem: Department
 S47 | Agent-day view: fidelity degrades honestly across the three horizons | Subsystem: Department Dashboard
 S48 | Outbound callbacks by department (CB-1) | Subsystem: Department Dashboard
 S49 | Transfer abandons land on the target dept (S2C-2, S2C-6) | Subsystem: Department Dashboard
+S50 | Admin moves an escalation to another department (ESC-R1) | Subsystem: Department Dashboard
+S51 | One escalation assigned to several departments -- linked copies (ESC-L1) | Subsystem: Department Dashboard
+S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC-L2) | Subsystem: Department Dashboard
+S53 | Restore a removed department; the thread while Neon is down (ESC-L3, ESC-S1) | Subsystem: Department Dashboard
 
 ### Frozen Subsystems
 - DQE Report Legacy — manager-facing reports in `apps-script/dqe-report/`. Frozen because migration to Department Dashboard is complete: Individual Report, Performance Report, Compare Ranges, Missed Calls Report, and Low Answer Rate Alerts all live in the dashboard. Replacement: Department Dashboard. Awaiting decommission of the legacy spreadsheet. Unfreeze only if a bug is found in legacy that affects production decisions before the spreadsheet is retired.
