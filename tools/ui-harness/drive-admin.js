@@ -509,6 +509,93 @@ const MODALS = [
         !!sent && Array.isArray(sent.departments) && sent.departments.join('|') === 'CSR|Sales', JSON.stringify(sent));
     }
 
+    // ESC-L2 (Step 2b): the removed copy renders read-only; a linked copy
+    // offers Link / Remove / Delete-all-linked; the shared thread tags each
+    // entry with its department; Remove REQUIRES a reason (validated in place).
+    {
+      const st = await page.evaluate(() => {
+        const card = (id) => [...document.querySelectorAll('.esc-card')].find((c) => c.getAttribute('data-id') === id);
+        const rm = card('96'), lk = card('101');
+        const has = (c, sel) => !!(c && c.querySelector(sel));
+        const lp = document.querySelector('.esc-link[data-id="101"]');
+        return {
+          rmPill: rm ? (rm.querySelector('.esc-pill') || {}).textContent : null,
+          rmNote: rm ? ((rm.querySelector('.esc-removed-note') || {}).textContent || '') : '',
+          rmWrite: rm ? ['.esc-resolve-disc', '.esc-start', '.esc-move-toggle', '.esc-link-toggle', '.esc-remove-dept', '.esc-reopen-toggle']
+            .filter((q) => has(rm, q)) : null,
+          lkBtns: lk ? ['.esc-link-toggle', '.esc-remove-dept', '.esc-delete-all'].map((q) => has(lk, q)) : null,
+          linkOpts: lp ? [...lp.querySelectorAll('.esc-link-dept option')].map((o) => o.value) : null,
+          removedOpt: !!document.querySelector('#esc-status option[value="removed"]'),
+        };
+      });
+      record('ESC-L2: a removed copy renders read-only (Removed pill, the reason, no write controls)',
+        st.rmPill === 'Removed' && /was removed from this escalation/.test(st.rmNote) && /Dispute upheld/.test(st.rmNote)
+          && Array.isArray(st.rmWrite) && st.rmWrite.length === 0, JSON.stringify(st));
+      record('ESC-L2: a linked copy offers Link, Remove and Delete all linked to an admin',
+        Array.isArray(st.lkBtns) && st.lkBtns.every(Boolean), JSON.stringify(st.lkBtns));
+      record('ESC-L2: Link never offers the card\'s own or an already-linked department',
+        Array.isArray(st.linkOpts) && st.linkOpts.length > 0
+          && ['CSR', 'Sales', 'Power'].every((d) => st.linkOpts.indexOf(d) === -1), JSON.stringify(st.linkOpts));
+      record('ESC-L2: the status filter carries a Removed option', st.removedOpt);
+
+      // Shared thread: open 101's Activity.
+      await page.click('.esc-activity-summary[data-id="101"]');
+      await page.waitForTimeout(700);
+      const th = await page.evaluate(() => {
+        const b = document.querySelector('.esc-activity-body[data-id="101"]');
+        return b ? [...b.querySelectorAll('.esc-timeline-dept')].map((d) => d.textContent.replace(/\s+/g, ' ').trim()) : null;
+      });
+      record('ESC-L2: the linked thread tags every entry with its department, a removed one marked',
+        Array.isArray(th) && th.indexOf('CSR') !== -1 && th.some((t) => /^Power · removed$/.test(t)), JSON.stringify(th));
+
+      // Link: open the panel + save.
+      await page.click('.esc-link-toggle[data-id="101"]');
+      await page.waitForTimeout(200);
+      await page.click('.esc-link-save[data-id="101"]');
+      await page.waitForTimeout(1500);
+      const linkCall = await page.evaluate(() => {
+        const c = window.__HARNESS__.calls.filter((x) => x.fn === 'linkEscalationDepartment').pop();
+        return c ? c.args[0] : null;
+      });
+      record('ESC-L2: Link calls the verb with the picked department', !!linkCall && linkCall.id === '101' && !!linkCall.department,
+        JSON.stringify(linkCall));
+
+      // Remove: the prompt refuses an empty reason in place, then sends it.
+      await page.click('.esc-remove-dept[data-id="101"]');
+      await page.waitForTimeout(300);
+      await page.click('.ds-confirm-ok');
+      await page.waitForTimeout(200);
+      const v = await page.evaluate(() => {
+        const e = document.querySelector('.ds-prompt-error');
+        return { open: !!document.querySelector('.ds-prompt-input'), err: e && !e.hidden ? e.textContent : '' };
+      });
+      record('ESC-L2: Remove requires a reason (validated in the dialog)', v.open && /reason/i.test(v.err), JSON.stringify(v));
+      await page.fill('.ds-prompt-input', 'Harness: dispute upheld');
+      await page.click('.ds-confirm-ok');
+      await page.waitForTimeout(1500);
+      const rmCall = await page.evaluate(() => {
+        const c = window.__HARNESS__.calls.filter((x) => x.fn === 'removeEscalationDepartment').pop();
+        return c ? c.args[0] : null;
+      });
+      record('ESC-L2: Remove sends the reason', !!rmCall && rmCall.id === '101' && rmCall.reason === 'Harness: dispute upheld',
+        JSON.stringify(rmCall));
+
+      // Delete all linked: a DANGER confirm naming every department; cancel.
+      await page.click('.esc-delete-all[data-id="101"]');
+      await page.waitForTimeout(300);
+      const dd = await page.evaluate(() => {
+        const t = document.querySelector('.ds-confirm-title');
+        const ok = document.querySelector('.ds-confirm-ok');
+        const body = document.querySelector('.ds-confirm-body');
+        return { title: t ? t.textContent : '', danger: !!(ok && ok.classList.contains('ds-confirm--danger')),
+                 body: body ? body.textContent : '' };
+      });
+      record('ESC-L2: Delete all linked confirms in DANGER tone, naming every linked department',
+        /every linked copy/i.test(dd.title) && dd.danger && ['CSR', 'Sales', 'Power'].every((d) => dd.body.indexOf(d) !== -1), JSON.stringify(dd));
+      await page.click('.ds-confirm-cancel');
+      await page.waitForTimeout(300);
+    }
+
     // ESC-R1: the admin "Move…" control on an open card -- rendered visible,
     // toggles an inline panel whose department list EXCLUDES the card's own
     // dept, and "Move escalation" calls the (mocked) verb and reloads cleanly.

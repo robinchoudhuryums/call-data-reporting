@@ -14,8 +14,11 @@
   department copies (multi-select create -> one row per dept sharing
   `group_id`), the "Also assigned to" card line, "(N linked)" strip label,
   one email per manager set, Move refuses a dept already holding a copy; S51.
-  Steps 0/1/2a are UNMERGED (no PR yet) -- ask the owner before 2b.
-  **APPROVED PLAN (2b NOT STARTED):**
+  **Step 2b SHIPPED on the branch (block 210, ESC-L2):** the group thread
+  tagged by dept, admin edit sync, Link department, soft Remove (read-only
+  for the removed dept, Removed filter), delete-all-linked; S52. Owner said
+  "keep stacking": Steps 0/1/2a/2b are all UNMERGED on the branch, no PR yet.
+  The linked-escalation plan is COMPLETE. **The plan as approved (for reference):**
   Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
   escalations (resolved/rejected: reopen first; pending_review stays with
   approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new

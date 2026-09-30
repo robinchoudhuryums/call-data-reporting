@@ -97,7 +97,7 @@ test('E2: the serve path re-applies the viewer scope — a single-dept manager s
   assert.deepEqual(out.rows.map(function (r) { return r.id; }), ['c1'],
     'status filter AND dept scope both applied');
   assert.deepEqual(out.meta.statusCounts,
-    { pending: 1, in_progress: 1, pending_review: 0, resolved: 0, rejected: 0 },
+    { pending: 1, in_progress: 1, pending_review: 0, resolved: 0, rejected: 0, removed: 0 },
     'band counts come from the dept-scoped OPEN rows; closed states are unknowable → 0');
   assert.ok(out.meta.snapshotAsOf, 'the banner key is set');
   assert.equal(out.available, true);
@@ -214,7 +214,8 @@ test('PCR-8: every committed escalation write force-refreshes the snapshot, past
   assert.deepEqual(calls, ['autocommit:true', 'query'], 'leaves the transaction, then re-reads despite the fresh snapshot');
   assert.equal(h.call('escSnapshotLoad_').rows[0].id, 'n1', 'the snapshot now holds the post-write open set');
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
-  ['createEscalation', 'updateEscalation', 'moveEscalation', 'resolveEscalation', 'reopenEscalation', 'startEscalation',
+  ['createEscalation', 'updateEscalation', 'moveEscalation', 'linkEscalationDepartment', 'removeEscalationDepartment',
+   'resolveEscalation', 'reopenEscalation', 'startEscalation',
    'approveEscalation', 'rejectEscalation', 'updateEscalationComment'].forEach(function (fn) {
     assert.match(src, new RegExp("conn\\.commit\\(\\);\\n    Logger\\.log\\('" + fn + ": [^\\n]*\\n    escSnapshotAfterWrite_\\(conn\\);"),
       fn + ' refreshes the snapshot right after its commit');

@@ -447,3 +447,16 @@ S51 | One escalation assigned to several departments -- linked copies (ESC-L1) |
     - As a CSR manager: only the CSR copy is listed, with the "Also assigned to" line; no Sales thread or fields are visible. Log a single-dept escalation as admin: no "Also assigned" line, no linked label.
   Expected: as described; resolving, commenting or editing one copy never changes another.
   Fails if: one create yields a single row; a copy's action changes its sibling; Move offers a dept already holding a copy; a manager sees another dept's thread or fields; or a manager of both depts gets two emails.
+
+S52 | Linked escalation: shared thread, edit sync, link, remove, delete-all (ESC-L2) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, log a linked escalation for CSR + Sales ("test -- thread"). As a CSR manager, comment on the CSR copy; as a Sales manager, comment on the Sales copy.
+    - Open Activity on EITHER copy: both comments appear in one timeline, each tagged CSR or Sales, with the author's email.
+    - As the admin, Edit the pending CSR copy (change the reason): the Sales card shows the new reason too; the thread has ONE "Edited" entry saying "applied to all 2 linked copies". Each copy keeps its own status.
+    - On a copy click "Link department…", pick Power: a pending Power card appears, both others list Power, and the thread shows "Department added". With `NOTIFY_ON_NEW_ESCALATION=true`, Power's managers get the email naming CSR and Sales.
+    - Click "Remove Sales…": the dialog will not accept an empty reason. Enter "Dispute upheld: billing matter". The Sales card turns "Removed" (read-only, the reason shown), leaves the Pending list and the Overview count, and the thread keeps the Sales comment tagged "Sales · removed" plus a "Department removed" entry with the reason.
+    - As the Sales manager: the escalation is under Status -> Removed, opens read-only with the whole thread, and no Resolve / Comment / Start controls. A crafted resolve on it is refused ("was removed from this escalation").
+    - Try removing CSR, then Power, as admin: the last active department is refused ("last department still on this escalation").
+    - "Delete all linked…": a red confirm naming every department; confirming deletes every copy. A plain "Delete…" on a linked copy deletes only that copy.
+  Expected: as described.
+  Fails if: the thread misses another department's entries or its tags; an edit changes only one copy or changes a status; a removed dept can still write, or loses read access; the removal deletes comments; the last department can be removed; or Delete removes more (or fewer) copies than it says.

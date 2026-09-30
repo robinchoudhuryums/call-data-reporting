@@ -110,16 +110,33 @@ function reviewConn(row, log) {
         setString: function (i, v) { params[i - 1] = v; },
         executeQuery: function () {
           let done = false;
-          // ESC-L1: escGroupHasDept_'s probe answers from row.groupHit.
-          const hit = sql.indexOf('WHERE group_id = ?') !== -1 ? !!(row && row.groupHit) : !!row;
-          if (sql.indexOf('WHERE group_id = ?') !== -1) log.groupProbes = (log.groupProbes || []).concat([params.slice()]);
+          // ESC-L1/L2 group queries answer from the row's group fixture:
+          // escGroupHasDept_ -> row.groupHit, escGroupActiveOthers_ ->
+          // row.activeOthers, escGroupSize_ -> row.groupSize, escGroupDepts_ ->
+          // row.groupDepts; every query is logged for the read-side pins.
+          log.reads = (log.reads || []).concat([{ sql: sql, params: params.slice() }]);
+          const isGroup = sql.indexOf('WHERE group_id = ?') !== -1;
+          if (isGroup) log.groupProbes = (log.groupProbes || []).concat([params.slice()]);
+          if (isGroup && sql.indexOf('SELECT department FROM') === 0) {
+            const ds = (row && row.groupDepts) || [];
+            let i = -1;
+            return { next: function () { return ++i < ds.length; },
+              getString: function () { return ds[i]; }, close: function () {} };
+          }
+          let n = row && row.n;
+          if (isGroup && sql.indexOf('SELECT count(*)') === 0) {
+            n = sql.indexOf("status <> 'removed'") !== -1 ? (row.activeOthers || 0) : (row.groupSize || 0);
+          }
+          const hit = !isGroup ? !!row
+            : sql.indexOf('SELECT count(*)') === 0 ? true
+            : !!(row && row.groupHit);
           return {
             next: function () { if (done) return false; done = true; return hit; },
             getString: function (col) {
               const map = { status: row.status, department: row.department,
                 caller: row.caller, patient_name: row.patientName, trx: row.trx,
-                area: row.area, reason: row.reason, source: row.source, n: row.n,
-                group_id: row.groupId };
+                area: row.area, reason: row.reason, source: row.source, n: n,
+                group_id: row.groupId, j: row.j };
               return map[col] == null ? null : map[col];
             },
             close: function () {},
@@ -805,4 +822,180 @@ test('ESC-L1: the badge reports the open linked copies, and FALLS BACK to the pr
   assert.equal(out.linked, 0);
   assert.equal(b.seen.length, 2);
   assert.equal(b.seen[1].indexOf('n_linked'), -1);
+});
+
+// ESC-L2 (Step 2b, owner decisions 2026-09-30): the SHARED THREAD across
+// linked copies, admin edit sync, "Link another department", the soft
+// REMOVE (kept in the thread, read-only for the removed dept) and
+// delete-all-linked.
+const ADMIN = { role: 'admin', email: 'admin@x.com' };
+const CSR_MGR = { role: 'manager', department: 'CSR', departments: ['CSR'], email: 'mgr@x.com' };
+
+test('ESC-L2: every write verb refuses a REMOVED copy with no writes (read-only once removed)', function () {
+  const removed = { status: 'removed', department: 'CSR', reason: 'r', groupId: 'g1' };
+  [
+    [CSR_MGR, 'resolveEscalation', { id: 'e1', resolution: 'done' }],
+    [CSR_MGR, 'reopenEscalation', { id: 'e1', reason: 'why' }],
+    [CSR_MGR, 'startEscalation', { id: 'e1' }],
+    [CSR_MGR, 'updateEscalationComment', { id: 'e1', comments: 'note' }],
+    [ADMIN, 'updateEscalation', { id: 'e1', reason: 'x' }],
+    [ADMIN, 'moveEscalation', { id: 'e1', department: 'Sales' }],
+    [ADMIN, 'linkEscalationDepartment', { id: 'e1', department: 'Sales' }],
+  ].forEach(function (c) {
+    const log = { writes: [] };
+    installMove(c[0], removed, log);
+    assert.throws(function () { h.call(c[1], c[2]); }, /CSR was removed from this escalation/, c[1]);
+    assert.equal(log.writes.length, 0, c[1] + ': no writes');
+  });
+});
+
+test('ESC-L2: a linked copy\'s Activity is the WHOLE group thread, tagged by department; the gate stays on the requested copy', function () {
+  const log = { writes: [] };
+  installMove(CSR_MGR, { status: 'removed', department: 'CSR', reason: 'r', groupId: 'g1',
+    j: JSON.stringify([{ action: 'comment', department: 'Sales', removed: false }]) }, log);
+  const res = JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'e1' })));
+  assert.equal(res.linked, true);
+  assert.equal(res.rows[0].department, 'Sales');
+  const q = log.reads.filter(function (r) { return r.sql.indexOf('escalation_activity') !== -1; })[0];
+  assert.match(q.sql, /JOIN escalations e ON e\.id = a\.escalation_id WHERE e\.group_id = \?/);
+  assert.deepEqual(q.params, ['e1', 'g1'], 'own-flag id, then the group');
+  // A manager of ANOTHER dept gets the not-found shape and no thread query.
+  const log2 = { writes: [] };
+  installMove({ role: 'manager', department: 'Sales', departments: ['Sales'], email: 's@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', j: '[{"action":"x"}]' }, log2);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'e1' }))), { available: true, rows: [] });
+  assert.equal(log2.reads.filter(function (r) { return r.sql.indexOf('escalation_activity') !== -1; }).length, 0);
+  // A standalone row keeps the single-row query.
+  const log3 = { writes: [] };
+  installMove(CSR_MGR, { status: 'pending', department: 'CSR', reason: 'r', j: '[]' }, log3);
+  const r3 = h.call('getEscalationActivity', { id: 'e1' });
+  assert.equal(r3.linked, false);
+  const q3 = log3.reads.filter(function (r) { return r.sql.indexOf('escalation_activity') !== -1; })[0];
+  assert.match(q3.sql, /WHERE escalation_id = \?\) t$/);
+});
+
+test('ESC-L2: an admin edit of a linked copy writes the shared fields to EVERY copy (one statement), one trail entry', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3 }, log);
+  h.call('updateEscalation', { id: 'e1', reason: 'corrected reason', patientName: 'Pat' });
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; });
+  assert.equal(upd.length, 1);
+  assert.match(upd[0].sql, /WHERE group_id = \?$/);
+  assert.equal(upd[0].params[6], 'g1');
+  assert.ok(upd[0].sql.indexOf('status') === -1, 'never the per-copy status');
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; });
+  assert.equal(act.length, 1);
+  assert.equal(act[0].params[1], 'e1');
+  assert.match(act[0].params[4], /applied to all 3 linked copies/);
+  // Standalone: the old WHERE id = ?.
+  const log2 = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r' }, log2);
+  h.call('updateEscalation', { id: 'e1', reason: 'x' });
+  const u2 = log2.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
+  assert.match(u2.sql, /WHERE id = \?$/);
+  assert.equal(u2.params[6], 'e1');
+});
+
+test('ESC-L2: linking a department to a STANDALONE escalation stamps a new group on it and copies the fields in SQL', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'resolved', department: 'CSR', reason: 'r', patientName: 'Pat' }, log,
+    { NOTIFY_ON_NEW_ESCALATION: 'true' });
+  const res = JSON.parse(JSON.stringify(h.call('linkEscalationDepartment', { id: 'e1', department: 'Sales', note: 'billing side' })));
+  const grp = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations SET group_id') === 0; });
+  assert.equal(grp.length, 1, 'the source joins the new group');
+  assert.deepEqual(grp[0].params, [res.groupId, 'e1']);
+  const ins = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalations') === 0; })[0];
+  assert.match(ins.sql, /SELECT \?, \?, occurred_at, caller, patient_name, trx, area, reason, \?, \?, \?, \? FROM escalations WHERE id = \?/);
+  assert.deepEqual(ins.params, [res.newId, 'Sales', 'pending', 'admin@x.com', 'manual', res.groupId, 'e1']);
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
+  assert.equal(act.params[1], res.newId);
+  assert.equal(act.params[2], 'linked');
+  assert.equal(act.params[4], 'Sales added to this escalation (linked from CSR): billing side');
+  assert.equal(log.commits, 1);
+  const real = h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject); });
+  assert.equal(real.length, 1);
+  assert.equal(real[0].to, 'sales.mgr@x.com');
+  assert.match(real[0].htmlBody, /also assigned to CSR/);
+});
+
+test('ESC-L2: linking into an existing group reuses its id; refusals write nothing', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'in_progress', department: 'CSR', reason: 'r', groupId: 'g1', groupDepts: ['CSR', 'Power'] }, log);
+  const res = h.call('linkEscalationDepartment', { id: 'e1', department: 'Sales' });
+  assert.equal(res.groupId, 'g1');
+  assert.equal(log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations SET group_id') === 0; }).length, 0);
+  [
+    [{ status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupHit: true }, 'Sales', /Sales already has a linked copy/],
+    [{ status: 'pending', department: 'CSR', reason: 'r' }, 'CSR', /already assigned to CSR/],
+    [{ status: 'pending_review', department: 'CSR', reason: 'r' }, 'Sales', /awaiting review/],
+    [{ status: 'rejected', department: 'CSR', reason: 'r' }, 'Sales', /pending, in-progress or resolved/],
+    [{ status: 'pending', department: 'CSR', reason: 'r' }, 'Nope', /Unknown department: Nope/],
+  ].forEach(function (c) {
+    const l = { writes: [] };
+    installMove(ADMIN, c[0], l);
+    assert.throws(function () { h.call('linkEscalationDepartment', { id: 'e1', department: c[1] }); }, c[2]);
+    assert.equal(l.writes.length, 0);
+  });
+  installMove(CSR_MGR, { status: 'pending', department: 'CSR', reason: 'r' }, { writes: [] });
+  assert.throws(function () { h.call('linkEscalationDepartment', { id: 'e1', department: 'Sales' }); }, /admin-only/);
+});
+
+test('ESC-L2: REMOVE is a soft status with who / when / why, a "removed" thread entry, and one commit', function () {
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'in_progress', department: 'CSR', reason: 'r', groupId: 'g1', activeOthers: 1 }, log);
+  const res = JSON.parse(JSON.stringify(h.call('removeEscalationDepartment', { id: 'e1', reason: 'Dispute upheld: billing matter' })));
+  assert.deepEqual(res, { id: 'e1', department: 'CSR' });
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
+  assert.match(upd.sql, /removed_by = \?, removed_at = now\(\), removed_reason = \?/);
+  assert.deepEqual(upd.params, ['removed', 'admin@x.com', 'Dispute upheld: billing matter', 'e1']);
+  assert.equal(log.writes.filter(function (w) { return w.sql.indexOf('DELETE') === 0; }).length, 0, 'never a delete');
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
+  assert.equal(act.params[2], 'removed');
+  assert.equal(act.params[4], 'CSR removed from this escalation (was in_progress): Dispute upheld: billing matter');
+  assert.equal(log.commits, 1);
+});
+
+test('ESC-L2: REMOVE refuses a missing reason, a standalone escalation, the LAST active copy, an already-removed copy, and managers', function () {
+  [
+    [ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', activeOthers: 1 }, '', /reason for removing/],
+    [ADMIN, { status: 'pending', department: 'CSR', reason: 'r' }, 'why', /one department only/],
+    [ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', activeOthers: 0 }, 'why', /last department still on this escalation/],
+    [ADMIN, { status: 'removed', department: 'CSR', reason: 'r', groupId: 'g1', activeOthers: 1 }, 'why', /already removed/],
+    [CSR_MGR, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', activeOthers: 1 }, 'why', /admin-only/],
+  ].forEach(function (c) {
+    const log = { writes: [] };
+    installMove(c[0], c[1], log);
+    assert.throws(function () { h.call('removeEscalationDepartment', { id: 'e1', reason: c[2] }); }, c[3]);
+    assert.equal(log.writes.length, 0);
+  });
+});
+
+test('ESC-L2: delete defaults to ONE copy; allLinked deletes every copy + the whole thread in one transaction', function () {
+  const usage = [];
+  const log = { writes: [] };
+  installMove(ADMIN, { status: 'pending', department: 'CSR', reason: 'r', groupId: 'g1', groupSize: 3, groupDepts: ['CSR', 'Sales'] }, log);
+  h.ctx.logReportUsage_ = function (report, dept) { usage.push(dept); };
+  const one = JSON.parse(JSON.stringify(h.call('deleteEscalation', { id: 'e1' })));
+  assert.equal(one.deleted, 1);
+  assert.deepEqual(log.writes.map(function (w) { return w.params; }), [['e1'], ['e1']], 'by id only');
+  const log2 = { writes: [] };
+  installMove(ADMIN, { status: 'removed', department: 'Power', reason: 'r', groupId: 'g1', groupSize: 3, groupDepts: ['CSR', 'Sales'] }, log2);
+  h.ctx.logReportUsage_ = function (report, dept) { usage.push(dept); };
+  const all = JSON.parse(JSON.stringify(h.call('deleteEscalation', { id: 'e1', allLinked: true })));
+  assert.deepEqual(all, { id: 'e1', deleted: 3, allLinked: true });
+  assert.equal(log2.writes.length, 2);
+  assert.match(log2.writes[0].sql, /DELETE FROM escalation_activity WHERE escalation_id IN \(SELECT id FROM escalations WHERE group_id = \?\)/);
+  assert.equal(log2.writes[1].sql, 'DELETE FROM escalations WHERE group_id = ?');
+  assert.deepEqual(log2.writes[1].params, ['g1']);
+  assert.equal(log2.commits, 1);
+  assert.equal(usage[1], 'CSR + Sales + Power', 'the audit names every department, never an id or PHI');
+});
+
+test('ESC-L2: "removed" is a list filter + count, and the list carries who/when/why for the card', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  assert.match(src, /'rejected', 'removed', 'all'\]\.indexOf\(status\)/);
+  assert.match(src, /count\(\*\) FILTER \(WHERE status = 'removed'\) AS n_removed/);
+  assert.match(src, /removed_by, removed_at::text AS removed_at, removed_reason, /);
+  // The open-status lists (badge / snapshot / overdue) never include it.
+  assert.ok(!/IN \('pending','in_progress'[^)]*'removed'/.test(src));
 });

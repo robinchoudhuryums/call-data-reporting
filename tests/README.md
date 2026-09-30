@@ -113,7 +113,10 @@ tests/
                               longer writing the dept; ESC-L1: linked copies --
                               one row per dept sharing a group_id in one
                               commit, one email per manager set, the Move
-                              guard, the badge's missing-column fallback),
+                              guard, the badge's missing-column fallback;
+                              ESC-L2: the group thread + its gate, edit sync,
+                              link / soft-remove / delete-all-linked, every
+                              write verb refusing a removed copy),
                               neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code

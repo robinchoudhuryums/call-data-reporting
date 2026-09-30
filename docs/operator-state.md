@@ -492,7 +492,12 @@ When something looks wrong, before assuming a code bug, check:
     picking more than one in the create form (ESC-L1, S51): each department
     gets its own LINKED COPY. The `group_id` column is added automatically on
     the first escalation write after the deploy -- no migration to run; until
-    then the Overview strip simply shows no "(N linked)" label. (a) **`NOTIFY_ON_NEW_ESCALATION`
+    then the Overview strip simply shows no "(N linked)" label. On a linked
+    card an admin can also **Link department…** (add another dept's copy),
+    **Remove <dept>…** (a soft removal with a required reason -- the dept's
+    comments stay in the shared thread and its managers can still open it
+    read-only under the Removed filter) and **Delete all linked…** (ESC-L2,
+    S52). The removal columns are added automatically too. (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
     (`lookupDeptManagers_`, Access Control rows; ALL managers only when
     opted in, #58) on every new escalation, and the NEW dept's managers when

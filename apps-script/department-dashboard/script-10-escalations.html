@@ -504,7 +504,7 @@
     var c = (resp && resp.available !== false && meta.statusCounts) || null;
     var reviewN = c ? Number(meta.pendingReviewCount || c.pending_review || 0) : null;
     var total = c ? (Number(c.pending || 0) + Number(c.in_progress || 0) + reviewN
-              + Number(c.resolved || 0) + Number(c.rejected || 0)) : null;
+              + Number(c.resolved || 0) + Number(c.rejected || 0) + Number(c.removed || 0)) : null;
     var active = (meta.status) || ($('esc-status') && $('esc-status').value) || 'pending';
     // [value, label, count-or-null, dot-tone]. Order = triage priority.
     // R11-H (owner): the "Needs review" row was dropped from the sidebar list
@@ -516,8 +516,12 @@
       ['in_progress',    'In progress',  c ? Number(c.in_progress || 0) : null, 'accent'],
       ['resolved',       'Completed',    c ? Number(c.resolved || 0)  : null, 'good'],
       ['rejected',       'Rejected',     c ? Number(c.rejected || 0)  : null, 'muted'],
+      // ESC-L2: copies a department was removed from (read-only). Listed only
+      // when there are some (or it is the active filter) -- most viewers never
+      // have one, and an always-zero row is noise.
+      ['removed',        'Removed',      c ? Number(c.removed || 0)   : null, 'muted'],
       ['all',            'All',          total,                              'muted'],
-    ];
+    ].filter(function (t) { return t[0] !== 'removed' || t[0] === active || (t[2] || 0) > 0; });
     menu.innerHTML = '<div class="esc-cat-label">Show</div>' + cats.map(function (t) {
       var on = t[0] === active;
       var count = (t[2] == null) ? '' : ('<span class="esc-cat-count">' + t[2] + '</span>');
@@ -565,6 +569,7 @@
     const inReview = r.status === 'pending_review';
     const rejected = r.status === 'rejected';
     const inProgress = r.status === 'in_progress';   // C6
+    const removed = r.status === 'removed';          // ESC-L2: read-only copy
     // C5: labeled field grid replaces the emoji meta run-on.
     const fields = [
       ['When',    r.occurred_at ? escFmtWhen_(r.occurred_at) : ''],
@@ -583,6 +588,8 @@
       ? '<span class="esc-dept-tag">' + escapeHtml(r.department || '') + '</span>' : '';
     const statusPill = inReview
       ? '<span class="esc-pill esc-pill-review">Needs review</span>'
+      : removed
+        ? '<span class="esc-pill esc-pill-removed">Removed</span>'
       : rejected
         ? '<span class="esc-pill esc-pill-rejected">Rejected</span>'
         : resolved
@@ -623,6 +630,17 @@
         +     '<button class="btn esc-reject-save" type="button" data-id="' + idAttr + '" disabled>Reject submission</button>'
         +   '</div>'
         + '</div></div>';
+    } else if (removed) {
+      // ESC-L2: this department was taken off a linked escalation (owner
+      // decision (b)). Read-only: the reason + who/when, and the other
+      // departments' outcome via the linked line above and the shared thread.
+      const rBy = r.removed_by ? (' by ' + escapeHtml(r.removed_by)) : '';
+      const rAt = r.removed_at ? (' ' + escapeHtml(escFmtWhen_(r.removed_at))) : '';
+      body += '<div class="esc-removed-note"><strong>' + escapeHtml(r.department || 'This department')
+        + ' was removed from this escalation</strong>' + rAt + rBy
+        + (r.removed_reason ? ': ' + escapeHtml(r.removed_reason) : '')
+        + (/[.!?]$/.test(String(r.removed_reason || '').trim()) ? '' : '.')
+        + ' Read-only &mdash; its comments stay in the thread; the other departments&rsquo; progress shows above and in Activity.</div>';
     } else if (rejected) {
       // Terminal: data retained for the audit trail; no actions. A
       // correction is a fresh external resubmission.
@@ -710,10 +728,44 @@
     // and carries data-admin-only so View-as-Manager hides it with the rest
     // of the admin chrome. The handler confirms in danger tone first.
     if (isAdmin) {
-      body += '<div class="esc-admin-actions" data-admin-only>'
-        + '<button class="btn btn-ghost esc-delete" type="button" data-id="' + idAttr
-        + '" title="Admin only: permanently delete this escalation and its activity trail">&#128465; Delete&hellip;</button>'
-        + '</div>';
+      // ESC-L2: Link (share with another dept) on a worklist or resolved
+      // copy; Remove (soft, reason required) on a linked copy that still has
+      // an active sibling; Delete all linked when there are siblings. The
+      // server re-checks every rule.
+      const sibs = Array.isArray(r.linked) ? r.linked : [];
+      const activeSibs = sibs.filter(function (l) { return l && l.status !== 'removed'; });
+      const canLink = !removed && ['pending', 'in_progress', 'resolved'].indexOf(r.status) !== -1;
+      const aa = [];
+      if (canLink) {
+        aa.push('<button class="btn btn-ghost esc-link-toggle" type="button" data-id="' + idAttr
+          + '" title="Admin only: also assign this escalation to another department (a linked copy)">&#128279; Link department&hellip;</button>');
+      }
+      if (!removed && activeSibs.length) {
+        aa.push('<button class="btn btn-ghost esc-remove-dept" type="button" data-id="' + idAttr
+          + '" title="Admin only: take ' + escapeHtml(r.department || '') + ' off this escalation (kept in the thread)">&#8854; Remove ' + escapeHtml(r.department || 'department') + '&hellip;</button>');
+      }
+      aa.push('<button class="btn btn-ghost esc-delete" type="button" data-id="' + idAttr
+        + '" title="Admin only: permanently delete this escalation and its activity trail">&#128465; Delete&hellip;</button>');
+      if (sibs.length) {
+        aa.push('<button class="btn btn-ghost esc-delete-all" type="button" data-id="' + idAttr
+          + '" title="Admin only: permanently delete EVERY linked copy and the whole thread">&#128465; Delete all linked&hellip;</button>');
+      }
+      body += '<div class="esc-admin-actions" data-admin-only>' + aa.join('') + '</div>';
+      if (canLink) {
+        const taken = sibs.map(function (l) { return l && l.department; });
+        const linkOpts = ((escInit_ && escInit_.departments) || []).filter(function (d) {
+          return d !== r.department && taken.indexOf(d) === -1;
+        }).map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+        body += '<div class="esc-link" data-admin-only data-id="' + idAttr + '" style="display:none;">'
+          + '<label class="esc-resolve-label">Also assign to'
+          + '<select class="esc-link-dept" data-id="' + idAttr + '">' + linkOpts + '</select></label>'
+          + '<label class="esc-resolve-label">Note <span class="esc-optional">(optional — goes into the thread)</span>'
+          + '<textarea class="esc-link-note" rows="1" data-id="' + idAttr + '"></textarea></label>'
+          + '<div class="esc-resolve-actions">'
+          + '<button class="btn esc-link-save" type="button" data-id="' + idAttr + '"' + (linkOpts ? '' : ' disabled') + '>Link department</button>'
+          + '<span class="status status-error esc-link-error" data-id="' + idAttr + '" style="display:none;"></span>'
+          + '</div></div>';
+      }
     }
 
     // §5: append-only activity trail, collapsed by default (progressive
@@ -724,7 +776,7 @@
       + '</details>';
 
     return '<div class="ds-card esc-card' + (resolved ? ' esc-card-resolved' : '')
-      + (rejected ? ' esc-card-resolved' : '') + (inProgress ? ' esc-card-progress' : '')
+      + ((rejected || removed) ? ' esc-card-resolved' : '') + (inProgress ? ' esc-card-progress' : '')
       + '" data-id="' + escapeHtml(r.id) + '">'
       + '<div class="esc-card-top">' + statusPill + deptTag + sourceTag
       +   (ageBadge ? '<span class="esc-card-top-spacer"></span>' + ageBadge : '') + '</div>'
@@ -784,6 +836,14 @@
     }
     if (t.classList.contains('esc-move-save'))      { escMove_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-delete'))         { escDelete_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-delete-all'))     { escDelete_(t.getAttribute('data-id'), true); return; }   // ESC-L2
+    if (t.classList.contains('esc-remove-dept'))    { escRemoveDept_(t.getAttribute('data-id')); return; }    // ESC-L2
+    if (t.classList.contains('esc-link-toggle'))    {                                                         // ESC-L2
+      const lw = document.querySelector('.esc-link[data-id="' + escCssId_(t.getAttribute('data-id')) + '"]');
+      if (lw) lw.style.display = (lw.style.display === 'none' ? '' : 'none');
+      return;
+    }
+    if (t.classList.contains('esc-link-save'))      { escLinkDept_(t.getAttribute('data-id')); return; }      // ESC-L2
     if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
   }
 
@@ -791,33 +851,45 @@
   // id / dept / date -- never the patient -- and only then calls the server,
   // which re-checks admin, deletes row + trail in one transaction, and returns
   // { deleted: 0|1 } (0 = already gone: a stale card, not an error).
-  function escDelete_(id) {
+  // ESC-L2: allLinked deletes every copy of a linked group + the whole thread.
+  function escDelete_(id, allLinked) {
     const rows = (escLastResp_ && escLastResp_.rows) || [];
     const row = rows.filter(function (r) { return String(r.id) === String(id); })[0];
     const when = (row && row.occurred_at) ? escFmtWhen_(row.occurred_at) : '';
+    const sibs = (row && Array.isArray(row.linked)) ? row.linked : [];
+    const allDepts = [row ? row.department : ''].concat(sibs.map(function (l) { return l && l.department; }))
+      .filter(Boolean);
     dsConfirm_({
-      title: 'Delete this escalation?',
-      messageHtml: 'This permanently removes escalation <code>' + escapeHtml(String(id)) + '</code>'
+      title: allLinked ? 'Delete every linked copy?' : 'Delete this escalation?',
+      messageHtml: allLinked
+        ? 'This permanently removes escalation <code>' + escapeHtml(String(id)) + '</code> for <strong>every</strong> department it is linked to ('
+          + escapeHtml(allDepts.join(', ')) + ')' + (when ? ', ' + escapeHtml(when) : '')
+          + ', and the whole shared thread. It cannot be undone.'
+        : 'This permanently removes escalation <code>' + escapeHtml(String(id)) + '</code>'
         + (row ? ' (' + escapeHtml(row.department || '') + (when ? ', ' + escapeHtml(when) : '') + ')' : '')
-        + ' and its activity trail. Use it for entries logged by mistake or for testing. It cannot be undone.',
-      confirmLabel: 'Delete permanently',
+        + ' and its activity trail. Use it for entries logged by mistake or for testing. It cannot be undone.'
+        + (sibs.length ? ' The other linked departments keep their copies; to take a department off while keeping '
+          + 'its comments in the thread, use &ldquo;Remove&rdquo; instead.' : ''),
+      confirmLabel: allLinked ? 'Delete all copies' : 'Delete permanently',
       cancelLabel: 'Keep it',
       tone: 'danger',
     }).then(function (ok) {
       if (!ok) return;
       escRowError_(id, '');
-      const btn = document.querySelector('.esc-delete[data-id="' + escCssId_(id) + '"]');
+      const btn = document.querySelector((allLinked ? '.esc-delete-all' : '.esc-delete') + '[data-id="' + escCssId_(id) + '"]');
+      const idle = btn ? btn.innerHTML : '';
       if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
       google.script.run
         .withSuccessHandler(function (res) {
-          showToast((res && res.deleted) ? 'Escalation deleted' : 'That escalation was already gone', 'success');
+          const n = (res && Number(res.deleted)) || 0;
+          showToast(n > 1 ? ('Deleted ' + n + ' linked copies') : (n ? 'Escalation deleted' : 'That escalation was already gone'), 'success');
           escLoad_();
         })
         .withFailureHandler(function (err) {
-          if (btn) { btn.disabled = false; btn.innerHTML = '&#128465; Delete&hellip;'; }
+          if (btn) { btn.disabled = false; btn.innerHTML = idle; }
           escRowError_(id, (err && err.message ? err.message : String(err)));
         })
-        .deleteEscalation({ id: id });
+        .deleteEscalation({ id: id, allLinked: !!allLinked });
     });
   }
 
@@ -844,6 +916,53 @@
         setErr(e && e.message ? e.message : String(e));
       })
       .moveEscalation({ id: id, department: to, note: note ? note.value.trim() : '' });
+  }
+
+  // ESC-L2: admin links another department (a new pending copy sharing the
+  // thread). The server re-checks admin, the source status and the target.
+  function escLinkDept_(id) {
+    const sel = document.querySelector('.esc-link-dept[data-id="' + escCssId_(id) + '"]');
+    const note = document.querySelector('.esc-link-note[data-id="' + escCssId_(id) + '"]');
+    const err = document.querySelector('.esc-link-error[data-id="' + escCssId_(id) + '"]');
+    const setErr = function (m) { if (err) { err.textContent = m || ''; err.style.display = m ? '' : 'none'; } };
+    const to = sel ? sel.value : '';
+    if (!to) { setErr('Pick a department.'); return; }
+    setErr('');
+    const btn = document.querySelector('.esc-link-save[data-id="' + escCssId_(id) + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Linking…'; }
+    google.script.run
+      .withSuccessHandler(function () { showToast('Linked to ' + to + ' \u2713', 'success'); escLoad_(); })
+      .withFailureHandler(function (e) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Link department'; }
+        setErr(e && e.message ? e.message : String(e));
+      })
+      .linkEscalationDepartment({ id: id, department: to, note: note ? note.value.trim() : '' });
+  }
+
+  // ESC-L2 (owner decision (b)): admin takes a department OFF a linked
+  // escalation. Not a delete -- the reason is required and becomes a thread
+  // entry, the copy's comments stay, and the dept can still open it read-only.
+  function escRemoveDept_(id) {
+    const rows = (escLastResp_ && escLastResp_.rows) || [];
+    const row = rows.filter(function (r) { return String(r.id) === String(id); })[0];
+    const dept = (row && row.department) || 'this department';
+    dsPrompt_({
+      title: 'Remove ' + dept + ' from this escalation?',
+      messageHtml: escapeHtml(dept) + ' stops working this escalation: it leaves their open worklist and counts. '
+        + 'Its comments and updates <strong>stay in the shared thread</strong>, marked as removed, and its managers can '
+        + 'still open it read-only to see the outcome. The reason goes into the thread for every department.',
+      label: 'Reason (required)',
+      placeholder: 'e.g. Dispute upheld — this is a billing matter, not ' + dept,
+      confirmLabel: 'Remove ' + dept,
+      validate: function (v) { return v ? '' : 'Enter the reason — it is recorded in the thread.'; },
+    }).then(function (reason) {
+      if (!reason) return;
+      escRowError_(id, '');
+      google.script.run
+        .withSuccessHandler(function () { showToast(dept + ' removed from the escalation', 'success'); escLoad_(); })
+        .withFailureHandler(function (e) { escRowError_(id, (e && e.message ? e.message : String(e))); })
+        .removeEscalationDepartment({ id: id, reason: reason });
+    });
   }
 
   // C6: start work on a pending escalation (pending -> in_progress).
@@ -972,7 +1091,12 @@
     if (!rows.length) { body.innerHTML = '<div class="esc-activity-empty">No activity recorded.</div>'; return; }
     const labels = { created: 'Created', resolved: 'Resolved', comment: 'Comment', edited: 'Edited',
       reopened: 'Reopened', started: 'Started', approved: 'Approved', rejected: 'Rejected',
-      reassigned: 'Moved' };   // ESC-R1
+      reassigned: 'Moved',                                       // ESC-R1
+      linked: 'Department added', removed: 'Department removed' };   // ESC-L2
+    // ESC-L2: a linked escalation's trail is the whole group's thread; each
+    // entry names the department whose copy it was written on (and marks a
+    // department that has since been removed).
+    const shared = !!resp.linked;
     body.innerHTML = '<ul class="esc-timeline">' + rows.map(function (a) {
       const lab = labels[a.action] || escapeHtml(a.action || '');
       const who = a.actor ? (' · ' + escapeHtml(a.actor)) : '';
@@ -980,6 +1104,8 @@
       const detail = a.detail ? '<div class="esc-timeline-detail">' + escapeHtml(a.detail) + '</div>' : '';
       return '<li class="esc-timeline-item esc-timeline-' + escapeHtml(a.action || '') + '">'
         + '<div class="esc-timeline-head"><span class="esc-timeline-action">' + lab + '</span>'
+        + ((shared && a.department) ? '<span class="esc-timeline-dept' + (a.removed ? ' is-removed' : '') + '">'
+          + escapeHtml(a.department) + (a.removed ? ' &middot; removed' : '') + '</span>' : '')
         + '<span class="esc-timeline-meta">' + when + who + '</span></div>'
         + detail + '</li>';
     }).join('') + '</ul>';
@@ -1084,7 +1210,7 @@
     const linked = Array.isArray(r && r.linked) ? r.linked : [];
     if (!linked.length) return '';
     const label = { pending: 'pending', in_progress: 'in progress', resolved: 'resolved',
-      pending_review: 'needs review', rejected: 'rejected' };
+      pending_review: 'needs review', rejected: 'rejected', removed: 'removed' };
     return '<div class="esc-linked" title="Linked copies: each department works its own copy of this escalation">'
       + '<span class="esc-linked-k">&#128279; Also assigned to</span> '
       + linked.map(function (l) {
