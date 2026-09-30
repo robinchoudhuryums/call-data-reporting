@@ -311,15 +311,23 @@ for emergencies only.
   `NEON_*` Script Properties + the `script.external_request` scope (the
   same ones the F1 read-back / Inbound report use). With Neon unset the
   tab renders an "unavailable" state and writes are refused; there is no
-  sheet fallback.
+  sheet fallback. During a Neon OUTAGE the tab shows a read-only offline
+  copy of the open escalations and their Activity threads, as of the last
+  successful load (operator note #24(c)).
+- **Admin tools:** an escalation can be assigned to SEVERAL departments --
+  each gets a linked copy it works itself, and all of them share one
+  Activity thread. An admin can move an escalation to another department,
+  link another department, remove one (kept in the thread, read-only for
+  that department) or restore it, and delete one copy or every linked copy.
+  See regression scenarios S50-S53.
 - **Security:** this is the first per-dept (non-admin) write path —
   managers can only touch their own department's escalations (the
   department is read from the stored row, never trusted from the
   request); `createEscalation` is admin-only. See CLAUDE.md INV-55.
-- **Phase 2 (planned):** the external *team-tools* app will INSERT
-  `pending_review` rows into the same `escalations` table for an
-  admin review queue — Neon is the shared substrate, so no new
-  cross-app plumbing is needed.
+- **Phase 2:** the review queue (Approve / Reject of `pending_review`
+  rows) is built; the external *team-tools* writer that would INSERT
+  those rows is designed but NOT built yet (H3) — Neon is the shared
+  substrate, so no new cross-app plumbing is needed when it is.
 
 **Optional (QCD Report):**
 

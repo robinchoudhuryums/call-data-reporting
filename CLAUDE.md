@@ -324,13 +324,10 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
 > one subsystem, split the family, not the bullets.** The Neon mirror +
 > read-back layer was eight bullets and 18 KB of "how this is built", so it
 > became [`docs/neon-layer.md`](docs/neon-layer.md) with the two rules that
-> bite from outside it left inline. The same pass found the Operator State
-> INDEX re-telling its own doc -- five items ran 495-714 B against a doc
-> holding 2.5-7 KB each -- and compressed 31 lines to true one-liners. Between
-> them that recovered ~20 KB with no rule deleted (every dropped reference was
-> verified to still resolve). Both moves are cheaper than shaving prose from
-> bullets already under budget, which is where this section's remaining weight
-> now sits.
+> bite from outside it left inline; an index that re-tells its own doc gets
+> compressed to one-liners the same way (F8d in fix-history). Both moves are
+> cheaper than shaving prose from bullets already under budget, which is
+> where this section's remaining weight now sits.
 
 - **Spreadsheet TZ ≠ script TZ**. The CDR Report spreadsheet is on
   `America/Mexico_City`; the script is on `America/Chicago`. Duration cells
@@ -571,7 +568,8 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   paths need at least the admin gate.** The dashboard's NON-spreadsheet
   (Neon) write paths are: Escalations (INV-55, per-dept-gated; its
   `deleteEscalation` is ADMIN-gated -- row + activity trail in one
-  transaction, audited as an `escalations:delete` usage row with no PHI),
+  transaction, audited as an `escalations:delete` usage row with no PHI --
+  as are the move / link / remove / restore department verbs),
   the admin-gated Coaching worklist (`Coaching.gs` -- delivery upsert +
   `updateCoachingFlagStatus`, the full data-mutation set), and
   `applyOrphanRename`'s best-effort `dqe_history` rename mirror
