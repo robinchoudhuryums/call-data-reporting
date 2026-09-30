@@ -470,6 +470,35 @@ const MODALS = [
       }
     }
 
+    // ESC-R1: the admin "Move…" control on an open card -- rendered visible,
+    // toggles an inline panel whose department list EXCLUDES the card's own
+    // dept, and "Move escalation" calls the (mocked) verb and reloads cleanly.
+    {
+      const tgl = page.locator('.esc-move-toggle').first();
+      const n = await page.locator('.esc-move-toggle').count();
+      record('ESC-R1: an admin sees a Move control on the open cards', n > 0, 'controls=' + n);
+      if (n > 0) {
+        record('ESC-R1: the Move control is rendered visible for an admin', (await tgl.isVisible()) === true);
+        const id = await tgl.getAttribute('data-id');
+        await tgl.click();
+        await page.waitForTimeout(200);
+        const panel = await page.evaluate((cid) => {
+          const card = [...document.querySelectorAll('.esc-card')].find((c) => c.getAttribute('data-id') === cid);
+          const p = document.querySelector('.esc-move[data-id="' + CSS.escape(cid) + '"]');
+          const tag = card && card.querySelector('.esc-dept-tag');
+          const opts = p ? [...p.querySelectorAll('.esc-move-dept option')].map((o) => o.value) : [];
+          return { shown: !!(p && p.offsetParent !== null), opts: opts, own: tag ? tag.textContent.trim() : '' };
+        }, id);
+        record('ESC-R1: Move opens an inline panel listing the other departments',
+          panel.shown && panel.opts.length > 0 && (!panel.own || panel.opts.indexOf(panel.own) === -1), JSON.stringify(panel));
+        await page.click('.esc-move-save[data-id="' + id + '"]');
+        await page.waitForTimeout(1500);
+        const after = await page.evaluate(() => ({ cards: document.querySelectorAll('.esc-card').length,
+          err: [...document.querySelectorAll('.esc-move-error')].some((e) => e.style.display !== 'none' && e.textContent) }));
+        record('ESC-R1: Move calls the verb and the list reloads cleanly', after.cards > 0 && !after.err, JSON.stringify(after));
+      }
+    }
+
     // F10: the nav badge must update IN PLACE. The original bug rendered it
     // behind an "if it does not already exist" guard and fetched once, so it
     // could neither update nor disappear -- and a second render appended a

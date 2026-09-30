@@ -646,7 +646,9 @@
       // form (its "Save comment only" IS the progress note). Pending cards
       // additionally get admin Edit (§3, pending-only per the server guard)
       // and a Start button (C6, pending -> in_progress). In-progress cards
-      // omit both (edit is pending-only; you can't re-start).
+      // omit both (edit is pending-only; you can't re-start). ESC-R1: BOTH
+      // states give an admin "Move…" (managers cannot reassign); it carries
+      // data-admin-only so View-as-Manager hides it.
       const pa = [];
       if (isAdmin && !inProgress) {
         pa.push('<button class="btn btn-ghost esc-edit" type="button" data-id="' + idAttr + '">&#9998; Edit</button>');
@@ -654,7 +656,24 @@
       if (!inProgress) {
         pa.push('<button class="btn btn-ghost esc-start" type="button" data-id="' + idAttr + '">&#9680; Start</button>');
       }
+      if (isAdmin) {
+        pa.push('<button class="btn btn-ghost esc-move-toggle" type="button" data-admin-only data-id="' + idAttr
+          + '" title="Admin only: move this escalation to another department">&#8644; Move&hellip;</button>');
+      }
       if (pa.length) body += '<div class="esc-pending-actions">' + pa.join('') + '</div>';
+      if (isAdmin) {
+        const moveOpts = ((escInit_ && escInit_.departments) || []).filter(function (d) { return d !== r.department; })
+          .map(function (d) { return '<option value="' + escapeHtml(d) + '">' + escapeHtml(d) + '</option>'; }).join('');
+        body += '<div class="esc-move" data-admin-only data-id="' + idAttr + '" style="display:none;">'
+          + '<label class="esc-resolve-label">Move to department'
+          + '<select class="esc-move-dept" data-id="' + idAttr + '">' + moveOpts + '</select></label>'
+          + '<label class="esc-resolve-label">Note <span class="esc-optional">(optional — goes to the activity trail)</span>'
+          + '<textarea class="esc-move-note" rows="1" data-id="' + idAttr + '"></textarea></label>'
+          + '<div class="esc-resolve-actions">'
+          + '<button class="btn esc-move-save" type="button" data-id="' + idAttr + '"' + (moveOpts ? '' : ' disabled') + '>Move escalation</button>'
+          + '<span class="status status-error esc-move-error" data-id="' + idAttr + '" style="display:none;"></span>'
+          + '</div></div>';
+      }
       // Inline resolve form. The "Resolved" checkbox + Save stay DISABLED
       // until a resolution note is entered (mirrors the server requirement).
       // R12-15 (P3-2): the form sits behind a disclosure (the Activity
@@ -748,6 +767,12 @@
     if (t.classList.contains('esc-reject-save'))    { escReject_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-start'))          { escStart_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-edit'))           { escEditOpen_(t.getAttribute('data-id')); return; }
+    if (t.classList.contains('esc-move-toggle'))    {
+      const mw = document.querySelector('.esc-move[data-id="' + escCssId_(t.getAttribute('data-id')) + '"]');
+      if (mw) mw.style.display = (mw.style.display === 'none' ? '' : 'none');
+      return;
+    }
+    if (t.classList.contains('esc-move-save'))      { escMove_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-delete'))         { escDelete_(t.getAttribute('data-id')); return; }
     if (t.classList.contains('esc-activity-summary')) { escLoadActivity_(t.getAttribute('data-id')); return; }
   }
@@ -784,6 +809,31 @@
         })
         .deleteEscalation({ id: id });
     });
+  }
+
+  // ESC-R1: admin moves an escalation to another department. The server
+  // re-checks admin + status + the target; the card then leaves this dept's
+  // filtered list (escLoad_) and the move shows in the activity trail.
+  function escMove_(id) {
+    const sel = document.querySelector('.esc-move-dept[data-id="' + escCssId_(id) + '"]');
+    const note = document.querySelector('.esc-move-note[data-id="' + escCssId_(id) + '"]');
+    const err = document.querySelector('.esc-move-error[data-id="' + escCssId_(id) + '"]');
+    const setErr = function (m) { if (err) { err.textContent = m || ''; err.style.display = m ? '' : 'none'; } };
+    const to = sel ? sel.value : '';
+    if (!to) { setErr('Pick a department.'); return; }
+    setErr('');
+    const btn = document.querySelector('.esc-move-save[data-id="' + escCssId_(id) + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Moving…'; }
+    google.script.run
+      .withSuccessHandler(function (res) {
+        showToast('Moved to ' + ((res && res.to) || to) + ' \u2713', 'success');
+        escLoad_();
+      })
+      .withFailureHandler(function (e) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Move escalation'; }
+        setErr(e && e.message ? e.message : String(e));
+      })
+      .moveEscalation({ id: id, department: to, note: note ? note.value.trim() : '' });
   }
 
   // C6: start work on a pending escalation (pending -> in_progress).
@@ -861,7 +911,13 @@
     const f = $('esc-create'); if (f) f.style.display = '';
     // Prefill. occurred_at comes back as 'YYYY-MM-DD HH:MM:SS' -> datetime-local wants 'YYYY-MM-DDTHH:MM'.
     const setVal = function (elId, v) { if ($(elId)) $(elId).value = v || ''; };
-    if ($('esc-c-dept')) $('esc-c-dept').value = row.department || '';
+    if ($('esc-c-dept')) {
+      $('esc-c-dept').value = row.department || '';
+      // ESC-R1: the department is not editable here -- a move is its own
+      // recorded action (the card's "Move…"); the server ignores it on edit.
+      $('esc-c-dept').disabled = true;
+      $('esc-c-dept').title = 'Use Move… on the escalation to change its department';
+    }
     setVal('esc-c-when', escToLocalInput_(row.occurred_at));
     setVal('esc-c-caller', row.caller);
     setVal('esc-c-patient', row.patient_name);
@@ -876,6 +932,7 @@
   // Reset the create form back to "new escalation" mode.
   function escResetCreateMode_() {
     escEditId_ = null;
+    if ($('esc-c-dept')) { $('esc-c-dept').disabled = false; $('esc-c-dept').title = ''; }   // ESC-R1
     const titleEl = $('esc-create-title'); if (titleEl) titleEl.textContent = 'Log a new escalation';
     const saveBtn = $('esc-c-save'); if (saveBtn) saveBtn.textContent = 'Save escalation';
   }
@@ -904,7 +961,8 @@
     const rows = resp.rows || [];
     if (!rows.length) { body.innerHTML = '<div class="esc-activity-empty">No activity recorded.</div>'; return; }
     const labels = { created: 'Created', resolved: 'Resolved', comment: 'Comment', edited: 'Edited',
-      reopened: 'Reopened', started: 'Started', approved: 'Approved', rejected: 'Rejected' };
+      reopened: 'Reopened', started: 'Started', approved: 'Approved', rejected: 'Rejected',
+      reassigned: 'Moved' };   // ESC-R1
     body.innerHTML = '<ul class="esc-timeline">' + rows.map(function (a) {
       const lab = labels[a.action] || escapeHtml(a.action || '');
       const who = a.actor ? (' · ' + escapeHtml(a.actor)) : '';

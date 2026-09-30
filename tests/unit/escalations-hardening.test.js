@@ -9,7 +9,7 @@ const { loadGas } = require('../harness/loadGas');
 
 // Util.gs supplies assertManagerOrAdmin_ (the Phase A agent-role allowlist
 // the escalation entry points now call).
-const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Escalations.gs'] });   // Config.gs: sendAppEmail_ (R28)
+const h = loadGas({ files: ['Config.gs', 'Util.gs', 'EmailKit.gs', 'Escalations.gs'] });   // Config.gs: sendAppEmail_ (R28)
 
 test('F-44: escCleanDateTime_ accepts the documented shapes only', function () {
   const f = h.fn('escCleanDateTime_');
@@ -568,4 +568,91 @@ test('2a: a failed DELETE rolls back and surfaces the error -- never a half-dele
   assert.throws(function () { h.call('deleteEscalation', { id: 'e1' }); }, /boom/);
   assert.equal(log.rollbacks, 1, 'rolled back');
   assert.equal(log.commits || 0, 0, 'never committed');
+});
+
+// ESC-R1 (owner ruling 2026-09-30): an ADMIN moves an escalation to another
+// department. Pending and in-progress only; the status is kept; the move is
+// its own `reassigned` activity row; the new dept's managers are notified
+// under NOTIFY_ON_NEW_ESCALATION; updateEscalation can no longer change the
+// department.
+function installMove(user, row, log, extraProps) {
+  installReview(user, row, log);
+  h.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales', 'Power']; };
+  h.ctx.escSnapshotAfterWrite_ = function () {};
+  h.ctx.lookupDeptManagers_ = function (d) { return d === 'Sales' ? ['sales.mgr@x.com'] : []; };
+  h.state.props = Object.assign({ ADMIN_EMAILS: 'admin@x.com' }, extraProps || {});
+  h.state.sentEmails.length = 0;
+  // Gap #3's tests above leave a throwing MailApp behind -- install a fresh capture.
+  h.ctx.MailApp = { sendEmail: function (m) { h.state.sentEmails.push(m); } };
+}
+
+test('ESC-R1: moveEscalation is ADMIN-ONLY -- a dept manager and the all-departments manager are refused', function () {
+  const log = { writes: [] };
+  installMove({ role: 'manager', department: 'CSR', departments: ['CSR'], email: 'mgr@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('moveEscalation', { id: 'e1', department: 'Sales' }); }, /admin-only/);
+  installMove({ role: 'manager', allDepts: true, department: null, departments: ['CSR', 'Sales'], email: 'all@x.com' },
+    { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('moveEscalation', { id: 'e1', department: 'Sales' }); }, /admin-only/);
+  assert.equal(log.writes.length, 0, 'no writes on a refusal');
+});
+
+test('ESC-R1: an admin moves a PENDING escalation -- dept updated, status untouched, "reassigned" trail row, new dept notified', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' },
+    { status: 'pending', department: 'CSR', patientName: 'Pat', trx: 'T1', reason: 'r' }, log,
+    { NOTIFY_ON_NEW_ESCALATION: 'true' });
+  h.state.userEmail = 'admin@x.com';
+  const res = JSON.parse(JSON.stringify(h.call('moveEscalation', { id: 'e1', department: 'Sales', note: 'Sales owns this account' })));
+  assert.deepEqual(res, { id: 'e1', from: 'CSR', to: 'Sales' });
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; });
+  assert.equal(upd.length, 1);
+  assert.equal(upd[0].sql, 'UPDATE escalations SET department = ?, updated_at = now() WHERE id = ?', 'the department only -- never the status');
+  assert.deepEqual(upd[0].params, ['Sales', 'e1']);
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
+  assert.equal(act.params[2], 'reassigned');
+  assert.equal(act.params[3], 'admin@x.com');
+  assert.equal(act.params[4], 'CSR → Sales: Sales owns this account');
+  assert.equal(log.commits, 1);
+  const real = h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject); });
+  assert.equal(real.length, 1, 'the NEW dept\'s managers are told');
+  assert.equal(real[0].to, 'sales.mgr@x.com');
+  assert.equal(real[0].subject, 'Escalation moved to Sales');
+  assert.match(real[0].htmlBody, /moved to your department from CSR/);
+});
+
+test('ESC-R1: an IN-PROGRESS escalation moves too and stays in progress; no email with the flag off', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' },
+    { status: 'in_progress', department: 'CSR', reason: 'r' }, log);
+  h.call('moveEscalation', { id: 'e1', department: 'Power' });
+  const sqls = log.writes.map(function (w) { return w.sql; });
+  assert.ok(sqls.every(function (q) { return q.indexOf('SET status') === -1; }), 'status is not touched');
+  const act = log.writes.filter(function (w) { return w.sql.indexOf('INSERT INTO escalation_activity') === 0; })[0];
+  assert.equal(act.params[4], 'CSR → Power', 'no note -> just the move');
+  assert.equal(h.state.sentEmails.length, 0, 'NOTIFY_ON_NEW_ESCALATION unset -> no email');
+});
+
+test('ESC-R1: resolved / rejected / awaiting-review / same-dept / unknown-dept moves are refused with no writes', function () {
+  [['resolved', /reopen it first/], ['rejected', /reopen it first/], ['pending_review', /approve or reject it first/]]
+    .forEach(function (c) {
+      const log = { writes: [] };
+      installMove({ role: 'admin', email: 'admin@x.com' }, { status: c[0], department: 'CSR', reason: 'r' }, log);
+      assert.throws(function () { h.call('moveEscalation', { id: 'e1', department: 'Sales' }); }, c[1], c[0]);
+      assert.equal(log.writes.length, 0, c[0] + ': no writes');
+    });
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  assert.throws(function () { h.call('moveEscalation', { id: 'e1', department: 'CSR' }); }, /already assigned to CSR/);
+  assert.throws(function () { h.call('moveEscalation', { id: 'e1', department: 'Nope' }); }, /Unknown department: Nope/);
+  assert.equal(log.writes.length, 0);
+});
+
+test('ESC-R1: updateEscalation no longer changes the department (a move is its own recorded action)', function () {
+  const log = { writes: [] };
+  installMove({ role: 'admin', email: 'admin@x.com' }, { status: 'pending', department: 'CSR', reason: 'r' }, log);
+  h.call('updateEscalation', { id: 'e1', department: 'Sales', reason: 'new reason' });
+  const upd = log.writes.filter(function (w) { return w.sql.indexOf('UPDATE escalations') === 0; })[0];
+  assert.ok(upd.sql.indexOf('department') === -1, 'the edit UPDATE never names the department column');
+  assert.ok(upd.params.indexOf('Sales') === -1);
 });

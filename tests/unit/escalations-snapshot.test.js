@@ -214,7 +214,7 @@ test('PCR-8: every committed escalation write force-refreshes the snapshot, past
   assert.deepEqual(calls, ['autocommit:true', 'query'], 'leaves the transaction, then re-reads despite the fresh snapshot');
   assert.equal(h.call('escSnapshotLoad_').rows[0].id, 'n1', 'the snapshot now holds the post-write open set');
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'department-dashboard', 'Escalations.gs'), 'utf8');
-  ['createEscalation', 'updateEscalation', 'resolveEscalation', 'reopenEscalation', 'startEscalation',
+  ['createEscalation', 'updateEscalation', 'moveEscalation', 'resolveEscalation', 'reopenEscalation', 'startEscalation',
    'approveEscalation', 'rejectEscalation', 'updateEscalationComment'].forEach(function (fn) {
     assert.match(src, new RegExp("conn\\.commit\\(\\);\\n    Logger\\.log\\('" + fn + ": [^\\n]*\\n    escSnapshotAfterWrite_\\(conn\\);"),
       fn + ' refreshes the snapshot right after its commit');

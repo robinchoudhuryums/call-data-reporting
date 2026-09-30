@@ -147,6 +147,7 @@ window.__HARNESS__ = { role: ${JSON.stringify(role)}, calls: [], unmocked: [],
     getEscalations: function () { return P[ROLE==='manager' ? 'esc-list-mgr' : 'esc-list']; },
     getEscalationActivity: function () { return P['esc-activity']; },
     deleteEscalation: function () { return { deleted: 1 }; },   // 2a: drive-admin confirms + deletes one card
+    moveEscalation: function (req) { return { id: req && req.id, from: 'CSR', to: req && req.department }; },   // ESC-R1: drive-admin moves one card
     getAlertsInit: function () { return P['alerts-init']; },
     getDigestsInit: function () { return P['digests-init']; },
     getQueueReportInit: function () { return P['queuereport-init']; },

@@ -7,8 +7,11 @@
   (alerts + new-escalation notice; `ALL_DEPT_NOTIFY_OPT_IN`), EML-2 the admin
   copy is a separate `[Copy]` message To the admin (the R28 BCC never reached
   the inbox -- the app sends AS the admin), and the cdr-report DCTR sends the
-  same copy. **APPROVED PLAN, NOT STARTED:**
-  Step 1 -- admin-only "Move to department" for pending AND in-progress
+  same copy. **Step 1 SHIPPED on the branch too (block 208, ESC-R1):**
+  admin-only "Move…" on pending + in-progress cards (`moveEscalation`), the
+  `reassigned` trail row, the new dept's email, Edit no longer changes the
+  dept; S50. **APPROVED PLAN, NOT STARTED (2a / 2b):**
+  Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
   escalations (resolved/rejected: reopen first; pending_review stays with
   approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new
   dept's managers emailed under NOTIFY_ON_NEW_ESCALATION with the EML-1 rule;
@@ -29,9 +32,10 @@
   comments/updates STAY in the shared thread, labelled e.g. "Sales · removed
   from this escalation 9/30 by <admin>: <reason>"; the removal reason is
   itself a thread entry (disputes are documented, not just mis-assignments);
-  a removed copy leaves that dept's open worklist and counts. Open question
-  for the owner before 2b: can a removed dept's managers still READ the
-  escalation (read-only, to see the outcome)?
+  a removed copy leaves that dept's open worklist and counts. **Owner
+  (2026-09-30): the removed dept's managers can still OPEN it READ-ONLY** to
+  see the outcome (every write verb refuses a removed copy; it lists under a
+  "Removed" status filter, not the open worklist).
 - **2026-09-28 (post-merge follow-ups, branch `claude/broad-scan-gnfpx5`
   restarted from main after PR #344 merged):** SHIPPED BK-1 (Neon backup
   falls back to a "Dashboard Neon Backups" workbook when policy blocks the

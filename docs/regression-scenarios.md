@@ -423,3 +423,15 @@ S49 | Transfer abandons land on the target dept (S2C-2, S2C-6) | Subsystem: Depa
     - S2C-6: read the log's last section, TRANSFERS NOT ANSWERED. Pick 2-3 counted attempts, including one NOT tied to a customer call, and search each transfer call id in `Call_Legs_<date>`: an internal call (placed by an employee, no outside caller) to the named queue, nobody answered, abandoned after MORE than a minute in the queue. Then open Reports -> Inbound for that dept: the "Transfers not answered" tile equals the log's count for its queues over the same window (work-window days only), and its foot says how many were tied to a customer call. "Abandoned on hold" does not change because of these.
   Expected: every sampled call reads as "answered, then transferred to a dept that never picked up, and the caller hung up" -- on hold, or in the target queue.
   Fails if: a sampled transfer group was ANSWERED; the transfer was placed by a different agent or long after the answer; an `[in target queue]` sample was not abandoned in the target queue; the answering dept's Total or Answered changed; or a move appears with no explanation in the tile foot.
+
+S50 | Admin moves an escalation to another department (ESC-R1) | Subsystem: Department Dashboard
+  Steps:
+    - As an ADMIN, log a throwaway escalation for CSR ("test -- move me"). On its card click "Move…": an inline panel lists every OTHER department (not CSR) and an optional note box.
+    - Pick Sales, type a note, click "Move escalation". Expect the toast "Moved to Sales", and the card to show the Sales tag (or leave a CSR-filtered list).
+    - Open its Activity: a "Moved" entry "CSR → Sales: <your note>" with your email.
+    - With `NOTIFY_ON_NEW_ESCALATION=true`: the Sales managers (not CSR's) receive "Escalation moved to Sales", saying it came from CSR; you get the `[Copy]`.
+    - Click Start on it, then Move it again (e.g. to Power): it moves and stays IN PROGRESS.
+    - Resolve it, then look for Move: none on a resolved card (reopen first). Open "Edit" on a pending card: the Department field is locked (use Move).
+    - As a CSR manager (or View-as-Manager for CSR): the moved escalation is gone from their list; as a Sales manager it is there with its whole trail. No manager sees "Move…".
+  Expected: as described; the escalation keeps its status and its activity trail across the move.
+  Fails if: a manager sees or can invoke Move; the old dept can still open the moved escalation; the move is missing from Activity; the status changes; or the email goes to the OLD dept.

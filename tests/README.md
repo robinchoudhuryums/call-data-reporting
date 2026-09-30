@@ -107,7 +107,10 @@ tests/
                               span-vs-full-scan equivalence, the ALL-HISTORY
                               ext derivation that a naive span would shrink,
                               and the wide-read count), escalations
-                              hardening, neon-write chunking/mapping (incl.
+                              hardening (incl. ESC-R1: admin-only move of a
+                              pending/in-progress escalation, the reassigned
+                              trail row, the new-dept notice, and Edit no
+                              longer writing the dept), neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
                               cache-pin drift), heatmap drill,

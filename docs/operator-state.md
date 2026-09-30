@@ -486,9 +486,13 @@ When something looks wrong, before assuming a code bug, check:
     DELETE an escalation** (mistake / test entry) from its card: row + activity
     trail in one transaction, audited as an `escalations:delete` Report Usage
     row (dept only, no PHI) -- no property, no trigger; managers never see the
-    control. (a) **`NOTIFY_ON_NEW_ESCALATION`
+    control. **An admin can also MOVE an open escalation to another
+    department** from its card (ESC-R1, S50) -- no property; recorded in the
+    Activity trail. (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
-    (`lookupDeptManagers_`, Access Control rows) on every new escalation.
+    (`lookupDeptManagers_`, Access Control rows; ALL managers only when
+    opted in, #58) on every new escalation, and the NEW dept's managers when
+    one is moved to them.
     Defaults OFF. The email carries FULL escalation detail (caller / patient /
     Trx / reason) -- a PII surface -- so leave it off until that's signed off.
     Best-effort (never blocks/fails the create); needs `script.send_mail`

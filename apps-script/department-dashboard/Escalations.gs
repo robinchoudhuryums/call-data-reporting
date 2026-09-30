@@ -24,7 +24,8 @@
  * resolve/comment/reopen escalations for THEIR OWN dept only. It carries the
  * same four mitigations the OrphanFix carve-out does, with the admin gate
  * swapped for the per-dept gate on the manager-reachable mutation paths:
- *   1. authorization — `createEscalation` / `updateEscalation` are admin-only
+ *   1. authorization — `createEscalation` / `updateEscalation` / `moveEscalation` (ESC-R1) /
+ *      `deleteEscalation` are admin-only
  *      (`assertAdmin_`); `resolveEscalation` / `updateEscalationComment` /
  *      `reopenEscalation` / `approveEscalation` / `rejectEscalation`
  *      re-resolve the caller and gate via
@@ -672,10 +673,12 @@ function createEscalation(req) {
 }
 
 /**
- * Admin-only correction of a PENDING escalation's fields (wrong dept /
- * patient / Trx / reason). Writes ONLY the existing data columns; never
- * touches status, resolution, or resolved_*. Resolved rows are out of scope
- * (pending-only). Appends an 'edited' activity row atomically (§5).
+ * Admin-only correction of a PENDING escalation's fields (patient / caller /
+ * Trx / area / reason / time). Writes ONLY those data columns; never touches
+ * status, resolution, resolved_* -- or the DEPARTMENT: ESC-R1 moved that to
+ * moveEscalation, so a department change is always its own recorded
+ * `reassigned` action (req.department is ignored here). Resolved rows are out
+ * of scope (pending-only). Appends an 'edited' activity row atomically (§5).
  * Returns { id }.
  */
 function updateEscalation(req) {
@@ -683,10 +686,6 @@ function updateEscalation(req) {
   req = req || {};
   var id = String(req.id || '').trim();
   if (!id) throw new Error('Missing escalation id.');
-  var department = String(req.department || '').trim();
-  if (getAllDepartments_().indexOf(department) === -1) {
-    throw new Error('Unknown department: ' + department);
-  }
   var reason = escClean_(req.reason);
   if (!reason) throw new Error('Reason for escalation is required.');
   var fields = {
@@ -712,22 +711,21 @@ function updateEscalation(req) {
     }
     conn.setAutoCommit(false); txn = true;
     var stmt = conn.prepareStatement(
-      'UPDATE escalations SET department = ?, occurred_at = NULLIF(?, \'\')::timestamptz, '
+      'UPDATE escalations SET occurred_at = NULLIF(?, \'\')::timestamptz, '
       + "caller = NULLIF(?, ''), patient_name = NULLIF(?, ''), trx = NULLIF(?, ''), "
       + "area = NULLIF(?, ''), reason = ?, updated_at = now() WHERE id = ?");
-    stmt.setString(1, department);
-    stmt.setString(2, fields.occurredAt);
-    stmt.setString(3, fields.caller);
-    stmt.setString(4, fields.patientName);
-    stmt.setString(5, fields.trx);
-    stmt.setString(6, fields.area);
-    stmt.setString(7, reason);
-    stmt.setString(8, id);
+    stmt.setString(1, fields.occurredAt);
+    stmt.setString(2, fields.caller);
+    stmt.setString(3, fields.patientName);
+    stmt.setString(4, fields.trx);
+    stmt.setString(5, fields.area);
+    stmt.setString(6, reason);
+    stmt.setString(7, id);
     stmt.execute();
     stmt.close();
     escAppendActivity_(conn, id, 'edited', actor, 'Edited escalation fields');
     conn.commit();
-    Logger.log('updateEscalation: %s edited %s (%s)', actor, id, department);
+    Logger.log('updateEscalation: %s edited %s (%s)', actor, id, meta.department);
     escSnapshotAfterWrite_(conn);   // PCR-8
     return { id: id };
   } catch (e) {
@@ -739,6 +737,81 @@ function updateEscalation(req) {
     try { conn.close(); } catch (ce) {}
     lock.releaseLock();
   }
+}
+
+/**
+ * ESC-R1 (owner ruling 2026-09-30): MOVES an escalation to another
+ * department. ADMIN-ONLY (`assertAdmin_`) -- managers cannot reassign, so it
+ * is an admin SURFACE and the all-departments manager is refused too.
+ *
+ * Allowed on PENDING and IN-PROGRESS rows (the open worklist). A resolved or
+ * rejected row must be reopened first (so the move lands on live work), and
+ * a pending_review submission goes through approve/reject. The status is
+ * kept: an in-progress escalation stays in progress in its new department.
+ *
+ * The row's department changes, so access follows it at once: the old
+ * dept's managers lose the row (escAssertRowAccess_ reads the stored dept),
+ * the new dept's gain it with the whole activity trail. A 'reassigned'
+ * activity row "<from> -> <to>" (+ the optional note) records who moved it,
+ * atomically with the move (§5). After the lock is released the new dept's
+ * managers get the new-escalation email, under the same
+ * NOTIFY_ON_NEW_ESCALATION flag and ALL_DEPT_NOTIFY_OPT_IN rule (EML-1).
+ * Returns { id, from, to }.
+ */
+function moveEscalation(req) {
+  assertAdmin_();
+  req = req || {};
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Missing escalation id.');
+  var to = String(req.department || '').trim();
+  if (getAllDepartments_().indexOf(to) === -1) throw new Error('Unknown department: ' + to);
+  var note = escClean_(req.note);
+  var actor = (Session.getActiveUser().getEmail() || '').toLowerCase();
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('Another escalation write is in progress — retry in a moment.');
+  var conn = getDashboardNeonConn_();
+  if (!conn) { lock.releaseLock(); throw new Error('Escalations storage (Neon) is not configured/reachable.'); }
+  var txn = false;
+  var notifyRec = null;
+  var from = null;
+  try {
+    escEnsureTable_(conn);
+    var row = escRowFull_(conn, id);
+    if (!row) throw new Error('Escalation not found.');
+    from = row.department;
+    if (row.status === ESC_STATUS_PENDING_REVIEW) {
+      throw new Error('This escalation is still awaiting review — approve or reject it first.');
+    }
+    if (row.status !== ESC_STATUS_PENDING && row.status !== ESC_STATUS_IN_PROGRESS) {
+      throw new Error('Only a pending or in-progress escalation can be moved (this one is "'
+        + row.status + '") — reopen it first.');
+    }
+    if (from === to) throw new Error('This escalation is already assigned to ' + to + '.');
+    conn.setAutoCommit(false); txn = true;
+    var stmt = conn.prepareStatement('UPDATE escalations SET department = ?, updated_at = now() WHERE id = ?');
+    stmt.setString(1, to);
+    stmt.setString(2, id);
+    stmt.execute();
+    stmt.close();
+    escAppendActivity_(conn, id, 'reassigned', actor, from + ' \u2192 ' + to + (note ? ': ' + note : ''));
+    conn.commit();
+    Logger.log('moveEscalation: %s moved %s from %s to %s', actor, id, from, to);
+    escSnapshotAfterWrite_(conn);   // PCR-8
+    notifyRec = { id: id, department: to, occurredAt: row.occurredAt || '', caller: row.caller,
+                  patientName: row.patientName, trx: row.trx, area: row.area, reason: row.reason };
+  } catch (e) {
+    if (txn) { try { conn.rollback(); } catch (rb) {} }
+    Logger.log('moveEscalation failed: ' + (e && e.message ? e.message : e));
+    throw new Error(e && e.message ? e.message : 'Could not move the escalation.');
+  } finally {
+    try { if (txn) conn.setAutoCommit(true); } catch (ae) {}
+    try { conn.close(); } catch (ce) {}
+    lock.releaseLock();
+  }
+  // Fire-and-log AFTER the commit + lock release (the create/approve rule).
+  if (notifyRec) escNotifyNewEscalation_(notifyRec, { movedFrom: from });
+  return { id: id, from: from, to: to };
 }
 
 /**
@@ -1489,7 +1562,8 @@ function escPendingReviewPing_() {
   }
 }
 
-function escNotifyNewEscalation_(rec) {
+function escNotifyNewEscalation_(rec, opts) {
+  var movedFrom = (opts && opts.movedFrom) ? String(opts.movedFrom) : '';   // ESC-R1
   try {
     var props = PropertiesService.getScriptProperties();
     var enabled = String(props.getProperty('NOTIFY_ON_NEW_ESCALATION') || '').toLowerCase() === 'true';
@@ -1503,8 +1577,8 @@ function escNotifyNewEscalation_(rec) {
     var link = dashUrl ? (dashUrl + '#/escalations') : '';
     sendAppEmail_({
       to:       recipients.join(','),
-      subject:  'New escalation logged — ' + rec.department,
-      htmlBody: escNotifyHtml_(rec, link),
+      subject:  (movedFrom ? 'Escalation moved to ' : 'New escalation logged — ') + rec.department,
+      htmlBody: escNotifyHtml_(rec, link, movedFrom),
     });
     Logger.log('escNotifyNewEscalation_: emailed %s for escalation %s (%s)', recipients.join(','), rec.id, rec.department);
   } catch (e) {
@@ -1514,7 +1588,7 @@ function escNotifyNewEscalation_(rec) {
 
 /** Email-safe HTML for the new-escalation notification -- the EmailKit house
  * style since Round-16 (shell + a label/value detail card + the shell CTA). */
-function escNotifyHtml_(rec, link) {
+function escNotifyHtml_(rec, link, movedFrom) {
   var esc = ekEsc_;
   var C = EK_C_, sans = EK_SANS_;
   var row = function (label, val) {
@@ -1527,8 +1601,9 @@ function escNotifyHtml_(rec, link) {
   return ekShellHtml_({
     band: { tone: 'neutral', glyph: '&#9873;' },   // R30: uniform banded header
     kicker: 'Call Data · Escalations',
-    title: 'New escalation — ' + rec.department,
-    subtitle: 'An escalation was just logged for your department.',
+    title: (movedFrom ? 'Escalation moved to ' : 'New escalation — ') + rec.department,
+    subtitle: movedFrom ? ('An escalation was moved to your department from ' + movedFrom + '.')
+                        : 'An escalation was just logged for your department.',
     preheader: 'New escalation for ' + rec.department + (rec.area ? ' · ' + rec.area : ''),
     rowsHtml: ekRow_(
       '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ' + C.line + ';border-radius:10px;border-collapse:separate;overflow:hidden;">'
