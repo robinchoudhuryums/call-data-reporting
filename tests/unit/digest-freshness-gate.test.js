@@ -175,8 +175,9 @@ test('R31 end-to-end: the cutoff send carries the data-not-available callout and
   h.state.userEmail = '';
   const r = h.call('digestDailyAttempt_', at('12:10'), 'retry');
   assert.equal(r.decision, 'send-stale');
-  assert.equal(h.state.sentEmails.length, 1, 'one subscriber');
-  const m = h.state.sentEmails[0];
+  const real1 = h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject || ''); });
+  assert.equal(real1.length, 1, 'one subscriber (plus the EML-2 admin copy)');
+  const m = real1[0];
   assert.equal(m.to, 'm@x.com');
   assert.match(m.htmlBody, /Data not yet available for 2026-09-02/);
   assert.match(m.htmlBody, /data is through 2026-09-01/);
@@ -185,7 +186,7 @@ test('R31 end-to-end: the cutoff send carries the data-not-available callout and
   // A fresh send has no callout.
   install({ dates: ['2026-09-01', '2026-09-02'], subscriber: true });
   h.call('digestDailyAttempt_', at('08:30'), 'trigger');
-  assert.equal(h.state.sentEmails.length, 1);
+  assert.equal(h.state.sentEmails.filter(function (m) { return !/^\[Copy\] /.test(m.subject || ''); }).length, 1);
   assert.ok(!/Data not yet available/.test(h.state.sentEmails[0].htmlBody));
   assert.match(h.state.props.DIGEST_LAST_RESULT_daily, /^ok 2026-09-02: sent 1 of 1 at /);
 });

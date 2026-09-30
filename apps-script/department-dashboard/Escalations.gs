@@ -1394,6 +1394,7 @@ function escAppendActivity_(conn, escId, action, actor, detail) {
  * notifyDigestFailure_): any failure is swallowed + logged so it can't break
  * the create. Recipients are the dept's managers via the shared Digest
  * resolver `lookupDeptManagers_` (Access Control rows) -- no new address book.
+ * ALL/'*' managers are included only when opted in via ALL_DEPT_NOTIFY_OPT_IN (EML-1).
  * Carries full escalation detail (operator decision): this is a PII surface,
  * which is why it stays off until explicitly enabled.
  */

@@ -620,7 +620,7 @@ test('Round-16 To/Cc: ONE message -- To rows joined, Cc rows on cc (dedupe by sh
   const mails = [];
   h.ctx.MailApp = { sendEmail: function (arg) { mails.push(arg); } };
   const res = h.call('sendQueueReportForDate_', '2026-07-10', {});
-  assert.equal(mails.length, 1, 'exactly ONE message per day');
+  assert.equal(mails.filter(function (m) { return !/^\[Copy\] /.test(m.subject || ''); }).length, 1, 'exactly ONE message per day (the EML-2 admin copy is separate)');
   assert.equal(mails[0].to, 'departmentleads@x.com');
   assert.equal(mails[0].cc, 'ops@x.com,exec@x.com');
   assert.equal(res.count, 3);
@@ -757,7 +757,7 @@ test('QV-4: sendQcdAllDeptEmail mails the CALLER only, for the requested range',
   const sent = [];
   h.ctx.MailApp = { sendEmail: function (arg) { sent.push(arg); } };
   const res = h.call('sendQcdAllDeptEmail', { from: '2026-07-14', to: '2026-07-18' });
-  assert.equal(sent.length, 1);
+  assert.equal(sent.filter(function (m) { return !/^\[Copy\] /.test(m.subject || ''); }).length, 1);
   assert.equal(sent[0].to, 'mgr@x.com', 'caller-recipient, never subscribers');
   assert.ok(sent[0].subject.indexOf('2026-07-14 - 2026-07-18') !== -1, 'range label in subject');
   assert.equal(res.to, 'mgr@x.com');

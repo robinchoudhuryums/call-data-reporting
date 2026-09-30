@@ -77,7 +77,8 @@ test('R29: sendAppEmail_ renders `notice` into htmlBody when the kit is loaded a
   assert.match(m.htmlBody, />Hello</);
   assert.equal(m.body, 'plain', 'plain body kept as the alternative');
   assert.ok(!('notice' in m), 'the spec never reaches MailApp');
-  assert.equal(m.bcc, 'robin@x.com');
+  assert.equal(h.state.sentEmails[1].to, 'robin@x.com', 'EML-2: the admin copy is its own message');
+  assert.ok(!('notice' in h.state.sentEmails[1]), 'nor does it reach the copy');
 
   // An explicit htmlBody wins over the spec.
   h.state.sentEmails.length = 0;
@@ -90,7 +91,7 @@ test('R29: sendAppEmail_ renders `notice` into htmlBody when the kit is loaded a
   try {
     h.state.sentEmails.length = 0;
     h.call('sendAppEmail_', { to: 'a@x.com', subject: 's', body: 'plain', notice: { title: 'Hello' } });
-    assert.equal(h.state.sentEmails.length, 1);
+    assert.equal(h.state.sentEmails.length, 2, 'the email + the admin copy');
     assert.equal(h.state.sentEmails[0].htmlBody, undefined);
   } finally { h.ctx.ekNoticeHtml_ = real; }
 

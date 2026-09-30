@@ -1888,19 +1888,36 @@ When something looks wrong, before assuming a code bug, check:
        `direct_call_history` (small, unpruned by design) — revisit the
        horizons before the plan upgrade.
 
-58. **`EMAIL_BCC` + `ACCESS_WELCOME_EMAIL` (dashboard) — the default BCC on
-    every app email, and the new-grant welcome email (R28, 2026-09).**
-    **BCC.** Every dashboard email (alerts, digests, the Daily Call Queue
-    Report, report exports and to-agent sends, escalation notices, coaching,
-    the watchdogs, client-issue reports, sign-in notices, the welcome below)
-    goes through `Config.gs::sendAppEmail_`, which BCCs `getAdminEmails_()[0]`
-    unless the address is already a recipient. Set `EMAIL_BCC` to a
-    comma-separated list to BCC other addresses instead, or `none` to turn it
-    off (e.g. once the app is trusted and the admin inbox is noisy). A
+58. **`EMAIL_BCC` + `ACCESS_WELCOME_EMAIL` + `ALL_DEPT_NOTIFY_OPT_IN`
+    (dashboard) — the admin copy of every app email, the new-grant welcome
+    email (R28, 2026-09), and which ALL managers get dept-manager email
+    (EML-1, 2026-09-30).**
+    **Admin copy.** Every dashboard email (alerts, digests, the Daily Call
+    Queue Report, report exports and to-agent sends, escalation notices,
+    coaching, the watchdogs, client-issue reports, sign-in notices, the
+    welcome below) goes through `Config.gs::sendAppEmail_`, which sends
+    `getAdminEmails_()[0]` a SEPARATE copy -- subject `[Copy] <original>`,
+    To the admin only, opening with "Sent to: … · cc: …" -- unless the
+    address already received the email. **It is not a BCC (EML-2, owner
+    2026-09-30):** the app sends AS the admin ("Execute as: Me"), and a BCC
+    to the sender's own mailbox lands in Sent and never the inbox, while a
+    message To the admin does. A failed copy is logged and never fails the
+    real send; the quota cost is the same one recipient a BCC cost. Set
+    `EMAIL_BCC` (name kept for compatibility) to a comma-separated list to
+    copy other addresses instead, or `none` to turn copies off. A
     malformed entry is DROPPED rather than handed to MailApp, which would
     fail the whole message (ENG-6). The Health page's `email-bcc` row names
     what was dropped, and if nothing valid remains the default first-admin
-    BCC applies. Pinned by
+    copy applies. The cdr-report DCTR (the one report email with no admin
+    recipient) sends the same `[Copy]` to `NEON_WRITE_CONFIG.alertEmail`
+    (`sendReportAdminCopy_`); the Daily Queue Report already CCs the admin.
+    **`ALL_DEPT_NOTIFY_OPT_IN`** (comma-separated addresses; unset = nobody):
+    an Access Control row whose Department is `ALL`/`*` sees every dept, but
+    receives the dept-manager emails -- the low-answer-rate alerts and the
+    new-escalation notice, both resolved by `Alerts.gs::lookupDeptManagers_`
+    -- ONLY when their address is listed here (EML-1, reversing B-5's
+    default). The list only filters ALL rows; it never adds a recipient.
+    Pinned by `tests/unit/alert-recipients.test.js` and
     `tests/unit/app-email.test.js`, whose sweep fails on any dashboard .gs
     that calls `MailApp.sendEmail` directly. **Every admin notice renders in
     the house style (R29):** the sender passes a `notice:` spec and

@@ -211,10 +211,13 @@ tests/
                               `notice:` render hook, and the sweep that every
                               plain-text sender is styled),
                               app-email (R28: the sendAppEmail_ chokepoint --
-                              default admin BCC, EMAIL_BCC override/none,
-                              dedup, both signatures, and the sweep that
-                              no .gs sends mail directly; ENG-6: a malformed
-                              EMAIL_BCC entry is dropped, never sent),
+                              EML-2's separate [Copy] message To the admin
+                              (never a BCC), EMAIL_BCC override/none, dedup,
+                              a failed copy never failing the send, both
+                              signatures, and the sweep that no .gs sends
+                              mail directly; ENG-6: a malformed EMAIL_BCC
+                              entry is dropped, never sent; the cdr-report
+                              DCTR copy, sendReportAdminCopy_),
                               alerts-readiness (ENG-3: the daily alerts'
                               DQE-readiness gate -- DEFERRED + one-shot retry
                               until noon, a LATE outcome past it, the run
@@ -256,7 +259,7 @@ tests/
                               weekend/holiday staleness credit the header
                               pill and Overview banner never had)
                               (index↔file sync + the size/bullet ratchets),
-                              setup (INV-12), alert-recipients (B-5), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
+                              setup (INV-12), alert-recipients (EML-1: ALL managers opt-in only), answer-rate-formula (DD-2: the ANSWER_RATE_FORMULA switch, answerRatePct_, the probe, the bare-formula tripwire),
                               client-dead-ends (Batch 4 source pins: the refuse helpers, the Overview Retry block, the init date-snap guard, the SWR/last-good gates, the mutation in-flight guard, the admin-init Retry; Batch 9 pins: the group-head keypress, srtApply_'s aria-sort, the no-role=button-on-tr sweep, the tour / chart-tips focus traps, the named dialogs + live notices, the global :focus-visible ring + no-outline:none sweep, the on-fill tokens, the print hides, the markup-level a11y fixes),
                               exec-ceiling-probe (P-3: the measured execution ceiling's pure verdict + the two property-tunable, bounded time budgets),
                               pending-imports (ING-4: every unprocessed Call_Legs sheet imported oldest-first, the ALREADY-IN-HISTORY memo, the out-of-budget + lock-skip one-shot catch-up),

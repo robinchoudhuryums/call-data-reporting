@@ -241,13 +241,13 @@ test('getAccessControlInit: groups rows into managers with a departments list', 
 });
 
 // ── R28: the new-grant welcome email ─────────────────────────────────────
-test('R28: a brand-new grant emails the person the dashboard link (admin BCC\'d); re-grants are silent', function () {
+test('R28: a brand-new grant emails the person the dashboard link (admin copied, EML-2); re-grants are silent', function () {
   install([]);
   h.state.props.DASHBOARD_URL = 'https://script.google.com/a/x/exec';
   h.state.sentEmails.length = 0;
   const r = h.call('saveAccessControlRow', { email: 'New@X.com', department: 'Sales' });
   assert.equal(r.welcomed, true);
-  assert.equal(h.state.sentEmails.length, 1);
+  assert.equal(h.state.sentEmails.length, 2, 'the welcome, then the admin copy (EML-2)');
   const m = h.state.sentEmails[0];
   assert.equal(m.to, 'New@X.com');
   assert.match(m.subject, /access to the Department Dashboard/);
@@ -256,7 +256,8 @@ test('R28: a brand-new grant emails the person the dashboard link (admin BCC\'d)
   assert.match(m.htmlBody, /Welcome to the Department Dashboard/, 'EmailKit-styled HTML alternative');
   assert.match(m.htmlBody, /Sales/);
   assert.match(m.htmlBody, /href="https:\/\/script\.google\.com\/a\/x\/exec"/, 'the CTA links the dashboard');
-  assert.equal(m.bcc, 'admin@x.com', 'the default BCC rides on the welcome too');
+  assert.equal(h.state.sentEmails[1].to, 'admin@x.com', 'the default admin copy rides on the welcome too');
+  assert.match(h.state.sentEmails[1].subject, /^\[Copy\] /);
 
   // Re-save (edit / re-grant): the address already had a row -> no email.
   h.state.sentEmails.length = 0;

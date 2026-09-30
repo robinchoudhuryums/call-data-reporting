@@ -931,8 +931,8 @@ function getSystemHealth(req) {
       if (bccCfg.invalid.length) {
         add('config', 'email-bcc', 'EMAIL_BCC addresses', 'warn',
           bccCfg.invalid.length + ' malformed address(es) ignored: ' + bccCfg.invalid.join(', '),
-          (bccCfg.valid.length ? 'Still BCC\'ing: ' + bccCfg.valid.join(', ') + '. '
-            : 'No valid address left -- the default first-admin BCC applies. ')
+          (bccCfg.valid.length ? 'Still copying: ' + bccCfg.valid.join(', ') + '. '
+            : 'No valid address left -- the default first-admin copy applies. ')
           + 'Fix the EMAIL_BCC Script Property (comma-separated addresses, or none; Operator State #58).');
       }
     } catch (eB) { add('config', 'email-bcc', 'EMAIL_BCC addresses', 'warn', 'probe failed', String(eB && eB.message || eB)); }

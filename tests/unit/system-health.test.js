@@ -1162,7 +1162,7 @@ test('ENG-6: a malformed EMAIL_BCC entry is named on the Health page; a clean or
   const row = rowByKey(h.call('getSystemHealth'), 'email-bcc');
   assert.equal(row.status, 'warn');
   assert.match(row.value, /1 malformed address\(es\) ignored: robin@x/);
-  assert.match(row.hint, /Still BCC'ing: audit@x\.com/);
+  assert.match(row.hint, /Still copying: audit@x\.com/);
   installHealth({ props: { NEON_HOST: 'h', EMAIL_BCC: 'audit@x.com' } });
   assert.equal(rowByKey(h.call('getSystemHealth'), 'email-bcc'), undefined);
   installHealth({ props: { NEON_HOST: 'h' } });
