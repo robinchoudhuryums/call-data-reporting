@@ -673,6 +673,12 @@ const DASHBOARD_EARLY_WINDOW = Object.freeze({
 const INBOUND_WORK_WINDOW_PST = Object.freeze({
   start: '06:30:00',
   end:   '15:00:00',
+  // PC-9 (broad-scan 2026-10-01, owner ruling: implement): the R49 floor in
+  // the query mirror. A call whose ENTRY queue is in the CSR family
+  // (DASHBOARD_EARLY_WINDOW.queues, plus the canonical side of any Dept Config
+  // `raw=canonical` pair for them -- capture rewrites entry_queue, R8-N) counts
+  // from 06:00, as DQE has since R49. Per QUEUE, never per dept (R49 rule 1).
+  earlyStart: '06:00:00',
 });
 
 /**

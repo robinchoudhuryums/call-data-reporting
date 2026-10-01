@@ -60,7 +60,7 @@ function install() {
 test('window clause: in-window bound is raw PST and half-open; NULL counts as in-window', function () {
   install();
   const inside = h.call('inboundWindowClause_', true);
-  assert.ok(inside.indexOf("c.call_start >= '06:30:00'") !== -1,
+  assert.ok(inside.indexOf("c.call_start >= (CASE WHEN") !== -1,
     'start bound is RAW PST -- call_start is not CST-shifted by the capture');
   assert.ok(inside.indexOf("c.call_start < '15:00:00'") !== -1,
     'end bound half-open, matching the pipeline predicate');
@@ -89,7 +89,7 @@ test('report: every dept-facing sub-select is window-scoped', function () {
   // rows -- counted too, so an unscoped join is caught like an unscoped FROM.
   const froms = (sql.split('FROM inbound_calls c').length - 1)
               + (sql.split('JOIN inbound_calls c ').length - 1);
-  const scoped = sql.split("c.call_start >= '06:30:00'").length - 1;
+  const scoped = sql.split("c.call_start >= (CASE WHEN").length - 1;
   assert.ok(froms >= 7, 'sanity: the payload really does have many sub-selects (' + froms + ')');
   assert.equal(scoped, froms,
     'every dept-facing FROM inbound_calls c must be window-scoped -- found ' + scoped
@@ -150,7 +150,7 @@ test('heatmap keeps its own INV-18 band and is NOT double-scoped', function () {
   // The heatmap band (8 AM - 5 PM CST) is the INV-18 display convention and is
   // 30 min WIDER at the start than the work window on purpose. Adding the
   // work-window clause on top would silently narrow the grid's first column.
-  assert.ok(sql.indexOf("c.call_start >= '06:30:00'") === -1,
+  assert.ok(sql.indexOf("c.call_start >= (CASE WHEN") === -1,
     'heatmap must NOT carry the work-window clause -- it is already bounded by '
     + 'INBOUND_HEATMAP_WINDOW_START_HOUR/END_HOUR (INV-18)');
   assert.ok(/28800/.test(sql) || /8 \* 3600/.test(sql) || sql.indexOf('28800') !== -1,
@@ -327,4 +327,38 @@ test('PCR-2 follow-on: callJourneyDeptPredicate_ matches final_dept against the 
   } finally {
     h.ctx.getFinalDeptLabels_ = saved.l; h.ctx.getOverviewParentMap_ = saved.p;
   }
+});
+
+// PC-9 (broad-scan 2026-10-01, owner ruling: implement): the R49 floor reaches
+// the inbound/outbound QUERY mirror. Per ENTRY QUEUE, never per dept (R49 rule
+// 1), and the queue set must include the CANONICAL name a Dept Config
+// `raw=canonical` pair rewrites A_Q_CSR to at capture (R8-N) -- otherwise CSR's
+// main queue, stored as A_Q_CustomerSuccess, would keep the flat 6:30.
+test('PC-9: the window start is 06:00 for the CSR family by RAW and CANONICAL entry-queue name, 06:30 otherwise', function () {
+  install();
+  h.ctx.getActiveDeptConfigMap_ = function () {
+    return { CSR: { inboundAliases: ['A_Q_CSR=A_Q_CustomerSuccess', 'A_Q_Other=A_Q_Elsewhere', 'Main IVR'] } };
+  };
+  const set = h.call('inboundEarlyQueueSet_');
+  assert.deepEqual(Object.keys(set).sort(),
+    ['a_q_csr', 'a_q_customersuccess', 'a_q_intake', 'a_q_spanish', 'backup csr'],
+    'raw family + the canonical side of a family pair; a non-family pair and a bare alias add nothing');
+  const sql = h.call('inboundWindowStartSql_');
+  assert.match(sql, /^\(CASE WHEN lower\(trim\(coalesce\(c\.entry_queue, ''\)\)\) IN \(/);
+  assert.ok(sql.indexOf("'a_q_customersuccess'") !== -1);
+  assert.ok(sql.indexOf("THEN '06:00:00' ELSE '06:30:00' END)") !== -1);
+  assert.equal(h.call('inboundWindowStartFor_', ' A_Q_CustomerSuccess ', set), '06:00:00');
+  assert.equal(h.call('inboundWindowStartFor_', 'Backup CSR', set), '06:00:00');
+  assert.equal(h.call('inboundWindowStartFor_', 'A_Q_Sales', set), '06:30:00', 'not in the family');
+  assert.equal(h.call('inboundWindowStartFor_', '', set), '06:30:00', 'no entry queue -> the standard floor');
+  delete h.ctx.getActiveDeptConfigMap_;
+});
+
+test('PC-9: an unreadable Dept Config keeps the RAW family names -- never wider, never a failed report', function () {
+  install();
+  h.ctx.getActiveDeptConfigMap_ = function () { throw new Error('sheet unavailable'); };
+  const set = h.call('inboundEarlyQueueSet_');
+  assert.deepEqual(Object.keys(set).sort(), ['a_q_csr', 'a_q_intake', 'a_q_spanish', 'backup csr']);
+  assert.ok(h.call('inboundWindowClause_', true).indexOf("'06:00:00'") !== -1);
+  delete h.ctx.getActiveDeptConfigMap_;
 });

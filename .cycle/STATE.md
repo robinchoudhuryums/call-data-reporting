@@ -1,6 +1,17 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-01 — broad-scan Batch 3 IMPLEMENTED on the same branch (block 216).**
+  PC-1/PC-2 (per-call agent names stored roster-canonical via the shared
+  INV-24 canonicalizer + an editor-run Neon rewrite, Operator State #72),
+  PC-3, PC-4 (Direct direction/answered), PC-5 + PC-8 (journey entitlement),
+  PC-6, PC-7, PC-9 (R49 06:00 floor in the inbound/outbound queries;
+  inbound:v16, outboundReport:v6), PC-10 (hashless capture is a failure row).
+  2026/2026 green. **Owner-side:** deploy cdr-import + the dashboard
+  (blocking) + cdr-report; then run the #72 preview -> backup -> rewrite.
+  Deferred: PC-12, and PC-10's 10-digit phone normalization (hash-space
+  change, needs measurement). **Where I left off:** Batches 1-3 done and
+  pushed, no PR opened; next suggested Batch 4.
 - **2026-10-01 — broad-scan Batch 2 IMPLEMENTED on the same branch (block 215).**
   AC-1 (fail-closed sub-queue access no longer locks parent managers out),
   EN-2/AC-4 (alerts no longer hold the script lock across sends; date claim

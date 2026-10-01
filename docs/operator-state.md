@@ -3010,3 +3010,30 @@ When something looks wrong, before assuming a code bug, check:
       other carve-out.
     - **It infers nothing and sets nothing.** The labels are the listener's;
       the tool only draws the sample and withholds the key.
+
+72. **Per-call agent-name rewrite (PC-1 / PC-2, broad-scan 2026-10-01;
+    cdr-import CDR Tools menu).** The per-call capture writers now store the
+    ROSTER-canonical agent name (the same INV-24 rule the DQE build applies:
+    alias override, exact roster match, else a UNIQUE strip/flatten paren
+    match; ambiguous and unknown names stay as captured). Rows captured BEFORE
+    the deploy still hold the raw feed name -- a nickname agent ("Roman Robin
+    Paulose" for roster "Roman (Robin) Paulose") reads "Unrostered" in the
+    Outbound report and matches nothing in Agent Day / the agent app until
+    they are rewritten. One-time, after deploying cdr-import:
+    - **Preview first:** CDR Tools -> "Preview per-call agent-name rewrite"
+      (`previewPerCallAgentNameRewrite`). Read-only; the execution log lists
+      every raw -> canonical pair per column (`outbound_calls.agent_name`,
+      `inbound_calls.first_agent` / `origin_agent`) and per journey table,
+      with row counts. Only names that would CHANGE are listed.
+    - **Back up:** dashboard Health page -> "Back up now"
+      (`runNeonBackupNow`, #28) -- both tables are in the backup set.
+    - **Apply:** "Rewrite per-call agent names (Neon)"
+      (`rewritePerCallAgentNames`). Bound `UPDATE ... WHERE col = raw` per
+      pair; journey entries are rewritten in place by name, NEVER a
+      `kind:'queue'` entry. Idempotent, so a run that stops at the
+      `IC_BACKFILL_TIME_LIMIT_MS` budget (#70; `stoppedAtBudget: true` in the
+      log) is simply re-run.
+    - **Re-run after** adding an `Agent Alias Overrides` row or fixing a
+      roster spelling: capture only applies the rule going forward. The
+      `Inbound Calls` / `Outbound Calls` export tabs pick up the rewritten
+      names on their next run (#49 / #50).

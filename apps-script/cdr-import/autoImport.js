@@ -2625,14 +2625,18 @@ if (!skipCDR && obcHD) {
         try {
           logPipelineHealthWithFallback_(targetSS, {
             step: 'processIntegratedHistory:Inbound',
-            status: 'success',
+            // PC-10: rows written WITHOUT caller_hash are a degraded capture
+            // (callbacks + insurer labels blind) -- a failure the Health page
+            // and PipelineWatch can see, not a quiet success.
+            status: inboundRes.hashless ? 'failure' : 'success',
             rows: inboundRes.inserted,
             durationMs: Date.now() - inboundStart,
             // C-6: partial unparsed drops ride the success row's notes (the
             // F9 unparsedStartCount discipline) so a creeping format drift is
             // visible before it reaches the all-unparsed refusal above.
             notes: dateObj.toDateString() + ((inboundRes.unparsedDropped || 0) > 0
-              ? ' | ' + inboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : ''),
+              ? ' | ' + inboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : '')
+              + perCallHashlessNote_(inboundRes),
           });
         } catch (logErr) { /* best-effort */ }
       }
@@ -2759,11 +2763,12 @@ if (!skipCDR && obcHD) {
         try {
           logPipelineHealthWithFallback_(targetSS, {
             step: 'processIntegratedHistory:Outbound',
-            status: 'success',
+            status: outboundRes.hashless ? 'failure' : 'success',   // PC-10
             rows: outboundRes.inserted,
             durationMs: Date.now() - outboundStart,
             notes: dateObj.toDateString() + ((outboundRes.unparsedDropped || 0) > 0
-              ? ' | ' + outboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : ''),
+              ? ' | ' + outboundRes.unparsedDropped + ' record(s) dropped (unparseable dates)' : '')
+              + perCallHashlessNote_(outboundRes),
           });
         } catch (logErr) { /* best-effort */ }
       }
@@ -3152,6 +3157,14 @@ function processPendingImports_() {
   }
   if (done.length > 1) console.log('processPendingImports_: imported ' + done.join(', '));
   return last;
+}
+
+/** PC-10: the per-call writers' "no HMAC_SECRET" note for their Pipeline Health row ('' when hashed). */
+function perCallHashlessNote_(res) {
+  return (res && res.hashless)
+    ? ' | WRITTEN WITHOUT phone hashes: HMAC_SECRET is not set in cdr-import -- callbacks and insurer '
+      + 'labels are blind; set it to match the dashboard (Operator State #17) and re-import the date'
+    : '';
 }
 
 /** PIPE-1: one FAILURE row when a date is parked -- Health flags it, PipelineWatch pushes it. */

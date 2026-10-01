@@ -164,6 +164,28 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
   function isQueueCall(cid, parent) {
     return queueCallIds.has(cid) || (parent && queueCallIds.has(parent));
   }
+  // PC-4 (broad-scan 2026-10-01): a call group with ANY Incoming leg is an
+  // INBOUND call -- outboundCalls.js's rule ("a leg group is outbound when it
+  // has NO Incoming leg"), because an answered inbound call carries the
+  // agent's own Outgoing talk leg (S2C-1 measured 3.8% of answered calls with
+  // the agent ONLY on that leg). PASS A guarded this for queue calls only, so
+  // on a NON-queue direct call that leg became a fake connected outbound and
+  // its talk counted twice. Same id discipline as queueCallIds (cid + parent).
+  const incomingCallIds = new Set();
+  for (let ii = 1; ii < rawDisplayData.length; ii++) {
+    const q = rawDisplayData[ii];
+    if (!q || String(q[C.DIR] || '') !== 'Incoming') continue;
+    const icid = dcClean_(q[C.CALL_ID]);
+    const ipar = realParent(dcClean_(q[C.PARENT]));
+    if (icid) incomingCallIds.add(icid);
+    if (ipar) incomingCallIds.add(ipar);
+  }
+  function isIncomingCall(cid, parent) {
+    return incomingCallIds.has(cid) || (parent && incomingCallIds.has(parent));
+  }
+  // agent name -> cid -> the talk seconds of their OWN Outgoing leg on an
+  // inbound call; credited to that call's inbound event after the scan.
+  const ownTalkOnInbound = {};
 
   // agent -> { dept, occ:[{cid,s,e}], ib:{cid->ev}, ob:{cid->ev} }
   const A = {};
@@ -229,8 +251,21 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       if (startSec != null && (ev.start == null || startSec < ev.start)) ev.start = startSec;
       const ringEnd = (startSec != null) ? startSec + Math.max(0, dcTimeToSec_(r[C.CALLTIME])) : null;
       if (ringEnd != null && (ev.ringEnd == null || ringEnd > ev.ringEnd)) ev.ringEnd = ringEnd;
-      if (answered) { ev.answered = true; ev.talk = Math.max(ev.talk, talk); }
+      // PC-4: "Answered" needs talk, as in the inbound capture's Talk>0 gate --
+      // a zero-talk Answered leg counted as answered and dragged ATT down.
+      if (answered && talk > 0) { ev.answered = true; ev.talk = Math.max(ev.talk, talk); }
       // (missed flag is implied when no leg answered; classified in pass 2)
+    }
+
+    // PC-4: the agent's own Outgoing leg on an INBOUND call is that call's
+    // talk, not an outbound call -- remembered and credited to the inbound
+    // event below (the leg may precede the Incoming leg in the grid).
+    if (callerAgent && !exclusions.has(callerAgent.name) && dir === 'Outgoing' && isIncomingCall(cid, parent)) {
+      if (talk > 0) {
+        const own = ownTalkOnInbound[callerAgent.name] || (ownTalkOnInbound[callerAgent.name] = {});
+        own[cid] = Math.max(own[cid] || 0, talk);
+      }
+      continue;
     }
 
     // (3) OUTBOUND DIRECT events -- agent is the caller; Outgoing. Activity only.
@@ -242,6 +277,20 @@ function computeDirectCallMetrics(rawDisplayData, maps, opts) {
       if (talk > 0) { ev.connected = true; ev.talk = Math.max(ev.talk, talk); }
     }
   }
+
+  // PC-4: an inbound event the agent's own Outgoing talk leg answered (the
+  // S2C-1 shape) is ANSWERED with that talk -- pre-fix it read missed_free
+  // while the same talk was counted as a fake outbound.
+  Object.keys(ownTalkOnInbound).forEach(function (name) {
+    const a = A[name];
+    if (!a) return;
+    Object.keys(ownTalkOnInbound[name]).forEach(function (cid) {
+      const ev = a.ib[cid];
+      if (!ev) return;
+      ev.answered = true;
+      ev.talk = Math.max(ev.talk, ownTalkOnInbound[name][cid]);
+    });
+  });
 
   function inWindow(s) { return s != null && s >= W0 && s < W1; }
   // Returns the FIRST overlapping busy interval of a DIFFERENT call (the

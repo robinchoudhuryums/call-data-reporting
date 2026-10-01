@@ -178,6 +178,9 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       unparsedDropped++;
       return false;
     });
+    // PC-1: roster-canonical agent names (inboundCalls.js), so the Outbound
+    // report's roster attribution and Agent Day match nickname agents.
+    if (typeof icCanonicalizeRecordAgents_ === 'function') icCanonicalizeRecordAgents_(records);
     if (unparsedDropped) {
       Logger.log('writeOutboundCallsToNeon: dropped %s record(s) with no parseable call date '
         + '(unparseable first-leg timestamp?) -- these calls are NOT captured.', unparsedDropped);
@@ -300,7 +303,7 @@ function writeOutboundCallsToNeon(rawRows, opts) {
       conn.commit();
       Logger.log('writeOutboundCallsToNeon: wrote ' + records.length + ' outbound-call records ('
         + batches.length + ' chunks).');
-      return { inserted: records.length, skipped: 0, unparsedDropped: unparsedDropped };
+      return { inserted: records.length, skipped: 0, unparsedDropped: unparsedDropped, hashless: !secret };   // PC-10
     } catch (e) {
       try { conn.rollback(); } catch (re) {}
       throw e;

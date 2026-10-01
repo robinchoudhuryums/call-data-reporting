@@ -69,7 +69,7 @@
 // derived dominant first_agent > raw number; raw kept in `number`).
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v15';  // v15: S2C-6 kpis.xferUnanswered -- internal transfer attempts into the dept's queues nobody answered, QCD's > 60s rule, linked or not (a separate tile; Abandoned on hold unchanged). v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v16';  // v16: PC-9 the R49 06:00 floor for CSR-family entry queues (inboundWindowClause_). v15: S2C-6 kpis.xferUnanswered -- internal transfer attempts into the dept's queues nobody answered, QCD's > 60s rule, linked or not (a separate tile; Abandoned on hold unchanged). v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -350,9 +350,57 @@ function inboundDeptPredicate_(dept, deptQueues) {
  * INV-18 display convention and 30 min wider at the start on purpose. Leave it.
  */
 function inboundWindowClause_(inside) {
-  const c = "(c.call_start IS NULL OR (c.call_start >= '" + INBOUND_WORK_WINDOW_PST.start
-          + "' AND c.call_start < '" + INBOUND_WORK_WINDOW_PST.end + "'))";
+  const c = "(c.call_start IS NULL OR (c.call_start >= " + inboundWindowStartSql_()
+          + " AND c.call_start < '" + INBOUND_WORK_WINDOW_PST.end + "'))";
   return inside ? c : ('NOT ' + c);
+}
+
+/**
+ * PC-9 (broad-scan 2026-10-01): the R49 per-queue floor, for inbound_calls.
+ * The lowercased entry-queue names that start at INBOUND_WORK_WINDOW_PST.
+ * earlyStart: the CSR family's RAW names (DASHBOARD_EARLY_WINDOW.queues) plus
+ * the CANONICAL side of every Dept Config `raw=canonical` pair whose raw side
+ * is one of them -- the capture rewrites entry_queue to the canonical name when
+ * such a pair exists (R8-N), so matching the raw names alone would miss CSR's
+ * main queue (A_Q_CSR is stored as A_Q_CustomerSuccess in this install).
+ * Best-effort: a config read failure leaves the raw names (never wider).
+ */
+function inboundEarlyQueueSet_() {
+  const set = {};
+  const raw = (typeof DASHBOARD_EARLY_WINDOW !== 'undefined' && DASHBOARD_EARLY_WINDOW.queues) || [];
+  raw.forEach(function (q) { set[String(q).trim().toLowerCase()] = true; });
+  try {
+    const cfg = (typeof getActiveDeptConfigMap_ === 'function') ? getActiveDeptConfigMap_() : {};
+    Object.keys(cfg || {}).forEach(function (d) {
+      ((cfg[d] && cfg[d].inboundAliases) || []).forEach(function (e) {
+        const t = String(e || '').trim();
+        const eq = t.indexOf('=');
+        if (eq <= 0) return;
+        const r = t.slice(0, eq).trim().toLowerCase();
+        const c = t.slice(eq + 1).trim().toLowerCase();
+        if (c && set[r]) set[c] = true;
+      });
+    });
+  } catch (e) {
+    Logger.log('inboundEarlyQueueSet_: Dept Config unavailable, raw early names only: ' + (e && e.message ? e.message : e));
+  }
+  return set;
+}
+
+/** PC-9: the window START as a SQL expression -- 06:00 for an early-family entry queue, else 06:30. */
+function inboundWindowStartSql_() {
+  const early = Object.keys(inboundEarlyQueueSet_());
+  if (!early.length || !INBOUND_WORK_WINDOW_PST.earlyStart) return "'" + INBOUND_WORK_WINDOW_PST.start + "'";
+  return "(CASE WHEN lower(trim(coalesce(c.entry_queue, ''))) IN ("
+    + early.map(inboundSqlLit_).join(',') + ") THEN '" + INBOUND_WORK_WINDOW_PST.earlyStart
+    + "' ELSE '" + INBOUND_WORK_WINDOW_PST.start + "' END)";
+}
+
+/** PC-9: the JS twin for the sheet fallbacks -- the start for one entry queue. */
+function inboundWindowStartFor_(entryQueue, earlySet) {
+  const set = earlySet || inboundEarlyQueueSet_();
+  return (INBOUND_WORK_WINDOW_PST.earlyStart && set[String(entryQueue || '').trim().toLowerCase()])
+    ? INBOUND_WORK_WINDOW_PST.earlyStart : INBOUND_WORK_WINDOW_PST.start;
 }
 
 function callJourneyDeptPredicate_(dept, deptQueues) {
@@ -593,7 +641,8 @@ function getCallJourney(req) {
       // R-3: allDepts managers are entitled to every dept's data (breadth
       // gate, like assertDeptAccess_), so their fallback is ungated too.
       const entitled = (user.role === 'admin') || !!user.allDepts
-        || callIdInDeptMissedReport_(dept, date, callId);
+        || callIdInDeptMissedReport_(dept, date, callId)
+        || inboundLinkEntitled_(conn, callId, date, dept, deptQueues);   // PC-5
       if (entitled) { json = lookup(''); viaFallback = !!json; ranUnscoped = true; }
     }
     if (!json) {
@@ -658,6 +707,49 @@ function getCallJourney(req) {
     return inboundCallJourneySheetFallback_(callId, date, dept, user);
   } finally {
     try { conn.close(); } catch (ce) {}
+  }
+}
+
+/**
+ * PC-5 (broad-scan 2026-10-01): the THIRD inbound auth arm -- the link is the
+ * capability, exactly as getOutboundCallJourney_ already rules for the
+ * outbound kind (Step 4). An internal transfer record (is_internal, written
+ * by inboundCalls.js) carries related_call_id = the CUSTOMER call and kind
+ * 'inbound', and the client renders "view that call's path" on it. The
+ * receiving dept's manager can drill that record, but the customer call itself
+ * sits in the ORIGIN dept's queues and is not in the receiving dept's Missed
+ * report, so both arms refused and the link was a reason-less dead end. TRUE
+ * iff some internal record linking this call is one this manager could already
+ * drill -- through the dept predicate (arm 1) or their Missed report (arm 2),
+ * the same two arms in the same order. Best-effort: an error is false (closed).
+ */
+function inboundLinkEntitled_(conn, callId, date, dept, deptQueues) {
+  if (!dept || !conn) return false;
+  try {
+    const base = 'SELECT c.call_id AS linker FROM inbound_calls c '
+      + 'WHERE c.related_call_id = ? AND c.call_date = ?::date '
+      + "AND lower(coalesce(c.related_call_kind, 'inbound')) = 'inbound' "
+      + 'AND COALESCE(c.is_internal, FALSE) = TRUE';
+    const run = function (pred) {
+      const st = conn.prepareStatement(base + pred);
+      st.setString(1, callId);
+      st.setString(2, date);
+      const rs = st.executeQuery();
+      const out = [];
+      while (rs.next()) out.push(String(rs.getString('linker') || ''));
+      rs.close(); st.close();
+      if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(out.join(',').length, 'callJourney');
+      return out;
+    };
+    if (run(callJourneyDeptPredicate_(dept, deptQueues)).length) return true;
+    const linkers = run('');
+    for (let i = 0; i < linkers.length; i++) {
+      if (linkers[i] && callIdInDeptMissedReport_(dept, date, linkers[i])) return true;
+    }
+    return false;
+  } catch (e) {
+    Logger.log('inboundLinkEntitled_ failed (stays closed): ' + (e && e.message ? e.message : e));
+    return false;
   }
 }
 
@@ -755,8 +847,16 @@ function outboundCallJourneySheetFallback_(callId, date, dept, user) {
     if (obCols < 12) return { available: false, found: false };   // pre-contract tab
 
     // ── Entitlement (managers only; admins are entitled to everything) ──
-    var isAdmin = !!(user && (user.role === 'admin' || user.allDepts));
-    if (!isAdmin && dept) {
+    // PC-8 (broad-scan 2026-10-01): the SAME rule as the Neon path
+    // (getOutboundCallJourney_: `user.role !== 'admin'` re-derives the link).
+    // This arm used to treat an all-departments manager as admin AND skipped
+    // the check whenever dept was blank -- the company view -- so during a Neon
+    // outage that manager could open ANY outbound call by id, data that is
+    // otherwise admin-only while the Outbound report is vetted. A blank dept
+    // now mirrors the Neon path's empty predicate: entitled iff ANY internal
+    // record links the call.
+    var isAdmin = !!(user && user.role === 'admin');
+    if (!isAdmin) {
       if (!ibSheet) return { available: false, found: false };
       var ibLast = ibSheet.getLastRow();
       var ibCols = ibSheet.getLastColumn();
@@ -787,7 +887,7 @@ function outboundCallJourneySheetFallback_(callId, date, dept, user) {
         var ibGrid = ibSheet.getRange(ibStart + ibFirst, 1, ibLastIdx - ibFirst + 1, 22)
                             .getDisplayValues();
         var qSet2 = {};
-        inboundQueuesForDept_(dept).forEach(function (q) {
+        (dept ? inboundQueuesForDept_(dept) : []).forEach(function (q) {
           qSet2[String(q).trim().toLowerCase()] = true;
         });
         var linkers = [];
@@ -800,9 +900,11 @@ function outboundCallJourneySheetFallback_(callId, date, dept, user) {
           if (String(lrow[16] == null ? '' : lrow[16]).trim().toUpperCase() !== 'TRUE') continue;
           linkers.push(lrow);
         }
-        // Arm 1: the dept predicate (entry / final queue / final dept).
+        // Arm 1: the dept predicate (entry / final queue / final dept). A blank
+        // dept (company view) is the Neon path's EMPTY predicate: any linker.
+        if (!dept && linkers.length) entitled = true;
         var fdSet2 = {};
-        inboundDeptFinalLabels_(dept).forEach(function (l) { fdSet2[l] = true; });
+        (dept ? inboundDeptFinalLabels_(dept) : []).forEach(function (l) { fdSet2[l] = true; });
         for (var a1 = 0; a1 < linkers.length && !entitled; a1++) {
           var eq2 = String(linkers[a1][10] == null ? '' : linkers[a1][10]).trim().toLowerCase();
           var fq2 = String(linkers[a1][11] == null ? '' : linkers[a1][11]).trim().toLowerCase();
@@ -814,7 +916,7 @@ function outboundCallJourneySheetFallback_(callId, date, dept, user) {
         for (var a2 = 0; a2 < linkers.length && !entitled; a2++) {
           var linkId = String(linkers[a2][1] == null ? '' : linkers[a2][1]).trim();
           if (!linkId) continue;
-          if (typeof callIdInDeptMissedReport_ === 'function'
+          if (dept && typeof callIdInDeptMissedReport_ === 'function'
               && callIdInDeptMissedReport_(dept, date, linkId)) entitled = true;
         }
       }
@@ -970,6 +1072,26 @@ function inboundCallJourneySheetFallback_(callId, date, dept, user) {
       if (!entitled) {
         entitled = (user && user.role === 'admin') || !!(user && user.allDepts)
                 || callIdInDeptMissedReport_(dept, date, callId);
+      }
+      // PC-5: the third arm, mirrored from inboundLinkEntitled_ -- an internal
+      // record on the same date linking this call (cols 16 / 20 / 21) that the
+      // manager could drill, by the dept sets above or their Missed report.
+      if (!entitled && width >= 22) {
+        for (var lk = 0; lk < grid.length && !entitled; lk++) {
+          var lr = grid[lk];
+          if (String(lr[20] == null ? '' : lr[20]).trim() !== callId) continue;
+          var lkind = String(lr[21] == null ? '' : lr[21]).trim().toLowerCase();
+          if (lkind && lkind !== 'inbound') continue;   // blank kind reads as inbound, as in SQL
+          if (String(lr[16] == null ? '' : lr[16]).trim().toUpperCase() !== 'TRUE') continue;
+          var leq = String(lr[10] == null ? '' : lr[10]).trim().toLowerCase();
+          var lfq = String(lr[11] == null ? '' : lr[11]).trim().toLowerCase();
+          var lfd = String(lr[12] == null ? '' : lr[12]).trim().toLowerCase();
+          if (qSet[leq] === true || qSet[lfq] === true || (!!lfd && fdSet[lfd] === true)) entitled = true;
+          else {
+            var lid = String(lr[1] == null ? '' : lr[1]).trim();
+            if (lid && callIdInDeptMissedReport_(dept, date, lid)) entitled = true;
+          }
+        }
       }
       // Reason-less miss for the gate-closed manager, as on the Neon path.
       if (!entitled) return { available: true, found: false };
@@ -1707,10 +1829,10 @@ function computeInboundReport_(scope) {
             "'calls', count(*), " +
             "'abandoned', count(*) FILTER (WHERE disposition='abandoned'), " +
             "'answered', count(*) FILTER (WHERE disposition='answered'), " +
-            "'beforeCalls', count(*) FILTER (WHERE c.call_start < '"
-              + INBOUND_WORK_WINDOW_PST.start + "'), " +
-            "'beforeAbandoned', count(*) FILTER (WHERE c.call_start < '"
-              + INBOUND_WORK_WINDOW_PST.start + "' AND disposition='abandoned'), " +
+            // PC-9: "before" is before THIS call's start (06:00 for the CSR family).
+            "'beforeCalls', count(*) FILTER (WHERE c.call_start < " + inboundWindowStartSql_() + "), " +
+            "'beforeAbandoned', count(*) FILTER (WHERE c.call_start < " + inboundWindowStartSql_()
+              + " AND disposition='abandoned'), " +
             "'afterCalls', count(*) FILTER (WHERE c.call_start >= '"
               + INBOUND_WORK_WINDOW_PST.end + "'), " +
             "'afterAbandoned', count(*) FILTER (WHERE c.call_start >= '"
@@ -2166,9 +2288,9 @@ function runInboundQcdParityCheck() {
         r.totals.qcd, r.totals.inboundAbandoned, r.totals.inboundOnHold,
         r.totals.inboundAbandoned - r.totals.qcd,
         (r.totals.inboundAbandoned + r.totals.inboundOnHold) - r.totals.qcd);
-      Logger.log('  OUTSIDE WORK WINDOW (%s-%s PST, research only -- NOT a dept metric, '
+      Logger.log('  OUTSIDE WORK WINDOW (%s-%s PST, %s for the CSR family; research only -- NOT a dept metric, '
         + 'and NOT part of the diff above): %s abandoned of %s calls',
-        INBOUND_WORK_WINDOW_PST.start, INBOUND_WORK_WINDOW_PST.end,
+        INBOUND_WORK_WINDOW_PST.start, INBOUND_WORK_WINDOW_PST.end, INBOUND_WORK_WINDOW_PST.earlyStart,
         r.totals.outsideWindowAbandoned, r.totals.outsideWindowCalls);
     });
 

@@ -480,6 +480,19 @@ test('L2: authoritative write DELETEs the payload dates before the upsert (same 
   assert.equal(cap.commits, 1, 'one commit (delete + insert are atomic)');
 });
 
+test('PC-10: a write with NO HMAC_SECRET is logged and reported as hashless (it used to leave no trace)', function () {
+  const cap = {};
+  const logs = [];
+  const prevLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function () { logs.push(Array.prototype.join.call(arguments, ' ')); } };
+  h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
+  try {
+    const res = h.call('writeInboundCallsToNeon', L2_ROWS);
+    assert.equal(res.hashless, true, 'the :Inbound Pipeline Health row keys on this');
+    assert.ok(logs.some(function (l) { return /HMAC_SECRET not set/.test(l); }), logs.join('|'));
+  } finally { h.ctx.Logger = prevLogger; }
+});
+
 test('L2: non-authoritative write is upsert-only (no DELETE)', function () {
   const cap = {};
   h.ctx.getReachableNeonConn_ = function () { return fakeInboundConn(cap); };
@@ -883,6 +896,22 @@ test('internal-origin: a phone-shaped or queue caller name is never stored as th
   ]);
   assert.equal(rec(noDept, '830004').originDept, null);
   assert.equal(rec(noDept, '830004').originAgent, 'Marie (Muskaan) Jindal');
+});
+
+test('PC-7: an EXTERNAL caller\'s CNAM is never stored as the originator, whatever its shape', function () {
+  // The phone-shaped test above passes because the NAME looks like a number.
+  // A real CNAM does not: an outbound call whose customer was transferred into
+  // a queue has no Incoming leg (captured internal-origin), and its queue leg
+  // can carry the customer as CALLER -- pre-PC-7 "SMITH JOHN" landed in
+  // origin_agent, shown to the receiving dept's managers as the requester.
+  const recs = build([
+    leg({ callId: '830020', legId: 1, start: '08/21/2026 08:30:00', stop: '08/21/2026 08:32:00',
+          direction: 'Internal', callTime: '0:02:00',
+          caller: '12145559999', callerName: 'SMITH JOHN',
+          callee: '138', calleeName: 'A_Q_Spanish',
+          missed: 'Missed', abandoned: 'Abandoned', dept: 'CSR' }),
+  ]);
+  assert.equal(rec(recs, '830020').originAgent, null);
 });
 
 test('externally-originated calls carry NO originator (the field is internal-only)', function () {

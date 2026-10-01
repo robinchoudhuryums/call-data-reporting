@@ -2282,6 +2282,7 @@ items for anything it flags or doesn't cover.)
 69. `ANSWER_RATE_FORMULA` -- the ONE answer-rate formula for every server surface (DD-2); run `probeAnswerRateFormulas()` before setting it
 70. Execution ceiling + the cdr-import time budgets -- measure the ceiling ONCE with the probe, then set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
 71. The answer-quality review sample -- CONCLUDED 2026-09-23: no stored field tells a person from a machine; now research-only, its figures never shown in reporting; blinded worksheet, do NOT open the key until every row is labelled
+72. Per-call agent-name rewrite (PC-1) -- capture now stores the roster-canonical name; run the cdr-import preview, back up Neon, then the rewrite once after deploy, and again after a new alias override
 
 ## Cycle Workflow Config
 

@@ -152,6 +152,13 @@ tests/
                               plus the shared-leg-tree scoping: originator-
                               scoped `answered`, the abandon-leg fallback,
                               and the queue-leg originator identity),
+                              percall-agent-canon (PC-1: the ONE INV-24
+                              canonicalizer shared by the DQE build and
+                              the capture writers, capture-time rewrite
+                              of agent names but never queue / masked /
+                              IVR journey nodes, and the editor-run Neon
+                              rewrite -- preview writes nothing, apply
+                              binds exactly the mapped pairs),
                               sheet-space (R47: the workbook 10M-cell
                               cap -- the planner REFUSES rather than
                               truncating a named range, the vetted per-tab

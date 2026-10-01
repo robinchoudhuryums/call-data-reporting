@@ -92,7 +92,7 @@ test('parity: the inbound side is scoped to the PST work window', function () {
   const conn = installStubs([]);
   h.call('compareInboundVsQcdAbandons_', 'CSR', '2026-06-01', '2026-06-03', conn);
   const sql = h.ctx.__cap.sqls[0];
-  assert.ok(sql.indexOf("c.call_start >= '06:30:00'") !== -1,
+  assert.ok(sql.indexOf("c.call_start >= (CASE WHEN") !== -1,
     'window start bound present, raw PST (call_start is NOT CST-shifted)');
   assert.ok(sql.indexOf("c.call_start < '15:00:00'") !== -1,
     'window end bound is half-open, matching the pipeline predicate');

@@ -472,3 +472,16 @@ test('ING-3 follow-on: a skipped DAILY QCD mirror logs processIntegratedHistory:
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
   assert.match(src, /Neon CDR write skipped[^\n]*\n\s*dailyMirrorSkipRow_\(targetSS, 'processIntegratedHistory:CDR:neon'/);
 });
+
+// PC-10 (broad-scan 2026-10-01): a per-call capture written WITHOUT phone
+// hashes is a degraded capture; its Pipeline Health row must say so and name the fix.
+test('PC-10: the hashless note names the missing HMAC_SECRET; a hashed write adds nothing', function () {
+  assert.equal(h.call('perCallHashlessNote_', { inserted: 5 }), '');
+  assert.equal(h.call('perCallHashlessNote_', null), '');
+  const note = h.call('perCallHashlessNote_', { inserted: 5, hashless: true });
+  assert.match(note, /HMAC_SECRET is not set in cdr-import/);
+  assert.match(note, /Operator State #17/);
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'cdr-import', 'autoImport.js'), 'utf8');
+  assert.match(src, /status: inboundRes\.hashless \? 'failure' : 'success'/);
+  assert.match(src, /status: outboundRes\.hashless \? 'failure' : 'success'/);
+});

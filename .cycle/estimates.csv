@@ -2,3 +2,4 @@ date,cycle,action,estimate,estimated_hours,actual_hours,calibration_note
 2026-08-26,149,journey-sheet-fallback+memo,M,4.5,1.5,"estimated 4-5h after Phase 0; actual ~1.5h of session work — the empty tab removed the migration half. Fallback-family estimates running ~3x actual."
 2026-10-01,214,broad-scan-batch1-ingest-safety,M,9.5,2.5,"estimated ~9.5h across 8 items; ~2.5h of session work -- most items were S fixes with existing harness seams."
 2026-10-01,215,broad-scan-batch2-lock-discipline,M,9.5,2,"estimated ~9.5h across 8 items; ~2h of session work -- the escalation preamble rewrite was mechanical (14 identical sites)."
+2026-10-01,216,broad-scan-batch3-per-call-identity,L,14,3.5,"estimated ~14h across 10 items; ~3.5h of session work -- PC-1/PC-9 grew past their estimates (owner asked twice), the rest were S fixes."
