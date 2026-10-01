@@ -339,6 +339,13 @@ test('F5: non-finite numerics are counted, and the clean note is unchanged', fun
   assert.equal(sqlNum(Infinity), '0');
   assert.equal(h.ctx.NEON_COERCED_, 3, 'NaN / undefined / Infinity must each be counted');
 
+  // PIPE-4: the CDR build's deliberate blank ('' for an agent with no
+  // outbound-external calls) still writes 0 but is NOT a non-finite value --
+  // counting it made every daily mirror cry "NON-FINITE" and buried real ones.
+  assert.equal(sqlInt(''), '0');
+  assert.equal(sqlNum('  '), '0');
+  assert.equal(h.ctx.NEON_COERCED_, 3, 'a blank cell is not counted');
+
   // The common path's log line must be BYTE-IDENTICAL to before this landed --
   // operators and any log-scraping read it.
   assert.equal(h.fn('neonInlineNote_')({ statements: 3, fallback: 0, coerced: 0 }),

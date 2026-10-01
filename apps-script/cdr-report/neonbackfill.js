@@ -21,8 +21,10 @@
 //   name columns corrupted before the F2 splitter fix, and fills any
 //   partially-written phone children. Requires HMAC_SECRET (aborts without
 //   it to avoid nulling the JSONB). Resumable via CDR_BACKFILL_RESUME.
-//   (T-8: every *_RESUME pointer is a fingerprinted JSON {index,rowCount,key};
-//   a sheet change since the last run restarts from 0 -- see nbResumeRead_.)
+//   (T-8: every *_RESUME pointer in THIS file is a fingerprinted JSON
+//   {index,rowCount,key}; a sheet change since the last run restarts from 0 --
+//   see nbResumeRead_. cdr-import's DIRECT_UPSERT_RESUME has carried the same
+//   fingerprint since IG-2, via its own dcResumeRead_ -- a different project.)
 // ============================================================================
 
 

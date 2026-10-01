@@ -1442,7 +1442,26 @@ When something looks wrong, before assuming a code bug, check:
     `holdCallLegsForRecovery()` run from the editor** right after, or the
     first prune removes it. Rebuild / backfill the date inside the hold. The
     importer also re-fills an EMPTY leftover tab from an earlier failed import
-    and removes a tab its own failed write created.
+    and removes a tab its own failed write created. Since IG-1 (broad-scan
+    2026-10-01) it holds each tab the moment it is imported (and re-holds one a
+    re-run skips), stops at the bulk time budget, and reports a per-file failure
+    instead of "Could not access folder" -- re-run to continue.
+
+    **Never-imported tabs are KEPT (PIPE-2, broad-scan 2026-10-01).** The prune
+    used to be age-only, so a tab the import never landed (stalled pending loop,
+    future-dated tab, lost hold) was deleted with its day never in history. An
+    over-age tab is now deleted only when PROVEN imported -- its name is in the
+    `lastSheets` memo or its date is in DQE / QCD Historical Data -- and every
+    other one is kept and named in the `retentionPrune` row ("KEPT N
+    never-imported"). **To clear one:** import it (Manual Processing for that
+    date) or delete the tab by hand. If the history check itself fails, nothing
+    unproven is deleted and the row is a FAILURE. Its companion on the import
+    side: a date that fails to import is retried on at most 3 runs (one email),
+    then PARKED with an `autoImport:parked` failure row -- the
+    `PENDING_IMPORT_FAILURES` ledger (cdr-import) holds the attempts; it clears
+    itself once the tab is processed or deleted, and a `success` row on the same
+    step says no parked date remains. The pending window now ends at TODAY, so a
+    future-dated tab can no longer hide the real ones.
 44. **DQE-silence watchdog (`DqeSilenceWatch.gs`, dashboard) — the
     cross-check born from the Field Ops Power blind spot. Enable it.**
     Defaults OFF like every flag-gated engine: editor-run

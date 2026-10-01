@@ -29,7 +29,12 @@ explicit offset) so the host cannot move it, and assert shape only on a bare
 date string -- see the Batch 4 bare-number pin in `neon-write-mapping.test.js`.
 `scripts/deploy.sh` runs its gate under `TZ=America/Chicago` for the same
 reason: a red gate blocks the `clasp push` entirely, so the developer's locale
-must not be what decides whether a deploy is allowed.
+must not be what decides whether a deploy is allowed. **HT-1 (broad-scan
+2026-10-01): `npm test` and `npm run ci` pin it too** (`TZ=${CI_TZ:-America/Chicago}`,
+the same `CI_TZ` override deploy.sh honours), so the npm entry points are green
+on any host; a bare `node --test` still runs in the host zone, which is how the
+table above is measured. The R38 `force-delete-rows` pins (added after that
+measurement) were red on a UTC host until their fixtures moved to NOON.
 
 Node-based unit tests for the **Department Dashboard** Apps Script
 code. Zero dependencies — uses Node's built-in `node:test` + `node:assert`

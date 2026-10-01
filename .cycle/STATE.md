@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-01 — broad-scan (new) + Batch 1 IMPLEMENTED on branch
+  `claude/optimistic-lamport-92xm9l` (block 214).** A fresh 3-stage broad scan
+  produced ~110 findings in 12 batches (IDs AC/DL/EN/PC/PIPE/IG/CR/CL/HT/DEP/
+  CH/DX/ESC-D/BU/QO -- new prefixes because SEC-/DATA-/OPS-/RPT-/UI- already
+  exist). Batch 1 ("ingest can't stall or silently lose tabs") is DONE and
+  pushed: HT-1, PIPE-1 (failed-import ledger + park after 3, `autoImport:parked`
+  row), PIPE-2 (window ends at today; prune keeps tabs not PROVEN imported),
+  IG-1, PIPE-3, IG-2 + DX-13, PIPE-5, PIPE-4. 1993/1993 green, lint clean.
+  **Owner-side:** deploy cdr-import (blocking) + cdr-report (INV-16 copy);
+  then read the next `retentionPrune` row for "KEPT N never-imported".
+  **Next suggested:** Batch 2 (lock discipline: AC-1, EN-2/AC-4, ESC-D2, AC-5,
+  EN-3/4/5). No PR opened (not requested).
 - **2026-10-01 — WHERE I LEFT OFF.** Everything below is MERGED to main:
   Steps 0/1/2a/2b + ESC-L3/ESC-S1 + the first sync-docs pass as PR #348
   (0dc15c9), and the reflect follow-ups (blocks 212-213) + the second

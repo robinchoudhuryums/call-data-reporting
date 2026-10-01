@@ -624,6 +624,55 @@ function writeDirectCallRowsToNeon_(rows, monthYear, isoDate) {
 }
 
 // -- Deferred Neon mirror backfill (Phase 3) ----------------------------------
+// IG-2 (broad-scan 2026-10-01): DIRECT_UPSERT_RESUME was the last BARE
+// positional index (cdr-report's four *_RESUME pointers got fingerprints in
+// T-8). dcWriteSheet_ deletes a rebuilt date's rows and appends them at the
+// END, so a force re-import between two runs slid every later row up under the
+// pointer and the resumed run skipped those rows for good -- the backfill does
+// no per-date replace, so the gap was permanent. Same fix as T-8, kept local
+// (different project): the pointer carries the grid's row count and the key of
+// the row it resumes AT; any mismatch -- or a legacy bare integer -- restarts
+// from 0, which is always safe because the upsert is ON CONFLICT idempotent.
+var DC_RESUME_KEY_COLS_ = [1, 2, 3];   // Direct Call History: B date, C dept, D agent
+
+function dcResumeKey_(row) {
+  return DC_RESUME_KEY_COLS_.map(function (c) {
+    return String(row && row[c] != null ? row[c] : '').trim();
+  }).join('\u0001');
+}
+
+function dcResumeRead_(props, data) {
+  const raw = props.getProperty('DIRECT_UPSERT_RESUME');
+  if (!raw) return 0;
+  let st = null;
+  try { st = JSON.parse(raw); } catch (e) { st = null; }
+  if (!st || typeof st !== 'object') {
+    Logger.log('DIRECT_UPSERT_RESUME = "%s" is a legacy positional pointer with no row fingerprint '
+      + '-- restarting from 0 so no row can be skipped (IG-2).', raw);
+    return 0;
+  }
+  let idx = parseInt(st.index, 10);
+  if (isNaN(idx) || idx < 0) idx = 0;
+  let why = null;
+  if (st.rowCount !== data.length) why = 'row count changed (' + st.rowCount + ' -> ' + data.length + ')';
+  else if (idx < data.length && dcResumeKey_(data[idx]) !== st.key) why = 'the row at index ' + idx + ' changed';
+  if (why) {
+    Logger.log('DIRECT_UPSERT_RESUME: the sheet changed since the last run -- %s. Restarting from 0 '
+      + 'so no row is skipped (IG-2).', why);
+    return 0;
+  }
+  return idx;
+}
+
+function dcResumeWrite_(props, idx, data) {
+  props.setProperty('DIRECT_UPSERT_RESUME', JSON.stringify({
+    index: idx,
+    rowCount: data.length,
+    key: idx < data.length ? dcResumeKey_(data[idx]) : '',
+    writtenAt: new Date().toISOString(),
+  }));
+}
+
 /**
  * Editor-run: mirror the WHOLE `Direct Call History` sheet to Neon
  * `direct_call_history` with ON CONFLICT DO UPDATE. The companion to the
@@ -649,7 +698,7 @@ function backfillDirectCallToNeon() {
 
   const data = sheet.getRange(2, 1, lastRow - 1, DIRECT_CALL_HISTORY_HEADERS.length).getDisplayValues();
   const props = PropertiesService.getScriptProperties();
-  let startIndex = parseInt(props.getProperty('DIRECT_UPSERT_RESUME') || '0', 10) || 0;
+  let startIndex = dcResumeRead_(props, data);   // IG-2
   let sinceFloor = props.getProperty('DIRECT_UPSERT_SINCE');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(sinceFloor || ''))) sinceFloor = null;
   Logger.log('Direct upsert: starting at index %s of %s%s', startIndex, data.length,
@@ -669,7 +718,7 @@ function backfillDirectCallToNeon() {
     dcEnsureNeonTable_(conn);
     while (i < data.length) {
       if (Date.now() - startTime > TIME_LIMIT_MS) {
-        props.setProperty('DIRECT_UPSERT_RESUME', String(i));
+        dcResumeWrite_(props, i, data);
         Logger.log('Direct upsert: time limit reached; resume at index %s. Upserted %s. Run again to continue.', i, totalUpserted);
         return { upserted: totalUpserted, resumeAt: i };   // finally closes conn
       }
@@ -701,7 +750,7 @@ function backfillDirectCallToNeon() {
         totalUpserted += batch.length;
       } catch (e) {
         try { conn.rollback(); } catch (re) {}
-        props.setProperty('DIRECT_UPSERT_RESUME', String(batchStartIdx));
+        dcResumeWrite_(props, batchStartIdx, data);
         Logger.log('Direct upsert batch failed, rolled back. Resume at %s. Error: %s', batchStartIdx, (e && e.message ? e.message : e));
         throw e;
       }
