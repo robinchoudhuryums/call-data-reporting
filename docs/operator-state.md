@@ -308,7 +308,15 @@ When something looks wrong, before assuming a code bug, check:
     likely first experience of anyone running a gate without setting its
     `*_PARITY_FROM/_TO` properties. **Never flip a read-source flag on a result
     carrying `error` or `compared: 0`** -- the CORE-5/F-5 rule the config gates
-    already followed. Pinned by qcd-report.test.js + dal-cutover.test.js. Reversible with no redeploy (set back to `sheet`); cut-over
+    already followed. **Both gates also count ROWS per key (DL-1 / QO-3,
+    broad-scan 2026-10-01; verdict field `duplicates`)**: a sheet holding the
+    same agent-day (or queue-day) twice used to collapse to one map entry and
+    read CLEAN, while the sheet path SUMS both rows -- so the flip would have
+    silently halved those figures. Merge DQE duplicates with
+    `previewDqeDuplicateMerge` / `repairDqeDuplicateMerge` (cdr-report, #56) and
+    force re-import a duplicated QCD date, then re-run. The DQE gate now diffs
+    the queue split too (DL-2: a stale Neon `queue_split`, which COALESCE
+    preserves, was fetched and never compared). Pinned by qcd-report.test.js + dal-cutover.test.js. Reversible with no redeploy (set back to `sheet`); cut-over
     readers also fall back to the sheet on any Neon error. After a bulk
     rebuild (which defers the DQE->Neon mirror via `skipNeon`), run
     `backfillDQEHistoryUpsert()` (cdr-report) to populate/refresh
@@ -1497,7 +1505,7 @@ When something looks wrong, before assuming a code bug, check:
     lives in `DQE_SILENCE_STREAKS` (engine-written; clearing it just resets
     open episodes). Pinned by `tests/unit/dqe-silence-watch.test.js`. The
     Overview tile's companion surface is the per-dept `dqeSilence`
-    queue-lens badge (`companyOverview:v25`) — the PULL view to this
+    queue-lens badge (`companyOverview:v26`) — the PULL view to this
     engine's PUSH, same detector shape over the trailing 7 chart days.
 
 45. **Sign-in notifications (`notifyLoginEvent_`, Auth.gs/doGet) — ON by

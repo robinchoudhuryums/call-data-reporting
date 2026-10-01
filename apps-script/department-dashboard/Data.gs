@@ -988,7 +988,8 @@ function getDepartmentSummary(req) {
   // Orphan Fix modal adds an agent or `DO NOT EDIT!` is edited, so a roster
   // change was invisible to this table for up to the 6 h TTL. One extra
   // roster read per request; the compute reads the same sheet anyway.
-  const rosterHash = hashAgents_(((getRosterForDepartment_(dept) || {}).names) || []);
+  // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
+  const rosterHash = rosterSetHash_(deptSet);
   const cacheKey = 'summary:v22:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_() + ':' + rosterHash;
@@ -998,6 +999,7 @@ function getDepartmentSummary(req) {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
       logReportUsage_('summary', dept, user, true);
+      if (typeof noteReportCache_ === 'function') noteReportCache_('hit');   // DL-9
       return parsed;
     } catch (e) {
       // Corrupted cache entry -- fall through to recompute.
@@ -1059,6 +1061,7 @@ function getDepartmentSummary(req) {
   } else {
     try {
       cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS);
+      if (typeof noteReportCache_ === 'function') noteReportCache_('write');   // DL-9
     } catch (e) {
       // CacheService values are capped at ~100KB. A single dept's
       // summary is well under that, but log if it ever fails.
@@ -2119,6 +2122,54 @@ function getRosterForDepartment_(dept) {
     }
   }
   return { names: names, byAgent: byAgent, allExtensions: allExtensions };
+}
+
+/**
+ * DL-5 (broad-scan 2026-10-01): the ROSTER cache dimension for a SET of depts.
+ * One dept hashes exactly as D-7 always did (hashAgents_ of its names), so the
+ * single-dept keys are unchanged; several depts hash `dept|name` pairs, so a
+ * combined sub-queue view notices a roster edit on ANY dept it shows -- D-7
+ * hashed only the requested (primary) dept's roster.
+ */
+function rosterSetHash_(depts) {
+  const list = depts || [];
+  if (list.length === 1) return hashAgents_((getRosterForDepartment_(list[0]) || {}).names || []);
+  const pairs = [];
+  list.forEach(function (d) {
+    ((getRosterForDepartment_(d) || {}).names || []).forEach(function (n) { pairs.push(d + '|' + n); });
+  });
+  return hashAgents_(pairs);
+}
+
+/**
+ * DL-5: one hash over EVERY dept's roster, for the all-dept payloads (the
+ * Overview YTD chart). The dept block of `DO NOT EDIT!` is read in ONE range --
+ * not one read per dept -- and its `dept|name` pairs hashed. 'na' when the
+ * sheet is missing or unreadable (the key stays valid; it just cannot move).
+ */
+function rosterAllDeptsHash_() {
+  try {
+    const sheet = openSpreadsheet_().getSheetByName(SHEETS.ROSTER);
+    if (!sheet) return 'na';
+    const lastCol = sheet.getLastColumn(), lastRow = sheet.getLastRow();
+    if (lastCol < ROSTER.DEPT_FIRST_COL || lastRow < ROSTER.HEADER_ROW) return 'na';
+    const grid = sheet.getRange(ROSTER.HEADER_ROW, ROSTER.DEPT_FIRST_COL,
+                                lastRow - ROSTER.HEADER_ROW + 1, lastCol - ROSTER.DEPT_FIRST_COL + 1).getValues();
+    const header = grid[0], pairs = [];
+    const firstData = ROSTER.DATA_START_ROW - ROSTER.HEADER_ROW;
+    for (let c = 0; c < header.length; c++) {
+      const dept = String(header[c] || '').trim();
+      if (!dept) break;   // first blank ends the dept block (getRosterForDepartment_'s rule)
+      for (let r = firstData; r < grid.length; r++) {
+        const parsed = parseRosterCell_(grid[r][c]);
+        if (parsed) pairs.push(dept + '|' + parsed.name);
+      }
+    }
+    return hashAgents_(pairs);
+  } catch (e) {
+    Logger.log('rosterAllDeptsHash_ failed: ' + (e && e.message ? e.message : e));
+    return 'na';
+  }
 }
 
 /**

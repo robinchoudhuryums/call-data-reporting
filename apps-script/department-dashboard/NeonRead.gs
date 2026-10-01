@@ -656,7 +656,7 @@ function compareDqeSources_() {
   // of parsing log prose. Mirrors the CORE-5/F-5 contract the CONFIG gates use.
   var verdict = function (o) {
     var v = { from: COMPARE_FROM, to: COMPARE_TO, clean: false, compared: 0,
-              missingInNeon: 0, extraInNeon: 0, mismatches: 0, error: '' };
+              missingInNeon: 0, extraInNeon: 0, mismatches: 0, duplicates: 0, error: '' };
     for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) v[k] = o[k];
     return v;
   };
@@ -678,13 +678,25 @@ function compareDqeSources_() {
   // F2: 'slots' compares the 19-element array via String() (comma-join) -- both
   // sources return string[19], so equality holds iff every slot matches;
   // abandonedParentIds / abandonedMissedTimes are display strings.
+  // DL-2 (broad-scan 2026-10-01): queueSplit is compared too -- it was fetched
+  // (withQueueSplit) and never diffed, so a COALESCE-preserved stale Neon split
+  // passed. Both sides are the stored col-AI / `queue_split text` bytes.
   var FIELDS = ['totalUnique', 'totalRung', 'totalMissed', 'totalAnswered',
                 'tttSec', 'attSec', 'avgAbdWaitSec', 'csrAvgAbdWaitSec', 'queueExt',
-                'slots', 'abandonedParentIds', 'abandonedMissedTimes'];
+                'slots', 'abandonedParentIds', 'abandonedMissedTimes', 'queueSplit'];
 
-  var sMap = {}, nMap = {};
-  sheetRows.forEach(function (r) { sMap[keyOf(r)] = r; });
-  neonRows.forEach(function (r)  { nMap[keyOf(r)] = r; });
+  // DL-1 (broad-scan 2026-10-01): count ROWS per key, not just keys. The maps
+  // below keep one row per date|agent, so a sheet holding the same agent-day
+  // TWICE collapsed to one and read CLEAN -- while every sheet-path reader SUMS
+  // both rows, so the flip would silently halve that agent's figures. Neon
+  // cannot hold a duplicate (uq_dqe_history), so any key seen more than once
+  // on either side is a NOT-clean result of its own.
+  var sMap = {}, nMap = {}, sCount = {}, nCount = {};
+  sheetRows.forEach(function (r) { var k = keyOf(r); sMap[k] = r; sCount[k] = (sCount[k] || 0) + 1; });
+  neonRows.forEach(function (r)  { var k = keyOf(r); nMap[k] = r; nCount[k] = (nCount[k] || 0) + 1; });
+  var duplicates = [];
+  Object.keys(sCount).forEach(function (k) { if (sCount[k] > 1) duplicates.push(k + ' (sheet x' + sCount[k] + ')'); });
+  Object.keys(nCount).forEach(function (k) { if (nCount[k] > 1) duplicates.push(k + ' (neon x' + nCount[k] + ')'); });
 
   var missingInNeon = [], extraInNeon = [], mismatches = [];
   Object.keys(sMap).forEach(function (k) {
@@ -705,6 +717,8 @@ function compareDqeSources_() {
   extraInNeon.slice(0, 10).forEach(function (k) { Logger.log('   %s', k); });
   Logger.log('--- value mismatches on common keys: %s', mismatches.length);
   mismatches.slice(0, 10).forEach(function (m) { Logger.log('   %s', m); });
+  Logger.log('--- DUPLICATE rows for one date|agent: %s', duplicates.length);
+  duplicates.slice(0, 10).forEach(function (d) { Logger.log('   %s', d); });
 
   // EXTRA-in-Neon rows count as NOT clean: with reads on neon they are the
   // phantom-row hazard (split agent / double-counted totals) IMP-5 exists
@@ -725,7 +739,8 @@ function compareDqeSources_() {
                      extraInNeon: extraInNeon.length });
   }
 
-  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0);
+  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0
+               && duplicates.length === 0);
   Logger.log('=== PARITY %s ===', clean
     ? 'CLEAN -- dqe_history matches the sheet for this range (' + compared
       + ' rows compared); read-back gate PASSED'
@@ -734,10 +749,12 @@ function compareDqeSources_() {
       + 'DO UPDATE re-mirror of the sheet, F-51-sanitized, resumable) -- NOT '
       + 'backfillDQEHistory(), whose DO NOTHING skips every existing row. '
       + 'EXTRA-in-Neon phantoms -> force re-import the date (authoritative '
-      + 'replace, IMP-5) or delete those rows in SQL, then re-run this check.');
+      + 'replace, IMP-5) or delete those rows in SQL, then re-run this check. '
+      + 'DUPLICATE sheet rows -> previewDqeDuplicateMerge / repairDqeDuplicateMerge '
+      + '(cdr-report, Operator State #56), then re-run.');
   return verdict({ clean: clean, compared: compared,
                    missingInNeon: missingInNeon.length, extraInNeon: extraInNeon.length,
-                   mismatches: mismatches.length });
+                   mismatches: mismatches.length, duplicates: duplicates.length });
 }
 
 /**

@@ -322,3 +322,55 @@ test('D-1: MTD violations start on the 1st in the SCRIPT TZ, never the sheet-TZ 
     assert.equal(h.call('computeMtdViolations_', 'CSR', grid, 'America/Mexico_City'), 5);
   });
 });
+
+// QO-1 (broad-scan 2026-10-01): MTD is month-to-date through the LATEST QCD
+// DATE, not through today (the D-8 rule My Department and the emails follow).
+// On the 1st the latest data is still last month's, and the chip read a green
+// "0 viol MTD" beside last month's numbers. The month's 1st also sits outside
+// a 30-day window on the 1st, so the snapshot must read back to it.
+test('QO-1: on the 1st, MTD covers the latest data date\'s month -- from its 1st, never the month before', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  h.state.spreadsheet = makeFakeSpreadsheet({
+    sheets: {
+      'QCD Historical Data': [QCD_HEADER,
+        qcdRow('2026-08-31', q, 7),   // the month before -- must NOT count
+        qcdRow('2026-09-01', q, 3),   // outside the 30-day window, inside the latest month
+        qcdRow('2026-09-30', q, 2),   // the latest data date
+      ],
+    },
+  });
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  h.ctx.QCD_SHEET_DATA_MEMO_ = null;
+  h.ctx.QCD_NEON_GRID_MEMO_ = null;
+  atInstant_('2026-10-01T15:00:00Z', function () {
+    const out = h.call('computeQcdSnapshots_', ['CSR'], '2026-09-02', 'America/Chicago');
+    assert.ok(out.CSR);
+    assert.equal(out.CSR.date, '2026-09-30');
+    assert.equal(out.CSR.violationsMtd, 5, 'Sep 1 + Sep 30; pre-fix this was 0 (October had no rows yet)');
+  });
+});
+
+test('QO-1: the Neon path re-reads from the latest month\'s 1st when the window starts after it', function () {
+  h.state.props.SPREADSHEET_ID = 'fake';
+  h.ctx.DEPT_CONFIG_ROWS_MEMO_ = null;
+  const q = h.call('getDeptQcdQueues_', 'CSR')[0];
+  const all = [qcdRow('2026-09-01', q, 3), qcdRow('2026-09-30', q, 2)];
+  const reads = [];
+  const realGrid = h.ctx.readQcdGrid_;
+  h.ctx.readQcdGrid_ = function (from, to) {
+    reads.push(from + '..' + to);
+    const rows = all.filter(function (r) { return r[2] >= from && r[2] <= to; });
+    return { values: rows, displays: rows.map(function (r) { return r.map(String); }) };
+  };
+  try {
+    atInstant_('2026-10-01T15:00:00Z', function () {
+      const out = h.call('computeQcdSnapshots_', ['CSR'], '2026-09-02', 'America/Chicago');
+      assert.deepEqual(reads, ['2026-09-02..2026-10-01', '2026-09-01..2026-10-01']);
+      assert.equal(out.CSR.violationsMtd, 5);
+    });
+  } finally { h.ctx.readQcdGrid_ = realGrid; }
+});

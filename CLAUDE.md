@@ -1764,7 +1764,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   SET is cached; the grid is ~128k cells, past the per-value cap. Since D-7
   (Batch 6) the `summary:v22` and `individual_active:v2` keys carry the same
   roster hash as a SUFFIX (the CORE-3 pattern, no version bump) for the same
-  reason.
+  reason; since DL-5 so do `individual:`, `missed:` and `overviewChartYtd:`,
+  and a combined `summary` hashes EVERY dept it shows (`rosterSetHash_` /
+  `rosterAllDeptsHash_`, Data.gs; pinned by `cache-key.test.js`).
 - **Sub-queue combined view on My Department (Phase 1).** A parent dept
   (Sales / CSR / Power) always renders the COMBINED table, grouped per dept,
   with each group's heading row as its collapse toggle; the three-way scope
@@ -2022,7 +2024,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   180-day QCD scan + the effective per-dept map, **so it invents no mapping**),
   samples up to 3 queue names busiest-first, and its Open button clicks
   `#dept-config-btn`. Its `unmappedQcd` payload field is admin-only and
-  stripped by `personalizeOverview_` (`companyOverview:v25`).
+  stripped by `personalizeOverview_` (`companyOverview:v26`).
 - **Agent table column model (My Department).** The table is rendered
   from the client `COLUMNS` array (script.html) against a matching static
   `<thead>` in `dashboard.html` (1:1 by position; the Overview mini-table

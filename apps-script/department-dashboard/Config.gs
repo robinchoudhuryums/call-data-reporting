@@ -847,6 +847,24 @@ function noteBestEffortReadFailed_(where, e) {
     where, (e && e.message) ? e.message : e);
 }
 function bestEffortReadFailed_() { return !!BEST_EFFORT_READ_FAILED_; }
+// DL-9 (broad-scan 2026-10-01): both flags above are sticky for the WHOLE
+// execution, which is right for one request and wrong for CacheWarm: one
+// dept's transient QCD throw skipped the put of every dept warmed after it.
+// CacheWarm resets them before each payload it warms.
+function resetExecReadFailureFlags_() {
+  QCD_SNAPSHOT_READ_FAILED_ = false;
+  BEST_EFFORT_READ_FAILED_ = false;
+}
+// DL-9: per-execution tally of the warmed report caches' OUTCOMES -- a put that
+// succeeded ('write') or a serve from an existing entry ('hit'). CacheWarm
+// counted calls that RETURNED as "warmed", including every payload a skip rule
+// above declined to cache. The four endpoints CacheWarm warms (summary,
+// Overview, Insights, the all-dept Queue report) note theirs here.
+var REPORT_CACHE_TALLY_ = { write: 0, hit: 0 };
+function noteReportCache_(kind) {
+  if (kind === 'write' || kind === 'hit') REPORT_CACHE_TALLY_[kind]++;
+}
+function reportCacheTally_() { return { write: REPORT_CACHE_TALLY_.write, hit: REPORT_CACHE_TALLY_.hit }; }
 
 var PROP_REGISTRY_ = Object.freeze({
   secret: Object.freeze({ NEON_PASS: true, HMAC_SECRET: true }),

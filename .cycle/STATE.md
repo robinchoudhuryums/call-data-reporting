@@ -1,6 +1,17 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-01 — broad-scan Batch 4 IMPLEMENTED on the same branch (block 217).**
+  DL-1/DL-2/QO-3 (the DQE + QCD parity gates count rows per key and the DQE
+  gate diffs the queue split), QO-1 (Overview MTD chip anchored on the latest
+  QCD date; companyOverview:v26), DL-4 (prior-window distance cap), DL-5
+  (roster hash on individual / missed / overviewChartYtd + the whole combined
+  summary set), DL-6 (Missed enrichment failure flagged, never cached), DL-9
+  (CacheWarm resets sticky flags per payload and counts real cache writes).
+  2041/2041 green. **Owner-side:** deploy the dashboard (blocking). Batches
+  1-3 deploys still owed as listed below. **Where I left off:** Batches 1-4
+  done and pushed, no PR opened; next suggested Batch 5 (escalations
+  integrity: ESC-D1, ESC-D3, AC-3 incl. PC-11, ESC-D4..D7).
 - **2026-10-01 — broad-scan Batch 3 IMPLEMENTED on the same branch (block 216).**
   PC-1/PC-2 (per-call agent names stored roster-canonical via the shared
   INV-24 canonicalizer + an editor-run Neon rewrite, Operator State #72),

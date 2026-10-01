@@ -158,6 +158,7 @@ function getInsightsReport(req) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
     assertReportRangeCap_(customPriorFrom, customPriorTo, null, 'Prior range');   // SEC-1
+    assertReportSpanCap_(from, to, customPriorFrom, customPriorTo);              // DL-4
   }
 
   const roster = getRosterForDepartment_(dept);
@@ -194,6 +195,7 @@ function getInsightsReport(req) {
       const parsed = JSON.parse(cached);
       parsed.meta.cacheHit = true;
       logReportUsage_('insights', dept, user, true);
+      if (typeof noteReportCache_ === 'function') noteReportCache_('hit');   // DL-9
       return parsed;
     } catch (e) { /* recompute */ }
   }
@@ -225,7 +227,7 @@ function getInsightsReport(req) {
     // failed Dept Config read -- serve it, don't pin it.
     Logger.log('InsightsReport: Dept Config read errored -- skipping cache put.');
   } else {
-    try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); }
+    try { cache.put(cacheKey, JSON.stringify(data), REPORT_CACHE_TTL_SECONDS); if (typeof noteReportCache_ === 'function') noteReportCache_('write'); }   // DL-9
     catch (e) { Logger.log('InsightsReport cache put failed: %s', e); }
   }
 
@@ -1132,6 +1134,7 @@ function sendInsightsReportEmail(req) {
       throw new Error('priorFrom must be on or before priorTo.');
     }
     assertReportRangeCap_(customPriorFrom, customPriorTo, null, 'Prior range');   // SEC-1
+    assertReportSpanCap_(from, to, customPriorFrom, customPriorTo);              // DL-4
   }
 
   const roster = getRosterForDepartment_(dept);

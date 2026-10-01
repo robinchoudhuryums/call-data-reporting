@@ -45,9 +45,30 @@ var CACHE_WARM_DEFAULT_HOUR = 9;   // Central; after the morning ingest window
 var CACHE_WARM_TOTAL_BUDGET_MS = 5 * 60 * 1000;
 
 /**
+ * DL-9 (broad-scan 2026-10-01): warms ONE payload and reports what really
+ * happened to its cache entry -- 'warmed' (a put succeeded), 'already' (served
+ * from an existing entry), 'uncached' (returned, but a skip rule declined the
+ * put: a degraded read, an outage-empty, a failed config read) or 'failed'
+ * (threw). It used to count every call that returned as warmed. The two sticky
+ * per-execution read-failure flags are reset FIRST, so one payload's
+ * transient throw no longer skips the put of every payload warmed after it.
+ */
+function warmOne_(fn) {
+  if (typeof resetExecReadFailureFlags_ === 'function') resetExecReadFailureFlags_();
+  var before = (typeof reportCacheTally_ === 'function') ? reportCacheTally_() : null;
+  fn();   // a throw propagates to the caller's catch -> 'failed'
+  if (!before) return 'warmed';   // no tally available: the pre-DL-9 count
+  var after = reportCacheTally_();
+  if (after.write > before.write) return 'warmed';
+  if (after.hit > before.hit) return 'already';
+  return 'uncached';
+}
+
+/**
  * S2A-4: warms the quick-start chip request per dept -- (dept, latest,
  * latest, the picker's active agents). Returns the number of depts left cold
- * by the budget; `tally(ok)` counts each attempt.
+ * by the budget; `tally(outcome)` counts each attempt (a warmOne_ outcome, or
+ * 'failed').
  */
 function warmInsightsChips_(depts, latest, start, budgetMs, tally) {
   for (var j = 0; j < depts.length; j++) {
@@ -59,10 +80,11 @@ function warmInsightsChips_(depts, latest, start, budgetMs, tally) {
       var init = getInsightsReportInit({ department: depts[j], from: latest, to: latest }) || {};
       var picked = (init.activeAgents && init.activeAgents.length) ? init.activeAgents : (init.agents || []);
       if (!picked.length) continue;   // empty roster: the chip runs agent-free, warmed above
-      getInsightsReport({ department: depts[j], from: latest, to: latest, agents: picked });
-      tally(true);
+      tally(warmOne_(function () {
+        getInsightsReport({ department: depts[j], from: latest, to: latest, agents: picked });
+      }));
     } catch (e) {
-      tally(false);
+      tally('failed');
       Logger.log('warmReportCaches_: insights (chips) ' + depts[j] + ' failed: ' + (e && e.message ? e.message : e));
     }
   }
@@ -105,6 +127,13 @@ function warmReportCachesNow() {
 function warmReportCaches_() {
   var start = Date.now();
   var warmed = 0, failed = 0, latest = null;
+  var already = 0, uncached = 0;   // DL-9
+  var count_ = function (outcome) {
+    if (outcome === 'warmed') warmed++;
+    else if (outcome === 'already') already++;
+    else if (outcome === 'uncached') uncached++;
+    else failed++;
+  };
   // F-27: suppress Report Usage telemetry for this execution -- warm
   // traffic isn't real manager usage. Reset in the finally below.
   REPORT_USAGE_SUPPRESS_ = true;
@@ -116,7 +145,7 @@ function warmReportCaches_() {
     recordCacheWarm_('skipped (no latest date)');
     return;
   }
-  try { getCompanyOverview(); warmed++; }
+  try { count_(warmOne_(function () { getCompanyOverview(); })); }
   catch (e) { failed++; Logger.log('warmReportCaches_: overview failed: ' + e); }
 
   var depts = [];
@@ -127,8 +156,7 @@ function warmReportCaches_() {
   for (var i = 0; i < depts.length; i++) {
     if (overBudget_()) { sumSkipped = depts.length - i; break; }   // O-4
     try {
-      getDepartmentSummary({ department: depts[i], from: latest, to: latest });
-      warmed++;
+      count_(warmOne_(function () { getDepartmentSummary({ department: depts[i], from: latest, to: latest }); }));
     } catch (e) {
       failed++;
       Logger.log('warmReportCaches_: ' + depts[i] + ' failed: '
@@ -160,8 +188,7 @@ function warmReportCaches_() {
       qcdSkipped = 1;   // O-4
       Logger.log('warmReportCaches_: skipping qcdAll warm (run budget hit)');
     } else if (qcdLatest && qcdLatest >= expectedQcd) {
-      getQcdAllDepartments({ from: qcdLatest, to: qcdLatest });
-      warmed++;
+      count_(warmOne_(function () { getQcdAllDepartments({ from: qcdLatest, to: qcdLatest }); }));
     } else {
       Logger.log('warmReportCaches_: skipping qcdAll warm (QCD latest '
         + (qcdLatest || 'unknown') + ' < ' + expectedQcd + ')');
@@ -196,8 +223,7 @@ function warmReportCaches_() {
     for (var j = 0; j < depts.length; j++) {
       if (Date.now() - start > INSIGHTS_WARM_BUDGET_MS) { skipped = depts.length - j; break; }
       try {
-        getInsightsReport({ department: depts[j], from: from, to: to, agents: [] });
-        warmed++;
+        count_(warmOne_(function () { getInsightsReport({ department: depts[j], from: from, to: to, agents: [] }); }));
       } catch (e) {
         failed++;
         Logger.log('warmReportCaches_: insights (' + label + ') ' + depts[j]
@@ -222,21 +248,23 @@ function warmReportCaches_() {
   //    picker itself calls, its active list (or the whole list when nobody is
   //    active, which is what the picker then ticks). Best effort: a sub-queue
   //    parent's picker can group differently, and then this just misses.
-  insSkipped += warmInsightsChips_(depts, latest, start, INSIGHTS_WARM_BUDGET_MS, function (ok) {
-    if (ok) warmed++; else failed++;
-  });
+  insSkipped += warmInsightsChips_(depts, latest, start, INSIGHTS_WARM_BUDGET_MS, count_);
 
   var ms = Date.now() - start;
-  Logger.log('warmReportCaches_: warmed=' + warmed + ' failed=' + failed
-    + ' for ' + latest + ' in ' + ms + 'ms');
+  Logger.log('warmReportCaches_: warmed=' + warmed + ' already=' + already + ' uncached=' + uncached
+    + ' failed=' + failed + ' for ' + latest + ' in ' + ms + 'ms');
   // O-1 (broad-scan 2026-09-17): the OPS-8 contract is prefix-coded and the
   // Health classifier paints an `ok` prefix green -- so a run in which EVERY
   // warm threw recorded "ok (0 warmed, 16 failed …)" and rendered healthy. A
   // run that warmed nothing while something failed is FAILED-ALL (the
   // QueueReport / Digest rule); partial failures stay ok (the detail names
   // them) because the caches that DID warm are real work.
-  var warmPrefix = (warmed === 0 && failed > 0) ? 'FAILED-ALL' : 'ok';
+  // DL-9: "nothing cached" now includes payloads served but NOT written -- a
+  // run whose every payload was degraded left every cache cold, and said ok.
+  var warmPrefix = (warmed === 0 && already === 0 && (failed + uncached) > 0) ? 'FAILED-ALL' : 'ok';
   recordCacheWarm_(warmPrefix + ' (' + warmed + ' warmed'
+    + (already ? ', ' + already + ' already cached' : '')
+    + (uncached ? ', ' + uncached + ' served but not cached' : '')
     + (failed ? ', ' + failed + ' failed' : '')
     + (sumSkipped ? ', ' + sumSkipped + ' summaries skipped on budget' : '')
     + (qcdSkipped ? ', qcdAll skipped on budget' : '')

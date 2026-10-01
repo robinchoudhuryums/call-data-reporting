@@ -129,6 +129,27 @@ function assertReportRangeCap_(from, to, maxDays, label) {
   }
 }
 
+/**
+ * DL-4 (broad-scan 2026-10-01): SEC-1 capped the prior window's LENGTH but not
+ * its DISTANCE. The reports read one span covering both windows
+ * ([priorFrom, to]), so a two-day prior in 2000 plus a current window ending
+ * yesterday read 26 years of history -- the cost SEC-1 exists to bound, with a
+ * fresh cache key per prior window. The longest legitimate combination is a
+ * maximal window with a year-over-year prior, so the COMBINED span is capped at
+ * REPORT_MAX_RANGE_DAYS + 366.
+ */
+var REPORT_MAX_SPAN_DAYS = REPORT_MAX_RANGE_DAYS + 366;
+
+/** DL-4: throws when the window plus its comparison window span too much history. */
+function assertReportSpanCap_(from, to, priorFrom, priorTo) {
+  var lo = priorFrom < from ? priorFrom : from;
+  var hi = priorTo > to ? priorTo : to;
+  if (reportRangeDays_(lo, hi) > REPORT_MAX_SPAN_DAYS) {
+    throw new Error('The comparison window is too far from the report window: together they may span at most '
+      + REPORT_MAX_SPAN_DAYS + ' days.');
+  }
+}
+
 // -- Report-usage telemetry --------------------------------------------------
 
 /**

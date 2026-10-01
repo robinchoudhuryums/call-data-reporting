@@ -274,6 +274,7 @@ function qcdAllDeptCachedData_(from, to, opts) {
       const parsed = JSON.parse(cached);
       if (parsed && parsed.meta) parsed.meta.cacheHit = true;
       Logger.log('[qcdAll] cache HIT key=' + cacheKey + ' anchorMs=' + anchorMs + ' getMs=' + getMs);
+      if (typeof noteReportCache_ === 'function') noteReportCache_('hit');   // DL-9
       return { data: parsed, cacheHit: true };
     } catch (e) { /* recompute */ }
   }
@@ -303,7 +304,7 @@ function qcdAllDeptCachedData_(from, to, opts) {
   const partial = !!(data && data.meta && data.meta.partial);
   if (json.length <= 100000 && !cfgFailed && !empty && !partial) {
     const tPut = Date.now();
-    try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); }
+    try { cache.put(cacheKey, json, QCD_ALLDEPT_CACHE_TTL_SECONDS); if (typeof noteReportCache_ === 'function') noteReportCache_('write'); }   // DL-9
     catch (e) { Logger.log('QCD all-dept cache put failed: %s', e); }
     Logger.log('[qcdAll] computeMs=' + computeMs + ' putMs=' + (Date.now() - tPut)
       + ' bytes=' + json.length + ' key=' + cacheKey);
@@ -1472,7 +1473,7 @@ function compareQcdSources_() {
   // read, and the operator had only log prose to judge by.
   var verdict = function (o) {
     var v = { from: COMPARE_FROM, to: COMPARE_TO, clean: false, compared: 0,
-              missingInNeon: 0, extraInNeon: 0, mismatches: 0, roundingOnly: 0, error: '' };
+              missingInNeon: 0, extraInNeon: 0, mismatches: 0, roundingOnly: 0, duplicates: 0, error: '' };
     for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) v[k] = o[k];
     return v;
   };
@@ -1493,7 +1494,10 @@ function compareQcdSources_() {
   // Normalize either grid to comparable rows keyed by date|queue|source over
   // the compare window. `windowed=true` filters (the whole-sheet grid); the
   // Neon grid is already windowed.
-  var norm = function (grid, windowed) {
+  // QO-3 (broad-scan 2026-10-01): `counts` records how many ROWS share each key.
+  // The map keeps one row per key, so a duplicated sheet row collapsed and read
+  // CLEAN while the sheet path sums both -- the DL-1 blind spot in this gate.
+  var norm = function (grid, windowed, counts) {
     var m = {};
     var vals = grid.values || [], disps = grid.displays || [];
     var tz = grid.ssTZ || TZ;
@@ -1505,6 +1509,7 @@ function compareQcdSources_() {
       var key = dateIso
         + '|' + String(r[QCD_HISTORICAL_COLS.CALL_QUEUE - 1]  || '').trim()
         + '|' + String(r[QCD_HISTORICAL_COLS.CALL_SOURCE - 1] || '').trim();
+      counts[key] = (counts[key] || 0) + 1;
       m[key] = {
         totalCalls:     Number(r[QCD_HISTORICAL_COLS.TOTAL_CALLS - 1])    || 0,
         totalAnswered:  Number(r[QCD_HISTORICAL_COLS.TOTAL_ANSWERED - 1]) || 0,
@@ -1516,8 +1521,12 @@ function compareQcdSources_() {
     }
     return m;
   };
-  var sMap = norm(sheetGrid, true);
-  var nMap = norm(neonGrid, false);
+  var sCount = {}, nCount = {};
+  var sMap = norm(sheetGrid, true, sCount);
+  var nMap = norm(neonGrid, false, nCount);
+  var duplicates = [];
+  Object.keys(sCount).forEach(function (k) { if (sCount[k] > 1) duplicates.push(k + ' (sheet x' + sCount[k] + ')'); });
+  Object.keys(nCount).forEach(function (k) { if (nCount[k] > 1) duplicates.push(k + ' (neon x' + nCount[k] + ')'); });
   Logger.log('sheet rows (in window): %s | neon rows: %s',
              Object.keys(sMap).length, Object.keys(nMap).length);
 
@@ -1555,6 +1564,8 @@ function compareQcdSources_() {
   extraInNeon.slice(0, 10).forEach(function (k) { Logger.log('   %s', k); });
   Logger.log('--- value mismatches on common keys: %s', mismatches.length);
   mismatches.slice(0, 10).forEach(function (m) { Logger.log('   %s', m); });
+  Logger.log('--- DUPLICATE rows for one date|queue|source: %s', duplicates.length);
+  duplicates.slice(0, 10).forEach(function (d) { Logger.log('   %s', d); });
   if (roundingOnly) {
     Logger.log('--- ±1s duration rounding diffs (IGNORED -- write-time float rounding '
       + 'vs Sheets display rounding at half-second averages; deterministic, not drift): %s',
@@ -1581,16 +1592,19 @@ function compareQcdSources_() {
                      extraInNeon: extraInNeon.length });
   }
 
-  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0);
+  var clean = (missingInNeon.length === 0 && extraInNeon.length === 0 && mismatches.length === 0
+               && duplicates.length === 0);
   Logger.log('=== QCD PARITY %s ===', clean
     ? 'CLEAN -- qcd_history matches the sheet for this range (' + compared
       + ' rows compared); the QCD read-back gate PASSED'
     : 'MISMATCH -- resolve before setting QCD_READ_SOURCE=neon. Re-run the daily import '
       + 'for the affected date(s) (writeQCDRowsToNeon is authoritative per-date), or delete '
-      + 'EXTRA-in-Neon phantom rows in SQL, then re-run this check.');
+      + 'EXTRA-in-Neon phantom rows in SQL, then re-run this check. DUPLICATE rows -> '
+      + 'force re-import the date (it deletes then rebuilds the date, Operator State #56).');
   return verdict({ clean: clean, compared: compared,
                    missingInNeon: missingInNeon.length, extraInNeon: extraInNeon.length,
-                   mismatches: mismatches.length, roundingOnly: roundingOnly });
+                   mismatches: mismatches.length, roundingOnly: roundingOnly,
+                   duplicates: duplicates.length });
 }
 
 /**
