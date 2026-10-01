@@ -21,7 +21,7 @@ batch, items are independent unless marked.
 | ∥ | **Neon storage decision** | operator decision; Health row "Neon storage by table" **SHIPPED 2026-09-11** (block 189) | dashboard (DEPLOYED 2026-09-14) | any time |
 | 6 | **Owner testing round** — IMPLEMENTED 2026-09-15 (6a/6b/6d done; 6c code-complete, RELEASE pending: Operator State #63) | 6a queue worst-first (own dept pinned) · 6b Overview answered volume · 6c Outbound RELEASE not build · 6d agent-day view (90d exact, then degrade) | dashboard | any time; 6a/6b are S |
 | 5 | **End the timezone split** (gated) | design spike → migration | all three + the spreadsheet setting | Phase 2 live ≥ 2 weeks AND 1b shipped |
-| ∥ | **Escalations: multi-department + reassignment** (owner ask 2026-09-30) — SHIPPED on the branch (blocks 207-211) | EML-1/2 email opt-in + admin copy · ESC-R1 move · ESC-L1 linked copies · ESC-L2 shared thread, link/remove, delete-all · ESC-L3 restore · ESC-S1 offline thread | dashboard (+ cdr-report for EML-2) | deploy pending |
+| ∥ | **Escalations: multi-department + reassignment** (owner ask 2026-09-30) — SHIPPED (blocks 207-211) | EML-1/2 email opt-in + admin copy · ESC-R1 move · ESC-L1 linked copies · ESC-L2 shared thread, link/remove, delete-all · ESC-L3 restore · ESC-S1 offline thread | dashboard (+ cdr-report for EML-2) | MERGED #348; dashboard DEPLOYED 2026-09-30 (S50-S53 walk pending) |
 | — | **Phase 3 binary-search span** | deferred | — | after 5 has held |
 | — | **Follow-ons** | ride along with whichever batch touches the file | — | — |
 

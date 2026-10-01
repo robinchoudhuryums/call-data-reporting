@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-01 — WHERE I LEFT OFF.** Everything below (Steps 0/1/2a/2b +
+  ESC-L3/ESC-S1 + the sync-docs pass) is MERGED to main as PR #348
+  (0dc15c9). Owner DEPLOYED the dashboard 2026-09-30 and ran "Back up now":
+  all four tables ok, written to the Sheets-workbook fallback (Drive is
+  disabled by the domain admin), 141 s, weekly Sat 6:00 trigger installed.
+  **Still owner-side:** (1) walk S50-S53 on the live app; (2) confirm the
+  cdr-report push (EML-2's `[Copy]` of the daily call report email) -- not stated;
+  (3) optional `ALL_DEPT_NOTIFY_OPT_IN` (#58). **Open follow-ons (not
+  started, not requested):** no email to a REMOVED department's managers;
+  the offline copy holds threads of OPEN escalations only (closed/removed
+  copies say unavailable). Branch `claude/broad-scan-gnfpx5`'s PR is merged
+  -- new work restarts the branch from main.
 - **2026-09-30 (escalations + email, branch `claude/broad-scan-gnfpx5`
   restarted from main after PR #347):** Step 0 SHIPPED on the branch (block
   207): EML-1 ALL/'*' managers are OPT-IN only for dept-manager email
@@ -17,10 +29,10 @@
   **Step 2b SHIPPED on the branch (block 210, ESC-L2):** the group thread
   tagged by dept, admin edit sync, Link department, soft Remove (read-only
   for the removed dept, Removed filter), delete-all-linked; S52. Owner said
-  "keep stacking": Steps 0/1/2a/2b are all UNMERGED on the branch, no PR yet.
+  "keep stacking"; all of it later merged as PR #348.
   The linked-escalation plan is COMPLETE. **Follow-ons SHIPPED (block 211):**
   ESC-L3 Restore a removed department (back to its prior status) and ESC-S1
-  the Activity threads in the outage snapshot; S53. Still unmerged, no PR. **The plan as approved (for reference):**
+  the Activity threads in the outage snapshot; S53. Merged in #348. **The plan as approved (for reference):**
   Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
   escalations (resolved/rejected: reopen first; pending_review stays with
   approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new
