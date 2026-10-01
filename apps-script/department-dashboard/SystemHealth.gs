@@ -145,6 +145,46 @@ var HEALTH_SEND_INTERRUPTED_MS_ = 30 * 60000;
 // Kept in step with cdr-report/sheetSpace.js's copies by cross-file-pins.
 var WORKBOOK_CELL_CAP_ = 10000000;
 var WORKBOOK_CELL_WARN_PCT_ = 80;
+// PROPS-1 (reflect 207-211): the dashboard's Script Properties store has a
+// 500 KB TOTAL quota shared by every key -- operator config, engine stamps
+// and the escalation outage snapshots (rows + threads, ~96 KB at their
+// ceilings). A full store makes EVERY setProperty in the project throw,
+// including the engines' *_LAST outcome writes, and nothing else on this
+// page sees it coming.
+var PROPS_STORE_CAP_BYTES_ = 500 * 1024;
+var PROPS_STORE_WARN_PCT_ = 80;
+
+/** PROPS-1 (PURE): UTF-8 byte length of a string (what the quota counts). */
+function propsUtf8Bytes_(str) {
+  var s = String(str == null ? '' : str), n = 0;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) { n += 4; i++; }   // surrogate pair
+    else n += 3;
+  }
+  return n;
+}
+
+/**
+ * PROPS-1 (PURE): props map -> { bytes, pct, top: [{ name, bytes }] } where
+ * `top` ranks key FAMILIES -- numbered chunks (ESC_SNAPSHOT_3, ..._ACT_2)
+ * fold into one "<prefix>*" entry -- so the largest spender is named, not
+ * its fifth chunk. Sizes only: a value never leaves this function.
+ */
+function propsStoreUsage_(props) {
+  var fam = {}, total = 0;
+  Object.keys(props || {}).forEach(function (k) {
+    var b = propsUtf8Bytes_(k) + propsUtf8Bytes_(props[k]);
+    total += b;
+    var name = /_\d+$/.test(k) ? k.replace(/\d+$/, '*') : k;
+    fam[name] = (fam[name] || 0) + b;
+  });
+  var top = Object.keys(fam).map(function (n) { return { name: n, bytes: fam[n] }; })
+    .sort(function (a, b) { return b.bytes - a.bytes || (a.name < b.name ? -1 : 1); }).slice(0, 3);
+  return { bytes: total, pct: Math.round((total / PROPS_STORE_CAP_BYTES_) * 100), top: top };
+}
 
 function getSystemHealth(req) {
   assertAdmin_();
@@ -598,6 +638,20 @@ function getSystemHealth(req) {
         }
       }
     } catch (e) { add('neon', 'neon-storage', 'Neon storage by table', 'warn', 'probe failed', String(e && e.message || e)); }
+    // ESC-DDL / ESC-U1 (reflect 207-211): did the escalations linked-copy
+    // migration land? escEnsureTable_ adds it best-effort, and every verb now
+    // reads it -- a silent failure there would break the whole write path.
+    // One read on the shared connection (R21); the verdict is pure.
+    try {
+      if (neonConfigured && typeof escSchemaRead_ === 'function' && typeof escSchemaVerdict_ === 'function') {
+        if (!sharedNeonConn) {
+          add('neon', 'esc-schema', 'Escalations schema', 'muted', 'Neon unreachable — not checked this load');
+        } else {
+          var esv = escSchemaVerdict_(escSchemaRead_(sharedNeonConn));
+          add('neon', 'esc-schema', 'Escalations schema', esv.status, esv.value, esv.hint);
+        }
+      }
+    } catch (e) { add('neon', 'esc-schema', 'Escalations schema', 'warn', 'probe failed', String(e && e.message || e)); }
   } finally {
     if (sharedNeonConn) { try { sharedNeonConn.close(); } catch (ce) {} }
   }
@@ -974,6 +1028,22 @@ function getSystemHealth(req) {
     add('props', 'props-tool', 'Diagnostic tool params (' + invGroups.tool.length + ' set)', 'muted',
       invGroups.tool.join(', ') || '(none — tools self-clear these after a clean run)',
       'Parity/vetting windows. Each tool clears its own after a CLEAN run; ones listed here belong to a round still in progress.');
+    // PROPS-1: how full the store is -- in the visible CONFIG section, not
+    // the folded inventory, because a full store is an outage, not trivia.
+    var psu = propsStoreUsage_(invAll);
+    add('config', 'props-store', 'Script Properties storage (500 KB cap)',
+      psu.pct >= PROPS_STORE_WARN_PCT_ ? 'warn' : 'ok',
+      Math.round(psu.bytes / 1024) + ' KB of ' + Math.round(PROPS_STORE_CAP_BYTES_ / 1024) + ' KB (' + psu.pct + '%)'
+        + (psu.top.length ? ' · largest: ' + psu.top.map(function (t) {
+            return t.name + ' ' + Math.max(1, Math.round(t.bytes / 1024)) + ' KB';
+          }).join(', ') : ''),
+      (psu.pct >= PROPS_STORE_WARN_PCT_
+        ? 'Near the cap: at 100% EVERY property write in this project fails -- the engines\' outcome '
+          + 'stamps, the escalation outage snapshot, sign-in tracking. '
+        : '')
+      + 'One 500 KB quota for every key. The escalation snapshots (ESC_SNAPSHOT_*, rows + threads) are '
+      + 'self-capped at ~48 KB each; an unrecognized key below may be a large leftover worth deleting '
+      + '(Operator State #53).');
     invUnknown.forEach(function (k) {
       add('props', 'props-unknown-' + k, k, 'warn',
         'unrecognized (' + String(invAll[k] == null ? '' : invAll[k]).length + ' chars stored)',

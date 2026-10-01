@@ -1512,3 +1512,70 @@ test('Batch 4 follow-on: a daily-alerts run that STARTED after its last outcome 
     ALERTS_STARTED: hoursAgo(2) } });
   assert.equal(rowByKey(h.call('getSystemHealth'), 'out-alerts').status, 'ok');
 });
+
+// ── PROPS-1 (reflect 207-211): the Script Properties store's 500 KB quota ────
+// One quota for every key; a full store makes every setProperty throw. The
+// row names the largest key FAMILY (numbered chunks folded) and never a value.
+test('PROPS-1: propsUtf8Bytes_ counts UTF-8 bytes, not UTF-16 units', function () {
+  const f = h.fn('propsUtf8Bytes_');
+  assert.equal(f('abc'), 3);
+  assert.equal(f('é'), 2);
+  assert.equal(f('—'), 3);          // em dash
+  assert.equal(f('😀'), 4);         // a surrogate pair is ONE 4-byte code point
+  assert.equal(f(null), 0);
+});
+
+test('PROPS-1: propsStoreUsage_ folds numbered chunks into one family and ranks the top three', function () {
+  const props = { ESC_SNAPSHOT_1: 'x'.repeat(8000), ESC_SNAPSHOT_2: 'x'.repeat(8000), ESC_SNAPSHOT_META: '{}',
+                  ESC_SNAPSHOT_ACT_1: 'y'.repeat(5000), NEON_PASS: 'secret', ADMIN_EMAILS: 'a@x.com' };
+  const u = JSON.parse(JSON.stringify(h.call('propsStoreUsage_', props)));
+  assert.equal(u.top[0].name, 'ESC_SNAPSHOT_*');
+  assert.equal(u.top[0].bytes, 2 * (14 + 8000));
+  assert.equal(u.top[1].name, 'ESC_SNAPSHOT_ACT_*');
+  assert.equal(u.top.length, 3);
+  assert.ok(JSON.stringify(u).indexOf('secret') === -1, 'sizes only -- a value never leaves the helper');
+  assert.equal(u.pct, Math.round(u.bytes / (500 * 1024) * 100));
+});
+
+test('PROPS-1: the props-store row sits in the visible CONFIG section and warns at 80%, value-free', function () {
+  installHealth({ props: { NEON_HOST: 'h', NEON_PASS: 'hunter2-secret' } });
+  const row = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'props-store');
+  assert.equal(row.section, 'config', 'not the folded inventory -- a full store is an outage');
+  assert.equal(row.status, 'ok');
+  assert.match(row.value, /^\d+ KB of 500 KB \(\d+%\) · largest: /);
+  assert.ok((row.value + row.hint).indexOf('hunter2-secret') === -1);
+  // ~410 KB in snapshot chunks -> past 80% -> warn, naming the family.
+  const big = { NEON_HOST: 'h' };
+  for (let i = 1; i <= 52; i++) big['ESC_SNAPSHOT_' + i] = 'z'.repeat(8000);
+  installHealth({ props: big });
+  const w = rowByKey(h.call('getSystemHealth', { part: 'fast' }), 'props-store');
+  assert.equal(w.status, 'warn');
+  assert.match(w.value, /largest: ESC_SNAPSHOT_\* \d+ KB/);
+  assert.match(w.hint, /^Near the cap: at 100% EVERY property write in this project fails/);
+});
+
+// ── ESC-DDL (reflect 207-211): did the escalations linked-copy migration land?
+test('ESC-DDL: the esc-schema row reads ONCE on the shared connection; unreachable is muted, a throw warns', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const conn = { close: function () {} };
+  let opened = 0, reads = [];
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return conn; };
+  h.ctx.escSchemaRead_ = function (c) { reads.push(c); return { columns: ['x'], indexes: [] }; };
+  h.ctx.escSchemaVerdict_ = function (r) { return { status: 'warn', value: 'V' + r.columns.length, hint: 'H' }; };
+  try {
+    const row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'esc-schema');
+    assert.equal(row.section, 'neon');
+    assert.equal(row.status, 'warn');
+    assert.equal(row.value, 'V1');
+    assert.equal(reads.length, 1);
+    assert.equal(reads[0], conn, 'the SHARED connection (R21)');
+    assert.equal(opened, 1);
+    h.ctx.getDashboardNeonConn_ = function () { return null; };
+    assert.equal(rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'esc-schema').status, 'muted');
+    h.ctx.getDashboardNeonConn_ = function () { return conn; };
+    h.ctx.escSchemaRead_ = function () { throw new Error('denied'); };
+    const t = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'esc-schema');
+    assert.equal(t.status, 'warn');
+    assert.equal(t.value, 'probe failed');
+  } finally { h.ctx.escSchemaRead_ = undefined; h.ctx.escSchemaVerdict_ = undefined; }
+});

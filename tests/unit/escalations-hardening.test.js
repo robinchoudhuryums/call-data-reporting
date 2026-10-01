@@ -1053,3 +1053,134 @@ test('ESC-L3: only a REMOVED copy restores, only for an admin; linking or moving
     assert.equal(l.writes.length, 0, fn);
   });
 });
+
+// ESC-G1 (reflect 207-211): a REMOVED copy is read-only, but only the verbs
+// written in 2b were taught that. This sweep makes it structural: every
+// PUBLIC Escalations.gs function that commits a write must call
+// escAssertNotRemoved_ -- or be listed here with the reason it may not.
+const ESC_REMOVED_GUARD_EXEMPT = {
+  createEscalation: 'writes NEW copies -- there is no existing copy to be removed',
+  removeEscalationDepartment: 'refuses a removed copy itself ("already removed")',
+  restoreEscalationDepartment: 'REQUIRES a removed copy -- it is the undo',
+  deleteEscalation: 'admin cleanup may delete a removed copy (and delete-all reaches them)',
+  approveEscalation: 'pending_review-only allowlist; a removed copy can never be pending_review',
+  rejectEscalation: 'pending_review-only allowlist; a removed copy can never be pending_review',
+  backfillEscalationActivity: 'editor-run migration; inserts seed trail rows only, never a status change',
+};
+
+function escPublicWriters() {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  const out = {};
+  const re = /^function ([A-Za-z0-9]+)\s*\(/gm;
+  let m;
+  const starts = [];
+  while ((m = re.exec(src))) starts.push({ name: m[1], at: m.index });
+  starts.forEach(function (s, i) {
+    const body = src.slice(s.at, i + 1 < starts.length ? starts[i + 1].at : src.length);
+    if (/conn\.commit\(\)/.test(body)) out[s.name] = body;   // public (no trailing _) + commits = a write verb
+  });
+  return out;
+}
+
+test('ESC-G1: every public escalation write verb refuses a removed copy, or is an exemption with a reason', function () {
+  const writers = escPublicWriters();
+  assert.ok(Object.keys(writers).length >= 10, 'the sweep found the write verbs');
+  const missing = Object.keys(writers).filter(function (n) {
+    return !ESC_REMOVED_GUARD_EXEMPT[n] && writers[n].indexOf('escAssertNotRemoved_(') === -1;
+  });
+  assert.deepEqual(missing, [], 'add escAssertNotRemoved_(meta) after the row gate, or exempt it here with a reason');
+  // No stale exemptions: each one must still be a public writer.
+  Object.keys(ESC_REMOVED_GUARD_EXEMPT).forEach(function (n) {
+    assert.ok(writers[n], n + ' is exempt but is no longer a public write verb -- drop the exemption');
+  });
+});
+
+// ESC-DDL / ESC-U1 (reflect 207-211): the linked-copy schema migration is
+// best-effort but no longer SILENT, and the database enforces one copy per
+// department per group.
+function ddlConn(failOn) {
+  const ran = [];
+  return { ran: ran, conn: { createStatement: function () {
+    return { execute: function (sql) {
+      ran.push(sql);
+      if (failOn && failOn.test(sql)) throw new Error('boom: ' + sql.slice(0, 30));
+    }, close: function () {} };
+  } } };
+}
+
+test('ESC-U1: escEnsureTable_ builds the PARTIAL unique (group_id, department) index, non-concurrently', function () {
+  const d = ddlConn(null);
+  h.call('escEnsureTable_', d.conn);
+  const uq = d.ran.filter(function (q) { return /CREATE UNIQUE INDEX/.test(q); });
+  assert.equal(uq.length, 1);
+  assert.equal(uq[0], 'CREATE UNIQUE INDEX IF NOT EXISTS idx_escalations_group_dept ON escalations (group_id, department) WHERE group_id IS NOT NULL');
+  assert.ok(!/CONCURRENTLY/.test(uq[0]), 'a failed concurrent build would leave an INVALID index behind');
+});
+
+test('ESC-DDL: a failing column DDL is LOGGED (not silent) and never blocks the index; a failing index build is logged, never thrown', function () {
+  const logs = [];
+  const prevLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function () { logs.push(Array.prototype.join.call(arguments, ' ')); } };
+  try {
+    const d = ddlConn(/ADD COLUMN IF NOT EXISTS group_id/);
+    assert.doesNotThrow(function () { h.call('escEnsureTable_', d.conn); });
+    assert.ok(logs.some(function (l) { return /escEnsureTable_: linked-copy column DDL failed: boom/.test(l); }), logs.join('|'));
+    assert.ok(d.ran.some(function (q) { return /CREATE UNIQUE INDEX/.test(q); }), 'the index still attempted');
+    logs.length = 0;
+    const d2 = ddlConn(/CREATE UNIQUE INDEX/);
+    assert.doesNotThrow(function () { h.call('escEnsureTable_', d2.conn); });
+    assert.ok(logs.some(function (l) { return /unique \(group_id, department\) index not built/.test(l); }));
+    assert.ok(d2.ran.some(function (q) { return /CREATE TABLE IF NOT EXISTS escalation_activity/.test(q); }), 'later DDL still runs');
+  } finally { h.ctx.Logger = prevLogger; }
+});
+
+test('ESC-DDL: escSchemaVerdict_ -- no table muted, missing columns warn (the outage case), missing index warn, else ok', function () {
+  const f = h.fn('escSchemaVerdict_');
+  const all = ['id', 'department', 'status', 'group_id', 'removed_by', 'removed_at', 'removed_reason', 'status_before_removal'];
+  assert.equal(f({ columns: [], indexes: [] }).status, 'muted');
+  const m = f({ columns: all.filter(function (c) { return c !== 'removed_at' && c !== 'group_id'; }), indexes: ['idx_escalations_group_dept'] });
+  assert.equal(m.status, 'warn');
+  assert.equal(m.value, 'missing column(s): group_id, removed_at');
+  assert.match(m.hint, /EVERY escalation save and live Activity fail/);
+  const i = f({ columns: all, indexes: ['escalations_pkey'] });
+  assert.equal(i.status, 'warn');
+  assert.match(i.value, /one-copy-per-department index missing/);
+  assert.match(i.hint, /HAVING count\(\*\) > 1/);
+  assert.equal(f({ columns: all, indexes: ['idx_escalations_group_dept'] }).status, 'ok');
+});
+
+test('ESC-DDL: escSchemaRead_ is one metered read of the live columns + index names', function () {
+  let sqlSeen = '', metered = null;
+  const prev = h.ctx.neonNoteEgress_;
+  h.ctx.neonNoteEgress_ = function (n, label) { metered = label; };
+  try {
+    const conn = { createStatement: function () { return {
+      executeQuery: function (sql) { sqlSeen = sql; let d = false;
+        return { next: function () { if (d) return false; d = true; return true; },
+          getString: function () { return JSON.stringify({ cols: ['id', 'group_id'], idx: ['escalations_pkey'] }); }, close: function () {} }; },
+      close: function () {} }; } };
+    const r = JSON.parse(JSON.stringify(h.call('escSchemaRead_', conn)));
+    assert.deepEqual(r, { columns: ['id', 'group_id'], indexes: ['escalations_pkey'] });
+    assert.match(sqlSeen, /information_schema\.columns/);
+    assert.match(sqlSeen, /pg_indexes/);
+    assert.equal(metered, 'escalations');
+  } finally { h.ctx.neonNoteEgress_ = prev; }
+});
+
+// ESC-DDL2 (sync-docs 2026-10-01): esc-schema is only as good as its list.
+// Every column escEnsureTable_ adds with ADD COLUMN must be in
+// ESC_REQUIRED_COLUMNS_, or the Health row reads ok while a column the
+// verbs depend on is missing.
+test('ESC-DDL2: every ADD COLUMN in escEnsureTable_ is in ESC_REQUIRED_COLUMNS_', function () {
+  const d = ddlConn(null);
+  h.call('escEnsureTable_', d.conn);
+  const added = [];
+  d.ran.forEach(function (q) {
+    const m = /ADD COLUMN IF NOT EXISTS\s+([a-z_][a-z0-9_]*)/i.exec(q);
+    if (m) added.push(m[1]);
+  });
+  assert.ok(added.length >= 5, 'the sweep saw the migration: ' + added.join(','));
+  const required = Array.from(h.ctx.ESC_REQUIRED_COLUMNS_);
+  const missing = added.filter(function (c) { return required.indexOf(c) === -1; });
+  assert.deepEqual(missing, [], 'add these to ESC_REQUIRED_COLUMNS_ so the esc-schema Health row checks them');
+});

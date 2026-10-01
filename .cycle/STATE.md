@@ -1,6 +1,53 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-01 — WHERE I LEFT OFF.** Everything below (Steps 0/1/2a/2b +
+  ESC-L3/ESC-S1 + the sync-docs pass) is MERGED to main as PR #348
+  (0dc15c9). Owner DEPLOYED the dashboard 2026-09-30 and ran "Back up now":
+  all four tables ok, written to the Sheets-workbook fallback (Drive is
+  disabled by the domain admin), 141 s, weekly Sat 6:00 trigger installed.
+  **Still owner-side:** (1) walk S50-S53 on the live app; (2) confirm the
+  cdr-report push (EML-2's `[Copy]` of the daily call report email) -- not stated;
+  (3) optional `ALL_DEPT_NOTIFY_OPT_IN` (#58). Branch
+  `claude/broad-scan-gnfpx5`'s PR is merged -- new work restarts the branch
+  from main.
+- **2026-10-01 follow-ups SHIPPED on the branch (block 212):** PROPS-1 (Health
+  row: Script Properties store usage vs its 500 KB total, warn at 80%) and
+  ESC-G1 (CI sweep: every public escalation write verb refuses a removed
+  copy or is a reasoned exemption). **Block 213 closed the rest:** ESC-DDL
+  (the linked-copy column migration logs on failure; Health `esc-schema`
+  row verifies columns + index) and ESC-U1 (partial UNIQUE index on
+  escalations (group_id, department)). All unmerged on the branch; after
+  the next deploy the owner reads two new Health rows once
+  (`props-store`, `esc-schema`). Reflect 207-211's follow-ons: none left.
+  Sync-docs 2026-10-01 applied (esc-schema in CLAUDE.md, INV-55 status +
+  required-columns rule) + ESC-DDL2 test; all of it PR'd + merged (see below).
+- **PARKED IDEAS (owner asked to keep them, 2026-10-01; NOT approved to
+  build -- ask before starting either):**
+  1. **Email a department's managers when it is REMOVED from an escalation.**
+     Today `removeEscalationDepartment` (Escalations.gs) sends nothing; the
+     removed dept only finds out via the Removed filter. Shape: fire-and-log
+     AFTER commit + lock release (the create/move rule), flag-gated by
+     `NOTIFY_ON_NEW_ESCALATION`, recipients via `lookupDeptManagers_` (EML-1
+     ALL opt-in rule), subject e.g. "Removed from an escalation — <dept>",
+     body naming the reason + who removed it + the depts still on it (the
+     removal is often a DISPUTE outcome, so the reason is the point). Reuse
+     `escNotifyHtml_`'s shell; add a `removed` mode beside `restored` /
+     `movedFrom`. Tests: escalations-hardening (flag on/off, recipients, no
+     email on a refused removal). Docs: INV-55, OS #24, S52 step.
+  2. **Offline copy (ESC-S1) for CLOSED + REMOVED escalations' threads.**
+     The E2 rows snapshot holds OPEN rows only (status IN pending /
+     in_progress / pending_review), so escSnapshotActServe_ can authorize --
+     and serve -- only those; a resolved, rejected or removed copy says
+     "unavailable" during an outage. Needs: a small extra snapshot of recent
+     closed/removed rows (or just their id + department + group_id, enough
+     for the row gate) so the serve path can authorize them, plus their
+     threads in the ESC_SNAPSHOT_ACT_* pack. Budget is the constraint: the
+     Script Properties store is 500 KB total, rows ~48 KB + threads ~48 KB
+     today; cap by recency (e.g. closed in the last 30 days). PHI scope
+     widens again -> update OS #24(c) (SEC-6) and say so to the owner.
+     Tests: escalations-snapshot (pack priority open-first, gate on a closed
+     row, ceiling).
 - **2026-09-30 (escalations + email, branch `claude/broad-scan-gnfpx5`
   restarted from main after PR #347):** Step 0 SHIPPED on the branch (block
   207): EML-1 ALL/'*' managers are OPT-IN only for dept-manager email
@@ -17,10 +64,10 @@
   **Step 2b SHIPPED on the branch (block 210, ESC-L2):** the group thread
   tagged by dept, admin edit sync, Link department, soft Remove (read-only
   for the removed dept, Removed filter), delete-all-linked; S52. Owner said
-  "keep stacking": Steps 0/1/2a/2b are all UNMERGED on the branch, no PR yet.
+  "keep stacking"; all of it later merged as PR #348.
   The linked-escalation plan is COMPLETE. **Follow-ons SHIPPED (block 211):**
   ESC-L3 Restore a removed department (back to its prior status) and ESC-S1
-  the Activity threads in the outage snapshot; S53. Still unmerged, no PR. **The plan as approved (for reference):**
+  the Activity threads in the outage snapshot; S53. Merged in #348. **The plan as approved (for reference):**
   Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
   escalations (resolved/rejected: reopen first; pending_review stays with
   approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new
@@ -5214,7 +5261,7 @@ when a change's correctness is outside the harness's reach, stage the rollout.
 Invariant candidates INV-56..60 proposed (block `.cycle/blocks/149-a-reflect.md`);
 metrics.csv + estimates.csv seeded (first rows).
 
-Subsystem cycles since last Seams audit: 3
+Subsystem cycles since last Seams audit: 4
 
 ## 2026-09-04 (late) — R28/R29 email family
 - Completed: R28 default admin BCC chokepoint (PR #283) + welcome email on a new grant (PR #284); R29 EmailKit v2 notice family for the welcome email and all 16 admin notices (block 169). Also merged this session: #280 rowDateIso_ memo, #281 Neon retention (phones gate, weekly prune, CDR_BACKFILL_BEFORE), #282 runbook fix.

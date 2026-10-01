@@ -499,7 +499,14 @@ When something looks wrong, before assuming a code bug, check:
     read-only under the Removed filter) and **Delete all linked…** (ESC-L2,
     S52). The removal columns are added automatically too. A removed
     department's card offers **Restore <dept>…** (ESC-L3, S53): it returns to
-    the state it was in when removed, and the thread keeps both events. (a) **`NOTIFY_ON_NEW_ESCALATION`
+    the state it was in when removed, and the thread keeps both events.
+    **Check the Health page's `esc-schema` row after the deploy** (Neon
+    section): it confirms the linked-copy columns AND the
+    one-copy-per-department index (`idx_escalations_group_dept`) exist. A
+    warn on MISSING COLUMNS means every escalation save is failing -- the
+    row's hint has the console fix; a warn on a missing INDEX means
+    duplicate copies blocked the build -- its hint has the query that finds
+    them (ESC-DDL / ESC-U1). (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
     (`lookupDeptManagers_`, Access Control rows; ALL managers only when
     opted in, #58) on every new escalation, and the NEW dept's managers when
@@ -1731,6 +1738,15 @@ When something looks wrong, before assuming a code bug, check:
     `inboundCalls.js`) -- each a `M/D/YYYY` date an editor run reads when it
     cannot show a prompt. Clear them after use; a stale pin silently narrows the
     next run to that one day.
+    **The store's TOTAL is capped too (PROPS-1):** 500 KB across every key,
+    and a full store makes EVERY property write in the project fail --
+    the engines' `*_LAST` outcome stamps, the escalation outage snapshot,
+    sign-in tracking. The Health page's `props-store` row (config section)
+    shows KB used, the percentage, and the three largest key FAMILIES
+    (numbered chunks folded, e.g. `ESC_SNAPSHOT_*`), and warns at 80%. The
+    two escalation snapshots self-cap at ~48 KB each; if the row warns,
+    look first for a large UNRECOGNIZED key in the inventory below it.
+
 54. **Caller Lookup's Neon index is a one-time manual step.** `CallerLookup.gs`
     queries `inbound_calls` by `caller_hash`; the index it expects,
     `CREATE INDEX IF NOT EXISTS idx_inbound_calls_caller_hash ON inbound_calls (caller_hash)`,
