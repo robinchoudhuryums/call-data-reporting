@@ -890,6 +890,17 @@ function notifyLoginEvent_(email, user) {
   if (!emailLower) return;   // no identity resolved -- nothing meaningful to report
 
   var outcomeKey = loginNotifyOutcomeKey_(user);
+  // ESC-D7 (broad-scan 2026-10-01): a Dept Config read that ERRORED this
+  // execution makes resolveUser_ fail closed -- a parent manager's sub-queue
+  // depts drop out (INV-38) -- so the outcome key shifts and the admins got
+  // an "Access changed" email, then a second one when the next request read
+  // the config again. Nothing about the grant changed. Decide nothing this
+  // time (the store is untouched, so the next request re-decides); a DENIED
+  // attempt does not depend on the config and is still reported.
+  if (outcomeKey !== 'denied' && typeof deptConfigReadFailed_ === 'function' && deptConfigReadFailed_()) {
+    Logger.log('notifyLoginEvent_: Dept Config read errored -- outcome for %s not compared this request.', emailLower);
+    return;
+  }
   var d = loginNotifyDecide_(props.getProperty('LOGIN_NOTIFY_SEEN'), emailLower, outcomeKey);
   if (!d.notify) return;
 

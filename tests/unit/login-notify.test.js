@@ -172,3 +172,27 @@ test('SEC-4: the byte count is UTF-8, not UTF-16 characters', function () {
   assert.equal(h.call('loginNotifyBytes_', 'é'), 2);
   assert.equal(h.call('loginNotifyBytes_', '€'), 3);
 });
+
+// ESC-D7 (broad-scan 2026-10-01): a Dept Config read that errored makes
+// resolveUser_ fail closed (a parent manager loses their sub-queue depts for
+// this request), so the outcome key shifted and the admins got a spurious
+// "Access changed" email -- and another when the config read recovered.
+test('ESC-D7: a failed Dept Config read compares nothing for a granted user; a DENIED attempt still reports', function () {
+  h.state.props = { ADMIN_EMAILS: 'admin@x.com',
+    LOGIN_NOTIFY_SEEN: JSON.stringify({ 'sales.mgr@x.com': 'manager:PAP+Sales' }) };
+  h.state.sentEmails.length = 0;
+  const degraded = { role: 'manager', department: 'Sales', departments: ['Sales'] };   // fail-closed shape
+  h.ctx.deptConfigReadFailed_ = function () { return true; };
+  try {
+    h.call('notifyLoginEvent_', 'sales.mgr@x.com', degraded);
+    assert.equal(h.state.sentEmails.length, 0, 'no spurious "Access changed" email');
+    assert.equal(JSON.parse(h.state.props.LOGIN_NOTIFY_SEEN)['sales.mgr@x.com'], 'manager:PAP+Sales',
+      'the stored outcome is untouched -- the next healthy request compares against it');
+    h.call('notifyLoginEvent_', 'stranger@x.com', { role: 'none' });
+    assert.equal(h.state.sentEmails.length, 1, 'a denied attempt does not depend on the config');
+  } finally { delete h.ctx.deptConfigReadFailed_; }
+  // Healthy again with the same grant: still silent (nothing changed).
+  h.call('notifyLoginEvent_', 'sales.mgr@x.com',
+    { role: 'manager', department: 'Sales', departments: ['PAP', 'Sales'] });
+  assert.equal(h.state.sentEmails.length, 1);
+});

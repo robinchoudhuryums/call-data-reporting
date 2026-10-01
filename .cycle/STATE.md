@@ -1,6 +1,18 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-01 — broad-scan Batch 5 IMPLEMENTED on the same branch (block 218).**
+  ESC-D1 (activity rows record their dept at write time; move-history
+  backfill; esc-schema checks the new column; escSchema:v2), ESC-D3 (linked
+  edit refused when a sibling moved past pending), AC-3 incl. PC-11 (9 bare
+  role-none gates -> assertManagerOrAdmin_), ESC-D4 (last-active-copy delete
+  guard + full audit), ESC-D5 (offline denial = not-found shape), ESC-D6
+  (byte-measured snapshot chunks, logged failures), ESC-D7 (no spurious
+  sign-in email on a config-read failure). 2053/2053 green. **Owner-side:**
+  deploy the dashboard (blocking), open Escalations once, read esc-schema.
+  **Where I left off:** Batches 1-5 done and pushed, no PR opened; next
+  suggested Batch 6 (backups, timeouts, engine signals: BU-1, DL-3, CR-6,
+  BU-4, BU-3, EN-1, EN-6, AC-6, BU-2, EN-8, EN-7).
 - **2026-10-01 — broad-scan Batch 4 IMPLEMENTED on the same branch (block 217).**
   DL-1/DL-2/QO-3 (the DQE + QCD parity gates count rows per key and the DQE
   gate diffs the queue split), QO-1 (Overview MTD chip anchored on the latest

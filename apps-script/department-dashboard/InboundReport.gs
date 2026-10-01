@@ -2831,7 +2831,7 @@ function inboundAbandonList_(scope, bucket) {
 function getDeptDayAbandons(req) {
   req = req || {};
   const user = resolveUser_(Session.getActiveUser().getEmail());
-  if (!user || user.role === 'none') throw new Error('Not authorized.');
+  assertManagerOrAdmin_(user);   // AC-3: allowlist, never a bare role-none check
   const date = String(req.date || '').trim();
   if (!isIsoDate_(date)) throw new Error('date must be YYYY-MM-DD.');
 

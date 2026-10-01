@@ -259,7 +259,8 @@ test('ESC-S1: a thread that would pass the ceiling is skipped WHOLE and the pack
   const p = h.ctx.escSnapshotActPack_(rows, entries);
   assert.equal(p.truncated, true);
   assert.ok(p.count > 0 && p.count < 150);
-  assert.ok(JSON.stringify(p.threads).length <= h.ctx.ESC_SNAPSHOT_CHUNK_CHARS * h.ctx.ESC_SNAPSHOT_ACT_MAX_CHUNKS);
+  // ESC-D6: the budget is BYTES (UTF-8), the per-property cap's own unit.
+  assert.ok(Buffer.byteLength(JSON.stringify(p.threads), 'utf8') <= h.ctx.ESC_SNAPSHOT_CHUNK_BYTES * h.ctx.ESC_SNAPSHOT_ACT_MAX_CHUNKS);
   assert.ok(Object.keys(p.threads).indexOf('r0') !== -1, 'newest rows kept first');
   Object.keys(p.threads).forEach(function (k) { assert.equal(p.threads[k].length, 1, 'never a partial thread'); });
 });
@@ -300,10 +301,12 @@ test('ESC-S1: with Neon DOWN, Activity serves the offline thread under the SAME 
   assert.ok(ok.snapshotAsOf);
   assert.deepEqual(ok.rows[1], { action: 'comment', actor: 'm@x.com', at: '2026-08-18 10:00:00', detail: 'long…',
                                   shortened: true, department: 'Power', removed: true });
-  // Another dept's row: the L9 not-found shape, no thread.
-  assert.deepEqual(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 's1' }))), { available: true, rows: [] });
-  // A row the snapshot does not hold (closed / removed): unavailable.
-  assert.deepEqual(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'nope' }))), { available: false, rows: [] });
+  // ESC-D5: another dept's row and an id the snapshot does not hold return the
+  // SAME shape -- offline, existence in another dept must not be detectable (L9).
+  const denied = JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 's1' })));
+  const missing = JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'nope' })));
+  assert.deepEqual(missing, { available: false, rows: [] });
+  assert.deepEqual(denied, missing, 'a denial is indistinguishable from not-found on the offline path');
   // A snapshotted row whose thread did not fit: unavailable + snapshotMissing.
   assert.deepEqual(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'c9' }))), { available: false, rows: [], snapshotMissing: true });
   // A MID-QUERY death serves it too.
@@ -313,4 +316,56 @@ test('ESC-S1: with Neon DOWN, Activity serves the offline thread under the SAME 
   };
   h.ctx.escEnsureTable_ = function () {};
   assert.equal(JSON.parse(JSON.stringify(h.call('getEscalationActivity', { id: 'c1' }))).snapshotAsOf, ok.snapshotAsOf);
+});
+
+// ESC-D6 (broad-scan 2026-10-01): the ~9KB per-property cap is BYTES. Chunks
+// were cut at 8000 CHARACTERS, so multi-byte content (accented names, emoji in
+// a comment) produced over-cap values -- and the failed setProperty vanished in
+// an empty catch.
+test('ESC-D6: chunks are cut by UTF-8 bytes, never split a surrogate pair, and round-trip', function () {
+  const chunk = h.ctx.escChunkUtf8_;
+  const s1 = 'a' + '\u00e9'.repeat(10) + '\ud83d\ude00'.repeat(5) + 'z';
+  const parts = Array.from(chunk(s1, 7));
+  assert.equal(parts.join(''), s1, 'lossless');
+  parts.forEach(function (p) {
+    assert.ok(Buffer.byteLength(p, 'utf8') <= 7, 'every piece within the byte cap');
+    assert.ok(!/[\ud800-\udbff]$/.test(p), 'no piece ends on a lone high surrogate');
+  });
+  assert.equal(h.ctx.escUtf8Len_(s1), Buffer.byteLength(s1, 'utf8'));
+  assert.deepEqual(Array.from(chunk('', 10)), []);
+});
+
+test('ESC-D6: a multi-byte snapshot stays under the cap per property and still loads', function () {
+  h.state.props = {};
+  const rows = [];
+  for (let i = 0; i < 40; i++) {
+    const r = row('m' + i, 'CSR', 'pending');
+    r.reason = '\u00e9\u00e8\u00ea\ud83d\ude00'.repeat(120);   // ~1.7KB of UTF-8, ~600 chars
+    rows.push(r);
+  }
+  const packed = h.ctx.escSnapshotChunk_(rows);
+  packed.chunks.forEach(function (c) {
+    assert.ok(Buffer.byteLength(c, 'utf8') <= 8000, 'pre-ESC-D6 an 8000-CHAR chunk of this was ~20KB');
+  });
+  assert.ok(packed.chunks.length <= h.ctx.ESC_SNAPSHOT_MAX_CHUNKS);
+  h.call('escSnapshotStore_', rows);
+  const loaded = JSON.parse(JSON.stringify(h.call('escSnapshotLoad_')));
+  assert.equal(loaded.rows.length, packed.count);
+  assert.equal(loaded.rows[0].reason, rows[0].reason);
+});
+
+test('ESC-D6: a failed property write is LOGGED, not swallowed', function () {
+  const lines = [];
+  const realLogger = h.ctx.Logger, realProps = h.ctx.PropertiesService;
+  h.ctx.Logger = { log: function (m) { lines.push(String(m)); } };
+  h.ctx.PropertiesService = { getScriptProperties: function () {
+    return { setProperty: function () { throw new Error('Argument too large: value'); },
+             deleteProperty: function () {}, getProperty: function () { return null; } };
+  } };
+  try {
+    h.call('escSnapshotStore_', [row('a', 'CSR', 'pending')]);
+    h.call('escSnapshotActStore_', { threads: { a: [] }, count: 1 });
+  } finally { h.ctx.Logger = realLogger; h.ctx.PropertiesService = realProps; }
+  assert.ok(lines.some(function (l) { return /escSnapshotStore_: snapshot NOT stored: Argument too large/.test(l); }));
+  assert.ok(lines.some(function (l) { return /escSnapshotActStore_: threads NOT stored/.test(l); }));
 });
