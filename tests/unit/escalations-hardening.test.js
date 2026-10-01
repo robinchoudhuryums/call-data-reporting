@@ -1184,3 +1184,69 @@ test('ESC-DDL2: every ADD COLUMN in escEnsureTable_ is in ESC_REQUIRED_COLUMNS_'
   const missing = added.filter(function (c) { return required.indexOf(c) === -1; });
   assert.deepEqual(missing, [], 'add these to ESC_REQUIRED_COLUMNS_ so the esc-schema Health row checks them');
 });
+
+// ── AC-5 / ESC-D2 (broad-scan 2026-10-01) ──────────────────────────────────
+
+test('AC-5: the schema DDL runs ONCE per execution and is cached across executions; a failed column DDL is never cached', function () {
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  h.state.cache.clear();
+  const d = ddlConn(null);
+  h.call('escEnsureTableOnce_', d.conn);
+  const first = d.ran.length;
+  assert.ok(first >= 8, 'the full DDL ran once');
+  h.call('escEnsureTableOnce_', d.conn);
+  assert.equal(d.ran.length, first, 'pre-fix: every list load and card expand re-ran ~11 statements');
+
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;   // a NEW execution, same cache
+  h.call('escEnsureTableOnce_', d.conn);
+  assert.equal(d.ran.length, first, 'the cache flag spans executions');
+
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  h.state.cache.clear();
+  const bad = ddlConn(/ADD COLUMN IF NOT EXISTS group_id/);
+  h.call('escEnsureTableOnce_', bad.conn);
+  assert.equal(h.ctx.ESC_SCHEMA_ENSURED_, false, 'a failed migration is retried by the next call');
+  const n = bad.ran.length;
+  h.call('escEnsureTableOnce_', bad.conn);
+  assert.ok(bad.ran.length > n);
+  h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  h.state.cache.clear();
+});
+
+test('ESC-D2: escOpenWriteConn_ bounds every statement and never touches the lock; escTakeWriteLock_ closes the conn when busy', function () {
+  const timeouts = [];
+  let closed = 0;
+  const stmt = function () { return { setQueryTimeout: function (s) { timeouts.push(s); }, execute: function () {}, close: function () {} }; };
+  const raw = { prepareStatement: stmt, createStatement: stmt, setAutoCommit: function () {}, commit: function () {},
+                rollback: function () {}, close: function () { closed++; } };
+  const saved = { conn: h.ctx.getDashboardNeonConn_, lock: h.ctx.LockService };
+  let lockTaken = 0;
+  h.ctx.getDashboardNeonConn_ = function () { return raw; };
+  h.ctx.LockService = { getScriptLock: function () { lockTaken++; return { tryLock: function () { return false; }, releaseLock: function () {} }; } };
+  h.ctx.ESC_SCHEMA_ENSURED_ = true;
+  try {
+    const conn = h.call('escOpenWriteConn_');
+    assert.equal(lockTaken, 0, 'the connect and the schema check happen OUTSIDE the script lock');
+    conn.prepareStatement('SELECT 1');
+    conn.createStatement();
+    assert.deepEqual(timeouts, [30, 30], 'every escalation statement carries setQueryTimeout');
+    assert.throws(function () { h.call('escTakeWriteLock_', conn, 15000); }, /Another escalation write is in progress/);
+    assert.equal(closed, 1, 'a busy lock closes the already-open connection');
+    h.ctx.getDashboardNeonConn_ = function () { return null; };
+    assert.throws(function () { h.call('escOpenWriteConn_'); }, /not configured\/reachable/);
+  } finally {
+    h.ctx.getDashboardNeonConn_ = saved.conn;
+    h.ctx.LockService = saved.lock;
+    h.ctx.ESC_SCHEMA_ENSURED_ = false;
+  }
+});
+
+test('ESC-D2: every escalation write verb connects BEFORE it takes the lock (source sweep)', function () {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script',
+    'department-dashboard', 'Escalations.gs'), 'utf8');
+  const opens = src.match(/var conn = escOpenWriteConn_\(\);[^\n]*\n\s*var lock = escTakeWriteLock_\(conn, \d+\);/g) || [];
+  assert.equal(opens.length, 14, 'the 14 write verbs');
+  const bareLocks = (src.match(/LockService\.getScriptLock\(\)/g) || []).length;
+  assert.equal(bareLocks, 1, 'the only getScriptLock is inside escTakeWriteLock_ -- a verb taking the lock '
+    + 'before its connect would hold it across an unbounded JDBC connect again');
+});

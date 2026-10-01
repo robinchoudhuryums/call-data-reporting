@@ -354,3 +354,20 @@ test('S2A-5: a preview sent before the import lands carries the stale callout, n
   assert.match(html, /when this digest was previewed/);
   assert.ok(!/No calls recorded/.test(html), 'the missing import is not blamed on the roster');
 });
+
+// EN-4 (broad-scan 2026-10-01): a thrown run recorded NOTHING (the previous
+// "ok" stayed green on the Health page) and the email promised a retry that
+// never happens -- the next scheduled run assesses the NEXT window.
+test('EN-4: a thrown digest run records FAILED (threw) and the email says how to re-send this window', function () {
+  install({ dates: ['2026-09-03', '2026-09-04'] });
+  h.state.props.DIGEST_LAST_RESULT_weekly = 'ok 2026-08-28: sent 3';
+  h.ctx.sendDigestsForCadence_ = function () { throw new Error('Digest Config read timed out'); };
+  const r = h.call('digestGatedAttempt_', 'weekly', new Date('2026-09-07T09:25:00-05:00'), 'trigger');
+  assert.equal(r.decision, 'error');
+  assert.match(h.state.props.DIGEST_LAST_RESULT_weekly, /^FAILED \(threw\): Digest Config read timed out/,
+    'pre-fix the stale "ok" stayed in place');
+  const mail = JSON.stringify(h.state.sentEmails);
+  assert.match(mail, /does NOT retry this window/);
+  assert.doesNotMatch(mail, /so the next scheduled run retries/);
+  h.ctx.sendDigestsForCadence_ = REAL_SEND;
+});

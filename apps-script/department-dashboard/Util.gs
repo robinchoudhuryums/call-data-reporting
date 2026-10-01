@@ -75,6 +75,19 @@ function assertDeptAccess_(user, dept) {
 }
 
 /**
+ * AC-1 (broad-scan 2026-10-01): the NON-THROWING twin of assertDeptAccess_,
+ * for callers that widen a request on the user's behalf (a parent dept's
+ * sub-queues) rather than serve one the user named. Such a caller must DROP a
+ * dept the user cannot reach -- never throw: when a Dept Config read fails,
+ * resolveUser_ correctly fails closed (no sub-queue expansion) while
+ * subQueueChildMap_ still serves the seed edges, and the throw locked every
+ * Sales / CSR / Power manager out of My Department until a read succeeded.
+ */
+function userCanAccessDept_(user, dept) {
+  try { assertDeptAccess_(user, dept); return true; } catch (e) { return false; }
+}
+
+/**
  * Phase A (agent role) deny wall for surfaces WITHOUT a dept argument --
  * company-wide reads (Overview, YTD trend, all-dept QCD) and the escalation
  * entry points, which predate the agent role and must not silently include
@@ -646,11 +659,16 @@ function buildTeamInsights_(curr, prev, opts) {
  * throwing, because a picker that fails to open is worse than one missing a
  * group the manager may not need.
  */
-function computeSubQueuePickerGroups_(dept, from, to) {
+function computeSubQueuePickerGroups_(dept, from, to, user) {
   if (typeof subQueueChildMap_ !== 'function') return [];
   let children;
   try { children = subQueueChildMap_()[dept] || []; }
   catch (e) { return []; }
+  // AC-1: only the sub-queues this viewer can actually reach. With a Dept
+  // Config read failure the child map is the seed constant while the user's
+  // departments are the fail-closed assigned list -- the groups must follow
+  // the user, or the picker offers agents the report call will then refuse.
+  if (user) children = children.filter(function (c) { return userCanAccessDept_(user, c); });
   const out = [];
   children.forEach(function (child) {
     try {

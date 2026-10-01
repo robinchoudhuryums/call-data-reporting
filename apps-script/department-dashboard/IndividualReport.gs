@@ -111,7 +111,7 @@ function getIndividualReportInit(req) {
     activeAgents   = active.agents;
     activeFloaters = active.floaters;
     subQueueGroups = (typeof computeSubQueuePickerGroups_ === 'function')
-      ? computeSubQueuePickerGroups_(dept, from, to) : [];
+      ? computeSubQueuePickerGroups_(dept, from, to, user) : [];   // AC-1: the viewer's reachable sub-queues only
   }
 
   return {

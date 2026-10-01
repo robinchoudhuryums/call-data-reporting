@@ -284,7 +284,29 @@ function sendAlerts(req) {
   assertAdmin_();
   const dateIso = String((req && req.date) || '').trim();
   if (!isIsoDate_(dateIso)) throw new Error('date must be YYYY-MM-DD');
-  return runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/Session.getActiveUser().getEmail());
+  // EN-2: a double-click (or a send racing the 8 AM trigger for the same date)
+  // is refused by the date claim, not by holding the script lock for the run.
+  // A deliberate SEQUENTIAL re-send of an already-assessed date stays allowed
+  // (admins force-send after a holiday) -- `manual` skips the 'done' refusal.
+  const props = PropertiesService.getScriptProperties();
+  const claim = alertsClaimRun_(props, dateIso, { manual: true });
+  if (!claim.ok) {
+    throw new Error(claim.reason === 'busy'
+      ? 'The script is busy with another write — please retry in a moment.'
+      : 'Another alert run is already in progress — please retry in a moment.');
+  }
+  try {
+    const results = runAlertsCore_(dateIso, /*dryRun=*/false, /*triggeredBy=*/Session.getActiveUser().getEmail());
+    // EN-5 (broad-scan 2026-10-01): a manual send never set ALERTS_RUN_MARKER,
+    // so sending yesterday's alerts at 7:45 let the 8 AM trigger send every
+    // below-threshold manager the SAME alert again. Mark the date assessed --
+    // only ever FORWARD, so a back-dated re-send can't re-open a newer day --
+    // and record the outcome the trigger will now not write.
+    if (alertsAdvanceMarker_(props, dateIso)) recordAlertsOutcome_(alertsOutcomeString_(dateIso, results || []));
+    return results;
+  } finally {
+    alertsReleaseRun_(props);
+  }
 }
 
 function installAlertTrigger() {
@@ -473,11 +495,15 @@ function alertsGatedAttempt_(now, source) {
 // check-and-claim, never the per-dept run. A claim older than
 // ALERTS_CLAIM_STALE_MS_ is a killed run's leftover and is ignored.
 var ALERTS_CLAIM_STALE_MS_ = 20 * 60000;
-function alertsClaimRun_(props, dateIso) {
+function alertsClaimRun_(props, dateIso, opts) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return { ok: false, reason: 'busy' };
   try {
-    if ((props.getProperty('ALERTS_RUN_MARKER') || '') === dateIso) return { ok: false, reason: 'done' };
+    // EN-2: a MANUAL send may re-send an assessed date on purpose; only a run
+    // in flight for the same date refuses it.
+    if (!(opts && opts.manual) && (props.getProperty('ALERTS_RUN_MARKER') || '') === dateIso) {
+      return { ok: false, reason: 'done' };
+    }
     var cur = String(props.getProperty('ALERTS_RUN_CLAIM') || '').split('|');
     if (cur[0] === dateIso && (Date.now() - Number(cur[1] || 0)) < ALERTS_CLAIM_STALE_MS_) {
       return { ok: false, reason: 'in-flight' };
@@ -490,6 +516,15 @@ function alertsClaimRun_(props, dateIso) {
 }
 function alertsReleaseRun_(props) {
   try { props.deleteProperty('ALERTS_RUN_CLAIM'); } catch (e) { /* the stale rule covers it */ }
+}
+/** EN-5: marks `dateIso` assessed, never moving the marker BACK. True when it advanced. */
+function alertsAdvanceMarker_(props, dateIso) {
+  try {
+    var cur = String(props.getProperty('ALERTS_RUN_MARKER') || '');
+    if (cur && cur >= dateIso) return false;
+    props.setProperty('ALERTS_RUN_MARKER', dateIso);
+    return true;
+  } catch (e) { return false; }
 }
 
 /** ENG-3. Schedules ONE retry attempt; true on success. Best-effort. */
@@ -572,27 +607,14 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
       + 'Every alert outcome must be logged.');
   }
 
-  // F4: serialize REAL sends so a double-click on "Send alerts" -- or an admin
-  // send racing the 8 AM runDailyAlerts_ trigger -- can't double-fire manager
-  // emails + duplicate Alert Log rows. Preview (dryRun) is self-marked
-  // (preview: / would-send) and read-mostly, so it isn't locked. Uses the same
-  // project-wide script lock as OrphanFix / DeptConfig (tryLock + throw on
-  // contention). A deliberate SEQUENTIAL re-send is still allowed -- the lock is
-  // free by then -- which is intended (admins can force-send after a holiday).
-  let alertLock = null;
-  if (!dryRun) {
-    alertLock = LockService.getScriptLock();
-    // OPS-2: wait up to 2 minutes, not 15s. The 8 AM digest trigger shares
-    // this project-wide lock and Apps Script schedules both randomly inside
-    // the same hour; with the digest now releasing the lock before its
-    // sends (see sendDigestsForCadence_) any residual contention is brief,
-    // and waiting it out beats dropping the whole day's alerts.
-    if (!alertLock.tryLock(120000)) {
-      throw new Error('Another alert run is already in progress — please retry in a moment.');
-    }
-  }
-  try {
-
+  // EN-2 (broad-scan 2026-10-01): NO script lock here any more. F4 held the
+  // project-wide lock across every dept's compute, Access Control read and
+  // manager send -- minutes at 8 AM -- so the 8 AM digests (15 s wait) and
+  // coaching (30 s) dropped their runs and every escalation write / admin save
+  // failed with "another write is in progress". Real-send de-duplication now
+  // rides the date CLAIM (alertsClaimRun_: a property set under a SHORT lock),
+  // taken by both callers: the trigger path (ENG-4) and sendAlerts (manual).
+  // Preview (dryRun) never needed either.
   const cfg = readAlertConfig_();
   const results = [];
 
@@ -775,9 +797,6 @@ function runAlertsCore_(dateIso, dryRun, triggeredBy) {
   });
 
   return results;
-  } finally {
-    if (alertLock) alertLock.releaseLock();   // F4
-  }
 }
 
 /**

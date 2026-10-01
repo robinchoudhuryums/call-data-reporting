@@ -905,8 +905,21 @@ function getDepartmentSummary(req) {
   // unchanged, and the three parents (Sales / CSR / Power) open combined. The
   // familiar own-dept figure is never lost: it stays on screen as that dept's
   // own subtotal row.
-  const subQueues = (typeof subQueueChildMap_ === 'function')
-    ? ((subQueueChildMap_()[dept]) || []) : [];
+  // AC-1 (broad-scan 2026-10-01): only the sub-queues this viewer can reach.
+  // A transient Dept Config read failure leaves user.departments at the
+  // fail-closed ASSIGNED list (resolveUser_ does not expand) while
+  // subQueueChildMap_ serves the seed edges, so the per-dept assert below
+  // threw and every Sales / CSR / Power manager lost My Department (and the
+  // dept email) until a read succeeded. Dropping an unreachable child serves
+  // the own-dept view instead; it widens nothing (the assert still runs).
+  const subQueues = ((typeof subQueueChildMap_ === 'function')
+    ? ((subQueueChildMap_()[dept]) || []) : [])
+    .filter(function (d) {
+      if (userCanAccessDept_(user, d)) return true;
+      Logger.log('getDepartmentSummary: sub-queue ' + d + ' of ' + dept
+        + ' is not reachable for this viewer -- serving without it (AC-1).');
+      return false;
+    });
   let subScope = String((req && req.subScope) || '').trim();
   if (['own', 'subs', 'all'].indexOf(subScope) === -1) {
     subScope = subQueues.length ? 'all' : 'own';

@@ -912,6 +912,7 @@ var PROP_REGISTRY_ = Object.freeze({
     PIPELINE_WATCH_LAST_TS: 'engine',
     PIPELINE_WATCH_BACKUP_MARK: 'engine', PIPELINE_WATCH_READBACK_MARK: 'engine',
     QUEUE_REPORT_LAST_SENT: 'engine', QUEUE_REPORT_LAST_MISSED: 'engine',
+    QUEUE_REPORT_FAIL_NOTIFIED: 'engine',   // EN-3: last emailed failure signature (once/day)
     QUEUE_REPORT_LAST_RESULT: 'engine',
     QUEUE_REPORT_LAST: 'engine', QUEUE_REPORT_STARTED: 'engine',   // ENG-5
     QUEUE_REPORT_SENDING: 'engine',   // S2B-8: the in-flight send claim

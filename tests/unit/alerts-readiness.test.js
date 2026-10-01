@@ -142,3 +142,94 @@ test('ENG-4: a BUSY script lock (some other admin write) reschedules instead of 
     assert.match(h.state.props.ALERTS_LAST_RESULT, /^DEFERRED 2026-09-21: the script lock was busy/);
   } finally { h.state.lockBusy = false; }
 });
+
+// ── EN-2 / AC-4 / EN-5 (broad-scan 2026-10-01) ─────────────────────────────
+// A fresh harness: the tests above stub runAlertsCore_ itself.
+const h2 = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'DeptConfig.gs', 'Alerts.gs', 'Digest.gs',
+  'SystemHealth.gs'] });
+
+// A LockService that knows whether the script lock is HELD (the shim's only
+// answers tryLock). `held` is what an escalation write / digest would contend on.
+function trackingLock() {
+  const st = { held: 0, peakDuringSend: 0 };
+  h2.ctx.LockService = { getScriptLock: function () {
+    let mine = false;
+    return {
+      tryLock: function () { if (st.held) return false; st.held++; mine = true; return true; },
+      waitLock: function () { st.held++; mine = true; },
+      releaseLock: function () { if (mine) { st.held--; mine = false; } },
+      hasLock: function () { return mine; },
+    };
+  } };
+  return st;
+}
+
+function installCore(lockState, sent) {
+  h2.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com' };
+  h2.state.userEmail = 'admin@x.com';
+  h2.ctx.isIsoDate_ = function (v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v)); };   // lives in Data.gs (not loaded)
+  h2.ctx.openSpreadsheet_ = function () { return { getSheetByName: function () { return {}; } }; };
+  h2.ctx.appendAlertLog_ = function () {};
+  h2.ctx.getAllDepartments_ = function () { return ['CSR', 'Sales']; };
+  h2.ctx.readAlertConfig_ = function () {
+    return [{ department: 'CSR', active: true, threshold: 90, skipDates: '' },
+            { department: 'Sales', active: true, threshold: 90, skipDates: '' }];
+  };
+  h2.ctx.getRosterForDepartment_ = function () { return { names: ['A'] }; };
+  h2.ctx.computeDeptAnswerRateForDate_ = function () { return { rung: 10, answered: 5, missed: 5, pct: 50 }; };
+  h2.ctx.resolveRecipients_ = function () { return ['m@x.com']; };
+  h2.ctx.sendAlertEmail_ = function (entry) {
+    sent.push(entry.department);
+    lockState.peakDuringSend = Math.max(lockState.peakDuringSend, lockState.held);
+  };
+}
+
+test('EN-2 / AC-4: a real alerts run sends with the script lock FREE (digests, coaching and escalation writes are not starved)', function () {
+  const lock = trackingLock();
+  const sent = [];
+  installCore(lock, sent);
+  const res = h2.call('runAlertsCore_', '2026-09-21', false, 'daily-trigger');
+  assert.equal(sent.length, 2, 'both depts below threshold were alerted');
+  assert.equal(lock.peakDuringSend, 0,
+    'pre-fix the F4 lock was held across every compute + send (minutes at 8 AM)');
+  assert.ok(res.every(function (r) { return r.status === 'sent'; }));
+  // ...and while it runs, another writer can take the lock (an escalation verb's tryLock).
+  h2.ctx.sendAlertEmail_ = function () {
+    const other = h2.ctx.LockService.getScriptLock();
+    assert.ok(other.tryLock(15000), 'an escalation write mid-alerts-run gets the lock');
+    other.releaseLock();
+  };
+  h2.call('runAlertsCore_', '2026-09-21', false, 'daily-trigger');
+});
+
+test('EN-2: a manual send is refused while a run for the SAME date is in flight (the double-click guard)', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  h2.state.props.ALERTS_RUN_CLAIM = '2026-09-21|' + Date.now();
+  assert.throws(function () { h2.call('sendAlerts', { date: '2026-09-21' }); }, /already in progress/);
+  assert.equal(sent.length, 0);
+});
+
+test('EN-5: a manual send marks the date, so the 8 AM trigger does not send the same alerts again', function () {
+  trackingLock();
+  const sent = [];
+  installCore({ held: 0, peakDuringSend: 0 }, sent);
+  h2.ctx.getCompanyHolidayRanges_ = function () { return []; };
+  h2.ctx.digestLatestDqeIso_ = function () { return '2026-09-21'; };
+  h2.call('sendAlerts', { date: '2026-09-21' });
+  assert.equal(sent.length, 2);
+  assert.equal(h2.state.props.ALERTS_RUN_MARKER, '2026-09-21');
+  assert.match(h2.state.props.ALERTS_LAST_RESULT, /^\S+ 2026-09-21:/, 'the outcome the trigger will not write is recorded');
+  assert.equal(h2.state.props.ALERTS_RUN_CLAIM, undefined, 'claim released');
+  const res = h2.call('alertsGatedAttempt_', new Date('2026-09-22T08:05:00-05:00'), 'trigger');
+  assert.equal(res.decision, 'done');
+  assert.equal(sent.length, 2, 'pre-fix: the trigger re-sent both depts');
+
+  // A deliberate sequential re-send is still allowed, and a BACK-dated one
+  // never moves the marker backwards (that would re-open the newer day).
+  h2.call('sendAlerts', { date: '2026-09-21' });
+  assert.equal(sent.length, 4);
+  h2.call('sendAlerts', { date: '2026-09-18' });
+  assert.equal(h2.state.props.ALERTS_RUN_MARKER, '2026-09-21');
+});

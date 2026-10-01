@@ -223,7 +223,7 @@ function getAccessEntries_(normalizedEmail) {
   // '__none__' for the TTL (a false denial for up to 60 s and a spurious
   // "Access changed" sign-in notice). A-6 closed that by taking the SCRIPT
   // LOCK here -- but that lock is project-wide and long jobs hold it (the
-  // 8 AM alerts run holds it across its whole compute-and-send loop, exactly
+  // 8 AM alerts run held it across its whole compute-and-send loop until EN-2, exactly
   // when managers sign in), so every uncached sign-in waited up to 10 s and,
   // failing the lock, was not cached, so every RPC in the page paid again
   // (S2B-2, broad-scan 2026-09-23).

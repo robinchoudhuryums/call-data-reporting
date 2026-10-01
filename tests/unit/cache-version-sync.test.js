@@ -78,6 +78,7 @@ const SPECS = [
   ['mailThrottle',      'Config.gs',              /'mailThrottle:v(\d+):'/],   // SEC-2 (Batch 8)
   ['orphanFix:init',    'OrphanFix.gs',           /'orphanFix:init:v(\d+)'/],
   ['deptConfig:init',   'DeptConfig.gs',          /'deptConfig:init:v(\d+)'/],
+  ['escSchema',         'Escalations.gs',         /'escSchema:v(\d+):'/],   // AC-5 (broad-scan 2026-10-01)
 ];
 
 // Build the canonical map from code at load time so every test sees it.
@@ -215,6 +216,7 @@ const ANCHOR_SPECS = {
   mailThrottle:        'exception: SEC-2 per-user report-email counter (rolling 6 h window) -- not a report cache',
   'orphanFix:init':    'exception: busted on every write (bustOrphanFixCache_)',
   'deptConfig:init':   'exception: busted on every write (dcBustCaches_)',
+  escSchema:           'exception: AC-5 "schema DDL already ran" flag (1 h TTL, key carries ESC_REQUIRED_COLUMNS_) -- not a report cache',
 };
 
 test('S3: every SPECS prefix has an anchor classification, and tag-anchored files reference reportFreshnessTag_', function () {

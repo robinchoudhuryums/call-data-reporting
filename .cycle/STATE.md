@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-01 — broad-scan Batch 2 IMPLEMENTED on the same branch (block 215).**
+  AC-1 (fail-closed sub-queue access no longer locks parent managers out),
+  EN-2/AC-4 (alerts no longer hold the script lock across sends; date claim
+  instead), ESC-D2/AC-5 (escalations connect + schema before the lock, 30 s
+  statement timeouts, schema DDL memoized), EN-4, EN-3, EN-5. 2003/2003 green.
+  **Owner-side:** deploy the dashboard (blocking), walk S50-S53, read the
+  out-alerts / out-digest Health rows after the next 8 AM run. Still owed from
+  Batch 1: the cdr-import (+ cdr-report) deploy. **Where I left off:** Batches
+  1-2 done and pushed, no PR opened; next suggested Batch 3 (per-call agent
+  identity: PC-1..PC-10).
 - **2026-10-01 — broad-scan (new) + Batch 1 IMPLEMENTED on branch
   `claude/optimistic-lamport-92xm9l` (block 214).** A fresh 3-stage broad scan
   produced ~110 findings in 12 batches (IDs AC/DL/EN/PC/PIPE/IG/CR/CL/HT/DEP/

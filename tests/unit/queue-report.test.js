@@ -1315,3 +1315,34 @@ test('S2B-8: the poll stands down while a manual blast owns the day', function (
     h.state.props = {};
   }
 });
+
+// EN-3 (broad-scan 2026-10-01): a persistent throw used to email every admin
+// on EVERY 30-minute poll (~36 a day); now once per error signature per day.
+test('EN-3: a persistent runDailyQueueReport_ throw emails ONCE per signature per day, while every poll is still recorded', function () {
+  h.state.props = { SPREADSHEET_ID: 'fake', QUEUE_REPORT_ENABLED: 'true', ADMIN_EMAILS: 'admin@x.com' };
+  const sent = [];
+  h.ctx.MailApp = { sendEmail: function (a) { sent.push(a); }, getRemainingDailyQuota: function () { return 100; } };
+  let msg = 'Service Spreadsheets timed out';
+  h.ctx.prevBusinessDayIso_ = function () { throw new Error(msg); };
+  const realDate = h.ctx.Date;
+  let fixed = new realDate('2026-07-13T07:00:00-05:00');
+  h.ctx.Date = function (a) { return arguments.length ? new realDate(a) : new realDate(fixed.getTime()); };
+  h.ctx.Date.now = function () { return fixed.getTime(); };
+  const failures = function () { return sent.filter(function (m) { return /run failed/.test(m.subject || ''); }).length; };
+  try {
+    h.call('runDailyQueueReport_');
+    h.call('runDailyQueueReport_');
+    h.call('runDailyQueueReport_');
+    assert.equal(failures(), 1, 'pre-fix: one email per poll');
+    assert.match(h.state.props.QUEUE_REPORT_LAST_RESULT, /^FAILED at .*timed out/, 'each poll still records the failure');
+    msg = 'a different failure';
+    h.call('runDailyQueueReport_');
+    assert.equal(failures(), 2, 'a NEW signature emails');
+    fixed = new realDate('2026-07-14T07:00:00-05:00');
+    h.call('runDailyQueueReport_');
+    assert.equal(failures(), 3, 'and the same failure on a new day emails again');
+  } finally {
+    h.ctx.Date = realDate;
+    delete h.ctx.prevBusinessDayIso_;
+  }
+});

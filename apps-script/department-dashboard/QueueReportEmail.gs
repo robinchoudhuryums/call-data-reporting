@@ -71,6 +71,7 @@ function queueReportRecordResult_(props, text) {
   props.setProperty(QUEUE_REPORT_LAST_PROP, new Date().toISOString());
 }
 const QUEUE_REPORT_LAST_MISSED_PROP = 'QUEUE_REPORT_LAST_MISSED';  // O-7: target ISO already flagged as missed
+const QUEUE_REPORT_FAIL_NOTIFIED_PROP = 'QUEUE_REPORT_FAIL_NOTIFIED';  // EN-3: '<day>|<error signature>' last emailed
 
 // ── Trigger entry point ───────────────────────────────────────────────────
 
@@ -261,7 +262,28 @@ function runDailyQueueReport_() {
       queueReportRecordResult_(PropertiesService.getScriptProperties(),
         'FAILED at ' + new Date() + ': ' + ((e && e.message) ? e.message : String(e)));
     } catch (pe) { /* best-effort */ }
-    notifyQueueReportFailure_(e);
+    // EN-3 (broad-scan 2026-10-01): the poll retries all day by design, so a
+    // PERSISTENT throw (a compute error, a full Script Properties store, a
+    // subscriber-sheet timeout) emailed every admin on EVERY 30-minute poll --
+    // ~36 identical emails a day on the mail quota alerts and digests share.
+    // Email once per error signature per day, like this file's FAILED-ALL and
+    // LATE notices; the result line above still records every poll.
+    if (queueReportFailureIsNew_(e)) notifyQueueReportFailure_(e);   // (`now` is try-scoped; the helper defaults it)
+  }
+}
+
+/** EN-3: true the first time this error signature fails today (and remembers it). */
+function queueReportFailureIsNew_(err, now) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const day = Utilities.formatDate(now || new Date(), TZ, 'yyyy-MM-dd');
+    const sig = String((err && err.message) ? err.message : err).slice(0, 120);
+    const key = day + '|' + sig;
+    if ((props.getProperty(QUEUE_REPORT_FAIL_NOTIFIED_PROP) || '') === key) return false;
+    props.setProperty(QUEUE_REPORT_FAIL_NOTIFIED_PROP, key);
+    return true;
+  } catch (pe) {
+    return true;   // cannot remember -> email (a missed failure is worse than a repeat)
   }
 }
 

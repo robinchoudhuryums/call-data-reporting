@@ -148,7 +148,10 @@ When something looks wrong, before assuming a code bug, check:
     their digest, check (a) Digest Config row Active=TRUE,
     (b) Cadence is `daily`, `weekly`, or `monthly` (normalized -- other values
     are dropped), (c) digest triggers installed (#8), (d) admin
-    inbox for a `notifyDigestFailure_` email if the run threw,
+    inbox for a `notifyDigestFailure_` email if the run threw -- since EN-4
+    the "Last runs" line / Health row also read `FAILED (threw): …`, and the
+    next SCHEDULED run does not retry that window (it assesses the next one):
+    re-run the cadence's handler from the editor before then,
     (e) the Alerts modal's Manager-digest "Last runs" line (the
     `DIGEST_LAST_RESULT_<cadence>` Script Properties via
     `getDigestsInit.lastResults`) -- a `FAILED-ALL` entry means every send
