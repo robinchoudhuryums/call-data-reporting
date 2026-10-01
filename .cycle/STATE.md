@@ -1,27 +1,30 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
-- **2026-10-01 — WHERE I LEFT OFF.** Everything below (Steps 0/1/2a/2b +
-  ESC-L3/ESC-S1 + the sync-docs pass) is MERGED to main as PR #348
-  (0dc15c9). Owner DEPLOYED the dashboard 2026-09-30 and ran "Back up now":
+- **2026-10-01 — WHERE I LEFT OFF.** Everything below is MERGED to main:
+  Steps 0/1/2a/2b + ESC-L3/ESC-S1 + the first sync-docs pass as PR #348
+  (0dc15c9), and the reflect follow-ups (blocks 212-213) + the second
+  sync-docs pass + ESC-DDL2 as PR #349 (3da4feb). Owner DEPLOYED the
+  dashboard 2026-09-30 (that deploy predates #349) and ran "Back up now":
   all four tables ok, written to the Sheets-workbook fallback (Drive is
   disabled by the domain admin), 141 s, weekly Sat 6:00 trigger installed.
-  **Still owner-side:** (1) walk S50-S53 on the live app; (2) confirm the
-  cdr-report push (EML-2's `[Copy]` of the daily call report email) -- not stated;
-  (3) optional `ALL_DEPT_NOTIFY_OPT_IN` (#58). Branch
-  `claude/broad-scan-gnfpx5`'s PR is merged -- new work restarts the branch
-  from main.
-- **2026-10-01 follow-ups SHIPPED on the branch (block 212):** PROPS-1 (Health
-  row: Script Properties store usage vs its 500 KB total, warn at 80%) and
-  ESC-G1 (CI sweep: every public escalation write verb refuses a removed
-  copy or is a reasoned exemption). **Block 213 closed the rest:** ESC-DDL
-  (the linked-copy column migration logs on failure; Health `esc-schema`
-  row verifies columns + index) and ESC-U1 (partial UNIQUE index on
-  escalations (group_id, department)). All unmerged on the branch; after
-  the next deploy the owner reads two new Health rows once
-  (`props-store`, `esc-schema`). Reflect 207-211's follow-ons: none left.
-  Sync-docs 2026-10-01 applied (esc-schema in CLAUDE.md, INV-55 status +
-  required-columns rule) + ESC-DDL2 test; all of it PR'd + merged (see below).
+  **Still owner-side:** (1) deploy the dashboard again to ship #349, then
+  read the two new Health rows once (`props-store`, `esc-schema` -- the
+  latter should read OK; a warn names the missing column/index); (2) walk
+  S50-S53 on the live app; (3) confirm the cdr-report push (EML-2's
+  `[Copy]` of the daily call report email) -- not stated; (4) optional
+  `ALL_DEPT_NOTIFY_OPT_IN` (#58). Branch `claude/broad-scan-gnfpx5`'s PRs
+  are merged -- new work restarts the branch from main.
+- **2026-10-01 follow-ups (blocks 212-213) -- MERGED as PR #349:** PROPS-1
+  (Health row: Script Properties store usage vs its 500 KB total, warn at
+  80%), ESC-G1 (CI sweep: every public escalation write verb refuses a
+  removed copy or is a reasoned exemption), ESC-DDL (the linked-copy column
+  migration logs on failure; Health `esc-schema` row verifies columns +
+  index), ESC-U1 (partial UNIQUE index on escalations (group_id,
+  department)), ESC-DDL2 (test: every escalations ADD COLUMN is listed in
+  `ESC_REQUIRED_COLUMNS_`), and the sync-docs pass (esc-schema in
+  CLAUDE.md, INV-55 status + required-columns rule). Reflect 207-211's
+  follow-ons: none left.
 - **PARKED IDEAS (owner asked to keep them, 2026-10-01; NOT approved to
   build -- ask before starting either):**
   1. **Email a department's managers when it is REMOVED from an escalation.**
