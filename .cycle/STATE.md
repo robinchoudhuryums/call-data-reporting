@@ -11,6 +11,12 @@
   (3) optional `ALL_DEPT_NOTIFY_OPT_IN` (#58). Branch
   `claude/broad-scan-gnfpx5`'s PR is merged -- new work restarts the branch
   from main.
+- **2026-10-01 follow-ups SHIPPED on the branch (block 212):** PROPS-1 (Health
+  row: Script Properties store usage vs its 500 KB total, warn at 80%) and
+  ESC-G1 (CI sweep: every public escalation write verb refuses a removed
+  copy or is a reasoned exemption). Unmerged; owner to read the new Health
+  row once after deploying. Still open from reflect 207-211: the
+  best-effort ADD COLUMN dependency (no signal), and INV-57 is code-only.
 - **PARKED IDEAS (owner asked to keep them, 2026-10-01; NOT approved to
   build -- ask before starting either):**
   1. **Email a department's managers when it is REMOVED from an escalation.**

@@ -1630,10 +1630,11 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   an OPS-8 prefix-coded outcome in their `*_LAST(_RESULT)` properties, classified
   by the ONE table `healthOutcomeIsBad_` / `HEALTH_BAD_PREFIXES_` (O-9: a new
   bad prefix goes there, nowhere else). Pinned by `system-health.test.js` /
-  `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Three CAPACITY rows sit
+  `smoke-check.test.js` / `neon-coverage.test.js` / `sheet-coverage.test.js`. **Four CAPACITY rows sit
   alongside them** -- Neon read volume MTD (`NEON_EGRESS_BUDGET_MB`, #47),
-  email quota, and Neon STORAGE by table (`NEON_STORAGE_CAP_MB`, #57) --
-  because all three fail SILENTLY and look healthy to every other probe. Both
+  email quota, Neon STORAGE by table (`NEON_STORAGE_CAP_MB`, #57) and the
+  Script Properties store's 500 KB quota (`props-store`, PROPS-1, #53) --
+  because all four fail SILENTLY and look healthy to every other probe. Both
   Neon figures are FLOORS (#47 / #57 say why), and a DELETE never moves the
   storage one (#57 has the reclaim runbook). Each ranks its top
   spenders: EVERY dashboard Neon read is metered with a surface label

@@ -118,7 +118,9 @@ tests/
                               link / soft-remove / delete-all-linked, every
                               write verb refusing a removed copy; ESC-L3:
                               restore to the prior status, Link/Move pointing
-                              at Restore),
+                              at Restore; ESC-G1: the source sweep that every
+                              public write verb refuses a removed copy or is
+                              a reasoned exemption),
                               neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
@@ -126,7 +128,9 @@ tests/
                               system-health (incl. the neon-storage row's
                               four branches: shared-conn read, unreachable
                               -> muted, throw -> warn, absent/fast/unconfigured
-                              -> no row) + smoke-check, queue-report,
+                              -> no row; PROPS-1: the Script Properties
+                              500 KB store row -- UTF-8 bytes, chunk families,
+                              80% warn, value-free) + smoke-check, queue-report,
                               pipeline-watch, missed-slice,
                               inbound-qcd-parity, journey-fallback (the
                               call-path drill's sheet fallback: source

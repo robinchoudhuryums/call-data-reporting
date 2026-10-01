@@ -1053,3 +1053,44 @@ test('ESC-L3: only a REMOVED copy restores, only for an admin; linking or moving
     assert.equal(l.writes.length, 0, fn);
   });
 });
+
+// ESC-G1 (reflect 207-211): a REMOVED copy is read-only, but only the verbs
+// written in 2b were taught that. This sweep makes it structural: every
+// PUBLIC Escalations.gs function that commits a write must call
+// escAssertNotRemoved_ -- or be listed here with the reason it may not.
+const ESC_REMOVED_GUARD_EXEMPT = {
+  createEscalation: 'writes NEW copies -- there is no existing copy to be removed',
+  removeEscalationDepartment: 'refuses a removed copy itself ("already removed")',
+  restoreEscalationDepartment: 'REQUIRES a removed copy -- it is the undo',
+  deleteEscalation: 'admin cleanup may delete a removed copy (and delete-all reaches them)',
+  approveEscalation: 'pending_review-only allowlist; a removed copy can never be pending_review',
+  rejectEscalation: 'pending_review-only allowlist; a removed copy can never be pending_review',
+  backfillEscalationActivity: 'editor-run migration; inserts seed trail rows only, never a status change',
+};
+
+function escPublicWriters() {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../../apps-script/department-dashboard/Escalations.gs'), 'utf8');
+  const out = {};
+  const re = /^function ([A-Za-z0-9]+)\s*\(/gm;
+  let m;
+  const starts = [];
+  while ((m = re.exec(src))) starts.push({ name: m[1], at: m.index });
+  starts.forEach(function (s, i) {
+    const body = src.slice(s.at, i + 1 < starts.length ? starts[i + 1].at : src.length);
+    if (/conn\.commit\(\)/.test(body)) out[s.name] = body;   // public (no trailing _) + commits = a write verb
+  });
+  return out;
+}
+
+test('ESC-G1: every public escalation write verb refuses a removed copy, or is an exemption with a reason', function () {
+  const writers = escPublicWriters();
+  assert.ok(Object.keys(writers).length >= 10, 'the sweep found the write verbs');
+  const missing = Object.keys(writers).filter(function (n) {
+    return !ESC_REMOVED_GUARD_EXEMPT[n] && writers[n].indexOf('escAssertNotRemoved_(') === -1;
+  });
+  assert.deepEqual(missing, [], 'add escAssertNotRemoved_(meta) after the row gate, or exempt it here with a reason');
+  // No stale exemptions: each one must still be a public writer.
+  Object.keys(ESC_REMOVED_GUARD_EXEMPT).forEach(function (n) {
+    assert.ok(writers[n], n + ' is exempt but is no longer a public write verb -- drop the exemption');
+  });
+});

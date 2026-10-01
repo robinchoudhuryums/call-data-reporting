@@ -1933,7 +1933,9 @@ function escGroupDepts_(conn, groupId) {
   return out;
 }
 
-/** ESC-L2: a REMOVED copy is read-only -- every write verb refuses it. */
+/** ESC-L2: a REMOVED copy is read-only -- every write verb refuses it.
+ *  ESC-G1: escalations-hardening.test.js fails when a public verb that
+ *  commits a write neither calls this nor is a named, reasoned exemption. */
 function escAssertNotRemoved_(meta) {
   if (meta && meta.status === ESC_STATUS_REMOVED) {
     throw new Error((meta.department || 'This department') + ' was removed from this escalation; '
