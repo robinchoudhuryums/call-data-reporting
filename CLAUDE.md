@@ -1643,8 +1643,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   top 5 tables (neon-retention.test.js). Also on the page: `build-stamp` ("unstamped" = a push
   bypassing deploy.sh's CI gates, #2), `legs-horizon` (surviving
   Call_Legs_* dates; sheet-only), `retention-risk` (surviving dates the
-  per-call tables are missing; #40/#43) and `workbook-cells` (the 10M
-  grid cap, ALLOCATED not used; #62).
+  per-call tables are missing; #40/#43), `workbook-cells` (the 10M
+  grid cap, ALLOCATED not used; #62) and `esc-schema` (the escalations
+  linked-copy columns + unique index, INV-55).
   **Install readiness: a trigger being
   installed does NOT mean its engine runs.** Eight engines gate their handler
   BODY on an `*_ENABLED` Script Property (`NEON_KEEPWARM`, `INGEST_WATCHDOG`,

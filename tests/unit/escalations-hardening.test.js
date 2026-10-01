@@ -1166,3 +1166,21 @@ test('ESC-DDL: escSchemaRead_ is one metered read of the live columns + index na
     assert.equal(metered, 'escalations');
   } finally { h.ctx.neonNoteEgress_ = prev; }
 });
+
+// ESC-DDL2 (sync-docs 2026-10-01): esc-schema is only as good as its list.
+// Every column escEnsureTable_ adds with ADD COLUMN must be in
+// ESC_REQUIRED_COLUMNS_, or the Health row reads ok while a column the
+// verbs depend on is missing.
+test('ESC-DDL2: every ADD COLUMN in escEnsureTable_ is in ESC_REQUIRED_COLUMNS_', function () {
+  const d = ddlConn(null);
+  h.call('escEnsureTable_', d.conn);
+  const added = [];
+  d.ran.forEach(function (q) {
+    const m = /ADD COLUMN IF NOT EXISTS\s+([a-z_][a-z0-9_]*)/i.exec(q);
+    if (m) added.push(m[1]);
+  });
+  assert.ok(added.length >= 5, 'the sweep saw the migration: ' + added.join(','));
+  const required = Array.from(h.ctx.ESC_REQUIRED_COLUMNS_);
+  const missing = added.filter(function (c) { return required.indexOf(c) === -1; });
+  assert.deepEqual(missing, [], 'add these to ESC_REQUIRED_COLUMNS_ so the esc-schema Health row checks them');
+});

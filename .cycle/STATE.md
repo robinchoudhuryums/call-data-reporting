@@ -20,6 +20,8 @@
   escalations (group_id, department)). All unmerged on the branch; after
   the next deploy the owner reads two new Health rows once
   (`props-store`, `esc-schema`). Reflect 207-211's follow-ons: none left.
+  Sync-docs 2026-10-01 applied (esc-schema in CLAUDE.md, INV-55 status +
+  required-columns rule) + ESC-DDL2 test; all of it PR'd + merged (see below).
 - **PARKED IDEAS (owner asked to keep them, 2026-10-01; NOT approved to
   build -- ask before starting either):**
   1. **Email a department's managers when it is REMOVED from an escalation.**

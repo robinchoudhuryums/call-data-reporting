@@ -67,7 +67,10 @@ var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
 
 // ESC-DDL / ESC-U1 (reflect 207-211): the schema the linked-copy verbs depend
 // on. escEnsureTable_ adds it best-effort; escSchemaVerdict_ is what the
-// Health page reads to say whether it actually landed.
+// Health page reads to say whether it actually landed. EVERY column
+// escEnsureTable_ adds with ADD COLUMN belongs in this list, or esc-schema
+// can read ok while a column the verbs read is missing (ESC-DDL2:
+// escalations-hardening.test.js fails on one that is not).
 var ESC_REQUIRED_COLUMNS_ = ['group_id', 'removed_by', 'removed_at', 'removed_reason', 'status_before_removal'];
 var ESC_GROUP_DEPT_INDEX_ = 'idx_escalations_group_dept';
 

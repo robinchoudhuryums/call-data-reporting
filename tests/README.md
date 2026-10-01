@@ -122,7 +122,9 @@ tests/
                               public write verb refuses a removed copy or is
                               a reasoned exemption; ESC-DDL/ESC-U1: the logged
                               column migration, the partial unique
-                              (group_id, department) index, escSchemaVerdict_),
+                              (group_id, department) index, escSchemaVerdict_;
+                              ESC-DDL2: every ADD COLUMN is in
+                              ESC_REQUIRED_COLUMNS_),
                               neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
