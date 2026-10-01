@@ -65,6 +65,12 @@
 
 var ESC_MAX_TEXT = 4000;          // length cap on free-text fields
 
+// ESC-DDL / ESC-U1 (reflect 207-211): the schema the linked-copy verbs depend
+// on. escEnsureTable_ adds it best-effort; escSchemaVerdict_ is what the
+// Health page reads to say whether it actually landed.
+var ESC_REQUIRED_COLUMNS_ = ['group_id', 'removed_by', 'removed_at', 'removed_reason', 'status_before_removal'];
+var ESC_GROUP_DEPT_INDEX_ = 'idx_escalations_group_dept';
+
 // ESC-L1: the OTHER copies of a linked escalation, as [{department, status}]
 // (NULL for a standalone row). Correlated on the outer alias `e`; the
 // sibling's department + status is all a viewer of one copy learns about the
@@ -2252,6 +2258,57 @@ function escNotifyHtml_(rec, link, movedFrom, alsoDepts, restored) {
 }
 
 /** Idempotent table creation (lazy, like inbound_calls). */
+/**
+ * ESC-DDL (reflect 207-211): one round trip -- the escalations table's live
+ * columns and index names. { columns: [], indexes: [] }; an empty columns
+ * list means the table does not exist yet. Read-only.
+ */
+function escSchemaRead_(conn) {
+  var sql = "SELECT json_build_object("
+    + "'cols', COALESCE((SELECT json_agg(column_name::text) FROM information_schema.columns "
+    +   "WHERE table_schema = current_schema() AND table_name = 'escalations'), '[]'::json), "
+    + "'idx', COALESCE((SELECT json_agg(indexname::text) FROM pg_indexes "
+    +   "WHERE schemaname = current_schema() AND tablename = 'escalations'), '[]'::json))::text AS j";
+  var stmt = conn.createStatement();
+  var rs = stmt.executeQuery(sql);
+  var json = rs.next() ? rs.getString('j') : '';
+  rs.close(); stmt.close();
+  if (typeof neonNoteEgress_ === 'function') neonNoteEgress_(json ? json.length : 0, 'escalations');   // OD-3
+  var parsed = JSON.parse(json || '{}') || {};
+  return { columns: (parsed.cols || []).map(String), indexes: (parsed.idx || []).map(String) };
+}
+
+/**
+ * ESC-DDL / ESC-U1 (PURE): a schema read -> the Health row's
+ * { status, value, hint }. Missing linked-copy COLUMNS are the outage case
+ * (every escalation save and live Activity fail); a missing unique index is
+ * the softer one (the code still refuses a second copy, the database does
+ * not), and its usual cause is duplicate copies already in the table.
+ */
+function escSchemaVerdict_(read) {
+  var cols = (read && read.columns) || [], idx = (read && read.indexes) || [];
+  if (!cols.length) {
+    return { status: 'muted', value: 'escalations table not created yet',
+             hint: 'It is created on the first escalation write.' };
+  }
+  var missing = ESC_REQUIRED_COLUMNS_.filter(function (c) { return cols.indexOf(c) === -1; });
+  if (missing.length) {
+    return { status: 'warn', value: 'missing column(s): ' + missing.join(', '),
+      hint: 'The linked-copy migration in escEnsureTable_ has not taken effect, so EVERY escalation save and '
+        + 'live Activity fail with "column ... does not exist". Each escalation write retries it and logs the '
+        + 'cause ("escEnsureTable_: ..." in the Apps Script executions log); if it keeps failing, run the '
+        + 'ALTER TABLE escalations ADD COLUMN ... statements in the Neon console as the table owner (Operator State #24).' };
+  }
+  if (idx.indexOf(ESC_GROUP_DEPT_INDEX_) === -1) {
+    return { status: 'warn', value: 'one-copy-per-department index missing (' + ESC_GROUP_DEPT_INDEX_ + ')',
+      hint: 'The database is not enforcing one copy per department in a linked group (the code still refuses '
+        + 'one). The build fails when duplicates already exist -- find them with SELECT group_id, department, '
+        + 'count(*) FROM escalations WHERE group_id IS NOT NULL GROUP BY 1, 2 HAVING count(*) > 1, delete or '
+        + 'remove the extras, and the next escalation write builds it (INV-55; Operator State #24).' };
+  }
+  return { status: 'ok', value: 'linked-copy columns + one-copy-per-department index present', hint: '' };
+}
+
 function escEnsureTable_(conn) {
   var ddl = conn.createStatement();
   ddl.execute(
@@ -2289,7 +2346,28 @@ function escEnsureTable_(conn) {
     // ESC-L3: the status a removed copy returns to when it is RESTORED.
     grp.execute('ALTER TABLE escalations ADD COLUMN IF NOT EXISTS status_before_removal text');
     grp.close();
-  } catch (grpErr) { /* best-effort */ }
+  } catch (grpErr) {
+    // ESC-DDL (reflect 207-211): still best-effort -- but no longer SILENT.
+    // Every verb now reads these columns, so a failure here breaks the whole
+    // write path with "column ... does not exist"; the log line names the
+    // cause and the Health page's esc-schema row (escSchemaVerdict_) shows it.
+    Logger.log('escEnsureTable_: linked-copy column DDL failed: ' + (grpErr && grpErr.message ? grpErr.message : grpErr));
+  }
+  // ESC-U1 (reflect 207-211): the DATABASE enforces one copy per department
+  // per linked group (INV-57) -- the verbs' checks stay as the readable
+  // refusals; this makes a slipped check impossible. Partial (standalone rows
+  // carry NULL group_id) and non-concurrent, so a build that hits existing
+  // duplicates rolls back whole instead of leaving an invalid index. Its own
+  // try: duplicate data must not block the columns above.
+  try {
+    var uq = conn.createStatement();
+    uq.execute('CREATE UNIQUE INDEX IF NOT EXISTS ' + ESC_GROUP_DEPT_INDEX_
+      + ' ON escalations (group_id, department) WHERE group_id IS NOT NULL');
+    uq.close();
+  } catch (uqErr) {
+    Logger.log('escEnsureTable_: unique (group_id, department) index not built (duplicate copies?): '
+      + (uqErr && uqErr.message ? uqErr.message : uqErr));
+  }
   // §5: append-only activity trail (create/comment/edit/resolve/reopen).
   // Rows are NEVER updated or deleted.
   try {

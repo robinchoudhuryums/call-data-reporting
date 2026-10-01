@@ -499,7 +499,14 @@ When something looks wrong, before assuming a code bug, check:
     read-only under the Removed filter) and **Delete all linked…** (ESC-L2,
     S52). The removal columns are added automatically too. A removed
     department's card offers **Restore <dept>…** (ESC-L3, S53): it returns to
-    the state it was in when removed, and the thread keeps both events. (a) **`NOTIFY_ON_NEW_ESCALATION`
+    the state it was in when removed, and the thread keeps both events.
+    **Check the Health page's `esc-schema` row after the deploy** (Neon
+    section): it confirms the linked-copy columns AND the
+    one-copy-per-department index (`idx_escalations_group_dept`) exist. A
+    warn on MISSING COLUMNS means every escalation save is failing -- the
+    row's hint has the console fix; a warn on a missing INDEX means
+    duplicate copies blocked the build -- its hint has the query that finds
+    them (ESC-DDL / ESC-U1). (a) **`NOTIFY_ON_NEW_ESCALATION`
     Script Property** -- set to `'true'` to email the dept's managers
     (`lookupDeptManagers_`, Access Control rows; ALL managers only when
     opted in, #58) on every new escalation, and the NEW dept's managers when

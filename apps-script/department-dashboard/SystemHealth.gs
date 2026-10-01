@@ -638,6 +638,20 @@ function getSystemHealth(req) {
         }
       }
     } catch (e) { add('neon', 'neon-storage', 'Neon storage by table', 'warn', 'probe failed', String(e && e.message || e)); }
+    // ESC-DDL / ESC-U1 (reflect 207-211): did the escalations linked-copy
+    // migration land? escEnsureTable_ adds it best-effort, and every verb now
+    // reads it -- a silent failure there would break the whole write path.
+    // One read on the shared connection (R21); the verdict is pure.
+    try {
+      if (neonConfigured && typeof escSchemaRead_ === 'function' && typeof escSchemaVerdict_ === 'function') {
+        if (!sharedNeonConn) {
+          add('neon', 'esc-schema', 'Escalations schema', 'muted', 'Neon unreachable — not checked this load');
+        } else {
+          var esv = escSchemaVerdict_(escSchemaRead_(sharedNeonConn));
+          add('neon', 'esc-schema', 'Escalations schema', esv.status, esv.value, esv.hint);
+        }
+      }
+    } catch (e) { add('neon', 'esc-schema', 'Escalations schema', 'warn', 'probe failed', String(e && e.message || e)); }
   } finally {
     if (sharedNeonConn) { try { sharedNeonConn.close(); } catch (ce) {} }
   }

@@ -1553,3 +1553,29 @@ test('PROPS-1: the props-store row sits in the visible CONFIG section and warns 
   assert.match(w.value, /largest: ESC_SNAPSHOT_\* \d+ KB/);
   assert.match(w.hint, /^Near the cap: at 100% EVERY property write in this project fails/);
 });
+
+// ── ESC-DDL (reflect 207-211): did the escalations linked-copy migration land?
+test('ESC-DDL: the esc-schema row reads ONCE on the shared connection; unreachable is muted, a throw warns', function () {
+  installHealth({ props: { NEON_HOST: 'h' } });
+  const conn = { close: function () {} };
+  let opened = 0, reads = [];
+  h.ctx.getDashboardNeonConn_ = function () { opened++; return conn; };
+  h.ctx.escSchemaRead_ = function (c) { reads.push(c); return { columns: ['x'], indexes: [] }; };
+  h.ctx.escSchemaVerdict_ = function (r) { return { status: 'warn', value: 'V' + r.columns.length, hint: 'H' }; };
+  try {
+    const row = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'esc-schema');
+    assert.equal(row.section, 'neon');
+    assert.equal(row.status, 'warn');
+    assert.equal(row.value, 'V1');
+    assert.equal(reads.length, 1);
+    assert.equal(reads[0], conn, 'the SHARED connection (R21)');
+    assert.equal(opened, 1);
+    h.ctx.getDashboardNeonConn_ = function () { return null; };
+    assert.equal(rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'esc-schema').status, 'muted');
+    h.ctx.getDashboardNeonConn_ = function () { return conn; };
+    h.ctx.escSchemaRead_ = function () { throw new Error('denied'); };
+    const t = rowByKey(h.call('getSystemHealth', { part: 'neon' }), 'esc-schema');
+    assert.equal(t.status, 'warn');
+    assert.equal(t.value, 'probe failed');
+  } finally { h.ctx.escSchemaRead_ = undefined; h.ctx.escSchemaVerdict_ = undefined; }
+});

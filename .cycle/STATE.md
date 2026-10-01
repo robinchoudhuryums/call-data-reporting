@@ -14,9 +14,12 @@
 - **2026-10-01 follow-ups SHIPPED on the branch (block 212):** PROPS-1 (Health
   row: Script Properties store usage vs its 500 KB total, warn at 80%) and
   ESC-G1 (CI sweep: every public escalation write verb refuses a removed
-  copy or is a reasoned exemption). Unmerged; owner to read the new Health
-  row once after deploying. Still open from reflect 207-211: the
-  best-effort ADD COLUMN dependency (no signal), and INV-57 is code-only.
+  copy or is a reasoned exemption). **Block 213 closed the rest:** ESC-DDL
+  (the linked-copy column migration logs on failure; Health `esc-schema`
+  row verifies columns + index) and ESC-U1 (partial UNIQUE index on
+  escalations (group_id, department)). All unmerged on the branch; after
+  the next deploy the owner reads two new Health rows once
+  (`props-store`, `esc-schema`). Reflect 207-211's follow-ons: none left.
 - **PARKED IDEAS (owner asked to keep them, 2026-10-01; NOT approved to
   build -- ask before starting either):**
   1. **Email a department's managers when it is REMOVED from an escalation.**

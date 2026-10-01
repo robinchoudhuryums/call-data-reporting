@@ -1094,3 +1094,75 @@ test('ESC-G1: every public escalation write verb refuses a removed copy, or is a
     assert.ok(writers[n], n + ' is exempt but is no longer a public write verb -- drop the exemption');
   });
 });
+
+// ESC-DDL / ESC-U1 (reflect 207-211): the linked-copy schema migration is
+// best-effort but no longer SILENT, and the database enforces one copy per
+// department per group.
+function ddlConn(failOn) {
+  const ran = [];
+  return { ran: ran, conn: { createStatement: function () {
+    return { execute: function (sql) {
+      ran.push(sql);
+      if (failOn && failOn.test(sql)) throw new Error('boom: ' + sql.slice(0, 30));
+    }, close: function () {} };
+  } } };
+}
+
+test('ESC-U1: escEnsureTable_ builds the PARTIAL unique (group_id, department) index, non-concurrently', function () {
+  const d = ddlConn(null);
+  h.call('escEnsureTable_', d.conn);
+  const uq = d.ran.filter(function (q) { return /CREATE UNIQUE INDEX/.test(q); });
+  assert.equal(uq.length, 1);
+  assert.equal(uq[0], 'CREATE UNIQUE INDEX IF NOT EXISTS idx_escalations_group_dept ON escalations (group_id, department) WHERE group_id IS NOT NULL');
+  assert.ok(!/CONCURRENTLY/.test(uq[0]), 'a failed concurrent build would leave an INVALID index behind');
+});
+
+test('ESC-DDL: a failing column DDL is LOGGED (not silent) and never blocks the index; a failing index build is logged, never thrown', function () {
+  const logs = [];
+  const prevLogger = h.ctx.Logger;
+  h.ctx.Logger = { log: function () { logs.push(Array.prototype.join.call(arguments, ' ')); } };
+  try {
+    const d = ddlConn(/ADD COLUMN IF NOT EXISTS group_id/);
+    assert.doesNotThrow(function () { h.call('escEnsureTable_', d.conn); });
+    assert.ok(logs.some(function (l) { return /escEnsureTable_: linked-copy column DDL failed: boom/.test(l); }), logs.join('|'));
+    assert.ok(d.ran.some(function (q) { return /CREATE UNIQUE INDEX/.test(q); }), 'the index still attempted');
+    logs.length = 0;
+    const d2 = ddlConn(/CREATE UNIQUE INDEX/);
+    assert.doesNotThrow(function () { h.call('escEnsureTable_', d2.conn); });
+    assert.ok(logs.some(function (l) { return /unique \(group_id, department\) index not built/.test(l); }));
+    assert.ok(d2.ran.some(function (q) { return /CREATE TABLE IF NOT EXISTS escalation_activity/.test(q); }), 'later DDL still runs');
+  } finally { h.ctx.Logger = prevLogger; }
+});
+
+test('ESC-DDL: escSchemaVerdict_ -- no table muted, missing columns warn (the outage case), missing index warn, else ok', function () {
+  const f = h.fn('escSchemaVerdict_');
+  const all = ['id', 'department', 'status', 'group_id', 'removed_by', 'removed_at', 'removed_reason', 'status_before_removal'];
+  assert.equal(f({ columns: [], indexes: [] }).status, 'muted');
+  const m = f({ columns: all.filter(function (c) { return c !== 'removed_at' && c !== 'group_id'; }), indexes: ['idx_escalations_group_dept'] });
+  assert.equal(m.status, 'warn');
+  assert.equal(m.value, 'missing column(s): group_id, removed_at');
+  assert.match(m.hint, /EVERY escalation save and live Activity fail/);
+  const i = f({ columns: all, indexes: ['escalations_pkey'] });
+  assert.equal(i.status, 'warn');
+  assert.match(i.value, /one-copy-per-department index missing/);
+  assert.match(i.hint, /HAVING count\(\*\) > 1/);
+  assert.equal(f({ columns: all, indexes: ['idx_escalations_group_dept'] }).status, 'ok');
+});
+
+test('ESC-DDL: escSchemaRead_ is one metered read of the live columns + index names', function () {
+  let sqlSeen = '', metered = null;
+  const prev = h.ctx.neonNoteEgress_;
+  h.ctx.neonNoteEgress_ = function (n, label) { metered = label; };
+  try {
+    const conn = { createStatement: function () { return {
+      executeQuery: function (sql) { sqlSeen = sql; let d = false;
+        return { next: function () { if (d) return false; d = true; return true; },
+          getString: function () { return JSON.stringify({ cols: ['id', 'group_id'], idx: ['escalations_pkey'] }); }, close: function () {} }; },
+      close: function () {} }; } };
+    const r = JSON.parse(JSON.stringify(h.call('escSchemaRead_', conn)));
+    assert.deepEqual(r, { columns: ['id', 'group_id'], indexes: ['escalations_pkey'] });
+    assert.match(sqlSeen, /information_schema\.columns/);
+    assert.match(sqlSeen, /pg_indexes/);
+    assert.equal(metered, 'escalations');
+  } finally { h.ctx.neonNoteEgress_ = prev; }
+});

@@ -120,7 +120,9 @@ tests/
                               restore to the prior status, Link/Move pointing
                               at Restore; ESC-G1: the source sweep that every
                               public write verb refuses a removed copy or is
-                              a reasoned exemption),
+                              a reasoned exemption; ESC-DDL/ESC-U1: the logged
+                              column migration, the partial unique
+                              (group_id, department) index, escSchemaVerdict_),
                               neon-write chunking/mapping (incl.
                               IMP-4/5/6 replace/dedupe pins), qcd/insights
                               freezes, cache-version-sync (doc↔code
@@ -130,7 +132,8 @@ tests/
                               -> muted, throw -> warn, absent/fast/unconfigured
                               -> no row; PROPS-1: the Script Properties
                               500 KB store row -- UTF-8 bytes, chunk families,
-                              80% warn, value-free) + smoke-check, queue-report,
+                              80% warn, value-free; ESC-DDL: the esc-schema
+                              row on the shared conn) + smoke-check, queue-report,
                               pipeline-watch, missed-slice,
                               inbound-qcd-parity, journey-fallback (the
                               call-path drill's sheet fallback: source
