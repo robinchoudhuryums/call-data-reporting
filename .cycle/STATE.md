@@ -1,6 +1,16 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — owner RULINGS on the scan's nine deferred items; PR #351 (Batches
+  1-12) MERGED.** Rulings + the three batches they became are in
+  docs/next-steps.md "Rulings round": DX-11 code correct (Pacific local, doc
+  fix only); QO-2 violation = 4.00% or more; AC-2 B; ESC-D8 C; PC-12 A;
+  CL-20 A (accepted); CL-23 B; CH-4 selective split (getSystemHealth +
+  getCompanyOverview only); LEG-2 B (decommission). **Waiting on the owner:**
+  the date the 4% violation rule took effect (QO-2's history repair is
+  date-gated on it). **Where I left off:** branch restarted from main
+  (3dfc830); nothing implemented yet; next is Batch 13 (QO-2, DX-11, PC-12,
+  AC-2).
 - **2026-10-02 — broad-scan Batch 12 IMPLEMENTED on the same branch (block 225).**
   The LAST batch of the 2026-10-01 scan. Code health: CH-1 (the five
   Diagnostics.gs tools are public + admin-gated, so the Run dropdown shows
