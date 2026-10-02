@@ -1,6 +1,17 @@
 # Cycle State — resume note
 
 ## OPEN NOW (read this first)
+- **2026-10-02 — rulings Batch 15 IMPLEMENTED (block 228).** CH-4: getSystemHealth
+  (~1000 -> ~50 lines, fifteen section helpers sharing one ctx) and
+  getCompanyOverview (~700 -> ~150, twelve stage helpers) split behind a
+  byte-for-byte payload golden (tests/unit/ch4-split-snapshot.test.js +
+  snapshots/ch4-payloads.json) committed BEFORE the split; 16 states, every
+  bite red; Overview half compares in America/Chicago only. An intended
+  payload change regenerates the golden with UPDATE_SNAPSHOTS=1. 2155/2155 +
+  ci:ui green. **Owner-side:** nothing new (deploy with the other batches).
+  **Where I left off:** committed + pushed on claude/optimistic-lamport-92xm9l,
+  no PR; the rulings round's batches (13-15) are all done; LEG-2 waits on the
+  owner's decommission date.
 - **2026-10-02 — rulings Batch 14 IMPLEMENTED (block 227).** ESC-D8 (a
   permanent escalation delete scrubs the deleted rows out of every backup
   snapshot + activity file in both stores; queued in

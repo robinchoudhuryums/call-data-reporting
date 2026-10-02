@@ -54,7 +54,9 @@ function check(name, payload) {
   taken[name] = JSON.parse(json);
   if (UPDATE) return;
   assert.ok(Object.prototype.hasOwnProperty.call(golden, name), 'no golden snapshot for "' + name + '" -- run with UPDATE_SNAPSHOTS=1');
-  assert.equal(json, JSON.stringify(golden[name], null, 1), name + ': the payload changed');
+  assert.equal(json, JSON.stringify(golden[name], null, 1), name + ': the payload changed -- if that is '
+    + 'INTENDED, regenerate with UPDATE_SNAPSHOTS=1 node --test tests/unit/ch4-split-snapshot.test.js '
+    + '(under TZ=America/Chicago) and review the golden file\'s diff');
 }
 
 // ── getSystemHealth ──────────────────────────────────────────────────────────

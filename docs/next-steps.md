@@ -527,7 +527,7 @@ became. Sizes: S < 1 h, M 2-4 h.
   behavior" with this API, so the ui-harness gets a mock + driver check AND
   the owner walks it in two real browsers before release.
 
-### Batch 15 — CH-4, selective split (dashboard)
+### Batch 15 — CH-4, selective split (dashboard) — IMPLEMENTED 2026-10-02 (block 228; pinned by tests/unit/ch4-split-snapshot.test.js)
 Split only where the parts are independent and the file changes often:
 `getSystemHealth` (977 lines, 17 commits since August -- a list of
 independent Health rows) and `getCompanyOverview` (703 lines, 13 commits).
